@@ -710,7 +710,7 @@ def apply_inline_markdown(line: str, reset_suffix: str = "") -> str:
     line = _MD_IMAGE_RE.sub(lambda m: f"\033[2m[img: {m.group(1)}]\033[0m{reset_suffix}", line)
 
     # Step 5b: links — underline text, discard URL
-    line = _MD_LINK_RE.sub(lambda m: f"\033[4m{m.group(1)} ({m.group(2)})\033[0m{reset_suffix}", line)
+    line = _MD_LINK_RE.sub(lambda m: f"\033[4m{m.group(1)}\033[0m{reset_suffix}", line)
 
     # Step 5c: HTML inline tags
     line = _MD_EM_RE.sub(lambda m: f"{_MD_ITALIC_ANSI}{m.group(1)}\033[0m{reset_suffix}", line)
@@ -734,6 +734,7 @@ _MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)")
 _MD_HR_RE = re.compile(r"^(-{3,}|\*{3,}|_{3,})$")
 _MD_BLOCKQUOTE_RE = re.compile(r"^>+\s?(.*)")
 _MD_UL_RE = re.compile(r"^(\s*)([-*+])\s+(.+)")
+_MD_OL_RE = re.compile(r"^(\s*)(\d+\.)\s+(.+)")
 _MD_REF_LINK_RE = re.compile(r"^\[[^\]]+\]:\s+\S+")
 
 _HEADING_STYLES = {

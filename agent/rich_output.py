@@ -11,12 +11,10 @@ LanguageDetector        detect language from filename / content
 FilePathFormatter       per-type icons + compact relative-path display
 SyntaxHighlighter       Pygments → Rich markup → ANSI string
 DiffRenderer            unified diff → Rich Text with line numbers → ANSI lines
+apply_inline_markdown   convert **bold** / *italic* / `code` / ~~strike~~ to ANSI
+apply_block_line        convert block-level markdown (headings, hr, blockquotes,
+                        lists) to ANSI on a single line
 clean_command_output    strip venv/stacktrace noise from command output
-
-Internal helpers (module-level, exposed for testing)
------------------------------------------------------
-_intra_diff             character-level segment diff between two line strings
-_parse_diff_filename    strip a/ b/ prefixes from unified-diff path headers
 """
 
 from __future__ import annotations
@@ -281,7 +279,7 @@ class _PygmentsToRich:
         while t is not None:
             if t in self._STYLES:
                 return self._STYLES[t]
-            t = t.parent  # type: ignore[assignment]  # pygments Token hierarchy isn't typed
+            t = t.parent  # type: ignore[assignment]
         return None
 
 
@@ -328,8 +326,7 @@ class SyntaxHighlighter:
         """Return an ANSI-escaped string suitable for plain ``print()``."""
         markup = self.to_markup(code, language, filename)
         buf = StringIO()
-        width = shutil.get_terminal_size((220, 50)).columns
-        Console(file=buf, highlight=False, force_terminal=True, width=width).print(markup)
+        Console(file=buf, highlight=False, force_terminal=True, width=220).print(markup)
         return buf.getvalue()
 
     # -- Helpers -------------------------------------------------------------
@@ -518,15 +515,14 @@ class DiffRenderer:
 
     # -- ANSI lines (drop-in for _render_inline_unified_diff) ----------------
 
-    def to_lines(self, diff_text: str, width: int = 0) -> list[str]:
+    def to_lines(self, diff_text: str, width: int = 220) -> list[str]:
         """Render *diff_text* and return a list of ANSI-escaped strings.
 
         Compatible with Hermes's ``print_fn`` pattern: each element maps to
         one ``print_fn(line)`` call.
         """
         buf = StringIO()
-        _w = width or shutil.get_terminal_size((220, 50)).columns
-        Console(file=buf, highlight=False, force_terminal=True, width=_w).print(
+        Console(file=buf, highlight=False, force_terminal=True, width=width).print(
             self.from_unified(diff_text)
         )
         # Drop the trailing empty line that Console adds
@@ -648,6 +644,166 @@ class DiffRenderer:
 
 
 # ---------------------------------------------------------------------------
+# Public: inline markdown → ANSI rendering
+# ---------------------------------------------------------------------------
+
+_MD_CODE_RE = re.compile(r"`([^`\n]+)`")
+_MD_BOLD_STAR_RE = re.compile(r"\*\*(.+?)\*\*")
+_MD_BOLD_UNDER_RE = re.compile(r"(?<![_\w])__(.+?)__(?![_\w])")
+_MD_ITALIC_STAR_RE = re.compile(r"\*([^*\n]+?)\*")
+_MD_ITALIC_UNDER_RE = re.compile(r"(?<![_\w])_([^_\n]+)_(?![_\w])")
+_MD_STRIKE_RE = re.compile(r"~~(.+?)~~")
+# Images must be matched before links (![  prefix overlaps with [)
+_MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\([^)]+\)")
+_MD_LINK_RE = re.compile(r"(?<!\x1b)\[([^\]]+)\]\([^)]+\)")
+_MD_EM_RE = re.compile(r"<em>(.*?)</em>", re.IGNORECASE)
+_MD_STRONG_RE = re.compile(r"<strong>(.*?)</strong>", re.IGNORECASE)
+
+_MD_BOLD_ANSI = "\033[1m"
+_MD_ITALIC_ANSI = "\033[3m"
+_MD_STRIKE_ANSI = "\033[9m"
+_MD_CODE_ANSI = "\033[97m"
+_MD_RST_ANSI = "\033[0m"
+
+
+def apply_inline_markdown(line: str, reset_suffix: str = "") -> str:
+    """Apply ANSI styling to inline markdown spans in a single text line.
+
+    Handles ``**bold**``, ``__bold__``, ``*italic*``, ``_italic_``,
+    ``~~strikethrough~~``, and `` `code` ``.  Backtick spans are processed
+    first and their content is protected from bold/italic passes via
+    placeholder tokens.
+
+    ``reset_suffix`` is appended after each closing reset; pass the active
+    response-text ANSI colour here so it is restored between adjacent spans
+    during streaming.
+
+    Returns *line* unchanged if it already contains ANSI escape codes.
+    """
+    if "\x1b" in line:
+        return line
+
+    rst = _MD_RST_ANSI + reset_suffix
+
+    # Step 1: protect backtick code spans with index placeholders so later
+    # passes cannot match * or _ inside them.
+    protected: list[str] = []
+
+    def _protect_code(m: re.Match) -> str:  # type: ignore[type-arg]
+        protected.append(f"{_MD_CODE_ANSI}{m.group(1)}{rst}")
+        return f"\x00{len(protected) - 1}\x00"
+
+    line = _MD_CODE_RE.sub(_protect_code, line)
+
+    # Step 2: bold
+    line = _MD_BOLD_STAR_RE.sub(lambda m: f"{_MD_BOLD_ANSI}{m.group(1)}{rst}", line)
+    line = _MD_BOLD_UNDER_RE.sub(lambda m: f"{_MD_BOLD_ANSI}{m.group(1)}{rst}", line)
+
+    # Step 3: italic (runs after bold so ** is already consumed)
+    line = _MD_ITALIC_STAR_RE.sub(lambda m: f"{_MD_ITALIC_ANSI}{m.group(1)}{rst}", line)
+    line = _MD_ITALIC_UNDER_RE.sub(lambda m: f"{_MD_ITALIC_ANSI}{m.group(1)}{rst}", line)
+
+    # Step 4: strikethrough
+    line = _MD_STRIKE_RE.sub(lambda m: f"{_MD_STRIKE_ANSI}{m.group(1)}{rst}", line)
+
+    # Step 5a: images (before links — ![  prefix overlaps)
+    line = _MD_IMAGE_RE.sub(lambda m: f"\033[2m[img: {m.group(1)}]\033[0m{reset_suffix}", line)
+
+    # Step 5b: links — underline text, discard URL
+    line = _MD_LINK_RE.sub(lambda m: f"\033[4m{m.group(1)}\033[0m{reset_suffix}", line)
+
+    # Step 5c: HTML inline tags
+    line = _MD_EM_RE.sub(lambda m: f"{_MD_ITALIC_ANSI}{m.group(1)}\033[0m{reset_suffix}", line)
+    line = _MD_STRONG_RE.sub(lambda m: f"{_MD_BOLD_ANSI}{m.group(1)}\033[0m{reset_suffix}", line)
+
+    # Step 6: restore protected code spans
+    for idx, span in enumerate(protected):
+        line = line.replace(f"\x00{idx}\x00", span)
+
+    # Step 7: strip CommonMark backslash escapes (\] → ], \* → *, etc.)
+    line = re.sub(r'\\([\\`*_{}\[\]()#+\-.!|~])', r'\1', line)
+
+    return line
+
+
+# ---------------------------------------------------------------------------
+# Public: block-level markdown → ANSI rendering
+# ---------------------------------------------------------------------------
+
+_MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)")
+_MD_HR_RE = re.compile(r"^(-{3,}|\*{3,}|_{3,})$")
+_MD_BLOCKQUOTE_RE = re.compile(r"^>+\s?(.*)")
+_MD_UL_RE = re.compile(r"^(\s*)([-*+])\s+(.+)")
+_MD_REF_LINK_RE = re.compile(r"^\[[^\]]+\]:\s+\S+")
+
+_HEADING_STYLES = {
+    1: "\033[1;97m",
+    2: "\033[1;37m",
+    3: "\033[1m",
+    4: "\033[1;2m",
+    5: "\033[1;2m",
+    6: "\033[1;2m",
+}
+_BLOCKQUOTE_ANSI = "\033[2m"
+_BULLETS = ["•", "◦", "▸", "·"]
+
+
+def apply_block_line(line: str) -> str:
+    """Apply ANSI styling to block-level markdown structures in a single line.
+
+    Handles headings (h1–h6), horizontal rules, blockquotes, unordered lists,
+    and reference link suppression.  Ordered lists are passed through unchanged.
+
+    Two early-exit guards:
+    - Lines containing ``\\x1b`` are already ANSI-rendered — returned as-is.
+    - Lines containing ``\\n`` are multi-line blocks from ``StreamingBlockBuffer``
+      (table or setext) — returned as-is.
+
+    Returns *line* unchanged if no block pattern matches.
+    """
+    if "\x1b" in line:
+        return line
+    if "\n" in line:
+        return line
+
+    # Reference link definition — suppress entirely
+    if _MD_REF_LINK_RE.match(line):
+        return ""
+
+    # Headings
+    m = _MD_HEADING_RE.match(line)
+    if m:
+        level = len(m.group(1))
+        text = m.group(2)
+        style = _HEADING_STYLES.get(level, "\033[1;2m")
+        rendered_text = apply_inline_markdown(text, reset_suffix=style)
+        return f"{style}{rendered_text}{_MD_RST_ANSI}"
+
+    # Horizontal rule
+    stripped = line.rstrip()
+    if _MD_HR_RE.match(stripped):
+        cols = shutil.get_terminal_size((80, 24)).columns
+        return f"\033[2m{'─' * cols}\033[0m"
+
+    # Blockquote — collapse any level of nesting to single gutter
+    m = _MD_BLOCKQUOTE_RE.match(line)
+    if m:
+        content = m.group(1)
+        content_rendered = apply_inline_markdown(content, reset_suffix=_BLOCKQUOTE_ANSI)
+        return f"{_BLOCKQUOTE_ANSI}▌ {content_rendered}\033[0m"
+
+    # Unordered list — bullet symbol by indent depth
+    m = _MD_UL_RE.match(line)
+    if m:
+        indent, _marker, content = m.group(1), m.group(2), m.group(3)
+        level = len(indent) // 2
+        bullet = _BULLETS[min(level, len(_BULLETS) - 1)]
+        return f"{indent}{bullet} {content}"
+
+    return line
+
+
+# ---------------------------------------------------------------------------
 # Public: fenced code block highlighting for LLM responses
 # ---------------------------------------------------------------------------
 
@@ -687,36 +843,42 @@ def _number_code_lines(highlighted: str) -> str:
 
 
 def format_response(text: str) -> str:
-    """Apply syntax highlighting to fenced code blocks in a complete response string.
+    """Apply syntax highlighting and markdown rendering to a complete response string.
 
-    Replaces each `` ```lang\\ncode\\n``` `` block with an ANSI-highlighted
-    version.  Inline code spans (single backticks) in prose segments are also
-    styled.  Blocks with no language hint use content-based detection.
+    Pass 1: replaces each `` ```lang\\ncode\\n``` `` block with an
+    ANSI-highlighted version (with dim line numbers).  Pass 2: applies
+    block-level then inline markdown (headings, hr, blockquotes, lists,
+    bold, italic, code spans, etc.) to every non-code line.
     Suitable for the non-streaming Rich Panel display path.
     """
     _hl = SyntaxHighlighter()
     _det = LanguageDetector()
 
-    def _highlight_block(m: "re.Match") -> str:
+    def _highlight(m: "re.Match") -> str:
         lang = m.group(2).strip() or None
         code = m.group(3)
         if not lang:
             lang = _det.detect_from_content(code)
         highlighted = _hl.to_ansi(code, language=lang).rstrip("\n")
+        # _number_code_lines prepends dim line-number prefix ensuring every
+        # line has at least one ANSI escape — safe for pass-2 \x1b detection.
         return _number_code_lines(highlighted)
 
     # Match fenced code blocks of any depth (3+ backticks); \1 backreference
     # ensures the closing fence uses the same backtick sequence as the opener.
-    # Apply inline-code highlighting only to prose segments between/around blocks.
-    fence_re = re.compile(r"(`{3,})(\w*)\n(.*?)\1", re.DOTALL)
-    parts: list[str] = []
-    last_end = 0
-    for m in fence_re.finditer(text):
-        parts.append(_highlight_inline_code(text[last_end:m.start()]))
-        parts.append(_highlight_block(m))
-        last_end = m.end()
-    parts.append(_highlight_inline_code(text[last_end:]))
-    return "".join(parts)
+    text = re.sub(r"(`{3,})(\w*)\n(.*?)\1", _highlight, text, flags=re.DOTALL)
+    # Block + inline markdown pass — lines with \x1b are already highlighted code.
+    # Use splitlines() (no keepends) so apply_block_line never receives a trailing
+    # \n that its capture groups would silently drop.  Rejoin manually and restore
+    # the final newline if the original text ended with one.
+    lines = text.splitlines()
+    result = "\n".join(
+        l if "\x1b" in l else apply_inline_markdown(apply_block_line(l))
+        for l in lines
+    )
+    if text.endswith("\n"):
+        result += "\n"
+    return result
 
 
 class StreamingCodeBlockHighlighter:

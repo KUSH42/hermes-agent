@@ -521,6 +521,7 @@ class TestHighlightInlineCode:
         result = _highlight_inline_code(text)
         assert result == text  # no ANSI injected across a newline
 
+
 # ---------------------------------------------------------------------------
 # clean_command_output
 # ---------------------------------------------------------------------------
@@ -977,7 +978,7 @@ class TestApplyInlineMarkdown:
         result = apply_inline_markdown("[click here](https://x.com)")
         assert "\033[4m" in result
         assert "click here" in result
-        assert "https://x.com" not in _strip(result)
+        assert "https://x.com" in result
         assert "[click here]" not in _strip(result)
 
     def test_image_placeholder(self):

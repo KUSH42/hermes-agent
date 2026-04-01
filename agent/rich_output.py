@@ -758,7 +758,7 @@ def apply_inline_markdown(line: str, reset_suffix: str = "") -> str:
     line = _MD_IMAGE_RE.sub(lambda m: f"\033[2m[img: {m.group(1)}]\033[0m{reset_suffix}", line)
 
     # Step 5b: links — underline text, discard URL
-    line = _MD_LINK_RE.sub(lambda m: f"\033[4m{m.group(1)}\033[0m{reset_suffix}", line)
+    line = _MD_LINK_RE.sub(lambda m: f"\033[4m{m.group(1)} ({m.group(2)})\033[0m{reset_suffix}", line)
 
     # Step 5c: HTML inline tags
     line = _MD_EM_RE.sub(lambda m: f"{_MD_ITALIC_ANSI}{m.group(1)}\033[0m{reset_suffix}", line)
@@ -901,6 +901,8 @@ def format_response(text: str) -> str:
     """
     _hl = SyntaxHighlighter()
     _det = LanguageDetector()
+
+    _RST = "\033[0m"  # reset — transparent no-op; marks lines as code for pass 2
 
     def _highlight(m: "re.Match") -> str:
         lang = m.group(2).strip() or None

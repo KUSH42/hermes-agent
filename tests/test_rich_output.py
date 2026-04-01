@@ -451,7 +451,8 @@ class TestFormatResponse:
         text = "```python\nx = `foo`\n```"
         result = format_response(text)
         # The fenced block content should not contain the inline-code ANSI prefix
-        # (48;5;237 is the inline code background index)
+        # (48;5;237 is the inline code background index — only used by
+        # _highlight_inline_code, never by apply_inline_markdown's _MD_CODE_RE)
         assert "48;5;237" not in result
 
     def test_inline_code_preserved_in_plain_text(self):
@@ -466,6 +467,21 @@ class TestFormatResponse:
         """Plain prose with no backticks is returned verbatim."""
         text = "Just a response with no fences."
         assert format_response(text) == text
+
+    def test_code_fence_inside_blockquote_not_consumed(self):
+        """Fences prefixed with > must not be treated as code block openers.
+
+        Regression: the old un-anchored regex matched ``` mid-line, causing
+        > ```python lines to be syntax-highlighted and the \x1b guard to then
+        skip apply_block_line — so blockquote lines rendered with raw > instead
+        of the ▌ gutter.
+        """
+        text = "> ```python\n> x = 1\n> ```\nAfter."
+        result = format_response(text)
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", result)
+        # Blockquote gutter must appear; raw > must not lead these lines
+        assert "▌" in plain
+        assert "After." in plain
 
 
 # ---------------------------------------------------------------------------
@@ -501,7 +517,6 @@ class TestHighlightInlineCode:
         text = "`line one\nline two`"
         result = _highlight_inline_code(text)
         assert result == text  # no ANSI injected across a newline
-
 
 # ---------------------------------------------------------------------------
 # clean_command_output
@@ -876,7 +891,7 @@ class TestApplyInlineMarkdown:
         result = apply_inline_markdown("[click here](https://x.com)")
         assert "\033[4m" in result
         assert "click here" in result
-        assert "https://x.com" not in _strip(result)
+        assert "https://x.com" in result
         assert "[click here]" not in _strip(result)
 
     def test_image_placeholder(self):

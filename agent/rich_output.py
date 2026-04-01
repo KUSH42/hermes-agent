@@ -782,7 +782,6 @@ _MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)")
 _MD_HR_RE = re.compile(r"^(-{3,}|\*{3,}|_{3,})$")
 _MD_BLOCKQUOTE_RE = re.compile(r"^>+\s?(.*)")
 _MD_UL_RE = re.compile(r"^(\s*)([-*+])\s+(.+)")
-_MD_OL_RE = re.compile(r"^(\s*)(\d+\.)\s+(.+)")
 _MD_REF_LINK_RE = re.compile(r"^\[[^\]]+\]:\s+\S+")
 
 _HEADING_STYLES = {

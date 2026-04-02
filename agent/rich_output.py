@@ -662,6 +662,10 @@ _MD_STRIKE_RE = re.compile(r"~~(.+?)~~")
 # Images must be matched before links (![  prefix overlaps with [)
 _MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\([^)]+\)")
 _MD_LINK_RE = re.compile(r"(?<!\x1b)\[([^\]]+)\]\(([^)]+)\)")
+# Bare URLs — negative lookbehind (?<!\() avoids matching URLs already
+# formatted as "text (url)" by the link step above.
+_MD_BARE_URL_RE = re.compile(r"(?<!\()https?://[^\s<>\[\]()\"]+")
+
 # HTML wrapper tags (may contain inner markdown — processed with reset_suffix)
 _MD_U_RE = re.compile(r"<u>(.*?)</u>", re.IGNORECASE | re.DOTALL)
 _MD_INS_RE = re.compile(r"<ins>(.*?)</ins>", re.IGNORECASE | re.DOTALL)
@@ -774,6 +778,16 @@ def apply_inline_markdown(line: str, reset_suffix: str = "") -> str:
 
     # Step 6b: links — bright-blue underline + URL for copy/ctrl+click
     line = _MD_LINK_RE.sub(lambda m: f"{_MD_LINK_ANSI}{m.group(1)} ({m.group(2)})\033[0m{reset_suffix}", line)
+
+    # Step 6b2: bare URLs (https?://...) — style the same as markdown links.
+    # Trailing punctuation characters are stripped from the URL and re-appended
+    # so "See https://x.com." doesn't include the period in the styled span.
+    def _bare_url(m: re.Match) -> str:  # type: ignore[type-arg]
+        url = m.group(0).rstrip(".,;:!?)")
+        tail = m.group(0)[len(url):]
+        return f"{_MD_LINK_ANSI}{url}\033[0m{reset_suffix}{tail}"
+
+    line = _MD_BARE_URL_RE.sub(_bare_url, line)
 
     # Step 6c: HTML inline tags (simple — content taken as-is)
     _h = reset_suffix  # shorthand

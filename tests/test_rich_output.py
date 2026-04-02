@@ -17,7 +17,7 @@ from agent.rich_output import (
     _NUM_RE,
     _SETEXT_H1_RE,
     _SETEXT_H2_RE,
-    _TABLE_ROW_RE,
+    _TABLE_STRICT_ROW_RE,
     _intra_diff,
     _parse_diff_filename,
     _split_row,
@@ -1443,10 +1443,10 @@ class TestStatefulBlockRegexes:
         assert not _SETEXT_H2_RE.match("--- text")
 
     def test_table_row_re(self):
-        assert _TABLE_ROW_RE.match("| a | b |")
-        assert _TABLE_ROW_RE.match("|---|---|")
-        assert not _TABLE_ROW_RE.match("a | b")
-        assert not _TABLE_ROW_RE.match("| no trailing")
+        assert _TABLE_STRICT_ROW_RE.match("| a | b |")
+        assert _TABLE_STRICT_ROW_RE.match("|---|---|")
+        assert not _TABLE_STRICT_ROW_RE.match("a | b")
+        assert not _TABLE_STRICT_ROW_RE.match("| no trailing")
 
     def test_num_re(self):
         assert _NUM_RE.match("42")
@@ -1600,11 +1600,13 @@ class TestRenderStatefulBlocksTables:
         assert "|" not in _strip(result)
 
     def test_table_no_separator(self):
+        # Strict table with no separator row: still renders framed (no sep_idx,
+        # so all rows are treated as content with inter-row dividers).
         t = "| A | B |\n| x | y |\n| z | w |"
         result = render_stateful_blocks(t)
         plain = _strip(result)
         assert "x" in plain
-        assert "─" not in plain
+        assert "┌" in plain  # box frame present even without separator
 
 
     def test_emoji_cells_do_not_misalign_columns(self):

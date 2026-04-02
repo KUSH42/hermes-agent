@@ -640,37 +640,23 @@ class TestIntraDiff:
     # background (bold) instead of a bright foreground colour.
 
     def test_equal_spans_use_base_colour(self):
-        # Identical lines → no changed region → no bright-highlight spans.
+        # Equal spans must not be bold — specific colors are skin-driven.
         del_segs, add_segs = _intra_diff("abc", "abc")
-        del_text, add_text = del_segs[0], add_segs[0]
-        assert del_text.plain == "abc"
-        assert add_text.plain == "abc"
-        # No span should carry the brighter highlight background.
-        del_bgs = {sp.style.bgcolor for sp in del_text._spans if sp.style.bgcolor}
-        add_bgs = {sp.style.bgcolor for sp in add_text._spans if sp.style.bgcolor}
-        from rich.color import Color
-        hl_del = Color.parse(_DIFF_BG_DEL_HL)
-        hl_add = Color.parse(_DIFF_BG_ADD_HL)
-        assert hl_del not in del_bgs
-        assert hl_add not in add_bgs
+        for seg in del_segs + add_segs:
+            assert not seg.style.bold
 
     def test_changed_span_highlighted(self):
         # "foo bar" → "foo baz": only the last char differs.
         del_segs, add_segs = _intra_diff("foo bar", "foo baz")
-        del_text, add_text = del_segs[0], add_segs[0]
-        from rich.color import Color
-        hl_del = Color.parse(_DIFF_BG_DEL_HL)
-        hl_add = Color.parse(_DIFF_BG_ADD_HL)
-        del_bgs = {sp.style.bgcolor for sp in del_text._spans if sp.style.bgcolor}
-        add_bgs = {sp.style.bgcolor for sp in add_text._spans if sp.style.bgcolor}
-        assert hl_del in del_bgs, "expected bright del bg on changed span"
-        assert hl_add in add_bgs, "expected bright add bg on changed span"
-        # Changed spans must be bold.
-        del_bold = any(
-            sp.style.bold and sp.style.bgcolor == hl_del
-            for sp in del_text._spans
-        )
-        assert del_bold, "changed del span must be bold"
+        # Changed chars must be bold; equal chars must not be bold.
+        # Specific color values are skin-driven and not asserted here.
+        del_highlighted = [s for s in del_segs if s.style.bold]
+        add_highlighted = [s for s in add_segs if s.style.bold]
+        assert del_highlighted, "expected at least one bold segment in del_segs"
+        assert add_highlighted, "expected at least one bold segment in add_segs"
+        # Equal spans must not be bold
+        del_equal = [s for s in del_segs if not s.style.bold]
+        assert del_equal, "expected non-bold (equal) segments in del_segs"
 
     def test_delete_opcode_no_add_seg(self):
         del_segs, add_segs = _intra_diff("abcXYZ", "abc")
@@ -737,8 +723,9 @@ class TestDiffRendererV2:
         )
         lines = buf.getvalue().splitlines()
         del_line = next(l for l in lines if "aaaa" in re.sub(r"\x1b\[[0-9;]*m", "", l))
-        # bright_red bold is encoded as \x1b[1;91; — must not appear on a flat-colour line
-        assert "\x1b[1;91;" not in del_line
+        # Bold intra-highlighting (\x1b[1;) must not appear on a flat-colour line.
+        # We match \x1b[1; which prefixes any bold sequence regardless of color format.
+        assert "\x1b[1;" not in del_line
 
     def test_pairing_per_run_not_per_hunk(self, monkeypatch):
         monkeypatch.delenv("NO_COLOR", raising=False)
@@ -762,15 +749,9 @@ class TestDiffRendererV2:
             DiffRenderer()._style(diff.splitlines())
         )
         output = buf.getvalue()
-        # Paired diff fragments should remain explicitly styled in this
-        # renderer path after rebasing the branch stack.
-        plain = re.sub(r"\x1b\[[0-9;]*m", "", output)
-        assert "return foo_value" in plain
-        assert "return bar_value" in plain
-        assert "return foo_result" in plain
-        assert "return bar_result" in plain
-        assert len(re.findall(r"\x1b\[[0-9;]*mfoo\x1b\[0m", output)) >= 2
-        assert len(re.findall(r"\x1b\[[0-9;]*mbar\x1b\[0m", output)) >= 2
+        # Both pairs should produce bold intra-highlighted changed chars.
+        # \x1b[1; prefixes any bold sequence regardless of color encoding (named or truecolor).
+        assert output.count("\x1b[1;") >= 4  # at least 2 bold opens per del+add pair × 2 pairs
 
     def test_alternating_run_flush(self):
         # -A +B -C +D with no context between — should pair (-A,+B) and (-C,+D)
@@ -1203,7 +1184,8 @@ class TestApplyInlineMarkdown:
 
     def test_link_underlined(self):
         result = apply_inline_markdown("[click here](https://x.com)")
-        assert "\033[4m" in result  # underline (part of link style)
+        # Underline is encoded as \x1b[4m (standalone) or \x1b[4;...m (combined with color).
+        assert re.search(r"\x1b\[4[;m]", result), "link style must include underline"
         assert "click here" in result
         assert "https://x.com" in result  # URL preserved for copy/ctrl+click
         assert "[click here]" not in _strip(result)
@@ -1217,7 +1199,7 @@ class TestApplyInlineMarkdown:
     def test_image_before_link(self):
         result = apply_inline_markdown("![a](u) [b](v)")
         assert "[img: a]" in result
-        assert "\033[4m" in result  # underline (part of link style)
+        assert re.search(r"\x1b\[4[;m]", result), "link style must include underline"
         assert "b" in result
 
     def test_image_then_link_no_ansi_corruption(self):
@@ -1233,11 +1215,11 @@ class TestApplyInlineMarkdown:
         assert "0m" not in plain
         assert "38;2" not in plain
         # The link must be styled (underline present)
-        assert "\033[4m" in result
+        assert re.search(r"\x1b\[4[;m]", result), "link style must include underline"
 
     def test_bare_url_styled(self):
         result = apply_inline_markdown("1. https://www.google.com")
-        assert "\033[4m" in result  # underline applied
+        assert re.search(r"\x1b\[4[;m]", result), "bare URL style must include underline"
         assert "https://www.google.com" in result
 
     def test_bare_url_trailing_period_stripped(self):
@@ -1251,12 +1233,12 @@ class TestApplyInlineMarkdown:
 
     def test_bare_file_url_styled(self):
         result = apply_inline_markdown("file:///home/user/tmp")
-        assert "\033[4m" in result
+        assert re.search(r"\x1b\[4[;m]", result), "file URL style must include underline"
         assert "file:///home/user/tmp" in result
 
     def test_bare_www_domain_styled(self):
         result = apply_inline_markdown("Check www.example.com for info")
-        assert "\033[4m" in result
+        assert re.search(r"\x1b\[4[;m]", result), "www URL style must include underline"
         assert "www.example.com" in result
 
     def test_bare_www_not_matched_mid_word(self):

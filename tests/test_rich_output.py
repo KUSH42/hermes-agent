@@ -1137,6 +1137,21 @@ class TestApplyInlineMarkdown:
         assert "\033[4m" in result  # underline (part of link style)
         assert "b" in result
 
+    def test_image_then_link_no_ansi_corruption(self):
+        # Regression: image step emits \033[0m; the link regex must not match
+        # the "[0m ... [linktext](url)" span and leave orphaned ESC bytes that
+        # cause subsequent ANSI sequences to print as literal text in the terminal.
+        result = apply_inline_markdown("![logo](img.png) and [click](https://x.com)")
+        plain = _strip(result)
+        assert "logo" in plain
+        assert "click" in plain
+        assert "https://x.com" in plain
+        # No raw ANSI fragments may appear as visible text
+        assert "0m" not in plain
+        assert "38;2" not in plain
+        # The link must be styled (underline present)
+        assert "\033[4m" in result
+
     def test_bare_url_styled(self):
         result = apply_inline_markdown("1. https://www.google.com")
         assert "\033[4m" in result  # underline applied

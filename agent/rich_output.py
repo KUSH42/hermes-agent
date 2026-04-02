@@ -980,8 +980,14 @@ def _parse_align(cell: str) -> str:
     return "left"
 
 
+_MD_OL_START_RE = re.compile(r"^\d+\.")
+
+
 def _is_heading_candidate(pending: Optional[str]) -> bool:
     if pending is None or pending == "" or "\x1b" in pending:
+        return False
+    # Ordered-list items look like "1. text" — never a setext heading.
+    if _MD_OL_START_RE.match(pending):
         return False
     return apply_block_line(pending) is pending
 

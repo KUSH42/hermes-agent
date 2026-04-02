@@ -2244,7 +2244,9 @@ class HermesCLI:
                 buf_tail = self._stream_block_buf.flush()
                 if buf_tail is not None:
                     for hl_line in buf_tail.splitlines():
-                        _cprint(hl_line)
+                        if _display._code_highlight_active:
+                            hl_line = _apply_inline_md(_apply_block_line(hl_line), reset_suffix=_tc)
+                        _cprint(f"{_tc}{hl_line}{_RST}" if _tc else hl_line)
                 # Flush any open code block (unclosed fence at end of response)
                 tail = self._stream_code_hl.flush()
                 if tail:

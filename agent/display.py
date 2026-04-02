@@ -1309,9 +1309,6 @@ def write_tty(text: str) -> None:
 # Context pressure display (CLI user-facing warnings)
 # =========================================================================
 
-# ANSI color codes for context pressure tiers
-_CYAN = "\033[36m"
-_YELLOW = "\033[33m"
 _BOLD = "\033[1m"
 _DIM_ANSI = "\033[2m"
 
@@ -1319,6 +1316,29 @@ _DIM_ANSI = "\033[2m"
 _BAR_FILLED = "▰"
 _BAR_EMPTY = "▱"
 _BAR_WIDTH = 20
+
+
+def _hex_to_ansi_fg(hex_color: str) -> str:
+    """Convert #RRGGBB to ANSI truecolor foreground escape. Returns "" on error."""
+    try:
+        h = hex_color.lstrip("#")
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        return f"\033[38;2;{r};{g};{b}m"
+    except Exception:
+        return ""
+
+
+def _ctx_color(pct: float) -> str:
+    """Return ANSI foreground color for context bar based on threshold percentage."""
+    skin = _get_skin()
+    if skin is None:
+        # Fallback: yellow for all levels
+        return f"{_BOLD}\033[33m"
+    if pct >= 0.95:
+        return f"{_BOLD}{_hex_to_ansi_fg(skin.get_ui_ext('context_bar_crit', '#ef5350'))}"
+    if pct >= 0.80:
+        return f"{_BOLD}{_hex_to_ansi_fg(skin.get_ui_ext('context_bar_warn', '#ffa726'))}"
+    return f"{_BOLD}{_hex_to_ansi_fg(skin.get_ui_ext('context_bar_normal', '#5f87d7'))}"
 
 
 def format_context_pressure(
@@ -1345,7 +1365,7 @@ def format_context_pressure(
     threshold_k = f"{threshold_tokens // 1000}k" if threshold_tokens >= 1000 else str(threshold_tokens)
     threshold_pct_int = int(threshold_percent * 100)
 
-    color = f"{_BOLD}{_YELLOW}"
+    color = _ctx_color(compaction_progress)
     icon = "⚠"
     if compression_enabled:
         hint = "compaction approaching"

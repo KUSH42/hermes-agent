@@ -696,6 +696,9 @@ class DiffRenderer:
 # ---------------------------------------------------------------------------
 
 _MD_CODE_RE = re.compile(r"`([^`\n]+)`")
+# Bold+italic must be matched before bold/italic individually
+_MD_BOLD_ITALIC_STAR_RE = re.compile(r"\*{3}(.+?)\*{3}")
+_MD_BOLD_ITALIC_UNDER_RE = re.compile(r"(?<![_\w])___(.+?)___(?![_\w])")
 _MD_BOLD_STAR_RE = re.compile(r"\*\*(.+?)\*\*")
 _MD_BOLD_UNDER_RE = re.compile(r"(?<![_\w])__(.+?)__(?![_\w])")
 _MD_ITALIC_STAR_RE = re.compile(r"\*([^*\n]+?)\*")
@@ -704,13 +707,26 @@ _MD_STRIKE_RE = re.compile(r"~~(.+?)~~")
 # Images must be matched before links (![  prefix overlaps with [)
 _MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\([^)]+\)")
 _MD_LINK_RE = re.compile(r"(?<!\x1b)\[([^\]]+)\]\(([^)]+)\)")
-_MD_EM_RE = re.compile(r"<em>(.*?)</em>", re.IGNORECASE)
-_MD_STRONG_RE = re.compile(r"<strong>(.*?)</strong>", re.IGNORECASE)
+# HTML wrapper tags (may contain inner markdown — processed with reset_suffix)
 _MD_U_RE = re.compile(r"<u>(.*?)</u>", re.IGNORECASE | re.DOTALL)
+_MD_INS_RE = re.compile(r"<ins>(.*?)</ins>", re.IGNORECASE | re.DOTALL)
 _MD_MARK_RE = re.compile(r"<mark>(.*?)</mark>", re.IGNORECASE | re.DOTALL)
+# HTML inline tags (simple — no nested markdown processing needed)
+_MD_EM_RE = re.compile(r"<em>(.*?)</em>", re.IGNORECASE)
+_MD_I_RE = re.compile(r"<i>(.*?)</i>", re.IGNORECASE)
+_MD_STRONG_RE = re.compile(r"<strong>(.*?)</strong>", re.IGNORECASE)
+_MD_B_RE = re.compile(r"<b>(.*?)</b>", re.IGNORECASE)
+_MD_S_RE = re.compile(r"<s>(.*?)</s>", re.IGNORECASE)
+_MD_STRIKE_TAG_RE = re.compile(r"<strike>(.*?)</strike>", re.IGNORECASE)
+_MD_DEL_RE = re.compile(r"<del>(.*?)</del>", re.IGNORECASE)
+_MD_CODE_TAG_RE = re.compile(r"<code>(.*?)</code>", re.IGNORECASE)
+_MD_KBD_RE = re.compile(r"<kbd>(.*?)</kbd>", re.IGNORECASE)
+# Tags with no terminal equivalent — content is preserved, tags stripped
+_MD_STRIP_TAGS_RE = re.compile(r"</?(?:sup|sub)>", re.IGNORECASE)
 
 _MD_BOLD_ANSI = "\033[1m"
 _MD_ITALIC_ANSI = "\033[3m"
+_MD_BOLD_ITALIC_ANSI = "\033[1;3m"
 _MD_STRIKE_ANSI = "\033[9m"
 _MD_CODE_ANSI = "\033[97m"
 _MD_U_ANSI = "\033[4m"
@@ -722,14 +738,18 @@ def apply_inline_markdown(line: str, reset_suffix: str = "") -> str:
     """Apply ANSI styling to inline markdown spans in a single text line.
 
     Handles ``**bold**``, ``__bold__``, ``*italic*``, ``_italic_``,
-    ``~~strikethrough~~``, `` `code` ``, ``<u>``, ``<mark>``, ``<em>``,
-    and ``<strong>``.  Backtick spans are processed first and protected from
-    later passes via placeholder tokens.
+    ``**bold**``, ``__bold__``, ``*italic*``, ``_italic_``,
+    ``***bold italic***``, ``___bold italic___``, ``~~strikethrough~~``,
+    `` `code` ``, ``<u>``, ``<ins>``, ``<mark>``, ``<em>``, ``<i>``,
+    ``<strong>``, ``<b>``, ``<s>``, ``<strike>``, ``<del>``, ``<code>``,
+    ``<kbd>``.  ``<sup>``/``<sub>`` tags are stripped (no ANSI equivalent).
+    Backtick spans are processed first and protected from later passes via
+    placeholder tokens.
 
-    HTML wrapper tags (``<u>``, ``<mark>``) are processed before markdown
-    spans via a recursive call with the wrapper style as ``reset_suffix``,
-    so inner bold/italic resets restore the outer underline/highlight rather
-    than dropping it.
+    HTML wrapper tags (``<u>``, ``<ins>``, ``<mark>``) are processed before
+    markdown spans via a recursive call with the wrapper style as
+    ``reset_suffix``, so inner bold/italic resets restore the outer
+    underline/highlight rather than dropping it.
 
     ``reset_suffix`` is appended after each closing reset; pass the active
     response-text ANSI colour here so it is restored between adjacent spans
@@ -742,8 +762,8 @@ def apply_inline_markdown(line: str, reset_suffix: str = "") -> str:
 
     rst = _MD_RST_ANSI + reset_suffix
 
-    # Step 0: HTML wrapper tags whose content needs inner-markdown processing
-    # with the wrapper style as reset_suffix so inner resets restore it.
+    # Step 0: HTML wrapper tags — process content recursively with the wrapper
+    # style as reset_suffix so inner resets restore the outer style.
     def _wrap(style: str) -> "re.Callable[[re.Match], str]":  # type: ignore[type-arg]
         def _sub(m: re.Match) -> str:  # type: ignore[type-arg]
             inner = apply_inline_markdown(m.group(1), reset_suffix=style)
@@ -751,6 +771,7 @@ def apply_inline_markdown(line: str, reset_suffix: str = "") -> str:
         return _sub
 
     line = _MD_U_RE.sub(_wrap(_MD_U_ANSI), line)
+    line = _MD_INS_RE.sub(_wrap(_MD_U_ANSI), line)
     line = _MD_MARK_RE.sub(_wrap(_MD_MARK_ANSI), line)
 
     # Step 1: protect backtick code spans with index placeholders so later
@@ -763,28 +784,43 @@ def apply_inline_markdown(line: str, reset_suffix: str = "") -> str:
 
     line = _MD_CODE_RE.sub(_protect_code, line)
 
-    # Step 2: bold
+    # Step 2: bold+italic (must precede bold and italic individually)
+    line = _MD_BOLD_ITALIC_STAR_RE.sub(lambda m: f"{_MD_BOLD_ITALIC_ANSI}{m.group(1)}{rst}", line)
+    line = _MD_BOLD_ITALIC_UNDER_RE.sub(lambda m: f"{_MD_BOLD_ITALIC_ANSI}{m.group(1)}{rst}", line)
+
+    # Step 3: bold
     line = _MD_BOLD_STAR_RE.sub(lambda m: f"{_MD_BOLD_ANSI}{m.group(1)}{rst}", line)
     line = _MD_BOLD_UNDER_RE.sub(lambda m: f"{_MD_BOLD_ANSI}{m.group(1)}{rst}", line)
 
-    # Step 3: italic (runs after bold so ** is already consumed)
+    # Step 4: italic (runs after bold so ** is already consumed)
     line = _MD_ITALIC_STAR_RE.sub(lambda m: f"{_MD_ITALIC_ANSI}{m.group(1)}{rst}", line)
     line = _MD_ITALIC_UNDER_RE.sub(lambda m: f"{_MD_ITALIC_ANSI}{m.group(1)}{rst}", line)
 
-    # Step 4: strikethrough
+    # Step 5: strikethrough
     line = _MD_STRIKE_RE.sub(lambda m: f"{_MD_STRIKE_ANSI}{m.group(1)}{rst}", line)
 
-    # Step 5a: images (before links — ![  prefix overlaps)
+    # Step 6a: images (before links — ![  prefix overlaps)
     line = _MD_IMAGE_RE.sub(lambda m: f"\033[2m[img: {m.group(1)}]\033[0m{reset_suffix}", line)
 
-    # Step 5b: links — underline text, discard URL
+    # Step 6b: links — underline text, preserve URL for copy/ctrl+click
     line = _MD_LINK_RE.sub(lambda m: f"\033[4m{m.group(1)} ({m.group(2)})\033[0m{reset_suffix}", line)
 
-    # Step 5c: remaining HTML inline tags (no inner markdown to recurse)
-    line = _MD_EM_RE.sub(lambda m: f"{_MD_ITALIC_ANSI}{m.group(1)}\033[0m{reset_suffix}", line)
-    line = _MD_STRONG_RE.sub(lambda m: f"{_MD_BOLD_ANSI}{m.group(1)}\033[0m{reset_suffix}", line)
+    # Step 6c: HTML inline tags (simple — content taken as-is)
+    _h = reset_suffix  # shorthand
+    line = _MD_EM_RE.sub(lambda m: f"{_MD_ITALIC_ANSI}{m.group(1)}{rst}", line)
+    line = _MD_I_RE.sub(lambda m: f"{_MD_ITALIC_ANSI}{m.group(1)}{rst}", line)
+    line = _MD_STRONG_RE.sub(lambda m: f"{_MD_BOLD_ANSI}{m.group(1)}{rst}", line)
+    line = _MD_B_RE.sub(lambda m: f"{_MD_BOLD_ANSI}{m.group(1)}{rst}", line)
+    line = _MD_S_RE.sub(lambda m: f"{_MD_STRIKE_ANSI}{m.group(1)}{rst}", line)
+    line = _MD_STRIKE_TAG_RE.sub(lambda m: f"{_MD_STRIKE_ANSI}{m.group(1)}{rst}", line)
+    line = _MD_DEL_RE.sub(lambda m: f"{_MD_STRIKE_ANSI}{m.group(1)}{rst}", line)
+    line = _MD_CODE_TAG_RE.sub(lambda m: f"{_MD_CODE_ANSI}{m.group(1)}{rst}", line)
+    line = _MD_KBD_RE.sub(lambda m: f"{_MD_CODE_ANSI}{m.group(1)}{rst}", line)
 
-    # Step 6: restore protected code spans
+    # Step 6d: tags with no terminal equivalent — strip tags, keep content
+    line = _MD_STRIP_TAGS_RE.sub("", line)
+
+    # Step 7: restore protected code spans
     for idx, span in enumerate(protected):
         line = line.replace(f"\x00{idx}\x00", span)
 

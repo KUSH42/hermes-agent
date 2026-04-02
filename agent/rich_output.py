@@ -1339,7 +1339,7 @@ def render_stateful_blocks(text: str) -> str:
     def _render_bq_depth(content: str, depth: int) -> str:
         indent = "  " * (depth - 1)
         dim_prefix = "\033[2m" * min(depth - 1, 2)
-        ansi = dim_prefix + _BLOCKQUOTE_ANSI
+        ansi = dim_prefix + _md_ansi("blockquote")
         content_rendered = apply_inline_markdown(content, reset_suffix=ansi, ref_map=ref_map)
         return f"{indent}{ansi}▌ {content_rendered}\033[0m"
 
@@ -1377,7 +1377,7 @@ def render_stateful_blocks(text: str) -> str:
         if "\x1b" in line:
             _flush_table_to_out()
             if _bq_depth:
-                _emit(f"{_BLOCKQUOTE_ANSI}▌ {_MD_RST_ANSI}{line}")
+                _emit(f"{_md_ansi("blockquote")}▌ {_MD_RST_ANSI}{line}")
             else:
                 _bq_depth = 0
                 _emit(line)
@@ -1404,13 +1404,13 @@ def render_stateful_blocks(text: str) -> str:
                         pending_inner = pm.group(2)  # type: ignore[union-attr]
                         if (_SETEXT_H1_RE.match(inner) or _SETEXT_H2_RE.match(inner)) and _is_heading_candidate(pending_inner):
                             level = 1 if _SETEXT_H1_RE.match(inner) else 2
-                            style = _HEADING_STYLES[level]
+                            style = _md_ansi(_MD_HEADING_KEYS.get(level, "heading_4_6"))
                             rendered_text = apply_inline_markdown(pending_inner, reset_suffix=style, ref_map=ref_map)
                             heading_out = f"{style}{rendered_text}{_MD_RST_ANSI}"
                             pending_depth = pm.group(1).count('>')  # type: ignore[union-attr]
                             pending_indent = "  " * (pending_depth - 1)
                             dim_prefix = "\033[2m" * min(pending_depth - 1, 2)
-                            ansi = dim_prefix + _BLOCKQUOTE_ANSI
+                            ansi = dim_prefix + _md_ansi("blockquote")
                             _pending = None
                             _emit(f"{pending_indent}{ansi}▌ {heading_out}\033[0m")
                             _bq_depth = depth
@@ -1494,7 +1494,7 @@ def render_stateful_blocks(text: str) -> str:
         if _SETEXT_H1_RE.match(line) or _SETEXT_H2_RE.match(line):
             if _is_heading_candidate(_pending):
                 level = 1 if _SETEXT_H1_RE.match(line) else 2
-                style = _HEADING_STYLES[level]
+                style = _md_ansi(_MD_HEADING_KEYS.get(level, "heading_4_6"))
                 rendered_text = apply_inline_markdown(_pending, reset_suffix=style, ref_map=ref_map)  # type: ignore[arg-type]
                 heading_out = f"{style}{rendered_text}{_MD_RST_ANSI}"
                 _pending = None
@@ -1635,7 +1635,7 @@ class StreamingBlockBuffer:
                         self._pending = None
                         self._emit_next = line
                         return self._render_bq_depth(inner, depth)
-                return f"{_BLOCKQUOTE_ANSI}▌ {_MD_RST_ANSI}{line}"
+                return f"{_md_ansi("blockquote")}▌ {_MD_RST_ANSI}{line}"
             if line == "":
                 # Flush pending BQ line before exiting blockquote
                 if self._pending is not None:
@@ -1675,13 +1675,13 @@ class StreamingBlockBuffer:
                     pending_inner = pm.group(2)  # type: ignore[union-attr]
                     if (_SETEXT_H1_RE.match(inner) or _SETEXT_H2_RE.match(inner)) and _is_heading_candidate(pending_inner):
                         level = 1 if _SETEXT_H1_RE.match(inner) else 2
-                        style = _HEADING_STYLES[level]
+                        style = _md_ansi(_MD_HEADING_KEYS.get(level, "heading_4_6"))
                         rendered_text = apply_inline_markdown(pending_inner, reset_suffix=style, ref_map=self._ref_map)
                         heading_out = f"{style}{rendered_text}{_MD_RST_ANSI}"
                         pending_depth = pm.group(1).count('>')  # type: ignore[union-attr]
                         pending_indent = "  " * (pending_depth - 1)
                         dim_prefix = "\033[2m" * min(pending_depth - 1, 2)
-                        ansi = dim_prefix + _BLOCKQUOTE_ANSI
+                        ansi = dim_prefix + _md_ansi("blockquote")
                         self._pending = None
                         self._bq_depth = depth
                         return f"{pending_indent}{ansi}▌ {heading_out}\033[0m"
@@ -1776,7 +1776,7 @@ class StreamingBlockBuffer:
         if _SETEXT_H1_RE.match(line) or _SETEXT_H2_RE.match(line):
             if _is_heading_candidate(self._pending):
                 level = 1 if _SETEXT_H1_RE.match(line) else 2
-                style = _HEADING_STYLES[level]
+                style = _md_ansi(_MD_HEADING_KEYS.get(level, "heading_4_6"))
                 rendered_text = apply_inline_markdown(self._pending, reset_suffix=style, ref_map=self._ref_map)  # type: ignore[arg-type]
                 heading = f"{style}{rendered_text}{_MD_RST_ANSI}"
                 self._pending = None
@@ -1803,7 +1803,7 @@ class StreamingBlockBuffer:
     def _render_bq_depth(self, content: str, depth: int) -> str:
         indent = "  " * (depth - 1)
         dim_prefix = "\033[2m" * min(depth - 1, 2)
-        ansi = dim_prefix + _BLOCKQUOTE_ANSI
+        ansi = dim_prefix + _md_ansi("blockquote")
         content_rendered = apply_inline_markdown(content, reset_suffix=ansi, ref_map=self._ref_map)
         return f"{indent}{ansi}▌ {content_rendered}\033[0m"
 

@@ -3,6 +3,7 @@
 import pytest
 
 from agent.rich_output import (
+    _DIFF_MAX_LINES,
     DiffRenderer,
     FilePathFormatter,
     LanguageDetector,
@@ -411,3 +412,69 @@ class TestDiffRendererV2:
         header = renderables[0]
         separator = renderables[1]
         assert len(separator.plain) == len(header.plain)
+
+
+# ---------------------------------------------------------------------------
+# DiffRenderer truncation tests
+# ---------------------------------------------------------------------------
+
+import re as _re
+_ANSI_RE = _re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _make_long_diff(n_lines: int) -> str:
+    """Generate a unified diff with n_lines changed lines."""
+    old = "\n".join(f"line {i}" for i in range(n_lines))
+    new = "\n".join(f"line {i} changed" for i in range(n_lines))
+    import difflib
+    return "".join(difflib.unified_diff(
+        old.splitlines(keepends=True),
+        new.splitlines(keepends=True),
+        fromfile="a/f.py", tofile="b/f.py",
+    ))
+
+
+class TestDiffRendererTruncation:
+    def setup_method(self):
+        self.dr = DiffRenderer()
+
+    def test_short_diff_not_truncated(self):
+        diff = "--- a/f.py\n+++ b/f.py\n@@ -1 +1 @@\n-old\n+new\n"
+        lines = self.dr.to_lines(diff)
+        assert not any("omitted" in _ANSI_RE.sub("", l) for l in lines)
+        assert any("old" in _ANSI_RE.sub("", l) for l in lines)
+        assert any("new" in _ANSI_RE.sub("", l) for l in lines)
+
+    def test_long_diff_truncated(self):
+        diff = _make_long_diff(_DIFF_MAX_LINES + 10)
+        lines = self.dr.to_lines(diff)
+        plain_last = _ANSI_RE.sub("", lines[-1])
+        assert "omitted" in plain_last
+        assert not any(f"line {_DIFF_MAX_LINES + 1} changed" in _ANSI_RE.sub("", l) for l in lines)
+
+    def test_footer_singular(self):
+        # Render a diff fully, then re-render capped at total-1 → exactly 1 omitted
+        diff = "--- a/f.py\n+++ b/f.py\n@@ -1,3 +1,3 @@\n-a\n-b\n-c\n+a2\n+b2\n+c2\n"
+        full = self.dr.to_lines(diff, max_lines=0)
+        lines = self.dr.to_lines(diff, max_lines=len(full) - 1)
+        footer = _ANSI_RE.sub("", lines[-1])
+        assert "1 more line omitted" in footer
+        assert "lines" not in footer
+
+    def test_footer_plural(self):
+        diff = _make_long_diff(_DIFF_MAX_LINES + 5)
+        lines = self.dr.to_lines(diff)
+        footer = _ANSI_RE.sub("", lines[-1])
+        assert "more lines omitted" in footer
+
+    def test_max_lines_zero_disables_cap(self):
+        diff = _make_long_diff(_DIFF_MAX_LINES + 20)
+        lines = self.dr.to_lines(diff, max_lines=0)
+        assert not any("omitted" in _ANSI_RE.sub("", l) for l in lines)
+        assert len(lines) > _DIFF_MAX_LINES
+
+    def test_custom_max_lines_respected(self):
+        diff = _make_long_diff(20)
+        lines = self.dr.to_lines(diff, max_lines=10)
+        assert len(lines) == 11  # 10 content + footer
+        assert "omitted" in _ANSI_RE.sub("", lines[-1])

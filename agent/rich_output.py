@@ -476,6 +476,8 @@ def _intra_diff(old: str, new: str) -> tuple[list[Text], list[Text]]:
 # Public: diff renderer
 # ---------------------------------------------------------------------------
 
+_DIFF_MAX_LINES: int = 80  # cap for DiffRenderer.to_lines; 0 = unlimited
+
 class DiffRenderer:
     """Render a unified diff as Rich Text objects with line numbers.
 
@@ -513,11 +515,17 @@ class DiffRenderer:
 
     # -- ANSI lines (drop-in for _render_inline_unified_diff) ----------------
 
-    def to_lines(self, diff_text: str, width: int = 0) -> list[str]:
+    def to_lines(self, diff_text: str, width: int = 0,
+                 max_lines: int = _DIFF_MAX_LINES) -> list[str]:
         """Render *diff_text* and return a list of ANSI-escaped strings.
 
         Compatible with Hermes's ``print_fn`` pattern: each element maps to
         one ``print_fn(line)`` call.
+
+        *max_lines* caps the output list and appends a dim footer for any
+        omitted lines.  Pass ``max_lines=0`` to disable truncation (useful
+        for callers that apply their own budget, e.g.
+        ``_summarize_rendered_diff_sections``).
         """
         buf = StringIO()
         _w = width or shutil.get_terminal_size((220, 50)).columns
@@ -525,7 +533,15 @@ class DiffRenderer:
             self.from_unified(diff_text)
         )
         # Drop the trailing empty line that Console adds
-        return buf.getvalue().rstrip("\n").splitlines()
+        lines = buf.getvalue().rstrip("\n").splitlines()
+        if max_lines and len(lines) > max_lines:
+            omitted = len(lines) - max_lines
+            footer = (
+                f"\033[2m   ╌╌ {omitted} more line"
+                f"{'s' if omitted != 1 else ''} omitted ╌╌\033[0m"
+            )
+            return lines[:max_lines] + [footer]
+        return lines
 
     # -- Internal rendering --------------------------------------------------
 

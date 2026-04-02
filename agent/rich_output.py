@@ -38,11 +38,60 @@ from rich.text import Text
 
 logger = logging.getLogger(__name__)
 
-# Diff background colours — kept in sync with agent.display._ANSI_PLUS / _ANSI_MINUS
-# _ANSI_PLUS  = "\033[38;2;255;255;255;48;2;20;90;20m"   → rgb(20,90,20)
-# _ANSI_MINUS = "\033[38;2;255;255;255;48;2;120;20;20m"  → rgb(120,20,20)
-_DIFF_BG_ADD = "#145a14"   # rgb(20, 90, 20)
-_DIFF_BG_DEL = "#781414"   # rgb(120, 20, 20)
+# ---------------------------------------------------------------------------
+# Rich style → ANSI conversion (used by markdown cache builder)
+# ---------------------------------------------------------------------------
+
+def _rich_style_to_ansi(style_str: str) -> str:
+    """Convert a Rich style string to an ANSI escape sequence prefix.
+
+    Examples::
+
+        "#58A6FF underline"  → "\\033[38;2;88;166;255m\\033[4m"
+        "bold dim"           → "\\033[1m\\033[2m"
+        "strike"             → "\\033[9m"
+
+    Called once per key per skin activation (during cache rebuild), not per
+    character — no per-render overhead.
+    """
+    from io import StringIO as _StringIO
+    from rich.console import Console as _RichConsole
+    from rich.style import Style as _RichStyle
+    buf = _StringIO()
+    console = _RichConsole(file=buf, highlight=False, force_terminal=True, width=1)
+    try:
+        parsed = _RichStyle.parse(style_str)
+        console.print(" ", style=parsed, end="")
+        rendered = buf.getvalue()
+        reset = "\033[0m"
+        if reset in rendered:
+            # Strip trailing reset + the space char we used as a dummy
+            return rendered[:rendered.index(reset) - 1]
+        return rendered[:-1]   # remove trailing space
+    except Exception:
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# Skin-driven diff accessor
+# ---------------------------------------------------------------------------
+
+def _diff_cfg(key: str) -> str:
+    """Return the active skin's diff color/style for *key*, falling back to defaults."""
+    try:
+        from hermes_cli.skin_engine import get_active_skin
+        return get_active_skin().get_diff(key)
+    except Exception:
+        # skin_engine unavailable — fall back to hardcoded defaults
+        _FALLBACKS = {
+            "deletion_bg": "#781414", "addition_bg": "#145a14",
+            "deletion_fg": "#ffffff", "addition_fg": "#ffffff",
+            "intra_del_bg": "#9b1c1c", "intra_add_bg": "#166534",
+            "intra_del_fg": "#ff8080", "intra_add_fg": "#80ff80",
+            "line_number": "dim", "separator": "dim",
+            "hunk_header": "bold cyan", "filename": "bold bright_white",
+        }
+        return _FALLBACKS.get(key, "")
 
 # Minimum SequenceMatcher ratio to apply intra-line highlighting.
 # Below this the lines are too dissimilar and highlighting would be noise.
@@ -480,18 +529,18 @@ def _make_header(filename: Optional[str], n_adds: int, n_dels: int) -> tuple[Tex
 def _flat_del(ln: int, content: str) -> Text:
     """Render a deletion line with flat (no intra-line) highlighting."""
     return Text.assemble(
-        Text(f"{ln:>4} ", style="dim"),
+        Text(f"{ln:>4} ", style=_diff_cfg("line_number")),
         Text("- ", style=Style(color="red", bold=True)),
-        Text(content, style=Style(bgcolor=_DIFF_BG_DEL, color="white")),
+        Text(content, style=Style(bgcolor=_diff_cfg("deletion_bg"), color=_diff_cfg("deletion_fg"))),
     )
 
 
 def _flat_add(ln: int, content: str) -> Text:
     """Render an addition line with flat (no intra-line) highlighting."""
     return Text.assemble(
-        Text(f"{ln:>4} ", style="dim"),
+        Text(f"{ln:>4} ", style=_diff_cfg("line_number")),
         Text("+ ", style=Style(color="green", bold=True)),
-        Text(content, style=Style(bgcolor=_DIFF_BG_ADD, color="white")),
+        Text(content, style=Style(bgcolor=_diff_cfg("addition_bg"), color=_diff_cfg("addition_fg"))),
     )
 
 
@@ -513,15 +562,15 @@ def _intra_diff(old: str, new: str) -> tuple[list[Text], list[Text]]:
     add_segs: list[Text] = []
     for tag, i1, i2, j1, j2 in SequenceMatcher(None, old, new, autojunk=False).get_opcodes():
         if tag == "equal":
-            del_segs.append(Text(old[i1:i2], style=Style(bgcolor=_DIFF_BG_DEL, color="white")))
-            add_segs.append(Text(new[j1:j2], style=Style(bgcolor=_DIFF_BG_ADD, color="white")))
+            del_segs.append(Text(old[i1:i2], style=Style(bgcolor=_diff_cfg("deletion_bg"), color=_diff_cfg("deletion_fg"))))
+            add_segs.append(Text(new[j1:j2], style=Style(bgcolor=_diff_cfg("addition_bg"), color=_diff_cfg("addition_fg"))))
         elif tag == "replace":
-            del_segs.append(Text(old[i1:i2], style=Style(bgcolor=_DIFF_BG_DEL, color="bright_red", bold=True)))
-            add_segs.append(Text(new[j1:j2], style=Style(bgcolor=_DIFF_BG_ADD, color="bright_green", bold=True)))
+            del_segs.append(Text(old[i1:i2], style=Style(bgcolor=_diff_cfg("intra_del_bg"), color=_diff_cfg("intra_del_fg"), bold=True)))
+            add_segs.append(Text(new[j1:j2], style=Style(bgcolor=_diff_cfg("intra_add_bg"), color=_diff_cfg("intra_add_fg"), bold=True)))
         elif tag == "delete":
-            del_segs.append(Text(old[i1:i2], style=Style(bgcolor=_DIFF_BG_DEL, color="bright_red", bold=True)))
+            del_segs.append(Text(old[i1:i2], style=Style(bgcolor=_diff_cfg("intra_del_bg"), color=_diff_cfg("intra_del_fg"), bold=True)))
         elif tag == "insert":
-            add_segs.append(Text(new[j1:j2], style=Style(bgcolor=_DIFF_BG_ADD, color="bright_green", bold=True)))
+            add_segs.append(Text(new[j1:j2], style=Style(bgcolor=_diff_cfg("intra_add_bg"), color=_diff_cfg("intra_add_fg"), bold=True)))
     return del_segs, add_segs
 
 
@@ -661,7 +710,7 @@ class DiffRenderer:
                 m = re.search(r"@@ -(\d+),?\d* \+(\d+),?\d* @@", line)
                 if m:
                     ln_old, ln_new = int(m.group(1)), int(m.group(2))
-                styled.append(Text(line, style=Style(color="cyan", bold=True)))
+                styled.append(Text(line, style=_diff_cfg("hunk_header")))
                 continue
 
             if line.startswith("-"):
@@ -738,15 +787,83 @@ _MD_KBD_RE = re.compile(r"<kbd>(.*?)</kbd>", re.IGNORECASE)
 # Tags with no terminal equivalent — content is preserved, tags stripped
 _MD_STRIP_TAGS_RE = re.compile(r"</?(?:sup|sub)>", re.IGNORECASE)
 
+# Bold/italic/underline/mark — fixed ANSI SGR codes, not skin-driven
 _MD_BOLD_ANSI = "\033[1m"
 _MD_ITALIC_ANSI = "\033[3m"
 _MD_BOLD_ITALIC_ANSI = "\033[1;3m"
-_MD_STRIKE_ANSI = "\033[9m"
-_MD_CODE_ANSI = "\033[97m"
 _MD_U_ANSI = "\033[4m"
 _MD_MARK_ANSI = "\033[7m"
-_MD_LINK_ANSI = "\033[38;2;88;166;255m\033[4m"  # #58A6FF (GitHub dark-mode blue) + underline
+# Universal reset — always \033[0m regardless of skin
 _MD_RST_ANSI = "\033[0m"
+
+# ---------------------------------------------------------------------------
+# Skin-driven markdown ANSI cache
+# ---------------------------------------------------------------------------
+# None = not yet built; {} = built (even if all values are empty strings).
+# The None sentinel distinguishes "not yet built" from "built but empty".
+_MD_ANSI_CACHE: "Optional[dict[str, str]]" = None
+_MD_VAL_CACHE: "Optional[dict[str, Any]]" = None
+
+# Keys whose values are Rich style strings → converted to ANSI at cache build time
+_MD_STYLE_KEYS = frozenset({
+    "link", "code_span", "heading_1", "heading_2", "heading_3", "heading_4_6",
+    "blockquote", "hr", "task_checked", "task_unchecked", "strike",
+    "image_alt", "ol_numeral",
+})
+# Keys whose values are stored as-is (Unicode strings, lists)
+_MD_VALUE_KEYS = frozenset({"blockquote_marker", "bullets"})
+
+
+def _md_ansi(key: str) -> str:
+    """Return the ANSI escape string for a markdown style key."""
+    if _MD_ANSI_CACHE is None:
+        _rebuild_md_cache()
+    return (_MD_ANSI_CACHE or {}).get(key, "")
+
+
+def _md_val(key: str) -> Any:
+    """Return the raw value for a non-style markdown key (bullets list, marker char)."""
+    if _MD_VAL_CACHE is None:
+        _rebuild_md_cache()
+    return (_MD_VAL_CACHE or {}).get(key)
+
+
+def _rebuild_md_cache() -> None:
+    """Rebuild both markdown caches from the active skin.
+
+    Called lazily on first access and explicitly by set_active_skin() via
+    the registered invalidation callback.
+    """
+    global _MD_ANSI_CACHE, _MD_VAL_CACHE
+    defaults = None
+    get_md = None
+    try:
+        from hermes_cli.skin_engine import get_active_skin, _MARKDOWN_DEFAULTS
+        defaults = _MARKDOWN_DEFAULTS
+        get_md = get_active_skin().get_markdown
+    except Exception:
+        try:
+            from hermes_cli.skin_engine import _MARKDOWN_DEFAULTS
+            defaults = _MARKDOWN_DEFAULTS
+        except Exception:
+            pass
+    if defaults is None:
+        _MD_ANSI_CACHE = {}
+        _MD_VAL_CACHE = {}
+        return
+    if get_md is None:
+        get_md = lambda k, d=None: defaults.get(k, d)  # noqa: E731
+
+    ansi_cache: dict[str, str] = {}
+    val_cache: dict[str, Any] = {}
+    for key, default in defaults.items():
+        value = get_md(key, default)
+        if key in _MD_STYLE_KEYS:
+            ansi_cache[key] = _rich_style_to_ansi(value) if isinstance(value, str) else ""
+        elif key in _MD_VALUE_KEYS:
+            val_cache[key] = value
+    _MD_ANSI_CACHE = ansi_cache
+    _MD_VAL_CACHE = val_cache
 
 
 def apply_inline_markdown(line: str, reset_suffix: str = "", ref_map: "dict[str, str] | None" = None) -> str:
@@ -794,7 +911,7 @@ def apply_inline_markdown(line: str, reset_suffix: str = "", ref_map: "dict[str,
     protected: list[str] = []
 
     def _protect_code(m: re.Match) -> str:  # type: ignore[type-arg]
-        protected.append(f"{_MD_CODE_ANSI}{m.group(1)}{rst}")
+        protected.append(f"{_md_ansi('code_span')}{m.group(1)}{rst}")
         return f"\x00{len(protected) - 1}\x00"
 
     line = _MD_CODE_RE.sub(_protect_code, line)
@@ -826,10 +943,10 @@ def apply_inline_markdown(line: str, reset_suffix: str = "", ref_map: "dict[str,
     line = _MD_ITALIC_UNDER_RE.sub(_span(_MD_ITALIC_ANSI), line)
 
     # Step 5: strikethrough
-    line = _MD_STRIKE_RE.sub(_span(_MD_STRIKE_ANSI), line)
+    line = _MD_STRIKE_RE.sub(_span(_md_ansi("strike")), line)
 
     # Step 6a: images (before links — ![  prefix overlaps)
-    line = _MD_IMAGE_RE.sub(lambda m: f"\033[2m[img: {m.group(1)}]\033[0m{reset_suffix}", line)
+    line = _MD_IMAGE_RE.sub(lambda m: f"{_md_ansi('image_alt')}[img: {m.group(1)}]{_MD_RST_ANSI}{reset_suffix}", line)
 
     # Step 6a2: reference link resolution (before inline link step)
     if ref_map:
@@ -838,7 +955,7 @@ def apply_inline_markdown(line: str, reset_suffix: str = "", ref_map: "dict[str,
             text_part = m.group(1)
             url = ref_map.get(text_part.lower())
             if url:
-                return f"{_MD_LINK_ANSI}{text_part} ({url})\033[0m{reset_suffix}"
+                return f"{_md_ansi('link')}{text_part} ({url}){_MD_RST_ANSI}{reset_suffix}"
             return m.group(0)
 
         def _resolve_use(m: re.Match) -> str:  # type: ignore[type-arg]
@@ -847,7 +964,7 @@ def apply_inline_markdown(line: str, reset_suffix: str = "", ref_map: "dict[str,
             ref_key = m.group(2).lower()
             url = ref_map.get(ref_key)
             if url:
-                return f"{_MD_LINK_ANSI}{text_part} ({url})\033[0m{reset_suffix}"
+                return f"{_md_ansi('link')}{text_part} ({url}){_MD_RST_ANSI}{reset_suffix}"
             return m.group(0)
 
         # [text][] collapsed ref — must run before [text][ref] to avoid partial match
@@ -855,7 +972,7 @@ def apply_inline_markdown(line: str, reset_suffix: str = "", ref_map: "dict[str,
         line = _MD_REF_LINK_USE_RE.sub(_resolve_use, line)
 
     # Step 6b: links — bright-blue underline + URL for copy/ctrl+click
-    line = _MD_LINK_RE.sub(lambda m: f"{_MD_LINK_ANSI}{m.group(1)} ({m.group(2)})\033[0m{reset_suffix}", line)
+    line = _MD_LINK_RE.sub(lambda m: f"{_md_ansi('link')}{m.group(1)} ({m.group(2)}){_MD_RST_ANSI}{reset_suffix}", line)
 
     # Step 6b2: bare URLs (https?://...) — style the same as markdown links.
     # Trailing punctuation characters are stripped from the URL and re-appended
@@ -863,7 +980,7 @@ def apply_inline_markdown(line: str, reset_suffix: str = "", ref_map: "dict[str,
     def _bare_url(m: re.Match) -> str:  # type: ignore[type-arg]
         url = m.group(0).rstrip(".,;:!?)")
         tail = m.group(0)[len(url):]
-        return f"{_MD_LINK_ANSI}{url}\033[0m{reset_suffix}{tail}"
+        return f"{_md_ansi('link')}{url}{_MD_RST_ANSI}{reset_suffix}{tail}"
 
     line = _MD_BARE_URL_RE.sub(_bare_url, line)
 
@@ -873,11 +990,11 @@ def apply_inline_markdown(line: str, reset_suffix: str = "", ref_map: "dict[str,
     line = _MD_I_RE.sub(lambda m: f"{_MD_ITALIC_ANSI}{m.group(1)}{rst}", line)
     line = _MD_STRONG_RE.sub(lambda m: f"{_MD_BOLD_ANSI}{m.group(1)}{rst}", line)
     line = _MD_B_RE.sub(lambda m: f"{_MD_BOLD_ANSI}{m.group(1)}{rst}", line)
-    line = _MD_S_RE.sub(lambda m: f"{_MD_STRIKE_ANSI}{m.group(1)}{rst}", line)
-    line = _MD_STRIKE_TAG_RE.sub(lambda m: f"{_MD_STRIKE_ANSI}{m.group(1)}{rst}", line)
-    line = _MD_DEL_RE.sub(lambda m: f"{_MD_STRIKE_ANSI}{m.group(1)}{rst}", line)
-    line = _MD_CODE_TAG_RE.sub(lambda m: f"{_MD_CODE_ANSI}{m.group(1)}{rst}", line)
-    line = _MD_KBD_RE.sub(lambda m: f"{_MD_CODE_ANSI}{m.group(1)}{rst}", line)
+    line = _MD_S_RE.sub(lambda m: f"{_md_ansi('strike')}{m.group(1)}{rst}", line)
+    line = _MD_STRIKE_TAG_RE.sub(lambda m: f"{_md_ansi('strike')}{m.group(1)}{rst}", line)
+    line = _MD_DEL_RE.sub(lambda m: f"{_md_ansi('strike')}{m.group(1)}{rst}", line)
+    line = _MD_CODE_TAG_RE.sub(lambda m: f"{_md_ansi('code_span')}{m.group(1)}{rst}", line)
+    line = _MD_KBD_RE.sub(lambda m: f"{_md_ansi('code_span')}{m.group(1)}{rst}", line)
 
     # Step 6d: tags with no terminal equivalent — strip tags, keep content
     line = _MD_STRIP_TAGS_RE.sub("", line)
@@ -908,16 +1025,7 @@ _REF_DEF_RE = re.compile(r'^\[([^\]]+)\]:\s*(\S+)(?:\s+(?:"[^"]*"|\'[^\']*\'|\([
 _MD_REF_LINK_USE_RE = re.compile(r'\[([^\]]+)\]\[([^\]]*)\]')
 _MD_REF_LINK_COLL_RE = re.compile(r'\[([^\]]+)\]\[\]')
 
-_HEADING_STYLES = {
-    1: "\033[1;97m",
-    2: "\033[1;37m",
-    3: "\033[1m",
-    4: "\033[1;2m",
-    5: "\033[1;2m",
-    6: "\033[1;2m",
-}
-_BLOCKQUOTE_ANSI = "\033[2m"
-_BULLETS = ["•", "◦", "▸", "·"]
+_MD_HEADING_KEYS = {1: "heading_1", 2: "heading_2", 3: "heading_3"}
 
 
 def apply_block_line(line: str) -> str:
@@ -947,7 +1055,8 @@ def apply_block_line(line: str) -> str:
     if m:
         level = len(m.group(1))
         text = m.group(2)
-        style = _HEADING_STYLES.get(level, "\033[1;2m")
+        key = _MD_HEADING_KEYS.get(level, "heading_4_6")
+        style = _md_ansi(key)
         rendered_text = apply_inline_markdown(text, reset_suffix=style)
         return f"{style}{rendered_text}{_MD_RST_ANSI}"
 
@@ -955,7 +1064,8 @@ def apply_block_line(line: str) -> str:
     stripped = line.rstrip()
     if _MD_HR_RE.match(stripped):
         cols = shutil.get_terminal_size((80, 24)).columns
-        return f"\033[2m{'─' * cols}\033[0m"
+        hr_ansi = _md_ansi("hr")
+        return f"{hr_ansi}{'─' * cols}{_MD_RST_ANSI}"
 
     # Blockquote — render with depth-aware gutter
     m = _MD_BQ_LEVEL_RE.match(line)
@@ -964,25 +1074,28 @@ def apply_block_line(line: str) -> str:
         content = m.group(2)
         depth = raw_prefix.count('>')
         indent = "  " * (depth - 1)
-        dim_prefix = "\033[2m" * min(depth - 1, 2)
-        ansi = dim_prefix + _BLOCKQUOTE_ANSI
+        bq_ansi = _md_ansi("blockquote")
+        dim_prefix = bq_ansi * min(depth - 1, 2)
+        ansi = dim_prefix + bq_ansi
+        marker = _md_val("blockquote_marker") or "▌"
         content_rendered = apply_inline_markdown(content, reset_suffix=ansi)
-        return f"{indent}{ansi}▌ {content_rendered}\033[0m"
+        return f"{indent}{ansi}{marker} {content_rendered}{_MD_RST_ANSI}"
 
     # Unordered list — bullet symbol by indent depth
     m = _MD_UL_RE.match(line)
     if m:
         indent, _marker, content = m.group(1), m.group(2), m.group(3)
         level = len(indent) // 2
-        bullet = _BULLETS[min(level, len(_BULLETS) - 1)]
+        bullets = _md_val("bullets") or ["•", "◦", "▸", "·"]
+        bullet = bullets[min(level, len(bullets) - 1)]
         # Task list detection
         tm = _MD_TASK_RE.match(content)
         if tm:
             checkbox_char, rest = tm.group(1), tm.group(2)
             if checkbox_char.lower() == 'x':
-                checkbox_sym = "\033[1;32m✓\033[0m"
+                checkbox_sym = f"{_md_ansi('task_checked')}✓{_MD_RST_ANSI}"
             else:
-                checkbox_sym = "\033[2m○\033[0m"
+                checkbox_sym = f"{_md_ansi('task_unchecked')}○{_MD_RST_ANSI}"
             rest_rendered = apply_inline_markdown(rest)
             return f"{indent}{bullet} {checkbox_sym} {rest_rendered}"
         return f"{indent}{bullet} {apply_inline_markdown(content)}"
@@ -991,9 +1104,8 @@ def apply_block_line(line: str) -> str:
     m = _MD_OL_RE.match(line)
     if m:
         indent, numeral, content = m.group(1), m.group(2), m.group(3)
-        level = len(indent) // 2
-        _ = level  # reserved for future indent-aware styling
-        return f"{indent}\033[2m{numeral}.\033[0m {apply_inline_markdown(content)}"
+        ol_ansi = _md_ansi("ol_numeral")
+        return f"{indent}{ol_ansi}{numeral}.{_MD_RST_ANSI} {apply_inline_markdown(content)}"
 
     return line
 

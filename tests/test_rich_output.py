@@ -1936,6 +1936,21 @@ class TestRenderStatefulBlocksTables:
         assert len(set(visual_lens)) == 1, f"Column widths diverged: {visual_lens}"
 
 
+    def test_emoji_cells_do_not_misalign_columns(self):
+        # Wide emoji (✅ = 2 cols, ❌ = 2 cols) must be counted correctly.
+        from agent.rich_output import _visual_len
+        assert _visual_len("✅") == 2
+        assert _visual_len("❌") == 2
+        assert _visual_len("⚠️") == 2
+        assert _visual_len("ok") == 2
+        md = "| A | B |\n|---|---|\n| ✅ | yes |\n| ❌ | no |"
+        out = format_response(md)
+        lines = [l for l in out.splitlines() if l.strip() and "─" not in l]
+        import re as _re
+        ansi = _re.compile(r"\x1b\[[0-9;]*m")
+        widths = [_visual_len(ansi.sub("", l)) for l in lines]
+        assert len(set(widths)) == 1, f"Column widths diverged: {widths}"
+
     def test_inline_markdown_in_cells_does_not_misalign_columns(self):
         # Cells with **bold** markup: rendered visual width must match padding.
         md = "| A | B |\n|---|---|\n| **hi** | x |\n| bye | y |"

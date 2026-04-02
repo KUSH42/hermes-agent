@@ -241,12 +241,13 @@ class TestStreamingCodeBlockHighlighter:
         assert self.hl.process_line("Another line") == "Another line"
 
     def test_plain_line_with_inline_code_styled(self):
-        import re
-        result = self.hl.process_line("Use `foo()` here.")
+        # process_line returns the original line for prose — the caller (cli.py)
+        # applies the full block + inline markdown pipeline via _apply_inline_md.
+        line = "Use `foo()` here."
+        result = self.hl.process_line(line)
         assert result is not None
-        plain = re.sub(r"\x1b\[[0-9;]*m", "", result)
-        assert "foo()" in plain
-        assert "\033[" in result
+        assert result is line  # identity preserved so cli.py applies full pipeline
+        assert "foo()" in result
 
     def test_opening_fence_suppressed(self):
         assert self.hl.process_line("```python") is None
@@ -926,8 +927,9 @@ class TestApplyInlineMarkdown:
     def test_backtick_code_span(self):
         result = apply_inline_markdown("`foo`")
         assert "\033[97m" in result
+        assert "\033[48;5;237m" in result  # dark background applied
         assert "foo" in result
-        assert "`" not in result
+        assert "`" in result  # backticks preserved inside the styled span
 
     def test_strikethrough(self):
         result = apply_inline_markdown("~~foo~~")
@@ -937,10 +939,11 @@ class TestApplyInlineMarkdown:
 
     def test_mixed_bold_and_code(self):
         result = apply_inline_markdown("**Line 88**: `cdOffset`")
-        assert "\033[1m" in result   # bold applied
-        assert "\033[97m" in result  # code span applied
+        assert "\033[1m" in result           # bold applied
+        assert "\033[97m" in result          # code span applied
+        assert "\033[48;5;237m" in result    # code span background applied
         assert "**" not in result
-        assert "`" not in result
+        assert "`" in result  # backticks preserved inside the styled span
 
     def test_asterisks_inside_backtick_untouched(self):
         result = apply_inline_markdown("`**not bold**`")

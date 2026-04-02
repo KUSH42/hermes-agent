@@ -987,7 +987,7 @@ class TestApplyInlineMarkdown:
 
     def test_link_underlined(self):
         result = apply_inline_markdown("[click here](https://x.com)")
-        assert "\033[4m" in result
+        assert "\033[4;94m" in result  # bright-blue underline
         assert "click here" in result
         assert "https://x.com" in result  # URL preserved for copy/ctrl+click
         assert "[click here]" not in _strip(result)
@@ -1001,7 +1001,7 @@ class TestApplyInlineMarkdown:
     def test_image_before_link(self):
         result = apply_inline_markdown("![a](u) [b](v)")
         assert "[img: a]" in result
-        assert "\033[4m" in result
+        assert "\033[4;94m" in result  # bright-blue underline
         assert "b" in result
 
 

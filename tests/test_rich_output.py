@@ -1224,6 +1224,28 @@ class TestApplyInlineMarkdown:
         assert "\033[4m" in result  # underline (part of link style)
         assert "b" in result
 
+    def test_bare_url_styled(self):
+        result = apply_inline_markdown("1. https://www.google.com")
+        assert "\033[4m" in result  # underline applied
+        assert "https://www.google.com" in result
+
+    def test_bare_url_trailing_period_stripped(self):
+        result = apply_inline_markdown("See https://example.com.")
+        assert "https://example.com" in result
+        # The period must NOT be inside the styled span
+        stripped = _strip(result)
+        assert stripped.endswith(".")
+        url_end = stripped.index("https://example.com") + len("https://example.com")
+        assert stripped[url_end] == "."
+
+    def test_bare_url_does_not_double_process_markdown_link(self):
+        result = apply_inline_markdown("[text](https://x.com) and https://y.com")
+        # markdown link: text shown, not the raw [text](url)
+        assert "[text]" not in _strip(result)
+        assert "text" in _strip(result)
+        # bare URL also styled (appears once)
+        assert result.count("https://y.com") == 1
+
 
 class TestApplyBlockLine:
     def test_h1_stripped_and_bold(self):

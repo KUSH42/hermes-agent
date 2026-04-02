@@ -989,8 +989,17 @@ def _visual_len(s: str) -> int:
 
 
 def _split_row(raw: str) -> list[str]:
-    """Split a raw pipe-row into cell strings, stripping boundary empties."""
-    return raw.split("|")[1:-1]
+    """Split a raw pipe-row into cell strings.
+
+    Handles both strict GFM (``| A | B |``) and loose GFM (``A | B | C``)
+    formats — leading and trailing ``|`` are stripped when present.
+    """
+    s = raw.strip()
+    if s.startswith("|"):
+        s = s[1:]
+    if s.endswith("|"):
+        s = s[:-1]
+    return s.split("|")
 
 
 def _parse_align(cell: str) -> str:
@@ -1136,7 +1145,10 @@ def render_stateful_blocks(text: str) -> str:
 
         # Priority 3: table accumulation
         if _table_rows:
-            if _TABLE_ROW_RE.match(line):
+            # Accept strict rows always; accept loose rows (no leading pipe) once
+            # the separator has been seen — after that any pipe-bearing line is a
+            # data row.  Blank lines or pipe-free lines end the table.
+            if _TABLE_ROW_RE.match(line) or (_sep_idx is not None and "|" in line):
                 _on_table_row(line)
                 continue
             else:
@@ -1152,9 +1164,26 @@ def render_stateful_blocks(text: str) -> str:
             continue
 
         if _TABLE_ROW_RE.match(line):
-            _flush_pending()
+            # If the pending line already contains pipes it is the loose table
+            # header that preceded this strict row — rescue it instead of
+            # emitting it as plain prose.
+            if _pending is not None and "|" in _pending:
+                _on_table_row(_pending)
+                _pending = None
+            else:
+                _flush_pending()
             _on_table_row(line)
             continue
+
+        # Loose table separator (no leading pipe, e.g. "---|---|---").
+        # If the pending line also has pipes it is the loose table header.
+        if "|" in line and _pending is not None and "|" in _pending:
+            _loose_cells = _split_row(line)
+            if _loose_cells and all(_SEP_CELL_RE.match(c) for c in _loose_cells):
+                _on_table_row(_pending)
+                _pending = None
+                _on_table_row(line)
+                continue
 
         # Setext marker check
         if _SETEXT_H1_RE.match(line) or _SETEXT_H2_RE.match(line):
@@ -1275,7 +1304,7 @@ class StreamingBlockBuffer:
 
         # Priority 3: table accumulation
         if self._table_buf:
-            if _TABLE_ROW_RE.match(line):
+            if _TABLE_ROW_RE.match(line) or (self._sep_idx is not None and "|" in line):
                 self._on_table_row(line)
                 return None
             else:
@@ -1298,13 +1327,28 @@ class StreamingBlockBuffer:
 
         # Table row start
         if _TABLE_ROW_RE.match(line):
-            if self._pending is not None:
+            if self._pending is not None and "|" in self._pending:
+                # Pending line is a loose table header — rescue it.
+                self._on_table_row(self._pending)
+                self._pending = None
+                self._on_table_row(line)
+                return None
+            elif self._pending is not None:
                 result = self._pending
                 self._pending = None
                 self._emit_next = line
                 return result
             self._on_table_row(line)
             return None
+
+        # Loose table separator (no leading pipe).
+        if "|" in line and self._pending is not None and "|" in self._pending:
+            _loose_cells = _split_row(line)
+            if _loose_cells and all(_SEP_CELL_RE.match(c) for c in _loose_cells):
+                self._on_table_row(self._pending)
+                self._pending = None
+                self._on_table_row(line)
+                return None
 
         # Setext marker
         if _SETEXT_H1_RE.match(line) or _SETEXT_H2_RE.match(line):

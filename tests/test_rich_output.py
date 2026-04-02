@@ -9,15 +9,22 @@ from agent.rich_output import (
     DiffRenderer,
     FilePathFormatter,
     LanguageDetector,
+    StreamingBlockBuffer,
     StreamingCodeBlockHighlighter,
     SyntaxHighlighter,
     _highlight_inline_code,
+    _NUM_RE,
+    _SETEXT_H1_RE,
+    _SETEXT_H2_RE,
+    _TABLE_ROW_RE,
     _intra_diff,
     _parse_diff_filename,
+    _split_row,
     apply_block_line,
     apply_inline_markdown,
     clean_command_output,
     format_response,
+    render_stateful_blocks,
 )
 
 
@@ -982,7 +989,7 @@ class TestApplyInlineMarkdown:
         result = apply_inline_markdown("[click here](https://x.com)")
         assert "\033[4m" in result
         assert "click here" in result
-        assert "https://x.com" in result
+        assert "https://x.com" not in _strip(result)
         assert "[click here]" not in _strip(result)
 
     def test_image_placeholder(self):
@@ -1158,3 +1165,338 @@ class TestFormatResponseInlineMarkdown:
         result = apply_inline_markdown(r"- [x\] checked item")
         assert r"\]" not in result
         assert "[x]" in _strip(result)
+
+
+# ---------------------------------------------------------------------------
+# render_stateful_blocks — regex smoke tests
+# ---------------------------------------------------------------------------
+
+class TestStatefulBlockRegexes:
+    def test_setext_h1_re_matches(self):
+        assert _SETEXT_H1_RE.match("==")
+        assert _SETEXT_H1_RE.match("===")
+        assert _SETEXT_H1_RE.match("===  ")
+        assert not _SETEXT_H1_RE.match("=")
+        assert not _SETEXT_H1_RE.match("=== text")
+
+    def test_setext_h2_re_matches(self):
+        assert _SETEXT_H2_RE.match("--")
+        assert _SETEXT_H2_RE.match("---")
+        assert _SETEXT_H2_RE.match("---  ")
+        assert not _SETEXT_H2_RE.match("-")
+        assert not _SETEXT_H2_RE.match("--- text")
+
+    def test_table_row_re(self):
+        assert _TABLE_ROW_RE.match("| a | b |")
+        assert _TABLE_ROW_RE.match("|---|---|")
+        assert not _TABLE_ROW_RE.match("a | b")
+        assert not _TABLE_ROW_RE.match("| no trailing")
+
+    def test_num_re(self):
+        assert _NUM_RE.match("42")
+        assert _NUM_RE.match("1,000")
+        assert _NUM_RE.match("3.14")
+        assert _NUM_RE.match("-7")
+        assert not _NUM_RE.match("abc")
+        assert not _NUM_RE.match("1a")
+
+    def test_split_row(self):
+        assert _split_row("| a | b |") == [" a ", " b "]
+        assert _split_row("|---|---|") == ["---", "---"]
+
+
+# ---------------------------------------------------------------------------
+# render_stateful_blocks — setext headings
+# ---------------------------------------------------------------------------
+
+class TestRenderStatefulBlocksSetext:
+    def test_setext_h1(self):
+        result = render_stateful_blocks("Foo\n===")
+        assert "\033[1;97m" in result
+        assert "Foo" in result
+        assert "===" not in result
+
+    def test_setext_h2(self):
+        result = render_stateful_blocks("Bar\n---")
+        assert "\033[1;37m" in result
+        assert "Bar" in result
+        assert "---" not in result
+
+    def test_blank_line_dash_is_hr_not_h2(self):
+        result = format_response("\n---")
+        plain = _strip(result)
+        assert "─" in plain
+        assert "\033[1;37m" not in result
+
+    def test_list_item_dash_is_hr(self):
+        result = format_response("- x\n---")
+        assert "\033[1;37m" not in result
+        plain = _strip(result)
+        assert "─" in plain
+
+    def test_setext_with_inline_span(self):
+        result = render_stateful_blocks("**Foo**\n===")
+        assert "\033[1;97m" in result
+        assert "\033[1m" in result
+        assert "Foo" in result
+        assert "**" not in result
+
+    def test_setext_at_end_of_string_no_newline(self):
+        result = render_stateful_blocks("Title\n===")
+        assert "\033[1;97m" in result
+        assert "===" not in result
+
+    def test_ansi_pending_not_heading(self):
+        result = render_stateful_blocks("\033[1mcode\033[0m\n===")
+        assert "===" in result
+        assert "\033[1;97m" not in result
+
+    def test_trailing_whitespace_marker(self):
+        result = render_stateful_blocks("Foo\n===  ")
+        assert "\033[1;97m" in result
+        assert "===" not in result
+
+    def test_marker_at_document_start(self):
+        # --- at document start renders as hr, not setext h2
+        result = format_response("---\ntext")
+        plain = _strip(result)
+        assert "─" in plain
+        assert "text" in plain
+        assert "\033[1;37m" not in result
+
+
+# ---------------------------------------------------------------------------
+# render_stateful_blocks — multi-line blockquote continuation
+# ---------------------------------------------------------------------------
+
+class TestRenderStatefulBlocksBlockquote:
+    def test_continuation_has_gutter(self):
+        result = render_stateful_blocks("> q\ncontinuation")
+        assert result.count("▌") == 2
+
+    def test_blank_line_ends_continuation(self):
+        result = render_stateful_blocks("> q\n\nnormal")
+        lines = result.splitlines()
+        normal_line = [l for l in lines if "normal" in l][0]
+        assert "▌" not in normal_line
+
+    def test_explicit_bq_resets(self):
+        result = render_stateful_blocks("> q\n\n> new")
+        assert result.count("▌") == 2
+
+
+# ---------------------------------------------------------------------------
+# render_stateful_blocks — tables
+# ---------------------------------------------------------------------------
+
+class TestRenderStatefulBlocksTables:
+    _TABLE = "| Name | Age |\n|------|-----|\n| Alice | 28 |\n| Bob | 32 |"
+
+    def test_basic_table_rendered(self):
+        result = render_stateful_blocks(self._TABLE)
+        plain = _strip(result)
+        assert "─" in plain
+        assert "Alice" in plain
+        assert "Bob" in plain
+        assert "|" not in plain
+
+    def test_right_aligned_column(self):
+        t = "| Name | Age |\n|------|----:|\n| Alice | 28 |"
+        result = render_stateful_blocks(t)
+        lines = _strip(result).splitlines()
+        data = [l for l in lines if "Alice" in l][0]
+        # "28" should appear right-justified (preceded by spaces)
+        assert "28" in data
+        idx_28 = data.index("28")
+        assert data[idx_28 - 1] == " "
+
+    def test_centre_aligned_column(self):
+        t = "| Name |\n|:----:|\n| Hi |"
+        result = render_stateful_blocks(t)
+        plain = _strip(result)
+        assert "Hi" in plain
+
+    def test_number_auto_right(self):
+        t = "| Item | Count |\n|------|-------|\n| foo | 42 |"
+        result = render_stateful_blocks(t)
+        plain = _strip(result)
+        assert "42" in plain
+
+    def test_ragged_row_padded(self):
+        t = "| A | B | C |\n|---|---|---|\n| x |"
+        result = render_stateful_blocks(t)
+        assert "x" in _strip(result)
+
+    def test_ragged_align_no_error(self):
+        t = "| A | B | C |\n|---|---|\n| x | y | z |"
+        result = render_stateful_blocks(t)
+        assert "x" in _strip(result)
+
+    def test_table_at_end_no_newline(self):
+        t = "| A |\n|---|\n| x |"
+        result = render_stateful_blocks(t)
+        assert "x" in _strip(result)
+        assert "|" not in _strip(result)
+
+    def test_table_no_separator(self):
+        t = "| A | B |\n| x | y |\n| z | w |"
+        result = render_stateful_blocks(t)
+        plain = _strip(result)
+        assert "x" in plain
+        assert "─" not in plain
+
+
+# ---------------------------------------------------------------------------
+# StreamingBlockBuffer
+# ---------------------------------------------------------------------------
+
+class TestStreamingBlockBuffer:
+    def setup_method(self):
+        self.buf = StreamingBlockBuffer()
+
+    def test_setext_h1_on_marker(self):
+        assert self.buf.process_line("Foo") is None
+        result = self.buf.process_line("===")
+        assert result is not None
+        assert "\033[1;97m" in result
+        assert "Foo" in result
+
+    def test_setext_non_marker_releases_pending(self):
+        assert self.buf.process_line("Foo") is None
+        result = self.buf.process_line("bar")
+        assert result == "Foo"
+        # "bar" is now pending
+        flushed = self.buf.flush()
+        assert flushed == "bar"
+
+    def test_setext_flush_emits_pending(self):
+        assert self.buf.process_line("Foo") is None
+        result = self.buf.flush()
+        assert result == "Foo"
+
+    def test_setext_ansi_line_not_held(self):
+        ansi = "\033[1mx\033[0m"
+        result = self.buf.process_line(ansi)
+        assert result is ansi  # returned immediately
+
+    def test_table_rows_none_until_done(self):
+        assert self.buf.process_line("| A | B |") is None
+        assert self.buf.process_line("|---|---|") is None
+        assert self.buf.process_line("| x | y |") is None
+        non_table = "done"
+        result = self.buf.process_line(non_table)
+        assert result is not None
+        assert "x" in _strip(result)
+        # Next call returns the non-table line
+        next_result = self.buf.process_line("anything")
+        assert next_result == "done"
+
+    def test_table_flush_emits_partial(self):
+        self.buf.process_line("| A |")
+        self.buf.process_line("|---|")
+        self.buf.process_line("| x |")
+        result = self.buf.flush()
+        assert result is not None
+        assert "x" in _strip(result)
+
+    def test_table_non_table_line_identity(self):
+        self.buf.process_line("| A |")
+        self.buf.process_line("|---|")
+        self.buf.process_line("| x |")
+        non_table = "plain line"
+        self.buf.process_line(non_table)  # returns rendered table
+        # Next call should return the non-table line with same identity
+        result = self.buf.process_line("next")
+        assert result is non_table
+
+    def test_blockquote_continuation_stateful(self):
+        self.buf.process_line("some")  # goes to pending
+        self.buf.flush()
+        self.buf.reset()
+        # Fresh: enter blockquote, then continuation
+        r1 = self.buf.process_line("> quote")
+        # r1 may be None (pending setext) or the bq line
+        # Force through: no pending, so should return gutter immediately
+        self.buf.reset()
+        r1 = self.buf.process_line("> quote")
+        assert r1 is not None
+        assert "▌" in r1
+        r2 = self.buf.process_line("continuation")
+        assert r2 is not None
+        assert "▌" in r2
+
+    def test_blockquote_ansi_gets_gutter(self):
+        # ANSI line inside blockquote keeps the gutter and stays in blockquote
+        self.buf.process_line("> start")
+        ansi = "\033[1mx\033[0m"
+        result = self.buf.process_line(ansi)
+        assert result is not None
+        assert "▌" in result
+        assert ansi in result
+        assert self.buf._in_blockquote  # stays in blockquote
+
+    def test_blockquote_fence_exits_state(self):
+        # Code fence line exits blockquote so the code highlighter can handle it
+        self.buf.process_line("> start")
+        result = self.buf.process_line("```python")
+        assert result == "```python"
+        assert not self.buf._in_blockquote
+
+    def test_mode_transition_pending_plus_blockquote(self):
+        assert self.buf.process_line("pending_line") is None
+        result = self.buf.process_line("> blockquote")
+        assert result == "pending_line"
+        # Next call should return rendered blockquote
+        result2 = self.buf.process_line("next")
+        assert result2 is not None
+        assert "▌" in result2
+
+    def test_mode_transition_pending_plus_table(self):
+        assert self.buf.process_line("pending_line") is None
+        result = self.buf.process_line("| A |")
+        assert result == "pending_line"
+        # Next call processes "| A |" (buffered), returns None
+        result2 = self.buf.process_line("| B |")
+        assert result2 is None
+
+    def test_reset_clears_all_state(self):
+        self.buf.process_line("pending")
+        self.buf._in_blockquote = True
+        self.buf._table_buf.append("| x |")
+        self.buf._emit_next = "something"
+        self.buf.reset()
+        assert self.buf._pending is None
+        assert self.buf._in_blockquote is False
+        assert self.buf._table_buf == []
+        assert self.buf._emit_next is None
+
+    def test_setext_marker_as_emit_next_via_flush(self):
+        """Deferred line stored in _emit_next is a setext marker: flush renders heading."""
+        # Turn 1: "Title" → pending
+        assert self.buf.process_line("Title") is None
+        # Turn 2: ">" line arrives while pending → returns "Title", stores ">" in _emit_next
+        result = self.buf.process_line("> quote")
+        assert result == "Title"
+        # flush: _emit_next = "> quote", _pending = None
+        flushed = self.buf.flush()
+        assert flushed is not None
+        assert "▌" in flushed
+
+    def test_pending_flushed_before_table(self):
+        """Prose line pending before a table must be emitted before table rows."""
+        result = render_stateful_blocks("prose\n| A | B |\n|---|---|\n| x | y |")
+        lines = _strip(result).splitlines()
+        prose_idx = next(i for i, l in enumerate(lines) if "prose" in l)
+        table_idx = next(i for i, l in enumerate(lines) if "x" in l)
+        assert prose_idx < table_idx
+
+    def test_ansi_line_in_table_flushes_table(self):
+        """An ANSI line mid-table must flush the accumulated rows before emitting the ANSI line."""
+        ansi = "\033[32mcode\033[0m"
+        text = "| A | B |\n|---|---|\n| x | y |\n" + ansi + "\nnormal"
+        result = render_stateful_blocks(text)
+        lines = result.splitlines()
+        # Table content must appear before the ANSI line
+        table_idx = next(i for i, l in enumerate(lines) if "x" in _strip(l))
+        ansi_idx = next(i for i, l in enumerate(lines) if ansi in l)
+        assert table_idx < ansi_idx

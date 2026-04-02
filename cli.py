@@ -463,6 +463,7 @@ except Exception:
 # Rich-based response highlighting (syntax highlight fenced code blocks)
 try:
     import agent.display as _display
+    from agent.rich_output import StreamingBlockBuffer as _BlockBuf
     from agent.rich_output import StreamingCodeBlockHighlighter as _CodeBlockHL
     from agent.rich_output import apply_block_line as _apply_block_line
     from agent.rich_output import apply_inline_markdown as _apply_inline_md
@@ -1881,18 +1882,21 @@ class HermesCLI:
         while "\n" in self._stream_buf:
             line, self._stream_buf = self._stream_buf.split("\n", 1)
             if _RICH_RESPONSE:
-                out = self._stream_code_hl.process_line(line)
+                out = self._stream_block_buf.process_line(line)
                 if out is None:
-                    continue  # buffering a code block
-                if out is line:
-                    # Plain text — apply block + inline markdown then response text colour.
-                    # Always apply when _RICH_RESPONSE is True; _code_highlight_active only
-                    # gates tool-output syntax highlighting, not LLM response rendering.
-                    line = _apply_inline_md(_apply_block_line(line), reset_suffix=_tc)
-                    _cprint(f"{_tc}{line}{_RST}" if _tc else line)
+                    continue
+                out2 = self._stream_code_hl.process_line(out)
+                if out2 is None:
+                    continue
+                if out2 is out:
+                    # plain text — apply block + inline markdown (fires whenever
+                    # _code_highlight_active is True, consistent with PR3)
+                    if _display._code_highlight_active:
+                        out = _apply_inline_md(_apply_block_line(out), reset_suffix=_tc)
+                    _cprint(f"{_tc}{out}{_RST}" if _tc else out)
                 else:
-                    # Highlighted code block — emit as-is (carries its own ANSI)
-                    for hl_line in out.splitlines():
+                    # fenced code block — emit as-is (carries its own ANSI)
+                    for hl_line in out2.splitlines():
                         _cprint(hl_line)
             else:
                 _cprint(f"{_tc}{line}{_RST}" if _tc else line)
@@ -1905,11 +1909,22 @@ class HermesCLI:
         if self._stream_buf:
             _tc = getattr(self, "_stream_text_ansi", "")
             if _RICH_RESPONSE:
-                out = self._stream_code_hl.process_line(self._stream_buf)
-                if out is not None:
-                    if out is self._stream_buf:
-                        out = _apply_inline_md(_apply_block_line(out), reset_suffix=_tc)
-                    _cprint(f"{_tc}{out}{_RST}" if _tc else out)
+                block_out = self._stream_block_buf.process_line(self._stream_buf)
+                if block_out is not None:
+                    out2 = self._stream_code_hl.process_line(block_out)
+                    if out2 is not None:
+                        if out2 is block_out:
+                            if _display._code_highlight_active:
+                                out2 = _apply_inline_md(_apply_block_line(out2), reset_suffix=_tc)
+                            _cprint(f"{_tc}{out2}{_RST}" if _tc else out2)
+                        else:
+                            for hl_line in out2.splitlines():
+                                _cprint(hl_line)
+                # Flush any buffered block-level state
+                buf_tail = self._stream_block_buf.flush()
+                if buf_tail is not None:
+                    for hl_line in buf_tail.splitlines():
+                        _cprint(hl_line)
                 # Flush any open code block (unclosed fence at end of response)
                 tail = self._stream_code_hl.flush()
                 if tail:
@@ -1936,6 +1951,10 @@ class HermesCLI:
         self._reasoning_buf = ""
         self._reasoning_preview_buf = ""
         if _RICH_RESPONSE:
+            if not hasattr(self, "_stream_block_buf"):
+                self._stream_block_buf = _BlockBuf()
+            else:
+                self._stream_block_buf.reset()
             if not hasattr(self, "_stream_code_hl"):
                 self._stream_code_hl = _CodeBlockHL()
             else:

@@ -10,13 +10,22 @@ from agent.rich_output import (
     DiffRenderer,
     FilePathFormatter,
     LanguageDetector,
+    StreamingBlockBuffer,
     StreamingCodeBlockHighlighter,
     SyntaxHighlighter,
     _highlight_inline_code,
+    _NUM_RE,
+    _SETEXT_H1_RE,
+    _SETEXT_H2_RE,
+    _TABLE_ROW_RE,
     _intra_diff,
     _parse_diff_filename,
+    _split_row,
+    apply_block_line,
+    apply_inline_markdown,
     clean_command_output,
     format_response,
+    render_stateful_blocks,
 )
 
 
@@ -837,3 +846,822 @@ class TestDiffRendererTruncation:
         lines = self.dr.to_lines(diff, max_lines=10)
         assert len(lines) == 11  # 10 content + footer
         assert "omitted" in _ANSI_RE.sub("", lines[-1])
+
+
+# ---------------------------------------------------------------------------
+# apply_inline_markdown
+
+
+class TestApplyInlineMarkdown:
+    def test_bold_double_asterisk(self):
+        result = apply_inline_markdown("**foo**")
+        assert "\033[1m" in result
+        assert "foo" in result
+        assert "**" not in result
+
+    def test_bold_double_underscore(self):
+        result = apply_inline_markdown("__foo__")
+        assert "\033[1m" in result
+        assert "foo" in result
+        assert "__" not in result
+
+    def test_italic_single_asterisk(self):
+        result = apply_inline_markdown("*foo*")
+        assert "\033[3m" in result
+        assert "foo" in result
+        assert result.count("*") == 0
+
+    def test_italic_single_underscore(self):
+        result = apply_inline_markdown("_foo_")
+        assert "\033[3m" in result
+        assert "foo" in result
+        assert "_" not in result
+
+    def test_italic_underscore_multi_word(self):
+        result = apply_inline_markdown("_underline - kinda works_")
+        assert "\033[3m" in result
+        assert "underline - kinda works" in result
+        assert "_" not in result
+
+    def test_italic_single_underscore_with_spaces(self):
+        result = apply_inline_markdown("This is _super bold and italic_ text.")
+        assert "\033[3m" in result
+        assert "super bold and italic" in result
+        assert "_" not in result
+
+    def test_underscore_inside_word_ignored(self):
+        result = apply_inline_markdown("snake_case_var")
+        assert result == "snake_case_var"
+
+    def test_trailing_underscore_ignored(self):
+        assert apply_inline_markdown("value_") == "value_"
+
+    def test_leading_underscore_ignored(self):
+        assert apply_inline_markdown("_private") == "_private"
+
+    def test_backtick_code_span(self):
+        result = apply_inline_markdown("`foo`")
+        assert "\033[97m" in result
+        assert "\033[48;5;237m" in result  # dark background applied
+        assert "foo" in result
+        assert "`" in result  # backticks preserved inside the styled span
+
+    def test_strikethrough(self):
+        result = apply_inline_markdown("~~foo~~")
+        assert "\033[9m" in result
+        assert "foo" in result
+        assert "~~" not in result
+
+    def test_mixed_bold_and_code(self):
+        result = apply_inline_markdown("**Line 88**: `cdOffset`")
+        assert "\033[1m" in result           # bold applied
+        assert "\033[97m" in result          # code span applied
+        assert "\033[48;5;237m" in result    # code span background applied
+        assert "**" not in result
+        assert "`" in result  # backticks preserved inside the styled span
+
+    def test_mixed_strikethrough_and_code(self):
+        result = apply_inline_markdown("~~deprecated~~ use `new_api()` instead")
+        assert "\033[9m" in result
+        assert "\033[48;5;237m" in result
+        assert "~~" not in result
+        assert "`" in result
+
+    def test_mixed_underline_and_code(self):
+        result = apply_inline_markdown("<u>important</u>: call `init()` first")
+        assert "\033[4m" in result
+        assert "\033[48;5;237m" in result
+        assert "<u>" not in result
+        assert "`" in result
+
+    def test_mixed_bold_italic_and_code(self):
+        result = apply_inline_markdown("***critical***: run `setup()` now")
+        assert "\033[1;3m" in result
+        assert "\033[48;5;237m" in result
+        assert "***" not in result
+        assert "`" in result
+
+    def test_mixed_mark_and_code(self):
+        result = apply_inline_markdown("<mark>highlight</mark> then call `fn()`")
+        assert "\033[7m" in result
+        assert "\033[48;5;237m" in result
+        assert "<mark>" not in result
+        assert "`" in result
+
+    def test_mixed_ins_and_code(self):
+        result = apply_inline_markdown("<ins>added</ins> via `patch()`")
+        assert "\033[4m" in result
+        assert "\033[48;5;237m" in result
+        assert "<ins>" not in result
+        assert "`" in result
+
+    def test_multiple_code_spans_with_bold(self):
+        result = apply_inline_markdown("**bold** uses `foo()` and `bar()`")
+        assert "\033[1m" in result
+        assert result.count("\033[48;5;237m") == 2
+        assert "**" not in result
+
+    def test_bold_italic_strikethrough_and_code(self):
+        result = apply_inline_markdown("**bold** *italic* ~~strike~~ `code`")
+        assert "\033[1m" in result
+        assert "\033[3m" in result
+        assert "\033[9m" in result
+        assert "\033[48;5;237m" in result
+        assert "**" not in result
+        assert "~~" not in result
+
+    def test_asterisks_inside_backtick_untouched(self):
+        result = apply_inline_markdown("`**not bold**`")
+        # Content inside code span must not be bold-rendered
+        assert "\033[1m" not in result
+        assert "**not bold**" in result
+
+    def test_already_ansi_returned_unchanged(self):
+        ansi_line = "\033[32mgreen\033[0m"
+        assert apply_inline_markdown(ansi_line) is ansi_line
+
+    def test_empty_string(self):
+        assert apply_inline_markdown("") == ""
+
+    def test_plain_text_unchanged(self):
+        assert apply_inline_markdown("plain text") == "plain text"
+
+    def test_reset_suffix_restored_between_spans(self):
+        colour = "\033[32m"
+        result = apply_inline_markdown("**a** and *b*", reset_suffix=colour)
+        # Each closing reset should be followed by the colour suffix
+        assert f"\033[0m{colour}" in result
+
+    def test_no_markdown(self):
+        assert apply_inline_markdown("no markdown here") == "no markdown here"
+
+    def test_em_tag_italic(self):
+        result = apply_inline_markdown("<em>foo</em>")
+        assert "\033[3m" in result
+        assert "foo" in result
+        assert "<em>" not in result
+        assert "</em>" not in result
+
+    def test_strong_tag_bold(self):
+        result = apply_inline_markdown("<strong>foo</strong>")
+        assert "\033[1m" in result
+        assert "foo" in result
+        assert "<strong>" not in result
+
+    def test_u_tag_underline(self):
+        result = apply_inline_markdown("<u>foo</u>")
+        assert "\033[4m" in result
+        assert "foo" in result
+        assert "<u>" not in result
+
+    def test_mark_tag_highlight(self):
+        result = apply_inline_markdown("<mark>foo</mark>")
+        assert "\033[7m" in result
+        assert "foo" in result
+        assert "<mark>" not in result
+
+    def test_u_tag_with_inner_bold_restores_underline(self):
+        # Inner bold reset must restore underline, not drop it.
+        result = apply_inline_markdown("<u>**bold** normal</u>")
+        # Underline code appears before bold
+        assert result.index("\033[4m") < result.index("\033[1m")
+        # reset_suffix "\033[4m" appears after the bold reset, restoring underline
+        ansi_codes = [result[i:i+4] for i in range(len(result)) if result[i:i+2] == "\033["]
+        assert result.count("\033[4m") >= 2  # outer open + reset_suffix restore
+
+    def test_bold_italic_triple_star(self):
+        result = apply_inline_markdown("***foo***")
+        assert "\033[1;3m" in result
+        assert "foo" in result
+        assert "*" not in _strip(result)
+
+    def test_bold_italic_triple_underscore(self):
+        result = apply_inline_markdown("___foo___")
+        assert "\033[1;3m" in result
+        assert "foo" in result
+
+    def test_i_tag_italic(self):
+        result = apply_inline_markdown("<i>foo</i>")
+        assert "\033[3m" in result
+        assert "<i>" not in result
+
+    def test_b_tag_bold(self):
+        result = apply_inline_markdown("<b>foo</b>")
+        assert "\033[1m" in result
+        assert "<b>" not in result
+
+    def test_s_tag_strikethrough(self):
+        result = apply_inline_markdown("<s>foo</s>")
+        assert "\033[9m" in result
+        assert "<s>" not in result
+
+    def test_strike_tag_strikethrough(self):
+        result = apply_inline_markdown("<strike>foo</strike>")
+        assert "\033[9m" in result
+        assert "<strike>" not in result
+
+    def test_del_tag_strikethrough(self):
+        result = apply_inline_markdown("<del>foo</del>")
+        assert "\033[9m" in result
+        assert "<del>" not in result
+
+    def test_code_tag_inline(self):
+        result = apply_inline_markdown("<code>foo</code>")
+        assert "\033[97m" in result
+        assert "<code>" not in result
+
+    def test_kbd_tag_code_style(self):
+        result = apply_inline_markdown("<kbd>Ctrl+C</kbd>")
+        assert "\033[97m" in result
+        assert "<kbd>" not in result
+
+    def test_ins_tag_underline(self):
+        result = apply_inline_markdown("<ins>foo</ins>")
+        assert "\033[4m" in result
+        assert "<ins>" not in result
+
+    def test_sup_tag_stripped(self):
+        result = apply_inline_markdown("x<sup>2</sup>")
+        assert "<sup>" not in result
+        assert "2" in result
+
+    def test_sub_tag_stripped(self):
+        result = apply_inline_markdown("H<sub>2</sub>O")
+        assert "<sub>" not in result
+        assert "2" in result
+        assert "H" in result
+        assert "O" in result
+
+    def test_link_underlined(self):
+        result = apply_inline_markdown("[click here](https://x.com)")
+        assert "\033[4m" in result
+        assert "click here" in result
+        assert "https://x.com" not in _strip(result)
+        assert "[click here]" not in _strip(result)
+
+    def test_image_placeholder(self):
+        result = apply_inline_markdown("![logo](img.png)")
+        assert "[img: logo]" in result
+        assert "\033[2m" in result
+        assert "img.png" not in result
+
+    def test_image_before_link(self):
+        result = apply_inline_markdown("![a](u) [b](v)")
+        assert "[img: a]" in result
+        assert "\033[4m" in result
+        assert "b" in result
+
+
+class TestApplyBlockLine:
+    def test_h1_stripped_and_bold(self):
+        result = apply_block_line("# Foo")
+        assert "\033[1;97m" in result
+        assert "Foo" in result
+        assert "#" not in result
+
+    def test_h2_dimmer_than_h1(self):
+        result = apply_block_line("## Foo")
+        assert "\033[1;37m" in result
+        assert "97m" not in result
+
+    def test_h4_bold_dim(self):
+        result = apply_block_line("#### Foo")
+        assert "\033[1;2m" in result
+
+    def test_h1_with_inline_span(self):
+        result = apply_block_line("# **Foo**")
+        assert "\033[1;97m" in result
+        assert "\033[1m" in result
+        assert "Foo" in result
+        assert "**" not in result
+
+    def test_hr_dashes_replaced(self):
+        result = apply_block_line("---")
+        assert "─" in result
+        assert "-" not in _strip(result)
+
+    def test_hr_stars_replaced(self):
+        result = apply_block_line("***")
+        assert "─" in result
+
+    def test_hr_underscores_replaced(self):
+        result = apply_block_line("___")
+        assert "─" in result
+
+    def test_non_hr_dashes_unchanged(self):
+        result = apply_block_line("some --- text")
+        assert result == "some --- text"
+
+    def test_blockquote_gutter(self):
+        result = apply_block_line("> hello")
+        assert "▌" in result
+        assert "hello" in result
+        assert ">" not in result
+
+    def test_blockquote_nested_collapsed(self):
+        result = apply_block_line(">> deep")
+        assert result.count("▌") == 1
+
+    def test_blockquote_inline_span(self):
+        result = apply_block_line("> **bold**")
+        assert "▌" in result
+        assert "\033[1m" in result
+        assert "**" not in result
+
+    def test_blockquote_inline_span_restores_dim(self):
+        # Bold span inside a blockquote must restore the dim gutter style on close,
+        # not reset to terminal default — fixes missing reset_suffix on blockquote branch.
+        result = apply_block_line("> **bold** plain")
+        # Dim style (\033[2m) must appear after the bold close (\033[0m)
+        assert "\033[0m\033[2m" in result
+
+    def test_blockquote_with_inline_code(self):
+        result = apply_block_line("> see `foo()` for details")
+        assert "▌" in result
+        assert "\033[48;5;237m" in result
+        assert "foo()" in result
+        assert ">" not in result
+
+    def test_blockquote_with_bold_and_code(self):
+        result = apply_block_line("> **important**: call `init()`")
+        assert "▌" in result
+        assert "\033[1m" in result
+        assert "\033[48;5;237m" in result
+        assert "**" not in result
+
+    def test_heading_with_inline_code(self):
+        result = apply_block_line("# Use `setup()` first")
+        assert "\033[1;97m" in result
+        assert "\033[48;5;237m" in result
+        assert "setup()" in result
+        assert "#" not in result
+
+    def test_heading_with_bold_and_code(self):
+        result = apply_block_line("## **Required**: run `init()`")
+        assert "\033[1;37m" in result
+        assert "\033[1m" in result
+        assert "\033[48;5;237m" in result
+        assert "**" not in result
+
+    def test_list_bullet_dot(self):
+        result = apply_block_line("- item")
+        assert "•" in result
+        assert "item" in result
+        assert result.startswith("•")
+
+    def test_list_bullet_circle_nested(self):
+        result = apply_block_line("  - item")
+        assert "◦" in result
+
+    def test_list_bullet_triangle_double_nested(self):
+        result = apply_block_line("    - item")
+        assert "▸" in result
+
+    def test_list_star_and_plus(self):
+        assert "•" in apply_block_line("* item")
+        assert "•" in apply_block_line("+ item")
+
+    def test_ordered_list_unchanged(self):
+        result = apply_block_line("1. item")
+        assert result == "1. item"
+
+    def test_reference_link_suppressed(self):
+        result = apply_block_line("[ref]: https://x.com")
+        assert result == ""
+
+    def test_reference_link_with_quoted_title_suppressed(self):
+        assert apply_block_line('[ref]: https://x.com "Page Title"') == ""
+
+    def test_reference_link_with_paren_title_suppressed(self):
+        assert apply_block_line("[ref]: https://x.com (Page Title)") == ""
+
+    def test_ansi_lines_skipped(self):
+        ansi_line = "\033[32mgreen\033[0m"
+        assert apply_block_line(ansi_line) is ansi_line
+
+    def test_multiline_skipped(self):
+        multi = "line1\nline2"
+        assert apply_block_line(multi) is multi
+
+    def test_plain_line_unchanged(self):
+        assert apply_block_line("just text") == "just text"
+
+
+class TestFormatResponseInlineMarkdown:
+    """Integration: format_response applies inline markdown to prose, not code."""
+
+    def test_bold_in_prose_rendered(self):
+        text = "This is **important** text."
+        result = format_response(text)
+        assert "\033[1m" in result
+        assert "important" in result
+        assert "**" not in result
+
+    def test_bold_and_inline_code_on_same_line(self):
+        # Regression: bold markers must survive alongside inline code spans.
+        text = "**Line 230**: `eocd.writeUInt32LE(cdSize, 8)` - EOCD should have **CD total size**"
+        result = format_response(text)
+        assert "\033[1m" in result            # bold ANSI applied
+        assert "\033[48;5;237m" in result     # code span background applied
+        assert "**" not in result             # no raw bold markers in output
+
+    def test_italic_and_inline_code_on_same_line(self):
+        text = "*note*: see `foo()` for details"
+        result = format_response(text)
+        assert "\033[3m" in result            # italic ANSI applied
+        assert "\033[48;5;237m" in result     # code span background applied
+        assert "*note*" not in result
+
+    def test_strikethrough_and_inline_code_on_same_line(self):
+        text = "~~deprecated~~ use `new_api()` instead"
+        result = format_response(text)
+        assert "\033[9m" in result            # strikethrough ANSI applied
+        assert "\033[48;5;237m" in result     # code span background applied
+        assert "~~" not in result
+
+    def test_underline_and_inline_code_on_same_line(self):
+        text = "<u>important</u>: call `init()` first"
+        result = format_response(text)
+        assert "\033[4m" in result            # underline ANSI applied
+        assert "\033[48;5;237m" in result     # code span background applied
+        assert "<u>" not in result
+        assert "</u>" not in result
+
+    def test_heading_followed_by_paragraph_preserves_newline(self):
+        # apply_block_line drops the trailing \n from matched lines; format_response
+        # must compensate so the paragraph starts on its own line.
+        text = "# Title\nParagraph text"
+        result = format_response(text)
+        plain = _strip(result)
+        # Heading and paragraph must be on separate lines
+        assert plain.index("Title") < plain.index("\n")
+        assert "Paragraph text" in plain
+
+    def test_list_followed_by_paragraph_preserves_newline(self):
+        text = "- item one\nnext line"
+        result = format_response(text)
+        plain = _strip(result)
+        assert "item one" in plain
+        assert plain.index("item one") < plain.index("\n")
+        assert "next line" in plain
+
+    def test_code_block_not_double_escaped(self):
+        text = "Note **this**:\n```python\nx = **1**\n```\nEnd **here**."
+        result = format_response(text)
+        # Prose bold rendered
+        assert "\033[1m" in result
+        # The Python code block was syntax-highlighted; the ** inside are code
+        # content — they appear as plain chars inside the highlighted block,
+        # not as ANSI bold markers.  Verify no double-escape by checking that
+        # the result does not contain literal \033[1m immediately followed by
+        # content that was already inside an ANSI span.
+        # Simpler: strip all ANSI and confirm code content intact
+        plain = _strip(result)
+        assert "x = **1**" in plain
+
+    def test_backslash_escape_stripped(self):
+        r"""CommonMark backslash escapes like \] and \* are stripped from output."""
+        result = apply_inline_markdown(r"- [ \] unchecked")
+        assert r"\]" not in result
+        assert "]" in result
+
+    def test_backslash_escape_checkbox(self):
+        r"""[x\] renders as [x] — backslash before ] removed."""
+        result = apply_inline_markdown(r"- [x\] checked item")
+        assert r"\]" not in result
+        assert "[x]" in _strip(result)
+
+
+# ---------------------------------------------------------------------------
+# render_stateful_blocks — regex smoke tests
+# ---------------------------------------------------------------------------
+
+class TestStatefulBlockRegexes:
+    def test_setext_h1_re_matches(self):
+        assert _SETEXT_H1_RE.match("==")
+        assert _SETEXT_H1_RE.match("===")
+        assert _SETEXT_H1_RE.match("===  ")
+        assert not _SETEXT_H1_RE.match("=")
+        assert not _SETEXT_H1_RE.match("=== text")
+
+    def test_setext_h2_re_matches(self):
+        assert _SETEXT_H2_RE.match("--")
+        assert _SETEXT_H2_RE.match("---")
+        assert _SETEXT_H2_RE.match("---  ")
+        assert not _SETEXT_H2_RE.match("-")
+        assert not _SETEXT_H2_RE.match("--- text")
+
+    def test_table_row_re(self):
+        assert _TABLE_ROW_RE.match("| a | b |")
+        assert _TABLE_ROW_RE.match("|---|---|")
+        assert not _TABLE_ROW_RE.match("a | b")
+        assert not _TABLE_ROW_RE.match("| no trailing")
+
+    def test_num_re(self):
+        assert _NUM_RE.match("42")
+        assert _NUM_RE.match("1,000")
+        assert _NUM_RE.match("3.14")
+        assert _NUM_RE.match("-7")
+        assert not _NUM_RE.match("abc")
+        assert not _NUM_RE.match("1a")
+
+    def test_split_row(self):
+        assert _split_row("| a | b |") == [" a ", " b "]
+        assert _split_row("|---|---|") == ["---", "---"]
+
+
+# ---------------------------------------------------------------------------
+# render_stateful_blocks — setext headings
+# ---------------------------------------------------------------------------
+
+class TestRenderStatefulBlocksSetext:
+    def test_setext_h1(self):
+        result = render_stateful_blocks("Foo\n===")
+        assert "\033[1;97m" in result
+        assert "Foo" in result
+        assert "===" not in result
+
+    def test_setext_h2(self):
+        result = render_stateful_blocks("Bar\n---")
+        assert "\033[1;37m" in result
+        assert "Bar" in result
+        assert "---" not in result
+
+    def test_blank_line_dash_is_hr_not_h2(self):
+        result = format_response("\n---")
+        plain = _strip(result)
+        assert "─" in plain
+        assert "\033[1;37m" not in result
+
+    def test_list_item_dash_is_hr(self):
+        result = format_response("- x\n---")
+        assert "\033[1;37m" not in result
+        plain = _strip(result)
+        assert "─" in plain
+
+    def test_setext_with_inline_span(self):
+        result = render_stateful_blocks("**Foo**\n===")
+        assert "\033[1;97m" in result
+        assert "\033[1m" in result
+        assert "Foo" in result
+        assert "**" not in result
+
+    def test_setext_at_end_of_string_no_newline(self):
+        result = render_stateful_blocks("Title\n===")
+        assert "\033[1;97m" in result
+        assert "===" not in result
+
+    def test_ansi_pending_not_heading(self):
+        result = render_stateful_blocks("\033[1mcode\033[0m\n===")
+        assert "===" in result
+        assert "\033[1;97m" not in result
+
+    def test_trailing_whitespace_marker(self):
+        result = render_stateful_blocks("Foo\n===  ")
+        assert "\033[1;97m" in result
+        assert "===" not in result
+
+    def test_marker_at_document_start(self):
+        # --- at document start renders as hr, not setext h2
+        result = format_response("---\ntext")
+        plain = _strip(result)
+        assert "─" in plain
+        assert "text" in plain
+        assert "\033[1;37m" not in result
+
+
+# ---------------------------------------------------------------------------
+# render_stateful_blocks — multi-line blockquote continuation
+# ---------------------------------------------------------------------------
+
+class TestRenderStatefulBlocksBlockquote:
+    def test_continuation_has_gutter(self):
+        result = render_stateful_blocks("> q\ncontinuation")
+        assert result.count("▌") == 2
+
+    def test_blank_line_ends_continuation(self):
+        result = render_stateful_blocks("> q\n\nnormal")
+        lines = result.splitlines()
+        normal_line = [l for l in lines if "normal" in l][0]
+        assert "▌" not in normal_line
+
+    def test_explicit_bq_resets(self):
+        result = render_stateful_blocks("> q\n\n> new")
+        assert result.count("▌") == 2
+
+
+# ---------------------------------------------------------------------------
+# render_stateful_blocks — tables
+# ---------------------------------------------------------------------------
+
+class TestRenderStatefulBlocksTables:
+    _TABLE = "| Name | Age |\n|------|-----|\n| Alice | 28 |\n| Bob | 32 |"
+
+    def test_basic_table_rendered(self):
+        result = render_stateful_blocks(self._TABLE)
+        plain = _strip(result)
+        assert "─" in plain
+        assert "Alice" in plain
+        assert "Bob" in plain
+        assert "|" not in plain
+
+    def test_right_aligned_column(self):
+        t = "| Name | Age |\n|------|----:|\n| Alice | 28 |"
+        result = render_stateful_blocks(t)
+        lines = _strip(result).splitlines()
+        data = [l for l in lines if "Alice" in l][0]
+        # "28" should appear right-justified (preceded by spaces)
+        assert "28" in data
+        idx_28 = data.index("28")
+        assert data[idx_28 - 1] == " "
+
+    def test_centre_aligned_column(self):
+        t = "| Name |\n|:----:|\n| Hi |"
+        result = render_stateful_blocks(t)
+        plain = _strip(result)
+        assert "Hi" in plain
+
+    def test_number_auto_right(self):
+        t = "| Item | Count |\n|------|-------|\n| foo | 42 |"
+        result = render_stateful_blocks(t)
+        plain = _strip(result)
+        assert "42" in plain
+
+    def test_ragged_row_padded(self):
+        t = "| A | B | C |\n|---|---|---|\n| x |"
+        result = render_stateful_blocks(t)
+        assert "x" in _strip(result)
+
+    def test_ragged_align_no_error(self):
+        t = "| A | B | C |\n|---|---|\n| x | y | z |"
+        result = render_stateful_blocks(t)
+        assert "x" in _strip(result)
+
+    def test_table_at_end_no_newline(self):
+        t = "| A |\n|---|\n| x |"
+        result = render_stateful_blocks(t)
+        assert "x" in _strip(result)
+        assert "|" not in _strip(result)
+
+    def test_table_no_separator(self):
+        t = "| A | B |\n| x | y |\n| z | w |"
+        result = render_stateful_blocks(t)
+        plain = _strip(result)
+        assert "x" in plain
+        assert "─" not in plain
+
+
+# ---------------------------------------------------------------------------
+# StreamingBlockBuffer
+# ---------------------------------------------------------------------------
+
+class TestStreamingBlockBuffer:
+    def setup_method(self):
+        self.buf = StreamingBlockBuffer()
+
+    def test_setext_h1_on_marker(self):
+        assert self.buf.process_line("Foo") is None
+        result = self.buf.process_line("===")
+        assert result is not None
+        assert "\033[1;97m" in result
+        assert "Foo" in result
+
+    def test_setext_non_marker_releases_pending(self):
+        assert self.buf.process_line("Foo") is None
+        result = self.buf.process_line("bar")
+        assert result == "Foo"
+        # "bar" is now pending
+        flushed = self.buf.flush()
+        assert flushed == "bar"
+
+    def test_setext_flush_emits_pending(self):
+        assert self.buf.process_line("Foo") is None
+        result = self.buf.flush()
+        assert result == "Foo"
+
+    def test_setext_ansi_line_not_held(self):
+        ansi = "\033[1mx\033[0m"
+        result = self.buf.process_line(ansi)
+        assert result is ansi  # returned immediately
+
+    def test_table_rows_none_until_done(self):
+        assert self.buf.process_line("| A | B |") is None
+        assert self.buf.process_line("|---|---|") is None
+        assert self.buf.process_line("| x | y |") is None
+        non_table = "done"
+        result = self.buf.process_line(non_table)
+        assert result is not None
+        assert "x" in _strip(result)
+        # Next call returns the non-table line
+        next_result = self.buf.process_line("anything")
+        assert next_result == "done"
+
+    def test_table_flush_emits_partial(self):
+        self.buf.process_line("| A |")
+        self.buf.process_line("|---|")
+        self.buf.process_line("| x |")
+        result = self.buf.flush()
+        assert result is not None
+        assert "x" in _strip(result)
+
+    def test_table_non_table_line_identity(self):
+        self.buf.process_line("| A |")
+        self.buf.process_line("|---|")
+        self.buf.process_line("| x |")
+        non_table = "plain line"
+        self.buf.process_line(non_table)  # returns rendered table
+        # Next call should return the non-table line with same identity
+        result = self.buf.process_line("next")
+        assert result is non_table
+
+    def test_blockquote_continuation_stateful(self):
+        self.buf.process_line("some")  # goes to pending
+        self.buf.flush()
+        self.buf.reset()
+        # Fresh: enter blockquote, then continuation
+        r1 = self.buf.process_line("> quote")
+        # r1 may be None (pending setext) or the bq line
+        # Force through: no pending, so should return gutter immediately
+        self.buf.reset()
+        r1 = self.buf.process_line("> quote")
+        assert r1 is not None
+        assert "▌" in r1
+        r2 = self.buf.process_line("continuation")
+        assert r2 is not None
+        assert "▌" in r2
+
+    def test_blockquote_ansi_gets_gutter(self):
+        # ANSI line inside blockquote keeps the gutter and stays in blockquote
+        self.buf.process_line("> start")
+        ansi = "\033[1mx\033[0m"
+        result = self.buf.process_line(ansi)
+        assert result is not None
+        assert "▌" in result
+        assert ansi in result
+        assert self.buf._in_blockquote  # stays in blockquote
+
+    def test_blockquote_fence_exits_state(self):
+        # Code fence line exits blockquote so the code highlighter can handle it
+        self.buf.process_line("> start")
+        result = self.buf.process_line("```python")
+        assert result == "```python"
+        assert not self.buf._in_blockquote
+
+    def test_mode_transition_pending_plus_blockquote(self):
+        assert self.buf.process_line("pending_line") is None
+        result = self.buf.process_line("> blockquote")
+        assert result == "pending_line"
+        # Next call should return rendered blockquote
+        result2 = self.buf.process_line("next")
+        assert result2 is not None
+        assert "▌" in result2
+
+    def test_mode_transition_pending_plus_table(self):
+        assert self.buf.process_line("pending_line") is None
+        result = self.buf.process_line("| A |")
+        assert result == "pending_line"
+        # Next call processes "| A |" (buffered), returns None
+        result2 = self.buf.process_line("| B |")
+        assert result2 is None
+
+    def test_reset_clears_all_state(self):
+        self.buf.process_line("pending")
+        self.buf._in_blockquote = True
+        self.buf._table_buf.append("| x |")
+        self.buf._emit_next = "something"
+        self.buf.reset()
+        assert self.buf._pending is None
+        assert self.buf._in_blockquote is False
+        assert self.buf._table_buf == []
+        assert self.buf._emit_next is None
+
+    def test_setext_marker_as_emit_next_via_flush(self):
+        """Deferred line stored in _emit_next is a setext marker: flush renders heading."""
+        # Turn 1: "Title" → pending
+        assert self.buf.process_line("Title") is None
+        # Turn 2: ">" line arrives while pending → returns "Title", stores ">" in _emit_next
+        result = self.buf.process_line("> quote")
+        assert result == "Title"
+        # flush: _emit_next = "> quote", _pending = None
+        flushed = self.buf.flush()
+        assert flushed is not None
+        assert "▌" in flushed
+
+    def test_pending_flushed_before_table(self):
+        """Prose line pending before a table must be emitted before table rows."""
+        result = render_stateful_blocks("prose\n| A | B |\n|---|---|\n| x | y |")
+        lines = _strip(result).splitlines()
+        prose_idx = next(i for i, l in enumerate(lines) if "prose" in l)
+        table_idx = next(i for i, l in enumerate(lines) if "x" in l)
+        assert prose_idx < table_idx
+
+    def test_ansi_line_in_table_flushes_table(self):
+        """An ANSI line mid-table must flush the accumulated rows before emitting the ANSI line."""
+        ansi = "\033[32mcode\033[0m"
+        text = "| A | B |\n|---|---|\n| x | y |\n" + ansi + "\nnormal"
+        result = render_stateful_blocks(text)
+        lines = result.splitlines()
+        # Table content must appear before the ANSI line
+        table_idx = next(i for i, l in enumerate(lines) if "x" in _strip(l))
+        ansi_idx = next(i for i, l in enumerate(lines) if ansi in l)
+        assert table_idx < ansi_idx

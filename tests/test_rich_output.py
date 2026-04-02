@@ -1805,3 +1805,24 @@ class TestStreamingBlockBuffer:
         table_idx = next(i for i, l in enumerate(lines) if "x" in _strip(l))
         ansi_idx = next(i for i, l in enumerate(lines) if ansi in l)
         assert table_idx < ansi_idx
+
+    def test_ol_item_not_setext_candidate_with_hr(self):
+        """OL item followed by '---' must NOT become a setext heading."""
+        buf = StreamingBlockBuffer()
+        assert buf.process_line("1. item one") is None
+        result = buf.process_line("---")
+        # '1. item one' must be emitted as plain text, not a heading
+        assert result is not None
+        assert "\033[1;37m" not in result  # no H2 heading style
+        assert "1. item one" in result
+        # '---' should be buffered now (pending for next setext check)
+        assert buf._pending == "---"
+
+    def test_ol_item_followed_by_setext_underline(self):
+        """OL item followed by '===' must NOT become a setext heading."""
+        buf = StreamingBlockBuffer()
+        assert buf.process_line("3. another item") is None
+        result = buf.process_line("===")
+        assert result is not None
+        assert "\033[1;97m" not in result  # no H1 heading style
+        assert "3. another item" in result

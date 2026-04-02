@@ -475,6 +475,14 @@ try:
     from agent.rich_output import StreamingCodeBlockHighlighter as _CodeBlockHL
     from agent.rich_output import format_response as _format_response
     _RICH_RESPONSE = True
+    # display.py registers syntax/markdown callbacks when imported above.
+    # Re-apply the active skin now so any skin set before display.py was
+    # imported (e.g. init_skin_from_config at startup) takes effect.
+    try:
+        from hermes_cli.skin_engine import get_active_skin_name, set_active_skin
+        set_active_skin(get_active_skin_name())
+    except Exception:
+        pass
 except ImportError:
     _RICH_RESPONSE = False
 
@@ -830,6 +838,17 @@ def _accent_hex() -> str:
         return get_active_skin().get_color("ui_accent", "#FFBF00")
     except Exception:
         return "#FFBF00"
+
+
+def _resp_border_ansi() -> str:
+    """Return ANSI bold truecolor escape for the response box border from active skin."""
+    try:
+        from hermes_cli.skin_engine import get_active_skin
+        h = get_active_skin().get_color("response_border", "#FFD700").lstrip("#")
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        return f"\033[1;38;2;{r};{g};{b}m"
+    except Exception:
+        return _GOLD
 
 
 def _rich_text_from_ansi(text: str) -> _RichText:
@@ -1977,7 +1996,7 @@ class HermesCLI:
                 self._stream_text_ansi = ""
             w = shutil.get_terminal_size().columns
             fill = w - 2 - len(label)
-            _cprint(f"\n{_GOLD}╭─{label}{'─' * max(fill - 1, 0)}╮{_RST}")
+            _cprint(f"\n{_resp_border_ansi()}╭─{label}{'─' * max(fill - 1, 0)}╮{_RST}")
 
         self._stream_buf += text
 
@@ -2040,7 +2059,7 @@ class HermesCLI:
         # Close the response box
         if self._stream_box_opened:
             w = shutil.get_terminal_size().columns
-            _cprint(f"{_GOLD}╰{'─' * (w - 2)}╯{_RST}")
+            _cprint(f"{_resp_border_ansi()}╰{'─' * (w - 2)}╯{_RST}")
 
     def _reset_stream_state(self) -> None:
         """Reset streaming state before each agent invocation."""
@@ -6127,9 +6146,14 @@ class HermesCLI:
                     if not _streaming_box_opened:
                         _streaming_box_opened = True
                         w = self.console.width
-                        label = " ⚕ Hermes "
+                        try:
+                            from hermes_cli.skin_engine import get_active_skin
+                            _sk = get_active_skin()
+                            label = _sk.get_branding("response_label", "⚕ Hermes")
+                        except Exception:
+                            label = " ⚕ Hermes "
                         fill = w - 2 - len(label)
-                        _cprint(f"\n{_GOLD}╭─{label}{'─' * max(fill - 1, 0)}╮{_RST}")
+                        _cprint(f"\n{_resp_border_ansi()}╭─{label}{'─' * max(fill - 1, 0)}╮{_RST}")
                     _cprint(sentence.rstrip())
 
                 tts_thread = threading.Thread(
@@ -6347,7 +6371,7 @@ class HermesCLI:
                 if use_streaming_tts and _streaming_box_opened and not is_error_response:
                     # Text was already printed sentence-by-sentence; just close the box
                     w = shutil.get_terminal_size().columns
-                    _cprint(f"\n{_GOLD}╰{'─' * (w - 2)}╯{_RST}")
+                    _cprint(f"\n{_resp_border_ansi()}╰{'─' * (w - 2)}╯{_RST}")
                 elif already_streamed:
                     # Response was already streamed token-by-token with box framing;
                     # _flush_stream() already closed the box. Skip Rich Panel.

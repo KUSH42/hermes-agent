@@ -2006,6 +2006,7 @@ class StreamingCodeBlockHighlighter:
         self._lang = None
         self._fence_depth = 3
         self._buf = []
+        self._hl.refresh()
 
     def _flush_block(self) -> str:
         code = "\n".join(self._buf)

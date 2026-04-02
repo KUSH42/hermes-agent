@@ -1822,9 +1822,14 @@ class HermesCLI:
         # reasoning is visible in real-time even without newlines.
         while "\n" in self._reasoning_buf:
             line, self._reasoning_buf = self._reasoning_buf.split("\n", 1)
+            if _RICH_RESPONSE:
+                line = _apply_inline_md(_apply_block_line(line), reset_suffix=_DIM)
             _cprint(f"{_DIM}{line}{_RST}")
         if len(self._reasoning_buf) > 80:
-            _cprint(f"{_DIM}{self._reasoning_buf}{_RST}")
+            partial = self._reasoning_buf
+            if _RICH_RESPONSE:
+                partial = _apply_inline_md(_apply_block_line(partial), reset_suffix=_DIM)
+            _cprint(f"{_DIM}{partial}{_RST}")
             self._reasoning_buf = ""
 
     def _close_reasoning_box(self) -> None:
@@ -1833,6 +1838,8 @@ class HermesCLI:
             # Flush remaining reasoning buffer
             buf = getattr(self, "_reasoning_buf", "")
             if buf:
+                if _RICH_RESPONSE:
+                    buf = _apply_inline_md(_apply_block_line(buf), reset_suffix=_DIM)
                 _cprint(f"{_DIM}{buf}{_RST}")
                 self._reasoning_buf = ""
             w = shutil.get_terminal_size().columns
@@ -6291,10 +6298,17 @@ class HermesCLI:
                     # Collapse long reasoning: show first 10 lines
                     lines = reasoning.strip().splitlines()
                     if len(lines) > 10:
-                        display_reasoning = "\n".join(lines[:10])
-                        display_reasoning += f"\n{_DIM}  ... ({len(lines) - 10} more lines){_RST}"
+                        visible = lines[:10]
+                        tail = f"\n{_DIM}  ... ({len(lines) - 10} more lines){_RST}"
                     else:
-                        display_reasoning = reasoning.strip()
+                        visible = lines
+                        tail = ""
+                    if _RICH_RESPONSE:
+                        visible = [
+                            _apply_inline_md(_apply_block_line(l), reset_suffix=_DIM)
+                            for l in visible
+                        ]
+                    display_reasoning = "\n".join(visible) + tail
                     _cprint(f"\n{r_top}\n{_DIM}{display_reasoning}{_RST}\n{r_bot}")
 
             if response and not response_previewed:

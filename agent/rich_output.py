@@ -664,7 +664,11 @@ _MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\([^)]+\)")
 _MD_LINK_RE = re.compile(r"(?<!\x1b)\[([^\]]+)\]\(([^)]+)\)")
 # Bare URLs — negative lookbehind (?<!\() avoids matching URLs already
 # formatted as "text (url)" by the link step above.
-_MD_BARE_URL_RE = re.compile(r"(?<!\()https?://[^\s<>\[\]()\"]+")
+# Matches https?://, ftp?s://, file:// and bare www. domains.
+_MD_BARE_URL_RE = re.compile(
+    r"(?<!\()"
+    r"(?:(?:https?|ftps?|file)://[^\s<>\[\]()\"]+|(?<![./\w])www\.[^\s<>\[\]()\"]+)"
+)
 
 # HTML wrapper tags (may contain inner markdown — processed with reset_suffix)
 _MD_U_RE = re.compile(r"<u>(.*?)</u>", re.IGNORECASE | re.DOTALL)

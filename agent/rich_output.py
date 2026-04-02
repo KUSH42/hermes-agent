@@ -731,7 +731,7 @@ def apply_inline_markdown(line: str, reset_suffix: str = "") -> str:
     protected: list[str] = []
 
     def _protect_code(m: re.Match) -> str:  # type: ignore[type-arg]
-        protected.append(f"{_MD_CODE_ANSI}{m.group(1)}{rst}")
+        protected.append(f"{_ANSI_INLINE_CODE_START}`{m.group(1)}`{rst}")
         return f"\x00{len(protected) - 1}\x00"
 
     line = _MD_CODE_RE.sub(_protect_code, line)
@@ -1002,7 +1002,7 @@ class StreamingCodeBlockHighlighter:
                 self._lang = m.group(2) or None
                 self._buf = []
                 return None  # suppress opening fence — will re-emit with block
-            return _highlight_inline_code(line)  # prose: style any inline code spans
+            return line  # prose: caller applies full block + inline markdown pipeline
 
         # Inside a code block — closing fence: >= fence_depth backticks, nothing else
         m = self._FENCE_CLOSE_RE.match(stripped)

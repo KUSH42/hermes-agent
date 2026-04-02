@@ -97,7 +97,7 @@ branding:
 #   solarized-dark — Ethan Schoonover's Solarized dark
 #
 # You can also override individual token colors under syntax_overrides.
-syntax_scheme: hermes
+syntax_scheme: monokai
 
 # Optional per-token overrides on top of the named scheme.
 # Token names: keyword, keyword_type, name, name_builtin, name_class,

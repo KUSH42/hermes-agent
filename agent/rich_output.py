@@ -667,7 +667,7 @@ _MD_LINK_RE = re.compile(r"(?<!\x1b)\[([^\]]+)\]\(([^)]+)\)")
 # Matches https?://, ftp?s://, file:// and bare www. domains.
 _MD_BARE_URL_RE = re.compile(
     r"(?<!\()"
-    r"(?:(?:https?|ftps?|file)://[^\s<>\[\]()\"]+|(?<![./\w])www\.[^\s<>\[\]()\"]+)"
+    r"(?:(?:https?|ftps?|file)://[^\s\x1b<>\[\]()\"]+|(?<![./\w])www\.[^\s\x1b<>\[\]()\"]+)"
 )
 
 # HTML wrapper tags (may contain inner markdown — processed with reset_suffix)

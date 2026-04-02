@@ -1096,7 +1096,7 @@ class TestApplyInlineMarkdown:
         result = apply_inline_markdown("[click here](https://x.com)")
         assert "\033[4m" in result
         assert "click here" in result
-        assert "https://x.com" not in _strip(result)
+        assert "https://x.com" in result  # URL preserved for copy/ctrl+click
         assert "[click here]" not in _strip(result)
 
     def test_image_placeholder(self):

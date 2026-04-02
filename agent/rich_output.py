@@ -39,8 +39,10 @@ logger = logging.getLogger(__name__)
 # Diff background colours — kept in sync with agent.display._ANSI_PLUS / _ANSI_MINUS
 # _ANSI_PLUS  = "\033[38;2;255;255;255;48;2;20;90;20m"   → rgb(20,90,20)
 # _ANSI_MINUS = "\033[38;2;255;255;255;48;2;120;20;20m"  → rgb(120,20,20)
-_DIFF_BG_ADD = "#145a14"   # rgb(20, 90, 20)
-_DIFF_BG_DEL = "#781414"   # rgb(120, 20, 20)
+_DIFF_BG_ADD    = "#145a14"   # rgb(20,  90, 20)  — base addition background
+_DIFF_BG_DEL    = "#781414"   # rgb(120, 20, 20)  — base deletion background
+_DIFF_BG_ADD_HL = "#289428"   # rgb(40, 148, 40)  — bright add bg for changed chars
+_DIFF_BG_DEL_HL = "#b43030"   # rgb(180, 48, 48)  — bright del bg for changed chars
 
 # Minimum SequenceMatcher ratio to apply intra-line highlighting.
 # Below this the lines are too dissimilar and highlighting would be noise.
@@ -424,52 +426,79 @@ def _make_header(filename: Optional[str], n_adds: int, n_dels: int) -> tuple[Tex
     return header, separator
 
 
-def _flat_del(ln: int, content: str) -> Text:
-    """Render a deletion line with flat (no intra-line) highlighting."""
+def _syntax_text(content: str, filename: Optional[str]) -> Text:
+    """Return a Rich ``Text`` with Pygments syntax colours (foreground only).
+
+    ``syntax_highlighter`` is resolved at call time so this helper can be
+    defined before the module-level instance is created.
+    Falls back to plain unstyled text on any error.
+
+    Pygments always appends a trailing newline token to its output.  We strip
+    it when the source *content* itself did not end with ``\\n`` so that diff
+    line lengths remain accurate.
+    """
+    try:
+        markup = syntax_highlighter.to_markup(content, filename=filename or "")
+        text = Text.from_markup(markup)
+        if text.plain.endswith("\n") and not content.endswith("\n"):
+            text = text[: len(text.plain) - 1]
+        return text
+    except Exception:
+        return Text(content)
+
+
+def _flat_del(ln: int, content: str, filename: Optional[str] = None) -> Text:
+    """Render a deletion line with syntax highlighting and diff background."""
+    syn = _syntax_text(content, filename)
+    syn.stylize(Style(bgcolor=_DIFF_BG_DEL))
     return Text.assemble(
         Text(f"{ln:>4} ", style="dim"),
         Text("- ", style=Style(color="red", bold=True)),
-        Text(content, style=Style(bgcolor=_DIFF_BG_DEL, color="white")),
+        syn,
     )
 
 
-def _flat_add(ln: int, content: str) -> Text:
-    """Render an addition line with flat (no intra-line) highlighting."""
+def _flat_add(ln: int, content: str, filename: Optional[str] = None) -> Text:
+    """Render an addition line with syntax highlighting and diff background."""
+    syn = _syntax_text(content, filename)
+    syn.stylize(Style(bgcolor=_DIFF_BG_ADD))
     return Text.assemble(
         Text(f"{ln:>4} ", style="dim"),
         Text("+ ", style=Style(color="green", bold=True)),
-        Text(content, style=Style(bgcolor=_DIFF_BG_ADD, color="white")),
+        syn,
     )
 
 
-def _intra_diff(old: str, new: str) -> tuple[list[Text], list[Text]]:
+def _intra_diff(
+    old: str, new: str, filename: Optional[str] = None
+) -> tuple[list[Text], list[Text]]:
     """Character-level diff between two line content strings.
 
-    Returns ``(del_segments, add_segments)`` — lists of ``Text`` objects
-    covering the full content of each line with no gaps.  Changed characters
-    are rendered bright-red / bright-green bold; unchanged characters use the
-    base diff background with white foreground.
+    Returns ``([del_text], [add_text])`` — single-element lists for API
+    compatibility with the ``Text.assemble(*segments)`` call sites.
 
-    Callers: ``Text.assemble(*del_segments)`` / ``Text.assemble(*add_segments)``.
+    Syntax colours are applied to the foreground; diff backgrounds are applied
+    as a separate layer so they never conflict with token colours:
 
-    Note: segment lists may have different total character counts when
-    ``delete`` or ``insert`` opcodes are present — this is correct because the
-    two lines have different lengths.
+    * Equal regions: syntax fg + dark diff background.
+    * Changed regions: syntax fg + **bright** diff background (bold), which
+      visually highlights the change without clobbering syntax colours.
     """
-    del_segs: list[Text] = []
-    add_segs: list[Text] = []
+    del_text = _syntax_text(old, filename)
+    add_text = _syntax_text(new, filename)
+
+    # Base diff backgrounds across the full lines.
+    del_text.stylize(Style(bgcolor=_DIFF_BG_DEL))
+    add_text.stylize(Style(bgcolor=_DIFF_BG_ADD))
+
+    # Brighter background on changed character ranges (overrides base bg).
     for tag, i1, i2, j1, j2 in SequenceMatcher(None, old, new, autojunk=False).get_opcodes():
-        if tag == "equal":
-            del_segs.append(Text(old[i1:i2], style=Style(bgcolor=_DIFF_BG_DEL, color="white")))
-            add_segs.append(Text(new[j1:j2], style=Style(bgcolor=_DIFF_BG_ADD, color="white")))
-        elif tag == "replace":
-            del_segs.append(Text(old[i1:i2], style=Style(bgcolor=_DIFF_BG_DEL, color="bright_red", bold=True)))
-            add_segs.append(Text(new[j1:j2], style=Style(bgcolor=_DIFF_BG_ADD, color="bright_green", bold=True)))
-        elif tag == "delete":
-            del_segs.append(Text(old[i1:i2], style=Style(bgcolor=_DIFF_BG_DEL, color="bright_red", bold=True)))
-        elif tag == "insert":
-            add_segs.append(Text(new[j1:j2], style=Style(bgcolor=_DIFF_BG_ADD, color="bright_green", bold=True)))
-    return del_segs, add_segs
+        if tag in ("replace", "delete"):
+            del_text.stylize(Style(bgcolor=_DIFF_BG_DEL_HL, bold=True), i1, i2)
+        if tag in ("replace", "insert"):
+            add_text.stylize(Style(bgcolor=_DIFF_BG_ADD_HL, bold=True), j1, j2)
+
+    return [del_text], [add_text]
 
 
 # ---------------------------------------------------------------------------
@@ -568,6 +597,7 @@ class DiffRenderer:
             if not del_run and not add_run:
                 return
             n_pairs = min(len(del_run), len(add_run))
+            fname = explicit_filename or from_path
 
             # Precompute intra-diff segments for each pair.
             pair_segs: list[tuple[Optional[list[Text]], Optional[list[Text]]]] = []
@@ -576,7 +606,7 @@ class DiffRenderer:
                 new_content = add_run[i][1]
                 r = SequenceMatcher(None, old_content, new_content).ratio()
                 if r >= _INTRA_DIFF_MIN_RATIO:
-                    d, a = _intra_diff(old_content, new_content)
+                    d, a = _intra_diff(old_content, new_content, fname)
                     pair_segs.append((d, a))
                 else:
                     pair_segs.append((None, None))
@@ -589,7 +619,7 @@ class DiffRenderer:
                         *pair_segs[i][0],
                     ))
                 else:
-                    styled.append(_flat_del(ln, content))
+                    styled.append(_flat_del(ln, content, fname))
 
             for i, (ln, content) in enumerate(add_run):
                 if i < n_pairs and pair_segs[i][1] is not None:
@@ -599,7 +629,7 @@ class DiffRenderer:
                         *pair_segs[i][1],
                     ))
                 else:
-                    styled.append(_flat_add(ln, content))
+                    styled.append(_flat_add(ln, content, fname))
 
             del_run.clear()
             add_run.clear()
@@ -645,10 +675,12 @@ class DiffRenderer:
             # and avoids duplicate numbers when old/new offsets diverge)
             flush_runs()
             content = line[1:] if line.startswith(" ") else line
+            syn = _syntax_text(content, explicit_filename or from_path)
+            syn.stylize(Style(dim=True))
             styled.append(Text.assemble(
                 Text(f"{ln_new:>4} ", style="dim"),
                 Text("  ", style="dim"),
-                Text(content, style="dim"),
+                syn,
             ))
             ln_old += 1
             ln_new += 1

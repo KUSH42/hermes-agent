@@ -980,6 +980,27 @@ class TestApplyInlineMarkdown:
         assert "foo" in result
         assert "<strong>" not in result
 
+    def test_u_tag_underline(self):
+        result = apply_inline_markdown("<u>foo</u>")
+        assert "\033[4m" in result
+        assert "foo" in result
+        assert "<u>" not in result
+
+    def test_mark_tag_highlight(self):
+        result = apply_inline_markdown("<mark>foo</mark>")
+        assert "\033[7m" in result
+        assert "foo" in result
+        assert "<mark>" not in result
+
+    def test_u_tag_with_inner_bold_restores_underline(self):
+        # Inner bold reset must restore underline, not drop it.
+        result = apply_inline_markdown("<u>**bold** normal</u>")
+        # Underline code appears before bold
+        assert result.index("\033[4m") < result.index("\033[1m")
+        # reset_suffix "\033[4m" appears after the bold reset, restoring underline
+        ansi_codes = [result[i:i+4] for i in range(len(result)) if result[i:i+2] == "\033["]
+        assert result.count("\033[4m") >= 2  # outer open + reset_suffix restore
+
     def test_link_underlined(self):
         result = apply_inline_markdown("[click here](https://x.com)")
         assert "\033[4m" in result

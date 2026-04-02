@@ -706,11 +706,15 @@ _MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\([^)]+\)")
 _MD_LINK_RE = re.compile(r"(?<!\x1b)\[([^\]]+)\]\(([^)]+)\)")
 _MD_EM_RE = re.compile(r"<em>(.*?)</em>", re.IGNORECASE)
 _MD_STRONG_RE = re.compile(r"<strong>(.*?)</strong>", re.IGNORECASE)
+_MD_U_RE = re.compile(r"<u>(.*?)</u>", re.IGNORECASE | re.DOTALL)
+_MD_MARK_RE = re.compile(r"<mark>(.*?)</mark>", re.IGNORECASE | re.DOTALL)
 
 _MD_BOLD_ANSI = "\033[1m"
 _MD_ITALIC_ANSI = "\033[3m"
 _MD_STRIKE_ANSI = "\033[9m"
 _MD_CODE_ANSI = "\033[97m"
+_MD_U_ANSI = "\033[4m"
+_MD_MARK_ANSI = "\033[7m"
 _MD_RST_ANSI = "\033[0m"
 
 
@@ -718,9 +722,14 @@ def apply_inline_markdown(line: str, reset_suffix: str = "") -> str:
     """Apply ANSI styling to inline markdown spans in a single text line.
 
     Handles ``**bold**``, ``__bold__``, ``*italic*``, ``_italic_``,
-    ``~~strikethrough~~``, and `` `code` ``.  Backtick spans are processed
-    first and their content is protected from bold/italic passes via
-    placeholder tokens.
+    ``~~strikethrough~~``, `` `code` ``, ``<u>``, ``<mark>``, ``<em>``,
+    and ``<strong>``.  Backtick spans are processed first and protected from
+    later passes via placeholder tokens.
+
+    HTML wrapper tags (``<u>``, ``<mark>``) are processed before markdown
+    spans via a recursive call with the wrapper style as ``reset_suffix``,
+    so inner bold/italic resets restore the outer underline/highlight rather
+    than dropping it.
 
     ``reset_suffix`` is appended after each closing reset; pass the active
     response-text ANSI colour here so it is restored between adjacent spans
@@ -732,6 +741,17 @@ def apply_inline_markdown(line: str, reset_suffix: str = "") -> str:
         return line
 
     rst = _MD_RST_ANSI + reset_suffix
+
+    # Step 0: HTML wrapper tags whose content needs inner-markdown processing
+    # with the wrapper style as reset_suffix so inner resets restore it.
+    def _wrap(style: str) -> "re.Callable[[re.Match], str]":  # type: ignore[type-arg]
+        def _sub(m: re.Match) -> str:  # type: ignore[type-arg]
+            inner = apply_inline_markdown(m.group(1), reset_suffix=style)
+            return f"{style}{inner}{rst}"
+        return _sub
+
+    line = _MD_U_RE.sub(_wrap(_MD_U_ANSI), line)
+    line = _MD_MARK_RE.sub(_wrap(_MD_MARK_ANSI), line)
 
     # Step 1: protect backtick code spans with index placeholders so later
     # passes cannot match * or _ inside them.
@@ -760,7 +780,7 @@ def apply_inline_markdown(line: str, reset_suffix: str = "") -> str:
     # Step 5b: links — underline text, discard URL
     line = _MD_LINK_RE.sub(lambda m: f"\033[4m{m.group(1)} ({m.group(2)})\033[0m{reset_suffix}", line)
 
-    # Step 5c: HTML inline tags
+    # Step 5c: remaining HTML inline tags (no inner markdown to recurse)
     line = _MD_EM_RE.sub(lambda m: f"{_MD_ITALIC_ANSI}{m.group(1)}\033[0m{reset_suffix}", line)
     line = _MD_STRONG_RE.sub(lambda m: f"{_MD_BOLD_ANSI}{m.group(1)}\033[0m{reset_suffix}", line)
 

@@ -602,7 +602,7 @@ def _summarize_rendered_diff_sections(
 
         rendered.extend(section_lines[:remaining_budget])
         omitted_lines += len(section_lines) - remaining_budget
-        omitted_files += 1 + max(0, len(sections) - idx - 1)
+        omitted_files += max(0, len(sections) - idx - 1)
         for leftover in sections[idx + 1:]:
             omitted_lines += len(_render_inline_unified_diff(leftover))
         break

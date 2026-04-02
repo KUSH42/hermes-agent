@@ -546,15 +546,9 @@ try:
     from agent.rich_output import StreamingBlockBuffer as _BlockBuf
     from agent.rich_output import StreamingCodeBlockHighlighter as _CodeBlockHL
     from agent.rich_output import format_response as _format_response
-    from agent.rich_output import apply_inline_markdown as _apply_inline_md
-    from agent.rich_output import apply_block_line as _apply_block_line
     _RICH_RESPONSE = True
 except ImportError:
     _RICH_RESPONSE = False
-    def _apply_inline_md(text, **_):  # type: ignore[misc]
-        return text
-    def _apply_block_line(text, **_):  # type: ignore[misc]
-        return text
 
 # Neuter AsyncHttpxClientWrapper.__del__ before any AsyncOpenAI clients are
 # created.  The SDK's __del__ schedules aclose() on asyncio.get_running_loop()
@@ -916,20 +910,7 @@ def _rich_text_from_ansi(text: str) -> _RichText:
     Using Rich Text.from_ansi preserves literal bracketed text like
     ``[not markup]`` while still interpreting real ANSI color codes.
     """
-    return _RichText.from_ansi(_normalize_ansi_c1(text or ""))
-
-
-def _normalize_ansi_c1(text: str) -> str:
-    """Normalize 8-bit C1 CSI controls to ESC-prefixed ANSI sequences.
-
-    Some tools emit CSI as the single-byte C1 control ``\x9b`` instead of the
-    more common ``\x1b[`` form. prompt_toolkit / Rich do not reliably treat that
-    form as ANSI in every environment, which can leak visible ``?[...m`` text
-    into the CLI. Converting it up front keeps the rendering path stable.
-    """
-    if "\x9b" not in text:
-        return text
-    return text.replace("\x9b", "\x1b[")
+    return _RichText.from_ansi(text or "")
 
 
 def _cprint(text: str):
@@ -939,16 +920,7 @@ def _cprint(text: str):
     StdoutProxy.  Routing through print_formatted_text(ANSI(...)) lets
     prompt_toolkit parse the escapes and render real colors.
     """
-    _pt_print(_PT_ANSI(_normalize_ansi_c1(text)))
-
-
-def _dim_lines(text: str) -> list[str]:
-    """Return lines wrapped in DIM/RESET individually.
-
-    Per-line wrapping keeps reasoning blocks consistently dim even when a
-    line contains its own reset sequence.
-    """
-    return [f"{_DIM}{line}{_RST}" for line in text.splitlines()]
+    _pt_print(_PT_ANSI(text))
 
 
 # ---------------------------------------------------------------------------
@@ -1290,13 +1262,8 @@ class HermesCLI:
 
         # Syntax-highlighted code preview for execute_code (display.code_highlight in config.yaml)
         self._code_highlight_enabled = CLI_CONFIG["display"].get("code_highlight", True)
-        from agent.display import set_code_highlight_active, set_diff_limits, set_preview_max_lines
+        from agent.display import set_code_highlight_active
         set_code_highlight_active(self._code_highlight_enabled)
-        set_diff_limits(
-            max_lines=CLI_CONFIG["display"].get("diff_max_lines", 80),
-            max_files=CLI_CONFIG["display"].get("diff_max_files", 6),
-        )
-        set_preview_max_lines(CLI_CONFIG["display"].get("preview_max_lines", 40))
 
         # Streaming display state
         self._stream_buf = ""        # Partial line buffer for line-buffered rendering
@@ -1952,14 +1919,9 @@ class HermesCLI:
         # reasoning is visible in real-time even without newlines.
         while "\n" in self._reasoning_buf:
             line, self._reasoning_buf = self._reasoning_buf.split("\n", 1)
-            if _RICH_RESPONSE:
-                line = _apply_inline_md(_apply_block_line(line, reset_suffix=_DIM), reset_suffix=_DIM)
-            _cprint(_dim_lines(line)[0])
+            _cprint(f"{_DIM}{line}{_RST}")
         if len(self._reasoning_buf) > 80:
-            partial = self._reasoning_buf
-            if _RICH_RESPONSE:
-                partial = _apply_inline_md(_apply_block_line(partial, reset_suffix=_DIM), reset_suffix=_DIM)
-            _cprint(_dim_lines(partial)[0])
+            _cprint(f"{_DIM}{self._reasoning_buf}{_RST}")
             self._reasoning_buf = ""
 
     def _close_reasoning_box(self) -> None:
@@ -1968,9 +1930,7 @@ class HermesCLI:
             # Flush remaining reasoning buffer
             buf = getattr(self, "_reasoning_buf", "")
             if buf:
-                if _RICH_RESPONSE:
-                    buf = _apply_inline_md(_apply_block_line(buf, reset_suffix=_DIM), reset_suffix=_DIM)
-                _cprint(_dim_lines(buf)[0])
+                _cprint(f"{_DIM}{buf}{_RST}")
                 self._reasoning_buf = ""
             w = shutil.get_terminal_size().columns
             _cprint(f"{_DIM}└{'─' * (w - 2)}┘{_RST}")
@@ -2136,10 +2096,7 @@ class HermesCLI:
                 if out2 is None:
                     continue
                 if out2 is out:
-                    # Plain text always gets markdown rendering during streaming.
-                    # display.code_highlight only controls syntax-highlighted
-                    # code previews and execute_code transcript formatting.
-                    out = _apply_inline_md(_apply_block_line(out, reset_suffix=_tc), reset_suffix=_tc)
+                    out = _apply_inline_md(_apply_block_line(out), reset_suffix=_tc)
                     _cprint(f"{_tc}{out}{_RST}" if _tc else out)
                 else:
                     for hl_line in out2.splitlines():
@@ -2160,7 +2117,7 @@ class HermesCLI:
                     out2 = self._stream_code_hl.process_line(block_out)
                     if out2 is not None:
                         if out2 is block_out:
-                            out2 = _apply_inline_md(_apply_block_line(out2, reset_suffix=_tc), reset_suffix=_tc)
+                            out2 = _apply_inline_md(_apply_block_line(out2), reset_suffix=_tc)
                             _cprint(f"{_tc}{out2}{_RST}" if _tc else out2)
                         else:
                             for hl_line in out2.splitlines():
@@ -2169,9 +2126,7 @@ class HermesCLI:
                 buf_tail = self._stream_block_buf.flush()
                 if buf_tail is not None:
                     for hl_line in buf_tail.splitlines():
-                        if "\x1b" not in hl_line:
-                            hl_line = _apply_inline_md(_apply_block_line(hl_line, reset_suffix=_tc), reset_suffix=_tc)
-                        _cprint(f"{_tc}{hl_line}{_RST}" if _tc else hl_line)
+                        _cprint(hl_line)
                 # Flush any open code block (unclosed fence at end of response)
                 tail = self._stream_code_hl.flush()
                 if tail:
@@ -2268,7 +2223,7 @@ class HermesCLI:
             )
         except Exception as exc:
             message = format_runtime_provider_error(exc)
-            self._print_cli_markup(f"[bold red]{message}[/]")
+            self.console.print(f"[bold red]{message}[/]")
             return False
 
         api_key = runtime.get("api_key")
@@ -2328,13 +2283,6 @@ class HermesCLI:
             self._active_agent_route_signature = None
 
         return True
-
-    def _print_cli_markup(self, markup: str) -> None:
-        """Render Rich markup safely inside the interactive prompt_toolkit UI."""
-        if self._app:
-            ChatConsole().print(markup)
-            return
-        self.console.print(markup)
 
     def _resolve_turn_agent_config(self, user_message: str) -> dict:
         """Resolve model/runtime overrides for a single user turn."""
@@ -4561,6 +4509,8 @@ class HermesCLI:
             self.console.print(f"  Status bar {state}")
         elif canonical == "verbose":
             self._toggle_verbose()
+        elif canonical == "code-highlight":
+            self._toggle_code_highlight()
         elif canonical == "yolo":
             self._toggle_yolo()
         elif canonical == "reasoning":
@@ -6762,20 +6712,11 @@ class HermesCLI:
                     # Collapse long reasoning: show first 10 lines
                     lines = reasoning.strip().splitlines()
                     if len(lines) > 10:
-                        visible = lines[:10]
-                        tail = f"  ... ({len(lines) - 10} more lines)"
+                        display_reasoning = "\n".join(lines[:10])
+                        display_reasoning += f"\n{_DIM}  ... ({len(lines) - 10} more lines){_RST}"
                     else:
-                        visible = lines
-                        tail = ""
-                    if _RICH_RESPONSE:
-                        visible = [
-                            _apply_inline_md(_apply_block_line(l, reset_suffix=_DIM), reset_suffix=_DIM)
-                            for l in visible
-                        ]
-                    rendered_reasoning = "\n".join(_dim_lines("\n".join(visible)))
-                    if tail:
-                        rendered_reasoning += f"\n{_dim_lines(tail)[0]}"
-                    _cprint(f"\n{r_top}\n{rendered_reasoning}\n{r_bot}")
+                        display_reasoning = reasoning.strip()
+                    _cprint(f"\n{r_top}\n{_DIM}{display_reasoning}{_RST}\n{r_bot}")
 
             if response and not response_previewed:
                 # Use skin engine for label/color with fallback
@@ -6802,19 +6743,9 @@ class HermesCLI:
                     pass
                 else:
                     _chat_console = ChatConsole()
-                    if _RICH_RESPONSE:
-                        # Build the same truecolor reset suffix used by the streaming
-                        # path so inline markdown elements (bold, italic, code spans)
-                        # reset back to the skin text colour, not terminal default.
-                        try:
-                            _th = _resp_text.lstrip("#")
-                            _tr, _tg, _tb = int(_th[0:2], 16), int(_th[2:4], 16), int(_th[4:6], 16)
-                            _text_reset = f"\033[38;2;{_tr};{_tg};{_tb}m"
-                        except (ValueError, IndexError):
-                            _text_reset = ""
-                        _rendered_response = _format_response(response, reset_suffix=_text_reset)
-                    else:
-                        _rendered_response = response
+                    _rendered_response = (
+                        _format_response(response) if _RICH_RESPONSE else response
+                    )
                     _chat_console.print(Panel(
                         _rich_text_from_ansi(_rendered_response),
                         title=f"[{_resp_color} bold]{label}[/]",

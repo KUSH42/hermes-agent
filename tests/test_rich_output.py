@@ -2238,3 +2238,382 @@ class TestRefLinkResolution:
         text = '[myref]: https://example.com "Example Site"\n\n[click][myref]\n'
         result = format_response(text)
         assert "https://example.com" in result
+
+    def test_ref_link_with_paren_title_resolves(self):
+        # Bug fix: parenthesized title in ref def must be collected into ref_map
+        text = '[myref]: https://example.com (Example Site)\n\n[click][myref]\n'
+        result = format_response(text)
+        assert "https://example.com" in result
+        assert "click" in result
+
+    def test_ref_link_with_single_quote_title_resolves(self):
+        # Bug fix: single-quoted title in ref def must be collected into ref_map
+        text = "[myref]: https://example.com 'Example Site'\n\n[click][myref]\n"
+        result = format_response(text)
+        assert "https://example.com" in result
+        assert "click" in result
+
+    def test_multiple_refs_in_document(self):
+        text = (
+            "[a]: https://a.com\n"
+            "[b]: https://b.com\n"
+            "\n"
+            "See [link a][a] and [link b][b].\n"
+        )
+        result = format_response(text)
+        assert "https://a.com" in result
+        assert "https://b.com" in result
+        assert "link a" in result
+        assert "link b" in result
+
+    def test_ref_collapsed_label_equals_text(self):
+        # [myref][] collapsed form uses text ('myref') as the lookup key
+        ref_map = {"myref": "https://example.com"}
+        result = apply_inline_markdown("[myref][]", ref_map=ref_map)
+        assert "myref" in result
+        assert "https://example.com" in result
+
+    def test_ref_unknown_label_left_as_is(self):
+        ref_map = {"other": "https://other.com"}
+        result = apply_inline_markdown("[text][unknown]", ref_map=ref_map)
+        assert "[text][unknown]" in result
+
+    def test_ref_no_map_use_syntax_left_as_is(self):
+        # Without ref_map, [text][ref] is not touched
+        result = apply_inline_markdown("[text][ref]")
+        assert "[text][ref]" in result
+
+    def test_ref_def_line_suppressed_in_format_response(self):
+        text = "[ref]: https://example.com\n\nHello world.\n"
+        result = format_response(text)
+        plain = _strip(result)
+        assert not any(l.strip().startswith("[ref]:") for l in plain.splitlines())
+
+    def test_streaming_ref_before_use_in_bq_resolves(self):
+        # Ref defined before BQ line — resolved when BQ content is rendered
+        buf = StreamingBlockBuffer()
+        buf.process_line("[link]: https://example.com")
+        buf.process_line("> See [link][] here")  # buffered
+        result = buf.process_line("> next line")  # flushes buffered line
+        flushed = buf.flush()
+        combined = "\n".join(x for x in [result, flushed] if x)
+        assert "https://example.com" in combined
+
+    def test_streaming_ref_after_use_does_not_resolve(self):
+        # Ref defined AFTER the usage line — acceptable: streaming can't look ahead.
+        # The buffer uses a one-tick delay: "See [myref][] for info." is held as
+        # pending and emitted (as-is) when the next line arrives (the ref def line).
+        # apply_inline_markdown is NOT called inside StreamingBlockBuffer for plain
+        # lines, so the ref cannot be resolved even if ref_map were populated.
+        buf = StreamingBlockBuffer()
+        r1 = buf.process_line("See [myref][] for info.")  # buffered → None
+        r2 = buf.process_line("[myref]: https://example.com")  # emits usage, buffers ref def
+        flushed = buf.flush()  # emits ref def line
+        all_parts = [x for x in [r1, r2, flushed] if x]
+        # The usage line ("for info") is emitted as plain text with literal brackets
+        usage_part = next((p for p in all_parts if "for info" in p), None)
+        assert usage_part is not None
+        assert "[myref][]" in usage_part
+
+    def test_streaming_paren_title_ref_collected(self):
+        # Streaming collector must also handle paren-titled ref defs
+        buf = StreamingBlockBuffer()
+        buf.process_line("[myref]: https://example.com (Title)")
+        assert "myref" in buf._ref_map
+        assert buf._ref_map["myref"] == "https://example.com"
+
+    def test_ref_in_bold_propagates_ref_map(self):
+        # ref_map must propagate into bold recursive call
+        ref_map = {"r": "https://r.com"}
+        result = apply_inline_markdown("**see [text][r] here**", ref_map=ref_map)
+        assert "https://r.com" in result
+        assert "text" in result
+
+
+# ---------------------------------------------------------------------------
+# Feature 1 (Ordered lists) — additional edge cases
+# ---------------------------------------------------------------------------
+
+class TestOrderedListsEdgeCases:
+    """Edge cases for ordered list rendering."""
+
+    def test_ol_paren_delimiter_in_format_response(self):
+        # 1) item should render same as 1. item
+        result = format_response("1) first\n2) second\n")
+        assert "\033[2m1.\033[0m" in result
+        assert "\033[2m2.\033[0m" in result
+
+    def test_ol_blank_line_between_items(self):
+        # Blank line between OL items — both still rendered
+        result = format_response("1. alpha\n\n2. beta\n")
+        assert "\033[2m1.\033[0m" in result
+        assert "\033[2m2.\033[0m" in result
+
+    def test_ol_mixed_with_ul(self):
+        # OL followed by UL — both render correctly
+        result = format_response("1. ordered\n- unordered\n")
+        assert "\033[2m1.\033[0m" in result
+        assert "•" in result
+
+    def test_ol_not_setext_with_dash_marker(self):
+        # "1. foo\n---" must NOT become an h2 setext heading
+        result = render_stateful_blocks("1. foo\n---\n")
+        assert "\033[1;37m" not in result
+        assert "foo" in result
+
+    def test_ol_not_setext_with_paren_delimiter(self):
+        # "1) foo\n---" must NOT become an h2 setext heading
+        result = render_stateful_blocks("1) foo\n---\n")
+        assert "\033[1;37m" not in result
+
+    def test_ol_inline_markdown_bold_content(self):
+        result = apply_block_line("1. **important**")
+        assert "\033[1m" in result
+        assert "important" in result
+
+    def test_ol_inline_markdown_code_content(self):
+        result = apply_block_line("2. Use `code` here")
+        assert "code" in result
+
+    def test_ol_indented_nested(self):
+        # Indented OL item at level 1
+        result = apply_block_line("  1. nested item")
+        assert result.startswith("  ")
+        assert "\033[2m1.\033[0m" in result
+
+    def test_ol_large_number(self):
+        result = apply_block_line("99. ninety-nine")
+        assert "\033[2m99.\033[0m" in result
+
+    def test_ol_via_streaming(self):
+        buf = StreamingBlockBuffer()
+        r1 = buf.process_line("1. first")
+        r2 = buf.process_line("2. second")
+        flushed = buf.flush()
+        # OL lines pass through streaming as plain lines
+        combined = "\n".join(x for x in [r1, r2, flushed] if x is not None)
+        assert "first" in combined
+        assert "second" in combined
+
+
+# ---------------------------------------------------------------------------
+# Feature 2 (Task lists) — additional edge cases
+# ---------------------------------------------------------------------------
+
+class TestTaskListsEdgeCases:
+    """Edge cases for task list rendering."""
+
+    def test_task_no_content_after_checkbox_checked(self):
+        # "- [x]" with nothing after — should render checkbox, no crash
+        result = apply_block_line("- [x]")
+        assert "✓" in result
+
+    def test_task_no_content_after_checkbox_unchecked(self):
+        result = apply_block_line("- [ ]")
+        assert "○" in result
+
+    def test_task_nested_in_ul(self):
+        # "  - [x] nested" — indented task list with circle bullet
+        result = apply_block_line("  - [x] nested task")
+        assert "✓" in result
+        assert result.startswith("  ")
+        # Level-1 bullet is ◦
+        assert "◦" in result
+
+    def test_task_double_nested(self):
+        result = apply_block_line("    - [ ] deep task")
+        assert "○" in result
+        assert result.startswith("    ")
+
+    def test_task_content_inline_code(self):
+        result = apply_block_line("- [x] run `pytest`")
+        assert "✓" in result
+        assert "pytest" in result
+
+    def test_task_content_bold(self):
+        result = apply_block_line("- [ ] **urgent** item")
+        assert "○" in result
+        assert "\033[1m" in result
+        assert "urgent" in result
+
+    def test_task_star_marker(self):
+        # Task with * list marker
+        result = apply_block_line("* [x] done with star")
+        assert "✓" in result
+
+    def test_task_plus_marker(self):
+        # Task with + list marker
+        result = apply_block_line("+ [ ] pending with plus")
+        assert "○" in result
+
+    def test_task_via_render_stateful(self):
+        text = "- [x] done\n- [ ] pending\n"
+        result = render_stateful_blocks(text)
+        # render_stateful_blocks doesn't apply block-level rendering, but items pass through
+        # as plain text (apply_block_line is called in format_response pass 3)
+        assert "done" in result
+        assert "pending" in result
+
+    def test_task_via_format_response_inline_bold(self):
+        text = "- [x] **bold task**\n"
+        result = format_response(text)
+        assert "✓" in result
+        assert "\033[1m" in result
+
+
+# ---------------------------------------------------------------------------
+# Feature 3 (Nested blockquotes) — additional edge cases
+# ---------------------------------------------------------------------------
+
+class TestNestedBlockquotesEdgeCases:
+    """Edge cases for nested blockquote depth rendering."""
+
+    def test_depth_3_cap_at_double_dim(self):
+        # Depth 3 adds min(2, 2) = 2 extra dim codes (capped)
+        result = apply_block_line("> > > triple")
+        # 4-space indent for depth-3
+        assert result.startswith("    ")
+        assert "▌" in result
+        # dim_prefix = "\033[2m" * min(2, 2) = 2 dims + base dim = 3 total
+        assert result.count("\033[2m") >= 3
+
+    def test_depth_2_indent_is_two_spaces(self):
+        result = apply_block_line("> > nested")
+        assert result.startswith("  ")
+        assert not result.startswith("    ")
+
+    def test_depth_3_indent_is_four_spaces(self):
+        result = apply_block_line("> > > triple")
+        assert result.startswith("    ")
+
+    def test_depth_reset_on_blank_in_stateful(self):
+        text = "> > deep\n\n> shallow\n"
+        result = render_stateful_blocks(text)
+        assert result.count("▌") == 2
+        # After blank, shallow is depth-1, no extra indent
+        lines = result.splitlines()
+        shallow_line = next((l for l in lines if "shallow" in l), None)
+        assert shallow_line is not None
+        assert not shallow_line.startswith("  ")
+
+    def test_lazy_continuation_at_depth2_stateful(self):
+        # Lazy continuation (no >) while in depth-2 BQ
+        text = "> > first line\nlazy cont\n"
+        result = render_stateful_blocks(text)
+        # Lazy cont rendered at current depth (2)
+        assert result.count("▌") == 2
+        assert "lazy cont" in result
+
+    def test_streaming_depth2_then_depth1(self):
+        buf = StreamingBlockBuffer()
+        buf.process_line("> > deep")  # buffered
+        result = buf.process_line("> shallow")  # emits deep, buffers shallow
+        flushed = buf.flush()
+        assert result is not None
+        assert "deep" in result
+        assert result.startswith("  ")
+        assert flushed is not None
+        assert "shallow" in flushed
+
+    def test_streaming_depth_reset_on_blank(self):
+        buf = StreamingBlockBuffer()
+        buf.process_line("> > deep")  # buffered
+        r_deep = buf.process_line("")  # blank exits BQ, emits pending
+        r_shallow = buf.process_line("> shallow")
+        flushed = buf.flush()
+        # deep should have been emitted
+        assert r_deep is not None
+        assert "deep" in r_deep
+        # shallow is a new BQ
+        assert flushed is not None
+        assert "shallow" in flushed
+
+    def test_bq_ansi_line_adjacent(self):
+        # ANSI line (pre-highlighted code) inside BQ context still has gutter
+        text = "> before\n\x1b[32mcode\x1b[0m\n> after\n"
+        result = render_stateful_blocks(text)
+        # The ANSI line should have a gutter since it's adjacent/inside BQ
+        assert "▌" in result
+
+    def test_depth1_no_extra_dim(self):
+        result = apply_block_line("> solo")
+        # depth-1: no extra dim beyond _BLOCKQUOTE_ANSI itself
+        # _BLOCKQUOTE_ANSI = "\033[2m", dim_prefix = "" for depth 1
+        # So exactly 1 leading \033[2m
+        # Split on ▌ to check prefix
+        before_gutter = result.split("▌")[0]
+        assert before_gutter.count("\033[2m") == 1
+
+
+# ---------------------------------------------------------------------------
+# Feature 4 (Setext in blockquotes) — additional edge cases
+# ---------------------------------------------------------------------------
+
+class TestSetextInBlockquoteEdgeCases:
+    """Edge cases for setext headings rendered inside blockquotes."""
+
+    def test_blank_inner_does_not_trigger_setext(self):
+        # "> \n> ===" — blank content is not a heading candidate
+        text = "> \n> ===\n"
+        result = render_stateful_blocks(text)
+        assert "\033[1;97m" not in result
+
+    def test_ol_inner_does_not_trigger_setext(self):
+        # "> 1. list\n> ---" — OL item is not a setext heading candidate
+        text = "> 1. list\n> ---\n"
+        result = render_stateful_blocks(text)
+        assert "\033[1;37m" not in result
+        assert "list" in result
+
+    def test_setext_h1_single_eq_does_not_trigger(self):
+        # Single '=' is not a setext h1 marker (needs 2+)
+        text = "> Heading\n> =\n"
+        result = render_stateful_blocks(text)
+        assert "\033[1;97m" not in result
+
+    def test_two_normal_bq_lines_both_rendered(self):
+        text = "> first\n> second\n"
+        result = render_stateful_blocks(text)
+        assert result.count("▌") == 2
+        assert "first" in result
+        assert "second" in result
+
+    def test_setext_h2_in_blockquote_stateful(self):
+        text = "> Subtitle\n> ---\n"
+        result = render_stateful_blocks(text)
+        assert "▌" in result
+        assert "Subtitle" in result
+        assert "\033[1;37m" in result
+        assert "---" not in _strip(result)
+
+    def test_setext_h1_in_blockquote_stateful(self):
+        text = "> Title\n> ===\n"
+        result = render_stateful_blocks(text)
+        assert "▌" in result
+        assert "Title" in result
+        assert "\033[1;97m" in result
+
+    def test_streaming_setext_h2_in_bq(self):
+        buf = StreamingBlockBuffer()
+        r1 = buf.process_line("> Sub")
+        r2 = buf.process_line("> ---")
+        flushed = buf.flush()
+        combined = "\n".join(x for x in [r1, r2, flushed] if x)
+        assert "Sub" in combined
+        assert "\033[1;37m" in combined
+
+    def test_format_response_setext_h2_in_bq(self):
+        text = "> Chapter\n> --------\n"
+        result = format_response(text)
+        assert "▌" in result
+        assert "Chapter" in result
+        assert "\033[1;37m" in result
+
+    def test_setext_in_depth2_bq(self):
+        # Setext heading inside depth-2 blockquote
+        text = "> > Heading\n> > ===\n"
+        result = render_stateful_blocks(text)
+        assert "\033[1;97m" in result
+        assert "Heading" in result
+        # Depth-2 indent
+        assert result.startswith("  ")

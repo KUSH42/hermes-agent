@@ -2054,10 +2054,3 @@ def clean_command_output(content: str) -> str:
     return re.sub(r"\n\s*\n\s*\n", "\n\n", result).strip()
 
 
-# ---------------------------------------------------------------------------
-# Module-level convenience singletons
-# ---------------------------------------------------------------------------
-
-lang_detector = LanguageDetector()
-syntax_highlighter = SyntaxHighlighter()
-diff_renderer = DiffRenderer()

@@ -1011,7 +1011,9 @@ def apply_block_line(line: str) -> str:
 
 _SETEXT_H1_RE = re.compile(r"^={2,}\s*$")
 _SETEXT_H2_RE = re.compile(r"^-{2,}\s*$")
-_TABLE_ROW_RE = re.compile(r"^\|.+\|\s*$")
+_TABLE_STRICT_ROW_RE = re.compile(r"^\|.+\|\s*$")   # pipes at both ends (strict GFM)
+_TABLE_LOOSE_ROW_RE  = re.compile(r"^[^|].+\|")      # no leading pipe, contains | (loose GFM)
+_TABLE_SEP_RE        = re.compile(r"^[\s:\-|]+$")     # separator row (dashes/colons/pipes)
 _SEP_CELL_RE = re.compile(r"^[\s:-]+$")
 _NUM_RE = re.compile(r"^-?[\d,]+\.?\d*$")
 _ANSI_ESC_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -1075,12 +1077,12 @@ def _is_heading_candidate(pending: Optional[str]) -> bool:
     return apply_block_line(pending) is pending
 
 
-def _render_table(rows: list[list[str]], sep_idx: Optional[int], align: list[str], cols: int) -> str:
+def _render_table(rows: list[list[str]], sep_idx: Optional[int], align: list[str], cols: int, framed: bool = False) -> str:
     if not rows:
         return ""
-    # Apply inline markdown to every data cell so that ANSI styling is
-    # accounted for before we measure visual widths.  Separator rows are kept
-    # raw (they are replaced by a ─ line and never inspected for content).
+    # Apply inline markdown to every data cell so ANSI styling is accounted for
+    # before measuring visual widths.  Separator rows are kept raw (replaced by
+    # a divider line and never inspected for content).
     rendered_rows: list[list[str]] = []
     for i, row in enumerate(rows):
         if i == sep_idx:
@@ -1096,25 +1098,44 @@ def _render_table(rows: list[list[str]], sep_idx: Optional[int], align: list[str
         for i in range(cols)
     ]
     align = list(align) + ["left"] * (cols - len(align))
-    out = []
-    for r_idx, row in enumerate(rendered_rows):
-        if r_idx == sep_idx:
-            out.append(" " + "  ".join("─" * w for w in widths))
-            continue
-        cells = []
-        for i, w in enumerate(widths):
-            cell = row[i] if i < len(row) else ""
-            raw = _ANSI_ESC_RE.sub("", cell)
-            pad = w - _visual_len(cell)
-            if align[i] == "right" or _NUM_RE.match(raw):
-                cells.append(" " * pad + cell)
-            elif align[i] == "centre":
-                lpad = pad // 2
-                cells.append(" " * lpad + cell + " " * (pad - lpad))
-            else:
-                cells.append(cell + " " * pad)
-        out.append(" " + "  ".join(cells))
-    return "\n".join(out)
+
+    def _padded(cell: str, w: int, a: str) -> str:
+        raw = _ANSI_ESC_RE.sub("", cell).strip()
+        pad = w - _visual_len(cell)
+        if a == "right" or _NUM_RE.match(raw):
+            return " " * pad + cell
+        if a == "centre":
+            lpad = pad // 2
+            return " " * lpad + cell + " " * (pad - lpad)
+        return cell + " " * pad
+
+    if framed:
+        def _hline(l: str, m: str, r: str) -> str:
+            return l + m.join("─" * (w + 2) for w in widths) + r
+
+        content = [(i, r) for i, r in enumerate(rendered_rows) if i != sep_idx]
+        out = [_hline("┌", "┬", "┐")]
+        for idx, (_, row) in enumerate(content):
+            cells_str = "│".join(
+                f" {_padded(row[i] if i < len(row) else '', widths[i], align[i])} "
+                for i in range(cols)
+            )
+            out.append(f"│{cells_str}│")
+            if idx < len(content) - 1:
+                out.append(_hline("├", "┼", "┤"))
+        out.append(_hline("└", "┴", "┘"))
+        return "\n".join(out)
+    else:
+        out = []
+        for r_idx, row in enumerate(rendered_rows):
+            if r_idx == sep_idx:
+                out.append(" " + "  ".join("─" * w for w in widths))
+                continue
+            out.append(" " + "  ".join(
+                _padded(row[i] if i < len(row) else "", widths[i], align[i])
+                for i in range(cols)
+            ))
+        return "\n".join(out)
 
 
 def render_stateful_blocks(text: str) -> str:
@@ -1140,6 +1161,7 @@ def render_stateful_blocks(text: str) -> str:
     _table_rows: list = []
     _sep_idx: Optional[int] = None
     _align: list = []
+    _table_strict: bool = False
 
     def _emit(s: str) -> None:
         out.append(s)
@@ -1163,7 +1185,9 @@ def render_stateful_blocks(text: str) -> str:
         return f"{indent}{ansi}▌ {content_rendered}\033[0m"
 
     def _on_table_row(raw: str) -> None:
-        nonlocal _sep_idx, _align
+        nonlocal _sep_idx, _align, _table_strict
+        if not _table_rows:  # first row is the header — determines strict vs loose
+            _table_strict = bool(_TABLE_STRICT_ROW_RE.match(raw))
         header_cols = len(_split_row(_table_rows[0])) if _table_rows else 0
         cells = _split_row(raw)
         if _sep_idx is None and cells and all(_SEP_CELL_RE.match(c) for c in cells):
@@ -1173,15 +1197,16 @@ def render_stateful_blocks(text: str) -> str:
         _table_rows.append(raw)
 
     def _flush_table_to_out() -> None:
-        nonlocal _sep_idx, _align
+        nonlocal _sep_idx, _align, _table_strict
         if not _table_rows:
             return
         rows = [_split_row(r) for r in _table_rows]
         cols = len(rows[0]) if rows else 0
-        rendered = _render_table(rows, _sep_idx, _align, cols)
+        rendered = _render_table(rows, _sep_idx, _align, cols, framed=_table_strict)
         _table_rows.clear()
         _sep_idx = None
         _align = []
+        _table_strict = False
         for tl in rendered.splitlines():
             _emit(tl)
 
@@ -1249,7 +1274,7 @@ def render_stateful_blocks(text: str) -> str:
             # Accept strict rows always; accept loose rows (no leading pipe) once
             # the separator has been seen — after that any pipe-bearing line is a
             # data row.  Blank lines or pipe-free lines end the table.
-            if _TABLE_ROW_RE.match(line) or (_sep_idx is not None and "|" in line):
+            if _TABLE_STRICT_ROW_RE.match(line) or (_sep_idx is not None and "|" in line):
                 _on_table_row(line)
                 continue
             else:
@@ -1284,7 +1309,7 @@ def render_stateful_blocks(text: str) -> str:
             _pending = line
             continue
 
-        if _TABLE_ROW_RE.match(line):
+        if _TABLE_STRICT_ROW_RE.match(line):
             # If the pending line already contains pipes it is the loose table
             # header that preceded this strict row — rescue it instead of
             # emitting it as plain prose.
@@ -1296,9 +1321,9 @@ def render_stateful_blocks(text: str) -> str:
             _on_table_row(line)
             continue
 
-        # Loose table separator (no leading pipe, e.g. "---|---|---").
-        # If the pending line also has pipes it is the loose table header.
-        if "|" in line and _pending is not None and "|" in _pending:
+        # Loose table separator (no leading pipe, e.g. "---|---|---" or "--- --- ---").
+        # Current line must look like a separator; pending line must be a loose header.
+        if _pending is not None and "|" in _pending and "-" in line and _TABLE_SEP_RE.match(line.strip()):
             _loose_cells = _split_row(line)
             if _loose_cells and all(_SEP_CELL_RE.match(c) for c in _loose_cells):
                 _on_table_row(_pending)
@@ -1363,6 +1388,7 @@ class StreamingBlockBuffer:
         self._table_buf: list = []
         self._sep_idx: Optional[int] = None
         self._align: list = []
+        self._table_strict: bool = False
         self._emit_next: Optional[str] = None
         self._ref_map: dict[str, str] = {}
 
@@ -1375,6 +1401,7 @@ class StreamingBlockBuffer:
         self._table_buf = []
         self._sep_idx = None
         self._align = []
+        self._table_strict = False
         self._emit_next = None
         self._ref_map = {}
 
@@ -1525,7 +1552,7 @@ class StreamingBlockBuffer:
 
         # Priority 3: table accumulation
         if self._table_buf:
-            if _TABLE_ROW_RE.match(line) or (self._sep_idx is not None and "|" in line):
+            if _TABLE_STRICT_ROW_RE.match(line) or (self._sep_idx is not None and "|" in line):
                 self._on_table_row(line)
                 return None
             else:
@@ -1562,7 +1589,7 @@ class StreamingBlockBuffer:
             return None
 
         # Table row start
-        if _TABLE_ROW_RE.match(line):
+        if _TABLE_STRICT_ROW_RE.match(line):
             if self._pending is not None and "|" in self._pending:
                 # Pending line is a loose table header — rescue it.
                 self._on_table_row(self._pending)
@@ -1577,8 +1604,8 @@ class StreamingBlockBuffer:
             self._on_table_row(line)
             return None
 
-        # Loose table separator (no leading pipe).
-        if "|" in line and self._pending is not None and "|" in self._pending:
+        # Loose table separator (no leading pipe, e.g. "---|---|---" or "--- --- ---").
+        if self._pending is not None and "|" in self._pending and "-" in line and _TABLE_SEP_RE.match(line.strip()):
             _loose_cells = _split_row(line)
             if _loose_cells and all(_SEP_CELL_RE.match(c) for c in _loose_cells):
                 self._on_table_row(self._pending)
@@ -1625,6 +1652,8 @@ class StreamingBlockBuffer:
         return self._render_bq_depth(content, max(self._bq_depth, 1))
 
     def _on_table_row(self, raw: str) -> None:
+        if not self._table_buf:  # first row is the header — determines strict vs loose
+            self._table_strict = bool(_TABLE_STRICT_ROW_RE.match(raw))
         header_cols = len(_split_row(self._table_buf[0])) if self._table_buf else 0
         cells = _split_row(raw)
         if self._sep_idx is None and cells and all(_SEP_CELL_RE.match(c) for c in cells):
@@ -1636,10 +1665,11 @@ class StreamingBlockBuffer:
     def _flush_table_str(self) -> str:
         rows = [_split_row(r) for r in self._table_buf]
         cols = len(rows[0]) if rows else 0
-        rendered = _render_table(rows, self._sep_idx, self._align, cols)
+        rendered = _render_table(rows, self._sep_idx, self._align, cols, framed=self._table_strict)
         self._table_buf = []
         self._sep_idx = None
         self._align = []
+        self._table_strict = False
         return rendered
 
 

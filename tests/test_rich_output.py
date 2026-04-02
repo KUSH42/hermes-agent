@@ -1511,6 +1511,18 @@ class TestRenderStatefulBlocksTables:
         assert "─" not in plain
 
 
+    def test_inline_markdown_in_cells_does_not_misalign_columns(self):
+        # Cells with **bold** markup: rendered visual width must match padding.
+        md = "| A | B |\n|---|---|\n| **hi** | x |\n| bye | y |"
+        out = format_response(md)
+        lines = [l for l in out.splitlines() if l.strip() and "─" not in l]
+        # All data lines must have the same visual length (consistent column widths).
+        import re
+        ansi = re.compile(r"\x1b\[[0-9;]*m")
+        visual_lens = [len(ansi.sub("", l)) for l in lines]
+        assert len(set(visual_lens)) == 1, f"Column widths diverged: {visual_lens}"
+
+
 # ---------------------------------------------------------------------------
 # StreamingBlockBuffer
 # ---------------------------------------------------------------------------

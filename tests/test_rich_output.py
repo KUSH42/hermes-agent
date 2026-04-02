@@ -1238,6 +1238,20 @@ class TestApplyInlineMarkdown:
         url_end = stripped.index("https://example.com") + len("https://example.com")
         assert stripped[url_end] == "."
 
+    def test_bare_file_url_styled(self):
+        result = apply_inline_markdown("file:///home/user/tmp")
+        assert "\033[4m" in result
+        assert "file:///home/user/tmp" in result
+
+    def test_bare_www_domain_styled(self):
+        result = apply_inline_markdown("Check www.example.com for info")
+        assert "\033[4m" in result
+        assert "www.example.com" in result
+
+    def test_bare_www_not_matched_mid_word(self):
+        result = apply_inline_markdown("xwww.example.com")
+        assert "\033[4m" not in result
+
     def test_bare_url_does_not_double_process_markdown_link(self):
         result = apply_inline_markdown("[text](https://x.com) and https://y.com")
         # markdown link: text shown, not the raw [text](url)

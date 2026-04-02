@@ -8,6 +8,8 @@ from agent.rich_output import (
     FilePathFormatter,
     LanguageDetector,
     SyntaxHighlighter,
+    _DIFF_BG_ADD_HL,
+    _DIFF_BG_DEL_HL,
     _intra_diff,
     _parse_diff_filename,
 )
@@ -186,40 +188,53 @@ class TestDiffRenderer:
 # ---------------------------------------------------------------------------
 
 class TestIntraDiff:
+    # _intra_diff now returns ([del_text], [add_text]) — single-element lists
+    # where each element is a Rich Text with spans rather than a list of
+    # per-segment Text objects.  Changed regions are marked with a brighter
+    # background (bold) instead of a bright foreground colour.
+
     def test_equal_spans_use_base_colour(self):
+        # Identical lines → no changed region → no bright-highlight spans.
         del_segs, add_segs = _intra_diff("abc", "abc")
-        for seg in del_segs + add_segs:
-            assert not seg.style.bold
-            assert _seg_color(seg) == "white"
+        del_text, add_text = del_segs[0], add_segs[0]
+        assert del_text.plain == "abc"
+        assert add_text.plain == "abc"
+        # No span should carry the brighter highlight background.
+        del_bgs = {sp.style.bgcolor for sp in del_text._spans if sp.style.bgcolor}
+        add_bgs = {sp.style.bgcolor for sp in add_text._spans if sp.style.bgcolor}
+        from rich.color import Color
+        hl_del = Color.parse(_DIFF_BG_DEL_HL)
+        hl_add = Color.parse(_DIFF_BG_ADD_HL)
+        assert hl_del not in del_bgs
+        assert hl_add not in add_bgs
 
     def test_changed_span_highlighted(self):
+        # "foo bar" → "foo baz": only the last char differs.
         del_segs, add_segs = _intra_diff("foo bar", "foo baz")
-        # There must be at least one bright_red segment in del and bright_green in add
-        del_highlighted = [s for s in del_segs if _seg_color(s) == "bright_red"]
-        add_highlighted = [s for s in add_segs if _seg_color(s) == "bright_green"]
-        assert del_highlighted, "expected at least one bright_red segment in del_segs"
-        assert add_highlighted, "expected at least one bright_green segment in add_segs"
-        # All highlighted segments must be bold
-        assert all(s.style.bold for s in del_highlighted)
-        assert all(s.style.bold for s in add_highlighted)
-        # Equal spans must be white and not bold
-        del_equal = [s for s in del_segs if _seg_color(s) == "white"]
-        assert del_equal, "expected equal (white) segments in del_segs"
-        assert all(not s.style.bold for s in del_equal)
+        del_text, add_text = del_segs[0], add_segs[0]
+        from rich.color import Color
+        hl_del = Color.parse(_DIFF_BG_DEL_HL)
+        hl_add = Color.parse(_DIFF_BG_ADD_HL)
+        del_bgs = {sp.style.bgcolor for sp in del_text._spans if sp.style.bgcolor}
+        add_bgs = {sp.style.bgcolor for sp in add_text._spans if sp.style.bgcolor}
+        assert hl_del in del_bgs, "expected bright del bg on changed span"
+        assert hl_add in add_bgs, "expected bright add bg on changed span"
+        # Changed spans must be bold.
+        del_bold = any(
+            sp.style.bold and sp.style.bgcolor == hl_del
+            for sp in del_text._spans
+        )
+        assert del_bold, "changed del span must be bold"
 
     def test_delete_opcode_no_add_seg(self):
         del_segs, add_segs = _intra_diff("abcXYZ", "abc")
-        del_plain = "".join(s.plain for s in del_segs)
-        add_plain = "".join(s.plain for s in add_segs)
-        assert "XYZ" in del_plain
-        assert len(add_plain) == 3  # only "abc"
+        assert "XYZ" in del_segs[0].plain
+        assert add_segs[0].plain == "abc"
 
     def test_insert_opcode_no_del_seg(self):
         del_segs, add_segs = _intra_diff("abc", "abcXYZ")
-        del_plain = "".join(s.plain for s in del_segs)
-        add_plain = "".join(s.plain for s in add_segs)
-        assert "XYZ" in add_plain
-        assert len(del_plain) == 3  # only "abc"
+        assert "XYZ" in add_segs[0].plain
+        assert del_segs[0].plain == "abc"
 
 
 # ---------------------------------------------------------------------------
@@ -300,9 +315,12 @@ class TestDiffRendererV2:
             DiffRenderer()._style(diff.splitlines())
         )
         output = buf.getvalue()
-        # Both pairs should produce intra-highlighted changed chars
-        assert output.count("\x1b[1;91;") >= 2  # bright_red bold in both del lines
-        assert output.count("\x1b[1;92;") >= 2  # bright_green bold in both add lines
+        # Both pairs should produce intra-highlighted changed chars.
+        # Changed regions now use a brighter background (bold) rather than a
+        # bright foreground colour, so check for the bright-del-bg ANSI code
+        # (_DIFF_BG_DEL_HL = "#b43030" → rgb(180,48,48)).
+        assert output.count("48;2;180;48;48") >= 2, "expected bright del bg in both del lines"
+        assert output.count("48;2;40;148;40") >= 2, "expected bright add bg in both add lines"
 
     def test_alternating_run_flush(self):
         # -A +B -C +D with no context between — should pair (-A,+B) and (-C,+D)

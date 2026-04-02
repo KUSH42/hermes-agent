@@ -907,6 +907,12 @@ class TestApplyInlineMarkdown:
         assert "underline - kinda works" in result
         assert "_" not in result
 
+    def test_italic_single_underscore_with_spaces(self):
+        result = apply_inline_markdown("This is _super bold and italic_ text.")
+        assert "\033[3m" in result
+        assert "super bold and italic" in result
+        assert "_" not in result
+
     def test_underscore_inside_word_ignored(self):
         result = apply_inline_markdown("snake_case_var")
         assert result == "snake_case_var"

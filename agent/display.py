@@ -440,7 +440,9 @@ def _render_inline_unified_diff(diff: str) -> list[str]:
     """
     if _RICH_OUTPUT:
         try:
-            return _rich_diff.to_lines(diff, max_lines=0)
+            import shutil
+            width = shutil.get_terminal_size().columns
+            return _rich_diff.to_lines(diff, width=width, max_lines=0)
         except Exception as exc:
             logger.debug("Rich diff render failed, using ANSI fallback: %s", exc)
 

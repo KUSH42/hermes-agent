@@ -1260,6 +1260,18 @@ class TestApplyInlineMarkdown:
         # bare URL also styled (appears once)
         assert result.count("https://y.com") == 1
 
+    def test_bare_url_inside_bold_no_orphan_ansi(self):
+        # Regression: bold/italic wrapping a bare URL caused the ESC byte from
+        # the inner apply_inline_markdown's reset to be captured by the outer
+        # _MD_BARE_URL_RE (ESC is not excluded from [^\s<>\[\]()\"] by default),
+        # leaving a literal "[0m[0m" in the rendered output.
+        for wrapper in ("**{url}** rest", "*{url}* rest"):
+            line = wrapper.format(url="https://example.com/path")
+            result = apply_inline_markdown(line, reset_suffix="\033[38;2;200;200;200m")
+            plain = _strip(result)
+            assert "[0m" not in plain, f"orphan '[0m' in output of {wrapper!r}: {plain!r}"
+            assert "https://example.com/path" in plain
+
 
 class TestApplyBlockLine:
     def test_h1_stripped_and_bold(self):

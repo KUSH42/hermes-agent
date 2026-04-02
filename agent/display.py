@@ -21,11 +21,59 @@ _RESET = "\033[0m"
 logger = logging.getLogger(__name__)
 
 _ANSI_RESET = "\033[0m"
-_ANSI_DIM = "\033[38;2;150;150;150m"
-_ANSI_FILE = "\033[38;2;180;160;255m"
-_ANSI_HUNK = "\033[38;2;120;120;140m"
-_ANSI_MINUS = "\033[38;2;255;255;255;48;2;120;20;20m"
-_ANSI_PLUS = "\033[38;2;255;255;255;48;2;20;90;20m"
+
+
+# ---------------------------------------------------------------------------
+# Hex → ANSI truecolor helpers (used by diff color accessors below)
+# ---------------------------------------------------------------------------
+
+def _hex_to_ansi_fg(hex_color: str) -> str:
+    """Convert #RRGGBB to ANSI truecolor foreground escape. Returns "" on error."""
+    try:
+        h = hex_color.lstrip("#")
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        return f"\033[38;2;{r};{g};{b}m"
+    except Exception:
+        return ""
+
+
+def _hex_to_ansi_bg(hex_color: str) -> str:
+    """Convert #RRGGBB to ANSI truecolor background escape. Returns "" on error."""
+    try:
+        h = hex_color.lstrip("#")
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        return f"\033[48;2;{r};{g};{b}m"
+    except Exception:
+        return ""
+
+
+def _d(key: str) -> str:
+    """Lazy diff color accessor. Returns hex string from active skin, or ""."""
+    try:
+        from hermes_cli.skin_engine import get_active_skin
+        return get_active_skin().get_diff(key, "")
+    except Exception:
+        return ""
+
+
+def _ansi_dim() -> str:
+    return _hex_to_ansi_fg(_d("context_fg"))
+
+
+def _ansi_file() -> str:
+    return _hex_to_ansi_fg(_d("file_path_fg"))
+
+
+def _ansi_hunk() -> str:
+    return _hex_to_ansi_fg(_d("hunk_fg"))
+
+
+def _ansi_minus() -> str:
+    return _hex_to_ansi_fg(_d("deletion_fg")) + _hex_to_ansi_bg(_d("deletion_bg"))
+
+
+def _ansi_plus() -> str:
+    return _hex_to_ansi_fg(_d("addition_fg")) + _hex_to_ansi_bg(_d("addition_bg"))
 _MAX_INLINE_DIFF_FILES = 6
 _MAX_INLINE_DIFF_LINES = 80
 
@@ -50,11 +98,13 @@ try:
     _rich_syntax = _RichSyntaxHighlighter()
     _rich_detector = _RichLanguageDetector()
     _RICH_OUTPUT = True
-    # Register syntax highlighter for skin-switch invalidation.
+    # Register invalidation callbacks for skin-switch.
     # skin_engine never imports display or rich_output, so callers self-register.
     try:
+        from agent import rich_output as _rich_output
         from hermes_cli import skin_engine as _skin_engine
         _skin_engine.register_skin_callback(_rich_syntax.refresh)
+        _skin_engine.register_skin_callback(_rich_output._rebuild_md_cache)
     except Exception:
         pass
 except ImportError:
@@ -465,19 +515,19 @@ def _render_inline_unified_diff(diff: str) -> list[str]:
         if raw_line.startswith("+++ "):
             to_file = raw_line[4:].strip()
             if from_file or to_file:
-                rendered.append(f"{_ANSI_FILE}{from_file or 'a/?'} → {to_file or 'b/?'}{_ANSI_RESET}")
+                rendered.append(f"{_ansi_file()}{from_file or 'a/?'} → {to_file or 'b/?'}{_ANSI_RESET}")
             continue
         if raw_line.startswith("@@"):
-            rendered.append(f"{_ANSI_HUNK}{raw_line}{_ANSI_RESET}")
+            rendered.append(f"{_ansi_hunk()}{raw_line}{_ANSI_RESET}")
             continue
         if raw_line.startswith("-"):
-            rendered.append(f"{_ANSI_MINUS}{raw_line}{_ANSI_RESET}")
+            rendered.append(f"{_ansi_minus()}{raw_line}{_ANSI_RESET}")
             continue
         if raw_line.startswith("+"):
-            rendered.append(f"{_ANSI_PLUS}{raw_line}{_ANSI_RESET}")
+            rendered.append(f"{_ansi_plus()}{raw_line}{_ANSI_RESET}")
             continue
         if raw_line.startswith(" "):
-            rendered.append(f"{_ANSI_DIM}{raw_line}{_ANSI_RESET}")
+            rendered.append(f"{_ansi_dim()}{raw_line}{_ANSI_RESET}")
             continue
         if raw_line:
             rendered.append(raw_line)
@@ -561,7 +611,7 @@ def _summarize_rendered_diff_sections(
         summary = f"… omitted {omitted_lines} diff line(s)"
         if omitted_files:
             summary += f" across {omitted_files} additional file(s)/section(s)"
-        rendered.append(f"{_ANSI_HUNK}{summary}{_ANSI_RESET}")
+        rendered.append(f"{_ansi_hunk()}{summary}{_ANSI_RESET}")
 
     return rendered
 

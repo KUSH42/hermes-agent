@@ -65,18 +65,7 @@ from agent.usage_pricing import (
 )
 from hermes_cli.banner import _format_context_length
 
-_SPINNER_STYLES: dict[str, tuple[str, ...]] = {
-    "dots":    ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"),
-    "bounce":  ("⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈"),
-    "grow":    ("▁", "▂", "▃", "▄", "▅", "▆", "▇", "█", "▇", "▆", "▅", "▄", "▃", "▂"),
-    "arrows":  ("←", "↖", "↑", "↗", "→", "↘", "↓", "↙"),
-    "star":    ("✶", "✷", "✸", "✹", "✺", "✹", "✸", "✷"),
-    "moon":    ("🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘"),
-    "pulse":   ("◜", "◠", "◝", "◞", "◡", "◟"),
-    "clock":   ("🕛", "🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚"),
-    "none":    ("",),
-}
-_COMMAND_SPINNER_FRAMES = _SPINNER_STYLES["dots"]  # overridden at CLI init from config
+_COMMAND_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 
 
 # Load .env from ~/.hermes/.env first, then project root as dev fallback.
@@ -550,6 +539,16 @@ try:
     set_tool_preview_max_len(int(_tpl) if _tpl else 0)
 except Exception:
     pass
+
+# Rich-based response highlighting (syntax highlight fenced code blocks)
+try:
+    import agent.display as _display
+    from agent.rich_output import StreamingBlockBuffer as _BlockBuf
+    from agent.rich_output import StreamingCodeBlockHighlighter as _CodeBlockHL
+    from agent.rich_output import format_response as _format_response
+    _RICH_RESPONSE = True
+except ImportError:
+    _RICH_RESPONSE = False
 
 # Neuter AsyncHttpxClientWrapper.__del__ before any AsyncOpenAI clients are
 # created.  The SDK's __del__ schedules aclose() on asyncio.get_running_loop()
@@ -1261,24 +1260,10 @@ class HermesCLI:
         # Inline diff previews for write actions (display.inline_diffs in config.yaml)
         self._inline_diffs_enabled = CLI_CONFIG["display"].get("inline_diffs", True)
 
-        # Spinner style — pick from _SPINNER_STYLES; falls back to "dots" for unknown keys
-        _spinner_key = CLI_CONFIG["display"].get("spinner_style", "dots")
-        global _COMMAND_SPINNER_FRAMES
-        _COMMAND_SPINNER_FRAMES = _SPINNER_STYLES.get(_spinner_key, _SPINNER_STYLES["dots"])
-
-        # Terminal tab/title — update with spinner frame while agent is active
-        self._title_spinner = CLI_CONFIG["display"].get("title_spinner", True)
-        self._title_base = CLI_CONFIG["display"].get("title_base", "Hermes")
-
         # Syntax-highlighted code preview for execute_code (display.code_highlight in config.yaml)
         self._code_highlight_enabled = CLI_CONFIG["display"].get("code_highlight", True)
-        from agent.display import set_code_highlight_active, set_diff_limits, set_preview_max_lines
+        from agent.display import set_code_highlight_active
         set_code_highlight_active(self._code_highlight_enabled)
-        set_diff_limits(
-            max_lines=CLI_CONFIG["display"].get("diff_max_lines", 80),
-            max_files=CLI_CONFIG["display"].get("diff_max_files", 6),
-        )
-        set_preview_max_lines(CLI_CONFIG["display"].get("preview_max_lines", 40))
 
         # Streaming display state
         self._stream_buf = ""        # Partial line buffer for line-buffered rendering
@@ -1286,6 +1271,7 @@ class HermesCLI:
         self._stream_box_opened = False  # True once the response box header is printed
         self._reasoning_stream_started = False  # True once live reasoning starts streaming
         self._reasoning_preview_buf = ""  # Coalesce tiny reasoning chunks for [thinking] output
+        self._stream_code_hl = _CodeBlockHL() if _RICH_RESPONSE else None
         self._pending_edit_snapshots = {}
         
         # Configuration - priority: CLI args > env vars > config file
@@ -1807,16 +1793,12 @@ class HermesCLI:
     # ── Streaming display ────────────────────────────────────────────────
 
     def _current_reasoning_callback(self):
-        """Return the active reasoning display callback for the current mode.
-
-        show_reasoning is the sole gate — verbose mode does not override it.
-        When show_reasoning is on: streaming path gets live token delivery
-        (_stream_reasoning_delta); non-streaming path gets the batch preview
-        (_on_reasoning / _flush_reasoning_preview → [thinking] lines).
-        """
-        if not self.show_reasoning:
-            return None
-        return self._stream_reasoning_delta if self.streaming_enabled else self._on_reasoning
+        """Return the active reasoning display callback for the current mode."""
+        if self.show_reasoning and self.streaming_enabled:
+            return self._stream_reasoning_delta
+        if self.verbose and not self.show_reasoning:
+            return self._on_reasoning
+        return None
 
     def _emit_reasoning_preview(self, reasoning_text: str) -> None:
         """Render a buffered reasoning preview as a single [thinking] block."""
@@ -2106,7 +2088,21 @@ class HermesCLI:
         _tc = getattr(self, "_stream_text_ansi", "")
         while "\n" in self._stream_buf:
             line, self._stream_buf = self._stream_buf.split("\n", 1)
-            _cprint(f"{_tc}{line}{_RST}" if _tc else line)
+            if _RICH_RESPONSE:
+                out = self._stream_block_buf.process_line(line)
+                if out is None:
+                    continue
+                out2 = self._stream_code_hl.process_line(out)
+                if out2 is None:
+                    continue
+                if out2 is out:
+                    out = _apply_inline_md(_apply_block_line(out), reset_suffix=_tc)
+                    _cprint(f"{_tc}{out}{_RST}" if _tc else out)
+                else:
+                    for hl_line in out2.splitlines():
+                        _cprint(hl_line)
+            else:
+                _cprint(f"{_tc}{line}{_RST}" if _tc else line)
 
     def _flush_stream(self) -> None:
         """Emit any remaining partial line from the stream buffer and close the box."""
@@ -2115,7 +2111,28 @@ class HermesCLI:
 
         if self._stream_buf:
             _tc = getattr(self, "_stream_text_ansi", "")
-            _cprint(f"{_tc}{self._stream_buf}{_RST}" if _tc else self._stream_buf)
+            if _RICH_RESPONSE:
+                block_out = self._stream_block_buf.process_line(self._stream_buf)
+                if block_out is not None:
+                    out2 = self._stream_code_hl.process_line(block_out)
+                    if out2 is not None:
+                        if out2 is block_out:
+                            out2 = _apply_inline_md(_apply_block_line(out2), reset_suffix=_tc)
+                            _cprint(f"{_tc}{out2}{_RST}" if _tc else out2)
+                        else:
+                            for hl_line in out2.splitlines():
+                                _cprint(hl_line)
+                # Flush any buffered block-level state
+                buf_tail = self._stream_block_buf.flush()
+                if buf_tail is not None:
+                    for hl_line in buf_tail.splitlines():
+                        _cprint(hl_line)
+                # Flush any open code block (unclosed fence at end of response)
+                tail = self._stream_code_hl.flush()
+                if tail:
+                    _cprint(tail)
+            else:
+                _cprint(f"{_tc}{self._stream_buf}{_RST}" if _tc else self._stream_buf)
             self._stream_buf = ""
 
         # Close the response box
@@ -2136,6 +2153,15 @@ class HermesCLI:
         self._reasoning_buf = ""
         self._reasoning_preview_buf = ""
         self._deferred_content = ""
+        if _RICH_RESPONSE:
+            if not hasattr(self, "_stream_block_buf"):
+                self._stream_block_buf = _BlockBuf()
+            else:
+                self._stream_block_buf.reset()
+            if not hasattr(self, "_stream_code_hl"):
+                self._stream_code_hl = _CodeBlockHL()
+            else:
+                self._stream_code_hl.reset()
 
     def _slow_command_status(self, command: str) -> str:
         """Return a user-facing status message for slower slash commands."""
@@ -4483,6 +4509,8 @@ class HermesCLI:
             self.console.print(f"  Status bar {state}")
         elif canonical == "verbose":
             self._toggle_verbose()
+        elif canonical == "code-highlight":
+            self._toggle_code_highlight()
         elif canonical == "yolo":
             self._toggle_yolo()
         elif canonical == "reasoning":
@@ -5188,6 +5216,17 @@ class HermesCLI:
         }
         _cprint(labels.get(self.tool_progress_mode, ""))
 
+    def _toggle_code_highlight(self):
+        """Toggle syntax-highlighted code preview for execute_code."""
+        self._code_highlight_enabled = not self._code_highlight_enabled
+        from agent.display import set_code_highlight_active
+        set_code_highlight_active(self._code_highlight_enabled)
+        from hermes_cli.colors import Colors as _Colors
+        if self._code_highlight_enabled:
+            _cprint(f"{_Colors.GREEN}Code highlight: ON{_Colors.RESET} — execute_code will show syntax-highlighted Python.")
+        else:
+            _cprint(f"{_Colors.DIM}Code highlight: OFF{_Colors.RESET} — execute_code preview disabled.")
+
     def _toggle_yolo(self):
         """Toggle YOLO mode — skip all dangerous command approval prompts."""
         import os
@@ -5628,8 +5667,16 @@ class HermesCLI:
             logger.debug("Edit snapshot capture failed for %s", function_name, exc_info=True)
 
     def _on_tool_complete(self, tool_call_id: str, function_name: str, function_args: dict, function_result: str):
-        """Render file edits with inline diff after write-capable tools complete."""
+        """Render file edits with inline diff / code preview after tools complete.
+
+        Both features are suppressed when tool_progress_mode is "off" — that
+        mode promises "silent, just the final response".
+        """
         snapshot = self._pending_edit_snapshots.pop(tool_call_id, None)
+
+        if self.tool_progress_mode == "off":
+            return
+
         try:
             from agent.display import render_edit_diff_with_delta
 
@@ -5642,6 +5689,24 @@ class HermesCLI:
             )
         except Exception:
             logger.debug("Edit diff preview failed for %s", function_name, exc_info=True)
+
+        if self._code_highlight_enabled:
+            try:
+                from agent.display import (
+                    _result_succeeded,
+                    render_execute_code_preview,
+                    render_read_file_preview,
+                    render_terminal_preview,
+                )
+                if function_name == "execute_code":
+                    if _result_succeeded(function_result):
+                        render_execute_code_preview(function_args.get("code", ""), print_fn=_cprint)
+                elif function_name == "read_file":
+                    render_read_file_preview(function_args.get("path", ""), function_result, print_fn=_cprint)
+                elif function_name == "terminal":
+                    render_terminal_preview(function_args.get("command", ""), function_result, print_fn=_cprint)
+            except Exception:
+                logger.debug("%s highlight failed", function_name, exc_info=True)
 
     # ====================================================================
     # Voice mode methods
@@ -6678,8 +6743,11 @@ class HermesCLI:
                     pass
                 else:
                     _chat_console = ChatConsole()
+                    _rendered_response = (
+                        _format_response(response) if _RICH_RESPONSE else response
+                    )
                     _chat_console.print(Panel(
-                        _rich_text_from_ansi(response),
+                        _rich_text_from_ansi(_rendered_response),
                         title=f"[{_resp_color} bold]{label}[/]",
                         title_align="left",
                         border_style=_resp_color,
@@ -6860,8 +6928,10 @@ class HermesCLI:
             return [("class:clarify-selected", f"✎ {state_suffix}")]
         if self._clarify_state:
             return [("class:prompt-working", f"? {state_suffix}")]
-        if self._command_running or self._agent_running:
+        if self._command_running:
             return [("class:prompt-working", f"{self._command_spinner_frame()} {state_suffix}")]
+        if self._agent_running:
+            return [("class:prompt-working", f"⚕ {state_suffix}")]
         if self._voice_mode:
             return [("class:voice-prompt", f"🎤 {state_suffix}")]
         return [("class:prompt", symbol)]
@@ -8137,28 +8207,18 @@ class HermesCLI:
             import time as _time
 
             last_idle_refresh = 0.0
-            last_title: str = ""
             while not self._should_exit:
                 if not self._app:
                     _time.sleep(0.1)
                     continue
-                if self._command_running or self._agent_running:
+                if self._command_running:
                     self._invalidate(min_interval=0.1)
-                    if self._title_spinner:
-                        frame = self._command_spinner_frame()
-                        new_title = f"{frame} {self._title_base}"
-                        if new_title != last_title:
-                            _set_terminal_title(new_title)
-                            last_title = new_title
                     _time.sleep(0.1)
                 else:
                     now = _time.monotonic()
                     if now - last_idle_refresh >= 1.0:
                         last_idle_refresh = now
                         self._invalidate(min_interval=1.0)
-                        if self._title_spinner and last_title != self._title_base:
-                            _set_terminal_title(self._title_base)
-                            last_title = self._title_base
                     _time.sleep(0.2)
 
         spinner_thread = threading.Thread(target=spinner_loop, daemon=True)

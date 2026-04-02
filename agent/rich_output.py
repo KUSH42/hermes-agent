@@ -227,47 +227,78 @@ class FilePathFormatter:
 # Pygments → Rich markup formatter (internal)
 # ---------------------------------------------------------------------------
 
+# Mapping from logical token names (used in SYNTAX_SCHEMES) to Pygments token objects.
+# Built lazily on first call to _build_pygments_map().
+_LOGICAL_TO_PYGMENTS: "dict | None" = None
+
+
+def _get_logical_to_pygments() -> dict:
+    """Return the logical-name → Pygments-token mapping, built once."""
+    global _LOGICAL_TO_PYGMENTS
+    if _LOGICAL_TO_PYGMENTS is not None:
+        return _LOGICAL_TO_PYGMENTS
+    if not _PYGMENTS:
+        _LOGICAL_TO_PYGMENTS = {}
+        return _LOGICAL_TO_PYGMENTS
+    _LOGICAL_TO_PYGMENTS = {
+        "keyword":             Keyword,
+        "keyword_type":        Keyword.Type,
+        "name":                Name,
+        "name_builtin":        Name.Builtin,
+        "name_class":          Name.Class,
+        "name_function":       Name.Function,
+        "name_function_magic": Name.Function.Magic,
+        "name_decorator":      Name.Decorator,
+        "name_exception":      Name.Exception,
+        "comment":             Comment,
+        "comment_preproc":     Comment.Preproc,
+        "string":              String,
+        "string_doc":          String.Doc,
+        "string_escape":       String.Escape,
+        "string_regex":        String.Regex,
+        "number":              Number,
+        "operator":            Operator,
+        "operator_word":       Operator.Word,
+        "error":               Error,
+        "diff_deleted":        Generic.Deleted,
+        "diff_inserted":       Generic.Inserted,
+        # Aliases that share a token
+        "name_constant":       Name.Constant,
+        "name_tag":            Name.Tag,
+        "name_variable_magic": Name.Variable.Magic,
+        "string_interpol":     String.Interpol,
+        "generic_error":       Generic.Error,
+    }
+    return _LOGICAL_TO_PYGMENTS
+
+
+def _build_pygments_map(styles: dict) -> dict:
+    """Convert a logical-name → Rich-style dict to a Pygments-token → Rich-style dict.
+
+    Multiple logical names may map to the same Pygments token (e.g. name_class and
+    name_constant both → Name.Class/Name.Constant).  Last writer wins but
+    they're always the same value in well-formed schemes.
+    """
+    mapping = _get_logical_to_pygments()
+    result: dict = {}
+    for logical, style in styles.items():
+        token = mapping.get(logical)
+        if token is not None:
+            result[token] = style
+    return result
+
+
 class _PygmentsToRich:
-    """Convert a Pygments token stream to a Rich markup string."""
+    """Convert a Pygments token stream to a Rich markup string.
 
-    # Built lazily so the class-level dict isn't populated when Pygments is absent
-    _STYLES: dict = {}
+    Accepts a per-instance styles dict so syntax colors are skin-driven.
+    """
 
-    @classmethod
-    def _ensure_styles(cls) -> None:
-        if cls._STYLES or not _PYGMENTS:
-            return
-        cls._STYLES = {
-            Keyword: "bold blue",
-            Keyword.Type: "bold cyan",
-            Name: "white",
-            Name.Builtin: "cyan",
-            Name.Class: "bold yellow",
-            Name.Constant: "bold yellow",
-            Name.Decorator: "bright_cyan",
-            Name.Exception: "bold red",
-            Name.Function: "bold yellow",
-            Name.Function.Magic: "cyan",
-            Name.Tag: "bold blue",
-            Name.Variable.Magic: "cyan",
-            Comment: "dim green",
-            Comment.Preproc: "bold green",
-            String: "green",
-            String.Doc: "dim green",
-            String.Escape: "bold green",
-            String.Interpol: "bold green",
-            String.Regex: "magenta",
-            Number: "magenta",
-            Operator: "white",
-            Operator.Word: "bold blue",
-            Generic.Deleted: "red",
-            Generic.Inserted: "green",
-            Generic.Error: "bold red",
-            Error: "bold red",
-        }
+    def __init__(self, styles: dict) -> None:
+        # styles: Pygments-token → Rich style string (from _build_pygments_map)
+        self._styles = styles
 
     def format(self, tokens) -> str:
-        self._ensure_styles()
         parts: list[str] = []
         for ttype, value in tokens:
             style = self._resolve(ttype)
@@ -287,9 +318,9 @@ class _PygmentsToRich:
     def _resolve(self, ttype) -> Optional[str]:
         t = ttype
         while t is not None:
-            if t in self._STYLES:
-                return self._STYLES[t]
-            t = t.parent  # type: ignore[assignment]  # pygments Token hierarchy isn't typed
+            if t in self._styles:
+                return self._styles[t]
+            t = t.parent  # type: ignore[assignment]
         return None
 
 
@@ -301,11 +332,28 @@ class SyntaxHighlighter:
     """Highlight source code using Pygments, output as Rich markup or ANSI.
 
     Falls back to plain green when Pygments is unavailable.
+    The formatter is rebuilt from the active skin on each skin switch via refresh().
     """
 
     def __init__(self) -> None:
-        self._fmt = _PygmentsToRich()
+        self._fmt = self._build_fmt()
         self._detector = LanguageDetector()
+
+    def _build_fmt(self) -> "_PygmentsToRich":
+        """Build a _PygmentsToRich formatter from the currently active skin."""
+        if not _PYGMENTS:
+            return _PygmentsToRich({})
+        try:
+            from hermes_cli.skin_engine import get_active_skin
+            logical_styles = get_active_skin().get_syntax_styles()
+        except Exception:
+            # skin_engine unavailable — render plain text
+            logical_styles = {}
+        return _PygmentsToRich(_build_pygments_map(logical_styles))
+
+    def refresh(self) -> None:
+        """Rebuild the formatter from the active skin. Called by set_active_skin()."""
+        self._fmt = self._build_fmt()
 
     # -- Rich markup (for embedding in Rich Text / Panel) --------------------
 

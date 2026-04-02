@@ -50,6 +50,13 @@ try:
     _rich_syntax = _RichSyntaxHighlighter()
     _rich_detector = _RichLanguageDetector()
     _RICH_OUTPUT = True
+    # Register syntax highlighter for skin-switch invalidation.
+    # skin_engine never imports display or rich_output, so callers self-register.
+    try:
+        from hermes_cli import skin_engine as _skin_engine
+        _skin_engine.register_skin_callback(_rich_syntax.refresh)
+    except Exception:
+        pass
 except ImportError:
     _RICH_OUTPUT = False
 

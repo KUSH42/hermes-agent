@@ -911,7 +911,7 @@ _MD_UL_RE = re.compile(r"^(\s*)([-*+])\s+(.+)")
 _MD_OL_RE = re.compile(r"^(\s*)(\d+)[.)]\s+(.+)")
 _MD_TASK_RE = re.compile(r"^\[( |x|X)\]\s*(.*)", re.IGNORECASE)
 _MD_REF_LINK_RE = re.compile(r"^\[[^\]]+\]:\s+\S+")
-_REF_DEF_RE = re.compile(r'^\[([^\]]+)\]:\s*(\S+)(?:\s+"[^"]*")?\s*$')
+_REF_DEF_RE = re.compile(r'^\[([^\]]+)\]:\s*(\S+)(?:\s+(?:"[^"]*"|\'[^\']*\'|\([^)]*\)))?\s*$')
 _MD_REF_LINK_USE_RE = re.compile(r'\[([^\]]+)\]\[([^\]]*)\]')
 _MD_REF_LINK_COLL_RE = re.compile(r'\[([^\]]+)\]\[\]')
 

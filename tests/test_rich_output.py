@@ -915,6 +915,69 @@ class TestApplyInlineMarkdown:
         ansi_codes = [result[i:i+4] for i in range(len(result)) if result[i:i+2] == "\033["]
         assert result.count("\033[4m") >= 2  # outer open + reset_suffix restore
 
+    def test_bold_italic_triple_star(self):
+        result = apply_inline_markdown("***foo***")
+        assert "\033[1;3m" in result
+        assert "foo" in result
+        assert "*" not in _strip(result)
+
+    def test_bold_italic_triple_underscore(self):
+        result = apply_inline_markdown("___foo___")
+        assert "\033[1;3m" in result
+        assert "foo" in result
+
+    def test_i_tag_italic(self):
+        result = apply_inline_markdown("<i>foo</i>")
+        assert "\033[3m" in result
+        assert "<i>" not in result
+
+    def test_b_tag_bold(self):
+        result = apply_inline_markdown("<b>foo</b>")
+        assert "\033[1m" in result
+        assert "<b>" not in result
+
+    def test_s_tag_strikethrough(self):
+        result = apply_inline_markdown("<s>foo</s>")
+        assert "\033[9m" in result
+        assert "<s>" not in result
+
+    def test_strike_tag_strikethrough(self):
+        result = apply_inline_markdown("<strike>foo</strike>")
+        assert "\033[9m" in result
+        assert "<strike>" not in result
+
+    def test_del_tag_strikethrough(self):
+        result = apply_inline_markdown("<del>foo</del>")
+        assert "\033[9m" in result
+        assert "<del>" not in result
+
+    def test_code_tag_inline(self):
+        result = apply_inline_markdown("<code>foo</code>")
+        assert "\033[97m" in result
+        assert "<code>" not in result
+
+    def test_kbd_tag_code_style(self):
+        result = apply_inline_markdown("<kbd>Ctrl+C</kbd>")
+        assert "\033[97m" in result
+        assert "<kbd>" not in result
+
+    def test_ins_tag_underline(self):
+        result = apply_inline_markdown("<ins>foo</ins>")
+        assert "\033[4m" in result
+        assert "<ins>" not in result
+
+    def test_sup_tag_stripped(self):
+        result = apply_inline_markdown("x<sup>2</sup>")
+        assert "<sup>" not in result
+        assert "2" in result
+
+    def test_sub_tag_stripped(self):
+        result = apply_inline_markdown("H<sub>2</sub>O")
+        assert "<sub>" not in result
+        assert "2" in result
+        assert "H" in result
+        assert "O" in result
+
     def test_link_underlined(self):
         result = apply_inline_markdown("[click here](https://x.com)")
         assert "\033[4m" in result

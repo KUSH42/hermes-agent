@@ -1175,9 +1175,11 @@ class TestApplyBlockLine:
         assert "•" in apply_block_line("* item")
         assert "•" in apply_block_line("+ item")
 
-    def test_ordered_list_unchanged(self):
+    def test_ordered_list_rendered(self):
         result = apply_block_line("1. item")
-        assert result == "1. item"
+        # OL items are now rendered with dim numeral
+        assert "\033[2m1.\033[0m" in result
+        assert "item" in result
 
     def test_reference_link_suppressed(self):
         result = apply_block_line("[ref]: https://x.com")
@@ -1534,34 +1536,49 @@ class TestStreamingBlockBuffer:
         self.buf.process_line("some")  # goes to pending
         self.buf.flush()
         self.buf.reset()
-        # Fresh: enter blockquote, then continuation
+        # Fresh: enter blockquote.
+        # The first BQ line is buffered for setext-in-blockquote lookahead (returns None).
         r1 = self.buf.process_line("> quote")
-        # r1 may be None (pending setext) or the bq line
-        # Force through: no pending, so should return gutter immediately
-        self.buf.reset()
-        r1 = self.buf.process_line("> quote")
-        assert r1 is not None
-        assert "▌" in r1
+        # Continuation flushes the buffered BQ line (returns the rendered BQ line)
         r2 = self.buf.process_line("continuation")
+        # Between r1 and r2 at least one should have the gutter
         assert r2 is not None
         assert "▌" in r2
+        # The continuation itself is also in blockquote — next call has it via emit_next
+        r3 = self.buf.process_line("more")
+        assert r3 is not None
+        assert "▌" in r3
 
     def test_blockquote_ansi_gets_gutter(self):
-        # ANSI line inside blockquote keeps the gutter and stays in blockquote
+        # ANSI line inside blockquote keeps the gutter.
+        # First BQ line is buffered (returns None); subsequent ANSI line
+        # flushes the pending BQ line and defers the ANSI line.
         self.buf.process_line("> start")
         ansi = "\033[1mx\033[0m"
-        result = self.buf.process_line(ansi)
-        assert result is not None
-        assert "▌" in result
-        assert ansi in result
-        assert self.buf._in_blockquote  # stays in blockquote
+        r1 = self.buf.process_line(ansi)
+        # r1 is the rendered "> start" line (pending flushed)
+        assert r1 is not None
+        assert "▌" in r1
+        # ansi is deferred in _emit_next; flush it to get the ANSI+gutter line
+        flushed = self.buf.flush()
+        assert flushed is not None
+        assert ansi in flushed
+        assert "▌" in flushed
 
     def test_blockquote_fence_exits_state(self):
-        # Code fence line exits blockquote so the code highlighter can handle it
+        # Code fence line exits blockquote so the code highlighter can handle it.
+        # First BQ line is buffered; fence flushes pending and defers itself.
         self.buf.process_line("> start")
-        result = self.buf.process_line("```python")
-        assert result == "```python"
-        assert not self.buf._in_blockquote
+        r1 = self.buf.process_line("```python")
+        # r1 is the flushed pending BQ line; "```python" is deferred
+        assert r1 is not None
+        assert "▌" in r1
+        # Blockquote exits when fence is encountered
+        assert self.buf._bq_depth == 0
+        # Flush gives the fence line
+        flushed = self.buf.flush()
+        assert flushed is not None
+        assert "```python" in flushed
 
     def test_mode_transition_pending_plus_blockquote(self):
         assert self.buf.process_line("pending_line") is None
@@ -1582,12 +1599,12 @@ class TestStreamingBlockBuffer:
 
     def test_reset_clears_all_state(self):
         self.buf.process_line("pending")
-        self.buf._in_blockquote = True
+        self.buf._bq_depth = 2
         self.buf._table_buf.append("| x |")
         self.buf._emit_next = "something"
         self.buf.reset()
         assert self.buf._pending is None
-        assert self.buf._in_blockquote is False
+        assert self.buf._bq_depth == 0
         assert self.buf._table_buf == []
         assert self.buf._emit_next is None
 
@@ -1687,3 +1704,372 @@ class TestStreamingBlockBuffer:
         plain = _strip(rendered)
         assert "A" in plain
         assert "x" in plain
+
+
+# ---------------------------------------------------------------------------
+# Feature 1: Task lists
+# ---------------------------------------------------------------------------
+
+class TestTaskLists:
+    """apply_block_line renders task list items with checkbox symbols."""
+
+    def test_unchecked_box_gets_circle_symbol(self):
+        result = apply_block_line("- [ ] do something")
+        assert "○" in result
+
+    def test_checked_box_gets_checkmark_symbol(self):
+        result = apply_block_line("- [x] done")
+        assert "✓" in result
+
+    def test_checked_uppercase_x(self):
+        result = apply_block_line("- [X] also done")
+        assert "✓" in result
+
+    def test_unchecked_has_dim_style(self):
+        result = apply_block_line("- [ ] pending task")
+        # dim style for unchecked checkbox
+        assert "\033[2m" in result
+        assert "○" in result
+
+    def test_checked_has_green_style(self):
+        result = apply_block_line("- [x] completed task")
+        # green bold style for checked
+        assert "\033[1;32m" in result
+        assert "✓" in result
+
+    def test_task_content_is_rendered_inline(self):
+        result = apply_block_line("- [x] **bold** item")
+        assert "✓" in result
+        assert "\033[1m" in result  # bold applied to content
+
+    def test_task_unchecked_contains_content(self):
+        result = apply_block_line("- [ ] buy groceries")
+        assert "buy groceries" in result
+
+    def test_task_bullet_present(self):
+        result = apply_block_line("- [ ] task")
+        assert "•" in result
+
+    def test_nested_task_indented(self):
+        result = apply_block_line("  - [x] sub-task")
+        # indented task list item
+        assert "✓" in result
+        assert result.startswith("  ")
+
+    def test_non_task_ul_not_affected(self):
+        result = apply_block_line("- regular item")
+        assert "○" not in result
+        assert "✓" not in result
+        assert "•" in result
+
+    def test_task_via_format_response(self):
+        text = "- [ ] unchecked\n- [x] checked\n"
+        result = format_response(text)
+        assert "○" in result
+        assert "✓" in result
+
+
+# ---------------------------------------------------------------------------
+# Feature 2: Ordered lists
+# ---------------------------------------------------------------------------
+
+class TestOrderedLists:
+    """apply_block_line renders OL items with dim numeral."""
+
+    def test_simple_ol_item(self):
+        result = apply_block_line("1. first item")
+        assert "\033[2m1.\033[0m" in result
+        assert "first item" in result
+
+    def test_ol_with_paren_delimiter(self):
+        result = apply_block_line("2) second item")
+        assert "\033[2m2.\033[0m" in result
+        assert "second item" in result
+
+    def test_ol_preserves_source_number(self):
+        result = apply_block_line("42. forty-two")
+        assert "\033[2m42.\033[0m" in result
+        assert "forty-two" in result
+
+    def test_ol_content_inline_rendered(self):
+        result = apply_block_line("3. **bold content**")
+        assert "\033[1m" in result  # bold
+        assert "bold content" in result
+
+    def test_ol_indented(self):
+        result = apply_block_line("  1. nested")
+        assert result.startswith("  ")
+        assert "\033[2m1.\033[0m" in result
+
+    def test_ol_not_setext_candidate(self):
+        # "1. text" followed by "---" should not be treated as a heading
+        result = render_stateful_blocks("1. item\n---\n")
+        # Should not contain h2 heading style
+        assert "\033[1;37m" not in result
+        # Should contain the OL rendering
+        assert "item" in result
+
+    def test_ol_via_format_response(self):
+        text = "1. first\n2. second\n3. third\n"
+        result = format_response(text)
+        assert "\033[2m1.\033[0m" in result
+        assert "\033[2m2.\033[0m" in result
+        assert "\033[2m3.\033[0m" in result
+
+    def test_ol_stateful_multiple_items(self):
+        text = "1. alpha\n2. beta\n3. gamma\n"
+        result = render_stateful_blocks(text)
+        # All items pass through for apply_block_line in pass 3
+        # render_stateful_blocks just passes them; apply_block_line does the work
+        assert "alpha" in result
+        assert "beta" in result
+        assert "gamma" in result
+
+
+# ---------------------------------------------------------------------------
+# Feature 3: Nested blockquotes
+# ---------------------------------------------------------------------------
+
+class TestNestedBlockquotes:
+    """Blockquote depth is tracked and rendered with additional indentation/dimming."""
+
+    def test_depth_1_basic(self):
+        result = apply_block_line("> hello")
+        assert "▌" in result
+        assert "hello" in result
+
+    def test_depth_2_has_indent(self):
+        result = apply_block_line("> > nested")
+        assert "▌" in result
+        assert "nested" in result
+        # depth-2 should have 2 spaces of indent before the gutter
+        assert result.startswith("  ")
+
+    def test_depth_3_deeper_indent(self):
+        result = apply_block_line("> > > deep")
+        assert "▌" in result
+        # depth-3: 4 spaces of indent
+        assert result.startswith("    ")
+
+    def test_depth_2_has_extra_dim(self):
+        result = apply_block_line("> > nested")
+        # depth-2 uses dim prefix on top of base blockquote ANSI
+        # Base _BLOCKQUOTE_ANSI = "\033[2m", depth-2 adds one more dim
+        assert result.count("\033[2m") >= 2
+
+    def test_depth_1_no_extra_indent(self):
+        result = apply_block_line("> single")
+        assert not result.startswith("  ")
+
+    def test_render_stateful_depth1(self):
+        text = "> quote line\n"
+        result = render_stateful_blocks(text)
+        assert "▌" in result
+        assert "quote line" in result
+
+    def test_render_stateful_depth2(self):
+        text = "> > nested\n"
+        result = render_stateful_blocks(text)
+        assert "▌" in result
+        assert "nested" in result
+        assert result.startswith("  ")
+
+    def test_bq_depth_reset_on_blank(self):
+        result = render_stateful_blocks("> q\n\n> new")
+        assert result.count("▌") == 2
+
+    def test_streaming_depth1(self):
+        buf = StreamingBlockBuffer()
+        # First BQ line is buffered for setext lookahead
+        r = buf.process_line("> depth1")
+        assert r is None
+        flushed = buf.flush()
+        assert flushed is not None
+        assert "▌" in flushed
+        assert "depth1" in flushed
+
+    def test_streaming_depth2(self):
+        buf = StreamingBlockBuffer()
+        # First BQ line buffered; flush to get it
+        buf.process_line("> > depth2")
+        flushed = buf.flush()
+        assert flushed is not None
+        assert "▌" in flushed
+        assert flushed.startswith("  ")
+
+    def test_streaming_depth_continuation(self):
+        buf = StreamingBlockBuffer()
+        buf.process_line("> > level2")
+        result = buf.process_line("continuation line")
+        # Continuation is rendered at current depth
+        assert result is not None
+        assert "▌" in result
+
+    def test_format_response_nested(self):
+        text = "> > double nested\n"
+        result = format_response(text)
+        assert "▌" in result
+        assert "double nested" in result
+
+
+# ---------------------------------------------------------------------------
+# Feature 4: Setext headings inside blockquotes
+# ---------------------------------------------------------------------------
+
+class TestSetextInBlockquote:
+    """Setext markers inside blockquotes produce styled headings with gutter."""
+
+    def test_setext_h1_in_blockquote(self):
+        text = "> Heading\n> ========\n"
+        result = render_stateful_blocks(text)
+        # Should contain the h1 heading style inside a gutter
+        assert "▌" in result
+        assert "Heading" in result
+        # h1 style
+        assert "\033[1;97m" in result
+        # The setext underline itself should NOT appear as a rendered BQ line
+        assert "=======" not in _strip(result)
+
+    def test_setext_h2_in_blockquote(self):
+        text = "> Subheading\n> ----------\n"
+        result = render_stateful_blocks(text)
+        assert "▌" in result
+        assert "Subheading" in result
+        # h2 style
+        assert "\033[1;37m" in result
+        # The setext underline should not appear in plain output
+        assert "----------" not in _strip(result)
+
+    def test_non_setext_two_bq_lines(self):
+        text = "> first\n> second\n"
+        result = render_stateful_blocks(text)
+        # Both lines should appear as normal blockquote lines
+        assert result.count("▌") == 2
+        assert "first" in result
+        assert "second" in result
+
+    def test_streaming_setext_h1_in_blockquote(self):
+        buf = StreamingBlockBuffer()
+        r1 = buf.process_line("> Heading")  # buffered → None
+        r2 = buf.process_line("> ========")  # setext detected → returns heading in gutter
+        flushed = buf.flush()
+        combined = "\n".join(x for x in [r1, r2, flushed] if x)
+        assert "▌" in combined
+        assert "Heading" in combined
+        assert "\033[1;97m" in combined
+
+    def test_streaming_setext_h2_in_blockquote(self):
+        buf = StreamingBlockBuffer()
+        r1 = buf.process_line("> Sub")   # buffered → None
+        r2 = buf.process_line("> ---")   # setext detected → returns h2 heading in gutter
+        flushed = buf.flush()
+        combined = "\n".join(x for x in [r1, r2, flushed] if x)
+        assert "Sub" in combined
+        assert "\033[1;37m" in combined
+
+    def test_blank_line_not_setext(self):
+        # Blank inner content is not a heading candidate
+        text = "> \n> ====\n"
+        result = render_stateful_blocks(text)
+        # Should not apply heading style
+        assert "\033[1;97m" not in result
+
+    def test_format_response_setext_in_bq(self):
+        text = "> Title\n> =====\n"
+        result = format_response(text)
+        assert "▌" in result
+        assert "Title" in result
+        assert "\033[1;97m" in result
+
+
+# ---------------------------------------------------------------------------
+# Feature 5: Link reference definitions → resolved links
+# ---------------------------------------------------------------------------
+
+class TestRefLinkResolution:
+    """Reference link definitions are collected and resolved in inline text."""
+
+    def test_ref_link_def_suppressed(self):
+        # [ref]: url lines produce empty output
+        result = apply_block_line("[myref]: https://example.com")
+        assert result == ""
+
+    def test_ref_link_use_resolved(self):
+        ref_map = {"myref": "https://example.com"}
+        result = apply_inline_markdown("[click here][myref]", ref_map=ref_map)
+        assert "click here" in result
+        assert "https://example.com" in result
+        # Should use link ANSI style
+        assert "\033[38;2;88;166;255m" in result
+
+    def test_ref_link_collapsed_resolved(self):
+        ref_map = {"myref": "https://example.com"}
+        result = apply_inline_markdown("[myref][]", ref_map=ref_map)
+        assert "myref" in result
+        assert "https://example.com" in result
+
+    def test_ref_link_case_insensitive_key(self):
+        ref_map = {"myref": "https://example.com"}
+        result = apply_inline_markdown("[text][MyRef]", ref_map=ref_map)
+        assert "https://example.com" in result
+
+    def test_ref_link_unknown_leaves_as_is(self):
+        ref_map = {"other": "https://other.com"}
+        result = apply_inline_markdown("[text][unknown]", ref_map=ref_map)
+        # Unknown ref should be left unchanged
+        assert "[text][unknown]" in result
+
+    def test_ref_link_no_map_leaves_as_is(self):
+        result = apply_inline_markdown("[text][ref]")
+        assert "[text][ref]" in result
+
+    def test_format_response_resolves_refs(self):
+        text = "[ref]: https://example.com\n\nSee [ref][] for details.\n"
+        result = format_response(text)
+        assert "https://example.com" in result
+        assert "ref" in result
+        # The ref def line itself should not appear as raw text
+        lines = _strip(result).splitlines()
+        assert not any(l.strip() == "[ref]: https://example.com" for l in lines)
+
+    def test_format_response_text_ref_resolved(self):
+        text = "[docs]: https://docs.example.com\n\nRead the [documentation][docs].\n"
+        result = format_response(text)
+        assert "https://docs.example.com" in result
+        assert "documentation" in result
+
+    def test_streaming_ref_map_accumulated(self):
+        # StreamingBlockBuffer collects ref defs into _ref_map as lines arrive.
+        # Inline rendering of plain text happens downstream (not inside the buffer);
+        # the buffer passes ref_map to apply_inline_markdown only for BQ/heading content.
+        # Verify that the ref_map is populated after processing a ref def line.
+        buf = StreamingBlockBuffer()
+        buf.process_line("[myref]: https://example.com")
+        assert "myref" in buf._ref_map
+        assert buf._ref_map["myref"] == "https://example.com"
+
+    def test_streaming_bq_line_uses_ref_map(self):
+        # BQ continuation content IS rendered via apply_inline_markdown with ref_map.
+        buf = StreamingBlockBuffer()
+        buf.process_line("[link]: https://example.com")
+        # Enter blockquote with a BQ line containing the ref link
+        buf.process_line("> First line")  # buffered for setext lookahead
+        # Second BQ line flushes the first one (rendered with ref_map via _render_bq_depth)
+        result = buf.process_line("> See [link][] for info")
+        # result is the rendered first BQ line "First line"
+        # The second line is buffered in pending
+        flushed = buf.flush()
+        combined = "\n".join(x for x in [result, flushed] if x)
+        # The second BQ line "See [link][] for info" should have the URL resolved
+        assert "https://example.com" in combined
+
+    def test_ref_map_passed_through_bold(self):
+        # ref_map should be propagated through bold/italic recursive calls
+        ref_map = {"r": "https://r.com"}
+        result = apply_inline_markdown("**see [r][]**", ref_map=ref_map)
+        assert "https://r.com" in result
+
+    def test_ref_link_with_quoted_title_in_def(self):
+        text = '[myref]: https://example.com "Example Site"\n\n[click][myref]\n'
+        result = format_response(text)
+        assert "https://example.com" in result

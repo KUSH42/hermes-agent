@@ -701,7 +701,7 @@ _MD_LINK_ANSI = "\033[38;2;88;166;255m\033[4m"  # #58A6FF (GitHub dark-mode blue
 _MD_RST_ANSI = "\033[0m"
 
 
-def apply_inline_markdown(line: str, reset_suffix: str = "") -> str:
+def apply_inline_markdown(line: str, reset_suffix: str = "", ref_map: "dict[str, str] | None" = None) -> str:
     """Apply ANSI styling to inline markdown spans in a single text line.
 
     Handles ``**bold**``, ``__bold__``, ``*italic*``, ``_italic_``,
@@ -733,7 +733,7 @@ def apply_inline_markdown(line: str, reset_suffix: str = "") -> str:
     # style as reset_suffix so inner resets restore the outer style.
     def _wrap(style: str) -> "re.Callable[[re.Match], str]":  # type: ignore[type-arg]
         def _sub(m: re.Match) -> str:  # type: ignore[type-arg]
-            inner = apply_inline_markdown(m.group(1), reset_suffix=style)
+            inner = apply_inline_markdown(m.group(1), reset_suffix=style, ref_map=ref_map)
             return f"{style}{inner}{rst}"
         return _sub
 
@@ -761,7 +761,7 @@ def apply_inline_markdown(line: str, reset_suffix: str = "") -> str:
         def _sub(m: re.Match) -> str:  # type: ignore[type-arg]
             inner = m.group(1)
             if "\x1b" not in inner:
-                inner = apply_inline_markdown(inner, reset_suffix=ansi + reset_suffix)
+                inner = apply_inline_markdown(inner, reset_suffix=ansi + reset_suffix, ref_map=ref_map)
             return f"{ansi}{inner}{rst}"
         return _sub
 
@@ -782,6 +782,29 @@ def apply_inline_markdown(line: str, reset_suffix: str = "") -> str:
 
     # Step 6a: images (before links — ![  prefix overlaps)
     line = _MD_IMAGE_RE.sub(lambda m: f"\033[2m[img: {m.group(1)}]\033[0m{reset_suffix}", line)
+
+    # Step 6a2: reference link resolution (before inline link step)
+    if ref_map:
+        def _resolve_coll(m: re.Match) -> str:  # type: ignore[type-arg]
+            """[text][] — use text as lookup key."""
+            text_part = m.group(1)
+            url = ref_map.get(text_part.lower())
+            if url:
+                return f"{_MD_LINK_ANSI}{text_part} ({url})\033[0m{reset_suffix}"
+            return m.group(0)
+
+        def _resolve_use(m: re.Match) -> str:  # type: ignore[type-arg]
+            """[text][ref] — use ref as lookup key."""
+            text_part = m.group(1)
+            ref_key = m.group(2).lower()
+            url = ref_map.get(ref_key)
+            if url:
+                return f"{_MD_LINK_ANSI}{text_part} ({url})\033[0m{reset_suffix}"
+            return m.group(0)
+
+        # [text][] collapsed ref — must run before [text][ref] to avoid partial match
+        line = _MD_REF_LINK_COLL_RE.sub(_resolve_coll, line)
+        line = _MD_REF_LINK_USE_RE.sub(_resolve_use, line)
 
     # Step 6b: links — bright-blue underline + URL for copy/ctrl+click
     line = _MD_LINK_RE.sub(lambda m: f"{_MD_LINK_ANSI}{m.group(1)} ({m.group(2)})\033[0m{reset_suffix}", line)
@@ -828,8 +851,14 @@ def apply_inline_markdown(line: str, reset_suffix: str = "") -> str:
 _MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)")
 _MD_HR_RE = re.compile(r"^(-{3,}|\*{3,}|_{3,})$")
 _MD_BLOCKQUOTE_RE = re.compile(r"^>+\s?(.*)")
+_MD_BQ_LEVEL_RE = re.compile(r"^((?:>\s*)+)(.*)")
 _MD_UL_RE = re.compile(r"^(\s*)([-*+])\s+(.+)")
+_MD_OL_RE = re.compile(r"^(\s*)(\d+)[.)]\s+(.+)")
+_MD_TASK_RE = re.compile(r"^\[( |x|X)\]\s*(.*)", re.IGNORECASE)
 _MD_REF_LINK_RE = re.compile(r"^\[[^\]]+\]:\s+\S+")
+_REF_DEF_RE = re.compile(r'^\[([^\]]+)\]:\s*(\S+)(?:\s+"[^"]*")?\s*$')
+_MD_REF_LINK_USE_RE = re.compile(r'\[([^\]]+)\]\[([^\]]*)\]')
+_MD_REF_LINK_COLL_RE = re.compile(r'\[([^\]]+)\]\[\]')
 
 _HEADING_STYLES = {
     1: "\033[1;97m",
@@ -880,12 +909,17 @@ def apply_block_line(line: str) -> str:
         cols = shutil.get_terminal_size((80, 24)).columns
         return f"\033[2m{'─' * cols}\033[0m"
 
-    # Blockquote — collapse any level of nesting to single gutter
-    m = _MD_BLOCKQUOTE_RE.match(line)
+    # Blockquote — render with depth-aware gutter
+    m = _MD_BQ_LEVEL_RE.match(line)
     if m:
-        content = m.group(1)
-        content_rendered = apply_inline_markdown(content, reset_suffix=_BLOCKQUOTE_ANSI)
-        return f"{_BLOCKQUOTE_ANSI}▌ {content_rendered}\033[0m"
+        raw_prefix = m.group(1)
+        content = m.group(2)
+        depth = raw_prefix.count('>')
+        indent = "  " * (depth - 1)
+        dim_prefix = "\033[2m" * min(depth - 1, 2)
+        ansi = dim_prefix + _BLOCKQUOTE_ANSI
+        content_rendered = apply_inline_markdown(content, reset_suffix=ansi)
+        return f"{indent}{ansi}▌ {content_rendered}\033[0m"
 
     # Unordered list — bullet symbol by indent depth
     m = _MD_UL_RE.match(line)
@@ -893,7 +927,25 @@ def apply_block_line(line: str) -> str:
         indent, _marker, content = m.group(1), m.group(2), m.group(3)
         level = len(indent) // 2
         bullet = _BULLETS[min(level, len(_BULLETS) - 1)]
-        return f"{indent}{bullet} {content}"
+        # Task list detection
+        tm = _MD_TASK_RE.match(content)
+        if tm:
+            checkbox_char, rest = tm.group(1), tm.group(2)
+            if checkbox_char.lower() == 'x':
+                checkbox_sym = "\033[1;32m✓\033[0m"
+            else:
+                checkbox_sym = "\033[2m○\033[0m"
+            rest_rendered = apply_inline_markdown(rest)
+            return f"{indent}{bullet} {checkbox_sym} {rest_rendered}"
+        return f"{indent}{bullet} {apply_inline_markdown(content)}"
+
+    # Ordered list — dim numeral, then content
+    m = _MD_OL_RE.match(line)
+    if m:
+        indent, numeral, content = m.group(1), m.group(2), m.group(3)
+        level = len(indent) // 2
+        _ = level  # reserved for future indent-aware styling
+        return f"{indent}\033[2m{numeral}.\033[0m {apply_inline_markdown(content)}"
 
     return line
 
@@ -956,13 +1008,13 @@ def _parse_align(cell: str) -> str:
     return "left"
 
 
-_MD_OL_START_RE = re.compile(r"^\d+\.")
+_MD_OL_START_RE = re.compile(r"^\s*\d+[.)]")
 
 
 def _is_heading_candidate(pending: Optional[str]) -> bool:
     if pending is None or pending == "" or "\x1b" in pending:
         return False
-    # Ordered-list items look like "1. text" — never a setext heading.
+    # Ordered-list items look like "1. text" or "1) text" — never a setext heading.
     if _MD_OL_START_RE.match(pending):
         return False
     return apply_block_line(pending) is pending
@@ -1016,11 +1068,20 @@ def render_stateful_blocks(text: str) -> str:
     Runs a single left-to-right scan.  Skips lines that already contain
     ``\\x1b`` (highlighted code from pass 1).
     """
+    # Pre-pass: collect reference link definitions into ref_map
+    ref_map: dict[str, str] = {}
+    for raw_line in text.splitlines():
+        rm = _REF_DEF_RE.match(raw_line.strip())
+        if rm:
+            ref_map[rm.group(1).lower()] = rm.group(2)
+
     lines = text.splitlines()
     out: list = []
 
     _pending: Optional[str] = None
-    _in_blockquote: bool = False
+    _bq_depth: int = 0  # 0 = not in blockquote; >0 = current depth
+    _in_ol: bool = False
+    _ol_indent: int = 0
     _table_rows: list = []
     _sep_idx: Optional[int] = None
     _align: list = []
@@ -1031,12 +1092,20 @@ def render_stateful_blocks(text: str) -> str:
     def _flush_pending() -> None:
         nonlocal _pending
         if _pending is not None:
-            _emit(_pending)
+            # If pending is a BQ line, render it with the gutter
+            pm = _MD_BQ_LEVEL_RE.match(_pending)
+            if pm:
+                _emit(_render_bq_depth(pm.group(2), pm.group(1).count('>')))
+            else:
+                _emit(_pending)
             _pending = None
 
-    def _render_bq(content: str) -> str:
-        content_rendered = apply_inline_markdown(content, reset_suffix=_BLOCKQUOTE_ANSI)
-        return f"{_BLOCKQUOTE_ANSI}▌ {content_rendered}\033[0m"
+    def _render_bq_depth(content: str, depth: int) -> str:
+        indent = "  " * (depth - 1)
+        dim_prefix = "\033[2m" * min(depth - 1, 2)
+        ansi = dim_prefix + _BLOCKQUOTE_ANSI
+        content_rendered = apply_inline_markdown(content, reset_suffix=ansi, ref_map=ref_map)
+        return f"{indent}{ansi}▌ {content_rendered}\033[0m"
 
     def _on_table_row(raw: str) -> None:
         nonlocal _sep_idx, _align
@@ -1065,27 +1134,59 @@ def render_stateful_blocks(text: str) -> str:
         # Priority 1: ANSI line — flush any open table, emit immediately.
         # _pending is intentionally left untouched (spec).
         # If inside a blockquote, keep the gutter so the code block is visually
-        # contained within the quote; _in_blockquote stays True and exits on
-        # the next blank line as usual.
+        # contained within the quote; _bq_depth stays and exits on next blank line.
         if "\x1b" in line:
             _flush_table_to_out()
-            if _in_blockquote:
+            if _bq_depth:
                 _emit(f"{_BLOCKQUOTE_ANSI}▌ {_MD_RST_ANSI}{line}")
             else:
-                _in_blockquote = False
+                _bq_depth = 0
                 _emit(line)
             continue
 
         # Priority 2: blockquote continuation
-        if _in_blockquote:
+        if _bq_depth:
             if line == "":
-                _in_blockquote = False
+                # Flush any pending BQ line before exiting
+                if _pending is not None and _MD_BQ_LEVEL_RE.match(_pending):
+                    pm = _MD_BQ_LEVEL_RE.match(_pending)
+                    _emit(_render_bq_depth(pm.group(2), pm.group(1).count('>')))
+                    _pending = None
+                _bq_depth = 0
                 _emit(line)
-            elif _MD_BLOCKQUOTE_RE.match(line):
-                m = _MD_BLOCKQUOTE_RE.match(line)
-                _emit(_render_bq(m.group(1)))
             else:
-                _emit(_render_bq(line))
+                bm = _MD_BQ_LEVEL_RE.match(line)
+                if bm:
+                    depth = bm.group(1).count('>')
+                    inner = bm.group(2)
+                    # Feature 4: setext heading inside blockquote
+                    if _pending is not None and _MD_BQ_LEVEL_RE.match(_pending):
+                        pm = _MD_BQ_LEVEL_RE.match(_pending)
+                        pending_inner = pm.group(2)  # type: ignore[union-attr]
+                        if (_SETEXT_H1_RE.match(inner) or _SETEXT_H2_RE.match(inner)) and _is_heading_candidate(pending_inner):
+                            level = 1 if _SETEXT_H1_RE.match(inner) else 2
+                            style = _HEADING_STYLES[level]
+                            rendered_text = apply_inline_markdown(pending_inner, reset_suffix=style, ref_map=ref_map)
+                            heading_out = f"{style}{rendered_text}{_MD_RST_ANSI}"
+                            pending_depth = pm.group(1).count('>')  # type: ignore[union-attr]
+                            pending_indent = "  " * (pending_depth - 1)
+                            dim_prefix = "\033[2m" * min(pending_depth - 1, 2)
+                            ansi = dim_prefix + _BLOCKQUOTE_ANSI
+                            _pending = None
+                            _emit(f"{pending_indent}{ansi}▌ {heading_out}\033[0m")
+                            _bq_depth = depth
+                            continue
+                        # Not setext: flush pending BQ line, buffer new one
+                        _flush_pending()
+                    _bq_depth = depth
+                    _pending = line  # buffer for next setext check
+                else:
+                    # Continuation (non-BQ line): flush any pending BQ line first
+                    if _pending is not None and _MD_BQ_LEVEL_RE.match(_pending):
+                        pm = _MD_BQ_LEVEL_RE.match(_pending)
+                        _emit(_render_bq_depth(pm.group(2), pm.group(1).count('>')))
+                        _pending = None
+                    _emit(_render_bq_depth(line, _bq_depth))
             continue
 
         # Priority 3: table accumulation
@@ -1100,12 +1201,32 @@ def render_stateful_blocks(text: str) -> str:
                 _flush_table_to_out()
                 # fall through to process this non-table line normally
 
+        # Priority 3b: OL continuation
+        if _in_ol:
+            if line == "":
+                _in_ol = False
+            elif _MD_OL_RE.match(line):
+                # New OL item — check indent vs current _ol_indent
+                om = _MD_OL_RE.match(line)
+                item_indent = len(om.group(1))  # type: ignore[union-attr]
+                if item_indent >= _ol_indent or item_indent > 0:
+                    # Still part of list (same or deeper indent), pass through
+                    pass
+                else:
+                    _in_ol = False
+            elif not line.startswith(" " * max(_ol_indent, 1)):
+                # Continuation lines must be indented at least to marker column
+                _in_ol = False
+
         # Priority 4: normal mode
-        if _MD_BLOCKQUOTE_RE.match(line):
+        bm = _MD_BQ_LEVEL_RE.match(line)
+        if bm:
             _flush_pending()
-            m = _MD_BLOCKQUOTE_RE.match(line)
-            _in_blockquote = True
-            _emit(_render_bq(m.group(1)))
+            depth = bm.group(1).count('>')
+            inner = bm.group(2)
+            _bq_depth = depth
+            # Setext-in-blockquote lookahead: store raw line as pending
+            _pending = line
             continue
 
         if _TABLE_ROW_RE.match(line):
@@ -1135,7 +1256,7 @@ def render_stateful_blocks(text: str) -> str:
             if _is_heading_candidate(_pending):
                 level = 1 if _SETEXT_H1_RE.match(line) else 2
                 style = _HEADING_STYLES[level]
-                rendered_text = apply_inline_markdown(_pending, reset_suffix=style)  # type: ignore[arg-type]
+                rendered_text = apply_inline_markdown(_pending, reset_suffix=style, ref_map=ref_map)  # type: ignore[arg-type]
                 heading_out = f"{style}{rendered_text}{_MD_RST_ANSI}"
                 _pending = None
                 _emit(heading_out)
@@ -1144,12 +1265,25 @@ def render_stateful_blocks(text: str) -> str:
                 _emit(line)
             continue
 
+        # OL start — track state
+        om = _MD_OL_RE.match(line)
+        if om:
+            _in_ol = True
+            _ol_indent = len(om.group(1))
+
         # Plain line — setext lookahead (one-tick delay)
         _flush_pending()
         _pending = line
 
     # End of input
     _flush_table_to_out()
+    # Flush any pending blockquote line (was waiting for setext check)
+    if _pending is not None and _bq_depth and _MD_BQ_LEVEL_RE.match(_pending):
+        pm = _MD_BQ_LEVEL_RE.match(_pending)
+        depth = pm.group(1).count('>')  # type: ignore[union-attr]
+        inner = pm.group(2)  # type: ignore[union-attr]
+        _emit(_render_bq_depth(inner, depth))
+        _pending = None
     _flush_pending()
 
     result = "\n".join(out)
@@ -1168,20 +1302,26 @@ class StreamingBlockBuffer:
 
     def __init__(self) -> None:
         self._pending: Optional[str] = None
-        self._in_blockquote: bool = False
+        self._bq_depth: int = 0  # 0 = not in blockquote; >0 = current depth
+        self._in_ol: bool = False
+        self._ol_indent: int = 0
         self._table_buf: list = []
         self._sep_idx: Optional[int] = None
         self._align: list = []
         self._emit_next: Optional[str] = None
+        self._ref_map: dict[str, str] = {}
 
     def reset(self) -> None:
         """Reset all state for a new response turn."""
         self._pending = None
-        self._in_blockquote = False
+        self._bq_depth = 0
+        self._in_ol = False
+        self._ol_indent = 0
         self._table_buf = []
         self._sep_idx = None
         self._align = []
         self._emit_next = None
+        self._ref_map = {}
 
     def process_line(self, line: str) -> Optional[str]:
         """Process one line.
@@ -1216,7 +1356,14 @@ class StreamingBlockBuffer:
         if self._table_buf:
             parts.append(self._flush_table_str())
         if self._pending is not None:
-            parts.append(self._pending)
+            # If pending is a blockquote line, render it now
+            if self._bq_depth and _MD_BQ_LEVEL_RE.match(self._pending):
+                pm = _MD_BQ_LEVEL_RE.match(self._pending)
+                depth = pm.group(1).count('>')  # type: ignore[union-attr]
+                inner = pm.group(2)  # type: ignore[union-attr]
+                parts.append(self._render_bq_depth(inner, depth))
+            else:
+                parts.append(self._pending)
             self._pending = None
         if parts:
             return "\n".join(parts)
@@ -1228,24 +1375,98 @@ class StreamingBlockBuffer:
 
     def _handle_line(self, line: str) -> Optional[str]:
         """Core state machine: priorities 2–4."""
+        # Collect reference link definitions as they arrive (streaming pre-pass)
+        rm = _REF_DEF_RE.match(line.strip())
+        if rm:
+            self._ref_map[rm.group(1).lower()] = rm.group(2)
+
         # Priority 2: blockquote continuation
-        if self._in_blockquote:
+        if self._bq_depth:
             if "\x1b" in line:
                 # Rare: raw ANSI in stream while in blockquote — keep gutter
+                # Flush any pending BQ line first
+                if self._pending is not None:
+                    pm = _MD_BQ_LEVEL_RE.match(self._pending)
+                    if pm:
+                        inner = pm.group(2)
+                        depth = pm.group(1).count('>')
+                        old = self._pending
+                        self._pending = None
+                        self._emit_next = line
+                        return self._render_bq_depth(inner, depth)
                 return f"{_BLOCKQUOTE_ANSI}▌ {_MD_RST_ANSI}{line}"
             if line == "":
-                self._in_blockquote = False
+                # Flush pending BQ line before exiting blockquote
+                if self._pending is not None:
+                    pm = _MD_BQ_LEVEL_RE.match(self._pending)
+                    if pm:
+                        inner = pm.group(2)
+                        depth = pm.group(1).count('>')
+                        self._pending = None
+                        self._bq_depth = 0
+                        self._emit_next = line
+                        return self._render_bq_depth(inner, depth)
+                self._bq_depth = 0
                 return line
             # Code fence — exit blockquote so StreamingCodeBlockHighlighter
             # can handle it normally (gutter on the fence itself isn't possible
             # once the line passes to the code highlighter)
             if line.strip().startswith("```"):
-                self._in_blockquote = False
+                if self._pending is not None:
+                    pm = _MD_BQ_LEVEL_RE.match(self._pending)
+                    if pm:
+                        inner = pm.group(2)
+                        depth = pm.group(1).count('>')
+                        self._pending = None
+                        self._bq_depth = 0
+                        self._emit_next = line
+                        return self._render_bq_depth(inner, depth)
+                self._bq_depth = 0
                 return line
-            m = _MD_BLOCKQUOTE_RE.match(line)
-            if m:
-                return self._render_bq(m.group(1))
-            return self._render_bq(line)
+            bm = _MD_BQ_LEVEL_RE.match(line)
+            if bm:
+                depth = bm.group(1).count('>')
+                inner = bm.group(2)
+                # Feature 4: setext heading inside blockquote
+                # Check if pending is a BQ line and current inner is setext
+                if self._pending is not None and _MD_BQ_LEVEL_RE.match(self._pending):
+                    pm = _MD_BQ_LEVEL_RE.match(self._pending)
+                    pending_inner = pm.group(2)  # type: ignore[union-attr]
+                    if (_SETEXT_H1_RE.match(inner) or _SETEXT_H2_RE.match(inner)) and _is_heading_candidate(pending_inner):
+                        level = 1 if _SETEXT_H1_RE.match(inner) else 2
+                        style = _HEADING_STYLES[level]
+                        rendered_text = apply_inline_markdown(pending_inner, reset_suffix=style, ref_map=self._ref_map)
+                        heading_out = f"{style}{rendered_text}{_MD_RST_ANSI}"
+                        pending_depth = pm.group(1).count('>')  # type: ignore[union-attr]
+                        pending_indent = "  " * (pending_depth - 1)
+                        dim_prefix = "\033[2m" * min(pending_depth - 1, 2)
+                        ansi = dim_prefix + _BLOCKQUOTE_ANSI
+                        self._pending = None
+                        self._bq_depth = depth
+                        return f"{pending_indent}{ansi}▌ {heading_out}\033[0m"
+                # Flush old pending BQ line, then buffer this new one for setext lookahead
+                if self._pending is not None and _MD_BQ_LEVEL_RE.match(self._pending):
+                    pm = _MD_BQ_LEVEL_RE.match(self._pending)
+                    old_inner = pm.group(2)  # type: ignore[union-attr]
+                    old_depth = pm.group(1).count('>')  # type: ignore[union-attr]
+                    rendered = self._render_bq_depth(old_inner, old_depth)
+                    self._pending = line
+                    self._bq_depth = depth
+                    return rendered
+                self._bq_depth = depth
+                self._pending = line
+                return None  # buffered for setext lookahead
+            # Continuation (non-BQ line while in blockquote)
+            # Flush any pending BQ line first
+            if self._pending is not None and _MD_BQ_LEVEL_RE.match(self._pending):
+                pm = _MD_BQ_LEVEL_RE.match(self._pending)
+                inner = pm.group(2)  # type: ignore[union-attr]
+                depth = pm.group(1).count('>')  # type: ignore[union-attr]
+                rendered = self._render_bq_depth(inner, depth)
+                self._pending = None
+                self._emit_next = line
+                return rendered
+            return self._render_bq_depth(line, self._bq_depth)
 
         # Priority 3: table accumulation
         if self._table_buf:
@@ -1257,18 +1478,33 @@ class StreamingBlockBuffer:
                 self._emit_next = line
                 return rendered
 
+        # Priority 3b: OL continuation tracking
+        if self._in_ol:
+            if line == "":
+                self._in_ol = False
+            elif _MD_OL_RE.match(line):
+                om = _MD_OL_RE.match(line)
+                item_indent = len(om.group(1))  # type: ignore[union-attr]
+                if item_indent < self._ol_indent and item_indent == 0:
+                    self._in_ol = False
+            elif not line.startswith(" " * max(self._ol_indent, 1)):
+                self._in_ol = False
+
         # Priority 4: normal mode
         # Blockquote start
-        m = _MD_BLOCKQUOTE_RE.match(line)
-        if m:
+        bm = _MD_BQ_LEVEL_RE.match(line)
+        if bm:
+            depth = bm.group(1).count('>')
             if self._pending is not None:
                 result = self._pending
                 self._pending = None
                 self._emit_next = line
-                self._in_blockquote = True
+                self._bq_depth = depth
                 return result
-            self._in_blockquote = True
-            return self._render_bq(m.group(1))
+            self._bq_depth = depth
+            # Buffer the first BQ line for setext-in-blockquote lookahead
+            self._pending = line
+            return None
 
         # Table row start
         if _TABLE_ROW_RE.match(line):
@@ -1300,7 +1536,7 @@ class StreamingBlockBuffer:
             if _is_heading_candidate(self._pending):
                 level = 1 if _SETEXT_H1_RE.match(line) else 2
                 style = _HEADING_STYLES[level]
-                rendered_text = apply_inline_markdown(self._pending, reset_suffix=style)  # type: ignore[arg-type]
+                rendered_text = apply_inline_markdown(self._pending, reset_suffix=style, ref_map=self._ref_map)  # type: ignore[arg-type]
                 heading = f"{style}{rendered_text}{_MD_RST_ANSI}"
                 self._pending = None
                 return heading
@@ -1308,6 +1544,12 @@ class StreamingBlockBuffer:
                 old = self._pending
                 self._pending = line
                 return old  # None if nothing was pending
+
+        # OL start — track state
+        om = _MD_OL_RE.match(line)
+        if om:
+            self._in_ol = True
+            self._ol_indent = len(om.group(1))
 
         # Plain line (or ANSI when _pending is None — return immediately)
         if "\x1b" in line and self._pending is None:
@@ -1317,9 +1559,15 @@ class StreamingBlockBuffer:
         self._pending = line
         return old  # None if _pending was None
 
+    def _render_bq_depth(self, content: str, depth: int) -> str:
+        indent = "  " * (depth - 1)
+        dim_prefix = "\033[2m" * min(depth - 1, 2)
+        ansi = dim_prefix + _BLOCKQUOTE_ANSI
+        content_rendered = apply_inline_markdown(content, reset_suffix=ansi, ref_map=self._ref_map)
+        return f"{indent}{ansi}▌ {content_rendered}\033[0m"
+
     def _render_bq(self, content: str) -> str:
-        content_rendered = apply_inline_markdown(content, reset_suffix=_BLOCKQUOTE_ANSI)
-        return f"{_BLOCKQUOTE_ANSI}▌ {content_rendered}\033[0m"
+        return self._render_bq_depth(content, max(self._bq_depth, 1))
 
     def _on_table_row(self, raw: str) -> None:
         header_cols = len(_split_row(self._table_buf[0])) if self._table_buf else 0
@@ -1423,6 +1671,13 @@ def format_response(text: str) -> str:
         # line has at least one ANSI escape — safe for pass-2 \x1b detection.
         return _number_code_lines(highlighted)
 
+    # Pre-pass: collect reference link definitions for inline resolution
+    ref_map: dict[str, str] = {}
+    for raw_line in text.splitlines():
+        rm = _REF_DEF_RE.match(raw_line.strip())
+        if rm:
+            ref_map[rm.group(1).lower()] = rm.group(2)
+
     # Match fenced code blocks of any depth (3+ backticks); \1 backreference
     # ensures the closing fence uses the same backtick sequence as the opener.
     text = re.sub(r"(?m)^(`{3,})(\w*)\n(.*?)\1", _highlight, text, flags=re.DOTALL)
@@ -1434,7 +1689,7 @@ def format_response(text: str) -> str:
     # the final newline if the original text ended with one.
     lines = text.splitlines()
     result = "\n".join(
-        l if "\x1b" in l else apply_inline_markdown(apply_block_line(l))
+        l if "\x1b" in l else apply_inline_markdown(apply_block_line(l), ref_map=ref_map)
         for l in lines
     )
     if text.endswith("\n"):

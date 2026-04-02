@@ -741,6 +741,7 @@ _MD_STRIKE_ANSI = "\033[9m"
 _MD_CODE_ANSI = "\033[97m"
 _MD_U_ANSI = "\033[4m"
 _MD_MARK_ANSI = "\033[7m"
+_MD_LINK_ANSI = "\033[4;94m"  # bright-blue underline — visually distinct from response text
 _MD_RST_ANSI = "\033[0m"
 
 
@@ -826,8 +827,8 @@ def apply_inline_markdown(line: str, reset_suffix: str = "") -> str:
     # Step 6a: images (before links — ![  prefix overlaps)
     line = _MD_IMAGE_RE.sub(lambda m: f"\033[2m[img: {m.group(1)}]\033[0m{reset_suffix}", line)
 
-    # Step 6b: links — underline text, discard URL
-    line = _MD_LINK_RE.sub(lambda m: f"\033[4m{m.group(1)}\033[0m{reset_suffix}", line)
+    # Step 6b: links — bright-blue underline + URL for copy/ctrl+click
+    line = _MD_LINK_RE.sub(lambda m: f"{_MD_LINK_ANSI}{m.group(1)} ({m.group(2)})\033[0m{reset_suffix}", line)
 
     # Step 6c: HTML inline tags (simple — content taken as-is)
     _h = reset_suffix  # shorthand

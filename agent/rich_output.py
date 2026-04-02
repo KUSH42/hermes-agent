@@ -452,8 +452,8 @@ def _flat_del(ln: int, content: str, filename: Optional[str] = None) -> Text:
     syn = _syntax_text(content, filename)
     syn.stylize(Style(bgcolor=_DIFF_BG_DEL))
     return Text.assemble(
-        Text(f"{ln:>4} ", style="dim"),
-        Text("- ", style=Style(color="red", bold=True)),
+        Text(f"{ln:>4} ", style=Style(dim=True, bgcolor=_DIFF_BG_DEL)),
+        Text("- ", style=Style(color="white", bold=True, bgcolor=_DIFF_BG_DEL)),
         syn,
     )
 
@@ -463,8 +463,8 @@ def _flat_add(ln: int, content: str, filename: Optional[str] = None) -> Text:
     syn = _syntax_text(content, filename)
     syn.stylize(Style(bgcolor=_DIFF_BG_ADD))
     return Text.assemble(
-        Text(f"{ln:>4} ", style="dim"),
-        Text("+ ", style=Style(color="green", bold=True)),
+        Text(f"{ln:>4} ", style=Style(dim=True, bgcolor=_DIFF_BG_ADD)),
+        Text("+ ", style=Style(color="white", bold=True, bgcolor=_DIFF_BG_ADD)),
         syn,
     )
 
@@ -614,8 +614,8 @@ class DiffRenderer:
             for i, (ln, content) in enumerate(del_run):
                 if i < n_pairs and pair_segs[i][0] is not None:
                     styled.append(Text.assemble(
-                        Text(f"{ln:>4} ", style="dim"),
-                        Text("- ", style=Style(color="red", bold=True)),
+                        Text(f"{ln:>4} ", style=Style(dim=True, bgcolor=_DIFF_BG_DEL)),
+                        Text("- ", style=Style(color="white", bold=True, bgcolor=_DIFF_BG_DEL)),
                         *pair_segs[i][0],
                     ))
                 else:
@@ -624,8 +624,8 @@ class DiffRenderer:
             for i, (ln, content) in enumerate(add_run):
                 if i < n_pairs and pair_segs[i][1] is not None:
                     styled.append(Text.assemble(
-                        Text(f"{ln:>4} ", style="dim"),
-                        Text("+ ", style=Style(color="green", bold=True)),
+                        Text(f"{ln:>4} ", style=Style(dim=True, bgcolor=_DIFF_BG_ADD)),
+                        Text("+ ", style=Style(color="white", bold=True, bgcolor=_DIFF_BG_ADD)),
                         *pair_segs[i][1],
                     ))
                 else:

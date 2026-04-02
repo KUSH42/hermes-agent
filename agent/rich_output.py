@@ -884,6 +884,12 @@ _SETEXT_H2_RE = re.compile(r"^-{2,}\s*$")
 _TABLE_ROW_RE = re.compile(r"^\|.+\|\s*$")
 _SEP_CELL_RE = re.compile(r"^[\s:-]+$")
 _NUM_RE = re.compile(r"^-?[\d,]+\.?\d*$")
+_ANSI_ESC_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _visual_len(s: str) -> int:
+    """Length of *s* in visible characters (ANSI escape codes stripped)."""
+    return len(_ANSI_ESC_RE.sub("", s))
 
 
 def _split_row(raw: str) -> list[str]:
@@ -909,26 +915,41 @@ def _is_heading_candidate(pending: Optional[str]) -> bool:
 def _render_table(rows: list[list[str]], sep_idx: Optional[int], align: list[str], cols: int) -> str:
     if not rows:
         return ""
-    data_rows = [r for i, r in enumerate(rows) if i != sep_idx]
+    # Apply inline markdown to every data cell so that ANSI styling is
+    # accounted for before we measure visual widths.  Separator rows are kept
+    # raw (they are replaced by a ─ line and never inspected for content).
+    rendered_rows: list[list[str]] = []
+    for i, row in enumerate(rows):
+        if i == sep_idx:
+            rendered_rows.append(row)
+        else:
+            rendered_rows.append([
+                apply_inline_markdown(row[j].strip()) if j < len(row) else ""
+                for j in range(cols)
+            ])
+    data_rows = [r for i, r in enumerate(rendered_rows) if i != sep_idx]
     widths = [
-        max((len(row[i].strip()) for row in data_rows if i < len(row)), default=0)
+        max((_visual_len(row[i]) for row in data_rows if i < len(row)), default=0)
         for i in range(cols)
     ]
     align = list(align) + ["left"] * (cols - len(align))
     out = []
-    for r_idx, row in enumerate(rows):
+    for r_idx, row in enumerate(rendered_rows):
         if r_idx == sep_idx:
             out.append(" " + "  ".join("─" * w for w in widths))
             continue
         cells = []
         for i, w in enumerate(widths):
-            cell = row[i].strip() if i < len(row) else ""
-            if align[i] == "right" or _NUM_RE.match(cell):
-                cells.append(cell.rjust(w))
+            cell = row[i] if i < len(row) else ""
+            raw = _ANSI_ESC_RE.sub("", cell)
+            pad = w - _visual_len(cell)
+            if align[i] == "right" or _NUM_RE.match(raw):
+                cells.append(" " * pad + cell)
             elif align[i] == "centre":
-                cells.append(cell.center(w))
+                lpad = pad // 2
+                cells.append(" " * lpad + cell + " " * (pad - lpad))
             else:
-                cells.append(cell.ljust(w))
+                cells.append(cell + " " * pad)
         out.append(" " + "  ".join(cells))
     return "\n".join(out)
 

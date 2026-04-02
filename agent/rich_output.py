@@ -686,7 +686,7 @@ _MD_STRIKE_ANSI = "\033[9m"
 _MD_CODE_ANSI = "\033[97m"
 _MD_U_ANSI = "\033[4m"
 _MD_MARK_ANSI = "\033[7m"
-_MD_LINK_ANSI = "\033[4;94m"  # bright-blue underline — visually distinct from response text
+_MD_LINK_ANSI = "\033[38;2;88;166;255m\033[4m"  # #58A6FF (GitHub dark-mode blue) + underline
 _MD_RST_ANSI = "\033[0m"
 
 

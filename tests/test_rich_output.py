@@ -1555,6 +1555,11 @@ class TestStatefulBlockRegexes:
     def test_split_row(self):
         assert _split_row("| a | b |") == [" a ", " b "]
         assert _split_row("|---|---|") == ["---", "---"]
+        # Loose format — no boundary pipes
+        assert _split_row("a | b | c") == ["a ", " b ", " c"]
+        assert _split_row("---|---|---") == ["---", "---", "---"]
+        # Mixed — trailing pipe only
+        assert _split_row("a | b |") == ["a ", " b "]
 
 
 # ---------------------------------------------------------------------------
@@ -1900,3 +1905,48 @@ class TestStreamingBlockBuffer:
         assert result is not None
         assert "\033[1;97m" not in result  # no H1 heading style
         assert "3. another item" in result
+
+    def test_loose_table_strict_separator(self):
+        """GFM optional-boundary pipes: header/data rows have no leading pipe."""
+        t = "Lang | Type\n|---|---|\nPython | Dynamic\nRust | Static"
+        result = render_stateful_blocks(t)
+        plain = _strip(result)
+        assert "Lang" in plain
+        assert "Python" in plain
+        assert "Rust" in plain
+        # Must not contain raw pipe-separator row
+        assert "|---|---|" not in plain
+
+    def test_loose_table_fully_loose(self):
+        """Fully-loose GFM table: no boundary pipes anywhere."""
+        t = "A | B | C\n---|---|---\nx | y | z"
+        result = render_stateful_blocks(t)
+        plain = _strip(result)
+        assert "A" in plain
+        assert "x" in plain
+        # separator row must be replaced by dashes
+        assert "---|" not in plain
+
+    def test_streaming_loose_table_strict_separator(self):
+        """StreamingBlockBuffer handles loose header + strict separator."""
+        buf = StreamingBlockBuffer()
+        assert buf.process_line("Lang | Type") is None      # pending
+        assert buf.process_line("|---|---|") is None        # rescues header, buffers sep
+        assert buf.process_line("Python | Dynamic") is None # loose data row
+        rendered = buf.flush()
+        assert rendered is not None
+        plain = _strip(rendered)
+        assert "Lang" in plain
+        assert "Python" in plain
+
+    def test_streaming_loose_table_fully_loose(self):
+        """StreamingBlockBuffer handles fully-loose table (no boundary pipes)."""
+        buf = StreamingBlockBuffer()
+        assert buf.process_line("A | B") is None
+        assert buf.process_line("---|---") is None
+        assert buf.process_line("x | y") is None
+        rendered = buf.flush()
+        assert rendered is not None
+        plain = _strip(rendered)
+        assert "A" in plain
+        assert "x" in plain

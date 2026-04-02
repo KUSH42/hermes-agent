@@ -25,6 +25,7 @@ import logging
 import os
 import re
 import shutil
+import unicodedata
 from difflib import SequenceMatcher
 from io import StringIO
 from pathlib import Path
@@ -936,8 +937,26 @@ _ANSI_ESC_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def _visual_len(s: str) -> int:
-    """Length of *s* in visible characters (ANSI escape codes stripped)."""
-    return len(_ANSI_ESC_RE.sub("", s))
+    """Terminal column width of *s* (ANSI codes stripped, wide/emoji chars = 2 cols).
+
+    Wide characters (east_asian_width W/F) count as 2.  U+FE0F (emoji
+    presentation selector) upgrades the preceding neutral char to 2-wide,
+    matching the behaviour of modern terminal emulators.
+    """
+    plain = _ANSI_ESC_RE.sub("", s)
+    total = 0
+    prev_width = 0
+    for ch in plain:
+        cp = ord(ch)
+        if cp == 0xFE0F:  # emoji presentation selector — upgrade preceding char
+            if prev_width == 1:
+                total += 1
+            prev_width = 0
+            continue
+        w = 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+        total += w
+        prev_width = w
+    return total
 
 
 def _split_row(raw: str) -> list[str]:

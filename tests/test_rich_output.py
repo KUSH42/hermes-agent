@@ -12,6 +12,7 @@ from agent.rich_output import (
     SyntaxHighlighter,
     _DIFF_BG_ADD_HL,
     _DIFF_BG_DEL_HL,
+    _highlight_inline_code,
     _intra_diff,
     _parse_diff_filename,
     clean_command_output,
@@ -144,6 +145,41 @@ class TestSyntaxHighlighter:
         assert isinstance(result, str)
         assert "some text" in result
 
+    def test_to_ansi_no_rogue_backslash_before_bracket(self):
+        # Haskell type signatures like [Integer] must render as [Integer], not
+        # [Integer\] — the old code escaped ] to \] which Rich renders literally.
+        import re
+        _strip = lambda s: re.sub(r"\x1b\[[0-9;]*m", "", s)
+        result = _strip(self.hl.to_ansi("fib :: [Integer]", language="haskell"))
+        assert "[Integer]" in result, f"Expected [Integer], got: {result!r}"
+        assert r"\]" not in result, f"Rogue backslash-bracket: {result!r}"
+
+    def test_to_ansi_lambda_backslash_no_leaking_close_tag(self):
+        # Haskell lambda \ is tokenised by Pygments as Name.Function (bold
+        # yellow). Without backslash-doubling the \ combined with the [/bold
+        # yellow] close tag to form \[ (Rich's escape), leaking the tag text.
+        import re
+        _strip = lambda s: re.sub(r"\x1b\[[0-9;]*m", "", s)
+        result = _strip(self.hl.to_ansi(r"fact = foldl (\a b -> a * b) 1", language="haskell"))
+        assert "[/bold" not in result, f"Leaked close tag: {result!r}"
+
+    def test_to_ansi_brackets_not_interpreted_as_rich_markup(self):
+        # Rich markup tags inside code string literals must survive as literal
+        # text — brackets like [bold green] and [/bold green] should appear
+        # verbatim in output, not vanish because Rich consumed them as tags.
+        import re
+        _strip = lambda s: re.sub(r"\x1b\[[0-9;]*m", "", s)
+        result = _strip(self.hl.to_ansi('printf "[bold green]hello[/bold green]\\n"', language="haskell"))
+        assert "hello" in result
+        assert "[bold green]" in result, f"Bracket text vanished: {result!r}"
+        assert "[/bold green]" in result, f"Bracket text vanished: {result!r}"
+
+    def test_to_markup_brackets_escaped(self):
+        # to_markup output goes to Console.print() — [ must be \[-escaped so
+        # Rich never interprets code content as formatting markup.
+        result = self.hl.to_markup('x = "[bold]text[/bold]"', language="python")
+        assert "[bold]" not in result or r"\[bold" in result
+
 
 # ---------------------------------------------------------------------------
 # DiffRenderer
@@ -196,8 +232,17 @@ class TestStreamingCodeBlockHighlighter:
         self.hl = StreamingCodeBlockHighlighter()
 
     def test_plain_lines_pass_through(self):
+        # Lines with no inline code are returned verbatim.
         assert self.hl.process_line("Hello world") == "Hello world"
         assert self.hl.process_line("Another line") == "Another line"
+
+    def test_plain_line_with_inline_code_styled(self):
+        import re
+        result = self.hl.process_line("Use `foo()` here.")
+        assert result is not None
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", result)
+        assert "foo()" in plain
+        assert "\033[" in result
 
     def test_opening_fence_suppressed(self):
         assert self.hl.process_line("```python") is None
@@ -373,6 +418,71 @@ class TestFormatResponse:
         plain = _re.sub(r"\x1b\[[0-9;]*m", "", result)
         for line in plain.splitlines():
             assert not line.strip().startswith("````"), f"4-backtick fence leaked: {line!r}"
+
+    def test_inline_code_in_prose_styled(self):
+        """Inline code spans in prose get ANSI styling."""
+        text = "Use `foo()` to call it."
+        result = format_response(text)
+        assert "\033[" in result
+        import re as _re
+        plain = _re.sub(r"\x1b\[[0-9;]*m", "", result)
+        assert "foo()" in plain
+
+    def test_inline_code_not_applied_inside_fenced_block(self):
+        """Backtick spans inside fenced code blocks are not double-styled."""
+        text = "```python\nx = `foo`\n```"
+        result = format_response(text)
+        # The fenced block content should not contain the inline-code ANSI prefix
+        # (48;5;237 is the inline code background index)
+        assert "48;5;237" not in result
+
+    def test_inline_code_preserved_in_plain_text(self):
+        """Inline code content survives styling."""
+        import re as _re
+        text = "The `fmap` function maps over a functor."
+        result = format_response(text)
+        plain = _re.sub(r"\x1b\[[0-9;]*m", "", result)
+        assert "fmap" in plain
+
+    def test_prose_without_backticks_unchanged(self):
+        """Plain prose with no backticks is returned verbatim."""
+        text = "Just a response with no fences."
+        assert format_response(text) == text
+
+
+# ---------------------------------------------------------------------------
+# _highlight_inline_code unit tests
+# ---------------------------------------------------------------------------
+
+class TestHighlightInlineCode:
+    def _strip(self, s: str) -> str:
+        import re
+        return re.sub(r"\x1b\[[0-9;]*m", "", s)
+
+    def test_single_span_styled(self):
+        result = _highlight_inline_code("Use `foo()` here.")
+        assert "\033[" in result
+        assert "foo()" in self._strip(result)
+
+    def test_multiple_spans_styled(self):
+        result = _highlight_inline_code("`a` and `b`")
+        plain = self._strip(result)
+        assert "a" in plain and "b" in plain
+        assert result.count("\033[48;5;237m") == 2
+
+    def test_no_backticks_unchanged(self):
+        text = "No inline code here."
+        assert _highlight_inline_code(text) == text
+
+    def test_backtick_content_preserved(self):
+        result = _highlight_inline_code("`m :: f (a -> Either e a)`")
+        assert "m :: f (a -> Either e a)" in self._strip(result)
+
+    def test_multiline_span_not_matched(self):
+        """A backtick span crossing a newline must NOT be treated as inline code."""
+        text = "`line one\nline two`"
+        result = _highlight_inline_code(text)
+        assert result == text  # no ANSI injected across a newline
 
 
 # ---------------------------------------------------------------------------

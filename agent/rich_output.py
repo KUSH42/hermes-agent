@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Optional
 
 from rich.console import Console, Group
+from rich.markup import escape as _markup_escape
 from rich.style import Style
 from rich.text import Text
 
@@ -264,11 +265,17 @@ class _PygmentsToRich:
         parts: list[str] = []
         for ttype, value in tokens:
             style = self._resolve(ttype)
+            # Use rich.markup.escape() which:
+            #   • doubles backslashes (\ → \\) so they render literally and
+            #     can never accidentally combine with the [ of a closing tag
+            #     to form \[ (Rich's escape for a literal "[")
+            #   • escapes [ → \[ so bracket text is never parsed as markup
+            #   • leaves ] alone — ] needs no escaping in Rich markup
+            esc = _markup_escape(value)
             if style and value.strip():
-                esc = value.replace("[", r"\[").replace("]", r"\]")
                 parts.append(f"[{style}]{esc}[/{style}]")
             else:
-                parts.append(value)
+                parts.append(esc)
         return "".join(parts)
 
     def _resolve(self, ttype) -> Optional[str]:
@@ -304,15 +311,13 @@ class SyntaxHighlighter:
     ) -> str:
         """Return a Rich markup string with syntax colours applied."""
         if not _PYGMENTS:
-            escaped = code.replace("[", r"\[").replace("]", r"\]")
-            return f"[green]{escaped}[/green]"
+            return f"[green]{_markup_escape(code)}[/green]"
         try:
             lexer = self._lexer(code, language, filename)
             return self._fmt.format(list(lexer.get_tokens(code)))
         except Exception as exc:
             logger.debug("Pygments highlight failed: %s", exc)
-            escaped = code.replace("[", r"\[").replace("]", r"\]")
-            return f"[green]{escaped}[/green]"
+            return f"[green]{_markup_escape(code)}[/green]"
 
     # -- ANSI string (for plain print / print_fn) ----------------------------
 
@@ -693,6 +698,29 @@ class DiffRenderer:
 # Public: fenced code block highlighting for LLM responses
 # ---------------------------------------------------------------------------
 
+# ANSI styling for inline code spans (`like this`):
+# dark gray background (256-colour index 237) + bright white text.
+_ANSI_INLINE_CODE_START = "\033[48;5;237m\033[97m"
+_ANSI_INLINE_CODE_END = "\033[0m"
+
+# Single backtick span: one or more non-backtick, non-newline characters.
+_INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
+
+
+def _highlight_inline_code(text: str) -> str:
+    """Apply ANSI styling to inline code spans (single backticks) in prose text.
+
+    Preserves the backticks so the boundary is still visible; only applies
+    a background/foreground colour change to distinguish code from prose.
+    Does NOT touch triple-backtick fenced blocks — callers must ensure
+    this is only called on prose segments, not on code block content.
+    """
+    return _INLINE_CODE_RE.sub(
+        lambda m: f"{_ANSI_INLINE_CODE_START}`{m.group(1)}`{_ANSI_INLINE_CODE_END}",
+        text,
+    )
+
+
 def _number_code_lines(highlighted: str) -> str:
     """Prepend dim right-justified line numbers to each line of a highlighted code block."""
     lines = highlighted.splitlines()
@@ -709,13 +737,14 @@ def format_response(text: str) -> str:
     """Apply syntax highlighting to fenced code blocks in a complete response string.
 
     Replaces each `` ```lang\\ncode\\n``` `` block with an ANSI-highlighted
-    version.  Blocks with no language hint use content-based detection.
+    version.  Inline code spans (single backticks) in prose segments are also
+    styled.  Blocks with no language hint use content-based detection.
     Suitable for the non-streaming Rich Panel display path.
     """
     _hl = SyntaxHighlighter()
     _det = LanguageDetector()
 
-    def _highlight(m: "re.Match") -> str:
+    def _highlight_block(m: "re.Match") -> str:
         lang = m.group(2).strip() or None
         code = m.group(3)
         if not lang:
@@ -725,7 +754,16 @@ def format_response(text: str) -> str:
 
     # Match fenced code blocks of any depth (3+ backticks); \1 backreference
     # ensures the closing fence uses the same backtick sequence as the opener.
-    return re.sub(r"(`{3,})(\w*)\n(.*?)\1", _highlight, text, flags=re.DOTALL)
+    # Apply inline-code highlighting only to prose segments between/around blocks.
+    fence_re = re.compile(r"(`{3,})(\w*)\n(.*?)\1", re.DOTALL)
+    parts: list[str] = []
+    last_end = 0
+    for m in fence_re.finditer(text):
+        parts.append(_highlight_inline_code(text[last_end:m.start()]))
+        parts.append(_highlight_block(m))
+        last_end = m.end()
+    parts.append(_highlight_inline_code(text[last_end:]))
+    return "".join(parts)
 
 
 class StreamingCodeBlockHighlighter:
@@ -777,7 +815,7 @@ class StreamingCodeBlockHighlighter:
                 self._lang = m.group(2) or None
                 self._buf = []
                 return None  # suppress opening fence — will re-emit with block
-            return line  # plain text, pass through
+            return _highlight_inline_code(line)  # prose: style any inline code spans
 
         # Inside a code block — closing fence: >= fence_depth backticks, nothing else
         m = self._FENCE_CLOSE_RE.match(stripped)

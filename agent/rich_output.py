@@ -693,6 +693,18 @@ class DiffRenderer:
 # Public: fenced code block highlighting for LLM responses
 # ---------------------------------------------------------------------------
 
+def _number_code_lines(highlighted: str) -> str:
+    """Prepend dim right-justified line numbers to each line of a highlighted code block."""
+    lines = highlighted.splitlines()
+    if not lines:
+        return highlighted
+    width = len(str(len(lines)))
+    out = []
+    for i, line in enumerate(lines, 1):
+        out.append(f"\033[2m{i:>{width}} \u2502\033[0m {line}")
+    return "\n".join(out)
+
+
 def format_response(text: str) -> str:
     """Apply syntax highlighting to fenced code blocks in a complete response string.
 
@@ -709,7 +721,7 @@ def format_response(text: str) -> str:
         if not lang:
             lang = _det.detect_from_content(code)
         highlighted = _hl.to_ansi(code, language=lang).rstrip("\n")
-        return highlighted
+        return _number_code_lines(highlighted)
 
     # Match fenced code blocks of any depth (3+ backticks); \1 backreference
     # ensures the closing fence uses the same backtick sequence as the opener.
@@ -794,7 +806,7 @@ class StreamingCodeBlockHighlighter:
         self._in_block = False
         self._lang = None
         self._buf = []
-        return highlighted
+        return _number_code_lines(highlighted)
 
 
 # ---------------------------------------------------------------------------

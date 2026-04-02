@@ -736,20 +736,34 @@ def apply_inline_markdown(line: str, reset_suffix: str = "") -> str:
 
     line = _MD_CODE_RE.sub(_protect_code, line)
 
+    # Steps 2–5 use _span() so that nested spans inside a bold/italic/strike
+    # delimiter are rendered recursively.  This prevents the _MD_ITALIC_UNDER_RE
+    # lookbehind ((?<![_\w])) from seeing the trailing 'm' of an enclosing ANSI
+    # code (e.g. \033[1m) as a word character and silently skipping the match.
+    # Guard: if the captured content already contains \x1b (ANSI from step 0),
+    # pass it through unchanged to avoid double-processing.
+    def _span(ansi: str) -> "Callable[[re.Match], str]":  # type: ignore[type-arg]
+        def _sub(m: re.Match) -> str:  # type: ignore[type-arg]
+            inner = m.group(1)
+            if "\x1b" not in inner:
+                inner = apply_inline_markdown(inner, reset_suffix=ansi + reset_suffix)
+            return f"{ansi}{inner}{rst}"
+        return _sub
+
     # Step 2: bold+italic (must precede bold and italic individually)
-    line = _MD_BOLD_ITALIC_STAR_RE.sub(lambda m: f"{_MD_BOLD_ITALIC_ANSI}{m.group(1)}{rst}", line)
-    line = _MD_BOLD_ITALIC_UNDER_RE.sub(lambda m: f"{_MD_BOLD_ITALIC_ANSI}{m.group(1)}{rst}", line)
+    line = _MD_BOLD_ITALIC_STAR_RE.sub(_span(_MD_BOLD_ITALIC_ANSI), line)
+    line = _MD_BOLD_ITALIC_UNDER_RE.sub(_span(_MD_BOLD_ITALIC_ANSI), line)
 
     # Step 3: bold
-    line = _MD_BOLD_STAR_RE.sub(lambda m: f"{_MD_BOLD_ANSI}{m.group(1)}{rst}", line)
-    line = _MD_BOLD_UNDER_RE.sub(lambda m: f"{_MD_BOLD_ANSI}{m.group(1)}{rst}", line)
+    line = _MD_BOLD_STAR_RE.sub(_span(_MD_BOLD_ANSI), line)
+    line = _MD_BOLD_UNDER_RE.sub(_span(_MD_BOLD_ANSI), line)
 
     # Step 4: italic (runs after bold so ** is already consumed)
-    line = _MD_ITALIC_STAR_RE.sub(lambda m: f"{_MD_ITALIC_ANSI}{m.group(1)}{rst}", line)
-    line = _MD_ITALIC_UNDER_RE.sub(lambda m: f"{_MD_ITALIC_ANSI}{m.group(1)}{rst}", line)
+    line = _MD_ITALIC_STAR_RE.sub(_span(_MD_ITALIC_ANSI), line)
+    line = _MD_ITALIC_UNDER_RE.sub(_span(_MD_ITALIC_ANSI), line)
 
     # Step 5: strikethrough
-    line = _MD_STRIKE_RE.sub(lambda m: f"{_MD_STRIKE_ANSI}{m.group(1)}{rst}", line)
+    line = _MD_STRIKE_RE.sub(_span(_MD_STRIKE_ANSI), line)
 
     # Step 6a: images (before links — ![  prefix overlaps)
     line = _MD_IMAGE_RE.sub(lambda m: f"\033[2m[img: {m.group(1)}]\033[0m{reset_suffix}", line)

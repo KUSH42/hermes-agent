@@ -246,12 +246,90 @@ class TestStreamingCodeBlockHighlighter:
         assert self.hl.process_line("Another line") == "Another line"
 
     def test_plain_line_with_inline_code_styled(self):
-        import re
-        result = self.hl.process_line("Use `foo()` here.")
-        assert result is not None
-        plain = re.sub(r"\x1b\[[0-9;]*m", "", result)
-        assert "foo()" in plain
-        assert "\033[" in result
+        line = "Use `foo()` here."
+        result = self.hl.process_line(line)
+        assert result is line  # identity preserved so cli.py applies full pipeline
+        assert "foo()" in result
+
+    def test_streaming_pipeline_bold_and_code_on_same_line(self):
+        # Regression: lines with inline code spans must still render bold/italic.
+        # The cli.py streaming path is: out = process_line(line); if out is line:
+        #     emit(apply_inline_markdown(apply_block_line(line)))
+        # If process_line returned a new string, the identity check failed and
+        # bold/italic were silently dropped (only code-span ANSI was emitted).
+        cases = [
+            "**Line 230**: `eocd.writeUInt32LE(cdSize, 8)` - EOCD should have **CD total size**",
+            "**Line 185**: `currentCDOffset` is calculated incrementally",
+            "1. **bold item** with `code` here",
+        ]
+        for line in cases:
+            out = self.hl.process_line(line)
+            assert out is line, f"process_line must return original line for prose: {line!r}"
+            rendered = apply_inline_markdown(apply_block_line(out))
+            assert "\033[1m" in rendered, f"bold ANSI missing for: {line!r}"
+            assert "\033[97m" in rendered, f"code-span style missing for: {line!r}"
+            assert "**" not in rendered, f"bold markers leaked into output for: {line!r}"
+
+    def test_streaming_pipeline_italic_and_code_on_same_line(self):
+        cases = [
+            "*note*: see `foo()` for details",
+            "Use *italic* alongside `code` here",
+        ]
+        for line in cases:
+            out = self.hl.process_line(line)
+            assert out is line, f"process_line must return original line: {line!r}"
+            rendered = apply_inline_markdown(apply_block_line(out))
+            assert "\033[3m" in rendered, f"italic ANSI missing for: {line!r}"
+            assert "\033[97m" in rendered, f"code-span style missing for: {line!r}"
+
+    def test_streaming_pipeline_strikethrough_and_code_on_same_line(self):
+        cases = [
+            "~~deprecated~~ use `new_api()` instead",
+            "~~old_func~~ replaced by `new_func()`",
+        ]
+        for line in cases:
+            out = self.hl.process_line(line)
+            assert out is line, f"process_line must return original line: {line!r}"
+            rendered = apply_inline_markdown(apply_block_line(out))
+            assert "\033[9m" in rendered, f"strikethrough ANSI missing for: {line!r}"
+            assert "\033[97m" in rendered, f"code-span style missing for: {line!r}"
+            assert "~~" not in rendered, f"strikethrough markers leaked for: {line!r}"
+
+    def test_streaming_pipeline_underline_and_code_on_same_line(self):
+        cases = [
+            "<u>important</u>: call `init()` first",
+            "<u>note</u> — `foo` must be set before use",
+        ]
+        for line in cases:
+            out = self.hl.process_line(line)
+            assert out is line, f"process_line must return original line: {line!r}"
+            rendered = apply_inline_markdown(apply_block_line(out))
+            assert "\033[4m" in rendered, f"underline ANSI missing for: {line!r}"
+            assert "\033[97m" in rendered, f"code-span style missing for: {line!r}"
+            assert "<u>" not in rendered, f"<u> tag leaked for: {line!r}"
+
+    def test_streaming_pipeline_bold_italic_and_code_on_same_line(self):
+        cases = [
+            "***critical***: run `setup()` now",
+            "***warning*** — `dangerous_op()` is irreversible",
+        ]
+        for line in cases:
+            out = self.hl.process_line(line)
+            assert out is line
+            rendered = apply_inline_markdown(apply_block_line(out))
+            assert "\033[1;3m" in rendered, f"bold-italic ANSI missing for: {line!r}"
+            assert "\033[97m" in rendered, f"code-span style missing for: {line!r}"
+            assert "***" not in rendered, f"bold-italic markers leaked for: {line!r}"
+
+    def test_streaming_pipeline_unordered_list_with_bold_and_code(self):
+        line = "- **important**: run `setup()` first"
+        out = self.hl.process_line(line)
+        assert out is line
+        rendered = apply_inline_markdown(apply_block_line(out))
+        assert "\033[1m" in rendered        # bold applied
+        assert "\033[97m" in rendered  # code span applied
+        assert "**" not in rendered
+        assert "•" in rendered              # bullet rendered by apply_block_line
 
     def test_opening_fence_suppressed(self):
         assert self.hl.process_line("```python") is None
@@ -902,7 +980,7 @@ class TestApplyInlineMarkdown:
     def test_backtick_code_span(self):
         result = apply_inline_markdown("`foo`")
         assert "\033[97m" in result
-        assert "\033[48;5;237m" in result  # dark background applied
+        assert "\033[97m" in result  # code span styled
         assert "foo" in result
         assert "`" in result  # backticks preserved inside the styled span
 
@@ -916,49 +994,49 @@ class TestApplyInlineMarkdown:
         result = apply_inline_markdown("**Line 88**: `cdOffset`")
         assert "\033[1m" in result           # bold applied
         assert "\033[97m" in result          # code span applied
-        assert "\033[48;5;237m" in result    # code span background applied
+        assert "\033[97m" in result    # code span applied applied
         assert "**" not in result
         assert "`" in result  # backticks preserved inside the styled span
 
     def test_mixed_strikethrough_and_code(self):
         result = apply_inline_markdown("~~deprecated~~ use `new_api()` instead")
         assert "\033[9m" in result
-        assert "\033[48;5;237m" in result
+        assert "\033[97m" in result
         assert "~~" not in result
         assert "`" in result
 
     def test_mixed_underline_and_code(self):
         result = apply_inline_markdown("<u>important</u>: call `init()` first")
         assert "\033[4m" in result
-        assert "\033[48;5;237m" in result
+        assert "\033[97m" in result
         assert "<u>" not in result
         assert "`" in result
 
     def test_mixed_bold_italic_and_code(self):
         result = apply_inline_markdown("***critical***: run `setup()` now")
         assert "\033[1;3m" in result
-        assert "\033[48;5;237m" in result
+        assert "\033[97m" in result
         assert "***" not in result
         assert "`" in result
 
     def test_mixed_mark_and_code(self):
         result = apply_inline_markdown("<mark>highlight</mark> then call `fn()`")
         assert "\033[7m" in result
-        assert "\033[48;5;237m" in result
+        assert "\033[97m" in result
         assert "<mark>" not in result
         assert "`" in result
 
     def test_mixed_ins_and_code(self):
         result = apply_inline_markdown("<ins>added</ins> via `patch()`")
         assert "\033[4m" in result
-        assert "\033[48;5;237m" in result
+        assert "\033[97m" in result
         assert "<ins>" not in result
         assert "`" in result
 
     def test_multiple_code_spans_with_bold(self):
         result = apply_inline_markdown("**bold** uses `foo()` and `bar()`")
         assert "\033[1m" in result
-        assert result.count("\033[48;5;237m") == 2
+        assert result.count("\033[97m") == 2
         assert "**" not in result
 
     def test_bold_italic_strikethrough_and_code(self):
@@ -966,7 +1044,7 @@ class TestApplyInlineMarkdown:
         assert "\033[1m" in result
         assert "\033[3m" in result
         assert "\033[9m" in result
-        assert "\033[48;5;237m" in result
+        assert "\033[97m" in result
         assert "**" not in result
         assert "~~" not in result
 
@@ -1178,7 +1256,7 @@ class TestApplyBlockLine:
     def test_blockquote_with_inline_code(self):
         result = apply_block_line("> see `foo()` for details")
         assert "▌" in result
-        assert "\033[48;5;237m" in result
+        assert "\033[97m" in result
         assert "foo()" in result
         assert ">" not in result
 
@@ -1186,13 +1264,13 @@ class TestApplyBlockLine:
         result = apply_block_line("> **important**: call `init()`")
         assert "▌" in result
         assert "\033[1m" in result
-        assert "\033[48;5;237m" in result
+        assert "\033[97m" in result
         assert "**" not in result
 
     def test_heading_with_inline_code(self):
         result = apply_block_line("# Use `setup()` first")
         assert "\033[1;97m" in result
-        assert "\033[48;5;237m" in result
+        assert "\033[97m" in result
         assert "setup()" in result
         assert "#" not in result
 
@@ -1200,7 +1278,7 @@ class TestApplyBlockLine:
         result = apply_block_line("## **Required**: run `init()`")
         assert "\033[1;37m" in result
         assert "\033[1m" in result
-        assert "\033[48;5;237m" in result
+        assert "\033[97m" in result
         assert "**" not in result
 
     def test_list_bullet_dot(self):
@@ -1262,28 +1340,28 @@ class TestFormatResponseInlineMarkdown:
         text = "**Line 230**: `eocd.writeUInt32LE(cdSize, 8)` - EOCD should have **CD total size**"
         result = format_response(text)
         assert "\033[1m" in result            # bold ANSI applied
-        assert "\033[48;5;237m" in result     # code span background applied
+        assert "\033[97m" in result     # code span applied applied
         assert "**" not in result             # no raw bold markers in output
 
     def test_italic_and_inline_code_on_same_line(self):
         text = "*note*: see `foo()` for details"
         result = format_response(text)
         assert "\033[3m" in result            # italic ANSI applied
-        assert "\033[48;5;237m" in result     # code span background applied
+        assert "\033[97m" in result     # code span applied applied
         assert "*note*" not in result
 
     def test_strikethrough_and_inline_code_on_same_line(self):
         text = "~~deprecated~~ use `new_api()` instead"
         result = format_response(text)
         assert "\033[9m" in result            # strikethrough ANSI applied
-        assert "\033[48;5;237m" in result     # code span background applied
+        assert "\033[97m" in result     # code span applied applied
         assert "~~" not in result
 
     def test_underline_and_inline_code_on_same_line(self):
         text = "<u>important</u>: call `init()` first"
         result = format_response(text)
         assert "\033[4m" in result            # underline ANSI applied
-        assert "\033[48;5;237m" in result     # code span background applied
+        assert "\033[97m" in result     # code span applied applied
         assert "<u>" not in result
         assert "</u>" not in result
 

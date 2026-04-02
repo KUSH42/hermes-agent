@@ -230,6 +230,32 @@ class TestDiffRenderer:
         result = self.dr.to_lines("not a real diff at all\njust some text\n")
         assert isinstance(result, list)
 
+    def test_del_line_numbers_stay_in_context_scale(self):
+        # Regression: when ln_old runs ahead of ln_new (e.g. a net-deletion earlier
+        # in the hunk), deletion line numbers must NOT jump above the surrounding
+        # context numbers.  All three of context, del, and add should use the same
+        # new-file scale so paired lines share the same number.
+        # Hunk @@ -59,16 +58,8 @@: after 3 context lines (58,59,60) ln_old=62 but
+        # ln_new=61 — before the fix, the first del showed as "62" skipping "61".
+        diff = (
+            "--- a/f.md\n+++ b/f.md\n"
+            "@@ -59,16 +58,8 @@\n"
+            " ctx_a\n ctx_b\n ctx_c\n"          # context → last shown: 60
+            "-del1\n-del2\n-del3\n"              # dels should be 61, 62, 63
+            "+add1\n+add2\n"                     # adds should be 61, 62
+        )
+        renderables = _renderables(diff)
+        import re
+        texts = [re.sub(r"\s+", " ", r.plain).strip() for r in renderables]
+        # First deletion must start at 61 (immediately after context line 60)
+        del_lines = [t for t in texts if "- del" in t]
+        assert del_lines, "expected deletion lines in output"
+        first_del_num = int(del_lines[0].split()[0])
+        assert first_del_num == 61, (
+            f"first deletion line showed {first_del_num}, expected 61 "
+            f"(must not jump to ln_old=62 when ln_new=61)"
+        )
+
 
 # ---------------------------------------------------------------------------
 # StreamingCodeBlockHighlighter

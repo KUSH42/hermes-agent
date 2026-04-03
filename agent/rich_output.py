@@ -927,7 +927,7 @@ _BLOCKQUOTE_ANSI = "\033[2m"
 _BULLETS = ["•", "◦", "▸", "·"]
 
 
-def apply_block_line(line: str) -> str:
+def apply_block_line(line: str, reset_suffix: str = "") -> str:
     """Apply ANSI styling to block-level markdown structures in a single line.
 
     Handles headings (h1–h6), horizontal rules, blockquotes, unordered lists,
@@ -937,6 +937,10 @@ def apply_block_line(line: str) -> str:
     - Lines containing ``\\x1b`` are already ANSI-rendered — returned as-is.
     - Lines containing ``\\n`` are multi-line blocks from ``StreamingBlockBuffer``
       (table or setext) — returned as-is.
+
+    ``reset_suffix`` is forwarded to every inner ``apply_inline_markdown`` call
+    so that inline span resets (e.g. code-span ``\\033[0m``) restore the outer
+    style (e.g. dim for reasoning blocks) instead of falling back to plain text.
 
     Returns *line* unchanged if no block pattern matches.
     """
@@ -987,12 +991,12 @@ def apply_block_line(line: str) -> str:
         if tm:
             checkbox_char, rest = tm.group(1), tm.group(2)
             if checkbox_char.lower() == 'x':
-                checkbox_sym = "\033[1;32m✓\033[0m"
+                checkbox_sym = f"\033[1;32m✓\033[0m{reset_suffix}"
             else:
-                checkbox_sym = "\033[2m○\033[0m"
-            rest_rendered = apply_inline_markdown(rest)
+                checkbox_sym = f"\033[2m○\033[0m{reset_suffix}"
+            rest_rendered = apply_inline_markdown(rest, reset_suffix=reset_suffix)
             return f"{indent}{bullet} {checkbox_sym} {rest_rendered}"
-        return f"{indent}{bullet} {apply_inline_markdown(content)}"
+        return f"{indent}{bullet} {apply_inline_markdown(content, reset_suffix=reset_suffix)}"
 
     # Ordered list — dim numeral, then content
     m = _MD_OL_RE.match(line)
@@ -1000,7 +1004,7 @@ def apply_block_line(line: str) -> str:
         indent, numeral, content = m.group(1), m.group(2), m.group(3)
         level = len(indent) // 2
         _ = level  # reserved for future indent-aware styling
-        return f"{indent}\033[2m{numeral}.\033[0m {apply_inline_markdown(content)}"
+        return f"{indent}\033[2m{numeral}.\033[0m{reset_suffix} {apply_inline_markdown(content, reset_suffix=reset_suffix)}"
 
     return line
 

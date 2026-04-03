@@ -634,39 +634,39 @@ class TestCleanCommandOutput:
 # ---------------------------------------------------------------------------
 
 class TestIntraDiff:
-    # _intra_diff now returns ([del_text], [add_text]) — single-element lists
-    # where each element is a Rich Text with spans rather than a list of
-    # per-segment Text objects.  Changed regions are marked with a brighter
-    # background (bold) instead of a bright foreground colour.
+    # _intra_diff returns ([del_text], [add_text]) — single-element lists where
+    # each element is a Rich Text with layered spans: syntax colours on the
+    # foreground, diff background applied via .stylize(), brighter highlight bg
+    # (bold) on changed character ranges.
 
     def test_equal_spans_use_base_colour(self):
-        # Equal spans must not be bold — specific colors are skin-driven.
+        # Identical lines → no changed regions → no bold spans.
         del_segs, add_segs = _intra_diff("abc", "abc")
-        for seg in del_segs + add_segs:
-            assert not seg.style.bold
+        del_text, add_text = del_segs[0], add_segs[0]
+        assert del_text.plain == "abc"
+        assert add_text.plain == "abc"
+        assert not any(sp.style.bold for sp in del_text._spans)
+        assert not any(sp.style.bold for sp in add_text._spans)
 
     def test_changed_span_highlighted(self):
         # "foo bar" → "foo baz": only the last char differs.
         del_segs, add_segs = _intra_diff("foo bar", "foo baz")
-        # Changed chars must be bold; equal chars must not be bold.
-        # Specific color values are skin-driven and not asserted here.
-        del_highlighted = [s for s in del_segs if s.style.bold]
-        add_highlighted = [s for s in add_segs if s.style.bold]
-        assert del_highlighted, "expected at least one bold segment in del_segs"
-        assert add_highlighted, "expected at least one bold segment in add_segs"
-        # Equal spans must not be bold
-        del_equal = [s for s in del_segs if not s.style.bold]
-        assert del_equal, "expected non-bold (equal) segments in del_segs"
+        del_text, add_text = del_segs[0], add_segs[0]
+        # At least one span must be bold (the changed char range).
+        assert any(sp.style.bold for sp in del_text._spans), "expected bold span on del"
+        assert any(sp.style.bold for sp in add_text._spans), "expected bold span on add"
+        # At least one span must not be bold (the equal range).
+        assert any(not sp.style.bold for sp in del_text._spans), "expected non-bold span on del"
 
     def test_delete_opcode_no_add_seg(self):
         del_segs, add_segs = _intra_diff("abcXYZ", "abc")
-        assert any("XYZ" in s.plain for s in del_segs)
-        assert any("abc" in s.plain for s in add_segs)
+        assert "abcXYZ" == del_segs[0].plain
+        assert "abc" == add_segs[0].plain
 
     def test_insert_opcode_no_del_seg(self):
         del_segs, add_segs = _intra_diff("abc", "abcXYZ")
-        assert any("XYZ" in s.plain for s in add_segs)
-        assert any("abc" in s.plain for s in del_segs)
+        assert "abcXYZ" == add_segs[0].plain
+        assert "abc" == del_segs[0].plain
 
 
 # ---------------------------------------------------------------------------

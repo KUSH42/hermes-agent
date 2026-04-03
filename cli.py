@@ -1919,9 +1919,14 @@ class HermesCLI:
         # reasoning is visible in real-time even without newlines.
         while "\n" in self._reasoning_buf:
             line, self._reasoning_buf = self._reasoning_buf.split("\n", 1)
+            if _RICH_RESPONSE:
+                line = _apply_inline_md(_apply_block_line(line, reset_suffix=_DIM), reset_suffix=_DIM)
             _cprint(f"{_DIM}{line}{_RST}")
         if len(self._reasoning_buf) > 80:
-            _cprint(f"{_DIM}{self._reasoning_buf}{_RST}")
+            partial = self._reasoning_buf
+            if _RICH_RESPONSE:
+                partial = _apply_inline_md(_apply_block_line(partial, reset_suffix=_DIM), reset_suffix=_DIM)
+            _cprint(f"{_DIM}{partial}{_RST}")
             self._reasoning_buf = ""
 
     def _close_reasoning_box(self) -> None:
@@ -1930,6 +1935,8 @@ class HermesCLI:
             # Flush remaining reasoning buffer
             buf = getattr(self, "_reasoning_buf", "")
             if buf:
+                if _RICH_RESPONSE:
+                    buf = _apply_inline_md(_apply_block_line(buf, reset_suffix=_DIM), reset_suffix=_DIM)
                 _cprint(f"{_DIM}{buf}{_RST}")
                 self._reasoning_buf = ""
             w = shutil.get_terminal_size().columns
@@ -2096,7 +2103,7 @@ class HermesCLI:
                 if out2 is None:
                     continue
                 if out2 is out:
-                    out = _apply_inline_md(_apply_block_line(out), reset_suffix=_tc)
+                    out = _apply_inline_md(_apply_block_line(out, reset_suffix=_tc), reset_suffix=_tc)
                     _cprint(f"{_tc}{out}{_RST}" if _tc else out)
                 else:
                     for hl_line in out2.splitlines():
@@ -2117,7 +2124,7 @@ class HermesCLI:
                     out2 = self._stream_code_hl.process_line(block_out)
                     if out2 is not None:
                         if out2 is block_out:
-                            out2 = _apply_inline_md(_apply_block_line(out2), reset_suffix=_tc)
+                            out2 = _apply_inline_md(_apply_block_line(out2, reset_suffix=_tc), reset_suffix=_tc)
                             _cprint(f"{_tc}{out2}{_RST}" if _tc else out2)
                         else:
                             for hl_line in out2.splitlines():
@@ -2126,8 +2133,7 @@ class HermesCLI:
                 buf_tail = self._stream_block_buf.flush()
                 if buf_tail is not None:
                     for hl_line in buf_tail.splitlines():
-                        if _display._code_highlight_active:
-                            hl_line = _apply_inline_md(_apply_block_line(hl_line), reset_suffix=_tc)
+                        hl_line = _apply_inline_md(_apply_block_line(hl_line, reset_suffix=_tc), reset_suffix=_tc)
                         _cprint(f"{_tc}{hl_line}{_RST}" if _tc else hl_line)
                 # Flush any open code block (unclosed fence at end of response)
                 tail = self._stream_code_hl.flush()
@@ -6717,7 +6723,14 @@ class HermesCLI:
                         display_reasoning = "\n".join(lines[:10])
                         display_reasoning += f"\n{_DIM}  ... ({len(lines) - 10} more lines){_RST}"
                     else:
-                        display_reasoning = reasoning.strip()
+                        visible = lines
+                        tail = ""
+                    if _RICH_RESPONSE:
+                        visible = [
+                            _apply_inline_md(_apply_block_line(l, reset_suffix=_DIM), reset_suffix=_DIM)
+                            for l in visible
+                        ]
+                    display_reasoning = "\n".join(visible) + tail
                     _cprint(f"\n{r_top}\n{_DIM}{display_reasoning}{_RST}\n{r_bot}")
 
             if response and not response_previewed:

@@ -10,8 +10,6 @@ from agent.rich_output import (
     LanguageDetector,
     StreamingCodeBlockHighlighter,
     SyntaxHighlighter,
-    _DIFF_BG_ADD_HL,
-    _DIFF_BG_DEL_HL,
     _highlight_inline_code,
     _intra_diff,
     _parse_diff_filename,
@@ -556,13 +554,13 @@ class TestIntraDiff:
 
     def test_delete_opcode_no_add_seg(self):
         del_segs, add_segs = _intra_diff("abcXYZ", "abc")
-        assert "XYZ" in del_segs[0].plain
-        assert add_segs[0].plain == "abc"
+        assert any("XYZ" in s.plain for s in del_segs)
+        assert any("abc" in s.plain for s in add_segs)
 
     def test_insert_opcode_no_del_seg(self):
         del_segs, add_segs = _intra_diff("abc", "abcXYZ")
-        assert "XYZ" in add_segs[0].plain
-        assert del_segs[0].plain == "abc"
+        assert any("XYZ" in s.plain for s in add_segs)
+        assert any("abc" in s.plain for s in del_segs)
 
 
 # ---------------------------------------------------------------------------

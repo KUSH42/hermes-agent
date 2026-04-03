@@ -553,20 +553,22 @@ def _syntax_text(content: str, filename: Optional[str]) -> Text:
 
 
 def _flat_del(ln: int, content: str, filename: Optional[str] = None) -> Text:
-    """Render a deletion line with diff background."""
+    """Render a deletion line with uniform diff background across number, sigil, and content."""
+    bg = _diff_cfg("deletion_bg")
     return Text.assemble(
-        Text(f"{ln:>4} ", style=_diff_cfg("line_number")),
-        Text("- ", style=Style(color="red", bold=True)),
-        Text(content, style=Style(bgcolor=_diff_cfg("deletion_bg"), color=_diff_cfg("deletion_fg"))),
+        Text(f"{ln:>4} ", style=Style(dim=True, bgcolor=bg)),
+        Text("- ", style=Style(color="white", bold=True, bgcolor=bg)),
+        Text(content, style=Style(bgcolor=bg, color=_diff_cfg("deletion_fg"))),
     )
 
 
 def _flat_add(ln: int, content: str, filename: Optional[str] = None) -> Text:
-    """Render an addition line with diff background."""
+    """Render an addition line with uniform diff background across number, sigil, and content."""
+    bg = _diff_cfg("addition_bg")
     return Text.assemble(
-        Text(f"{ln:>4} ", style=_diff_cfg("line_number")),
-        Text("+ ", style=Style(color="green", bold=True)),
-        Text(content, style=Style(bgcolor=_diff_cfg("addition_bg"), color=_diff_cfg("addition_fg"))),
+        Text(f"{ln:>4} ", style=Style(dim=True, bgcolor=bg)),
+        Text("+ ", style=Style(color="white", bold=True, bgcolor=bg)),
+        Text(content, style=Style(bgcolor=bg, color=_diff_cfg("addition_fg"))),
     )
 
 
@@ -706,11 +708,13 @@ class DiffRenderer:
                 new_content = add_run[i][1]
                 r = SequenceMatcher(None, old_content, new_content).ratio()
                 if r >= _INTRA_DIFF_MIN_RATIO:
-                    d, a = _intra_diff(old_content, new_content, fname)
+                    d, a = _intra_diff(old_content, new_content)
                     pair_segs.append((d, a))
                 else:
                     pair_segs.append((None, None))
 
+            del_bg = _diff_cfg("deletion_bg")
+            add_bg = _diff_cfg("addition_bg")
             for i, (ln_old_saved, content) in enumerate(del_run):
                 # Paired deletions share the addition's new-file line number so
                 # del and add lines at the same logical position show the same
@@ -720,8 +724,8 @@ class DiffRenderer:
                 ln = add_run[i][0] if i < n_pairs else ln_old_saved
                 if i < n_pairs and pair_segs[i][0] is not None:
                     styled.append(Text.assemble(
-                        Text(f"{ln:>4} ", style=Style(dim=True, bgcolor=_DIFF_BG_DEL)),
-                        Text("- ", style=Style(color="white", bold=True, bgcolor=_DIFF_BG_DEL)),
+                        Text(f"{ln:>4} ", style=Style(dim=True, bgcolor=del_bg)),
+                        Text("- ", style=Style(color="white", bold=True, bgcolor=del_bg)),
                         *pair_segs[i][0],
                     ))
                 else:
@@ -730,8 +734,8 @@ class DiffRenderer:
             for i, (ln, content) in enumerate(add_run):
                 if i < n_pairs and pair_segs[i][1] is not None:
                     styled.append(Text.assemble(
-                        Text(f"{ln:>4} ", style=Style(dim=True, bgcolor=_DIFF_BG_ADD)),
-                        Text("+ ", style=Style(color="white", bold=True, bgcolor=_DIFF_BG_ADD)),
+                        Text(f"{ln:>4} ", style=Style(dim=True, bgcolor=add_bg)),
+                        Text("+ ", style=Style(color="white", bold=True, bgcolor=add_bg)),
                         *pair_segs[i][1],
                     ))
                 else:

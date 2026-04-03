@@ -761,6 +761,8 @@ class DiffRenderer:
                 if entry:
                     fname, n_adds, n_dels = entry
                     header, sep = _make_header(fname, n_adds, n_dels)
+                    if styled:  # blank line between file sections
+                        styled.append(Text(""))
                     styled.append(header)
                     styled.append(sep)
                 continue
@@ -770,7 +772,11 @@ class DiffRenderer:
                 m = re.search(r"@@ -(\d+),?\d* \+(\d+),?\d* @@", line)
                 if m:
                     ln_old, ln_new = int(m.group(1)), int(m.group(2))
-                styled.append(Text(line, style=_diff_cfg("hunk_header")))
+                # Indent hunk header to align with the line-number + sigil prefix
+                styled.append(Text.assemble(
+                    Text("       ", style="dim"),  # 4-digit num + space + 2-char sigil
+                    Text(line, style=_diff_cfg("hunk_header")),
+                ))
                 continue
 
             if line.startswith("-"):

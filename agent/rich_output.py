@@ -1377,7 +1377,7 @@ def render_stateful_blocks(text: str) -> str:
         if "\x1b" in line:
             _flush_table_to_out()
             if _bq_depth:
-                _emit(f"{_md_ansi("blockquote")}▌ {_MD_RST_ANSI}{line}")
+                _emit(f"{_md_ansi('blockquote')}▌ {_MD_RST_ANSI}{line}")
             else:
                 _bq_depth = 0
                 _emit(line)
@@ -1635,7 +1635,7 @@ class StreamingBlockBuffer:
                         self._pending = None
                         self._emit_next = line
                         return self._render_bq_depth(inner, depth)
-                return f"{_md_ansi("blockquote")}▌ {_MD_RST_ANSI}{line}"
+                return f"{_md_ansi('blockquote')}▌ {_MD_RST_ANSI}{line}"
             if line == "":
                 # Flush pending BQ line before exiting blockquote
                 if self._pending is not None:

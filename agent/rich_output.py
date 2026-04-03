@@ -560,9 +560,10 @@ class DiffRenderer:
         for callers that apply their own budget, e.g.
         ``_summarize_rendered_diff_sections``).
         """
+        import shutil
+        render_width = width or shutil.get_terminal_size((220, 24)).columns
         buf = StringIO()
-        _w = width or shutil.get_terminal_size((220, 50)).columns
-        Console(file=buf, highlight=False, force_terminal=True, width=_w).print(
+        Console(file=buf, highlight=False, force_terminal=True, width=render_width).print(
             self.from_unified(diff_text)
         )
         # Drop the trailing empty line that Console adds

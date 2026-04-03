@@ -695,10 +695,7 @@ class DiffRenderer:
                 if add_run:
                     # -→+→- transition: flush current run and start fresh
                     flush_runs()
-                # Use ln_new + offset so deletion numbers stay in sync with the
-                # surrounding context/addition lines (all on new-file scale).
-                # ln_old still advances correctly for context-line accounting.
-                del_run.append((ln_new + len(del_run), line[1:]))
+                del_run.append((ln_old, line[1:]))
                 ln_old += 1
                 continue
 

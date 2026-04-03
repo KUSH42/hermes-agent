@@ -600,7 +600,7 @@ class DiffRenderer:
         # Pass 2 — render with run-based pairing and intra-line highlighting.
         ln_old = ln_new = 0
         from_path: Optional[str] = None
-        del_run: list[tuple[int, str]] = []  # (line_number, content)
+        del_run: list[tuple[int, str]] = []  # (ln_old, content)
         add_run: list[tuple[int, str]] = []
 
         def flush_runs() -> None:
@@ -622,7 +622,13 @@ class DiffRenderer:
                 else:
                     pair_segs.append((None, None))
 
-            for i, (ln, content) in enumerate(del_run):
+            for i, (ln_old_saved, content) in enumerate(del_run):
+                # Paired deletions share the addition's new-file line number so
+                # del and add lines at the same logical position show the same
+                # number.  Unpaired deletions (no corresponding addition) fall
+                # back to their old-file line number so the display stays
+                # monotonic and correct even when context lines split a del block.
+                ln = add_run[i][0] if i < n_pairs else ln_old_saved
                 if i < n_pairs and pair_segs[i][0] is not None:
                     styled.append(Text.assemble(
                         Text(f"{ln:>4} ", style=Style(dim=True, bgcolor=_DIFF_BG_DEL)),
@@ -673,10 +679,7 @@ class DiffRenderer:
                 if add_run:
                     # -→+→- transition: flush current run and start fresh
                     flush_runs()
-                # Use ln_new + offset so deletion numbers stay in sync with the
-                # surrounding context/addition lines (all on new-file scale).
-                # ln_old still advances correctly for context-line accounting.
-                del_run.append((ln_new + len(del_run), line[1:]))
+                del_run.append((ln_old, line[1:]))
                 ln_old += 1
                 continue
 

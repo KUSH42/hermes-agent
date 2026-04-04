@@ -223,16 +223,26 @@ class FilePathFormatter:
 # ---------------------------------------------------------------------------
 
 class _PygmentsToRich:
-    """Convert a Pygments token stream to a Rich markup string."""
+    """Convert a Pygments token stream to a Rich markup string.
 
-    # Built lazily so the class-level dict isn't populated when Pygments is absent
+    By default uses a built-in colour palette that looks good on dark terminals.
+    Call :func:`set_code_theme` to load colours from a named Pygments style
+    (e.g. ``"monokai"``, ``"dracula"``) — typically driven by the active skin.
+    """
+
+    # Built lazily so the class-level dict isn't populated when Pygments is absent.
+    # Replaced wholesale by set_code_theme() when a named Pygments style is loaded.
     _STYLES: dict = {}
+    _current_theme: str = ""  # tracks which theme name is currently active
+
+    # The built-in fallback palette — used when no Pygments style is requested
+    _DEFAULT_STYLES: dict = {}
 
     @classmethod
     def _ensure_styles(cls) -> None:
         if cls._STYLES or not _PYGMENTS:
             return
-        cls._STYLES = {
+        cls._DEFAULT_STYLES = {
             Keyword: "bold blue",
             Keyword.Type: "bold cyan",
             Name: "white",
@@ -260,6 +270,57 @@ class _PygmentsToRich:
             Generic.Error: "bold red",
             Error: "bold red",
         }
+        cls._STYLES = dict(cls._DEFAULT_STYLES)
+
+    @classmethod
+    def load_theme(cls, theme_name: str) -> bool:
+        """Replace the active colour palette with styles from a named Pygments theme.
+
+        Returns True if the theme was loaded successfully, False on any error
+        (unknown name, Pygments unavailable, etc.) in which case the built-in
+        palette is left intact.
+        """
+        if not _PYGMENTS or not theme_name:
+            return False
+        # Don't reload the same theme
+        if theme_name == cls._current_theme:
+            return True
+        try:
+            from pygments.styles import get_style_by_name
+            pygments_style = get_style_by_name(theme_name)
+        except Exception:
+            logger.debug("Unknown Pygments theme %r, keeping current palette", theme_name)
+            return False
+
+        # Convert Pygments style entries to Rich markup style strings.
+        # A Pygments style entry has .color (hex), .bold, .italic, .underline.
+        new_styles: dict = {}
+        for token_type, style_dict in pygments_style:
+            parts: list[str] = []
+            if style_dict.get("bold"):
+                parts.append("bold")
+            if style_dict.get("italic"):
+                parts.append("italic")
+            if style_dict.get("underline"):
+                parts.append("underline")
+            color = style_dict.get("color")
+            if color:
+                parts.append(f"#{color}")
+            if parts:
+                new_styles[token_type] = " ".join(parts)
+
+        cls._ensure_styles()  # make sure _DEFAULT_STYLES is populated
+        cls._STYLES = new_styles
+        cls._current_theme = theme_name
+        logger.debug("Loaded Pygments theme %r (%d token styles)", theme_name, len(new_styles))
+        return True
+
+    @classmethod
+    def reset_to_default(cls) -> None:
+        """Revert to the built-in colour palette."""
+        cls._ensure_styles()
+        cls._STYLES = dict(cls._DEFAULT_STYLES)
+        cls._current_theme = ""
 
     def format(self, tokens) -> str:
         self._ensure_styles()
@@ -345,6 +406,24 @@ class SyntaxHighlighter:
             return guess_lexer(code, stripnl=False)
         except ClassNotFound:
             return TextLexer(stripnl=False)
+
+
+# ---------------------------------------------------------------------------
+# Public: skin-aware code theme configuration
+# ---------------------------------------------------------------------------
+
+def set_code_theme(theme_name: str) -> bool:
+    """Apply a named Pygments theme to the syntax highlighter.
+
+    Called from the CLI when the active skin provides a ``code_theme`` colour key
+    (e.g. ``"monokai"``, ``"dracula"``).  Returns True on success.
+
+    An empty *theme_name* (or ``"default"``) reverts to the built-in palette.
+    """
+    if not theme_name or theme_name == "default":
+        _PygmentsToRich.reset_to_default()
+        return True
+    return _PygmentsToRich.load_theme(theme_name)
 
 
 # ---------------------------------------------------------------------------
@@ -1726,6 +1805,26 @@ def _number_code_lines(highlighted: str) -> str:
     for i, line in enumerate(lines, 1):
         out.append(f"\033[2m{i:>{width}} \u2502\033[0m {line}")
     return "\n".join(out)
+
+
+# Fast-path regex: matches common markdown syntax characters.
+# If none are found in the first 500 chars, the text is almost certainly plain
+# and we can skip the full markdown parsing pipeline for a faster display.
+_MD_SYNTAX_RE = re.compile(
+    r'[#*`|>\[~]|\n\n|^\d+\.\s|\n\d+\.\s',
+    re.MULTILINE,
+)
+
+
+def has_markdown_syntax(text: str) -> bool:
+    """Return True if *text* likely contains markdown that should be rendered.
+
+    Scans only the first 500 characters to keep the check fast. Used as a
+    fast-path gate before ``format_response()`` so plain-text responses skip
+    the full parsing pipeline.
+    """
+    sample = text[:500] if len(text) > 500 else text
+    return bool(_MD_SYNTAX_RE.search(sample))
 
 
 def format_response(text: str) -> str:

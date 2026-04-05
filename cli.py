@@ -2016,10 +2016,9 @@ class HermesCLI:
                     if out2 is None:
                         continue
                     if out2 is out:
-                        # plain text — apply block + inline markdown (fires whenever
-                        # _code_highlight_active is True, consistent with PR3)
-                        if _display._code_highlight_active:
-                            out = _apply_inline_md(_apply_block_line(out, reset_suffix=_tc), reset_suffix=_tc)
+                        # Plain text still needs markdown rendering even when
+                        # execute_code syntax highlighting is disabled.
+                        out = _apply_inline_md(_apply_block_line(out, reset_suffix=_tc), reset_suffix=_tc)
                         _cprint(f"{_tc}{out}{_RST}" if _tc else out)
                     else:
                         # fenced code block — emit as-is (carries its own ANSI)
@@ -2046,8 +2045,7 @@ class HermesCLI:
                         out2 = self._stream_code_hl.process_line(block_out)
                         if out2 is not None:
                             if out2 is block_out:
-                                if _display._code_highlight_active:
-                                    out2 = _apply_inline_md(_apply_block_line(out2, reset_suffix=_tc), reset_suffix=_tc)
+                                out2 = _apply_inline_md(_apply_block_line(out2, reset_suffix=_tc), reset_suffix=_tc)
                                 _cprint(f"{_tc}{out2}{_RST}" if _tc else out2)
                             else:
                                 for hl_line in out2.splitlines():
@@ -2056,7 +2054,7 @@ class HermesCLI:
                     buf_tail = self._stream_block_buf.flush()
                     if buf_tail is not None:
                         for hl_line in buf_tail.splitlines():
-                            if _display._code_highlight_active:
+                            if "\x1b" not in hl_line:
                                 hl_line = _apply_inline_md(_apply_block_line(hl_line, reset_suffix=_tc), reset_suffix=_tc)
                             _cprint(f"{_tc}{hl_line}{_RST}" if _tc else hl_line)
                     # Flush any open code block (unclosed fence at end of response)

@@ -1,5 +1,6 @@
 """Tests for agent/rich_output.py — syntax highlighting, diff rendering, code block detection."""
 
+import os
 import re
 
 import pytest
@@ -723,19 +724,22 @@ class TestIntraDiff:
 
 class TestParseDiffFilename:
     def test_strips_b_prefix(self):
-        assert _parse_diff_filename("b/src/foo.py") == "foo.py"
+        assert _parse_diff_filename("b/src/foo.py") == "src/foo.py"
 
     def test_strips_a_prefix(self):
-        assert _parse_diff_filename("a/src/foo.py") == "foo.py"
+        assert _parse_diff_filename("a/src/foo.py") == "src/foo.py"
 
     def test_bare_path(self):
-        assert _parse_diff_filename("path/bar.py") == "bar.py"
+        assert _parse_diff_filename("path/bar.py") == "path/bar.py"
 
     def test_devnull_falls_back_to_from(self):
         assert _parse_diff_filename("/dev/null", "a/old.py") == "old.py"
 
     def test_devnull_no_fallback_returns_question(self):
         assert _parse_diff_filename("/dev/null") == "?"
+
+    def test_preserves_distinct_relative_paths(self):
+        assert _parse_diff_filename("b/src/foo.py") != _parse_diff_filename("b/tests/foo.py")
 
 
 # ---------------------------------------------------------------------------
@@ -985,6 +989,12 @@ class TestDiffRendererTruncation:
         lines = self.dr.to_lines(diff, max_lines=10)
         assert len(lines) == 11  # 10 content + footer
         assert "omitted" in _ANSI_RE.sub("", lines[-1])
+
+    def test_width_zero_uses_terminal_fallback(self, monkeypatch):
+        diff = "--- a/f.py\n+++ b/f.py\n@@ -1 +1 @@\n-old\n+new\n"
+        monkeypatch.setattr("agent.rich_output.shutil.get_terminal_size", lambda _fallback=(220, 24): os.terminal_size((120, 24)))
+        lines = self.dr.to_lines(diff, width=0)
+        assert lines
 
 
 # ---------------------------------------------------------------------------

@@ -216,6 +216,17 @@ class TestEditDiffPreview:
         assert not any("file7.py" in line for line in rendered)
         assert "additional file" in rendered[-1]
 
+    def test_summarize_rendered_diff_sections_keeps_distinct_relative_paths(self):
+        diff = (
+            "--- a/src/foo.py\n+++ b/src/foo.py\n+src\n"
+            "--- a/tests/foo.py\n+++ b/tests/foo.py\n+tests\n"
+        )
+
+        rendered = _summarize_rendered_diff_sections(diff, max_files=10, max_lines=50)
+
+        assert any("src/foo.py" in line for line in rendered)
+        assert any("tests/foo.py" in line for line in rendered)
+
 
 # ---------------------------------------------------------------------------
 # _highlight_block

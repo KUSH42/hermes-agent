@@ -2,6 +2,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from cli import HermesCLI, _rich_text_from_ansi
+from agent.display import set_code_highlight_active
+from agent.rich_output import StreamingBlockBuffer, StreamingCodeBlockHighlighter
 from hermes_cli.skin_engine import get_active_skin, set_active_skin
 
 
@@ -17,6 +19,7 @@ def _make_cli_stub():
     cli._voice_recording = False
     cli._voice_processing = False
     cli._voice_mode = False
+    cli._stream_box_opened = False
     cli._command_spinner_frame = lambda: "⟳"
     cli._tui_style_base = {
         "prompt": "#fff",
@@ -96,3 +99,26 @@ class TestAnsiRichTextHelper:
     def test_strips_ansi_but_keeps_plain_text(self):
         text = _rich_text_from_ansi("\x1b[31mred\x1b[0m")
         assert text.plain == "red"
+
+
+class TestCliMarkdownStreaming:
+    def test_flush_stream_renders_markdown_when_code_highlight_disabled(self):
+        cli = _make_cli_stub()
+        cli.markdown_enabled = True
+        cli._stream_buf = "**bold**"
+        cli._stream_text_ansi = ""
+        cli._stream_block_buf = StreamingBlockBuffer()
+        cli._stream_code_hl = StreamingCodeBlockHighlighter()
+        cli._close_reasoning_box = MagicMock()
+
+        rendered = []
+        set_code_highlight_active(False)
+        try:
+            with patch("cli._cprint", side_effect=rendered.append):
+                HermesCLI._flush_stream(cli)
+        finally:
+            set_code_highlight_active(False)
+
+        assert rendered
+        assert "**bold**" not in rendered[0]
+        assert "\033[1m" in rendered[0]

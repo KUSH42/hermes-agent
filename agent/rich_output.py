@@ -431,7 +431,7 @@ def set_code_theme(theme_name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def _parse_diff_filename(path: str, fallback: Optional[str] = None) -> str:
-    """Return the basename from a unified-diff path string.
+    """Return a normalized relative path from a unified-diff path string.
 
     Strips ``b/`` / ``a/`` prefixes produced by ``git diff``.  If the result
     is ``/dev/null`` (deleted-file diff), recurses on *fallback* (the ``---``
@@ -445,8 +445,8 @@ def _parse_diff_filename(path: str, fallback: Optional[str] = None) -> str:
         if fallback:
             return _parse_diff_filename(fallback)
         return "?"
-    name = Path(path).name
-    return name if name else path
+    normalized = path.strip()
+    return normalized or "?"
 
 
 def _count_pass(
@@ -641,7 +641,8 @@ class DiffRenderer:
         ``_summarize_rendered_diff_sections``).
         """
         buf = StringIO()
-        Console(file=buf, highlight=False, force_terminal=True, width=width).print(
+        render_width = width or shutil.get_terminal_size((220, 24)).columns
+        Console(file=buf, highlight=False, force_terminal=True, width=render_width).print(
             self.from_unified(diff_text)
         )
         # Drop the trailing empty line that Console adds

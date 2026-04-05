@@ -243,13 +243,13 @@ class TestIntraDiff:
 
 class TestParseDiffFilename:
     def test_strips_b_prefix(self):
-        assert _parse_diff_filename("b/src/foo.py") == "foo.py"
+        assert _parse_diff_filename("b/src/foo.py") == "src/foo.py"
 
     def test_strips_a_prefix(self):
-        assert _parse_diff_filename("a/src/foo.py") == "foo.py"
+        assert _parse_diff_filename("a/src/foo.py") == "src/foo.py"
 
     def test_bare_path(self):
-        assert _parse_diff_filename("path/bar.py") == "bar.py"
+        assert _parse_diff_filename("path/bar.py") == "path/bar.py"
 
     def test_devnull_falls_back_to_from(self):
         assert _parse_diff_filename("/dev/null", "a/old.py") == "old.py"
@@ -395,23 +395,32 @@ class TestDiffRendererV2:
     def test_summary_header_contains_filename(self):
         diff = "--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1 +1 @@\n+x\n"
         plain = _renderables(diff)[0].plain
-        assert "foo.py" in plain
+        assert "src/foo.py" in plain
 
     def test_summary_header_strips_b_prefix(self):
         diff = "--- a/path/bar.py\n+++ b/path/bar.py\n@@ -1 +1 @@\n+x\n"
         plain = _renderables(diff)[0].plain
-        assert "bar.py" in plain
-        assert "b/bar.py" not in plain
+        assert "path/bar.py" in plain
+        assert "b/path/bar.py" not in plain
 
     def test_summary_header_bare_path(self):
         diff = "--- path/bar.py\n+++ path/bar.py\n@@ -1 +1 @@\n+x\n"
         plain = _renderables(diff)[0].plain
-        assert "bar.py" in plain
+        assert "path/bar.py" in plain
 
     def test_summary_header_devnull_fallback(self):
         diff = "--- a/old.py\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n"
         plain = _renderables(diff)[0].plain
         assert "old.py" in plain
+
+    def test_summary_header_keeps_distinct_relative_paths(self):
+        diff = (
+            "--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1 +1 @@\n+x\n"
+            "--- a/tests/foo.py\n+++ b/tests/foo.py\n@@ -1 +1 @@\n+y\n"
+        )
+        header_plains = [r.plain for r in _renderables(diff) if "●" in r.plain]
+        assert any("src/foo.py" in p for p in header_plains)
+        assert any("tests/foo.py" in p for p in header_plains)
 
     def test_multi_file_diff_two_headers(self):
         diff = (

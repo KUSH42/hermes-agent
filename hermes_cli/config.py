@@ -363,6 +363,7 @@ DEFAULT_CONFIG = {
         "streaming": False,
         "inline_diffs": True,     # Show inline diff previews for write actions (write_file, patch, skill_manage)
         "code_highlight": True,   # Highlight source-like tool output previews and fenced code blocks
+        "syntax_bold": True,      # Keep bold emphasis on syntax-highlighted token styles
         "show_cost": False,       # Show $ cost in the status bar (off by default)
         "skin": "default",
         "tool_progress_command": False,  # Enable /verbose command in messaging gateway
@@ -525,7 +526,7 @@ DEFAULT_CONFIG = {
     },
 
     # Config schema version - bump this when adding new required fields
-    "_config_version": 11,
+    "_config_version": 12,
 }
 
 # =============================================================================

@@ -1955,8 +1955,10 @@ class StreamingCodeBlockHighlighter:
     """State machine that syntax-highlights fenced code blocks during streaming.
 
     Feed lines one at a time with ``process_line()``.  Regular lines are
-    returned immediately; lines inside a code block are buffered and the
-    entire highlighted block is returned when the closing fence arrives.
+    returned immediately and unchanged; lines inside a code block are buffered
+    and the entire highlighted block is returned when the closing fence
+    arrives. Inline markdown on prose lines is handled later by the CLI's
+    markdown pipeline, not here.
 
     Example usage in a line-emission loop::
 
@@ -2000,7 +2002,7 @@ class StreamingCodeBlockHighlighter:
                 self._lang = m.group(2) or None
                 self._buf = []
                 return None  # suppress opening fence — will re-emit with block
-            return _highlight_inline_code(line)  # prose: style any inline code spans
+            return line  # prose passes through; CLI applies markdown rendering
 
         # Inside a code block — closing fence: >= fence_depth backticks, nothing else
         m = self._FENCE_CLOSE_RE.match(stripped)
@@ -2068,5 +2070,4 @@ def clean_command_output(content: str) -> str:
 
     result = "\n".join(out)
     return re.sub(r"\n\s*\n\s*\n", "\n\n", result).strip()
-
 

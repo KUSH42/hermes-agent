@@ -89,6 +89,19 @@ def test_syntax_refresh_on_skin_switch():
     assert default_out != monokai_out
 
 
+def test_syntax_bold_toggle_strips_syntax_token_bold(monkeypatch):
+    from hermes_cli import skin_engine
+
+    monkeypatch.setattr(skin_engine, "_syntax_bold_enabled", lambda: False)
+    styles = skin_engine.get_active_skin().get_syntax_styles()
+
+    assert styles["keyword"] == "blue"
+    assert styles["keyword_type"] == "cyan"
+    assert styles["name_class"] == "yellow"
+    assert styles["name_function"] == "yellow"
+    assert styles["operator_word"] == "blue"
+
+
 def test_diff_filename_style_uses_active_skin():
     from agent.rich_output import DiffRenderer
     from hermes_cli.skin_engine import get_active_skin, set_active_skin

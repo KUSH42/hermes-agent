@@ -263,7 +263,7 @@ def load_cli_config() -> Dict[str, Any]:
             "show_reasoning": False,
             "streaming": True,
             "busy_input_mode": "interrupt",
-
+            "syntax_bold": True,
             "skin": "default",
         },
         "clarify": {

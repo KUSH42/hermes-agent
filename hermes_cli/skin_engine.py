@@ -469,6 +469,27 @@ def register_skin_callback(fn: Callable[[], None]) -> None:
     _invalidation_callbacks.append(fn)
 
 
+def _syntax_bold_enabled() -> bool:
+    """Return whether syntax token styles should keep bold emphasis."""
+    try:
+        from hermes_cli.config import load_config
+
+        display = load_config().get("display", {})
+        value = display.get("syntax_bold", True)
+    except Exception:
+        return True
+
+    if isinstance(value, str):
+        return value.strip().lower() not in {"0", "false", "no", "off"}
+    return bool(value)
+
+
+def _strip_bold(style: str) -> str:
+    """Remove the standalone ``bold`` token from a Rich style string."""
+    parts = [part for part in style.split() if part.lower() != "bold"]
+    return " ".join(parts)
+
+
 # =============================================================================
 # Skin data structure
 # =============================================================================
@@ -517,6 +538,11 @@ class SkinConfig:
         """Return merged syntax styles: named scheme + per-skin token overrides."""
         base = dict(SYNTAX_SCHEMES.get(self.syntax_scheme, SYNTAX_SCHEMES["hermes"]))
         base.update(self.syntax)  # per-skin overrides win
+        if not _syntax_bold_enabled():
+            base = {
+                token: (_strip_bold(style) if isinstance(style, str) else style)
+                for token, style in base.items()
+            }
         return base
 
     def get_diff(self, key: str, fallback: str = "") -> str:

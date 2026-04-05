@@ -1,0 +1,20 @@
+On branch feat/output-interceptor
+Your branch is ahead of 'origin/feat/output-interceptor' by 2 commits.
+  (use "git push" to publish your local commits)
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   tools/terminal_tool.py
+	modified:   tools/process_registry.py
+
+Changes to be committed:
+  (use "git restore --staged <file>..." to unstage)
+	new file:   tools/output_interceptor.py
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	tests/tools/test_output_interceptor.py
+	scripts/demo_diff.py
+
+no changes added to commit

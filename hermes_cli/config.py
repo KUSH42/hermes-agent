@@ -217,6 +217,16 @@ DEFAULT_CONFIG = {
         "modal_mode": "auto",
         "cwd": ".",  # Use current directory
         "timeout": 180,
+        "output_interceptor_enabled": True,
+        "output_default_verbosity": "summary",
+        "interceptor_persist_large_output": True,
+        "interceptor_capture_summarized_raw": True,
+        "interceptor_include_fallback_reason": False,
+        "interceptor_persist_threshold_chars": 50000,
+        "interceptor_medium_diff_max_files": 5,
+        "interceptor_medium_diff_max_lines": 200,
+        "interceptor_min_savings_chars": 0,
+        "interceptor_min_savings_ratio": 0.0,
         # Environment variables to pass through to sandboxed execution
         # (terminal and execute_code).  Skill-declared required_environment_variables
         # are passed through automatically; this list is for non-skill use cases.
@@ -531,7 +541,7 @@ DEFAULT_CONFIG = {
     },
 
     # Config schema version - bump this when adding new required fields
-    "_config_version": 11,
+    "_config_version": 15,
 }
 
 # =============================================================================
@@ -1311,6 +1321,18 @@ def migrate_config(interactive: bool = True, quiet: bool = False) -> Dict[str, A
                     print("  ✓ Cleared ANTHROPIC_TOKEN from .env (no longer used)")
         except Exception:
             pass
+
+    # ── Version 14 → 15: default fallback_reason off in model-facing payloads ──
+    if current_ver < 15:
+        config = load_config()
+        terminal = config.get("terminal", {})
+        if not isinstance(terminal, dict):
+            terminal = {}
+        terminal["interceptor_include_fallback_reason"] = False
+        config["terminal"] = terminal
+        save_config(config)
+        if not quiet:
+            print("  ✓ Set terminal.interceptor_include_fallback_reason = false")
 
     if current_ver < latest_ver and not quiet:
         print(f"Config version: {current_ver} → {latest_ver}")
@@ -2140,6 +2162,16 @@ def set_config_value(key: str, value: str):
         "terminal.docker_mount_cwd_to_workspace": "TERMINAL_DOCKER_MOUNT_CWD_TO_WORKSPACE",
         "terminal.cwd": "TERMINAL_CWD",
         "terminal.timeout": "TERMINAL_TIMEOUT",
+        "terminal.output_interceptor_enabled": "TERMINAL_OUTPUT_INTERCEPTOR_ENABLED",
+        "terminal.output_default_verbosity": "TERMINAL_OUTPUT_DEFAULT_VERBOSITY",
+        "terminal.interceptor_persist_large_output": "TERMINAL_INTERCEPTOR_PERSIST_LARGE_OUTPUT",
+        "terminal.interceptor_capture_summarized_raw": "TERMINAL_INTERCEPTOR_CAPTURE_SUMMARIZED_RAW",
+        "terminal.interceptor_include_fallback_reason": "TERMINAL_INTERCEPTOR_INCLUDE_FALLBACK_REASON",
+        "terminal.interceptor_persist_threshold_chars": "TERMINAL_INTERCEPTOR_PERSIST_THRESHOLD_CHARS",
+        "terminal.interceptor_medium_diff_max_files": "TERMINAL_INTERCEPTOR_MEDIUM_DIFF_MAX_FILES",
+        "terminal.interceptor_medium_diff_max_lines": "TERMINAL_INTERCEPTOR_MEDIUM_DIFF_MAX_LINES",
+        "terminal.interceptor_min_savings_chars": "TERMINAL_INTERCEPTOR_MIN_SAVINGS_CHARS",
+        "terminal.interceptor_min_savings_ratio": "TERMINAL_INTERCEPTOR_MIN_SAVINGS_RATIO",
         "terminal.sandbox_dir": "TERMINAL_SANDBOX_DIR",
         "terminal.persistent_shell": "TERMINAL_PERSISTENT_SHELL",
     }

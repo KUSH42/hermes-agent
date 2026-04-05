@@ -1,0 +1,13 @@
+diff --git a/tools/sample.py b/tools/sample.py
+index 1a2b3c4..5d6e7f8 100644
+--- a/tools/sample.py
++++ b/tools/sample.py
+@@ -1,5 +1,8 @@
+ def greet(name):
+-    return "hello"
++    if not name:
++        return "hello, world"
++    return f"hello, {name}"
+ 
+ 
+ print(greet("team"))

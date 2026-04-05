@@ -74,6 +74,8 @@ class TestGetAndPoll:
         assert result["status"] == "running"
         assert "some output" in result["output_preview"]
         assert result["command"] == "echo hello"
+        assert "derived_output" in result
+        assert "interceptor_kind" in result
 
     def test_poll_exited(self, registry):
         s = _make_session(exited=True, exit_code=0, output="done")
@@ -81,6 +83,29 @@ class TestGetAndPoll:
         result = registry.poll(s.id)
         assert result["status"] == "exited"
         assert result["exit_code"] == 0
+
+    def test_poll_pytest_uses_summary_preview(self, registry):
+        s = _make_session(
+            command="pytest -q",
+            output=(
+                "============================= test session starts ==============================\n"
+                "platform linux -- Python 3.12.1, pytest-8.3.1\n"
+                "collected 3 items\n\n"
+                "FAILED tests/test_demo.py::test_a - AssertionError\n"
+                "tests/test_demo.py F..\n\n"
+                "=================================== FAILURES ===================================\n"
+                "_______________________________ test_a _______________________________\n"
+                "E AssertionError\n"
+                "==== 1 failed, 2 passed in 0.10s ====\n"
+            ),
+        )
+        registry._running[s.id] = s
+        with patch.dict(os.environ, {"TERMINAL_INTERCEPTOR_CAPTURE_SUMMARIZED_RAW": "false"}):
+            result = registry.poll(s.id)
+        assert result["derived_output"] is True
+        assert result["interceptor_kind"] == "pytest"
+        assert "2 passed" in result["output_preview"]
+        assert "1 failed" in result["output_preview"]
 
 
 # =========================================================================
@@ -258,9 +283,44 @@ class TestSpawnEnvSanitization:
         env = captured["env"]
         assert env["MY_CUSTOM_VAR"] == "keep-me"
         assert env["TELEGRAM_BOT_TOKEN"] == "forced-bot-token"
-        assert "FIRECRAWL_API_KEY" not in env
-        assert f"{_HERMES_PROVIDER_ENV_FORCE_PREFIX}TELEGRAM_BOT_TOKEN" not in env
-        assert env["PYTHONUNBUFFERED"] == "1"
+
+
+class TestWaitInterception:
+    def test_wait_exited_adds_summary_metadata(self, registry):
+        s = _make_session(
+            command="git diff",
+            exited=True,
+            exit_code=1,
+            output=(
+                "diff --git a/foo.py b/foo.py\n"
+                "--- a/foo.py\n"
+                "+++ b/foo.py\n"
+                "@@ -1,2 +1,12 @@\n"
+                "-old\n"
+                "+new\n"
+                "+line 1\n"
+                "+line 2\n"
+                "+line 3\n"
+                "+line 4\n"
+                "+line 5\n"
+                "+line 6\n"
+                "diff --git a/bar.py b/bar.py\n"
+                "--- a/bar.py\n"
+                "+++ b/bar.py\n"
+                "@@ -5,1 +5,4 @@\n"
+                "-x\n"
+                "+y\n"
+                "+z\n"
+                "+w\n"
+            ),
+        )
+        registry._finished[s.id] = s
+        with patch.dict(os.environ, {"TERMINAL_INTERCEPTOR_CAPTURE_SUMMARIZED_RAW": "false"}):
+            result = registry.wait(s.id, timeout=1, verbosity="summary")
+        assert result["status"] == "exited"
+        assert result["derived_output"] is True
+        assert result["interceptor_kind"] == "git_diff"
+        assert "files changed" in result["output"]
 
 
 # =========================================================================

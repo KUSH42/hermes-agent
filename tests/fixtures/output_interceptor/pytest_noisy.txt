@@ -1,0 +1,73 @@
+============================= test session starts ==============================
+platform linux -- Python 3.11.0, pytest-8.4.0
+collected 24 items
+
+tests/test_integration.py ..........FFF...........
+
+=================================== FAILURES ===================================
+__________________________ test_terminal_timeout_path __________________________
+
+self = <tests.test_integration.TimeoutSuite object at 0x1000>
+
+    def test_terminal_timeout_path(self):
+        payload = {
+            "status": "timeout",
+            "output": "line-1\nline-2\nline-3\nline-4\nline-5\nline-6\nline-7\nline-8\nline-9\nline-10",
+        }
+>       assert payload["timeout_note"] == "Waited 30s"
+E       KeyError: 'timeout_note'
+
+tests/test_integration.py:122: KeyError
+----------------------------- Captured stdout call -----------------------------
+running background task
+polling background task
+polling background task
+polling background task
+___________________________ test_interceptor_payload ___________________________
+
+self = <tests.test_integration.InterceptorSuite object at 0x1001>
+
+    def test_interceptor_payload(self):
+        result = intercept({"command": "pytest -q"})
+>       assert result["summary"] == "2 failed, 10 passed"
+E       AssertionError: assert '10 passed, 2 failed' == '2 failed, 10 passed'
+
+tests/test_integration.py:211: AssertionError
+----------------------------- Captured stderr call -----------------------------
+Traceback (most recent call last):
+  File "/workspace/tools/interceptor.py", line 55, in intercept
+    return render_summary(result)
+  File "/workspace/tools/interceptor.py", line 91, in render_summary
+    raise AssertionError("ordering mismatch")
+AssertionError: ordering mismatch
+__________________________ test_retry_loop_debug_trace _________________________
+
+self = <tests.test_integration.RetrySuite object at 0x1002>
+
+    def test_retry_loop_debug_trace(self):
+        trace = [
+            "attempt=1 status=retry",
+            "attempt=2 status=retry",
+            "attempt=3 status=retry",
+            "attempt=4 status=failed",
+            "context=very-long-debug-line-0001",
+            "context=very-long-debug-line-0002",
+            "context=very-long-debug-line-0003",
+            "context=very-long-debug-line-0004",
+            "context=very-long-debug-line-0005",
+            "context=very-long-debug-line-0006",
+            "context=very-long-debug-line-0007",
+            "context=very-long-debug-line-0008",
+            "context=very-long-debug-line-0009",
+            "context=very-long-debug-line-0010",
+            "context=very-long-debug-line-0011",
+            "context=very-long-debug-line-0012",
+        ]
+>       assert "retry budget exhausted" in "\n".join(trace)
+E       AssertionError: assert 'retry budget exhausted' in 'attempt=1 status=retry\nattempt=2 status=retry\nattempt=3 status=retry\nattempt=4 status=failed\ncontext=very-long-debug-line-0001\ncontext=very-long-debug-line-0002\ncontext=very-long-debug-line-0003\ncontext=very-long-debug-line-0004\ncontext=very-long-debug-line-0005\ncontext=very-long-debug-line-0006\ncontext=very-long-debug-line-0007\ncontext=very-long-debug-line-0008\ncontext=very-long-debug-line-0009\ncontext=very-long-debug-line-0010\ncontext=very-long-debug-line-0011\ncontext=very-long-debug-line-0012'
+
+tests/test_integration.py:278: AssertionError
+FAILED tests/test_integration.py::test_terminal_timeout_path - KeyError: 'timeout_note'
+FAILED tests/test_integration.py::test_interceptor_payload - AssertionError: assert '10 passed, 2 failed' == '2 failed, 10 passed'
+FAILED tests/test_integration.py::test_retry_loop_debug_trace - AssertionError: assert 'retry budget exhausted' in 'attempt=1 status=retry\nattempt=2 status=retry\nattempt=3 status=retry\nattempt=4 status=failed\ncontext=very-long-debug-line-0001\ncontext=very-long-debug-line-0002\ncontext=very-long-debug-line-0003\ncontext=very-long-debug-line-0004\ncontext=very-long-debug-line-0005\ncontext=very-long-debug-line-0006\ncontext=very-long-debug-line-0007\ncontext=very-long-debug-line-0008\ncontext=very-long-debug-line-0009\ncontext=very-long-debug-line-0010\ncontext=very-long-debug-line-0011\ncontext=very-long-debug-line-0012'
+======================== 3 failed, 21 passed in 4.82s =========================

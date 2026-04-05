@@ -1,0 +1,45 @@
+diff --git a/tools/a.py b/tools/a.py
+index 1111111..2222222 100644
+--- a/tools/a.py
++++ b/tools/a.py
+@@ -1,7 +1,10 @@
+ def alpha():
+-    return 1
++    value = 1
++    value += 2
++    return value
+ 
+ 
+ def beta():
+     return "beta"
+diff --git a/tools/b.py b/tools/b.py
+index 3333333..4444444 100644
+--- a/tools/b.py
++++ b/tools/b.py
+@@ -10,8 +10,11 @@ def build():
+-    parts = ["a", "b"]
+-    return "-".join(parts)
++    parts = ["a", "b", "c"]
++    parts.append("d")
++    return ":".join(parts)
+ 
+ 
+ def noop():
+     return None
+diff --git a/tools/c.py b/tools/c.py
+index 5555555..6666666 100644
+--- a/tools/c.py
++++ b/tools/c.py
+@@ -2,6 +2,12 @@
+ class Config:
+     enabled = False
+ 
++    def as_dict(self):
++        return {
++            "enabled": self.enabled,
++            "source": "bench",
++        }
++
+ 
+ def load():
+     return Config()

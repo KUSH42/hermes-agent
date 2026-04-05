@@ -46,6 +46,13 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from hermes_cli.config import get_hermes_home
+from tools.output_interceptor import (
+    CommandExecutionResult,
+    InterceptorRequest,
+    intercept_output,
+    resolve_output_verbosity,
+    result_to_json_dict,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -422,7 +429,7 @@ class ProcessRegistry:
         with self._lock:
             return self._running.get(session_id) or self._finished.get(session_id)
 
-    def poll(self, session_id: str) -> dict:
+    def poll(self, session_id: str, verbosity: str | None = None) -> dict:
         """Check status and get new output for a background process."""
         from tools.ansi_strip import strip_ansi
 
@@ -431,7 +438,27 @@ class ProcessRegistry:
             return {"status": "not_found", "error": f"No process with ID {session_id}"}
 
         with session._lock:
-            output_preview = strip_ansi(session.output_buffer[-1000:]) if session.output_buffer else ""
+            raw_output = session.output_buffer or ""
+
+        effective_verbosity = resolve_output_verbosity(verbosity or "summary")
+        intercepted = intercept_output(
+            InterceptorRequest(
+                execution=CommandExecutionResult(
+                    command=session.command,
+                    cwd=session.cwd,
+                    exit_code=session.exit_code,
+                    stdout=raw_output,
+                    stderr="",
+                    combined_output=raw_output,
+                    source="process_poll",
+                ),
+                verbosity=effective_verbosity,
+                task_id=session.task_id,
+                background_context=True,
+            ),
+        )
+        output_preview = intercepted.summary or strip_ansi(raw_output[-1000:])
+        payload = result_to_json_dict(intercepted, effective_verbosity)
 
         result = {
             "session_id": session.id,
@@ -440,6 +467,7 @@ class ProcessRegistry:
             "pid": session.pid,
             "uptime_seconds": int(time.time() - session.started_at),
             "output_preview": output_preview,
+            **payload,
         }
         if session.exited:
             result["exit_code"] = session.exit_code
@@ -476,7 +504,7 @@ class ProcessRegistry:
             "showing": f"{len(selected)} lines",
         }
 
-    def wait(self, session_id: str, timeout: int = None) -> dict:
+    def wait(self, session_id: str, timeout: int = None, verbosity: str | None = None) -> dict:
         """
         Block until a process exits, timeout, or interrupt.
 
@@ -510,22 +538,50 @@ class ProcessRegistry:
             return {"status": "not_found", "error": f"No process with ID {session_id}"}
 
         deadline = time.monotonic() + effective_timeout
+        effective_verbosity = resolve_output_verbosity(verbosity)
 
         while time.monotonic() < deadline:
             if session.exited:
+                intercepted = intercept_output(
+                    InterceptorRequest(
+                        execution=CommandExecutionResult(
+                            command=session.command,
+                            cwd=session.cwd,
+                            exit_code=session.exit_code,
+                            stdout=session.output_buffer,
+                            stderr="",
+                            combined_output=session.output_buffer,
+                            source="process_wait",
+                        ),
+                        verbosity=effective_verbosity,
+                        task_id=session.task_id,
+                        background_context=True,
+                    ),
+                )
+                payload = result_to_json_dict(intercepted, effective_verbosity)
                 result = {
                     "status": "exited",
                     "exit_code": session.exit_code,
-                    "output": strip_ansi(session.output_buffer[-2000:]),
+                    **payload,
                 }
                 if timeout_note:
                     result["timeout_note"] = timeout_note
                 return result
 
             if _interrupt_event.is_set():
+                interrupted_output = strip_ansi(session.output_buffer[-1000:])
                 result = {
                     "status": "interrupted",
-                    "output": strip_ansi(session.output_buffer[-1000:]),
+                    "output": interrupted_output,
+                    "summary": None,
+                    "structured": None,
+                    "verbosity": effective_verbosity,
+                    "raw_available": bool(interrupted_output),
+                    "derived_output": False,
+                    "interceptor_kind": None,
+                    "raw_output_path": None,
+                    "truncated": False,
+                    "confidence": "raw",
                     "note": "User sent a new message -- wait interrupted",
                 }
                 if timeout_note:
@@ -534,9 +590,19 @@ class ProcessRegistry:
 
             time.sleep(1)
 
+        timeout_output = strip_ansi(session.output_buffer[-1000:])
         result = {
             "status": "timeout",
-            "output": strip_ansi(session.output_buffer[-1000:]),
+            "output": timeout_output,
+            "summary": None,
+            "structured": None,
+            "verbosity": effective_verbosity,
+            "raw_available": bool(timeout_output),
+            "derived_output": False,
+            "interceptor_kind": None,
+            "raw_output_path": None,
+            "truncated": False,
+            "confidence": "raw",
         }
         if timeout_note:
             result["timeout_note"] = timeout_note
@@ -837,6 +903,11 @@ PROCESS_SCHEMA = {
                 "description": "Max seconds to block for 'wait' action. Returns partial output on timeout.",
                 "minimum": 1
             },
+            "verbosity": {
+                "type": "string",
+                "enum": ["summary", "medium", "full"],
+                "description": "For poll and wait only: summary is cheapest, medium adds targeted details, full returns sanitized raw output.",
+            },
             "offset": {
                 "type": "integer",
                 "description": "Line offset for 'log' action (default: last 200 lines)"
@@ -865,12 +936,15 @@ def _handle_process(args, **kw):
         if not session_id:
             return _json.dumps({"error": f"session_id is required for {action}"}, ensure_ascii=False)
         if action == "poll":
-            return _json.dumps(process_registry.poll(session_id), ensure_ascii=False)
+            return _json.dumps(process_registry.poll(session_id, verbosity=args.get("verbosity")), ensure_ascii=False)
         elif action == "log":
             return _json.dumps(process_registry.read_log(
                 session_id, offset=args.get("offset", 0), limit=args.get("limit", 200)), ensure_ascii=False)
         elif action == "wait":
-            return _json.dumps(process_registry.wait(session_id, timeout=args.get("timeout")), ensure_ascii=False)
+            return _json.dumps(
+                process_registry.wait(session_id, timeout=args.get("timeout"), verbosity=args.get("verbosity")),
+                ensure_ascii=False,
+            )
         elif action == "kill":
             return _json.dumps(process_registry.kill_process(session_id), ensure_ascii=False)
         elif action == "write":

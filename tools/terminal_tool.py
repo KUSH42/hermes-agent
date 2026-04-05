@@ -67,6 +67,13 @@ def ensure_minisweagent_on_path(_repo_root: Path | None = None) -> None:
 
 # Singularity helpers (scratch dir, SIF cache) now live in tools/environments/singularity.py
 from tools.environments.singularity import _get_scratch_dir
+from tools.output_interceptor import (
+    CommandExecutionResult,
+    InterceptorRequest,
+    intercept_output,
+    resolve_output_verbosity,
+    result_to_json_dict,
+)
 from tools.tool_backend_helpers import (
     coerce_modal_mode,
     has_direct_modal_credentials,
@@ -981,6 +988,7 @@ def terminal_tool(
     workdir: Optional[str] = None,
     check_interval: Optional[int] = None,
     pty: bool = False,
+    verbosity: Optional[str] = None,
 ) -> str:
     """
     Execute a command in the configured terminal environment.
@@ -994,6 +1002,7 @@ def terminal_tool(
         workdir: Working directory for this command (optional, uses session cwd if not set)
         check_interval: Seconds between auto-checks for background processes (gateway only, min 30)
         pty: If True, use pseudo-terminal for interactive CLI tools (local backend only)
+        verbosity: summary, medium, or full output shaping for foreground commands
 
     Returns:
         str: JSON string with output, exit_code, and error fields
@@ -1288,46 +1297,40 @@ def terminal_tool(
                 break
             
             # Extract output
-            output = result.get("output", "")
+            raw_output = result.get("output", "")
             returncode = result.get("returncode", 0)
             
             # Add helpful message for sudo failures in messaging context
-            output = _handle_sudo_failure(output, env_type)
-            
-            # Truncate output if too long, keeping both head and tail
-            MAX_OUTPUT_CHARS = 50000
-            if len(output) > MAX_OUTPUT_CHARS:
-                head_chars = int(MAX_OUTPUT_CHARS * 0.4)  # 40% head (error messages often appear early)
-                tail_chars = MAX_OUTPUT_CHARS - head_chars  # 60% tail (most recent/relevant output)
-                omitted = len(output) - head_chars - tail_chars
-                truncated_notice = (
-                    f"\n\n... [OUTPUT TRUNCATED - {omitted} chars omitted "
-                    f"out of {len(output)} total] ...\n\n"
-                )
-                output = output[:head_chars] + truncated_notice + output[-tail_chars:]
-
-            # Strip ANSI escape sequences so the model never sees terminal
-            # formatting — prevents it from copying escapes into file writes.
-            from tools.ansi_strip import strip_ansi
-            output = strip_ansi(output)
-
-            # Redact secrets from command output (catches env/printenv leaking keys)
-            from agent.redact import redact_sensitive_text
-            output = redact_sensitive_text(output.strip()) if output else ""
+            output = _handle_sudo_failure(raw_output, env_type)
 
             # Interpret non-zero exit codes that aren't real errors
             # (e.g. grep=1 means "no matches", diff=1 means "files differ")
             exit_note = _interpret_exit_code(command, returncode)
 
+            effective_verbosity = resolve_output_verbosity(verbosity)
+            intercepted = intercept_output(
+                InterceptorRequest(
+                    execution=CommandExecutionResult(
+                        command=command,
+                        cwd=workdir or config["cwd"],
+                        exit_code=returncode,
+                        stdout=result.get("stdout", "") or output,
+                        stderr=result.get("stderr", ""),
+                        combined_output=output,
+                        source="terminal",
+                    ),
+                    verbosity=effective_verbosity,
+                    task_id=effective_task_id,
+                ),
+                exit_code_meaning=exit_note,
+            )
             result_dict = {
-                "output": output,
                 "exit_code": returncode,
                 "error": None,
+                **result_to_json_dict(intercepted, effective_verbosity),
             }
             if approval_note:
                 result_dict["approval"] = approval_note
-            if exit_note:
-                result_dict["exit_code_meaning"] = exit_note
 
             return json.dumps(result_dict, ensure_ascii=False)
 
@@ -1530,6 +1533,12 @@ TERMINAL_SCHEMA = {
                 "type": "boolean",
                 "description": "Run in pseudo-terminal (PTY) mode for interactive CLI tools like Codex, Claude Code, or Python REPL. Only works with local and SSH backends. Default: false.",
                 "default": False
+            },
+            "verbosity": {
+                "type": "string",
+                "enum": ["summary", "medium", "full"],
+                "description": "How much terminal output to return. summary is cheapest, medium adds targeted details, full returns sanitized raw output.",
+                "default": "summary",
             }
         },
         "required": ["command"]
@@ -1546,6 +1555,7 @@ def _handle_terminal(args, **kw):
         workdir=args.get("workdir"),
         check_interval=args.get("check_interval"),
         pty=args.get("pty", False),
+        verbosity=args.get("verbosity"),
     )
 
 

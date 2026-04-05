@@ -1,0 +1,8 @@
+## feat/output-interceptor...origin/feat/output-interceptor [ahead 2, behind 1]
+ M tools/terminal_tool.py
+M  tools/process_registry.py
+A  tools/output_interceptor.py
+D  docs/old_notes.md
+R  docs/spec-old.md -> docs/spec-new.md
+?? tests/tools/test_output_interceptor.py
+?? scripts/demo_diff.py

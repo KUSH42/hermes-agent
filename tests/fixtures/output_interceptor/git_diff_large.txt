@@ -1,0 +1,105 @@
+diff --git a/app/main.py b/app/main.py
+index aaa0000..bbb0000 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -1,20 +1,38 @@
+-def render():
+-    return "old"
++def render(mode="summary"):
++    lines = []
++    for idx in range(10):
++        lines.append(f"line-{idx}:{mode}")
++    return "\n".join(lines)
+ 
+ 
+-def validate():
+-    return False
++def validate(config):
++    errors = []
++    if not config:
++        errors.append("missing config")
++    if "token" not in config:
++        errors.append("missing token")
++    if errors:
++        return {"ok": False, "errors": errors}
++    return {"ok": True, "errors": []}
+diff --git a/app/routes.py b/app/routes.py
+index aaa0001..bbb0001 100644
+--- a/app/routes.py
++++ b/app/routes.py
+@@ -1,10 +1,24 @@
+-ROUTES = ["/"]
++ROUTES = [
++    "/",
++    "/health",
++    "/metrics",
++    "/ready",
++    "/version",
++]
+ 
+ 
+ def all_routes():
+     return ROUTES
+ 
+ 
++def admin_routes():
++    return [
++        "/admin",
++        "/admin/jobs",
++        "/admin/logs",
++        "/admin/cache",
++    ]
+diff --git a/app/jobs.py b/app/jobs.py
+index aaa0002..bbb0002 100644
+--- a/app/jobs.py
++++ b/app/jobs.py
+@@ -1,12 +1,30 @@
+ class Job:
+     def __init__(self, name):
+         self.name = name
+ 
+ 
+-def run(job):
+-    return f"ran {job.name}"
++def run(job, retries=3):
++    attempts = []
++    for attempt in range(retries):
++        attempts.append(f"attempt={attempt}")
++    attempts.append(f"done:{job.name}")
++    return attempts
+ 
+ 
++def summarize(jobs):
++    summary = []
++    for job in jobs:
++        summary.append({
++            "name": job.name,
++            "status": "queued",
++            "priority": "normal",
++        })
++    return summary
+diff --git a/app/cache.py b/app/cache.py
+index aaa0003..bbb0003 100644
+--- a/app/cache.py
++++ b/app/cache.py
+@@ -1,8 +1,19 @@
+-CACHE = {}
++CACHE = {
++    "users": {},
++    "jobs": {},
++    "stats": {},
++}
+ 
+ 
+ def reset():
+-    CACHE.clear()
++    for key in list(CACHE.keys()):
++        CACHE[key] = {}
++    return True
+ 
+ 
++def seed():
++    CACHE["stats"]["hits"] = 0
++    CACHE["stats"]["misses"] = 0
++    CACHE["stats"]["size"] = 0
++    return CACHE

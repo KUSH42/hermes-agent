@@ -1,0 +1,26 @@
+============================= test session starts ==============================
+platform linux -- Python 3.11.0, pytest-8.4.0
+collected 9 items
+
+tests/test_status.py ..F
+tests/test_diff.py .F.
+tests/test_misc.py ...
+
+=================================== FAILURES ===================================
+__________________________ test_status_summary __________________________
+
+    def test_status_summary():
+>       assert build_summary({"modified": 2}) == "2 modified"
+E       AssertionError: assert 'modified:2' == '2 modified'
+
+tests/test_status.py:18: AssertionError
+______________________________ test_diff_excerpt _______________________________
+
+    def test_diff_excerpt():
+>       assert build_excerpt([]) == "no excerpt"
+E       AssertionError: assert '' == 'no excerpt'
+
+tests/test_diff.py:42: AssertionError
+FAILED tests/test_status.py::test_status_summary - AssertionError: assert 'modified:2' == '2 modified'
+FAILED tests/test_diff.py::test_diff_excerpt - AssertionError: assert '' == 'no excerpt'
+========================= 2 failed, 7 passed in 0.93s ==========================

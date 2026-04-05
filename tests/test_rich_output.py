@@ -294,7 +294,8 @@ class TestDiffRendererV2:
         # bright_red bold is encoded as \x1b[1;91; — must not appear on a flat-colour line
         assert "\x1b[1;91;" not in del_line
 
-    def test_pairing_per_run_not_per_hunk(self):
+    def test_pairing_per_run_not_per_hunk(self, monkeypatch):
+        monkeypatch.delenv("NO_COLOR", raising=False)
         # Use pairs with ratio > 0.5 so intra-diff triggers.
         # "return foo_value" vs "return bar_value": share "return " + "_value" = 13 chars,
         # total = 32, ratio = 26/32 ≈ 0.81.

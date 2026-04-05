@@ -101,7 +101,8 @@ class TestEditDiffPreview:
         assert diff is not None
         assert "+++ b/x" in diff
 
-    def test_render_inline_unified_diff_colors_added_and_removed_lines(self):
+    def test_render_inline_unified_diff_colors_added_and_removed_lines(self, monkeypatch):
+        monkeypatch.delenv("NO_COLOR", raising=False)
         rendered = _render_inline_unified_diff(
             "--- a/cli.py\n"
             "+++ b/cli.py\n"

@@ -27,6 +27,36 @@ FIXTURE_DIR = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "o
 MANIFEST_PATH = FIXTURE_DIR / "manifest.json"
 
 
+def load_eval_report(path: str | Path) -> dict[str, Any]:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def summarize_eval_parity(eval_report: dict[str, Any]) -> dict[str, Any]:
+    aggregate = dict(eval_report.get("aggregate") or {})
+    off = aggregate.get("off") or {}
+    summary = aggregate.get("summary") or {}
+    full = aggregate.get("full") or {}
+    off_rate = float(off.get("success_rate", 0.0))
+    summary_rate = float(summary.get("success_rate", 0.0))
+    full_rate = float(full.get("success_rate", 0.0))
+    parity_achieved = abs(summary_rate - full_rate) < 1e-9 and abs(summary_rate - off_rate) < 1e-9
+    if parity_achieved:
+        headline = "Task-quality parity achieved on this eval run."
+    elif abs(summary_rate - full_rate) < 1e-9:
+        headline = "Summary mode matched full mode on this eval run, but not every mode matched."
+    else:
+        headline = "Task-quality parity not achieved on this eval run."
+    return {
+        "suite": eval_report.get("suite"),
+        "model": eval_report.get("model"),
+        "off_success_rate": off_rate,
+        "summary_success_rate": summary_rate,
+        "full_success_rate": full_rate,
+        "parity_achieved": parity_achieved,
+        "headline": headline,
+    }
+
+
 def load_fixtures() -> list[dict]:
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     fixtures = []
@@ -60,6 +90,7 @@ def raw_payload_dict(text: str, verbosity: str, *, truncated: bool) -> dict:
         "raw_output_path": None,
         "truncated": truncated,
         "confidence": "raw",
+        "capture_mode": "none",
     }
 
 
@@ -106,6 +137,8 @@ def intercept_fixture(fixture: dict, tmp_home: str) -> dict:
         "interceptor_kind": result.interceptor_kind,
         "fallback_reason": result.fallback_reason,
         "truncated": result.truncated,
+        "capture_mode": result.capture_mode,
+        "captured_derived": bool(result.derived and result.raw_output_path),
     }
 
 
@@ -130,7 +163,7 @@ def run_benchmark() -> dict:
     rows = []
     reductions = []
     deltas = []
-    raw_recovery = []
+    captured_derived_rows = []
 
     with tempfile.TemporaryDirectory(prefix="hermes-output-interceptor-bench-") as tmp_home:
         import os
@@ -184,6 +217,8 @@ def run_benchmark() -> dict:
                     "confidence": intercept["confidence"],
                     "interceptor_kind": intercept["interceptor_kind"],
                     "fallback_reason": intercept["fallback_reason"],
+                    "capture_mode": intercept["capture_mode"],
+                    "captured_derived": intercept["captured_derived"],
                     "serialization_mode": serialization_mode(),
                     "matches_expectation": expectation_matches,
                 }
@@ -192,7 +227,7 @@ def run_benchmark() -> dict:
                 if row["derived"]:
                     reductions.append(reduction)
                     deltas.append(delta_ms)
-                    raw_recovery.append(intercept["raw_path_exists"])
+                    captured_derived_rows.append(intercept["captured_derived"])
         finally:
             if old_home is None:
                 os.environ.pop("HERMES_HOME", None)
@@ -211,6 +246,7 @@ def run_benchmark() -> dict:
                 {
                     "rows": 0,
                     "derived_rows": 0,
+                    "captured_derived_rows": 0,
                     "fallback_rows": 0,
                     "median_reduction_pct": 0.0,
                 },
@@ -218,6 +254,8 @@ def run_benchmark() -> dict:
             entry["rows"] += 1
             if row["derived"]:
                 entry["derived_rows"] += 1
+            if row["captured_derived"]:
+                entry["captured_derived_rows"] += 1
             if row["confidence"] == "fallback":
                 entry["fallback_rows"] += 1
         for key, entry in bucket.items():
@@ -227,20 +265,24 @@ def run_benchmark() -> dict:
         key = row["confidence"] or "none"
         entry = by_confidence.setdefault(
             key,
-            {"rows": 0, "derived_rows": 0, "truncated_rows": 0},
+            {"rows": 0, "derived_rows": 0, "captured_derived_rows": 0, "truncated_rows": 0},
         )
         entry["rows"] += 1
         if row["derived"]:
             entry["derived_rows"] += 1
+        if row["captured_derived"]:
+            entry["captured_derived_rows"] += 1
         if row["truncated"]:
             entry["truncated_rows"] += 1
         serialization_entry = by_serialization_mode.setdefault(
             row["serialization_mode"],
-            {"rows": 0, "derived_rows": 0, "fallback_rows": 0},
+            {"rows": 0, "derived_rows": 0, "captured_derived_rows": 0, "fallback_rows": 0},
         )
         serialization_entry["rows"] += 1
         if row["derived"]:
             serialization_entry["derived_rows"] += 1
+        if row["captured_derived"]:
+            serialization_entry["captured_derived_rows"] += 1
         if row["confidence"] == "fallback":
             serialization_entry["fallback_rows"] += 1
 
@@ -250,6 +292,8 @@ def run_benchmark() -> dict:
             "fixture_count": len(rows),
             "expectation_match_rate_pct": (sum(1 for row in rows if row["matches_expectation"]) / len(rows) * 100.0) if rows else 0.0,
             "derived_row_count": sum(1 for row in rows if row["derived"]),
+            "captured_derived_row_count": sum(1 for row in rows if row["captured_derived"]),
+            "uncaptured_derived_row_count": sum(1 for row in rows if row["derived"] and not row["captured_derived"]),
             "raw_row_count": sum(1 for row in rows if row["confidence"] == "raw"),
             "fallback_row_count": sum(1 for row in rows if row["confidence"] == "fallback"),
             "truncated_row_count": sum(1 for row in rows if row["truncated"]),
@@ -257,7 +301,9 @@ def run_benchmark() -> dict:
             "p95_reduction_pct": percentile(reductions, 95),
             "median_delta_ms": statistics.median(deltas) if deltas else 0.0,
             "p95_delta_ms": percentile(deltas, 95),
-            "raw_recovery_rate_pct": (sum(1 for ok in raw_recovery if ok) / len(raw_recovery) * 100.0) if raw_recovery else 0.0,
+            "captured_derived_rate_pct": (
+                sum(1 for ok in captured_derived_rows if ok) / len(captured_derived_rows) * 100.0
+            ) if captured_derived_rows else 0.0,
             "serialization_mode": serialization_mode(),
         },
         "by_class": by_class,
@@ -283,7 +329,7 @@ def print_markdown_table(results: dict) -> None:
     print(
         f"| `aggregate-p95` | - | - | {aggregate['p95_reduction_pct']:.1f}% | - | - | {aggregate['p95_delta_ms']:.3f} ms |"
     )
-    print(f"\nRaw recovery rate: {aggregate['raw_recovery_rate_pct']:.1f}%")
+    print(f"\nCaptured derived rate: {aggregate['captured_derived_rate_pct']:.1f}%")
 
 
 def _svg_write(path: Path, width: int, height: int, body: str) -> None:
@@ -457,6 +503,71 @@ def _write_breakdown_chart(results: dict[str, Any], path: Path) -> None:
     _svg_write(path, width, height, "".join(parts))
 
 
+def _write_capture_policy_chart(results: dict[str, Any], path: Path) -> None:
+    rows = results["rows"]
+    capture_counts: dict[str, int] = {}
+    for row in rows:
+        label = str(row["capture_mode"] or "none")
+        capture_counts[label] = capture_counts.get(label, 0) + 1
+
+    items = sorted(capture_counts.items(), key=lambda item: (-item[1], item[0]))
+    width = max(900, 120 + len(items) * 130)
+    height = 440
+    left = 70
+    right = 30
+    top = 54
+    bottom = 110
+    plot_w = width - left - right
+    plot_h = height - top - bottom
+    gap = plot_w / max(1, len(items))
+    bar_w = gap * 0.58
+    max_count = max(1, max(count for _, count in items))
+
+    def y_scale(value: float) -> float:
+        return top + plot_h - ((value / max_count) * plot_h)
+
+    color_map = {
+        "none": "#7a6f63",
+        "derived_optional_skipped": "#d6a04c",
+        "derived_optional": "#2e8b57",
+        "derived_required_recovery": "#2d6a9f",
+        "derived_required_background": "#8d5a97",
+        "derived_required_truncated": "#c4493d",
+        "raw_large_output": "#4d6c8a",
+        "derived_capture_disabled": "#b08a48",
+    }
+
+    parts = [
+        '<text x="24" y="30" font-size="18" font-weight="700" fill="#2a241f">Capture Policy Distribution</text>',
+    ]
+    for tick in range(0, max_count + 1):
+        y = y_scale(tick)
+        parts.append(
+            f'<line x1="{left}" y1="{y:.1f}" x2="{width-right}" y2="{y:.1f}" stroke="#ece4d9"/>'
+        )
+        parts.append(f'<text x="24" y="{y+4:.1f}" font-size="10" fill="#3a322b">{tick}</text>')
+
+    for idx, (label, count) in enumerate(items):
+        x = left + idx * gap + (gap - bar_w) / 2
+        y = y_scale(count)
+        h = top + plot_h - y
+        fill = color_map.get(label, "#4d6c8a")
+        parts.append(
+            f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{max(1.2, h):.1f}" fill="{fill}">'
+            f'<title>{escape(label)}: {count}</title></rect>'
+        )
+        parts.append(
+            f'<text x="{x+bar_w/2-8:.1f}" y="{y-8:.1f}" font-size="10" fill="#2a241f">{count}</text>'
+        )
+        label_x = x + bar_w / 2
+        label_y = height - bottom + 16
+        parts.append(
+            f'<g transform="translate({label_x:.1f},{label_y:.1f}) rotate(28)">'
+            f'<text font-size="10" fill="#3a322b">{escape(label)}</text></g>'
+        )
+    _svg_write(path, width, height, "".join(parts))
+
+
 def _write_matplotlib_chart_bundle(results: dict[str, Any], output_dir: Path) -> dict[str, str]:
     import matplotlib
     matplotlib.use("Agg")
@@ -535,6 +646,39 @@ def _write_matplotlib_chart_bundle(results: dict[str, Any], output_dir: Path) ->
     fig.savefig(breakdown_path, dpi=180)
     plt.close(fig)
     charts["breakdowns"] = str(breakdown_path)
+
+    capture_counts: dict[str, int] = {}
+    for row in rows:
+        label = str(row["capture_mode"] or "none")
+        capture_counts[label] = capture_counts.get(label, 0) + 1
+    labels = [label for label, _ in sorted(capture_counts.items(), key=lambda item: (-item[1], item[0]))]
+    values = [capture_counts[label] for label in labels]
+    colors = [
+        {
+            "none": "#7a6f63",
+            "derived_optional_skipped": "#d6a04c",
+            "derived_optional": "#2e8b57",
+            "derived_required_recovery": "#2d6a9f",
+            "derived_required_background": "#8d5a97",
+            "derived_required_truncated": "#c4493d",
+            "raw_large_output": "#4d6c8a",
+            "derived_capture_disabled": "#b08a48",
+        }.get(label, "#4d6c8a")
+        for label in labels
+    ]
+    fig, ax = plt.subplots(figsize=(max(8, len(labels) * 1.5), 5))
+    ax.bar(labels, values, color=colors)
+    ax.set_title("Capture Policy Distribution")
+    ax.set_ylabel("Fixture count")
+    ax.grid(axis="y", linestyle="--", alpha=0.55)
+    ax.tick_params(axis="x", rotation=30)
+    for idx, value in enumerate(values):
+        ax.text(idx, value + 0.05, str(value), ha="center", va="bottom", fontsize=9)
+    fig.tight_layout()
+    capture_path = output_dir / "capture_policy.png"
+    fig.savefig(capture_path, dpi=180)
+    plt.close(fig)
+    charts["capture_policy"] = str(capture_path)
     return charts
 
 
@@ -552,9 +696,12 @@ def write_chart_bundle(results: dict[str, Any], output_dir: Path) -> dict[str, s
         _write_reduction_chart(results["rows"], reduction_path)
         _write_latency_scatter(results["rows"], tradeoff_path)
         _write_breakdown_chart(results, breakdown_path)
+        capture_path = output_dir / "capture_policy.svg"
+        _write_capture_policy_chart(results, capture_path)
         charts["reduction_by_fixture"] = str(reduction_path)
         charts["latency_vs_reduction"] = str(tradeoff_path)
         charts["breakdowns"] = str(breakdown_path)
+        charts["capture_policy"] = str(capture_path)
         backend = "svg"
 
     manifest = {
@@ -584,7 +731,13 @@ def _report_table(headers: list[str], rows: list[list[str]]) -> str:
     return f"<table><thead><tr>{thead}</tr></thead><tbody>{''.join(body)}</tbody></table>"
 
 
-def write_detailed_report(results: dict[str, Any], output_dir: Path, charts: dict[str, str]) -> str:
+def write_detailed_report(
+    results: dict[str, Any],
+    output_dir: Path,
+    charts: dict[str, str],
+    *,
+    eval_report: dict[str, Any] | None = None,
+) -> str:
     output_dir.mkdir(parents=True, exist_ok=True)
     aggregate = results["aggregate"]
     rows = results["rows"]
@@ -596,6 +749,8 @@ def write_detailed_report(results: dict[str, Any], output_dir: Path, charts: dic
         ["Fixture count", str(aggregate["fixture_count"])],
         ["Expectation match rate", _fmt_pct(aggregate["expectation_match_rate_pct"])],
         ["Derived rows", str(aggregate["derived_row_count"])],
+        ["Captured derived rows", str(aggregate["captured_derived_row_count"])],
+        ["Uncaptured derived rows", str(aggregate["uncaptured_derived_row_count"])],
         ["Raw rows", str(aggregate["raw_row_count"])],
         ["Fallback rows", str(aggregate["fallback_row_count"])],
         ["Truncated rows", str(aggregate["truncated_row_count"])],
@@ -603,7 +758,7 @@ def write_detailed_report(results: dict[str, Any], output_dir: Path, charts: dic
         ["P95 reduction", _fmt_pct(aggregate["p95_reduction_pct"])],
         ["Median added latency", _fmt_ms(aggregate["median_delta_ms"])],
         ["P95 added latency", _fmt_ms(aggregate["p95_delta_ms"])],
-        ["Raw recovery rate", _fmt_pct(aggregate["raw_recovery_rate_pct"])],
+        ["Captured derived rate", _fmt_pct(aggregate["captured_derived_rate_pct"])],
         ["Serialization mode", escape(str(aggregate["serialization_mode"]))],
     ]
 
@@ -612,6 +767,7 @@ def write_detailed_report(results: dict[str, Any], output_dir: Path, charts: dic
             escape("unclassified" if label == "unknown" else label),
             str(data["rows"]),
             str(data["derived_rows"]),
+            str(data["captured_derived_rows"]),
             str(data["fallback_rows"]),
             _fmt_pct(float(data["median_reduction_pct"])),
         ]
@@ -622,6 +778,7 @@ def write_detailed_report(results: dict[str, Any], output_dir: Path, charts: dic
             escape(label),
             str(data["rows"]),
             str(data["derived_rows"]),
+            str(data["captured_derived_rows"]),
             str(data["fallback_rows"]),
             _fmt_pct(float(data["median_reduction_pct"])),
         ]
@@ -632,6 +789,7 @@ def write_detailed_report(results: dict[str, Any], output_dir: Path, charts: dic
             escape(label),
             str(data["rows"]),
             str(data["derived_rows"]),
+            str(data["captured_derived_rows"]),
             str(data["truncated_rows"]),
         ]
         for label, data in sorted(results["by_confidence"].items())
@@ -641,6 +799,7 @@ def write_detailed_report(results: dict[str, Any], output_dir: Path, charts: dic
             escape(label),
             str(data["rows"]),
             str(data["derived_rows"]),
+            str(data["captured_derived_rows"]),
             str(data["fallback_rows"]),
         ]
         for label, data in sorted(results["by_serialization_mode"].items())
@@ -654,11 +813,32 @@ def write_detailed_report(results: dict[str, Any], output_dir: Path, charts: dic
             escape(str(row["confidence"])),
             _fmt_pct(float(row["reduction_pct"])),
             _fmt_ms(float(row["delta_ms"])),
+            escape(row["capture_mode"]),
             "yes" if row["raw_path_exists"] else "no",
             "yes" if row["truncated"] else "no",
         ]
         for row in rows
     ]
+    eval_summary = summarize_eval_parity(eval_report) if eval_report else None
+    eval_rows = []
+    if eval_summary:
+        eval_rows = [
+            ["Suite", escape(str(eval_summary["suite"]))],
+            ["Model", escape(str(eval_summary["model"]))],
+            ["Off success rate", _fmt_pct(eval_summary["off_success_rate"] * 100.0)],
+            ["Summary success rate", _fmt_pct(eval_summary["summary_success_rate"] * 100.0)],
+            ["Full success rate", _fmt_pct(eval_summary["full_success_rate"] * 100.0)],
+            ["Assessment", escape(str(eval_summary["headline"]))],
+        ]
+    eval_section = ""
+    if eval_rows:
+        eval_section = (
+            f"""
+    <h2>Task-quality eval</h2>
+    <p class="muted">{escape(eval_summary['headline'])}</p>
+    {_report_table(["Metric", "Value"], eval_rows)}
+"""
+        )
 
     html = f"""<!doctype html>
 <html lang="en">
@@ -732,6 +912,7 @@ def write_detailed_report(results: dict[str, Any], output_dir: Path, charts: dic
 
     <h2>Overview</h2>
     {_report_table(["Metric", "Value"], aggregate_rows)}
+{eval_section}
 
     <h2>Charts</h2>
     <div class="grid">
@@ -747,22 +928,26 @@ def write_detailed_report(results: dict[str, Any], output_dir: Path, charts: dic
         <h3>Breakdowns</h3>
         <img src="{escape(rel('breakdowns'))}" alt="Breakdown charts">
       </section>
+      <section class="card chart-card">
+        <h3>Capture policy</h3>
+        <img src="{escape(rel('capture_policy'))}" alt="Capture policy distribution chart">
+      </section>
     </div>
 
     <h2>By Class</h2>
-    {_report_table(["Class", "Rows", "Derived", "Fallback", "Median Reduction"], class_rows)}
+    {_report_table(["Class", "Rows", "Derived", "Captured derived", "Fallback", "Median Reduction"], class_rows)}
 
     <h2>By Verbosity</h2>
-    {_report_table(["Verbosity", "Rows", "Derived", "Fallback", "Median Reduction"], verbosity_rows)}
+    {_report_table(["Verbosity", "Rows", "Derived", "Captured derived", "Fallback", "Median Reduction"], verbosity_rows)}
 
     <h2>By Confidence</h2>
-    {_report_table(["Confidence", "Rows", "Derived", "Truncated"], confidence_rows)}
+    {_report_table(["Confidence", "Rows", "Derived", "Captured derived", "Truncated"], confidence_rows)}
 
     <h2>By Serialization Mode</h2>
-    {_report_table(["Mode", "Rows", "Derived", "Fallback"], serialization_rows)}
+    {_report_table(["Mode", "Rows", "Derived", "Captured derived", "Fallback"], serialization_rows)}
 
     <h2>Fixture Detail</h2>
-    {_report_table(["Fixture", "Class", "Verbosity", "Derived", "Confidence", "Reduction", "Delta", "Raw Path", "Truncated"], fixture_rows)}
+    {_report_table(["Fixture", "Class", "Verbosity", "Derived", "Confidence", "Reduction", "Delta", "Capture mode", "Raw Path", "Truncated"], fixture_rows)}
   </main>
 </body>
 </html>
@@ -772,17 +957,62 @@ def write_detailed_report(results: dict[str, Any], output_dir: Path, charts: dic
     return str(report_path)
 
 
+def write_markdown_summary(
+    results: dict[str, Any],
+    output_dir: Path,
+    *,
+    eval_report: dict[str, Any] | None = None,
+) -> str:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    aggregate = results["aggregate"]
+    lines = [
+        "# Output interceptor summary",
+        "",
+        f"- Fixture count: {aggregate['fixture_count']}",
+        f"- Expectation match rate: {_fmt_pct(aggregate['expectation_match_rate_pct'])}",
+        f"- Derived rows: {aggregate['derived_row_count']}",
+        f"- Captured derived rows: {aggregate['captured_derived_row_count']}",
+        f"- Uncaptured derived rows: {aggregate['uncaptured_derived_row_count']}",
+        f"- Median reduction: {_fmt_pct(aggregate['median_reduction_pct'])}",
+        f"- P95 reduction: {_fmt_pct(aggregate['p95_reduction_pct'])}",
+        f"- Median added latency: {_fmt_ms(aggregate['median_delta_ms'])}",
+        f"- Captured derived rate: {_fmt_pct(aggregate['captured_derived_rate_pct'])}",
+        f"- Serialization mode: {aggregate['serialization_mode']}",
+    ]
+    if eval_report:
+        eval_summary = summarize_eval_parity(eval_report)
+        lines.extend(
+            [
+                "",
+                "## Task-quality eval",
+                "",
+                f"- {eval_summary['headline']}",
+                f"- Suite: {eval_summary['suite']}",
+                f"- Model: {eval_summary['model']}",
+                f"- Off success rate: {_fmt_pct(eval_summary['off_success_rate'] * 100.0)}",
+                f"- Summary success rate: {_fmt_pct(eval_summary['summary_success_rate'] * 100.0)}",
+                f"- Full success rate: {_fmt_pct(eval_summary['full_success_rate'] * 100.0)}",
+            ]
+        )
+    summary_path = output_dir / "benchmark_summary.md"
+    summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(summary_path)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Benchmark output interceptor fixtures.")
     parser.add_argument("--json", action="store_true", help="Print JSON instead of markdown")
     parser.add_argument("--chart-dir", default="", help="Optional directory to write benchmark charts as PNG files.")
+    parser.add_argument("--eval-json", default="", help="Optional eval JSON report to merge into the benchmark report and summary.")
     args = parser.parse_args()
 
     results = run_benchmark()
+    eval_report = load_eval_report(args.eval_json) if args.eval_json else None
     if args.chart_dir:
         charts = write_chart_bundle(results, Path(args.chart_dir))
-        report_path = write_detailed_report(results, Path(args.chart_dir), charts)
-        results = {**results, "charts": charts, "report": report_path}
+        report_path = write_detailed_report(results, Path(args.chart_dir), charts, eval_report=eval_report)
+        summary_path = write_markdown_summary(results, Path(args.chart_dir), eval_report=eval_report)
+        results = {**results, "charts": charts, "report": report_path, "summary_markdown": summary_path}
     if args.json:
         print(json.dumps(results, indent=2))
     else:
@@ -790,6 +1020,7 @@ def main() -> int:
         if args.chart_dir:
             print(f"\nCharts written to {args.chart_dir}")
             print(f"Report written to {report_path}")
+            print(f"Summary written to {summary_path}")
     return 0
 
 

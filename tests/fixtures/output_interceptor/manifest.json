@@ -43,7 +43,9 @@
     "intercepted": true,
     "expect_derived": true,
     "expect_kind": "git_status",
-    "expect_confidence": "high"
+    "expect_confidence": "high",
+    "expect_raw_path_exists": true,
+    "expect_capture_mode": "derived_optional"
   },
   {
     "id": "git_status_ambiguous",
@@ -67,7 +69,9 @@
     "intercepted": true,
     "expect_derived": true,
     "expect_kind": "git_diff",
-    "expect_confidence": "high"
+    "expect_confidence": "high",
+    "expect_raw_path_exists": false,
+    "expect_capture_mode": "derived_optional_skipped"
   },
   {
     "id": "git_diff_medium",
@@ -79,7 +83,9 @@
     "intercepted": true,
     "expect_derived": true,
     "expect_kind": "git_diff",
-    "expect_confidence": "high"
+    "expect_confidence": "high",
+    "expect_raw_path_exists": true,
+    "expect_capture_mode": "derived_optional"
   },
   {
     "id": "git_diff_large",
@@ -91,7 +97,9 @@
     "intercepted": true,
     "expect_derived": true,
     "expect_kind": "git_diff",
-    "expect_confidence": "high"
+    "expect_confidence": "high",
+    "expect_raw_path_exists": true,
+    "expect_capture_mode": "derived_optional"
   },
   {
     "id": "git_diff_large_medium",
@@ -103,7 +111,9 @@
     "intercepted": true,
     "expect_derived": true,
     "expect_kind": "git_diff",
-    "expect_confidence": "high"
+    "expect_confidence": "high",
+    "expect_raw_path_exists": true,
+    "expect_capture_mode": "derived_optional"
   },
   {
     "id": "git_diff_medium_medium",
@@ -115,7 +125,9 @@
     "intercepted": true,
     "expect_derived": true,
     "expect_kind": "git_diff",
-    "expect_confidence": "high"
+    "expect_confidence": "high",
+    "expect_raw_path_exists": true,
+    "expect_capture_mode": "derived_optional"
   },
   {
     "id": "git_diff_large_full",
@@ -150,7 +162,9 @@
     "intercepted": true,
     "expect_derived": true,
     "expect_kind": "pytest",
-    "expect_confidence": "high"
+    "expect_confidence": "high",
+    "expect_raw_path_exists": true,
+    "expect_capture_mode": "derived_required_recovery"
   },
   {
     "id": "pytest_fail",
@@ -162,7 +176,9 @@
     "intercepted": true,
     "expect_derived": true,
     "expect_kind": "pytest",
-    "expect_confidence": "high"
+    "expect_confidence": "high",
+    "expect_raw_path_exists": true,
+    "expect_capture_mode": "derived_required_recovery"
   },
   {
     "id": "pytest_noisy",
@@ -174,7 +190,9 @@
     "intercepted": true,
     "expect_derived": true,
     "expect_kind": "python_pytest",
-    "expect_confidence": "high"
+    "expect_confidence": "high",
+    "expect_raw_path_exists": true,
+    "expect_capture_mode": "derived_required_recovery"
   },
   {
     "id": "pytest_noisy_medium",
@@ -186,7 +204,9 @@
     "intercepted": true,
     "expect_derived": true,
     "expect_kind": "python_pytest",
-    "expect_confidence": "high"
+    "expect_confidence": "high",
+    "expect_raw_path_exists": true,
+    "expect_capture_mode": "derived_required_recovery"
   },
   {
     "id": "pytest_noisy_full",
@@ -209,7 +229,9 @@
     "intercepted": true,
     "expect_derived": true,
     "expect_kind": "pytest",
-    "expect_confidence": "high"
+    "expect_confidence": "high",
+    "expect_raw_path_exists": true,
+    "expect_capture_mode": "derived_required_recovery"
   },
   {
     "id": "pytest_pass_medium",
@@ -221,7 +243,9 @@
     "intercepted": true,
     "expect_derived": true,
     "expect_kind": "pytest",
-    "expect_confidence": "high"
+    "expect_confidence": "high",
+    "expect_raw_path_exists": true,
+    "expect_capture_mode": "derived_required_recovery"
   },
   {
     "id": "pytest_ambiguous",
@@ -272,6 +296,7 @@
     "expect_derived": false,
     "expect_confidence": "raw",
     "expect_raw_path_exists": true,
+    "expect_capture_mode": "raw_large_output",
     "expect_truncated": true
   }
 ]

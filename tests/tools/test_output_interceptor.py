@@ -24,6 +24,7 @@ class TestOutputInterceptor:
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
         monkeypatch.setenv("TERMINAL_INTERCEPTOR_MIN_SAVINGS_CHARS", "0")
         monkeypatch.setenv("TERMINAL_INTERCEPTOR_MIN_SAVINGS_RATIO", "0.0")
+        monkeypatch.setenv("TERMINAL_INTERCEPTOR_OPTIONAL_CAPTURE_MAX_RAW_CHARS", "100")
         diff = (
             "diff --git a/foo.py b/foo.py\n"
             "--- a/foo.py\n"
@@ -65,7 +66,51 @@ class TestOutputInterceptor:
         assert result.derived is True
         assert "2 files changed" in result.summary
         assert result.raw_output_path is not None
+        assert result.capture_mode == "derived_optional"
         assert Path(result.raw_output_path).exists()
+
+    def test_small_git_diff_summary_can_skip_optional_capture(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        diff = (
+            "diff --git a/foo.py b/foo.py\n"
+            "--- a/foo.py\n"
+            "+++ b/foo.py\n"
+            "@@ -1,4 +1,12 @@\n"
+            "-old\n"
+            "+new\n"
+            "+line 1\n"
+            "+line 2\n"
+            "+line 3\n"
+            "+line 4\n"
+            "+line 5\n"
+            "+line 6\n"
+            "diff --git a/bar.py b/bar.py\n"
+            "--- a/bar.py\n"
+            "+++ b/bar.py\n"
+            "@@ -10,3 +10,6 @@\n"
+            "-x\n"
+            "+y\n"
+            "+z\n"
+            "+w\n"
+        )
+        result = intercept_output(
+            InterceptorRequest(
+                execution=CommandExecutionResult(
+                    command="git diff",
+                    cwd="/repo",
+                    exit_code=1,
+                    stdout="",
+                    stderr="",
+                    combined_output=diff,
+                ),
+                verbosity="summary",
+                task_id="task123",
+            )
+        )
+
+        assert result.derived is True
+        assert result.raw_output_path is None
+        assert result.capture_mode == "derived_optional_skipped"
 
     def test_git_diff_medium_returns_compact_file_list(self):
         with patch.dict(os.environ, {"TERMINAL_INTERCEPTOR_CAPTURE_SUMMARIZED_RAW": "false"}):
@@ -112,6 +157,47 @@ class TestOutputInterceptor:
         assert "Files: foo.py, bar.py" in result.output
         assert "@@ -1,4 +1,12 @@" not in result.output
 
+    def test_git_diff_summary_includes_changed_files_in_output_and_structured(self):
+        diff = (
+            "diff --git a/foo.py b/foo.py\n"
+            "--- a/foo.py\n"
+            "+++ b/foo.py\n"
+            "@@ -1,4 +1,12 @@\n"
+            "-old\n"
+            "+newer content that changes behavior\n"
+            "+line 1\n"
+            "+line 2\n"
+            "+line 3\n"
+            "+line 4\n"
+            "+line 5\n"
+            "+line 6\n"
+            "diff --git a/bar.py b/bar.py\n"
+            "--- a/bar.py\n"
+            "+++ b/bar.py\n"
+            "@@ -1,3 +1,6 @@\n"
+            "-x\n"
+            "+y\n"
+            "+z\n"
+            "+w\n"
+        )
+        result = intercept_output(
+            InterceptorRequest(
+                execution=CommandExecutionResult(
+                    command="git diff",
+                    cwd="/repo",
+                    exit_code=1,
+                    stdout="",
+                    stderr="",
+                    combined_output=diff,
+                ),
+                verbosity="summary",
+            )
+        )
+
+        assert result.derived is True
+        assert "Files: foo.py, bar.py" in result.output
+        assert result.structured["files"] == ["foo.py", "bar.py"]
+
     def test_small_summary_can_fall_back_to_raw_when_not_smaller(self):
         result = intercept_output(
             InterceptorRequest(
@@ -157,6 +243,7 @@ class TestOutputInterceptor:
             "ahead": 2,
             "counts": {"modified": 10, "untracked": 8},
         }
+        assert result.capture_mode == "derived_optional_skipped"
 
     def test_pytest_summary_extracts_failures_for_noisy_output(self):
         with patch.dict(os.environ, {"TERMINAL_INTERCEPTOR_CAPTURE_SUMMARIZED_RAW": "false"}):
@@ -199,7 +286,83 @@ class TestOutputInterceptor:
                 "tests/test_demo.py::test_a",
                 "tests/test_demo.py::test_b",
             ],
+            "failure_clues": ["AssertionError: no", "ValueError: bad", "no"],
         }
+        assert result.capture_mode == "derived_capture_disabled"
+
+    def test_pytest_summary_surfaces_compact_failure_clues(self):
+        text = (
+            "============================= test session starts ==============================\n"
+            "collected 2 items\n\n"
+            "FAILED tests/test_payload.py::test_payload_flags - AssertionError: no\n"
+            "FAILED tests/test_payload.py::test_payload_items - AssertionError: no\n"
+            "________________________________ test_payload_flags ________________________________\n"
+            "    assert payload[\"flags\"][\"enabled\"] is True\n"
+            "E   AssertionError: no\n"
+            "________________________________ test_payload_items ________________________________\n"
+            "    expected = [f\"wrong-{i}\" for i in range(40)]\n"
+            "    assert payload[\"items\"] == expected\n"
+            "E   AssertionError: no\n"
+            "========== 2 failed in 0.12s ==========\n"
+        )
+        result = intercept_output(
+            InterceptorRequest(
+                execution=CommandExecutionResult(
+                    command="python -m pytest -q",
+                    cwd="/repo",
+                    exit_code=1,
+                    stdout="",
+                    stderr="",
+                    combined_output=text,
+                ),
+                verbosity="summary",
+            )
+        )
+
+        assert result.derived is True
+        assert "clues:" in result.summary
+        assert "enabled expected true" in result.summary
+        assert "expected prefix wrong-" in result.summary
+        assert result.structured["failure_clues"][:2] == [
+            "enabled expected true",
+            "expected prefix wrong-",
+        ]
+
+    def test_background_derived_result_forces_raw_capture(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        result = intercept_output(
+            InterceptorRequest(
+                execution=CommandExecutionResult(
+                    command="git diff",
+                    cwd="/repo",
+                    exit_code=1,
+                    stdout="",
+                    stderr="",
+                    combined_output=(
+                        "diff --git a/foo.py b/foo.py\n"
+                        "--- a/foo.py\n"
+                        "+++ b/foo.py\n"
+                        "@@ -1,20 +1,40 @@\n"
+                        + "".join(f"-old line {i}\n" for i in range(1, 21))
+                        + "".join(f"+new line {i}\n" for i in range(1, 41))
+                        + "diff --git a/bar.py b/bar.py\n"
+                        + "--- a/bar.py\n"
+                        + "+++ b/bar.py\n"
+                        + "@@ -1,10 +1,20 @@\n"
+                        + "".join(f"-x line {i}\n" for i in range(1, 11))
+                        + "".join(f"+y line {i}\n" for i in range(1, 21))
+                    ),
+                    source="process_wait",
+                ),
+                verbosity="summary",
+                task_id="bg-task",
+                background_context=True,
+            )
+        )
+
+        assert result.derived is True
+        assert result.raw_output_path is not None
+        assert result.capture_mode == "derived_required_background"
 
     def test_full_verbosity_returns_raw_output(self):
         result = intercept_output(
@@ -282,6 +445,7 @@ class TestOutputInterceptor:
         assert result.fallback_reason == "ambiguous_git_status_output"
         assert payload["confidence"] == "fallback"
         assert "fallback_reason" not in payload
+        assert payload["capture_mode"] == "none"
 
 
 class TestTerminalToolInterceptor:
@@ -306,7 +470,7 @@ class TestTerminalToolInterceptor:
                     "returncode": 1,
                 }
 
-        with patch.dict(os.environ, {"TERMINAL_INTERCEPTOR_CAPTURE_SUMMARIZED_RAW": "false"}), patch("tools.terminal_tool._get_env_config", return_value={
+        with patch("tools.terminal_tool._get_env_config", return_value={
             "env_type": "local",
             "cwd": "/repo",
             "timeout": 30,
@@ -327,6 +491,7 @@ class TestTerminalToolInterceptor:
         assert result["interceptor_kind"] == "pytest"
         assert result["verbosity"] == "summary"
         assert result["confidence"] == "high"
+        assert result["capture_mode"] == "derived_required_recovery"
         assert "2 failed" in result["summary"]
 
     def test_terminal_tool_full_verbosity_returns_raw(self):

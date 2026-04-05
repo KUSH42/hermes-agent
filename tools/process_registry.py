@@ -582,6 +582,7 @@ class ProcessRegistry:
                     "raw_output_path": None,
                     "truncated": False,
                     "confidence": "raw",
+                    "capture_mode": "none",
                     "note": "User sent a new message -- wait interrupted",
                 }
                 if timeout_note:
@@ -603,6 +604,7 @@ class ProcessRegistry:
             "raw_output_path": None,
             "truncated": False,
             "confidence": "raw",
+            "capture_mode": "none",
         }
         if timeout_note:
             result["timeout_note"] = timeout_note

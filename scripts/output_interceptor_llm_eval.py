@@ -43,6 +43,7 @@ class EvalCase:
     suite: Literal["workspace", "fixture"] = "workspace"
     setup_fn: Callable[[Path], None] | None = None
     env_overrides: dict[str, str] = field(default_factory=dict)
+    required_terminal_calls: int | None = None
 
 
 @dataclass
@@ -67,7 +68,10 @@ class EvalRunResult:
     total_tool_json_chars: int
     total_terminal_output_chars: int
     terminal_call_count: int
+    derived_terminal_call_count: int
+    captured_derived_terminal_call_count: int
     serialization_mode: str
+    capture_modes: list[str] = field(default_factory=list)
     tool_traces: list[ToolTrace] = field(default_factory=list)
     error: str | None = None
 
@@ -195,72 +199,116 @@ def setup_pytest_noisy_case(root: Path) -> None:
     )
 
 
+def _workspace_prompt(command: str, answer_shape: str, extra_instruction: str = "") -> str:
+    prompt = (
+        "Use the terminal tool exactly once. "
+        f"Run `{command}` in the current working directory. "
+        "Do not call the terminal tool again. "
+        "Answer in exactly one line. "
+        f"Use exactly this shape: `{answer_shape}`."
+    )
+    if extra_instruction:
+        prompt += f" {extra_instruction}"
+    return prompt
+
+
 WORKSPACE_CASES = [
     EvalCase(
-        id="git_status_dirty",
-        description="Dirty repo with one modified tracked file and one untracked file.",
-        prompt=(
-            "Use the terminal tool. Run `git status --porcelain=v1 --branch` in the current working directory. "
-            "Then answer in one line with exactly this shape: "
-            "`branch=<branch>; modified=<comma-separated modified files>; untracked=<comma-separated untracked files>`."
+        id="git_status_what_changed",
+        description="Summarize changed files from porcelain git status output.",
+        prompt=_workspace_prompt(
+            "git status --porcelain=v1 --branch",
+            "changed=<comma-separated changed files>; inspect=<single file>",
+            "List both modified and untracked files in `changed`.",
         ),
         suite="workspace",
         setup_fn=setup_git_status_case,
-        expected_substrings=["branch=main", "modified=tracked.txt", "untracked=untracked.txt"],
+        expected_substrings=["changed=", "tracked.txt", "untracked.txt", "inspect=tracked.txt"],
+        required_terminal_calls=1,
     ),
     EvalCase(
-        id="git_diff_two_files",
-        description="Two-file working tree diff with deterministic file names.",
-        prompt=(
-            "Use the terminal tool. Run `git diff --stat` in the current working directory. "
-            "Then answer in one line with exactly this shape: "
-            "`files=<comma-separated changed files>; summary=<copy the insertions/deletions totals>`."
+        id="git_status_what_next",
+        description="Recommend the next inspection target from git status output.",
+        prompt=_workspace_prompt(
+            "git status --porcelain=v1 --branch",
+            "changed=<comma-separated changed files>; next=<single file>",
+            "List both modified and untracked files in `changed`.",
+        ),
+        suite="workspace",
+        setup_fn=setup_git_status_case,
+        expected_substrings=["changed=", "tracked.txt", "untracked.txt", "next=tracked.txt"],
+        required_terminal_calls=1,
+    ),
+    EvalCase(
+        id="git_diff_risky_files",
+        description="Identify the risky files in a small working tree diff.",
+        prompt=_workspace_prompt(
+            "git diff",
+            "risky=<comma-separated files>; why=<short reason>",
         ),
         suite="workspace",
         setup_fn=setup_git_diff_case,
-        expected_substrings=["files=alpha.py,beta.py", "insertions", "deletions"],
+        expected_substrings=["risky=", "alpha.py", "beta.py"],
+        required_terminal_calls=1,
     ),
     EvalCase(
-        id="pytest_failures",
-        description="Minimal project with two failing pytest tests.",
-        prompt=(
-            "Use the terminal tool. Run `python -m pytest -q` in the current working directory. "
-            "Then answer in one line with exactly this shape: "
-            "`failing=<comma-separated failing tests>`."
+        id="git_diff_likely_intent",
+        description="Infer likely change intent from a deterministic diff.",
+        prompt=_workspace_prompt(
+            "git diff",
+            "intent=<short phrase>; files=<comma-separated files>",
+        ),
+        suite="workspace",
+        setup_fn=setup_git_diff_case,
+        expected_substrings=["intent=", "files=", "alpha.py", "beta.py"],
+        required_terminal_calls=1,
+    ),
+    EvalCase(
+        id="pytest_failed_tests",
+        description="Identify which pytest cases failed.",
+        prompt=_workspace_prompt(
+            "python -m pytest -q",
+            "failing=<comma-separated fully-qualified test ids>",
+            "Use fully-qualified pytest node ids exactly as shown in the terminal output.",
         ),
         suite="workspace",
         setup_fn=setup_pytest_case,
         expected_substrings=[
-            "failing=tests/test_app.py::test_add,tests/test_app.py::test_greet",
+            "failing=",
+            "tests/test_app.py::test_add",
+            "tests/test_app.py::test_greet",
         ],
+        required_terminal_calls=1,
     ),
     EvalCase(
-        id="git_diff_large",
-        description="Large one-file diff where summary mode should save tokens.",
-        prompt=(
-            "Use the terminal tool. Run `git diff` in the current working directory. "
-            "Then answer in one line with exactly this shape: "
-            "`files=<comma-separated changed files>; summary=<copy the insertions/deletions totals>`."
-        ),
-        suite="workspace",
-        setup_fn=setup_git_diff_large_case,
-        expected_substrings=["files=big.py", "insertions", "deletions"],
-    ),
-    EvalCase(
-        id="pytest_noisy",
-        description="Noisy failing pytest output with large assertion diffs.",
-        prompt=(
-            "Use the terminal tool. Run `python -m pytest -q` in the current working directory. "
-            "Then answer in one line with exactly this shape: "
-            "`failing=<comma-separated failing tests>`."
+        id="pytest_likely_cause",
+        description="Infer the likely failure cause from noisy pytest output.",
+        prompt=_workspace_prompt(
+            "python -m pytest -q",
+            "cause=<short cause>",
         ),
         suite="workspace",
         setup_fn=setup_pytest_noisy_case,
-        expected_substrings=[
-            "failing=tests/test_payload.py::test_payload_flags,tests/test_payload.py::test_payload_items",
-        ],
+        expected_substrings=["cause=", "enabled", "true", "wrong-"],
+        required_terminal_calls=1,
     ),
 ]
+
+
+def _capture_stats_from_traces(traces: list[ToolTrace]) -> tuple[int, int, list[str]]:
+    derived_count = 0
+    captured_derived_count = 0
+    capture_modes: set[str] = set()
+    for trace in traces:
+        if trace.name != "terminal" or not isinstance(trace.result, dict):
+            continue
+        capture_mode = str(trace.result.get("capture_mode") or "none")
+        capture_modes.add(capture_mode)
+        if trace.result.get("derived_output"):
+            derived_count += 1
+            if trace.result.get("raw_output_path"):
+                captured_derived_count += 1
+    return derived_count, captured_derived_count, sorted(capture_modes)
 
 
 def _split_command(command: str) -> list[str]:
@@ -289,16 +337,21 @@ def _fixture_expected_substrings(item: dict) -> list[str]:
     expect_confidence = str(item.get("expect_confidence") or "none")
     expect_kind = str(item.get("expect_kind") or "none")
     expect_fallback = str(item.get("expect_fallback_reason") or "none")
-    expect_raw_path = "yes" if item.get("expect_raw_path_exists", bool(item.get("expect_derived"))) else "no"
     expect_truncated = str(bool(item.get("expect_truncated", False))).lower()
-    return [
+    substrings = [
         f"derived={expect_derived}",
         f"confidence={expect_confidence}",
         f"kind={expect_kind}",
         f"fallback_reason={expect_fallback}",
-        f"raw_output_path={expect_raw_path}",
         f"truncated={expect_truncated}",
     ]
+    if "expect_raw_path_exists" in item:
+        substrings.append(
+            f"raw_output_path={'yes' if item.get('expect_raw_path_exists') else 'no'}"
+        )
+    if "expect_capture_mode" in item:
+        substrings.append(f"capture_mode={item.get('expect_capture_mode')}")
+    return substrings
 
 
 def _fixture_prompt(item: dict) -> str:
@@ -308,7 +361,8 @@ def _fixture_prompt(item: dict) -> str:
         "Read the terminal tool JSON carefully. "
         "Then answer in one line exactly with this shape, using the tool field names literally: "
         "`derived=<true|false>; confidence=<value>; kind=<value-or-none>; "
-        "fallback_reason=<value-or-none>; raw_output_path=<yes|no>; truncated=<true|false>`. "
+        "fallback_reason=<value-or-none>; raw_output_path=<yes|no>; truncated=<true|false>; "
+        "capture_mode=<value>`. "
         "For `raw_output_path`, answer `yes` if the field is non-null, otherwise `no`."
     )
 
@@ -490,6 +544,12 @@ def run_case(
             matched = [s for s in case.expected_substrings if _normalize_answer(s) in lowered]
             missing = [s for s in case.expected_substrings if _normalize_answer(s) not in lowered]
             duration = time.perf_counter() - started
+            derived_count, captured_derived_count, capture_modes = _capture_stats_from_traces(traces)
+            terminal_call_count = sum(1 for t in traces if t.name == "terminal")
+            if case.required_terminal_calls is not None and terminal_call_count != case.required_terminal_calls:
+                missing = list(missing) + [
+                    f"terminal_call_count={case.required_terminal_calls} (got {terminal_call_count})"
+                ]
             return EvalRunResult(
                 case_id=case.id,
                 mode=mode,
@@ -501,12 +561,16 @@ def run_case(
                 missing_substrings=missing,
                 total_tool_json_chars=sum(t.raw_json_chars for t in traces),
                 total_terminal_output_chars=sum(t.output_chars for t in traces if t.name == "terminal"),
-                terminal_call_count=sum(1 for t in traces if t.name == "terminal"),
+                terminal_call_count=terminal_call_count,
+                derived_terminal_call_count=derived_count,
+                captured_derived_terminal_call_count=captured_derived_count,
                 serialization_mode=serialization_mode(),
+                capture_modes=capture_modes,
                 tool_traces=traces,
             )
         except Exception as exc:
             duration = time.perf_counter() - started
+            derived_count, captured_derived_count, capture_modes = _capture_stats_from_traces(traces)
             return EvalRunResult(
                 case_id=case.id,
                 mode=mode,
@@ -519,7 +583,10 @@ def run_case(
                 total_tool_json_chars=sum(t.raw_json_chars for t in traces),
                 total_terminal_output_chars=sum(t.output_chars for t in traces if t.name == "terminal"),
                 terminal_call_count=sum(1 for t in traces if t.name == "terminal"),
+                derived_terminal_call_count=derived_count,
+                captured_derived_terminal_call_count=captured_derived_count,
                 serialization_mode=serialization_mode(),
+                capture_modes=capture_modes,
                 tool_traces=traces,
                 error=f"{type(exc).__name__}: {exc}",
             )
@@ -546,7 +613,12 @@ def summarize(results: list[EvalRunResult]) -> dict:
             "avg_terminal_output_chars": statistics.mean(terminal_chars) if rows else 0.0,
             "stdev_terminal_output_chars": statistics.pstdev(terminal_chars) if len(terminal_chars) > 1 else 0.0,
             "avg_terminal_calls": statistics.mean(r.terminal_call_count for r in rows) if rows else 0.0,
+            "avg_derived_terminal_calls": statistics.mean(r.derived_terminal_call_count for r in rows) if rows else 0.0,
+            "avg_captured_derived_terminal_calls": (
+                statistics.mean(r.captured_derived_terminal_call_count for r in rows) if rows else 0.0
+            ),
             "serialization_modes": sorted({r.serialization_mode for r in rows}),
+            "capture_modes": sorted({mode for r in rows for mode in r.capture_modes}),
         }
     return summary
 
@@ -559,19 +631,22 @@ def _normalize_answer(text: str) -> str:
     if normalized.endswith("fallback_reason="):
         normalized = normalized[:-len("fallback_reason=")] + "fallback_reason=none"
     normalized = normalized.replace(": null", ": none")
+    normalized = normalized.replace(": ", "=")
+    normalized = normalized.replace(" ;", ";")
     normalized = normalized.replace(", ", ",")
     normalized = " ".join(normalized.split())
     return normalized
 
 
 def print_report(results: list[EvalRunResult]) -> None:
-    print("| Case | Mode | Serialization | Success | Tool JSON chars | Terminal output chars | Terminal calls | Duration |")
-    print("| --- | --- | --- | --- | ---: | ---: | ---: | ---: |")
+    print("| Case | Mode | Serialization | Success | Tool JSON chars | Terminal output chars | Terminal calls | Derived calls | Captured derived | Duration |")
+    print("| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |")
     for row in results:
         print(
             f"| `{row.case_id}` | `{row.mode}` | `{row.serialization_mode}` | {'yes' if row.success else 'no'} | "
             f"{row.total_tool_json_chars} | {row.total_terminal_output_chars} | "
-            f"{row.terminal_call_count} | {row.duration_seconds:.2f}s |"
+            f"{row.terminal_call_count} | {row.derived_terminal_call_count} | "
+            f"{row.captured_derived_terminal_call_count} | {row.duration_seconds:.2f}s |"
         )
 
     print("\nPer-run details:")
@@ -580,6 +655,7 @@ def print_report(results: list[EvalRunResult]) -> None:
         if row.error:
             print(f"  error: {row.error}")
         print(f"  serialization_mode: {row.serialization_mode}")
+        print(f"  capture_modes: {', '.join(row.capture_modes) if row.capture_modes else 'none'}")
         print(f"  answer: {row.answer or '(empty)'}")
         if row.missing_substrings:
             print(f"  missing: {', '.join(row.missing_substrings)}")
@@ -591,6 +667,8 @@ def print_report(results: list[EvalRunResult]) -> None:
             f"- `{mode}`: success_rate={metrics['success_rate']:.2f}, "
             f"avg_tool_json_chars={metrics['avg_tool_json_chars']:.1f}±{metrics['stdev_tool_json_chars']:.1f}, "
             f"avg_terminal_output_chars={metrics['avg_terminal_output_chars']:.1f}±{metrics['stdev_terminal_output_chars']:.1f}, "
+            f"avg_derived_calls={metrics['avg_derived_terminal_calls']:.1f}, "
+            f"avg_captured_derived_calls={metrics['avg_captured_derived_terminal_calls']:.1f}, "
             f"avg_duration={metrics['avg_duration_seconds']:.2f}s±{metrics['stdev_duration_seconds']:.2f}s"
         )
 
@@ -675,7 +753,10 @@ def main() -> int:
                 "total_tool_json_chars": r.total_tool_json_chars,
                 "total_terminal_output_chars": r.total_terminal_output_chars,
                 "terminal_call_count": r.terminal_call_count,
+                "derived_terminal_call_count": r.derived_terminal_call_count,
+                "captured_derived_terminal_call_count": r.captured_derived_terminal_call_count,
                 "serialization_mode": r.serialization_mode,
+                "capture_modes": r.capture_modes,
                 "error": r.error,
             }
             for r in results

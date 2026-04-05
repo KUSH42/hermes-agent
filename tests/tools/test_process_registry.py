@@ -106,6 +106,7 @@ class TestGetAndPoll:
         assert result["interceptor_kind"] == "pytest"
         assert "2 passed" in result["output_preview"]
         assert "1 failed" in result["output_preview"]
+        assert result["capture_mode"] == "derived_capture_disabled"
 
 
 # =========================================================================
@@ -321,6 +322,7 @@ class TestWaitInterception:
         assert result["derived_output"] is True
         assert result["interceptor_kind"] == "git_diff"
         assert "files changed" in result["output"]
+        assert result["capture_mode"] == "derived_capture_disabled"
 
 
 # =========================================================================

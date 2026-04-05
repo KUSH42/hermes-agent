@@ -1,9 +1,11 @@
 from scripts.output_interceptor_llm_eval import (
+    _normalize_answer,
     _fixture_expected_substrings,
     _primary_executable,
     load_fixture_eval_cases,
     summarize,
     EvalRunResult,
+    WORKSPACE_CASES,
 )
 
 
@@ -24,6 +26,12 @@ def test_fixture_eval_cases_cover_manifest_rows():
     assert by_id["fixture_git_diff_large"].suite == "fixture"
 
 
+def test_workspace_cases_require_single_terminal_call():
+    by_id = {case.id: case for case in WORKSPACE_CASES}
+    assert by_id["git_diff_risky_files"].required_terminal_calls == 1
+    assert by_id["pytest_failed_tests"].required_terminal_calls == 1
+
+
 def test_fixture_expected_substrings_include_manifest_metadata():
     substrings = _fixture_expected_substrings(
         {
@@ -33,6 +41,7 @@ def test_fixture_expected_substrings_include_manifest_metadata():
             "expect_fallback_reason": None,
             "expect_raw_path_exists": True,
             "expect_truncated": False,
+            "expect_capture_mode": "derived_optional",
         }
     )
 
@@ -42,6 +51,7 @@ def test_fixture_expected_substrings_include_manifest_metadata():
     assert "fallback_reason=none" in substrings
     assert "raw_output_path=yes" in substrings
     assert "truncated=false" in substrings
+    assert "capture_mode=derived_optional" in substrings
 
 
 def test_summarize_reports_serialization_modes():
@@ -59,9 +69,19 @@ def test_summarize_reports_serialization_modes():
                 total_tool_json_chars=100,
                 total_terminal_output_chars=50,
                 terminal_call_count=1,
+                derived_terminal_call_count=1,
+                captured_derived_terminal_call_count=1,
                 serialization_mode="production",
+                capture_modes=["derived_optional"],
             )
         ]
     )
 
     assert summary["summary"]["serialization_modes"] == ["production"]
+    assert summary["summary"]["capture_modes"] == ["derived_optional"]
+
+
+def test_normalize_answer_accepts_colon_and_equals_shapes():
+    assert _normalize_answer("changed: tracked.txt; next: untracked.txt") == (
+        "changed=tracked.txt; next=untracked.txt"
+    )

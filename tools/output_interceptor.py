@@ -55,6 +55,7 @@ class InterceptorResult:
     exit_code_meaning: str | None = None
     fallback_reason: str | None = None
     notes: list[str] | None = None
+    capture_mode: str = "none"
 
 
 @dataclass
@@ -129,6 +130,22 @@ def _min_savings_ratio() -> float:
 
 def _include_fallback_reason() -> bool:
     return _env_bool("TERMINAL_INTERCEPTOR_INCLUDE_FALLBACK_REASON", False)
+
+
+def _capture_summarized_raw_enabled() -> bool:
+    return _env_bool("TERMINAL_INTERCEPTOR_CAPTURE_SUMMARIZED_RAW", True)
+
+
+def _force_capture_background() -> bool:
+    return _env_bool("TERMINAL_INTERCEPTOR_FORCE_CAPTURE_BACKGROUND", True)
+
+
+def _force_capture_truncated() -> bool:
+    return _env_bool("TERMINAL_INTERCEPTOR_FORCE_CAPTURE_TRUNCATED", True)
+
+
+def _optional_capture_max_raw_chars() -> int:
+    return _env_int("TERMINAL_INTERCEPTOR_OPTIONAL_CAPTURE_MAX_RAW_CHARS", 512)
 
 
 def _truncate_text(text: str, max_chars: int) -> tuple[str, bool]:
@@ -404,11 +421,17 @@ def _structured_git_status(data: dict[str, Any], verbosity: Verbosity) -> tuple[
 
 def _handle_git_status(request: InterceptorRequest, normalized: NormalizedOutput) -> InterceptorResult:
     text = normalized.full_output
-    if "## " in text or re.search(r"^(.. |\?\? )", text, flags=re.MULTILINE):
+    porcelain_requested = "--porcelain" in request.execution.command
+    if porcelain_requested and ("## " in text or re.search(r"^(.. |\?\? )", text, flags=re.MULTILINE)):
         data, _ = _parse_git_status_porcelain(text)
         confident = _git_status_parse_confident(data, text)
     else:
         if not _looks_like_git_status(text):
+            raise ValueError("ambiguous_git_status_output")
+        # Human-readable status remains best-effort only. If the output mixes
+        # staged and unstaged sections, the current schema cannot represent the
+        # nuance faithfully enough to claim strong support.
+        if "Changes to be committed:" in text and "Changes not staged for commit:" in text:
             raise ValueError("ambiguous_git_status_output")
         data = _parse_git_status_human(text)
         confident = _git_status_parse_confident(data, text)
@@ -437,7 +460,7 @@ def _handle_git_status(request: InterceptorRequest, normalized: NormalizedOutput
         interceptor_kind="git_status",
         derived=True,
         truncated=normalized.truncated,
-        confidence="high",
+        confidence="high" if porcelain_requested else "medium",
         notes=notes,
     )
 
@@ -476,10 +499,10 @@ def _structured_git_diff(data: dict[str, Any], verbosity: Verbosity) -> dict[str
         "insertions": data["insertions"],
         "deletions": data["deletions"],
     }
-    if verbosity == "summary":
-        return structured
     if data["files"]:
         structured["files"] = data["files"][: _medium_diff_max_files()]
+    if verbosity == "summary":
+        return structured
     return structured
 
 
@@ -494,9 +517,14 @@ def _handle_git_diff(request: InterceptorRequest, normalized: NormalizedOutput) 
     )
     output = summary
     notes: list[str] = []
+    shown_files = data["files"][: _medium_diff_max_files()]
+    hidden_files = max(0, data["file_count"] - len(shown_files))
+    if request.verbosity == "summary" and shown_files:
+        detail = f"Files: {', '.join(shown_files)}"
+        if hidden_files:
+            detail += f"; +{hidden_files} more"
+        output = summary + "\n" + detail
     if request.verbosity == "medium":
-        shown_files = data["files"][: _medium_diff_max_files()]
-        hidden_files = max(0, data["file_count"] - len(shown_files))
         detail_lines = []
         if shown_files:
             detail_lines.append(f"Files: {', '.join(shown_files)}")
@@ -571,7 +599,37 @@ def _collect_failure_excerpts(text: str, limit: int = 3) -> list[str]:
     return [excerpt for excerpt in excerpts if excerpt]
 
 
-def _structured_pytest(data: dict[str, Any], verbosity: Verbosity, excerpts: list[str] | None = None) -> dict[str, Any] | None:
+def _extract_pytest_clues(text: str) -> list[str]:
+    clues: list[str] = []
+    seen: set[str] = set()
+
+    def _add(clue: str) -> None:
+        if clue and clue not in seen:
+            seen.add(clue)
+            clues.append(clue)
+
+    for match in re.finditer(r'\["([^"]+)"\]\s+is\s+(True|False)', text):
+        key, value = match.groups()
+        _add(f"{key} expected {value.lower()}")
+    if "wrong-" in text:
+        _add("expected prefix wrong-")
+    for match in re.finditer(r"^[E>\s]*([A-Za-z]+Error):\s*(.+)$", text, flags=re.MULTILINE):
+        _add(f"{match.group(1)}: {match.group(2).strip()}")
+    for match in re.finditer(r"KeyError: '([^']+)'", text):
+        _add(f"missing key {match.group(1)}")
+    for match in re.finditer(r"AssertionError:\s*(.+)", text):
+        message = match.group(1).strip()
+        if message:
+            _add(message[:120])
+    return clues[:4]
+
+
+def _structured_pytest(
+    data: dict[str, Any],
+    verbosity: Verbosity,
+    excerpts: list[str] | None = None,
+    clues: list[str] | None = None,
+) -> dict[str, Any] | None:
     if verbosity == "full":
         return None
     structured: dict[str, Any] = {}
@@ -582,6 +640,8 @@ def _structured_pytest(data: dict[str, Any], verbosity: Verbosity, excerpts: lis
     failing_tests = list(data.get("failing_tests") or [])
     if failing_tests:
         structured["failing_tests"] = failing_tests[:4 if verbosity == "summary" else 8]
+    if clues:
+        structured["failure_clues"] = clues[:3 if verbosity == "summary" else 4]
     if verbosity == "medium" and excerpts:
         structured["failure_excerpt_count"] = len(excerpts)
     return structured or None
@@ -607,6 +667,9 @@ def _handle_pytest(request: InterceptorRequest, normalized: NormalizedOutput, ki
         summary_parts.append("pytest run completed")
     if data["failing_tests"]:
         summary_parts.append(f"failing: {', '.join(data['failing_tests'][:8])}")
+    clues = _extract_pytest_clues(normalized.full_output)
+    if clues:
+        summary_parts.append(f"clues: {', '.join(clues[:2])}")
     summary = ", ".join(summary_parts)
     output = summary
     excerpts: list[str] = []
@@ -617,7 +680,7 @@ def _handle_pytest(request: InterceptorRequest, normalized: NormalizedOutput, ki
     return InterceptorResult(
         output=output,
         summary=summary,
-        structured=_structured_pytest(data, request.verbosity, excerpts),
+        structured=_structured_pytest(data, request.verbosity, excerpts, clues),
         raw_available=True,
         interceptor_kind=kind,
         derived=True,
@@ -644,10 +707,17 @@ def _fallback_raw_result(
         confidence=confidence,
         exit_code_meaning=exit_code_meaning,
         fallback_reason=fallback_reason,
+        capture_mode="none",
     )
 
 
-def _estimate_model_payload_chars(result: InterceptorResult, verbosity: Verbosity, *, raw_output_path: str | None = None) -> int:
+def _estimate_model_payload_chars(
+    result: InterceptorResult,
+    verbosity: Verbosity,
+    *,
+    raw_output_path: str | None = None,
+    capture_mode: str | None = None,
+) -> int:
     payload: dict[str, Any] = {
         "output": result.output,
         "summary": result.summary,
@@ -659,6 +729,7 @@ def _estimate_model_payload_chars(result: InterceptorResult, verbosity: Verbosit
         "raw_output_path": raw_output_path,
         "truncated": result.truncated,
         "confidence": result.confidence,
+        "capture_mode": capture_mode or result.capture_mode,
     }
     if result.exit_code_meaning:
         payload["exit_code_meaning"] = result.exit_code_meaning
@@ -673,12 +744,20 @@ def serialization_mode() -> str:
     return "debug" if _include_fallback_reason() else "production"
 
 
-def _prefer_derived_payload(derived: InterceptorResult, raw: InterceptorResult, verbosity: Verbosity) -> tuple[bool, str | None]:
+def _prefer_derived_payload(
+    derived: InterceptorResult,
+    raw: InterceptorResult,
+    verbosity: Verbosity,
+    *,
+    raw_capture_path_included: bool,
+    capture_mode: str,
+) -> tuple[bool, str | None]:
     raw_chars = _estimate_model_payload_chars(raw, verbosity)
     derived_chars = _estimate_model_payload_chars(
         derived,
         verbosity,
-        raw_output_path="__persisted__" if derived.derived and _env_bool("TERMINAL_INTERCEPTOR_CAPTURE_SUMMARIZED_RAW", True) else None,
+        raw_output_path="__persisted__" if raw_capture_path_included else None,
+        capture_mode=capture_mode,
     )
     if derived_chars >= raw_chars:
         return False, "summary_not_smaller"
@@ -688,6 +767,44 @@ def _prefer_derived_payload(derived: InterceptorResult, raw: InterceptorResult, 
     if savings_chars >= _min_savings_chars() or savings_ratio >= _min_savings_ratio():
         return True, None
     return False, "summary_not_smaller"
+
+
+def _should_force_recovery_capture(result: InterceptorResult) -> bool:
+    return result.interceptor_kind in {"pytest", "python_pytest"}
+
+
+def _eligible_for_optional_capture(result: InterceptorResult, request: InterceptorRequest, normalized: NormalizedOutput) -> bool:
+    if request.background_context:
+        return False
+    if result.truncated:
+        return False
+    if normalized.raw_total_chars > _optional_capture_max_raw_chars():
+        return False
+    if result.interceptor_kind not in {"git_status", "git_diff"}:
+        return False
+    if result.interceptor_kind == "git_status" and "--porcelain" not in request.execution.command:
+        return False
+    return True
+
+
+def _resolve_capture_policy(
+    result: InterceptorResult,
+    request: InterceptorRequest,
+    normalized: NormalizedOutput,
+) -> tuple[bool, str]:
+    if not result.derived:
+        return False, "none"
+    if not _capture_summarized_raw_enabled():
+        return False, "derived_capture_disabled"
+    if request.background_context and _force_capture_background():
+        return True, "derived_required_background"
+    if result.truncated and _force_capture_truncated():
+        return True, "derived_required_truncated"
+    if _should_force_recovery_capture(result):
+        return True, "derived_required_recovery"
+    if _eligible_for_optional_capture(result, request, normalized):
+        return False, "derived_optional_skipped"
+    return True, "derived_optional"
 
 
 def intercept_output(request: InterceptorRequest, exit_code_meaning: str | None = None) -> InterceptorResult:
@@ -742,7 +859,14 @@ def intercept_output(request: InterceptorRequest, exit_code_meaning: str | None 
         )
 
     if result.derived:
-        prefer_derived, _fallback_reason = _prefer_derived_payload(result, raw_result, request.verbosity)
+        capture_raw, capture_mode = _resolve_capture_policy(result, request, normalized)
+        prefer_derived, _fallback_reason = _prefer_derived_payload(
+            result,
+            raw_result,
+            request.verbosity,
+            raw_capture_path_included=capture_raw,
+            capture_mode=capture_mode,
+        )
         if not prefer_derived:
             result = _fallback_raw_result(
                 raw_text=raw_text,
@@ -750,11 +874,16 @@ def intercept_output(request: InterceptorRequest, exit_code_meaning: str | None 
                 exit_code_meaning=exit_code_meaning,
                 confidence="raw",
             )
+        else:
+            result.capture_mode = capture_mode
 
-    if result.derived and _env_bool("TERMINAL_INTERCEPTOR_CAPTURE_SUMMARIZED_RAW", True):
+    if result.derived and result.capture_mode != "derived_optional_skipped" and result.capture_mode != "derived_capture_disabled":
         result.raw_output_path = persist_raw_output(full_raw_text, task_id=request.task_id, source=request.execution.source)
+    elif result.derived:
+        result.raw_output_path = None
     elif _env_bool("TERMINAL_INTERCEPTOR_PERSIST_LARGE_OUTPUT", True) and normalized.raw_total_chars >= _persist_threshold_chars():
         result.raw_output_path = persist_raw_output(full_raw_text, task_id=request.task_id, source=request.execution.source)
+        result.capture_mode = "raw_large_output"
 
     result.exit_code_meaning = exit_code_meaning
     return result
@@ -772,6 +901,7 @@ def result_to_json_dict(result: InterceptorResult, verbosity: Verbosity) -> dict
         "raw_output_path": result.raw_output_path,
         "truncated": result.truncated,
         "confidence": result.confidence,
+        "capture_mode": result.capture_mode,
     }
     if result.exit_code_meaning:
         payload["exit_code_meaning"] = result.exit_code_meaning

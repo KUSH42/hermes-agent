@@ -25,6 +25,12 @@ from agent.display import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _disable_no_color(monkeypatch):
+    """Inline diff/style assertions expect ANSI styling to be enabled."""
+    monkeypatch.delenv("NO_COLOR", raising=False)
+
+
 class TestBuildToolPreview:
     """Tests for build_tool_preview defensive handling and normal operation."""
 

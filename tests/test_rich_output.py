@@ -760,7 +760,14 @@ class TestDiffRendererV2:
         from io import StringIO
         from rich.console import Console
         buf = StringIO()
-        Console(file=buf, force_terminal=True, highlight=False, width=220).print(
+        Console(
+            file=buf,
+            force_terminal=True,
+            highlight=False,
+            no_color=False,
+            color_system="truecolor",
+            width=220,
+        ).print(
             DiffRenderer()._style(diff.splitlines())
         )
         output = buf.getvalue()
@@ -2781,7 +2788,14 @@ class TestMonokaiIntraDiff:
         from io import StringIO
         from rich.console import Console
         buf = StringIO()
-        Console(file=buf, highlight=False, force_terminal=True, width=220).print(text, end="")
+        Console(
+            file=buf,
+            highlight=False,
+            force_terminal=True,
+            no_color=False,
+            color_system="truecolor",
+            width=220,
+        ).print(text, end="")
         return buf.getvalue()
 
     # ------------------------------------------------------------------

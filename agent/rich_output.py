@@ -59,20 +59,46 @@ def _rich_style_to_ansi(style_str: str) -> str:
     Called once per key per skin activation (during cache rebuild), not per
     character — no per-render overhead.
     """
-    from io import StringIO as _StringIO
-    from rich.console import Console as _RichConsole
     from rich.style import Style as _RichStyle
-    buf = _StringIO()
-    console = _RichConsole(file=buf, highlight=False, force_terminal=True, width=1)
     try:
         parsed = _RichStyle.parse(style_str)
-        console.print(" ", style=parsed, end="")
-        rendered = buf.getvalue()
-        reset = "\033[0m"
-        if reset in rendered:
-            # Strip trailing reset + the space char we used as a dummy
-            return rendered[:rendered.index(reset) - 1]
-        return rendered[:-1]   # remove trailing space
+        codes: list[str] = []
+
+        def _append_color(color, background: bool = False) -> None:
+            if color is None:
+                return
+            prefix = "48" if background else "38"
+            number = getattr(color, "number", None)
+            triplet = getattr(color, "triplet", None)
+            if triplet is not None:
+                codes.append(f"{prefix};2;{triplet.red};{triplet.green};{triplet.blue}")
+                return
+            if number is not None:
+                if 0 <= number <= 7:
+                    base = 40 if background else 30
+                    codes.append(str(base + number))
+                    return
+                if 8 <= number <= 15:
+                    base = 100 if background else 90
+                    codes.append(str(base + (number - 8)))
+                    return
+                codes.append(f"{prefix};5;{number}")
+
+        if parsed.bold:
+            codes.append("1")
+        if parsed.dim:
+            codes.append("2")
+        if parsed.italic:
+            codes.append("3")
+        if parsed.underline:
+            codes.append("4")
+        if parsed.reverse:
+            codes.append("7")
+        if parsed.strike:
+            codes.append("9")
+        _append_color(parsed.color, background=False)
+        _append_color(parsed.bgcolor, background=True)
+        return f"\033[{';'.join(codes)}m" if codes else ""
     except Exception:
         return ""
 
@@ -432,7 +458,13 @@ class SyntaxHighlighter:
         markup = self.to_markup(code, language, filename)
         buf = StringIO()
         width = shutil.get_terminal_size((220, 50)).columns
-        Console(file=buf, highlight=False, force_terminal=True, width=width).print(markup)
+        Console(
+            file=buf,
+            highlight=False,
+            force_terminal=True,
+            color_system="truecolor",
+            width=width,
+        ).print(markup)
         return buf.getvalue()
 
     # -- Helpers -------------------------------------------------------------
@@ -665,7 +697,13 @@ class DiffRenderer:
         import shutil
         render_width = width or shutil.get_terminal_size((220, 24)).columns
         buf = StringIO()
-        Console(file=buf, highlight=False, force_terminal=True, width=render_width).print(
+        Console(
+            file=buf,
+            highlight=False,
+            force_terminal=True,
+            color_system="truecolor",
+            width=render_width,
+        ).print(
             self.from_unified(diff_text)
         )
         # Drop the trailing empty line that Console adds

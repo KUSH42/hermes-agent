@@ -2221,6 +2221,9 @@ class HermesCLI:
                 if out2 is None:
                     continue
                 if out2 is out:
+                    # Plain text always gets markdown rendering during streaming.
+                    # display.code_highlight only controls syntax-highlighted
+                    # code previews and execute_code transcript formatting.
                     out = _apply_inline_md(_apply_block_line(out, reset_suffix=_tc), reset_suffix=_tc)
                     _cprint(f"{_tc}{out}{_RST}" if _tc else out)
                 else:
@@ -2251,7 +2254,8 @@ class HermesCLI:
                 buf_tail = self._stream_block_buf.flush()
                 if buf_tail is not None:
                     for hl_line in buf_tail.splitlines():
-                        hl_line = _apply_inline_md(_apply_block_line(hl_line, reset_suffix=_tc), reset_suffix=_tc)
+                        if "\x1b" not in hl_line:
+                            hl_line = _apply_inline_md(_apply_block_line(hl_line, reset_suffix=_tc), reset_suffix=_tc)
                         _cprint(f"{_tc}{hl_line}{_RST}" if _tc else hl_line)
                 # Flush any open code block (unclosed fence at end of response)
                 tail = self._stream_code_hl.flush()

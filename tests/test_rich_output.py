@@ -3018,3 +3018,16 @@ class TestMonokaiIntraDiff:
         assert _MONOKAI_FUNCTION not in ansi_def, (
             "monokai function colour should be absent after switching to default skin"
         )
+
+    def test_diff_renderer_marker_sigils_have_distinct_colours(self):
+        diff = (
+            "--- a/f.py\n+++ b/f.py\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        dr = DiffRenderer()
+        lines = dr.to_lines(diff)
+        all_ansi = "\n".join(lines)
+        assert "38;2;255;123;114" in all_ansi, "deletion marker fg missing"
+        assert "38;2;86;211;100" in all_ansi, "addition marker fg missing"

@@ -89,6 +89,21 @@ def test_syntax_refresh_on_skin_switch():
     assert default_out != monokai_out
 
 
+def test_diff_filename_style_uses_active_skin():
+    from agent.rich_output import DiffRenderer
+    from hermes_cli.skin_engine import get_active_skin, set_active_skin
+
+    set_active_skin("default")
+    skin = get_active_skin()
+    skin.diff["filename"] = "bold #123456"
+
+    diff = "--- a/f.py\n+++ b/f.py\n@@ -1 +1 @@\n-old\n+new\n"
+    header = DiffRenderer().to_lines(diff)[0]
+
+    assert "\x1b[1;" in header or ";1;" in header
+    assert "38;2;18;52;86" in header
+
+
 # ---------------------------------------------------------------------------
 # Markdown cache
 # ---------------------------------------------------------------------------
@@ -179,6 +194,33 @@ def test_diff_cfg_reflects_skin_override():
     skin.diff["deletion_marker_fg"] = "#AA0000"
     assert _diff_cfg("deletion_bg") == "#FF0000"
     assert _diff_cfg("deletion_marker_fg") == "#AA0000"
+
+
+def test_builtin_skin_diff_palette_overrides_defaults():
+    from hermes_cli.skin_engine import set_active_skin, get_active_skin
+
+    set_active_skin("mono")
+    mono = get_active_skin()
+    assert mono.get_diff("deletion_bg") == "#3A3030"
+    assert mono.get_diff("addition_bg") == "#2F3A30"
+    assert mono.get_diff("deletion_marker_fg") == "#D0D0D0"
+    assert mono.get_diff("addition_marker_fg") == "#F0F0F0"
+
+    set_active_skin("poseidon")
+    poseidon = get_active_skin()
+    assert poseidon.get_diff("intra_del_bg") == "#5A4060"
+    assert poseidon.get_diff("intra_add_bg") == "#2F6259"
+
+    set_active_skin("sisyphus")
+    sisyphus = get_active_skin()
+    assert sisyphus.get_diff("deletion_marker_fg") == "#D6D6D6"
+    assert sisyphus.get_diff("addition_marker_fg") == "#F5F5F5"
+
+
+def test_hermes_scheme_styles_operator_words():
+    from hermes_cli.skin_engine import SYNTAX_SCHEMES
+
+    assert SYNTAX_SCHEMES["hermes"]["operator_word"] == "bold blue"
 
 
 def test_diff_renderer_produces_ansi():

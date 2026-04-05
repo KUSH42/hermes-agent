@@ -549,7 +549,7 @@ def _make_header(filename: Optional[str], n_adds: int, n_dels: int) -> tuple[Tex
 
     parts: list[Text] = [
         Text("● ", style="bright_white"),
-        Text(filename or "?", style=Style(color="bright_white", bold=True)),
+        Text(filename or "?", style=_diff_cfg("filename")),
         Text("   "),
     ]
     if n_adds > 0 and n_dels == 0:
@@ -610,6 +610,16 @@ def _flat_add(ln: int, content: str, filename: Optional[str] = None) -> Text:
     )
 
 
+def _pad_diff_row(row: Text, bg: str, width: Optional[int]) -> Text:
+    """Extend a diff row's background to the render width when possible."""
+    if not width:
+        return row
+    pad = width - row.cell_len
+    if pad > 0:
+        row.append(" " * pad, Style(bgcolor=bg))
+    return row
+
+
 def _intra_diff(
     old: str, new: str, filename: Optional[str] = None
 ) -> tuple[list[Text], list[Text]]:
@@ -623,7 +633,7 @@ def _intra_diff(
     token colours:
 
     * Equal regions: syntax fg + base diff background.
-    * Changed regions: syntax fg + bright diff background (bold), which
+    * Changed regions: syntax fg + bright diff background, which
       visually highlights the change without clobbering syntax colours.
     """
     del_text = _syntax_text(old, filename)
@@ -634,9 +644,9 @@ def _intra_diff(
 
     for tag, i1, i2, j1, j2 in SequenceMatcher(None, old, new, autojunk=False).get_opcodes():
         if tag in ("replace", "delete"):
-            del_text.stylize(Style(bgcolor=_diff_cfg("intra_del_bg"), bold=True), i1, i2)
+            del_text.stylize(Style(bgcolor=_diff_cfg("intra_del_bg")), i1, i2)
         if tag in ("replace", "insert"):
-            add_text.stylize(Style(bgcolor=_diff_cfg("intra_add_bg"), bold=True), j1, j2)
+            add_text.stylize(Style(bgcolor=_diff_cfg("intra_add_bg")), j1, j2)
 
     return [del_text], [add_text]
 
@@ -678,9 +688,9 @@ class DiffRenderer:
 
     # -- From unified diff text ----------------------------------------------
 
-    def from_unified(self, diff_text: str) -> Group:
+    def from_unified(self, diff_text: str, width: Optional[int] = None) -> Group:
         """Render an already-generated unified diff string."""
-        return self._style(diff_text.splitlines())
+        return self._style(diff_text.splitlines(), render_width=width)
 
     # -- ANSI lines (drop-in for _render_inline_unified_diff) ----------------
 
@@ -707,10 +717,9 @@ class DiffRenderer:
             color_system="truecolor",
             width=render_width,
         ).print(
-            self.from_unified(diff_text)
+            self.from_unified(diff_text, width=render_width)
         )
-        # Drop the trailing empty line that Console adds
-        lines = buf.getvalue().rstrip("\n").splitlines()
+        lines = buf.getvalue().splitlines()
         if max_lines and len(lines) > max_lines:
             omitted = len(lines) - max_lines
             footer = (
@@ -722,7 +731,12 @@ class DiffRenderer:
 
     # -- Internal rendering --------------------------------------------------
 
-    def _style(self, lines: list[str], file_path: Optional[str] = None) -> Group:
+    def _style(
+        self,
+        lines: list[str],
+        file_path: Optional[str] = None,
+        render_width: Optional[int] = None,
+    ) -> Group:
         """Render *lines* (from a unified diff) as a ``Group`` of Rich ``Text``.
 
         *file_path* — when supplied (from ``from_content()``), its basename is
@@ -737,6 +751,7 @@ class DiffRenderer:
         # Pass 2 — render with run-based pairing and intra-line highlighting.
         ln_old = ln_new = 0
         from_path: Optional[str] = None
+        seen_hunk = False
         del_run: list[tuple[int, str]] = []  # (ln_old, content)
         add_run: list[tuple[int, str]] = []
 
@@ -769,23 +784,25 @@ class DiffRenderer:
                 # monotonic and correct even when context lines split a del block.
                 ln = add_run[i][0] if i < n_pairs else ln_old_saved
                 if i < n_pairs and pair_segs[i][0] is not None:
-                    styled.append(Text.assemble(
+                    row = Text.assemble(
                         Text(f"{ln:>4} ", style=Style(dim=True, bgcolor=del_bg)),
                         Text("- ", style=Style(color=_diff_cfg("deletion_marker_fg"), bgcolor=del_bg)),
                         *pair_segs[i][0],
-                    ))
+                    )
+                    styled.append(_pad_diff_row(row, del_bg, render_width))
                 else:
-                    styled.append(_flat_del(ln, content, fname))
+                    styled.append(_pad_diff_row(_flat_del(ln, content, fname), del_bg, render_width))
 
             for i, (ln, content) in enumerate(add_run):
                 if i < n_pairs and pair_segs[i][1] is not None:
-                    styled.append(Text.assemble(
+                    row = Text.assemble(
                         Text(f"{ln:>4} ", style=Style(dim=True, bgcolor=add_bg)),
                         Text("+ ", style=Style(color=_diff_cfg("addition_marker_fg"), bgcolor=add_bg)),
                         *pair_segs[i][1],
-                    ))
+                    )
+                    styled.append(_pad_diff_row(row, add_bg, render_width))
                 else:
-                    styled.append(_flat_add(ln, content, fname))
+                    styled.append(_pad_diff_row(_flat_add(ln, content, fname), add_bg, render_width))
 
             del_run.clear()
             add_run.clear()
@@ -806,10 +823,13 @@ class DiffRenderer:
                         styled.append(Text(""))
                     styled.append(header)
                     styled.append(sep)
+                    seen_hunk = False
                 continue
 
             if line.startswith("@@"):
                 flush_runs()
+                if seen_hunk:
+                    styled.append(Text(""))
                 m = re.search(r"@@ -(\d+),?\d* \+(\d+),?\d* @@", line)
                 if m:
                     ln_old, ln_new = int(m.group(1)), int(m.group(2))
@@ -818,6 +838,7 @@ class DiffRenderer:
                     Text("       ", style="dim"),  # 4-digit num + space + 2-char sigil
                     Text(line, style=_diff_cfg("hunk_header")),
                 ))
+                seen_hunk = True
                 continue
 
             if line.startswith("-"):

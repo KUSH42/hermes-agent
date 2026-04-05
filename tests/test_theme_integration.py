@@ -166,6 +166,8 @@ def test_diff_cfg_returns_default_hex():
     from agent.rich_output import _diff_cfg
     assert _diff_cfg("deletion_bg") == "#781414"
     assert _diff_cfg("addition_bg") == "#145a14"
+    assert _diff_cfg("deletion_marker_fg") == "#FF7B72"
+    assert _diff_cfg("addition_marker_fg") == "#56D364"
 
 
 def test_diff_cfg_reflects_skin_override():
@@ -174,7 +176,9 @@ def test_diff_cfg_reflects_skin_override():
 
     skin = get_active_skin()
     skin.diff["deletion_bg"] = "#FF0000"
+    skin.diff["deletion_marker_fg"] = "#AA0000"
     assert _diff_cfg("deletion_bg") == "#FF0000"
+    assert _diff_cfg("deletion_marker_fg") == "#AA0000"
 
 
 def test_diff_renderer_produces_ansi():

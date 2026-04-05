@@ -403,6 +403,8 @@ _DIFF_DEFAULTS: Dict[str, str] = {
     "addition_bg":  "#145a14",
     "deletion_fg":  "#ffffff",
     "addition_fg":  "#ffffff",
+    "deletion_marker_fg": "#FF7B72",
+    "addition_marker_fg": "#56D364",
     "intra_del_bg": "#9b1c1c",
     "intra_add_bg": "#166534",
     "intra_del_fg": "#ff8080",

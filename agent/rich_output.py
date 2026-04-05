@@ -117,6 +117,7 @@ def _diff_cfg(key: str) -> str:
         _FALLBACKS = {
             "deletion_bg": "#781414", "addition_bg": "#145a14",
             "deletion_fg": "#ffffff", "addition_fg": "#ffffff",
+            "deletion_marker_fg": "#FF7B72", "addition_marker_fg": "#56D364",
             "intra_del_bg": "#9b1c1c", "intra_add_bg": "#166534",
             "intra_del_fg": "#ff8080", "intra_add_fg": "#80ff80",
             "line_number": "dim", "separator": "dim",
@@ -462,6 +463,7 @@ class SyntaxHighlighter:
             file=buf,
             highlight=False,
             force_terminal=True,
+            no_color=False,
             color_system="truecolor",
             width=width,
         ).print(markup)
@@ -591,7 +593,7 @@ def _flat_del(ln: int, content: str, filename: Optional[str] = None) -> Text:
     syn.stylize(Style(bgcolor=bg))
     return Text.assemble(
         Text(f"{ln:>4} ", style=Style(dim=True, bgcolor=bg)),
-        Text("- ", style=Style(color="white", bold=True, bgcolor=bg)),
+        Text("- ", style=Style(color=_diff_cfg("deletion_marker_fg"), bgcolor=bg)),
         syn,
     )
 
@@ -603,7 +605,7 @@ def _flat_add(ln: int, content: str, filename: Optional[str] = None) -> Text:
     syn.stylize(Style(bgcolor=bg))
     return Text.assemble(
         Text(f"{ln:>4} ", style=Style(dim=True, bgcolor=bg)),
-        Text("+ ", style=Style(color="white", bold=True, bgcolor=bg)),
+        Text("+ ", style=Style(color=_diff_cfg("addition_marker_fg"), bgcolor=bg)),
         syn,
     )
 
@@ -701,6 +703,7 @@ class DiffRenderer:
             file=buf,
             highlight=False,
             force_terminal=True,
+            no_color=False,
             color_system="truecolor",
             width=render_width,
         ).print(
@@ -768,7 +771,7 @@ class DiffRenderer:
                 if i < n_pairs and pair_segs[i][0] is not None:
                     styled.append(Text.assemble(
                         Text(f"{ln:>4} ", style=Style(dim=True, bgcolor=del_bg)),
-                        Text("- ", style=Style(color="white", bold=True, bgcolor=del_bg)),
+                        Text("- ", style=Style(color=_diff_cfg("deletion_marker_fg"), bgcolor=del_bg)),
                         *pair_segs[i][0],
                     ))
                 else:
@@ -778,7 +781,7 @@ class DiffRenderer:
                 if i < n_pairs and pair_segs[i][1] is not None:
                     styled.append(Text.assemble(
                         Text(f"{ln:>4} ", style=Style(dim=True, bgcolor=add_bg)),
-                        Text("+ ", style=Style(color="white", bold=True, bgcolor=add_bg)),
+                        Text("+ ", style=Style(color=_diff_cfg("addition_marker_fg"), bgcolor=add_bg)),
                         *pair_segs[i][1],
                     ))
                 else:

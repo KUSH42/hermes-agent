@@ -1,5 +1,6 @@
 """Tests for agent/rich_output.py — syntax highlighting, diff rendering, code block detection."""
 
+import os
 import re
 import pytest
 from unittest.mock import patch
@@ -28,6 +29,12 @@ from agent.rich_output import (
     format_response,
     render_stateful_blocks,
 )
+
+
+@pytest.fixture(autouse=True)
+def _disable_no_color(monkeypatch):
+    """Rich-output assertions expect ANSI styling to be enabled."""
+    monkeypatch.delenv("NO_COLOR", raising=False)
 
 
 # ---------------------------------------------------------------------------

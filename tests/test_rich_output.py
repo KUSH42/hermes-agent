@@ -644,15 +644,15 @@ class TestDiffRendererV2:
             DiffRenderer()._style(diff.splitlines())
         )
         output = buf.getvalue()
-        # PR3 still uses bold token styling for the changed fragments in this
-        # renderer path; later branches add stronger background treatment.
+        # After rebasing onto the updated PR2 base, paired diff fragments carry
+        # background-highlighted tokens in this renderer path.
         plain = re.sub(r"\x1b\[[0-9;]*m", "", output)
         assert "return foo_value" in plain
         assert "return bar_value" in plain
         assert "return foo_result" in plain
         assert "return bar_result" in plain
-        assert output.count("\x1b[1mfoo\x1b[0m") >= 2
-        assert output.count("\x1b[1mbar\x1b[0m") >= 2
+        assert "\x1b[1;97;48;2;111;26;26mfoo\x1b[0m" in output
+        assert "\x1b[1;37;48;2;40;148;40mbar\x1b[0m" in output
 
     def test_alternating_run_flush(self):
         # -A +B -C +D with no context between — should pair (-A,+B) and (-C,+D)

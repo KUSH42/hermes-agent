@@ -644,8 +644,8 @@ class TestDiffRendererV2:
             DiffRenderer()._style(diff.splitlines())
         )
         output = buf.getvalue()
-        # PR2 highlights paired changes via bold token styling in the rendered
-        # ANSI output; later branches add stronger background treatment.
+        # PR3 still uses bold token styling for the changed fragments in this
+        # renderer path; later branches add stronger background treatment.
         plain = re.sub(r"\x1b\[[0-9;]*m", "", output)
         assert "return foo_value" in plain
         assert "return bar_value" in plain

@@ -1,5 +1,6 @@
 """Tests for agent/rich_output.py — syntax highlighting, diff rendering, code block detection."""
 
+import re
 import pytest
 from unittest.mock import patch
 
@@ -46,6 +47,10 @@ def _renderables(diff: str) -> list:
     buffer and inspecting the output instead.
     """
     return list(DiffRenderer()._style(diff.splitlines()).renderables)
+
+
+def _strip(s: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*m", "", s)
 
 
 # ---------------------------------------------------------------------------

@@ -649,26 +649,25 @@ class TestIntraDiff:
     # _intra_diff returns ([del_text], [add_text]) — single-element lists where
     # each element is a Rich Text with layered spans: syntax colours on the
     # foreground, diff background applied via .stylize(), brighter highlight bg
-    # (bold) on changed character ranges.
+    # background highlight on changed character ranges.
 
     def test_equal_spans_use_base_colour(self):
-        # Identical lines → no changed regions → no bold spans.
+        # Identical lines → no changed regions → no explicit highlight spans.
         del_segs, add_segs = _intra_diff("abc", "abc")
         del_text, add_text = del_segs[0], add_segs[0]
         assert del_text.plain == "abc"
         assert add_text.plain == "abc"
-        assert not any(sp.style.bold for sp in del_text._spans)
-        assert not any(sp.style.bold for sp in add_text._spans)
+        del_hl = _diff_cfg("intra_del_bg")
+        add_hl = _diff_cfg("intra_add_bg")
+        assert not any(getattr(sp.style, "bgcolor", None) == del_hl for sp in del_text._spans)
+        assert not any(getattr(sp.style, "bgcolor", None) == add_hl for sp in add_text._spans)
 
     def test_changed_span_highlighted(self):
         # "foo bar" → "foo baz": only the last char differs.
         del_segs, add_segs = _intra_diff("foo bar", "foo baz")
         del_text, add_text = del_segs[0], add_segs[0]
-        # At least one span must be bold (the changed char range).
-        assert any(sp.style.bold for sp in del_text._spans), "expected bold span on del"
-        assert any(sp.style.bold for sp in add_text._spans), "expected bold span on add"
-        # At least one span must not be bold (the equal range).
-        assert any(not sp.style.bold for sp in del_text._spans), "expected non-bold span on del"
+        assert any(getattr(sp.style, "bgcolor", None) for sp in del_text._spans), "expected highlighted span on del"
+        assert any(getattr(sp.style, "bgcolor", None) for sp in add_text._spans), "expected highlighted span on add"
 
     def test_delete_opcode_no_add_seg(self):
         del_segs, add_segs = _intra_diff("abcXYZ", "abc")
@@ -771,9 +770,8 @@ class TestDiffRendererV2:
             DiffRenderer()._style(diff.splitlines())
         )
         output = buf.getvalue()
-        # Both pairs should produce bold intra-highlighted changed chars.
-        # \x1b[1; prefixes any bold sequence regardless of color encoding (named or truecolor).
-        assert output.count("\x1b[1;") >= 4  # at least 2 bold opens per del+add pair × 2 pairs
+        assert output.count("48;2;155;28;28") >= 2
+        assert output.count("48;2;22;101;52") >= 2
 
     def test_alternating_run_flush(self):
         # -A +B -C +D with no context between — should pair (-A,+B) and (-C,+D)
@@ -892,6 +890,19 @@ class TestDiffRendererV2:
         header = renderables[0]
         separator = renderables[1]
         assert len(separator.plain) == len(header.plain)
+
+    def test_blank_line_between_hunks_in_same_file(self):
+        diff = (
+            "--- a/foo.py\n+++ b/foo.py\n"
+            "@@ -1 +1 @@\n-old\n+new\n"
+            "@@ -10 +10 @@\n-old2\n+new2\n"
+        )
+        renderables = _renderables(diff)
+        plains = [r.plain for r in renderables]
+        first_hunk = plains.index("       @@ -1 +1 @@")
+        second_hunk = plains.index("       @@ -10 +10 @@")
+        assert plains[second_hunk - 1] == ""
+        assert second_hunk > first_hunk
 
 
 # ---------------------------------------------------------------------------
@@ -2871,20 +2882,18 @@ class TestMonokaiIntraDiff:
         assert _MONOKAI_KEYWORD in del_ansi, "equal span missing monokai keyword colour on del"
         assert _MONOKAI_KEYWORD in add_ansi, "equal span missing monokai keyword colour on add"
 
-    def test_intra_diff_changed_number_span_is_bold(self, monokai_skin):
-        """Changing a numeric literal (99 → 100) should produce bold spans on both sides."""
+    def test_intra_diff_changed_number_span_is_highlighted(self, monokai_skin):
+        """Changing a numeric literal should apply highlight spans on both sides."""
         old = 'result = compute(x, 99)'
         new = 'result = compute(x, 100)'
         del_segs, add_segs = _intra_diff(old, new, "calc.py")
         del_text, add_text = del_segs[0], add_segs[0]
-        _bold = lambda sp: getattr(sp.style, 'bold', None)  # style may be str or Style
-        assert any(_bold(sp) for sp in del_text._spans), "changed span must be bold on del"
-        assert any(_bold(sp) for sp in add_text._spans), "changed span must be bold on add"
-        # Unchanged spans must not be bold
-        assert any(not _bold(sp) for sp in del_text._spans), "equal spans must not be bold"
+        _bg = lambda sp: getattr(sp.style, 'bgcolor', None)
+        assert any(_bg(sp) for sp in del_text._spans), "changed span must be highlighted on del"
+        assert any(_bg(sp) for sp in add_text._spans), "changed span must be highlighted on add"
 
-    def test_intra_diff_keyword_change_produces_bold_and_monokai_fg(self, monokai_skin):
-        """Changing 'while' → 'for' (keyword swap): changed span bold; equal spans have syntax fg."""
+    def test_intra_diff_keyword_change_produces_highlight_and_monokai_fg(self, monokai_skin):
+        """Changing 'while' → 'for' should keep syntax fg and add highlight spans."""
         old = 'while condition:'
         new = 'for item in items:'
         del_segs, add_segs = _intra_diff(old, new, "loop.py")
@@ -2893,13 +2902,12 @@ class TestMonokaiIntraDiff:
         # Both keywords get monokai fg on their tokens
         assert _MONOKAI_KEYWORD in del_ansi, "monokai keyword fg missing from del"
         assert _MONOKAI_KEYWORD in add_ansi, "monokai keyword fg missing from add"
-        # The changed region must be bold
-        _bold = lambda sp: getattr(sp.style, 'bold', None)
-        assert any(_bold(sp) for sp in del_segs[0]._spans)
-        assert any(_bold(sp) for sp in add_segs[0]._spans)
+        _bg = lambda sp: getattr(sp.style, 'bgcolor', None)
+        assert any(_bg(sp) for sp in del_segs[0]._spans)
+        assert any(_bg(sp) for sp in add_segs[0]._spans)
 
-    def test_intra_diff_string_mutation_bold_with_monokai_string_fg(self, monokai_skin):
-        """Mutating a string value should produce bold on the changed chars and
+    def test_intra_diff_string_mutation_highlight_with_monokai_string_fg(self, monokai_skin):
+        """Mutating a string value should produce a highlight on the changed chars and
         monokai string colour (#E6DB74) on string token spans."""
         old = 'log("starting service")'
         new = 'log("stopping service")'
@@ -2908,9 +2916,9 @@ class TestMonokaiIntraDiff:
         add_ansi = self._ansi(add_segs[0])
         assert _MONOKAI_STRING in del_ansi, "monokai string fg missing from del"
         assert _MONOKAI_STRING in add_ansi, "monokai string fg missing from add"
-        _bold = lambda sp: getattr(sp.style, 'bold', None)
-        assert any(_bold(sp) for sp in del_segs[0]._spans)
-        assert any(_bold(sp) for sp in add_segs[0]._spans)
+        _bg = lambda sp: getattr(sp.style, 'bgcolor', None)
+        assert any(_bg(sp) for sp in del_segs[0]._spans)
+        assert any(_bg(sp) for sp in add_segs[0]._spans)
 
     def test_intra_diff_comment_line_monokai_fg(self, monokai_skin):
         """A comment token should carry monokai comment colour #75715E."""
@@ -2959,7 +2967,7 @@ class TestMonokaiIntraDiff:
         assert _MONOKAI_STRING in all_ansi, "monokai string colour missing from conf.py diff"
 
     def test_diff_renderer_number_literal_monokai_fg(self, monokai_skin):
-        """Numeric literal change must carry monokai number colour and bold highlight."""
+        """Numeric literal change must carry monokai number colour and a span highlight."""
         diff = (
             "--- a/limits.py\n+++ b/limits.py\n"
             "@@ -1,2 +1,2 @@\n"
@@ -2970,8 +2978,7 @@ class TestMonokaiIntraDiff:
         lines = dr.to_lines(diff)
         all_ansi = "\n".join(lines)
         assert _MONOKAI_NUMBER in all_ansi, "monokai number colour missing from limits.py diff"
-        # The changed digit range must be bold (intra-diff)
-        assert "\x1b[1;" in all_ansi or ";1;" in all_ansi, "bold intra-diff highlight missing"
+        assert "48;2;" in all_ansi, "background intra-diff highlight missing"
 
     def test_diff_renderer_multifile_monokai_colours(self, monokai_skin):
         """Multi-file diff: each file's changed lines carry monokai syntax colours."""
@@ -3031,3 +3038,24 @@ class TestMonokaiIntraDiff:
         all_ansi = "\n".join(lines)
         assert "38;2;255;123;114" in all_ansi, "deletion marker fg missing"
         assert "38;2;86;211;100" in all_ansi, "addition marker fg missing"
+
+    def test_diff_renderer_keeps_trailing_blank_line(self):
+        diff = (
+            "--- a/f.py\n+++ b/f.py\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        lines = DiffRenderer().to_lines(diff)
+        assert lines[-1] == ""
+
+    def test_diff_renderer_pads_diff_row_background_to_width(self):
+        diff = (
+            "--- a/f.py\n+++ b/f.py\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        lines = DiffRenderer().to_lines(diff, width=20)
+        assert lines[5].endswith("          \x1b[0m")
+        assert lines[6].endswith("          \x1b[0m")

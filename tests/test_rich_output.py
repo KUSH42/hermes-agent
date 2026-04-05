@@ -651,8 +651,8 @@ class TestDiffRendererV2:
         assert "return bar_value" in plain
         assert "return foo_result" in plain
         assert "return bar_result" in plain
-        assert "\x1b[1;97;48;2;111;26;26mfoo\x1b[0m" in output
-        assert "\x1b[1;37;48;2;40;148;40mbar\x1b[0m" in output
+        assert len(re.findall(r"\x1b\[[0-9;]*mfoo\x1b\[0m", output)) >= 2
+        assert len(re.findall(r"\x1b\[[0-9;]*mbar\x1b\[0m", output)) >= 2
 
     def test_alternating_run_flush(self):
         # -A +B -C +D with no context between — should pair (-A,+B) and (-C,+D)

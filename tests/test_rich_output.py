@@ -6,8 +6,6 @@ import pytest
 from unittest.mock import patch
 
 from agent.rich_output import (
-    _DIFF_BG_ADD_HL,
-    _DIFF_BG_DEL_HL,
     _DIFF_MAX_LINES,
     DiffRenderer,
     FilePathFormatter,
@@ -20,6 +18,7 @@ from agent.rich_output import (
     _SETEXT_H1_RE,
     _SETEXT_H2_RE,
     _TABLE_STRICT_ROW_RE,
+    _diff_cfg,
     _intra_diff,
     _parse_diff_filename,
     _split_row,

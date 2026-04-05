@@ -128,7 +128,7 @@ class TestEditDiffPreview:
         assert "cli.py" in stripped[0]
         assert any("old line" in l for l in stripped)
         assert any("new line" in l for l in stripped)
-        assert any("48;2;" in line for line in rendered)
+        assert any("\x1b[" in line for line in rendered)
 
     def test_extract_edit_diff_ignores_non_edit_tools(self):
         assert extract_edit_diff("web_search", '{"diff": "--- a\\n+++ b\\n"}') is None

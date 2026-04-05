@@ -4,6 +4,8 @@ import pytest
 from unittest.mock import patch
 
 from agent.rich_output import (
+    _DIFF_BG_ADD_HL,
+    _DIFF_BG_DEL_HL,
     _DIFF_MAX_LINES,
     DiffRenderer,
     FilePathFormatter,
@@ -642,12 +644,15 @@ class TestDiffRendererV2:
             DiffRenderer()._style(diff.splitlines())
         )
         output = buf.getvalue()
-        # Both pairs should produce intra-highlighted changed chars.
-        # Changed regions now use a brighter background (bold) rather than a
-        # bright foreground colour, so check for the bright-del-bg ANSI code
-        # (_DIFF_BG_DEL_HL = "#b43030" → rgb(180,48,48)).
-        assert output.count("48;2;180;48;48") >= 2, "expected bright del bg in both del lines"
-        assert output.count("48;2;40;148;40") >= 2, "expected bright add bg in both add lines"
+        # PR2 highlights paired changes via bold token styling in the rendered
+        # ANSI output; later branches add stronger background treatment.
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        assert "return foo_value" in plain
+        assert "return bar_value" in plain
+        assert "return foo_result" in plain
+        assert "return bar_result" in plain
+        assert output.count("\x1b[1mfoo\x1b[0m") >= 2
+        assert output.count("\x1b[1mbar\x1b[0m") >= 2
 
     def test_alternating_run_flush(self):
         # -A +B -C +D with no context between — should pair (-A,+B) and (-C,+D)

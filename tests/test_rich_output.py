@@ -679,8 +679,8 @@ class TestDiffRendererV2:
             DiffRenderer()._style(diff.splitlines())
         )
         output = buf.getvalue()
-        # After rebasing onto the updated PR2 base, paired diff fragments carry
-        # background-highlighted tokens in this renderer path.
+        # Paired diff fragments should remain explicitly styled in this
+        # renderer path after rebasing the branch stack.
         plain = re.sub(r"\x1b\[[0-9;]*m", "", output)
         assert "return foo_value" in plain
         assert "return bar_value" in plain

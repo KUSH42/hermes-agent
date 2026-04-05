@@ -347,7 +347,7 @@ class SyntaxHighlighter:
 # ---------------------------------------------------------------------------
 
 def _parse_diff_filename(path: str, fallback: Optional[str] = None) -> str:
-    """Return the basename from a unified-diff path string.
+    """Return a displayable path from a unified-diff path string.
 
     Strips ``b/`` / ``a/`` prefixes produced by ``git diff``.  If the result
     is ``/dev/null`` (deleted-file diff), recurses on *fallback* (the ``---``
@@ -361,8 +361,7 @@ def _parse_diff_filename(path: str, fallback: Optional[str] = None) -> str:
         if fallback:
             return _parse_diff_filename(fallback)
         return "?"
-    name = Path(path).name
-    return name if name else path
+    return path or "?"
 
 
 def _count_pass(

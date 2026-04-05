@@ -1821,13 +1821,6 @@ def format_response(text: str, reset_suffix: str = "") -> str:
         highlighted = _hl.to_ansi(code, language=lang).rstrip("\n")
         return _number_code_lines(highlighted)
 
-    # Pre-pass: collect reference link definitions for inline resolution
-    ref_map: dict[str, str] = {}
-    for raw_line in text.splitlines():
-        rm = _REF_DEF_RE.match(raw_line.strip())
-        if rm:
-            ref_map[rm.group(1).lower()] = rm.group(2)
-
     # Match fenced code blocks of any depth (3+ backticks); \1 backreference
     # ensures the closing fence uses the same backtick sequence as the opener.
     fence_re = re.compile(rf"(?m)^(`{{3,}})\s*({_FENCE_INFO_RE})\n(.*?)\1", re.DOTALL)

@@ -474,9 +474,15 @@ try:
     from agent.rich_output import StreamingBlockBuffer as _BlockBuf
     from agent.rich_output import StreamingCodeBlockHighlighter as _CodeBlockHL
     from agent.rich_output import format_response as _format_response
+    from agent.rich_output import apply_inline_markdown as _apply_inline_md
+    from agent.rich_output import apply_block_line as _apply_block_line
     _RICH_RESPONSE = True
 except ImportError:
     _RICH_RESPONSE = False
+    def _apply_inline_md(text, **_):  # type: ignore[misc]
+        return text
+    def _apply_block_line(text, **_):  # type: ignore[misc]
+        return text
 
 # Neuter AsyncHttpxClientWrapper.__del__ before any AsyncOpenAI clients are
 # created.  The SDK's __del__ schedules aclose() on asyncio.get_running_loop()

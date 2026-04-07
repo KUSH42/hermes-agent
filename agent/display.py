@@ -49,10 +49,12 @@ def set_diff_limits(max_lines: int, max_files: int) -> None:
 # Rich-based rendering (syntax highlighting + enhanced diffs)
 try:
     from agent.rich_output import DiffRenderer as _RichDiffRenderer
+    from agent.rich_output import LanguageDetector as _RichLanguageDetector
     from agent.rich_output import SyntaxHighlighter as _RichSyntaxHighlighter
     from agent.rich_output import clean_command_output
     _rich_diff = _RichDiffRenderer()
     _rich_syntax = _RichSyntaxHighlighter()
+    _rich_detector = _RichLanguageDetector()
     _RICH_OUTPUT = True
 except ImportError:
     _RICH_OUTPUT = False
@@ -1188,6 +1190,8 @@ def get_cute_tool_message(
         }
         return _wrap(f"┊ 🧪 rl        {rl.get(tool_name, tool_name.replace('rl_', ''))}  {dur}")
     if tool_name == "execute_code":
+        if _code_highlight_active:
+            return _wrap(f"┊ 🐍 exec      {dur}")
         code = args.get("code", "")
         first_line = code.strip().split("\n")[0] if code.strip() else ""
         return _wrap(f"┊ 🐍 exec      {_trunc(first_line, 35)}  {dur}")

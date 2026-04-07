@@ -360,7 +360,7 @@ DEFAULT_CONFIG = {
         "busy_input_mode": "interrupt",
         "bell_on_complete": False,
         "show_reasoning": False,
-        "streaming": False,
+        "streaming": True,
         "inline_diffs": True,     # Show inline diff previews for write actions (write_file, patch, skill_manage)
         "code_highlight": True,   # Highlight source-like tool output previews and fenced code blocks
         "syntax_bold": True,      # Keep bold emphasis on syntax-highlighted token styles

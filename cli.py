@@ -2050,8 +2050,8 @@ class HermesCLI:
         # Close reasoning box if still open (in case no content tokens arrived)
         self._close_reasoning_box()
 
+        _tc = getattr(self, "_stream_text_ansi", "")
         if self._stream_buf:
-            _tc = getattr(self, "_stream_text_ansi", "")
             if _RICH_RESPONSE:
                 block_out = self._stream_block_buf.process_line(self._stream_buf)
                 if block_out is not None:
@@ -2063,20 +2063,25 @@ class HermesCLI:
                         else:
                             for hl_line in out2.splitlines():
                                 _cprint(hl_line)
-                # Flush any buffered block-level state
-                buf_tail = self._stream_block_buf.flush()
-                if buf_tail is not None:
-                    for hl_line in buf_tail.splitlines():
-                        if "\x1b" not in hl_line:
-                            hl_line = _apply_inline_md(_apply_block_line(hl_line, reset_suffix=_tc), reset_suffix=_tc)
-                        _cprint(f"{_tc}{hl_line}{_RST}" if _tc else hl_line)
-                # Flush any open code block (unclosed fence at end of response)
-                tail = self._stream_code_hl.flush()
-                if tail:
-                    _cprint(tail)
             else:
                 _cprint(f"{_tc}{self._stream_buf}{_RST}" if _tc else self._stream_buf)
             self._stream_buf = ""
+
+        # Flush block-level and code-HL state regardless of whether _stream_buf
+        # was empty. StreamingBlockBuffer always holds one line of lookahead in
+        # _pending, so when a response ends with \n the buffer is already drained
+        # but _pending still holds the last line — it must be flushed here.
+        if _RICH_RESPONSE:
+            buf_tail = self._stream_block_buf.flush()
+            if buf_tail is not None:
+                for hl_line in buf_tail.splitlines():
+                    if "\x1b" not in hl_line:
+                        hl_line = _apply_inline_md(_apply_block_line(hl_line, reset_suffix=_tc), reset_suffix=_tc)
+                    _cprint(f"{_tc}{hl_line}{_RST}" if _tc else hl_line)
+            # Flush any open code block (unclosed fence at end of response)
+            tail = self._stream_code_hl.flush()
+            if tail:
+                _cprint(tail)
 
         # Close the response box
         if self._stream_box_opened:

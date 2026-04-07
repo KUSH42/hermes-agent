@@ -1690,12 +1690,16 @@ class HermesCLI:
     # ── Streaming display ────────────────────────────────────────────────
 
     def _current_reasoning_callback(self):
-        """Return the active reasoning display callback for the current mode."""
-        if self.show_reasoning and self.streaming_enabled:
-            return self._stream_reasoning_delta
-        if self.verbose and not self.show_reasoning:
-            return self._on_reasoning
-        return None
+        """Return the active reasoning display callback for the current mode.
+
+        show_reasoning is the sole gate — verbose mode does not override it.
+        When show_reasoning is on: streaming path gets live token delivery
+        (_stream_reasoning_delta); non-streaming path gets the batch preview
+        (_on_reasoning / _flush_reasoning_preview → [thinking] lines).
+        """
+        if not self.show_reasoning:
+            return None
+        return self._stream_reasoning_delta if self.streaming_enabled else self._on_reasoning
 
     def _emit_reasoning_preview(self, reasoning_text: str) -> None:
         """Render a buffered reasoning preview as a single [thinking] block."""

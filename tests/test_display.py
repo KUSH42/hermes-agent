@@ -20,6 +20,8 @@ from agent.display import (
     render_read_file_preview,
     render_terminal_preview,
     set_code_highlight_active,
+    set_diff_limits,
+    set_preview_max_lines,
 )
 
 
@@ -449,3 +451,57 @@ class TestResultSucceededGate:
 
     def test_none_fails(self):
         assert not _result_succeeded(None)
+
+
+# ---------------------------------------------------------------------------
+# set_diff_limits / set_preview_max_lines — config-exposed limit setters
+# ---------------------------------------------------------------------------
+
+class TestDisplayLimitSetters:
+    """set_diff_limits and set_preview_max_lines write module-level globals
+    that gate truncation in render_read_file_preview and inline diff rendering."""
+
+    def test_set_diff_limits_updates_globals(self):
+        import agent.display as _disp
+        original_lines = _disp._MAX_INLINE_DIFF_LINES
+        original_files = _disp._MAX_INLINE_DIFF_FILES
+        try:
+            set_diff_limits(max_lines=200, max_files=12)
+            assert _disp._MAX_INLINE_DIFF_LINES == 200
+            assert _disp._MAX_INLINE_DIFF_FILES == 12
+        finally:
+            set_diff_limits(max_lines=original_lines, max_files=original_files)
+
+    def test_set_preview_max_lines_updates_global(self):
+        import agent.display as _disp
+        original = _disp._PREVIEW_MAX_LINES
+        try:
+            set_preview_max_lines(99)
+            assert _disp._PREVIEW_MAX_LINES == 99
+        finally:
+            set_preview_max_lines(original)
+
+    def test_set_preview_max_lines_truncates_execute_code_preview(self):
+        """render_execute_code_preview honours _PREVIEW_MAX_LINES after set_preview_max_lines()."""
+        import agent.display as _disp
+        original = _disp._PREVIEW_MAX_LINES
+        try:
+            set_preview_max_lines(3)
+            # Build code with 10 numbered lines
+            code = "\n".join(f"x_{i} = {i}" for i in range(1, 11))
+            lines_captured = []
+            render_execute_code_preview(code, print_fn=lines_captured.append)
+            stripped = [re.sub(r"\x1b\[[0-9;]*m", "", l) for l in lines_captured]
+            content_lines = [l for l in stripped if l.strip().startswith("x_")]
+            # At limit=3 only 3 content lines should appear before truncation
+            assert len(content_lines) <= 3, f"expected ≤3 content lines, got {len(content_lines)}: {content_lines}"
+        finally:
+            set_preview_max_lines(original)
+
+    def test_summarize_diff_sections_respects_max_lines(self):
+        """_summarize_rendered_diff_sections truncates when max_lines is tight."""
+        many_lines = "\n".join(f"-old{i}\n+new{i}" for i in range(10))
+        diff = f"--- a/f.py\n+++ b/f.py\n@@ -1,10 +1,10 @@\n{many_lines}\n"
+        result_lines = _summarize_rendered_diff_sections(diff, max_lines=2, max_files=10)
+        stripped = "\n".join(re.sub(r"\x1b\[[0-9;]*m", "", l) for l in result_lines)
+        assert "omitted" in stripped.lower(), f"expected truncation notice, got: {stripped[:200]}"

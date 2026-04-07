@@ -367,6 +367,9 @@ DEFAULT_CONFIG = {
         "preview_max_lines": 40,  # Max lines shown in read_file / execute_code / terminal previews
         "code_highlight": True,   # Highlight source-like tool output previews and fenced code blocks
         "syntax_bold": True,      # Keep bold emphasis on syntax-highlighted token styles
+        "spinner_style": "dots",  # TUI spinner style: dots, bounce, grow, arrows, star, moon, pulse, clock, none
+        "title_spinner": True,    # Animate terminal tab/window title with spinner while agent is active
+        "title_base": "Hermes",   # Base string shown in terminal tab/window title
         "show_cost": False,       # Show $ cost in the status bar (off by default)
         "skin": "default",
         "tool_progress_command": False,  # Enable /verbose command in messaging gateway

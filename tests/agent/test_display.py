@@ -1,5 +1,6 @@
 """Tests for agent/display.py — build_tool_preview() and inline diff previews."""
 
+import json
 import os
 import re
 import pytest
@@ -9,8 +10,11 @@ from agent.display import (
     build_tool_preview,
     capture_local_edit_snapshot,
     extract_edit_diff,
+    _highlight_block,
     _render_inline_unified_diff,
+    _result_succeeded,
     _summarize_rendered_diff_sections,
+    get_cute_tool_message,
     render_edit_diff_with_delta,
     render_execute_code_preview,
     render_read_file_preview,

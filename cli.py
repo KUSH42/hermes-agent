@@ -6966,9 +6966,19 @@ class HermesCLI:
                     pass
                 else:
                     _chat_console = ChatConsole()
-                    _rendered_response = (
-                        _format_response(response) if _RICH_RESPONSE else response
-                    )
+                    if _RICH_RESPONSE:
+                        # Build the same truecolor reset suffix used by the streaming
+                        # path so inline markdown elements (bold, italic, code spans)
+                        # reset back to the skin text colour, not terminal default.
+                        try:
+                            _th = _resp_text.lstrip("#")
+                            _tr, _tg, _tb = int(_th[0:2], 16), int(_th[2:4], 16), int(_th[4:6], 16)
+                            _text_reset = f"\033[38;2;{_tr};{_tg};{_tb}m"
+                        except (ValueError, IndexError):
+                            _text_reset = ""
+                        _rendered_response = _format_response(response, reset_suffix=_text_reset)
+                    else:
+                        _rendered_response = response
                     _chat_console.print(Panel(
                         _rich_text_from_ansi(_rendered_response),
                         title=f"[{_resp_color} bold]{label}[/]",

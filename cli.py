@@ -1290,8 +1290,13 @@ class HermesCLI:
 
         # Syntax-highlighted code preview for execute_code (display.code_highlight in config.yaml)
         self._code_highlight_enabled = CLI_CONFIG["display"].get("code_highlight", True)
-        from agent.display import set_code_highlight_active
+        from agent.display import set_code_highlight_active, set_diff_limits, set_preview_max_lines
         set_code_highlight_active(self._code_highlight_enabled)
+        set_diff_limits(
+            max_lines=CLI_CONFIG["display"].get("diff_max_lines", 80),
+            max_files=CLI_CONFIG["display"].get("diff_max_files", 6),
+        )
+        set_preview_max_lines(CLI_CONFIG["display"].get("preview_max_lines", 40))
 
         # Streaming display state
         self._stream_buf = ""        # Partial line buffer for line-buffered rendering

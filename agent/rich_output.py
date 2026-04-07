@@ -1794,7 +1794,7 @@ def _number_code_lines(highlighted: str) -> str:
     return "\n".join(out)
 
 
-def format_response(text: str) -> str:
+def format_response(text: str, reset_suffix: str = "") -> str:
     """Apply syntax highlighting to fenced code blocks in a complete response string.
 
     Pass 1: replaces each fenced code block with an ANSI-highlighted version.
@@ -1804,6 +1804,11 @@ def format_response(text: str) -> str:
     ``apply_inline_markdown`` (headings, hr, blockquotes, lists, bold, italic,
     code spans, etc.).
     Suitable for the non-streaming Rich Panel display path.
+
+    ``reset_suffix`` is threaded into Pass 3 so that inline elements (bold,
+    italic, code spans) reset back to the caller's text colour rather than
+    terminal default — matching the streaming path's ``reset_suffix=_tc``
+    behaviour.
     """
     _hl = SyntaxHighlighter()
     _det = LanguageDetector()
@@ -1829,7 +1834,11 @@ def format_response(text: str) -> str:
     # the final newline if the original text ended with one.
     lines = text.splitlines()
     result = "\n".join(
-        l if "\x1b" in l else apply_inline_markdown(apply_block_line(l), ref_map=ref_map)
+        l if "\x1b" in l else apply_inline_markdown(
+            apply_block_line(l, reset_suffix=reset_suffix),
+            reset_suffix=reset_suffix,
+            ref_map=ref_map,
+        )
         for l in lines
     )
     if text.endswith("\n"):

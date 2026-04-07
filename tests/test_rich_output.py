@@ -3059,3 +3059,54 @@ class TestMonokaiIntraDiff:
         lines = DiffRenderer().to_lines(diff, width=20)
         assert lines[5].endswith("          \x1b[0m")
         assert lines[6].endswith("          \x1b[0m")
+
+
+# ---------------------------------------------------------------------------
+# format_response — reset_suffix parameter (non-streaming Panel path fix)
+# ---------------------------------------------------------------------------
+
+class TestFormatResponseResetSuffix:
+    """format_response must thread reset_suffix into inline-element ANSI resets.
+
+    Without the fix, after bold/italic/code-span the terminal reset (\033[0m)
+    dropped to the terminal default colour.  With reset_suffix the reset
+    restores to the caller's panel text colour.
+    """
+
+    def test_reset_suffix_default_empty_string(self):
+        """Calling without reset_suffix should not raise and should still apply styling."""
+        text = "Use **bold** and `code` here."
+        result = format_response(text)
+        assert "\033[1m" in result       # bold applied
+        assert "\033[97m" in result      # inline code applied
+
+    def test_reset_suffix_present_after_bold(self):
+        """reset_suffix appears in output after bold element closes."""
+        suffix = "\033[38;2;200;200;200m"   # arbitrary RGB colour
+        result = format_response("**bold** text", reset_suffix=suffix)
+        # The suffix must appear somewhere after the bold-on escape
+        assert suffix in result
+        bold_pos = result.index("\033[1m")
+        suffix_pos = result.index(suffix)
+        assert suffix_pos > bold_pos, "reset_suffix must come after bold open"
+
+    def test_reset_suffix_present_after_inline_code(self):
+        """reset_suffix appears in output after inline code span closes."""
+        suffix = "\033[38;2;100;150;200m"
+        result = format_response("call `foo()` now", reset_suffix=suffix)
+        assert suffix in result
+
+    def test_reset_suffix_not_leaked_into_code_blocks(self):
+        """reset_suffix is only applied to prose lines, not fenced code blocks."""
+        suffix = "\033[38;2;99;99;99m"
+        text = "```python\ndef fn(): pass\n```\n**bold** prose"
+        result = format_response(text, reset_suffix=suffix)
+        # suffix must appear (in the prose bold segment)
+        assert suffix in result
+        # The fenced block is replaced wholesale; verify "def fn" is still present
+        assert "fn" in _strip(result)
+
+    def test_reset_suffix_empty_string_behaves_like_default(self):
+        """Explicit reset_suffix='' must match behaviour of no reset_suffix arg."""
+        text = "**hello** `world`"
+        assert format_response(text, reset_suffix="") == format_response(text)

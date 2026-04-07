@@ -706,7 +706,10 @@ class AIAgent:
         # Context pressure warnings: notify the USER (not the LLM) as context
         # fills up.  Purely informational — displayed in CLI output and sent via
         # status_callback for gateway platforms.  Does NOT inject into messages.
-        self._context_pressure_warned = False
+        # Tracks the highest threshold level (0.85 or 0.95) at which the bar
+        # has been shown; 0.0 = not yet shown.  Float lets us re-emit at 0.95
+        # even after the 0.85 warning fired.
+        self._context_pressure_warned_at: float = 0.0
 
         # Activity tracking — updated on each API call, tool execution, and
         # stream chunk.  Used by the gateway timeout handler to report what the
@@ -5927,7 +5930,7 @@ class AIAgent:
         if self.context_compressor.threshold_tokens > 0:
             _post_progress = _compressed_est / self.context_compressor.threshold_tokens
             if _post_progress < 0.85:
-                self._context_pressure_warned = False
+                self._context_pressure_warned_at = 0.0
 
         # Clear the file-read dedup cache.  After compression the original
         # read content is summarised away — if the model re-reads the same
@@ -8820,11 +8823,17 @@ class AIAgent:
                     # and fires status_callback for gateway platforms.
                     if _compressor.threshold_tokens > 0:
                         _compaction_progress = _real_tokens / _compressor.threshold_tokens
-                        if _compaction_progress >= 0.85 and not self._context_pressure_warned:
-                            self._context_pressure_warned = True
+                        _warn_level = (
+                            0.95 if _compaction_progress >= 0.95 else
+                            0.85 if _compaction_progress >= 0.85 else
+                            0.0
+                        )
+                        if _warn_level > self._context_pressure_warned_at:
+                            self._context_pressure_warned_at = _warn_level
                             self._emit_context_pressure(_compaction_progress, _compressor)
 
                     if self.compression_enabled and _compressor.should_compress(_real_tokens):
+                        self._safe_print("  ⟳ compacting context…")
                         messages, active_system_prompt = self._compress_context(
                             messages, system_message,
                             approx_tokens=self.context_compressor.last_prompt_tokens,

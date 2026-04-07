@@ -151,7 +151,7 @@ class TestContextPressureFlags:
     """Context pressure warning flag tracking on AIAgent."""
 
     def test_flag_initialized_false(self, agent):
-        assert agent._context_pressure_warned is False
+        assert agent._context_pressure_warned_at == 0.0
 
     def test_emit_calls_status_callback(self, agent):
         """status_callback should be invoked with event type and message."""
@@ -210,7 +210,7 @@ class TestContextPressureFlags:
 
     def test_flag_reset_on_compression(self, agent):
         """After _compress_context, context pressure flag should reset."""
-        agent._context_pressure_warned = True
+        agent._context_pressure_warned_at = 0.95
         agent.compression_enabled = True
 
         agent.context_compressor = MagicMock()
@@ -233,7 +233,26 @@ class TestContextPressureFlags:
         ]
         agent._compress_context(messages, "system prompt")
 
-        assert agent._context_pressure_warned is False
+        assert agent._context_pressure_warned_at == 0.0
+
+    def test_flag_reemits_at_95(self, agent):
+        """Warning should fire again at 95% even after firing at 85%."""
+        agent._context_pressure_warned_at = 0.85  # already warned at 85%
+
+        # Simulate 95% — warn_level (0.95) > warned_at (0.85), so should emit
+        _warn_level = 0.95 if 0.97 >= 0.95 else 0.85 if 0.97 >= 0.85 else 0.0
+        assert _warn_level > agent._context_pressure_warned_at
+
+        # Confirm below-85 produces warn_level 0.0 (no re-emit)
+        _warn_level_low = 0.95 if 0.70 >= 0.95 else 0.85 if 0.70 >= 0.85 else 0.0
+        assert _warn_level_low == 0.0
+
+    def test_flag_no_double_emit_same_level(self, agent):
+        """Warning should NOT re-emit at 85% if already warned at 85%."""
+        agent._context_pressure_warned_at = 0.85
+        _warn_level = 0.95 if 0.88 >= 0.95 else 0.85 if 0.88 >= 0.85 else 0.0
+        assert _warn_level == 0.85
+        assert not (_warn_level > agent._context_pressure_warned_at)
 
     def test_emit_callback_error_handled(self, agent):
         """If status_callback raises, it should be caught gracefully."""

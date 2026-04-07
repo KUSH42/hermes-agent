@@ -88,6 +88,12 @@ def set_code_highlight_active(active: bool) -> None:
     _code_highlight_active = active
 
 
+def set_diff_limits(max_lines: int, max_files: int) -> None:
+    global _MAX_INLINE_DIFF_LINES, _MAX_INLINE_DIFF_FILES
+    _MAX_INLINE_DIFF_LINES = max_lines
+    _MAX_INLINE_DIFF_FILES = max_files
+
+
 # Rich-based rendering (syntax highlighting + enhanced diffs)
 try:
     from agent.rich_output import DiffRenderer as _RichDiffRenderer
@@ -646,6 +652,11 @@ def render_edit_diff_with_delta(
 # =========================================================================
 
 _PREVIEW_MAX_LINES = 40
+
+
+def set_preview_max_lines(n: int) -> None:
+    global _PREVIEW_MAX_LINES
+    _PREVIEW_MAX_LINES = n
 
 
 def _emit_highlighted_lines(block: str, print_fn) -> bool:

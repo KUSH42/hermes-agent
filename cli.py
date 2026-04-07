@@ -6840,10 +6840,8 @@ class HermesCLI:
             return [("class:clarify-selected", f"✎ {state_suffix}")]
         if self._clarify_state:
             return [("class:prompt-working", f"? {state_suffix}")]
-        if self._command_running:
+        if self._command_running or self._agent_running:
             return [("class:prompt-working", f"{self._command_spinner_frame()} {state_suffix}")]
-        if self._agent_running:
-            return [("class:prompt-working", f"⚕ {state_suffix}")]
         if self._voice_mode:
             return [("class:voice-prompt", f"🎤 {state_suffix}")]
         return [("class:prompt", symbol)]
@@ -8114,7 +8112,7 @@ class HermesCLI:
                 if not self._app:
                     _time.sleep(0.1)
                     continue
-                if self._command_running:
+                if self._command_running or self._agent_running:
                     self._invalidate(min_interval=0.1)
                     _time.sleep(0.1)
                 else:

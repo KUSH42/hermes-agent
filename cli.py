@@ -66,6 +66,8 @@ from agent.usage_pricing import (
 from hermes_cli.banner import _format_context_length, format_banner_version_label
 
 _SPINNER_STYLES: dict[str, tuple[str, ...]] = {
+    # ── ASCII (EAW Narrow — universally supported, title-safe) ─────────────────
+    "line":     ("|", "/", "-", "\\"),                              # classic slash/bar
     # ── Braille (EAW Narrow — single-width in every font, title-safe) ──────────
     "dots":     ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"),
     "bounce":   ("⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈"),
@@ -121,6 +123,7 @@ _TITLE_SPINNER_FRAMES   = _SPINNER_STYLES["dots"]  # overridden at CLI init; may
 # "Variable-width" styles (pulse, arrows, star) fall back to "dots" in the title bar
 # unless the user explicitly sets display.title_spinner_style.
 _TITLE_SAFE_STYLES: frozenset[str] = frozenset({
+    "line",                                                # ASCII N
     "dots", "bounce", "spin", "wide", "wave",          # Braille N
     "grow", "fill", "box", "triangle",                 # Ambiguous homogeneous
     "circle", "zoom", "bold", "open", "cross",         # Ambiguous homogeneous

@@ -73,7 +73,7 @@ _SPINNER_STYLES: dict[str, tuple[str, ...]] = {
     "dots":     ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"),
     "bounce":   ("⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈"),
     "spin":     ("⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"),
-    "pulse":    ("⠒", "⠿", "⣿", "⠿"),               # braille centre → full → centre
+    "breathe":  ("⠒", "⠿", "⣿", "⠿"),               # braille centre → full → centre
 
     # ── Braille 2-char combos (N) ────────────────────────────────────────────────
     "wide":     ("⣾⣷", "⣽⣯", "⣻⣟", "⢿⡿", "⡿⢿", "⣟⣻", "⣯⣽", "⣷⣾"),   # mirrored ring
@@ -129,6 +129,7 @@ _SPINNER_STYLES: dict[str, tuple[str, ...]] = {
 
     # ── Prompt-only: mixed/variable EAW or multi-codepoint sequences ────────────
     "halves":   ("◐", "◓", "◑", "◒"),                   # mixed A+N
+    "pulse":    ("◜", "◠", "◝", "◞", "◡", "◟"),         # circular arc quadrants
     "arrows":   ("←", "↖", "↑", "↗", "→", "↘", "↓", "↙"),
     "star":     ("✶", "✷", "✸", "✹", "✺", "✹", "✸", "✷"),
     "keycap":   ("0️⃣", "1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣"),
@@ -156,7 +157,7 @@ _TITLE_SAFE_STYLES: frozenset[str] = frozenset({
     # ASCII N
     "line",
     # Braille N (single and multi-char)
-    "dots", "bounce", "spin", "pulse",
+    "dots", "bounce", "spin", "breathe",
     "wide", "twin", "dots2", "wave", "ping",
     "spin3", "spin3b", "bounce3", "bar",
     # Block / geometric A

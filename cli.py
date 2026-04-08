@@ -78,6 +78,20 @@ _SPINNER_STYLES: dict[str, tuple[str, ...]] = {
 }
 _COMMAND_SPINNER_FRAMES = _SPINNER_STYLES["dots"]  # overridden at CLI init from config
 
+# Styles safe for the terminal title bar: title bars render with proportional fonts
+# (SF Pro, Segoe UI, etc.) where each glyph has its own advance width.  Characters
+# must have consistent advance widths across all frames so the trailing " Hermes"
+# text does not shift position as the frame cycles.
+#
+#   Safe:   Braille (dots, bounce)  — fixed-cell design, uniform advance width
+#           Block elements (grow)   — designed to fill a consistent cell width
+#           Emoji (moon, clock)     — square/fixed by emoji spec
+#
+#   Unsafe: Arc segments (pulse ◜◠◝), geometric arrows (←↑→↙), dingbats (star ✶✷✸)
+#           — proportional fonts give these varying advance widths per glyph
+_TITLE_SAFE_SPINNER_STYLES: frozenset[str] = frozenset({"dots", "bounce", "grow", "moon", "clock", "none"})
+_TITLE_SPINNER_FRAMES = _SPINNER_STYLES["dots"]  # overridden at CLI init alongside prompt spinner
+
 
 # Load .env from ~/.hermes/.env first, then project root as dev fallback.
 # User-managed env files should override stale shell exports on restart.
@@ -1167,10 +1181,26 @@ class HermesCLI:
         # Inline diff previews for write actions (display.inline_diffs in config.yaml)
         self._inline_diffs_enabled = CLI_CONFIG["display"].get("inline_diffs", True)
 
+<<<<<<< Updated upstream
         # Spinner style — pick from _SPINNER_STYLES; falls back to "dots" for unknown keys
         _spinner_key = CLI_CONFIG["display"].get("spinner_style", "dots")
         global _COMMAND_SPINNER_FRAMES
+=======
+        # Spinner style — skin takes priority over display.spinner_style config key
+        try:
+            from hermes_cli.skin_engine import get_active_skin as _get_skin
+            _skin_style = _get_skin().get_spinner_style()
+        except Exception:
+            _skin_style = None
+        _spinner_key = _skin_style or CLI_CONFIG["display"].get("spinner_style", "dots")
+        global _COMMAND_SPINNER_FRAMES, _TITLE_SPINNER_FRAMES
+>>>>>>> Stashed changes
         _COMMAND_SPINNER_FRAMES = _SPINNER_STYLES.get(_spinner_key, _SPINNER_STYLES["dots"])
+        # Title bar uses the same style only when it's safe (Braille-based, single-width).
+        # Ambiguous-width and emoji styles (pulse, arrows, grow, star, moon, clock) fall
+        # back to "dots" so the text after the frame doesn't shift position each tick.
+        _title_key = _spinner_key if _spinner_key in _TITLE_SAFE_SPINNER_STYLES else "dots"
+        _TITLE_SPINNER_FRAMES = _SPINNER_STYLES.get(_title_key, _SPINNER_STYLES["dots"])
 
         # Terminal tab/title — update with spinner frame while agent is active
         self._title_spinner = CLI_CONFIG["display"].get("title_spinner", True)
@@ -7679,8 +7709,8 @@ class HermesCLI:
                 if self._command_running or self._agent_running:
                     self._invalidate(min_interval=0.1)
                     if self._title_spinner:
-                        frame = self._command_spinner_frame()
-                        new_title = f"{frame} {self._title_base}"
+                        t_idx = int(_time.monotonic() * 10) % len(_TITLE_SPINNER_FRAMES)
+                        new_title = f"{_TITLE_SPINNER_FRAMES[t_idx]} {self._title_base}"
                         if new_title != last_title:
                             _set_terminal_title(new_title)
                             last_title = new_title

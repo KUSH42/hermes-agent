@@ -402,3 +402,16 @@ class TestSpinnerConfig:
         }})
         assert cli._title_spinner is False
         assert cli._title_base == "MyApp"
+
+    def test_title_safe_styles_all_exist_in_registry(self):
+        """Every name in _TITLE_SAFE_STYLES must have an entry in _SPINNER_STYLES."""
+        import cli as cli_mod
+        unknown = cli_mod._TITLE_SAFE_STYLES - set(cli_mod._SPINNER_STYLES.keys())
+        assert not unknown, f"_TITLE_SAFE_STYLES references unknown styles: {unknown}"
+
+    def test_prompt_only_styles_excluded_from_title_safe(self):
+        """Styles with mixed or variable EAW must not appear in _TITLE_SAFE_STYLES."""
+        import cli as cli_mod
+        prompt_only = {"halves", "keycap", "pulse", "arrows", "star"}
+        leaking = prompt_only & cli_mod._TITLE_SAFE_STYLES
+        assert not leaking, f"prompt-only styles in _TITLE_SAFE_STYLES: {leaking}"

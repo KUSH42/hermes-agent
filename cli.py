@@ -76,7 +76,15 @@ _SPINNER_STYLES: dict[str, tuple[str, ...]] = {
     "clock":   ("🕛", "🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚"),
     "none":    ("",),
 }
-_COMMAND_SPINNER_FRAMES = _SPINNER_STYLES["dots"]  # overridden at CLI init from config
+_COMMAND_SPINNER_FRAMES = _SPINNER_STYLES["dots"]  # overridden at CLI init from config/skin
+_TITLE_SPINNER_FRAMES   = _SPINNER_STYLES["dots"]  # overridden at CLI init; may differ from prompt
+
+# Title-bar spinner must use characters with consistent advance widths in proportional
+# fonts (SF Pro, Segoe UI, …).  Braille patterns and emoji qualify; most other Unicode
+# symbols have variable advance widths that shift the trailing title text each tick.
+# Styles not in this set fall back to "dots" for the title unless the user sets
+# display.title_spinner_style explicitly.
+_TITLE_SAFE_STYLES: frozenset[str] = frozenset({"dots", "bounce", "grow", "moon", "clock", "none"})
 
 
 # Load .env from ~/.hermes/.env first, then project root as dev fallback.
@@ -1174,8 +1182,15 @@ class HermesCLI:
         except Exception:
             _skin_style = None
         _spinner_key = _skin_style or CLI_CONFIG["display"].get("spinner_style", "dots")
-        global _COMMAND_SPINNER_FRAMES
+        global _COMMAND_SPINNER_FRAMES, _TITLE_SPINNER_FRAMES
         _COMMAND_SPINNER_FRAMES = _SPINNER_STYLES.get(_spinner_key, _SPINNER_STYLES["dots"])
+        # Title spinner: explicit override > safe fallback from prompt style.
+        # Pulse/arrows/star have variable advance widths in proportional title fonts and
+        # will shift the text slightly each frame; dots/bounce/grow/moon/clock do not.
+        _title_key = CLI_CONFIG["display"].get("title_spinner_style") or (
+            _spinner_key if _spinner_key in _TITLE_SAFE_STYLES else "dots"
+        )
+        _TITLE_SPINNER_FRAMES = _SPINNER_STYLES.get(_title_key, _SPINNER_STYLES["dots"])
 
         # Terminal tab/title — update with spinner frame while agent is active
         self._title_spinner = CLI_CONFIG["display"].get("title_spinner", True)
@@ -7684,13 +7699,11 @@ class HermesCLI:
                 if self._command_running or self._agent_running:
                     self._invalidate(min_interval=0.1)
                     if self._title_spinner:
-                        # Set title once on transition to running — no per-frame updates.
-                        # Repeated OSC writes change the total string pixel-width each tick
-                        # causing the title text to shift in centre-aligned title bars.
-                        busy_title = f"{self._title_base} …"
-                        if last_title != busy_title:
-                            _set_terminal_title(busy_title)
-                            last_title = busy_title
+                        t_idx = int(_time.monotonic() * 10) % len(_TITLE_SPINNER_FRAMES)
+                        new_title = f"{_TITLE_SPINNER_FRAMES[t_idx]} {self._title_base}"
+                        if new_title != last_title:
+                            _set_terminal_title(new_title)
+                            last_title = new_title
                     _time.sleep(0.1)
                 else:
                     now = _time.monotonic()

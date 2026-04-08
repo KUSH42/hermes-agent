@@ -235,6 +235,36 @@ class TestContextPressureFlags:
 
         assert agent._context_pressure_warned_at == 0.0
 
+    def test_flag_not_reset_when_compression_insufficient(self, agent):
+        """Flag must NOT reset if post-compression tokens are still >= 85% of threshold."""
+        agent._context_pressure_warned_at = 0.95
+        agent.compression_enabled = True
+
+        # Compressed output is large — simulate a fat system prompt dominating
+        # the token budget so _post_progress stays above 0.85.
+        agent.context_compressor = MagicMock()
+        agent.context_compressor.compress.return_value = [
+            {"role": "user", "content": "summary"}
+        ]
+        agent.context_compressor.context_length = 200_000
+        agent.context_compressor.threshold_tokens = 100_000
+
+        agent._todo_store = MagicMock()
+        agent._todo_store.format_for_injection.return_value = None
+
+        # Make _build_system_prompt return a very large string so the rough
+        # token estimate keeps _post_progress >= 0.85.
+        # estimate_tokens_rough uses len//4, threshold=100k → need >340k chars.
+        agent._build_system_prompt = MagicMock(return_value="x " * 200_000)
+        agent._cached_system_prompt = "old"
+        agent._session_db = None
+
+        messages = [{"role": "user", "content": "hello"}]
+        agent._compress_context(messages, "system prompt")
+
+        # Still above threshold — flag must be preserved
+        assert agent._context_pressure_warned_at == 0.95
+
     def test_flag_reemits_at_95(self, agent):
         """Warning should fire again at 95% even after firing at 85%."""
         agent._context_pressure_warned_at = 0.85  # already warned at 85%

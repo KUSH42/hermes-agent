@@ -72,6 +72,10 @@ _SPINNER_STYLES: dict[str, tuple[str, ...]] = {
     "dots":     ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"),
     "bounce":   ("⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈"),
     "spin":     ("⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"),   # braille ring
+    # ── Braille multi-char combos (EAW Narrow — title-safe) ─────────────────────
+    "dots2":    ("⠋⠏", "⠙⠇", "⠹⠧", "⠸⠦", "⠼⠴", "⠴⠼", "⠦⠸", "⠧⠹", "⠇⠙", "⠏⠋"),  # opposite-direction pair
+    "spin3":    ("⣾⣽⣻", "⣽⣻⢿", "⣻⢿⡿", "⢿⡿⣟", "⡿⣟⣯", "⣟⣯⣷", "⣯⣷⣾", "⣷⣾⣽"),     # rolling 3-wide ring
+    "bounce3":  ("⠁⠂⠄", "⠂⠄⡀", "⠄⡀⢀", "⡀⢀⠠", "⢀⠠⠐", "⠠⠐⠈", "⠐⠈⠁", "⠈⠁⠂"),     # rolling 3-wide bounce
     # ── Block / geometric (EAW Ambiguous — consistent within each set) ─────────
     "grow":     ("▁", "▂", "▃", "▄", "▅", "▆", "▇", "█", "▇", "▆", "▅", "▄", "▃", "▂"),
     "fill":     ("▏", "▎", "▍", "▌", "▋", "▊", "▉", "█", "▉", "▊", "▋", "▌", "▍", "▎"),
@@ -93,6 +97,9 @@ _SPINNER_STYLES: dict[str, tuple[str, ...]] = {
     # ── Multi-char combos (EAW Narrow — title-safe, consistent 2-cell width) ────
     "wave":     ("⠁⠈", "⠂⠐", "⠄⠠", "⡀⢀", "⠠⠄", "⠐⠂", "⠈⠁"),            # braille wave
     "box2":     ("┌┐", "└┘", "├┤", "┬┴"),                                  # paired box corners; all A
+    # ── Numbers (EAW Ambiguous — homogeneous, title-safe) ───────────────────────
+    "nums":     ("①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"),      # circled digits, all A
+    "tally":    ("❶", "❷", "❸", "❹", "❺", "❻", "❼", "❽", "❾", "❿"),      # filled circled, all A
     # ── More symbols (EAW Ambiguous — homogeneous set, title-safe) ───────────
     "shade":    ("░", "▒", "▓", "█", "▓", "▒"),                            # all A, shading fill
     "cards":    ("♠", "♥", "♣", "♤", "♡", "♧"),                            # all A (drop ♦♢ = N)
@@ -100,6 +107,8 @@ _SPINNER_STYLES: dict[str, tuple[str, ...]] = {
     # ── More symbols (EAW Narrow — title-safe) ───────────────────────────────
     "chess":    ("♟", "♞", "♝", "♜", "♛", "♚"),                            # all N
     # ── Variable-width (prompt only — title falls back to dots) ────────────────
+    # keycap: multi-codepoint sequences (digit + VS16 + U+20E3), mixed EAW per component
+    "keycap":   ("0️⃣", "1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣"),
     # halves: ◐◓◑◒ — mixed EAW (A+N), shifts in proportional title fonts
     "halves":   ("◐", "◓", "◑", "◒"),                                      # clockwise; mixed A+N
     "arrows":   ("←", "↖", "↑", "↗", "→", "↘", "↓", "↙"),
@@ -123,11 +132,13 @@ _TITLE_SPINNER_FRAMES   = _SPINNER_STYLES["dots"]  # overridden at CLI init; may
 # "Variable-width" styles (pulse, arrows, star) fall back to "dots" in the title bar
 # unless the user explicitly sets display.title_spinner_style.
 _TITLE_SAFE_STYLES: frozenset[str] = frozenset({
-    "line",                                                # ASCII N
-    "dots", "bounce", "spin", "wide", "wave",          # Braille N
+    "line",                                                    # ASCII N
+    "dots", "bounce", "spin", "wide", "wave",              # Braille N
+    "dots2", "spin3", "bounce3",                           # Braille multi-char N
     "grow", "fill", "box", "triangle",                 # Ambiguous homogeneous
     "circle", "zoom", "bold", "open", "cross",         # Ambiguous homogeneous
-    "shade", "cards", "music", "box2",                 # Ambiguous homogeneous
+    "nums", "tally",                                           # Ambiguous homogeneous (numbers)
+    "shade", "cards", "music", "box2",                     # Ambiguous homogeneous
     "weather", "dice", "floral", "corner", "chess",    # Narrow N symbols
     "moon", "clock", "earth", "orbs", "hearts",        # Emoji W
     "plants", "zodiac",                                # Emoji W

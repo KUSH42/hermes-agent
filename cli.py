@@ -66,88 +66,102 @@ from agent.usage_pricing import (
 from hermes_cli.banner import _format_context_length
 
 _SPINNER_STYLES: dict[str, tuple[str, ...]] = {
-    # ── ASCII (EAW Narrow — universally supported, title-safe) ─────────────────
-    "line":     ("|", "/", "-", "\\"),                              # classic slash/bar
-    # ── Braille (EAW Narrow — single-width in every font, title-safe) ──────────
+    # ── ASCII (N, universally supported) ────────────────────────────────────────
+    "line":     ("|", "/", "-", "\\"),
+
+    # ── Braille single-char (N) ──────────────────────────────────────────────────
     "dots":     ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"),
     "bounce":   ("⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈"),
-    "spin":     ("⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"),   # braille ring
-    # ── Braille multi-char combos (EAW Narrow — title-safe) ─────────────────────
-    "dots2":    ("⠋⠏", "⠙⠇", "⠹⠧", "⠸⠦", "⠼⠴", "⠴⠼", "⠦⠸", "⠧⠹", "⠇⠙", "⠏⠋"),  # opposite-direction pair
-    "spin3":    ("⣾⣽⣻", "⣽⣻⢿", "⣻⢿⡿", "⢿⡿⣟", "⡿⣟⣯", "⣟⣯⣷", "⣯⣷⣾", "⣷⣾⣽"),     # rolling 3-wide ring
-    "bounce3":  ("⠁⠂⠄", "⠂⠄⡀", "⠄⡀⢀", "⡀⢀⠠", "⢀⠠⠐", "⠠⠐⠈", "⠐⠈⠁", "⠈⠁⠂"),     # rolling 3-wide bounce
-    # ── Block / geometric (EAW Ambiguous — consistent within each set) ─────────
+    "spin":     ("⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"),
+
+    # ── Braille 2-char combos (N) ────────────────────────────────────────────────
+    "wide":     ("⣾⣷", "⣽⣯", "⣻⣟", "⢿⡿", "⡿⢿", "⣟⣻", "⣯⣽", "⣷⣾"),   # mirrored ring
+    "twin":     ("⠁⢀", "⠂⠠", "⠄⠐", "⡀⠈", "⢀⠁", "⠠⠂", "⠐⠄", "⠈⡀"),   # two dots chasing
+    "dots2":    ("⠋⠏", "⠙⠇", "⠹⠧", "⠸⠦", "⠼⠴", "⠴⠼", "⠦⠸", "⠧⠹", "⠇⠙", "⠏⠋"),  # opposing
+    "wave":     ("⠁⠈", "⠂⠐", "⠄⠠", "⡀⢀", "⠠⠄", "⠐⠂", "⠈⠁"),           # symmetric sweep
+    "ping":     ("⠁⠀", "⠈⠀", "⠀⠁", "⠀⠈", "⠀⢀", "⠀⡀", "⢀⠀", "⡀⠀"),   # single dot clockwise
+
+    # ── Braille 3-char combos (N) ────────────────────────────────────────────────
+    "spin3":    ("⣾⣽⣻", "⣽⣻⢿", "⣻⢿⡿", "⢿⡿⣟", "⡿⣟⣯", "⣟⣯⣷", "⣯⣷⣾", "⣷⣾⣽"),
+    "bounce3":  ("⠁⠂⠄", "⠂⠄⡀", "⠄⡀⢀", "⡀⢀⠠", "⢀⠠⠐", "⠠⠐⠈", "⠐⠈⠁", "⠈⠁⠂"),
+    "bar":      ("⣀⠀⠀", "⣤⠀⠀", "⣶⠀⠀", "⣿⠀⠀",
+                 "⣿⣀⠀", "⣿⣤⠀", "⣿⣶⠀", "⣿⣿⠀",
+                 "⣿⣿⣀", "⣿⣿⣤", "⣿⣿⣶", "⣿⣿⣿",
+                 "⣿⣿⣶", "⣿⣿⣤", "⣿⣿⣀", "⣿⣿⠀",
+                 "⣿⣶⠀", "⣿⣤⠀", "⣿⣀⠀", "⣿⠀⠀",
+                 "⣶⠀⠀", "⣤⠀⠀", "⣀⠀⠀"),           # fill → drain 3-cell bar
+
+    # ── Block / geometric (A) ────────────────────────────────────────────────────
     "grow":     ("▁", "▂", "▃", "▄", "▅", "▆", "▇", "█", "▇", "▆", "▅", "▄", "▃", "▂"),
     "fill":     ("▏", "▎", "▍", "▌", "▋", "▊", "▉", "█", "▉", "▊", "▋", "▌", "▍", "▎"),
-    "box":      ("┤", "┘", "┴", "└", "├", "┌", "┬", "┐"),       # box-drawing rotation
-    "triangle": ("◢", "◣", "◤", "◥"),                             # corner fills
-    # ── Braille double-wide (EAW Narrow — title-safe, 2-char combo) ─────────────
-    "wide":     ("⣾⣷", "⣽⣯", "⣻⣟", "⢿⡿", "⡿⢿", "⣟⣻", "⣯⣽", "⣷⣾"),   # mirrored ring
-    # ── Symbols (EAW Narrow — title-safe) ──────────────────────────────────────
+    "shade":    ("░", "▒", "▓", "█", "▓", "▒"),
+    "box":      ("┤", "┘", "┴", "└", "├", "┌", "┬", "┐"),
+    "box2":     ("┌┐", "└┘", "├┤", "┬┴"),
+    "triangle": ("◢", "◣", "◤", "◥"),
+
+    # ── Geometric shapes (A) ─────────────────────────────────────────────────────
+    "circle":   ("○", "◐", "●", "◑"),
+    "zoom":     ("○", "◎", "⊙", "●"),
+    "bold":     ("▲", "▼", "◀", "▶"),
+    "open":     ("▷", "▽", "◁", "△"),
+    "cross":    ("┼", "╀", "╁", "╂"),
+    "cards":    ("♠", "♥", "♣", "♤", "♡", "♧"),         # drop ♦♢ (N)
+    "music":    ("♩", "♪", "♬", "♭", "♯"),               # drop ♫♮ (N)
+    "nums":     ("①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"),
+    "tally":    ("❶", "❷", "❸", "❹", "❺", "❻", "❼", "❽", "❾", "❿"),
+
+    # ── Symbols (N) ──────────────────────────────────────────────────────────────
     "weather":  ("☀", "☁", "☂", "☃"),
     "dice":     ("⚀", "⚁", "⚂", "⚃", "⚄", "⚅"),
-    "floral":   ("✿", "❀", "❁", "❃"),                                    # all N
-    "corner":   ("▟", "▙", "▛", "▜"),                                    # all N, corner squares
-    # ── Geometric (EAW Ambiguous — homogeneous set, title-safe) ─────────────────
-    "circle":   ("○", "◐", "●", "◑"),                                    # all A, fill rotation
-    "zoom":     ("○", "◎", "⊙", "●"),                                    # all A, radial zoom
-    "bold":     ("▲", "▼", "◀", "▶"),                                    # all A, bold arrows
-    "open":     ("▷", "▽", "◁", "△"),                                    # all A, open triangles
-    "cross":    ("┼", "╀", "╁", "╂"),                                    # all A, cross rotation
-    # ── Multi-char combos (EAW Narrow — title-safe, consistent 2-cell width) ────
-    "wave":     ("⠁⠈", "⠂⠐", "⠄⠠", "⡀⢀", "⠠⠄", "⠐⠂", "⠈⠁"),            # braille wave
-    "box2":     ("┌┐", "└┘", "├┤", "┬┴"),                                  # paired box corners; all A
-    # ── Numbers (EAW Ambiguous — homogeneous, title-safe) ───────────────────────
-    "nums":     ("①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"),      # circled digits, all A
-    "tally":    ("❶", "❷", "❸", "❹", "❺", "❻", "❼", "❽", "❾", "❿"),      # filled circled, all A
-    # ── More symbols (EAW Ambiguous — homogeneous set, title-safe) ───────────
-    "shade":    ("░", "▒", "▓", "█", "▓", "▒"),                            # all A, shading fill
-    "cards":    ("♠", "♥", "♣", "♤", "♡", "♧"),                            # all A (drop ♦♢ = N)
-    "music":    ("♩", "♪", "♬", "♭", "♯"),                                 # all A (drop ♫♮ = N)
-    # ── More symbols (EAW Narrow — title-safe) ───────────────────────────────
-    "chess":    ("♟", "♞", "♝", "♜", "♛", "♚"),                            # all N
-    # ── Variable-width / multi-codepoint (prompt only — title falls back to dots) ─
-    # keycap: digit + VS16 + U+20E3 — mixed EAW per component
-    "keycap":   ("0️⃣", "1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣"),
-    # flags: RI+RI pairs — N+N per codepoint but rendered width varies by terminal
-    "flags":    ("🇺🇸", "🇬🇧", "🇫🇷", "🇩🇪", "🇯🇵", "🇨🇳", "🇧🇷", "🇦🇺", "🇨🇦", "🇮🇳"),
-    # hi: emoji + skin-tone modifier (W+W) — requires terminal skin-tone support
-    "hi":       ("👋🏻", "👋🏼", "👋🏽", "👋🏾", "👋🏿"),
-    # halves: ◐◓◑◒ — mixed EAW (A+N), shifts in proportional title fonts
-    "halves":   ("◐", "◓", "◑", "◒"),                                      # clockwise; mixed A+N
+    "chess":    ("♟", "♞", "♝", "♜", "♛", "♚"),
+    "floral":   ("✿", "❀", "❁", "❃"),
+    "corner":   ("▟", "▙", "▛", "▜"),
+
+    # ── Prompt-only: mixed/variable EAW or multi-codepoint sequences ────────────
+    "halves":   ("◐", "◓", "◑", "◒"),                   # mixed A+N
+    "pulse":    ("◜", "◠", "◝", "◞", "◡", "◟"),
     "arrows":   ("←", "↖", "↑", "↗", "→", "↘", "↓", "↙"),
     "star":     ("✶", "✷", "✸", "✹", "✺", "✹", "✸", "✷"),
-    "pulse":    ("◜", "◠", "◝", "◞", "◡", "◟"),
-    # ── Emoji (EAW Wide — 2-wide, title-safe) ──────────────────────────────────
+    "keycap":   ("0️⃣", "1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣"),
+    "hi":       ("👋🏻", "👋🏼", "👋🏽", "👋🏾", "👋🏿"),   # emoji + skin-tone modifier
+
+    # ── Emoji (W) ────────────────────────────────────────────────────────────────
     "moon":     ("🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘"),
     "clock":    ("🕛", "🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚"),
-    "earth":    ("🌍", "🌎", "🌏"),                                          # all W, rotating globe
-    "orbs":     ("🔴", "🟠", "🟡", "🟢", "🔵", "🟣"),                       # all W, rainbow
-    "hearts":   ("🧡", "💛", "💚", "💙", "💜", "🤍"),                       # all W (drop ❤ = N)
-    "plants":   ("🌱", "🌿", "🍀", "🌾"),                                   # all W, growth
-    "zodiac":   ("♈", "♉", "♊", "♋", "♌", "♍", "♎", "♏", "♐", "♑", "♒", "♓"),  # all W
+    "earth":    ("🌍", "🌎", "🌏"),
+    "orbs":     ("🔴", "🟠", "🟡", "🟢", "🔵", "🟣"),
+    "hearts":   ("🧡", "💛", "💚", "💙", "💜", "🤍"),   # drop ❤ (N)
+    "plants":   ("🌱", "🌿", "🍀", "🌾"),
+    "zodiac":   ("♈", "♉", "♊", "♋", "♌", "♍", "♎", "♏", "♐", "♑", "♒", "♓"),
+
     "none":     ("",),
 }
 _COMMAND_SPINNER_FRAMES = _SPINNER_STYLES["dots"]  # overridden at CLI init from config/skin
 _TITLE_SPINNER_FRAMES   = _SPINNER_STYLES["dots"]  # overridden at CLI init; may differ from prompt
 
-# Styles whose frames all share the same East Asian Width category and are therefore
-# safe to use in a proportional title-bar font without causing text to shift each tick.
-# "Variable-width" styles (pulse, arrows, star) fall back to "dots" in the title bar
-# unless the user explicitly sets display.title_spinner_style.
+# Styles whose frames all share the same East Asian Width category, making them
+# safe in proportional title-bar fonts (SF Pro, Segoe UI) without text shifting.
+# Prompt-only styles fall back to "dots" in the title bar unless the user sets
+# display.title_spinner_style explicitly.
 _TITLE_SAFE_STYLES: frozenset[str] = frozenset({
-    "line",                                                    # ASCII N
-    "dots", "bounce", "spin", "wide", "wave",              # Braille N
-    "dots2", "spin3", "bounce3",                           # Braille multi-char N
-    "grow", "fill", "box", "triangle",                 # Ambiguous homogeneous
-    "circle", "zoom", "bold", "open", "cross",         # Ambiguous homogeneous
-    "nums", "tally",                                           # Ambiguous homogeneous (numbers)
-    "shade", "cards", "music", "box2",                     # Ambiguous homogeneous
-    "weather", "dice", "floral", "corner", "chess",    # Narrow N symbols
-    "moon", "clock", "earth", "orbs", "hearts",        # Emoji W
-    "plants", "zodiac",                                # Emoji W
+    # ASCII N
+    "line",
+    # Braille N (single and multi-char)
+    "dots", "bounce", "spin",
+    "wide", "twin", "dots2", "wave", "ping",
+    "spin3", "bounce3", "bar",
+    # Block / geometric A
+    "grow", "fill", "shade", "box", "box2", "triangle",
+    # Geometric shapes A
+    "circle", "zoom", "bold", "open", "cross",
+    "cards", "music", "nums", "tally",
+    # Symbols N
+    "weather", "dice", "chess", "floral", "corner",
+    # Emoji W
+    "moon", "clock", "earth", "orbs", "hearts", "plants", "zodiac",
     "none",
-    # NOT included: halves (mixed A+N), pulse/arrows/star (variable-width)
+    # NOT included: halves (mixed A+N), pulse/arrows/star (variable-width),
+    #               keycap/hi (multi-codepoint sequences)
 })
 
 

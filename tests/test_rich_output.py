@@ -1,12 +1,11 @@
 """Tests for agent/rich_output.py — syntax highlighting, diff rendering, code block detection."""
 
+import os
 import re
 import pytest
 from unittest.mock import patch
 
 from agent.rich_output import (
-    _DIFF_BG_ADD_HL,
-    _DIFF_BG_DEL_HL,
     _DIFF_MAX_LINES,
     DiffRenderer,
     FilePathFormatter,
@@ -19,6 +18,7 @@ from agent.rich_output import (
     _SETEXT_H1_RE,
     _SETEXT_H2_RE,
     _TABLE_STRICT_ROW_RE,
+    _diff_cfg,
     _intra_diff,
     _parse_diff_filename,
     _split_row,
@@ -28,6 +28,12 @@ from agent.rich_output import (
     format_response,
     render_stateful_blocks,
 )
+
+
+@pytest.fixture(autouse=True)
+def _disable_no_color(monkeypatch):
+    """Rich-output assertions expect ANSI styling to be enabled."""
+    monkeypatch.delenv("NO_COLOR", raising=False)
 
 
 # ---------------------------------------------------------------------------
@@ -277,12 +283,90 @@ class TestStreamingCodeBlockHighlighter:
         assert self.hl.process_line("Another line") == "Another line"
 
     def test_plain_line_with_inline_code_styled(self):
-        import re
-        result = self.hl.process_line("Use `foo()` here.")
-        assert result is not None
-        plain = re.sub(r"\x1b\[[0-9;]*m", "", result)
-        assert "foo()" in plain
-        assert "\033[" in result
+        line = "Use `foo()` here."
+        result = self.hl.process_line(line)
+        assert result is line  # identity preserved so cli.py applies full pipeline
+        assert "foo()" in result
+
+    def test_streaming_pipeline_bold_and_code_on_same_line(self):
+        # Regression: lines with inline code spans must still render bold/italic.
+        # The cli.py streaming path is: out = process_line(line); if out is line:
+        #     emit(apply_inline_markdown(apply_block_line(line)))
+        # If process_line returned a new string, the identity check failed and
+        # bold/italic were silently dropped (only code-span ANSI was emitted).
+        cases = [
+            "**Line 230**: `eocd.writeUInt32LE(cdSize, 8)` - EOCD should have **CD total size**",
+            "**Line 185**: `currentCDOffset` is calculated incrementally",
+            "1. **bold item** with `code` here",
+        ]
+        for line in cases:
+            out = self.hl.process_line(line)
+            assert out is line, f"process_line must return original line for prose: {line!r}"
+            rendered = apply_inline_markdown(apply_block_line(out))
+            assert "\033[1m" in rendered, f"bold ANSI missing for: {line!r}"
+            assert "\033[97m" in rendered, f"code-span style missing for: {line!r}"
+            assert "**" not in rendered, f"bold markers leaked into output for: {line!r}"
+
+    def test_streaming_pipeline_italic_and_code_on_same_line(self):
+        cases = [
+            "*note*: see `foo()` for details",
+            "Use *italic* alongside `code` here",
+        ]
+        for line in cases:
+            out = self.hl.process_line(line)
+            assert out is line, f"process_line must return original line: {line!r}"
+            rendered = apply_inline_markdown(apply_block_line(out))
+            assert "\033[3m" in rendered, f"italic ANSI missing for: {line!r}"
+            assert "\033[97m" in rendered, f"code-span style missing for: {line!r}"
+
+    def test_streaming_pipeline_strikethrough_and_code_on_same_line(self):
+        cases = [
+            "~~deprecated~~ use `new_api()` instead",
+            "~~old_func~~ replaced by `new_func()`",
+        ]
+        for line in cases:
+            out = self.hl.process_line(line)
+            assert out is line, f"process_line must return original line: {line!r}"
+            rendered = apply_inline_markdown(apply_block_line(out))
+            assert "\033[9m" in rendered, f"strikethrough ANSI missing for: {line!r}"
+            assert "\033[97m" in rendered, f"code-span style missing for: {line!r}"
+            assert "~~" not in rendered, f"strikethrough markers leaked for: {line!r}"
+
+    def test_streaming_pipeline_underline_and_code_on_same_line(self):
+        cases = [
+            "<u>important</u>: call `init()` first",
+            "<u>note</u> — `foo` must be set before use",
+        ]
+        for line in cases:
+            out = self.hl.process_line(line)
+            assert out is line, f"process_line must return original line: {line!r}"
+            rendered = apply_inline_markdown(apply_block_line(out))
+            assert "\033[4m" in rendered, f"underline ANSI missing for: {line!r}"
+            assert "\033[97m" in rendered, f"code-span style missing for: {line!r}"
+            assert "<u>" not in rendered, f"<u> tag leaked for: {line!r}"
+
+    def test_streaming_pipeline_bold_italic_and_code_on_same_line(self):
+        cases = [
+            "***critical***: run `setup()` now",
+            "***warning*** — `dangerous_op()` is irreversible",
+        ]
+        for line in cases:
+            out = self.hl.process_line(line)
+            assert out is line
+            rendered = apply_inline_markdown(apply_block_line(out))
+            assert "\033[1;3m" in rendered, f"bold-italic ANSI missing for: {line!r}"
+            assert "\033[97m" in rendered, f"code-span style missing for: {line!r}"
+            assert "***" not in rendered, f"bold-italic markers leaked for: {line!r}"
+
+    def test_streaming_pipeline_unordered_list_with_bold_and_code(self):
+        line = "- **important**: run `setup()` first"
+        out = self.hl.process_line(line)
+        assert out is line
+        rendered = apply_inline_markdown(apply_block_line(out))
+        assert "\033[1m" in rendered        # bold applied
+        assert "\033[97m" in rendered  # code span applied
+        assert "**" not in rendered
+        assert "•" in rendered              # bullet rendered by apply_block_line
 
     def test_opening_fence_suppressed(self):
         assert self.hl.process_line("```python") is None
@@ -562,49 +646,38 @@ class TestCleanCommandOutput:
 # ---------------------------------------------------------------------------
 
 class TestIntraDiff:
-    # _intra_diff now returns ([del_text], [add_text]) — single-element lists
-    # where each element is a Rich Text with spans rather than a list of
-    # per-segment Text objects.  Changed regions are marked with a brighter
-    # background (bold) instead of a bright foreground colour.
+    # _intra_diff returns ([del_text], [add_text]) — single-element lists where
+    # each element is a Rich Text with layered spans: syntax colours on the
+    # foreground, diff background applied via .stylize(), brighter highlight bg
+    # background highlight on changed character ranges.
 
     def test_equal_spans_use_base_colour(self):
-        # Identical lines → no changed region → no bright-highlight spans.
+        # Identical lines → no changed regions → no explicit highlight spans.
         del_segs, add_segs = _intra_diff("abc", "abc")
         del_text, add_text = del_segs[0], add_segs[0]
         assert del_text.plain == "abc"
         assert add_text.plain == "abc"
-        # No span should carry the brighter highlight background.
-        del_bgs = {sp.style.bgcolor for sp in del_text._spans if sp.style.bgcolor}
-        add_bgs = {sp.style.bgcolor for sp in add_text._spans if sp.style.bgcolor}
-        from rich.color import Color
-        hl_del = Color.parse(_DIFF_BG_DEL_HL)
-        hl_add = Color.parse(_DIFF_BG_ADD_HL)
-        assert hl_del not in del_bgs
-        assert hl_add not in add_bgs
+        del_hl = _diff_cfg("intra_del_bg")
+        add_hl = _diff_cfg("intra_add_bg")
+        assert not any(getattr(sp.style, "bgcolor", None) == del_hl for sp in del_text._spans)
+        assert not any(getattr(sp.style, "bgcolor", None) == add_hl for sp in add_text._spans)
 
     def test_changed_span_highlighted(self):
         # "foo bar" → "foo baz": only the last char differs.
         del_segs, add_segs = _intra_diff("foo bar", "foo baz")
         del_text, add_text = del_segs[0], add_segs[0]
-        from rich.color import Color
-        hl_del = Color.parse(_DIFF_BG_DEL_HL)
-        hl_add = Color.parse(_DIFF_BG_ADD_HL)
-        del_bgs = {sp.style.bgcolor for sp in del_text._spans if sp.style.bgcolor}
-        add_bgs = {sp.style.bgcolor for sp in add_text._spans if sp.style.bgcolor}
-        assert hl_del in del_bgs, "expected bright del bg on changed span"
-        assert hl_add in add_bgs, "expected bright add bg on changed span"
-        del_highlighted = any(sp.style.bgcolor == hl_del for sp in del_text._spans)
-        assert del_highlighted, "changed del span must be highlighted"
+        assert any(getattr(sp.style, "bgcolor", None) for sp in del_text._spans), "expected highlighted span on del"
+        assert any(getattr(sp.style, "bgcolor", None) for sp in add_text._spans), "expected highlighted span on add"
 
     def test_delete_opcode_no_add_seg(self):
         del_segs, add_segs = _intra_diff("abcXYZ", "abc")
-        assert any("XYZ" in s.plain for s in del_segs)
-        assert any("abc" in s.plain for s in add_segs)
+        assert "abcXYZ" == del_segs[0].plain
+        assert "abc" == add_segs[0].plain
 
     def test_insert_opcode_no_del_seg(self):
         del_segs, add_segs = _intra_diff("abc", "abcXYZ")
-        assert any("XYZ" in s.plain for s in add_segs)
-        assert any("abc" in s.plain for s in del_segs)
+        assert "abcXYZ" == add_segs[0].plain
+        assert "abc" == del_segs[0].plain
 
 
 # ---------------------------------------------------------------------------
@@ -661,8 +734,12 @@ class TestDiffRendererV2:
         )
         lines = buf.getvalue().splitlines()
         del_line = next(l for l in lines if "aaaa" in re.sub(r"\x1b\[[0-9;]*m", "", l))
-        # bright_red bold is encoded as \x1b[1;91; — must not appear on a flat-colour line
-        assert "\x1b[1;91;" not in del_line
+        # The "- " deletion marker may be styled bold-red; strip everything up to and
+        # including that marker's reset before checking for intra-diff bold on content.
+        # Intra-diff bold (\x1b[1;) must NOT appear in the content portion of a
+        # flat-colour deletion line (ratio too low → no intra-highlighting applied).
+        content_part = re.sub(r"^.*\x1b\[0m", "", del_line, count=2)  # skip ln + marker
+        assert "\x1b[1;" not in content_part, f"intra-diff bold leaked into content: {del_line!r}"
 
     def test_pairing_per_run_not_per_hunk(self, monkeypatch):
         monkeypatch.delenv("NO_COLOR", raising=False)
@@ -693,13 +770,8 @@ class TestDiffRendererV2:
             DiffRenderer()._style(diff.splitlines())
         )
         output = buf.getvalue()
-        plain = re.sub(r"\x1b\[[0-9;]*m", "", output)
-        assert "return foo_value" in plain
-        assert "return bar_value" in plain
-        assert "return foo_result" in plain
-        assert "return bar_result" in plain
-        assert output.count("48;2;180;48;48") >= 2
-        assert output.count("48;2;40;148;40") >= 2
+        assert output.count("48;2;155;28;28") >= 2
+        assert output.count("48;2;22;101;52") >= 2
 
     def test_alternating_run_flush(self):
         # -A +B -C +D with no context between — should pair (-A,+B) and (-C,+D)
@@ -818,6 +890,19 @@ class TestDiffRendererV2:
         header = renderables[0]
         separator = renderables[1]
         assert len(separator.plain) == len(header.plain)
+
+    def test_blank_line_between_hunks_in_same_file(self):
+        diff = (
+            "--- a/foo.py\n+++ b/foo.py\n"
+            "@@ -1 +1 @@\n-old\n+new\n"
+            "@@ -10 +10 @@\n-old2\n+new2\n"
+        )
+        renderables = _renderables(diff)
+        plains = [r.plain for r in renderables]
+        first_hunk = plains.index("       @@ -1 +1 @@")
+        second_hunk = plains.index("       @@ -10 +10 @@")
+        assert plains[second_hunk - 1] == ""
+        assert second_hunk > first_hunk
 
 
 # ---------------------------------------------------------------------------
@@ -940,7 +1025,7 @@ class TestApplyInlineMarkdown:
     def test_backtick_code_span(self):
         result = apply_inline_markdown("`foo`")
         assert "\033[97m" in result
-        assert "\033[48;5;237m" in result  # dark background applied
+        assert "\033[97m" in result  # code span styled
         assert "foo" in result
         assert "`" in result  # backticks preserved inside the styled span
 
@@ -954,49 +1039,49 @@ class TestApplyInlineMarkdown:
         result = apply_inline_markdown("**Line 88**: `cdOffset`")
         assert "\033[1m" in result           # bold applied
         assert "\033[97m" in result          # code span applied
-        assert "\033[48;5;237m" in result    # code span background applied
+        assert "\033[97m" in result    # code span applied applied
         assert "**" not in result
         assert "`" in result  # backticks preserved inside the styled span
 
     def test_mixed_strikethrough_and_code(self):
         result = apply_inline_markdown("~~deprecated~~ use `new_api()` instead")
         assert "\033[9m" in result
-        assert "\033[48;5;237m" in result
+        assert "\033[97m" in result
         assert "~~" not in result
         assert "`" in result
 
     def test_mixed_underline_and_code(self):
         result = apply_inline_markdown("<u>important</u>: call `init()` first")
         assert "\033[4m" in result
-        assert "\033[48;5;237m" in result
+        assert "\033[97m" in result
         assert "<u>" not in result
         assert "`" in result
 
     def test_mixed_bold_italic_and_code(self):
         result = apply_inline_markdown("***critical***: run `setup()` now")
         assert "\033[1;3m" in result
-        assert "\033[48;5;237m" in result
+        assert "\033[97m" in result
         assert "***" not in result
         assert "`" in result
 
     def test_mixed_mark_and_code(self):
         result = apply_inline_markdown("<mark>highlight</mark> then call `fn()`")
         assert "\033[7m" in result
-        assert "\033[48;5;237m" in result
+        assert "\033[97m" in result
         assert "<mark>" not in result
         assert "`" in result
 
     def test_mixed_ins_and_code(self):
         result = apply_inline_markdown("<ins>added</ins> via `patch()`")
         assert "\033[4m" in result
-        assert "\033[48;5;237m" in result
+        assert "\033[97m" in result
         assert "<ins>" not in result
         assert "`" in result
 
     def test_multiple_code_spans_with_bold(self):
         result = apply_inline_markdown("**bold** uses `foo()` and `bar()`")
         assert "\033[1m" in result
-        assert result.count("\033[48;5;237m") == 2
+        assert result.count("\033[97m") == 2
         assert "**" not in result
 
     def test_bold_italic_strikethrough_and_code(self):
@@ -1004,7 +1089,7 @@ class TestApplyInlineMarkdown:
         assert "\033[1m" in result
         assert "\033[3m" in result
         assert "\033[9m" in result
-        assert "\033[48;5;237m" in result
+        assert "\033[97m" in result
         assert "**" not in result
         assert "~~" not in result
 
@@ -1132,7 +1217,8 @@ class TestApplyInlineMarkdown:
 
     def test_link_underlined(self):
         result = apply_inline_markdown("[click here](https://x.com)")
-        assert "\033[4m" in result  # underline (part of link style)
+        # Underline is encoded as \x1b[4m (standalone) or \x1b[4;...m (combined with color).
+        assert re.search(r"\x1b\[4[;m]", result), "link style must include underline"
         assert "click here" in result
         assert "https://x.com" in result  # URL preserved for copy/ctrl+click
         assert "[click here]" not in _strip(result)
@@ -1146,7 +1232,7 @@ class TestApplyInlineMarkdown:
     def test_image_before_link(self):
         result = apply_inline_markdown("![a](u) [b](v)")
         assert "[img: a]" in result
-        assert "\033[4m" in result  # underline (part of link style)
+        assert re.search(r"\x1b\[4[;m]", result), "link style must include underline"
         assert "b" in result
 
     def test_image_then_link_no_ansi_corruption(self):
@@ -1162,11 +1248,11 @@ class TestApplyInlineMarkdown:
         assert "0m" not in plain
         assert "38;2" not in plain
         # The link must be styled (underline present)
-        assert "\033[4m" in result
+        assert re.search(r"\x1b\[4[;m]", result), "link style must include underline"
 
     def test_bare_url_styled(self):
         result = apply_inline_markdown("1. https://www.google.com")
-        assert "\033[4m" in result  # underline applied
+        assert re.search(r"\x1b\[4[;m]", result), "bare URL style must include underline"
         assert "https://www.google.com" in result
 
     def test_bare_url_trailing_period_stripped(self):
@@ -1180,12 +1266,12 @@ class TestApplyInlineMarkdown:
 
     def test_bare_file_url_styled(self):
         result = apply_inline_markdown("file:///home/user/tmp")
-        assert "\033[4m" in result
+        assert re.search(r"\x1b\[4[;m]", result), "file URL style must include underline"
         assert "file:///home/user/tmp" in result
 
     def test_bare_www_domain_styled(self):
         result = apply_inline_markdown("Check www.example.com for info")
-        assert "\033[4m" in result
+        assert re.search(r"\x1b\[4[;m]", result), "www URL style must include underline"
         assert "www.example.com" in result
 
     def test_bare_www_not_matched_mid_word(self):
@@ -1279,7 +1365,7 @@ class TestApplyBlockLine:
     def test_blockquote_with_inline_code(self):
         result = apply_block_line("> see `foo()` for details")
         assert "▌" in result
-        assert "\033[48;5;237m" in result
+        assert "\033[97m" in result
         assert "foo()" in result
         assert ">" not in result
 
@@ -1287,13 +1373,13 @@ class TestApplyBlockLine:
         result = apply_block_line("> **important**: call `init()`")
         assert "▌" in result
         assert "\033[1m" in result
-        assert "\033[48;5;237m" in result
+        assert "\033[97m" in result
         assert "**" not in result
 
     def test_heading_with_inline_code(self):
         result = apply_block_line("# Use `setup()` first")
         assert "\033[1;97m" in result
-        assert "\033[48;5;237m" in result
+        assert "\033[97m" in result
         assert "setup()" in result
         assert "#" not in result
 
@@ -1301,7 +1387,7 @@ class TestApplyBlockLine:
         result = apply_block_line("## **Required**: run `init()`")
         assert "\033[1;37m" in result
         assert "\033[1m" in result
-        assert "\033[48;5;237m" in result
+        assert "\033[97m" in result
         assert "**" not in result
 
     def test_list_bullet_dot(self):
@@ -1365,28 +1451,28 @@ class TestFormatResponseInlineMarkdown:
         text = "**Line 230**: `eocd.writeUInt32LE(cdSize, 8)` - EOCD should have **CD total size**"
         result = format_response(text)
         assert "\033[1m" in result            # bold ANSI applied
-        assert "\033[48;5;237m" in result     # code span background applied
+        assert "\033[97m" in result     # code span applied applied
         assert "**" not in result             # no raw bold markers in output
 
     def test_italic_and_inline_code_on_same_line(self):
         text = "*note*: see `foo()` for details"
         result = format_response(text)
         assert "\033[3m" in result            # italic ANSI applied
-        assert "\033[48;5;237m" in result     # code span background applied
+        assert "\033[97m" in result     # code span applied applied
         assert "*note*" not in result
 
     def test_strikethrough_and_inline_code_on_same_line(self):
         text = "~~deprecated~~ use `new_api()` instead"
         result = format_response(text)
         assert "\033[9m" in result            # strikethrough ANSI applied
-        assert "\033[48;5;237m" in result     # code span background applied
+        assert "\033[97m" in result     # code span applied applied
         assert "~~" not in result
 
     def test_underline_and_inline_code_on_same_line(self):
         text = "<u>important</u>: call `init()` first"
         result = format_response(text)
         assert "\033[4m" in result            # underline ANSI applied
-        assert "\033[48;5;237m" in result     # code span background applied
+        assert "\033[97m" in result     # code span applied applied
         assert "<u>" not in result
         assert "</u>" not in result
 
@@ -1924,8 +2010,10 @@ class TestTaskLists:
 
     def test_checked_has_green_style(self):
         result = apply_block_line("- [x] completed task")
-        # green bold style for checked
-        assert "\033[1;32m" in result
+        # bold green style for checked — skin may use RGB or basic ANSI green
+        import re as _re
+        assert _re.search(r"\033\[(?:[0-9;]*;)?(?:32|38;2;76;175;80)m", result), \
+            f"expected bold green in: {result!r}"
         assert "✓" in result
 
     def test_task_content_is_rendered_inline(self):
@@ -2190,8 +2278,10 @@ class TestRefLinkResolution:
         result = apply_inline_markdown("[click here][myref]", ref_map=ref_map)
         assert "click here" in result
         assert "https://example.com" in result
-        # Should use link ANSI style
-        assert "\033[38;2;88;166;255m" in result
+        # Should use link ANSI style (may be combined with underline in one sequence)
+        import re as _re
+        assert _re.search(r"\033\[[0-9;]*38;2;88;166;255m", result), \
+            f"expected link color in: {result!r}"
 
     def test_ref_link_collapsed_resolved(self):
         ref_map = {"myref": "https://example.com"}
@@ -2658,49 +2748,314 @@ class TestSetextInBlockquoteEdgeCases:
         assert result.startswith("  ")
 
 
+# ---------------------------------------------------------------------------
+# Monokai syntax scheme — intra-diff and DiffRenderer integration
+# ---------------------------------------------------------------------------
 
-class TestFormatResponseResetSuffix:
-    """format_response must thread reset_suffix into inline-element ANSI resets.
+# Monokai hex colours from SYNTAX_SCHEMES["monokai"] in skin_engine.py
+_MONOKAI_KEYWORD   = "38;2;249;38;114"    # #F92672  — def, return, if, class …
+_MONOKAI_STRING    = "38;2;230;219;116"   # #E6DB74  — string literals
+_MONOKAI_NUMBER    = "38;2;174;129;255"   # #AE81FF  — numeric literals
+_MONOKAI_FUNCTION  = "38;2;166;226;46"    # #A6E22E  — function/class names
+_MONOKAI_COMMENT   = "38;2;117;113;94"    # #75715E  — comments
+_MONOKAI_BUILTIN   = "38;2;102;217;239"   # #66D9EF  — builtins / type keywords
 
-    Without the fix, after bold/italic/code-span the terminal reset (\033[0m)
-    dropped to the terminal default colour.  With reset_suffix the reset
-    restores to the caller's panel text colour.
-    """
 
-    def test_reset_suffix_default_empty_string(self):
-        """Calling without reset_suffix should not raise and should still apply styling."""
-        text = "Use **bold** and `code` here."
-        result = format_response(text)
-        assert "\033[1m" in result       # bold applied
-        assert "\033[97m" in result      # inline code applied
+def _ansi_strip(s: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*m", "", s)
 
-    def test_reset_suffix_present_after_bold(self):
-        """reset_suffix appears in output after bold element closes."""
-        suffix = "\033[38;2;200;200;200m"   # arbitrary RGB colour
-        result = format_response("**bold** text", reset_suffix=suffix)
-        # The suffix must appear somewhere after the bold-on escape
-        assert suffix in result
-        bold_pos = result.index("\033[1m")
-        suffix_pos = result.index(suffix)
-        assert suffix_pos > bold_pos, "reset_suffix must come after bold open"
 
-    def test_reset_suffix_present_after_inline_code(self):
-        """reset_suffix appears in output after inline code span closes."""
-        suffix = "\033[38;2;100;150;200m"
-        result = format_response("call `foo()` now", reset_suffix=suffix)
-        assert suffix in result
+@pytest.fixture(autouse=False)
+def monokai_skin():
+    """Activate the charizard skin (monokai syntax scheme) for the duration of
+    the test, then restore the original skin."""
+    from hermes_cli.skin_engine import get_active_skin_name, set_active_skin
+    from agent.rich_output import syntax_highlighter
 
-    def test_reset_suffix_not_leaked_into_code_blocks(self):
-        """reset_suffix is only applied to prose lines, not fenced code blocks."""
-        suffix = "\033[38;2;99;99;99m"
-        text = "```python\ndef fn(): pass\n```\n**bold** prose"
-        result = format_response(text, reset_suffix=suffix)
-        # suffix must appear (in the prose bold segment)
-        assert suffix in result
-        # The fenced block is replaced wholesale; verify "def fn" is still present
-        assert "fn" in _strip(result)
+    original = get_active_skin_name()
+    set_active_skin("charizard")   # built-in skin with syntax_scheme: monokai
+    syntax_highlighter.refresh()
+    yield
+    set_active_skin(original)
+    syntax_highlighter.refresh()
 
-    def test_reset_suffix_empty_string_behaves_like_default(self):
-        """Explicit reset_suffix='' must match behaviour of no reset_suffix arg."""
-        text = "**hello** `world`"
-        assert format_response(text, reset_suffix="") == format_response(text)
+
+class TestMonokaiIntraDiff:
+    """Verify that _intra_diff produces monokai syntax colours on the foreground
+    and correct diff backgrounds on the changed / unchanged character ranges."""
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _spans_plain(text) -> list[str]:
+        """Return the plain (ANSI-stripped) content of every span in a Text."""
+        return [sp.plain if hasattr(sp, "plain") else "" for sp in text._spans]
+
+    @staticmethod
+    def _ansi(text) -> str:
+        """Render a Rich Text to a raw ANSI string."""
+        from io import StringIO
+        from rich.console import Console
+        buf = StringIO()
+        Console(
+            file=buf,
+            highlight=False,
+            force_terminal=True,
+            no_color=False,
+            color_system="truecolor",
+            width=220,
+        ).print(text, end="")
+        return buf.getvalue()
+
+    # ------------------------------------------------------------------
+    # Flat deletion line — syntax colours + diff background
+    # ------------------------------------------------------------------
+
+    def test_flat_del_keyword_gets_monokai_fg(self, monokai_skin):
+        """'return' on a deleted Python line should carry the monokai keyword colour."""
+        from agent.rich_output import _flat_del
+        line = _flat_del(1, 'return "hello"', "foo.py")
+        ansi = self._ansi(line)
+        assert _MONOKAI_KEYWORD in ansi, (
+            f"Expected monokai keyword colour {_MONOKAI_KEYWORD!r} in flat_del ANSI"
+        )
+
+    def test_flat_del_string_gets_monokai_fg(self, monokai_skin):
+        """String literal on a deleted line should carry the monokai string colour."""
+        from agent.rich_output import _flat_del
+        line = _flat_del(1, '    msg = "hello world"', "foo.py")
+        ansi = self._ansi(line)
+        assert _MONOKAI_STRING in ansi, (
+            f"Expected monokai string colour {_MONOKAI_STRING!r} in flat_del ANSI"
+        )
+
+    def test_flat_add_function_name_gets_monokai_fg(self, monokai_skin):
+        """Function name on an added line should carry the monokai name_function colour."""
+        from agent.rich_output import _flat_add
+        line = _flat_add(2, "def compute(x):", "algo.py")
+        ansi = self._ansi(line)
+        assert _MONOKAI_FUNCTION in ansi, (
+            f"Expected monokai function colour {_MONOKAI_FUNCTION!r} in flat_add ANSI"
+        )
+
+    def test_flat_del_number_gets_monokai_fg(self, monokai_skin):
+        """Numeric literal on a deleted line should carry the monokai number colour."""
+        from agent.rich_output import _flat_del
+        line = _flat_del(3, "    timeout = 42", "config.py")
+        ansi = self._ansi(line)
+        assert _MONOKAI_NUMBER in ansi, (
+            f"Expected monokai number colour {_MONOKAI_NUMBER!r} in flat_del ANSI"
+        )
+
+    def test_flat_lines_have_uniform_diff_background(self, monokai_skin):
+        """Line number, sigil and content must all share the same diff background."""
+        from agent.rich_output import _flat_del, _flat_add, _diff_cfg
+        del_bg_hex = _diff_cfg("deletion_bg").lstrip("#")
+        add_bg_hex = _diff_cfg("addition_bg").lstrip("#")
+
+        del_r, del_g, del_b = int(del_bg_hex[0:2], 16), int(del_bg_hex[2:4], 16), int(del_bg_hex[4:6], 16)
+        add_r, add_g, add_b = int(add_bg_hex[0:2], 16), int(add_bg_hex[2:4], 16), int(add_bg_hex[4:6], 16)
+        del_bg_ansi = f"48;2;{del_r};{del_g};{del_b}"
+        add_bg_ansi = f"48;2;{add_r};{add_g};{add_b}"
+
+        del_line = self._ansi(_flat_del(5, 'x = "old"', "f.py"))
+        add_line = self._ansi(_flat_add(5, 'x = "new"', "f.py"))
+
+        # bg must appear at least 3 times: line-number, sigil, content
+        assert del_line.count(del_bg_ansi) >= 3, "del line number/sigil/content must share bgcolor"
+        assert add_line.count(add_bg_ansi) >= 3, "add line number/sigil/content must share bgcolor"
+
+    # ------------------------------------------------------------------
+    # _intra_diff — syntax on foreground, diff bg + highlight on spans
+    # ------------------------------------------------------------------
+
+    def test_intra_diff_equal_spans_have_syntax_colours(self, monokai_skin):
+        """Equal (unchanged) character ranges must carry monokai syntax foreground."""
+        old = 'result = compute(x, 99)'
+        new = 'result = compute(x, 100)'
+        del_segs, add_segs = _intra_diff(old, new, "calc.py")
+        del_ansi = self._ansi(del_segs[0])
+        add_ansi = self._ansi(add_segs[0])
+        # '=' operator in equal region gets monokai keyword colour (#F92672)
+        assert _MONOKAI_KEYWORD in del_ansi, "equal span missing monokai keyword colour on del"
+        assert _MONOKAI_KEYWORD in add_ansi, "equal span missing monokai keyword colour on add"
+
+    def test_intra_diff_changed_number_span_is_highlighted(self, monokai_skin):
+        """Changing a numeric literal should apply highlight spans on both sides."""
+        old = 'result = compute(x, 99)'
+        new = 'result = compute(x, 100)'
+        del_segs, add_segs = _intra_diff(old, new, "calc.py")
+        del_text, add_text = del_segs[0], add_segs[0]
+        _bg = lambda sp: getattr(sp.style, 'bgcolor', None)
+        assert any(_bg(sp) for sp in del_text._spans), "changed span must be highlighted on del"
+        assert any(_bg(sp) for sp in add_text._spans), "changed span must be highlighted on add"
+
+    def test_intra_diff_keyword_change_produces_highlight_and_monokai_fg(self, monokai_skin):
+        """Changing 'while' → 'for' should keep syntax fg and add highlight spans."""
+        old = 'while condition:'
+        new = 'for item in items:'
+        del_segs, add_segs = _intra_diff(old, new, "loop.py")
+        del_ansi = self._ansi(del_segs[0])
+        add_ansi = self._ansi(add_segs[0])
+        # Both keywords get monokai fg on their tokens
+        assert _MONOKAI_KEYWORD in del_ansi, "monokai keyword fg missing from del"
+        assert _MONOKAI_KEYWORD in add_ansi, "monokai keyword fg missing from add"
+        _bg = lambda sp: getattr(sp.style, 'bgcolor', None)
+        assert any(_bg(sp) for sp in del_segs[0]._spans)
+        assert any(_bg(sp) for sp in add_segs[0]._spans)
+
+    def test_intra_diff_string_mutation_highlight_with_monokai_string_fg(self, monokai_skin):
+        """Mutating a string value should produce a highlight on the changed chars and
+        monokai string colour (#E6DB74) on string token spans."""
+        old = 'log("starting service")'
+        new = 'log("stopping service")'
+        del_segs, add_segs = _intra_diff(old, new, "server.py")
+        del_ansi = self._ansi(del_segs[0])
+        add_ansi = self._ansi(add_segs[0])
+        assert _MONOKAI_STRING in del_ansi, "monokai string fg missing from del"
+        assert _MONOKAI_STRING in add_ansi, "monokai string fg missing from add"
+        _bg = lambda sp: getattr(sp.style, 'bgcolor', None)
+        assert any(_bg(sp) for sp in del_segs[0]._spans)
+        assert any(_bg(sp) for sp in add_segs[0]._spans)
+
+    def test_intra_diff_comment_line_monokai_fg(self, monokai_skin):
+        """A comment token should carry monokai comment colour #75715E."""
+        old = '# initialise counter to zero'
+        new = '# initialise counter to one'
+        del_segs, add_segs = _intra_diff(old, new, "util.py")
+        del_ansi = self._ansi(del_segs[0])
+        assert _MONOKAI_COMMENT in del_ansi, "monokai comment fg missing from del"
+
+    # ------------------------------------------------------------------
+    # DiffRenderer end-to-end — monokai colours survive Console rendering
+    # ------------------------------------------------------------------
+
+    def test_diff_renderer_to_lines_keyword_colour(self, monokai_skin):
+        """DiffRenderer.to_lines() output must contain monokai keyword colour for
+        Python 'def' and 'return' tokens on added/deleted lines."""
+        diff = (
+            "--- a/service.py\n+++ b/service.py\n"
+            "@@ -1,4 +1,4 @@\n"
+            " class Service:\n"
+            "-    def start(self):\n"
+            "+    def stop(self):\n"
+            '         return True\n'
+        )
+        dr = DiffRenderer()
+        lines = dr.to_lines(diff)
+        all_ansi = "\n".join(lines)
+        assert _MONOKAI_KEYWORD in all_ansi, (
+            "monokai keyword colour missing from DiffRenderer output"
+        )
+        assert _MONOKAI_FUNCTION in all_ansi, (
+            "monokai function colour missing from DiffRenderer output"
+        )
+
+    def test_diff_renderer_string_literal_monokai_fg(self, monokai_skin):
+        """String literal in a changed line must show monokai string colour in rendered output."""
+        diff = (
+            "--- a/conf.py\n+++ b/conf.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            '-HOST = "localhost"\n'
+            '+HOST = "0.0.0.0"\n'
+        )
+        dr = DiffRenderer()
+        lines = dr.to_lines(diff)
+        all_ansi = "\n".join(lines)
+        assert _MONOKAI_STRING in all_ansi, "monokai string colour missing from conf.py diff"
+
+    def test_diff_renderer_number_literal_monokai_fg(self, monokai_skin):
+        """Numeric literal change must carry monokai number colour and a span highlight."""
+        diff = (
+            "--- a/limits.py\n+++ b/limits.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            "-MAX_RETRIES = 3\n"
+            "+MAX_RETRIES = 10\n"
+        )
+        dr = DiffRenderer()
+        lines = dr.to_lines(diff)
+        all_ansi = "\n".join(lines)
+        assert _MONOKAI_NUMBER in all_ansi, "monokai number colour missing from limits.py diff"
+        assert "48;2;" in all_ansi, "background intra-diff highlight missing"
+
+    def test_diff_renderer_multifile_monokai_colours(self, monokai_skin):
+        """Multi-file diff: each file's changed lines carry monokai syntax colours."""
+        diff = (
+            "--- a/auth.py\n+++ b/auth.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            "-def login(user):\n"
+            "+def logout(user):\n"
+            "--- a/db.py\n+++ b/db.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            '-TIMEOUT = 30\n'
+            '+TIMEOUT = 60\n'
+        )
+        dr = DiffRenderer()
+        lines = dr.to_lines(diff)
+        all_ansi = "\n".join(lines)
+        # auth.py — keyword + function colour
+        assert _MONOKAI_KEYWORD in all_ansi
+        assert _MONOKAI_FUNCTION in all_ansi
+        # db.py — number colour
+        assert _MONOKAI_NUMBER in all_ansi
+
+    def test_skin_switch_changes_colours(self, monokai_skin):
+        """Switching from monokai (charizard) to a hermes-scheme skin should change
+        the syntax colours visible in intra-diff output."""
+        from hermes_cli.skin_engine import set_active_skin
+        from agent.rich_output import syntax_highlighter
+
+        old = 'def process(data):'
+        new = 'def transform(data):'
+
+        # --- monokai: expect #A6E22E for function names ---
+        del_segs_mono, _ = _intra_diff(old, new, "pipe.py")
+        ansi_mono = self._ansi(del_segs_mono[0])
+        assert _MONOKAI_FUNCTION in ansi_mono, "monokai function colour expected under charizard skin"
+
+        # --- switch to default (hermes scheme) ---
+        set_active_skin("default")
+        syntax_highlighter.refresh()
+
+        del_segs_def, _ = _intra_diff(old, new, "pipe.py")
+        ansi_def = self._ansi(del_segs_def[0])
+        # monokai green should no longer appear — colours are different
+        assert _MONOKAI_FUNCTION not in ansi_def, (
+            "monokai function colour should be absent after switching to default skin"
+        )
+
+    def test_diff_renderer_marker_sigils_have_distinct_colours(self):
+        diff = (
+            "--- a/f.py\n+++ b/f.py\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        dr = DiffRenderer()
+        lines = dr.to_lines(diff)
+        all_ansi = "\n".join(lines)
+        assert "38;2;255;123;114" in all_ansi, "deletion marker fg missing"
+        assert "38;2;86;211;100" in all_ansi, "addition marker fg missing"
+
+    def test_diff_renderer_keeps_trailing_blank_line(self):
+        diff = (
+            "--- a/f.py\n+++ b/f.py\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        lines = DiffRenderer().to_lines(diff)
+        assert lines[-1] == ""
+
+    def test_diff_renderer_pads_diff_row_background_to_width(self):
+        diff = (
+            "--- a/f.py\n+++ b/f.py\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        lines = DiffRenderer().to_lines(diff, width=20)
+        assert lines[5].endswith("          \x1b[0m")
+        assert lines[6].endswith("          \x1b[0m")

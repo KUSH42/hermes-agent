@@ -21,11 +21,59 @@ _RESET = "\033[0m"
 logger = logging.getLogger(__name__)
 
 _ANSI_RESET = "\033[0m"
-_ANSI_DIM = "\033[38;2;150;150;150m"
-_ANSI_FILE = "\033[38;2;180;160;255m"
-_ANSI_HUNK = "\033[38;2;120;120;140m"
-_ANSI_MINUS = "\033[38;2;255;255;255;48;2;120;20;20m"
-_ANSI_PLUS = "\033[38;2;255;255;255;48;2;20;90;20m"
+
+
+# ---------------------------------------------------------------------------
+# Hex → ANSI truecolor helpers (used by diff color accessors below)
+# ---------------------------------------------------------------------------
+
+def _hex_to_ansi_fg(hex_color: str) -> str:
+    """Convert #RRGGBB to ANSI truecolor foreground escape. Returns "" on error."""
+    try:
+        h = hex_color.lstrip("#")
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        return f"\033[38;2;{r};{g};{b}m"
+    except Exception:
+        return ""
+
+
+def _hex_to_ansi_bg(hex_color: str) -> str:
+    """Convert #RRGGBB to ANSI truecolor background escape. Returns "" on error."""
+    try:
+        h = hex_color.lstrip("#")
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        return f"\033[48;2;{r};{g};{b}m"
+    except Exception:
+        return ""
+
+
+def _d(key: str) -> str:
+    """Lazy diff color accessor. Returns hex string from active skin, or ""."""
+    try:
+        from hermes_cli.skin_engine import get_active_skin
+        return get_active_skin().get_diff(key, "")
+    except Exception:
+        return ""
+
+
+def _ansi_dim() -> str:
+    return _hex_to_ansi_fg(_d("context_fg"))
+
+
+def _ansi_file() -> str:
+    return _hex_to_ansi_fg(_d("file_path_fg"))
+
+
+def _ansi_hunk() -> str:
+    return _hex_to_ansi_fg(_d("hunk_fg"))
+
+
+def _ansi_minus() -> str:
+    return _hex_to_ansi_fg(_d("deletion_fg")) + _hex_to_ansi_bg(_d("deletion_bg"))
+
+
+def _ansi_plus() -> str:
+    return _hex_to_ansi_fg(_d("addition_fg")) + _hex_to_ansi_bg(_d("addition_bg"))
 _MAX_INLINE_DIFF_FILES = 6
 _MAX_INLINE_DIFF_LINES = 80
 
@@ -56,6 +104,15 @@ try:
     _rich_syntax = _RichSyntaxHighlighter()
     _rich_detector = _RichLanguageDetector()
     _RICH_OUTPUT = True
+    # Register invalidation callbacks for skin-switch.
+    # skin_engine never imports display or rich_output, so callers self-register.
+    try:
+        from agent import rich_output as _rich_output
+        from hermes_cli import skin_engine as _skin_engine
+        _skin_engine.register_skin_callback(_rich_syntax.refresh)
+        _skin_engine.register_skin_callback(_rich_output._rebuild_md_cache)
+    except Exception:
+        pass
 except ImportError:
     _RICH_OUTPUT = False
 
@@ -464,19 +521,19 @@ def _render_inline_unified_diff(diff: str) -> list[str]:
         if raw_line.startswith("+++ "):
             to_file = raw_line[4:].strip()
             if from_file or to_file:
-                rendered.append(f"{_ANSI_FILE}{from_file or 'a/?'} → {to_file or 'b/?'}{_ANSI_RESET}")
+                rendered.append(f"{_ansi_file()}{from_file or 'a/?'} → {to_file or 'b/?'}{_ANSI_RESET}")
             continue
         if raw_line.startswith("@@"):
-            rendered.append(f"{_ANSI_HUNK}{raw_line}{_ANSI_RESET}")
+            rendered.append(f"{_ansi_hunk()}{raw_line}{_ANSI_RESET}")
             continue
         if raw_line.startswith("-"):
-            rendered.append(f"{_ANSI_MINUS}{raw_line}{_ANSI_RESET}")
+            rendered.append(f"{_ansi_minus()}{raw_line}{_ANSI_RESET}")
             continue
         if raw_line.startswith("+"):
-            rendered.append(f"{_ANSI_PLUS}{raw_line}{_ANSI_RESET}")
+            rendered.append(f"{_ansi_plus()}{raw_line}{_ANSI_RESET}")
             continue
         if raw_line.startswith(" "):
-            rendered.append(f"{_ANSI_DIM}{raw_line}{_ANSI_RESET}")
+            rendered.append(f"{_ansi_dim()}{raw_line}{_ANSI_RESET}")
             continue
         if raw_line:
             rendered.append(raw_line)
@@ -560,7 +617,7 @@ def _summarize_rendered_diff_sections(
         summary = f"… omitted {omitted_lines} diff line(s)"
         if omitted_files:
             summary += f" across {omitted_files} additional file(s)/section(s)"
-        rendered.append(f"{_ANSI_HUNK}{summary}{_ANSI_RESET}")
+        rendered.append(f"{_ansi_hunk()}{summary}{_ANSI_RESET}")
 
     return rendered
 
@@ -1130,8 +1187,6 @@ def get_cute_tool_message(
         return _wrap(f"┊ ◀️  back      {dur}")
     if tool_name == "browser_press":
         return _wrap(f"┊ ⌨️  press     {args.get('key', '?')}  {dur}")
-    if tool_name == "browser_close":
-        return _wrap(f"┊ 🚪 close     browser  {dur}")
     if tool_name == "browser_get_images":
         return _wrap(f"┊ 🖼️  images    extracting  {dur}")
     if tool_name == "browser_vision":
@@ -1230,31 +1285,10 @@ def _osc8_link(url: str, text: str) -> str:
     return f"\033]8;;{url}\033\\{text}\033]8;;\033\\"
 
 
-def honcho_session_line(workspace: str, session_name: str) -> str:
-    """One-line session indicator: `Honcho session: <clickable name>`."""
-    url = honcho_session_url(workspace, session_name)
-    linked_name = _osc8_link(url, f"{_SKY_BLUE}{session_name}{_ANSI_RESET}")
-    return f"{_DIM}Honcho session:{_ANSI_RESET} {linked_name}"
-
-
-def write_tty(text: str) -> None:
-    """Write directly to /dev/tty, bypassing stdout capture."""
-    try:
-        fd = os.open("/dev/tty", os.O_WRONLY)
-        os.write(fd, text.encode("utf-8"))
-        os.close(fd)
-    except OSError:
-        sys.stdout.write(text)
-        sys.stdout.flush()
-
-
 # =========================================================================
 # Context pressure display (CLI user-facing warnings)
 # =========================================================================
 
-# ANSI color codes for context pressure tiers
-_CYAN = "\033[36m"
-_YELLOW = "\033[33m"
 _BOLD = "\033[1m"
 _DIM_ANSI = "\033[2m"
 
@@ -1262,6 +1296,29 @@ _DIM_ANSI = "\033[2m"
 _BAR_FILLED = "▰"
 _BAR_EMPTY = "▱"
 _BAR_WIDTH = 20
+
+
+def _hex_to_ansi_fg(hex_color: str) -> str:
+    """Convert #RRGGBB to ANSI truecolor foreground escape. Returns "" on error."""
+    try:
+        h = hex_color.lstrip("#")
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        return f"\033[38;2;{r};{g};{b}m"
+    except Exception:
+        return ""
+
+
+def _ctx_color(pct: float) -> str:
+    """Return ANSI foreground color for context bar based on threshold percentage."""
+    skin = _get_skin()
+    if skin is None:
+        # Fallback: yellow for all levels
+        return f"{_BOLD}\033[33m"
+    if pct >= 0.95:
+        return f"{_BOLD}{_hex_to_ansi_fg(skin.get_ui_ext('context_bar_crit', '#ef5350'))}"
+    if pct >= 0.80:
+        return f"{_BOLD}{_hex_to_ansi_fg(skin.get_ui_ext('context_bar_warn', '#ffa726'))}"
+    return f"{_BOLD}{_hex_to_ansi_fg(skin.get_ui_ext('context_bar_normal', '#5f87d7'))}"
 
 
 def format_context_pressure(
@@ -1288,7 +1345,7 @@ def format_context_pressure(
     threshold_k = f"{threshold_tokens // 1000}k" if threshold_tokens >= 1000 else str(threshold_tokens)
     threshold_pct_int = int(threshold_percent * 100)
 
-    color = f"{_BOLD}{_YELLOW}"
+    color = _ctx_color(compaction_progress)
     icon = "⚠"
     if compression_enabled:
         hint = "compaction approaching"

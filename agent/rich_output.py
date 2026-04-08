@@ -43,15 +43,87 @@ from rich.text import Text
 
 logger = logging.getLogger(__name__)
 
-# Diff background colours — kept in sync with agent.display._ANSI_PLUS / _ANSI_MINUS
-# _ANSI_PLUS  = "\033[38;2;255;255;255;48;2;20;90;20m"   → rgb(20,90,20)
-# _ANSI_MINUS = "\033[38;2;255;255;255;48;2;120;20;20m"  → rgb(120,20,20)
-_DIFF_BG_ADD    = "#145a14"   # rgb(20,  90, 20)  — base addition background
-_DIFF_BG_DEL    = "#781414"   # rgb(120, 20, 20)  — base deletion background
-_DIFF_BG_ADD_HL = "#289428"   # rgb(40, 148, 40)  — bright add bg for changed chars
-_DIFF_BG_DEL_HL = "#b43030"   # rgb(180, 48, 48)  — bright del bg for changed chars
-_DIFF_FG_ADD_SIGIL = "#56D364"
-_DIFF_FG_DEL_SIGIL = "#FF7B72"
+# ---------------------------------------------------------------------------
+# Rich style → ANSI conversion (used by markdown cache builder)
+# ---------------------------------------------------------------------------
+
+def _rich_style_to_ansi(style_str: str) -> str:
+    """Convert a Rich style string to an ANSI escape sequence prefix.
+
+    Examples::
+
+        "#58A6FF underline"  → "\\033[38;2;88;166;255m\\033[4m"
+        "bold dim"           → "\\033[1m\\033[2m"
+        "strike"             → "\\033[9m"
+
+    Called once per key per skin activation (during cache rebuild), not per
+    character — no per-render overhead.
+    """
+    from rich.style import Style as _RichStyle
+    try:
+        parsed = _RichStyle.parse(style_str)
+        codes: list[str] = []
+
+        def _append_color(color, background: bool = False) -> None:
+            if color is None:
+                return
+            prefix = "48" if background else "38"
+            number = getattr(color, "number", None)
+            triplet = getattr(color, "triplet", None)
+            if triplet is not None:
+                codes.append(f"{prefix};2;{triplet.red};{triplet.green};{triplet.blue}")
+                return
+            if number is not None:
+                if 0 <= number <= 7:
+                    base = 40 if background else 30
+                    codes.append(str(base + number))
+                    return
+                if 8 <= number <= 15:
+                    base = 100 if background else 90
+                    codes.append(str(base + (number - 8)))
+                    return
+                codes.append(f"{prefix};5;{number}")
+
+        if parsed.bold:
+            codes.append("1")
+        if parsed.dim:
+            codes.append("2")
+        if parsed.italic:
+            codes.append("3")
+        if parsed.underline:
+            codes.append("4")
+        if parsed.reverse:
+            codes.append("7")
+        if parsed.strike:
+            codes.append("9")
+        _append_color(parsed.color, background=False)
+        _append_color(parsed.bgcolor, background=True)
+        return f"\033[{';'.join(codes)}m" if codes else ""
+    except Exception:
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# Skin-driven diff accessor
+# ---------------------------------------------------------------------------
+
+def _diff_cfg(key: str) -> str:
+    """Return the active skin's diff color/style for *key*, falling back to defaults."""
+    try:
+        from hermes_cli.skin_engine import get_active_skin
+        return get_active_skin().get_diff(key)
+    except Exception:
+        # skin_engine unavailable — fall back to hardcoded defaults
+        _FALLBACKS = {
+            "deletion_bg": "#781414", "addition_bg": "#145a14",
+            "deletion_fg": "#ffffff", "addition_fg": "#ffffff",
+            "deletion_marker_fg": "#FF7B72", "addition_marker_fg": "#56D364",
+            "intra_del_bg": "#9b1c1c", "intra_add_bg": "#166534",
+            "intra_del_fg": "#ff8080", "intra_add_fg": "#80ff80",
+            "line_number": "dim", "separator": "dim",
+            "hunk_header": "bold cyan", "filename": "bold bright_white",
+        }
+        return _FALLBACKS.get(key, "")
 
 # Minimum SequenceMatcher ratio to apply intra-line highlighting.
 # Below this the lines are too dissimilar and highlighting would be noise.
@@ -229,47 +301,78 @@ class FilePathFormatter:
 # Pygments → Rich markup formatter (internal)
 # ---------------------------------------------------------------------------
 
+# Mapping from logical token names (used in SYNTAX_SCHEMES) to Pygments token objects.
+# Built lazily on first call to _build_pygments_map().
+_LOGICAL_TO_PYGMENTS: "dict | None" = None
+
+
+def _get_logical_to_pygments() -> dict:
+    """Return the logical-name → Pygments-token mapping, built once."""
+    global _LOGICAL_TO_PYGMENTS
+    if _LOGICAL_TO_PYGMENTS is not None:
+        return _LOGICAL_TO_PYGMENTS
+    if not _PYGMENTS:
+        _LOGICAL_TO_PYGMENTS = {}
+        return _LOGICAL_TO_PYGMENTS
+    _LOGICAL_TO_PYGMENTS = {
+        "keyword":             Keyword,
+        "keyword_type":        Keyword.Type,
+        "name":                Name,
+        "name_builtin":        Name.Builtin,
+        "name_class":          Name.Class,
+        "name_function":       Name.Function,
+        "name_function_magic": Name.Function.Magic,
+        "name_decorator":      Name.Decorator,
+        "name_exception":      Name.Exception,
+        "comment":             Comment,
+        "comment_preproc":     Comment.Preproc,
+        "string":              String,
+        "string_doc":          String.Doc,
+        "string_escape":       String.Escape,
+        "string_regex":        String.Regex,
+        "number":              Number,
+        "operator":            Operator,
+        "operator_word":       Operator.Word,
+        "error":               Error,
+        "diff_deleted":        Generic.Deleted,
+        "diff_inserted":       Generic.Inserted,
+        # Aliases that share a token
+        "name_constant":       Name.Constant,
+        "name_tag":            Name.Tag,
+        "name_variable_magic": Name.Variable.Magic,
+        "string_interpol":     String.Interpol,
+        "generic_error":       Generic.Error,
+    }
+    return _LOGICAL_TO_PYGMENTS
+
+
+def _build_pygments_map(styles: dict) -> dict:
+    """Convert a logical-name → Rich-style dict to a Pygments-token → Rich-style dict.
+
+    Multiple logical names may map to the same Pygments token (e.g. name_class and
+    name_constant both → Name.Class/Name.Constant).  Last writer wins but
+    they're always the same value in well-formed schemes.
+    """
+    mapping = _get_logical_to_pygments()
+    result: dict = {}
+    for logical, style in styles.items():
+        token = mapping.get(logical)
+        if token is not None:
+            result[token] = style
+    return result
+
+
 class _PygmentsToRich:
-    """Convert a Pygments token stream to a Rich markup string."""
+    """Convert a Pygments token stream to a Rich markup string.
 
-    # Built lazily so the class-level dict isn't populated when Pygments is absent
-    _STYLES: dict = {}
+    Accepts a per-instance styles dict so syntax colors are skin-driven.
+    """
 
-    @classmethod
-    def _ensure_styles(cls) -> None:
-        if cls._STYLES or not _PYGMENTS:
-            return
-        cls._STYLES = {
-            Keyword: "blue",
-            Keyword.Type: "cyan",
-            Name: "white",
-            Name.Builtin: "cyan",
-            Name.Class: "yellow",
-            Name.Constant: "yellow",
-            Name.Decorator: "bright_cyan",
-            Name.Exception: "red",
-            Name.Function: "yellow",
-            Name.Function.Magic: "cyan",
-            Name.Tag: "blue",
-            Name.Variable.Magic: "cyan",
-            Comment: "dim green",
-            Comment.Preproc: "green",
-            String: "green",
-            String.Doc: "dim green",
-            String.Escape: "green",
-            String.Interpol: "green",
-            String.Regex: "magenta",
-            Number: "magenta",
-            Operator: "white",
-            Operator.Word: "blue",
-            Generic.Deleted: "red",
-            Generic.Inserted: "green",
-            Generic.Error: "red",
-            Error: "red",
-        }
+    def __init__(self, styles: dict) -> None:
+        # styles: Pygments-token → Rich style string (from _build_pygments_map)
+        self._styles = styles
 
     def format(self, tokens) -> str:
-        self._ensure_styles()
         parts: list[str] = []
         for ttype, value in tokens:
             style = self._resolve(ttype)
@@ -289,9 +392,9 @@ class _PygmentsToRich:
     def _resolve(self, ttype) -> Optional[str]:
         t = ttype
         while t is not None:
-            if t in self._STYLES:
-                return self._STYLES[t]
-            t = t.parent  # type: ignore[assignment]  # pygments Token hierarchy isn't typed
+            if t in self._styles:
+                return self._styles[t]
+            t = t.parent  # type: ignore[assignment]
         return None
 
 
@@ -303,11 +406,28 @@ class SyntaxHighlighter:
     """Highlight source code using Pygments, output as Rich markup or ANSI.
 
     Falls back to plain green when Pygments is unavailable.
+    The formatter is rebuilt from the active skin on each skin switch via refresh().
     """
 
     def __init__(self) -> None:
-        self._fmt = _PygmentsToRich()
+        self._fmt = self._build_fmt()
         self._detector = LanguageDetector()
+
+    def _build_fmt(self) -> "_PygmentsToRich":
+        """Build a _PygmentsToRich formatter from the currently active skin."""
+        if not _PYGMENTS:
+            return _PygmentsToRich({})
+        try:
+            from hermes_cli.skin_engine import get_active_skin
+            logical_styles = get_active_skin().get_syntax_styles()
+        except Exception:
+            # skin_engine unavailable — render plain text
+            logical_styles = {}
+        return _PygmentsToRich(_build_pygments_map(logical_styles))
+
+    def refresh(self) -> None:
+        """Rebuild the formatter from the active skin. Called by set_active_skin()."""
+        self._fmt = self._build_fmt()
 
     # -- Rich markup (for embedding in Rich Text / Panel) --------------------
 
@@ -429,7 +549,7 @@ def _make_header(filename: Optional[str], n_adds: int, n_dels: int) -> tuple[Tex
 
     parts: list[Text] = [
         Text("● ", style="bright_white"),
-        Text(filename or "?", style=Style(color="bright_white")),
+        Text(filename or "?", style=_diff_cfg("filename")),
         Text("   "),
     ]
     if n_adds > 0 and n_dels == 0:
@@ -445,11 +565,11 @@ def _make_header(filename: Optional[str], n_adds: int, n_dels: int) -> tuple[Tex
     return header, separator
 
 
+syntax_highlighter = SyntaxHighlighter()
+
+
 def _syntax_text(content: str, filename: Optional[str]) -> Text:
     """Return a Rich ``Text`` with Pygments syntax colours (foreground only).
-
-    ``syntax_highlighter`` is resolved at call time so this helper can be
-    defined before the module-level instance is created.
     Falls back to plain unstyled text on any error.
 
     Pygments always appends a trailing newline token to its output.  We strip
@@ -467,25 +587,37 @@ def _syntax_text(content: str, filename: Optional[str]) -> Text:
 
 
 def _flat_del(ln: int, content: str, filename: Optional[str] = None) -> Text:
-    """Render a deletion line with syntax highlighting and diff background."""
+    """Render a deletion line: syntax-highlighted foreground, uniform diff background."""
+    bg = _diff_cfg("deletion_bg")
     syn = _syntax_text(content, filename)
-    syn.stylize(Style(bgcolor=_DIFF_BG_DEL))
+    syn.stylize(Style(bgcolor=bg))
     return Text.assemble(
-        Text(f"{ln:>4} ", style=Style(dim=True, bgcolor=_DIFF_BG_DEL)),
-        Text("- ", style=Style(color=_DIFF_FG_DEL_SIGIL, bgcolor=_DIFF_BG_DEL)),
+        Text(f"{ln:>4} ", style=Style(dim=True, bgcolor=bg)),
+        Text("- ", style=Style(color=_diff_cfg("deletion_marker_fg"), bgcolor=bg)),
         syn,
     )
 
 
 def _flat_add(ln: int, content: str, filename: Optional[str] = None) -> Text:
-    """Render an addition line with syntax highlighting and diff background."""
+    """Render an addition line: syntax-highlighted foreground, uniform diff background."""
+    bg = _diff_cfg("addition_bg")
     syn = _syntax_text(content, filename)
-    syn.stylize(Style(bgcolor=_DIFF_BG_ADD))
+    syn.stylize(Style(bgcolor=bg))
     return Text.assemble(
-        Text(f"{ln:>4} ", style=Style(dim=True, bgcolor=_DIFF_BG_ADD)),
-        Text("+ ", style=Style(color=_DIFF_FG_ADD_SIGIL, bgcolor=_DIFF_BG_ADD)),
+        Text(f"{ln:>4} ", style=Style(dim=True, bgcolor=bg)),
+        Text("+ ", style=Style(color=_diff_cfg("addition_marker_fg"), bgcolor=bg)),
         syn,
     )
+
+
+def _pad_diff_row(row: Text, bg: str, width: Optional[int]) -> Text:
+    """Extend a diff row's background to the render width when possible."""
+    if not width:
+        return row
+    pad = width - row.cell_len
+    if pad > 0:
+        row.append(" " * pad, Style(bgcolor=bg))
+    return row
 
 
 def _intra_diff(
@@ -494,28 +626,27 @@ def _intra_diff(
     """Character-level diff between two line content strings.
 
     Returns ``([del_text], [add_text])`` — single-element lists for API
-    compatibility with the ``Text.assemble(*segments)`` call sites.
+    compatibility with ``Text.assemble(*segments)`` call sites.
 
-    Syntax colours are applied to the foreground; diff backgrounds are applied
-    as a separate layer so they never conflict with token colours:
+    Syntax colours are applied to the foreground via ``_syntax_text``; diff
+    backgrounds are applied as a separate layer so they never conflict with
+    token colours:
 
-    * Equal regions: syntax fg + dark diff background.
-    * Changed regions: syntax fg + **bright** diff background (bold), which
+    * Equal regions: syntax fg + base diff background.
+    * Changed regions: syntax fg + bright diff background, which
       visually highlights the change without clobbering syntax colours.
     """
     del_text = _syntax_text(old, filename)
     add_text = _syntax_text(new, filename)
 
-    # Base diff backgrounds across the full lines.
-    del_text.stylize(Style(bgcolor=_DIFF_BG_DEL))
-    add_text.stylize(Style(bgcolor=_DIFF_BG_ADD))
+    del_text.stylize(Style(bgcolor=_diff_cfg("deletion_bg")))
+    add_text.stylize(Style(bgcolor=_diff_cfg("addition_bg")))
 
-    # Brighter background on changed character ranges (overrides base bg).
     for tag, i1, i2, j1, j2 in SequenceMatcher(None, old, new, autojunk=False).get_opcodes():
         if tag in ("replace", "delete"):
-            del_text.stylize(Style(bgcolor=_DIFF_BG_DEL_HL), i1, i2)
+            del_text.stylize(Style(bgcolor=_diff_cfg("intra_del_bg")), i1, i2)
         if tag in ("replace", "insert"):
-            add_text.stylize(Style(bgcolor=_DIFF_BG_ADD_HL), j1, j2)
+            add_text.stylize(Style(bgcolor=_diff_cfg("intra_add_bg")), j1, j2)
 
     return [del_text], [add_text]
 
@@ -557,9 +688,9 @@ class DiffRenderer:
 
     # -- From unified diff text ----------------------------------------------
 
-    def from_unified(self, diff_text: str) -> Group:
+    def from_unified(self, diff_text: str, width: Optional[int] = None) -> Group:
         """Render an already-generated unified diff string."""
-        return self._style(diff_text.splitlines())
+        return self._style(diff_text.splitlines(), render_width=width)
 
     # -- ANSI lines (drop-in for _render_inline_unified_diff) ----------------
 
@@ -586,10 +717,9 @@ class DiffRenderer:
             color_system="truecolor",
             width=render_width,
         ).print(
-            self.from_unified(diff_text)
+            self.from_unified(diff_text, width=render_width)
         )
-        # Drop the trailing empty line that Console adds
-        lines = buf.getvalue().rstrip("\n").splitlines()
+        lines = buf.getvalue().splitlines()
         if max_lines and len(lines) > max_lines:
             omitted = len(lines) - max_lines
             footer = (
@@ -601,7 +731,12 @@ class DiffRenderer:
 
     # -- Internal rendering --------------------------------------------------
 
-    def _style(self, lines: list[str], file_path: Optional[str] = None) -> Group:
+    def _style(
+        self,
+        lines: list[str],
+        file_path: Optional[str] = None,
+        render_width: Optional[int] = None,
+    ) -> Group:
         """Render *lines* (from a unified diff) as a ``Group`` of Rich ``Text``.
 
         *file_path* — when supplied (from ``from_content()``), its basename is
@@ -616,6 +751,7 @@ class DiffRenderer:
         # Pass 2 — render with run-based pairing and intra-line highlighting.
         ln_old = ln_new = 0
         from_path: Optional[str] = None
+        seen_hunk = False
         del_run: list[tuple[int, str]] = []  # (ln_old, content)
         add_run: list[tuple[int, str]] = []
 
@@ -638,6 +774,8 @@ class DiffRenderer:
                 else:
                     pair_segs.append((None, None))
 
+            del_bg = _diff_cfg("deletion_bg")
+            add_bg = _diff_cfg("addition_bg")
             for i, (ln_old_saved, content) in enumerate(del_run):
                 # Paired deletions share the addition's new-file line number so
                 # del and add lines at the same logical position show the same
@@ -646,23 +784,25 @@ class DiffRenderer:
                 # monotonic and correct even when context lines split a del block.
                 ln = add_run[i][0] if i < n_pairs else ln_old_saved
                 if i < n_pairs and pair_segs[i][0] is not None:
-                    styled.append(Text.assemble(
-                        Text(f"{ln:>4} ", style=Style(dim=True, bgcolor=_DIFF_BG_DEL)),
-                        Text("- ", style=Style(color=_DIFF_FG_DEL_SIGIL, bgcolor=_DIFF_BG_DEL)),
+                    row = Text.assemble(
+                        Text(f"{ln:>4} ", style=Style(dim=True, bgcolor=del_bg)),
+                        Text("- ", style=Style(color=_diff_cfg("deletion_marker_fg"), bgcolor=del_bg)),
                         *pair_segs[i][0],
-                    ))
+                    )
+                    styled.append(_pad_diff_row(row, del_bg, render_width))
                 else:
-                    styled.append(_flat_del(ln, content, fname))
+                    styled.append(_pad_diff_row(_flat_del(ln, content, fname), del_bg, render_width))
 
             for i, (ln, content) in enumerate(add_run):
                 if i < n_pairs and pair_segs[i][1] is not None:
-                    styled.append(Text.assemble(
-                        Text(f"{ln:>4} ", style=Style(dim=True, bgcolor=_DIFF_BG_ADD)),
-                        Text("+ ", style=Style(color=_DIFF_FG_ADD_SIGIL, bgcolor=_DIFF_BG_ADD)),
+                    row = Text.assemble(
+                        Text(f"{ln:>4} ", style=Style(dim=True, bgcolor=add_bg)),
+                        Text("+ ", style=Style(color=_diff_cfg("addition_marker_fg"), bgcolor=add_bg)),
                         *pair_segs[i][1],
-                    ))
+                    )
+                    styled.append(_pad_diff_row(row, add_bg, render_width))
                 else:
-                    styled.append(_flat_add(ln, content, fname))
+                    styled.append(_pad_diff_row(_flat_add(ln, content, fname), add_bg, render_width))
 
             del_run.clear()
             add_run.clear()
@@ -679,16 +819,26 @@ class DiffRenderer:
                 if entry:
                     fname, n_adds, n_dels = entry
                     header, sep = _make_header(fname, n_adds, n_dels)
+                    if styled:  # blank line between file sections
+                        styled.append(Text(""))
                     styled.append(header)
                     styled.append(sep)
+                    seen_hunk = False
                 continue
 
             if line.startswith("@@"):
                 flush_runs()
+                if seen_hunk:
+                    styled.append(Text(""))
                 m = re.search(r"@@ -(\d+),?\d* \+(\d+),?\d* @@", line)
                 if m:
                     ln_old, ln_new = int(m.group(1)), int(m.group(2))
-                styled.append(Text(line, style=Style(color="cyan")))
+                # Indent hunk header to align with the line-number + sigil prefix
+                styled.append(Text.assemble(
+                    Text("       ", style="dim"),  # 4-digit num + space + 2-char sigil
+                    Text(line, style=_diff_cfg("hunk_header")),
+                ))
+                seen_hunk = True
                 continue
 
             if line.startswith("-"):
@@ -764,15 +914,83 @@ _MD_KBD_RE = re.compile(r"<kbd>(.*?)</kbd>", re.IGNORECASE)
 # Tags with no terminal equivalent — content is preserved, tags stripped
 _MD_STRIP_TAGS_RE = re.compile(r"</?(?:sup|sub)>", re.IGNORECASE)
 
+# Bold/italic/underline/mark — fixed ANSI SGR codes, not skin-driven
 _MD_BOLD_ANSI = "\033[1m"
 _MD_ITALIC_ANSI = "\033[3m"
 _MD_BOLD_ITALIC_ANSI = "\033[1;3m"
-_MD_STRIKE_ANSI = "\033[9m"
-_MD_CODE_ANSI = "\033[97m"
 _MD_U_ANSI = "\033[4m"
 _MD_MARK_ANSI = "\033[7m"
-_MD_LINK_ANSI = "\033[38;2;88;166;255m\033[4m"  # #58A6FF (GitHub dark-mode blue) + underline
+# Universal reset — always \033[0m regardless of skin
 _MD_RST_ANSI = "\033[0m"
+
+# ---------------------------------------------------------------------------
+# Skin-driven markdown ANSI cache
+# ---------------------------------------------------------------------------
+# None = not yet built; {} = built (even if all values are empty strings).
+# The None sentinel distinguishes "not yet built" from "built but empty".
+_MD_ANSI_CACHE: "Optional[dict[str, str]]" = None
+_MD_VAL_CACHE: "Optional[dict[str, Any]]" = None
+
+# Keys whose values are Rich style strings → converted to ANSI at cache build time
+_MD_STYLE_KEYS = frozenset({
+    "link", "code_span", "heading_1", "heading_2", "heading_3", "heading_4_6",
+    "blockquote", "hr", "task_checked", "task_unchecked", "strike",
+    "image_alt", "ol_numeral",
+})
+# Keys whose values are stored as-is (Unicode strings, lists)
+_MD_VALUE_KEYS = frozenset({"blockquote_marker", "bullets"})
+
+
+def _md_ansi(key: str) -> str:
+    """Return the ANSI escape string for a markdown style key."""
+    if _MD_ANSI_CACHE is None:
+        _rebuild_md_cache()
+    return (_MD_ANSI_CACHE or {}).get(key, "")
+
+
+def _md_val(key: str) -> Any:
+    """Return the raw value for a non-style markdown key (bullets list, marker char)."""
+    if _MD_VAL_CACHE is None:
+        _rebuild_md_cache()
+    return (_MD_VAL_CACHE or {}).get(key)
+
+
+def _rebuild_md_cache() -> None:
+    """Rebuild both markdown caches from the active skin.
+
+    Called lazily on first access and explicitly by set_active_skin() via
+    the registered invalidation callback.
+    """
+    global _MD_ANSI_CACHE, _MD_VAL_CACHE
+    defaults = None
+    get_md = None
+    try:
+        from hermes_cli.skin_engine import get_active_skin, _MARKDOWN_DEFAULTS
+        defaults = _MARKDOWN_DEFAULTS
+        get_md = get_active_skin().get_markdown
+    except Exception:
+        try:
+            from hermes_cli.skin_engine import _MARKDOWN_DEFAULTS
+            defaults = _MARKDOWN_DEFAULTS
+        except Exception:
+            pass
+    if defaults is None:
+        _MD_ANSI_CACHE = {}
+        _MD_VAL_CACHE = {}
+        return
+    if get_md is None:
+        get_md = lambda k, d=None: defaults.get(k, d)  # noqa: E731
+
+    ansi_cache: dict[str, str] = {}
+    val_cache: dict[str, Any] = {}
+    for key, default in defaults.items():
+        value = get_md(key, default)
+        if key in _MD_STYLE_KEYS:
+            ansi_cache[key] = _rich_style_to_ansi(value) if isinstance(value, str) else ""
+        elif key in _MD_VALUE_KEYS:
+            val_cache[key] = value
+    _MD_ANSI_CACHE = ansi_cache
+    _MD_VAL_CACHE = val_cache
 
 
 def apply_inline_markdown(line: str, reset_suffix: str = "", ref_map: "dict[str, str] | None" = None) -> str:
@@ -820,7 +1038,7 @@ def apply_inline_markdown(line: str, reset_suffix: str = "", ref_map: "dict[str,
     protected: list[str] = []
 
     def _protect_code(m: re.Match) -> str:  # type: ignore[type-arg]
-        protected.append(f"{_ANSI_INLINE_CODE_START}`{m.group(1)}`{rst}")
+        protected.append(f"{_md_ansi('code_span')}`{m.group(1)}`{rst}")
         return f"\x00{len(protected) - 1}\x00"
 
     line = _MD_CODE_RE.sub(_protect_code, line)
@@ -852,10 +1070,10 @@ def apply_inline_markdown(line: str, reset_suffix: str = "", ref_map: "dict[str,
     line = _MD_ITALIC_UNDER_RE.sub(_span(_MD_ITALIC_ANSI), line)
 
     # Step 5: strikethrough
-    line = _MD_STRIKE_RE.sub(_span(_MD_STRIKE_ANSI), line)
+    line = _MD_STRIKE_RE.sub(_span(_md_ansi("strike")), line)
 
     # Step 6a: images (before links — ![  prefix overlaps)
-    line = _MD_IMAGE_RE.sub(lambda m: f"\033[2m[img: {m.group(1)}]\033[0m{reset_suffix}", line)
+    line = _MD_IMAGE_RE.sub(lambda m: f"{_md_ansi('image_alt')}[img: {m.group(1)}]{_MD_RST_ANSI}{reset_suffix}", line)
 
     # Step 6a2: reference link resolution (before inline link step)
     if ref_map:
@@ -864,7 +1082,7 @@ def apply_inline_markdown(line: str, reset_suffix: str = "", ref_map: "dict[str,
             text_part = m.group(1)
             url = ref_map.get(text_part.lower())
             if url:
-                return f"{_MD_LINK_ANSI}{text_part} ({url})\033[0m{reset_suffix}"
+                return f"{_md_ansi('link')}{text_part} ({url}){_MD_RST_ANSI}{reset_suffix}"
             return m.group(0)
 
         def _resolve_use(m: re.Match) -> str:  # type: ignore[type-arg]
@@ -873,7 +1091,7 @@ def apply_inline_markdown(line: str, reset_suffix: str = "", ref_map: "dict[str,
             ref_key = m.group(2).lower()
             url = ref_map.get(ref_key)
             if url:
-                return f"{_MD_LINK_ANSI}{text_part} ({url})\033[0m{reset_suffix}"
+                return f"{_md_ansi('link')}{text_part} ({url}){_MD_RST_ANSI}{reset_suffix}"
             return m.group(0)
 
         # [text][] collapsed ref — must run before [text][ref] to avoid partial match
@@ -881,7 +1099,7 @@ def apply_inline_markdown(line: str, reset_suffix: str = "", ref_map: "dict[str,
         line = _MD_REF_LINK_USE_RE.sub(_resolve_use, line)
 
     # Step 6b: links — bright-blue underline + URL for copy/ctrl+click
-    line = _MD_LINK_RE.sub(lambda m: f"{_MD_LINK_ANSI}{m.group(1)} ({m.group(2)})\033[0m{reset_suffix}", line)
+    line = _MD_LINK_RE.sub(lambda m: f"{_md_ansi('link')}{m.group(1)} ({m.group(2)}){_MD_RST_ANSI}{reset_suffix}", line)
 
     # Step 6b2: bare URLs (https?://...) — style the same as markdown links.
     # Trailing punctuation characters are stripped from the URL and re-appended
@@ -889,7 +1107,7 @@ def apply_inline_markdown(line: str, reset_suffix: str = "", ref_map: "dict[str,
     def _bare_url(m: re.Match) -> str:  # type: ignore[type-arg]
         url = m.group(0).rstrip(".,;:!?)")
         tail = m.group(0)[len(url):]
-        return f"{_MD_LINK_ANSI}{url}\033[0m{reset_suffix}{tail}"
+        return f"{_md_ansi('link')}{url}{_MD_RST_ANSI}{reset_suffix}{tail}"
 
     line = _MD_BARE_URL_RE.sub(_bare_url, line)
 
@@ -899,11 +1117,11 @@ def apply_inline_markdown(line: str, reset_suffix: str = "", ref_map: "dict[str,
     line = _MD_I_RE.sub(lambda m: f"{_MD_ITALIC_ANSI}{m.group(1)}{rst}", line)
     line = _MD_STRONG_RE.sub(lambda m: f"{_MD_BOLD_ANSI}{m.group(1)}{rst}", line)
     line = _MD_B_RE.sub(lambda m: f"{_MD_BOLD_ANSI}{m.group(1)}{rst}", line)
-    line = _MD_S_RE.sub(lambda m: f"{_MD_STRIKE_ANSI}{m.group(1)}{rst}", line)
-    line = _MD_STRIKE_TAG_RE.sub(lambda m: f"{_MD_STRIKE_ANSI}{m.group(1)}{rst}", line)
-    line = _MD_DEL_RE.sub(lambda m: f"{_MD_STRIKE_ANSI}{m.group(1)}{rst}", line)
-    line = _MD_CODE_TAG_RE.sub(lambda m: f"{_MD_CODE_ANSI}{m.group(1)}{rst}", line)
-    line = _MD_KBD_RE.sub(lambda m: f"{_MD_CODE_ANSI}{m.group(1)}{rst}", line)
+    line = _MD_S_RE.sub(lambda m: f"{_md_ansi('strike')}{m.group(1)}{rst}", line)
+    line = _MD_STRIKE_TAG_RE.sub(lambda m: f"{_md_ansi('strike')}{m.group(1)}{rst}", line)
+    line = _MD_DEL_RE.sub(lambda m: f"{_md_ansi('strike')}{m.group(1)}{rst}", line)
+    line = _MD_CODE_TAG_RE.sub(lambda m: f"{_md_ansi('code_span')}{m.group(1)}{rst}", line)
+    line = _MD_KBD_RE.sub(lambda m: f"{_md_ansi('code_span')}{m.group(1)}{rst}", line)
 
     # Step 6d: tags with no terminal equivalent — strip tags, keep content
     line = _MD_STRIP_TAGS_RE.sub("", line)
@@ -937,16 +1155,7 @@ _FENCE_INFO_RE = r"[^\s`]*"
 _FENCE_OPEN_LINE_RE = re.compile(rf"^(`{{3,}})\s*({_FENCE_INFO_RE})$")
 _FENCE_CLOSE_LINE_RE = re.compile(r"^(`+)\s*$")
 
-_HEADING_STYLES = {
-    1: "\033[1;97m",
-    2: "\033[1;37m",
-    3: "\033[1m",
-    4: "\033[1;2m",
-    5: "\033[1;2m",
-    6: "\033[1;2m",
-}
-_BLOCKQUOTE_ANSI = "\033[2m"
-_BULLETS = ["•", "◦", "▸", "·"]
+_MD_HEADING_KEYS = {1: "heading_1", 2: "heading_2", 3: "heading_3"}
 
 
 def apply_block_line(line: str, reset_suffix: str = "") -> str:
@@ -980,7 +1189,8 @@ def apply_block_line(line: str, reset_suffix: str = "") -> str:
     if m:
         level = len(m.group(1))
         text = m.group(2)
-        style = _HEADING_STYLES.get(level, "\033[1;2m")
+        key = _MD_HEADING_KEYS.get(level, "heading_4_6")
+        style = _md_ansi(key)
         rendered_text = apply_inline_markdown(text, reset_suffix=style)
         return f"{style}{rendered_text}{_MD_RST_ANSI}"
 
@@ -988,7 +1198,8 @@ def apply_block_line(line: str, reset_suffix: str = "") -> str:
     stripped = line.rstrip()
     if _MD_HR_RE.match(stripped):
         cols = shutil.get_terminal_size((80, 24)).columns
-        return f"\033[2m{'─' * cols}\033[0m"
+        hr_ansi = _md_ansi("hr")
+        return f"{hr_ansi}{'─' * cols}{_MD_RST_ANSI}"
 
     # Blockquote — render with depth-aware gutter
     m = _MD_BQ_LEVEL_RE.match(line)
@@ -997,25 +1208,28 @@ def apply_block_line(line: str, reset_suffix: str = "") -> str:
         content = m.group(2)
         depth = raw_prefix.count('>')
         indent = "  " * (depth - 1)
-        dim_prefix = "\033[2m" * min(depth - 1, 2)
-        ansi = dim_prefix + _BLOCKQUOTE_ANSI
+        bq_ansi = _md_ansi("blockquote")
+        dim_prefix = bq_ansi * min(depth - 1, 2)
+        ansi = dim_prefix + bq_ansi
+        marker = _md_val("blockquote_marker") or "▌"
         content_rendered = apply_inline_markdown(content, reset_suffix=ansi)
-        return f"{indent}{ansi}▌ {content_rendered}\033[0m"
+        return f"{indent}{ansi}{marker} {content_rendered}{_MD_RST_ANSI}"
 
     # Unordered list — bullet symbol by indent depth
     m = _MD_UL_RE.match(line)
     if m:
         indent, _marker, content = m.group(1), m.group(2), m.group(3)
         level = len(indent) // 2
-        bullet = _BULLETS[min(level, len(_BULLETS) - 1)]
+        bullets = _md_val("bullets") or ["•", "◦", "▸", "·"]
+        bullet = bullets[min(level, len(bullets) - 1)]
         # Task list detection
         tm = _MD_TASK_RE.match(content)
         if tm:
             checkbox_char, rest = tm.group(1), tm.group(2)
             if checkbox_char.lower() == 'x':
-                checkbox_sym = f"\033[1;32m✓\033[0m{reset_suffix}"
+                checkbox_sym = f"{_md_ansi('task_checked')}✓{_MD_RST_ANSI}{reset_suffix}"
             else:
-                checkbox_sym = f"\033[2m○\033[0m{reset_suffix}"
+                checkbox_sym = f"{_md_ansi('task_unchecked')}○{_MD_RST_ANSI}{reset_suffix}"
             rest_rendered = apply_inline_markdown(rest, reset_suffix=reset_suffix)
             return f"{indent}{bullet} {checkbox_sym} {rest_rendered}"
         return f"{indent}{bullet} {apply_inline_markdown(content, reset_suffix=reset_suffix)}"
@@ -1024,9 +1238,8 @@ def apply_block_line(line: str, reset_suffix: str = "") -> str:
     m = _MD_OL_RE.match(line)
     if m:
         indent, numeral, content = m.group(1), m.group(2), m.group(3)
-        level = len(indent) // 2
-        _ = level  # reserved for future indent-aware styling
-        return f"{indent}\033[2m{numeral}.\033[0m{reset_suffix} {apply_inline_markdown(content, reset_suffix=reset_suffix)}"
+        ol_ansi = _md_ansi("ol_numeral")
+        return f"{indent}{ol_ansi}{numeral}.{_MD_RST_ANSI}{reset_suffix} {apply_inline_markdown(content, reset_suffix=reset_suffix)}"
 
     return line
 
@@ -1221,7 +1434,7 @@ def render_stateful_blocks(text: str) -> str:
     def _render_bq_depth(content: str, depth: int) -> str:
         indent = "  " * (depth - 1)
         dim_prefix = "\033[2m" * min(depth - 1, 2)
-        ansi = dim_prefix + _BLOCKQUOTE_ANSI
+        ansi = dim_prefix + _md_ansi("blockquote")
         content_rendered = apply_inline_markdown(content, reset_suffix=ansi, ref_map=ref_map)
         return f"{indent}{ansi}▌ {content_rendered}\033[0m"
 
@@ -1263,7 +1476,7 @@ def render_stateful_blocks(text: str) -> str:
                     pm = _MD_BQ_LEVEL_RE.match(_pending)
                     _emit(_render_bq_depth(pm.group(2), pm.group(1).count('>')))
                     _pending = None
-                _emit(f"{_BLOCKQUOTE_ANSI}▌ {_MD_RST_ANSI}{line}")
+                _emit(f"{_md_ansi('blockquote')}▌ {_MD_RST_ANSI}{line}")
             else:
                 _bq_depth = 0
                 _emit(line)
@@ -1290,13 +1503,13 @@ def render_stateful_blocks(text: str) -> str:
                         pending_inner = pm.group(2)  # type: ignore[union-attr]
                         if (_SETEXT_H1_RE.match(inner) or _SETEXT_H2_RE.match(inner)) and _is_heading_candidate(pending_inner):
                             level = 1 if _SETEXT_H1_RE.match(inner) else 2
-                            style = _HEADING_STYLES[level]
+                            style = _md_ansi(_MD_HEADING_KEYS.get(level, "heading_4_6"))
                             rendered_text = apply_inline_markdown(pending_inner, reset_suffix=style, ref_map=ref_map)
                             heading_out = f"{style}{rendered_text}{_MD_RST_ANSI}"
                             pending_depth = pm.group(1).count('>')  # type: ignore[union-attr]
                             pending_indent = "  " * (pending_depth - 1)
                             dim_prefix = "\033[2m" * min(pending_depth - 1, 2)
-                            ansi = dim_prefix + _BLOCKQUOTE_ANSI
+                            ansi = dim_prefix + _md_ansi("blockquote")
                             _pending = None
                             _emit(f"{pending_indent}{ansi}▌ {heading_out}\033[0m")
                             _bq_depth = depth
@@ -1385,7 +1598,7 @@ def render_stateful_blocks(text: str) -> str:
         if _SETEXT_H1_RE.match(line) or _SETEXT_H2_RE.match(line):
             if _is_heading_candidate(_pending):
                 level = 1 if _SETEXT_H1_RE.match(line) else 2
-                style = _HEADING_STYLES[level]
+                style = _md_ansi(_MD_HEADING_KEYS.get(level, "heading_4_6"))
                 rendered_text = apply_inline_markdown(_pending, reset_suffix=style, ref_map=ref_map)  # type: ignore[arg-type]
                 heading_out = f"{style}{rendered_text}{_MD_RST_ANSI}"
                 _pending = None
@@ -1537,7 +1750,7 @@ class StreamingBlockBuffer:
                         self._pending = None
                         self._emit_next = line
                         return self._render_bq_depth(inner, depth)
-                return f"{_BLOCKQUOTE_ANSI}▌ {_MD_RST_ANSI}{line}"
+                return f"{_md_ansi('blockquote')}▌ {_MD_RST_ANSI}{line}"
             if line == "":
                 # Flush pending BQ line before exiting blockquote
                 if self._pending is not None:
@@ -1577,13 +1790,13 @@ class StreamingBlockBuffer:
                     pending_inner = pm.group(2)  # type: ignore[union-attr]
                     if (_SETEXT_H1_RE.match(inner) or _SETEXT_H2_RE.match(inner)) and _is_heading_candidate(pending_inner):
                         level = 1 if _SETEXT_H1_RE.match(inner) else 2
-                        style = _HEADING_STYLES[level]
+                        style = _md_ansi(_MD_HEADING_KEYS.get(level, "heading_4_6"))
                         rendered_text = apply_inline_markdown(pending_inner, reset_suffix=style, ref_map=self._ref_map)
                         heading_out = f"{style}{rendered_text}{_MD_RST_ANSI}"
                         pending_depth = pm.group(1).count('>')  # type: ignore[union-attr]
                         pending_indent = "  " * (pending_depth - 1)
                         dim_prefix = "\033[2m" * min(pending_depth - 1, 2)
-                        ansi = dim_prefix + _BLOCKQUOTE_ANSI
+                        ansi = dim_prefix + _md_ansi("blockquote")
                         self._pending = None
                         self._bq_depth = depth
                         return f"{pending_indent}{ansi}▌ {heading_out}\033[0m"
@@ -1683,7 +1896,7 @@ class StreamingBlockBuffer:
         if _SETEXT_H1_RE.match(line) or _SETEXT_H2_RE.match(line):
             if _is_heading_candidate(self._pending):
                 level = 1 if _SETEXT_H1_RE.match(line) else 2
-                style = _HEADING_STYLES[level]
+                style = _md_ansi(_MD_HEADING_KEYS.get(level, "heading_4_6"))
                 rendered_text = apply_inline_markdown(self._pending, reset_suffix=style, ref_map=self._ref_map)  # type: ignore[arg-type]
                 heading = f"{style}{rendered_text}{_MD_RST_ANSI}"
                 self._pending = None
@@ -1710,7 +1923,7 @@ class StreamingBlockBuffer:
     def _render_bq_depth(self, content: str, depth: int) -> str:
         indent = "  " * (depth - 1)
         dim_prefix = "\033[2m" * min(depth - 1, 2)
-        ansi = dim_prefix + _BLOCKQUOTE_ANSI
+        ansi = dim_prefix + _md_ansi("blockquote")
         content_rendered = apply_inline_markdown(content, reset_suffix=ansi, ref_map=self._ref_map)
         return f"{indent}{ansi}▌ {content_rendered}\033[0m"
 
@@ -1794,7 +2007,7 @@ def _number_code_lines(highlighted: str) -> str:
     return "\n".join(out)
 
 
-def format_response(text: str, reset_suffix: str = "") -> str:
+def format_response(text: str) -> str:
     """Apply syntax highlighting to fenced code blocks in a complete response string.
 
     Pass 1: replaces each fenced code block with an ANSI-highlighted version.
@@ -1804,11 +2017,6 @@ def format_response(text: str, reset_suffix: str = "") -> str:
     ``apply_inline_markdown`` (headings, hr, blockquotes, lists, bold, italic,
     code spans, etc.).
     Suitable for the non-streaming Rich Panel display path.
-
-    ``reset_suffix`` is threaded into Pass 3 so that inline elements (bold,
-    italic, code spans) reset back to the caller's text colour rather than
-    terminal default — matching the streaming path's ``reset_suffix=_tc``
-    behaviour.
     """
     _hl = SyntaxHighlighter()
     _det = LanguageDetector()
@@ -1834,11 +2042,7 @@ def format_response(text: str, reset_suffix: str = "") -> str:
     # the final newline if the original text ended with one.
     lines = text.splitlines()
     result = "\n".join(
-        l if "\x1b" in l else apply_inline_markdown(
-            apply_block_line(l, reset_suffix=reset_suffix),
-            reset_suffix=reset_suffix,
-            ref_map=ref_map,
-        )
+        l if "\x1b" in l else apply_inline_markdown(apply_block_line(l), ref_map=ref_map)
         for l in lines
     )
     if text.endswith("\n"):
@@ -1850,8 +2054,10 @@ class StreamingCodeBlockHighlighter:
     """State machine that syntax-highlights fenced code blocks during streaming.
 
     Feed lines one at a time with ``process_line()``.  Regular lines are
-    returned immediately; lines inside a code block are buffered and the
-    entire highlighted block is returned when the closing fence arrives.
+    returned immediately and unchanged; lines inside a code block are buffered
+    and the entire highlighted block is returned when the closing fence
+    arrives. Inline markdown on prose lines is handled later by the CLI's
+    markdown pipeline, not here.
 
     Example usage in a line-emission loop::
 
@@ -1866,8 +2072,7 @@ class StreamingCodeBlockHighlighter:
             emit(tail)
     """
 
-    # Matches an opening fence: 3+ backticks, optional language hint supporting
-    # common Markdown info-string punctuation like c++, f#, or shell-session.
+    # Matches an opening fence: 3+ backticks, optional language hint (word chars)
     _FENCE_OPEN_RE = re.compile(rf"^(`{{3,}})\s*({_FENCE_INFO_RE})$")
     # Matches a closing fence: 3+ backticks, optional trailing whitespace only
     _FENCE_CLOSE_RE = re.compile(r"^(`+)\s*$")
@@ -1896,7 +2101,7 @@ class StreamingCodeBlockHighlighter:
                 self._lang = m.group(2) or None
                 self._buf = []
                 return None  # suppress opening fence — will re-emit with block
-            return _highlight_inline_code(line)  # prose: style any inline code spans
+            return line  # prose passes through; CLI applies markdown rendering
 
         # Inside a code block — closing fence: >= fence_depth backticks, nothing else
         m = self._FENCE_CLOSE_RE.match(stripped)
@@ -1917,6 +2122,7 @@ class StreamingCodeBlockHighlighter:
         self._lang = None
         self._fence_depth = 3
         self._buf = []
+        self._hl.refresh()
 
     def _flush_block(self) -> str:
         code = "\n".join(self._buf)
@@ -1963,12 +2169,3 @@ def clean_command_output(content: str) -> str:
 
     result = "\n".join(out)
     return re.sub(r"\n\s*\n\s*\n", "\n\n", result).strip()
-
-
-# ---------------------------------------------------------------------------
-# Module-level convenience singletons
-# ---------------------------------------------------------------------------
-
-lang_detector = LanguageDetector()
-syntax_highlighter = SyntaxHighlighter()
-diff_renderer = DiffRenderer()

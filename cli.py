@@ -88,15 +88,29 @@ _SPINNER_STYLES: dict[str, tuple[str, ...]] = {
     "bold":     ("▲", "▼", "◀", "▶"),                                    # all A, bold arrows
     "open":     ("▷", "▽", "◁", "△"),                                    # all A, open triangles
     "cross":    ("┼", "╀", "╁", "╂"),                                    # all A, cross rotation
+    # ── Multi-char combos (EAW Narrow — title-safe, consistent 2-cell width) ────
+    "wave":     ("⠁⠈", "⠂⠐", "⠄⠠", "⡀⢀", "⠠⠄", "⠐⠂", "⠈⠁"),            # braille wave
+    "box2":     ("┌┐", "└┘", "├┤", "┬┴"),                                  # paired box corners; all A
+    # ── More symbols (EAW Ambiguous — homogeneous set, title-safe) ───────────
+    "shade":    ("░", "▒", "▓", "█", "▓", "▒"),                            # all A, shading fill
+    "cards":    ("♠", "♥", "♣", "♤", "♡", "♧"),                            # all A (drop ♦♢ = N)
+    "music":    ("♩", "♪", "♬", "♭", "♯"),                                 # all A (drop ♫♮ = N)
+    # ── More symbols (EAW Narrow — title-safe) ───────────────────────────────
+    "chess":    ("♟", "♞", "♝", "♜", "♛", "♚"),                            # all N
     # ── Variable-width (prompt only — title falls back to dots) ────────────────
     # halves: ◐◓◑◒ — mixed EAW (A+N), shifts in proportional title fonts
-    "halves":   ("◐", "◓", "◑", "◒"),                                    # clockwise; mixed A+N
+    "halves":   ("◐", "◓", "◑", "◒"),                                      # clockwise; mixed A+N
     "arrows":   ("←", "↖", "↑", "↗", "→", "↘", "↓", "↙"),
     "star":     ("✶", "✷", "✸", "✹", "✺", "✹", "✸", "✷"),
     "pulse":    ("◜", "◠", "◝", "◞", "◡", "◟"),
     # ── Emoji (EAW Wide — 2-wide, title-safe) ──────────────────────────────────
     "moon":     ("🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘"),
     "clock":    ("🕛", "🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚"),
+    "earth":    ("🌍", "🌎", "🌏"),                                          # all W, rotating globe
+    "orbs":     ("🔴", "🟠", "🟡", "🟢", "🔵", "🟣"),                       # all W, rainbow
+    "hearts":   ("🧡", "💛", "💚", "💙", "💜", "🤍"),                       # all W (drop ❤ = N)
+    "plants":   ("🌱", "🌿", "🍀", "🌾"),                                   # all W, growth
+    "zodiac":   ("♈", "♉", "♊", "♋", "♌", "♍", "♎", "♏", "♐", "♑", "♒", "♓"),  # all W
     "none":     ("",),
 }
 _COMMAND_SPINNER_FRAMES = _SPINNER_STYLES["dots"]  # overridden at CLI init from config/skin
@@ -107,11 +121,13 @@ _TITLE_SPINNER_FRAMES   = _SPINNER_STYLES["dots"]  # overridden at CLI init; may
 # "Variable-width" styles (pulse, arrows, star) fall back to "dots" in the title bar
 # unless the user explicitly sets display.title_spinner_style.
 _TITLE_SAFE_STYLES: frozenset[str] = frozenset({
-    "dots", "bounce", "spin", "wide",      # Braille N — fixed-width by design
-    "grow", "fill", "box", "triangle",     # Ambiguous but homogeneous set
-    "circle", "zoom", "bold", "open", "cross",  # Ambiguous homogeneous sets
-    "weather", "dice", "floral", "corner", # Narrow N symbols
-    "moon", "clock",                       # Emoji W — square by spec
+    "dots", "bounce", "spin", "wide", "wave",          # Braille N
+    "grow", "fill", "box", "triangle",                 # Ambiguous homogeneous
+    "circle", "zoom", "bold", "open", "cross",         # Ambiguous homogeneous
+    "shade", "cards", "music", "box2",                 # Ambiguous homogeneous
+    "weather", "dice", "floral", "corner", "chess",    # Narrow N symbols
+    "moon", "clock", "earth", "orbs", "hearts",        # Emoji W
+    "plants", "zodiac",                                # Emoji W
     "none",
     # NOT included: halves (mixed A+N), pulse/arrows/star (variable-width)
 })

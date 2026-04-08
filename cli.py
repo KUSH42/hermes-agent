@@ -65,7 +65,18 @@ from agent.usage_pricing import (
 )
 from hermes_cli.banner import _format_context_length
 
-_COMMAND_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+_SPINNER_STYLES: dict[str, tuple[str, ...]] = {
+    "dots":    ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"),
+    "bounce":  ("⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈"),
+    "grow":    ("▁", "▂", "▃", "▄", "▅", "▆", "▇", "█", "▇", "▆", "▅", "▄", "▃", "▂"),
+    "arrows":  ("←", "↖", "↑", "↗", "→", "↘", "↓", "↙"),
+    "star":    ("✶", "✷", "✸", "✹", "✺", "✹", "✸", "✷"),
+    "moon":    ("🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘"),
+    "pulse":   ("◜", "◠", "◝", "◞", "◡", "◟"),
+    "clock":   ("🕛", "🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚"),
+    "none":    ("",),
+}
+_COMMAND_SPINNER_FRAMES = _SPINNER_STYLES["dots"]  # overridden at CLI init from config/skin
 
 
 # Load .env from ~/.hermes/.env first, then project root as dev fallback.
@@ -1301,10 +1312,29 @@ class HermesCLI:
         # Inline diff previews for write actions (display.inline_diffs in config.yaml)
         self._inline_diffs_enabled = CLI_CONFIG["display"].get("inline_diffs", True)
 
+        # Spinner style — skin takes priority over display.spinner_style config key
+        try:
+            from hermes_cli.skin_engine import get_active_skin as _get_skin
+            _skin_style = _get_skin().get_spinner_style()
+        except Exception:
+            _skin_style = None
+        _spinner_key = _skin_style or CLI_CONFIG["display"].get("spinner_style", "dots")
+        global _COMMAND_SPINNER_FRAMES
+        _COMMAND_SPINNER_FRAMES = _SPINNER_STYLES.get(_spinner_key, _SPINNER_STYLES["dots"])
+
+        # Terminal tab/title — update with spinner frame while agent is active
+        self._title_spinner = CLI_CONFIG["display"].get("title_spinner", True)
+        self._title_base = CLI_CONFIG["display"].get("title_base", "Hermes")
+
         # Syntax-highlighted code preview for execute_code (display.code_highlight in config.yaml)
         self._code_highlight_enabled = CLI_CONFIG["display"].get("code_highlight", True)
-        from agent.display import set_code_highlight_active
+        from agent.display import set_code_highlight_active, set_diff_limits, set_preview_max_lines
         set_code_highlight_active(self._code_highlight_enabled)
+        set_diff_limits(
+            max_lines=CLI_CONFIG["display"].get("diff_max_lines", 80),
+            max_files=CLI_CONFIG["display"].get("diff_max_files", 6),
+        )
+        set_preview_max_lines(CLI_CONFIG["display"].get("preview_max_lines", 40))
 
         # Streaming display state
         self._stream_buf = ""        # Partial line buffer for line-buffered rendering
@@ -7003,7 +7033,7 @@ class HermesCLI:
         if self._command_running:
             return [("class:prompt-working", f"{self._command_spinner_frame()} {state_suffix}")]
         if self._agent_running:
-            return [("class:prompt-working", f"⚕ {state_suffix}")]
+            return [("class:prompt-working", f"{self._command_spinner_frame()} {state_suffix}")]
         if self._voice_mode:
             return [("class:voice-prompt", f"🎤 {state_suffix}")]
         return [("class:prompt", symbol)]
@@ -8279,18 +8309,28 @@ class HermesCLI:
             import time as _time
 
             last_idle_refresh = 0.0
+            last_title: str = ""
             while not self._should_exit:
                 if not self._app:
                     _time.sleep(0.1)
                     continue
-                if self._command_running:
+                if self._command_running or self._agent_running:
                     self._invalidate(min_interval=0.1)
+                    if self._title_spinner:
+                        frame = self._command_spinner_frame()
+                        new_title = f"{frame} {self._title_base}"
+                        if new_title != last_title:
+                            _set_terminal_title(new_title)
+                            last_title = new_title
                     _time.sleep(0.1)
                 else:
                     now = _time.monotonic()
                     if now - last_idle_refresh >= 1.0:
                         last_idle_refresh = now
                         self._invalidate(min_interval=1.0)
+                        if self._title_spinner and last_title != self._title_base:
+                            _set_terminal_title(self._title_base)
+                            last_title = self._title_base
                     _time.sleep(0.2)
 
         spinner_thread = threading.Thread(target=spinner_loop, daemon=True)

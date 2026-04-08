@@ -35,6 +35,7 @@ All fields are optional. Missing values inherit from the ``default`` skin.
 
     # Spinner: customize the animated spinner during API calls
     spinner:
+      style: dots                         # TUI prompt spinner: dots|bounce|grow|arrows|star|moon|pulse|clock|none
       waiting_faces:                      # Faces shown while waiting for API
         - "(⚔)"
         - "(⛨)"
@@ -521,6 +522,10 @@ class SkinConfig:
         """Get a spinner list (faces, verbs, etc.)."""
         return self.spinner.get(key, [])
 
+    def get_spinner_style(self) -> Optional[str]:
+        """Return the TUI spinner style key for this skin, or None to use config default."""
+        return self.spinner.get("style") or None
+
     def get_spinner_wings(self) -> List[Tuple[str, str]]:
         """Get spinner wing pairs, or empty list if none."""
         raw = self.spinner.get("wings", [])
@@ -591,6 +596,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "session_border": "#8B8682",
         },
         "spinner": {
+            "style": "dots",
             # Empty = use hardcoded defaults in display.py
         },
         "branding": {
@@ -631,6 +637,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "session_border": "#6E584B",
         },
         "spinner": {
+            "style": "arrows",
             "waiting_faces": ["(⚔)", "(⛨)", "(▲)", "(<>)", "(/)"],
             "thinking_faces": ["(⚔)", "(⛨)", "(▲)", "(⌁)", "(<>)"],
             "thinking_verbs": [
@@ -703,7 +710,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "session_label": "#888888",
             "session_border": "#555555",
         },
-        "spinner": {},
+        "spinner": {"style": "none"},
         "branding": {
             "agent_name": "Hermes Agent",
             "welcome": "Welcome to Hermes Agent! Type your message or /help for commands.",
@@ -741,7 +748,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "session_label": "#7eb8f6",
             "session_border": "#4b5563",
         },
-        "spinner": {},
+        "spinner": {"style": "pulse"},
         "branding": {
             "agent_name": "Hermes Agent",
             "welcome": "Welcome to Hermes Agent! Type your message or /help for commands.",
@@ -780,6 +787,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "session_border": "#496884",
         },
         "spinner": {
+            "style": "bounce",
             "waiting_faces": ["(≈)", "(Ψ)", "(∿)", "(◌)", "(◠)"],
             "thinking_faces": ["(Ψ)", "(∿)", "(≈)", "(⌁)", "(◌)"],
             "thinking_verbs": [
@@ -853,6 +861,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "session_border": "#656565",
         },
         "spinner": {
+            "style": "grow",
             "waiting_faces": ["(◉)", "(◌)", "(◬)", "(⬤)", "(::)"],
             "thinking_faces": ["(◉)", "(◬)", "(◌)", "(○)", "(●)"],
             "thinking_verbs": [

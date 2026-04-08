@@ -87,6 +87,10 @@ _SPINNER_STYLES: dict[str, tuple[str, ...]] = {
                  "⠋⠉⠉", "⠛⠉⠉", "⠛⠋⠉", "⠛⠛⠉", "⠛⠛⠋", "⠛⠛⠛",
                  "⠟⠛⠛", "⠿⠛⠛", "⠿⠟⠛", "⠿⠿⠛", "⠿⠿⠟", "⠿⠿⠿",
                  "⡿⠿⠿", "⣿⠿⠿", "⣿⡿⠿", "⣿⣿⠿", "⣿⣿⡿", "⣿⣿⣿"),
+    "spin3b":   ("⡀⠀⠀", "⣀⠀⠀", "⣀⡀⠀", "⣀⣀⠀", "⣀⣀⡀", "⣀⣀⣀",
+                 "⣄⣀⣀", "⣤⣀⣀", "⣤⣄⣀", "⣤⣤⣀", "⣤⣤⣄", "⣤⣤⣤",
+                 "⣦⣤⣤", "⣶⣤⣤", "⣶⣦⣤", "⣶⣶⣤", "⣶⣶⣦", "⣶⣶⣶",
+                 "⣷⣶⣶", "⣿⣶⣶", "⣿⣷⣶", "⣿⣿⣶", "⣿⣿⣷", "⣿⣿⣿"),
     "bounce3":  ("⠁⠂⠄", "⠂⠄⡀", "⠄⡀⢀", "⡀⢀⠠", "⢀⠠⠐", "⠠⠐⠈", "⠐⠈⠁", "⠈⠁⠂"),
     "bar":      ("⣀⠀⠀", "⣤⠀⠀", "⣶⠀⠀", "⣿⠀⠀",
                  "⣿⣀⠀", "⣿⣤⠀", "⣿⣶⠀", "⣿⣿⠀",
@@ -154,7 +158,7 @@ _TITLE_SAFE_STYLES: frozenset[str] = frozenset({
     # Braille N (single and multi-char)
     "dots", "bounce", "spin",
     "wide", "twin", "dots2", "wave", "ping",
-    "spin3", "bounce3", "bar",
+    "spin3", "spin3b", "bounce3", "bar",
     # Block / geometric A
     "grow", "fill", "shade", "box", "box2", "triangle",
     # Geometric shapes A

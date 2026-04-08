@@ -106,9 +106,13 @@ _SPINNER_STYLES: dict[str, tuple[str, ...]] = {
     "music":    ("♩", "♪", "♬", "♭", "♯"),                                 # all A (drop ♫♮ = N)
     # ── More symbols (EAW Narrow — title-safe) ───────────────────────────────
     "chess":    ("♟", "♞", "♝", "♜", "♛", "♚"),                            # all N
-    # ── Variable-width (prompt only — title falls back to dots) ────────────────
-    # keycap: multi-codepoint sequences (digit + VS16 + U+20E3), mixed EAW per component
+    # ── Variable-width / multi-codepoint (prompt only — title falls back to dots) ─
+    # keycap: digit + VS16 + U+20E3 — mixed EAW per component
     "keycap":   ("0️⃣", "1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣"),
+    # flags: RI+RI pairs — N+N per codepoint but rendered width varies by terminal
+    "flags":    ("🇺🇸", "🇬🇧", "🇫🇷", "🇩🇪", "🇯🇵", "🇨🇳", "🇧🇷", "🇦🇺", "🇨🇦", "🇮🇳"),
+    # hi: emoji + skin-tone modifier (W+W) — requires terminal skin-tone support
+    "hi":       ("👋🏻", "👋🏼", "👋🏽", "👋🏾", "👋🏿"),
     # halves: ◐◓◑◒ — mixed EAW (A+N), shifts in proportional title fonts
     "halves":   ("◐", "◓", "◑", "◒"),                                      # clockwise; mixed A+N
     "arrows":   ("←", "↖", "↑", "↗", "→", "↘", "↓", "↙"),

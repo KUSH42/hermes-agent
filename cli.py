@@ -7656,11 +7656,14 @@ class HermesCLI:
         self._app = app  # Store reference for clarify_callback
 
         def _set_terminal_title(title: str) -> None:
-            """Emit OSC 0 to update the terminal tab/window title."""
+            """Emit OSC 0 to update the terminal tab/window title.
+
+            Written directly to fd 1 (atomic os.write) rather than through
+            prompt_toolkit's shared output buffer, which would race with the
+            main render thread and corrupt escape-sequence framing.
+            """
             try:
-                if self._app:
-                    self._app.output.write_raw(f"\033]0;{title}\007")
-                    self._app.output.flush()
+                os.write(1, f"\033]0;{title}\007".encode())
             except Exception:
                 pass
 

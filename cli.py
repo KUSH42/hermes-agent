@@ -66,25 +66,41 @@ from agent.usage_pricing import (
 from hermes_cli.banner import _format_context_length
 
 _SPINNER_STYLES: dict[str, tuple[str, ...]] = {
-    "dots":    ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"),
-    "bounce":  ("⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈"),
-    "grow":    ("▁", "▂", "▃", "▄", "▅", "▆", "▇", "█", "▇", "▆", "▅", "▄", "▃", "▂"),
-    "arrows":  ("←", "↖", "↑", "↗", "→", "↘", "↓", "↙"),
-    "star":    ("✶", "✷", "✸", "✹", "✺", "✹", "✸", "✷"),
-    "moon":    ("🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘"),
-    "pulse":   ("◜", "◠", "◝", "◞", "◡", "◟"),
-    "clock":   ("🕛", "🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚"),
-    "none":    ("",),
+    # ── Braille (EAW Narrow — single-width in every font, title-safe) ──────────
+    "dots":     ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"),
+    "bounce":   ("⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈"),
+    "spin":     ("⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"),   # braille ring
+    # ── Block / geometric (EAW Ambiguous — consistent within each set) ─────────
+    "grow":     ("▁", "▂", "▃", "▄", "▅", "▆", "▇", "█", "▇", "▆", "▅", "▄", "▃", "▂"),
+    "fill":     ("▏", "▎", "▍", "▌", "▋", "▊", "▉", "█", "▉", "▊", "▋", "▌", "▍", "▎"),
+    "box":      ("┤", "┘", "┴", "└", "├", "┌", "┬", "┐"),       # box-drawing rotation
+    "triangle": ("◢", "◣", "◤", "◥"),                             # corner fills
+    # ── Symbols (EAW Narrow — title-safe) ──────────────────────────────────────
+    "weather":  ("☀", "☁", "☂", "☃"),
+    "dice":     ("⚀", "⚁", "⚂", "⚃", "⚄", "⚅"),
+    # ── Variable-width (prompt only — title falls back to dots) ────────────────
+    "arrows":   ("←", "↖", "↑", "↗", "→", "↘", "↓", "↙"),
+    "star":     ("✶", "✷", "✸", "✹", "✺", "✹", "✸", "✷"),
+    "pulse":    ("◜", "◠", "◝", "◞", "◡", "◟"),
+    # ── Emoji (EAW Wide — 2-wide, title-safe) ──────────────────────────────────
+    "moon":     ("🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘"),
+    "clock":    ("🕛", "🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚"),
+    "none":     ("",),
 }
 _COMMAND_SPINNER_FRAMES = _SPINNER_STYLES["dots"]  # overridden at CLI init from config/skin
 _TITLE_SPINNER_FRAMES   = _SPINNER_STYLES["dots"]  # overridden at CLI init; may differ from prompt
 
-# Title-bar spinner must use characters with consistent advance widths in proportional
-# fonts (SF Pro, Segoe UI, …).  Braille patterns and emoji qualify; most other Unicode
-# symbols have variable advance widths that shift the trailing title text each tick.
-# Styles not in this set fall back to "dots" for the title unless the user sets
-# display.title_spinner_style explicitly.
-_TITLE_SAFE_STYLES: frozenset[str] = frozenset({"dots", "bounce", "grow", "moon", "clock", "none"})
+# Styles whose frames all share the same East Asian Width category and are therefore
+# safe to use in a proportional title-bar font without causing text to shift each tick.
+# "Variable-width" styles (pulse, arrows, star) fall back to "dots" in the title bar
+# unless the user explicitly sets display.title_spinner_style.
+_TITLE_SAFE_STYLES: frozenset[str] = frozenset({
+    "dots", "bounce", "spin",              # Braille N — fixed-width by design
+    "grow", "fill", "box", "triangle",     # Ambiguous but homogeneous set
+    "weather", "dice",                     # Narrow N symbols
+    "moon", "clock",                       # Emoji W — square by spec
+    "none",
+})
 
 
 # Load .env from ~/.hermes/.env first, then project root as dev fallback.

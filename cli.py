@@ -7684,10 +7684,13 @@ class HermesCLI:
                 if self._command_running or self._agent_running:
                     self._invalidate(min_interval=0.1)
                     if self._title_spinner:
-                        new_title = f"{self._title_base} {self._command_spinner_frame()}"
-                        if new_title != last_title:
-                            _set_terminal_title(new_title)
-                            last_title = new_title
+                        # Set title once on transition to running — no per-frame updates.
+                        # Repeated OSC writes change the total string pixel-width each tick
+                        # causing the title text to shift in centre-aligned title bars.
+                        busy_title = f"{self._title_base} …"
+                        if last_title != busy_title:
+                            _set_terminal_title(busy_title)
+                            last_title = busy_title
                     _time.sleep(0.1)
                 else:
                     now = _time.monotonic()

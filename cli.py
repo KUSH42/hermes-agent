@@ -1955,7 +1955,7 @@ class HermesCLI:
         """Return the active reasoning display callback for the current mode."""
         if self.show_reasoning and self.streaming_enabled:
             return self._stream_reasoning_delta
-        if self.verbose and not self.show_reasoning:
+        if self.show_reasoning:
             return self._on_reasoning
         return None
 

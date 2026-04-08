@@ -557,6 +557,8 @@ try:
     from agent.rich_output import StreamingBlockBuffer as _BlockBuf
     from agent.rich_output import StreamingCodeBlockHighlighter as _CodeBlockHL
     from agent.rich_output import format_response as _format_response
+    from agent.rich_output import apply_block_line as _apply_block_line
+    from agent.rich_output import apply_inline_markdown as _apply_inline_md
     _RICH_RESPONSE = True
     # display.py registers syntax/markdown callbacks when imported above.
     # Re-apply the active skin now so any skin set before display.py was

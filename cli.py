@@ -75,10 +75,22 @@ _SPINNER_STYLES: dict[str, tuple[str, ...]] = {
     "fill":     ("▏", "▎", "▍", "▌", "▋", "▊", "▉", "█", "▉", "▊", "▋", "▌", "▍", "▎"),
     "box":      ("┤", "┘", "┴", "└", "├", "┌", "┬", "┐"),       # box-drawing rotation
     "triangle": ("◢", "◣", "◤", "◥"),                             # corner fills
+    # ── Braille double-wide (EAW Narrow — title-safe, 2-char combo) ─────────────
+    "wide":     ("⣾⣷", "⣽⣯", "⣻⣟", "⢿⡿", "⡿⢿", "⣟⣻", "⣯⣽", "⣷⣾"),   # mirrored ring
     # ── Symbols (EAW Narrow — title-safe) ──────────────────────────────────────
     "weather":  ("☀", "☁", "☂", "☃"),
     "dice":     ("⚀", "⚁", "⚂", "⚃", "⚄", "⚅"),
+    "floral":   ("✿", "❀", "❁", "❃"),                                    # all N
+    "corner":   ("▟", "▙", "▛", "▜"),                                    # all N, corner squares
+    # ── Geometric (EAW Ambiguous — homogeneous set, title-safe) ─────────────────
+    "circle":   ("○", "◐", "●", "◑"),                                    # all A, fill rotation
+    "zoom":     ("○", "◎", "⊙", "●"),                                    # all A, radial zoom
+    "bold":     ("▲", "▼", "◀", "▶"),                                    # all A, bold arrows
+    "open":     ("▷", "▽", "◁", "△"),                                    # all A, open triangles
+    "cross":    ("┼", "╀", "╁", "╂"),                                    # all A, cross rotation
     # ── Variable-width (prompt only — title falls back to dots) ────────────────
+    # halves: ◐◓◑◒ — mixed EAW (A+N), shifts in proportional title fonts
+    "halves":   ("◐", "◓", "◑", "◒"),                                    # clockwise; mixed A+N
     "arrows":   ("←", "↖", "↑", "↗", "→", "↘", "↓", "↙"),
     "star":     ("✶", "✷", "✸", "✹", "✺", "✹", "✸", "✷"),
     "pulse":    ("◜", "◠", "◝", "◞", "◡", "◟"),
@@ -95,11 +107,13 @@ _TITLE_SPINNER_FRAMES   = _SPINNER_STYLES["dots"]  # overridden at CLI init; may
 # "Variable-width" styles (pulse, arrows, star) fall back to "dots" in the title bar
 # unless the user explicitly sets display.title_spinner_style.
 _TITLE_SAFE_STYLES: frozenset[str] = frozenset({
-    "dots", "bounce", "spin",              # Braille N — fixed-width by design
+    "dots", "bounce", "spin", "wide",      # Braille N — fixed-width by design
     "grow", "fill", "box", "triangle",     # Ambiguous but homogeneous set
-    "weather", "dice",                     # Narrow N symbols
+    "circle", "zoom", "bold", "open", "cross",  # Ambiguous homogeneous sets
+    "weather", "dice", "floral", "corner", # Narrow N symbols
     "moon", "clock",                       # Emoji W — square by spec
     "none",
+    # NOT included: halves (mixed A+N), pulse/arrows/star (variable-width)
 })
 
 

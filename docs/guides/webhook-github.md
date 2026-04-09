@@ -38,7 +38,7 @@ platforms:
   webhook:
     enabled: true
     port: 8644          # default; change if needed
-    rate_limit: 30      # max requests per minute across all routes
+    rate_limit: 30      # max requests per minute per route (not global)
 
     routes:
       github-pr-review:
@@ -111,7 +111,7 @@ curl http://localhost:8644/health
    - **Which events?** → Select individual events → check **Pull requests**
 3. Click **Add webhook**
 
-GitHub will send a ping event — you'll see it logged (and safely ignored, since `ping` isn't in your `events` list).
+GitHub will send a ping event. It is safely ignored (since `ping` isn't in your `events` list) and returns `{"status": "ignored"}`. It is only logged at DEBUG level, so it won't appear in the console at the default log level.
 
 ---
 
@@ -122,7 +122,7 @@ Create a branch, push it, and open a PR against the repo. Within a few seconds, 
 To watch it happen in real time:
 
 ```bash
-hermes logs --follow
+tail -f ~/.hermes/logs/gateway.log
 ```
 
 ---
@@ -135,27 +135,34 @@ If Hermes is running on your laptop, use [ngrok](https://ngrok.com/) to expose i
 ngrok http 8644
 ```
 
-Copy the `https://...ngrok-free.app` URL and use it as your GitHub Payload URL. The URL changes each time ngrok restarts, so this is best for development only.
+Copy the `https://...ngrok-free.app` URL and use it as your GitHub Payload URL. On the free ngrok tier the URL changes each time ngrok restarts, so update your GitHub webhook each session. Paid ngrok accounts get a static domain.
 
 ---
 
 ## Filtering to specific actions
 
-GitHub sends `pull_request` events for many actions: `opened`, `synchronize`, `reopened`, `closed`, etc. To only trigger on new PRs and updates (not closes), add an `actions` filter to your prompt template and rely on the payload:
+GitHub sends `pull_request` events for many actions: `opened`, `synchronize`, `reopened`, `closed`, etc. The `events` filter matches the `X-GitHub-Event` header value only — it cannot filter by action sub-type at the routing level.
+
+To skip unwanted actions, you have two options:
+
+**Option 1 — Let the agent decide.** Include `{action}` in the prompt and instruct the agent to bail out early:
 
 ```yaml
 prompt: |
-  {% if action == "closed" %}
-  Skip this event.
-  {% else %}
-  Review this PR: {pull_request.title}
-  ...
-  {% endif %}
+  A pull_request event with action "{action}" was received.
+  PR: {pull_request.title} — {pull_request.html_url}
+  Author: {pull_request.user.login}
+  Branch: {pull_request.head.ref} → {pull_request.base.ref}
+
+  If the action is "closed" or "labeled", reply only with: SKIP
+  Otherwise, review the PR and give concise, actionable feedback.
 ```
 
-Or more simply, handle it in the prompt — the agent will naturally ignore irrelevant context.
+`{action}` resolves from the top-level `payload["action"]` field, which GitHub sets to `"opened"`, `"synchronize"`, `"reopened"`, `"closed"`, etc.
 
-To filter at the routing level (bypass the agent entirely for `closed`), you can use multiple routes with distinct names and set up separate GitHub webhooks pointing to each.
+**Option 2 — Use a second route.** Create a second route (e.g. `github-pr-sync`) with a trivial prompt, and point a separate GitHub webhook at it for the events you want to suppress. The agent runs but does nothing meaningful.
+
+> There is no Jinja2 or conditional template syntax. `{field}` and `{nested.field}` are the only template substitutions supported.
 
 ---
 
@@ -178,6 +185,8 @@ routes:
 ```
 
 The agent will use the skill's instructions as its system context.
+
+> **Note:** Only the first skill in the list that is found is loaded. Hermes does not stack multiple skills — subsequent entries are ignored.
 
 ---
 
@@ -205,14 +214,16 @@ The home channel is used automatically if `chat_id` is omitted (requires a home 
 
 ## GitLab support
 
-The same adapter works with GitLab. GitLab sends `X-Gitlab-Token` for authentication instead of an HMAC signature — Hermes handles both automatically. Change the event filter:
+The same adapter works with GitLab. GitLab sends `X-Gitlab-Token` for authentication instead of an HMAC signature — Hermes handles both automatically.
+
+For event filtering, GitLab sets `X-GitLab-Event` (note the capitalisation) to values like `Merge Request Hook`, `Push Hook`, `Pipeline Hook`, etc. Use the exact header value in your `events` list:
 
 ```yaml
 events:
   - Merge Request Hook
 ```
 
-And use the GitLab payload field names in your prompt template.
+Use GitLab payload field names in your prompt template (they differ from GitHub's — e.g. `{object_attributes.title}` for the MR title).
 
 ---
 
@@ -220,7 +231,7 @@ And use the GitLab payload field names in your prompt template.
 
 - **Never use `INSECURE_NO_AUTH`** in production — it disables signature validation entirely and is only meant for local development/testing.
 - Rotate your webhook secret periodically and update it in both GitHub (webhook settings) and your `config.yaml`.
-- The adapter enforces a 1 MB body size limit and a fixed-window rate limit (default 30 req/min) to prevent abuse.
+- The adapter enforces a 1 MB body size limit and a fixed-window rate limit (default 30 req/min **per route**) to prevent abuse.
 - Duplicate deliveries (webhook retries) are deduplicated automatically via a 1-hour idempotency cache.
 
 ---
@@ -231,9 +242,22 @@ And use the GitLab payload field names in your prompt template.
 |---|---|
 | `401 Invalid signature` | Secret in config.yaml doesn't match GitHub webhook secret |
 | `404 Unknown route` | Route name in the URL doesn't match the key in `routes:` |
+| `429 Rate limit exceeded` | You hit 30 req/min on that route (common when re-delivering test events from GitHub's UI) — wait a minute or raise `rate_limit` |
 | No comment posted | `gh` CLI not installed or not authenticated (`gh auth login`) |
-| Agent runs but comment is empty | Check `hermes logs` — the agent may have returned an empty response |
+| Agent runs but comment is empty | Check `tail -f ~/.hermes/logs/gateway.log` — the agent may have returned an empty response |
 | Port already in use | Change `port:` in config.yaml to a free port |
+| Can't see the ping confirmation | Ignored events are only logged at DEBUG level — check GitHub's delivery log instead (repo → Settings → Webhooks → your webhook → Recent Deliveries) |
+
+**Tip:** GitHub's **Recent Deliveries** tab (repo → Settings → Webhooks → your webhook) shows the exact payload, request headers, HTTP status, and response body for every delivery. It's the fastest way to diagnose failures without touching your server logs.
+
+To test your HMAC signature locally before registering with GitHub:
+
+```bash
+SECRET="your-webhook-secret-here"
+BODY='{"action":"opened","number":1}'
+echo -n "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -hex | awk '{print "sha256="$2}'
+# Compare the output to what Hermes would expect in X-Hub-Signature-256
+```
 
 ---
 
@@ -255,6 +279,6 @@ platforms:
         events: []            # [] = accept all; list specific X-GitHub-Event values
         prompt: ""            # template; {field} / {nested.field} from payload
         skills: []            # list of skill names to load
-        deliver: "log"        # log | github_comment | telegram | discord | slack
+        deliver: "log"        # log | github_comment | telegram | discord | slack | signal | sms
         deliver_extra: {}     # depends on deliver type (see examples above)
 ```

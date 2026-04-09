@@ -143,7 +143,7 @@ curl http://localhost:8644/health
    - **Which events?** → Select individual events → check **Pull requests**
 3. Click **Add webhook**
 
-![GitHub Add Webhook form filled out with ngrok URL, application/json content type, and secret](/img/webhook-add-github.png)
+![GitHub Add Webhook form filled out with ngrok URL, application/json content type, and secret](/img/docs/guides/webhook-github/webhook-add-github.png)
 
 GitHub will immediately send a `ping` event to confirm the connection. It is safely ignored — `ping` is not in your `events` list — and returns `{"status": "ignored", "event": "ping"}`. It is only logged at DEBUG level, so it won't appear in the console at the default log level.
 
@@ -161,15 +161,15 @@ tail -f "${HERMES_HOME:-$HOME/.hermes}/logs/gateway.log"
 
 You should see the webhook arrive, the `gh pr diff` tool call, and the response being delivered:
 
-![Gateway log showing webhook received, agent running, and comment posted](/img/webhook-gateway-log.png)
+![Gateway log showing webhook received, agent running, and comment posted](/img/docs/guides/webhook-github/webhook-gateway-log.png)
 
 The agent runs `gh pr comment` to post the review:
 
-![Terminal showing gh pr comment being executed with the review text](/img/webhook-gateway-cmd.png)
+![Terminal showing gh pr comment being executed with the review text](/img/docs/guides/webhook-github/webhook-gateway-cmd.png)
 
 The result on GitHub:
 
-![Hermes review comment posted on the GitHub PR](/img/webhook-pr-comment.png)
+![Hermes review comment posted on the GitHub PR](/img/docs/guides/webhook-github/webhook-pr-comment.png)
 
 ---
 
@@ -189,7 +189,7 @@ ngrok http 8644
 
 Copy the `https://...ngrok-free.app` URL and use it as your GitHub Payload URL. Paid ngrok accounts get a static domain.
 
-![ngrok running and forwarding to localhost:8644 with successful webhook requests](/img/webhook-ngrok.png)
+![ngrok running and forwarding to localhost:8644 with successful webhook requests](/img/docs/guides/webhook-github/webhook-ngrok.png)
 
 You can smoke-test a static route directly with `curl` — no GitHub account or real PR needed.
 

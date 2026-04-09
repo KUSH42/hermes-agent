@@ -151,11 +151,13 @@ GitHub will immediately send a `ping` event to confirm the connection. It is saf
 
 Create a branch, push a change, and open a PR. Within 30–90 seconds (depending on PR size and model), Hermes should post a review comment.
 
-To follow the agent's progress in real time:
+Follow the agent's progress in real time — gateway startup messages and all incoming webhook events go to the log file, not stdout:
 
 ```bash
 tail -f "${HERMES_HOME:-$HOME/.hermes}/logs/gateway.log"
 ```
+
+You should see the webhook arrive, the `gh pr diff` tool call, and the response being delivered.
 
 ---
 
@@ -167,7 +169,13 @@ If Hermes is running on your laptop, use [ngrok](https://ngrok.com/) to expose i
 ngrok http 8644
 ```
 
-Copy the `https://...ngrok-free.app` URL and use it as your GitHub Payload URL. On the free ngrok tier the URL changes each time ngrok restarts — update your GitHub webhook each session. Paid ngrok accounts get a static domain.
+:::warning Common ngrok mistakes
+- Pass the **port number only** — `ngrok http 8644`, not `ngrok http https://localhost:8644`. The latter tells ngrok to speak TLS to your server, which will fail with `ERR_NGROK_3004`.
+- The Payload URL must have **no trailing slash** — `…/webhooks/github-pr-review`, not `…/webhooks/github-pr-review/`. A trailing slash returns `404`.
+- On the free tier the URL changes every time ngrok restarts. Update the Payload URL in GitHub each session.
+:::
+
+Copy the `https://...ngrok-free.app` URL and use it as your GitHub Payload URL. Paid ngrok accounts get a static domain.
 
 You can smoke-test a static route directly with `curl` — no GitHub account or real PR needed.
 
@@ -303,6 +311,9 @@ GitLab payload fields differ from GitHub's — e.g. `{object_attributes.title}` 
 | Symptom | Check |
 |---|---|
 | `401 Invalid signature` | Secret in config.yaml doesn't match GitHub webhook secret |
+| `404 Not Found` on `/webhooks/…` | Trailing slash in the Payload URL — remove it |
+| `ERR_NGROK_3004` (invalid HTTP response) | ngrok started with `ngrok http https://localhost:8644` instead of `ngrok http 8644` |
+| `ERR_NGROK_8012` (connection refused) | Gateway isn't running — start `hermes gateway run` first, then start ngrok |
 | `404 Unknown route` | Route name in the URL doesn't match the key in `routes:` |
 | `429 Rate limit exceeded` | 30 req/min per route exceeded — common when re-delivering test events from GitHub's UI; wait a minute or raise `extra.rate_limit` |
 | No comment posted | `gh` not installed, not on PATH, or not authenticated (`gh auth login`) |

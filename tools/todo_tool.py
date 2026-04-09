@@ -85,7 +85,7 @@ class TodoStore:
 
     def has_items(self) -> bool:
         """Check if there are any items in the list."""
-        return bool(self._items)
+        return len(self._items) > 0
 
     def format_for_injection(self) -> Optional[str]:
         """
@@ -161,7 +161,7 @@ def todo_tool(
         JSON string with the full current list and summary metadata.
     """
     if store is None:
-        return tool_error("TodoStore not initialized")
+        return json.dumps({"error": "TodoStore not initialized"}, ensure_ascii=False)
 
     if todos is not None:
         items = store.write(todos, merge)
@@ -255,7 +255,7 @@ TODO_SCHEMA = {
 
 
 # --- Registry ---
-from tools.registry import registry, tool_error
+from tools.registry import registry
 
 registry.register(
     name="todo",

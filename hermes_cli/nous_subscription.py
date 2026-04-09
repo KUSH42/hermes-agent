@@ -131,7 +131,6 @@ def _browser_label(current_provider: str) -> str:
     mapping = {
         "browserbase": "Browserbase",
         "browser-use": "Browser Use",
-        "firecrawl": "Firecrawl",
         "camofox": "Camofox",
         "local": "Local browser",
     }
@@ -157,7 +156,6 @@ def _resolve_browser_feature_state(
     direct_camofox: bool,
     direct_browserbase: bool,
     direct_browser_use: bool,
-    direct_firecrawl: bool,
     managed_browser_available: bool,
 ) -> tuple[str, bool, bool, bool]:
     """Resolve browser availability using the same precedence as runtime."""
@@ -167,22 +165,18 @@ def _resolve_browser_feature_state(
     if browser_provider_explicit:
         current_provider = browser_provider or "local"
         if current_provider == "browserbase":
-            available = bool(browser_local_available and direct_browserbase)
-            active = bool(browser_tool_enabled and available)
-            return current_provider, available, active, False
-        if current_provider == "browser-use":
-            provider_available = managed_browser_available or direct_browser_use
+            provider_available = managed_browser_available or direct_browserbase
             available = bool(browser_local_available and provider_available)
             managed = bool(
                 browser_tool_enabled
                 and browser_local_available
                 and managed_browser_available
-                and not direct_browser_use
+                and not direct_browserbase
             )
             active = bool(browser_tool_enabled and available)
             return current_provider, available, active, managed
-        if current_provider == "firecrawl":
-            available = bool(browser_local_available and direct_firecrawl)
+        if current_provider == "browser-use":
+            available = bool(browser_local_available and direct_browser_use)
             active = bool(browser_tool_enabled and available)
             return current_provider, available, active, False
         if current_provider == "camofox":
@@ -193,21 +187,16 @@ def _resolve_browser_feature_state(
         active = bool(browser_tool_enabled and available)
         return current_provider, available, active, False
 
-    if managed_browser_available or direct_browser_use:
+    if managed_browser_available or direct_browserbase:
         available = bool(browser_local_available)
         managed = bool(
             browser_tool_enabled
             and browser_local_available
             and managed_browser_available
-            and not direct_browser_use
+            and not direct_browserbase
         )
         active = bool(browser_tool_enabled and available)
-        return "browser-use", available, active, managed
-
-    if direct_browserbase:
-        available = bool(browser_local_available)
-        active = bool(browser_tool_enabled and available)
-        return "browserbase", available, active, False
+        return "browserbase", available, active, managed
 
     available = bool(browser_local_available)
     active = bool(browser_tool_enabled and available)
@@ -271,7 +260,7 @@ def get_nous_subscription_features(
     managed_web_available = managed_tools_flag and nous_auth_present and is_managed_tool_gateway_ready("firecrawl")
     managed_image_available = managed_tools_flag and nous_auth_present and is_managed_tool_gateway_ready("fal-queue")
     managed_tts_available = managed_tools_flag and nous_auth_present and is_managed_tool_gateway_ready("openai-audio")
-    managed_browser_available = managed_tools_flag and nous_auth_present and is_managed_tool_gateway_ready("browser-use")
+    managed_browser_available = managed_tools_flag and nous_auth_present and is_managed_tool_gateway_ready("browserbase")
     managed_modal_available = managed_tools_flag and nous_auth_present and is_managed_tool_gateway_ready("modal")
     modal_state = resolve_modal_backend_state(
         modal_mode,
@@ -326,7 +315,6 @@ def get_nous_subscription_features(
         direct_camofox=direct_camofox,
         direct_browserbase=direct_browserbase,
         direct_browser_use=direct_browser_use,
-        direct_firecrawl=direct_firecrawl,
         managed_browser_available=managed_browser_available,
     )
 
@@ -517,10 +505,10 @@ def apply_nous_managed_defaults(
         changed.add("tts")
 
     if "browser" in selected_toolsets and not features.browser.explicit_configured and not (
-        get_env_value("BROWSER_USE_API_KEY")
-        or get_env_value("BROWSERBASE_API_KEY")
+        get_env_value("BROWSERBASE_API_KEY")
+        or get_env_value("BROWSER_USE_API_KEY")
     ):
-        browser_cfg["cloud_provider"] = "browser-use"
+        browser_cfg["cloud_provider"] = "browserbase"
         changed.add("browser")
 
     if "image_gen" in selected_toolsets and not get_env_value("FAL_KEY"):

@@ -15,6 +15,7 @@ Usage::
 
 import asyncio
 import logging
+import os
 import sys
 from pathlib import Path
 from hermes_constants import get_hermes_home

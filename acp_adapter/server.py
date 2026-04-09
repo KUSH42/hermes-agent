@@ -12,8 +12,7 @@ import acp
 from acp.schema import (
     AgentCapabilities,
     AuthenticateResponse,
-    AvailableCommand,
-    AvailableCommandsUpdate,
+    AuthMethod,
     ClientCapabilities,
     EmbeddedResourceContentBlock,
     ForkSessionResponse,
@@ -38,15 +37,8 @@ from acp.schema import (
     SessionListCapabilities,
     SessionInfo,
     TextContentBlock,
-    UnstructuredCommandInput,
     Usage,
 )
-
-# AuthMethodAgent was renamed from AuthMethod in agent-client-protocol 0.9.0
-try:
-    from acp.schema import AuthMethodAgent
-except ImportError:
-    from acp.schema import AuthMethod as AuthMethodAgent  # type: ignore[attr-defined]
 
 from acp_adapter.auth import detect_provider, has_provider
 from acp_adapter.events import (
@@ -91,48 +83,6 @@ def _extract_text(
 
 class HermesACPAgent(acp.Agent):
     """ACP Agent implementation wrapping Hermes AIAgent."""
-
-    _SLASH_COMMANDS = {
-        "help": "Show available commands",
-        "model": "Show or change current model",
-        "tools": "List available tools",
-        "context": "Show conversation context info",
-        "reset": "Clear conversation history",
-        "compact": "Compress conversation context",
-        "version": "Show Hermes version",
-    }
-
-    _ADVERTISED_COMMANDS = (
-        {
-            "name": "help",
-            "description": "List available commands",
-        },
-        {
-            "name": "model",
-            "description": "Show current model and provider, or switch models",
-            "input_hint": "model name to switch to",
-        },
-        {
-            "name": "tools",
-            "description": "List available tools with descriptions",
-        },
-        {
-            "name": "context",
-            "description": "Show conversation message counts by role",
-        },
-        {
-            "name": "reset",
-            "description": "Clear conversation history",
-        },
-        {
-            "name": "compact",
-            "description": "Compress conversation context",
-        },
-        {
-            "name": "version",
-            "description": "Show Hermes version",
-        },
-    )
 
     def __init__(self, session_manager: SessionManager | None = None):
         super().__init__()
@@ -227,7 +177,7 @@ class HermesACPAgent(acp.Agent):
         auth_methods = None
         if provider:
             auth_methods = [
-                AuthMethodAgent(
+                AuthMethod(
                     id=provider,
                     name=f"{provider} runtime credentials",
                     description=f"Authenticate Hermes using the currently configured {provider} runtime credentials.",
@@ -269,7 +219,6 @@ class HermesACPAgent(acp.Agent):
         state = self.session_manager.create_session(cwd=cwd)
         await self._register_session_mcp_servers(state, mcp_servers)
         logger.info("New session %s (cwd=%s)", state.session_id, cwd)
-        self._schedule_available_commands_update(state.session_id)
         return NewSessionResponse(session_id=state.session_id)
 
     async def load_session(
@@ -285,7 +234,6 @@ class HermesACPAgent(acp.Agent):
             return None
         await self._register_session_mcp_servers(state, mcp_servers)
         logger.info("Loaded session %s", session_id)
-        self._schedule_available_commands_update(session_id)
         return LoadSessionResponse()
 
     async def resume_session(
@@ -301,7 +249,6 @@ class HermesACPAgent(acp.Agent):
             state = self.session_manager.create_session(cwd=cwd)
         await self._register_session_mcp_servers(state, mcp_servers)
         logger.info("Resumed session %s", state.session_id)
-        self._schedule_available_commands_update(state.session_id)
         return ResumeSessionResponse()
 
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
@@ -327,8 +274,6 @@ class HermesACPAgent(acp.Agent):
         if state is not None:
             await self._register_session_mcp_servers(state, mcp_servers)
         logger.info("Forked session %s -> %s", session_id, new_id)
-        if new_id:
-            self._schedule_available_commands_update(new_id)
         return ForkSessionResponse(session_id=new_id)
 
     async def list_sessions(
@@ -466,50 +411,15 @@ class HermesACPAgent(acp.Agent):
 
     # ---- Slash commands (headless) -------------------------------------------
 
-    @classmethod
-    def _available_commands(cls) -> list[AvailableCommand]:
-        commands: list[AvailableCommand] = []
-        for spec in cls._ADVERTISED_COMMANDS:
-            input_hint = spec.get("input_hint")
-            commands.append(
-                AvailableCommand(
-                    name=spec["name"],
-                    description=spec["description"],
-                    input=UnstructuredCommandInput(hint=input_hint)
-                    if input_hint
-                    else None,
-                )
-            )
-        return commands
-
-    async def _send_available_commands_update(self, session_id: str) -> None:
-        """Advertise supported slash commands to the connected ACP client."""
-        if not self._conn:
-            return
-
-        try:
-            await self._conn.session_update(
-                session_id=session_id,
-                update=AvailableCommandsUpdate(
-                    sessionUpdate="available_commands_update",
-                    availableCommands=self._available_commands(),
-                ),
-            )
-        except Exception:
-            logger.warning(
-                "Failed to advertise ACP slash commands for session %s",
-                session_id,
-                exc_info=True,
-            )
-
-    def _schedule_available_commands_update(self, session_id: str) -> None:
-        """Send the command advertisement after the session response is queued."""
-        if not self._conn:
-            return
-        loop = asyncio.get_running_loop()
-        loop.call_soon(
-            asyncio.create_task, self._send_available_commands_update(session_id)
-        )
+    _SLASH_COMMANDS = {
+        "help": "Show available commands",
+        "model": "Show or change current model",
+        "tools": "List available tools",
+        "context": "Show conversation context info",
+        "reset": "Clear conversation history",
+        "compact": "Compress conversation context",
+        "version": "Show Hermes version",
+    }
 
     def _handle_slash_command(self, text: str, state: SessionState) -> str | None:
         """Dispatch a slash command and return the response text.
@@ -629,39 +539,11 @@ class HermesACPAgent(acp.Agent):
             return "Nothing to compress — conversation is empty."
         try:
             agent = state.agent
-            if not getattr(agent, "compression_enabled", True):
-                return "Context compression is disabled for this agent."
-            if not hasattr(agent, "_compress_context"):
-                return "Context compression not available for this agent."
-
-            from agent.model_metadata import estimate_messages_tokens_rough
-
-            original_count = len(state.history)
-            approx_tokens = estimate_messages_tokens_rough(state.history)
-            original_session_db = getattr(agent, "_session_db", None)
-
-            try:
-                # ACP sessions must keep a stable session id, so avoid the
-                # SQLite session-splitting side effect inside _compress_context.
-                agent._session_db = None
-                compressed, _ = agent._compress_context(
-                    state.history,
-                    getattr(agent, "_cached_system_prompt", "") or "",
-                    approx_tokens=approx_tokens,
-                    task_id=state.session_id,
-                )
-            finally:
-                agent._session_db = original_session_db
-
-            state.history = compressed
-            self.session_manager.save_session(state.session_id)
-
-            new_count = len(state.history)
-            new_tokens = estimate_messages_tokens_rough(state.history)
-            return (
-                f"Context compressed: {original_count} -> {new_count} messages\n"
-                f"~{approx_tokens:,} -> ~{new_tokens:,} tokens"
-            )
+            if hasattr(agent, "compress_context"):
+                agent.compress_context(state.history)
+                self.session_manager.save_session(state.session_id)
+                return f"Context compressed. Messages: {len(state.history)}"
+            return "Context compression not available for this agent."
         except Exception as e:
             return f"Compression failed: {e}"
 

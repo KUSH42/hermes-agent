@@ -504,8 +504,7 @@ class TestMattermostFileUpload:
         self.adapter._session = MagicMock()
 
     @pytest.mark.asyncio
-    @patch("tools.url_safety.is_safe_url", return_value=True)
-    async def test_send_image_downloads_and_uploads(self, _mock_safe):
+    async def test_send_image_downloads_and_uploads(self):
         """send_image should download the URL, upload via /api/v4/files, then post."""
         # Mock the download (GET)
         mock_dl_resp = AsyncMock()

@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from cli import HermesCLI, _build_compact_banner, _rich_text_from_ansi
+from cli import HermesCLI, _normalize_ansi_c1, _rich_text_from_ansi
 from hermes_cli.skin_engine import get_active_skin, set_active_skin
 
 
@@ -88,53 +88,18 @@ class TestCliSkinPromptIntegration:
         assert cli._app.style is not None
 
 
-class TestCompactBannerSkinIntegration:
-    def test_default_compact_banner_keeps_legacy_nous_hermes_branding(self):
-        set_active_skin("default")
-
-        with patch("cli.shutil.get_terminal_size", return_value=SimpleNamespace(columns=90)), \
-             patch("cli.format_banner_version_label", return_value="Hermes Agent v0.1.0 (test)"):
-            banner = _build_compact_banner()
-
-        assert "NOUS HERMES" in banner
-
-    def test_poseidon_compact_banner_uses_skin_branding_instead_of_nous_hermes(self):
-        set_active_skin("poseidon")
-
-        with patch("cli.shutil.get_terminal_size", return_value=SimpleNamespace(columns=90)), \
-             patch("cli.format_banner_version_label", return_value="Hermes Agent v0.1.0 (test)"):
-            banner = _build_compact_banner()
-
-        assert "Poseidon Agent" in banner
-        assert "NOUS HERMES" not in banner
-
-    def test_poseidon_compact_banner_uses_skin_colors(self):
-        set_active_skin("poseidon")
-        skin = get_active_skin()
-
-        with patch("cli.shutil.get_terminal_size", return_value=SimpleNamespace(columns=90)), \
-             patch("cli.format_banner_version_label", return_value="Hermes Agent v0.1.0 (test)"):
-            banner = _build_compact_banner()
-
-        assert skin.get_color("banner_border") in banner
-        assert skin.get_color("banner_title") in banner
-        assert skin.get_color("banner_dim") in banner
-
-    def test_compact_banner_shows_version_label(self):
-        set_active_skin("default")
-
-        with patch("cli.shutil.get_terminal_size", return_value=SimpleNamespace(columns=90)), \
-             patch("cli.format_banner_version_label", return_value="Hermes Agent v1.0 (test) · upstream abc12345"):
-            banner = _build_compact_banner()
-
-        assert "upstream abc12345" in banner
-
-
 class TestAnsiRichTextHelper:
+    def test_normalizes_c1_csi_sequences(self):
+        assert _normalize_ansi_c1("\x9b31mred\x9b0m") == "\x1b[31mred\x1b[0m"
+
     def test_preserves_literal_brackets(self):
         text = _rich_text_from_ansi("[notatag] literal")
         assert text.plain == "[notatag] literal"
 
     def test_strips_ansi_but_keeps_plain_text(self):
         text = _rich_text_from_ansi("\x1b[31mred\x1b[0m")
+        assert text.plain == "red"
+
+    def test_parses_c1_csi_ansi_plain_text(self):
+        text = _rich_text_from_ansi("\x9b31mred\x9b0m")
         assert text.plain == "red"

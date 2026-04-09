@@ -17,6 +17,7 @@ Usage:
 
 import re
 import base64
+import sys
 
 # ═══════════════════════════════════════════════════════════════════
 # Trigger words that commonly trip safety classifiers

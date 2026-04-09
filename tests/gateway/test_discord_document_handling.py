@@ -244,6 +244,7 @@ class TestIncomingDocumentHandling:
         adapter.handle_message.assert_called_once()
 
     @pytest.mark.asyncio
+<<<<<<< Updated upstream
     async def test_mid_sized_zip_under_32mb_is_cached(self, adapter):
         """A 25MB .zip should be accepted now that Discord documents allow up to 32MB."""
         msg = make_message([
@@ -264,17 +265,18 @@ class TestIncomingDocumentHandling:
     @pytest.mark.asyncio
     async def test_zip_document_cached(self, adapter):
         """A .zip file should be cached as a supported document."""
+=======
+    async def test_unsupported_type_skipped(self, adapter):
+        """An unsupported file type (.zip) should be skipped silently."""
+>>>>>>> Stashed changes
         msg = make_message([
             make_attachment(filename="archive.zip", content_type="application/zip")
         ])
-
-        with _mock_aiohttp_download(b"PK\x03\x04test"):
-            await adapter._handle_message(msg)
+        await adapter._handle_message(msg)
 
         event = adapter.handle_message.call_args[0][0]
-        assert len(event.media_urls) == 1
-        assert event.media_types == ["application/zip"]
-        assert event.message_type == MessageType.DOCUMENT
+        assert event.media_urls == []
+        assert event.message_type == MessageType.TEXT
 
     @pytest.mark.asyncio
     async def test_download_error_handled(self, adapter):

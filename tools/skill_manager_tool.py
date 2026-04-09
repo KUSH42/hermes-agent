@@ -92,6 +92,11 @@ VALID_NAME_RE = re.compile(r'^[a-z0-9][a-z0-9._-]*$')
 ALLOWED_SUBDIRS = {"references", "templates", "scripts", "assets"}
 
 
+def check_skill_manage_requirements() -> bool:
+    """Skill management has no external requirements -- always available."""
+    return True
+
+
 # =============================================================================
 # Validation helpers
 # =============================================================================
@@ -198,19 +203,14 @@ def _resolve_skill_dir(name: str, category: str = None) -> Path:
 
 def _find_skill(name: str) -> Optional[Dict[str, Any]]:
     """
-    Find a skill by name across all skill directories.
-
-    Searches the local skills dir (~/.hermes/skills/) first, then any
-    external dirs configured via skills.external_dirs.  Returns
-    {"path": Path} or None.
+    Find a skill by name in ~/.hermes/skills/.
+    Returns {"path": Path} or None.
     """
-    from agent.skill_utils import get_all_skills_dirs
-    for skills_dir in get_all_skills_dirs():
-        if not skills_dir.exists():
-            continue
-        for skill_md in skills_dir.rglob("SKILL.md"):
-            if skill_md.parent.name == name:
-                return {"path": skill_md.parent}
+    if not SKILLS_DIR.exists():
+        return None
+    for skill_md in SKILLS_DIR.rglob("SKILL.md"):
+        if skill_md.parent.name == name:
+            return {"path": skill_md.parent}
     return None
 
 
@@ -584,19 +584,19 @@ def skill_manage(
     """
     if action == "create":
         if not content:
-            return tool_error("content is required for 'create'. Provide the full SKILL.md text (frontmatter + body).", success=False)
+            return json.dumps({"success": False, "error": "content is required for 'create'. Provide the full SKILL.md text (frontmatter + body)."}, ensure_ascii=False)
         result = _create_skill(name, content, category)
 
     elif action == "edit":
         if not content:
-            return tool_error("content is required for 'edit'. Provide the full updated SKILL.md text.", success=False)
+            return json.dumps({"success": False, "error": "content is required for 'edit'. Provide the full updated SKILL.md text."}, ensure_ascii=False)
         result = _edit_skill(name, content)
 
     elif action == "patch":
         if not old_string:
-            return tool_error("old_string is required for 'patch'. Provide the text to find.", success=False)
+            return json.dumps({"success": False, "error": "old_string is required for 'patch'. Provide the text to find."}, ensure_ascii=False)
         if new_string is None:
-            return tool_error("new_string is required for 'patch'. Use empty string to delete matched text.", success=False)
+            return json.dumps({"success": False, "error": "new_string is required for 'patch'. Use empty string to delete matched text."}, ensure_ascii=False)
         result = _patch_skill(name, old_string, new_string, file_path, replace_all)
 
     elif action == "delete":
@@ -604,14 +604,14 @@ def skill_manage(
 
     elif action == "write_file":
         if not file_path:
-            return tool_error("file_path is required for 'write_file'. Example: 'references/api-guide.md'", success=False)
+            return json.dumps({"success": False, "error": "file_path is required for 'write_file'. Example: 'references/api-guide.md'"}, ensure_ascii=False)
         if file_content is None:
-            return tool_error("file_content is required for 'write_file'.", success=False)
+            return json.dumps({"success": False, "error": "file_content is required for 'write_file'."}, ensure_ascii=False)
         result = _write_file(name, file_path, file_content)
 
     elif action == "remove_file":
         if not file_path:
-            return tool_error("file_path is required for 'remove_file'.", success=False)
+            return json.dumps({"success": False, "error": "file_path is required for 'remove_file'."}, ensure_ascii=False)
         result = _remove_file(name, file_path)
 
     else:
@@ -722,7 +722,7 @@ SKILL_MANAGE_SCHEMA = {
 
 
 # --- Registry ---
-from tools.registry import registry, tool_error
+from tools.registry import registry
 
 registry.register(
     name="skill_manage",

@@ -40,17 +40,17 @@ def test_resolve_managed_tool_gateway_uses_vendor_specific_override():
         os.environ,
         {
             "HERMES_ENABLE_NOUS_MANAGED_TOOLS": "1",
-            "BROWSER_USE_GATEWAY_URL": "http://browser-use-gateway.localhost:3009/",
+            "BROWSERBASE_GATEWAY_URL": "http://browserbase-gateway.localhost:3009/",
         },
         clear=False,
     ):
         result = resolve_managed_tool_gateway(
-            "browser-use",
+            "browserbase",
             token_reader=lambda: "nous-token",
         )
 
     assert result is not None
-    assert result.gateway_origin == "http://browser-use-gateway.localhost:3009"
+    assert result.gateway_origin == "http://browserbase-gateway.localhost:3009"
 
 
 def test_resolve_managed_tool_gateway_is_inactive_without_nous_token():

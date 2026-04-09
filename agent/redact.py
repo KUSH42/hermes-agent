@@ -48,18 +48,13 @@ _PREFIX_PATTERNS = [
     r"sk_[A-Za-z0-9_]{10,}",            # ElevenLabs TTS key (sk_ underscore, not sk- dash)
     r"tvly-[A-Za-z0-9]{10,}",           # Tavily search API key
     r"exa_[A-Za-z0-9]{10,}",            # Exa search API key
-    r"gsk_[A-Za-z0-9]{10,}",            # Groq Cloud API key
-    r"syt_[A-Za-z0-9]{10,}",            # Matrix access token
-    r"retaindb_[A-Za-z0-9]{10,}",       # RetainDB API key
-    r"hsk-[A-Za-z0-9]{10,}",            # Hindsight API key
-    r"mem0_[A-Za-z0-9]{10,}",           # Mem0 Platform API key
-    r"brv_[A-Za-z0-9]{10,}",            # ByteRover API key
 ]
 
 # ENV assignment patterns: KEY=value where KEY contains a secret-like name
 _SECRET_ENV_NAMES = r"(?:API_?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH)"
 _ENV_ASSIGN_RE = re.compile(
-    rf"([A-Z0-9_]{{0,50}}{_SECRET_ENV_NAMES}[A-Z0-9_]{{0,50}})\s*=\s*(['\"]?)(\S+)\2",
+    rf"([A-Z_]*{_SECRET_ENV_NAMES}[A-Z_]*)\s*=\s*(['\"]?)(\S+)\2",
+    re.IGNORECASE,
 )
 
 # JSON field patterns: "apiKey": "value", "token": "value", etc.
@@ -102,6 +97,19 @@ _PREFIX_RE = re.compile(
     r"(?<![A-Za-z0-9_-])(" + "|".join(_PREFIX_PATTERNS) + r")(?![A-Za-z0-9_-])"
 )
 
+_FAST_MARKERS_CASE_SENSITIVE = (
+    "sk-", "ghp_", "github_pat_", "gho_", "ghu_", "ghs_", "ghr_",
+    "xox", "AIza", "pplx-", "fal_", "fc-", "bb_live_", "gAAAA",
+    "AKIA", "sk_live_", "sk_test_", "rk_live_", "SG.", "hf_", "r8_",
+    "npm_", "pypi-", "dop_v1_", "doo_v1_", "am_", "sk_", "tvly-",
+    "exa_", "Authorization:", "://", "PRIVATE KEY",
+)
+_FAST_MARKERS_LOWER = (
+    "api_key", "apikey", "token", "secret", "password", "passwd",
+    "credential", "authorization:", "bearer", "access_token",
+    "refresh_token", "auth_token",
+)
+
 
 def _mask_token(token: str) -> str:
     """Mask a token, preserving prefix for long tokens."""
@@ -124,6 +132,15 @@ def redact_sensitive_text(text: str) -> str:
         return text
     if not _REDACT_ENABLED:
         return text
+    # Fast path for large plain text blobs with no secret-like markers.
+    # This avoids running several regex passes across large source files or
+    # logs that contain no credentials at all.
+    if len(text) > 8192:
+        lower_text = text.lower()
+        if not any(marker in text for marker in _FAST_MARKERS_CASE_SENSITIVE) and not any(
+            marker in lower_text for marker in _FAST_MARKERS_LOWER
+        ):
+            return text
 
     # Known prefixes (sk-, ghp_, etc.)
     text = _PREFIX_RE.sub(lambda m: _mask_token(m.group(1)), text)

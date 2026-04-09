@@ -1,24 +1,63 @@
-"""Browserbase cloud browser provider (direct credentials only)."""
+"""Browserbase cloud browser provider."""
 
 import logging
 import os
+import threading
 import uuid
 from typing import Any, Dict, Optional
 
 import requests
 
 from tools.browser_providers.base import CloudBrowserProvider
+from tools.managed_tool_gateway import resolve_managed_tool_gateway
+from tools.tool_backend_helpers import managed_nous_tools_enabled
 
 logger = logging.getLogger(__name__)
+_pending_create_keys: Dict[str, str] = {}
+_pending_create_keys_lock = threading.Lock()
+
+
+def _get_or_create_pending_create_key(task_id: str) -> str:
+    with _pending_create_keys_lock:
+        existing = _pending_create_keys.get(task_id)
+        if existing:
+            return existing
+
+        created = f"browserbase-session-create:{uuid.uuid4().hex}"
+        _pending_create_keys[task_id] = created
+        return created
+
+
+def _clear_pending_create_key(task_id: str) -> None:
+    with _pending_create_keys_lock:
+        _pending_create_keys.pop(task_id, None)
+
+
+def _should_preserve_pending_create_key(response: requests.Response) -> bool:
+    if response.status_code >= 500:
+        return True
+
+    if response.status_code != 409:
+        return False
+
+    try:
+        payload = response.json()
+    except Exception:
+        return False
+
+    if not isinstance(payload, dict):
+        return False
+
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return False
+
+    message = str(error.get("message") or "").lower()
+    return "already in progress" in message
 
 
 class BrowserbaseProvider(CloudBrowserProvider):
-    """Browserbase (https://browserbase.com) cloud browser backend.
-
-    This provider requires direct BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID
-    credentials.  Managed Nous gateway support has been removed — the Nous
-    subscription now routes through Browser Use instead.
-    """
+    """Browserbase (https://browserbase.com) cloud browser backend."""
 
     def provider_name(self) -> str:
         return "Browserbase"
@@ -38,20 +77,37 @@ class BrowserbaseProvider(CloudBrowserProvider):
                 "api_key": api_key,
                 "project_id": project_id,
                 "base_url": os.environ.get("BROWSERBASE_BASE_URL", "https://api.browserbase.com").rstrip("/"),
+                "managed_mode": False,
             }
-        return None
+
+        managed = resolve_managed_tool_gateway("browserbase")
+        if managed is None:
+            return None
+
+        return {
+            "api_key": managed.nous_user_token,
+            "project_id": "managed",
+            "base_url": managed.gateway_origin.rstrip("/"),
+            "managed_mode": True,
+        }
 
     def _get_config(self) -> Dict[str, Any]:
         config = self._get_config_or_none()
         if config is None:
-            raise ValueError(
-                "Browserbase requires BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID "
-                "environment variables."
+            message = (
+                "Browserbase requires direct BROWSERBASE_API_KEY/BROWSERBASE_PROJECT_ID credentials."
             )
+            if managed_nous_tools_enabled():
+                message = (
+                    "Browserbase requires either direct BROWSERBASE_API_KEY/BROWSERBASE_PROJECT_ID "
+                    "credentials or a managed Browserbase gateway configuration."
+                )
+            raise ValueError(message)
         return config
 
     def create_session(self, task_id: str) -> Dict[str, object]:
         config = self._get_config()
+        managed_mode = bool(config.get("managed_mode"))
 
         # Optional env-var knobs
         enable_proxies = os.environ.get("BROWSERBASE_PROXIES", "true").lower() != "false"
@@ -91,6 +147,8 @@ class BrowserbaseProvider(CloudBrowserProvider):
             "Content-Type": "application/json",
             "X-BB-API-Key": config["api_key"],
         }
+        if managed_mode:
+            headers["X-Idempotency-Key"] = _get_or_create_pending_create_key(task_id)
 
         response = requests.post(
             f"{config['base_url']}/v1/sessions",
@@ -103,7 +161,7 @@ class BrowserbaseProvider(CloudBrowserProvider):
         keepalive_fallback = False
 
         # Handle 402 — paid features unavailable
-        if response.status_code == 402:
+        if response.status_code == 402 and not managed_mode:
             if enable_keep_alive:
                 keepalive_fallback = True
                 logger.warning(
@@ -133,13 +191,18 @@ class BrowserbaseProvider(CloudBrowserProvider):
                 )
 
         if not response.ok:
+            if managed_mode and not _should_preserve_pending_create_key(response):
+                _clear_pending_create_key(task_id)
             raise RuntimeError(
                 f"Failed to create Browserbase session: "
                 f"{response.status_code} {response.text}"
             )
 
         session_data = response.json()
+        if managed_mode:
+            _clear_pending_create_key(task_id)
         session_name = f"hermes_{task_id}_{uuid.uuid4().hex[:8]}"
+        external_call_id = response.headers.get("x-external-call-id") if managed_mode else None
 
         if enable_proxies and not proxies_fallback:
             features_enabled["proxies"] = True
@@ -158,6 +221,7 @@ class BrowserbaseProvider(CloudBrowserProvider):
             "bb_session_id": session_data["id"],
             "cdp_url": session_data["connectUrl"],
             "features": features_enabled,
+            "external_call_id": external_call_id,
         }
 
     def close_session(self, session_id: str) -> bool:

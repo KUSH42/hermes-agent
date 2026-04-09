@@ -16,6 +16,7 @@ crashes due to a bad timezone string.
 import logging
 import os
 from datetime import datetime
+from pathlib import Path
 from hermes_constants import get_hermes_home
 from typing import Optional
 
@@ -91,6 +92,7 @@ def get_timezone() -> Optional[ZoneInfo]:
 
 def get_timezone_name() -> str:
     """Return the IANA name of the configured timezone, or empty string."""
+    global _cached_tz_name, _cache_resolved
     if not _cache_resolved:
         get_timezone()  # populates cache
     return _cached_tz_name or ""

@@ -464,11 +464,7 @@
       addToSystemPackages = mkOption {
         type = types.bool;
         default = false;
-        description = ''
-          Add the hermes CLI to environment.systemPackages and export
-          HERMES_HOME system-wide (via environment.variables) so interactive
-          shells share state with the gateway service.
-        '';
+        description = "Add hermes CLI to environment.systemPackages.";
       };
 
       # ── OCI Container (opt-in) ──────────────────────────────────────────
@@ -549,12 +545,8 @@
       })
 
       # ── Host CLI ──────────────────────────────────────────────────────
-      # Add the hermes CLI to system PATH and export HERMES_HOME system-wide
-      # so interactive shells share state (sessions, skills, cron) with the
-      # gateway service instead of creating a separate ~/.hermes/.
       (lib.mkIf cfg.addToSystemPackages {
         environment.systemPackages = [ cfg.package ];
-        environment.variables.HERMES_HOME = "${cfg.stateDir}/.hermes";
       })
 
       # ── Directories ───────────────────────────────────────────────────
@@ -569,7 +561,7 @@
 
       # ── Activation: link config + auth + documents ────────────────────
       {
-        system.activationScripts."hermes-agent-setup" = lib.stringAfter [ "users" "setupSecrets" ] ''
+        system.activationScripts."hermes-agent-setup" = lib.stringAfter [ "users" ] ''
           # Ensure directories exist (activation runs before tmpfiles)
           mkdir -p ${cfg.stateDir}/.hermes
           mkdir -p ${cfg.stateDir}/home
@@ -609,7 +601,7 @@
           # so this is the single source of truth for both native and container mode.
           ${lib.optionalString (cfg.environment != {} || cfg.environmentFiles != []) ''
             ENV_FILE="${cfg.stateDir}/.hermes/.env"
-            install -o ${cfg.user} -g ${cfg.group} -m 0640 /dev/null "$ENV_FILE"
+            install -o ${cfg.user} -g ${cfg.group} -m 0600 /dev/null "$ENV_FILE"
             cat > "$ENV_FILE" <<'HERMES_NIX_ENV_EOF'
 ${envFileContent}
 HERMES_NIX_ENV_EOF

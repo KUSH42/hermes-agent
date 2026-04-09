@@ -1,18 +1,10 @@
 """Tests for Matrix voice message support (MSC3245)."""
 import io
-import types
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-# Try importing real nio; skip entire file if not available.
-# A MagicMock in sys.modules (from another test) is not the real package.
-try:
-    import nio as _nio_probe
-    if not isinstance(_nio_probe, types.ModuleType) or not hasattr(_nio_probe, "__file__"):
-        pytest.skip("nio in sys.modules is a mock, not the real package", allow_module_level=True)
-except ImportError:
-    pytest.skip("matrix-nio not installed", allow_module_level=True)
+nio = pytest.importorskip("nio", reason="matrix-nio not installed")
 
 from gateway.platforms.base import MessageType
 

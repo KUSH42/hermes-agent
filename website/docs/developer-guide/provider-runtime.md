@@ -42,18 +42,11 @@ Current provider families include:
 - OpenRouter
 - Nous Portal
 - OpenAI Codex
-- Copilot / Copilot ACP
 - Anthropic (native)
-- Google / Gemini
-- Alibaba / DashScope
-- DeepSeek
 - Z.AI
 - Kimi / Moonshot
 - MiniMax
 - MiniMax China
-- Kilo Code
-- Hugging Face
-- OpenCode Zen / OpenCode Go
 - Custom (`provider: custom`) — first-class provider for any OpenAI-compatible endpoint
 - Named custom providers (`custom_providers` list in config.yaml)
 

@@ -21,7 +21,7 @@
     in {
       packages.default = pkgs.stdenv.mkDerivation {
         pname = "hermes-agent";
-        version = (builtins.fromTOML (builtins.readFile ../pyproject.toml)).project.version;
+        version = "0.1.0";
 
         dontUnpack = true;
         dontBuild = true;

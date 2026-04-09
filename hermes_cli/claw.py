@@ -10,6 +10,7 @@ Usage:
 
 import importlib.util
 import logging
+import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +24,7 @@ from hermes_cli.setup import (
     print_info,
     print_success,
     print_error,
+    print_warning,
     prompt_yes_no,
 )
 

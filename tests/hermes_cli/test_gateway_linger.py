@@ -44,7 +44,7 @@ class TestEnsureLingerEnabled:
 
         run_calls = []
 
-        def fake_run(cmd, capture_output=False, text=False, check=False, **kwargs):
+        def fake_run(cmd, capture_output=False, text=False, check=False):
             run_calls.append((cmd, capture_output, text, check))
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 

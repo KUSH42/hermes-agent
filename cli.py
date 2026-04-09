@@ -5705,7 +5705,8 @@ class HermesCLI:
             _skin_style = _get_skin().get_spinner_style()
         except Exception:
             _skin_style = None
-        _spinner_key = _skin_style or CLI_CONFIG["display"].get("spinner_style", "dots")
+        _config_style = CLI_CONFIG["display"].get("spinner_style", "")
+        _spinner_key = _config_style or _skin_style or "dots"
         _COMMAND_SPINNER_FRAMES = _SPINNER_STYLES.get(_spinner_key, _SPINNER_STYLES["dots"])
         if save_config_value("display.skin", new_skin):
             print(f"  Skin set to: {new_skin} (saved)")

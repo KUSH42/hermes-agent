@@ -2192,8 +2192,8 @@ class HermesCLI:
         # Close reasoning box if still open (in case no content tokens arrived)
         self._close_reasoning_box()
 
+        _tc = getattr(self, "_stream_text_ansi", "")
         if self._stream_buf:
-            _tc = getattr(self, "_stream_text_ansi", "")
             if _RICH_RESPONSE:
                 block_out = self._stream_block_buf.process_line(self._stream_buf)
                 if block_out is not None:
@@ -2205,20 +2205,23 @@ class HermesCLI:
                         else:
                             for hl_line in out2.splitlines():
                                 _cprint(hl_line)
-                # Flush any buffered block-level state
-                buf_tail = self._stream_block_buf.flush()
-                if buf_tail is not None:
-                    for hl_line in buf_tail.splitlines():
-                        if "\x1b" not in hl_line:
-                            hl_line = _apply_inline_md(_apply_block_line(hl_line, reset_suffix=_tc), reset_suffix=_tc)
-                        _cprint(f"{_tc}{hl_line}{_RST}" if _tc else hl_line)
-                # Flush any open code block (unclosed fence at end of response)
-                tail = self._stream_code_hl.flush()
-                if tail:
-                    _cprint(tail)
             else:
                 _cprint(f"{_tc}{self._stream_buf}{_RST}" if _tc else self._stream_buf)
             self._stream_buf = ""
+
+        if _RICH_RESPONSE:
+            # Flush any buffered block-level state (must run even if _stream_buf
+            # was empty — e.g. API error hit right after a newline boundary).
+            buf_tail = self._stream_block_buf.flush()
+            if buf_tail is not None:
+                for hl_line in buf_tail.splitlines():
+                    if "\x1b" not in hl_line:
+                        hl_line = _apply_inline_md(_apply_block_line(hl_line, reset_suffix=_tc), reset_suffix=_tc)
+                    _cprint(f"{_tc}{hl_line}{_RST}" if _tc else hl_line)
+            # Flush any open code block (unclosed fence at end of response)
+            tail = self._stream_code_hl.flush()
+            if tail:
+                _cprint(f"{tail}{_RST}")
 
         # Close the response box
         if self._stream_box_opened:
@@ -5759,8 +5762,9 @@ class HermesCLI:
     def _on_tool_complete(self, tool_call_id: str, function_name: str, function_args: dict, function_result: str):
         """Render file edits with inline diff / code preview after tools complete.
 
-        Both features are suppressed when tool_progress_mode is "off" — that
-        mode promises "silent, just the final response".
+        Edit diffs are suppressed only in "off" mode.
+        Code previews (read_file, execute_code, terminal) are shown only in
+        "verbose" mode — they're full raw output, not a summary.
         """
         snapshot = self._pending_edit_snapshots.pop(tool_call_id, None)
 
@@ -5780,7 +5784,7 @@ class HermesCLI:
         except Exception:
             logger.debug("Edit diff preview failed for %s", function_name, exc_info=True)
 
-        if self._code_highlight_enabled:
+        if self.tool_progress_mode == "verbose" and self._code_highlight_enabled:
             try:
                 from agent.display import (
                     _result_succeeded,

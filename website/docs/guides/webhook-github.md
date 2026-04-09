@@ -84,7 +84,7 @@ platforms:
 | `deliver_extra.pr_number` | Resolves to the PR number from the payload. |
 
 :::note The payload does not contain code
-The GitHub webhook payload includes PR metadata (title, description, branch names, URLs) but **not the diff**. The prompt above instructs the agent to run `gh pr diff` to fetch the actual changes. This requires terminal/shell tool access to be enabled for the gateway.
+The GitHub webhook payload includes PR metadata (title, description, branch names, URLs) but **not the diff**. The prompt above instructs the agent to run `gh pr diff` to fetch the actual changes. The `terminal` tool is included in the default `hermes-webhook` toolset, so no extra configuration is needed.
 :::
 
 ---
@@ -120,7 +120,7 @@ curl http://localhost:8644/health
    - **Which events?** → Select individual events → check **Pull requests**
 3. Click **Add webhook**
 
-GitHub will immediately send a `ping` event to confirm the connection. It is safely ignored — `ping` is not in your `events` list — and returns `{"status": "ignored"}`. It is only logged at DEBUG level, so it won't appear in the console at the default log level.
+GitHub will immediately send a `ping` event to confirm the connection. It is safely ignored — `ping` is not in your `events` list — and returns `{"status": "ignored", "event": "ping"}`. It is only logged at DEBUG level, so it won't appear in the console at the default log level.
 
 ---
 
@@ -146,7 +146,11 @@ ngrok http 8644
 
 Copy the `https://...ngrok-free.app` URL and use it as your GitHub Payload URL. On the free ngrok tier the URL changes each time ngrok restarts — update your GitHub webhook each session. Paid ngrok accounts get a static domain.
 
-You can smoke-test a static route directly with `curl` — no GitHub account or real PR needed:
+You can smoke-test a static route directly with `curl` — no GitHub account or real PR needed.
+
+:::tip Use `deliver: log` when testing locally
+Change `deliver: github_comment` to `deliver: log` in your config while testing. Otherwise the agent will attempt to post a comment to the fake `org/repo#99` repo in the test payload, which will fail. Switch back to `deliver: github_comment` once you're satisfied with the prompt output.
+:::
 
 ```bash
 SECRET="your-webhook-secret-here"
@@ -159,6 +163,11 @@ curl -s -X POST http://localhost:8644/webhooks/github-pr-review \
   -H "X-Hub-Signature-256: $SIG" \
   -d "$BODY"
 # Expected: {"status":"accepted","route":"github-pr-review","event":"pull_request","delivery_id":"..."}
+```
+
+Then watch the agent run:
+```bash
+tail -f "${HERMES_HOME:-$HOME/.hermes}/logs/gateway.log"
 ```
 
 :::note
@@ -195,9 +204,16 @@ platforms:
           secret: "your-webhook-secret-here"
           events: [pull_request]
           prompt: |
+            A pull request event was received (action: {action}).
             PR #{number}: {pull_request.title} by {pull_request.user.login}
-            Run: gh pr diff {number} --repo {repository.full_name}
-            Review the diff using your review guidelines.
+            URL: {pull_request.html_url}
+
+            If the action is "closed" or "labeled", stop here and do not post a comment.
+
+            Otherwise:
+            1. Run: gh pr diff {number} --repo {repository.full_name}
+            2. Review the diff using your review guidelines.
+            3. Write a concise, actionable review comment and post it.
           skills:
             - review
           deliver: github_comment
@@ -212,23 +228,23 @@ platforms:
 
 ## Sending responses to Slack or Discord instead
 
-Replace `deliver: github_comment` with your messaging platform:
+Replace the `deliver` and `deliver_extra` fields inside your route with your target platform:
 
 ```yaml
+# Inside platforms.webhook.extra.routes.<route-name>:
+
+# Slack
 deliver: slack
 deliver_extra:
-  chat_id: "C0123456789"   # Slack channel ID
-```
+  chat_id: "C0123456789"   # Slack channel ID (omit to use the configured home channel)
 
-Or:
-
-```yaml
+# Discord
 deliver: discord
 deliver_extra:
-  chat_id: "987654321012345678"  # Discord channel ID
+  chat_id: "987654321012345678"  # Discord channel ID (omit to use home channel)
 ```
 
-If `chat_id` is omitted, the response is sent to that platform's configured home channel. The target platform must also be enabled and connected in the gateway.
+The target platform must also be enabled and connected in the gateway. If `chat_id` is omitted, the response is sent to that platform's configured home channel.
 
 Valid `deliver` values: `log` · `github_comment` · `telegram` · `discord` · `slack` · `signal` · `sms`
 
@@ -245,7 +261,7 @@ events:
   - Merge Request Hook
 ```
 
-GitLab payload fields differ from GitHub's — e.g. `{object_attributes.title}` for the MR title and `{object_attributes.iid}` for the MR number. Use `deliver: log` first and check the gateway log to see the full payload structure before writing your prompt template.
+GitLab payload fields differ from GitHub's — e.g. `{object_attributes.title}` for the MR title and `{object_attributes.iid}` for the MR number. The easiest way to discover the full payload structure is GitLab's **Test** button in your webhook settings, combined with the **Recent Deliveries** log. Alternatively, omit `prompt` from your route config — Hermes will then pass the full payload as formatted JSON directly to the agent, and the agent's response (visible in the gateway log with `deliver: log`) will describe its structure.
 
 ---
 
@@ -270,7 +286,7 @@ GitLab payload fields differ from GitHub's — e.g. `{object_attributes.title}` 
 | Agent runs but no comment | Check the gateway log — if the agent output was empty or just "SKIP", delivery is still attempted |
 | Port already in use | Change `extra.port` in config.yaml |
 | Agent runs but reviews only the PR description | The prompt isn't including the `gh pr diff` instruction — the diff is not in the webhook payload |
-| Can't see the ping event | Ignored events return `{"status":"ignored"}` — check GitHub's delivery log (repo → Settings → Webhooks → your webhook → Recent Deliveries) |
+| Can't see the ping event | Ignored events return `{"status":"ignored","event":"ping"}` at DEBUG log level only — check GitHub's delivery log (repo → Settings → Webhooks → your webhook → Recent Deliveries) |
 
 **GitHub's Recent Deliveries tab** (repo → Settings → Webhooks → your webhook) shows the exact request headers, payload, HTTP status, and response body for every delivery. It is the fastest way to diagnose failures without touching your server logs.
 

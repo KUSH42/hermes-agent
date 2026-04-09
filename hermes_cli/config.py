@@ -385,6 +385,15 @@ DEFAULT_CONFIG = {
         "skin": "default",
         "tool_progress_command": False,  # Enable /verbose command in messaging gateway
         "tool_preview_length": 0,  # Max chars for tool call previews (0 = no limit, show full paths/commands)
+        # ── Streaming token reveal effects ────────────────────────────────────
+        # Active only when display.streaming: true
+        # Values: none | flash | gradient_tail | glow_settle | decrypt
+        "stream_effect": "none",
+        "stream_effect_color": "",       # hex e.g. "#00ffff" — empty → skin ui_accent
+        "stream_effect_length": 12,      # tail window in chars (gradient_tail, glow_settle)
+        "stream_effect_speed": 0.06,     # seconds per animation frame (glow_settle, decrypt)
+        "stream_effect_settle_frames": 6,   # frames to dim to text color (glow_settle)
+        "stream_effect_scramble_frames": 6, # scramble frames before resolve (decrypt)
     },
 
     # Privacy settings

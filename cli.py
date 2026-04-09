@@ -56,6 +56,16 @@ except (ImportError, AttributeError):
     _STEADY_CURSOR = None
 import threading
 import queue
+import re as _re_cli
+import unicodedata as _unicodedata_cli
+
+_ANSI_ESCAPE_RE = _re_cli.compile(r"\033\[[^m]*m")
+
+
+def _vlen(s: str) -> int:
+    """Visual column width of s after stripping ANSI escapes (EAW-aware)."""
+    s = _ANSI_ESCAPE_RE.sub("", s)
+    return sum(2 if _unicodedata_cli.east_asian_width(c) in ("W", "F") else 1 for c in s)
 
 from agent.usage_pricing import (
     CanonicalUsage,
@@ -101,8 +111,12 @@ _SPINNER_STYLES: dict[str, tuple[str, ...]] = {
                  "⣶⠀⠀", "⣤⠀⠀", "⣀⠀⠀"),           # fill → drain 3-cell bar
 
     # ── Block / geometric (A) ────────────────────────────────────────────────────
-    "grow":     ("▁", "▂", "▃", "▄", "▅", "▆", "▇", "█", "▇", "▆", "▅", "▄", "▃", "▂"),
-    "fill":     ("▏", "▎", "▍", "▌", "▋", "▊", "▉", "█", "▉", "▊", "▋", "▌", "▍", "▎"),
+    "grow":     ("▁▁", "▂▁", "▃▂", "▄▃", "▅▄", "▆▅", "▇▆", "█▇",
+                 "▇█", "▆▇", "▅▆", "▄▅", "▃▄", "▂▃"),              # left-leads-right wave
+    "fill":     ("▏▏", "▎▏", "▍▏", "▌▏", "▋▏", "▊▏", "▉▏", "█▏",
+                 "█▎", "█▍", "█▌", "█▋", "█▊", "█▉", "██",
+                 "█▉", "█▊", "█▋", "█▌", "█▍", "█▎", "█▏",
+                 "▉▏", "▊▏", "▋▏", "▌▏", "▍▏", "▎▏"),              # fill left→right, drain right→left
     "shade":    ("░", "▒", "▓", "█", "▓", "▒"),
     "box":      ("┤", "┘", "┴", "└", "├", "┌", "┬", "┐"),
     "box2":     ("┌┐", "└┘", "├┤", "┬┴"),
@@ -748,6 +762,12 @@ def _run_cleanup():
             _active_agent_ref.shutdown_memory_provider(
                 getattr(_active_agent_ref, 'conversation_history', None) or []
             )
+    except Exception:
+        pass
+    # Shut down streaming effect background threads (glow_settle, decrypt)
+    try:
+        if _active_agent_ref and hasattr(_active_agent_ref, '_fx'):
+            _active_agent_ref._fx.shutdown()
     except Exception:
         pass
 
@@ -1448,11 +1468,21 @@ class HermesCLI:
 
         # Streaming display state
         self._stream_buf = ""        # Partial line buffer for line-buffered rendering
+        self._stream_vis_len = 0     # Visual width of _stream_buf (ANSI-stripped, EAW-aware)
         self._stream_started = False  # True once first delta arrives
         self._stream_box_opened = False  # True once the response box header is printed
         self._reasoning_stream_started = False  # True once live reasoning starts streaming
         self._reasoning_preview_buf = ""  # Coalesce tiny reasoning chunks for [thinking] output
         self._stream_code_hl = _CodeBlockHL() if _RICH_RESPONSE else None
+
+        # Streaming token reveal effect (display.stream_effect in config.yaml)
+        self._stream_lock = threading.Lock()
+        try:
+            from hermes_cli.stream_effects import make_stream_effect
+            self._fx = make_stream_effect(CLI_CONFIG["display"], self._stream_lock)
+        except Exception:
+            from hermes_cli.stream_effects import StreamEffectRenderer
+            self._fx = StreamEffectRenderer({"stream_effect": "none"}, self._stream_lock)
         self._pending_edit_snapshots = {}
         
         # Configuration - priority: CLI args > env vars > config file
@@ -2270,12 +2300,62 @@ class HermesCLI:
             fill = w - 2 - len(label)
             _cprint(f"\n{_resp_border_ansi()}╭─{label}{'─' * max(fill - 1, 0)}╮{_RST}")
 
-        self._stream_buf += text
-
         # Emit complete lines, keep partial remainder in buffer
         _tc = getattr(self, "_stream_text_ansi", "")
+        _fx = getattr(self, "_fx", None)
+        _fx_active = _fx is not None and _fx.active
+
+        # When an effect is active it takes ownership of printing tokens on the
+        # partial line.  Complete lines (after \n) always use _cprint normally.
+        if _fx_active:
+            tw = shutil.get_terminal_size((80, 24)).columns
+            # Split incoming text into line-complete and partial portions
+            if "\n" in text:
+                parts = text.split("\n")
+                # Everything up to the last segment triggers line completions
+                for part in parts[:-1]:
+                    # Append this part and flush as complete line
+                    self._stream_buf += part
+                    self._stream_vis_len += _vlen(part) if part else 0
+                    with self._stream_lock:
+                        self._fx.on_line_complete()
+                    self._stream_vis_len = 0
+                    line = self._stream_buf
+                    self._stream_buf = ""
+                    if _RICH_RESPONSE:
+                        out = self._stream_block_buf.process_line(line)
+                        if out is not None:
+                            out2 = self._stream_code_hl.process_line(out)
+                            if out2 is not None:
+                                if out2 is out:
+                                    out = _apply_inline_md(_apply_block_line(out, reset_suffix=_tc), reset_suffix=_tc)
+                                    _cprint(f"{_tc}{out}{_RST}" if _tc else out)
+                                else:
+                                    for hl_line in out2.splitlines():
+                                        _cprint(hl_line)
+                    else:
+                        _cprint(f"{_tc}{line}{_RST}" if _tc else line)
+                # Remaining partial segment goes through effect
+                tail = parts[-1]
+                if tail:
+                    with self._stream_lock:
+                        _fx.on_token(tail, self._stream_buf, self._stream_vis_len, _tc, tw)
+                    self._stream_buf += tail
+                    self._stream_vis_len += _vlen(tail)
+            else:
+                # Pure partial-line token — route through effect
+                with self._stream_lock:
+                    _fx.on_token(text, self._stream_buf, self._stream_vis_len, _tc, tw)
+                self._stream_buf += text
+                self._stream_vis_len += _vlen(text)
+            return
+
+        self._stream_buf += text
+        self._stream_vis_len = _vlen(self._stream_buf)
+
         while "\n" in self._stream_buf:
             line, self._stream_buf = self._stream_buf.split("\n", 1)
+            self._stream_vis_len = _vlen(self._stream_buf)
             if _RICH_RESPONSE:
                 out = self._stream_block_buf.process_line(line)
                 if out is None:
@@ -2300,33 +2380,47 @@ class HermesCLI:
         # Close reasoning box if still open (in case no content tokens arrived)
         self._close_reasoning_box()
 
+        # Let the effect settle the last partial line before the box closes.
+        # on_turn_end waits for natural window drain (decrypt) or settles immediately
+        # (all other effects delegate to on_line_complete internally).
+        _fx = getattr(self, "_fx", None)
+        if _fx is not None and _fx.active:
+            _fx.on_turn_end()
+
         if self._stream_buf:
             _tc = getattr(self, "_stream_text_ansi", "")
+            # When effect was active it already printed the partial line content;
+            # in that case we only need to run the block/code-hl pipeline to keep
+            # its state machine consistent, but suppress actual _cprint output.
+            _fx_was_active = _fx is not None and _fx.active
             if _RICH_RESPONSE:
                 block_out = self._stream_block_buf.process_line(self._stream_buf)
                 if block_out is not None:
                     out2 = self._stream_code_hl.process_line(block_out)
                     if out2 is not None:
-                        if out2 is block_out:
-                            out2 = _apply_inline_md(_apply_block_line(out2, reset_suffix=_tc), reset_suffix=_tc)
-                            _cprint(f"{_tc}{out2}{_RST}" if _tc else out2)
-                        else:
-                            for hl_line in out2.splitlines():
-                                _cprint(hl_line)
+                        if not _fx_was_active:
+                            if out2 is block_out:
+                                out2 = _apply_inline_md(_apply_block_line(out2, reset_suffix=_tc), reset_suffix=_tc)
+                                _cprint(f"{_tc}{out2}{_RST}" if _tc else out2)
+                            else:
+                                for hl_line in out2.splitlines():
+                                    _cprint(hl_line)
                 # Flush any buffered block-level state
                 buf_tail = self._stream_block_buf.flush()
-                if buf_tail is not None:
+                if buf_tail is not None and not _fx_was_active:
                     for hl_line in buf_tail.splitlines():
                         if "\x1b" not in hl_line:
                             hl_line = _apply_inline_md(_apply_block_line(hl_line, reset_suffix=_tc), reset_suffix=_tc)
                         _cprint(f"{_tc}{hl_line}{_RST}" if _tc else hl_line)
                 # Flush any open code block (unclosed fence at end of response)
                 tail = self._stream_code_hl.flush()
-                if tail:
+                if tail and not _fx_was_active:
                     _cprint(tail)
             else:
-                _cprint(f"{_tc}{self._stream_buf}{_RST}" if _tc else self._stream_buf)
+                if not _fx_was_active:
+                    _cprint(f"{_tc}{self._stream_buf}{_RST}" if _tc else self._stream_buf)
             self._stream_buf = ""
+            self._stream_vis_len = 0
 
         # Close the response box
         if self._stream_box_opened:
@@ -2336,6 +2430,7 @@ class HermesCLI:
     def _reset_stream_state(self) -> None:
         """Reset streaming state before each agent invocation."""
         self._stream_buf = ""
+        self._stream_vis_len = 0
         self._stream_started = False
         self._stream_box_opened = False
         self._reasoning_stream_started = False
@@ -2346,6 +2441,9 @@ class HermesCLI:
         self._reasoning_buf = ""
         self._reasoning_preview_buf = ""
         self._deferred_content = ""
+        _fx = getattr(self, "_fx", None)
+        if _fx is not None and _fx.active:
+            _fx.on_turn_end()
         if _RICH_RESPONSE:
             if not hasattr(self, "_stream_block_buf"):
                 self._stream_block_buf = _BlockBuf()

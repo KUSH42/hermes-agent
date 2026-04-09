@@ -1401,6 +1401,108 @@ class TestConcurrentToolExecution:
         assert len(messages) == 2
         assert all("result_" in m["content"] for m in messages)
 
+    def test_call_timeout_all_tools_timeout(self, agent, tmp_path, monkeypatch):
+        """When every tool in the batch times out all slots get error results."""
+        import time as _time
+
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        (tmp_path / "config.yaml").write_text("tools:\n  call_timeout: 0.05\n")
+
+        tc1 = _mock_tool_call(name="web_search", arguments='{"q":"a"}', call_id="c1")
+        tc2 = _mock_tool_call(name="web_search", arguments='{"q":"b"}', call_id="c2")
+        mock_msg = _mock_assistant_msg(content="", tool_calls=[tc1, tc2])
+        messages = []
+
+        def fake_handle(name, args, task_id, **kwargs):
+            _time.sleep(5)
+            return "should not appear"
+
+        with patch("run_agent.handle_function_call", side_effect=fake_handle):
+            agent._execute_tool_calls_concurrent(mock_msg, messages, "task-1")
+
+        assert len(messages) == 2
+        assert all("timed out" in m["content"].lower() for m in messages)
+
+    def test_call_timeout_complete_callback_fires_for_timed_out_slot(self, agent, tmp_path, monkeypatch):
+        """tool_complete_callback should fire even for timed-out tools."""
+        import time as _time
+
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        (tmp_path / "config.yaml").write_text("tools:\n  call_timeout: 0.05\n")
+
+        tc1 = _mock_tool_call(name="web_search", arguments='{"q":"slow"}', call_id="c1")
+        mock_msg = _mock_assistant_msg(content="", tool_calls=[tc1,
+            _mock_tool_call(name="web_search", arguments='{"q":"fast"}', call_id="c2")])
+        messages = []
+        completed = []
+        agent.tool_complete_callback = lambda tid, name, args, result: completed.append((tid, result))
+
+        def fake_handle(name, args, task_id, **kwargs):
+            if args.get("q") == "slow":
+                _time.sleep(5)
+            return "ok"
+
+        with patch("run_agent.handle_function_call", side_effect=fake_handle):
+            agent._execute_tool_calls_concurrent(mock_msg, messages, "task-1")
+
+        assert len(completed) == 2
+        timed_out_result = next(r for tid, r in completed if tid == "c1")
+        assert "timed out" in timed_out_result.lower()
+
+
+class TestGetToolCallTimeout:
+    """Unit tests for the _get_tool_call_timeout() config reader."""
+
+    def test_returns_none_when_no_config(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        from run_agent import _get_tool_call_timeout
+        assert _get_tool_call_timeout() is None
+
+    def test_returns_none_when_tools_section_missing(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        (tmp_path / "config.yaml").write_text("model:\n  name: test\n")
+        from run_agent import _get_tool_call_timeout
+        assert _get_tool_call_timeout() is None
+
+    def test_returns_none_for_zero(self, tmp_path, monkeypatch):
+        """call_timeout: 0 should be treated as disabled."""
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        (tmp_path / "config.yaml").write_text("tools:\n  call_timeout: 0\n")
+        from run_agent import _get_tool_call_timeout
+        assert _get_tool_call_timeout() is None
+
+    def test_returns_none_for_negative(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        (tmp_path / "config.yaml").write_text("tools:\n  call_timeout: -1\n")
+        from run_agent import _get_tool_call_timeout
+        assert _get_tool_call_timeout() is None
+
+    def test_returns_none_for_string_value(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        (tmp_path / "config.yaml").write_text("tools:\n  call_timeout: '120'\n")
+        from run_agent import _get_tool_call_timeout
+        assert _get_tool_call_timeout() is None
+
+    def test_returns_float_for_valid_int(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        (tmp_path / "config.yaml").write_text("tools:\n  call_timeout: 120\n")
+        from run_agent import _get_tool_call_timeout
+        result = _get_tool_call_timeout()
+        assert result == 120.0
+        assert isinstance(result, float)
+
+    def test_returns_float_for_valid_float(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        (tmp_path / "config.yaml").write_text("tools:\n  call_timeout: 30.5\n")
+        from run_agent import _get_tool_call_timeout
+        assert _get_tool_call_timeout() == 30.5
+
+    def test_returns_none_for_malformed_yaml(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        (tmp_path / "config.yaml").write_text("tools:\n  call_timeout: [bad")
+        from run_agent import _get_tool_call_timeout
+        assert _get_tool_call_timeout() is None
+
 
 class TestPathsOverlap:
     """Unit tests for the _paths_overlap helper."""

@@ -12,24 +12,21 @@ The cron-based approach to automated PR reviews has a fundamental inefficiency: 
 Webhooks eliminate that waste entirely. GitHub pushes an event to Hermes the instant a PR is opened or updated — the agent runs exactly once per real event, fetches the diff, reviews it, and posts a comment. No polling. No idle runs. No token burn on empty queues.
 
 ```
-┌─────────────────┐   POST /webhooks/      ┌───────────────────────┐
-│  GitHub         │   github-pr-review     │  Hermes Gateway       │
-│  (PR opened /   │ ─────────────────────▶ │  • validates HMAC sig │
-│   updated)      │                        │  • renders prompt     │
-└─────────────────┘                        └──────────┬────────────┘
-                                                      │ spawns agent
-                                                      ▼
-                                           ┌───────────────────────┐
-                                           │  Hermes Agent         │
-                                           │  gh pr diff {number}  │
-                                           │  → reviews diff       │
-                                           └──────────┬────────────┘
-                                                      │ gh pr comment
-                                                      ▼
-                                           ┌───────────────────────┐
-                                           │  GitHub PR thread     │
-                                           │  (review comment)     │
-                                           └───────────────────────┘
+GitHub (PR opened/updated)
+  │
+  │  POST /webhooks/github-pr-review
+  ▼
+Hermes Gateway
+  │  validates HMAC signature
+  │  renders prompt from payload
+  │  spawns agent
+  ▼
+Hermes Agent
+  │  runs: gh pr diff {number} --repo {repo}
+  │  reviews the diff
+  │  gh pr comment
+  ▼
+GitHub PR thread  ←  review comment posted
 ```
 
 This guide wires up that pipeline: GitHub webhook → Hermes → `gh` CLI → PR comment.

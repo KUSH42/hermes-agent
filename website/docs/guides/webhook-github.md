@@ -348,3 +348,4 @@ platforms:
           deliver: "log"        # log | github_comment | telegram | discord | slack | signal | sms
           deliver_extra: {}     # repo + pr_number for github_comment; chat_id for others
 ```
+<!-- webhook test -->

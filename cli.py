@@ -2267,12 +2267,18 @@ class HermesCLI:
             r_fill = w - 2 - len(r_label)
             _cprint(f"\n{_DIM}┌─{r_label}{'─' * max(r_fill - 1, 0)}┐{_RST}")
 
+        # Track length of any partial reasoning line already shown
+        _prev_partial = _vlen(getattr(self, "_reasoning_buf", ""))
+
         self._reasoning_buf = getattr(self, "_reasoning_buf", "") + text
 
-        # Emit complete lines, and force-flush long partial lines so
-        # reasoning is visible in real-time even without newlines.
+        # Emit complete lines, keep partial remainder for per-token display
         while "\n" in self._reasoning_buf:
             line, self._reasoning_buf = self._reasoning_buf.split("\n", 1)
+            # Clear any partial line shown before rendering the complete line
+            if _prev_partial:
+                _pt_print(_PT_ANSI(f"\r{' ' * _prev_partial}\r"), end="")
+                _prev_partial = 0
             if getattr(self, "_rich_reasoning", False):
                 out = self._reasoning_block_buf.process_line(line)
                 if out is None:
@@ -2291,14 +2297,10 @@ class HermesCLI:
                 _cprint(_dim_lines(line)[0])
             else:
                 _cprint(_dim_lines(line)[0])
-        if len(self._reasoning_buf) > 80:
-            partial = self._reasoning_buf
-            if getattr(self, "_rich_reasoning", False):
-                partial = _apply_inline_md(_apply_block_line(partial, reset_suffix=""), reset_suffix="")
-            elif _RICH_RESPONSE:
-                partial = _apply_inline_md(_apply_block_line(partial, reset_suffix=_DIM), reset_suffix=_DIM)
-            _cprint(_dim_lines(partial)[0])
-            self._reasoning_buf = ""
+
+        # Show partial reasoning line immediately for per-token feedback
+        if self._reasoning_buf:
+            _pt_print(_PT_ANSI(f"\r{_DIM}{self._reasoning_buf}{_RST}"), end="", flush=True)
 
     def _close_reasoning_box(self) -> None:
         """Close the live reasoning box if it's open."""
@@ -2306,6 +2308,10 @@ class HermesCLI:
             # Flush remaining reasoning buffer
             buf = getattr(self, "_reasoning_buf", "")
             if buf:
+                # Clear any partial line shown during per-token streaming
+                partial_len = _vlen(buf)
+                if partial_len:
+                    _pt_print(_PT_ANSI(f"\r{' ' * partial_len}\r"), end="")
                 if getattr(self, "_rich_reasoning", False):
                     buf = _apply_inline_md(_apply_block_line(buf, reset_suffix=""), reset_suffix="")
                 elif _RICH_RESPONSE:
@@ -2477,12 +2483,19 @@ class HermesCLI:
         # Emit complete lines, keep partial remainder in buffer
         _tc = getattr(self, "_stream_text_ansi", "")
 
+        # Track length of any partial line already shown so we can clear it
+        _prev_partial = self._stream_vis_len
+
         self._stream_buf += text
         self._stream_vis_len = _vlen(self._stream_buf)
 
         while "\n" in self._stream_buf:
             line, self._stream_buf = self._stream_buf.split("\n", 1)
             self._stream_vis_len = _vlen(self._stream_buf)
+            # Clear any partial line printed before rendering the complete line
+            if _prev_partial:
+                _pt_print(_PT_ANSI(f"\r{' ' * _prev_partial}\r"), end="")
+                _prev_partial = 0
             if _RICH_RESPONSE:
                 out = self._stream_block_buf.process_line(line)
                 if out is None:
@@ -2502,6 +2515,10 @@ class HermesCLI:
             else:
                 _cprint(f"{_tc}{line}{_RST}" if _tc else line)
 
+        # Show partial line immediately for per-token feedback
+        if self._stream_buf:
+            _pt_print(_PT_ANSI(f"\r{_tc}{self._stream_buf}{_RST}"), end="", flush=True)
+
     def _flush_stream(self) -> None:
         """Emit any remaining partial line from the stream buffer and close the box."""
         # Close reasoning box if still open (in case no content tokens arrived)
@@ -2509,6 +2526,9 @@ class HermesCLI:
 
         _tc = getattr(self, "_stream_text_ansi", "")
         if self._stream_buf:
+            # Clear the partial line shown during per-token streaming before final render
+            if self._stream_vis_len:
+                _pt_print(_PT_ANSI(f"\r{' ' * self._stream_vis_len}\r"), end="")
             if _RICH_RESPONSE:
                 block_out = self._stream_block_buf.process_line(self._stream_buf)
                 if block_out is not None:

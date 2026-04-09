@@ -47,6 +47,7 @@ def _make_flush_cli(stream_buf="", stream_box_opened=False, stream_text_ansi="")
 
     cli = HermesCLI.__new__(HermesCLI)
     cli._stream_buf = stream_buf
+    cli._stream_vis_len = 0  # no partial line shown by default
     cli._stream_box_opened = stream_box_opened
     cli._stream_text_ansi = stream_text_ansi
     cli._reasoning_box_opened = False

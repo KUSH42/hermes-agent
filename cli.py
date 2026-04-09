@@ -1434,13 +1434,15 @@ class HermesCLI:
         # Inline diff previews for write actions (display.inline_diffs in config.yaml)
         self._inline_diffs_enabled = CLI_CONFIG["display"].get("inline_diffs", True)
 
-        # Spinner style — skin takes priority over display.spinner_style config key
+        # Spinner style — explicit config overrides skin; skin overrides built-in default.
+        # An empty config value ("") means "defer to skin".
         try:
             from hermes_cli.skin_engine import get_active_skin as _get_skin
             _skin_style = _get_skin().get_spinner_style()
         except Exception:
             _skin_style = None
-        _spinner_key = _skin_style or CLI_CONFIG["display"].get("spinner_style", "dots")
+        _config_style = CLI_CONFIG["display"].get("spinner_style", "")
+        _spinner_key = _config_style or _skin_style or "dots"
         global _COMMAND_SPINNER_FRAMES, _TITLE_SPINNER_FRAMES
         _COMMAND_SPINNER_FRAMES = _SPINNER_STYLES.get(_spinner_key, _SPINNER_STYLES["dots"])
         # Title spinner: explicit override > safe fallback from prompt style.

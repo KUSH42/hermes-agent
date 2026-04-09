@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from cli import HermesCLI, _build_compact_banner, _rich_text_from_ansi
+from cli import HermesCLI, _build_compact_banner, _normalize_ansi_c1, _rich_text_from_ansi
 from hermes_cli.skin_engine import get_active_skin, set_active_skin
 
 

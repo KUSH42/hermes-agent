@@ -2638,7 +2638,7 @@ class HermesCLI:
             )
         except Exception as exc:
             message = format_runtime_provider_error(exc)
-            ChatConsole().print(f"[bold red]{message}[/]")
+            self._print_cli_markup(f"[bold red]{message}[/]")
             return False
 
         api_key = runtime.get("api_key")

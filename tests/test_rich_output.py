@@ -660,7 +660,7 @@ class TestStreamingCodeBlockHighlighter:
         assert result is not None
         plain = re.sub(r"\x1b\[[0-9;]*m", "", result)
         assert "foo()" in plain
-        assert "\033[" in result
+        # prose passes through verbatim; inline markdown is applied by the CLI pipeline
 
     def test_opening_fence_suppressed(self):
         assert self.hl.process_line("```python") is None
@@ -1031,6 +1031,8 @@ class TestDiffRendererV2:
 
     def test_pairing_per_run_not_per_hunk(self, monkeypatch):
         monkeypatch.delenv("NO_COLOR", raising=False)
+        # Isolate from any active skin so _diff_cfg uses hardcoded fallback colors.
+        monkeypatch.setattr("hermes_cli.skin_engine.get_active_skin", lambda: (_ for _ in ()).throw(Exception("no skin")))
         # Use pairs with ratio > 0.5 so intra-diff triggers.
         # "return foo_value" vs "return bar_value": share "return " + "_value" = 13 chars,
         # total = 32, ratio = 26/32 ≈ 0.81.

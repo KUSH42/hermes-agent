@@ -265,8 +265,13 @@ class TestFlushStreamCodeHlReset:
         printed = [str(c.args[0]) for c in mock_cprint.call_args_list]
         code_lines = [p for p in printed if "some code" in p]
         assert code_lines, "Code hl tail was not printed at all"
-        assert all(p.endswith(_RST_SENTINEL) for p in code_lines), (
-            f"Expected _RST at end of code-hl output, got: {code_lines}"
+        # Each code line is now printed with 2-space indent; _RST follows as a
+        # separate _cprint call immediately after the loop.
+        assert all(p.startswith("  ") for p in code_lines), (
+            f"Expected 2-space indent on code-hl lines, got: {code_lines}"
+        )
+        assert _RST_SENTINEL in printed, (
+            f"Expected standalone _RST after code-hl output, got: {printed}"
         )
 
     @patch("cli._cprint")

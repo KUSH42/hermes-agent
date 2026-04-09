@@ -669,7 +669,7 @@ def _emit_highlighted_lines(block: str, print_fn) -> bool:
             f"\033[2m╌╌ {omitted} more line{'s' if omitted != 1 else ''} omitted ╌╌\033[0m"
         ]
     for line in lines:
-        print_fn(line)
+        print_fn(f"  {line}")
     return True
 
 def _highlight_block(header: str, content: str, language: str, print_fn) -> bool:

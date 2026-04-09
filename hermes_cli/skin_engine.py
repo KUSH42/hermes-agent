@@ -165,27 +165,29 @@ logger = logging.getLogger(__name__)
 # MIT-licensed originals credited inline.
 SYNTAX_SCHEMES: Dict[str, Dict[str, str]] = {
     "hermes": {
-        # Current hardcoded palette — unchanged for backward compat.
-        # "name" intentionally omitted: plain identifiers render as terminal default.
-        "keyword":             "bold blue",
-        "keyword_type":        "bold cyan",
-        "name_builtin":        "cyan",
-        "name_class":          "bold yellow",
-        "name_function":       "bold yellow",
-        "name_function_magic": "cyan",
-        "name_decorator":      "bright_cyan",
-        "name_exception":      "red",
-        "comment":             "dim green",
-        "string":              "green",
-        "string_doc":          "dim green",
-        "string_escape":       "green",
-        "string_regex":        "magenta",
-        "number":              "magenta",
-        "operator":            "white",
-        "operator_word":       "bold blue",
-        "error":               "red",
-        "diff_deleted":        "red",
-        "diff_inserted":       "green",
+        # Hermes truecolor palette — warm gold/amber accent on dark terminal.
+        # Identifiers (#E8E2D5) are warm off-white rather than terminal default
+        # for consistent contrast regardless of terminal color scheme.
+        "name":                "#E8E2D5",   # plain identifiers — warm off-white
+        "keyword":             "bold #E8A838",  # amber-gold; distinct from strings
+        "keyword_type":        "#6EC6C6",   # teal — type annotations / builtins
+        "name_builtin":        "#6EC6C6",   # teal — len, print, etc.
+        "name_class":          "bold #FFD700",  # bright gold — class definitions
+        "name_function":       "bold #FFBF00",  # amber — function definitions
+        "name_function_magic": "#C8A850",   # muted gold — __dunder__ methods
+        "name_decorator":      "#E8844A",   # warm orange — @decorators
+        "name_exception":      "#E05C5C",   # soft red — ExceptionClass
+        "comment":             "italic #7A7060",  # warm grey — unobtrusive
+        "string":              "#98C47A",   # sage green — string literals
+        "string_doc":          "italic #7A9E60",  # darker sage — docstrings
+        "string_escape":       "#C8A030",   # gold-amber — \n \t etc.
+        "string_regex":        "#B8A060",   # muted amber — regex patterns
+        "number":              "#C09A60",   # warm tan — numeric literals
+        "operator":            "#A09880",   # warm grey — + - * /
+        "operator_word":       "bold #E8A838",  # amber — and or not in
+        "error":               "#E05C5C",   # soft red
+        "diff_deleted":        "#F47070",   # rose-red — matches diff deletion_bg
+        "diff_inserted":       "#7EC87E",   # sage-green — matches diff addition_bg
     },
     "monokai": {
         # Adapted from Wimer Hazenberg's Monokai (MIT). Background ref: #272822

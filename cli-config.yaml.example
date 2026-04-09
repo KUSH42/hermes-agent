@@ -770,6 +770,13 @@ display:
   # Toggle at runtime with /reasoning show or /reasoning hide.
   show_reasoning: false
 
+  # Apply rich markdown rendering inside reasoning/thinking blocks.
+  # When enabled, fenced code blocks, tables, lists, headings, and inline
+  # markdown are rendered inside the reasoning box with the same pipeline
+  # used for normal responses. Requires show_reasoning: true to have effect.
+  # Automatically disabled if the rich rendering engine failed to load.
+  rich_reasoning: true
+
   # Stream tokens to the terminal as they arrive instead of waiting for the
   # full response. The response box opens on first token and text appears
   # line-by-line. Tool calls are still captured silently.

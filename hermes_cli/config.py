@@ -392,6 +392,7 @@ DEFAULT_CONFIG = {
         "busy_input_mode": "interrupt",
         "bell_on_complete": False,
         "show_reasoning": False,
+        "rich_reasoning": True,
         "streaming": True,
         "inline_diffs": True,     # Show inline diff previews for write actions (write_file, patch, skill_manage)
         "diff_max_lines": 80,     # Max rendered lines shown per inline diff (excess → "… omitted N lines" summary)

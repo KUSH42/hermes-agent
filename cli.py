@@ -1535,6 +1535,11 @@ class HermesCLI:
         self.bell_on_complete = CLI_CONFIG["display"].get("bell_on_complete", False)
         # show_reasoning: display model thinking/reasoning before the response
         self.show_reasoning = CLI_CONFIG["display"].get("show_reasoning", False)
+        # rich_reasoning: apply full rich rendering pipeline inside reasoning blocks
+        self._rich_reasoning: bool = (
+            _RICH_RESPONSE
+            and CLI_CONFIG["display"].get("rich_reasoning", True)
+        )
         # busy_input_mode: "interrupt" (Enter interrupts current run) or "queue" (Enter queues for next turn)
         _bim = CLI_CONFIG["display"].get("busy_input_mode", "interrupt")
         self.busy_input_mode = "queue" if str(_bim).strip().lower() == "queue" else "interrupt"
@@ -2128,41 +2133,78 @@ class HermesCLI:
 
     def _emit_reasoning_preview(self, reasoning_text: str) -> None:
         """Render a buffered reasoning preview as a single [thinking] block."""
-        import re
-        import textwrap
-
         preview_text = reasoning_text.strip()
         if not preview_text:
             return
 
-        try:
-            term_width = shutil.get_terminal_size().columns
-        except Exception:
-            term_width = 80
-        prefix = "  [thinking] "
-        wrap_width = max(30, term_width - len(prefix) - 2)
-
-        paragraphs = []
-        raw_paragraphs = re.split(r"\n\s*\n+", preview_text.replace("\r\n", "\n"))
-        for paragraph in raw_paragraphs:
-            compact = " ".join(line.strip() for line in paragraph.splitlines() if line.strip())
-            if compact:
-                paragraphs.append(textwrap.fill(compact, width=wrap_width))
-        preview_text = "\n".join(paragraphs)
-        if not preview_text:
-            return
-
-        if self.verbose:
-            _cprint(f"  {_DIM}[thinking] {preview_text}{_RST}")
-            return
-
-        lines = preview_text.splitlines()
-        if len(lines) > 5:
-            preview = "\n".join(lines[:5])
-            preview += f"\n  ... ({len(lines) - 5} more lines)"
+        if getattr(self, "_rich_reasoning", False):
+            buf = _BlockBuf()
+            hl  = _CodeBlockHL()
+            rendered_lines = []
+            for raw_line in preview_text.splitlines():
+                out = buf.process_line(raw_line)
+                if out is None:
+                    continue
+                out2 = hl.process_line(out)
+                if out2 is None:
+                    continue
+                if out2 is out:
+                    out = _apply_inline_md(_apply_block_line(out, reset_suffix=""), reset_suffix="")
+                    for sub in out.splitlines():
+                        rendered_lines.append(_dim_lines(sub)[0])
+                else:
+                    for sub in out2.splitlines():
+                        rendered_lines.append(_dim_lines(sub)[0])
+            # Flush state machine tails
+            for tail in (buf.flush() or "").splitlines():
+                if "\x1b" not in tail:
+                    tail = _apply_inline_md(_apply_block_line(tail, reset_suffix=""), reset_suffix="")
+                rendered_lines.append(_dim_lines(tail)[0])
+            for tail in (hl.flush() or "").splitlines():
+                rendered_lines.append(_dim_lines(tail)[0])
         else:
-            preview = preview_text
-        _cprint(f"  {_DIM}[thinking] {preview}{_RST}")
+            # Legacy: textwrap collapse (preserved exactly for backward compat)
+            import re
+            import textwrap
+            try:
+                term_width = shutil.get_terminal_size().columns
+            except Exception:
+                term_width = 80
+            prefix = "  [thinking] "
+            wrap_width = max(30, term_width - len(prefix) - 2)
+            paragraphs = []
+            for p in re.split(r"\n\s*\n+", preview_text.replace("\r\n", "\n")):
+                compact = " ".join(l.strip() for l in p.splitlines() if l.strip())
+                if compact:
+                    paragraphs.append(textwrap.fill(compact, width=wrap_width))
+            legacy_text = "\n".join(paragraphs)
+            if not legacy_text:
+                return
+            if self.verbose:
+                _cprint(f"  {_DIM}[thinking] {legacy_text}{_RST}")
+                return
+            lines = legacy_text.splitlines()
+            if len(lines) > 5:
+                legacy_preview = "\n".join(lines[:5])
+                legacy_preview += f"\n  ... ({len(lines) - 5} more lines)"
+            else:
+                legacy_preview = legacy_text
+            _cprint(f"  {_DIM}[thinking] {legacy_preview}{_RST}")
+            return
+
+        if not rendered_lines:
+            return
+
+        if not self.verbose and len(rendered_lines) > 5:
+            displayed = rendered_lines[:5]
+            displayed.append(f"  {_DIM}... ({len(rendered_lines) - 5} more lines){_RST}")
+        else:
+            displayed = rendered_lines
+
+        prefix = f"  {_DIM}[thinking]{_RST} "
+        _cprint(prefix + displayed[0])
+        for l in displayed[1:]:
+            _cprint("  " + l)
 
     def _flush_reasoning_preview(self, *, force: bool = False) -> None:
         """Flush buffered reasoning text at natural boundaries.
@@ -2245,12 +2287,29 @@ class HermesCLI:
         # reasoning is visible in real-time even without newlines.
         while "\n" in self._reasoning_buf:
             line, self._reasoning_buf = self._reasoning_buf.split("\n", 1)
-            if _RICH_RESPONSE:
+            if getattr(self, "_rich_reasoning", False):
+                out = self._reasoning_block_buf.process_line(line)
+                if out is None:
+                    continue   # buffered inside a table / setext heading
+                out2 = self._reasoning_code_hl.process_line(out)
+                if out2 is None:
+                    continue   # buffered inside a fenced code block
+                if out2 is out:
+                    out = _apply_inline_md(_apply_block_line(out, reset_suffix=""), reset_suffix="")
+                    _cprint(_dim_lines(out)[0])
+                else:
+                    for hl_line in out2.splitlines():
+                        _cprint(_dim_lines(hl_line)[0])
+            elif _RICH_RESPONSE:
                 line = _apply_inline_md(_apply_block_line(line, reset_suffix=_DIM), reset_suffix=_DIM)
-            _cprint(_dim_lines(line)[0])
+                _cprint(_dim_lines(line)[0])
+            else:
+                _cprint(_dim_lines(line)[0])
         if len(self._reasoning_buf) > 80:
             partial = self._reasoning_buf
-            if _RICH_RESPONSE:
+            if getattr(self, "_rich_reasoning", False):
+                partial = _apply_inline_md(_apply_block_line(partial, reset_suffix=""), reset_suffix="")
+            elif _RICH_RESPONSE:
                 partial = _apply_inline_md(_apply_block_line(partial, reset_suffix=_DIM), reset_suffix=_DIM)
             _cprint(_dim_lines(partial)[0])
             self._reasoning_buf = ""
@@ -2261,10 +2320,24 @@ class HermesCLI:
             # Flush remaining reasoning buffer
             buf = getattr(self, "_reasoning_buf", "")
             if buf:
-                if _RICH_RESPONSE:
+                if getattr(self, "_rich_reasoning", False):
+                    buf = _apply_inline_md(_apply_block_line(buf, reset_suffix=""), reset_suffix="")
+                elif _RICH_RESPONSE:
                     buf = _apply_inline_md(_apply_block_line(buf, reset_suffix=_DIM), reset_suffix=_DIM)
                 _cprint(_dim_lines(buf)[0])
                 self._reasoning_buf = ""
+            # Drain state machines (unclosed tables / fenced code blocks)
+            if getattr(self, "_rich_reasoning", False):
+                block_tail = self._reasoning_block_buf.flush()
+                if block_tail:
+                    for tl in block_tail.splitlines():
+                        if "\x1b" not in tl:
+                            tl = _apply_inline_md(_apply_block_line(tl, reset_suffix=""), reset_suffix="")
+                        _cprint(_dim_lines(tl)[0])
+                code_tail = self._reasoning_code_hl.flush()
+                if code_tail:
+                    for tl in code_tail.splitlines():
+                        _cprint(_dim_lines(tl)[0])
             w = shutil.get_terminal_size().columns
             _cprint(f"{_DIM}└{'─' * (w - 2)}┘{_RST}")
             self._reasoning_box_opened = False
@@ -2573,6 +2646,14 @@ class HermesCLI:
                 self._stream_code_hl = _CodeBlockHL()
             else:
                 self._stream_code_hl.reset()
+            if not hasattr(self, "_reasoning_block_buf"):
+                self._reasoning_block_buf = _BlockBuf()
+            else:
+                self._reasoning_block_buf.reset()
+            if not hasattr(self, "_reasoning_code_hl"):
+                self._reasoning_code_hl = _CodeBlockHL()
+            else:
+                self._reasoning_code_hl.reset()
 
     def _slow_command_status(self, command: str) -> str:
         """Return a user-facing status message for slower slash commands."""
@@ -7208,7 +7289,12 @@ class HermesCLI:
                     else:
                         visible = lines
                         tail = ""
-                    if _RICH_RESPONSE:
+                    if getattr(self, "_rich_reasoning", False):
+                        visible = [
+                            _apply_inline_md(_apply_block_line(l, reset_suffix=""), reset_suffix="")
+                            for l in visible
+                        ]
+                    elif _RICH_RESPONSE:
                         visible = [
                             _apply_inline_md(_apply_block_line(l, reset_suffix=_DIM), reset_suffix=_DIM)
                             for l in visible

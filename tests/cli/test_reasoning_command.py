@@ -923,26 +923,23 @@ class TestStreamReasoningDeltaRichPipeline(unittest.TestCase):
         mock_dim.assert_any_call("line_a")
         mock_dim.assert_any_call("line_b")
 
+    @patch("cli._pt_print")
     @patch("cli._cprint")
-    def test_force_flush_uses_empty_reset_suffix(self, mock_cprint):
-        """Force-flush (>80 char partial line) also uses reset_suffix="" when
-        rich_reasoning=True."""
+    def test_long_partial_uses_pt_print_not_cprint(self, mock_cprint, mock_pt_print):
+        """Partials >80 chars (no newline) are shown via _pt_print(end=''), not
+        _cprint. The 80-char force-flush hack is gone; per-token output handles it."""
         cli = _make_reasoning_stream_cli()
-        captured_suffix = {}
 
-        def spy_block_line(line, reset_suffix=""):
-            captured_suffix["reset_suffix"] = reset_suffix
-            return line
+        with patch("cli._PT_ANSI", side_effect=lambda x: x):
+            cli._stream_reasoning_delta("x" * 85)
 
-        with (
-            patch("cli._apply_block_line", side_effect=spy_block_line),
-            patch("cli._apply_inline_md", side_effect=lambda l, **_: l),
-            patch("cli._dim_lines", side_effect=lambda l: [l]),
-        ):
-            cli._stream_reasoning_delta("x" * 85)   # no newline, >80 chars
-
-        self.assertEqual(captured_suffix.get("reset_suffix"), "")
-        self.assertEqual(cli._reasoning_buf, "")   # buffer was flushed
+        mock_cprint.assert_not_called()
+        partial_calls = [
+            c for c in mock_pt_print.call_args_list
+            if c.kwargs.get("end", "\n") == ""
+        ]
+        self.assertTrue(partial_calls, "_pt_print(end='') not called for long partial")
+        self.assertEqual(cli._reasoning_buf, "x" * 85, "buffer must NOT be cleared for partial")
 
     @patch("cli._cprint")
     def test_rich_reasoning_false_falls_back_to_dim_path(self, mock_cprint):

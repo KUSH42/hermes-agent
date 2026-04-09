@@ -229,3 +229,4 @@ mcp_servers:
 - **[Configuration](../user-guide/configuration.md)** — Customize your setup
 - **[Messaging Gateway](../user-guide/messaging/index.md)** — Connect Telegram, Discord, Slack, WhatsApp, Signal, Email, or Home Assistant
 - **[Tools & Toolsets](../user-guide/features/tools.md)** — Explore available capabilities
+- **[Automated GitHub PR Reviews](../guides/webhook-github.md)** — Trigger agent runs from GitHub webhook events

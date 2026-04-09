@@ -2135,7 +2135,7 @@ class HermesCLI:
                 if out2 is None:
                     continue
                 if out2 is out:
-                    out = _apply_inline_md(_apply_block_line(out, reset_suffix=""), reset_suffix="")
+                    out = _apply_inline_md(_apply_block_line(out, reset_suffix=_DIM), reset_suffix=_DIM)
                     for sub in out.splitlines():
                         rendered_lines.append(_dim_lines(sub)[0])
                 else:
@@ -2144,7 +2144,7 @@ class HermesCLI:
             # Flush state machine tails
             for tail in (buf.flush() or "").splitlines():
                 if "\x1b" not in tail:
-                    tail = _apply_inline_md(_apply_block_line(tail, reset_suffix=""), reset_suffix="")
+                    tail = _apply_inline_md(_apply_block_line(tail, reset_suffix=_DIM), reset_suffix=_DIM)
                 rendered_lines.append(_dim_lines(tail)[0])
             for tail in (hl.flush() or "").splitlines():
                 rendered_lines.append(_dim_lines(tail)[0])
@@ -2166,30 +2166,15 @@ class HermesCLI:
             legacy_text = "\n".join(paragraphs)
             if not legacy_text:
                 return
-            if self.verbose:
-                _cprint(f"  {_DIM}[thinking] {legacy_text}{_RST}")
-                return
-            lines = legacy_text.splitlines()
-            if len(lines) > 5:
-                legacy_preview = "\n".join(lines[:5])
-                legacy_preview += f"\n  ... ({len(lines) - 5} more lines)"
-            else:
-                legacy_preview = legacy_text
-            _cprint(f"  {_DIM}[thinking] {legacy_preview}{_RST}")
+            _cprint(f"  {_DIM}[thinking] {legacy_text}{_RST}")
             return
 
         if not rendered_lines:
             return
 
-        if not self.verbose and len(rendered_lines) > 5:
-            displayed = rendered_lines[:5]
-            displayed.append(f"  {_DIM}... ({len(rendered_lines) - 5} more lines){_RST}")
-        else:
-            displayed = rendered_lines
-
         prefix = f"  {_DIM}[thinking]{_RST} "
-        _cprint(prefix + displayed[0])
-        for l in displayed[1:]:
+        _cprint(prefix + rendered_lines[0])
+        for l in rendered_lines[1:]:
             _cprint("  " + l)
 
     def _flush_reasoning_preview(self, *, force: bool = False) -> None:
@@ -2287,7 +2272,7 @@ class HermesCLI:
                 if out2 is None:
                     continue   # buffered inside a fenced code block
                 if out2 is out:
-                    out = _apply_inline_md(_apply_block_line(out, reset_suffix=""), reset_suffix="")
+                    out = _apply_inline_md(_apply_block_line(out, reset_suffix=_DIM), reset_suffix=_DIM)
                     _cprint(_dim_lines(out)[0])
                 else:
                     for hl_line in out2.splitlines():
@@ -2313,7 +2298,7 @@ class HermesCLI:
                 if partial_len:
                     _pt_print(_PT_ANSI(f"\r{' ' * partial_len}\r"), end="")
                 if getattr(self, "_rich_reasoning", False):
-                    buf = _apply_inline_md(_apply_block_line(buf, reset_suffix=""), reset_suffix="")
+                    buf = _apply_inline_md(_apply_block_line(buf, reset_suffix=_DIM), reset_suffix=_DIM)
                 elif _RICH_RESPONSE:
                     buf = _apply_inline_md(_apply_block_line(buf, reset_suffix=_DIM), reset_suffix=_DIM)
                 _cprint(_dim_lines(buf)[0])
@@ -2324,7 +2309,7 @@ class HermesCLI:
                 if block_tail:
                     for tl in block_tail.splitlines():
                         if "\x1b" not in tl:
-                            tl = _apply_inline_md(_apply_block_line(tl, reset_suffix=""), reset_suffix="")
+                            tl = _apply_inline_md(_apply_block_line(tl, reset_suffix=_DIM), reset_suffix=_DIM)
                         _cprint(_dim_lines(tl)[0])
                 code_tail = self._reasoning_code_hl.flush()
                 if code_tail:

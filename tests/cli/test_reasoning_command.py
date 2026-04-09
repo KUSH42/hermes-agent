@@ -883,9 +883,10 @@ class TestStreamReasoningDeltaRichPipeline(unittest.TestCase):
         mock_cprint.assert_not_called()
 
     @patch("cli._cprint")
-    def test_plain_line_uses_empty_reset_suffix(self, mock_cprint):
-        """Plain lines (out2 is out) call _apply_block_line with reset_suffix=""
-        not _DIM, so markdown spans can express relative brightness."""
+    def test_plain_line_uses_dim_reset_suffix(self, mock_cprint):
+        """Plain lines (out2 is out) call _apply_block_line with reset_suffix=_DIM
+        so DIM is restored after markdown spans (bold/italic) and text stays gray."""
+        from cli import _DIM
         cli = _make_reasoning_stream_cli()
         sentinel = "unchanged"
         cli._reasoning_block_buf.process_line.return_value = sentinel
@@ -905,7 +906,7 @@ class TestStreamReasoningDeltaRichPipeline(unittest.TestCase):
         ):
             cli._stream_reasoning_delta("**bold text**\n")
 
-        self.assertEqual(captured_suffix.get("reset_suffix"), "")
+        self.assertEqual(captured_suffix.get("reset_suffix"), _DIM)
 
     @patch("cli._cprint")
     def test_syntax_highlighted_output_each_line_dimmed(self, mock_cprint):
@@ -1095,8 +1096,10 @@ class TestEmitReasoningPreviewRichPipeline(unittest.TestCase):
         mock_hl.process_line.assert_called()
 
     @patch("cli._cprint")
-    def test_rich_path_uses_empty_reset_suffix(self, mock_cprint):
-        """Rich preview calls _apply_block_line with reset_suffix="" (not _DIM)."""
+    def test_rich_path_uses_dim_reset_suffix(self, mock_cprint):
+        """Rich preview calls _apply_block_line with reset_suffix=_DIM so DIM is
+        restored after markdown spans and text stays gray throughout."""
+        from cli import _DIM
         cli = self._make_preview_cli(rich=True)
         mock_buf = MagicMock()
         mock_hl  = MagicMock()
@@ -1120,15 +1123,14 @@ class TestEmitReasoningPreviewRichPipeline(unittest.TestCase):
         ):
             cli._emit_reasoning_preview("some text")
 
-        self.assertEqual(captured_suffix.get("reset_suffix"), "")
+        self.assertEqual(captured_suffix.get("reset_suffix"), _DIM)
 
     @patch("cli._cprint")
-    def test_five_line_truncation_on_rendered_lines(self, mock_cprint):
-        """5-line truncation is applied to rendered lines (not raw text)."""
+    def test_all_lines_shown_no_truncation(self, mock_cprint):
+        """All rendered lines are shown — no 5-line truncation, no '... more lines'."""
         cli = self._make_preview_cli(rich=True, verbose=False)
         mock_buf = MagicMock()
         mock_hl  = MagicMock()
-        # Each process_line returns the line as-is
         mock_buf.process_line.side_effect = lambda l: l
         mock_buf.flush.return_value = None
         mock_hl.process_line.side_effect = lambda x: x
@@ -1146,7 +1148,10 @@ class TestEmitReasoningPreviewRichPipeline(unittest.TestCase):
             cli._emit_reasoning_preview(ten_lines)
 
         all_printed = " ".join(c.args[0] for c in mock_cprint.call_args_list)
-        self.assertIn("more lines", all_printed)
+        self.assertNotIn("more lines", all_printed)
+        # All 10 lines must appear
+        for i in range(10):
+            self.assertIn(f"Line {i}", all_printed)
 
     @patch("cli._cprint")
     def test_verbose_shows_all_lines(self, mock_cprint):

@@ -777,6 +777,47 @@ display:
   streaming: true
 
   # ───────────────────────────────────────────────────────────────────────────
+  # Syntax Highlighting & Rich Rendering
+  # ───────────────────────────────────────────────────────────────────────────
+
+  # Enable syntax-highlighted code previews for execute_code, read_file, and
+  # terminal tool output. Uses the active skin's syntax_scheme.
+  # Toggle at runtime with /highlight.
+  code_highlight: true
+
+  # Bold keywords and type names in syntax-highlighted output.
+  syntax_bold: true
+
+  # Max lines to render in inline diff previews (write_file / patch responses).
+  # Diffs longer than this are truncated with a "N more lines" note.
+  diff_max_lines: 80
+
+  # Max files to show in a multi-file diff preview.
+  diff_max_files: 6
+
+  # Max lines for fenced code block previews in streamed responses.
+  preview_max_lines: 40
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Terminal Title
+  # ───────────────────────────────────────────────────────────────────────────
+
+  # Animate the terminal tab title while the agent is running.
+  title_spinner: true
+
+  # Base text used in the terminal tab title (e.g. "Hermes | thinking…").
+  title_base: "Hermes"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Spinner
+  # ───────────────────────────────────────────────────────────────────────────
+
+  # Animation style for the CLI spinner shown during API calls and tool runs.
+  # Skins can override this per-theme via spinner.style.
+  # Options: dots | bounce | grow | arrows | star | moon | pulse | clock | none
+  spinner_style: dots
+
+  # ───────────────────────────────────────────────────────────────────────────
   # Skin / Theme
   # ───────────────────────────────────────────────────────────────────────────
   # Customize CLI visual appearance — banner colors, spinner faces, tool prefix,
@@ -802,6 +843,7 @@ display:
   #     ui_accent: "#HEX"        # UI accent color
   #     response_border: "#HEX"  # Response box border color
   #   spinner:
+  #     style: dots              # Override display.spinner_style for this skin
   #     waiting_faces: ["(⚔)", "(⛨)"]       # Faces shown while waiting
   #     thinking_faces: ["(⚔)", "(⌁)"]      # Faces shown while thinking
   #     thinking_verbs: ["forging", "plotting"]  # Verbs for spinner messages
@@ -814,6 +856,32 @@ display:
   #     response_label: " ⚔ Agent "         # Response box header label
   #     prompt_symbol: "⚔ ❯ "              # Prompt symbol
   #   tool_prefix: "╎"                       # Tool output line prefix (default: ┊)
+  #   syntax_scheme: monokai                 # Syntax color scheme for this skin
+  #     # Built-in schemes: hermes | monokai | dracula | one-dark | github-dark |
+  #     #                   nord | catppuccin | tokyo-night | gruvbox | solarized-dark
+  #   syntax_overrides:                      # Per-token color overrides
+  #     keyword: "bold #FF79C6"
+  #     comment: "italic #6272A4"
+  #   diff:                                  # Inline diff color overrides
+  #     deletion_bg: "#781414"
+  #     addition_bg: "#145a14"
+  #     deletion_fg: "#ffffff"
+  #     addition_fg: "#ffffff"
+  #     deletion_marker_fg: "#FF7B72"
+  #     addition_marker_fg: "#56D364"
+  #   markdown:                              # Markdown rendering style overrides
+  #     link: "#58A6FF underline"
+  #     heading_1: "bold bright_white"
+  #     heading_2: "bold white"
+  #     code_span: "bright_white"
+  #     blockquote_marker: "▌"
+  #     bullets: ["•", "◦", "▸", "·"]
+  #   ui_ext:                                # Extended UI color overrides
+  #     context_bar_normal: "#5f87d7"
+  #     context_bar_warn: "#ffa726"
+  #     context_bar_crit: "#ef5350"
+  #     menu_cursor: ["fg_green", "bold"]
+  #     panel_border: "cyan"
   #
   skin: default
 

@@ -374,13 +374,14 @@ DEFAULT_CONFIG = {
         "busy_input_mode": "interrupt",
         "bell_on_complete": False,
         "show_reasoning": False,
-        "streaming": False,
+        "streaming": True,
         "inline_diffs": True,     # Show inline diff previews for write actions (write_file, patch, skill_manage)
         "diff_max_lines": 80,     # Max rendered lines shown per inline diff (excess → "… omitted N lines" summary)
         "diff_max_files": 6,      # Max file sections shown per inline diff (excess files omitted)
         "preview_max_lines": 40,  # Max lines shown in read_file / execute_code / terminal previews
         "code_highlight": True,   # Highlight source-like tool output previews and fenced code blocks
         "syntax_bold": True,      # Keep bold emphasis on syntax-highlighted token styles
+        "spinner_style": "",      # TUI spinner animation: dots|bounce|grow|arrows|star|moon|pulse|clock|none (empty = skin default)
         "show_cost": False,       # Show $ cost in the status bar (off by default)
         "skin": "default",
         "tool_progress_command": False,  # Enable /verbose command in messaging gateway

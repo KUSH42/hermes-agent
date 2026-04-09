@@ -145,6 +145,7 @@ const sidebars: SidebarsConfig = {
         'guides/work-with-skills',
         'guides/delegation-patterns',
         'guides/migrate-from-openclaw',
+        'guides/webhook-github',
       ],
     },
     {

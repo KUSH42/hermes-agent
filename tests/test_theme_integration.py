@@ -95,11 +95,11 @@ def test_syntax_bold_toggle_strips_syntax_token_bold(monkeypatch):
     monkeypatch.setattr(skin_engine, "_syntax_bold_enabled", lambda: False)
     styles = skin_engine.get_active_skin().get_syntax_styles()
 
-    assert styles["keyword"] == "blue"
-    assert styles["keyword_type"] == "cyan"
-    assert styles["name_class"] == "yellow"
-    assert styles["name_function"] == "yellow"
-    assert styles["operator_word"] == "blue"
+    assert styles["keyword"] == "#E8A838"
+    assert styles["keyword_type"] == "#6EC6C6"
+    assert styles["name_class"] == "#FFD700"
+    assert styles["name_function"] == "#FFBF00"
+    assert styles["operator_word"] == "#E8A838"
 
 
 def test_diff_filename_style_uses_active_skin():
@@ -233,7 +233,7 @@ def test_builtin_skin_diff_palette_overrides_defaults():
 def test_hermes_scheme_styles_operator_words():
     from hermes_cli.skin_engine import SYNTAX_SCHEMES
 
-    assert SYNTAX_SCHEMES["hermes"]["operator_word"] == "bold blue"
+    assert SYNTAX_SCHEMES["hermes"]["operator_word"] == "bold #E8A838"
 
 
 def test_diff_renderer_produces_ansi():

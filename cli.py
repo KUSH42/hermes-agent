@@ -2183,7 +2183,7 @@ class HermesCLI:
                     _cprint(f"{_tc}{out}{_RST}" if _tc else out)
                 else:
                     for hl_line in out2.splitlines():
-                        _cprint(hl_line)
+                        _cprint(f"  {hl_line}")
             else:
                 _cprint(f"{_tc}{line}{_RST}" if _tc else line)
 
@@ -2221,7 +2221,9 @@ class HermesCLI:
             # Flush any open code block (unclosed fence at end of response)
             tail = self._stream_code_hl.flush()
             if tail:
-                _cprint(f"{tail}{_RST}")
+                for hl_line in tail.splitlines():
+                    _cprint(f"  {hl_line}")
+                _cprint(_RST)
 
         # Close the response box
         if self._stream_box_opened:

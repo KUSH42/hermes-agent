@@ -5275,6 +5275,15 @@ class HermesCLI:
             return
 
         set_active_skin(new_skin)
+        # Refresh spinner frames to match the new skin's style preference.
+        global _COMMAND_SPINNER_FRAMES
+        try:
+            from hermes_cli.skin_engine import get_active_skin as _get_skin
+            _skin_style = _get_skin().get_spinner_style()
+        except Exception:
+            _skin_style = None
+        _spinner_key = _skin_style or CLI_CONFIG["display"].get("spinner_style", "dots")
+        _COMMAND_SPINNER_FRAMES = _SPINNER_STYLES.get(_spinner_key, _SPINNER_STYLES["dots"])
         if save_config_value("display.skin", new_skin):
             print(f"  Skin set to: {new_skin} (saved)")
         else:

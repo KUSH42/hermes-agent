@@ -765,12 +765,6 @@ def _run_cleanup():
             )
     except Exception:
         pass
-    # Shut down streaming effect background threads (glow_settle, decrypt)
-    try:
-        if _active_agent_ref and hasattr(_active_agent_ref, '_fx'):
-            _active_agent_ref._fx.shutdown()
-    except Exception:
-        pass
 
 
 # =============================================================================
@@ -1594,14 +1588,6 @@ class HermesCLI:
         self._reasoning_preview_buf = ""  # Coalesce tiny reasoning chunks for [thinking] output
         self._stream_code_hl = _CodeBlockHL() if _RICH_RESPONSE else None
 
-        # Streaming token reveal effect (display.stream_effect in config.yaml)
-        self._stream_lock = threading.Lock()
-        try:
-            from hermes_cli.stream_effects import make_stream_effect
-            self._fx = make_stream_effect(CLI_CONFIG["display"], self._stream_lock)
-        except Exception:
-            from hermes_cli.stream_effects import StreamEffectRenderer
-            self._fx = StreamEffectRenderer({"stream_effect": "none"}, self._stream_lock)
         self._pending_edit_snapshots = {}
         
         # Configuration - priority: CLI args > env vars > config file
@@ -2490,53 +2476,6 @@ class HermesCLI:
 
         # Emit complete lines, keep partial remainder in buffer
         _tc = getattr(self, "_stream_text_ansi", "")
-        _fx = getattr(self, "_fx", None)
-        _fx_active = _fx is not None and _fx.active
-
-        # When an effect is active it takes ownership of printing tokens on the
-        # partial line.  Complete lines (after \n) always use _cprint normally.
-        if _fx_active:
-            tw = shutil.get_terminal_size((80, 24)).columns
-            # Split incoming text into line-complete and partial portions
-            if "\n" in text:
-                parts = text.split("\n")
-                # Everything up to the last segment triggers line completions
-                for part in parts[:-1]:
-                    # Append this part and flush as complete line
-                    self._stream_buf += part
-                    self._stream_vis_len += _vlen(part) if part else 0
-                    with self._stream_lock:
-                        self._fx.on_line_complete()
-                    self._stream_vis_len = 0
-                    line = self._stream_buf
-                    self._stream_buf = ""
-                    if _RICH_RESPONSE:
-                        out = self._stream_block_buf.process_line(line)
-                        if out is not None:
-                            out2 = self._stream_code_hl.process_line(out)
-                            if out2 is not None:
-                                if out2 is out:
-                                    out = _apply_inline_md(_apply_block_line(out, reset_suffix=_tc), reset_suffix=_tc)
-                                    _cprint(f"{_tc}{out}{_RST}" if _tc else out)
-                                else:
-                                    for hl_line in out2.splitlines():
-                                        _cprint(hl_line)
-                    else:
-                        _cprint(f"{_tc}{line}{_RST}" if _tc else line)
-                # Remaining partial segment goes through effect
-                tail = parts[-1]
-                if tail:
-                    with self._stream_lock:
-                        _fx.on_token(tail, self._stream_buf, self._stream_vis_len, _tc, tw)
-                    self._stream_buf += tail
-                    self._stream_vis_len += _vlen(tail)
-            else:
-                # Pure partial-line token — route through effect
-                with self._stream_lock:
-                    _fx.on_token(text, self._stream_buf, self._stream_vis_len, _tc, tw)
-                self._stream_buf += text
-                self._stream_vis_len += _vlen(text)
-            return
 
         self._stream_buf += text
         self._stream_vis_len = _vlen(self._stream_buf)
@@ -2568,34 +2507,21 @@ class HermesCLI:
         # Close reasoning box if still open (in case no content tokens arrived)
         self._close_reasoning_box()
 
-        # Let the effect settle the last partial line before the box closes.
-        # on_turn_end waits for natural window drain (decrypt) or settles immediately
-        # (all other effects delegate to on_line_complete internally).
-        _fx = getattr(self, "_fx", None)
-        if _fx is not None and _fx.active:
-            _fx.on_turn_end()
-
         _tc = getattr(self, "_stream_text_ansi", "")
         if self._stream_buf:
-            # When effect was active it already printed the partial line content;
-            # in that case we only need to run the block/code-hl pipeline to keep
-            # its state machine consistent, but suppress actual _cprint output.
-            _fx_was_active = _fx is not None and _fx.active
             if _RICH_RESPONSE:
                 block_out = self._stream_block_buf.process_line(self._stream_buf)
                 if block_out is not None:
                     out2 = self._stream_code_hl.process_line(block_out)
                     if out2 is not None:
-                        if not _fx_was_active:
-                            if out2 is block_out:
-                                out2 = _apply_inline_md(_apply_block_line(out2, reset_suffix=_tc), reset_suffix=_tc)
-                                _cprint(f"{_tc}{out2}{_RST}" if _tc else out2)
-                            else:
-                                for hl_line in out2.splitlines():
-                                    _cprint(hl_line)
+                        if out2 is block_out:
+                            out2 = _apply_inline_md(_apply_block_line(out2, reset_suffix=_tc), reset_suffix=_tc)
+                            _cprint(f"{_tc}{out2}{_RST}" if _tc else out2)
+                        else:
+                            for hl_line in out2.splitlines():
+                                _cprint(hl_line)
             else:
-                if not _fx_was_active:
-                    _cprint(f"{_tc}{self._stream_buf}{_RST}" if _tc else self._stream_buf)
+                _cprint(f"{_tc}{self._stream_buf}{_RST}" if _tc else self._stream_buf)
             self._stream_buf = ""
             self._stream_vis_len = 0
 
@@ -2634,9 +2560,6 @@ class HermesCLI:
         self._reasoning_buf = ""
         self._reasoning_preview_buf = ""
         self._deferred_content = ""
-        _fx = getattr(self, "_fx", None)
-        if _fx is not None and _fx.active:
-            _fx.on_turn_end()
         if _RICH_RESPONSE:
             if not hasattr(self, "_stream_block_buf"):
                 self._stream_block_buf = _BlockBuf()

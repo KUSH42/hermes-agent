@@ -1,15 +1,38 @@
 ---
 sidebar_position: 10
 sidebar_label: "GitHub PR Reviews via Webhook"
-title: "Automated GitHub PR Comments with Webhooks"
-description: "Connect Hermes to GitHub so it automatically fetches PR diffs, reviews code changes, and posts comments — triggered by webhooks with no manual prompting"
+title: "Zero-Waste PR Reviews: Event-Driven GitHub Webhooks"
+description: "Connect Hermes to GitHub webhooks so the agent reviews code the moment a PR is opened — no polling, no wasted inference, no manual prompting"
 ---
 
-# Automated GitHub PR Comments with Webhooks
+# Zero-Waste PR Reviews: Event-Driven GitHub Webhooks
 
-This guide walks you through connecting Hermes Agent to GitHub so it automatically fetches a pull request's diff, analyzes the code changes, and posts a comment — triggered by a webhook event with no manual prompting.
+The cron-based approach to automated PR reviews has a fundamental inefficiency: the agent wakes up on a schedule, runs `gh pr list`, finds nothing new, and burns inference tokens doing nothing. Repeat every hour.
 
-When a PR is opened or updated, GitHub sends a webhook POST to your Hermes instance. Hermes runs the agent with a prompt that instructs it to retrieve the diff via the `gh` CLI, and the response is posted back to the PR thread.
+Webhooks eliminate that waste entirely. GitHub pushes an event to Hermes the instant a PR is opened or updated — the agent runs exactly once per real event, fetches the diff, reviews it, and posts a comment. No polling. No idle runs. No token burn on empty queues.
+
+```
+┌─────────────────┐   POST /webhooks/      ┌───────────────────────┐
+│  GitHub         │   github-pr-review     │  Hermes Gateway       │
+│  (PR opened /   │ ─────────────────────▶ │  • validates HMAC sig │
+│   updated)      │                        │  • renders prompt     │
+└─────────────────┘                        └──────────┬────────────┘
+                                                      │ spawns agent
+                                                      ▼
+                                           ┌───────────────────────┐
+                                           │  Hermes Agent         │
+                                           │  gh pr diff {number}  │
+                                           │  → reviews diff       │
+                                           └──────────┬────────────┘
+                                                      │ gh pr comment
+                                                      ▼
+                                           ┌───────────────────────┐
+                                           │  GitHub PR thread     │
+                                           │  (review comment)     │
+                                           └───────────────────────┘
+```
+
+This guide wires up that pipeline: GitHub webhook → Hermes → `gh` CLI → PR comment.
 
 :::info Reference docs
 For the full webhook platform reference (all config options, delivery types, dynamic subscriptions, security model) see [Webhooks](/docs/user-guide/messaging/webhooks).

@@ -76,7 +76,7 @@ platforms:
 
 | Field | Description |
 |---|---|
-| `extra.secret` | Global fallback HMAC secret. Per-route `secret` overrides this. |
+| `secret` (route-level) | HMAC secret for this route. Falls back to `extra.secret` global if omitted. |
 | `events` | List of `X-GitHub-Event` header values to accept. Empty list = accept all. |
 | `prompt` | Template; `{field}` and `{nested.field}` resolve from the GitHub payload. |
 | `deliver` | `github_comment` posts via `gh pr comment`. `log` just writes to the gateway log. |
@@ -146,19 +146,24 @@ ngrok http 8644
 
 Copy the `https://...ngrok-free.app` URL and use it as your GitHub Payload URL. On the free ngrok tier the URL changes each time ngrok restarts — update your GitHub webhook each session. Paid ngrok accounts get a static domain.
 
-You can also smoke-test a route directly without GitHub using `hermes webhook test`:
+You can smoke-test a static route directly with `curl` — no GitHub account or real PR needed:
 
 ```bash
-hermes webhook test github-pr-review
-# Sends a synthetic event through the route and logs the result
+SECRET="your-webhook-secret-here"
+BODY='{"action":"opened","number":99,"pull_request":{"title":"Test PR","body":"Adds a feature.","user":{"login":"testuser"},"head":{"ref":"feat/x"},"base":{"ref":"main"},"html_url":"https://github.com/org/repo/pull/99"},"repository":{"full_name":"org/repo"}}'
+SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -hex | awk '{print "sha256="$2}')
+
+curl -s -X POST http://localhost:8644/webhooks/github-pr-review \
+  -H "Content-Type: application/json" \
+  -H "X-GitHub-Event: pull_request" \
+  -H "X-Hub-Signature-256: $SIG" \
+  -d "$BODY"
+# Expected: {"status":"accepted","route":"github-pr-review","event":"pull_request","delivery_id":"..."}
 ```
 
-Or with a custom payload:
-
-```bash
-hermes webhook test github-pr-review \
-  --payload '{"action":"opened","number":99,"pull_request":{"title":"Test","body":"","user":{"login":"testuser"},"head":{"ref":"feat/x"},"base":{"ref":"main"},"html_url":"https://github.com/org/repo/pull/99"},"repository":{"full_name":"org/repo"}}'
-```
+:::note
+`hermes webhook test <name>` only works for **dynamic subscriptions** created with `hermes webhook subscribe`. It does not read routes from `config.yaml`.
+:::
 
 ---
 
@@ -168,11 +173,9 @@ GitHub sends `pull_request` events for many actions: `opened`, `synchronize`, `r
 
 The prompt in Step 1 already handles this by instructing the agent to stop early for `closed` and `labeled` events.
 
-:::warning Option 1 still runs the agent
-The "stop here and do not post a comment" instruction prevents a comment being posted, but the agent still runs to completion and consumes tokens. On a high-volume repository this can add up. For busy repos, use Option 2 below.
+:::warning The agent still runs and consumes tokens
+The "stop here" instruction prevents a meaningful review, but the agent still runs to completion for every `pull_request` event regardless of action. GitHub webhooks can only filter by event type (`pull_request`, `push`, `issues`, etc.) — not by action sub-type (`opened`, `closed`, `labeled`). There is no routing-level filter for sub-actions. For high-volume repos, accept this cost or filter upstream with a GitHub Actions workflow that calls your webhook URL conditionally.
 :::
-
-**Option 2 — Avoid running the agent at all.** Create a second route (e.g. `github-pr-sync`) with a trivial prompt and `deliver: log`, then register a second GitHub webhook pointing to it for the events you want to suppress. The first route only receives the events you actually want.
 
 > There is no Jinja2 or conditional template syntax. `{field}` and `{nested.field}` are the only substitutions supported. Anything else is passed verbatim to the agent.
 
@@ -180,23 +183,27 @@ The "stop here and do not post a comment" instruction prevents a comment being p
 
 ## Using a skill for consistent review style
 
-Load a [Hermes skill](/docs/user-guide/features/skills) to give the agent a consistent review persona:
+Load a [Hermes skill](/docs/user-guide/features/skills) to give the agent a consistent review persona. Add `skills` to your route inside `platforms.webhook.extra.routes` in `config.yaml`:
 
 ```yaml
-routes:
-  github-pr-review:
-    secret: "..."
-    events: [pull_request]
-    prompt: |
-      PR #{number}: {pull_request.title} by {pull_request.user.login}
-      Run: gh pr diff {number} --repo {repository.full_name}
-      Review the diff using your review guidelines.
-    skills:
-      - review
-    deliver: github_comment
-    deliver_extra:
-      repo: "{repository.full_name}"
-      pr_number: "{number}"
+platforms:
+  webhook:
+    enabled: true
+    extra:
+      routes:
+        github-pr-review:
+          secret: "your-webhook-secret-here"
+          events: [pull_request]
+          prompt: |
+            PR #{number}: {pull_request.title} by {pull_request.user.login}
+            Run: gh pr diff {number} --repo {repository.full_name}
+            Review the diff using your review guidelines.
+          skills:
+            - review
+          deliver: github_comment
+          deliver_extra:
+            repo: "{repository.full_name}"
+            pr_number: "{number}"
 ```
 
 > **Note:** Only the first skill in the list that is found is loaded. Hermes does not stack multiple skills — subsequent entries are ignored.
@@ -247,7 +254,7 @@ GitLab payload fields differ from GitHub's — e.g. `{object_attributes.title}` 
 - **Never use `INSECURE_NO_AUTH`** in production — it disables signature validation entirely. It is only for local development.
 - **Rotate your webhook secret** periodically and update it in both GitHub (webhook settings) and your `config.yaml`.
 - **Rate limiting** is 30 req/min per route by default (configurable via `extra.rate_limit`). Exceeding it returns `429`.
-- **Duplicate deliveries** (webhook retries) are deduplicated automatically via a 1-hour idempotency cache keyed on `X-GitHub-Delivery`.
+- **Duplicate deliveries** (webhook retries) are deduplicated via a 1-hour idempotency cache. The cache key is `X-GitHub-Delivery` if present, then `X-Request-ID`, then a millisecond timestamp. When neither delivery ID header is set, retries are **not** deduplicated.
 - **Prompt injection:** PR titles, descriptions, and commit messages are attacker-controlled. Malicious PRs could attempt to manipulate the agent's actions. Run the gateway in a sandboxed environment (Docker, VM) when exposed to the public internet.
 
 ---

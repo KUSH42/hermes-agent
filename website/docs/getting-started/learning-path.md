@@ -71,9 +71,14 @@ Schedule recurring tasks, run batch jobs, or chain agent actions together.
 3. [Batch Processing](/docs/user-guide/features/batch-processing)
 4. [Delegation](/docs/user-guide/features/delegation)
 5. [Hooks](/docs/user-guide/features/hooks)
+6. [Webhooks](/docs/user-guide/messaging/webhooks)
+
+For project examples, see:
+- [Daily Briefing Bot](/docs/guides/daily-briefing-bot)
+- [Automated GitHub PR Comments](/docs/guides/webhook-github)
 
 :::tip
-Cron jobs let Hermes Agent run tasks on a schedule — daily summaries, periodic checks, automated reports — without you being present.
+Cron jobs let Hermes Agent run tasks on a schedule — daily summaries, periodic checks, automated reports — without you being present. Webhooks let external services (GitHub, GitLab, etc.) trigger agent runs in response to events.
 :::
 
 ### "I want to build custom tools/skills"
@@ -132,6 +137,7 @@ Not sure what's available? Here's a quick directory of major features:
 | **Code Execution** | Run code in sandboxed environments | [Code Execution](/docs/user-guide/features/code-execution) |
 | **Browser** | Web browsing and scraping | [Browser](/docs/user-guide/features/browser) |
 | **Hooks** | Event-driven callbacks and middleware | [Hooks](/docs/user-guide/features/hooks) |
+| **Webhooks** | Receive GitHub/GitLab events and trigger agent runs automatically | [Webhooks](/docs/user-guide/messaging/webhooks) |
 | **Batch Processing** | Process multiple inputs in bulk | [Batch Processing](/docs/user-guide/features/batch-processing) |
 | **RL Training** | Fine-tune models with reinforcement learning | [RL Training](/docs/user-guide/features/rl-training) |
 | **Provider Routing** | Route requests across multiple LLM providers | [Provider Routing](/docs/user-guide/features/provider-routing) |

@@ -1352,6 +1352,55 @@ class TestConcurrentToolExecution:
             mock_todo.assert_called_once()
         assert "ok" in result
 
+    def test_call_timeout_injects_error_for_slow_tool(self, agent, tmp_path, monkeypatch):
+        """Slow tools should receive a timeout error when call_timeout is set."""
+        import time as _time
+
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        (tmp_path / "config.yaml").write_text("tools:\n  call_timeout: 0.05\n")
+
+        tc1 = _mock_tool_call(name="web_search", arguments='{"q":"fast"}', call_id="c1")
+        tc2 = _mock_tool_call(name="web_search", arguments='{"q":"slow"}', call_id="c2")
+        mock_msg = _mock_assistant_msg(content="", tool_calls=[tc1, tc2])
+        messages = []
+
+        def fake_handle(name, args, task_id, **kwargs):
+            if args.get("q") == "slow":
+                _time.sleep(5)  # Much longer than the 50 ms timeout
+            return f"result_{args.get('q', '')}"
+
+        with patch("run_agent.handle_function_call", side_effect=fake_handle):
+            agent._execute_tool_calls_concurrent(mock_msg, messages, "task-1")
+
+        assert len(messages) == 2
+        fast_msg = next(m for m in messages if m["tool_call_id"] == "c1")
+        assert "result_fast" in fast_msg["content"]
+        slow_msg = next(m for m in messages if m["tool_call_id"] == "c2")
+        assert "timed out" in slow_msg["content"].lower()
+
+    def test_no_call_timeout_waits_for_all_tools(self, agent, tmp_path, monkeypatch):
+        """Without call_timeout, concurrent path waits for all tools."""
+        import time as _time
+
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        # No config.yaml → timeout disabled
+
+        tc1 = _mock_tool_call(name="web_search", arguments='{"q":"fast"}', call_id="c1")
+        tc2 = _mock_tool_call(name="web_search", arguments='{"q":"slow"}', call_id="c2")
+        mock_msg = _mock_assistant_msg(content="", tool_calls=[tc1, tc2])
+        messages = []
+
+        def fake_handle(name, args, task_id, **kwargs):
+            if args.get("q") == "slow":
+                _time.sleep(0.05)
+            return f"result_{args.get('q', '')}"
+
+        with patch("run_agent.handle_function_call", side_effect=fake_handle):
+            agent._execute_tool_calls_concurrent(mock_msg, messages, "task-1")
+
+        assert len(messages) == 2
+        assert all("result_" in m["content"] for m in messages)
+
 
 class TestPathsOverlap:
     """Unit tests for the _paths_overlap helper."""

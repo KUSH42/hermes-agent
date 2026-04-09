@@ -536,6 +536,16 @@ platform_toolsets:
   signal: [hermes-signal]
   homeassistant: [hermes-homeassistant]
 
+# ── Tool execution ─────────────────────────────────────────────────────────────
+tools:
+  # Global ceiling on concurrent tool-call batches (seconds).
+  # When the model issues multiple tool calls in one turn, Hermes runs them
+  # in a thread pool.  If any tool hasn't responded within this window it is
+  # marked as timed out and the agent moves on; the background thread may
+  # still finish on its own.
+  # Omit or set to 0 to disable (default: no limit).
+  # call_timeout: 120
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Available toolsets (use these names in platform_toolsets or the toolsets list)
 #

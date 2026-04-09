@@ -209,6 +209,31 @@ class IterationBudget:
             return max(0, self.max_total - self._used)
 
 
+def _get_tool_call_timeout() -> Optional[float]:
+    """Return ``tools.call_timeout`` from config.yaml, or *None* if unset.
+
+    When set, concurrent tool batches are abandoned after this many seconds.
+    Timed-out slots receive an error result; background threads may still
+    finish on their own once the agent moves on.
+    """
+    config_path = get_hermes_home() / "config.yaml"
+    if not config_path.exists():
+        return None
+    try:
+        import yaml as _yaml
+        with open(config_path, encoding="utf-8") as _f:
+            _parsed = _yaml.safe_load(_f) or {}
+    except Exception:
+        return None
+    _tools_cfg = _parsed.get("tools")
+    if not isinstance(_tools_cfg, dict):
+        return None
+    _value = _tools_cfg.get("call_timeout")
+    if isinstance(_value, (int, float)) and _value > 0:
+        return float(_value)
+    return None
+
+
 # Tools that must never run concurrently (interactive / user-facing).
 # When any of these appear in a batch, we fall back to sequential execution.
 _NEVER_PARALLEL_TOOLS = frozenset({"clarify"})
@@ -6299,16 +6324,38 @@ class AIAgent:
             spinner = KawaiiSpinner(f"{face} ⚡ running {num_tools} tools concurrently", spinner_type='dots', print_fn=self._print_fn)
             spinner.start()
 
+        _call_timeout = _get_tool_call_timeout()
         try:
             max_workers = min(num_tools, _MAX_TOOL_WORKERS)
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
+            try:
                 futures = []
                 for i, (tc, name, args) in enumerate(parsed_calls):
                     f = executor.submit(_run_tool, i, tc, name, args)
                     futures.append(f)
 
-                # Wait for all to complete (exceptions are captured inside _run_tool)
-                concurrent.futures.wait(futures)
+                # Wait for all to complete (exceptions are captured inside _run_tool).
+                # Honour tools.call_timeout when configured.
+                _done, _not_done = concurrent.futures.wait(futures, timeout=_call_timeout)
+
+                if _not_done:
+                    # Inject timeout errors for tools that didn't finish in time.
+                    _timed_out = {id(f) for f in _not_done}
+                    for _i, _f in enumerate(futures):
+                        if id(_f) in _timed_out:
+                            _tname = parsed_calls[_i][1]
+                            logger.warning(
+                                "tool %s exceeded call_timeout (%.1fs) — marking as timed out",
+                                _tname, _call_timeout,
+                            )
+                            results[_i] = (
+                                _tname, {},
+                                f"[Tool timed out after {_call_timeout:.0f}s]",
+                                _call_timeout, True,
+                            )
+            finally:
+                # Don't block on still-running threads; let them finish in background.
+                executor.shutdown(wait=False)
         finally:
             if spinner:
                 # Build a summary message for the spinner stop

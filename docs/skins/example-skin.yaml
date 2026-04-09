@@ -44,6 +44,11 @@ colors:
 # ── Spinner ─────────────────────────────────────────────────────────────────
 # Customize the animated spinner shown during API calls and tool execution.
 spinner:
+  # TUI prompt spinner animation style.
+  # Options: dots|bounce|grow|arrows|star|moon|pulse|clock|none
+  # Omit or leave empty to use the display.spinner_style config value.
+  style: dots
+
   # Faces shown while waiting for the API response
   waiting_faces:
     - "(｡◕‿◕｡)"
@@ -85,7 +90,7 @@ branding:
 # used by the Rich renderer.
 #
 # Built-in options:
-#   hermes        — default Hermes palette (bold blues/greens/yellows)
+#   hermes        — default Hermes palette (warm amber/gold truecolor)
 #   monokai       — Wimer Hazenberg's Monokai (pink/green/yellow)
 #   dracula       — Zeno Rocha's Dracula (purple/pink/green)
 #   one-dark      — Atom One Dark / One Dark Pro

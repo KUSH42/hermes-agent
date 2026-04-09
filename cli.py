@@ -8703,6 +8703,14 @@ class HermesCLI:
 
         app._on_resize = _resize_clear_ghosts
 
+        def _set_terminal_title(title: str) -> None:
+            """Emit OSC 0 to update the terminal tab/window title."""
+            try:
+                if self._app:
+                    self._app.output.write_raw(f"\033]0;{title}\007")
+                    self._app.output.flush()
+            except Exception:
+                pass
 
         def spinner_loop():
             import time as _time

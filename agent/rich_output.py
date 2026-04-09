@@ -2007,7 +2007,7 @@ def _number_code_lines(highlighted: str) -> str:
     return "\n".join(out)
 
 
-def format_response(text: str) -> str:
+def format_response(text: str, reset_suffix: str = "") -> str:
     """Apply syntax highlighting to fenced code blocks in a complete response string.
 
     Pass 1: replaces each fenced code block with an ANSI-highlighted version.
@@ -2017,6 +2017,10 @@ def format_response(text: str) -> str:
     ``apply_inline_markdown`` (headings, hr, blockquotes, lists, bold, italic,
     code spans, etc.).
     Suitable for the non-streaming Rich Panel display path.
+
+    ``reset_suffix`` is an optional ANSI escape sequence appended after all
+    rendering (e.g. a foreground-colour reset to restore the configured
+    response-text colour after inline markdown may have altered it).
     """
     _hl = SyntaxHighlighter()
     _det = LanguageDetector()
@@ -2047,6 +2051,8 @@ def format_response(text: str) -> str:
     )
     if text.endswith("\n"):
         result += "\n"
+    if reset_suffix:
+        result += reset_suffix
     return result
 
 

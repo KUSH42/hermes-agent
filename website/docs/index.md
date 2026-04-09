@@ -28,7 +28,8 @@ It's not a coding copilot tethered to an IDE or a chatbot wrapper around a singl
 | 🗺️ **[Learning Path](/docs/getting-started/learning-path)** | Find the right docs for your experience level |
 | ⚙️ **[Configuration](/docs/user-guide/configuration)** | Config file, providers, models, and options |
 | 💬 **[Messaging Gateway](/docs/user-guide/messaging)** | Set up Telegram, Discord, Slack, or WhatsApp |
-| 🔧 **[Tools & Toolsets](/docs/user-guide/features/tools)** | 47 built-in tools and how to configure them |
+| 🔗 **[Automated GitHub PR Reviews](/docs/guides/webhook-github)** | Trigger agent runs from GitHub webhook events |
+| 🔧 **[Tools & Toolsets](/docs/user-guide/features/tools)** | 40+ built-in tools and how to configure them |
 | 🧠 **[Memory System](/docs/user-guide/features/memory)** | Persistent memory that grows across sessions |
 | 📚 **[Skills System](/docs/user-guide/features/skills)** | Procedural memory the agent creates and reuses |
 | 🔌 **[MCP Integration](/docs/user-guide/features/mcp)** | Connect to MCP servers, filter their tools, and extend Hermes safely |

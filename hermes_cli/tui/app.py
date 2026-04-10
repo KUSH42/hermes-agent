@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import platform
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -22,7 +23,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.css.query import NoMatches
 from textual.reactive import reactive
-from textual.widgets import Rule, TextArea
+from textual.widgets import TextArea
 from textual import work
 
 from hermes_cli.tui.state import (
@@ -36,11 +37,13 @@ from hermes_cli.tui.widgets import (
     HintBar,
     ImageBar,
     LiveLineWidget,
+    MessagePanel,
     OutputPanel,
     ReasoningPanel,
     SecretWidget,
     StatusBar,
     SudoWidget,
+    TitledRule,
     VoiceStatusBar,
     _safe_widget_call,
 )
@@ -93,9 +96,10 @@ class HermesApp(App):
 
     # hint_text is NOT on HermesApp — HintBar.hint is the single source of truth.
 
-    def __init__(self, cli: Any, **kwargs: Any) -> None:
+    def __init__(self, cli: Any, startup_fn=None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.cli = cli
+        self._startup_fn = startup_fn
 
         # Bounded queue: prevents unbounded memory growth when agent produces
         # faster than UI renders. 4096 chunks ≈ ~1MB of text at ~256 bytes/chunk.
@@ -116,7 +120,6 @@ class HermesApp(App):
 
     def compose(self) -> ComposeResult:
         yield OutputPanel(id="output-panel")
-        yield ReasoningPanel(id="reasoning-panel")
         with Vertical(id="overlay-layer"):
             yield ClarifyWidget(id="clarify")
             yield ApprovalWidget(id="approval")
@@ -124,7 +127,7 @@ class HermesApp(App):
             yield SecretWidget(id="secret")
         yield HintBar(id="hint-bar")
         yield ImageBar(id="image-bar")
-        yield Rule(id="input-rule")
+        yield TitledRule(title="⚕ Hermes", id="input-rule")
 
         if self._use_hermes_input:
             from hermes_cli.tui.input_widget import HermesInput as _HI
@@ -141,6 +144,8 @@ class HermesApp(App):
         self._event_loop = asyncio.get_running_loop()
         self._consume_output()  # starts the @work consumer
         self.set_interval(0.1, self._tick_spinner)
+        if self._startup_fn is not None:
+            threading.Thread(target=self._startup_fn, daemon=True).start()
 
     # --- Output consumer (bounded queue → RichLog) ---
 
@@ -164,7 +169,7 @@ class HermesApp(App):
             try:
                 panel = self.query_one(OutputPanel)
                 panel.live_line.append(chunk)
-                panel.scroll_end(animate=False)
+                self.call_after_refresh(panel.scroll_end, animate=False)
             except NoMatches:
                 pass
 
@@ -211,8 +216,8 @@ class HermesApp(App):
         """set_interval callback — runs ON the event loop (def, not async def).
 
         Reads overlay deadlines and agent state to assemble hint text.
-        Uses direct mutation (not call_from_thread) since this runs on
-        the event loop already.
+        Updates the input widget's spinner_text so the spinner renders
+        inside the input field when the agent is running.
         """
         if not (self.agent_running or self.command_running):
             return
@@ -225,8 +230,22 @@ class HermesApp(App):
             frame = ""
 
         hint_suffix = self._build_hint_text()
+        spinner_display = f"{frame} {hint_suffix}" if frame else hint_suffix
+
+        # Show spinner in input field
         try:
-            self.query_one(HintBar).hint = f"{frame} {hint_suffix}" if frame else hint_suffix
+            inp = self.query_one("#input-area")
+            if hasattr(inp, "spinner_text"):
+                inp.spinner_text = spinner_display
+        except NoMatches:
+            pass
+
+        # Also update HintBar for overlay countdowns
+        try:
+            self.query_one(HintBar).hint = hint_suffix if any(
+                getattr(self, attr) is not None
+                for attr in ("approval_state", "clarify_state", "sudo_state", "secret_state")
+            ) else ""
         except NoMatches:
             pass
 
@@ -258,9 +277,17 @@ class HermesApp(App):
         try:
             widget = self.query_one("#input-area")
             widget.disabled = value
+            if not value and hasattr(widget, "spinner_text"):
+                widget.spinner_text = ""
         except NoMatches:
             pass
-        # Clear spinner when agent stops
+        # New turn starting — create a new MessagePanel
+        if value:
+            try:
+                self.query_one(OutputPanel).new_message()
+            except NoMatches:
+                pass
+        # Clear hint bar when agent stops
         if not value and not self.command_running:
             try:
                 self.query_one(HintBar).hint = ""
@@ -327,17 +354,31 @@ class HermesApp(App):
 
     # --- Reasoning panel helpers (called via call_from_thread) ---
 
+    def _current_reasoning(self) -> ReasoningPanel | None:
+        """Return the ReasoningPanel of the current MessagePanel, or None."""
+        try:
+            msg = self.query_one(OutputPanel).current_message
+            return msg.reasoning if msg is not None else None
+        except NoMatches:
+            return None
+
     def open_reasoning(self, title: str = "Reasoning") -> None:
         """Open the reasoning panel. Safe to call from any thread via call_from_thread."""
-        _safe_widget_call(self, ReasoningPanel, "open_box", title)
+        rp = self._current_reasoning()
+        if rp is not None:
+            rp.open_box(title)
 
     def append_reasoning(self, delta: str) -> None:
         """Append reasoning delta. Safe to call from any thread via call_from_thread."""
-        _safe_widget_call(self, ReasoningPanel, "append_delta", delta)
+        rp = self._current_reasoning()
+        if rp is not None:
+            rp.append_delta(delta)
 
     def close_reasoning(self) -> None:
         """Close the reasoning panel. Safe to call from any thread via call_from_thread."""
-        _safe_widget_call(self, ReasoningPanel, "close_box")
+        rp = self._current_reasoning()
+        if rp is not None:
+            rp.close_box()
 
     # --- Theme / skin system ---
 
@@ -364,18 +405,85 @@ class HermesApp(App):
         except Exception:
             logger.warning("Failed to apply skin CSS variables", exc_info=True)
 
-    # --- Key bindings for overlays ---
+    # --- Key bindings for overlays and interrupt ---
 
     def on_key(self, event: Any) -> None:
-        """Global key handler for overlay navigation."""
+        """Global key handler for overlay navigation and agent interrupt."""
+        import time as _time
+
         key = event.key
+
+        # --- Ctrl+C / Escape: interrupt agent or cancel overlays ---
+        if key in ("ctrl+c", "escape"):
+            # Cancel active overlays first (ctrl+c denies, escape cancels)
+            for state_attr in ("approval_state", "clarify_state"):
+                state: ChoiceOverlayState | None = getattr(self, state_attr)
+                if state is not None:
+                    state.response_queue.put("deny" if key == "ctrl+c" else None)
+                    setattr(self, state_attr, None)
+                    event.prevent_default()
+                    return
+
+            for state_attr in ("sudo_state", "secret_state"):
+                state = getattr(self, state_attr)
+                if state is not None:
+                    state.response_queue.put("")
+                    setattr(self, state_attr, None)
+                    event.prevent_default()
+                    return
+
+            # Interrupt running agent
+            if self.agent_running and hasattr(self.cli, "agent") and self.cli.agent:
+                now = _time.time()
+                last = getattr(self, "_last_ctrl_c_time", 0.0)
+
+                if key == "ctrl+c" and now - last < 2.0:
+                    # Double ctrl+c within 2s → force exit
+                    self.exit()
+                    event.prevent_default()
+                    return
+
+                if key == "ctrl+c":
+                    self._last_ctrl_c_time = now
+
+                self.cli.agent.interrupt()
+                # Show feedback
+                try:
+                    panel = self.query_one(OutputPanel)
+                    from rich.text import Text
+                    msg = panel.current_message
+                    if msg is not None:
+                        rl = msg.response_log
+                        rl.write(
+                            Text.from_markup("[bold red]⚡ Interrupting...[/bold red]")
+                        )
+                        if rl._deferred_renders:
+                            self.call_after_refresh(msg.refresh, layout=True)
+                except NoMatches:
+                    pass
+                event.prevent_default()
+                return
+
+            # Idle ctrl+c: clear input or exit
+            if key == "ctrl+c" and not self.agent_running:
+                try:
+                    inp = self.query_one("#input-area")
+                    if hasattr(inp, "content") and inp.content:
+                        inp.content = ""
+                        inp.cursor_pos = 0
+                    else:
+                        self.exit()
+                except NoMatches:
+                    self.exit()
+                event.prevent_default()
+                return
 
         # Overlay key handling — check each overlay in priority order
         for state_attr, widget_type in [
             ("approval_state", ApprovalWidget),
             ("clarify_state", ClarifyWidget),
         ]:
-            state: ChoiceOverlayState | None = getattr(self, state_attr)
+            state = getattr(self, state_attr)
             if state is not None:
                 if key == "up" and state.selected > 0:
                     state.selected -= 1
@@ -398,11 +506,6 @@ class HermesApp(App):
                         chosen = state.choices[state.selected]
                         state.response_queue.put(chosen)
                         setattr(self, state_attr, None)
-                    event.prevent_default()
-                    return
-                elif key == "escape":
-                    state.response_queue.put(None)
-                    setattr(self, state_attr, None)
                     event.prevent_default()
                     return
 

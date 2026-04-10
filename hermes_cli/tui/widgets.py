@@ -68,45 +68,108 @@ class LiveLineWidget(Widget):
         return Text.from_ansi(self._buf) if self._buf else Text("")
 
     def append(self, chunk: str) -> None:
-        """Append *chunk*; commit complete lines to the parent OutputPanel's RichLog."""
+        """Append *chunk*; commit complete lines to the current MessagePanel's RichLog."""
         self._buf += chunk
         if "\n" in self._buf:
             lines = self._buf.split("\n")
             try:
-                log = self.app.query_one("#output-log", RichLog)
+                panel = self.app.query_one(OutputPanel)
+                msg = panel.current_message
+                if msg is None:
+                    msg = panel.new_message()
+                rl = msg.response_log
                 for committed in lines[:-1]:
-                    log.write(Text.from_ansi(committed))
+                    rl.write(Text.from_ansi(committed))
+                # If writes were deferred (RichLog size not yet known),
+                # schedule a layout refresh so the panel expands once the
+                # deferred renders are processed on the next resize.
+                if rl._deferred_renders:
+                    self.call_after_refresh(msg.refresh, layout=True)
             except NoMatches:
                 pass
             self._buf = lines[-1]
 
 
+class MessagePanel(Widget):
+    """Groups a ReasoningPanel + response RichLog for one assistant turn."""
+
+    DEFAULT_CSS = """
+    MessagePanel {
+        height: auto;
+    }
+    MessagePanel RichLog {
+        height: auto;
+        overflow-y: hidden;
+        overflow-x: hidden;
+    }
+    """
+
+    _msg_counter: int = 0
+
+    def __init__(self, **kwargs: Any) -> None:
+        MessagePanel._msg_counter += 1
+        self._msg_id = MessagePanel._msg_counter
+        self._reasoning_panel = ReasoningPanel(id=f"reasoning-{self._msg_id}")
+        self._response_log = RichLog(
+            markup=False, highlight=False, wrap=True,
+            id=f"response-{self._msg_id}",
+        )
+        super().__init__(**kwargs)
+
+    def compose(self) -> ComposeResult:
+        yield self._reasoning_panel
+        yield self._response_log
+
+    @property
+    def reasoning(self) -> ReasoningPanel:
+        return self._reasoning_panel
+
+    @property
+    def response_log(self) -> RichLog:
+        return self._response_log
+
+
 class OutputPanel(ScrollableContainer):
-    """Scrollable output area: committed lines in RichLog + live in-progress line."""
+    """Scrollable output area containing MessagePanels + live in-progress line."""
 
     DEFAULT_CSS = """
     OutputPanel {
         height: 1fr;
         overflow-y: auto;
+        overflow-x: hidden;
     }
     """
 
     def compose(self) -> ComposeResult:
-        yield RichLog(markup=False, highlight=False, id="output-log")
         yield LiveLineWidget(id="live-line")
 
     @property
     def live_line(self) -> LiveLineWidget:
         return self.query_one(LiveLineWidget)
 
+    @property
+    def current_message(self) -> MessagePanel | None:
+        """Return the most recent MessagePanel, or None."""
+        panels = self.query(MessagePanel)
+        return panels.last() if panels else None
+
+    def new_message(self) -> MessagePanel:
+        """Create and mount a new MessagePanel for a new turn."""
+        panel = MessagePanel()
+        self.mount(panel, before=self.live_line)
+        return panel
+
     def flush_live(self) -> None:
-        """Commit any in-progress buffered line to RichLog (called on turn end)."""
+        """Commit any in-progress buffered line to current message's RichLog."""
         live = self.live_line
         if live._buf:
-            try:
-                self.query_one(RichLog).write(Text.from_ansi(live._buf))
-            except NoMatches:
-                pass
+            msg = self.current_message
+            if msg is None:
+                msg = self.new_message()
+            rl = msg.response_log
+            rl.write(Text.from_ansi(live._buf))
+            if rl._deferred_renders:
+                self.call_after_refresh(msg.refresh, layout=True)
             live._buf = ""
 
 
@@ -124,44 +187,90 @@ class ReasoningPanel(Widget):
     DEFAULT_CSS = """
     ReasoningPanel {
         display: none;
-        border: round $primary-darken-2;
         height: auto;
-        max-height: 12;
-        overflow-y: auto;
     }
     ReasoningPanel.visible {
         display: block;
     }
+    ReasoningPanel RichLog {
+        height: auto;
+        overflow-y: hidden;
+        overflow-x: hidden;
+    }
     """
 
+    def __init__(self, **kwargs: Any) -> None:
+        self._reasoning_log = RichLog(markup=False, highlight=False, id="reasoning-log")
+        super().__init__(**kwargs)
+        self._live_buf = ""
+
     def compose(self) -> ComposeResult:
-        yield RichLog(markup=False, highlight=False, id="reasoning-log")
+        yield self._reasoning_log
 
     def open_box(self, title: str) -> None:
         """Show the reasoning panel with a styled header line."""
+        self._live_buf = ""
         self.add_class("visible")
-        # Text.from_markup for styled header — RichLog.write() has no markup kwarg.
-        try:
-            self.query_one("#reasoning-log", RichLog).write(
-                Text.from_markup(f"[dim]─ {title} ─[/dim]")
-            )
-        except NoMatches:
-            pass
+        self._reasoning_log.write(
+            Text.from_markup(f"[dim]─ {title} ─[/dim]")
+        )
+        # Trigger layout refresh so parent recalculates height after
+        # deferred renders are processed on the next resize event.
+        self.call_after_refresh(self.refresh, layout=True)
 
     def append_delta(self, text: str) -> None:
-        """Append a reasoning text delta. Plain string safe with markup=False."""
-        try:
-            self.query_one("#reasoning-log", RichLog).write(text)
-        except NoMatches:
-            pass
+        """Append a reasoning text delta, streaming character-by-character.
+
+        Buffers partial lines and commits on newlines so the RichLog
+        shows complete lines while still updating in real-time.
+        """
+        self._live_buf += text
+        log = self._reasoning_log
+        wrote = False
+        # Commit complete lines
+        while "\n" in self._live_buf:
+            line, self._live_buf = self._live_buf.split("\n", 1)
+            log.write(line)
+            wrote = True
+        if wrote and log._deferred_renders:
+            self.call_after_refresh(self.refresh, layout=True)
 
     def close_box(self) -> None:
-        """Hide the reasoning panel and clear its log."""
+        """Hide the reasoning panel, flush remaining buffer."""
+        # Flush any partial line
+        buf = self._live_buf
+        if buf:
+            self._reasoning_log.write(buf)
+            self._live_buf = ""
         self.remove_class("visible")
-        try:
-            self.query_one("#reasoning-log", RichLog).clear()
-        except NoMatches:
-            pass
+        self.call_after_refresh(self.refresh, layout=True)
+
+
+# ---------------------------------------------------------------------------
+# Titled rule (separator with embedded title)
+# ---------------------------------------------------------------------------
+
+class TitledRule(Widget):
+    """Horizontal rule with a title embedded in it, e.g. ``─── Hermes ───``."""
+
+    DEFAULT_CSS = """
+    TitledRule {
+        height: 1;
+    }
+    """
+
+    title_text: reactive[str] = reactive("Hermes")
+
+    def __init__(self, title: str = "Hermes", **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.title_text = title
+
+    def render(self) -> RenderResult:
+        w = self.size.width
+        label = f" {self.title_text} "
+        right = max(0, w - 1 - len(label))
+        line = "╭" + label + "─" * right
+        return Text(line, style=self.rich_style)
 
 
 # ---------------------------------------------------------------------------
@@ -176,12 +285,24 @@ class HintBar(Static):
     ``app.query_one(HintBar).hint`` directly.
     """
 
-    DEFAULT_CSS = "HintBar { height: 1; }"
+    DEFAULT_CSS = """
+    HintBar {
+        height: 1;
+        display: none;
+    }
+    HintBar.visible {
+        display: block;
+    }
+    """
 
     hint: reactive[str] = reactive("")
 
     def watch_hint(self, value: str) -> None:
         self.update(value)
+        if value:
+            self.add_class("visible")
+        else:
+            self.remove_class("visible")
 
 
 # ---------------------------------------------------------------------------
@@ -261,8 +382,6 @@ class ImageBar(Static):
     ImageBar {
         display: none;
         height: auto;
-        color: $text-muted;
-        padding: 0 1;
     }
     """
 

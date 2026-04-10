@@ -926,20 +926,20 @@ class TestStreamReasoningDeltaRichPipeline(unittest.TestCase):
 
     @patch("cli._pt_print")
     @patch("cli._cprint")
-    def test_long_partial_uses_pt_print_not_cprint(self, mock_cprint, mock_pt_print):
-        """Partials >80 chars (no newline) are shown via _pt_print(end=''), not
-        _cprint. The 80-char force-flush hack is gone; per-token output handles it."""
+    def test_long_partial_stays_in_buf_not_cprint(self, mock_cprint, mock_pt_print):
+        """Partials >80 chars (no newline) stay in _reasoning_buf — no _cprint, no
+        _pt_print(end='').  The 80-char force-flush hack is gone; line-buffered
+        streaming handles it."""
         cli = _make_reasoning_stream_cli()
 
-        with patch("cli._PT_ANSI", side_effect=lambda x: x):
-            cli._stream_reasoning_delta("x" * 85)
+        cli._stream_reasoning_delta("x" * 85)
 
         mock_cprint.assert_not_called()
-        partial_calls = [
+        partial_end_calls = [
             c for c in mock_pt_print.call_args_list
             if c.kwargs.get("end", "\n") == ""
         ]
-        self.assertTrue(partial_calls, "_pt_print(end='') not called for long partial")
+        self.assertFalse(partial_end_calls, "_pt_print(end='') must not be called for partial")
         self.assertEqual(cli._reasoning_buf, "x" * 85, "buffer must NOT be cleared for partial")
 
     @patch("cli._cprint")

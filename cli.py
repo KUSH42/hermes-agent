@@ -1120,6 +1120,11 @@ _BOLD = "\033[1m"
 _DIM = "\033[2m"
 _RST = "\033[0m"
 
+# Minimum buffer length before attempting a word-boundary partial flush.
+# Prose lines longer than this are flushed at word boundaries rather than
+# waiting for a full \\n, improving perceived streaming responsiveness.
+_PARTIAL_FLUSH_CHARS = 12
+
 def _accent_hex() -> str:
     """Return the active skin accent color for legacy CLI output lines."""
     try:
@@ -1581,7 +1586,6 @@ class HermesCLI:
 
         # Streaming display state
         self._stream_buf = ""        # Partial line buffer for line-buffered rendering
-        self._stream_vis_len = 0     # Visual width of _stream_buf (ANSI-stripped, EAW-aware)
         self._stream_started = False  # True once first delta arrives
         self._stream_box_opened = False  # True once the response box header is printed
         self._reasoning_stream_started = False  # True once live reasoning starts streaming
@@ -2252,18 +2256,11 @@ class HermesCLI:
             r_fill = w - 2 - len(r_label)
             _cprint(f"\n{_DIM}┌─{r_label}{'─' * max(r_fill - 1, 0)}┐{_RST}")
 
-        # Track length of any partial reasoning line already shown
-        _prev_partial = _vlen(getattr(self, "_reasoning_buf", ""))
-
         self._reasoning_buf = getattr(self, "_reasoning_buf", "") + text
 
-        # Emit complete lines, keep partial remainder for per-token display
+        # Emit complete lines, keep partial remainder buffered
         while "\n" in self._reasoning_buf:
             line, self._reasoning_buf = self._reasoning_buf.split("\n", 1)
-            # Clear any partial line shown before rendering the complete line
-            if _prev_partial:
-                _pt_print(_PT_ANSI(f"\r{' ' * _prev_partial}\r"), end="")
-                _prev_partial = 0
             if getattr(self, "_rich_reasoning", False):
                 out = self._reasoning_block_buf.process_line(line)
                 if out is None:
@@ -2283,9 +2280,17 @@ class HermesCLI:
             else:
                 _cprint(_dim_lines(line)[0])
 
-        # Show partial reasoning line immediately for per-token feedback
-        if self._reasoning_buf:
-            _pt_print(_PT_ANSI(f"\r{_DIM}{self._reasoning_buf}{_RST}"), end="", flush=True)
+        # Word-boundary flush for long reasoning lines (same logic as response
+        # streaming; markdown skipped to avoid unclosed spans across boundaries).
+        if (
+            len(self._reasoning_buf) >= _PARTIAL_FLUSH_CHARS
+            and self._reasoning_buf[0] not in ("#", ">", "|", "`", " ", "\t", "-", "*", "+")
+        ):
+            cut = self._reasoning_buf.rfind(" ")
+            if cut > 5:
+                chunk = self._reasoning_buf[:cut + 1]
+                self._reasoning_buf = self._reasoning_buf[cut + 1:]
+                _cprint(_dim_lines(chunk)[0])
 
     def _close_reasoning_box(self) -> None:
         """Close the live reasoning box if it's open."""
@@ -2293,10 +2298,6 @@ class HermesCLI:
             # Flush remaining reasoning buffer
             buf = getattr(self, "_reasoning_buf", "")
             if buf:
-                # Clear any partial line shown during per-token streaming
-                partial_len = _vlen(buf)
-                if partial_len:
-                    _pt_print(_PT_ANSI(f"\r{' ' * partial_len}\r"), end="")
                 if getattr(self, "_rich_reasoning", False):
                     buf = _apply_inline_md(_apply_block_line(buf, reset_suffix=_DIM), reset_suffix=_DIM)
                 elif _RICH_RESPONSE:
@@ -2468,19 +2469,10 @@ class HermesCLI:
         # Emit complete lines, keep partial remainder in buffer
         _tc = getattr(self, "_stream_text_ansi", "")
 
-        # Track length of any partial line already shown so we can clear it
-        _prev_partial = self._stream_vis_len
-
         self._stream_buf += text
-        self._stream_vis_len = _vlen(self._stream_buf)
 
         while "\n" in self._stream_buf:
             line, self._stream_buf = self._stream_buf.split("\n", 1)
-            self._stream_vis_len = _vlen(self._stream_buf)
-            # Clear any partial line printed before rendering the complete line
-            if _prev_partial:
-                _pt_print(_PT_ANSI(f"\r{' ' * _prev_partial}\r"), end="")
-                _prev_partial = 0
             if _RICH_RESPONSE:
                 out = self._stream_block_buf.process_line(line)
                 if out is None:
@@ -2500,9 +2492,21 @@ class HermesCLI:
             else:
                 _cprint(f"{_tc}{line}{_RST}" if _tc else line)
 
-        # Show partial line immediately for per-token feedback
-        if self._stream_buf:
-            _pt_print(_PT_ANSI(f"\r{_tc}{self._stream_buf}{_RST}"), end="", flush=True)
+        # Word-boundary flush: show progress on long prose lines without
+        # waiting for a full \\n.  Structural prefixes (headings, blockquotes,
+        # tables, code, list markers) are excluded — they need the complete
+        # line for correct block-level rendering.  Inline markdown is skipped
+        # here too: bold/italic spans can straddle a flush boundary, and an
+        # unclosed span would corrupt the color state of following tokens.
+        if (
+            len(self._stream_buf) >= _PARTIAL_FLUSH_CHARS
+            and self._stream_buf[0] not in ("#", ">", "|", "`", " ", "\t", "-", "*", "+")
+        ):
+            cut = self._stream_buf.rfind(" ")
+            if cut > 5:
+                chunk = self._stream_buf[:cut + 1]
+                self._stream_buf = self._stream_buf[cut + 1:]
+                _cprint(f"{_tc}{chunk}{_RST}" if _tc else chunk)
 
     def _flush_stream(self) -> None:
         """Emit any remaining partial line from the stream buffer and close the box."""
@@ -2511,9 +2515,6 @@ class HermesCLI:
 
         _tc = getattr(self, "_stream_text_ansi", "")
         if self._stream_buf:
-            # Clear the partial line shown during per-token streaming before final render
-            if self._stream_vis_len:
-                _pt_print(_PT_ANSI(f"\r{' ' * self._stream_vis_len}\r"), end="")
             if _RICH_RESPONSE:
                 block_out = self._stream_block_buf.process_line(self._stream_buf)
                 if block_out is not None:
@@ -2528,7 +2529,6 @@ class HermesCLI:
             else:
                 _cprint(f"{_tc}{self._stream_buf}{_RST}" if _tc else self._stream_buf)
             self._stream_buf = ""
-            self._stream_vis_len = 0
 
         if _RICH_RESPONSE:
             # Flush any buffered block-level state (must run even if _stream_buf
@@ -2554,7 +2554,6 @@ class HermesCLI:
     def _reset_stream_state(self) -> None:
         """Reset streaming state before each agent invocation."""
         self._stream_buf = ""
-        self._stream_vis_len = 0
         self._stream_started = False
         self._stream_box_opened = False
         self._reasoning_stream_started = False
@@ -7210,27 +7209,20 @@ class HermesCLI:
                     r_fill = w - 2 - len(r_label)
                     r_top = f"{_DIM}┌─{r_label}{'─' * max(r_fill - 1, 0)}┐{_RST}"
                     r_bot = f"{_DIM}└{'─' * (w - 2)}┘{_RST}"
-                    # Collapse long reasoning: show first 10 lines
                     lines = reasoning.strip().splitlines()
-                    if len(lines) > 10:
-                        visible = lines[:10]
-                        tail = f"  ... ({len(lines) - 10} more lines)"
-                    else:
-                        visible = lines
-                        tail = ""
                     if getattr(self, "_rich_reasoning", False):
                         visible = [
-                            _apply_inline_md(_apply_block_line(l, reset_suffix=""), reset_suffix="")
-                            for l in visible
+                            _apply_inline_md(_apply_block_line(l, reset_suffix=_DIM), reset_suffix=_DIM)
+                            for l in lines
                         ]
                     elif _RICH_RESPONSE:
                         visible = [
                             _apply_inline_md(_apply_block_line(l, reset_suffix=_DIM), reset_suffix=_DIM)
-                            for l in visible
+                            for l in lines
                         ]
+                    else:
+                        visible = lines
                     rendered_reasoning = "\n".join(_dim_lines("\n".join(visible)))
-                    if tail:
-                        rendered_reasoning += f"\n{_dim_lines(tail)[0]}"
                     _cprint(f"\n{r_top}\n{rendered_reasoning}\n{r_bot}")
 
             if response and not response_previewed:

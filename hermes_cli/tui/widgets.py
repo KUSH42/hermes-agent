@@ -78,6 +78,7 @@ class LiveLineWidget(Widget):
                 if msg is None:
                     msg = panel.new_message()
                 rl = msg.response_log
+                msg.show_response_rule()
                 for committed in lines[:-1]:
                     rl.write(Text.from_ansi(committed))
                 # If writes were deferred (RichLog size not yet known),
@@ -91,7 +92,7 @@ class LiveLineWidget(Widget):
 
 
 class MessagePanel(Widget):
-    """Groups a ReasoningPanel + response RichLog for one assistant turn."""
+    """Groups a response TitledRule + ReasoningPanel + response RichLog for one assistant turn."""
 
     DEFAULT_CSS = """
     MessagePanel {
@@ -102,6 +103,12 @@ class MessagePanel(Widget):
         overflow-y: hidden;
         overflow-x: hidden;
     }
+    MessagePanel TitledRule {
+        display: none;
+    }
+    MessagePanel TitledRule.visible {
+        display: block;
+    }
     """
 
     _msg_counter: int = 0
@@ -109,6 +116,7 @@ class MessagePanel(Widget):
     def __init__(self, **kwargs: Any) -> None:
         MessagePanel._msg_counter += 1
         self._msg_id = MessagePanel._msg_counter
+        self._response_rule = TitledRule(title="⚕ Hermes", id=f"response-rule-{self._msg_id}")
         self._reasoning_panel = ReasoningPanel(id=f"reasoning-{self._msg_id}")
         self._response_log = RichLog(
             markup=False, highlight=False, wrap=True,
@@ -117,8 +125,13 @@ class MessagePanel(Widget):
         super().__init__(**kwargs)
 
     def compose(self) -> ComposeResult:
+        yield self._response_rule
         yield self._reasoning_panel
         yield self._response_log
+
+    def show_response_rule(self) -> None:
+        """Show the response title rule (called when first content arrives)."""
+        self._response_rule.add_class("visible")
 
     @property
     def reasoning(self) -> ReasoningPanel:
@@ -166,6 +179,7 @@ class OutputPanel(ScrollableContainer):
             msg = self.current_message
             if msg is None:
                 msg = self.new_message()
+            msg.show_response_rule()
             rl = msg.response_log
             rl.write(Text.from_ansi(live._buf))
             if rl._deferred_renders:
@@ -178,16 +192,20 @@ class OutputPanel(ScrollableContainer):
 # ---------------------------------------------------------------------------
 
 class ReasoningPanel(Widget):
-    """Scrollable reasoning display with bordered header.
+    """Collapsible reasoning display with left gutter marker.
 
     Hidden by default via CSS ``display: none``. Toggled visible via the
-    ``visible`` CSS class when reasoning output arrives.
+    ``visible`` CSS class when reasoning output arrives. Each committed
+    line is prefixed with a ``▌`` gutter marker in dim style.
     """
+
+    GUTTER = "▌ "
 
     DEFAULT_CSS = """
     ReasoningPanel {
         display: none;
         height: auto;
+        margin: 0 1;
     }
     ReasoningPanel.visible {
         display: block;
@@ -207,13 +225,17 @@ class ReasoningPanel(Widget):
     def compose(self) -> ComposeResult:
         yield self._reasoning_log
 
+    def _gutter_line(self, content: str) -> Text:
+        """Build a dim gutter-prefixed line for the reasoning log."""
+        t = Text()
+        t.append(self.GUTTER, style="dim")
+        t.append(content, style="dim italic")
+        return t
+
     def open_box(self, title: str) -> None:
-        """Show the reasoning panel with a styled header line."""
+        """Show the reasoning panel."""
         self._live_buf = ""
         self.add_class("visible")
-        self._reasoning_log.write(
-            Text.from_markup(f"[dim]─ {title} ─[/dim]")
-        )
         # Trigger layout refresh so parent recalculates height after
         # deferred renders are processed on the next resize event.
         self.call_after_refresh(self.refresh, layout=True)
@@ -223,6 +245,7 @@ class ReasoningPanel(Widget):
 
         Buffers partial lines and commits on newlines so the RichLog
         shows complete lines while still updating in real-time.
+        Each committed line gets a ``▌`` gutter prefix.
         """
         self._live_buf += text
         log = self._reasoning_log
@@ -230,7 +253,7 @@ class ReasoningPanel(Widget):
         # Commit complete lines
         while "\n" in self._live_buf:
             line, self._live_buf = self._live_buf.split("\n", 1)
-            log.write(line)
+            log.write(self._gutter_line(line))
             wrote = True
         if wrote and log._deferred_renders:
             self.call_after_refresh(self.refresh, layout=True)
@@ -240,7 +263,7 @@ class ReasoningPanel(Widget):
         # Flush any partial line
         buf = self._live_buf
         if buf:
-            self._reasoning_log.write(buf)
+            self._reasoning_log.write(self._gutter_line(buf))
             self._live_buf = ""
         self.remove_class("visible")
         self.call_after_refresh(self.refresh, layout=True)
@@ -250,8 +273,27 @@ class ReasoningPanel(Widget):
 # Titled rule (separator with embedded title)
 # ---------------------------------------------------------------------------
 
+def _fade_rule(count: int, start_hex: str, end_hex: str) -> Text:
+    """Build a run of ``─`` chars that fade from *start_hex* to *end_hex*.
+
+    Uses Rich's ``blend_rgb`` for interpolation — no extra dependencies.
+    """
+    from rich.color import Color, blend_rgb
+
+    if count <= 0:
+        return Text()
+    c_start = Color.parse(start_hex).get_truecolor()
+    c_end = Color.parse(end_hex).get_truecolor()
+    t = Text()
+    for i in range(count):
+        factor = i / max(count - 1, 1)
+        c = blend_rgb(c_start, c_end, factor)
+        t.append("─", style=f"rgb({c.red},{c.green},{c.blue})")
+    return t
+
+
 class TitledRule(Widget):
-    """Horizontal rule with a title embedded in it, e.g. ``─── Hermes ───``."""
+    """Horizontal rule with an embedded title and fading rule chars."""
 
     DEFAULT_CSS = """
     TitledRule {
@@ -261,16 +303,48 @@ class TitledRule(Widget):
 
     title_text: reactive[str] = reactive("Hermes")
 
-    def __init__(self, title: str = "Hermes", **kwargs: Any) -> None:
+    def __init__(
+        self,
+        title: str = "Hermes",
+        fade_start: str = "#CD7F32",
+        fade_end: str = "#3A3A3A",
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self.title_text = title
+        self._fade_start = fade_start
+        self._fade_end = fade_end
 
     def render(self) -> RenderResult:
         w = self.size.width
         label = f" {self.title_text} "
-        right = max(0, w - 1 - len(label))
-        line = "╭" + label + "─" * right
-        return Text(line, style=self.rich_style)
+        left_pad = 2
+        right = max(0, w - left_pad - len(label))
+        t = Text()
+        # Left pad: short, just dim
+        t.append("─" * left_pad, style="dim")
+        t.append(label, style=self.rich_style)
+        # Right fill: fade from accent to background
+        t.append_text(_fade_rule(right, self._fade_start, self._fade_end))
+        return t
+
+
+class PlainRule(Widget):
+    """Plain horizontal rule that fades out."""
+
+    DEFAULT_CSS = """
+    PlainRule {
+        height: 1;
+    }
+    """
+
+    def __init__(self, fade_start: str = "#555555", fade_end: str = "#2A2A2A", **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._fade_start = fade_start
+        self._fade_end = fade_end
+
+    def render(self) -> RenderResult:
+        return _fade_rule(self.size.width, self._fade_start, self._fade_end)
 
 
 # ---------------------------------------------------------------------------
@@ -457,7 +531,7 @@ class ClarifyWidget(CountdownMixin, Widget):
     DEFAULT_CSS = """
     ClarifyWidget {
         display: none;
-        border: round $warning;
+        border: tall $warning;
         padding: 1 2;
     }
     """
@@ -501,7 +575,7 @@ class ApprovalWidget(CountdownMixin, Widget):
     DEFAULT_CSS = """
     ApprovalWidget {
         display: none;
-        border: round $error;
+        border: tall $error;
         padding: 1 2;
     }
     """
@@ -545,7 +619,7 @@ class SudoWidget(CountdownMixin, Widget):
     DEFAULT_CSS = """
     SudoWidget {
         display: none;
-        border: round $warning;
+        border: tall $warning;
         padding: 1 2;
     }
     """
@@ -595,7 +669,7 @@ class SecretWidget(CountdownMixin, Widget):
     DEFAULT_CSS = """
     SecretWidget {
         display: none;
-        border: round $warning;
+        border: tall $warning;
         padding: 1 2;
     }
     """

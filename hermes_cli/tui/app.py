@@ -39,6 +39,7 @@ from hermes_cli.tui.widgets import (
     LiveLineWidget,
     MessagePanel,
     OutputPanel,
+    PlainRule,
     ReasoningPanel,
     SecretWidget,
     StatusBar,
@@ -135,6 +136,7 @@ class HermesApp(App):
         else:
             yield TextArea(id="input-area")
 
+        yield PlainRule(id="input-rule-bottom")
         yield VoiceStatusBar(id="voice-status")
         yield StatusBar(id="status-bar")
 

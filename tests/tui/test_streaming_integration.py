@@ -321,8 +321,8 @@ async def test_reasoning_open_close_lifecycle():
         rp.append_delta("Step 1\n")
         rp.append_delta("Step 2\n")
         await _pause(pilot)
-        # Header + 2 lines
-        assert len(rp._reasoning_log.lines) == 3
+        # 2 gutter-prefixed lines (no header)
+        assert len(rp._reasoning_log.lines) == 2
 
         # Close
         rp.close_box()
@@ -351,14 +351,14 @@ async def test_reasoning_partial_line_buffering():
         rp.append_delta(" this")
         await _pause(pilot)
 
-        # Only header line committed; partial stays in buffer
-        assert len(rp._reasoning_log.lines) == 1  # just the header
+        # No lines committed; partial stays in buffer (no header)
+        assert len(rp._reasoning_log.lines) == 0
         assert "thinking about this" in rp._live_buf
 
         # Complete the line
         rp.append_delta("\n")
         await _pause(pilot)
-        assert len(rp._reasoning_log.lines) == 2  # header + completed line
+        assert len(rp._reasoning_log.lines) == 1  # completed line (no header)
         assert rp._live_buf == ""
 
 
@@ -385,7 +385,7 @@ async def test_reasoning_close_flushes_partial():
         rp.close_box()
         await _pause(pilot)
         assert rp._live_buf == ""
-        assert len(rp._reasoning_log.lines) == 2  # header + flushed partial
+        assert len(rp._reasoning_log.lines) == 1  # flushed partial (no header)
 
 
 @pytest.mark.asyncio
@@ -409,7 +409,7 @@ async def test_reasoning_via_app_helpers():
         app.append_reasoning("Step 2\n")
         await _pause(pilot)
 
-        assert len(msg.reasoning._reasoning_log.lines) == 3
+        assert len(msg.reasoning._reasoning_log.lines) == 2
 
         app.close_reasoning()
         await _pause(pilot)
@@ -450,7 +450,7 @@ async def test_reasoning_then_response_streaming():
         await _pause(pilot)
 
         assert len(msg.response_log.lines) >= 2
-        assert len(msg.reasoning._reasoning_log.lines) >= 2  # header + 1 step
+        assert len(msg.reasoning._reasoning_log.lines) >= 1  # 1 gutter-prefixed step (no header)
 
 
 @pytest.mark.asyncio

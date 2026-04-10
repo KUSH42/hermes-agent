@@ -98,8 +98,8 @@ async def test_reasoning_panel_content_visible_after_open():
         for _ in range(5):
             await pilot.pause()
 
-        # Reasoning log should have 3 lines: header + 2 steps
-        assert len(msg.reasoning._reasoning_log.lines) == 3
+        # Reasoning log should have 2 lines (gutter-prefixed, no header)
+        assert len(msg.reasoning._reasoning_log.lines) == 2
         # The reasoning panel should have non-zero height
         assert msg.reasoning.size.height > 0, (
             "ReasoningPanel should expand to show content"

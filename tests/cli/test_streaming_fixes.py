@@ -274,8 +274,8 @@ class TestReasoningCprintIsolation(unittest.TestCase):
         ):
             cli._close_reasoning_box()
 
-        # Should have called _cprint for the buffer flush and box bottom
-        assert mock_cprint.call_count >= 2
+        # Should have called _cprint for the buffer flush (no box bottom anymore)
+        assert mock_cprint.call_count >= 1
 
     @patch("cli._cprint")
     @patch("cli._hermes_app")
@@ -288,7 +288,7 @@ class TestReasoningCprintIsolation(unittest.TestCase):
         cli._reasoning_box_opened = False  # force re-open
         cli._stream_reasoning_delta("first token")
 
-        # No _cprint for the ┌─ Reasoning ─┐ border
+        # No _cprint for the reasoning box open (gutter-only, no border)
         mock_cprint.assert_not_called()
 
 

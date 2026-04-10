@@ -222,7 +222,7 @@ async def test_reasoning_deferred_writes_become_visible():
         rp.append_delta("Deferred step 2\n")
         await _pause(pilot, n=10)
 
-        assert len(rp._reasoning_log.lines) >= 3  # header + 2 steps
+        assert len(rp._reasoning_log.lines) >= 2  # 2 gutter-prefixed steps (no header)
         assert rp.size.height > 0
 
 

@@ -55,8 +55,8 @@ async def test_append_delta_writes_complete_lines():
         msg.reasoning.append_delta("step 2\n")
         await pilot.pause()
         log = msg.reasoning.query_one("#reasoning-log")
-        # Header + 2 committed lines = 3 lines
-        assert len(log.lines) == 3
+        # 2 committed lines (no header, gutter-prefixed)
+        assert len(log.lines) == 2
 
 
 @pytest.mark.asyncio
@@ -72,8 +72,8 @@ async def test_append_delta_buffers_partial():
         msg.reasoning.append_delta("text")
         await pilot.pause()
         log = msg.reasoning.query_one("#reasoning-log")
-        # Header only — partial text is in _live_buf, not committed
-        assert len(log.lines) == 1
+        # No lines committed — partial text is in _live_buf (no header line)
+        assert len(log.lines) == 0
         assert msg.reasoning._live_buf == "partial text"
 
 
@@ -90,8 +90,8 @@ async def test_append_delta_flushes_on_newline():
         msg.reasoning.append_delta("world\nnext")
         await pilot.pause()
         log = msg.reasoning.query_one("#reasoning-log")
-        # Header + "hello world" committed = 2 lines; "next" still in buffer
-        assert len(log.lines) == 2
+        # "hello world" committed = 1 line; "next" still in buffer
+        assert len(log.lines) == 1
         assert msg.reasoning._live_buf == "next"
 
 
@@ -110,8 +110,8 @@ async def test_close_box_flushes_and_hides():
         await pilot.pause()
         assert not msg.reasoning.has_class("visible")
         log = msg.reasoning.query_one("#reasoning-log")
-        # Header + flushed partial = 2 lines (content preserved, just hidden)
-        assert len(log.lines) == 2
+        # Flushed partial = 1 line (content preserved, just hidden)
+        assert len(log.lines) == 1
 
 
 @pytest.mark.asyncio

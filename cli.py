@@ -1206,13 +1206,16 @@ def _cprint(text: str) -> None:
         _pt_print(_PT_ANSI(_normalize_ansi_c1(text)))
 
 
+_REASONING_GUTTER = "▌ "
+
 def _dim_lines(text: str) -> list[str]:
-    """Return lines wrapped in DIM/RESET individually.
+    """Return lines wrapped in DIM/RESET with a ``▌`` gutter prefix.
 
     Per-line wrapping keeps reasoning blocks consistently dim even when a
-    line contains its own reset sequence.
+    line contains its own reset sequence. The gutter marker provides visual
+    containment without full box borders.
     """
-    return [f"{_DIM}{line}{_RST}" for line in text.splitlines()]
+    return [f"{_DIM}{_REASONING_GUTTER}{line}{_RST}" for line in text.splitlines()]
 
 
 # ---------------------------------------------------------------------------
@@ -2302,11 +2305,8 @@ class HermesCLI:
                 # TUI mode: reasoning goes to ReasoningPanel only
                 tui.call_from_thread(tui.open_reasoning, "Reasoning")
             else:
-                # PT mode: draw box border in terminal
-                w = shutil.get_terminal_size().columns
-                r_label = " Reasoning "
-                r_fill = w - 2 - len(r_label)
-                _cprint(f"\n{_DIM}┌─{r_label}{'─' * max(r_fill - 1, 0)}┐{_RST}")
+                # PT mode: no header border — reasoning uses ▌ gutter only
+                pass
 
         self._reasoning_buf = getattr(self, "_reasoning_buf", "") + text
         tui = _hermes_app
@@ -2389,8 +2389,7 @@ class HermesCLI:
                     if code_tail:
                         for tl in code_tail.splitlines():
                             _cprint(_dim_lines(tl)[0])
-                w = shutil.get_terminal_size().columns
-                _cprint(f"{_DIM}└{'─' * (w - 2)}┘{_RST}")
+                # No bottom border — reasoning uses gutter markers only
 
             # Flush any content that was deferred while reasoning was rendering.
             deferred = getattr(self, "_deferred_content", "")
@@ -2548,8 +2547,9 @@ class HermesCLI:
             except (ValueError, IndexError):
                 self._stream_text_ansi = ""
             w = shutil.get_terminal_size().columns
-            fill = w - 2 - len(label)
-            _cprint(f"\n{_resp_border_ansi()}╭─{label}{'─' * max(fill - 1, 0)}╮{_RST}")
+            left_pad = 2
+            right = max(0, w - left_pad - len(f" {label} "))
+            _cprint(f"\n{_DIM}{'─' * left_pad}{_RST}{_resp_border_ansi()} {label} {_RST}{_DIM}{'─' * right}{_RST}")
 
         # Emit complete lines, keep partial remainder in buffer
         _tc = getattr(self, "_stream_text_ansi", "")
@@ -2636,10 +2636,7 @@ class HermesCLI:
                     _cprint(f"  {hl_line}")
                 _cprint(_RST)
 
-        # Close the response box
-        if self._stream_box_opened:
-            w = shutil.get_terminal_size().columns
-            _cprint(f"{_resp_border_ansi()}╰{'─' * (w - 2)}╯{_RST}")
+        # No bottom border — next turn's top rule provides separation
 
     def _reset_stream_state(self) -> None:
         """Reset streaming state before each agent invocation."""
@@ -7268,8 +7265,9 @@ class HermesCLI:
                             label = _sk.get_branding("response_label", "⚕ Hermes")
                         except Exception:
                             label = " ⚕ Hermes "
-                        fill = w - 2 - len(label)
-                        _cprint(f"\n{_resp_border_ansi()}╭─{label}{'─' * max(fill - 1, 0)}╮{_RST}")
+                        left_pad = 2
+                        right = max(0, w - left_pad - len(f" {label} "))
+                        _cprint(f"\n{_DIM}{'─' * left_pad}{_RST}{_resp_border_ansi()} {label} {_RST}{_DIM}{'─' * right}{_RST}")
                     _cprint(sentence.rstrip())
 
                 tts_thread = threading.Thread(
@@ -7453,11 +7451,6 @@ class HermesCLI:
             if self.show_reasoning and result and not _reasoning_already_shown:
                 reasoning = result.get("last_reasoning")
                 if reasoning:
-                    w = shutil.get_terminal_size().columns
-                    r_label = " Reasoning "
-                    r_fill = w - 2 - len(r_label)
-                    r_top = f"{_DIM}┌─{r_label}{'─' * max(r_fill - 1, 0)}┐{_RST}"
-                    r_bot = f"{_DIM}└{'─' * (w - 2)}┘{_RST}"
                     lines = reasoning.strip().splitlines()
                     if getattr(self, "_rich_reasoning", False):
                         visible = [
@@ -7472,7 +7465,7 @@ class HermesCLI:
                     else:
                         visible = lines
                     rendered_reasoning = "\n".join(_dim_lines("\n".join(visible)))
-                    _cprint(f"\n{r_top}\n{rendered_reasoning}\n{r_bot}")
+                    _cprint(f"\n{rendered_reasoning}")
 
             if response and not response_previewed:
                 # Use skin engine for label/color with fallback
@@ -7490,9 +7483,8 @@ class HermesCLI:
                 is_error_response = result and (result.get("failed") or result.get("partial"))
                 already_streamed = self._stream_started and self._stream_box_opened and not is_error_response
                 if use_streaming_tts and _streaming_box_opened and not is_error_response:
-                    # Text was already printed sentence-by-sentence; just close the box
-                    w = shutil.get_terminal_size().columns
-                    _cprint(f"\n{_resp_border_ansi()}╰{'─' * (w - 2)}╯{_RST}")
+                    # Text was already printed sentence-by-sentence; no bottom border needed
+                    pass
                 elif already_streamed:
                     # Response was already streamed token-by-token with box framing;
                     # _flush_stream() already closed the box. Skip Rich Panel.

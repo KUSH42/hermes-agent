@@ -1167,14 +1167,36 @@ def _normalize_ansi_c1(text: str) -> str:
     return text.replace("\x9b", "\x1b[")
 
 
-def _cprint(text: str):
-    """Print ANSI-colored text through prompt_toolkit's native renderer.
+# Module-level reference to the Textual app; set in run(), cleared in finally.
+# Replaces all hasattr(self, "_app") and self._app guards.
+_hermes_app: "HermesApp | None" = None
 
-    Raw ANSI escapes written via print() are swallowed by patch_stdout's
-    StdoutProxy.  Routing through print_formatted_text(ANSI(...)) lets
-    prompt_toolkit parse the escapes and render real colors.
+
+def _cprint(text: str) -> None:
+    """Route ANSI text to Textual output panel from any thread.
+
+    When the Textual TUI is running, text is enqueued to a bounded
+    asyncio.Queue consumed by HermesApp._consume_output. When no TUI
+    is active (single-query mode or before/after app lifecycle), falls
+    through to prompt_toolkit's renderer (and ultimately stdout).
     """
-    _pt_print(_PT_ANSI(_normalize_ansi_c1(text)))
+    import asyncio as _asyncio
+
+    app = _hermes_app
+    if app is not None and app._event_loop is not None:
+        try:
+            app._event_loop.call_soon_threadsafe(
+                app._output_queue.put_nowait, _normalize_ansi_c1(text)
+            )
+        except _asyncio.QueueFull:
+            # Backpressure: UI is 4096 chunks behind — drop rather than OOM.
+            pass
+        except RuntimeError:
+            # Event loop closed or not yet started — fall through to stdout
+            _pt_print(_PT_ANSI(_normalize_ansi_c1(text)))
+    else:
+        # Single-query / no-TUI mode: use prompt_toolkit renderer
+        _pt_print(_PT_ANSI(_normalize_ansi_c1(text)))
 
 
 def _dim_lines(text: str) -> list[str]:
@@ -8949,7 +8971,18 @@ class HermesCLI:
             # Fall back to default handler for everything else
             loop.default_exception_handler(context)
 
-        # Run the application with patch_stdout for proper output handling
+        # Run the application with patch_stdout for proper output handling.
+        # Set the module-level _hermes_app reference so _cprint can route
+        # output through the Textual queue when the TUI is active.
+        global _hermes_app
+        try:
+            from hermes_cli.tui.app import HermesApp as _HApp
+            _tui_app = _HApp(cli=self)
+            _tui_app._spinner_frames = _COMMAND_SPINNER_FRAMES
+            _hermes_app = _tui_app
+        except ImportError:
+            _tui_app = None
+
         try:
             with patch_stdout():
                 # Set the custom handler on prompt_toolkit's event loop
@@ -8963,6 +8996,7 @@ class HermesCLI:
         except (EOFError, KeyboardInterrupt, BrokenPipeError):
             pass
         finally:
+            _hermes_app = None  # clear before any atexit handlers fire
             self._should_exit = True
             # Flush memories before exit (only for substantial conversations)
             if self.agent and self.conversation_history:

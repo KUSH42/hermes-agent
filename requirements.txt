@@ -10,6 +10,7 @@ httpx
 rich
 tenacity
 prompt_toolkit
+textual>=1.0.0,<9
 pyyaml
 requests
 jinja2

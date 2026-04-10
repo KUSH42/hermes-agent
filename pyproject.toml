@@ -23,7 +23,8 @@ dependencies = [
   "requests>=2.33.0,<3",  # CVE-2026-25645
   "jinja2>=3.1.5,<4",
   "pydantic>=2.12.5,<3",
-  # Interactive CLI (prompt_toolkit is used directly by cli.py)
+  # Interactive CLI — Textual for the TUI, prompt_toolkit retained for FileHistory
+  "textual>=1.0.0,<9",
   "prompt_toolkit>=3.0.52,<4",
   # Tools
   "exa-py>=2.9.0,<3",

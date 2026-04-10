@@ -1,0 +1,61 @@
+/*
+ * hermes_cli/tui/hermes.tcss
+ *
+ * VISUAL properties (colours, margins, padding) only.
+ * Structural properties (height, overflow, display, dock) belong in
+ * each widget's DEFAULT_CSS — see CSS precedence rule in spec §4.13.
+ *
+ * Precedence: DEFAULT_CSS < CSS class var < external .tcss < inline styles.
+ * Keep structural properties in DEFAULT_CSS and visual properties here
+ * to avoid precedence surprises.
+ */
+
+HermesApp {
+    background: $background;
+}
+
+/* OutputPanel structural rules (height, overflow) are in DEFAULT_CSS */
+ReasoningPanel {
+    margin: 0 1;
+}
+
+#input-rule {
+    color: $primary-darken-3;
+}
+
+HintBar {
+    color: $text-muted;
+}
+
+StatusBar {
+    background: $primary-darken-3;
+    color: $text;
+    padding: 0 1;
+}
+
+ClarifyWidget,
+ApprovalWidget,
+SudoWidget,
+SecretWidget {
+    margin: 0 1;
+}
+
+/* Overlay layer — stacks overlays vertically, hidden unless children are visible */
+#overlay-layer {
+    height: auto;
+}
+
+/* Input area styling */
+HermesInput {
+    padding: 0 1;
+}
+
+/* Image bar */
+ImageBar {
+    padding: 0 1;
+}
+
+/* Voice status bar */
+VoiceStatusBar {
+    padding: 0 1;
+}

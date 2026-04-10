@@ -147,8 +147,8 @@ async def test_reasoning_panel_grows_with_content():
 
 
 @pytest.mark.asyncio
-async def test_reasoning_panel_collapses_on_close():
-    """ReasoningPanel returns to zero height (display:none) after close."""
+async def test_reasoning_panel_stays_visible_after_close():
+    """ReasoningPanel stays visible after close (reasoning preserved as history)."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 40)) as pilot:
         await pilot.pause()
@@ -166,8 +166,9 @@ async def test_reasoning_panel_collapses_on_close():
         rp.close_box()
         await _pause(pilot, n=10)
 
-        assert rp.size.height == 0, (
-            f"ReasoningPanel should collapse after close, got height={rp.size.height}"
+        # Panel stays visible — reasoning content preserved as message history
+        assert rp.size.height > 0, (
+            f"ReasoningPanel should stay visible after close, got height={rp.size.height}"
         )
 
 
@@ -286,8 +287,8 @@ async def test_live_line_widget_stays_at_bottom():
 async def test_full_turn_layout_reasoning_then_response():
     """A full turn with reasoning→response transitions lays out correctly.
 
-    The reasoning panel should expand, then collapse, then the response
-    panel should expand — all within the same MessagePanel.
+    The reasoning panel stays visible after close, and the response
+    panel expands below it — all within the same MessagePanel.
     """
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 40)) as pilot:
@@ -308,19 +309,20 @@ async def test_full_turn_layout_reasoning_then_response():
         reasoning_h = rp.size.height
         assert reasoning_h > 0, "Reasoning should be visible during thinking"
 
-        # Phase 2: Transition — close reasoning, start response
+        # Phase 2: Transition — close reasoning (stays visible), start response
         rp.close_box()
         await _pause(pilot, n=10)
 
-        assert rp.size.height == 0, "Reasoning should collapse after close"
+        assert rp.size.height > 0, "Reasoning stays visible as history"
 
         # Phase 3: Response
         for i in range(8):
             app.write_output(f"Response line {i}\n")
         await _pause(pilot, n=10)
 
-        assert msg.size.height >= 8, (
-            f"MessagePanel should accommodate response, height={msg.size.height}"
+        # MessagePanel accommodates both reasoning and response
+        assert msg.size.height >= reasoning_h + 8, (
+            f"MessagePanel should accommodate reasoning + response, height={msg.size.height}"
         )
         assert len(msg.response_log.lines) >= 8
 

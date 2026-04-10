@@ -201,3 +201,53 @@ async def test_ctrl_c_clears_input_when_idle():
         await pilot.press("ctrl+c")
         await pilot.pause()
         assert inp.value == ""
+
+
+@pytest.mark.asyncio
+async def test_ctrl_c_copies_when_text_selected():
+    """ctrl+c copies selected output text when screen has a selection."""
+    app, cli = _app_with_agent()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        # Mock _get_selected_text to simulate selected output text
+        app._get_selected_text = lambda: "selected output"
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        # Agent should NOT be interrupted (ctrl+c only copies)
+        cli.agent.interrupt.assert_not_called()
+        # Clipboard should contain the selected text
+        assert app.clipboard == "selected output"
+
+
+@pytest.mark.asyncio
+async def test_ctrl_c_no_selection_clears_or_exits():
+    """ctrl+c without selection clears input or exits — never interrupts agent."""
+    app, cli = _app_with_agent()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.agent_running = True
+        await pilot.pause()
+        # ctrl+c should NOT call interrupt even with agent running
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        cli.agent.interrupt.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ctrl_c_input_selection_handled_by_input():
+    """ctrl+c with Input-level selection copies via Input's action_copy."""
+    app, cli = _app_with_agent()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        from hermes_cli.tui.input_widget import HermesInput
+        inp = app.query_one(HermesInput)
+        inp.value = "copy me"
+        inp.focus()
+        await pilot.pause()
+        inp.action_select_all()
+        await pilot.pause()
+        # Input's own action_copy handles ctrl+c when text is selected
+        inp.action_copy()
+        await pilot.pause()
+        # No interrupt — copy was handled at input level
+        cli.agent.interrupt.assert_not_called()

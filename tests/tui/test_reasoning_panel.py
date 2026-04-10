@@ -96,8 +96,8 @@ async def test_append_delta_flushes_on_newline():
 
 
 @pytest.mark.asyncio
-async def test_close_box_flushes_and_hides():
-    """close_box flushes remaining buffer and hides the panel."""
+async def test_close_box_flushes_and_stays_visible():
+    """close_box flushes remaining buffer; panel stays visible as history."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -108,9 +108,10 @@ async def test_close_box_flushes_and_hides():
         await pilot.pause()
         msg.reasoning.close_box()
         await pilot.pause()
-        assert not msg.reasoning.has_class("visible")
+        # Panel stays visible so reasoning isn't lost during tool calls
+        assert msg.reasoning.has_class("visible")
         log = msg.reasoning.query_one("#reasoning-log")
-        # Flushed partial = 1 line (content preserved, just hidden)
+        # Flushed partial = 1 line
         assert len(log.lines) == 1
 
 
@@ -141,7 +142,8 @@ async def test_app_reasoning_helpers():
         await pilot.pause()
         app.close_reasoning()
         await pilot.pause()
-        assert not msg.reasoning.has_class("visible")
+        # Panel stays visible as message history after close
+        assert msg.reasoning.has_class("visible")
 
 
 @pytest.mark.asyncio

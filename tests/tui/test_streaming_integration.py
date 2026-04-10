@@ -327,10 +327,10 @@ async def test_reasoning_open_close_lifecycle():
         # 2 gutter-prefixed lines (no header)
         assert len(rp._reasoning_log.lines) == 2
 
-        # Close
+        # Close (stays visible as history)
         rp.close_box()
         await _pause(pilot)
-        assert not rp.has_class("visible")
+        assert rp.has_class("visible")
 
 
 @pytest.mark.asyncio
@@ -416,7 +416,8 @@ async def test_reasoning_via_app_helpers():
 
         app.close_reasoning()
         await _pause(pilot)
-        assert not msg.reasoning.has_class("visible")
+        # Panel stays visible as history
+        assert msg.reasoning.has_class("visible")
 
 
 # ---------------------------------------------------------------------------
@@ -442,10 +443,10 @@ async def test_reasoning_then_response_streaming():
         await _pause(pilot)
         assert msg.reasoning.has_class("visible")
 
-        # Transition to response
+        # Transition to response (reasoning stays visible as history)
         app.close_reasoning()
         await _pause(pilot)
-        assert not msg.reasoning.has_class("visible")
+        assert msg.reasoning.has_class("visible")
 
         # Response phase
         app.write_output("Response line 1\n")

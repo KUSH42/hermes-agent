@@ -20,6 +20,7 @@ from textual.app import ComposeResult, RenderResult
 from textual.containers import ScrollableContainer
 from textual.css.query import NoMatches
 from textual.reactive import reactive
+from textual.selection import Selection
 from textual.widget import Widget
 from textual.widgets import Input, RichLog, Static
 
@@ -74,6 +75,23 @@ class CopyableRichLog(RichLog):
         """Write styled text to display, store plain text for copy."""
         self._plain_lines.append(plain)
         return self.write(styled, **kwargs)
+
+    def get_selection(self, selection: Selection) -> tuple[str, str] | None:
+        """Return plain text for the selected region.
+
+        Overrides RichLog.get_selection() to return clean markdown without ANSI
+        codes. Uses _plain_lines joined with newlines, then delegates extraction
+        to Selection.extract() which handles line/column offsets correctly.
+
+        Note: _plain_lines has one entry per write_with_source() call. RichLog
+        wraps long lines internally, so a single write may produce multiple
+        visual lines. Selection offsets reference the wrapped layout — for short
+        lines this is fine, but wrapped lines may extract partial plain text.
+        """
+        if not self._plain_lines:
+            return None
+        text = "\n".join(self._plain_lines)
+        return selection.extract(text), "\n"
 
     def clear(self) -> "CopyableRichLog":
         self._plain_lines.clear()
@@ -367,14 +385,16 @@ class ReasoningPanel(Widget):
             self.call_after_refresh(self.refresh, layout=True)
 
     def close_box(self) -> None:
-        """Hide the reasoning panel, flush remaining buffer."""
+        """Flush remaining buffer. The panel stays visible as message history."""
         # Flush any partial line
         buf = self._live_buf
         if buf:
             self._reasoning_log.write(self._gutter_line(buf))
             self._plain_lines.append(buf)
             self._live_buf = ""
-        self.remove_class("visible")
+        # Don't remove "visible" — reasoning stays shown as part of the
+        # message so it isn't lost when tool output or the next response
+        # pushes new content into the same MessagePanel.
         self.call_after_refresh(self.refresh, layout=True)
 
 
@@ -437,14 +457,10 @@ class TitledRule(Widget):
         accent_char = parts[0] if parts else ""
         rest = (" " + parts[1]) if len(parts) > 1 else ""
 
-        label_len = len(f" {title} ")
-        left_pad = 2
-        right = max(0, w - left_pad - label_len)
+        label_len = len(f"{title} ")
+        right = max(0, w - label_len)
         t = Text()
-        # Left pad: fade in (end → start)
-        t.append_text(_fade_rule(left_pad, self._fade_end, self._fade_start))
         # Title: accent char in bright accent, rest in title_color
-        t.append(" ")
         t.append(accent_char, style=f"bold {self._accent}")
         t.append(f"{rest} ", style=f"{self._title_color}")
         # Right fill: fade out (start → end)
@@ -711,6 +727,7 @@ class ClarifyWidget(CountdownMixin, Widget):
     DEFAULT_CSS = """
     ClarifyWidget {
         display: none;
+        height: auto;
         border: tall $warning;
         padding: 1 2;
     }
@@ -755,6 +772,7 @@ class ApprovalWidget(CountdownMixin, Widget):
     DEFAULT_CSS = """
     ApprovalWidget {
         display: none;
+        height: auto;
         border: tall $error;
         padding: 1 2;
     }
@@ -799,6 +817,7 @@ class SudoWidget(CountdownMixin, Widget):
     DEFAULT_CSS = """
     SudoWidget {
         display: none;
+        height: auto;
         border: tall $warning;
         padding: 1 2;
     }
@@ -849,6 +868,7 @@ class SecretWidget(CountdownMixin, Widget):
     DEFAULT_CSS = """
     SecretWidget {
         display: none;
+        height: auto;
         border: tall $warning;
         padding: 1 2;
     }

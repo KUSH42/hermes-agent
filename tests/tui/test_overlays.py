@@ -12,6 +12,8 @@ import pytest
 
 from hermes_cli.tui.app import HermesApp
 from hermes_cli.tui.state import ChoiceOverlayState, SecretOverlayState
+from textual.widgets import Static
+
 from hermes_cli.tui.widgets import (
     ApprovalWidget,
     ClarifyWidget,
@@ -48,6 +50,30 @@ async def test_clarify_visible_when_state_set():
         await pilot.pause()
         w = app.query_one(ClarifyWidget)
         assert w.display
+
+
+@pytest.mark.asyncio
+async def test_clarify_renders_question_and_choices():
+    """ClarifyWidget populates question and choices with non-zero height."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        state = ChoiceOverlayState(
+            deadline=time.monotonic() + 30,
+            response_queue=queue.Queue(),
+            question="Which tool?",
+            choices=["option_a", "option_b"],
+        )
+        app.clarify_state = state
+        await pilot.pause()
+        w = app.query_one(ClarifyWidget)
+        assert w.size.height > 0, "ClarifyWidget must have non-zero content height"
+        q = w.query_one("#clarify-question", Static)
+        assert "Which tool?" in str(q.render())
+        c = w.query_one("#clarify-choices", Static)
+        rendered = str(c.render())
+        assert "option_a" in rendered
+        assert "option_b" in rendered
 
 
 @pytest.mark.asyncio
@@ -167,6 +193,30 @@ async def test_approval_visible_when_state_set():
 
 
 @pytest.mark.asyncio
+async def test_approval_renders_question_and_choices():
+    """ApprovalWidget populates question and choices with non-zero height."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        state = ChoiceOverlayState(
+            deadline=time.monotonic() + 30,
+            response_queue=queue.Queue(),
+            question="Allow rm -rf?",
+            choices=["once", "session", "deny"],
+        )
+        app.approval_state = state
+        await pilot.pause()
+        w = app.query_one(ApprovalWidget)
+        assert w.size.height > 0, "ApprovalWidget must have non-zero content height"
+        q = w.query_one("#approval-question", Static)
+        assert "Allow rm -rf?" in str(q.render())
+        c = w.query_one("#approval-choices", Static)
+        rendered = str(c.render())
+        assert "once" in rendered
+        assert "deny" in rendered
+
+
+@pytest.mark.asyncio
 async def test_approval_timeout_auto_denies():
     """ApprovalWidget timeout response is 'deny'."""
     app = HermesApp(cli=MagicMock())
@@ -267,6 +317,25 @@ async def test_sudo_visible_when_state_set():
 
 
 @pytest.mark.asyncio
+async def test_sudo_renders_prompt():
+    """SudoWidget populates prompt text with non-zero height."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        state = SecretOverlayState(
+            deadline=time.monotonic() + 30,
+            response_queue=queue.Queue(),
+            prompt="Enter sudo password:",
+        )
+        app.sudo_state = state
+        await pilot.pause()
+        w = app.query_one(SudoWidget)
+        assert w.size.height > 0, "SudoWidget must have non-zero content height"
+        p = w.query_one("#sudo-prompt", Static)
+        assert "Enter sudo password:" in str(p.render())
+
+
+@pytest.mark.asyncio
 async def test_sudo_timeout_resolves_none():
     """SudoWidget timeout puts None on queue."""
     app = HermesApp(cli=MagicMock())
@@ -314,6 +383,25 @@ async def test_secret_visible_when_state_set():
         await pilot.pause()
         w = app.query_one(SecretWidget)
         assert w.display
+
+
+@pytest.mark.asyncio
+async def test_secret_renders_prompt():
+    """SecretWidget populates prompt text with non-zero height."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        state = SecretOverlayState(
+            deadline=time.monotonic() + 30,
+            response_queue=queue.Queue(),
+            prompt="Enter API key:",
+        )
+        app.secret_state = state
+        await pilot.pause()
+        w = app.query_one(SecretWidget)
+        assert w.size.height > 0, "SecretWidget must have non-zero content height"
+        p = w.query_one("#secret-prompt", Static)
+        assert "Enter API key:" in str(p.render())
 
 
 @pytest.mark.asyncio

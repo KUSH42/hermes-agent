@@ -306,25 +306,39 @@ class TitledRule(Widget):
     def __init__(
         self,
         title: str = "Hermes",
-        fade_start: str = "#CD7F32",
-        fade_end: str = "#3A3A3A",
+        fade_start: str = "#555555",
+        fade_end: str = "#2A2A2A",
+        accent: str = "#FFD700",
+        title_color: str = "#B8860B",
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.title_text = title
         self._fade_start = fade_start
         self._fade_end = fade_end
+        self._accent = accent
+        self._title_color = title_color
 
     def render(self) -> RenderResult:
         w = self.size.width
-        label = f" {self.title_text} "
+        title = self.title_text
+        # Split title into accent char (first non-space) + rest
+        # e.g. "⚕ Hermes" → accent="⚕", rest=" Hermes"
+        parts = title.split(" ", 1)
+        accent_char = parts[0] if parts else ""
+        rest = (" " + parts[1]) if len(parts) > 1 else ""
+
+        label_len = len(f" {title} ")
         left_pad = 2
-        right = max(0, w - left_pad - len(label))
+        right = max(0, w - left_pad - label_len)
         t = Text()
-        # Left pad: short, just dim
-        t.append("─" * left_pad, style="dim")
-        t.append(label, style=self.rich_style)
-        # Right fill: fade from accent to background
+        # Left pad: fade in (end → start)
+        t.append_text(_fade_rule(left_pad, self._fade_end, self._fade_start))
+        # Title: accent char in bright accent, rest in title_color
+        t.append(" ")
+        t.append(accent_char, style=f"bold {self._accent}")
+        t.append(f"{rest} ", style=f"{self._title_color}")
+        # Right fill: fade out (start → end)
         t.append_text(_fade_rule(right, self._fade_start, self._fade_end))
         return t
 

@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import re
+
 from rich.text import Text
 from textual.app import ComposeResult, RenderResult
 from textual.containers import ScrollableContainer
@@ -51,6 +53,31 @@ def _skin_branding(key: str, fallback: str) -> str:
         return get_active_skin().get_branding(key, fallback)
     except Exception:
         return fallback
+
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def _strip_ansi(text: str) -> str:
+    """Strip ANSI CSI escape sequences from text."""
+    return _ANSI_RE.sub("", text)
+
+
+class CopyableRichLog(RichLog):
+    """RichLog that stores plain text for clipboard operations."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._plain_lines: list[str] = []
+
+    def write_with_source(self, styled: Text, plain: str, **kwargs: Any) -> "CopyableRichLog":
+        """Write styled text to display, store plain text for copy."""
+        self._plain_lines.append(plain)
+        return self.write(styled, **kwargs)
+
+    def clear(self) -> "CopyableRichLog":
+        self._plain_lines.clear()
+        return super().clear()
 
 
 def _safe_widget_call(app: HermesApp, widget_type: type, method: str, *args: Any) -> None:
@@ -98,7 +125,11 @@ class LiveLineWidget(Widget):
                 rl = msg.response_log
                 msg.show_response_rule()
                 for committed in lines[:-1]:
-                    rl.write(Text.from_ansi(committed))
+                    plain = _strip_ansi(committed)
+                    if isinstance(rl, CopyableRichLog):
+                        rl.write_with_source(Text.from_ansi(committed), plain)
+                    else:
+                        rl.write(Text.from_ansi(committed))
                 # If writes were deferred (RichLog size not yet known),
                 # schedule a layout refresh so the panel expands once the
                 # deferred renders are processed on the next resize.
@@ -136,7 +167,7 @@ class MessagePanel(Widget):
         self._msg_id = MessagePanel._msg_counter
         self._response_rule = TitledRule(id=f"response-rule-{self._msg_id}")
         self._reasoning_panel = ReasoningPanel(id=f"reasoning-{self._msg_id}")
-        self._response_log = RichLog(
+        self._response_log = CopyableRichLog(
             markup=False, highlight=False, wrap=True,
             id=f"response-{self._msg_id}",
         )
@@ -156,7 +187,7 @@ class MessagePanel(Widget):
         return self._reasoning_panel
 
     @property
-    def response_log(self) -> RichLog:
+    def response_log(self) -> CopyableRichLog:
         return self._response_log
 
 
@@ -199,7 +230,11 @@ class OutputPanel(ScrollableContainer):
                 msg = self.new_message()
             msg.show_response_rule()
             rl = msg.response_log
-            rl.write(Text.from_ansi(live._buf))
+            plain = _strip_ansi(live._buf)
+            if isinstance(rl, CopyableRichLog):
+                rl.write_with_source(Text.from_ansi(live._buf), plain)
+            else:
+                rl.write(Text.from_ansi(live._buf))
             if rl._deferred_renders:
                 self.call_after_refresh(msg.refresh, layout=True)
             live._buf = ""
@@ -291,6 +326,7 @@ class ReasoningPanel(Widget):
         self._reasoning_log = RichLog(markup=False, highlight=False, wrap=True, id="reasoning-log")
         super().__init__(**kwargs)
         self._live_buf = ""
+        self._plain_lines: list[str] = []
 
     def compose(self) -> ComposeResult:
         yield self._reasoning_log
@@ -305,6 +341,7 @@ class ReasoningPanel(Widget):
     def open_box(self, title: str) -> None:
         """Show the reasoning panel."""
         self._live_buf = ""
+        self._plain_lines.clear()
         self.add_class("visible")
         # Trigger layout refresh so parent recalculates height after
         # deferred renders are processed on the next resize event.
@@ -324,6 +361,7 @@ class ReasoningPanel(Widget):
         while "\n" in self._live_buf:
             line, self._live_buf = self._live_buf.split("\n", 1)
             log.write(self._gutter_line(line))
+            self._plain_lines.append(line)
             wrote = True
         if wrote and log._deferred_renders:
             self.call_after_refresh(self.refresh, layout=True)
@@ -334,6 +372,7 @@ class ReasoningPanel(Widget):
         buf = self._live_buf
         if buf:
             self._reasoning_log.write(self._gutter_line(buf))
+            self._plain_lines.append(buf)
             self._live_buf = ""
         self.remove_class("visible")
         self.call_after_refresh(self.refresh, layout=True)
@@ -477,34 +516,81 @@ class HintBar(Static):
 # Status bar (Step 3)
 # ---------------------------------------------------------------------------
 
+_BAR_FILLED = "▰"
+_BAR_EMPTY = "▱"
+_BAR_WIDTH = 20
+
+
 class StatusBar(Widget):
-    """Bottom status bar showing model, tokens, and duration.
+    """Bottom status bar showing model, compaction bar, tok/s, tokens, and duration.
 
     Reads directly from the App's reactives — no duplicated state.
-    Uses ``self.watch(self.app, attr, self.refresh)`` for all three
-    reactive fields so any change triggers a re-render.
-
-    RenderResult is imported from textual.app (not textual.widget).
     """
 
     DEFAULT_CSS = "StatusBar { height: 1; dock: bottom; }"
 
     def on_mount(self) -> None:
-        self.watch(self.app, "status_tokens", self._on_status_change)
-        self.watch(self.app, "status_model", self._on_status_change)
-        self.watch(self.app, "status_duration", self._on_status_change)
+        for attr in (
+            "status_tokens", "status_model", "status_duration",
+            "status_compaction_progress", "status_tok_s",
+        ):
+            self.watch(self.app, attr, self._on_status_change)
 
     def _on_status_change(self, _value: object = None) -> None:
         self.refresh()
 
     def render(self) -> RenderResult:
         app = self.app
+        width = self.size.width
         t = Text()
-        t.append(getattr(app, "status_model", ""), style="dim")
+
+        # Model name
+        model = getattr(app, "status_model", "")
+        t.append(model, style="dim")
+
+        # Compaction bar
+        progress = getattr(app, "status_compaction_progress", 0.0)
+        if progress > 0 and width >= 60:
+            pct_int = min(int(progress * 100), 100)
+            filled = min(int(progress * _BAR_WIDTH), _BAR_WIDTH)
+            bar_str = _BAR_FILLED * filled + _BAR_EMPTY * (_BAR_WIDTH - filled)
+            bar_color = self._compaction_color(progress)
+            t.append("  ")
+            t.append(bar_str, style=bar_color)
+            t.append(" ")
+            t.append(f"{pct_int}%", style=bar_color)
+        elif progress > 0 and width >= 40:
+            # Narrow: just percentage
+            pct_int = min(int(progress * 100), 100)
+            bar_color = self._compaction_color(progress)
+            t.append(f"  {pct_int}%", style=bar_color)
+
+        # Tok/s
+        tok_s = getattr(app, "status_tok_s", 0.0)
+        if tok_s > 0 and width >= 60:
+            t.append(f"  {tok_s:.0f} tok/s", style="dim")
+
+        # Session tokens + duration
         tokens = getattr(app, "status_tokens", 0)
-        duration = getattr(app, "status_duration", 0.0)
-        t.append(f"  {tokens} tok  {duration:.1f}s")
+        duration = getattr(app, "status_duration", "0s")
+        t.append(f"  {tokens} tok  {duration}")
+
         return t
+
+    @staticmethod
+    def _compaction_color(progress: float) -> str:
+        """Return Rich style hex color for compaction bar, matching skin config."""
+        try:
+            from hermes_cli.skin_engine import get_active_skin
+            skin = get_active_skin()
+        except Exception:
+            skin = None
+
+        if progress >= 0.95:
+            return skin.get_ui_ext("context_bar_crit", "#ef5350") if skin else "#ef5350"
+        if progress >= 0.80:
+            return skin.get_ui_ext("context_bar_warn", "#ffa726") if skin else "#ffa726"
+        return skin.get_ui_ext("context_bar_normal", "#5f87d7") if skin else "#5f87d7"
 
 
 # ---------------------------------------------------------------------------

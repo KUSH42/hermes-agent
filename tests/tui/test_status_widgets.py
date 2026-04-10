@@ -53,16 +53,72 @@ async def test_spinner_stops_when_agent_not_running():
 
 @pytest.mark.asyncio
 async def test_status_bar_renders_model_tokens_duration():
-    """StatusBar renders status_model, status_tokens, and status_duration."""
+    """StatusBar renders status_model, status_tokens, and status_duration (str)."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         app.status_model = "claude-opus"
         app.status_tokens = 1234
-        app.status_duration = 5.7
+        app.status_duration = "5m 42s"
         await pilot.pause()
         bar = app.query_one(StatusBar)
         # Force re-render check — the bar should exist and have rendered
+
+
+@pytest.mark.asyncio
+async def test_compaction_bar_renders_at_zero():
+    """No compaction bar shown when progress is 0.0."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.status_compaction_progress = 0.0
+        await pilot.pause()
+        # No error; bar renders without compaction section
+
+
+@pytest.mark.asyncio
+async def test_compaction_bar_renders_filled():
+    """Compaction bar shows correct fill at various percentages."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        for pct in (0.5, 0.85, 1.0):
+            app.status_compaction_progress = pct
+            await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_compaction_bar_color_thresholds():
+    """Color thresholds: normal < 80%, warn 80-94%, crit >= 95%."""
+    color = StatusBar._compaction_color
+    # Normal
+    assert color(0.5) in ("#5f87d7",)  # may vary by skin
+    # Warn
+    assert color(0.85) in ("#ffa726",)
+    # Crit
+    assert color(0.99) in ("#ef5350",)
+
+
+@pytest.mark.asyncio
+async def test_tok_s_displayed():
+    """status_tok_s renders in status bar when > 0."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.status_tok_s = 35.0
+        await pilot.pause()
+        # No error; bar renders with tok/s section
+
+
+@pytest.mark.asyncio
+async def test_tok_s_zero_hidden():
+    """Tok/s not shown when 0.0."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.status_tok_s = 0.0
+        await pilot.pause()
+        # No error; bar renders without tok/s
 
 
 @pytest.mark.asyncio

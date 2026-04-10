@@ -1928,6 +1928,33 @@ class HermesCLI:
 
         return snapshot
 
+    def _push_tui_status(self) -> None:
+        """Push status bar data to the TUI app if running."""
+        tui = _hermes_app
+        if tui is None:
+            return
+
+        snapshot = self._get_status_bar_snapshot()
+
+        # Model
+        tui.call_from_thread(setattr, tui, "status_model", snapshot["model_short"])
+
+        # Total session tokens
+        tui.call_from_thread(setattr, tui, "status_tokens", snapshot["session_total_tokens"])
+
+        # Compaction progress
+        agent = getattr(self, "agent", None)
+        compressor = getattr(agent, "context_compressor", None) if agent else None
+        if compressor and getattr(compressor, "threshold_tokens", 0) > 0:
+            progress = min(1.0, (getattr(compressor, "last_prompt_tokens", 0) or 0) / compressor.threshold_tokens)
+        else:
+            progress = 0.0
+        tui.call_from_thread(setattr, tui, "status_compaction_progress", progress)
+        tui.call_from_thread(
+            setattr, tui, "status_compaction_enabled",
+            getattr(self, "compression_enabled", True) if agent else True,
+        )
+
     @staticmethod
     def _status_bar_display_width(text: str) -> int:
         """Return terminal cell width for status-bar text.
@@ -2433,6 +2460,9 @@ class HermesCLI:
             return
 
         self._stream_started = True
+        if not hasattr(self, "_stream_start_time") or self._stream_start_time is None:
+            import time as _time_mod
+            self._stream_start_time = _time_mod.monotonic()
 
         # ── Tag-based reasoning suppression ──
         # Track whether we're inside a reasoning/thinking block.
@@ -2656,6 +2686,18 @@ class HermesCLI:
 
     def _reset_stream_state(self) -> None:
         """Reset streaming state before each agent invocation."""
+        # Calculate tok/s from the just-completed stream before resetting
+        import time as _time_mod
+        if self._stream_started and getattr(self, "_stream_start_time", None) is not None:
+            stream_duration = _time_mod.monotonic() - self._stream_start_time
+            agent = getattr(self, "agent", None)
+            turn_output_tokens = getattr(agent, "_last_turn_output_tokens", 0)
+            if stream_duration > 0.1 and turn_output_tokens > 0:
+                tok_s = turn_output_tokens / stream_duration
+                tui = _hermes_app
+                if tui is not None:
+                    tui.call_from_thread(setattr, tui, "status_tok_s", tok_s)
+        self._stream_start_time = None
         self._stream_buf = ""
         self._stream_started = False
         self._stream_box_opened = False
@@ -3312,6 +3354,11 @@ class HermesCLI:
             )
             self._startup_skills_line_shown = True
         self.console.print()
+        # Push initial status bar data to TUI
+        try:
+            self._push_tui_status()
+        except Exception:
+            pass
 
     def _try_attach_clipboard_image(self) -> bool:
         """Check clipboard for an image and attach it if found.
@@ -9171,6 +9218,10 @@ class HermesCLI:
                         if _tui_app is not None:
                             try:
                                 _tui_app.call_from_thread(setattr, _tui_app, "agent_running", False)
+                            except Exception:
+                                pass
+                            try:
+                                self._push_tui_status()
                             except Exception:
                                 pass
                         else:

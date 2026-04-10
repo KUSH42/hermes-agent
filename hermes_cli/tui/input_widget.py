@@ -1,30 +1,28 @@
 """Custom input widget for Hermes TUI.
 
-Replaces prompt_toolkit's TextArea with a Textual-native widget that owns:
-- History: backed by ~/.hermes/.hermes_history via prompt_toolkit.history.FileHistory
-- Autocomplete: slash-command completer with ListView popup
-- Placeholder: conditional overlay shown when content is empty
-- Password masking: reactive masked bool replacing display chars with bullet
+Extends Textual's built-in Input widget to get selection, clipboard, mouse
+drag, shift+arrow, and all standard keybindings for free. Layers
+Hermes-specific features on top:
 
-This is Step 5 of the migration plan. Steps 1–4 use Textual's built-in
-TextArea as an interim shim.
+- History: backed by ~/.hermes/.hermes_history via FileHistory format
+- Autocomplete: slash-command completer with popup
+- Spinner overlay: sibling widget toggled when disabled
+- Property bridge: content/cursor_pos aliases for callers still using old API
 """
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from rich.text import Text
 from textual import events
-from textual.app import ComposeResult, RenderResult
 from textual.binding import Binding
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
-from textual.widget import Widget
-from textual.widgets import Static
+from textual.widgets import Input, Static
 
 if TYPE_CHECKING:
     pass
@@ -34,21 +32,20 @@ _HERMES_HOME = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
 _HISTORY_FILE = _HERMES_HOME / ".hermes_history"
 
 
-class HermesInput(Widget, can_focus=True):
-    """Custom input widget with history, autocomplete, and password masking.
+class HermesInput(Input, can_focus=True):
+    """Input widget with history, autocomplete, and spinner overlay.
 
-    Emits :class:`HermesInput.Submitted` when the user presses Enter with
-    non-empty content.
+    Extends Textual's Input to inherit selection, clipboard, cursor, and
+    all standard keybindings. Emits :class:`HermesInput.Submitted` when
+    the user presses Enter with non-empty content.
     """
 
     DEFAULT_CSS = """
     HermesInput {
-        height: auto;
-        min-height: 1;
-        max-height: 8;
-    }
-    HermesInput > .hermes-input--placeholder {
-        display: none;
+        height: 1;
+        background: transparent;
+        border: none;
+        padding: 0;
     }
     HermesInput > .hermes-input--autocomplete {
         display: none;
@@ -61,23 +58,15 @@ class HermesInput(Widget, can_focus=True):
     }
     """
 
-    # Prompt chevron shown before input text (mirrors prompt_toolkit's prompt symbol)
-    PROMPT_SYMBOL = "❯ "
-
     BINDINGS = [
-        Binding("enter", "submit", "Submit", show=False),
         Binding("up", "history_prev", "Previous history", show=False),
         Binding("down", "history_next", "Next history", show=False),
         Binding("escape", "dismiss_autocomplete", "Dismiss", show=False),
         Binding("tab", "accept_autocomplete", "Accept completion", show=False),
+        Binding("ctrl+a", "select_all", "Select all", show=False),
     ]
 
-    # --- Reactives ---
-    content: reactive[str] = reactive("", repaint=True)
-    cursor_pos: reactive[int] = reactive(0)
-    masked: reactive[bool] = reactive(False)
-    placeholder_text: reactive[str] = reactive("")
-    disabled: reactive[bool] = reactive(False)
+    # Spinner text shown when disabled (set by app's _tick_spinner)
     spinner_text: reactive[str] = reactive("", repaint=True)
 
     # --- Messages ---
@@ -95,22 +84,36 @@ class HermesInput(Widget, can_focus=True):
         id: str | None = None,
         classes: str | None = None,
     ) -> None:
-        super().__init__(id=id, classes=classes)
-        self.placeholder_text = placeholder
+        super().__init__(placeholder=placeholder, id=id, classes=classes)
         self._history: list[str] = []
         self._history_idx: int = -1
-        self._history_draft: str = ""  # save current input when navigating history
+        self._history_draft: str = ""
         self._autocomplete_items: list[str] = []
         self._autocomplete_idx: int = 0
         self._slash_commands: list[str] = []
 
-    def compose(self) -> ComposeResult:
-        yield Static(self.placeholder_text, classes="hermes-input--placeholder")
-        yield Static("", classes="hermes-input--autocomplete")
-
     def on_mount(self) -> None:
         self._load_history()
-        self._update_empty_class()
+
+    # --- Property bridges (old API → Input API) ---
+
+    @property
+    def content(self) -> str:
+        return self.value
+
+    @content.setter
+    def content(self, val: str) -> None:
+        self.value = val
+
+    @property
+    def cursor_pos(self) -> int:
+        return self.cursor_position
+
+    @cursor_pos.setter
+    def cursor_pos(self, val: int) -> None:
+        self.cursor_position = val
+
+    # --- History ---
 
     def _load_history(self) -> None:
         """Load history from the hermes history file (same format as FileHistory)."""
@@ -126,7 +129,6 @@ class HermesInput(Widget, can_focus=True):
                         current_entry = []
                 if current_entry:
                     lines.append("\n".join(current_entry))
-                # Most recent last
                 self._history = lines
         except OSError:
             self._history = []
@@ -149,212 +151,72 @@ class HermesInput(Widget, can_focus=True):
         """Set the available slash commands for autocomplete."""
         self._slash_commands = sorted(commands)
 
-    def _update_empty_class(self) -> None:
-        self.set_class(not self.content, "--empty")
+    # --- Disabled key guard ---
 
-    def watch_content(self, value: str) -> None:
-        self._update_empty_class()
-        self._update_autocomplete()
+    async def _on_key(self, event: events.Key) -> None:
+        """Block printable input when disabled.
 
-    def watch_disabled(self, value: bool) -> None:
-        if value:
-            self.add_class("--disabled")
-        else:
-            self.remove_class("--disabled")
-
-    def render(self) -> RenderResult:
-        prompt = self.PROMPT_SYMBOL
-
-        # When disabled with spinner text, show spinner instead of input content
-        if self.disabled and self.spinner_text:
-            t = Text()
-            t.append(prompt, style="#FFF8DC")
-            t.append(self.spinner_text, style="dim italic")
-            return t
-
-        if self.masked:
-            display = "●" * len(self.content)
-        else:
-            display = self.content
-
-        t = Text()
-        t.append(prompt, style="#FFF8DC")
-
-        if display:
-            t.append(display, style="#FFF8DC")
-        elif not self.has_focus:
-            # Show placeholder when empty and not focused
-            if self.placeholder_text:
-                t.append(self.placeholder_text, style="#555555 italic")
-
-        # Cursor indicator — offset by prompt length
-        if self.has_focus and not self.disabled:
-            offset = len(prompt)
-            pos = min(self.cursor_pos, len(display))
-            if pos < len(display):
-                t.stylize("reverse", offset + pos, offset + pos + 1)
-            else:
-                t.append("▏", style="blink")
-        return t
-
-    # --- Key handling ---
-
-    def on_key(self, event: events.Key) -> None:
-        if self.disabled:
-            # Let ctrl+c and escape bubble up for interrupt handling
-            if event.key not in ("ctrl+c", "escape"):
-                event.prevent_default()
+        Textual's disabled state only blocks mouse events. Key events pass
+        through unrestricted, so users can still type into a disabled Input.
+        Guard against that here. Let ctrl+c and escape bubble for interrupt.
+        """
+        if self.disabled and event.is_printable:
+            event.prevent_default()
             return
-
-        key = event.key
-        char = event.character
-
-        # Regular character input
-        if char and len(char) == 1 and key not in (
-            "enter", "up", "down", "escape", "tab",
-            "backspace", "delete", "left", "right",
-            "home", "end",
-        ) and not event.is_printable is False:
-            event.prevent_default()
-            self._insert_char(char)
-            return
-
-        if key == "backspace":
-            event.prevent_default()
-            self._backspace()
-        elif key == "delete":
-            event.prevent_default()
-            self._delete()
-        elif key == "left":
-            event.prevent_default()
-            if self.cursor_pos > 0:
-                self.cursor_pos -= 1
-        elif key == "right":
-            event.prevent_default()
-            if self.cursor_pos < len(self.content):
-                self.cursor_pos += 1
-        elif key == "home":
-            event.prevent_default()
-            self.cursor_pos = 0
-        elif key == "end":
-            event.prevent_default()
-            self.cursor_pos = len(self.content)
-        elif key == "ctrl+a":
-            event.prevent_default()
-            self.cursor_pos = 0
-        elif key == "ctrl+e":
-            event.prevent_default()
-            self.cursor_pos = len(self.content)
-        elif key == "ctrl+k":
-            event.prevent_default()
-            self.content = self.content[: self.cursor_pos]
-        elif key == "ctrl+u":
-            event.prevent_default()
-            self.content = self.content[self.cursor_pos :]
-            self.cursor_pos = 0
-        elif key == "ctrl+w":
-            event.prevent_default()
-            self._delete_word_back()
-
-    def _insert_char(self, char: str) -> None:
-        pos = self.cursor_pos
-        self.content = self.content[:pos] + char + self.content[pos:]
-        self.cursor_pos = pos + len(char)
-
-    def _backspace(self) -> None:
-        if self.cursor_pos > 0:
-            pos = self.cursor_pos
-            self.content = self.content[: pos - 1] + self.content[pos:]
-            self.cursor_pos = pos - 1
-
-    def _delete(self) -> None:
-        pos = self.cursor_pos
-        if pos < len(self.content):
-            self.content = self.content[:pos] + self.content[pos + 1 :]
-
-    def _delete_word_back(self) -> None:
-        pos = self.cursor_pos
-        if pos == 0:
-            return
-        # Skip trailing spaces
-        i = pos - 1
-        while i > 0 and self.content[i] == " ":
-            i -= 1
-        # Skip word chars
-        while i > 0 and self.content[i - 1] != " ":
-            i -= 1
-        self.content = self.content[:i] + self.content[pos:]
-        self.cursor_pos = i
-
-    def insert_text(self, text: str) -> None:
-        """Insert text at cursor position (for paste support)."""
-        pos = self.cursor_pos
-        self.content = self.content[:pos] + text + self.content[pos:]
-        self.cursor_pos = pos + len(text)
-
-    def on_paste(self, event: events.Paste) -> None:
-        """Handle paste events."""
-        if self.disabled:
-            return
-        self.insert_text(event.text)
-        event.prevent_default()
+        await super()._on_key(event)
 
     # --- Actions ---
 
     def action_submit(self) -> None:
-        if self.disabled:
+        """Save to history before posting Submitted."""
+        text = self.value.strip()
+        if self.disabled or not text:
             return
-        text = self.content.strip()
-        if text:
-            self._save_to_history(text)
-            self.post_message(self.Submitted(text))
-            self.content = ""
-            self.cursor_pos = 0
-            self._history_idx = -1
+        self._save_to_history(text)
+        self.post_message(self.Submitted(text))
+        self.value = ""
+        self._history_idx = -1
 
     def action_history_prev(self) -> None:
         if self.disabled or not self._history:
             return
-
-        # If we haven't started navigating history, save current content
         if self._history_idx == -1:
-            self._history_draft = self.content
+            self._history_draft = self.value
             self._history_idx = len(self._history) - 1
         elif self._history_idx > 0:
             self._history_idx -= 1
         else:
             return
-
-        self.content = self._history[self._history_idx]
-        self.cursor_pos = len(self.content)
+        self.value = self._history[self._history_idx]
+        self.cursor_position = len(self.value)
 
     def action_history_next(self) -> None:
         if self.disabled or self._history_idx == -1:
             return
-
         if self._history_idx < len(self._history) - 1:
             self._history_idx += 1
-            self.content = self._history[self._history_idx]
+            self.value = self._history[self._history_idx]
         else:
-            # Back to the draft
             self._history_idx = -1
-            self.content = self._history_draft
-
-        self.cursor_pos = len(self.content)
+            self.value = self._history_draft
+        self.cursor_position = len(self.value)
 
     # --- Autocomplete ---
 
+    def watch_value(self, value: str) -> None:
+        self._update_autocomplete()
+
     def _update_autocomplete(self) -> None:
-        """Update autocomplete popup based on current content."""
-        if self.content.startswith("/") and self._slash_commands:
-            prefix = self.content.split()[0] if self.content else ""
+        """Update autocomplete popup based on current value."""
+        if self.value.startswith("/") and self._slash_commands:
+            prefix = self.value.split()[0] if self.value else ""
             matches = [c for c in self._slash_commands if c.startswith(prefix) and c != prefix]
             if matches and len(prefix) > 1:
                 self._autocomplete_items = matches[:12]
                 self._autocomplete_idx = 0
                 self.add_class("--autocomplete-visible")
                 try:
-                    popup = self.query_one(".hermes-input--autocomplete", Static)
+                    popup = self.screen.query_one(".hermes-input--autocomplete")
                     popup.update("\n".join(
                         f"[bold]→[/bold] {m}" if i == self._autocomplete_idx else f"  {m}"
                         for i, m in enumerate(self._autocomplete_items)
@@ -368,8 +230,8 @@ class HermesInput(Widget, can_focus=True):
     def action_accept_autocomplete(self) -> None:
         if self._autocomplete_items:
             selected = self._autocomplete_items[self._autocomplete_idx]
-            self.content = selected + " "
-            self.cursor_pos = len(self.content)
+            self.value = selected + " "
+            self.cursor_position = len(self.value)
             self._autocomplete_items = []
             self.remove_class("--autocomplete-visible")
 
@@ -377,7 +239,15 @@ class HermesInput(Widget, can_focus=True):
         self._autocomplete_items = []
         self.remove_class("--autocomplete-visible")
 
+    # --- Convenience ---
+
+    def insert_text(self, text: str) -> None:
+        """Insert text at cursor position (for paste support / external callers)."""
+        pos = self.cursor_position
+        self.value = self.value[:pos] + text + self.value[pos:]
+        self.cursor_position = pos + len(text)
+
     def clear(self) -> None:
         """Clear the input content."""
-        self.content = ""
-        self.cursor_pos = 0
+        self.value = ""
+        self.cursor_position = 0

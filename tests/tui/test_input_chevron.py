@@ -1,9 +1,14 @@
-"""Tests for input widget focus and chevron prompt rendering."""
+"""Tests for input widget focus and chevron prompt rendering.
+
+The chevron is now a separate Static('❯ ') sibling in the #input-row
+Horizontal container, not rendered inside HermesInput (which extends
+Textual's Input and does not use render()).
+"""
 
 from unittest.mock import MagicMock
 
 import pytest
-from rich.text import Text
+from textual.widgets import Static
 
 from hermes_cli.tui.app import HermesApp
 from hermes_cli.tui.input_widget import HermesInput
@@ -20,102 +25,56 @@ async def test_input_focused_on_startup():
 
 
 @pytest.mark.asyncio
+async def test_chevron_exists_as_sibling():
+    """The ❯ chevron is a Static sibling in the #input-row container."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        chevron = app.query_one("#input-chevron", Static)
+        assert chevron is not None
+
+
+@pytest.mark.asyncio
 async def test_chevron_visible_when_empty():
-    """The ❯ chevron is visible even when input is empty."""
+    """The ❯ chevron Static is visible even when input is empty."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         inp = app.query_one(HermesInput)
         assert inp.content == ""
-        rendered = inp.render()
-        assert isinstance(rendered, Text)
-        assert rendered.plain.startswith("❯ ")
-
-
-@pytest.mark.asyncio
-async def test_chevron_visible_with_content():
-    """The ❯ chevron precedes user-typed content."""
-    app = HermesApp(cli=MagicMock())
-    async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause()
-        inp = app.query_one(HermesInput)
-        inp.content = "hello"
-        rendered = inp.render()
-        assert rendered.plain.startswith("❯ hello")
+        chevron = app.query_one("#input-chevron", Static)
+        assert chevron.display
 
 
 @pytest.mark.asyncio
 async def test_chevron_visible_when_disabled():
-    """The ❯ chevron is visible even when input is disabled with spinner."""
+    """The ❯ chevron remains visible when input is disabled."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        inp = app.query_one(HermesInput)
-        inp.disabled = True
-        inp.spinner_text = "thinking..."
-        rendered = inp.render()
-        assert rendered.plain.startswith("❯ ")
-        assert "thinking..." in rendered.plain
+        app.agent_running = True
+        await pilot.pause()
+        chevron = app.query_one("#input-chevron", Static)
+        assert chevron.display
 
 
 @pytest.mark.asyncio
-async def test_chevron_visible_when_masked():
-    """The ❯ chevron is visible during password masking."""
+async def test_spinner_overlay_exists():
+    """Spinner overlay Static widget exists in #input-row."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        inp = app.query_one(HermesInput)
-        inp.content = "secret"
-        inp.masked = True
-        rendered = inp.render()
-        assert rendered.plain.startswith("❯ ")
-        assert "●" in rendered.plain
-        assert "secret" not in rendered.plain
-
-
-@pytest.mark.asyncio
-async def test_prompt_symbol_constant():
-    """PROMPT_SYMBOL matches the PT version's chevron."""
-    assert HermesInput.PROMPT_SYMBOL == "❯ "
-
-
-@pytest.mark.asyncio
-async def test_cursor_offset_accounts_for_chevron():
-    """Cursor position in render is offset by the chevron length."""
-    app = HermesApp(cli=MagicMock())
-    async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause()
-        inp = app.query_one(HermesInput)
-        inp.content = "abc"
-        inp.cursor_pos = 1  # between 'a' and 'b'
-        rendered = inp.render()
-        # The chevron is "❯ " (2 chars), so cursor at content pos 1
-        # means the 'b' at rendered position 3 should be reversed
-        plain = rendered.plain
-        assert plain.startswith("❯ abc")
+        spinner = app.query_one("#spinner-overlay", Static)
+        assert spinner is not None
+        # Hidden by default
+        assert not spinner.display
 
 
 @pytest.mark.asyncio
 async def test_no_placeholder_when_idle():
-    """No placeholder text shown when idle (matches PT behavior)."""
+    """No placeholder text shown when idle."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         inp = app.query_one(HermesInput)
-        assert inp.placeholder_text == ""
-        # When focused and empty, just chevron + cursor
-        rendered = inp.render()
-        # Should be "❯ " + cursor indicator only
-        assert "Send a message" not in rendered.plain
-
-
-@pytest.mark.asyncio
-async def test_placeholder_child_always_hidden():
-    """The placeholder Static child widget is always hidden (display:none)."""
-    app = HermesApp(cli=MagicMock())
-    async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause()
-        inp = app.query_one(HermesInput)
-        placeholder = inp.query_one(".hermes-input--placeholder")
-        # display should be none regardless of content state
-        assert not placeholder.display
+        assert inp.placeholder == ""

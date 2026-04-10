@@ -16,14 +16,17 @@ import asyncio
 import logging
 import platform
 import threading
+import time as _time
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from rich.text import Text
 from textual.app import App, ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.reactive import reactive
-from textual.widgets import TextArea
+from textual.widgets import Static, TextArea
 from textual import work
 
 from hermes_cli.tui.state import (
@@ -34,6 +37,7 @@ from hermes_cli.tui.state import (
 from hermes_cli.tui.widgets import (
     ApprovalWidget,
     ClarifyWidget,
+    CopyableRichLog,
     HintBar,
     ImageBar,
     LiveLineWidget,
@@ -90,7 +94,14 @@ class HermesApp(App):
     # Status bar data
     status_tokens: reactive[int] = reactive(0)
     status_model: reactive[str] = reactive("")
-    status_duration: reactive[float] = reactive(0.0)
+    status_duration: reactive[str] = reactive("0s")
+
+    # Compaction state
+    status_compaction_progress: reactive[float] = reactive(0.0)  # 0.0–1.0
+    status_compaction_enabled: reactive[bool] = reactive(True)
+
+    # Tok/s throughput (last turn)
+    status_tok_s: reactive[float] = reactive(0.0)
 
     # Image attachments — reactive(list) uses factory form to avoid shared mutable default
     attached_images: reactive[list] = reactive(list)
@@ -135,7 +146,10 @@ class HermesApp(App):
 
         if self._use_hermes_input:
             from hermes_cli.tui.input_widget import HermesInput as _HI
-            yield _HI(id="input-area")
+            with Horizontal(id="input-row"):
+                yield Static("❯ ", id="input-chevron")
+                yield _HI(id="input-area")
+                yield Static("", id="spinner-overlay")
         else:
             yield TextArea(id="input-area")
 
@@ -149,6 +163,12 @@ class HermesApp(App):
         self._event_loop = asyncio.get_running_loop()
         self._consume_output()  # starts the @work consumer
         self.set_interval(0.1, self._tick_spinner)
+        self.set_interval(1.0, self._tick_duration)
+        # Mount autocomplete popup on screen for absolute positioning
+        self._autocomplete_popup = Static(
+            "", id="autocomplete-popup", classes="hermes-input--autocomplete"
+        )
+        self.screen.mount(self._autocomplete_popup)
         # Focus the input bar so the user can type immediately
         try:
             self.query_one("#input-area").focus()
@@ -247,9 +267,17 @@ class HermesApp(App):
         hint_suffix = self._build_hint_text()
         spinner_display = f"{frame} {hint_suffix}" if frame else hint_suffix
 
-        # Show spinner in input field
+        # Show spinner in overlay, hide input
         try:
             inp = self.query_one("#input-area")
+            overlay = self.query_one("#spinner-overlay", Static)
+            if spinner_display:
+                overlay.update(Text(spinner_display, style="dim italic"))
+                overlay.display = True
+                inp.display = False
+            else:
+                overlay.display = False
+                inp.display = True
             if hasattr(inp, "spinner_text"):
                 inp.spinner_text = spinner_display
         except NoMatches:
@@ -286,6 +314,23 @@ class HermesApp(App):
                 parts.append(f" — waiting for {label} ({state.remaining}s)")
         return " ".join(parts) if parts else ""
 
+    # --- Session duration timer ---
+
+    def _tick_duration(self) -> None:
+        """Update session duration every second."""
+        cli = getattr(self, "cli", None)
+        if cli is None:
+            return
+        session_start = getattr(cli, "session_start", None)
+        if session_start is None:
+            return
+        try:
+            from agent.usage_pricing import format_duration_compact
+            elapsed = max(0.0, (datetime.now() - session_start).total_seconds())
+            self.status_duration = format_duration_compact(elapsed)
+        except Exception:
+            pass
+
     # --- User message echo ---
 
     def echo_user_message(self, text: str, images: int = 0) -> None:
@@ -307,8 +352,15 @@ class HermesApp(App):
         try:
             widget = self.query_one("#input-area")
             widget.disabled = value
-            if not value and hasattr(widget, "spinner_text"):
-                widget.spinner_text = ""
+            if not value:
+                if hasattr(widget, "spinner_text"):
+                    widget.spinner_text = ""
+                # Restore input visibility, hide spinner overlay
+                widget.display = True
+                try:
+                    self.query_one("#spinner-overlay", Static).display = False
+                except NoMatches:
+                    pass
         except NoMatches:
             pass
         # New turn starting — create a new MessagePanel
@@ -435,25 +487,46 @@ class HermesApp(App):
         except Exception:
             logger.warning("Failed to apply skin CSS variables", exc_info=True)
 
-    # --- Key bindings for overlays and interrupt ---
+    # --- Clipboard / selection helpers ---
+
+    def _get_selected_text(self) -> str | None:
+        """Return selected text from the screen, or None."""
+        try:
+            result = self.screen.get_selected_text()
+            return result if result else None
+        except Exception:
+            return None
+
+    # --- Key bindings for overlays, copy, and interrupt ---
 
     def on_key(self, event: Any) -> None:
-        """Global key handler for overlay navigation and agent interrupt."""
-        import time as _time
+        """Global key handler for overlay navigation, copy, and interrupt.
 
+        Keybinding split:
+        - ctrl+c: copy selected text → cancel overlay → clear input → exit
+        - ctrl+shift+c: dedicated agent interrupt (double-press = force exit)
+        - escape: cancel overlay → interrupt agent
+        """
         key = event.key
 
-        # --- Ctrl+C / Escape: interrupt agent or cancel overlays ---
-        if key in ("ctrl+c", "escape"):
-            # Cancel active overlays first (ctrl+c denies, escape cancels)
+        # --- ctrl+c: copy / cancel overlay / clear / exit ---
+        if key == "ctrl+c":
+            # Priority 1: copy selected text from output panels
+            # (Input handles its own selection copy internally)
+            selected = self._get_selected_text()
+            if selected:
+                self.copy_to_clipboard(selected)
+                event.prevent_default()
+                return
+
+            # Priority 2: cancel active overlays (deny)
             for state_attr in ("approval_state", "clarify_state"):
                 state: ChoiceOverlayState | None = getattr(self, state_attr)
                 if state is not None:
-                    state.response_queue.put("deny" if key == "ctrl+c" else None)
+                    state.response_queue.put("deny")
                     setattr(self, state_attr, None)
                     event.prevent_default()
                     return
-
             for state_attr in ("sudo_state", "secret_state"):
                 state = getattr(self, state_attr)
                 if state is not None:
@@ -462,25 +535,35 @@ class HermesApp(App):
                     event.prevent_default()
                     return
 
-            # Interrupt running agent
-            if self.agent_running and hasattr(self.cli, "agent") and self.cli.agent:
-                now = _time.time()
-                last = getattr(self, "_last_ctrl_c_time", 0.0)
+            # Priority 3: clear input or exit (NO interrupt)
+            if not self.agent_running:
+                try:
+                    inp = self.query_one("#input-area")
+                    if hasattr(inp, "content") and inp.content:
+                        inp.content = ""
+                        inp.cursor_pos = 0
+                    else:
+                        self.exit()
+                except NoMatches:
+                    self.exit()
+            event.prevent_default()
+            return
 
-                if key == "ctrl+c" and now - last < 2.0:
-                    # Double ctrl+c within 2s → force exit
+        # --- ctrl+shift+c: dedicated agent interrupt ---
+        if key == "ctrl+shift+c":
+            if self.agent_running and hasattr(self.cli, "agent") and self.cli.agent:
+                now = _time.monotonic()
+                last = getattr(self, "_last_interrupt_time", 0.0)
+                if now - last < 2.0:
+                    # Double ctrl+shift+c within 2s → force exit
                     self.exit()
                     event.prevent_default()
                     return
-
-                if key == "ctrl+c":
-                    self._last_ctrl_c_time = now
-
+                self._last_interrupt_time = now
                 self.cli.agent.interrupt()
                 # Show feedback
                 try:
                     panel = self.query_one(OutputPanel)
-                    from rich.text import Text
                     msg = panel.current_message
                     if msg is not None:
                         rl = msg.response_log
@@ -494,17 +577,39 @@ class HermesApp(App):
                 event.prevent_default()
                 return
 
-            # Idle ctrl+c: clear input or exit
-            if key == "ctrl+c" and not self.agent_running:
+        # --- escape: cancel overlay or interrupt agent ---
+        if key == "escape":
+            # Cancel active overlays (None response)
+            for state_attr in ("approval_state", "clarify_state"):
+                state = getattr(self, state_attr)
+                if state is not None:
+                    state.response_queue.put(None)
+                    setattr(self, state_attr, None)
+                    event.prevent_default()
+                    return
+            for state_attr in ("sudo_state", "secret_state"):
+                state = getattr(self, state_attr)
+                if state is not None:
+                    state.response_queue.put("")
+                    setattr(self, state_attr, None)
+                    event.prevent_default()
+                    return
+
+            # Interrupt running agent
+            if self.agent_running and hasattr(self.cli, "agent") and self.cli.agent:
+                self.cli.agent.interrupt()
                 try:
-                    inp = self.query_one("#input-area")
-                    if hasattr(inp, "content") and inp.content:
-                        inp.content = ""
-                        inp.cursor_pos = 0
-                    else:
-                        self.exit()
+                    panel = self.query_one(OutputPanel)
+                    msg = panel.current_message
+                    if msg is not None:
+                        rl = msg.response_log
+                        rl.write(
+                            Text.from_markup("[bold red]⚡ Interrupting...[/bold red]")
+                        )
+                        if rl._deferred_renders:
+                            self.call_after_refresh(msg.refresh, layout=True)
                 except NoMatches:
-                    self.exit()
+                    pass
                 event.prevent_default()
                 return
 

@@ -1,4 +1,10 @@
-"""Tests for Ctrl+C / Escape agent interrupt in the TUI."""
+"""Tests for ctrl+c / ctrl+shift+c / escape keybinding split in the TUI.
+
+Keybinding model:
+- ctrl+c: copy selected → cancel overlay → clear input → exit (never interrupts)
+- ctrl+shift+c: dedicated agent interrupt (double-press = force exit)
+- escape: cancel overlay → interrupt agent
+"""
 
 import asyncio
 from unittest.mock import MagicMock, PropertyMock
@@ -21,14 +27,14 @@ def _app_with_agent():
 
 
 @pytest.mark.asyncio
-async def test_ctrl_c_interrupts_running_agent():
-    """Ctrl+C calls agent.interrupt() when agent is running."""
+async def test_ctrl_shift_c_interrupts_running_agent():
+    """ctrl+shift+c calls agent.interrupt() when agent is running."""
     app, cli = _app_with_agent()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         app.agent_running = True
         await pilot.pause()
-        await pilot.press("ctrl+c")
+        await pilot.press("ctrl+shift+c")
         await pilot.pause()
         cli.agent.interrupt.assert_called_once()
 
@@ -47,12 +53,24 @@ async def test_escape_interrupts_running_agent():
 
 
 @pytest.mark.asyncio
-async def test_ctrl_c_no_interrupt_when_idle():
-    """Ctrl+C does NOT call interrupt when agent is not running."""
+async def test_ctrl_c_does_not_interrupt_agent():
+    """ctrl+c does NOT interrupt agent — that's ctrl+shift+c's job."""
     app, cli = _app_with_agent()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        # Agent not running — ctrl+c should clear input or exit, not interrupt
+        app.agent_running = True
+        await pilot.pause()
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        cli.agent.interrupt.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ctrl_c_no_interrupt_when_idle():
+    """ctrl+c does NOT call interrupt when agent is not running."""
+    app, cli = _app_with_agent()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
         await pilot.press("ctrl+c")
         await pilot.pause()
         cli.agent.interrupt.assert_not_called()
@@ -60,7 +78,7 @@ async def test_ctrl_c_no_interrupt_when_idle():
 
 @pytest.mark.asyncio
 async def test_ctrl_c_cancels_approval_overlay():
-    """Ctrl+C cancels an active approval overlay with 'deny'."""
+    """ctrl+c cancels an active approval overlay with 'deny'."""
     app, cli = _app_with_agent()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -108,7 +126,7 @@ async def test_escape_cancels_approval_overlay_with_none():
 
 @pytest.mark.asyncio
 async def test_ctrl_c_cancels_sudo_overlay():
-    """Ctrl+C cancels an active sudo overlay."""
+    """ctrl+c cancels an active sudo overlay."""
     app, cli = _app_with_agent()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -130,7 +148,7 @@ async def test_ctrl_c_cancels_sudo_overlay():
 
 @pytest.mark.asyncio
 async def test_overlay_priority_over_interrupt():
-    """When overlay is active, ctrl+c cancels overlay rather than interrupting agent."""
+    """When overlay is active, ctrl+c cancels overlay rather than interrupting."""
     app, cli = _app_with_agent()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -155,18 +173,31 @@ async def test_overlay_priority_over_interrupt():
 
 
 @pytest.mark.asyncio
-async def test_double_ctrl_c_exits():
-    """Double Ctrl+C within 2s exits the app."""
+async def test_double_ctrl_shift_c_exits():
+    """Double ctrl+shift+c within 2s exits the app."""
     app, cli = _app_with_agent()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         app.agent_running = True
         await pilot.pause()
-        await pilot.press("ctrl+c")
+        await pilot.press("ctrl+shift+c")
         await pilot.pause()
-        # Second ctrl+c within 2s should trigger exit
-        await pilot.press("ctrl+c")
+        # Second ctrl+shift+c within 2s should trigger exit
+        await pilot.press("ctrl+shift+c")
         await pilot.pause()
-        # The app should have exited (or be exiting)
         # interrupt called at least once (first press)
         assert cli.agent.interrupt.call_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_ctrl_c_clears_input_when_idle():
+    """ctrl+c clears input content when idle (no agent running, no overlay)."""
+    app, cli = _app_with_agent()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one("#input-area")
+        inp.value = "some text"
+        await pilot.pause()
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert inp.value == ""

@@ -67,8 +67,44 @@ SecretWidget {
 
 /* --- Input area --- */
 
-HermesInput {
+#input-row {
+    height: 1;
     padding: 0 1;
+}
+
+#input-chevron {
+    color: #FFF8DC;
+    width: 2;
+    height: 1;
+}
+
+#spinner-overlay {
+    display: none;
+    height: 1;
+    width: 1fr;
+    color: $text-muted;
+}
+
+HermesInput {
+    background: transparent;
+    border: none;
+    padding: 0;
+    height: 1;
+    width: 1fr;
+}
+
+HermesInput > .input--cursor {
+    color: #FFF8DC;
+    background: #FFF8DC;
+}
+
+HermesInput > .input--selection {
+    background: #3A5A8C;
+}
+
+HermesInput > .input--placeholder {
+    color: #555555;
+    text-style: italic;
 }
 
 /* --- Image bar --- */

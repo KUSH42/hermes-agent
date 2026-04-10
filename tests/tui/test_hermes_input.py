@@ -1,4 +1,4 @@
-"""Tests for HermesInput widget — Step 5."""
+"""Tests for HermesInput widget (Input-based)."""
 
 from unittest.mock import MagicMock
 
@@ -20,13 +20,28 @@ async def test_input_widget_exists():
 
 @pytest.mark.asyncio
 async def test_input_starts_empty():
-    """Input content is empty on mount."""
+    """Input value is empty on mount."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         inp = app.query_one(HermesInput)
-        assert inp.content == ""
-        assert inp.has_class("--empty")
+        assert inp.value == ""
+        assert inp.content == ""  # bridge property
+
+
+@pytest.mark.asyncio
+async def test_content_property_bridge():
+    """content property reads/writes value; cursor_pos bridges cursor_position."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        inp.content = "hello"
+        assert inp.value == "hello"
+        assert inp.content == "hello"
+        inp.cursor_pos = 3
+        assert inp.cursor_position == 3
+        assert inp.cursor_pos == 3
 
 
 @pytest.mark.asyncio
@@ -49,11 +64,11 @@ async def test_input_clear():
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         inp = app.query_one(HermesInput)
-        inp.content = "hello"
-        inp.cursor_pos = 3
+        inp.value = "hello"
+        inp.cursor_position = 3
         inp.clear()
-        assert inp.content == ""
-        assert inp.cursor_pos == 0
+        assert inp.value == ""
+        assert inp.cursor_position == 0
 
 
 @pytest.mark.asyncio
@@ -63,24 +78,11 @@ async def test_input_insert_text():
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         inp = app.query_one(HermesInput)
-        inp.content = "helo"
-        inp.cursor_pos = 3
+        inp.value = "helo"
+        inp.cursor_position = 3
         inp.insert_text("l")
-        assert inp.content == "hello"
-        assert inp.cursor_pos == 4
-
-
-@pytest.mark.asyncio
-async def test_input_password_masking():
-    """When masked=True, render shows bullets."""
-    app = HermesApp(cli=MagicMock())
-    async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause()
-        inp = app.query_one(HermesInput)
-        inp.content = "secret"
-        inp.masked = True
-        await pilot.pause()
-        # The render method should produce masked output
+        assert inp.value == "hello"
+        assert inp.cursor_position == 4
 
 
 @pytest.mark.asyncio
@@ -91,8 +93,8 @@ async def test_slash_command_autocomplete():
         await pilot.pause()
         inp = app.query_one(HermesInput)
         inp.set_slash_commands(["/help", "/history", "/quit"])
-        inp.content = "/he"
-        inp.cursor_pos = 3
+        inp.value = "/he"
+        inp.cursor_position = 3
         await pilot.pause()
         assert inp.has_class("--autocomplete-visible")
         assert "/help" in inp._autocomplete_items
@@ -106,13 +108,88 @@ async def test_history_navigation():
         await pilot.pause()
         inp = app.query_one(HermesInput)
         inp._history = ["first", "second", "third"]
-        inp.content = "current"
+        inp.value = "current"
 
         inp.action_history_prev()
-        assert inp.content == "third"
+        assert inp.value == "third"
         inp.action_history_prev()
-        assert inp.content == "second"
+        assert inp.value == "second"
         inp.action_history_next()
-        assert inp.content == "third"
+        assert inp.value == "third"
         inp.action_history_next()
-        assert inp.content == "current"
+        assert inp.value == "current"
+
+
+@pytest.mark.asyncio
+async def test_history_navigation_empty_history():
+    """Up/down with no history entries is a no-op."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        inp._history = []  # ensure empty
+        inp.value = "current"
+        inp.action_history_prev()
+        assert inp.value == "current"
+        inp.action_history_next()
+        assert inp.value == "current"
+
+
+@pytest.mark.asyncio
+async def test_history_save_on_submit():
+    """action_submit() saves to history before posting Submitted."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        inp._history = []
+        inp.value = "test command"
+        inp.action_submit()
+        assert "test command" in inp._history
+        assert inp.value == ""
+
+
+@pytest.mark.asyncio
+async def test_disabled_input_rejects_keystrokes():
+    """Typing into disabled HermesInput has no effect."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        inp.focus()
+        app.agent_running = True
+        await pilot.pause()
+        assert inp.disabled
+        # Try typing — value should remain empty
+        await pilot.press("a", "b", "c")
+        await pilot.pause()
+        assert inp.value == ""
+
+
+@pytest.mark.asyncio
+async def test_input_changed_triggers_autocomplete():
+    """watch_value updates autocomplete popup."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        inp.set_slash_commands(["/help", "/history"])
+        # Setting value should trigger watch_value → _update_autocomplete
+        inp.value = "/he"
+        await pilot.pause()
+        assert inp._autocomplete_items == ["/help"]
+
+
+@pytest.mark.asyncio
+async def test_ctrl_a_selects_all():
+    """ctrl+a selects entire input value."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        inp.value = "hello world"
+        inp.focus()
+        await pilot.pause()
+        inp.action_select_all()
+        await pilot.pause()
+        assert inp.selection.start != inp.selection.end

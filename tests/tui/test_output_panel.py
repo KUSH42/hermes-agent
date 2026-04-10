@@ -7,12 +7,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from hermes_cli.tui.app import HermesApp
-from hermes_cli.tui.widgets import LiveLineWidget, OutputPanel
+from hermes_cli.tui.widgets import LiveLineWidget, MessagePanel, OutputPanel
 
 
 @pytest.mark.asyncio
 async def test_output_panel_composes_children():
-    """OutputPanel yields a RichLog and a LiveLineWidget."""
+    """OutputPanel yields a LiveLineWidget."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -24,17 +24,19 @@ async def test_output_panel_composes_children():
 
 @pytest.mark.asyncio
 async def test_cprint_routes_to_queue():
-    """Text written via write_output reaches the output panel."""
+    """Text written via write_output reaches the current message's RichLog."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        # Ensure a MessagePanel exists for output to land in
+        panel = app.query_one(OutputPanel)
+        msg = panel.new_message()
         await pilot.pause()
         app.write_output("Hello world\n")
         # Give consumer time to process
         await pilot.pause()
         await pilot.pause()
-        log = app.query_one("#output-log")
-        # RichLog should have at least one line
-        assert len(log.lines) >= 1
+        assert len(msg.response_log.lines) >= 1
 
 
 @pytest.mark.asyncio
@@ -56,15 +58,18 @@ async def test_queue_sentinel_flushes_live_line():
 
 @pytest.mark.asyncio
 async def test_live_line_commits_complete_lines():
-    """LiveLineWidget commits complete lines to RichLog."""
+    """LiveLineWidget commits complete lines to the current MessagePanel's RichLog."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        # Ensure a MessagePanel exists
+        panel = app.query_one(OutputPanel)
+        msg = panel.new_message()
         await pilot.pause()
         app.write_output("line1\nline2\npartial")
         await pilot.pause()
         await pilot.pause()
-        log = app.query_one("#output-log")
-        assert len(log.lines) >= 2
+        assert len(msg.response_log.lines) >= 2
         live = app.query_one(LiveLineWidget)
         assert live._buf == "partial"
 

@@ -200,7 +200,7 @@ class ReasoningPanel(Widget):
     """
 
     def __init__(self, **kwargs: Any) -> None:
-        self._reasoning_log = RichLog(markup=False, highlight=False, id="reasoning-log")
+        self._reasoning_log = RichLog(markup=False, highlight=False, wrap=True, id="reasoning-log")
         super().__init__(**kwargs)
         self._live_buf = ""
 

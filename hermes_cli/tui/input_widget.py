@@ -48,11 +48,7 @@ class HermesInput(Widget, can_focus=True):
         max-height: 8;
     }
     HermesInput > .hermes-input--placeholder {
-        color: $text-muted;
         display: none;
-    }
-    HermesInput.--empty > .hermes-input--placeholder {
-        display: block;
     }
     HermesInput > .hermes-input--autocomplete {
         display: none;
@@ -64,6 +60,9 @@ class HermesInput(Widget, can_focus=True):
         display: block;
     }
     """
+
+    # Prompt chevron shown before input text (mirrors prompt_toolkit's prompt symbol)
+    PROMPT_SYMBOL = "❯ "
 
     BINDINGS = [
         Binding("enter", "submit", "Submit", show=False),
@@ -77,8 +76,9 @@ class HermesInput(Widget, can_focus=True):
     content: reactive[str] = reactive("", repaint=True)
     cursor_pos: reactive[int] = reactive(0)
     masked: reactive[bool] = reactive(False)
-    placeholder_text: reactive[str] = reactive("Send a message...")
+    placeholder_text: reactive[str] = reactive("")
     disabled: reactive[bool] = reactive(False)
+    spinner_text: reactive[str] = reactive("", repaint=True)
 
     # --- Messages ---
     class Submitted(Message):
@@ -91,7 +91,7 @@ class HermesInput(Widget, can_focus=True):
     def __init__(
         self,
         *,
-        placeholder: str = "Send a message...",
+        placeholder: str = "",
         id: str | None = None,
         classes: str | None = None,
     ) -> None:
@@ -163,17 +163,36 @@ class HermesInput(Widget, can_focus=True):
             self.remove_class("--disabled")
 
     def render(self) -> RenderResult:
+        prompt = self.PROMPT_SYMBOL
+
+        # When disabled with spinner text, show spinner instead of input content
+        if self.disabled and self.spinner_text:
+            t = Text()
+            t.append(prompt, style="#FFF8DC")
+            t.append(self.spinner_text, style="dim italic")
+            return t
+
         if self.masked:
             display = "●" * len(self.content)
         else:
             display = self.content
 
-        t = Text(display)
-        # Cursor indicator — append a block char at cursor position
+        t = Text()
+        t.append(prompt, style="#FFF8DC")
+
+        if display:
+            t.append(display, style="#FFF8DC")
+        elif not self.has_focus:
+            # Show placeholder when empty and not focused
+            if self.placeholder_text:
+                t.append(self.placeholder_text, style="#555555 italic")
+
+        # Cursor indicator — offset by prompt length
         if self.has_focus and not self.disabled:
+            offset = len(prompt)
             pos = min(self.cursor_pos, len(display))
             if pos < len(display):
-                t.stylize("reverse", pos, pos + 1)
+                t.stylize("reverse", offset + pos, offset + pos + 1)
             else:
                 t.append("▏", style="blink")
         return t
@@ -182,7 +201,9 @@ class HermesInput(Widget, can_focus=True):
 
     def on_key(self, event: events.Key) -> None:
         if self.disabled:
-            event.prevent_default()
+            # Let ctrl+c and escape bubble up for interrupt handling
+            if event.key not in ("ctrl+c", "escape"):
+                event.prevent_default()
             return
 
         key = event.key

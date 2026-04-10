@@ -5,7 +5,17 @@ from unittest.mock import MagicMock
 import pytest
 
 from hermes_cli.tui.app import HermesApp
-from hermes_cli.tui.widgets import ReasoningPanel, _safe_widget_call
+from hermes_cli.tui.widgets import OutputPanel, ReasoningPanel, _safe_widget_call
+from textual.widgets import RichLog
+
+
+def _ensure_message(app):
+    """Create a MessagePanel so ReasoningPanel is in the DOM."""
+    panel = app.query_one(OutputPanel)
+    msg = panel.current_message
+    if msg is None:
+        msg = panel.new_message()
+    return msg
 
 
 @pytest.mark.asyncio
@@ -14,8 +24,9 @@ async def test_reasoning_panel_hidden_by_default():
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        panel = app.query_one(ReasoningPanel)
-        assert not panel.has_class("visible")
+        msg = _ensure_message(app)
+        await pilot.pause()
+        assert not msg.reasoning.has_class("visible")
 
 
 @pytest.mark.asyncio
@@ -24,43 +35,83 @@ async def test_open_box_makes_visible():
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        panel = app.query_one(ReasoningPanel)
-        panel.open_box("Reasoning")
+        msg = _ensure_message(app)
         await pilot.pause()
-        assert panel.has_class("visible")
+        msg.reasoning.open_box("Reasoning")
+        await pilot.pause()
+        assert msg.reasoning.has_class("visible")
 
 
 @pytest.mark.asyncio
-async def test_append_delta_writes_to_log():
-    """append_delta writes text to the reasoning RichLog."""
+async def test_append_delta_writes_complete_lines():
+    """append_delta commits complete lines (with \\n) to the RichLog."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        panel = app.query_one(ReasoningPanel)
-        panel.open_box("Thinking")
-        panel.append_delta("step 1")
-        panel.append_delta("step 2")
+        msg = _ensure_message(app)
         await pilot.pause()
-        log = app.query_one("#reasoning-log")
-        # Header + 2 deltas = at least 3 lines
-        assert len(log.lines) >= 3
+        msg.reasoning.open_box("Thinking")
+        msg.reasoning.append_delta("step 1\n")
+        msg.reasoning.append_delta("step 2\n")
+        await pilot.pause()
+        log = msg.reasoning.query_one("#reasoning-log")
+        # Header + 2 committed lines = 3 lines
+        assert len(log.lines) == 3
 
 
 @pytest.mark.asyncio
-async def test_close_box_hides_and_clears():
-    """close_box removes visible class and clears the log."""
+async def test_append_delta_buffers_partial():
+    """append_delta buffers text without newlines, doesn't write to log."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        panel = app.query_one(ReasoningPanel)
-        panel.open_box("Reasoning")
-        panel.append_delta("some content")
+        msg = _ensure_message(app)
         await pilot.pause()
-        panel.close_box()
+        msg.reasoning.open_box("Thinking")
+        msg.reasoning.append_delta("partial ")
+        msg.reasoning.append_delta("text")
         await pilot.pause()
-        assert not panel.has_class("visible")
-        log = app.query_one("#reasoning-log")
-        assert len(log.lines) == 0
+        log = msg.reasoning.query_one("#reasoning-log")
+        # Header only — partial text is in _live_buf, not committed
+        assert len(log.lines) == 1
+        assert msg.reasoning._live_buf == "partial text"
+
+
+@pytest.mark.asyncio
+async def test_append_delta_flushes_on_newline():
+    """Partial buffer is committed when a newline arrives."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        msg = _ensure_message(app)
+        await pilot.pause()
+        msg.reasoning.open_box("Thinking")
+        msg.reasoning.append_delta("hello ")
+        msg.reasoning.append_delta("world\nnext")
+        await pilot.pause()
+        log = msg.reasoning.query_one("#reasoning-log")
+        # Header + "hello world" committed = 2 lines; "next" still in buffer
+        assert len(log.lines) == 2
+        assert msg.reasoning._live_buf == "next"
+
+
+@pytest.mark.asyncio
+async def test_close_box_flushes_and_hides():
+    """close_box flushes remaining buffer and hides the panel."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        msg = _ensure_message(app)
+        await pilot.pause()
+        msg.reasoning.open_box("Reasoning")
+        msg.reasoning.append_delta("some content")
+        await pilot.pause()
+        msg.reasoning.close_box()
+        await pilot.pause()
+        assert not msg.reasoning.has_class("visible")
+        log = msg.reasoning.query_one("#reasoning-log")
+        # Header + flushed partial = 2 lines (content preserved, just hidden)
+        assert len(log.lines) == 2
 
 
 @pytest.mark.asyncio
@@ -81,12 +132,59 @@ async def test_app_reasoning_helpers():
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
+        msg = _ensure_message(app)
+        await pilot.pause()
         app.open_reasoning("Test")
         await pilot.pause()
-        panel = app.query_one(ReasoningPanel)
-        assert panel.has_class("visible")
-        app.append_reasoning("thinking...")
+        assert msg.reasoning.has_class("visible")
+        app.append_reasoning("thinking...\n")
         await pilot.pause()
         app.close_reasoning()
         await pilot.pause()
-        assert not panel.has_class("visible")
+        assert not msg.reasoning.has_class("visible")
+
+
+@pytest.mark.asyncio
+async def test_reasoning_richlog_has_wrap_true():
+    """Reasoning RichLog is created with wrap=True so text reflows on resize.
+
+    Without wrap=True, content rendered during deferred render (when the panel
+    transitions from display:none to visible) would be stuck at a narrow width.
+    """
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        msg = _ensure_message(app)
+        await pilot.pause()
+        rl = msg.reasoning._reasoning_log
+        assert isinstance(rl, RichLog)
+        assert rl.wrap is True
+
+
+@pytest.mark.asyncio
+async def test_reasoning_text_uses_full_width():
+    """Reasoning text wraps to the panel's full width, not a narrow default.
+
+    Regression test: when ReasoningPanel transitions from display:none to
+    visible, the RichLog's initial size can be 0. With wrap=True, content
+    reflows when the widget gets its real width.
+    """
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.agent_running = True
+        for _ in range(5):
+            await pilot.pause()
+
+        msg = app.query_one(OutputPanel).current_message
+        rp = msg.reasoning
+
+        rp.open_box("Reasoning")
+        long_line = "The user wants me to analyze this request carefully and provide a thorough response"
+        rp.append_delta(long_line + "\n")
+        for _ in range(10):
+            await pilot.pause()
+
+        assert rp.size.width > 20, (
+            f"ReasoningPanel should use full width, got {rp.size.width}"
+        )

@@ -16,7 +16,6 @@ from hermes_cli.tui.state import ChoiceOverlayState, SecretOverlayState
 from hermes_cli.tui.widgets import (
     HintBar,
     OutputPanel,
-    ReasoningPanel,
     StatusBar,
 )
 
@@ -29,7 +28,6 @@ async def test_full_app_composes_all_widgets():
         await pilot.pause()
         # Verify all key widgets are present
         assert app.query_one(OutputPanel)
-        assert app.query_one(ReasoningPanel)
         assert app.query_one(HintBar)
         assert app.query_one(StatusBar)
         assert app.query_one("#input-area")
@@ -79,6 +77,11 @@ async def test_streaming_pipeline_ordering():
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
 
+        # Ensure a MessagePanel exists for output to land in
+        panel = app.query_one(OutputPanel)
+        msg = panel.new_message()
+        await pilot.pause()
+
         # Write numbered chunks
         for i in range(100):
             app.write_output(f"line {i}\n")
@@ -89,8 +92,7 @@ async def test_streaming_pipeline_ordering():
         await asyncio.sleep(0.1)
         await pilot.pause()
 
-        log = app.query_one("#output-log")
-        assert len(log.lines) >= 50  # Should have most lines committed
+        assert len(msg.response_log.lines) >= 50  # Should have most lines committed
 
 
 @pytest.mark.asyncio

@@ -21,8 +21,8 @@ async def test_hint_bar_updates_on_reactive_change():
 
 
 @pytest.mark.asyncio
-async def test_spinner_tick_updates_hint_when_agent_running():
-    """_tick_spinner updates HintBar when agent_running is True."""
+async def test_spinner_tick_updates_input_when_agent_running():
+    """_tick_spinner updates input widget's spinner_text when agent_running is True."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -32,8 +32,9 @@ async def test_spinner_tick_updates_hint_when_agent_running():
         import asyncio
         await asyncio.sleep(0.15)
         await pilot.pause()
-        bar = app.query_one(HintBar)
-        assert bar.hint != ""
+        inp = app.query_one("#input-area")
+        assert hasattr(inp, "spinner_text")
+        assert inp.spinner_text != ""
 
 
 @pytest.mark.asyncio

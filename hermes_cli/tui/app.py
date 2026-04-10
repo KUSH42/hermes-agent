@@ -144,6 +144,11 @@ class HermesApp(App):
         self._event_loop = asyncio.get_running_loop()
         self._consume_output()  # starts the @work consumer
         self.set_interval(0.1, self._tick_spinner)
+        # Focus the input bar so the user can type immediately
+        try:
+            self.query_one("#input-area").focus()
+        except NoMatches:
+            pass
         if self._startup_fn is not None:
             threading.Thread(target=self._startup_fn, daemon=True).start()
 

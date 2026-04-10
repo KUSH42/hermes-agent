@@ -1184,9 +1184,16 @@ def _cprint(text: str) -> None:
 
     app = _hermes_app
     if app is not None and app._event_loop is not None:
+        # prompt_toolkit's print_formatted_text appends \n by default.
+        # Ensure TUI queue receives the same trailing \n so
+        # LiveLineWidget.append() commits complete lines to the RichLog
+        # instead of buffering them indefinitely.
+        normalized = _normalize_ansi_c1(text)
+        if not normalized.endswith("\n"):
+            normalized += "\n"
         try:
             app._event_loop.call_soon_threadsafe(
-                app._output_queue.put_nowait, _normalize_ansi_c1(text)
+                app._output_queue.put_nowait, normalized
             )
         except _asyncio.QueueFull:
             # Backpressure: UI is 4096 chunks behind — drop rather than OOM.
@@ -1284,11 +1291,19 @@ class ChatConsole:
             highlight=False,
         )
 
+    @property
+    def width(self) -> int:
+        return shutil.get_terminal_size((80, 24)).columns
+
+    def clear(self, *args, **kwargs):
+        pass  # No-op in TUI context — clearing the terminal makes no sense
+
     def print(self, *args, **kwargs):
         self._buffer.seek(0)
         self._buffer.truncate()
-        # Read terminal width at render time so panels adapt to current size
-        self._inner.width = shutil.get_terminal_size((80, 24)).columns
+        # Read terminal width at render time so panels adapt to current size.
+        width = shutil.get_terminal_size((80, 24)).columns
+        self._inner.width = width
         self._inner.print(*args, **kwargs)
         output = self._buffer.getvalue()
         for line in output.rstrip("\n").split("\n"):
@@ -2282,14 +2297,31 @@ class HermesCLI:
         # Open reasoning box on first reasoning token
         if not getattr(self, "_reasoning_box_opened", False):
             self._reasoning_box_opened = True
-            w = shutil.get_terminal_size().columns
-            r_label = " Reasoning "
-            r_fill = w - 2 - len(r_label)
-            _cprint(f"\n{_DIM}┌─{r_label}{'─' * max(r_fill - 1, 0)}┐{_RST}")
+            tui = _hermes_app
+            if tui is not None:
+                # TUI mode: reasoning goes to ReasoningPanel only
+                tui.call_from_thread(tui.open_reasoning, "Reasoning")
+            else:
+                # PT mode: draw box border in terminal
+                w = shutil.get_terminal_size().columns
+                r_label = " Reasoning "
+                r_fill = w - 2 - len(r_label)
+                _cprint(f"\n{_DIM}┌─{r_label}{'─' * max(r_fill - 1, 0)}┐{_RST}")
 
         self._reasoning_buf = getattr(self, "_reasoning_buf", "") + text
+        tui = _hermes_app
 
-        # Emit complete lines, keep partial remainder buffered
+        # Bridge every raw delta to TUI ReasoningPanel (handles its own line buffering)
+        if tui is not None:
+            tui.call_from_thread(tui.append_reasoning, text)
+            # TUI mode: ReasoningPanel handles display — skip _cprint to avoid
+            # reasoning content leaking into the response RichLog.
+            # Still maintain _reasoning_buf for _close_reasoning_box flush.
+            while "\n" in self._reasoning_buf:
+                _line, self._reasoning_buf = self._reasoning_buf.split("\n", 1)
+            return
+
+        # PT mode: emit complete lines via _cprint for terminal display
         while "\n" in self._reasoning_buf:
             line, self._reasoning_buf = self._reasoning_buf.split("\n", 1)
             if getattr(self, "_rich_reasoning", False):
@@ -2316,6 +2348,8 @@ class HermesCLI:
         if (
             len(self._reasoning_buf) >= _PARTIAL_FLUSH_CHARS
             and self._reasoning_buf[0] not in ("#", ">", "|", "`", " ", "\t", "-", "*", "+")
+            and self._reasoning_buf.count("**") % 2 == 0
+            and self._reasoning_buf.count("*") % 2 == 0
         ):
             cut = self._reasoning_buf.rfind(" ")
             if cut > 5:
@@ -2326,30 +2360,37 @@ class HermesCLI:
     def _close_reasoning_box(self) -> None:
         """Close the live reasoning box if it's open."""
         if getattr(self, "_reasoning_box_opened", False):
-            # Flush remaining reasoning buffer
-            buf = getattr(self, "_reasoning_buf", "")
-            if buf:
-                if getattr(self, "_rich_reasoning", False):
-                    buf = _apply_inline_md(_apply_block_line(buf, reset_suffix=_DIM), reset_suffix=_DIM)
-                elif _RICH_RESPONSE:
-                    buf = _apply_inline_md(_apply_block_line(buf, reset_suffix=_DIM), reset_suffix=_DIM)
-                _cprint(_dim_lines(buf)[0])
-                self._reasoning_buf = ""
-            # Drain state machines (unclosed tables / fenced code blocks)
-            if getattr(self, "_rich_reasoning", False):
-                block_tail = self._reasoning_block_buf.flush()
-                if block_tail:
-                    for tl in block_tail.splitlines():
-                        if "\x1b" not in tl:
-                            tl = _apply_inline_md(_apply_block_line(tl, reset_suffix=_DIM), reset_suffix=_DIM)
-                        _cprint(_dim_lines(tl)[0])
-                code_tail = self._reasoning_code_hl.flush()
-                if code_tail:
-                    for tl in code_tail.splitlines():
-                        _cprint(_dim_lines(tl)[0])
-            w = shutil.get_terminal_size().columns
-            _cprint(f"{_DIM}└{'─' * (w - 2)}┘{_RST}")
+            tui = _hermes_app
             self._reasoning_box_opened = False
+
+            if tui is not None:
+                # TUI mode: ReasoningPanel handles display — just close it
+                self._reasoning_buf = ""
+                tui.call_from_thread(tui.close_reasoning)
+            else:
+                # PT mode: flush remaining buffer and draw box bottom
+                buf = getattr(self, "_reasoning_buf", "")
+                self._reasoning_buf = ""
+                if buf:
+                    if getattr(self, "_rich_reasoning", False):
+                        buf = _apply_inline_md(_apply_block_line(buf, reset_suffix=_DIM), reset_suffix=_DIM)
+                    elif _RICH_RESPONSE:
+                        buf = _apply_inline_md(_apply_block_line(buf, reset_suffix=_DIM), reset_suffix=_DIM)
+                    _cprint(_dim_lines(buf)[0])
+                # Drain state machines (unclosed tables / fenced code blocks)
+                if getattr(self, "_rich_reasoning", False):
+                    block_tail = self._reasoning_block_buf.flush()
+                    if block_tail:
+                        for tl in block_tail.splitlines():
+                            if "\x1b" not in tl:
+                                tl = _apply_inline_md(_apply_block_line(tl, reset_suffix=_DIM), reset_suffix=_DIM)
+                            _cprint(_dim_lines(tl)[0])
+                    code_tail = self._reasoning_code_hl.flush()
+                    if code_tail:
+                        for tl in code_tail.splitlines():
+                            _cprint(_dim_lines(tl)[0])
+                w = shutil.get_terminal_size().columns
+                _cprint(f"{_DIM}└{'─' * (w - 2)}┘{_RST}")
 
             # Flush any content that was deferred while reasoning was rendering.
             deferred = getattr(self, "_deferred_content", "")
@@ -2454,8 +2495,21 @@ class HermesCLI:
                 self._stream_prefilt = self._stream_prefilt[-max_tag_len:]
             return
 
+    # Orphan close tags that leak when the API uses structured thinking
+    # blocks (so _in_reasoning_block is never set) but the model also
+    # emits literal </think> in its text content.
+    _ORPHAN_CLOSE_TAGS = ("</think>", "</thinking>", "</reasoning>",
+                          "</THINKING>", "</REASONING_SCRATCHPAD>")
+
     def _emit_stream_text(self, text: str) -> None:
         """Emit filtered text to the streaming display."""
+        if not text:
+            return
+
+        # Strip orphan reasoning close tags that leak through when the API
+        # uses structured thinking blocks instead of tag-based reasoning.
+        for tag in self._ORPHAN_CLOSE_TAGS:
+            text = text.replace(tag, "")
         if not text:
             return
 
@@ -2524,14 +2578,19 @@ class HermesCLI:
                 _cprint(f"{_tc}{line}{_RST}" if _tc else line)
 
         # Word-boundary flush: show progress on long prose lines without
-        # waiting for a full \\n.  Structural prefixes (headings, blockquotes,
+        # waiting for a full \n.  Structural prefixes (headings, blockquotes,
         # tables, code, list markers) are excluded — they need the complete
         # line for correct block-level rendering.  Inline markdown is skipped
         # here too: bold/italic spans can straddle a flush boundary, and an
         # unclosed span would corrupt the color state of following tokens.
+        # Skip flush entirely when the buffer contains unclosed markdown
+        # delimiters (** or *) — flushing raw delimiters produces visible
+        # asterisks that can't be retroactively rendered as bold/italic.
         if (
             len(self._stream_buf) >= _PARTIAL_FLUSH_CHARS
             and self._stream_buf[0] not in ("#", ">", "|", "`", " ", "\t", "-", "*", "+")
+            and self._stream_buf.count("**") % 2 == 0
+            and self._stream_buf.count("*") % 2 == 0
         ):
             cut = self._stream_buf.rfind(" ")
             if cut > 5:
@@ -2594,6 +2653,12 @@ class HermesCLI:
         self._reasoning_box_opened = False
         self._reasoning_buf = ""
         self._reasoning_preview_buf = ""
+        # Close TUI reasoning panel if it was opened in non-streaming mode
+        if getattr(self, "_on_reasoning_tui_opened", False):
+            tui = _hermes_app
+            if tui is not None:
+                tui.call_from_thread(tui.close_reasoning)
+        self._on_reasoning_tui_opened = False
         self._deferred_content = ""
         if _RICH_RESPONSE:
             if not hasattr(self, "_stream_block_buf"):
@@ -2651,7 +2716,7 @@ class HermesCLI:
                 pass
         self._invalidate(min_interval=0.0)
         try:
-            print(f"⏳ {status}")
+            _cprint(f"⏳ {status}")
             yield
         finally:
             self._command_running = False
@@ -3198,6 +3263,42 @@ class HermesCLI:
             style=_history_text_c,
         )
         self.console.print(panel)
+
+    def _tui_startup_display(self) -> None:
+        """Display the startup banner and welcome text inside the Textual TUI.
+
+        Called from HermesApp.on_mount() in a daemon thread after the event
+        loop is running, so _cprint() routes through the output queue.
+        Switches self.console to ChatConsole so all subsequent console.print()
+        calls appear in the TUI output panel rather than on raw stdout.
+        """
+        # Switch to ChatConsole: routes all self.console.print() through _cprint
+        # → TUI output queue.  Must happen before show_banner() so banner output
+        # goes to the panel, not stdout.
+        self.console = ChatConsole()
+        self.show_banner()
+        if self._resumed:
+            if self._preload_resumed_session():
+                self._display_resumed_history()
+        try:
+            from hermes_cli.skin_engine import get_active_skin
+            _welcome_skin = get_active_skin()
+            _welcome_text = _welcome_skin.get_branding(
+                "welcome",
+                "Welcome to Hermes Agent! Type your message or /help for commands.",
+            )
+            _welcome_color = _welcome_skin.get_color("banner_text", "#FFF8DC")
+        except Exception:
+            _welcome_text = "Welcome to Hermes Agent! Type your message or /help for commands."
+            _welcome_color = "#FFF8DC"
+        self.console.print(f"[{_welcome_color}]{_welcome_text}[/]")
+        if self.preloaded_skills and not self._startup_skills_line_shown:
+            skills_label = ", ".join(self.preloaded_skills)
+            self.console.print(
+                f"[bold {_accent_hex()}]Activated skills:[/] {skills_label}"
+            )
+            self._startup_skills_line_shown = True
+        self.console.print()
 
     def _try_attach_clipboard_image(self) -> bool:
         """Check clipboard for an image and attach it if found.
@@ -5799,6 +5900,13 @@ class HermesCLI:
         """Callback for intermediate reasoning display during tool-call loops."""
         if not reasoning_text:
             return
+        # Bridge to TUI ReasoningPanel (non-streaming mode)
+        tui = _hermes_app
+        if tui is not None:
+            if not getattr(self, "_on_reasoning_tui_opened", False):
+                self._on_reasoning_tui_opened = True
+                tui.call_from_thread(tui.open_reasoning, "Reasoning")
+            tui.call_from_thread(tui.append_reasoning, reasoning_text)
         self._reasoning_preview_buf = getattr(self, "_reasoning_preview_buf", "") + reasoning_text
         self._flush_reasoning_preview(force=False)
 
@@ -7699,44 +7807,48 @@ class HermesCLI:
 
     def run(self):
         """Run the interactive CLI loop with persistent input at bottom."""
-        # Push the entire TUI to the bottom of the terminal so the banner,
-        # responses, and prompt all appear pinned to the bottom — empty
-        # space stays above, not below.  This prints enough blank lines to
-        # scroll the cursor to the last row before any content is rendered.
+        # Detect whether Textual TUI will be the active runtime.
+        # When Textual is available, skip all pre-TUI stdout display — Textual
+        # clears the terminal when it takes over, so anything printed here is
+        # lost.  The banner and welcome text are deferred to _tui_startup_display()
+        # which runs inside the TUI after on_mount(), routing through ChatConsole.
         try:
-            _term_lines = shutil.get_terminal_size().lines
-            if _term_lines > 2:
-                print("\n" * (_term_lines - 1), end="", flush=True)
-        except Exception:
-            pass
+            import textual as _tc; del _tc  # noqa: F401,E702
+            _will_use_textual = True
+        except ImportError:
+            _will_use_textual = False
 
-        self.show_banner()
+        if not _will_use_textual:
+            # PT path only: push output to bottom of terminal before PT takes over.
+            try:
+                _term_lines = shutil.get_terminal_size().lines
+                if _term_lines > 2:
+                    print("\n" * (_term_lines - 1), end="", flush=True)
+            except Exception:
+                pass
 
-        # One-line Honcho session indicator (TTY-only, not captured by agent).
-        # Only show when the user explicitly configured Honcho for Hermes
-        # (not auto-enabled from a stray HONCHO_API_KEY env var).
-        # If resuming a session, load history and display it immediately
-        # so the user has context before typing their first message.
-        if self._resumed:
-            if self._preload_resumed_session():
-                self._display_resumed_history()
+            self.show_banner()
 
-        try:
-            from hermes_cli.skin_engine import get_active_skin
-            _welcome_skin = get_active_skin()
-            _welcome_text = _welcome_skin.get_branding("welcome", "Welcome to Hermes Agent! Type your message or /help for commands.")
-            _welcome_color = _welcome_skin.get_color("banner_text", "#FFF8DC")
-        except Exception:
-            _welcome_text = "Welcome to Hermes Agent! Type your message or /help for commands."
-            _welcome_color = "#FFF8DC"
-        self.console.print(f"[{_welcome_color}]{_welcome_text}[/]")
-        if self.preloaded_skills and not self._startup_skills_line_shown:
-            skills_label = ", ".join(self.preloaded_skills)
-            self.console.print(
-                f"[bold {_accent_hex()}]Activated skills:[/] {skills_label}"
-            )
-            self._startup_skills_line_shown = True
-        self.console.print()
+            if self._resumed:
+                if self._preload_resumed_session():
+                    self._display_resumed_history()
+
+            try:
+                from hermes_cli.skin_engine import get_active_skin
+                _welcome_skin = get_active_skin()
+                _welcome_text = _welcome_skin.get_branding("welcome", "Welcome to Hermes Agent! Type your message or /help for commands.")
+                _welcome_color = _welcome_skin.get_color("banner_text", "#FFF8DC")
+            except Exception:
+                _welcome_text = "Welcome to Hermes Agent! Type your message or /help for commands."
+                _welcome_color = "#FFF8DC"
+            self.console.print(f"[{_welcome_color}]{_welcome_text}[/]")
+            if self.preloaded_skills and not self._startup_skills_line_shown:
+                skills_label = ", ".join(self.preloaded_skills)
+                self.console.print(
+                    f"[bold {_accent_hex()}]Activated skills:[/] {skills_label}"
+                )
+                self._startup_skills_line_shown = True
+            self.console.print()
         
         # State for async operation
         self._agent_running = False
@@ -9133,7 +9245,7 @@ class HermesCLI:
         global _hermes_app
         try:
             from hermes_cli.tui.app import HermesApp as _HApp
-            _tui_app = _HApp(cli=self)
+            _tui_app = _HApp(cli=self, startup_fn=self._tui_startup_display)
             _tui_app._spinner_frames = _COMMAND_SPINNER_FRAMES
             _hermes_app = _tui_app
         except ImportError:

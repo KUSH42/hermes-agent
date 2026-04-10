@@ -14,24 +14,45 @@ HermesApp {
     background: $background;
 }
 
-/* OutputPanel structural rules (height, overflow) are in DEFAULT_CSS */
+* {
+    scrollbar-size-vertical: 0;
+    scrollbar-size-horizontal: 0;
+}
+
+/* --- Message turns --- */
+
+MessagePanel {
+    margin: 1 0 0 0;
+}
+
+/* --- Reasoning panel --- */
+
 ReasoningPanel {
     margin: 0 1;
+    border: round $primary-darken-2;
 }
+
+/* --- Input rule separator --- */
 
 #input-rule {
     color: $primary-darken-3;
 }
 
+/* --- Hint bar --- */
+
 HintBar {
     color: $text-muted;
 }
+
+/* --- Status bar --- */
 
 StatusBar {
     background: $primary-darken-3;
     color: $text;
     padding: 0 1;
 }
+
+/* --- Overlay widgets --- */
 
 ClarifyWidget,
 ApprovalWidget,
@@ -45,17 +66,21 @@ SecretWidget {
     height: auto;
 }
 
-/* Input area styling */
+/* --- Input area --- */
+
 HermesInput {
     padding: 0 1;
 }
 
-/* Image bar */
+/* --- Image bar --- */
+
 ImageBar {
+    color: $text-muted;
     padding: 0 1;
 }
 
-/* Voice status bar */
+/* --- Voice status bar --- */
+
 VoiceStatusBar {
     padding: 0 1;
 }

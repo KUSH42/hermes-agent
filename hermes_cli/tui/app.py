@@ -88,6 +88,9 @@ class HermesApp(App):
     # Image attachments — reactive(list) uses factory form to avoid shared mutable default
     attached_images: reactive[list] = reactive(list)
 
+    # Spinner label — text shown beside the spinner frame (e.g. "Calling tool…")
+    spinner_label: reactive[str] = reactive("")
+
     # hint_text is NOT on HermesApp — HintBar.hint is the single source of truth.
 
     def __init__(self, cli: Any, **kwargs: Any) -> None:
@@ -235,6 +238,9 @@ class HermesApp(App):
         the get_hint_text() closure (cli.py:8258).
         """
         parts: list[str] = []
+        label_text = getattr(self, "spinner_label", "")
+        if label_text:
+            parts.append(label_text)
         for label, state_attr in [
             ("approval", "approval_state"),
             ("clarify", "clarify_state"),
@@ -244,7 +250,7 @@ class HermesApp(App):
             state = getattr(self, state_attr)
             if state is not None:
                 parts.append(f" — waiting for {label} ({state.remaining}s)")
-        return "".join(parts)
+        return " ".join(parts) if parts else ""
 
     # --- Reactive watchers ---
 

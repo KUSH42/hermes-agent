@@ -1821,6 +1821,8 @@ class HermesCLI:
 
     def _invalidate(self, min_interval: float = 0.25) -> None:
         """Throttled UI repaint — prevents terminal blinking on slow/SSH connections."""
+        if _hermes_app is not None:
+            return  # Textual handles reactivity; no manual invalidation needed
         import time as _time
         now = _time.monotonic()
         if hasattr(self, "_app") and self._app and (now - self._last_invalidate) >= min_interval:
@@ -2131,6 +2133,13 @@ class HermesCLI:
         if not text:
             self._flush_reasoning_preview(force=True)
         self._spinner_text = text or ""
+        if _hermes_app is not None:
+            try:
+                _hermes_app.call_from_thread(
+                    setattr, _hermes_app, "spinner_label", self._spinner_text
+                )
+            except Exception:
+                pass
         self._invalidate()
 
     # ── Streaming display ────────────────────────────────────────────────
@@ -2635,6 +2644,11 @@ class HermesCLI:
         """Expose a temporary busy state in the TUI while a slash command runs."""
         self._command_running = True
         self._command_status = status
+        if _hermes_app is not None:
+            try:
+                _hermes_app.call_from_thread(setattr, _hermes_app, "command_running", True)
+            except Exception:
+                pass
         self._invalidate(min_interval=0.0)
         try:
             print(f"⏳ {status}")
@@ -2642,6 +2656,11 @@ class HermesCLI:
         finally:
             self._command_running = False
             self._command_status = ""
+            if _hermes_app is not None:
+                try:
+                    _hermes_app.call_from_thread(setattr, _hermes_app, "command_running", False)
+                except Exception:
+                    pass
             self._invalidate(min_interval=0.0)
 
     def _ensure_runtime_credentials(self) -> bool:
@@ -6587,6 +6606,46 @@ class HermesCLI:
         timeout = CLI_CONFIG.get("clarify", {}).get("timeout", 120)
         response_queue = queue.Queue()
         is_open_ended = not choices
+        _timeout_msg = (
+            "The user did not provide a response within the time limit. "
+            "Use your best judgement to make the choice and proceed."
+        )
+
+        tui = _hermes_app
+        if tui is not None:
+            # Textual path: use typed ChoiceOverlayState + reactive watcher
+            from hermes_cli.tui.state import ChoiceOverlayState as _COS
+            state = _COS(
+                deadline=_time.monotonic() + timeout,
+                response_queue=response_queue,
+                question=question,
+                choices=choices if not is_open_ended else [],
+                selected=0,
+            )
+            try:
+                tui.call_from_thread(setattr, tui, "clarify_state", state)
+            except Exception:
+                pass
+            while True:
+                try:
+                    result = response_queue.get(timeout=1)
+                    try:
+                        tui.call_from_thread(setattr, tui, "clarify_state", None)
+                    except Exception:
+                        pass
+                    if result is None:
+                        _cprint(f"\n{_DIM}(clarify timed out after {timeout}s — agent will decide){_RST}")
+                        return _timeout_msg
+                    return result
+                except queue.Empty:
+                    if state.expired:
+                        try:
+                            tui.call_from_thread(setattr, tui, "clarify_state", None)
+                        except Exception:
+                            pass
+                        _cprint(f"\n{_DIM}(clarify timed out after {timeout}s — agent will decide){_RST}")
+                        return _timeout_msg
+            # unreachable
 
         self._clarify_state = {
             "question": question,
@@ -6601,15 +6660,6 @@ class HermesCLI:
         # Trigger prompt_toolkit repaint from this (non-main) thread
         self._invalidate()
 
-        # Poll for the user's response.  The countdown in the hint line
-        # updates on each invalidate — but frequent repaints cause visible
-        # flicker in some terminals (Kitty, ghostty).  We only refresh the
-        # countdown every 5 s; selection changes (↑/↓) trigger instant
-        # Poll for the user's response.  The countdown in the hint line
-        # updates on each invalidate — but frequent repaints cause visible
-        # flicker in some terminals (Kitty, ghostty).  We only refresh the
-        # countdown every 5 s; selection changes (↑/↓) trigger instant
-        # repaints via the key bindings.
         _last_countdown_refresh = _time.monotonic()
         while True:
             try:
@@ -6625,9 +6675,6 @@ class HermesCLI:
                 if now - _last_countdown_refresh >= 5.0:
                     _last_countdown_refresh = now
                     self._invalidate()
-                if now - _last_countdown_refresh >= 5.0:
-                    _last_countdown_refresh = now
-                    self._invalidate()
 
         # Timed out — tear down the UI and let the agent decide
         self._clarify_state = None
@@ -6635,15 +6682,12 @@ class HermesCLI:
         self._clarify_deadline = 0
         self._invalidate()
         _cprint(f"\n{_DIM}(clarify timed out after {timeout}s — agent will decide){_RST}")
-        return (
-            "The user did not provide a response within the time limit. "
-            "Use your best judgement to make the choice and proceed."
-        )
+        return _timeout_msg
 
     def _sudo_password_callback(self) -> str:
         """
         Prompt for sudo password through the prompt_toolkit UI.
-        
+
         Called from the agent thread when a sudo command is encountered.
         Uses the same clarify-style mechanism: sets UI state, waits on a
         queue for the user's response via the Enter key binding.
@@ -6652,6 +6696,41 @@ class HermesCLI:
 
         timeout = 45
         response_queue = queue.Queue()
+
+        tui = _hermes_app
+        if tui is not None:
+            # Textual path: SudoWidget has its own Input; no buffer snapshot needed
+            from hermes_cli.tui.state import SecretOverlayState as _SOS
+            state = _SOS(
+                deadline=_time.monotonic() + timeout,
+                response_queue=response_queue,
+                prompt="sudo password:",
+            )
+            try:
+                tui.call_from_thread(setattr, tui, "sudo_state", state)
+            except Exception:
+                pass
+            while True:
+                try:
+                    result = response_queue.get(timeout=1)
+                    try:
+                        tui.call_from_thread(setattr, tui, "sudo_state", None)
+                    except Exception:
+                        pass
+                    if result:
+                        _cprint(f"\n{_DIM}  ✓ Password received (cached for session){_RST}")
+                    else:
+                        _cprint(f"\n{_DIM}  ⏭ Skipped{_RST}")
+                    return result or ""
+                except queue.Empty:
+                    if state.expired:
+                        try:
+                            tui.call_from_thread(setattr, tui, "sudo_state", None)
+                        except Exception:
+                            pass
+                        _cprint(f"\n{_DIM}  ⏱ Timeout — continuing without sudo{_RST}")
+                        return ""
+            # unreachable
 
         self._capture_modal_input_snapshot()
         self._sudo_state = {
@@ -6706,6 +6785,40 @@ class HermesCLI:
         with self._approval_lock:
             timeout = 60
             response_queue = queue.Queue()
+
+            tui = _hermes_app
+            if tui is not None:
+                # Textual path: ApprovalWidget handles countdown + selection
+                from hermes_cli.tui.state import ChoiceOverlayState as _COS
+                state = _COS(
+                    deadline=_time.monotonic() + timeout,
+                    response_queue=response_queue,
+                    question=f"{description}\n$ {command}",
+                    choices=self._approval_choices(command, allow_permanent=allow_permanent),
+                    selected=0,
+                )
+                try:
+                    tui.call_from_thread(setattr, tui, "approval_state", state)
+                except Exception:
+                    pass
+                while True:
+                    try:
+                        result = response_queue.get(timeout=1)
+                        try:
+                            tui.call_from_thread(setattr, tui, "approval_state", None)
+                        except Exception:
+                            pass
+                        # "deny" comes from timeout (_timeout_response) or user selection
+                        return result if result is not None else "deny"
+                    except queue.Empty:
+                        if state.expired:
+                            try:
+                                tui.call_from_thread(setattr, tui, "approval_state", None)
+                            except Exception:
+                                pass
+                            _cprint(f"\n{_DIM}  ⏱ Timeout — denying command{_RST}")
+                            return "deny"
+                # unreachable
 
             self._approval_state = {
                 "command": command,
@@ -6856,6 +6969,8 @@ class HermesCLI:
 
     def _capture_modal_input_snapshot(self) -> None:
         """Temporarily clear the input buffer and save the user's in-progress draft."""
+        if _hermes_app is not None:
+            return  # Textual: HermesInput content is independent of overlay Input widgets
         if self._modal_input_snapshot is not None or not getattr(self, "_app", None):
             return
         try:
@@ -6870,6 +6985,8 @@ class HermesCLI:
 
     def _restore_modal_input_snapshot(self) -> None:
         """Restore any draft text that was present before a modal prompt opened."""
+        if _hermes_app is not None:
+            return  # Textual: HermesInput content is independent of overlay Input widgets
         snapshot = self._modal_input_snapshot
         self._modal_input_snapshot = None
         if not snapshot or not getattr(self, "_app", None):
@@ -6893,6 +7010,8 @@ class HermesCLI:
         self._submit_secret_response("")
 
     def _clear_secret_input_buffer(self) -> None:
+        if _hermes_app is not None:
+            return  # Textual: SecretWidget's own Input handles clearing
         if getattr(self, "_app", None):
             try:
                 self._app.current_buffer.reset()
@@ -7487,7 +7606,24 @@ class HermesCLI:
         return style_dict
 
     def _apply_tui_skin_style(self) -> bool:
-        """Refresh prompt_toolkit styling for a running interactive TUI."""
+        """Refresh TUI styling for the running interactive app."""
+        if _hermes_app is not None:
+            # Textual path: map skin colours via CSS variable injection
+            try:
+                from hermes_cli.skin_engine import get_active_skin
+                skin = get_active_skin()
+                primary = skin.get_color("accent", None)
+                background = skin.get_color("background", None)
+                skin_vars: dict[str, str] = {}
+                if primary:
+                    skin_vars["primary"] = primary
+                if background:
+                    skin_vars["background"] = background
+                if skin_vars:
+                    _hermes_app.call_from_thread(_hermes_app.apply_skin, skin_vars)
+            except Exception:
+                pass
+            return True
         if not getattr(self, "_app", None) or not getattr(self, "_tui_style_base", None):
             return False
         self._app.style = PTStyle.from_dict(self._build_tui_style_dict())
@@ -8744,7 +8880,9 @@ class HermesCLI:
             last_idle_refresh = 0.0
             last_title: str = ""
             while not self._should_exit:
-                if not self._app:
+                # When Textual is running, _invalidate() is a no-op but title
+                # spinner still works. When neither TUI is ready, sleep.
+                if not self._app and _tui_app is None:
                     _time.sleep(0.1)
                     continue
                 if self._command_running or self._agent_running:
@@ -8831,7 +8969,12 @@ class HermesCLI:
                         if not self.process_command(user_input):
                             self._should_exit = True
                             # Schedule app exit
-                            if app.is_running:
+                            if _tui_app is not None:
+                                try:
+                                    _tui_app.call_from_thread(_tui_app.exit)
+                                except Exception:
+                                    pass
+                            elif app.is_running:
                                 app.exit()
                         continue
                     
@@ -8887,7 +9030,13 @@ class HermesCLI:
 
                     # Regular chat - run agent
                     self._agent_running = True
-                    app.invalidate()  # Refresh status line
+                    if _tui_app is not None:
+                        try:
+                            _tui_app.call_from_thread(setattr, _tui_app, "agent_running", True)
+                        except Exception:
+                            pass
+                    else:
+                        app.invalidate()  # Refresh PT status line
 
                     try:
                         self.chat(user_input, images=submit_images or None)
@@ -8895,7 +9044,13 @@ class HermesCLI:
                         self._agent_running = False
                         self._spinner_text = ""
 
-                        app.invalidate()  # Refresh status line
+                        if _tui_app is not None:
+                            try:
+                                _tui_app.call_from_thread(setattr, _tui_app, "agent_running", False)
+                            except Exception:
+                                pass
+                        else:
+                            app.invalidate()  # Refresh PT status line
 
                         # Continuous voice: auto-restart recording after agent responds.
                         # Dispatch to a daemon thread so play_beep (sd.wait) and
@@ -8908,7 +9063,8 @@ class HermesCLI:
                                         self._voice_tts_done.wait(timeout=60)
                                         time.sleep(0.3)
                                     self._voice_start_recording()
-                                    app.invalidate()
+                                    if _tui_app is None:
+                                        app.invalidate()
                                 except Exception as e:
                                     _cprint(f"{_DIM}Voice auto-restart failed: {e}{_RST}")
                             threading.Thread(target=_restart_recording, daemon=True).start()
@@ -8984,15 +9140,19 @@ class HermesCLI:
             _tui_app = None
 
         try:
-            with patch_stdout():
-                # Set the custom handler on prompt_toolkit's event loop
-                try:
-                    import asyncio as _aio
-                    _loop = _aio.get_event_loop()
-                    _loop.set_exception_handler(_suppress_closed_loop_errors)
-                except Exception:
-                    pass
-                app.run()
+            if _tui_app is not None:
+                # Textual path — _hermes_app is already set above; Textual owns the loop
+                _tui_app.run()
+            else:
+                # Fallback: prompt_toolkit Application (Textual not installed)
+                with patch_stdout():
+                    try:
+                        import asyncio as _aio
+                        _loop = _aio.get_event_loop()
+                        _loop.set_exception_handler(_suppress_closed_loop_errors)
+                    except Exception:
+                        pass
+                    app.run()
         except (EOFError, KeyboardInterrupt, BrokenPipeError):
             pass
         finally:

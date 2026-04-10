@@ -47,6 +47,7 @@ def _make_flush_cli(stream_buf="", stream_box_opened=False, stream_text_ansi="")
 
     cli = HermesCLI.__new__(HermesCLI)
     cli._stream_buf = stream_buf
+    cli._stream_spec_stack = []
     cli._stream_vis_len = 0  # no partial line shown by default
     cli._stream_box_opened = stream_box_opened
     cli._stream_text_ansi = stream_text_ansi
@@ -213,23 +214,20 @@ class TestFlushStreamNonEmptyBuffer:
     @patch("cli._cprint")
     @patch("cli._RICH_RESPONSE", True)
     @patch("cli._RST", _RST_SENTINEL)
-    def test_box_border_printed_when_opened(self, mock_cprint):
+    def test_no_box_border_printed_when_opened(self, mock_cprint):
+        """No bottom border — next turn's top rule provides separation."""
         cli = _make_flush_cli(stream_buf="", stream_box_opened=True)
         cli._stream_block_buf.flush.return_value = None
         cli._stream_code_hl.flush.return_value = None
 
         with (
             patch.object(cli, "_close_reasoning_box"),
-            patch("cli._resp_border_ansi", return_value=""),
             patch("cli.shutil") as mock_shutil,
         ):
             mock_shutil.get_terminal_size.return_value = SimpleNamespace(columns=40)
             cli._flush_stream()
 
-        printed = [str(c.args[0]) for c in mock_cprint.call_args_list]
-        assert any(_RST_SENTINEL in p for p in printed), (
-            "Expected box border with _RST when _stream_box_opened is True"
-        )
+        assert not mock_cprint.called
 
     @patch("cli._cprint")
     @patch("cli._RICH_RESPONSE", True)

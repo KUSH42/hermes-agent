@@ -21,6 +21,7 @@ def _make_emit_cli(stream_buf="", show_reasoning=False):
 
     cli = HermesCLI.__new__(HermesCLI)
     cli._stream_buf = stream_buf
+    cli._stream_spec_stack = []
     cli._stream_text_ansi = ""
     cli._stream_box_opened = True
     cli._stream_started = True
@@ -55,6 +56,7 @@ def _make_stream_delta_cli(show_reasoning=True):
 
     cli = HermesCLI.__new__(HermesCLI)
     cli._stream_buf = ""
+    cli._stream_spec_stack = []
     cli._stream_text_ansi = ""
     cli._stream_box_opened = False
     cli._stream_started = False
@@ -162,26 +164,33 @@ class TestOrphanCloseTagStripping(unittest.TestCase):
 
 
 class TestWordBoundaryFlushMarkdown(unittest.TestCase):
-    """Word-boundary flush skips when buffer contains unclosed markdown
-    delimiters, preventing raw asterisks from showing."""
+    """Word-boundary flush with unclosed markdown delimiters applies
+    speculative styling instead of blocking the flush."""
 
     @patch("cli._cprint")
-    def test_unclosed_bold_prevents_flush(self, mock_cprint):
-        """Buffer with unclosed ** is NOT flushed at word boundary."""
+    @patch("cli._RICH_RESPONSE", True)
+    @patch("cli._RST", "\033[0m")
+    def test_unclosed_bold_flushes_speculatively(self, mock_cprint):
+        """Buffer with unclosed ** is flushed with speculative bold styling."""
         cli = _make_emit_cli()
-        # Pre-load buffer with unclosed bold then send a space to trigger flush check
         cli._stream_buf = "This is a **memorable text that"
         cli._emit_stream_text(" keeps going")
-        # Unclosed ** → flush should be suppressed, all content stays in buf
-        assert "**memorable" in cli._stream_buf
+        # Speculative flush should have occurred — buffer shrunk
+        total = "This is a **memorable text that keeps going"
+        assert len(cli._stream_buf) < len(total), (
+            f"Buffer should have been partially flushed but is: {cli._stream_buf!r}"
+        )
 
     @patch("cli._cprint")
-    def test_unclosed_italic_prevents_flush(self, mock_cprint):
-        """Buffer with unclosed * is NOT flushed at word boundary."""
+    @patch("cli._RICH_RESPONSE", True)
+    @patch("cli._RST", "\033[0m")
+    def test_unclosed_italic_flushes_speculatively(self, mock_cprint):
+        """Buffer with unclosed * is flushed with speculative italic styling."""
         cli = _make_emit_cli()
         cli._stream_buf = "We are in a *judgment-free zone"
         cli._emit_stream_text(" right now")
-        assert "*judgment-free" in cli._stream_buf
+        total = "We are in a *judgment-free zone right now"
+        assert len(cli._stream_buf) < len(total)
 
     @patch("cli._cprint")
     def test_closed_bold_allows_flush(self, mock_cprint):

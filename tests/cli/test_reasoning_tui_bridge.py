@@ -326,6 +326,7 @@ class TestResetStreamStateTuiBridge:
             cli._on_reasoning_tui_opened = True
             # Provide required attrs for _reset_stream_state
             cli._stream_buf = ""
+            cli._stream_spec_stack = []
             cli._stream_started = False
             cli._stream_box_opened = False
             cli._reasoning_stream_started = False
@@ -353,6 +354,7 @@ class TestResetStreamStateTuiBridge:
             cli = _make_nonstream_cli()
             cli._on_reasoning_tui_opened = False
             cli._stream_buf = ""
+            cli._stream_spec_stack = []
             cli._stream_started = False
             cli._stream_box_opened = False
             cli._reasoning_stream_started = False
@@ -406,6 +408,7 @@ class TestReasoningTuiLifecycle:
             cli = _make_nonstream_cli()
             # Also set up attrs needed for _reset_stream_state
             cli._stream_buf = ""
+            cli._stream_spec_stack = []
             cli._stream_started = False
             cli._stream_box_opened = False
             cli._reasoning_stream_started = False

@@ -54,6 +54,7 @@ def _make_emit_cli(stream_buf="", stream_text_ansi=""):
 
     cli = HermesCLI.__new__(HermesCLI)
     cli._stream_buf = stream_buf
+    cli._stream_spec_stack = []
     cli._stream_text_ansi = stream_text_ansi
     cli._stream_box_opened = True   # skip box-open branch (needs skin_engine)
     cli._stream_started = True
@@ -519,8 +520,13 @@ class TestWordBoundaryFlush:
     @patch("cli._RICH_RESPONSE", False)
     @patch("cli._RST", _RST_SENTINEL)
     def test_no_flush_for_structural_prefix(self, mock_cprint, mock_pt_print):
-        """Lines starting with structural prefixes must not word-boundary-flush."""
-        for prefix in ("#", ">", "|", "`", " ", "\t", "-", "*", "+"):
+        """Lines starting with structural prefixes must not word-boundary-flush.
+
+        For ``-`` and ``*``, only the list-marker forms (``- text`` and
+        ``* text``, with a trailing space) are structural.  ``*bold`` and
+        ``-text`` are inline and may flush normally.
+        """
+        for prefix in ("#", ">", "|", "`", " ", "\t", "- ", "* ", "+"):
             c = _make_emit_cli()
             # Pad to exceed 12-char threshold after prefix
             text = prefix + "word " * 5

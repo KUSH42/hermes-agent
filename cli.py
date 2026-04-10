@@ -669,6 +669,8 @@ try:
     from agent.rich_output import format_response as _format_response
     from agent.rich_output import apply_block_line as _apply_block_line
     from agent.rich_output import apply_inline_markdown as _apply_inline_md
+    from agent.rich_output import apply_speculative_inline_md as _apply_spec_inline_md
+    from agent.rich_output import _find_closing_delim
     _RICH_RESPONSE = True
     # display.py registers syntax/markdown callbacks when imported above.
     # Re-apply the active skin now so any skin set before display.py was
@@ -1639,6 +1641,7 @@ class HermesCLI:
 
         # Streaming display state
         self._stream_buf = ""        # Partial line buffer for line-buffered rendering
+        self._stream_spec_stack: list[tuple[str, str]] = []  # Speculative inline-md open delimiters
         self._stream_started = False  # True once first delta arrives
         self._stream_box_opened = False  # True once the response box header is printed
         self._reasoning_stream_started = False  # True once live reasoning starts streaming
@@ -2387,7 +2390,7 @@ class HermesCLI:
         # streaming; markdown skipped to avoid unclosed spans across boundaries).
         if (
             len(self._reasoning_buf) >= _PARTIAL_FLUSH_CHARS
-            and self._reasoning_buf[0] not in ("#", ">", "|", "`", " ", "\t", "-", "*", "+")
+            and self._reasoning_buf[0] not in ("#", ">", "|", "`", " ", "\t", "-", "*", "+", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9")
             and self._reasoning_buf.count("**") % 2 == 0
             and self._reasoning_buf.count("*") % 2 == 0
         ):
@@ -2604,6 +2607,38 @@ class HermesCLI:
 
         while "\n" in self._stream_buf:
             line, self._stream_buf = self._stream_buf.split("\n", 1)
+
+            # Close speculative inline-md state from prior partial flushes.
+            # Strip matching closing delimiters and emit the styled prefix
+            # before handing the remainder to the normal pipeline.
+            if getattr(self, "_stream_spec_stack", []) and _RICH_RESPONSE:
+                _spec_parts: list[str] = []
+                _spec_rem = line
+                _spec_stk = list(self._stream_spec_stack)
+                while _spec_stk and _spec_rem:
+                    _sd, _sa = _spec_stk[-1]
+                    _si = _find_closing_delim(_spec_rem, _sd)
+                    if _si == -1:
+                        # No closing — speculative was wrong or spans the
+                        # whole remaining line.  Emit under spec styles.
+                        _sc = "".join(a for _, a in _spec_stk)
+                        _spec_parts.append(f"{_sc}{_spec_rem}{_RST}{_tc}")
+                        _spec_rem = ""
+                        _spec_stk = []
+                        break
+                    _sb = _spec_rem[:_si]
+                    _spec_rem = _spec_rem[_si + len(_sd):]
+                    if _sb:
+                        _sc = "".join(a for _, a in _spec_stk)
+                        _spec_parts.append(f"{_sc}{_sb}{_RST}{_tc}")
+                    _spec_stk.pop()
+                if _spec_parts:
+                    _cprint("".join(_spec_parts))
+                self._stream_spec_stack = []
+                line = _spec_rem
+                if not line:
+                    continue
+
             if _RICH_RESPONSE:
                 out = self._stream_block_buf.process_line(line)
                 if out is None:
@@ -2626,23 +2661,31 @@ class HermesCLI:
         # Word-boundary flush: show progress on long prose lines without
         # waiting for a full \n.  Structural prefixes (headings, blockquotes,
         # tables, code, list markers) are excluded — they need the complete
-        # line for correct block-level rendering.  Inline markdown is skipped
-        # here too: bold/italic spans can straddle a flush boundary, and an
-        # unclosed span would corrupt the color state of following tokens.
-        # Skip flush entirely when the buffer contains unclosed markdown
-        # delimiters (** or *) — flushing raw delimiters produces visible
-        # asterisks that can't be retroactively rendered as bold/italic.
-        if (
-            len(self._stream_buf) >= _PARTIAL_FLUSH_CHARS
-            and self._stream_buf[0] not in ("#", ">", "|", "`", " ", "\t", "-", "*", "+")
-            and self._stream_buf.count("**") % 2 == 0
-            and self._stream_buf.count("*") % 2 == 0
-        ):
-            cut = self._stream_buf.rfind(" ")
-            if cut > 5:
-                chunk = self._stream_buf[:cut + 1]
-                self._stream_buf = self._stream_buf[cut + 1:]
-                _cprint(f"{_tc}{chunk}{_RST}" if _tc else chunk)
+        # line for correct block-level rendering.
+        #
+        # When the buffer contains unclosed inline-markdown delimiters,
+        # speculative styling is applied: the opening delimiter is stripped,
+        # its ANSI style is emitted immediately, and the open state is
+        # tracked on self._stream_spec_stack so subsequent flushes (or the
+        # eventual \n) can close it properly.
+        if len(self._stream_buf) >= _PARTIAL_FLUSH_CHARS:
+            _ch0 = self._stream_buf[0]
+            _structural = (
+                _ch0 in "#>|` \t+"
+                or (_ch0 in "-*" and len(self._stream_buf) > 1 and self._stream_buf[1] == " ")
+                or _ch0 in "0123456789"
+            )
+            if not _structural:
+                cut = self._stream_buf.rfind(" ")
+                if cut > 5:
+                    chunk = self._stream_buf[:cut + 1]
+                    self._stream_buf = self._stream_buf[cut + 1:]
+                    if _RICH_RESPONSE:
+                        styled, self._stream_spec_stack = _apply_spec_inline_md(
+                            chunk, self._stream_spec_stack, reset_suffix=_tc)
+                        _cprint(f"{_tc}{styled}{_RST}" if _tc else f"{styled}{_RST}")
+                    else:
+                        _cprint(f"{_tc}{chunk}{_RST}" if _tc else chunk)
 
     def _flush_stream(self) -> None:
         """Emit any remaining partial line from the stream buffer and close the box."""
@@ -2650,6 +2693,33 @@ class HermesCLI:
         self._close_reasoning_box()
 
         _tc = getattr(self, "_stream_text_ansi", "")
+
+        # Close any open speculative inline-md state before final flush.
+        _spec_stk = getattr(self, "_stream_spec_stack", [])
+        if _spec_stk and self._stream_buf and _RICH_RESPONSE:
+            _spec_parts: list[str] = []
+            _spec_rem = self._stream_buf
+            _spec_stk = list(_spec_stk)
+            while _spec_stk and _spec_rem:
+                _sd, _sa = _spec_stk[-1]
+                _si = _find_closing_delim(_spec_rem, _sd)
+                if _si == -1:
+                    _sc = "".join(a for _, a in _spec_stk)
+                    _spec_parts.append(f"{_sc}{_spec_rem}{_RST}{_tc}")
+                    _spec_rem = ""
+                    _spec_stk = []
+                    break
+                _sb = _spec_rem[:_si]
+                _spec_rem = _spec_rem[_si + len(_sd):]
+                if _sb:
+                    _sc = "".join(a for _, a in _spec_stk)
+                    _spec_parts.append(f"{_sc}{_sb}{_RST}{_tc}")
+                _spec_stk.pop()
+            if _spec_parts:
+                _cprint("".join(_spec_parts))
+            self._stream_spec_stack = []
+            self._stream_buf = _spec_rem
+
         if self._stream_buf:
             if _RICH_RESPONSE:
                 block_out = self._stream_block_buf.process_line(self._stream_buf)
@@ -2699,6 +2769,7 @@ class HermesCLI:
                     tui.call_from_thread(setattr, tui, "status_tok_s", tok_s)
         self._stream_start_time = None
         self._stream_buf = ""
+        self._stream_spec_stack: list[tuple[str, str]] = []
         self._stream_started = False
         self._stream_box_opened = False
         self._reasoning_stream_started = False
@@ -7517,21 +7588,32 @@ class HermesCLI:
             if self.show_reasoning and result and not _reasoning_already_shown:
                 reasoning = result.get("last_reasoning")
                 if reasoning:
-                    lines = reasoning.strip().splitlines()
-                    if getattr(self, "_rich_reasoning", False):
-                        visible = [
-                            _apply_inline_md(_apply_block_line(l, reset_suffix=_DIM), reset_suffix=_DIM)
-                            for l in lines
-                        ]
-                    elif _RICH_RESPONSE:
-                        visible = [
-                            _apply_inline_md(_apply_block_line(l, reset_suffix=_DIM), reset_suffix=_DIM)
-                            for l in lines
-                        ]
+                    tui = _hermes_app
+                    if tui is not None:
+                        # Route post-response reasoning to the TUI
+                        # ReasoningPanel (above the response text) instead
+                        # of _cprint (which appends to the response RichLog).
+                        tui.call_from_thread(tui.open_reasoning, "Reasoning")
+                        tui.call_from_thread(tui.append_reasoning, reasoning)
+                        # Mark so _reset_stream_state closes the panel
+                        # on the next turn.
+                        self._on_reasoning_tui_opened = True
                     else:
-                        visible = lines
-                    rendered_reasoning = "\n".join(_dim_lines("\n".join(visible)))
-                    _cprint(f"\n{rendered_reasoning}")
+                        lines = reasoning.strip().splitlines()
+                        if getattr(self, "_rich_reasoning", False):
+                            visible = [
+                                _apply_inline_md(_apply_block_line(l, reset_suffix=_DIM), reset_suffix=_DIM)
+                                for l in lines
+                            ]
+                        elif _RICH_RESPONSE:
+                            visible = [
+                                _apply_inline_md(_apply_block_line(l, reset_suffix=_DIM), reset_suffix=_DIM)
+                                for l in lines
+                            ]
+                        else:
+                            visible = lines
+                        rendered_reasoning = "\n".join(_dim_lines("\n".join(visible)))
+                        _cprint(f"\n{rendered_reasoning}")
 
             if response and not response_previewed:
                 # Use skin engine for label/color with fallback

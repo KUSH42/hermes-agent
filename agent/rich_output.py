@@ -1137,6 +1137,188 @@ def apply_inline_markdown(line: str, reset_suffix: str = "", ref_map: "dict[str,
 
 
 # ---------------------------------------------------------------------------
+# Speculative inline markdown for streaming partial flushes
+# ---------------------------------------------------------------------------
+# When streaming LLM output token-by-token, partial lines may contain opening
+# markdown delimiters (*, **, ***, ~~, `) without corresponding closers.
+# Instead of blocking the display until the closer arrives, these functions
+# apply *speculative* styling: the delimiter is stripped, its ANSI style is
+# emitted immediately, and a stack of open speculative delimiters is returned
+# so the caller can close them when the closer eventually arrives.
+
+# Exact-match patterns for finding closing delimiters that aren't part of a
+# longer delimiter sequence (e.g. find standalone * but not inside **).
+_SPEC_CLOSE_RE: "dict[str, re.Pattern[str]]" = {
+    "*":   re.compile(r'(?<!\*)\*(?!\*)'),
+    "**":  re.compile(r'(?<!\*)\*{2}(?!\*)'),
+    "***": re.compile(r'(?<!\*)\*{3}(?!\*)'),
+    "~~":  re.compile(r'(?<!~)~~(?!~)'),
+    "`":   re.compile(r'(?<!`)`(?!`)'),
+}
+
+
+def _find_closing_delim(text: str, delim: str) -> int:
+    """Return position of a closing *delim* not part of a longer run, or -1."""
+    pat = _SPEC_CLOSE_RE.get(delim)
+    if pat:
+        m = pat.search(text)
+        return m.start() if m else -1
+    return text.find(delim)
+
+
+def _find_unclosed_md_openers(text: str) -> "list[tuple[int, str, str]]":
+    """Find unclosed inline markdown openers in *text* (which has no ANSI codes).
+
+    First removes matched delimiter pairs (using the same regexes as
+    :func:`apply_inline_markdown`), then scans for remaining delimiter
+    characters.  Positions refer to the *original* text (pairs are replaced
+    with ``\\x01`` placeholders of equal length to preserve indexing).
+
+    Returns a list of ``(position, delimiter_str, ansi_code)`` sorted by
+    position, or an empty list if everything is balanced.
+    """
+    # Replace matched pairs with \x01 placeholders (same length → positions preserved)
+    _repl = lambda m: "\x01" * len(m.group(0))  # noqa: E731
+    work = _MD_CODE_RE.sub(_repl, text)
+    # Use guarded bold+italic / bold regexes: (?=[^*]) lookahead prevents
+    # runs like ***** from being internally matched as **(*)**.
+    work = re.sub(r"\*{3}(?=[^*])(.+?)\*{3}", _repl, work)
+    work = re.sub(r"\*\*(?=[^*])(.+?)\*\*", _repl, work)
+    # Protect remaining ** runs from the italic regex, which would
+    # otherwise treat one star from a ** as a delimiter.  \x02 is
+    # restored to * after italic pair removal.
+    work = work.replace("**", "\x02\x02")
+    work = _MD_ITALIC_STAR_RE.sub(_repl, work)
+    work = work.replace("\x02", "*")
+    work = _MD_STRIKE_RE.sub(_repl, work)
+
+    openers: "list[tuple[int, str, str]]" = []
+    i = 0
+    while i < len(work):
+        ch = work[i]
+        if ch == "\x01":
+            i += 1
+            continue
+        if ch == "*":
+            # Count consecutive unmatched stars
+            j = i
+            while j < len(work) and work[j] == "*":
+                j += 1
+            n = j - i
+            # Decompose run: *** then ** then *
+            pos = i
+            while n >= 3:
+                openers.append((pos, "***", _MD_BOLD_ITALIC_ANSI))
+                pos += 3
+                n -= 3
+            if n == 2:
+                openers.append((pos, "**", _MD_BOLD_ANSI))
+            elif n == 1:
+                openers.append((pos, "*", _MD_ITALIC_ANSI))
+            i = j
+        elif ch == "~" and i + 1 < len(work) and work[i + 1] == "~":
+            openers.append((i, "~~", _md_ansi("strike")))
+            i += 2
+        elif ch == "`":
+            openers.append((i, "`", _md_ansi("code_span")))
+            i += 1
+        else:
+            i += 1
+
+    return openers
+
+
+def apply_speculative_inline_md(
+    text: str,
+    open_stack: "list[tuple[str, str]]",
+    reset_suffix: str = "",
+) -> "tuple[str, list[tuple[str, str]]]":
+    """Apply inline markdown speculatively to a partial streaming chunk.
+
+    Handles three phases:
+
+    1. **Close** previously opened speculative delimiters (innermost first).
+    2. **Process** complete delimiter pairs via :func:`apply_inline_markdown`.
+    3. **Open** new speculative styling for any remaining unclosed openers.
+
+    Each speculative opener is stripped from the visible output and replaced
+    with its ANSI style code; a stack of ``(delimiter, ansi_code)`` is
+    returned so the caller can close them on later chunks or newlines.
+
+    Supports arbitrary nesting depth (e.g. ``***bold-italic **bold *italic``).
+
+    Args:
+        text: Raw text chunk (must not contain ANSI escape codes).
+        open_stack: Stack of ``(delimiter, ansi_code)`` from prior partial
+            flushes, outermost first.
+        reset_suffix: ANSI suffix to restore after style resets (typically
+            the response text colour).
+
+    Returns:
+        ``(styled_text, new_open_stack)`` where *new_open_stack* replaces
+        *open_stack* for the next flush or newline processing.
+    """
+    rst = _MD_RST_ANSI + reset_suffix
+    parts: "list[str]" = []
+    new_stack = list(open_stack)
+    remaining = text
+
+    # ── Phase 1: close pending speculative delimiters (innermost first) ──
+    while new_stack and remaining:
+        inner_delim, _inner_ansi = new_stack[-1]
+        idx = _find_closing_delim(remaining, inner_delim)
+        if idx == -1:
+            break  # no closing found in this chunk
+        # Text before the closer is still under all active speculative styles
+        before = remaining[:idx]
+        remaining = remaining[idx + len(inner_delim):]
+        if before:
+            combined = "".join(a for _, a in new_stack)
+            parts.append(f"{combined}{before}{rst}")
+        new_stack.pop()
+
+    # If everything was consumed by closings, we're done
+    if not remaining:
+        return ("".join(parts), new_stack)
+
+    # If specs are still open (no closing found), entire remaining text
+    # stays under those speculative styles
+    if new_stack:
+        combined = "".join(a for _, a in new_stack)
+        # Still process inner complete pairs (e.g. *italic* inside spec bold)
+        inner = apply_inline_markdown(remaining, reset_suffix=combined + reset_suffix)
+        parts.append(f"{combined}{inner}" if inner != remaining else f"{combined}{remaining}")
+        return ("".join(parts), new_stack)
+
+    # ── Phase 2+3: no speculative state — handle remaining text ──
+    unclosed = _find_unclosed_md_openers(remaining)
+    if not unclosed:
+        # All delimiters balanced → full inline-md is safe
+        parts.append(apply_inline_markdown(remaining, reset_suffix=reset_suffix))
+        return ("".join(parts), [])
+
+    # Build output: segments between unclosed openers get normal inline-md;
+    # each opener pushes onto the stack and subsequent text gains its style.
+    last_end = 0
+    for pos, delim, ansi in unclosed:
+        seg = remaining[last_end:pos]
+        if seg:
+            combined_rs = ("".join(a for _, a in new_stack) + reset_suffix) if new_stack else reset_suffix
+            parts.append(apply_inline_markdown(seg, reset_suffix=combined_rs))
+        new_stack.append((delim, ansi))
+        last_end = pos + len(delim)
+
+    # Trailing text after the last opener
+    tail = remaining[last_end:]
+    if tail:
+        combined = "".join(a for _, a in new_stack)
+        inner = apply_inline_markdown(tail, reset_suffix=combined + reset_suffix)
+        parts.append(f"{combined}{inner}" if inner != tail else f"{combined}{tail}")
+
+    return ("".join(parts), new_stack)
+
+
+# ---------------------------------------------------------------------------
 # Public: block-level markdown → ANSI rendering
 # ---------------------------------------------------------------------------
 

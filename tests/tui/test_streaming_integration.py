@@ -4,11 +4,11 @@ Exercises the end-to-end flow: _cprint → output queue → LiveLineWidget →
 RichLog, as well as reasoning panel lifecycle and flush semantics.
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from hermes_cli.tui.app import HermesApp
+from hermes_cli.tui.app import HermesApp, _CPYTHON_FAST_PATH
 from hermes_cli.tui.widgets import LiveLineWidget, MessagePanel, OutputPanel, ReasoningPanel
 
 
@@ -496,6 +496,63 @@ async def test_interleaved_output_and_flush():
         msg = panel.current_message
         assert len(msg.response_log.lines) >= 3  # First, partial, Second
         assert panel.live_line._buf == ""
+
+
+# ---------------------------------------------------------------------------
+# Streaming fix: incremental rendering & thread-safe queue access
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_chunks_render_incrementally_on_new_message():
+    """Chunks for a newly auto-created MessagePanel appear incrementally.
+
+    Regression test: without yielding to the event loop between chunks,
+    RichLog writes go to _deferred_renders (size=0 after mount) and only
+    appear once the queue is fully drained.
+    """
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+
+        panel = app.query_one(OutputPanel)
+        # Do NOT pre-create a MessagePanel — let append() auto-create it
+        assert panel.current_message is None
+
+        # Send first chunk — triggers new_message() + mount
+        app.write_output("First line\n")
+        await _pause(pilot)
+
+        msg = panel.current_message
+        assert msg is not None
+        first_count = len(msg.response_log.lines)
+        assert first_count >= 1, "First chunk should render before second arrives"
+
+        # Send second chunk — should also render (not pile up deferred)
+        app.write_output("Second line\n")
+        await _pause(pilot)
+
+        assert len(msg.response_log.lines) >= first_count + 1
+
+
+def test_cpython_fast_path_disabled():
+    """call_soon_threadsafe is always used for cross-thread queue access.
+
+    asyncio.Queue is not thread-safe; put_nowait from a non-event-loop
+    thread won't wake the selector, causing batched delivery on timer ticks.
+    """
+    assert _CPYTHON_FAST_PATH is False
+
+
+@pytest.mark.asyncio
+async def test_write_output_uses_call_soon_threadsafe():
+    """write_output routes through call_soon_threadsafe, not raw put_nowait."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        with patch.object(app._event_loop, "call_soon_threadsafe", wraps=app._event_loop.call_soon_threadsafe) as spy:
+            app.write_output("test\n")
+            assert spy.call_count >= 1
 
 
 # ---------------------------------------------------------------------------

@@ -54,9 +54,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# CPython fast-path: asyncio.Queue.put_nowait is GIL-atomic on CPython
-# because deque.append is atomic. On other runtimes, use call_soon_threadsafe.
-_CPYTHON_FAST_PATH = platform.python_implementation() == "CPython"
+# Always use call_soon_threadsafe for cross-thread queue access.
+# asyncio.Queue is not thread-safe: put_nowait from a non-event-loop thread
+# won't wake the selector, so the consumer only discovers items on the next
+# timer tick rather than immediately.
+_CPYTHON_FAST_PATH = False
 
 # CSS file path — relative to this module
 _CSS_PATH = Path(__file__).parent / "hermes.tcss"
@@ -163,6 +165,11 @@ class HermesApp(App):
         Runs on the Textual event loop. ``@work`` with no ``thread=True``
         means this is an async coroutine worker — correct for awaiting
         the asyncio.Queue.
+
+        The ``await asyncio.sleep(0)`` after each chunk yields back to the
+        event loop so that layout/refresh callbacks (e.g. processing deferred
+        RichLog renders after a new MessagePanel mount) can run between chunks
+        rather than piling up until the queue is fully drained.
         """
         while True:
             chunk = await self._output_queue.get()
@@ -179,15 +186,15 @@ class HermesApp(App):
                 self.call_after_refresh(panel.scroll_end, animate=False)
             except NoMatches:
                 pass
+            await asyncio.sleep(0)
 
     # --- Thread-safe output writing ---
 
     def write_output(self, text: str) -> None:
         """Thread-safe: enqueue text for the output consumer.
 
-        Uses ``call_soon_threadsafe`` as the safe default. On CPython,
-        ``put_nowait`` directly is also safe (GIL-atomic deque.append),
-        but we use the safe path by default.
+        Uses ``call_soon_threadsafe`` to ensure the event loop wakes
+        immediately when a chunk is enqueued from the agent thread.
         """
         if self._event_loop is None:
             return

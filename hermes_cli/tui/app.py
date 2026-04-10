@@ -45,6 +45,7 @@ from hermes_cli.tui.widgets import (
     StatusBar,
     SudoWidget,
     TitledRule,
+    UserEchoPanel,
     VoiceStatusBar,
     _safe_widget_call,
 )
@@ -130,7 +131,7 @@ class HermesApp(App):
             yield SecretWidget(id="secret")
         yield HintBar(id="hint-bar")
         yield ImageBar(id="image-bar")
-        yield TitledRule(title="⚕ Hermes", id="input-rule")
+        yield TitledRule(id="input-rule")
 
         if self._use_hermes_input:
             from hermes_cli.tui.input_widget import HermesInput as _HI
@@ -284,6 +285,21 @@ class HermesApp(App):
             if state is not None:
                 parts.append(f" — waiting for {label} ({state.remaining}s)")
         return " ".join(parts) if parts else ""
+
+    # --- User message echo ---
+
+    def echo_user_message(self, text: str, images: int = 0) -> None:
+        """Mount a UserEchoPanel showing the user's submitted message.
+
+        Called from the agent thread via ``call_from_thread`` before
+        ``agent_running`` is set to True (which creates the new MessagePanel).
+        """
+        try:
+            panel = self.query_one(OutputPanel)
+            panel.mount(UserEchoPanel(text, images=images), before=panel.live_line)
+            self.call_after_refresh(panel.scroll_end, animate=False)
+        except NoMatches:
+            pass
 
     # --- Reactive watchers ---
 

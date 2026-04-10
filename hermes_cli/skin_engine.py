@@ -596,6 +596,8 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "response_border": "#FFD700",
             "session_label": "#DAA520",
             "session_border": "#8B8682",
+            "rule_start": "#555555",
+            "rule_end": "#2A2A2A",
         },
         "spinner": {
             "style": "dots",
@@ -637,6 +639,8 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "response_border": "#C7A96B",
             "session_label": "#C7A96B",
             "session_border": "#6E584B",
+            "rule_start": "#6B1717",
+            "rule_end": "#2A1010",
         },
         "spinner": {
             "style": "arrows",
@@ -711,6 +715,8 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "response_border": "#aaaaaa",
             "session_label": "#888888",
             "session_border": "#555555",
+            "rule_start": "#444444",
+            "rule_end": "#222222",
         },
         "spinner": {"style": "none"},
         "branding": {
@@ -749,6 +755,8 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "response_border": "#7eb8f6",
             "session_label": "#7eb8f6",
             "session_border": "#4b5563",
+            "rule_start": "#3a5a8a",
+            "rule_end": "#1a2a40",
         },
         "spinner": {"style": "pulse"},
         "branding": {
@@ -787,6 +795,8 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "response_border": "#5DB8F5",
             "session_label": "#A9DFFF",
             "session_border": "#496884",
+            "rule_start": "#1a4a7a",
+            "rule_end": "#0d2540",
         },
         "spinner": {
             "style": "bounce",
@@ -861,6 +871,8 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "response_border": "#B7B7B7",
             "session_label": "#919191",
             "session_border": "#656565",
+            "rule_start": "#4A4A4A",
+            "rule_end": "#222222",
         },
         "spinner": {
             "style": "grow",
@@ -934,6 +946,8 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "response_border": "#F29C38",
             "session_label": "#FFD39A",
             "session_border": "#6C4724",
+            "rule_start": "#7A3511",
+            "rule_end": "#2A1508",
         },
         "spinner": {
             "waiting_faces": ["(✦)", "(▲)", "(◇)", "(<>)", "(🔥)"],

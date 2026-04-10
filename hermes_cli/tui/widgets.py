@@ -35,6 +35,24 @@ if TYPE_CHECKING:
 # Helper
 # ---------------------------------------------------------------------------
 
+def _skin_color(key: str, fallback: str) -> str:
+    """Read a color from the active skin, falling back to *fallback*."""
+    try:
+        from hermes_cli.skin_engine import get_active_skin
+        return get_active_skin().get_color(key, fallback)
+    except Exception:
+        return fallback
+
+
+def _skin_branding(key: str, fallback: str) -> str:
+    """Read a branding string from the active skin."""
+    try:
+        from hermes_cli.skin_engine import get_active_skin
+        return get_active_skin().get_branding(key, fallback)
+    except Exception:
+        return fallback
+
+
 def _safe_widget_call(app: HermesApp, widget_type: type, method: str, *args: Any) -> None:
     """Query a widget and call a method on it, swallowing NoMatches during teardown.
 
@@ -116,7 +134,7 @@ class MessagePanel(Widget):
     def __init__(self, **kwargs: Any) -> None:
         MessagePanel._msg_counter += 1
         self._msg_id = MessagePanel._msg_counter
-        self._response_rule = TitledRule(title="⚕ Hermes", id=f"response-rule-{self._msg_id}")
+        self._response_rule = TitledRule(id=f"response-rule-{self._msg_id}")
         self._reasoning_panel = ReasoningPanel(id=f"reasoning-{self._msg_id}")
         self._response_log = RichLog(
             markup=False, highlight=False, wrap=True,
@@ -185,6 +203,58 @@ class OutputPanel(ScrollableContainer):
             if rl._deferred_renders:
                 self.call_after_refresh(msg.refresh, layout=True)
             live._buf = ""
+
+
+# ---------------------------------------------------------------------------
+# User echo panel
+# ---------------------------------------------------------------------------
+
+class UserEchoPanel(Widget):
+    """Displays the user's submitted message framed by short fade rulers.
+
+    Mounted into OutputPanel when the user sends a message, before the new
+    MessagePanel is created for the response.
+    """
+
+    DEFAULT_CSS = """
+    UserEchoPanel {
+        height: auto;
+        margin: 1 0 0 0;
+        padding: 0 1;
+    }
+    """
+
+    _ECHO_RULE_WIDTH = 30
+
+    def __init__(self, message: str, images: int = 0, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._message = message
+        self._images = images
+
+    def compose(self) -> ComposeResult:
+        yield PlainRule(max_width=self._ECHO_RULE_WIDTH, id="echo-rule-top")
+        yield Static(self._format_message(), id="echo-text")
+        if self._images:
+            yield Static(self._format_images(), id="echo-images")
+        yield PlainRule(max_width=self._ECHO_RULE_WIDTH, id="echo-rule-bottom")
+
+    def _format_message(self) -> Text:
+        bullet_color = _skin_color("ui_accent", "#FFBF00")
+        t = Text()
+        t.append("● ", style=f"bold {bullet_color}")
+        msg = self._message
+        if "\n" in msg:
+            first_line = msg.split("\n")[0]
+            line_count = msg.count("\n") + 1
+            t.append(first_line, style="bold")
+            t.append(f" (+{line_count - 1} lines)", style="dim")
+        else:
+            t.append(msg, style="bold")
+        return t
+
+    def _format_images(self) -> Text:
+        n = self._images
+        return Text(f"  📎 {n} image{'s' if n > 1 else ''} attached", style="dim")
 
 
 # ---------------------------------------------------------------------------
@@ -305,19 +375,19 @@ class TitledRule(Widget):
 
     def __init__(
         self,
-        title: str = "Hermes",
-        fade_start: str = "#555555",
-        fade_end: str = "#2A2A2A",
-        accent: str = "#FFD700",
-        title_color: str = "#B8860B",
+        title: str | None = None,
+        fade_start: str | None = None,
+        fade_end: str | None = None,
+        accent: str | None = None,
+        title_color: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
-        self.title_text = title
-        self._fade_start = fade_start
-        self._fade_end = fade_end
-        self._accent = accent
-        self._title_color = title_color
+        self.title_text = title or _skin_branding("response_label", "⚕ Hermes")
+        self._fade_start = fade_start or _skin_color("rule_start", "#555555")
+        self._fade_end = fade_end or _skin_color("rule_end", "#2A2A2A")
+        self._accent = accent or _skin_color("banner_title", "#FFD700")
+        self._title_color = title_color or _skin_color("banner_dim", "#B8860B")
 
     def render(self) -> RenderResult:
         w = self.size.width
@@ -352,13 +422,23 @@ class PlainRule(Widget):
     }
     """
 
-    def __init__(self, fade_start: str = "#555555", fade_end: str = "#2A2A2A", **kwargs: Any) -> None:
+    def __init__(
+        self,
+        fade_start: str | None = None,
+        fade_end: str | None = None,
+        max_width: int = 0,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
-        self._fade_start = fade_start
-        self._fade_end = fade_end
+        self._fade_start = fade_start or _skin_color("rule_start", "#555555")
+        self._fade_end = fade_end or _skin_color("rule_end", "#2A2A2A")
+        self._max_width = max_width
 
     def render(self) -> RenderResult:
-        return _fade_rule(self.size.width, self._fade_start, self._fade_end)
+        w = self.size.width
+        if self._max_width:
+            w = min(w, self._max_width)
+        return _fade_rule(w, self._fade_start, self._fade_end)
 
 
 # ---------------------------------------------------------------------------

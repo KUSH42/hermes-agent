@@ -1134,6 +1134,19 @@ def _accent_hex() -> str:
         return "#FFBF00"
 
 
+def _user_fade_bar(width: int = 30) -> _RichText:
+    """Build a short gradient ruler for user message echo (matches PlainRule style)."""
+    from rich.color import Color, blend_rgb
+    start = Color.parse("#555555").get_truecolor()
+    end = Color.parse("#2A2A2A").get_truecolor()
+    t = _RichText()
+    for i in range(width):
+        factor = i / max(width - 1, 1)
+        c = blend_rgb(start, end, factor)
+        t.append("─", style=f"rgb({c.red},{c.green},{c.blue})")
+    return t
+
+
 def _resp_border_ansi() -> str:
     """Return ANSI bold truecolor escape for the response box border from active skin."""
     try:
@@ -2529,27 +2542,30 @@ class HermesCLI:
             if not text:
                 return
             self._stream_box_opened = True
-            try:
-                from hermes_cli.skin_engine import get_active_skin
-                _skin = get_active_skin()
-                label = _skin.get_branding("response_label", "⚕ Hermes")
-                _text_hex = _skin.get_color("banner_text", "#FFF8DC")
-            except Exception:
-                label = "⚕ Hermes"
-                _text_hex = "#FFF8DC"
-            # Build a true-color ANSI escape for the response text color
-            # so streamed content matches the Rich Panel appearance.
-            try:
-                _r = int(_text_hex[1:3], 16)
-                _g = int(_text_hex[3:5], 16)
-                _b = int(_text_hex[5:7], 16)
-                self._stream_text_ansi = f"\033[38;2;{_r};{_g};{_b}m"
-            except (ValueError, IndexError):
-                self._stream_text_ansi = ""
-            w = shutil.get_terminal_size().columns
-            left_pad = 2
-            right = max(0, w - left_pad - len(f" {label} "))
-            _cprint(f"\n{_DIM}{'─' * left_pad}{_RST}{_resp_border_ansi()} {label} {_RST}{_DIM}{'─' * right}{_RST}")
+            # In TUI mode the TitledRule widget handles the header —
+            # only print the ANSI header in PT mode.
+            if _hermes_app is None:
+                try:
+                    from hermes_cli.skin_engine import get_active_skin
+                    _skin = get_active_skin()
+                    label = _skin.get_branding("response_label", "⚕ Hermes")
+                    _text_hex = _skin.get_color("banner_text", "#FFF8DC")
+                except Exception:
+                    label = "⚕ Hermes"
+                    _text_hex = "#FFF8DC"
+                # Build a true-color ANSI escape for the response text color
+                # so streamed content matches the Rich Panel appearance.
+                try:
+                    _r = int(_text_hex[1:3], 16)
+                    _g = int(_text_hex[3:5], 16)
+                    _b = int(_text_hex[5:7], 16)
+                    self._stream_text_ansi = f"\033[38;2;{_r};{_g};{_b}m"
+                except (ValueError, IndexError):
+                    self._stream_text_ansi = ""
+                w = shutil.get_terminal_size().columns
+                left_pad = 2
+                right = max(0, w - left_pad - len(f" {label} "))
+                _cprint(f"\n{_DIM}{'─' * left_pad}{_RST}{_resp_border_ansi()} {label} {_RST}{_DIM}{'─' * right}{_RST}")
 
         # Emit complete lines, keep partial remainder in buffer
         _tc = getattr(self, "_stream_text_ansi", "")
@@ -7204,8 +7220,11 @@ class HermesCLI:
         # Add user message to history
         self.conversation_history.append({"role": "user", "content": message})
 
-        ChatConsole().print(f"[{_accent_hex()}]{'─' * 40}[/]")
-        print(flush=True)
+        # PT mode: print a separator bar between user echo and response.
+        # TUI mode: the UserEchoPanel + TitledRule widgets provide separation.
+        if _hermes_app is None:
+            ChatConsole().print(f"[{_accent_hex()}]{'─' * 40}[/]")
+            print(flush=True)
         
         try:
             # Run the conversation with interrupt monitoring
@@ -9086,6 +9105,8 @@ class HermesCLI:
                     import re as _re
                     _paste_ref_re = _re.compile(r'\[Pasted text #\d+: \d+ lines \u2192 (.+?)\]')
                     paste_refs = list(_paste_ref_re.finditer(user_input)) if isinstance(user_input, str) else []
+                    # Expand paste references back to full content
+                    _display_text = user_input
                     if paste_refs:
                         def _expand_ref(m):
                             p = Path(m.group(1))
@@ -9093,44 +9114,43 @@ class HermesCLI:
                         expanded = _paste_ref_re.sub(_expand_ref, user_input)
                         total_lines = expanded.count('\n') + 1
                         n_pastes = len(paste_refs)
-                        _user_bar = f"[{_accent_hex()}]{'─' * 40}[/]"
-                        print()
-                        ChatConsole().print(_user_bar)
-                        # Show any surrounding user text alongside the paste summary
+                        # Build a display string for the paste summary
                         split_parts = _paste_ref_re.split(user_input)
                         visible_user_text = " ".join(
                             split_parts[i].strip() for i in range(0, len(split_parts), 2) if split_parts[i].strip()
                         )
                         if visible_user_text:
-                            ChatConsole().print(
-                                f"[bold {_accent_hex()}]\u25cf[/] [bold]{_escape(visible_user_text)}[/] "
-                                f"[dim]({n_pastes} pasted block{'s' if n_pastes > 1 else ''}, {total_lines} lines total)[/]"
-                            )
+                            _display_text = f"{visible_user_text} ({n_pastes} pasted block{'s' if n_pastes > 1 else ''}, {total_lines} lines total)"
                         else:
-                            ChatConsole().print(
-                                f"[bold {_accent_hex()}]\u25cf[/] [bold]{_escape(f'[Pasted text: {total_lines} lines]')}[/]"
-                            )
+                            _display_text = f"[Pasted text: {total_lines} lines]"
                         user_input = expanded
+
+                    # Echo user message
+                    _n_images = len(submit_images) if submit_images else 0
+                    if _tui_app is not None:
+                        try:
+                            _tui_app.call_from_thread(
+                                _tui_app.echo_user_message, _display_text, _n_images
+                            )
+                        except Exception:
+                            pass
                     else:
-                        _user_bar = f"[{_accent_hex()}]{'─' * 40}[/]"
-                        if '\n' in user_input:
-                            first_line = user_input.split('\n')[0]
-                            line_count = user_input.count('\n') + 1
-                            print()
-                            ChatConsole().print(_user_bar)
-                            ChatConsole().print(
+                        _ubar = _user_fade_bar()
+                        _cc = ChatConsole()
+                        print()
+                        _cc.print(_ubar)
+                        if '\n' in _display_text:
+                            first_line = _display_text.split('\n')[0]
+                            line_count = _display_text.count('\n') + 1
+                            _cc.print(
                                 f"[bold {_accent_hex()}]●[/] [bold]{_escape(first_line)}[/] "
                                 f"[dim](+{line_count - 1} lines)[/]"
                             )
                         else:
-                            print()
-                            ChatConsole().print(_user_bar)
-                            ChatConsole().print(f"[bold {_accent_hex()}]●[/] [bold]{_escape(user_input)}[/]")
-                    
-                    # Show image attachment count
-                    if submit_images:
-                        n = len(submit_images)
-                        _cprint(f"  {_DIM}📎 {n} image{'s' if n > 1 else ''} attached{_RST}")
+                            _cc.print(f"[bold {_accent_hex()}]●[/] [bold]{_escape(_display_text)}[/]")
+                        _cc.print(_ubar)
+                        if _n_images:
+                            _cprint(f"  {_DIM}📎 {_n_images} image{'s' if _n_images > 1 else ''} attached{_RST}")
 
                     # Regular chat - run agent
                     self._agent_running = True

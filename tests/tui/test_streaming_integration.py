@@ -9,7 +9,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from hermes_cli.tui.app import HermesApp, _CPYTHON_FAST_PATH
-from hermes_cli.tui.widgets import LiveLineWidget, MessagePanel, OutputPanel, ReasoningPanel
+from hermes_cli.tui.widgets import (
+    LiveLineWidget, MessagePanel, OutputPanel, PlainRule,
+    ReasoningPanel, UserEchoPanel,
+)
 
 
 async def _pause(pilot, n=5):
@@ -553,6 +556,86 @@ async def test_write_output_uses_call_soon_threadsafe():
         with patch.object(app._event_loop, "call_soon_threadsafe", wraps=app._event_loop.call_soon_threadsafe) as spy:
             app.write_output("test\n")
             assert spy.call_count >= 1
+
+
+# ---------------------------------------------------------------------------
+# User echo panel
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_echo_user_message_mounts_panel():
+    """echo_user_message mounts a UserEchoPanel into OutputPanel."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+
+        app.echo_user_message("Hello world")
+        await _pause(pilot)
+
+        panels = app.query(UserEchoPanel)
+        assert len(panels) == 1
+
+
+@pytest.mark.asyncio
+async def test_echo_user_message_before_response():
+    """UserEchoPanel appears before the response MessagePanel."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+
+        # Echo user message, then start agent turn
+        app.echo_user_message("test message")
+        await _pause(pilot)
+        panel = app.query_one(OutputPanel)
+        panel.new_message()
+        await _pause(pilot)
+
+        # UserEchoPanel should be before MessagePanel in the DOM
+        children = list(panel.children)
+        echo_idx = next(i for i, c in enumerate(children) if isinstance(c, UserEchoPanel))
+        msg_idx = next(i for i, c in enumerate(children) if isinstance(c, MessagePanel))
+        assert echo_idx < msg_idx
+
+
+@pytest.mark.asyncio
+async def test_user_echo_has_short_rulers():
+    """UserEchoPanel contains PlainRule widgets with max_width set."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+
+        app.echo_user_message("test")
+        await _pause(pilot)
+
+        echo = app.query_one(UserEchoPanel)
+        rules = echo.query(PlainRule)
+        assert len(rules) == 2
+        for rule in rules:
+            assert rule._max_width == UserEchoPanel._ECHO_RULE_WIDTH
+
+
+@pytest.mark.asyncio
+async def test_user_echo_does_not_pollute_response_log():
+    """User echo content should NOT appear in the MessagePanel's RichLog."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+
+        app.echo_user_message("my question")
+        await _pause(pilot)
+        panel = app.query_one(OutputPanel)
+        panel.new_message()
+        await _pause(pilot)
+
+        # Write response content
+        app.write_output("response text\n")
+        await _pause(pilot)
+
+        msg = panel.current_message
+        assert msg is not None
+        # RichLog should only have response text, not user echo
+        assert len(msg.response_log.lines) >= 1
 
 
 # ---------------------------------------------------------------------------

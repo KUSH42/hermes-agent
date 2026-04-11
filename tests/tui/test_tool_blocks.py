@@ -86,6 +86,27 @@ async def test_copy_content_returns_plain_text():
     assert block.copy_content() == "first line\nsecond line\nthird line\nfourth line"
 
 
+@pytest.mark.asyncio
+async def test_toggle_is_noop_on_small_block():
+    """toggle() is a no-op for blocks with ≤ COLLAPSE_THRESHOLD lines."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        lines = [f"L{i}" for i in range(COLLAPSE_THRESHOLD)]
+        plain = [f"P{i}" for i in range(COLLAPSE_THRESHOLD)]
+        app.mount_tool_block("diff", lines, plain)
+        await pilot.pause()
+
+        block = app.query_one(ToolBlock)
+        # Small block auto-expands — body is expanded, no affordances
+        assert block._body.has_class("expanded")
+        assert not block._header._has_affordances
+
+        # toggle() should be a no-op
+        block.toggle()
+        await pilot.pause()
+        assert block._body.has_class("expanded")  # still expanded
+
+
 # ---------------------------------------------------------------------------
 # Step 3 — mount_tool_block
 # ---------------------------------------------------------------------------
@@ -360,8 +381,80 @@ async def test_browse_escape_exits():
 
 
 @pytest.mark.asyncio
+async def test_browse_a_expands_all():
+    """'a' key in browse mode expands all blocks that have affordances."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        for _ in range(3):
+            lines = [f"L{i}" for i in range(5)]
+            plain = [f"P{i}" for i in range(5)]
+            app.mount_tool_block("diff", lines, plain)
+        await pilot.pause()
+
+        app.browse_mode = True
+        await pilot.pause()
+
+        blocks = list(app.query(ToolBlock))
+        assert all(not b._body.has_class("expanded") for b in blocks)
+
+        await pilot.press("a")
+        await pilot.pause()
+        assert all(b._body.has_class("expanded") for b in blocks)
+        assert app.browse_mode is True  # stays in browse mode
+
+
+@pytest.mark.asyncio
+async def test_browse_A_collapses_all():
+    """'A' (shift+a) key in browse mode collapses all expanded blocks."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        for _ in range(3):
+            lines = [f"L{i}" for i in range(5)]
+            plain = [f"P{i}" for i in range(5)]
+            app.mount_tool_block("diff", lines, plain)
+        await pilot.pause()
+
+        app.browse_mode = True
+        await pilot.pause()
+
+        # First expand all
+        blocks = list(app.query(ToolBlock))
+        for b in blocks:
+            b.toggle()
+        await pilot.pause()
+        assert all(b._body.has_class("expanded") for b in blocks)
+
+        await pilot.press("A")
+        await pilot.pause()
+        assert all(not b._body.has_class("expanded") for b in blocks)
+        assert app.browse_mode is True  # stays in browse mode
+
+
+@pytest.mark.asyncio
+async def test_browse_uses_increments_on_entry():
+    """_browse_uses increments each time browse mode is entered."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        lines = [f"L{i}" for i in range(5)]
+        plain = [f"P{i}" for i in range(5)]
+        app.mount_tool_block("diff", lines, plain)
+        await pilot.pause()
+
+        assert app._browse_uses == 0
+        app.browse_mode = True
+        await pilot.pause()
+        assert app._browse_uses == 1
+
+        app.browse_mode = False
+        await pilot.pause()
+        app.browse_mode = True
+        await pilot.pause()
+        assert app._browse_uses == 2
+
+
+@pytest.mark.asyncio
 async def test_browse_printable_key_exits_and_inserts():
-    """A printable key in browse mode exits browse mode."""
+    """A printable key (not a/A/c/enter) in browse mode exits browse mode."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         lines = [f"L{i}" for i in range(5)]
@@ -373,7 +466,7 @@ async def test_browse_printable_key_exits_and_inserts():
         await pilot.pause()
         assert app.browse_mode is True
 
-        await pilot.press("a")
+        await pilot.press("q")
         await pilot.pause()
         assert app.browse_mode is False
 
@@ -404,6 +497,7 @@ async def test_statusbar_browse_full_width():
         assert "1/1" in plain_text
         assert "Tab" in plain_text
         assert "Enter" in plain_text
+        assert "expand-all" in plain_text
         assert "Esc exit" in plain_text
 
 

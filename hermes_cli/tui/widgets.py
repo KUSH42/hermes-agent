@@ -636,9 +636,12 @@ class StatusBar(Widget):
             "status_tokens", "status_model", "status_duration",
             "status_compaction_progress", "status_compaction_enabled", "status_tok_s",
             "agent_running", "command_running",
-            "browse_mode", "browse_index",
+            "browse_mode", "browse_index", "_browse_total",
+            "status_output_dropped",
         ):
             self.watch(self.app, attr, self._on_status_change)
+        # _browse_uses is a plain int (not reactive) — watch browse_mode instead,
+        # which always fires before we need to re-render.
 
     def _on_status_change(self, _value: object = None) -> None:
         self.refresh()
@@ -651,16 +654,16 @@ class StatusBar(Widget):
         browse_idx = getattr(app, "browse_index", 0)
 
         if browse:
-            # Import locally to avoid circular import at module level
-            try:
-                from hermes_cli.tui.tool_blocks import ToolHeader as _TH
-                browse_total = len(list(app.query(_TH)))
-            except Exception:
-                browse_total = 0
+            # Use memoized counter — avoids O(n) DOM query per keystroke
+            browse_total = getattr(app, "_browse_total", 0)
 
+            browse_uses = getattr(app, "_browse_uses", 0)
             left = Text(f"BROWSE ▸{browse_idx + 1}/{browse_total}", style="bold")
             if width >= 60:
-                left.append("  Tab · Enter · c copy · Esc exit", style="dim")
+                if browse_uses <= 3:
+                    left.append("  Tab · Enter · c copy · a expand-all · Esc exit", style="dim")
+                else:
+                    left.append("  Tab · c · a/A · Esc", style="dim")
             elif width >= 40:
                 left.append("  Tab · c · Esc", style="dim")
             # Right side: tokens · duration
@@ -727,11 +730,14 @@ class StatusBar(Widget):
             t.append(" · ", style="dim")
             t.append(duration, style="dim")
 
-        # Right-anchored state label
+        # Right-anchored state label (with optional dropped-output warning)
+        dropped = getattr(app, "status_output_dropped", False)
         if running:
             state_t = Text(" running", style="#ffa726")
         else:
             state_t = Text(" idle", style="dim")
+        if dropped:
+            state_t = Text(" ⚠ output truncated", style="#ef5350") + state_t
         pad = max(0, width - t.cell_len - state_t.cell_len)
         t.append(" " * pad)
         t.append_text(state_t)

@@ -107,6 +107,11 @@ class HermesApp(App):
     # Browse mode — keyboard-driven navigation through ToolBlock widgets
     browse_mode: reactive[bool] = reactive(False)
     browse_index: reactive[int] = reactive(0)
+    # Memoized count of mounted ToolHeaders — avoids O(n) DOM query in StatusBar.render()
+    _browse_total: reactive[int] = reactive(0)
+
+    # Output dropped flag — set when queue is full; shown in StatusBar until next successful write
+    status_output_dropped: reactive[bool] = reactive(False)
 
     # Image attachments — reactive(list) uses factory form to avoid shared mutable default
     attached_images: reactive[list] = reactive(list)
@@ -138,6 +143,9 @@ class HermesApp(App):
 
         # Whether to use HermesInput (step 5) or interim TextArea
         self._use_hermes_input = True
+
+        # Browse-mode visit counter — first 3 visits show full hint, then compact
+        self._browse_uses: int = 0
 
     # --- Compose ---
 
@@ -234,8 +242,14 @@ class HermesApp(App):
                 self._event_loop.call_soon_threadsafe(
                     self._output_queue.put_nowait, text
                 )
+            # Clear the dropped flag on a successful enqueue
+            if self.status_output_dropped:
+                self.status_output_dropped = False
         except asyncio.QueueFull:
-            pass  # Backpressure: UI is 4096 chunks behind — drop rather than OOM
+            # Backpressure: UI is 4096 chunks behind — drop rather than OOM.
+            # Signal the user via StatusBar so they know output was truncated.
+            logger.warning("Output queue full — dropped chunk (backpressure)")
+            self.status_output_dropped = True
         except RuntimeError:
             pass  # Event loop closed
 
@@ -502,6 +516,8 @@ class HermesApp(App):
             if panel is None:
                 panel = output.new_message()
             panel.mount(_ToolBlock(label, lines, plain_lines))
+            # Increment memoized header count to avoid O(n) query in StatusBar
+            self._browse_total += 1
         except NoMatches:
             pass
 
@@ -524,6 +540,7 @@ class HermesApp(App):
             if not list(self.query(_TH)):
                 self.browse_mode = False
                 return
+            self._browse_uses += 1
         # Disable/re-enable input so printable keys bubble to on_key in browse mode
         try:
             inp = self.query_one("#input-area")
@@ -735,6 +752,22 @@ class HermesApp(App):
                     if hasattr(parent, "copy_content"):
                         self.copy_to_clipboard(parent.copy_content())
                     h.flash_copy()
+                event.prevent_default()
+                return
+            elif key == "a":
+                # Expand all blocks (only those with affordances)
+                from hermes_cli.tui.tool_blocks import ToolBlock as _TB
+                for block in self.query(_TB):
+                    if not block._body.has_class("expanded"):
+                        block.toggle()
+                event.prevent_default()
+                return
+            elif key == "A":
+                # Collapse all blocks (only those with affordances)
+                from hermes_cli.tui.tool_blocks import ToolBlock as _TB
+                for block in self.query(_TB):
+                    if block._body.has_class("expanded"):
+                        block.toggle()
                 event.prevent_default()
                 return
             elif key == "escape":

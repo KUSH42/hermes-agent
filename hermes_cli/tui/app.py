@@ -58,6 +58,7 @@ from hermes_cli.tui.widgets import (
     CopyableRichLog,
     HistorySearchOverlay,
     HintBar,
+    KeymapOverlay,
     ImageBar,
     LiveLineWidget,
     MessagePanel,
@@ -126,6 +127,7 @@ class HermesApp(App):
     BINDINGS = [
         Binding("ctrl+f", "open_history_search", "History search", show=False, priority=True),
         Binding("ctrl+r", "open_history_search", "Reverse history search", show=False, priority=True),
+        Binding("f1", "show_help", "Keyboard shortcuts", show=False),
     ]
 
     _CHEVRON_PHASE_CLASSES: frozenset[str] = frozenset({
@@ -260,6 +262,7 @@ class HermesApp(App):
             # directly above the input in the natural layout flow (no dock/offset).
             yield _CO(id="completion-overlay")
             yield HistorySearchOverlay(id="history-search")
+            yield KeymapOverlay(id="keymap-help")
             with Horizontal(id="input-row"):
                 yield Static("❯ ", id="input-chevron")
                 yield _HI(id="input-area")
@@ -301,6 +304,16 @@ class HermesApp(App):
         import os as _os
         if _os.environ.get("HERMES_DENSITY", "").lower() == "compact":
             self.add_class("density-compact")
+        if _os.environ.get("HERMES_REDUCED_MOTION", "").lower() in ("1", "true", "yes"):
+            self.add_class("reduced-motion")
+        # Wire slash commands from COMMAND_REGISTRY into the autocomplete engine
+        if self._use_hermes_input:
+            self._populate_slash_commands()
+        # Startup micro-hint — visible until the first agent turn or flash replaces it
+        try:
+            self.query_one(HintBar).hint = "F1 help  Ctrl+F search  /cmd  @path"
+        except NoMatches:
+            pass
 
     # --- Output consumer (bounded queue → RichLog) ---
 
@@ -536,6 +549,11 @@ class HermesApp(App):
     def watch_agent_running(self, value: bool) -> None:
         if value:
             self._set_chevron_phase("--phase-stream")
+            # Clear startup micro-hint so spinner text has full HintBar width
+            try:
+                self.query_one(HintBar).hint = ""
+            except NoMatches:
+                pass
         else:
             try:
                 chevron = self.query_one("#input-chevron", Static)
@@ -638,6 +656,17 @@ class HermesApp(App):
                 hs.action_dismiss()
             else:
                 hs.open_search()
+        except NoMatches:
+            pass
+
+    def action_show_help(self) -> None:
+        """Toggle the keyboard-shortcut reference overlay."""
+        try:
+            overlay = self.query_one(KeymapOverlay)
+            if overlay.has_class("--visible"):
+                overlay.remove_class("--visible")
+            else:
+                overlay.add_class("--visible")
         except NoMatches:
             pass
 
@@ -947,6 +976,36 @@ class HermesApp(App):
         else:
             self._theme_manager.load([skin_vars])
         self._theme_manager.apply()
+        # Propagate new fuzzy-match color to the completion list cache.
+        try:
+            from .completion_list import VirtualCompletionList
+            lst = self.query_one(VirtualCompletionList)
+            lst._refresh_fuzzy_color()
+        except Exception:
+            pass
+
+    def refresh_slash_commands(self, extra: list[str] | None = None) -> None:
+        """Update the slash command list after plugins are loaded.
+
+        Call via ``call_from_thread`` if not on the event loop.
+
+        Parameters
+        ----------
+        extra:
+            Additional command names to append (e.g. plugin-registered commands
+            that COMMAND_REGISTRY doesn't know about yet).
+        """
+        self._populate_slash_commands()
+        if extra:
+            try:
+                from hermes_cli.tui.input_widget import HermesInput as _HI
+                inp = self.query_one(_HI)
+                combined = sorted(set(inp._slash_commands) | {
+                    n if n.startswith("/") else f"/{n}" for n in extra
+                })
+                inp.set_slash_commands(combined)
+            except (NoMatches, Exception):
+                pass
 
     # --- Clipboard / selection helpers ---
 
@@ -957,6 +1016,31 @@ class HermesApp(App):
             return result if result else None
         except Exception:
             return None
+
+    # --- Slash command wiring ---
+
+    def _populate_slash_commands(self) -> None:
+        """Feed the canonical command list from COMMAND_REGISTRY into HermesInput.
+
+        Called once on mount.  Safe to call again after plugin commands are added.
+        Includes built-in commands, their aliases, and any registered skill commands.
+        """
+        try:
+            from hermes_cli.tui.input_widget import HermesInput as _HI
+            from hermes_cli.commands import COMMAND_REGISTRY
+            # Build full slash-name list: /name + /alias for each command
+            names: list[str] = []
+            for cmd in COMMAND_REGISTRY:
+                names.append(f"/{cmd.name}")
+                for alias in getattr(cmd, "aliases", []):
+                    names.append(f"/{alias}")
+            try:
+                inp = self.query_one(_HI)
+                inp.set_slash_commands(names)
+            except NoMatches:
+                pass
+        except Exception:
+            pass  # Don't crash on import errors during init
 
     # --- Copy/paste feedback ---
 
@@ -1016,6 +1100,21 @@ class HermesApp(App):
             from hermes_cli.tui.context_menu import ContextMenu as _CM
             self.query_one(_CM).show(items, sx, sy)
         except NoMatches:
+            pass
+
+    def on_path_search_provider_batch(self, message: Any) -> None:
+        """Relay PathSearchProvider.Batch to HermesInput.
+
+        PathSearchProvider and HermesInput are siblings (both children of the
+        Screen).  Textual only bubbles messages upward through the parent chain,
+        so PathSearchProvider.post_message(Batch) reaches the App but never
+        reaches HermesInput.  This relay bridges the gap by calling the handler
+        directly on the input widget.
+        """
+        try:
+            from hermes_cli.tui.input_widget import HermesInput
+            self.query_one(HermesInput).on_path_search_provider_batch(message)
+        except (NoMatches, ImportError):
             pass
 
     def _build_context_items(self, event: Any) -> list:
@@ -1099,12 +1198,14 @@ class HermesApp(App):
 
             node = getattr(node, "parent", None)
 
-        # Fallback: copy selected text only when a selection is active
+        # Fallback: always provide Paste; add Copy selected when text is highlighted.
+        items = []
         selected = self._get_selected_text()
         if selected:
             sel_text = selected
-            return [MenuItem("⎘  Copy selected", "", lambda t=sel_text: self._copy_text(t))]
-        return []
+            items.append(MenuItem("⎘  Copy selected", "", lambda t=sel_text: self._copy_text(t)))
+        items.append(MenuItem("📋  Paste", "ctrl+v", lambda: self._paste_into_input()))
+        return items
 
     # --- Context menu action helpers ---
 

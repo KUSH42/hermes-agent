@@ -22,6 +22,28 @@ $cursor-color: #FFF8DC;
 $cursor-selection-bg: #3A5A8C;
 $cursor-placeholder: #555555;
 
+/* Chevron phase colours — ThemeManager overrides via component_vars */
+$chevron-base: #FFF8DC;
+$chevron-file: #FFBF00;
+$chevron-stream: #6EA8D4;
+$chevron-shell: #A8D46E;
+$chevron-done: #4CAF50;
+$chevron-error: #E06C75;
+
+/* Fuzzy match highlight — ThemeManager overrides via component_vars */
+$fuzzy-match-color: #FFD866;
+
+/* Status / pulse indicators — ThemeManager overrides via component_vars */
+$status-running-color: #FFBF00;
+$status-error-color: #ef5350;
+$status-context-color: #5f87d7;
+
+/* TitledRule colours — ThemeManager overrides via component_vars */
+$rule-dim-color: #555555;
+$rule-bg-color: #2A2A2A;
+$rule-accent-color: #FFD700;
+$rule-accent-dim-color: #B8860B;
+
 HermesApp {
     background: $background;
 }
@@ -54,8 +76,11 @@ ReasoningPanel {
     color: $primary-darken-3;
 }
 
-/* --- Hint bar --- */
-
+/* --- Hint bar ---
+ * Always 1 line tall (no display:none toggling) to prevent layout reflow
+ * jitter when hints appear/disappear during streaming.  Empty hint renders
+ * as a blank line — visually invisible, zero layout cost to show/hide.
+ */
 HintBar {
     color: $text-muted;
 }
@@ -91,18 +116,18 @@ SecretWidget {
 }
 
 #input-chevron {
-    color: #FFF8DC;
+    color: $chevron-base;
     width: 2;
     height: 1;
     transition: color 0.2s in_out_cubic;
 }
 
 /* Chevron phase colours — set by _set_chevron_phase() */
-#input-chevron.--phase-file   { color: #FFBF00; }
-#input-chevron.--phase-stream { color: #6EA8D4; }
-#input-chevron.--phase-shell  { color: #A8D46E; }
-#input-chevron.--phase-done   { color: #4CAF50; }
-#input-chevron.--phase-error  { color: #E06C75; }
+#input-chevron.--phase-file   { color: $chevron-file; }
+#input-chevron.--phase-stream { color: $chevron-stream; }
+#input-chevron.--phase-shell  { color: $chevron-shell; }
+#input-chevron.--phase-done   { color: $chevron-done; }
+#input-chevron.--phase-error  { color: $chevron-error; }
 
 #spinner-overlay {
     display: none;
@@ -112,11 +137,16 @@ SecretWidget {
 }
 
 HermesInput {
-    background: transparent;
+    background: $background;
     border: none;
     padding: 0;
     height: 1;
     width: 1fr;
+}
+
+/* Prevent Textual's Input:focus tint from creating a contrast stripe */
+HermesInput:focus {
+    background: $background;
 }
 
 /* Component Part variables — themed via ThemeManager.component_vars.
@@ -140,6 +170,13 @@ HermesInput > .input--selection {
 
 HermesInput > .input--placeholder {
     color: $cursor-placeholder;
+    text-style: italic;
+}
+
+/* Ghost text styling — scoped to HermesInput only so other Input widgets
+ * (history search, sudo/secret overlays) are not inadvertently affected. */
+HermesInput > .input--suggestion {
+    color: $text-muted 60%;
     text-style: italic;
 }
 
@@ -175,13 +212,6 @@ VirtualCompletionList:focus {
 VirtualCompletionList > .completion--row-selected {
     background: $accent 25%;
     text-style: bold;
-}
-
-/* Ghost text styling — Textual's Input renders its own suggestion via the
- * Suggester API using the built-in dim style.  We tune the component class. */
-Input > .input--suggestion {
-    color: $text-muted 60%;
-    text-style: italic;
 }
 
 /* Preview panel divider */
@@ -221,18 +251,20 @@ ToolHeader.--flash-complete {
     background: $success 18%;
 }
 
-/* ToolBodyContainer body lines — indent matches the ┊ gutter */
+/* ToolBodyContainer body lines — indent matches the ┊ gutter.
+ * max-height increased from 40 → 60 to reduce scroll fatigue on long outputs. */
 ToolBodyContainer CopyableRichLog {
     padding-left: 0;
     height: auto;
-    max-height: 40;
+    max-height: 60;
     overflow-y: auto;
     overflow-x: hidden;
 }
 
-/* --- Context menu --- */
-
-ContextMenu > _ContextItem:hover { background: $primary 30%; }
+/* --- Context menu ---
+ * Hover uses $accent at low opacity — $primary can be near-black in dark
+ * themes, making $primary 30% nearly invisible against $panel background. */
+ContextMenu > _ContextItem:hover { background: $accent 15%; }
 ContextMenu > _ContextSep { color: $text-muted; }
 
 /* --- History search overlay (SPEC-B) --- */
@@ -262,17 +294,21 @@ TurnResultItem {
     padding: 0 1;
 }
 
+/* Use $cursor-selection-bg for consistent selection style with VirtualCompletionList
+ * and HermesInput text selection — all three represent "selected item". */
 TurnResultItem.--selected {
-    background: $accent 20%;
+    background: $cursor-selection-bg;
 }
 
 TurnResultItem:hover {
     background: $accent 10%;
 }
 
+/* History jump highlight — 0.5s is fast enough for expert users who chain
+ * multiple jumps; was 1.5s which caused visible lag between jumps. */
 MessagePanel.--highlighted {
     background: $accent 15%;
-    transition: background 1.5s in_out_cubic;
+    transition: background 0.5s in_out_cubic;
 }
 
 /* --- Overlay focus rings (§2.6) --- */
@@ -281,6 +317,13 @@ ClarifyWidget:focus,
 ApprovalWidget:focus {
     outline: tall $accent 50%;
 }
+
+/* --- Reduced motion (HERMES_REDUCED_MOTION=1) --- */
+
+HermesApp.reduced-motion MessagePanel           { transition: none; }
+HermesApp.reduced-motion MessagePanel.--highlighted { transition: none; }
+HermesApp.reduced-motion #input-chevron         { transition: none; }
+HermesApp.reduced-motion ToolHeader             { transition: none; }
 
 /* --- Density: compact mode (§2.9) --- */
 
@@ -292,4 +335,10 @@ HermesApp.density-compact HintBar               { padding: 0; }
 HermesApp.density-compact ImageBar              { padding: 0; }
 HermesApp.density-compact VoiceStatusBar        { padding: 0; }
 HermesApp.density-compact #input-row            { padding: 0; }
-HermesApp.density-compact ToolBodyContainer CopyableRichLog { max-height: 20; }
+HermesApp.density-compact ToolBodyContainer CopyableRichLog { max-height: 25; }
+/* Overlays: trim extra padding to match standard 0 1 in compact mode */
+HermesApp.density-compact ClarifyWidget,
+HermesApp.density-compact ApprovalWidget,
+HermesApp.density-compact SudoWidget,
+HermesApp.density-compact SecretWidget          { padding: 0 1; }
+HermesApp.density-compact UndoConfirmOverlay    { padding: 0 1; }

@@ -60,11 +60,13 @@ class HermesInput(Input, can_focus=True):
     """
 
     BINDINGS = [
-        Binding("up", "history_prev", "Previous history", show=False),
-        Binding("down", "history_next", "Next history", show=False),
-        Binding("escape", "dismiss_autocomplete", "Dismiss", show=False),
-        Binding("tab", "accept_autocomplete", "Accept completion", show=False),
-        Binding("ctrl+a", "select_all", "Select all", show=False),
+        Binding("up",       "history_prev",           "Previous history",     show=False),
+        Binding("down",     "history_next",            "Next history",         show=False),
+        Binding("pageup",   "completion_page_up",      "Page up completion",   show=False),
+        Binding("pagedown", "completion_page_down",    "Page down completion", show=False),
+        Binding("escape",   "dismiss_autocomplete",    "Dismiss",              show=False),
+        Binding("tab",      "accept_autocomplete",     "Accept completion",    show=False),
+        Binding("ctrl+a",   "select_all",              "Select all",           show=False),
     ]
 
     # Spinner text shown when disabled (set by app's _tick_spinner)
@@ -230,6 +232,32 @@ class HermesInput(Input, can_focus=True):
             self.value = self._history_draft
         self.cursor_position = len(self.value)
 
+    def action_completion_page_up(self) -> None:
+        """PageUp: jump one page up in the completion list."""
+        if not self._completion_overlay_visible():
+            return
+        try:
+            clist = self.screen.query_one(VirtualCompletionList)
+            if not clist.items:
+                return
+            page = max(1, clist.size.height - 1)
+            clist.highlighted = max(0, clist.highlighted - page)
+        except NoMatches:
+            pass
+
+    def action_completion_page_down(self) -> None:
+        """PageDown: jump one page down in the completion list."""
+        if not self._completion_overlay_visible():
+            return
+        try:
+            clist = self.screen.query_one(VirtualCompletionList)
+            if not clist.items:
+                return
+            page = max(1, clist.size.height - 1)
+            clist.highlighted = min(len(clist.items) - 1, clist.highlighted + page)
+        except NoMatches:
+            pass
+
     # --- Autocomplete ---
 
     def watch_value(self, value: str) -> None:
@@ -259,7 +287,7 @@ class HermesInput(Input, can_focus=True):
 
             if trigger.context is CompletionContext.SLASH_COMMAND:
                 self._show_slash_completions(trigger.fragment)
-            elif trigger.context is CompletionContext.PATH_REF:
+            elif trigger.context in (CompletionContext.PATH_REF, CompletionContext.PLAIN_PATH_REF):
                 self._show_path_completions(trigger.fragment)
             else:
                 self._hide_completion_overlay()
@@ -307,6 +335,7 @@ class HermesInput(Input, can_focus=True):
             self._path_debounce_timer = None
         self._set_overlay_mode(slash_only=False)
         self._push_to_list([])
+        self._set_searching(True)   # show "searching…" while debounce + walk run
         self._show_completion_overlay()
         self._path_debounce_timer = self.set_timer(
             0.12, lambda: self._fire_path_search(fragment)
@@ -314,7 +343,7 @@ class HermesInput(Input, can_focus=True):
 
     def _fire_path_search(self, fragment: str) -> None:
         self._path_debounce_timer = None
-        if self._current_trigger.context is not CompletionContext.PATH_REF:
+        if self._current_trigger.context not in (CompletionContext.PATH_REF, CompletionContext.PLAIN_PATH_REF):
             return
         if self._current_trigger.fragment != fragment:
             return
@@ -323,6 +352,13 @@ class HermesInput(Input, can_focus=True):
         except NoMatches:
             return
         provider.search(fragment, Path.cwd())
+
+    def _set_searching(self, value: bool) -> None:
+        try:
+            clist = self.screen.query_one(VirtualCompletionList)
+            clist.searching = value
+        except Exception:
+            pass
 
     def _set_overlay_mode(self, *, slash_only: bool) -> None:
         try:
@@ -342,6 +378,7 @@ class HermesInput(Input, can_focus=True):
         if self._path_debounce_timer is not None:
             self._path_debounce_timer.stop()
             self._path_debounce_timer = None
+        self._set_searching(False)
         try:
             overlay = self.screen.query_one(CompletionOverlay)
         except NoMatches:
@@ -372,7 +409,7 @@ class HermesInput(Input, can_focus=True):
         """Accumulate walker batches and re-rank candidates."""
         # Belt + suspenders: exclusive=True already cancels in-flight walkers,
         # but a batch can be in the message queue when cancellation lands.
-        if self._current_trigger.context is not CompletionContext.PATH_REF:
+        if self._current_trigger.context not in (CompletionContext.PATH_REF, CompletionContext.PLAIN_PATH_REF):
             return
         if message.query != self._current_trigger.fragment:
             return
@@ -383,6 +420,9 @@ class HermesInput(Input, can_focus=True):
             self._current_trigger.fragment, self._raw_candidates, limit=200,
         )
         self._push_to_list(ranked)
+        # Clear searching state once the final batch arrives
+        if message.final:
+            self._set_searching(False)
 
     def _push_to_list(self, candidates: list[Candidate]) -> None:
         try:
@@ -408,17 +448,24 @@ class HermesInput(Input, can_focus=True):
             new_value = c.command + " "
             new_cursor = len(new_value)
         elif isinstance(c, PathCandidate):
-            # Replace only the @fragment span; preserve surrounding text.
-            # trig.start is the index of the first char of the fragment
-            # (char immediately after @); so trig.start - 1 is the @.
-            before = self.value[: trig.start - 1]
-            after = self.value[trig.start + len(trig.fragment):]
-            # Trailing space only when at EOL so inline inserts don't double-space.
-            tail = " " if not after else ""
-            new_value = f"{before}@{c.display}{tail}{after}"
-            # Cursor lands immediately after the inserted path (+ tail),
-            # NOT at EOL, so mid-string inserts don't jump the user away.
-            new_cursor = len(before) + 1 + len(c.display) + len(tail)
+            if trig.context is CompletionContext.PLAIN_PATH_REF:
+                # Replace ./fragment (or ../fragment, ~/fragment).
+                # trig.start is the position of '.' or '~'; the prefix ends at
+                # the first '/' after trig.start.
+                prefix_end = self.value.index("/", trig.start) + 1
+                path_prefix = self.value[trig.start:prefix_end]  # "./" or "../" or "~/"
+                before = self.value[:trig.start]
+                after = self.value[trig.start + len(path_prefix) + len(trig.fragment):]
+                tail = " " if not after else ""
+                new_value = f"{before}{path_prefix}{c.display}{tail}{after}"
+                new_cursor = len(before) + len(path_prefix) + len(c.display) + len(tail)
+            else:
+                # PATH_REF: replace @fragment span; trig.start - 1 is the @.
+                before = self.value[: trig.start - 1]
+                after = self.value[trig.start + len(trig.fragment):]
+                tail = " " if not after else ""
+                new_value = f"{before}@{c.display}{tail}{after}"
+                new_cursor = len(before) + 1 + len(c.display) + len(tail)
         else:
             return
 

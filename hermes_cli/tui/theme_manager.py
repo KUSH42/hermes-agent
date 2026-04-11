@@ -101,6 +101,24 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     "cursor-selection-bg":  "#3A5A8C",
     # HermesInput placeholder text
     "cursor-placeholder":   "#555555",
+    # Chevron phase colours
+    "chevron-base":         "#FFF8DC",
+    "chevron-file":         "#FFBF00",
+    "chevron-stream":       "#6EA8D4",
+    "chevron-shell":        "#A8D46E",
+    "chevron-done":         "#4CAF50",
+    "chevron-error":        "#E06C75",
+    # Fuzzy match highlight in autocomplete list
+    "fuzzy-match-color":    "#FFD866",
+    # Status / pulse indicators
+    "status-running-color": "#FFBF00",
+    "status-error-color":   "#ef5350",
+    "status-context-color": "#5f87d7",
+    # TitledRule / PlainRule separator tones
+    "rule-dim-color":       "#555555",
+    "rule-bg-color":        "#2A2A2A",
+    "rule-accent-color":    "#FFD700",
+    "rule-accent-dim-color":"#B8860B",
 }
 
 

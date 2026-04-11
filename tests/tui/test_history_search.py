@@ -169,7 +169,8 @@ async def test_fuzzy_filter_returns_matching_turns():
         inp = overlay.query_one("#history-search-input", Input)
         inp.value = "memory"
         await pilot.pause()
-        await pilot.pause()  # allow remove + mount to settle
+        await asyncio.sleep(0.16)  # wait for 150ms debounce timer
+        await pilot.pause()        # flush DOM update
 
         items = list(overlay.query(TurnResultItem))
         assert len(items) == 1

@@ -28,8 +28,9 @@ from enum import Enum
 class CompletionContext(Enum):
     NONE = 0
     SLASH_COMMAND = 1
-    PATH_REF = 2
+    PATH_REF = 2       # triggered by @fragment
     NATURAL = 3
+    PLAIN_PATH_REF = 4 # triggered by ./fragment, ../fragment, ~/fragment
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,7 +43,8 @@ class CompletionTrigger:
 # ``[\w-]`` so commands like /review-pr, /commit-msg, /skill-scan match.
 # The character class explicitly includes hyphen, which ``\w`` does not.
 _SLASH_RE = re.compile(r"^/([\w-]*)$")
-_PATH_RE = re.compile(r"(?:^|\s)@([\w./\-]*)$")  # anchored to cursor head
+_PATH_RE = re.compile(r"(?:^|\s)@([\w./\-]*)$")     # anchored to cursor head
+_PLAIN_PATH_RE = re.compile(r"(?:^|\s)((?:\.\.?|~)/[\w./\-]*)$")  # ./x, ../x, ~/x
 
 
 def detect_context(value: str, cursor: int) -> CompletionTrigger:
@@ -64,6 +66,17 @@ def detect_context(value: str, cursor: int) -> CompletionTrigger:
             context=CompletionContext.PATH_REF,
             fragment=m.group(1),
             start=m.start(1),
+        )
+
+    m = _PLAIN_PATH_RE.search(head)
+    if m:
+        full_path = m.group(1)              # e.g. "./src/main" or "../foo" or "~/bar"
+        slash_idx = full_path.index("/")
+        fragment = full_path[slash_idx + 1:]  # part after the first "/"
+        return CompletionTrigger(
+            context=CompletionContext.PLAIN_PATH_REF,
+            fragment=fragment,
+            start=m.start(1),              # position of '.' or '~' in the input
         )
 
     # NATURAL has no fragment — it's the absence of a completion context,

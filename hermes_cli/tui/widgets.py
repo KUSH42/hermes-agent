@@ -643,9 +643,21 @@ class OutputPanel(ScrollableContainer):
         if self.max_scroll_y > 0 and new_y >= self.max_scroll_y - 3:
             self._user_scrolled_up = False
 
-    def on_mouse_scroll_up(self, _event: Any) -> None:
-        """Mark that the user has scrolled up — suppress auto-scroll."""
+    # Lines scrolled per mouse wheel tick.  1 is the OS default; 3 matches
+    # most browser/editor defaults and reduces scroll fatigue on long outputs.
+    _SCROLL_LINES: int = 3
+
+    def on_mouse_scroll_up(self, event: Any) -> None:
+        """Scroll up 3 lines per wheel tick and suppress auto-scroll."""
         self._user_scrolled_up = True
+        self.scroll_up(self._SCROLL_LINES, animate=False)
+        event.prevent_default()
+
+    def on_mouse_scroll_down(self, event: Any) -> None:
+        """Scroll down 3 lines per wheel tick; re-engage auto-scroll at bottom."""
+        self.scroll_down(self._SCROLL_LINES, animate=False)
+        event.prevent_default()
+        # watch_scroll_y handles re-engaging auto-scroll when near the bottom.
 
     def on_scroll_up(self, _event: Any) -> None:
         """Mark that the user has scrolled up via keyboard — suppress auto-scroll."""
@@ -747,7 +759,10 @@ class UserEchoPanel(Widget):
         yield PlainRule(max_width=self._ECHO_RULE_WIDTH, id="echo-rule-bottom")
 
     def _format_message(self) -> Text:
-        bullet_color = _skin_color("ui_accent", "#FFBF00")
+        try:
+            bullet_color = self.app.get_css_variables().get("chevron-file", "#FFBF00")
+        except Exception:
+            bullet_color = "#FFBF00"
         t = Text()
         t.append("● ", style=f"bold {bullet_color}")
         msg = self._message
@@ -915,12 +930,31 @@ class TitledRule(Widget):
     def _on_state_change(self, _value: object = None) -> None:
         self.refresh()
 
+    def _live_colors(self) -> tuple[str, str, str, str]:
+        """Read rule colours from CSS variables for hot-reload support.
+
+        Returns (fade_start, fade_end, accent, title_color). Falls back to
+        the instance variables set at construction time so pre-mount renders
+        (e.g. during test setup) are safe.
+        """
+        try:
+            v = self.app.get_css_variables()
+            return (
+                v.get("rule-dim-color",        self._fade_start),
+                v.get("rule-bg-color",         self._fade_end),
+                v.get("rule-accent-color",     self._accent),
+                v.get("rule-accent-dim-color", self._title_color),
+            )
+        except Exception:
+            return self._fade_start, self._fade_end, self._accent, self._title_color
+
     def render(self) -> RenderResult:
         if self.progress >= 0.5:
             return self._render_progress_bar()
         return self._render_normal()
 
     def _render_normal(self) -> RenderResult:
+        fade_start, fade_end, accent, title_color = self._live_colors()
         w = self.size.width
         title = self.title_text
         # Split title into accent char (first non-space) + rest
@@ -944,14 +978,15 @@ class TitledRule(Widget):
         right = max(0, w - label_len - state_suffix.cell_len)
         t = Text()
         # Title: accent char in bright accent, rest in title_color
-        t.append(accent_char, style=f"bold {self._accent}")
-        t.append(f"{rest} ", style=f"{self._title_color}")
+        t.append(accent_char, style=f"bold {accent}")
+        t.append(f"{rest} ", style=f"{title_color}")
         # Right fill: fade out (start → end), then optional state glyph
-        t.append_text(_fade_rule(right, self._fade_start, self._fade_end))
+        t.append_text(_fade_rule(right, fade_start, fade_end))
         t.append_text(state_suffix)
         return t
 
     def _render_progress_bar(self) -> RenderResult:
+        fade_start, fade_end, accent, _title_color = self._live_colors()
         width = max(1, self.size.width)
         filled = int(width * self.progress)
         if self.progress >= 0.9:
@@ -960,7 +995,7 @@ class TitledRule(Widget):
             bar_color = _skin_color("warning_color", "#FFA726")
         else:
             bar_color = _skin_color("caution_color", "#FFBF00")
-        empty_color = _skin_color("rule_dim_color", "#333333")
+        empty_color = fade_start  # use live-reloaded dim colour
         t = Text()
         t.append("━" * filled, style=bar_color)
         t.append("─" * (width - filled), style=empty_color)
@@ -1005,15 +1040,14 @@ class HintBar(Static):
     ``HermesApp`` has NO ``hint_text`` reactive. ``HintBar.hint`` is the
     single source of truth. ``_tick_spinner`` writes to
     ``app.query_one(HintBar).hint`` directly.
+
+    Always occupies exactly 1 line (no display:none toggling) to prevent
+    layout reflow jitter when hints appear/disappear during streaming.
     """
 
     DEFAULT_CSS = """
     HintBar {
         height: 1;
-        display: none;
-    }
-    HintBar.visible {
-        display: block;
     }
     """
 
@@ -1021,10 +1055,6 @@ class HintBar(Static):
 
     def watch_hint(self, value: str) -> None:
         self.update(value)
-        if value:
-            self.add_class("visible")
-        else:
-            self.remove_class("visible")
 
 
 # ---------------------------------------------------------------------------
@@ -1190,15 +1220,21 @@ class StatusBar(PulseMixin, Widget):
         # When agent is running, the ● indicator pulses between two accent shades.
         dropped = getattr(app, "status_output_dropped", False)
         if running:
+            _vars = getattr(app, "get_css_variables", lambda: {})()
+            _run_lo = _vars.get("status-running-color", "#FFBF00")
+            _run_hi = _vars.get("chevron-file", "#ffa726")
             if self._pulse_t > 0:
-                pulse_color = lerp_color("#ffa726", "#ffbf00", self._pulse_t)
+                pulse_color = lerp_color(_run_hi, _run_lo, self._pulse_t)
             else:
-                pulse_color = "#ffa726"
+                pulse_color = _run_hi
             state_t = Text(" ● running", style=f"bold {pulse_color}")
         else:
-            state_t = Text(" idle", style="dim")
+            state_t = Text(" idle  F1·help", style="dim")
+        _err_color = getattr(app, "get_css_variables", lambda: {})().get(
+            "status-error-color", "#ef5350"
+        )
         if dropped:
-            state_t = Text(" ⚠ output truncated", style="#ef5350") + state_t
+            state_t = Text(f" ⚠ output truncated", style=_err_color) + state_t
         pad = max(0, width - t.cell_len - state_t.cell_len)
         t.append(" " * pad)
         t.append_text(state_t)
@@ -1640,6 +1676,16 @@ class TurnCandidate:
     entry: "_TurnEntry | None" = field(default=None)
 
 
+def _turn_result_label(entry: "_TurnEntry | None") -> str:
+    """Build the Rich-markup label for a TurnResultItem row."""
+    if not entry:
+        return ""
+    max_width = 76
+    first = entry.display or "(no content)"
+    truncated = first[:max_width] + "…" if len(first) > max_width else first
+    return f"[dim]\\[turn {entry.index:>3}][/dim]  {truncated}"
+
+
 class TurnResultItem(Static):
     """Single row in the history search result list."""
 
@@ -1651,13 +1697,7 @@ class TurnResultItem(Static):
 
     def __init__(self, entry: "_TurnEntry | None", **kwargs: Any) -> None:
         self._entry = entry
-        max_width = 76  # fallback; good enough for most terminals
-        label = ""
-        if entry:
-            first = entry.display or "(no content)"
-            truncated = first[:max_width] + "…" if len(first) > max_width else first
-            label = f"[dim]\\[turn {entry.index:>3}][/dim]  {truncated}"
-        super().__init__(label, **kwargs)
+        super().__init__(_turn_result_label(entry), **kwargs)
 
     def on_click(self, event: Any) -> None:
         """Clicking a result row jumps to the turn."""
@@ -1667,6 +1707,62 @@ class TurnResultItem(Static):
                 overlay.action_jump_to(self._entry)
             except NoMatches:
                 pass
+
+
+class KeymapOverlay(Widget):
+    """Keyboard-shortcut reference card.  Toggle with F1; dismiss with Escape or F1."""
+
+    DEFAULT_CSS = """
+    KeymapOverlay {
+        layer: overlay;
+        display: none;
+        dock: top;
+        height: auto;
+        max-height: 20;
+        width: 1fr;
+        padding: 1 2;
+        background: $surface;
+        border-bottom: hkey $primary 40%;
+    }
+    KeymapOverlay.--visible { display: block; }
+    KeymapOverlay > Static { height: auto; }
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "Close", show=False, priority=True),
+        Binding("f1", "dismiss", "Close", show=False, priority=True),
+    ]
+
+    _CONTENT = (
+        "[bold]Keyboard Shortcuts[/bold]\n"
+        "\n"
+        "[dim]Input[/dim]\n"
+        "  [bold]Enter[/bold]          Submit message\n"
+        "  [bold]Tab[/bold]            Accept autocomplete\n"
+        "  [bold]Escape[/bold]         Dismiss autocomplete / cancel\n"
+        "  [bold]↑ / ↓[/bold]          History previous / next\n"
+        "  [bold]Ctrl+A[/bold]         Select all input text\n"
+        "\n"
+        "[dim]Navigation[/dim]\n"
+        "  [bold]Ctrl+F / Ctrl+R[/bold]  History search\n"
+        "  [bold]/ [/bold]              Slash-command list\n"
+        "  [bold]@[/bold]               File-path autocomplete\n"
+        "\n"
+        "[dim]Output[/dim]\n"
+        "  [bold]a / A[/bold]          Expand all / collapse all tool blocks\n"
+        "  [bold]c[/bold]              Copy hovered tool output\n"
+        "  [bold]Ctrl+C[/bold]         Interrupt agent  (double: force quit)\n"
+        "\n"
+        "[dim]View[/dim]\n"
+        "  [bold]F1 / ?[/bold]         This help overlay\n"
+    )
+
+    def compose(self) -> ComposeResult:
+        from textual.widgets import Static
+        yield Static(self._CONTENT, markup=True)
+
+    def action_dismiss(self) -> None:
+        self.remove_class("--visible")
 
 
 class HistorySearchOverlay(Widget):
@@ -1714,6 +1810,7 @@ class HistorySearchOverlay(Widget):
         self._candidates: list[TurnCandidate] = []
         self._selected_idx: int = 0
         self._saved_hint: str = ""
+        self._debounce_handle: Any = None  # Timer | None; cancelled on each new keystroke
 
     def compose(self) -> ComposeResult:
         yield Input(placeholder="Search history  ↑↓ navigate · Enter jump · Esc close", id="history-search-input")
@@ -1774,37 +1871,71 @@ class HistorySearchOverlay(Widget):
         ]
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        """Re-rank and display results on every keystroke."""
-        if event.input.id == "history-search-input":
-            self._render_results(event.value)
+        """Debounce keystrokes (150ms) before re-ranking results."""
+        if event.input.id != "history-search-input":
+            return
+        if self._debounce_handle is not None:
+            self._debounce_handle.stop()
+            self._debounce_handle = None
+        query = event.value
+        self._debounce_handle = self.set_timer(0.15, lambda: self._render_results(query))
 
     def _render_results(self, query: str) -> None:
-        """Apply fuzzy_rank and populate ResultList with TurnResultItem widgets."""
+        """Apply fuzzy_rank and update the result list.
+
+        Reuses existing TurnResultItem widgets when the result count is
+        unchanged (update-in-place via Static.update()).  Only adds or removes
+        widgets when the count changes, cutting DOM churn on stable queries.
+        """
+        self._debounce_handle = None
         from hermes_cli.tui.fuzzy import fuzzy_rank
-        results = fuzzy_rank(query, self._candidates, limit=200)
+        # Cap at 15: overlay max-height 18 minus input + status rows = ~16 visible.
+        # Rendering more than fits is wasted DOM work.
+        results = fuzzy_rank(query, self._candidates, limit=15)
         try:
             result_list = self.query_one("#history-result-list", VerticalScroll)
         except NoMatches:
             return
-        # Replace all children with new TurnResultItem widgets.
-        # Use individual remove() per child (snapshot copy) then mount new items.
-        # remove_children() has a deferred-removal race with subsequent mount() calls
-        # that causes newly-mounted items to be removed; the loop pattern avoids this.
-        for child in list(result_list.children):
-            child.remove()
-        items = [TurnResultItem(r.entry) for r in results]
-        if items:
-            result_list.mount(*items)
-        # Update selection clamping — defer until after mount() completes.
-        # mount() is deferred so query(TurnResultItem) returns 0 in the same tick.
-        self._selected_idx = max(0, min(self._selected_idx, len(items) - 1))
+
+        existing = list(result_list.query(TurnResultItem))
+        new_count = len(results)
+        old_count = len(existing)
+
+        if new_count == old_count:
+            # Common case: same number of results — update in place, zero DOM add/remove.
+            for widget, r in zip(existing, results):
+                widget._entry = r.entry
+                widget.update(_turn_result_label(r.entry))
+        elif new_count < old_count:
+            # Fewer results: update kept widgets, remove the tail.
+            for widget, r in zip(existing[:new_count], results):
+                widget._entry = r.entry
+                widget.update(_turn_result_label(r.entry))
+            for widget in existing[new_count:]:
+                widget.remove()
+        else:
+            # More results: update existing, mount only the new additions.
+            for widget, r in zip(existing, results[:old_count]):
+                widget._entry = r.entry
+                widget.update(_turn_result_label(r.entry))
+            new_items = [TurnResultItem(r.entry) for r in results[old_count:]]
+            result_list.mount(*new_items)
+
+        self._selected_idx = max(0, min(self._selected_idx, new_count - 1))
         self.call_after_refresh(self._update_selection)
+
         # Status line
         total = len(self._index)
         try:
-            self.query_one("#history-status", Static).update(
-                f"[dim]{len(results)} of {total} turn{'s' if total != 1 else ''}[/dim]"
-            )
+            if results or total == 0:
+                status_text = (
+                    f"[dim]{len(results)} of {total} turn{'s' if total != 1 else ''}[/dim]"
+                )
+            else:
+                status_text = (
+                    "[dim]no matches — try fewer words or a partial phrase[/dim]"
+                )
+            self.query_one("#history-status", Static).update(status_text)
         except NoMatches:
             pass
 
@@ -1840,7 +1971,7 @@ class HistorySearchOverlay(Widget):
         panel = entry.panel
         panel.scroll_visible(animate=True)
         panel.add_class("--highlighted")
-        panel.set_timer(1.5, lambda: panel.remove_class("--highlighted"))
+        panel.set_timer(0.5, lambda: panel.remove_class("--highlighted"))
 
     def action_jump_to(self, entry: "_TurnEntry | None") -> None:
         """Jump directly to a specific entry (used by TurnResultItem click)."""
@@ -1850,7 +1981,7 @@ class HistorySearchOverlay(Widget):
         panel = entry.panel
         panel.scroll_visible(animate=True)
         panel.add_class("--highlighted")
-        panel.set_timer(1.5, lambda: panel.remove_class("--highlighted"))
+        panel.set_timer(0.5, lambda: panel.remove_class("--highlighted"))
 
     def on_resize(self) -> None:
         """Re-render results to update truncation width after terminal resize."""

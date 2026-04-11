@@ -53,10 +53,23 @@ class ToolHeader(Widget):
         self._spinner_char: str | None = None   # non-None while streaming
         self._duration: str = ""                # set on completion
 
+    def on_mount(self) -> None:
+        self._refresh_gutter_color()
+
+    def _refresh_gutter_color(self) -> None:
+        """Cache focused-gutter colour from CSS variables (supports hot-reload)."""
+        try:
+            self._focused_gutter_color: str = self.app.get_css_variables().get(
+                "rule-accent-color", "#FFD700"
+            )
+        except Exception:
+            self._focused_gutter_color = "#FFD700"
+
     def render(self) -> RenderResult:
         focused = self.has_class("focused")
         if focused:
-            gutter = Text("  ┃", style=f"bold {_skin_color('banner_title', '#FFD700')}")
+            color = getattr(self, "_focused_gutter_color", "#FFD700")
+            gutter = Text("  ┃", style=f"bold {color}")
         else:
             gutter = Text("  ┊", style="dim")
         t = Text()
@@ -284,11 +297,28 @@ class StreamingToolBlock(ToolBlock):
         self._pending.append((raw, plain))
         self._all_plain.append(plain)
 
+    def on_unmount(self) -> None:
+        """Stop timers so they don't fire against a detached widget."""
+        try:
+            self._render_timer.stop()
+        except Exception:
+            pass
+        try:
+            self._spinner_timer.stop()
+        except Exception:
+            pass
+
     def complete(self, duration: str) -> None:
         """Transition to COMPLETED state: flush remaining lines, update header."""
         if self._completed:
             return
         self._completed = True
+        # Stop timers — no more streaming ticks needed
+        try:
+            self._render_timer.stop()
+            self._spinner_timer.stop()
+        except Exception:
+            pass
         # Final synchronous flush
         self._flush_pending()
         # Hide tail badge unconditionally

@@ -32,6 +32,9 @@ class CompletionOverlay(Horizontal):
 
     DEFAULT_CSS = """
     CompletionOverlay {
+        layer: overlay;
+        dock: bottom;
+        margin-bottom: 4;
         height: auto;
         max-height: 14;
         display: none;

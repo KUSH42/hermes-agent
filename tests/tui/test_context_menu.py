@@ -344,7 +344,7 @@ async def test_build_context_items_hermes_input():
 
 @pytest.mark.asyncio
 async def test_build_context_items_fallback_no_selection():
-    """Unrecognised widget + no selection → empty list (no menu)."""
+    """Unrecognised widget + no selection → Paste-only fallback (menu always shows)."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -357,7 +357,8 @@ async def test_build_context_items_fallback_no_selection():
         with patch.object(app, "_get_selected_text", return_value=None):
             items = app._build_context_items(mock_event)
 
-        assert items == []
+        assert len(items) == 1
+        assert "Paste" in items[0].label
 
 
 @pytest.mark.asyncio

@@ -298,11 +298,10 @@ async def test_path_completion_populates_list() -> None:
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         inp = app.query_one(HermesInput)
-        inp.value = "@src"
-        inp.cursor_position = 4
-        await pilot.pause()
 
-        # Simulate a batch arriving
+        # Set trigger and candidates directly (no inp.value assignment) to avoid
+        # triggering the real PathSearchProvider walker which would inject extra
+        # batches via the App-level relay during pilot.pause().
         from hermes_cli.tui.completion_context import CompletionContext, CompletionTrigger
         inp._current_trigger = CompletionTrigger(
             CompletionContext.PATH_REF, "src", 1
@@ -316,8 +315,8 @@ async def test_path_completion_populates_list() -> None:
             final=True,
         )
         inp.on_path_search_provider_batch(batch_msg)
-        await pilot.pause()
-
+        # No pilot.pause() here: avoid event-loop ticks that let the real walker inject more batches.
+        # The batch handler is synchronous — items are set immediately.
         clist = app.query_one(VirtualCompletionList)
         assert len(clist.items) == 2
 
@@ -395,6 +394,63 @@ async def test_tab_accepts_highlighted_path() -> None:
         await pilot.pause()
 
         assert "@src/main.py" in inp.value
+        assert not app.query_one(CompletionOverlay).has_class("--visible")
+
+
+@pytest.mark.asyncio
+async def test_app_relays_batch_to_hermes_input() -> None:
+    """HermesApp.on_path_search_provider_batch relays Batch to HermesInput.
+
+    PathSearchProvider and HermesInput are siblings — bubbling from the
+    provider never reaches the input.  The App-level relay bridges this.
+    """
+    from hermes_cli.tui.completion_context import CompletionContext, CompletionTrigger
+    from hermes_cli.tui.path_search import PathSearchProvider as _PSP
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+
+        inp._current_trigger = CompletionTrigger(CompletionContext.PATH_REF, "foo", 1)
+        batch_msg = _PSP.Batch(
+            query="foo",
+            batch=[PathCandidate(display="foo/bar.py", abs_path="/tmp/foo/bar.py")],
+            final=True,
+        )
+        # Post via the App relay (simulates PathSearchProvider bubbling to App)
+        app.on_path_search_provider_batch(batch_msg)
+        await pilot.pause()
+
+        clist = app.query_one(VirtualCompletionList)
+        assert len(clist.items) == 1
+        assert clist.items[0].display == "foo/bar.py"
+
+
+@pytest.mark.asyncio
+async def test_tab_accepts_plain_path_candidate() -> None:
+    """Tab on a PathCandidate with PLAIN_PATH_REF preserves the ./ prefix."""
+    from hermes_cli.tui.completion_context import CompletionContext, CompletionTrigger
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        inp.value = "./src"
+        inp.cursor_position = 5
+
+        inp._current_trigger = CompletionTrigger(
+            CompletionContext.PLAIN_PATH_REF, "src", 0
+        )
+        clist = app.query_one(VirtualCompletionList)
+        clist.items = (PathCandidate(display="src/main.py", abs_path="/tmp/src/main.py"),)
+        clist.highlighted = 0
+        await pilot.pause()
+
+        inp.action_accept_autocomplete()
+        await pilot.pause()
+
+        assert inp.value == "./src/main.py "
         assert not app.query_one(CompletionOverlay).has_class("--visible")
 
 

@@ -93,3 +93,48 @@ def test_slash_only_is_slash_command() -> None:
     t = detect_context("/", 1)
     assert t.context is CompletionContext.SLASH_COMMAND
     assert t.fragment == ""
+
+
+# ---------------------------------------------------------------------------
+# PLAIN_PATH_REF tests (./  ../  ~/)
+# ---------------------------------------------------------------------------
+
+def test_dot_slash_alone_is_plain_path_ref() -> None:
+    """./ alone → PLAIN_PATH_REF with empty fragment."""
+    t = detect_context("./", 2)
+    assert t.context is CompletionContext.PLAIN_PATH_REF
+    assert t.fragment == ""
+
+
+def test_dot_slash_with_fragment() -> None:
+    """./src/main → PLAIN_PATH_REF with fragment 'src/main'."""
+    t = detect_context("./src/main", 10)
+    assert t.context is CompletionContext.PLAIN_PATH_REF
+    assert t.fragment == "src/main"
+
+
+def test_dotdot_slash_is_plain_path_ref() -> None:
+    """../foo → PLAIN_PATH_REF with fragment 'foo'."""
+    t = detect_context("../foo", 6)
+    assert t.context is CompletionContext.PLAIN_PATH_REF
+    assert t.fragment == "foo"
+
+
+def test_tilde_slash_is_plain_path_ref() -> None:
+    """~/bar → PLAIN_PATH_REF with fragment 'bar'."""
+    t = detect_context("~/bar", 5)
+    assert t.context is CompletionContext.PLAIN_PATH_REF
+    assert t.fragment == "bar"
+
+
+def test_plain_path_after_space() -> None:
+    """'check ./src' at cursor after 'src' → PLAIN_PATH_REF."""
+    t = detect_context("check ./src", 11)
+    assert t.context is CompletionContext.PLAIN_PATH_REF
+    assert t.fragment == "src"
+
+
+def test_dot_slash_not_mid_word() -> None:
+    """foo./bar is NOT PLAIN_PATH_REF (no space or SOL before '.')."""
+    t = detect_context("foo./bar", 8)
+    assert t.context is CompletionContext.NATURAL

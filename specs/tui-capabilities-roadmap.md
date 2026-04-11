@@ -128,21 +128,23 @@ Queue full → `logger.warning` + `app.status_output_dropped = True` → StatusB
 
 No search within past turns. `Ctrl+R` / `Ctrl+F` from idle input brings up nothing; users scroll manually.
 
-**No spec yet.** See §Future specs below.
+**Spec written:** `specs/tui-history-search-spec.md` — APPROVED 2026-04-11.
 
 ### Missing: turn undo / retry
 
 No way to rewind the conversation to before the last turn. After a bad agent response, the user must start a new session or manually roll back any file changes.
 
-**No spec yet.**
+**Spec written:** `specs/tui-turn-undo-retry-spec.md` — APPROVED 2026-04-11.
 
 ### Missing: mouse click-to-toggle on ToolBlocks
 
 Browse mode requires keyboard. Click-to-toggle on a ToolHeader is deferred per the spec (requires hit-testing in the scrollable `OutputPanel`).
 
+**Spec written:** `specs/tui-toolblock-click-toggle-spec.md` — APPROVED 2026-04-11.
+
 ### Terminal compatibility caveats
 
-- **OSC 52 clipboard:** Fire-and-forget. Fails silently in Windows Terminal <1.9, some SSH sessions, restricted containers. No capability detection at startup. A `✓` flash after `c` confirms the escape was sent, not that it was received.
+- **OSC 52 clipboard:** Fire-and-forget. Fails silently in Windows Terminal <1.9, some SSH sessions, restricted containers. No capability detection at startup. A `✓` flash after `c` confirms the escape was sent, not that it was received. **Spec written:** `specs/tui-osc52-capability-detection-spec.md` — APPROVED 2026-04-11.
 - **Truecolor:** StatusBar uses hex colors (`#ffa726`). Rich downsamples gracefully to 256-color but not to 16-color (`TERM=xterm`). No explicit 16-color fallback.
 - **Emoji width:** Tool emoji (`✍️`, `📖`, `🔎`) are ZWJ/presentation sequences — render as 2 cells in most terminals, 1 in some East Asian locales. Rich's cell-width calculation handles the common case but not all locale combos.
 
@@ -176,30 +178,25 @@ These are ordered by user impact. Each warrants a standalone spec before impleme
 **Status:** Done. Steps 21–25 of `specs/tool-output-streamline.md` §8. Step 26 (nested delegation) deferred.  
 **What was built:** `execute_streaming()` on `BaseEnvironment` + `LocalEnvironment`; `StreamingToolBlock` widget (IDLE→STREAMING→COMPLETED); 60fps flush timer; 200-line visible cap; 2 kB/line byte cap; `_user_scrolled_up` scroll lock on `OutputPanel`; ContextVar streaming callback in `terminal_tool.py`; `open_streaming_tool_block` / `append_streaming_line` / `close_streaming_tool_block` on `HermesApp`; wired from `cli.py` `_on_tool_start` / `_on_tool_complete`. 22 new tests.
 
-### SPEC-B: History search
+### ~~SPEC-B: History search~~ → SPEC WRITTEN 2026-04-11
 **Impact:** High — long sessions with 50+ turns make retrieval painful without search.  
-**Scope:** `Ctrl+F` from idle input opens a search overlay (new widget, similar to ClarifyWidget). Typed query filters `MessagePanel` turns by response text match. Navigate matches with `Up`/`Down`, jump-to on `Enter`, dismiss with `Escape`.  
-**Dependencies:** Requires full-text index of `CopyableRichLog._plain_lines` per turn. Build lazily on first search.  
-**Risk:** Low. Pure display-layer feature; no agent interaction.  
-**Course of action:** Write spec, implement as a standalone overlay + `OutputPanel.search(query)` method.
+**Spec:** `specs/tui-history-search-spec.md` — APPROVED, reviewed to 0 issues.  
+**Key design:** `HistorySearchOverlay` (layer:overlay, dock:top); `TurnCandidate(Candidate)` for `fuzzy_rank()` compatibility; frozen snapshot index on `open_search()`; priority `BINDINGS` for key interception; `panel.scroll_visible()` + `--highlighted` CSS fade for jump.
 
-### SPEC-C: Turn undo / retry
+### ~~SPEC-C: Turn undo / retry~~ → SPEC WRITTEN 2026-04-11
 **Impact:** Medium-high — recovering from bad agent turns currently requires exiting.  
-**Scope:** Store a conversation-state snapshot (messages, files-changed list) before each agent turn. `/undo` command or `ctrl+z` keybinding reverts to the snapshot: restores conversation history, offers to reverse file changes (using stored pre-edit snapshots from `_pending_edit_snapshots`).  
-**Dependencies:** Conversation history is already in `self.agent.history`. File-edit snapshots exist via `LocalEditSnapshot`. The main work is plumbing the revert UI.  
-**Risk:** Medium. Reverting git-untracked edits is irreversible; need a confirmation overlay.  
-**Course of action:** Spec the snapshot model and revert UX first.
+**Spec:** `specs/tui-turn-undo-retry-spec.md` — APPROVED, reviewed to 0 issues.  
+**Key design:** `UndoConfirmOverlay` (CountdownMixin, 10s auto-cancel); `UndoOverlayState(OverlayState)`; `_run_undo_sequence()` (@work(thread=False)); `MessagePanel._user_text`; `watch_agent_running` auto-cancel guard; `_handle_tui_command()` intercept before agent forward.
 
-### SPEC-D: Mouse click-to-toggle on ToolBlocks
-**Impact:** Low-medium — browse mode covers the same use case via keyboard. Mouse adds discoverability.  
-**Scope:** `ToolHeader` receives `on_click` → calls `parent.toggle()`. Requires resolving click coordinates to the correct `ToolBlock` within `OutputPanel`.  
-**Dependencies:** Textual 8.x click-event routing in `ScrollableContainer` — verify that `on_click` fires correctly on `Widget` children inside a `ScrollableContainer` with `overflow-y: auto`.  
-**Risk:** Low. Purely additive.
+### ~~SPEC-D: Mouse click-to-toggle on ToolBlocks~~ → SPEC WRITTEN 2026-04-11
+**Impact:** Low-medium — browse mode covers keyboard; mouse adds discoverability.  
+**Spec:** `specs/tui-toolblock-click-toggle-spec.md` — APPROVED, reviewed to 0 issues.  
+**Key design:** `ToolHeader.on_click(event: Click)` with streaming guard + affordances guard; `from textual.events import Click`; hover background via `ToolHeader:hover` CSS (no `cursor: pointer` — not valid in Textual).
 
-### SPEC-E: OSC 52 capability detection
-**Impact:** Low — affects users in restricted environments.  
-**Scope:** At startup, probe terminal clipboard support via a capability query (e.g., `TERM_PROGRAM`, `COLORTERM`, known SSH env vars). Set `_clipboard_supported: bool` on `HermesApp`. If unsupported, the `c` key in browse mode falls back to writing the content to a temp file and showing the path, or prints to the StatusBar.  
-**Risk:** Low. Detection is heuristic; no reliable universal method exists.
+### ~~SPEC-E: OSC 52 capability detection~~ → SPEC WRITTEN 2026-04-11
+**Impact:** Low — affects users in restricted environments (SSH, gnome-terminal).  
+**Spec:** `specs/tui-osc52-capability-detection-spec.md` — APPROVED, reviewed to 0 issues.  
+**Key design:** `osc52_probe.py` with pre-startup `asyncio.run(probe_osc52())`; platform guard (`win32` → False); `_clipboard_available` kwarg on `HermesApp`; `_copy_text_with_hint()` guard; `HERMES_CLIPBOARD=0|1` override.
 
 ---
 

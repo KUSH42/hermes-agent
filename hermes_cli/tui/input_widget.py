@@ -377,7 +377,8 @@ class HermesInput(Input, can_focus=True):
         if message.query != self._current_trigger.fragment:
             return
 
-        self._raw_candidates.extend(message.batch)
+        if len(self._raw_candidates) < 4096:
+            self._raw_candidates.extend(message.batch)
         ranked = fuzzy_rank(
             self._current_trigger.fragment, self._raw_candidates, limit=200,
         )

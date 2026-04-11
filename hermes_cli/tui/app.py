@@ -25,6 +25,10 @@ _FILE_TOOLS: frozenset[str] = frozenset({
     "view", "str_replace_editor", "patch",
 })
 
+_SHELL_TOOLS: frozenset[str] = frozenset({
+    "bash", "run_command", "execute_command", "shell", "run_bash",
+})
+
 _PATH_EXTRACT_RE = re.compile(
     r'["\']?(/[\w./\-]+|[\w./\-]+\.[\w]{1,6})["\']?'
 )
@@ -35,6 +39,7 @@ from typing import TYPE_CHECKING, Any
 
 from rich.text import Text
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.reactive import reactive
@@ -69,6 +74,9 @@ from hermes_cli.tui.widgets import (
     VoiceStatusBar,
     _safe_widget_call,
 )
+
+from hermes_cli.tui.perf import EventLoopLatencyProbe, WorkerWatcher
+from hermes_cli.tui.theme_manager import ThemeManager
 
 if TYPE_CHECKING:
     from hermes_cli.tui.input_widget import HermesInput
@@ -114,6 +122,16 @@ class HermesApp(App):
     # Layer declaration — required before any widget uses ``layer: overlay``
     # in CSS.  Draw order: default → overlay.
     LAYERS = ("default", "overlay")
+
+    BINDINGS = [
+        Binding("ctrl+f", "open_history_search", "History search", show=False, priority=True),
+        Binding("ctrl+r", "open_history_search", "Reverse history search", show=False, priority=True),
+    ]
+
+    _CHEVRON_PHASE_CLASSES: frozenset[str] = frozenset({
+        "--phase-file", "--phase-stream", "--phase-shell",
+        "--phase-done", "--phase-error",
+    })
 
     # --- Reactive state (replaces flag + _invalidate() pattern) ---
     agent_running: reactive[bool] = reactive(False)
@@ -165,11 +183,19 @@ class HermesApp(App):
 
     # hint_text is NOT on HermesApp — HintBar.hint is the single source of truth.
 
-    def __init__(self, cli: Any, startup_fn=None, clipboard_available: bool = True, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        cli: Any,
+        startup_fn=None,
+        clipboard_available: bool = True,
+        xclip_cmd: list[str] | None = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self.cli = cli
         self._startup_fn = startup_fn
         self._clipboard_available: bool = clipboard_available
+        self._xclip_cmd: list[str] | None = xclip_cmd
 
         # Bounded queue: prevents unbounded memory growth when agent produces
         # faster than UI renders. 4096 chunks ≈ ~1MB of text at ~256 bytes/chunk.
@@ -177,8 +203,12 @@ class HermesApp(App):
         self._spinner_idx = 0
         self._event_loop: asyncio.AbstractEventLoop | None = None
 
-        # Skin CSS variable overrides (injected via get_css_variables)
-        self._skin_vars: dict[str, str] = {}
+        # ThemeManager handles skin loading, component vars, and hot reload.
+        # Must be constructed after super().__init__() so App internals exist.
+        self._theme_manager = ThemeManager(self)
+        # Diagnostic probes — initialised in on_mount once the event loop runs.
+        self._worker_watcher: WorkerWatcher | None = None
+        self._event_loop_probe: EventLoopLatencyProbe | None = None
 
         # Spinner frames — read from module-level _COMMAND_SPINNER_FRAMES in cli.py
         self._spinner_frames: tuple[str, ...] = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
@@ -204,6 +234,9 @@ class HermesApp(App):
         # Timestamp until which _flash_hint has the hint bar reserved.
         # _tick_spinner must not overwrite before this expires.
         self._flash_hint_expires: float = 0.0
+
+        # Compaction warning state — reset when progress returns to 0
+        self._compaction_warned: bool = False
 
     # --- Compose ---
 
@@ -248,6 +281,8 @@ class HermesApp(App):
 
     def on_mount(self) -> None:
         self._event_loop = asyncio.get_running_loop()
+        self._worker_watcher = WorkerWatcher(self)
+        self._event_loop_probe = EventLoopLatencyProbe()
         self._consume_output()  # starts the @work consumer
         self.set_interval(0.1, self._tick_spinner)
         self.set_interval(1.0, self._tick_duration)
@@ -256,13 +291,16 @@ class HermesApp(App):
             self.query_one("#input-area").focus()
         except NoMatches:
             pass
-        if not self._clipboard_available:
+        if not self._clipboard_available and not self._xclip_cmd:
             try:
                 self.query_one("#status-clipboard-warning").add_class("--active")
             except NoMatches:
                 pass
         if self._startup_fn is not None:
             threading.Thread(target=self._startup_fn, daemon=True).start()
+        import os as _os
+        if _os.environ.get("HERMES_DENSITY", "").lower() == "compact":
+            self.add_class("density-compact")
 
     # --- Output consumer (bounded queue → RichLog) ---
 
@@ -444,7 +482,16 @@ class HermesApp(App):
     # --- Session duration timer ---
 
     def _tick_duration(self) -> None:
-        """Update session duration every second."""
+        """Update session duration and run 1-Hz diagnostics."""
+        # --- Diagnostic probes (run unconditionally at 1 Hz) ---
+        if self._event_loop_probe is not None:
+            self._event_loop_probe.tick()
+        if self._worker_watcher is not None:
+            self._worker_watcher.tick()
+        if self._theme_manager is not None:
+            self._theme_manager.check_for_changes()
+
+        # --- Session duration display ---
         cli = getattr(self, "cli", None)
         if cli is None:
             return
@@ -475,12 +522,28 @@ class HermesApp(App):
 
     # --- Reactive watchers ---
 
-    def watch_agent_running(self, value: bool) -> None:
-        # Dim chevron while running — keeps the spatial anchor visible
+    def _set_chevron_phase(self, phase: str) -> None:
+        """Set exactly one phase class on #input-chevron, clearing all others."""
         try:
-            self.query_one("#input-chevron", Static).set_class(value, "--busy")
+            chevron = self.query_one("#input-chevron", Static)
+            for cls in self._CHEVRON_PHASE_CLASSES:
+                chevron.remove_class(cls)
+            if phase:
+                chevron.add_class(phase)
         except NoMatches:
             pass
+
+    def watch_agent_running(self, value: bool) -> None:
+        if value:
+            self._set_chevron_phase("--phase-stream")
+        else:
+            try:
+                chevron = self.query_one("#input-chevron", Static)
+                if not chevron.has_class("--phase-error"):
+                    self._set_chevron_phase("--phase-done")
+                    self.set_timer(0.4, lambda: self._set_chevron_phase(""))
+            except NoMatches:
+                pass
 
         # --- undo safety guard ---
         if value and self.undo_state is not None:
@@ -532,10 +595,17 @@ class HermesApp(App):
             if tool_name in _FILE_TOOLS:
                 m = _PATH_EXTRACT_RE.search(value)
                 self.status_active_file = m.group(1) if m else ""
+                self._set_chevron_phase("--phase-file")
+            elif tool_name in _SHELL_TOOLS:
+                self.status_active_file = ""
+                self._set_chevron_phase("--phase-shell")
             else:
                 self.status_active_file = ""
+                self._set_chevron_phase("--phase-stream")
         else:
             self.status_active_file = ""
+            if self.agent_running:
+                self._set_chevron_phase("--phase-stream")
 
     @property
     def choice_overlay_active(self) -> bool:
@@ -554,6 +624,32 @@ class HermesApp(App):
         except NoMatches:
             pass
 
+    def action_open_history_search(self) -> None:
+        """Open (or close) the history search overlay."""
+        from hermes_cli.tui.completion_overlay import CompletionOverlay as _CO
+        try:
+            if self.query_one(_CO).has_class("--visible"):
+                return
+        except NoMatches:
+            pass
+        try:
+            hs = self.query_one(HistorySearchOverlay)
+            if hs.has_class("--visible"):
+                hs.action_dismiss()
+            else:
+                hs.open_search()
+        except NoMatches:
+            pass
+
+    def action_toggle_density(self) -> None:
+        """Toggle compact / normal density mode."""
+        if self.has_class("density-compact"):
+            self.remove_class("density-compact")
+            self._flash_hint("Density: normal", 1.0)
+        else:
+            self.add_class("density-compact")
+            self._flash_hint("Density: compact", 1.0)
+
     def watch_clarify_state(self, value: ChoiceOverlayState | None) -> None:
         try:
             w = self.query_one(ClarifyWidget)
@@ -561,6 +657,13 @@ class HermesApp(App):
             if value is not None:
                 w.update(value)
                 self._hide_completion_overlay_if_present()
+                self.call_after_refresh(w.focus)
+            else:
+                if not self.agent_running and not self.command_running:
+                    try:
+                        self.call_after_refresh(self.query_one("#input-area").focus)
+                    except NoMatches:
+                        pass
         except NoMatches:
             pass
 
@@ -571,6 +674,13 @@ class HermesApp(App):
             if value is not None:
                 w.update(value)
                 self._hide_completion_overlay_if_present()
+                self.call_after_refresh(w.focus)
+            else:
+                if not self.agent_running and not self.command_running:
+                    try:
+                        self.call_after_refresh(self.query_one("#input-area").focus)
+                    except NoMatches:
+                        pass
         except NoMatches:
             pass
 
@@ -623,6 +733,17 @@ class HermesApp(App):
         # Clear pending panel ref when overlay is dismissed (including auto-cancel)
         if value is None:
             self._pending_undo_panel = None
+
+    def watch_status_compaction_progress(self, value: float) -> None:
+        if value == 0.0:
+            self._compaction_warned = False
+        try:
+            self.query_one("#input-rule", TitledRule).progress = value
+        except NoMatches:
+            pass
+        if value >= 0.9 and not self._compaction_warned:
+            self._compaction_warned = True
+            self._flash_hint("⚠  Context window 90% full — compaction imminent", 3.0)
 
     def watch_voice_mode(self, value: bool) -> None:
         try:
@@ -791,33 +912,41 @@ class HermesApp(App):
     # --- Theme / skin system ---
 
     def get_css_variables(self) -> dict[str, str]:
-        """Merge runtime skin overrides into Textual's CSS variable resolution.
+        """Merge ThemeManager overrides into Textual's CSS variable resolution.
 
         Confirmed stable: ``App.get_css_variables() -> dict[str, str]`` is
         unchanged from Textual 1.0 through 8.x.
+
+        Variable precedence (highest → lowest):
+            component_vars  >  skin vars  >  Textual defaults
+
+        The component_vars layer enables full Component Parts theming without
+        private-API hacks: ``hermes.tcss`` references ``$cursor-color`` etc.
+        which ThemeManager injects here.
         """
         base = super().get_css_variables()
-        # _skin_vars may not exist yet if called during super().__init__()
-        skin = getattr(self, "_skin_vars", {})
-        return {**base, **skin}
+        # _theme_manager may not exist yet if called during super().__init__()
+        tm = getattr(self, "_theme_manager", None)
+        overrides = tm.css_variables if tm is not None else {}
+        return {**base, **overrides}
 
     def apply_skin(self, skin_vars: "dict[str, str] | Path") -> None:
         """Apply a skin as CSS variable overrides.
 
         Accepts either a pre-built ``dict[str, str]`` of Textual CSS variable
         names, or a ``Path`` to a JSON/YAML skin file (processed via
-        ``skin_loader.load_skin``).
+        ``ThemeManager``).
+
+        Skin files may include a ``component_vars`` section to theme cursor
+        colour, selection colour, and other Component Part variables.
 
         Safe to call via ``call_from_thread``.
         """
-        if isinstance(skin_vars, Path):
-            from hermes_cli.tui.skin_loader import load_skin
-            skin_vars = load_skin(skin_vars)
-        self._skin_vars = skin_vars
-        try:
-            self.refresh_css()
-        except Exception:
-            logger.warning("Failed to apply skin CSS variables", exc_info=True)
+        if isinstance(skin_vars, dict):
+            self._theme_manager.load_dict(skin_vars)
+        else:
+            self._theme_manager.load([skin_vars])
+        self._theme_manager.apply()
 
     # --- Clipboard / selection helpers ---
 
@@ -851,7 +980,15 @@ class HermesApp(App):
     def _copy_text_with_hint(self, text: str) -> None:
         """Copy text to clipboard with capability guard and hint flash."""
         if not self._clipboard_available:
-            self._flash_hint("⚠  Clipboard unavailable (terminal has no OSC 52 support)", 2.5)
+            if self._xclip_cmd:
+                try:
+                    import subprocess
+                    subprocess.run(self._xclip_cmd, input=text.encode(), check=True, timeout=2)
+                    self._flash_hint(f"⎘  {len(text)} chars copied", 1.5)
+                except Exception:
+                    self._flash_hint("⚠  Copy failed (xclip/xsel error)", 2.5)
+            else:
+                self._flash_hint("⚠  No clipboard (install xclip or xsel)", 2.5)
             return
         self.copy_to_clipboard(text)
         self._flash_hint(f"⎘  {len(text)} chars copied", 1.5)
@@ -1044,6 +1181,9 @@ class HermesApp(App):
         if re.match(r"^/rollback(?:\s+\d+)?$", stripped):
             self._initiate_rollback(stripped)
             return True
+        if stripped == "/compact":
+            self.action_toggle_density()
+            return True
         return False
 
     def _has_rollback_checkpoint(self) -> bool:
@@ -1169,19 +1309,6 @@ class HermesApp(App):
         - escape: cancel overlay → interrupt agent
         """
         key = event.key
-
-        # --- ctrl+f / ctrl+r → toggle history search overlay ---
-        if key in ("ctrl+f", "ctrl+r"):
-            try:
-                hs = self.query_one(HistorySearchOverlay)
-                if hs.has_class("--visible"):
-                    hs.action_dismiss()
-                else:
-                    hs.open_search()
-            except NoMatches:
-                pass
-            event.prevent_default()
-            return
 
         # --- ctrl+p → path/file picker (@-completion) ---
         if key == "ctrl+p":

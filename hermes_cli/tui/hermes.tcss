@@ -8,7 +8,19 @@
  * Precedence: DEFAULT_CSS < CSS class var < external .tcss < inline styles.
  * Keep structural properties in DEFAULT_CSS and visual properties here
  * to avoid precedence surprises.
+ *
+ * Component Part variables — ThemeManager overrides at runtime via
+ * App.get_css_variables().  Defaults here are authoritative for first render.
+ * Override in your skin file's component_vars section:
+ *
+ *   component_vars:
+ *     cursor-color:        "#FFD700"
+ *     cursor-selection-bg: "#1E4080"
+ *     cursor-placeholder:  "#666666"
  */
+$cursor-color: #FFF8DC;
+$cursor-selection-bg: #3A5A8C;
+$cursor-placeholder: #555555;
 
 HermesApp {
     background: $background;
@@ -24,6 +36,10 @@ HermesApp {
 MessagePanel {
     margin: 1 0 0 0;
     transition: opacity 0.3s in_out_cubic;
+}
+
+MessagePanel.--entering {
+    opacity: 0.0;
 }
 
 /* --- Reasoning panel --- */
@@ -71,6 +87,7 @@ SecretWidget {
 #input-row {
     height: 1;
     padding: 0 1;
+    background: $background;
 }
 
 #input-chevron {
@@ -80,10 +97,12 @@ SecretWidget {
     transition: color 0.2s in_out_cubic;
 }
 
-/* Chevron dims while agent is running — spatial anchor stays visible */
-#input-chevron.--busy {
-    color: $text-muted 40%;
-}
+/* Chevron phase colours — set by _set_chevron_phase() */
+#input-chevron.--phase-file   { color: #FFBF00; }
+#input-chevron.--phase-stream { color: #6EA8D4; }
+#input-chevron.--phase-shell  { color: #A8D46E; }
+#input-chevron.--phase-done   { color: #4CAF50; }
+#input-chevron.--phase-error  { color: #E06C75; }
 
 #spinner-overlay {
     display: none;
@@ -100,17 +119,27 @@ HermesInput {
     width: 1fr;
 }
 
+/* Component Part variables — themed via ThemeManager.component_vars.
+ * Defaults are defined in theme_manager.COMPONENT_VAR_DEFAULTS and
+ * injected through HermesApp.get_css_variables().  Override by adding
+ * a component_vars section to your skin JSON/YAML:
+ *
+ *   component_vars:
+ *     cursor-color:        "#FFD700"
+ *     cursor-selection-bg: "#1E4080"
+ *     cursor-placeholder:  "#666666"
+ */
 HermesInput > .input--cursor {
-    color: #FFF8DC;
-    background: #FFF8DC;
+    color: $cursor-color;
+    background: $cursor-color;
 }
 
 HermesInput > .input--selection {
-    background: #3A5A8C;
+    background: $cursor-selection-bg;
 }
 
 HermesInput > .input--placeholder {
-    color: #555555;
+    color: $cursor-placeholder;
     text-style: italic;
 }
 
@@ -166,8 +195,8 @@ PreviewPanel {
 
 #status-clipboard-warning {
     color: $warning;
+    background: transparent;
     display: none;
-    margin-left: 1;
 }
 
 #status-clipboard-warning.--active {
@@ -245,3 +274,22 @@ MessagePanel.--highlighted {
     background: $accent 15%;
     transition: background 1.5s in_out_cubic;
 }
+
+/* --- Overlay focus rings (§2.6) --- */
+
+ClarifyWidget:focus,
+ApprovalWidget:focus {
+    outline: tall $accent 50%;
+}
+
+/* --- Density: compact mode (§2.9) --- */
+
+HermesApp.density-compact MessagePanel          { margin: 0; }
+HermesApp.density-compact ReasoningPanel        { margin: 0; }
+HermesApp.density-compact UserEchoPanel         { margin: 0; padding: 0 1; }
+HermesApp.density-compact StatusBar             { padding: 0; }
+HermesApp.density-compact HintBar               { padding: 0; }
+HermesApp.density-compact ImageBar              { padding: 0; }
+HermesApp.density-compact VoiceStatusBar        { padding: 0; }
+HermesApp.density-compact #input-row            { padding: 0; }
+HermesApp.density-compact ToolBodyContainer CopyableRichLog { max-height: 20; }

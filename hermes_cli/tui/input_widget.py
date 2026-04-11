@@ -17,6 +17,8 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from hermes_cli.tui.perf import measure
+
 from rich.text import Text
 from textual import events
 from textual.binding import Binding
@@ -99,9 +101,15 @@ class HermesInput(Input, can_focus=True):
             CompletionContext.NONE, "", 0,
         )
         self._raw_candidates: list[PathCandidate] = []
+        self._path_debounce_timer: "Any | None" = None
 
     def on_mount(self) -> None:
         self._load_history()
+
+    def on_unmount(self) -> None:
+        if self._path_debounce_timer is not None:
+            self._path_debounce_timer.stop()
+            self._path_debounce_timer = None
 
     # --- Property bridges (old API → Input API) ---
 
@@ -229,26 +237,32 @@ class HermesInput(Input, can_focus=True):
         # Suggester (ghost text) is driven natively by Input — no manual hook.
 
     def _update_autocomplete(self) -> None:
-        """Dispatch to the correct completion provider based on context."""
-        # Choice overlay wins: completion is suppressed while an approval
-        # prompt is up.
-        if getattr(self.app, "choice_overlay_active", False):
-            self._hide_completion_overlay()
-            return
+        """Dispatch to the correct completion provider based on context.
 
-        trigger = detect_context(self.value, self.cursor_position)
-        self._current_trigger = trigger
+        Perf target: <4 ms total (60 FPS budget = 16.67 ms; autocomplete is
+        ~25 % of that budget).  Measured via TEXTUAL_LOG=1 + [PERF] filter.
+        Torture test: 100 chars/s input while a 50 k-file tree is being walked.
+        """
+        with measure("input._update_autocomplete", budget_ms=4.0):
+            # Choice overlay wins: completion is suppressed while an approval
+            # prompt is up.
+            if getattr(self.app, "choice_overlay_active", False):
+                self._hide_completion_overlay()
+                return
 
-        # Context change: clear stale walker output.  The new trigger.fragment
-        # becomes the implicit stale-batch key in on_path_search_provider_batch.
-        self._raw_candidates = []
+            trigger = detect_context(self.value, self.cursor_position)
+            self._current_trigger = trigger
 
-        if trigger.context is CompletionContext.SLASH_COMMAND:
-            self._show_slash_completions(trigger.fragment)
-        elif trigger.context is CompletionContext.PATH_REF:
-            self._show_path_completions(trigger.fragment)
-        else:
-            self._hide_completion_overlay()
+            # Context change: clear stale walker output.  The new trigger.fragment
+            # becomes the implicit stale-batch key in on_path_search_provider_batch.
+            self._raw_candidates = []
+
+            if trigger.context is CompletionContext.SLASH_COMMAND:
+                self._show_slash_completions(trigger.fragment)
+            elif trigger.context is CompletionContext.PATH_REF:
+                self._show_path_completions(trigger.fragment)
+            else:
+                self._hide_completion_overlay()
 
     def _show_slash_completions(self, fragment: str) -> None:
         if not self._slash_commands:
@@ -259,12 +273,26 @@ class HermesInput(Input, can_focus=True):
             for c in self._slash_commands
             if c.startswith("/" + fragment)
         ]
-        ranked = fuzzy_rank(fragment, items, limit=50)
+        with measure("slash_completions.fuzzy_rank", budget_ms=2.0, silent=True):
+            ranked = fuzzy_rank(fragment, items, limit=50)
         if not ranked:
-            # GAP-7: flash hint so the user knows the command doesn't exist
-            if fragment:
+            hint = ""
+            duration = 1.5
+            if fragment and len(fragment) >= 2:
+                all_slash = [SlashCandidate(display=c, command=c) for c in self._slash_commands]
+                suggestions = fuzzy_rank(fragment, all_slash, limit=1)
+                if suggestions:
+                    hint = f"Did you mean: {suggestions[0].command}?"
+                    duration = 2.0
+                else:
+                    hint = f"Unknown command: /{fragment}"
+                    duration = 1.5
+            elif fragment:
+                hint = f"Unknown command: /{fragment}"
+                duration = 1.5
+            if hint:
                 try:
-                    self.app._flash_hint(f"Unknown command: /{fragment}", 1.5)
+                    self.app._flash_hint(hint, duration)
                 except Exception:
                     pass
             self._hide_completion_overlay()
@@ -274,17 +302,27 @@ class HermesInput(Input, can_focus=True):
         self._show_completion_overlay()
 
     def _show_path_completions(self, fragment: str) -> None:
+        if self._path_debounce_timer is not None:
+            self._path_debounce_timer.stop()
+            self._path_debounce_timer = None
+        self._set_overlay_mode(slash_only=False)
+        self._push_to_list([])
+        self._show_completion_overlay()
+        self._path_debounce_timer = self.set_timer(
+            0.12, lambda: self._fire_path_search(fragment)
+        )
+
+    def _fire_path_search(self, fragment: str) -> None:
+        self._path_debounce_timer = None
+        if self._current_trigger.context is not CompletionContext.PATH_REF:
+            return
+        if self._current_trigger.fragment != fragment:
+            return
         try:
             provider = self.screen.query_one(PathSearchProvider)
         except NoMatches:
-            # Provider not yet mounted (e.g. during test fixture bootstrap).
-            # Fail closed — hide, don't crash.
-            self._hide_completion_overlay()
             return
-        self._set_overlay_mode(slash_only=False)
-        self._push_to_list([])  # clear while walker spins up — no blank flash
         provider.search(fragment, Path.cwd())
-        self._show_completion_overlay()
 
     def _set_overlay_mode(self, *, slash_only: bool) -> None:
         try:
@@ -301,6 +339,9 @@ class HermesInput(Input, can_focus=True):
         overlay.add_class("--visible")
 
     def _hide_completion_overlay(self) -> None:
+        if self._path_debounce_timer is not None:
+            self._path_debounce_timer.stop()
+            self._path_debounce_timer = None
         try:
             overlay = self.screen.query_one(CompletionOverlay)
         except NoMatches:

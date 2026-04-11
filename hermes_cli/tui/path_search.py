@@ -16,11 +16,12 @@ Candidate hierarchy
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
-from textual import work
+from textual import log, work
 from textual.message import Message
 from textual.widget import Widget
 from textual.worker import get_current_worker
@@ -52,6 +53,15 @@ class SlashCandidate(Candidate):
 # PathSearchProvider widget
 # ---------------------------------------------------------------------------
 
+def _log_first_batch(ms: float) -> None:
+    """Emit first-batch latency to Textual console with budget check."""
+    budget = 50.0
+    if ms > budget:
+        log.warning(f"[PERF] path-walker first-batch: {ms:.1f}ms ⚠ OVER {budget:.0f}ms budget")
+    else:
+        log(f"[PERF] path-walker first-batch: {ms:.1f}ms (target <{budget:.0f}ms)")
+
+
 class PathSearchProvider(Widget):
     """Invisible worker host.  Owns the path-search @work and emits Batches.
 
@@ -82,6 +92,17 @@ class PathSearchProvider(Widget):
 
     @work(thread=True, exclusive=True, group="path-search")
     def _walk(self, query: str, root: Path) -> None:
+        # --------------- perf instrumentation --------------------------------
+        # Target: first batch in <50 ms so the overlay populates before the
+        # user finishes typing.  Total scan of 50 k files should finish <2 s.
+        # Monitor via: TEXTUAL_LOG=1 + filter Textual Console for [PERF].
+        # Torture test: hold '@' then type a deep path fragment rapidly.
+        # Expected: worker count peaks at 2, then drops; no UI frame drops.
+        # ----------------------------------------------------------------------
+        t_start = time.perf_counter()
+        first_batch_sent = False
+        total_files = 0
+
         BATCH = 512
         IGNORE = {".git", "node_modules", "__pycache__", ".venv", "dist", "build"}
         buf: list[PathCandidate] = []
@@ -93,9 +114,12 @@ class PathSearchProvider(Widget):
             # Cooperative cancellation at directory granularity.
             # Per-file checks cost more than the walk itself on warm caches.
             if worker.is_cancelled:
+                t_cancel = (time.perf_counter() - t_start) * 1000
+                log(f"[PERF] path-walker cancelled after {t_cancel:.0f}ms, {total_files} files")
                 return
             rel_dir = dirpath[len(root_str) + 1:] if dirpath != root_str else ""
             for name in filenames:
+                total_files += 1
                 # Cheap prefilter BEFORE allocation — PathCandidate alloc is
                 # the dominant cost once the FS cache is warm.
                 if q_lower and q_lower not in name.lower() and q_lower not in rel_dir.lower():
@@ -106,9 +130,21 @@ class PathSearchProvider(Widget):
                     abs_path=os.path.join(dirpath, name),
                 ))
                 if len(buf) >= BATCH:
+                    if not first_batch_sent:
+                        first_batch_ms = (time.perf_counter() - t_start) * 1000
+                        _log_first_batch(first_batch_ms)
+                        first_batch_sent = True
                     self.post_message(self.Batch(query, buf, final=False))
                     buf = []
+
+        # Final batch (may be smaller than BATCH)
+        if not first_batch_sent:
+            first_batch_ms = (time.perf_counter() - t_start) * 1000
+            _log_first_batch(first_batch_ms)
+
         self.post_message(self.Batch(query, buf, final=True))
+        total_ms = (time.perf_counter() - t_start) * 1000
+        log(f"[PERF] path-walker done: {total_ms:.0f}ms, {total_files} files scanned")
 
     @staticmethod
     def _iwalk(root: Path, ignore: set[str]) -> Iterator[tuple[str, list[str], list[str]]]:

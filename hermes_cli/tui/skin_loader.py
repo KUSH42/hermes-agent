@@ -37,6 +37,48 @@ class SkinError(ValueError):
     """Raised when a skin file cannot be parsed or has an invalid structure."""
 
 
+def load_skin_full(path: Path) -> tuple[dict[str, str], dict[str, str]]:
+    """Like ``load_skin()`` but also returns the ``component_vars`` dict.
+
+    Returns
+    -------
+    tuple of (css_vars, component_vars) where:
+
+    * ``css_vars``        — Textual CSS variable overrides (same as load_skin)
+    * ``component_vars``  — raw dict from the ``component_vars`` key in the
+                            skin file; empty dict if absent.  Callers
+                            (``ThemeManager``) apply their own defaults on top.
+    """
+    data = _read_structured(path)
+    if not isinstance(data, dict):
+        raise SkinError(f"{path}: top level must be a mapping")
+
+    # Extract component_vars before CSS var processing
+    raw_component = data.get("component_vars", {})
+    if not isinstance(raw_component, dict):
+        raise SkinError(f"{path}: 'component_vars' must be a mapping")
+    component_vars = {str(k): str(v) for k, v in raw_component.items()}
+
+    out: dict[str, str] = {}
+
+    # Pass 1 — raw vars win on conflict
+    raw = data.get("vars", {})
+    if not isinstance(raw, dict):
+        raise SkinError(f"{path}: 'vars' must be a mapping")
+    out.update({str(k): str(v) for k, v in raw.items()})
+
+    # Pass 2 — semantic keys fan out; component_vars key is intentionally skipped
+    for semantic, value in data.items():
+        if semantic in ("vars", "component_vars") or not isinstance(value, str):
+            continue
+        for target in _SEMANTIC_MAP.get(semantic, ()):
+            out.setdefault(target, value)
+        if semantic in _GLASS_KEYS:
+            out.setdefault(semantic, value)
+
+    return out, component_vars
+
+
 def load_skin(path: Path) -> dict[str, str]:
     """Load a JSON or YAML skin file and return a Textual CSS variable dict.
 

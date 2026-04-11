@@ -275,12 +275,12 @@ async def test_fps_counter_toggle_keybind() -> None:
         counter = app.query_one(FPSCounter)
         assert not counter.has_class("--visible")
 
-        await pilot.press("ctrl+backslash")
+        await pilot.press("f8")
         await pilot.pause()
         assert counter.has_class("--visible")
         assert app.fps_hud_visible is True
 
-        await pilot.press("ctrl+backslash")
+        await pilot.press("f8")
         await pilot.pause()
         assert not counter.has_class("--visible")
         assert app.fps_hud_visible is False

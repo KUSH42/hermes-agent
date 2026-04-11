@@ -659,12 +659,12 @@ class OutputPanel(ScrollableContainer):
     def on_mouse_scroll_up(self, event: Any) -> None:
         """Scroll up 3 lines per wheel tick and suppress auto-scroll."""
         self._user_scrolled_up = True
-        self.scroll_up(self._SCROLL_LINES, animate=False)
+        self.scroll_relative(y=-self._SCROLL_LINES, animate=False)
         event.prevent_default()
 
     def on_mouse_scroll_down(self, event: Any) -> None:
         """Scroll down 3 lines per wheel tick; re-engage auto-scroll at bottom."""
-        self.scroll_down(self._SCROLL_LINES, animate=False)
+        self.scroll_relative(y=self._SCROLL_LINES, animate=False)
         event.prevent_default()
         # watch_scroll_y handles re-engaging auto-scroll when near the bottom.
 
@@ -981,7 +981,7 @@ class TitledRule(Widget):
                 or getattr(self.app, "command_running", False)
             )
             if running:
-                state_suffix = Text(" ⟳", style="#ffa726")
+                state_suffix = Text(" ⟳", style="#FFA726")
 
         label_len = len(f"{title} ")
         right = max(0, w - label_len - state_suffix.cell_len)
@@ -1280,7 +1280,7 @@ class StatusBar(PulseMixin, Widget):
         cased when using the defaults.
         """
         color_normal = css_vars.get("status-context-color", "#5f87d7")
-        color_warn   = css_vars.get("status-warn-color",    "#ffa726")
+        color_warn   = css_vars.get("status-warn-color",    "#FFA726")
         color_crit   = css_vars.get("status-error-color",   "#ef5350")
         if progress >= 0.95:
             return color_crit
@@ -2026,8 +2026,7 @@ class FPSCounter(Widget):
     milliseconds per tick.  Values come from :class:`~hermes_cli.tui.perf.FrameRateProbe`
     via two reactives that ``HermesApp._tick_fps`` sets every 0.1 s.
 
-    Toggle with **Ctrl+\\\\** (``ctrl+backslash``) or set
-    ``display.fps_hud: true`` in your Hermes config to start visible.
+    Toggle with **F8** or set ``display.fps_hud: true`` in your Hermes config to start visible.
 
     Visual layout::
 

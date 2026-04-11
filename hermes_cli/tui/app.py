@@ -131,7 +131,7 @@ class HermesApp(App):
         Binding("ctrl+f", "open_history_search", "History search", show=False, priority=True),
         Binding("ctrl+g", "open_history_search", "History search", show=False, priority=True),
         Binding("f1", "show_help", "Keyboard shortcuts", show=False),
-        Binding("ctrl+backslash", "toggle_fps_hud", "FPS HUD", show=False),
+        Binding("f8", "toggle_fps_hud", "FPS HUD", show=False),
     ]
 
     _CHEVRON_PHASE_CLASSES: frozenset[str] = frozenset({

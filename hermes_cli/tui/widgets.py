@@ -997,6 +997,7 @@ class StatusBar(PulseMixin, Widget):
             "command_running",
             "browse_mode", "browse_index", "_browse_total",
             "status_output_dropped",
+            "status_active_file",
         ):
             self.watch(app, attr, self._on_status_change)
         # agent_running: dedicated callback to start/stop pulse + refresh
@@ -1108,6 +1109,17 @@ class StatusBar(PulseMixin, Widget):
             t.append(f"{tokens} tok", style="dim")
             t.append(" · ", style="dim")
             t.append(duration, style="dim")
+
+        # Active-file breadcrumb — shown when agent is using a file-touching tool
+        active_file = str(getattr(app, "status_active_file", ""))
+        if active_file and width >= 60:
+            t.append("  📄 ", style="dim")
+            max_path = max(10, width // 4)
+            display_path = (
+                active_file if len(active_file) <= max_path
+                else "…" + active_file[-(max_path - 1):]
+            )
+            t.append(display_path, style="dim")
 
         # Right-anchored state label (with optional dropped-output warning).
         # When agent is running, the ● indicator pulses between two accent shades.

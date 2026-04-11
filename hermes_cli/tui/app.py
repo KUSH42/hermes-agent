@@ -18,6 +18,16 @@ import platform
 import queue
 import re
 import threading
+
+# File-touching tool names — used by watch_spinner_label to extract active file
+_FILE_TOOLS: frozenset[str] = frozenset({
+    "read_file", "write_file", "edit_file", "create_file",
+    "view", "str_replace_editor", "patch",
+})
+
+_PATH_EXTRACT_RE = re.compile(
+    r'["\']?(/[\w./\-]+|[\w./\-]+\.[\w]{1,6})["\']?'
+)
 import time as _time
 from datetime import datetime
 from pathlib import Path
@@ -144,6 +154,10 @@ class HermesApp(App):
 
     # Spinner label — text shown beside the spinner frame (e.g. "Calling tool…")
     spinner_label: reactive[str] = reactive("")
+
+    # Active file path extracted from spinner_label when a file-touching tool runs.
+    # Drives the 📄 breadcrumb in StatusBar. Empty string when no file is active.
+    status_active_file: reactive[str] = reactive("")
 
     # Highlighted completion candidate — drives PreviewPanel via watch_highlighted_candidate.
     # Uses reactive(None) (no type param) to avoid import cycle at class-definition time.
@@ -378,17 +392,13 @@ class HermesApp(App):
             elapsed = _time.monotonic() - self._tool_start_time
             spinner_display = f"{spinner_display} · {elapsed:.1f}s"
 
-        # Show spinner in overlay, hide input
+        # Keep input visible; deliver spinner text via placeholder (zero layout reflow)
         try:
             inp = self.query_one("#input-area")
             overlay = self.query_one("#spinner-overlay", Static)
-            if spinner_display:
-                overlay.update(Text(spinner_display, style="dim italic"))
-                overlay.display = True
-                inp.display = False
-            else:
-                overlay.display = False
-                inp.display = True
+            overlay.display = False  # always hidden; placeholder replaces overlay
+            if hasattr(inp, "placeholder"):
+                inp.placeholder = spinner_display if spinner_display else ""
             if hasattr(inp, "spinner_text"):
                 inp.spinner_text = spinner_display
         except NoMatches:
@@ -485,8 +495,10 @@ class HermesApp(App):
             if not value:
                 if hasattr(widget, "spinner_text"):
                     widget.spinner_text = ""
-                # Restore input visibility, hide spinner overlay
+                # Restore input visibility (safety guard) and clear spinner placeholder
                 widget.display = True
+                if hasattr(widget, "placeholder"):
+                    widget.placeholder = ""
                 try:
                     self.query_one("#spinner-overlay", Static).display = False
                 except NoMatches:
@@ -511,8 +523,19 @@ class HermesApp(App):
                 pass
 
     def watch_spinner_label(self, value: str) -> None:
-        """Reset per-tool elapsed timer whenever the spinner label changes."""
+        """Reset per-tool elapsed timer and extract active file path."""
         self._tool_start_time = _time.monotonic() if value else 0.0
+        if value and isinstance(value, str):
+            # Labels are already prefix-stripped by _build_hint_text.
+            # Split on "(" (args form) and " · " (elapsed-time form) to isolate tool name.
+            tool_name = value.split("(")[0].split(" · ")[0].strip()
+            if tool_name in _FILE_TOOLS:
+                m = _PATH_EXTRACT_RE.search(value)
+                self.status_active_file = m.group(1) if m else ""
+            else:
+                self.status_active_file = ""
+        else:
+            self.status_active_file = ""
 
     @property
     def choice_overlay_active(self) -> bool:

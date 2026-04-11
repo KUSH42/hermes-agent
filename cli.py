@@ -1649,7 +1649,13 @@ class HermesCLI:
         self._stream_code_hl = _CodeBlockHL() if _RICH_RESPONSE else None
 
         self._pending_edit_snapshots = {}
-        
+
+        # Streaming tool output — tracks in-flight StreamingToolBlocks
+        self._active_stream_tool_ids: set[str] = set()
+        self._stream_start_times: dict[str, float] = {}
+        # Tokens for reset_streaming_callback, keyed by tool_call_id
+        self._stream_callback_tokens: dict[str, object] = {}
+
         # Configuration - priority: CLI args > env vars > config file
         # Model comes from: CLI arg or config.yaml (single source of truth).
         # LLM_MODEL/OPENAI_MODEL env vars are NOT checked — config.yaml is
@@ -6409,7 +6415,11 @@ class HermesCLI:
             pass
 
     def _on_tool_start(self, tool_call_id: str, function_name: str, function_args: dict):
-        """Capture local before-state for write-capable tools."""
+        """Capture local before-state for write-capable tools.
+
+        Also opens a StreamingToolBlock for terminal / execute_code foreground
+        commands when the TUI is active.
+        """
         try:
             from agent.display import capture_local_edit_snapshot
 
@@ -6419,6 +6429,48 @@ class HermesCLI:
         except Exception:
             logger.debug("Edit snapshot capture failed for %s", function_name, exc_info=True)
 
+        # --- Streaming block setup ---
+        _STREAMING_TOOLS = {"terminal", "execute_code"}
+        if function_name not in _STREAMING_TOOLS:
+            return
+        # Foreground-only for terminal (background=True uses process_registry, not streaming)
+        if function_name == "terminal" and function_args.get("background"):
+            return
+
+        tui = _hermes_app
+        if tui is None:
+            return
+
+        import time as _t
+        getattr(self, "_stream_start_times", {})[tool_call_id] = _t.monotonic()
+        getattr(self, "_active_stream_tool_ids", set()).add(tool_call_id)
+
+        # Build a human-readable label for the block header
+        if function_name == "terminal":
+            label = function_args.get("command", "terminal")
+        else:
+            # execute_code — show the first non-empty line of the code
+            code = function_args.get("code", "execute_code")
+            label = next((l.strip() for l in code.splitlines() if l.strip()), "execute_code")
+        # Cap label at 60 chars
+        if len(label) > 60:
+            label = label[:57] + "…"
+
+        tui.call_from_thread(tui.open_streaming_tool_block, tool_call_id, label)
+
+        # Register the streaming line callback so terminal_tool / execute_code
+        # can route output lines directly to the block.
+        try:
+            from tools.terminal_tool import set_streaming_callback as _set_cb
+            token = _set_cb(
+                lambda line, _tid=tool_call_id: tui.call_from_thread(
+                    tui.append_streaming_line, _tid, line
+                )
+            )
+            getattr(self, "_stream_callback_tokens", {})[tool_call_id] = token
+        except Exception:
+            logger.debug("Failed to register streaming callback for %s", function_name, exc_info=True)
+
     def _on_tool_complete(self, tool_call_id: str, function_name: str, function_args: dict, function_result: str):
         """Render file edits with inline diff / code preview after tools complete.
 
@@ -6427,6 +6479,27 @@ class HermesCLI:
         "verbose" mode — they're full raw output, not a summary.
         """
         snapshot = self._pending_edit_snapshots.pop(tool_call_id, None)
+
+        # --- Close streaming block (terminal / execute_code foreground) ---
+        _active_ids = getattr(self, "_active_stream_tool_ids", set())
+        _was_streaming = tool_call_id in _active_ids
+        if _was_streaming:
+            _active_ids.discard(tool_call_id)
+            # Reset the ContextVar callback
+            try:
+                from tools.terminal_tool import reset_streaming_callback as _reset_cb
+                token = getattr(self, "_stream_callback_tokens", {}).pop(tool_call_id, None)
+                if token is not None:
+                    _reset_cb(token)
+            except Exception:
+                pass
+            # Compute duration and close the block
+            import time as _t
+            start = getattr(self, "_stream_start_times", {}).pop(tool_call_id, None)
+            duration = f"{_t.monotonic() - start:.1f}s" if start is not None else ""
+            tui = _hermes_app
+            if tui is not None:
+                tui.call_from_thread(tui.close_streaming_tool_block, tool_call_id, duration)
 
         if self.tool_progress_mode == "off":
             return
@@ -6465,7 +6538,8 @@ class HermesCLI:
                         render_terminal_preview,
                     )
                     if function_name == "execute_code":
-                        if _result_succeeded(function_result):
+                        # Skip static preview when a StreamingToolBlock was used
+                        if not _was_streaming and _result_succeeded(function_result):
                             display_lines = []
                             render_execute_code_preview(function_args.get("code", ""), print_fn=display_lines.append, prefix=_TOOL_PREFIX)
                             if display_lines:
@@ -6478,11 +6552,13 @@ class HermesCLI:
                             plain = [_strip_ansi(l).removeprefix("  ┊ ").removeprefix("  ┊   ") for l in display_lines]
                             tui.call_from_thread(tui.mount_tool_block, "code", display_lines, plain)
                     elif function_name == "terminal":
-                        display_lines = []
-                        render_terminal_preview(function_args.get("command", ""), function_result, print_fn=display_lines.append, prefix=_TOOL_PREFIX)
-                        if display_lines:
-                            plain = [_strip_ansi(l).removeprefix("  ┊ ").removeprefix("  ┊   ") for l in display_lines]
-                            tui.call_from_thread(tui.mount_tool_block, "output", display_lines, plain)
+                        # Skip static preview when a StreamingToolBlock was used
+                        if not _was_streaming:
+                            display_lines = []
+                            render_terminal_preview(function_args.get("command", ""), function_result, print_fn=display_lines.append, prefix=_TOOL_PREFIX)
+                            if display_lines:
+                                plain = [_strip_ansi(l).removeprefix("  ┊ ").removeprefix("  ┊   ") for l in display_lines]
+                                tui.call_from_thread(tui.mount_tool_block, "output", display_lines, plain)
                 except Exception:
                     logger.debug("%s highlight failed", function_name, exc_info=True)
         else:

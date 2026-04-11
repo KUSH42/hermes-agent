@@ -152,6 +152,9 @@ class HermesApp(App):
         # Browse-mode visit counter — first 3 visits show full hint, then compact
         self._browse_uses: int = 0
 
+        # Active StreamingToolBlocks keyed by tool_call_id
+        self._active_streaming_blocks: dict[str, Any] = {}
+
     # --- Compose ---
 
     def compose(self) -> ComposeResult:
@@ -227,7 +230,8 @@ class HermesApp(App):
             try:
                 panel = self.query_one(OutputPanel)
                 panel.live_line.append(chunk)
-                self.call_after_refresh(panel.scroll_end, animate=False)
+                if not panel._user_scrolled_up:
+                    self.call_after_refresh(panel.scroll_end, animate=False)
             except NoMatches:
                 pass
             await asyncio.sleep(0)
@@ -554,6 +558,63 @@ class HermesApp(App):
             panel.mount(_ToolBlock(label, lines, plain_lines))
             # Increment memoized header count to avoid O(n) query in StatusBar
             self._browse_total += 1
+        except NoMatches:
+            pass
+
+    # --- StreamingToolBlock lifecycle ---
+
+    def open_streaming_tool_block(self, tool_call_id: str, label: str) -> None:
+        """Mount a StreamingToolBlock for incremental output. Event-loop only.
+
+        Called via ``call_from_thread`` from the agent thread before the tool
+        starts executing.  Subsequent output lines are routed here via
+        ``append_streaming_line()``.
+        """
+        from hermes_cli.tui.tool_blocks import StreamingToolBlock as _STB
+        try:
+            output = self.query_one(OutputPanel)
+            panel = output.current_message
+            if panel is None:
+                panel = output.new_message()
+            block = _STB(label=label)
+            panel.mount(block, before=output.live_line)
+            self._active_streaming_blocks[tool_call_id] = block
+            self._browse_total += 1
+        except NoMatches:
+            pass
+
+    def append_streaming_line(self, tool_call_id: str, line: str) -> None:
+        """Append a line to the named streaming block. Event-loop only.
+
+        Called via ``call_from_thread`` from the agent thread (via the
+        ``on_line`` callback registered in ``cli.py._on_tool_start``).
+        """
+        block = self._active_streaming_blocks.get(tool_call_id)
+        if block is None:
+            return
+        block.append_line(line)
+        # Auto-scroll when user hasn't manually scrolled away
+        try:
+            panel = self.query_one(OutputPanel)
+            if not panel._user_scrolled_up:
+                self.call_after_refresh(panel.scroll_end, animate=False)
+        except NoMatches:
+            pass
+
+    def close_streaming_tool_block(self, tool_call_id: str, duration: str) -> None:
+        """Transition streaming block to COMPLETED state. Event-loop only.
+
+        Called via ``call_from_thread`` from the agent thread after the tool
+        finishes executing.
+        """
+        block = self._active_streaming_blocks.pop(tool_call_id, None)
+        if block is None:
+            return
+        block.complete(duration)
+        # Scroll to show the completed (now collapsed) block
+        try:
+            panel = self.query_one(OutputPanel)
+            self.call_after_refresh(panel.scroll_end, animate=False)
         except NoMatches:
             pass
 

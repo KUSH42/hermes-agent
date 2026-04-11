@@ -265,7 +265,14 @@ class MessagePanel(Widget):
 
 
 class OutputPanel(ScrollableContainer):
-    """Scrollable output area containing MessagePanels + live in-progress line."""
+    """Scrollable output area containing MessagePanels + live in-progress line.
+
+    ``_user_scrolled_up`` is ``True`` when the user has manually scrolled away
+    from the bottom.  When this flag is set, automatic ``scroll_end()`` calls
+    from streaming output are suppressed so the user can read previous content
+    without losing their position.  The flag is cleared when the scroll
+    position returns to (near) the bottom.
+    """
 
     DEFAULT_CSS = """
     OutputPanel {
@@ -274,6 +281,24 @@ class OutputPanel(ScrollableContainer):
         overflow-x: hidden;
     }
     """
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._user_scrolled_up: bool = False
+
+    def watch_scroll_y(self, new_y: float) -> None:
+        """Re-engage auto-scroll when the user scrolls back to the bottom."""
+        # max_scroll_y can be 0 when the panel hasn't laid out yet; guard against that.
+        if self.max_scroll_y > 0 and new_y >= self.max_scroll_y - 3:
+            self._user_scrolled_up = False
+
+    def on_mouse_scroll_up(self, _event: Any) -> None:
+        """Mark that the user has scrolled up — suppress auto-scroll."""
+        self._user_scrolled_up = True
+
+    def on_scroll_up(self, _event: Any) -> None:
+        """Mark that the user has scrolled up via keyboard — suppress auto-scroll."""
+        self._user_scrolled_up = True
 
     def compose(self) -> ComposeResult:
         yield ToolPendingLine(id="tool-pending")

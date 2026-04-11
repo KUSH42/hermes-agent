@@ -530,6 +530,26 @@ class BaseEnvironment(ABC):
 
         return result
 
+    def execute_streaming(
+        self,
+        command: str,
+        cwd: str = "",
+        *,
+        timeout: int | None = None,
+        on_line: "Callable[[str], None] | None" = None,
+    ) -> dict:
+        """Execute with incremental line callbacks.
+
+        Default implementation falls back to blocking ``execute()`` and emits
+        all output lines after the command completes.  Subclasses (e.g.
+        ``LocalEnvironment``) override this with a real streaming path.
+        """
+        result = self.execute(command, cwd=cwd, timeout=timeout)
+        if on_line:
+            for line in result.get("output", "").splitlines():
+                on_line(line)
+        return result
+
     # ------------------------------------------------------------------
     # Shared helpers
     # ------------------------------------------------------------------

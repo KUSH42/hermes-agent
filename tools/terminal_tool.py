@@ -30,6 +30,7 @@ Usage:
     result = terminal_tool("python server.py", background=True)
 """
 
+import contextvars
 import importlib.util
 import json
 import logging
@@ -42,7 +43,7 @@ import atexit
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Callable, Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +119,25 @@ _cached_sudo_password: str = ""
 #   _approval_callback(command, description) -> str  ("once"/"session"/"always"/"deny")
 _sudo_password_callback = None
 _approval_callback = None
+
+# ContextVar for streaming line callback — set per-thread by cli.py before a
+# foreground terminal invocation, cleared after.  ContextVar is used so
+# concurrent tool calls on different threads get independent callbacks.
+_streaming_line_callback: contextvars.ContextVar[
+    "Callable[[str], None] | None"
+] = contextvars.ContextVar("terminal_streaming_line_callback", default=None)
+
+
+def set_streaming_callback(
+    cb: "Callable[[str], None] | None",
+) -> "contextvars.Token":
+    """Register a per-invocation streaming line callback. Returns a reset token."""
+    return _streaming_line_callback.set(cb)
+
+
+def reset_streaming_callback(token: "contextvars.Token") -> None:
+    """Restore the streaming callback to its previous value (call after tool)."""
+    _streaming_line_callback.reset(token)
 
 
 def set_sudo_password_callback(cb):
@@ -1442,13 +1462,28 @@ def terminal_tool(
             max_retries = 3
             retry_count = 0
             result = None
-            
+
+            # If a streaming line callback is registered (set by cli.py for TUI
+            # mode) and the environment supports real streaming, use it so that
+            # output appears incrementally in the StreamingToolBlock.
+            _on_line: "Callable[[str], None] | None" = _streaming_line_callback.get(None)
+            _use_streaming = (
+                _on_line is not None
+                and env_type == "local"
+                and hasattr(env, "execute_streaming")
+            )
+
             while retry_count <= max_retries:
                 try:
                     execute_kwargs = {"timeout": effective_timeout}
                     if workdir:
                         execute_kwargs["cwd"] = workdir
-                    result = env.execute(command, **execute_kwargs)
+                    if _use_streaming:
+                        result = env.execute_streaming(
+                            command, **execute_kwargs, on_line=_on_line
+                        )
+                    else:
+                        result = env.execute(command, **execute_kwargs)
                 except Exception as e:
                     error_str = str(e).lower()
                     if "timeout" in error_str:

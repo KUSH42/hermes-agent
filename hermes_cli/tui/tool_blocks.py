@@ -3,10 +3,14 @@
 ToolBlock groups a ToolHeader (single-line label with toggle/copy affordances)
 and a ToolBodyContainer (collapsible content area). Blocks with ≤3 lines are
 auto-expanded with no toggle or copy affordance.
+
+StreamingToolBlock extends ToolBlock with IDLE→STREAMING→COMPLETED lifecycle,
+60fps render throttle, 200-line visible cap, and 2 kB per-line byte cap.
 """
 
 from __future__ import annotations
 
+import collections
 from typing import Any
 
 from rich.text import Text
@@ -14,14 +18,24 @@ from textual.app import ComposeResult, RenderResult
 from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.widget import Widget
+from textual.widgets import Static
 
-from hermes_cli.tui.widgets import CopyableRichLog, _skin_color
+from hermes_cli.tui.widgets import CopyableRichLog, _skin_color, _strip_ansi
 
 COLLAPSE_THRESHOLD = 3  # >N lines → collapsed by default
 
+# StreamingToolBlock constants
+_VISIBLE_CAP = 200          # max lines shown in the RichLog
+_LINE_BYTE_CAP = 2000       # truncate single lines beyond this many chars
+_SPINNER_FRAMES = ("◐", "◓", "◑", "◒")
+
 
 class ToolHeader(Widget):
-    """Single-line header: '  ╌╌ {label}  {N}L  [▸/▾  ⎘]'."""
+    """Single-line header: '  ╌╌ {label}  {N}L  [▸/▾  ⎘]'.
+
+    During streaming ``_spinner_char`` replaces the toggle chevron.
+    After completion ``_duration`` is appended to the label.
+    """
 
     DEFAULT_CSS = "ToolHeader { height: 1; }"
 
@@ -34,6 +48,9 @@ class ToolHeader(Widget):
         # ≤ threshold: always open, no affordances shown
         self._has_affordances = line_count > COLLAPSE_THRESHOLD
         self._copy_flash = False
+        # Streaming state — set by StreamingToolBlock
+        self._spinner_char: str | None = None   # non-None while streaming
+        self._duration: str = ""                # set on completion
 
     def render(self) -> RenderResult:
         focused = self.has_class("focused")
@@ -43,12 +60,21 @@ class ToolHeader(Widget):
             gutter = Text("  ┊", style="dim")
         t = Text()
         t.append_text(gutter)
-        t.append(f"   ╌╌ {self._label}  {self._line_count}L", style="dim")
-        if self._has_affordances:
-            toggle = "  ▾" if not self.collapsed else "  ▸"
-            icon = "  ✓" if self._copy_flash else "  ⎘"
-            t.append(toggle, style="dim")
-            t.append(icon, style="dim")
+        label_str = self._label
+        if self._duration:
+            label_str += f"  {self._duration}"
+        t.append(f"   ╌╌ {label_str}", style="dim")
+        if self._spinner_char is not None:
+            # Streaming in progress — show spinner, no line count or toggle yet
+            t.append(f"  {self._spinner_char}", style="dim")
+        else:
+            if self._line_count:
+                t.append(f"  {self._line_count}L", style="dim")
+            if self._has_affordances:
+                toggle = "  ▾" if not self.collapsed else "  ▸"
+                icon = "  ✓" if self._copy_flash else "  ⎘"
+                t.append(toggle, style="dim")
+                t.append(icon, style="dim")
         return t
 
     def flash_copy(self) -> None:
@@ -131,3 +157,170 @@ class ToolBlock(Widget):
     def copy_content(self) -> str:
         """Plain-text content for clipboard — no ANSI, no gutter, no line numbers."""
         return "\n".join(self._plain_lines)
+
+
+# ---------------------------------------------------------------------------
+# ToolTail — scroll-lock badge shown when auto-scroll is disengaged
+# ---------------------------------------------------------------------------
+
+class ToolTail(Static):
+    """Single-line badge: '  ↓ N new lines' — right-aligned, dim.
+
+    Hidden (``display: none``) when auto-scroll is active or the tool has
+    completed.  Clicking it re-engages auto-scroll.
+    """
+
+    DEFAULT_CSS = """
+    ToolTail {
+        height: 1;
+        display: none;
+        text-align: right;
+        color: $text-muted;
+    }
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__("", **kwargs)
+        self._new_line_count = 0
+
+    def update_count(self, n: int) -> None:
+        self._new_line_count = n
+        if n > 0:
+            self.update(f"  ↓ {n} new lines  ")
+            self.display = True
+        else:
+            self.display = False
+
+    def dismiss(self) -> None:
+        self._new_line_count = 0
+        self.display = False
+
+
+# ---------------------------------------------------------------------------
+# StreamingToolBlock — live output during tool execution
+# ---------------------------------------------------------------------------
+
+class StreamingToolBlock(ToolBlock):
+    """ToolBlock with IDLE → STREAMING → COMPLETED lifecycle.
+
+    Lines arrive via ``append_line()`` (called from the event loop via
+    ``call_from_thread``).  A 60 fps flush timer drains the pending-line
+    buffer into the RichLog.  Back-pressure is handled by:
+
+    * **Render throttle** — the flush timer batches all lines that arrived
+      between ticks into a single render pass.
+    * **Visible cap** — at most ``_VISIBLE_CAP`` (200) lines are written to
+      the RichLog.  Additional lines are tracked only in plain-text storage.
+    * **Byte cap** — lines longer than ``_LINE_BYTE_CAP`` (2000 chars) are
+      truncated before rendering and before plain-text storage.
+    """
+
+    DEFAULT_CSS = "StreamingToolBlock { height: auto; }"
+
+    def __init__(self, label: str, **kwargs: Any) -> None:
+        # Initialise parent with empty lines — content arrives via append_line()
+        super().__init__(label=label, lines=[], plain_lines=[], **kwargs)
+        self._stream_label = label
+        # Lines buffered between 60fps flush ticks
+        self._pending: list[tuple[str, str]] = []  # (raw_ansi, plain)
+        # All plain-text lines for clipboard (no display cap)
+        self._all_plain: list[str] = []
+        self._visible_count: int = 0
+        self._total_received: int = 0
+        self._cap_marker_written: bool = False
+        self._spinner_frame: int = 0
+        self._completed: bool = False
+        self._tail_new_count: int = 0  # lines added while user scrolled away
+
+    def on_mount(self) -> None:
+        """Start expanded (user wants to see streaming output) + start timers."""
+        self._body.add_class("expanded")
+        self._header.collapsed = False
+        self._header._has_affordances = False  # no toggle while streaming
+        self._header._spinner_char = _SPINNER_FRAMES[0]
+        self._render_timer = self.set_interval(1 / 60, self._flush_pending)
+        self._spinner_timer = self.set_interval(0.25, self._tick_spinner)
+
+    # ------------------------------------------------------------------
+    # Streaming API (called from event loop via call_from_thread)
+    # ------------------------------------------------------------------
+
+    def append_line(self, raw: str) -> None:
+        """Buffer a raw ANSI line for rendering on the next 60fps tick."""
+        if self._completed:
+            return
+        # Byte cap
+        if len(raw) > _LINE_BYTE_CAP:
+            over = len(raw) - 200
+            raw = raw[:200] + f"… (+{over} chars)"
+        plain = _strip_ansi(raw)
+        self._total_received += 1
+        self._pending.append((raw, plain))
+        self._all_plain.append(plain)
+
+    def complete(self, duration: str) -> None:
+        """Transition to COMPLETED state: flush remaining lines, update header."""
+        if self._completed:
+            return
+        self._completed = True
+        # Final synchronous flush
+        self._flush_pending()
+        # Hide tail badge unconditionally
+        try:
+            self.query_one(ToolTail).dismiss()
+        except NoMatches:
+            pass
+        # Update header: remove spinner, add duration + line count
+        self._header._spinner_char = None
+        self._header._duration = duration
+        self._header._line_count = self._total_received
+        # Apply same collapse logic as static ToolBlock
+        if self._total_received > COLLAPSE_THRESHOLD:
+            self._header._has_affordances = True
+            self._header.collapsed = True
+            self._body.remove_class("expanded")
+        else:
+            self._header.collapsed = False
+        self._header.refresh()
+
+    # ------------------------------------------------------------------
+    # Internal timers
+    # ------------------------------------------------------------------
+
+    def _tick_spinner(self) -> None:
+        if self._completed:
+            return
+        self._spinner_frame = (self._spinner_frame + 1) % len(_SPINNER_FRAMES)
+        self._header._spinner_char = _SPINNER_FRAMES[self._spinner_frame]
+        self._header.refresh()
+
+    def _flush_pending(self) -> None:
+        """Drain pending lines into the RichLog (called at 60fps)."""
+        if not self._pending:
+            return
+        batch = self._pending
+        self._pending = []
+
+        try:
+            log = self._body.query_one(CopyableRichLog)
+        except NoMatches:
+            return
+
+        for raw, plain in batch:
+            if self._visible_count < _VISIBLE_CAP:
+                log.write_with_source(Text.from_ansi(raw), plain)
+                self._visible_count += 1
+            elif not self._cap_marker_written:
+                log.write(Text.from_markup(
+                    f"[dim]  … (showing first {_VISIBLE_CAP} of "
+                    f"{self._total_received} lines)[/dim]"
+                ))
+                self._cap_marker_written = True
+            # Lines beyond cap are still in _all_plain (appended in append_line)
+
+    # ------------------------------------------------------------------
+    # Override copy_content to return all plain lines, not just visible
+    # ------------------------------------------------------------------
+
+    def copy_content(self) -> str:
+        return "\n".join(self._all_plain)

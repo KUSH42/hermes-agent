@@ -2,7 +2,7 @@
 
 **Branch:** `feat/textual-migration`  
 **Last updated:** 2026-04-11  
-**Test suite:** 280 tests, 0 failures
+**Test suite:** 302 tests, 0 failures
 
 ---
 
@@ -10,7 +10,7 @@
 
 ### Core architecture
 
-| Component | File | Status |
+| Component | File | Delivered in |
 |---|---|---|
 | `HermesApp(App)` — reactive state, queue consumer, theme | `hermes_cli/tui/app.py` | ✅ Complete |
 | `OutputPanel` — scrollable, holds all `MessagePanel`s | `hermes_cli/tui/widgets.py` | ✅ Complete |
@@ -18,6 +18,9 @@
 | `LiveLineWidget` — streaming in-progress line | `hermes_cli/tui/widgets.py` | ✅ Complete |
 | `ToolPendingLine` — in-progress tool activity (single, replaceable) | `hermes_cli/tui/widgets.py` | ✅ Phase 3 |
 | `ToolBlock` + `ToolHeader` + `ToolBodyContainer` — collapsible tool output | `hermes_cli/tui/tool_blocks.py` | ✅ Phase 7 |
+| `StreamingToolBlock` — IDLE→STREAMING→COMPLETED; 60fps flush, 200-line cap, 2kB/line cap | `hermes_cli/tui/tool_blocks.py` | ✅ Phase 7 §8 |
+| `ToolTail` — scroll-lock badge `↓ N new lines` | `hermes_cli/tui/tool_blocks.py` | ✅ Phase 7 §8 |
+| `OutputPanel._user_scrolled_up` — auto-scroll suppression during streaming | `hermes_cli/tui/widgets.py` | ✅ Phase 7 §8 |
 | `HermesInput` — history (file-backed), autocomplete, masking | `hermes_cli/tui/input_widget.py` | ✅ Complete |
 | `StatusBar` — model, context bar, tok/s, duration, browse mode | `hermes_cli/tui/widgets.py` | ✅ Complete |
 | `ReasoningPanel` — collapsible reasoning with `▌` gutter | `hermes_cli/tui/widgets.py` | ✅ Complete |
@@ -61,8 +64,10 @@ Keyboard-driven navigation through all `ToolBlock` widgets in session order:
 | `Tab` / `Shift+Tab` | Cycle `ToolHeader` focus (wraps) |
 | `Enter` | Toggle collapse state of focused block |
 | `c` | Copy plain-text content (OSC 52) + `⎘→✓` flash |
+| `a` | Expand all `ToolBlock`s in the session |
+| `A` (shift+a) | Collapse all `ToolBlock`s in the session |
 | `Escape` | Exit browse mode |
-| Any printable key | Exit browse mode + insert character into input |
+| Any other printable key | Exit browse mode + insert character into input |
 
 `StatusBar` switches to `BROWSE ▸N/T  hint` layout at three width tiers (≥60 / 40–59 / <40).
 
@@ -122,15 +127,11 @@ Queue full → `logger.warning` + `app.status_output_dropped = True` → StatusB
 
 ## Known limitations
 
-### Missing: streaming tool output (spec §8, not yet started)
+### Missing: nested delegation streaming (step 26)
 
-`terminal`, `execute_code`, and `process` tools currently wait for full completion before showing any output. Users stare at a spinner for the full tool duration (potentially minutes).
+`delegate_task` sub-agent tool activity does not yet stream into a nested `StreamingToolBlock` with a doubled gutter (`┊   ┊`). The outer agent's streaming works; sub-agent output accumulates and collapses as before.
 
-**Desired behaviour:** Output appears incrementally inside an auto-expanded `StreamingToolBlock` as the command produces it, then collapses when done.
-
-**Why not done yet:** Requires a PTY/pipe reader on the tool-execution side, a `StreamingToolBlock` widget variant that accepts `write()` calls while mounted, and careful backpressure between the PTY reader thread and Textual's event loop. The tool execution layer (`tools/terminal_tool.py`, `tools/code_exec.py`) currently does not expose incremental output — it buffers the entire result before returning. Implementing this requires changes to both the tool execution layer and the TUI.
-
-**See spec:** `specs/tool-output-streamline.md` §8
+**See spec:** `specs/tool-output-streamline.md` §8.6. Deferred — additive, lower priority.
 
 ### Missing: history search
 
@@ -165,6 +166,16 @@ Browse mode requires keyboard. Click-to-toggle on a ToolHeader is deferred per t
 | `on_key` queries `list(self.query(ToolHeader))` per-keypress in browse mode | Sessions with >1000 blocks | Acceptable; Textual's query is O(n) but fast in practice |
 | `asyncio.Queue(maxsize=4096)` drop-on-full | Sustained high-throughput output | ✅ Now signals user via StatusBar indicator |
 | `call_after_refresh` on detached widget during interrupt | Rare teardown edge case | Low risk; Textual auto-cancels set_interval timers on unmount |
+| `StreamingToolBlock._flush_pending` 60fps `set_interval` timer | One timer per active streaming block | Low risk; Textual auto-cancels on unmount; typically ≤3 concurrent |
+
+---
+
+## Specs written, not yet implemented
+
+| Spec | Status | Tests planned |
+|---|---|---|
+| `tui-context-menu.md` — right-click menu + copy/paste feedback | Draft | 20 tests |
+| `tui-text-effects.md` — `/effects` command, TTE port to Textual, 15 effects | Draft | 28 tests |
 
 ---
 
@@ -172,12 +183,10 @@ Browse mode requires keyboard. Click-to-toggle on a ToolHeader is deferred per t
 
 These are ordered by user impact. Each warrants a standalone spec before implementation.
 
-### SPEC-A: Streaming tool output (`StreamingToolBlock`)
+### ~~SPEC-A: Streaming tool output (`StreamingToolBlock`)~~ ✅ IMPLEMENTED 2026-04-11
 **Impact:** High — eliminates the worst perceived-latency experience (30s command = 30s spinner).  
-**Scope:** Tool execution layer (expose incremental output), `StreamingToolBlock` widget (extends `ToolBlock`, accepts `write()` while mounted), backpressure-aware PTY reader thread, auto-collapse on completion.  
-**Dependencies:** `tools/terminal_tool.py`, `tools/code_exec.py` must be refactored to yield output incrementally. Consider asyncio subprocess with `communicate()` replaced by stdout line reader.  
-**Risk:** Medium-high. PTY wrapping on Linux vs macOS, Windows compatibility unknown.  
-**Course of action:** Spec the tool-execution interface first (how incremental output is surfaced), then spec the TUI widget separately. Implement tool side first, gated behind a config flag.
+**Status:** Done. Steps 21–25 of `specs/tool-output-streamline.md` §8. Step 26 (nested delegation) deferred.  
+**What was built:** `execute_streaming()` on `BaseEnvironment` + `LocalEnvironment`; `StreamingToolBlock` widget (IDLE→STREAMING→COMPLETED); 60fps flush timer; 200-line visible cap; 2 kB/line byte cap; `_user_scrolled_up` scroll lock on `OutputPanel`; ContextVar streaming callback in `terminal_tool.py`; `open_streaming_tool_block` / `append_streaming_line` / `close_streaming_tool_block` on `HermesApp`; wired from `cli.py` `_on_tool_start` / `_on_tool_complete`. 22 new tests.
 
 ### SPEC-B: History search
 **Impact:** High — long sessions with 50+ turns make retrieval painful without search.  
@@ -204,12 +213,6 @@ These are ordered by user impact. Each warrants a standalone spec before impleme
 **Scope:** At startup, probe terminal clipboard support via a capability query (e.g., `TERM_PROGRAM`, `COLORTERM`, known SSH env vars). Set `_clipboard_supported: bool` on `HermesApp`. If unsupported, the `c` key in browse mode falls back to writing the content to a temp file and showing the path, or prints to the StatusBar.  
 **Risk:** Low. Detection is heuristic; no reliable universal method exists.
 
-### SPEC-F: Expand-all / collapse-all in browse mode
-**Impact:** Low — convenience for power users.  
-**Scope:** `a` key in browse mode expands all `ToolBlock`s in the current turn. `A` (shift+a) collapses all. Currently not implemented; the spec calls for it (tool-output-streamline.md §7.1) but was deferred from the ToolBlock implementation.  
-**Risk:** None. Two lines of code + keybinding.  
-**Course of action:** No spec needed; implement directly in next browse-mode patch.
-
 ---
 
 ## Completed spec work
@@ -217,7 +220,8 @@ These are ordered by user impact. Each warrants a standalone spec before impleme
 | Spec | Implemented | Tests |
 |---|---|---|
 | `tool-output-streamline.md` Phases 1–3 (ToolPendingLine, indented blocks, tier system) | ✅ | ~20 tests |
-| `tool-output-streamline.md` Phase 7 (ToolBlock, browse mode, StatusBar) | ✅ `tool-block-browse-mode.md` | 28 tests |
+| `tool-output-streamline.md` Phase 4 (ToolBlock, browse mode, StatusBar) | ✅ `tool-block-browse-mode.md` | 28 tests |
+| `tool-output-streamline.md` Phase 7 §8 steps 21–25 (StreamingToolBlock, execute_streaming, backpressure, scroll lock, terminal wiring) | ✅ 2026-04-11 | 22 tests |
 | Textual migration (app, widgets, overlays, input, theme) | ✅ `project_textual_migration.md` | 183 tests |
 | Markdown/rich output rendering (inline, block, streaming, code highlight) | ✅ (on this branch, `agent/rich_output.py`) | 300+ tests |
 | Speculative inline markdown (zero-stall partial flush) | ✅ | 8 tests |

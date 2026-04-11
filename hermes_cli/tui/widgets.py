@@ -492,21 +492,25 @@ class MessagePanel(Widget):
         super().__init__(**kwargs)
 
     def on_mount(self) -> None:
-        # Skip animation under pytest: styles.animate 60fps callbacks compete
-        # with RichLog._deferred_renders commit ticks and cause flaky failures.
-        # Tests only assert final opacity==1.0, which holds without animation.
-        import os
-        if "PYTEST_CURRENT_TEST" not in os.environ:
-            self.call_after_refresh(self._start_fade)
+        # Defer fade-in until after first layout so children are already sized.
+        # CSS transition handles the animation (hermes.tcss: opacity 0.3s in_out_cubic).
+        self.call_after_refresh(self._start_fade)
 
     def _start_fade(self) -> None:
         """Fade-in after first render (plain def — no await).
 
         Fires after the first layout pass so child RichLog widgets have already
-        been sized. Sets opacity to 0 then immediately animates to 1.
+        been sized. Sets opacity to 0, then defers setting it to 1 by one
+        frame so the CSS transition (opacity 0.3s in_out_cubic in hermes.tcss)
+        fires. styles.animate() does not exist in Textual 8.x — use CSS
+        transition + direct property mutation instead.
         """
         self.styles.opacity = 0.0
-        self.styles.animate("opacity", 1.0, duration=0.25, easing="out_cubic")
+        self.call_after_refresh(self._finish_fade)
+
+    def _finish_fade(self) -> None:
+        """Set opacity to 1 after the zero-opacity frame — triggers CSS transition."""
+        self.styles.opacity = 1.0
 
     def compose(self) -> ComposeResult:
         yield self._response_rule

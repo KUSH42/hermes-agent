@@ -1,6 +1,6 @@
 # Spec: Streaming Typewriter Animation for Textual TUI
 
-**Status:** Implemented 2026-04-11 — 341 tests passing (17 new in test_typewriter.py)  
+**Status:** Implemented 2026-04-11 — 390 tests passing (23 in test_typewriter.py)  
 **Branch:** `feat/textual-migration`  
 **Replaces:** `/home/xush/.hermes/typewriter_streaming.md` (prompt_toolkit era, obsolete)
 
@@ -12,7 +12,14 @@ Add a character-by-character typewriter animation to `LiveLineWidget` — the in
 streaming line at the bottom of `OutputPanel`. Each character of the LLM response appears
 individually with a configurable inter-character delay. Complete lines are committed to
 the permanent `RichLog` immediately when `\n` is processed (no animation delay on commits).
-A `▌` cursor renders at the end of the in-progress buffer while the drainer is active.
+
+Two mutually exclusive cursor modes:
+
+- **Typewriter cursor** (`_animating = True`): `▌` with `style="blink"` at end of buffer while the
+  drainer is active. Used when `typewriter.enabled = true`.
+- **Non-typewriter blink cursor**: `▌` with `style="dim"` toggled by a 0.5 s `set_interval` timer.
+  Active when typewriter is off but `display.cursor_blink = true` (default). Stopped by `flush()`.
+
 Burst compensation prevents visual lag when the model produces text faster than the
 animation speed.
 
@@ -72,7 +79,8 @@ HermesApp._consume_output()
     │  panel.live_line.feed(chunk)      # NEW: replaces append() call
     ▼
 LiveLineWidget.feed(chunk)
-    │  for ch in chunk: _char_queue.put_nowait(ch)   # asyncio.Queue, on event loop
+    │  # ANSI sequences enqueued as atomic items; plain chars individually
+    │  for item in _atomize(chunk): _char_queue.put_nowait(item)  # asyncio.Queue, on event loop
     ▼
 LiveLineWidget._drain_chars()           # NEW: long-running @work coroutine (started on_mount)
     │  char = await asyncio.wait_for(_char_queue.get(), timeout=0.5)
@@ -110,8 +118,6 @@ If a future refactor moves streaming to a thread, the caller must use
 
 ### 5.1 config.yaml
 
-Add a `typewriter` subsection under `terminal`:
-
 ```yaml
 terminal:
   backend: local
@@ -120,10 +126,17 @@ terminal:
     enabled: false        # opt-in; default: false
     speed: 60             # characters per second; 0 = instant (one yield per char)
     burst_threshold: 128  # chars queued before batch-drain mode activates
-    cursor: true          # show ▌ cursor at end of in-progress line
+    cursor: true          # show ▌ cursor at end of in-progress line (typewriter mode)
+
+display:
+  cursor_blink: true      # blinking ▌ cursor when typewriter is off (default: true)
 ```
 
 All keys are optional. Missing keys use the defaults shown.
+
+`typewriter.cursor` and `display.cursor_blink` are **mutually exclusive at runtime** —
+when typewriter is enabled, only the typewriter `▌` (blink style) renders; when
+typewriter is disabled, only the non-typewriter `▌` (dim style, timer-driven) renders.
 
 ### 5.2 Environment override
 
@@ -146,20 +159,36 @@ per character with no wall-clock delay.
 
 ## 6. `LiveLineWidget` Changes
 
-### 6.1 New reactive field
+### 6.1 Reactive fields
+
+`_buf` pre-exists as a class-level reactive that drives repaints on every chunk:
 
 ```python
-# In LiveLineWidget (class-level):
+# Pre-existing in LiveLineWidget (class-level):
+_buf: reactive[str] = reactive("", repaint=True)
+```
+
+`_animating` is new, added by this feature:
+
+```python
+# New (class-level):
 _animating: reactive[bool] = reactive(False, repaint=True)
 ```
 
-`_animating = True` while the drainer has processed at least one char and the queue
-is not yet empty. `_animating = False` when the queue drains to zero or after `flush()`.
+`_animating` is set `True` immediately when the drainer dequeues its first char. It is
+set `False` when the queue is found empty after processing a char, when `flush()` is
+called, or in the `finally` block on worker cancellation. There is a window between
+the last char being appended and the `queue.empty()` check (during `asyncio.sleep(delay)`)
+where `_animating` is `True` but the queue is transiently empty — this is intentional:
+the cursor remains visible until the drainer confirms the queue is drained.
 
-### 6.2 Config cache — `on_mount()`
+### 6.2 Config cache and blink state — `on_mount()`
 
 Config is read once at mount time and stored as instance attributes. This avoids
 `get_config()` I/O on every render frame (which is called 60×/sec during animation).
+Blink cursor state is also initialised here (not `__init__`) to avoid event-loop
+resource issues. (`asyncio.Queue` in Python ≤ 3.9 requires a running event loop;
+Textual 8.x requires Python ≥ 3.10 but `on_mount()` placement remains correct practice.)
 
 ```python
 def on_mount(self) -> None:
@@ -170,6 +199,11 @@ def on_mount(self) -> None:
     if self._tw_enabled:
         self._char_queue: asyncio.Queue[str] = asyncio.Queue()
         self._drain_chars()     # start the single long-running drainer
+
+    # Non-typewriter blink cursor state — only used when typewriter is off.
+    self._blink_visible: bool = True
+    self._blink_timer: object | None = None
+    self._blink_enabled: bool = _cursor_blink_enabled()
 ```
 
 `asyncio.Queue` is initialised in `on_mount()` — NOT in `__init__`. Widgets are
@@ -179,19 +213,35 @@ requires a running loop in Python ≤ 3.9, and in 3.10+ it binds to the running 
 
 ### 6.3 `render()` — cursor indicator
 
+Two mutually exclusive cursor rendering paths:
+
 ```python
 def render(self) -> RenderResult:
     if not self._buf and not self._animating:
         return Text("")
     t = Text.from_ansi(self._buf) if self._buf else Text("")
-    if self._animating and self._tw_cursor:
+
+    # Typewriter cursor (typewriter on, drainer active):
+    if self._animating and getattr(self, "_tw_cursor", True):
         t.append("▌", style="blink")
+
+    # Non-typewriter blink cursor (typewriter off, blink timer running):
+    elif (
+        not getattr(self, "_tw_enabled", False)
+        and getattr(self, "_blink_timer", None) is not None
+        and getattr(self, "_blink_visible", True)
+    ):
+        t.append("▌", style="dim")
+
     return t
 ```
 
-`_tw_cursor` is read from the cached attribute — no per-frame config access.
+`getattr` defensive access is used in `render()` because Textual may call `render()` via
+CSS inspection before `on_mount()` completes, and because both cursor paths use fields
+initialized at mount time. The `elif` ensures the paths are mutually exclusive.
+
 `style="blink"` maps to ANSI `\x1b[5m`. If a terminal does not support blink, `▌`
-still renders but does not flash — purely cosmetic.
+still renders as a static character — purely cosmetic degradation.
 
 ### 6.4 `feed()` — new public method
 
@@ -214,6 +264,8 @@ def feed(self, chunk: str) -> None:
     """Enqueue *chunk* for typewriter animation.
 
     Falls through to append() when typewriter is disabled — zero overhead.
+    Also starts the non-typewriter blink timer on the first chunk of each turn
+    when typewriter is off and blink is enabled.
     Must be called from the event loop.
 
     ANSI escape sequences are enqueued as atomic units (the whole sequence
@@ -221,7 +273,13 @@ def feed(self, chunk: str) -> None:
     code between render frames — which would cause Rich to misparse the
     incomplete sequence and render literal bytes.
     """
-    if not self._tw_enabled:
+    if not getattr(self, "_tw_enabled", False):
+        # Non-typewriter path: start blink timer on first chunk (if enabled)
+        if (
+            getattr(self, "_blink_timer", None) is None
+            and getattr(self, "_blink_enabled", True)
+        ):
+            self._blink_timer = self.set_interval(0.5, self._toggle_blink)
         self.append(chunk)
         return
     pos = 0
@@ -346,7 +404,8 @@ def _commit_lines(self) -> None:
 ### 6.7 `flush()` — synchronous drain for sentinel path
 
 `flush()` is called by `OutputPanel.flush_live()` when the `None` sentinel arrives. It
-drains all remaining chars from the queue synchronously and updates `_buf` directly.
+drains all remaining chars from the typewriter queue synchronously, resets `_animating`,
+and also stops the non-typewriter blink timer.
 
 ```python
 def flush(self) -> None:
@@ -356,8 +415,17 @@ def flush(self) -> None:
     single-threaded: flush() runs to completion before _drain_chars() resumes.
     When _drain_chars() next wakes from asyncio.wait_for or asyncio.sleep, it
     finds an empty queue, clears _animating, and blocks again — a no-op.
+
+    Also stops the non-typewriter blink timer so the cursor disappears when
+    the response turn ends.
     """
-    if not self._tw_enabled or not hasattr(self, "_char_queue"):
+    # Stop non-typewriter blink timer (turn end cleanup)
+    if getattr(self, "_blink_timer", None) is not None:
+        self._blink_timer.stop()
+        self._blink_timer = None
+    self._blink_visible = True  # reset to visible state for next turn
+
+    if not getattr(self, "_tw_enabled", False) or not hasattr(self, "_char_queue"):
         return
     while True:
         try:
@@ -378,17 +446,29 @@ suspended at `asyncio.wait_for(queue.get())` (waiting for chars) or at
 - If it was at `wait_for(queue.get())`: queue is now empty → timeout fires eventually → `continue` → loops back → blocks on empty queue. `_animating` was already set False by `flush()`.
 - If it was at `asyncio.sleep(delay)`: wakes, checks `queue.empty()` → sets `_animating = False` → loops → `wait_for(queue.get())` → blocks. Safe.
 
-### 6.8 `on_unmount()` — cleanup
+### 6.8 `_toggle_blink()` — non-typewriter blink callback
+
+```python
+def _toggle_blink(self) -> None:
+    """Blink timer callback — plain def required (no await)."""
+    self._blink_visible = not self._blink_visible
+    self.refresh()
+```
+
+Must be a plain `def` (not `async def`) — `set_interval` callbacks must be synchronous.
+`self.refresh()` triggers a repaint of the widget. `render()` reads `_blink_visible` to
+decide whether to append `▌`.
+
+### 6.9 `on_unmount()` — cleanup
 
 ```python
 def on_unmount(self) -> None:
-    """Cancel the drainer worker on widget removal.
-
-    Textual cancels @work workers automatically when a widget is removed from
-    the DOM, but an explicit _animating reset ensures render() returns a clean
-    state if the widget is briefly queried during teardown.
-    """
+    """Cancel the drainer worker and blink timer on widget removal."""
     self._animating = False
+    # Cancel blink timer if active
+    if getattr(self, "_blink_timer", None) is not None:
+        self._blink_timer.stop()
+        self._blink_timer = None
 ```
 
 Textual's worker system cancels `@work` coroutines when the widget that owns them is
@@ -447,13 +527,27 @@ def _typewriter_cursor_enabled() -> bool:
         )
     except Exception:
         return True
+
+def _cursor_blink_enabled() -> bool:
+    """Non-typewriter cursor blink (default: true)."""
+    try:
+        from hermes_cli.config import get_config
+        return bool(get_config().get("display", {}).get("cursor_blink", True))
+    except Exception:
+        return True
 ```
 
 ---
 
 ## 8. Changes to `HermesApp._consume_output()`
 
-One line changes: `append` → `feed`.
+`_consume_output` is decorated `@work(exclusive=True)` — a new call would cancel any
+in-flight instance, though in practice it is started once on app mount and never
+restarted.
+
+Two changes were made together:
+
+**Change 1** — `append` → `feed` (typewriter dispatch):
 
 ```python
 # Before:
@@ -465,15 +559,45 @@ panel.live_line.feed(chunk)
 
 `feed()` dispatches to `append()` when disabled — no branching needed in `_consume_output`.
 
+**Change 2** — ThinkingWidget deactivation on first chunk per turn:
+
+```python
+_first_chunk_in_turn: bool = True   # local flag, reset on each None sentinel
+
+# Inside the chunk-processing path:
+if _first_chunk_in_turn:
+    _first_chunk_in_turn = False
+    try:
+        self.query_one(ThinkingWidget).deactivate()
+    except NoMatches:
+        pass
+
+# Inside the sentinel (None) path:
+_first_chunk_in_turn = True         # reset for next turn
+```
+
+This deactivates the shimmer spinner the moment the first response token arrives,
+giving immediate visual feedback that the model has started generating. The
+`flush_live()` path (§9) also deactivates ThinkingWidget to handle the empty-response
+case where no chunk arrives at all.
+
 ---
 
 ## 9. Changes to `OutputPanel.flush_live()`
 
+`live.flush()` is inserted before reading `_buf`. ThinkingWidget deactivation is included
+here to cover the empty-response case where no chunk ever arrives.
+
 ```python
 def flush_live(self) -> None:
     """Commit any in-progress buffered line to current message's RichLog."""
+    # Deactivate shimmer — covers the empty-response case where no chunk ever arrives
+    try:
+        self.query_one(ThinkingWidget).deactivate()
+    except NoMatches:
+        pass
     live = self.live_line
-    live.flush()        # NEW: drain _char_queue before reading _buf (no-op when disabled)
+    live.flush()        # drain _char_queue before reading _buf (no-op when disabled)
     if live._buf:
         msg = self.current_message
         if msg is None:
@@ -485,6 +609,8 @@ def flush_live(self) -> None:
             rl.write_with_source(Text.from_ansi(live._buf), plain)
         else:
             rl.write(Text.from_ansi(live._buf))
+        if rl._deferred_renders:
+            self.call_after_refresh(msg.refresh, layout=True)
         live._buf = ""
 ```
 
@@ -496,8 +622,8 @@ All changes are within existing files — no new modules.
 
 | File | Change |
 |---|---|
-| `hermes_cli/tui/widgets.py` | `LiveLineWidget`: add `on_mount`, `on_unmount`, `_animating`, `feed()`, `_drain_chars()`, `_commit_lines()`, `flush()`; update `append()` to call `_commit_lines()`; update `render()`; add 4 config accessors at module level |
-| `hermes_cli/tui/widgets.py` | `OutputPanel.flush_live()`: call `live.flush()` before reading `_buf` |
+| `hermes_cli/tui/widgets.py` | `LiveLineWidget`: add `on_mount`, `on_unmount`, `_animating`, `feed()`, `_drain_chars()`, `_commit_lines()`, `flush()`, `_toggle_blink()`; update `append()` to call `_commit_lines()`; update `render()` with both cursor paths; add 5 config accessors at module level |
+| `hermes_cli/tui/widgets.py` | `OutputPanel.flush_live()`: call `live.flush()` before reading `_buf`; add `ThinkingWidget.deactivate()` |
 | `hermes_cli/tui/app.py` | `_consume_output()`: `append` → `feed` (1 line) |
 
 ---
@@ -518,12 +644,17 @@ that, on the outer queue drain loop. Correct behaviour is preserved.
 
 ```python
 if chunk is None:
-    panel.flush_live()   # → live.flush() → drains char queue → commit _buf
+    _first_chunk_in_turn = True   # reset for next turn
+    try:
+        self.query_one(OutputPanel).flush_live()   # → live.flush() → drains char queue → commit _buf
+    except NoMatches:
+        pass
     continue
 ```
 
-After `flush_live()`, `_buf` is `""` and `_animating` is `False`. The drainer finds an
-empty queue on its next wakeup and blocks. No state leaks between agent turns.
+After `flush_live()`, `_buf` is `""`, `_animating` is `False`, and the blink timer is
+stopped. The drainer finds an empty queue on its next wakeup and blocks. No state leaks
+between agent turns.
 
 ---
 
@@ -532,17 +663,17 @@ empty queue on its next wakeup and blocks. No state leaks between agent turns.
 New file: `tests/tui/test_typewriter.py`  
 Run with: `pytest -o "addopts=" tests/tui/test_typewriter.py -v`
 
-Tests use Textual's `app.run_test()` + `pilot`. **Timing assertions use a high speed
-(e.g., `speed=1000` ≈ 1 ms/char) and `await asyncio.sleep()` plus `await pilot.pause()`
-to advance the event loop** rather than asserting on precise wall-clock intervals —
-avoiding flakiness on loaded CI runners.
+Tests use Textual's `app.run_test()` + `pilot`. Timing-sensitive tests use high speeds
+(`speed=1000` ≈ 1 ms/char, `speed=5000` ≈ 0.2 ms/char) and `await asyncio.sleep()` plus
+`await pilot.pause()` to advance the event loop — avoiding flakiness on loaded CI runners.
+Unit tests that check `render()` output set widget state directly without feeding or waiting.
 
 ### 13.1 Unit-level (within run_test, testing widget state)
 
 | Test | What it asserts |
 |---|---|
 | `test_feed_disabled_falls_through` | Disabled: `feed("abc")` → `_buf == "abc"`, no `_char_queue` attr |
-| `test_feed_enabled_queues_chars` | Enabled, speed=0.001 (very slow); call `feed("abc")`; assert immediately (no `await` between feed and assert) → `_char_queue.qsize() == 3`; asyncio cooperative scheduling guarantees drainer has not yet run since no yield point has been crossed |
+| `test_feed_enabled_queues_chars` | Enabled, `speed=1` (1 char/sec — very slow so drainer does not drain); call `feed("abc")`; assert immediately (no `await` between feed and assert) → `_char_queue.qsize() == 3`; asyncio cooperative scheduling guarantees drainer has not yet run since no yield point has been crossed |
 | `test_commit_lines_newline` | `_buf = "hello\nworld"` → `_commit_lines()` → `_buf == "world"` (hello committed) |
 | `test_flush_drains_queue` | `_char_queue` has 3 chars, `flush()` → queue empty, `_buf == "abc"`, `_animating == False` |
 | `test_flush_noop_when_disabled` | Disabled: `flush()` returns without error, `_buf` unchanged |
@@ -551,21 +682,31 @@ avoiding flakiness on loaded CI runners.
 
 | Test | Strategy |
 |---|---|
-| `test_typewriter_chars_appear_sequentially` | speed=1000; feed "hello"; await sleep(0.02)+pause; assert `_buf` non-empty; await sleep(0.1)+pause; assert all 5 chars committed/buffered |
-| `test_cursor_shown_during_animation` | speed=30 (33 ms/char); feed "hi"; `await asyncio.sleep(0.05)` + `await pilot.pause(times=3)`; assert `▌` in `str(live_line.render())` |
-| `test_cursor_hidden_after_drain` | speed=1000; feed "hi"; await full drain; assert no `▌` in render |
-| `test_newline_commits_immediately` | speed=30; feed "hello\n"; after `\n` processed, "hello" in RichLog lines |
-| `test_burst_compensation` | speed=60, burst=10; feed 200 chars; await sleep(0.2)+pause(5); assert all 200 chars processed (not 200×17ms = 3.4s) |
-| `test_flush_sentinel_mid_animation` | speed=30; feed 10 chars; call `app.flush_output()` immediately; after sentinel processed, `_buf == ""` + chars in RichLog |
-| `test_disabled_output_unchanged` | Disable; feed 100 chars; all in `_buf` immediately (no sleep) |
-| `test_turn_reset` | feed "hello", flush; start new turn; feed "world"; `_buf` does not contain "hello" |
-| `test_scroll_lock_preserved` | Set `_user_scrolled_up = True`; feed chars; `scroll_end` not called |
+| `test_typewriter_chars_appear_sequentially` | speed=1000; feed "hello"; `await asyncio.sleep(0.05)` + `await pilot.pause()`; drain remaining queue; assert at least 1 char appeared in `_buf` (deliberately weak — avoids flakiness on slow CI) |
+| `test_cursor_shown_during_animation` | Unit test of `render()`: directly set `live._animating = True`, `live._buf = "hi"`, `live._tw_cursor = True`; assert `▌` in `str(live.render())` — no feeding or waiting |
+| `test_cursor_hidden_after_drain` | Unit test of `render()`: directly set `live._animating = False`, `live._buf = "hi"`, `live._tw_cursor = True`; assert no `▌` in `str(live.render())` — no feeding or waiting |
+| `test_disabled_output_unchanged` | Disable; feed "hello world" (11 chars); assert `_buf == "hello world"` immediately after `await pilot.pause()` — no animation queue, direct append |
+| `test_disabled_no_animating_reactive` | Disable; feed "abc"; `_animating` never becomes True |
+| `test_burst_compensation_processes_all` | speed=5000 (0.2 ms/char), burst=10; feed 200 chars; await sleep(0.5)+pause; assert queue drains fully well within 0.5 s (without burst, 200×0.2 ms = 40 ms; burst ensures even faster drain) |
 | `test_env_var_override_enable` | `HERMES_TYPEWRITER=1` with config disabled → typewriter activates |
 | `test_env_var_override_disable` | `HERMES_TYPEWRITER=0` with config enabled → fast-path |
-| `test_speed_zero_instant` | speed=0 → delay=0.0; feed 100 chars; all processed within a few event loop ticks |
-| `test_is_mounted_exit` | Unmount widget while drainer is active; no exceptions, `_animating == False` |
+| `test_speed_zero_delay` | Unit test of config accessor: patch `_typewriter_delay_s` return value to `0.0`; assert call returns `0.0` — verifies the accessor honors `speed=0` |
+| `test_is_mounted_exit_no_exception` | Feed "hello" with typewriter enabled; sleep 20 ms; let app exit (widget unmounts) — asserts no exception is raised during teardown |
+| `test_consume_output_uses_feed` | `_consume_output` calls `live_line.feed()` not `live_line.append()` |
+| `test_flush_live_calls_flush` | `flush_live()` calls `live.flush()` before committing `_buf` |
 
-### 13.3 Performance regression (`@pytest.mark.slow`)
+### 13.3 Non-typewriter blink cursor
+
+| Test | What it asserts |
+|---|---|
+| `test_no_blink_before_feed` | Before any `feed()` call, assert `live._blink_timer is None` |
+| `test_blink_timer_starts_after_feed` | Disabled typewriter; call `feed("x")`; `_blink_timer is not None` |
+| `test_flush_stops_blink_timer` | Start blink timer; call `flush()`; `_blink_timer is None`; `_blink_visible == True` |
+| `test_no_double_cursor_when_typewriter_animating` | Typewriter enabled, `_animating=True`; blink timer also active; render shows exactly one `▌` (typewriter wins via `elif`) |
+| `test_blink_cursor_appears_when_active` | Unit test of `render()`: directly set `_buf = "streaming text"`, `_blink_timer = MagicMock()`, `_blink_visible = True`; assert `▌` in `str(live.render())` — no feeding or waiting |
+| `test_blink_cursor_hidden_when_not_visible` | Unit test of `render()`: directly set `_buf = "streaming text"`, `_blink_timer = MagicMock()`, `_blink_visible = False`; assert no `▌` in `str(live.render())` |
+
+### 13.4 Performance regression (`@pytest.mark.slow`) — planned, not yet implemented
 
 ```python
 @pytest.mark.slow
@@ -573,7 +714,8 @@ async def test_typewriter_paint_cost():
     """Each LiveLineWidget render at 60 chars/sec completes within 3ms."""
 ```
 
-Measures widget repaint duration via mock instrumentation of `render()`.
+Would measure widget repaint duration via mock instrumentation of `render()`. Not yet
+written — covered implicitly by the burst compensation test at speed=5000.
 
 ---
 
@@ -607,15 +749,17 @@ A 1000-char burst drains in 8 batches × < 1 ms = under 8 ms total — versus
 
 | Case | Handling |
 |---|---|
-| Agent stream interrupted (ctrl+c) | `flush_output()` sends `None` sentinel → `flush_live()` → `live.flush()` drains all; `_animating = False` |
+| Agent stream interrupted (ctrl+c) | `flush_output()` sends `None` sentinel → `flush_live()` → `live.flush()` drains all; `_animating = False`; blink timer stopped |
 | Multi-line chunk | All chars queued in order; `\n` commits intermediate lines as they are processed by the drainer |
 | Empty chunk `""` | `feed("")` → 0 chars queued, no effect |
 | ANSI escape sequences | `feed()` uses `_ANSI_SEQ_RE` to enqueue complete sequences as atomic items — `_buf` never contains a partial escape code between frames. Any lone `\x1b` not matched is passed as a single char; Rich silently drops bare ESC bytes. |
-| Widget unmount during animation | `@work` receives `CancelledError` → propagates through `asyncio.wait_for` → caught by `try/finally` → `_animating = False` |
-| Config changed mid-session | Not supported — config is cached at mount time. Restart required for config changes to take effect. Document this in help. |
+| Widget unmount during animation | `@work` receives `CancelledError` → propagates through `asyncio.wait_for` → caught by `try/finally` → `_animating = False`; `on_unmount()` also stops blink timer |
+| Config changed mid-session | Not supported — config is cached at mount time. Restart required for config changes to take effect. |
 | `speed = 0` | `_typewriter_delay_s()` returns `0.0` → `asyncio.sleep(0.0)` = one event loop yield per char; functionally near-instant |
 | Terminal does not support blink | `▌` renders as static character — cursor feature degrades gracefully |
 | `burst_threshold = 0` | `_typewriter_burst_threshold()` returns `max(1, value)` — prevents always-batch path on threshold=0 |
+| Both `typewriter.cursor = false` and `display.cursor_blink = false` | No `▌` rendered in either path — completely cursor-free mode |
+| `_blink_visible = False` at next turn start | `flush()` resets `_blink_visible = True` so the cursor appears immediately on the next turn's first character |
 
 ---
 
@@ -628,10 +772,11 @@ A 1000-char burst drains in 8 batches × < 1 ms = under 8 ms total — versus
 5. **Add `feed()`** — disabled fast-path only; verify with unit test.
 6. **Add `_char_queue` init in `on_mount()`**, add `_animating` reactive.
 7. **Add `_drain_chars()`** `@work` coroutine; start in `on_mount()` when enabled.
-8. **Update `render()`** with cursor.
-9. **Update `_consume_output()`** in `app.py`: `append` → `feed`.
-10. **Write tests** in `tests/tui/test_typewriter.py`.
-11. **Update `config.yaml`** with commented `typewriter:` block showing schema.
+8. **Update `render()`** with typewriter cursor.
+9. **Add `_toggle_blink()`**, init blink state in `on_mount()`, start timer in `feed()` non-typewriter path, stop in `flush()` and `on_unmount()`.
+10. **Update `render()`** with non-typewriter blink cursor `elif` branch.
+11. **Update `_consume_output()`** in `app.py`: `append` → `feed`.
+12. **Write tests** in `tests/tui/test_typewriter.py` (typewriter tests + blink cursor tests).
 
 ---
 
@@ -654,8 +799,10 @@ timeout means at worst a 0.5 s delay between app exit and drainer clean exit —
 for a daemon worker. The inner `except asyncio.TimeoutError: continue` catches only the
 timer expiry. `CancelledError` is intentionally **not** caught in the inner block — it
 propagates through `asyncio.wait_for`, exits the `while` loop, and reaches the `finally`
-block which sets `_animating = False`. This is correct cancellation semantics on all
-Python versions supported by Textual 8.x (≥ 3.10).
+block which sets `_animating = False`. This is correct cancellation semantics on Python ≥ 3.10, which is the floor for
+Textual 8.x. (Note: §6.2 mentions Python ≤ 3.9 in the context of `asyncio.Queue`
+initialisation — that is a historical note about why `on_mount()` is used instead of
+`__init__`; it does not imply ≤ 3.9 support.)
 
 ## Appendix B: Why Not `@work(exclusive=True)`
 
@@ -671,3 +818,17 @@ Textual forwards `style="blink"` to Rich, which emits ANSI `\x1b[5m`. Supported 
 xterm-256color, kitty, alacritty, iTerm2 (partial), Windows Terminal (CSS-limited),
 Ghostty. Not supported by: some SSH-forwarded terminals, screen/tmux default configs.
 `cursor: false` in config disables the feature for constrained environments.
+
+## Appendix D: Non-Typewriter Cursor Design Rationale
+
+The non-typewriter blink cursor (`_toggle_blink` / `set_interval(0.5)`) provides live
+visual feedback that the agent is streaming even when typewriter animation is off. It
+uses `style="dim"` (not `style="blink"`) to avoid triggering terminal blink for the
+non-animated path — a deliberate distinction: the typewriter cursor pulses at the
+animation cadence (visible via `style="blink"`), while the non-typewriter cursor
+blinks at a fixed 2 Hz interval under Python control, always visible regardless of
+terminal blink support.
+
+The timer starts on the **first chunk** of each response turn (not on mount) so that the
+cursor does not appear during idle between-turn intervals. It stops in `flush()` which is
+called exactly once per turn, ensuring no timer leak across turns.

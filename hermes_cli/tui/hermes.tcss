@@ -170,3 +170,8 @@ ToolBodyContainer CopyableRichLog {
     overflow-y: auto;
     overflow-x: hidden;
 }
+
+/* --- Context menu --- */
+
+ContextMenu > _ContextItem:hover { background: $primary 30%; }
+ContextMenu > _ContextSep { color: $text-muted; }

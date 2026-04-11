@@ -388,6 +388,18 @@ class HermesInput(Input, can_focus=True):
 
     # --- Convenience ---
 
+    def on_paste(self, event) -> None:
+        """Flash HintBar when text is pasted into the input.
+
+        ``Input`` handles the actual paste — we must NOT call
+        ``event.prevent_default()`` here.
+        """
+        n = len(event.text)
+        try:
+            self.app._flash_hint(f"📋  {n} chars", 1.2)
+        except Exception:
+            pass
+
     def insert_text(self, text: str) -> None:
         """Insert text at cursor position (for paste support / external callers)."""
         pos = self.cursor_position

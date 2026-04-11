@@ -81,6 +81,10 @@ class HermesApp(App):
 
     CSS_PATH = "hermes.tcss"
 
+    # Layer declaration — required before any widget uses ``layer: overlay``
+    # in CSS.  Draw order: default → overlay.
+    LAYERS = ("default", "overlay")
+
     # --- Reactive state (replaces flag + _invalidate() pattern) ---
     agent_running: reactive[bool] = reactive(False)
     command_running: reactive[bool] = reactive(False)
@@ -187,6 +191,10 @@ class HermesApp(App):
         yield PlainRule(id="input-rule-bottom")
         yield VoiceStatusBar(id="voice-status")
         yield StatusBar(id="status-bar")
+        # ContextMenu must be last so it renders above all other widgets
+        # within the overlay layer (DOM order = paint order within a layer).
+        from hermes_cli.tui.context_menu import ContextMenu as _CM
+        yield _CM(id="context-menu")
 
     # --- Lifecycle ---
 
@@ -693,6 +701,190 @@ class HermesApp(App):
         except Exception:
             return None
 
+    # --- Copy/paste feedback ---
+
+    def _flash_hint(self, text: str, duration: float = 1.5) -> None:
+        """Flash *text* in the HintBar for *duration* seconds, then restore.
+
+        Reuses the existing ``HintBar.hint`` reactive — no new widgets.
+        Safe to call from the event loop (e.g. from action lambdas).
+        """
+        try:
+            bar = self.query_one(HintBar)
+            prior = bar.hint
+            bar.hint = text
+            self.set_timer(duration, lambda: setattr(bar, "hint", prior))
+        except NoMatches:
+            pass
+
+    # --- Right-click context menu ---
+
+    def on_click(self, event: Any) -> None:
+        """Intercept right-clicks (button=3) and show a context menu."""
+        if event.button != 3:
+            return
+        items = self._build_context_items(event)
+        if not items:
+            return
+        event.prevent_default()
+        # Resolve screen coords — show() receives ints, not int|None
+        sx = event.screen_x if event.screen_x is not None else event.x
+        sy = event.screen_y if event.screen_y is not None else event.y
+        try:
+            from hermes_cli.tui.context_menu import ContextMenu as _CM
+            self.query_one(_CM).show(items, sx, sy)
+        except NoMatches:
+            pass
+
+    def _build_context_items(self, event: Any) -> list:
+        """Walk the clicked widget's parent chain and return context menu items.
+
+        Priority (first match wins):
+        1. ToolBlock / ToolHeader → tool copy + expand/collapse + copy-all
+        2. MessagePanel          → copy selected (if any) + copy full response
+        3. HermesInput / #input-row → paste hint + clear input
+        4. Fallback              → copy selected only (if selection is active)
+        """
+        from hermes_cli.tui.context_menu import MenuItem
+
+        widget = getattr(event, "widget", None)
+        if widget is None:
+            return []
+
+        # Walk up the parent chain
+        node = widget
+        while node is not None:
+            # --- ToolBlock ---
+            try:
+                from hermes_cli.tui.tool_blocks import ToolBlock as _TB
+                if isinstance(node, _TB):
+                    block = node
+                    return [
+                        MenuItem("⎘  Copy tool output", "", lambda b=block: self._copy_tool_output(b)),
+                        MenuItem("▸/▾  Expand/Collapse", "", lambda b=block: b.toggle()),
+                        MenuItem("⎘  Copy all output", "", lambda: self._copy_all_output(), separator_above=True),
+                    ]
+            except ImportError:
+                pass
+
+            # --- ToolHeader (parent is the ToolBlock) ---
+            try:
+                from hermes_cli.tui.tool_blocks import ToolHeader as _TH, ToolBlock as _TB
+                if isinstance(node, _TH):
+                    parent = node.parent
+                    if isinstance(parent, _TB):
+                        block = parent
+                        return [
+                            MenuItem("⎘  Copy tool output", "", lambda b=block: self._copy_tool_output(b)),
+                            MenuItem("▸/▾  Expand/Collapse", "", lambda b=block: b.toggle()),
+                            MenuItem("⎘  Copy all output", "", lambda: self._copy_all_output(), separator_above=True),
+                        ]
+            except ImportError:
+                pass
+
+            # --- MessagePanel ---
+            try:
+                from hermes_cli.tui.widgets import MessagePanel as _MP
+                if isinstance(node, _MP):
+                    panel = node
+                    items = []
+                    selected = self._get_selected_text()
+                    if selected:
+                        sel_text = selected
+                        items.append(MenuItem("⎘  Copy selected", "", lambda t=sel_text: self._copy_text(t)))
+                    items.append(MenuItem("⎘  Copy full response", "", lambda p=panel: self._copy_panel(p)))
+                    return items
+            except ImportError:
+                pass
+
+            # --- HermesInput ---
+            try:
+                from hermes_cli.tui.input_widget import HermesInput as _HI
+                if isinstance(node, _HI):
+                    return [
+                        MenuItem("📋  Paste", "ctrl+v", lambda: self._paste_into_input()),
+                        MenuItem("✕  Clear input", "", lambda: self._clear_input()),
+                    ]
+            except ImportError:
+                pass
+
+            # --- #input-row container ---
+            if getattr(node, "id", None) == "input-row":
+                return [
+                    MenuItem("📋  Paste", "ctrl+v", lambda: self._paste_into_input()),
+                    MenuItem("✕  Clear input", "", lambda: self._clear_input()),
+                ]
+
+            node = getattr(node, "parent", None)
+
+        # Fallback: copy selected text only when a selection is active
+        selected = self._get_selected_text()
+        if selected:
+            sel_text = selected
+            return [MenuItem("⎘  Copy selected", "", lambda t=sel_text: self._copy_text(t))]
+        return []
+
+    # --- Context menu action helpers ---
+
+    def _copy_tool_output(self, block: Any) -> None:
+        """Copy a ToolBlock's plain-text content to clipboard and flash hint."""
+        try:
+            content = block.copy_content()
+            self.copy_to_clipboard(content)
+            self._flash_hint(f"⎘  {len(content)} chars copied", 1.5)
+        except Exception:
+            self._flash_hint("⚠ copy failed", 1.5)
+
+    def _copy_all_output(self) -> None:
+        """Copy plain text from every CopyableRichLog in the output panel."""
+        try:
+            from hermes_cli.tui.widgets import CopyableRichLog as _CRL
+            parts = [log.copy_content() for log in self.query(_CRL)]
+            content = "\n".join(p for p in parts if p)
+            self.copy_to_clipboard(content)
+            self._flash_hint(f"⎘  {len(content)} chars copied", 1.5)
+        except Exception:
+            self._flash_hint("⚠ copy failed", 1.5)
+
+    def _copy_panel(self, panel: Any) -> None:
+        """Copy a MessagePanel's response log content to clipboard."""
+        try:
+            from hermes_cli.tui.widgets import MessagePanel as _MP, CopyableRichLog as _CRL
+            if isinstance(panel, _MP):
+                content = panel.response_log.copy_content()
+            elif isinstance(panel, _CRL):
+                content = panel.copy_content()
+            else:
+                return
+            self.copy_to_clipboard(content)
+            self._flash_hint(f"⎘  {len(content)} chars copied", 1.5)
+        except Exception:
+            self._flash_hint("⚠ copy failed", 1.5)
+
+    def _copy_text(self, text: str) -> None:
+        """Copy arbitrary text to clipboard and flash hint."""
+        self.copy_to_clipboard(text)
+        self._flash_hint(f"⎘  {len(text)} chars copied", 1.5)
+
+    def _paste_into_input(self) -> None:
+        """Focus the input and show a hint to press ctrl+v."""
+        try:
+            self.query_one("#input-area").focus()
+            self._flash_hint("press ctrl+v to paste", 1.5)
+        except NoMatches:
+            pass
+
+    def _clear_input(self) -> None:
+        """Clear the input content."""
+        try:
+            inp = self.query_one("#input-area")
+            if hasattr(inp, "clear"):
+                inp.clear()
+            elif hasattr(inp, "value"):
+                inp.value = ""
+        except NoMatches:
+            pass
+
     # --- Key bindings for overlays, copy, and interrupt ---
 
     def on_key(self, event: Any) -> None:
@@ -712,6 +904,7 @@ class HermesApp(App):
             selected = self._get_selected_text()
             if selected:
                 self.copy_to_clipboard(selected)
+                self._flash_hint(f"⎘  {len(selected)} chars copied", 1.5)
                 event.prevent_default()
                 return
 

@@ -93,6 +93,10 @@ class CopyableRichLog(RichLog):
         text = "\n".join(self._plain_lines)
         return selection.extract(text), "\n"
 
+    def copy_content(self) -> str:
+        """Plain text for clipboard — no ANSI, no markup."""
+        return "\n".join(self._plain_lines)
+
     def clear(self) -> "CopyableRichLog":
         self._plain_lines.clear()
         return super().clear()

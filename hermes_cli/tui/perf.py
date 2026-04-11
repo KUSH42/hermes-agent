@@ -285,9 +285,12 @@ class FrameRateProbe:
     * <5.0 Hz  / >200ms → event loop under load (blocking I/O, heavy DOM ops)
     * <2.0 Hz  / >500ms → severe blockage — user will perceive input lag
 
-    This is NOT Textual's screen render rate (which is driven by dirty-region
-    repaints and has no fixed frequency). It measures how reliably the event
-    loop delivers a 0.1s timer — a direct proxy for overall loop health.
+    This is NOT Textual's screen render rate. Textual has an internal
+    ``Screen._update_timer`` that fires at ``1/MAX_FPS`` (default 60fps /
+    16.67ms) whenever dirty widgets are queued — that rate is invisible to
+    user code. What this probe measures is whether the event loop can still
+    deliver a *coarse* 0.1s timer on time; if it can't, the 60fps render
+    timer is also being starved.
 
     ``log()`` output (``TEXTUAL_LOG=1``) is emitted every *log_every* ticks
     so the Textual devtools console shows a running fps/ms trace without

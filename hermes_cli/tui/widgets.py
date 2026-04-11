@@ -13,9 +13,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import asyncio
+import os
 import re
 
 from rich.text import Text
+from textual import work
 from textual.app import ComposeResult, RenderResult
 from textual.containers import ScrollableContainer
 from textual.css.query import NoMatches
@@ -62,6 +65,67 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 def _strip_ansi(text: str) -> str:
     """Strip ANSI CSI escape sequences from text."""
     return _ANSI_RE.sub("", text)
+
+
+# Matches complete ANSI/VT escape sequences as atomic units for typewriter animation.
+# Covers CSI (colour/attr), OSC (hyperlinks), and Fe (reverse-index etc.).
+_ANSI_SEQ_RE = re.compile(
+    r"\x1b(?:"
+    r"\[[0-9;]*[A-Za-z]"               # CSI sequences
+    r"|\][^\x07\x1b]*(?:\x07|\x1b\\)"  # OSC sequences
+    r"|[A-Za-z]"                        # Fe sequences
+    r")"
+)
+
+
+# ---------------------------------------------------------------------------
+# Typewriter config accessors (called once at mount, never from render)
+# ---------------------------------------------------------------------------
+
+def _typewriter_enabled() -> bool:
+    env = os.environ.get("HERMES_TYPEWRITER")
+    if env == "1":
+        return True
+    if env == "0":
+        return False
+    try:
+        from hermes_cli.config import get_config
+        return bool(
+            get_config().get("terminal", {}).get("typewriter", {}).get("enabled", False)
+        )
+    except Exception:
+        return False
+
+
+def _typewriter_delay_s() -> float:
+    speed = 60
+    try:
+        from hermes_cli.config import get_config
+        speed = get_config().get("terminal", {}).get("typewriter", {}).get("speed", 60)
+    except Exception:
+        pass
+    if speed <= 0:
+        return 0.0
+    return 1.0 / speed
+
+
+def _typewriter_burst_threshold() -> int:
+    try:
+        from hermes_cli.config import get_config
+        raw = get_config().get("terminal", {}).get("typewriter", {}).get("burst_threshold", 128)
+        return max(1, int(raw))
+    except Exception:
+        return 128
+
+
+def _typewriter_cursor_enabled() -> bool:
+    try:
+        from hermes_cli.config import get_config
+        return bool(
+            get_config().get("terminal", {}).get("typewriter", {}).get("cursor", True)
+        )
+    except Exception:
+        return True
 
 
 class CopyableRichLog(RichLog):
@@ -177,44 +241,146 @@ class ToolPendingLine(Widget):
 class LiveLineWidget(Widget):
     """Renders the current in-progress streaming chunk before it is committed.
 
-    Accumulates text via :meth:`append`. When a newline arrives, all complete
-    lines are committed to the parent OutputPanel's RichLog and only the
-    trailing partial line remains in the buffer.
+    Accumulates text via :meth:`append` (direct) or :meth:`feed` (typewriter).
+    When a newline arrives, all complete lines are committed to the parent
+    OutputPanel's RichLog and only the trailing partial line remains in the buffer.
+
+    Typewriter animation is opt-in via config (``terminal.typewriter.enabled``).
+    When disabled, :meth:`feed` falls through to :meth:`append` with zero overhead.
     """
 
     DEFAULT_CSS = "LiveLineWidget { height: auto; }"
 
     _buf: reactive[str] = reactive("", repaint=True)
+    _animating: reactive[bool] = reactive(False, repaint=True)
+
+    def on_mount(self) -> None:
+        self._tw_enabled: bool = _typewriter_enabled()
+        self._tw_delay: float = _typewriter_delay_s()
+        self._tw_burst: int = _typewriter_burst_threshold()
+        self._tw_cursor: bool = _typewriter_cursor_enabled()
+        if self._tw_enabled:
+            self._char_queue: asyncio.Queue[str] = asyncio.Queue()
+            self._drain_chars()
+
+    def on_unmount(self) -> None:
+        self._animating = False
 
     def render(self) -> RenderResult:
-        return Text.from_ansi(self._buf) if self._buf else Text("")
+        if not self._buf and not self._animating:
+            return Text("")
+        t = Text.from_ansi(self._buf) if self._buf else Text("")
+        if self._animating and getattr(self, "_tw_cursor", True):
+            t.append("▌", style="blink")
+        return t
+
+    def _commit_lines(self) -> None:
+        """Commit all complete lines in _buf to the current MessagePanel's RichLog."""
+        if "\n" not in self._buf:
+            return
+        lines = self._buf.split("\n")
+        try:
+            panel = self.app.query_one(OutputPanel)
+            msg = panel.current_message
+            if msg is None:
+                msg = panel.new_message()
+            rl = msg.response_log
+            msg.show_response_rule()
+            for committed in lines[:-1]:
+                plain = _strip_ansi(committed)
+                if isinstance(rl, CopyableRichLog):
+                    rl.write_with_source(Text.from_ansi(committed), plain)
+                else:
+                    rl.write(Text.from_ansi(committed))
+            if rl._deferred_renders:
+                self.call_after_refresh(msg.refresh, layout=True)
+        except NoMatches:
+            pass
+        self._buf = lines[-1]
 
     def append(self, chunk: str) -> None:
-        """Append *chunk*; commit complete lines to the current MessagePanel's RichLog."""
+        """Append *chunk* directly; commit complete lines to the MessagePanel's RichLog."""
         self._buf += chunk
         if "\n" in self._buf:
-            lines = self._buf.split("\n")
+            self._commit_lines()
+
+    def feed(self, chunk: str) -> None:
+        """Enqueue *chunk* for typewriter animation (falls through to append when disabled).
+
+        ANSI escape sequences are enqueued as atomic items so _buf never contains
+        a partial escape code between render frames.  Must be called from the event loop.
+        """
+        if not getattr(self, "_tw_enabled", False):
+            self.append(chunk)
+            return
+        pos = 0
+        for m in _ANSI_SEQ_RE.finditer(chunk):
+            for ch in chunk[pos:m.start()]:
+                self._char_queue.put_nowait(ch)
+            self._char_queue.put_nowait(m.group(0))
+            pos = m.end()
+        for ch in chunk[pos:]:
+            self._char_queue.put_nowait(ch)
+
+    @work(exclusive=False)
+    async def _drain_chars(self) -> None:
+        """Long-running drainer — started once in on_mount(), exits on unmount.
+
+        Burst compensation batch-drains when the queue is deep, avoiding O(N)
+        asyncio.sleep calls for fast model output.
+        """
+        delay = self._tw_delay
+        burst = self._tw_burst
+        try:
+            while self.is_mounted:
+                try:
+                    char = await asyncio.wait_for(
+                        self._char_queue.get(), timeout=0.5
+                    )
+                except asyncio.TimeoutError:
+                    continue
+
+                self._animating = True
+                self._buf += char
+                if "\n" in self._buf:
+                    self._commit_lines()
+
+                qsize = self._char_queue.qsize()
+                if qsize >= burst:
+                    for _ in range(min(qsize, burst * 2)):
+                        try:
+                            c = self._char_queue.get_nowait()
+                            self._buf += c
+                            if "\n" in self._buf:
+                                self._commit_lines()
+                        except asyncio.QueueEmpty:
+                            break
+                    await asyncio.sleep(0)
+                else:
+                    await asyncio.sleep(delay)
+
+                if self._char_queue.empty():
+                    self._animating = False
+        finally:
+            self._animating = False
+
+    def flush(self) -> None:
+        """Synchronously drain all pending chars from _char_queue.
+
+        Called from OutputPanel.flush_live() on the event loop when the None
+        sentinel arrives.  Safe because asyncio is single-threaded.
+        """
+        if not getattr(self, "_tw_enabled", False) or not hasattr(self, "_char_queue"):
+            return
+        while True:
             try:
-                panel = self.app.query_one(OutputPanel)
-                msg = panel.current_message
-                if msg is None:
-                    msg = panel.new_message()
-                rl = msg.response_log
-                msg.show_response_rule()
-                for committed in lines[:-1]:
-                    plain = _strip_ansi(committed)
-                    if isinstance(rl, CopyableRichLog):
-                        rl.write_with_source(Text.from_ansi(committed), plain)
-                    else:
-                        rl.write(Text.from_ansi(committed))
-                # If writes were deferred (RichLog size not yet known),
-                # schedule a layout refresh so the panel expands once the
-                # deferred renders are processed on the next resize.
-                if rl._deferred_renders:
-                    self.call_after_refresh(msg.refresh, layout=True)
-            except NoMatches:
-                pass
-            self._buf = lines[-1]
+                char = self._char_queue.get_nowait()
+                self._buf += char
+                if "\n" in self._buf:
+                    self._commit_lines()
+            except asyncio.QueueEmpty:
+                break
+        self._animating = False
 
 
 class MessagePanel(Widget):
@@ -331,6 +497,7 @@ class OutputPanel(ScrollableContainer):
     def flush_live(self) -> None:
         """Commit any in-progress buffered line to current message's RichLog."""
         live = self.live_line
+        live.flush()  # drain _char_queue before reading _buf (no-op when typewriter disabled)
         if live._buf:
             msg = self.current_message
             if msg is None:

@@ -251,7 +251,7 @@ class HermesApp(App):
                 continue
             try:
                 panel = self.query_one(OutputPanel)
-                panel.live_line.append(chunk)
+                panel.live_line.feed(chunk)
                 if not panel._user_scrolled_up:
                     self.call_after_refresh(panel.scroll_end, animate=False)
             except NoMatches:

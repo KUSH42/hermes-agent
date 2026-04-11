@@ -2166,13 +2166,14 @@ _INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
 def _highlight_inline_code(text: str) -> str:
     """Apply ANSI styling to inline code spans (single backticks) in prose text.
 
-    Preserves the backticks so the boundary is still visible; only applies
-    a background/foreground colour change to distinguish code from prose.
+    Strips the surrounding backticks and applies a dark-background / bright-white
+    colour to distinguish inline code from prose — matching the standard markdown
+    convention without rendering the delimiter characters.
     Does NOT touch triple-backtick fenced blocks — callers must ensure
     this is only called on prose segments, not on code block content.
     """
     return _INLINE_CODE_RE.sub(
-        lambda m: f"{_ANSI_INLINE_CODE_START}`{m.group(1)}`{_ANSI_INLINE_CODE_END}",
+        lambda m: f"{_ANSI_INLINE_CODE_START}{m.group(1)}{_ANSI_INLINE_CODE_END}",
         text,
     )
 

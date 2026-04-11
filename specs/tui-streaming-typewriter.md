@@ -1,6 +1,6 @@
 # Spec: Streaming Typewriter Animation for Textual TUI
 
-**Status:** Implemented 2026-04-11 — 392 tests passing (25 in test_typewriter.py)  
+**Status:** Implemented 2026-04-11 — 392 tests passing (25 in test_typewriter.py); config bug fixed 2026-04-11  
 **Branch:** `feat/textual-migration`  
 **Replaces:** `/home/xush/.hermes/typewriter_streaming.md` (prompt_toolkit era, obsolete)
 

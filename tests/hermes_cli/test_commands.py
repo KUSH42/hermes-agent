@@ -989,3 +989,71 @@ class TestDiscordSkillCommands:
             assert len(name) <= _CMD_NAME_LIMIT, (
                 f"Name '{name}' is {len(name)} chars (limit {_CMD_NAME_LIMIT})"
             )
+
+
+# ---------------------------------------------------------------------------
+# /effects command registration
+# ---------------------------------------------------------------------------
+
+_EXPECTED_EFFECT_NAMES = {
+    "beams", "binarypath", "blackhole", "decrypt", "highlight",
+    "laseretch", "matrix", "overflow", "print", "rain",
+    "slide", "sweep", "synthgrid", "waves", "wipe",
+}
+
+
+class TestEffectsCommandRegistration:
+    def test_effects_in_registry(self):
+        """/effects canonical entry must be present."""
+        cmd = resolve_command("effects")
+        assert cmd is not None
+        assert cmd.name == "effects"
+
+    def test_easteregg_is_alias_not_separate_entry(self):
+        """/easteregg should be an alias for /effects, not its own entry."""
+        # Must resolve to the effects CommandDef
+        cmd = resolve_command("easteregg")
+        assert cmd is not None
+        assert cmd.name == "effects", (
+            f"easteregg resolved to '{cmd.name}' instead of 'effects'"
+        )
+        # Must NOT be a separate canonical entry
+        canonical_names = [c.name for c in COMMAND_REGISTRY]
+        assert "easteregg" not in canonical_names
+
+    def test_effects_has_16_subcommands(self):
+        """15 effect names + 'list' = 16 subcommands."""
+        cmd = resolve_command("effects")
+        assert cmd is not None
+        assert len(cmd.subcommands) == 16, (
+            f"Expected 16 subcommands, got {len(cmd.subcommands)}: {cmd.subcommands}"
+        )
+
+    def test_effects_subcommands_include_list(self):
+        cmd = resolve_command("effects")
+        assert "list" in cmd.subcommands
+
+    def test_effects_subcommands_include_all_15_effects(self):
+        cmd = resolve_command("effects")
+        assert cmd is not None
+        for name in _EXPECTED_EFFECT_NAMES:
+            assert name in cmd.subcommands, f"Effect '{name}' missing from subcommands"
+
+    def test_effects_in_subcommands_dict(self):
+        """/effects must appear in the SUBCOMMANDS lookup dict."""
+        assert "/effects" in SUBCOMMANDS
+        for name in _EXPECTED_EFFECT_NAMES:
+            assert name in SUBCOMMANDS["/effects"], (
+                f"Effect '{name}' missing from SUBCOMMANDS['/effects']"
+            )
+        assert "list" in SUBCOMMANDS["/effects"]
+
+    def test_effects_is_cli_only(self):
+        cmd = resolve_command("effects")
+        assert cmd is not None
+        assert cmd.cli_only is True
+
+    def test_easteregg_alias_in_commands_dict(self):
+        """/easteregg should appear in the flat COMMANDS dict as an alias."""
+        assert "/easteregg" in COMMANDS
+        assert "alias" in COMMANDS["/easteregg"].lower() or "effects" in COMMANDS["/easteregg"].lower()

@@ -61,6 +61,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _run_effect_sync(effect_name: str, text: str) -> None:
+    """Run a TTE animation synchronously.
+
+    Must be called after the Textual TUI has been suspended (i.e. inside
+    ``App.suspend()``).  Runs in a thread-pool executor so it does not
+    block the event loop.
+    """
+    from hermes_cli.tui.tte_runner import run_effect
+    print()
+    run_effect(effect_name, text)
+    print()
+
+
 # Always use call_soon_threadsafe for cross-thread queue access.
 # asyncio.Queue is not thread-safe: put_nowait from a non-event-loop thread
 # won't wake the selector, so the consumer only discovers items on the next
@@ -271,6 +285,20 @@ class HermesApp(App):
             self.status_output_dropped = True
         except RuntimeError:
             pass  # Event loop closed
+
+    @work
+    async def _play_effects(self, effect_name: str, text: str) -> None:
+        """Suspend Textual, run a TTE animation, then resume.
+
+        ``App.suspend()`` is a **synchronous** context manager — use ``with``,
+        not ``async with``.  The blocking TTE call is offloaded to a thread-pool
+        executor so it doesn't block the event loop even while suspended.
+
+        Safe to call from any thread; ``@work`` handles dispatch.
+        """
+        loop = asyncio.get_running_loop()
+        with self.suspend():
+            await loop.run_in_executor(None, _run_effect_sync, effect_name, text)
 
     def flush_output(self) -> None:
         """Thread-safe: send flush sentinel to commit any trailing partial line."""

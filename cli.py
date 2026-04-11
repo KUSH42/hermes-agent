@@ -5297,6 +5297,10 @@ class HermesCLI:
             self._handle_skin_command(cmd_original)
         elif canonical == "voice":
             self._handle_voice_command(cmd_original)
+        elif canonical == "effects":
+            if _base_word == "easteregg":
+                print("  /easteregg is deprecated — use /effects instead.")
+            self._handle_effects_command(cmd_original)
         else:
             # Check for user-defined quick commands (bypass agent loop, no LLM call)
             base_cmd = cmd_lower.split()[0]
@@ -6857,6 +6861,52 @@ class HermesCLI:
         else:
             _cprint(f"Unknown voice subcommand: {subcommand}")
             _cprint("Usage: /voice [on|off|tts|status]")
+
+    def _handle_effects_command(self, cmd: str) -> None:
+        """Handle /effects [effect] [text] — play a terminal text animation."""
+        from hermes_cli.tui.tte_runner import (
+            resolve_effect, EFFECT_MAP, EFFECT_DESCRIPTIONS
+        )
+        parts = cmd.strip().split(maxsplit=2)
+
+        # /effects list — print catalogue
+        if len(parts) >= 2 and parts[1].strip().lower() == "list":
+            print()
+            for name, desc in sorted(EFFECT_DESCRIPTIONS.items()):
+                print(f"  {name:<14} {desc}")
+            print()
+            return
+
+        effect_name = "matrix"
+        custom_text = ""
+
+        if len(parts) >= 2:
+            maybe = parts[1].strip().lower()
+            if resolve_effect(maybe):
+                effect_name = maybe
+                custom_text = parts[2].strip() if len(parts) >= 3 else ""
+            else:
+                custom_text = cmd.strip().split(maxsplit=1)[1].strip()
+
+        if not custom_text:
+            try:
+                from hermes_cli.skin_engine import get_active_skin
+                custom_text = get_active_skin().get_branding("agent_name", "Hermes")
+            except Exception:
+                custom_text = "Hermes"
+
+        # Route through Textual suspension when TUI is active.
+        # _play_effects is a @work method — safe to call from any thread;
+        # @work handles its own dispatch. Do NOT wrap in call_from_thread.
+        _app = _hermes_app
+        if _app is not None:
+            _app._play_effects(effect_name, custom_text)
+        else:
+            # Single-query / no-TUI mode — run directly
+            from hermes_cli.tui.tte_runner import run_effect
+            print()
+            run_effect(effect_name, custom_text)
+            print()
 
     def _enable_voice_mode(self):
         """Enable voice mode after checking requirements."""

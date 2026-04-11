@@ -103,6 +103,15 @@ COMMAND_REGISTRY: list[CommandDef] = [
                subcommands=("none", "low", "minimal", "medium", "high", "xhigh", "show", "hide", "on", "off")),
     CommandDef("skin", "Show or change the display skin/theme", "Configuration",
                cli_only=True, args_hint="[name]"),
+    CommandDef("effects", "Play a terminal text animation (TerminalTextEffects)", "Configuration",
+               cli_only=True, aliases=("easteregg",),
+               args_hint="[effect] [text] | list",
+               subcommands=(
+                   "beams", "binarypath", "blackhole", "decrypt", "highlight",
+                   "laseretch", "matrix", "overflow", "print", "rain",
+                   "slide", "sweep", "synthgrid", "waves", "wipe",
+                   "list",
+               )),
     CommandDef("voice", "Toggle voice mode", "Configuration",
                args_hint="[on|off|tts|status]", subcommands=("on", "off", "tts", "status")),
 

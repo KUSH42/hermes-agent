@@ -167,6 +167,15 @@ def _animate_counters_enabled() -> bool:
         return True
 
 
+def _fps_hud_enabled() -> bool:
+    """FPS/ms HUD overlay — off by default, toggleable at runtime (default: false)."""
+    try:
+        from hermes_cli.config import read_raw_config
+        return bool(read_raw_config().get("display", {}).get("fps_hud", False))
+    except Exception:
+        return False
+
+
 class CopyableRichLog(RichLog):
     """RichLog that stores plain text for clipboard operations."""
 
@@ -640,7 +649,7 @@ class OutputPanel(ScrollableContainer):
     def watch_scroll_y(self, new_y: float) -> None:
         """Re-engage auto-scroll when the user scrolls back to the bottom."""
         # max_scroll_y can be 0 when the panel hasn't laid out yet; guard against that.
-        if self.max_scroll_y > 0 and new_y >= self.max_scroll_y - 3:
+        if self.max_scroll_y > 0 and new_y >= self.max_scroll_y - 1:
             self._user_scrolled_up = False
 
     # Lines scrolled per mouse wheel tick.  1 is the OS default; 3 matches
@@ -1078,6 +1087,14 @@ class StatusBar(PulseMixin, Widget):
     # Animated tok/s backing reactive — drives smooth counter easing
     _tok_s_displayed: reactive[float] = reactive(0.0, repaint=True)
 
+    _IDLE_HINTS: tuple[str, ...] = (
+        "F1 help · ctrl+f history",
+        "ctrl+z undo · ctrl+g history",
+        "@ file · / command · tab accept",
+        "right-click for options",
+        "ctrl+c interrupt · esc dismiss",
+    )
+
     def compose(self) -> "ComposeResult":
         yield Static("⚠ no clipboard", id="status-clipboard-warning")
 
@@ -1101,6 +1118,10 @@ class StatusBar(PulseMixin, Widget):
         self.watch(app, "status_tok_s", self._on_tok_s_change)
         # _browse_uses is a plain int (not reactive) — watch browse_mode instead,
         # which always fires before we need to re-render.
+        # status_error: triggers repaint when a persistent error is set/cleared
+        self.watch(app, "status_error", self._on_status_change)
+        self._hint_idx: int = 0
+        self.set_interval(5.0, self._rotate_hint)
 
     def _on_status_change(self, _value: object = None) -> None:
         self.refresh()
@@ -1119,6 +1140,11 @@ class StatusBar(PulseMixin, Widget):
             self.animate("_tok_s_displayed", float(tok_s), duration=0.2, easing="out_cubic")
         else:
             self._tok_s_displayed = float(tok_s)
+
+    def _rotate_hint(self) -> None:
+        """Advance idle hint text to the next entry in _IDLE_HINTS."""
+        self._hint_idx = (self._hint_idx + 1) % len(self._IDLE_HINTS)
+        self.refresh()
 
     def render(self) -> RenderResult:
         app = self.app
@@ -1157,6 +1183,7 @@ class StatusBar(PulseMixin, Widget):
             left.append_text(right)
             return left
 
+        _vars    = getattr(app, "get_css_variables", lambda: {})()
         model    = str(getattr(app, "status_model", ""))
         duration = str(getattr(app, "status_duration", "0s"))
         tokens   = getattr(app, "status_tokens", 0)
@@ -1181,7 +1208,7 @@ class StatusBar(PulseMixin, Widget):
             if enabled and progress > 0:
                 pct_int = min(int(progress * 100), 100)
                 t.append(" · ", style="dim")
-                t.append(f"{pct_int}%", style=self._compaction_color(progress))
+                t.append(f"{pct_int}%", style=StatusBar._compaction_color(progress, _vars))
             t.append(" · ", style="dim")
             t.append(f"{tokens} tok", style="dim")
             t.append(" · ", style="dim")
@@ -1192,7 +1219,7 @@ class StatusBar(PulseMixin, Widget):
                 pct_int = min(int(progress * 100), 100)
                 filled  = min(int(progress * _BAR_WIDTH), _BAR_WIDTH)
                 bar_str = _BAR_FILLED * filled + _BAR_EMPTY * (_BAR_WIDTH - filled)
-                bar_color = self._compaction_color(progress)
+                bar_color = StatusBar._compaction_color(progress, _vars)
                 t.append("  ")
                 t.append(bar_str, style=bar_color)
                 t.append(" ")
@@ -1219,20 +1246,23 @@ class StatusBar(PulseMixin, Widget):
         # Right-anchored state label (with optional dropped-output warning).
         # When agent is running, the ● indicator pulses between two accent shades.
         dropped = getattr(app, "status_output_dropped", False)
+        _err_color = _vars.get("status-error-color", "#EF5350")
+        _status_err = getattr(app, "status_error", "")
+
         if running:
-            _vars = getattr(app, "get_css_variables", lambda: {})()
             _run_lo = _vars.get("status-running-color", "#FFBF00")
-            _run_hi = _vars.get("chevron-file", "#ffa726")
+            _run_hi = _vars.get("chevron-file", "#FFA726")
             if self._pulse_t > 0:
                 pulse_color = lerp_color(_run_hi, _run_lo, self._pulse_t)
             else:
                 pulse_color = _run_hi
             state_t = Text(" ● running", style=f"bold {pulse_color}")
+        elif _status_err:
+            state_t = Text(f" ⚠ {_status_err}", style=f"bold {_err_color}")
         else:
-            state_t = Text(" idle  F1·help", style="dim")
-        _err_color = getattr(app, "get_css_variables", lambda: {})().get(
-            "status-error-color", "#ef5350"
-        )
+            hint = self._IDLE_HINTS[getattr(self, "_hint_idx", 0)]
+            state_t = Text(f" {hint}", style="dim")
+
         if dropped:
             state_t = Text(f" ⚠ output truncated", style=_err_color) + state_t
         pad = max(0, width - t.cell_len - state_t.cell_len)
@@ -1242,26 +1272,22 @@ class StatusBar(PulseMixin, Widget):
         return t
 
     @staticmethod
-    def _compaction_color(progress: float) -> str:
-        """Return Rich style hex color for compaction bar, smoothly lerped between bands."""
-        try:
-            from hermes_cli.skin_engine import get_active_skin
-            skin = get_active_skin()
-        except Exception:
-            skin = None
+    def _compaction_color(progress: float, css_vars: dict) -> str:
+        """Lerp context-bar colour from CSS variables (no legacy skin_engine read).
 
-        color_normal = skin.get_ui_ext("context_bar_normal", "#5f87d7") if skin else "#5f87d7"
-        color_warn   = skin.get_ui_ext("context_bar_warn",   "#ffa726") if skin else "#ffa726"
-        color_crit   = skin.get_ui_ext("context_bar_crit",   "#ef5350") if skin else "#ef5350"
-
+        Fallbacks use lowercase hex to match lerp_color()'s output format,
+        so direct returns (< 0.50, >= 0.95) and lerp returns are consistently
+        cased when using the defaults.
+        """
+        color_normal = css_vars.get("status-context-color", "#5f87d7")
+        color_warn   = css_vars.get("status-warn-color",    "#ffa726")
+        color_crit   = css_vars.get("status-error-color",   "#ef5350")
         if progress >= 0.95:
             return color_crit
         if progress >= 0.80:
-            # Lerp from warn → crit across the 0.80–0.95 band
             t = (progress - 0.80) / 0.15
             return lerp_color(color_warn, color_crit, t)
         if progress >= 0.50:
-            # Lerp from normal → warn across the 0.50–0.80 band
             t = (progress - 0.50) / 0.30
             return lerp_color(color_normal, color_warn, t)
         return color_normal
@@ -1418,7 +1444,6 @@ class ClarifyWidget(CountdownMixin, Widget, can_focus=True):
         display: none;
         height: auto;
         border: tall $warning;
-        padding: 1 2;
     }
     """
 
@@ -1463,7 +1488,6 @@ class ApprovalWidget(CountdownMixin, Widget, can_focus=True):
         display: none;
         height: auto;
         border: tall $error;
-        padding: 1 2;
     }
     """
 
@@ -1508,7 +1532,6 @@ class SudoWidget(CountdownMixin, Widget):
         display: none;
         height: auto;
         border: tall $warning;
-        padding: 1 2;
     }
     """
 
@@ -1559,7 +1582,6 @@ class SecretWidget(CountdownMixin, Widget):
         display: none;
         height: auto;
         border: tall $warning;
-        padding: 1 2;
     }
     """
 
@@ -1614,7 +1636,6 @@ class UndoConfirmOverlay(CountdownMixin, Widget):
         display: none;
         height: auto;
         border: tall $warning;
-        padding: 1 2;
     }
     """
 
@@ -1744,7 +1765,7 @@ class KeymapOverlay(Widget):
         "  [bold]Ctrl+A[/bold]         Select all input text\n"
         "\n"
         "[dim]Navigation[/dim]\n"
-        "  [bold]Ctrl+F / Ctrl+R[/bold]  History search\n"
+        "  [bold]Ctrl+F / Ctrl+G[/bold]  History search\n"
         "  [bold]/ [/bold]              Slash-command list\n"
         "  [bold]@[/bold]               File-path autocomplete\n"
         "\n"
@@ -1796,6 +1817,7 @@ class HistorySearchOverlay(Widget):
     BINDINGS = [
         Binding("escape", "dismiss", priority=True),
         Binding("ctrl+f", "dismiss", priority=True),
+        Binding("ctrl+g", "dismiss", priority=True),
         Binding("ctrl+c", "dismiss", priority=True),
         Binding("up", "move_up", priority=True),
         Binding("down", "move_down", priority=True),
@@ -1991,3 +2013,53 @@ class HistorySearchOverlay(Widget):
             except NoMatches:
                 query = ""
             self._render_results(query)
+
+
+# ---------------------------------------------------------------------------
+# FPSCounter — floating HUD for event-loop FPS + avg-ms
+# ---------------------------------------------------------------------------
+
+class FPSCounter(Widget):
+    """Floating FPS / avg-ms HUD.
+
+    Displays the event-loop timer delivery rate (target: 10 fps) and average
+    milliseconds per tick.  Values come from :class:`~hermes_cli.tui.perf.FrameRateProbe`
+    via two reactives that ``HermesApp._tick_fps`` sets every 0.1 s.
+
+    Toggle with **Ctrl+\\\\** (``ctrl+backslash``) or set
+    ``display.fps_hud: true`` in your Hermes config to start visible.
+
+    Visual layout::
+
+        ┌──────────────────┐  ← docked top, overlay layer (no layout reflow)
+        │  10.0fps  9.8ms  │
+        └──────────────────┘
+
+    Structural CSS is in ``DEFAULT_CSS``; visual CSS is in ``hermes.tcss``.
+    The widget stays ``display: none`` until the ``--visible`` class is added.
+    """
+
+    DEFAULT_CSS = """
+    FPSCounter {
+        layer: overlay;
+        dock: top;
+        width: 18;
+        height: 1;
+        display: none;
+    }
+    FPSCounter.--visible {
+        display: block;
+    }
+    """
+
+    fps: reactive[float] = reactive(0.0, repaint=True)
+    avg_ms: reactive[float] = reactive(0.0, repaint=True)
+
+    def render(self) -> RenderResult:
+        fps_str = f"{self.fps:.1f}"
+        ms_str = f"{self.avg_ms:.1f}ms"
+        t = Text()
+        t.append(fps_str, style="bold")
+        t.append("fps ", style="dim")
+        t.append(ms_str, style="dim")
+        return t

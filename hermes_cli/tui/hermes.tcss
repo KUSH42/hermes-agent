@@ -36,7 +36,14 @@ $fuzzy-match-color: #FFD866;
 /* Status / pulse indicators — ThemeManager overrides via component_vars */
 $status-running-color: #FFBF00;
 $status-error-color: #ef5350;
+$status-warn-color: #FFA726;
 $status-context-color: #5f87d7;
+
+/* Tool body max-height — overridable via TCSS $var substitution */
+$tool-body-max-height: 60;
+
+/* FPS HUD background — ThemeManager overrides via component_vars */
+$fps-hud-bg: #1a1a2e;
 
 /* TitledRule colours — ThemeManager overrides via component_vars */
 $rule-dim-color: #555555;
@@ -98,8 +105,10 @@ StatusBar {
 ClarifyWidget,
 ApprovalWidget,
 SudoWidget,
-SecretWidget {
+SecretWidget,
+UndoConfirmOverlay {
     margin: 0 1;
+    padding: 1 2;
 }
 
 /* Overlay layer — stacks overlays vertically, hidden unless children are visible */
@@ -256,14 +265,16 @@ ToolHeader.--flash-complete {
 ToolBodyContainer CopyableRichLog {
     padding-left: 0;
     height: auto;
-    max-height: 60;
+    max-height: $tool-body-max-height;
     overflow-y: auto;
-    overflow-x: hidden;
+    overflow-x: auto;
+    scrollbar-size-horizontal: 1;   /* scoped override of the global size-0 rule */
 }
 
 /* --- Context menu ---
  * Hover uses $accent at low opacity — $primary can be near-black in dark
  * themes, making $primary 30% nearly invisible against $panel background. */
+ContextMenu { background: $panel; }
 ContextMenu > _ContextItem:hover { background: $accent 15%; }
 ContextMenu > _ContextSep { color: $text-muted; }
 
@@ -324,6 +335,14 @@ HermesApp.reduced-motion MessagePanel           { transition: none; }
 HermesApp.reduced-motion MessagePanel.--highlighted { transition: none; }
 HermesApp.reduced-motion #input-chevron         { transition: none; }
 HermesApp.reduced-motion ToolHeader             { transition: none; }
+
+/* --- FPS HUD overlay --- */
+
+FPSCounter {
+    background: $fps-hud-bg;
+    color: $accent;
+    padding: 0 1;
+}
 
 /* --- Density: compact mode (§2.9) --- */
 

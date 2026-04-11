@@ -265,3 +265,79 @@ class EventLoopLatencyProbe:
     def over_budget_count(self) -> int:
         """Number of ticks that exceeded the jitter budget."""
         return self._over_budget_count
+
+
+# ---------------------------------------------------------------------------
+# FrameRateProbe — FPS + avg-ms tracker for the HUD
+# ---------------------------------------------------------------------------
+
+class FrameRateProbe:
+    """Rolling FPS and avg-ms tracker for the TUI HUD.
+
+    Call ``tick()`` from a ``set_interval(0.1)`` callback (10 Hz target).
+    The probe computes smoothed FPS and average ms-per-tick over a sliding
+    window of recent samples.  Results are both returned and exposed as
+    properties for the ``FPSCounter`` widget to consume.
+
+    A 10 Hz ticker is a good proxy for event-loop health:
+    * ~10.0 fps  → event loop is healthy, delivers timers on time
+    * <5.0 fps   → event loop is under load (blocking I/O, heavy DOM ops)
+    * <2.0 fps   → severe blockage — user will perceive input lag
+
+    ``log()`` output (``TEXTUAL_LOG=1``) is emitted every *log_every* ticks
+    so the Textual devtools console shows a running fps/ms trace without
+    flooding the output.
+
+    Parameters
+    ----------
+    window:
+        Rolling window size in samples (default 20 → ~2 s at 10 Hz).
+    log_every:
+        Emit a ``[FPS]`` log line every N ticks (default 50 → every 5 s).
+    """
+
+    def __init__(self, window: int = 20, log_every: int = 50) -> None:
+        self._window = window
+        self._log_every = log_every
+        self._last_tick: float = 0.0
+        self._samples: list[float] = []
+        self._ticks: int = 0
+        self._fps: float = 0.0
+        self._avg_ms: float = 0.0
+
+    def tick(self) -> tuple[float, float]:
+        """Record one tick; return *(fps, avg_ms)*.
+
+        The first call initialises the baseline and returns ``(0.0, 0.0)``.
+        """
+        now = time.perf_counter()
+        if self._last_tick:
+            interval_ms = (now - self._last_tick) * 1000.0
+            self._samples.append(interval_ms)
+            if len(self._samples) > self._window:
+                self._samples.pop(0)
+            if self._samples:
+                avg = sum(self._samples) / len(self._samples)
+                self._avg_ms = avg
+                self._fps = 1000.0 / avg if avg > 0 else 0.0
+        self._last_tick = now
+        self._ticks += 1
+
+        if self._ticks % self._log_every == 0 and self._fps > 0:
+            log(
+                f"[FPS] fps={self._fps:.1f} "
+                f"avg_ms={self._avg_ms:.2f} "
+                f"ticks={self._ticks}"
+            )
+
+        return self._fps, self._avg_ms
+
+    @property
+    def fps(self) -> float:
+        """Smoothed FPS estimate (0.0 before first sample pair)."""
+        return self._fps
+
+    @property
+    def avg_ms(self) -> float:
+        """Average ms per tick over the rolling window."""
+        return self._avg_ms

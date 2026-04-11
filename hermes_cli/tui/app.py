@@ -56,6 +56,7 @@ from hermes_cli.tui.widgets import (
     ApprovalWidget,
     ClarifyWidget,
     CopyableRichLog,
+    FPSCounter,
     HistorySearchOverlay,
     HintBar,
     KeymapOverlay,
@@ -73,10 +74,12 @@ from hermes_cli.tui.widgets import (
     UndoConfirmOverlay,
     UserEchoPanel,
     VoiceStatusBar,
+    _fps_hud_enabled,
     _safe_widget_call,
 )
 
-from hermes_cli.tui.perf import EventLoopLatencyProbe, WorkerWatcher
+from hermes_cli.tui.constants import ICON_COPY
+from hermes_cli.tui.perf import EventLoopLatencyProbe, FrameRateProbe, WorkerWatcher
 from hermes_cli.tui.theme_manager import ThemeManager
 
 if TYPE_CHECKING:
@@ -126,8 +129,9 @@ class HermesApp(App):
 
     BINDINGS = [
         Binding("ctrl+f", "open_history_search", "History search", show=False, priority=True),
-        Binding("ctrl+r", "open_history_search", "Reverse history search", show=False, priority=True),
+        Binding("ctrl+g", "open_history_search", "History search", show=False, priority=True),
         Binding("f1", "show_help", "Keyboard shortcuts", show=False),
+        Binding("ctrl+backslash", "toggle_fps_hud", "FPS HUD", show=False),
     ]
 
     _CHEVRON_PHASE_CLASSES: frozenset[str] = frozenset({
@@ -179,9 +183,16 @@ class HermesApp(App):
     # Drives the 📄 breadcrumb in StatusBar. Empty string when no file is active.
     status_active_file: reactive[str] = reactive("")
 
+    # Persistent error message shown in StatusBar until cleared.
+    # repaint=False: StatusBar registers its own watch() in on_mount.
+    status_error: reactive[str] = reactive("", repaint=False)
+
     # Highlighted completion candidate — drives PreviewPanel via watch_highlighted_candidate.
     # Uses reactive(None) (no type param) to avoid import cycle at class-definition time.
     highlighted_candidate: reactive = reactive(None)
+
+    # FPS HUD visibility — toggled via Ctrl+\ or display.fps_hud config
+    fps_hud_visible: reactive[bool] = reactive(False)
 
     # hint_text is NOT on HermesApp — HintBar.hint is the single source of truth.
 
@@ -211,6 +222,7 @@ class HermesApp(App):
         # Diagnostic probes — initialised in on_mount once the event loop runs.
         self._worker_watcher: WorkerWatcher | None = None
         self._event_loop_probe: EventLoopLatencyProbe | None = None
+        self._frame_probe: FrameRateProbe | None = None
 
         # Spinner frames — read from module-level _COMMAND_SPINNER_FRAMES in cli.py
         self._spinner_frames: tuple[str, ...] = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
@@ -275,6 +287,9 @@ class HermesApp(App):
         yield PlainRule(id="input-rule-bottom")
         yield VoiceStatusBar(id="voice-status")
         yield StatusBar(id="status-bar")
+        # FPS HUD — overlay layer, docked top; display:none by default.
+        # Must be before ContextMenu so ContextMenu stays topmost in overlay layer.
+        yield FPSCounter(id="fps-counter")
         # ContextMenu must be last so it renders above all other widgets
         # within the overlay layer (DOM order = paint order within a layer).
         from hermes_cli.tui.context_menu import ContextMenu as _CM
@@ -286,9 +301,14 @@ class HermesApp(App):
         self._event_loop = asyncio.get_running_loop()
         self._worker_watcher = WorkerWatcher(self)
         self._event_loop_probe = EventLoopLatencyProbe()
+        self._frame_probe = FrameRateProbe()
         self._consume_output()  # starts the @work consumer
         self.set_interval(0.1, self._tick_spinner)
+        self.set_interval(0.1, self._tick_fps)
         self.set_interval(1.0, self._tick_duration)
+        # Restore FPS HUD state from config (runtime toggle overrides this)
+        if _fps_hud_enabled():
+            self.fps_hud_visible = True
         # Focus the input bar so the user can type immediately
         try:
             self.query_one("#input-area").focus()
@@ -517,6 +537,40 @@ class HermesApp(App):
             self.status_duration = format_duration_compact(elapsed)
         except Exception:
             pass
+
+    # --- FPS HUD ticker ---
+
+    def _tick_fps(self) -> None:
+        """10 Hz ticker: sample FrameRateProbe and push to FPSCounter widget.
+
+        Always ticks the probe (for console logging) but only queries the DOM
+        when the HUD is actually visible to avoid spurious work.
+        """
+        if self._frame_probe is None:
+            return
+        fps, avg_ms = self._frame_probe.tick()
+        if self.fps_hud_visible:
+            try:
+                counter = self.query_one(FPSCounter)
+                counter.fps = fps
+                counter.avg_ms = avg_ms
+            except NoMatches:
+                pass
+
+    def watch_fps_hud_visible(self, value: bool) -> None:
+        """Show or hide the FPS HUD overlay."""
+        try:
+            counter = self.query_one(FPSCounter)
+            if value:
+                counter.add_class("--visible")
+            else:
+                counter.remove_class("--visible")
+        except NoMatches:
+            pass
+
+    def action_toggle_fps_hud(self) -> None:
+        """Toggle the FPS / avg-ms HUD (Ctrl+\\)."""
+        self.fps_hud_visible = not self.fps_hud_visible
 
     # --- User message echo ---
 
@@ -976,11 +1030,10 @@ class HermesApp(App):
         else:
             self._theme_manager.load([skin_vars])
         self._theme_manager.apply()
-        # Propagate new fuzzy-match color to the completion list cache.
+        # Propagate new skin colors to the completion list cache and repaint.
         try:
             from .completion_list import VirtualCompletionList
-            lst = self.query_one(VirtualCompletionList)
-            lst._refresh_fuzzy_color()
+            self.query_one(VirtualCompletionList).refresh_theme()
         except Exception:
             pass
 
@@ -1061,6 +1114,19 @@ class HermesApp(App):
         except NoMatches:
             pass
 
+    def set_status_error(self, msg: str, auto_clear_s: float = 0.0) -> None:
+        """Persistent StatusBar error. Also fires a flash hint for immediate visibility.
+
+        Thread-safety: must be called from the event loop.
+        auto_clear_s=0 → sticky until next set_status_error("") call.
+        auto_clear_s>0 → auto-clears after that many seconds.
+        """
+        self.status_error = msg
+        flash_duration = auto_clear_s if 0 < auto_clear_s <= 2.5 else 2.5
+        self._flash_hint(f"⚠ {msg}", flash_duration)
+        if auto_clear_s > 0:
+            self.set_timer(auto_clear_s, lambda: setattr(self, "status_error", ""))
+
     def _copy_text_with_hint(self, text: str) -> None:
         """Copy text to clipboard with capability guard and hint flash."""
         if not self._clipboard_available:
@@ -1070,9 +1136,9 @@ class HermesApp(App):
                     subprocess.run(self._xclip_cmd, input=text.encode(), check=True, timeout=2)
                     self._flash_hint(f"⎘  {len(text)} chars copied", 1.5)
                 except Exception:
-                    self._flash_hint("⚠  Copy failed (xclip/xsel error)", 2.5)
+                    self.set_status_error("copy failed", auto_clear_s=10.0)
             else:
-                self._flash_hint("⚠  No clipboard (install xclip or xsel)", 2.5)
+                self.set_status_error("no clipboard — install xclip or xsel", auto_clear_s=0)
             return
         self.copy_to_clipboard(text)
         self._flash_hint(f"⎘  {len(text)} chars copied", 1.5)
@@ -1183,7 +1249,7 @@ class HermesApp(App):
                 from hermes_cli.tui.input_widget import HermesInput as _HI
                 if isinstance(node, _HI):
                     return [
-                        MenuItem("📋  Paste", "ctrl+v", lambda: self._paste_into_input()),
+                        MenuItem(f"{ICON_COPY}  Paste", "ctrl+v", lambda: self._paste_into_input()),
                         MenuItem("✕  Clear input", "", lambda: self._clear_input()),
                     ]
             except ImportError:
@@ -1192,7 +1258,7 @@ class HermesApp(App):
             # --- #input-row container ---
             if getattr(node, "id", None) == "input-row":
                 return [
-                    MenuItem("📋  Paste", "ctrl+v", lambda: self._paste_into_input()),
+                    MenuItem(f"{ICON_COPY}  Paste", "ctrl+v", lambda: self._paste_into_input()),
                     MenuItem("✕  Clear input", "", lambda: self._clear_input()),
                 ]
 
@@ -1204,7 +1270,7 @@ class HermesApp(App):
         if selected:
             sel_text = selected
             items.append(MenuItem("⎘  Copy selected", "", lambda t=sel_text: self._copy_text(t)))
-        items.append(MenuItem("📋  Paste", "ctrl+v", lambda: self._paste_into_input()))
+        items.append(MenuItem(f"{ICON_COPY}  Paste", "ctrl+v", lambda: self._paste_into_input()))
         return items
 
     # --- Context menu action helpers ---

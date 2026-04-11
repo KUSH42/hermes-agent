@@ -77,6 +77,12 @@ SecretWidget {
     color: #FFF8DC;
     width: 2;
     height: 1;
+    transition: color 0.2s in_out_cubic;
+}
+
+/* Chevron dims while agent is running — spatial anchor stays visible */
+#input-chevron.--busy {
+    color: $text-muted 40%;
 }
 
 #spinner-overlay {
@@ -173,11 +179,17 @@ PreviewPanel {
 /* ToolHeader: structural height:1 is in DEFAULT_CSS */
 ToolHeader {
     margin-left: 0;
+    transition: background 0.4s in_out_cubic;
 }
 
 /* ToolHeader — hover affordance */
 ToolHeader:hover {
     background: $accent 8%;
+}
+
+/* ToolHeader — brief green flash on streaming completion (#2) */
+ToolHeader.--flash-complete {
+    background: $success 18%;
 }
 
 /* ToolBodyContainer body lines — indent matches the ┊ gutter */

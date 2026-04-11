@@ -88,6 +88,14 @@ class ToolHeader(Widget):
         self._copy_flash = False
         self.refresh()
 
+    def flash_complete(self) -> None:
+        """Brief success-colour flash when a streaming block completes."""
+        self.add_class("--flash-complete")
+        self.set_timer(0.45, self._end_complete_flash)
+
+    def _end_complete_flash(self) -> None:
+        self.remove_class("--flash-complete")
+
     def on_click(self, event: Click) -> None:
         """Left-click toggles the parent ToolBlock.
 
@@ -300,6 +308,8 @@ class StreamingToolBlock(ToolBlock):
         else:
             self._header.collapsed = False
         self._header.refresh()
+        # Brief success flash to signal completion
+        self._header.flash_complete()
 
     # ------------------------------------------------------------------
     # Internal timers

@@ -466,6 +466,12 @@ class HermesApp(App):
     # --- Reactive watchers ---
 
     def watch_agent_running(self, value: bool) -> None:
+        # Dim chevron while running — keeps the spatial anchor visible
+        try:
+            self.query_one("#input-chevron", Static).set_class(value, "--busy")
+        except NoMatches:
+            pass
+
         # --- undo safety guard ---
         if value and self.undo_state is not None:
             # Agent started while undo overlay was open — auto-cancel for safety
@@ -485,6 +491,8 @@ class HermesApp(App):
                     self.query_one("#spinner-overlay", Static).display = False
                 except NoMatches:
                     pass
+                # GAP-17: restore focus so the user can type immediately without clicking
+                self.call_after_refresh(widget.focus)
         except NoMatches:
             pass
         # New turn starting — create a new MessagePanel with the last user input
@@ -1139,8 +1147,8 @@ class HermesApp(App):
         """
         key = event.key
 
-        # --- ctrl+f → toggle history search overlay ---
-        if key == "ctrl+f":
+        # --- ctrl+f / ctrl+r → toggle history search overlay ---
+        if key in ("ctrl+f", "ctrl+r"):
             try:
                 hs = self.query_one(HistorySearchOverlay)
                 if hs.has_class("--visible"):
@@ -1148,6 +1156,18 @@ class HermesApp(App):
                 else:
                     hs.open_search()
             except NoMatches:
+                pass
+            event.prevent_default()
+            return
+
+        # --- ctrl+p → path/file picker (@-completion) ---
+        if key == "ctrl+p":
+            try:
+                from hermes_cli.tui.input_widget import HermesInput as _HI
+                inp = self.query_one(_HI)
+                inp.focus()
+                inp.insert_text("@")
+            except (NoMatches, Exception):
                 pass
             event.prevent_default()
             return

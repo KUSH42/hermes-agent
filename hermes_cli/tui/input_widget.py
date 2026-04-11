@@ -261,6 +261,12 @@ class HermesInput(Input, can_focus=True):
         ]
         ranked = fuzzy_rank(fragment, items, limit=50)
         if not ranked:
+            # GAP-7: flash hint so the user knows the command doesn't exist
+            if fragment:
+                try:
+                    self.app._flash_hint(f"Unknown command: /{fragment}", 1.5)
+                except Exception:
+                    pass
             self._hide_completion_overlay()
             return
         self._set_overlay_mode(slash_only=True)

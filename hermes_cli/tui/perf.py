@@ -279,10 +279,15 @@ class FrameRateProbe:
     window of recent samples.  Results are both returned and exposed as
     properties for the ``FPSCounter`` widget to consume.
 
-    A 10 Hz ticker is a good proxy for event-loop health:
-    * ~10.0 fps  → event loop is healthy, delivers timers on time
-    * <5.0 fps   → event loop is under load (blocking I/O, heavy DOM ops)
-    * <2.0 fps   → severe blockage — user will perceive input lag
+    A 10 Hz ticker is a good proxy for event-loop health.
+    The HUD shows Hz (timer delivery rate) and avg ms (mean interval):
+    * ~10.0 Hz / ~100ms → event loop is healthy, timers on time
+    * <5.0 Hz  / >200ms → event loop under load (blocking I/O, heavy DOM ops)
+    * <2.0 Hz  / >500ms → severe blockage — user will perceive input lag
+
+    This is NOT Textual's screen render rate (which is driven by dirty-region
+    repaints and has no fixed frequency). It measures how reliably the event
+    loop delivers a 0.1s timer — a direct proxy for overall loop health.
 
     ``log()`` output (``TEXTUAL_LOG=1``) is emitted every *log_every* ticks
     so the Textual devtools console shows a running fps/ms trace without

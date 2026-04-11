@@ -2055,10 +2055,11 @@ class FPSCounter(Widget):
     avg_ms: reactive[float] = reactive(0.0, repaint=True)
 
     def render(self) -> RenderResult:
-        fps_str = f"{self.fps:.1f}"
-        ms_str = f"{self.avg_ms:.1f}ms"
+        # fps here is the event-loop timer delivery rate (target: 10 Hz).
+        # Display as Hz so it's not confused with screen render FPS.
+        # avg_ms is the mean interval between probe ticks (~100ms = healthy).
         t = Text()
-        t.append(fps_str, style="bold")
-        t.append("fps ", style="dim")
-        t.append(ms_str, style="dim")
+        t.append(f"{self.fps:.1f}", style="bold")
+        t.append("Hz ", style="dim")
+        t.append(f"{self.avg_ms:.0f}ms", style="dim")
         return t

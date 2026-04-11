@@ -223,6 +223,7 @@ class HermesApp(App):
         self._worker_watcher: WorkerWatcher | None = None
         self._event_loop_probe: EventLoopLatencyProbe | None = None
         self._frame_probe: FrameRateProbe | None = None
+        self._fps_hud_update_every: int = 1  # refined in on_mount once MAX_FPS is known
 
         # Spinner frames — read from module-level _COMMAND_SPINNER_FRAMES in cli.py
         self._spinner_frames: tuple[str, ...] = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
@@ -301,10 +302,14 @@ class HermesApp(App):
         self._event_loop = asyncio.get_running_loop()
         self._worker_watcher = WorkerWatcher(self)
         self._event_loop_probe = EventLoopLatencyProbe()
-        self._frame_probe = FrameRateProbe()
+        from textual import constants as _tc
+        _frame_interval = 1.0 / _tc.MAX_FPS  # matches Screen._update_timer cadence
+        # window=MAX_FPS → 1 s of rolling history; log every MAX_FPS ticks → 1 log/s
+        self._frame_probe = FrameRateProbe(window=_tc.MAX_FPS, log_every=_tc.MAX_FPS)
+        self._fps_hud_update_every = max(1, _tc.MAX_FPS // 4)  # update display at ~4 Hz
         self._consume_output()  # starts the @work consumer
         self.set_interval(0.1, self._tick_spinner)
-        self.set_interval(0.1, self._tick_fps)
+        self.set_interval(_frame_interval, self._tick_fps)
         self.set_interval(1.0, self._tick_duration)
         # Restore FPS HUD state from config (runtime toggle overrides this)
         if _fps_hud_enabled():
@@ -541,21 +546,25 @@ class HermesApp(App):
     # --- FPS HUD ticker ---
 
     def _tick_fps(self) -> None:
-        """10 Hz ticker: sample FrameRateProbe and push to FPSCounter widget.
+        """Frame-rate probe ticker — runs at 1/MAX_FPS (matches Screen._update_timer).
 
-        Always ticks the probe (for console logging) but only queries the DOM
-        when the HUD is actually visible to avoid spurious work.
+        Probes at the render cadence so the HUD reflects actual event-loop frame
+        delivery rate rather than an arbitrary coarse interval.  DOM is only
+        touched every ~4 Hz (fps_hud_update_every ticks) to keep the HUD readable
+        and avoid adding repaint pressure from the HUD itself.
         """
         if self._frame_probe is None:
             return
         fps, avg_ms = self._frame_probe.tick()
         if self.fps_hud_visible:
-            try:
-                counter = self.query_one(FPSCounter)
-                counter.fps = fps
-                counter.avg_ms = avg_ms
-            except NoMatches:
-                pass
+            every = getattr(self, "_fps_hud_update_every", 1)
+            if self._frame_probe._ticks % every == 0:
+                try:
+                    counter = self.query_one(FPSCounter)
+                    counter.fps = fps
+                    counter.avg_ms = avg_ms
+                except NoMatches:
+                    pass
 
     def watch_fps_hud_visible(self, value: bool) -> None:
         """Show or hide the FPS HUD overlay."""

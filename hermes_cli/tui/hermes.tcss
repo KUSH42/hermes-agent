@@ -119,3 +119,19 @@ ImageBar {
 VoiceStatusBar {
     padding: 0 1;
 }
+
+/* --- ToolBlock widgets --- */
+
+/* ToolHeader: structural height:1 is in DEFAULT_CSS */
+ToolHeader {
+    margin-left: 0;
+}
+
+/* ToolBodyContainer body lines — indent matches the ┊ gutter */
+ToolBodyContainer CopyableRichLog {
+    padding-left: 0;
+    height: auto;
+    max-height: 40;
+    overflow-y: auto;
+    overflow-x: hidden;
+}

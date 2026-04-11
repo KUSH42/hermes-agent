@@ -56,6 +56,7 @@ from hermes_cli.tui.widgets import (
 
 if TYPE_CHECKING:
     from hermes_cli.tui.input_widget import HermesInput
+    from hermes_cli.tui.tool_blocks import ToolHeader
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,10 @@ class HermesApp(App):
 
     # Tok/s throughput (last turn)
     status_tok_s: reactive[float] = reactive(0.0)
+
+    # Browse mode — keyboard-driven navigation through ToolBlock widgets
+    browse_mode: reactive[bool] = reactive(False)
+    browse_index: reactive[int] = reactive(0)
 
     # Image attachments — reactive(list) uses factory form to avoid shared mutable default
     attached_images: reactive[list] = reactive(list)
@@ -479,6 +484,60 @@ class HermesApp(App):
         if rp is not None:
             rp.close_box()
 
+    # --- ToolBlock mounting ---
+
+    def mount_tool_block(
+        self,
+        label: str,
+        lines: list[str],
+        plain_lines: list[str],
+    ) -> None:
+        """Mount a ToolBlock into the current MessagePanel. Event-loop only."""
+        if not lines:
+            return
+        from hermes_cli.tui.tool_blocks import ToolBlock as _ToolBlock
+        try:
+            output = self.query_one(OutputPanel)
+            panel = output.current_message
+            if panel is None:
+                panel = output.new_message()
+            panel.mount(_ToolBlock(label, lines, plain_lines))
+        except NoMatches:
+            pass
+
+    # --- Browse mode ---
+
+    def _apply_browse_focus(self) -> None:
+        """Update .focused CSS class on all ToolHeaders based on browse state."""
+        from hermes_cli.tui.tool_blocks import ToolHeader as _TH
+        headers = list(self.query(_TH))
+        for i, h in enumerate(headers):
+            if self.browse_mode and i == self.browse_index:
+                h.add_class("focused")
+            else:
+                h.remove_class("focused")
+
+    def watch_browse_mode(self, value: bool) -> None:
+        from hermes_cli.tui.tool_blocks import ToolHeader as _TH
+        if value:
+            # If no ToolHeaders exist, do not enter browse mode
+            if not list(self.query(_TH)):
+                self.browse_mode = False
+                return
+        # Disable/re-enable input so printable keys bubble to on_key in browse mode
+        try:
+            inp = self.query_one("#input-area")
+            inp.disabled = value
+            if not value:
+                inp.display = True
+                inp.focus()
+        except NoMatches:
+            pass
+        self._apply_browse_focus()
+
+    def watch_browse_index(self, _value: int) -> None:
+        self._apply_browse_focus()
+
     # --- Theme / skin system ---
 
     def get_css_variables(self) -> dict[str, str]:
@@ -594,9 +653,15 @@ class HermesApp(App):
                 event.prevent_default()
                 return
 
-        # --- escape: cancel overlay or interrupt agent ---
+        # --- escape: cancel overlay, interrupt agent, browse mode, or enter browse ---
         if key == "escape":
-            # Cancel active overlays (None response)
+            # Priority 1: exit browse mode
+            if self.browse_mode:
+                self.browse_mode = False
+                event.prevent_default()
+                return
+
+            # Priority 2: cancel active overlays (None response)
             for state_attr in ("approval_state", "clarify_state"):
                 state = getattr(self, state_attr)
                 if state is not None:
@@ -612,7 +677,7 @@ class HermesApp(App):
                     event.prevent_default()
                     return
 
-            # Interrupt running agent
+            # Priority 3: interrupt running agent
             if self.agent_running and hasattr(self.cli, "agent") and self.cli.agent:
                 self.cli.agent.interrupt()
                 try:
@@ -625,6 +690,64 @@ class HermesApp(App):
                         )
                         if rl._deferred_renders:
                             self.call_after_refresh(msg.refresh, layout=True)
+                except NoMatches:
+                    pass
+                event.prevent_default()
+                return
+
+            # Priority 4: enter browse mode when idle (no overlay, agent not running)
+            no_overlay = all(
+                getattr(self, a) is None
+                for a in ("approval_state", "clarify_state", "sudo_state", "secret_state")
+            )
+            if no_overlay and not self.agent_running:
+                self.browse_mode = True
+                event.prevent_default()
+                return
+
+        # --- Browse mode key handling ---
+        if self.browse_mode:
+            from hermes_cli.tui.tool_blocks import ToolHeader as _TH
+            headers = list(self.query(_TH))
+            total = max(1, len(headers))
+
+            if key == "tab":
+                self.browse_index = (self.browse_index + 1) % total
+                event.prevent_default()
+                return
+            elif key == "shift+tab":
+                self.browse_index = (self.browse_index - 1) % total
+                event.prevent_default()
+                return
+            elif key == "enter":
+                if headers:
+                    idx = self.browse_index % len(headers)
+                    parent = headers[idx].parent
+                    if hasattr(parent, "toggle"):
+                        parent.toggle()
+                event.prevent_default()
+                return
+            elif key == "c":
+                if headers:
+                    idx = self.browse_index % len(headers)
+                    h = headers[idx]
+                    parent = h.parent
+                    if hasattr(parent, "copy_content"):
+                        self.copy_to_clipboard(parent.copy_content())
+                    h.flash_copy()
+                event.prevent_default()
+                return
+            elif key == "escape":
+                self.browse_mode = False
+                event.prevent_default()
+                return
+            elif event.character is not None:
+                # Printable key: exit browse mode and insert the character
+                self.browse_mode = False
+                try:
+                    inp = self.query_one("#input-area")
+                    if hasattr(inp, "insert_text"):
+                        inp.insert_text(event.character)
                 except NoMatches:
                     pass
                 event.prevent_default()

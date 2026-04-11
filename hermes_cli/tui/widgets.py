@@ -636,6 +636,7 @@ class StatusBar(Widget):
             "status_tokens", "status_model", "status_duration",
             "status_compaction_progress", "status_compaction_enabled", "status_tok_s",
             "agent_running", "command_running",
+            "browse_mode", "browse_index",
         ):
             self.watch(self.app, attr, self._on_status_change)
 
@@ -645,6 +646,39 @@ class StatusBar(Widget):
     def render(self) -> RenderResult:
         app = self.app
         width = self.size.width
+
+        browse = getattr(app, "browse_mode", False)
+        browse_idx = getattr(app, "browse_index", 0)
+
+        if browse:
+            # Import locally to avoid circular import at module level
+            try:
+                from hermes_cli.tui.tool_blocks import ToolHeader as _TH
+                browse_total = len(list(app.query(_TH)))
+            except Exception:
+                browse_total = 0
+
+            left = Text(f"BROWSE ▸{browse_idx + 1}/{browse_total}", style="bold")
+            if width >= 60:
+                left.append("  Tab · Enter · c copy · Esc exit", style="dim")
+            elif width >= 40:
+                left.append("  Tab · c · Esc", style="dim")
+            # Right side: tokens · duration
+            tokens = getattr(app, "status_tokens", 0)
+            duration = str(getattr(app, "status_duration", "0s"))
+            right = Text()
+            if width >= 60:
+                right.append(f"{tokens} tok", style="dim")
+                right.append("  ", style="dim")
+                right.append(duration, style="dim")
+            elif width >= 40:
+                right.append(f"{tokens} tok", style="dim")
+            else:
+                right.append(duration, style="dim")
+            pad = max(0, width - left.cell_len - right.cell_len)
+            left.append(" " * pad)
+            left.append_text(right)
+            return left
 
         model    = str(getattr(app, "status_model", ""))
         duration = str(getattr(app, "status_duration", "0s"))

@@ -6432,42 +6432,97 @@ class HermesCLI:
             return
 
         _TOOL_PREFIX = "  ┊ "
-        try:
-            from agent.display import render_edit_diff_with_delta
-
-            render_edit_diff_with_delta(
-                function_name,
-                function_result,
-                function_args=function_args,
-                snapshot=snapshot,
-                print_fn=_cprint,
-                prefix=_TOOL_PREFIX,
-            )
-        except Exception:
-            logger.debug("Edit diff preview failed for %s", function_name, exc_info=True)
-
-        if self.tool_progress_mode == "verbose" and self._code_highlight_enabled:
+        tui = _hermes_app
+        if tui is not None:
+            from hermes_cli.tui.widgets import _strip_ansi
+            # --- TUI path: collect lines, mount ToolBlock ---
             try:
-                from agent.display import (
-                    _result_succeeded,
-                    render_execute_code_preview,
-                    render_read_file_preview,
-                    render_terminal_preview,
+                from agent.display import render_edit_diff_with_delta
+                display_lines: list[str] = []
+                render_edit_diff_with_delta(
+                    function_name,
+                    function_result,
+                    function_args=function_args,
+                    snapshot=snapshot,
+                    print_fn=display_lines.append,
+                    prefix=_TOOL_PREFIX,
                 )
-                if function_name == "execute_code":
-                    if _result_succeeded(function_result):
-                        render_execute_code_preview(function_args.get("code", ""), print_fn=_cprint, prefix=_TOOL_PREFIX)
-                elif function_name == "read_file":
-                    render_read_file_preview(function_args.get("path", ""), function_result, print_fn=_cprint, prefix=_TOOL_PREFIX)
-                elif function_name == "terminal":
-                    render_terminal_preview(function_args.get("command", ""), function_result, print_fn=_cprint, prefix=_TOOL_PREFIX)
+                if display_lines:
+                    plain = [
+                        _strip_ansi(l).removeprefix("  ┊ ").removeprefix("  ┊   ")
+                        for l in display_lines
+                    ]
+                    tui.call_from_thread(tui.mount_tool_block, "diff", display_lines, plain)
             except Exception:
-                logger.debug("%s highlight failed", function_name, exc_info=True)
+                logger.debug("Edit diff preview failed for %s", function_name, exc_info=True)
+
+            if self.tool_progress_mode == "verbose" and self._code_highlight_enabled:
+                try:
+                    from agent.display import (
+                        _result_succeeded,
+                        render_execute_code_preview,
+                        render_read_file_preview,
+                        render_terminal_preview,
+                    )
+                    if function_name == "execute_code":
+                        if _result_succeeded(function_result):
+                            display_lines = []
+                            render_execute_code_preview(function_args.get("code", ""), print_fn=display_lines.append, prefix=_TOOL_PREFIX)
+                            if display_lines:
+                                plain = [_strip_ansi(l).removeprefix("  ┊ ").removeprefix("  ┊   ") for l in display_lines]
+                                tui.call_from_thread(tui.mount_tool_block, "code", display_lines, plain)
+                    elif function_name == "read_file":
+                        display_lines = []
+                        render_read_file_preview(function_args.get("path", ""), function_result, print_fn=display_lines.append, prefix=_TOOL_PREFIX)
+                        if display_lines:
+                            plain = [_strip_ansi(l).removeprefix("  ┊ ").removeprefix("  ┊   ") for l in display_lines]
+                            tui.call_from_thread(tui.mount_tool_block, "code", display_lines, plain)
+                    elif function_name == "terminal":
+                        display_lines = []
+                        render_terminal_preview(function_args.get("command", ""), function_result, print_fn=display_lines.append, prefix=_TOOL_PREFIX)
+                        if display_lines:
+                            plain = [_strip_ansi(l).removeprefix("  ┊ ").removeprefix("  ┊   ") for l in display_lines]
+                            tui.call_from_thread(tui.mount_tool_block, "output", display_lines, plain)
+                except Exception:
+                    logger.debug("%s highlight failed", function_name, exc_info=True)
+        else:
+            # --- PT mode path: unchanged ---
+            try:
+                from agent.display import render_edit_diff_with_delta
+
+                render_edit_diff_with_delta(
+                    function_name,
+                    function_result,
+                    function_args=function_args,
+                    snapshot=snapshot,
+                    print_fn=_cprint,
+                    prefix=_TOOL_PREFIX,
+                )
+            except Exception:
+                logger.debug("Edit diff preview failed for %s", function_name, exc_info=True)
+
+            if self.tool_progress_mode == "verbose" and self._code_highlight_enabled:
+                try:
+                    from agent.display import (
+                        _result_succeeded,
+                        render_execute_code_preview,
+                        render_read_file_preview,
+                        render_terminal_preview,
+                    )
+                    if function_name == "execute_code":
+                        if _result_succeeded(function_result):
+                            render_execute_code_preview(function_args.get("code", ""), print_fn=_cprint, prefix=_TOOL_PREFIX)
+                    elif function_name == "read_file":
+                        render_read_file_preview(function_args.get("path", ""), function_result, print_fn=_cprint, prefix=_TOOL_PREFIX)
+                    elif function_name == "terminal":
+                        render_terminal_preview(function_args.get("command", ""), function_result, print_fn=_cprint, prefix=_TOOL_PREFIX)
+                except Exception:
+                    logger.debug("%s highlight failed", function_name, exc_info=True)
 
         # Clear the in-progress pending line now that the cute message is in the RichLog.
         tui = _hermes_app
         if tui is not None:
-            from hermes_cli.tui.widgets import ToolPendingLine
+            from hermes_cli.tui.widgets import ToolPendingLine, _safe_widget_call
             tui.call_from_thread(
                 _safe_widget_call, tui, ToolPendingLine, "remove_line", function_name,
             )

@@ -6356,7 +6356,18 @@ class HermesCLI:
             self._stream_box_opened = False
         self._close_reasoning_box()
 
-        pass  # preparing line removed — spinner label provides in-progress feedback
+        # Show an in-progress line in the TUI pending widget.
+        tui = _hermes_app
+        if tui is not None:
+            from agent.display import get_tool_emoji
+            from rich.text import Text
+            from hermes_cli.tui.widgets import ToolPendingLine
+            emoji = get_tool_emoji(tool_name, default="⚡")
+            styled = Text.from_ansi(f"  ┊ {emoji} {tool_name}  …")
+            tui.call_from_thread(
+                _safe_widget_call, tui, ToolPendingLine, "set_line",
+                tool_name, styled,
+            )
 
     # ====================================================================
     # Tool progress callback (audio cues for voice mode)
@@ -6452,6 +6463,14 @@ class HermesCLI:
                     render_terminal_preview(function_args.get("command", ""), function_result, print_fn=_cprint, prefix=_TOOL_PREFIX)
             except Exception:
                 logger.debug("%s highlight failed", function_name, exc_info=True)
+
+        # Clear the in-progress pending line now that the cute message is in the RichLog.
+        tui = _hermes_app
+        if tui is not None:
+            from hermes_cli.tui.widgets import ToolPendingLine
+            tui.call_from_thread(
+                _safe_widget_call, tui, ToolPendingLine, "remove_line", function_name,
+            )
 
     # ====================================================================
     # Voice mode methods

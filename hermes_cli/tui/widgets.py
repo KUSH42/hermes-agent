@@ -548,7 +548,7 @@ class StatusBar(Widget):
     def on_mount(self) -> None:
         for attr in (
             "status_tokens", "status_model", "status_duration",
-            "status_compaction_progress", "status_tok_s",
+            "status_compaction_progress", "status_compaction_enabled", "status_tok_s",
         ):
             self.watch(self.app, attr, self._on_status_change)
 
@@ -560,36 +560,38 @@ class StatusBar(Widget):
         width = self.size.width
         t = Text()
 
-        # Model name
-        model = getattr(app, "status_model", "")
+        model    = getattr(app, "status_model", "")
+        duration = getattr(app, "status_duration", "0s")
+        tokens   = getattr(app, "status_tokens", 0)
+        progress = getattr(app, "status_compaction_progress", 0.0)
+        enabled  = getattr(app, "status_compaction_enabled", True)
+        tok_s    = getattr(app, "status_tok_s", 0.0)
+
         t.append(model, style="dim")
 
-        # Compaction bar
-        progress = getattr(app, "status_compaction_progress", 0.0)
-        if progress > 0 and width >= 60:
-            pct_int = min(int(progress * 100), 100)
-            filled = min(int(progress * _BAR_WIDTH), _BAR_WIDTH)
-            bar_str = _BAR_FILLED * filled + _BAR_EMPTY * (_BAR_WIDTH - filled)
-            bar_color = self._compaction_color(progress)
-            t.append("  ")
-            t.append(bar_str, style=bar_color)
-            t.append(" ")
-            t.append(f"{pct_int}%", style=bar_color)
-        elif progress > 0 and width >= 40:
-            # Narrow: just percentage
-            pct_int = min(int(progress * 100), 100)
-            bar_color = self._compaction_color(progress)
-            t.append(f"  {pct_int}%", style=bar_color)
-
-        # Tok/s
-        tok_s = getattr(app, "status_tok_s", 0.0)
-        if tok_s > 0 and width >= 60:
-            t.append(f"  {tok_s:.0f} tok/s", style="dim")
-
-        # Session tokens + duration
-        tokens = getattr(app, "status_tokens", 0)
-        duration = getattr(app, "status_duration", "0s")
-        t.append(f"  {tokens} tok  {duration}")
+        if width < 40:
+            # Minimal: model + duration only
+            t.append(f"  {duration}")
+        elif width < 60:
+            # Compact: compaction % (no bar) + tokens + duration
+            if enabled and progress > 0:
+                pct_int = min(int(progress * 100), 100)
+                t.append(f"  {pct_int}%", style=self._compaction_color(progress))
+            t.append(f"  {tokens} tok  {duration}")
+        else:
+            # Full: bar + % + tok/s + tokens + duration
+            if enabled and progress > 0:
+                pct_int = min(int(progress * 100), 100)
+                filled  = min(int(progress * _BAR_WIDTH), _BAR_WIDTH)
+                bar_str = _BAR_FILLED * filled + _BAR_EMPTY * (_BAR_WIDTH - filled)
+                bar_color = self._compaction_color(progress)
+                t.append("  ")
+                t.append(bar_str, style=bar_color)
+                t.append(" ")
+                t.append(f"{pct_int}%", style=bar_color)
+            if tok_s > 0:
+                t.append(f"  {tok_s:.0f} tok/s", style="dim")
+            t.append(f"  {tokens} tok  {duration}")
 
         return t
 

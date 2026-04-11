@@ -1,6 +1,8 @@
 """Tests for HintBar, StatusBar, VoiceStatusBar, ImageBar — Step 3."""
 
-from unittest.mock import MagicMock
+import asyncio
+from datetime import datetime, timedelta
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -191,3 +193,127 @@ async def test_image_bar_shows_on_attach():
         await pilot.pause()
         bar = app.query_one(ImageBar)
         assert bar.display
+
+
+@pytest.mark.asyncio
+async def test_session_timer_ticks():
+    """status_duration updates every second from cli.session_start."""
+    cli = MagicMock()
+    cli.session_start = datetime.now() - timedelta(seconds=5)
+    app = HermesApp(cli=cli)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        # Wait for at least one 1-second tick
+        await asyncio.sleep(1.1)
+        await pilot.pause()
+        assert app.status_duration != "0s"
+
+
+def test_compaction_bar_color_from_skin():
+    """_compaction_color reads from skin.get_ui_ext(), falling back to hardcoded hex."""
+    # Without a skin (exception path), hardcoded defaults are returned
+    with patch("hermes_cli.skin_engine.get_active_skin", side_effect=Exception("no skin")):
+        assert StatusBar._compaction_color(0.5)  == "#5f87d7"
+        assert StatusBar._compaction_color(0.85) == "#ffa726"
+        assert StatusBar._compaction_color(0.99) == "#ef5350"
+
+    # With a mock skin that returns custom colors via get_ui_ext()
+    fake_skin = MagicMock()
+    fake_skin.get_ui_ext.side_effect = lambda key, default: {
+        "context_bar_normal": "#aabbcc",
+        "context_bar_warn":   "#ddeeff",
+        "context_bar_crit":   "#112233",
+    }.get(key, default)
+
+    with patch("hermes_cli.skin_engine.get_active_skin", return_value=fake_skin):
+        assert StatusBar._compaction_color(0.5)  == "#aabbcc"
+        assert StatusBar._compaction_color(0.85) == "#ddeeff"
+        assert StatusBar._compaction_color(0.99) == "#112233"
+
+
+@pytest.mark.asyncio
+async def test_status_bar_narrow_width():
+    """StatusBar render degrades gracefully at narrow widths (three breakpoints)."""
+    from unittest.mock import PropertyMock
+    from textual.geometry import Size
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.status_model = "claude"
+        app.status_duration = "5s"
+        app.status_compaction_progress = 0.5
+        app.status_compaction_enabled = True
+        app.status_tokens = 1000
+        await pilot.pause()
+
+        bar = app.query_one(StatusBar)
+
+        # At width < 40: minimal — only model + duration, no bar or tokens
+        with patch.object(type(bar), "size", new_callable=PropertyMock, return_value=Size(30, 1)):
+            rendered_narrow = str(bar.render())
+        assert "5s" in rendered_narrow
+        assert "▰" not in rendered_narrow
+        assert "1000" not in rendered_narrow
+
+        # At width 40–59: compact — % and tokens, no full bar
+        with patch.object(type(bar), "size", new_callable=PropertyMock, return_value=Size(50, 1)):
+            rendered_compact = str(bar.render())
+        assert "1000" in rendered_compact
+        assert "▰" not in rendered_compact
+
+        # At width >= 60: full — bar glyphs present
+        with patch.object(type(bar), "size", new_callable=PropertyMock, return_value=Size(80, 1)):
+            rendered_full = str(bar.render())
+        assert "▰" in rendered_full
+
+
+@pytest.mark.asyncio
+async def test_push_tui_status_wires_all_fields():
+    """_push_tui_status() sets status_model, status_tokens, and compaction fields on TUI."""
+    import cli as cli_module
+    from types import SimpleNamespace
+
+    # call_from_thread(fn, *a) → fn(*a): applies setattr directly on fake_tui
+    fake_tui = MagicMock()
+    fake_tui.call_from_thread = lambda fn, *a: fn(*a)
+
+    orig = cli_module._hermes_app
+    try:
+        cli_module._hermes_app = fake_tui
+
+        from cli import HermesCLI
+        obj = HermesCLI.__new__(HermesCLI)
+        obj.model = "anthropic/claude-sonnet-4-20250514"
+        obj.session_start = datetime.now() - timedelta(seconds=10)
+        obj.conversation_history = [{"role": "user", "content": "hi"}]
+        obj.agent = SimpleNamespace(
+            model=obj.model,
+            provider="anthropic",
+            base_url="",
+            session_input_tokens=100,
+            session_output_tokens=50,
+            session_cache_read_tokens=0,
+            session_cache_write_tokens=0,
+            session_prompt_tokens=100,
+            session_completion_tokens=50,
+            session_total_tokens=150,
+            session_api_calls=1,
+            context_compressor=SimpleNamespace(
+                last_prompt_tokens=8000,
+                context_length=200000,
+                threshold_tokens=160000,
+                compression_count=0,
+            ),
+        )
+        obj.compression_enabled = True
+
+        obj._push_tui_status()
+
+        # call_from_thread executed setattr(fake_tui, attr, value) for each field
+        assert hasattr(fake_tui, "status_model")
+        assert hasattr(fake_tui, "status_tokens")
+        assert hasattr(fake_tui, "status_compaction_progress")
+        assert hasattr(fake_tui, "status_compaction_enabled")
+    finally:
+        cli_module._hermes_app = orig

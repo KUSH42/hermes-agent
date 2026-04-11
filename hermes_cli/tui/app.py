@@ -48,6 +48,7 @@ from hermes_cli.tui.widgets import (
     SecretWidget,
     StatusBar,
     SudoWidget,
+    ThinkingWidget,
     TitledRule,
     UserEchoPanel,
     VoiceStatusBar,
@@ -239,16 +240,28 @@ class HermesApp(App):
         event loop so that layout/refresh callbacks (e.g. processing deferred
         RichLog renders after a new MessagePanel mount) can run between chunks
         rather than piling up until the queue is fully drained.
+
+        ``_first_chunk_in_turn`` is a local flag reset on each None sentinel.
+        The first non-None chunk per turn deactivates the ThinkingWidget shimmer.
         """
+        _first_chunk_in_turn: bool = True
         while True:
             chunk = await self._output_queue.get()
             if chunk is None:
-                # Sentinel: flush live line and stay alive for next turn
+                # Sentinel: flush live line; reset first-chunk flag for next turn
+                _first_chunk_in_turn = True
                 try:
                     self.query_one(OutputPanel).flush_live()
                 except NoMatches:
                     pass
                 continue
+            # Deactivate shimmer on first content chunk of each turn
+            if _first_chunk_in_turn:
+                _first_chunk_in_turn = False
+                try:
+                    self.query_one(ThinkingWidget).deactivate()
+                except NoMatches:
+                    pass
             try:
                 panel = self.query_one(OutputPanel)
                 panel.live_line.feed(chunk)
@@ -1158,6 +1171,11 @@ class HermesApp(App):
 
     def on_hermes_input_submitted(self, event: Any) -> None:
         """Handle input submission from HermesInput."""
+        # Activate thinking shimmer — deactivated when first chunk arrives or on flush
+        try:
+            self.query_one(ThinkingWidget).activate()
+        except NoMatches:
+            pass
         if hasattr(self, "cli") and self.cli is not None:
             text = event.value
             if hasattr(self.cli, "_pending_input"):

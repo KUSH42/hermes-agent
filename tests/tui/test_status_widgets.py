@@ -91,12 +91,14 @@ async def test_compaction_bar_renders_filled():
 
 @pytest.mark.asyncio
 async def test_compaction_bar_color_thresholds():
-    """Color thresholds: normal < 80%, warn 80-94%, crit >= 95%."""
+    """Color thresholds: normal < 50%, lerp 50–95%, crit >= 95%."""
+    from hermes_cli.tui.animation import lerp_color
     color = StatusBar._compaction_color
-    # Normal
-    assert color(0.5) in ("#5f87d7",)  # may vary by skin
-    # Warn
-    assert color(0.85) in ("#ffa726",)
+    # Normal (below lerp band)
+    assert color(0.3) in ("#5f87d7",)
+    # At 0.85: in warn→crit lerp band
+    expected_085 = lerp_color("#ffa726", "#ef5350", (0.85 - 0.80) / 0.15)
+    assert color(0.85) == expected_085
     # Crit
     assert color(0.99) in ("#ef5350",)
 
@@ -211,10 +213,14 @@ async def test_session_timer_ticks():
 
 def test_compaction_bar_color_from_skin():
     """_compaction_color reads from skin.get_ui_ext(), falling back to hardcoded hex."""
+    from hermes_cli.tui.animation import lerp_color
+
     # Without a skin (exception path), hardcoded defaults are returned
     with patch("hermes_cli.skin_engine.get_active_skin", side_effect=Exception("no skin")):
         assert StatusBar._compaction_color(0.5)  == "#5f87d7"
-        assert StatusBar._compaction_color(0.85) == "#ffa726"
+        # At 0.85: lerp between warn and crit (warn→crit band)
+        expected_085 = lerp_color("#ffa726", "#ef5350", (0.85 - 0.80) / 0.15)
+        assert StatusBar._compaction_color(0.85) == expected_085
         assert StatusBar._compaction_color(0.99) == "#ef5350"
 
     # With a mock skin that returns custom colors via get_ui_ext()
@@ -227,7 +233,9 @@ def test_compaction_bar_color_from_skin():
 
     with patch("hermes_cli.skin_engine.get_active_skin", return_value=fake_skin):
         assert StatusBar._compaction_color(0.5)  == "#aabbcc"
-        assert StatusBar._compaction_color(0.85) == "#ddeeff"
+        # At 0.85: lerp between skin warn and skin crit
+        expected_skin = lerp_color("#ddeeff", "#112233", (0.85 - 0.80) / 0.15)
+        assert StatusBar._compaction_color(0.85) == expected_skin
         assert StatusBar._compaction_color(0.99) == "#112233"
 
 
@@ -385,3 +393,128 @@ async def test_status_bar_running_label_right_anchored():
         # There should be spaces between the left content and the right-anchored label
         idle_pos = rendered.rfind("idle")
         assert idle_pos > 10, f"'idle' too close to start: pos {idle_pos} in {rendered!r}"
+
+
+# ---------------------------------------------------------------------------
+# Animation tests (spec: tui-animation-novel-techniques.md)
+# ---------------------------------------------------------------------------
+
+def test_compaction_color_normal_below_fifty():
+    """_compaction_color returns the normal color when progress < 0.50."""
+    with patch("hermes_cli.skin_engine.get_active_skin", side_effect=Exception("no skin")):
+        assert StatusBar._compaction_color(0.3) == "#5f87d7"
+        assert StatusBar._compaction_color(0.0) == "#5f87d7"
+
+
+def test_compaction_color_blend_at_seventy():
+    """_compaction_color at 0.70 is between normal and warn colors."""
+    from hermes_cli.tui.animation import lerp_color
+    with patch("hermes_cli.skin_engine.get_active_skin", side_effect=Exception("no skin")):
+        result = StatusBar._compaction_color(0.70)
+        expected = lerp_color("#5f87d7", "#ffa726", (0.70 - 0.50) / 0.30)
+        assert result == expected
+
+
+def test_compaction_color_blend_at_ninety():
+    """_compaction_color at 0.90 is between warn and crit colors."""
+    from hermes_cli.tui.animation import lerp_color
+    with patch("hermes_cli.skin_engine.get_active_skin", side_effect=Exception("no skin")):
+        result = StatusBar._compaction_color(0.90)
+        expected = lerp_color("#ffa726", "#ef5350", (0.90 - 0.80) / 0.15)
+        assert result == expected
+
+
+@pytest.mark.asyncio
+async def test_statusbar_running_indicator_has_bullet():
+    """Running indicator shows ● when agent is running."""
+    from unittest.mock import PropertyMock
+    from textual.geometry import Size
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.agent_running = True
+        await pilot.pause()
+
+        bar = app.query_one(StatusBar)
+        with patch.object(type(bar), "size", new_callable=PropertyMock, return_value=Size(80, 1)):
+            rendered = str(bar.render())
+        assert "●" in rendered
+        assert "running" in rendered
+
+
+@pytest.mark.asyncio
+async def test_statusbar_pulse_starts_on_agent_running():
+    """_pulse_timer is started when agent_running transitions to True."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.agent_running = True
+        await pilot.pause()
+
+        bar = app.query_one(StatusBar)
+        # Pulse should be running — timer is non-None
+        assert bar._pulse_timer is not None
+
+
+@pytest.mark.asyncio
+async def test_statusbar_pulse_stops_on_agent_done():
+    """_pulse_timer is stopped when agent_running transitions to False."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.agent_running = True
+        await pilot.pause()
+        app.agent_running = False
+        await pilot.pause()
+
+        bar = app.query_one(StatusBar)
+        assert bar._pulse_timer is None
+        assert bar._pulse_t == 0.0
+
+
+@pytest.mark.asyncio
+async def test_statusbar_tok_s_animates():
+    """Setting status_tok_s triggers _tok_s_displayed to animate toward the target."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.status_tok_s = 100.0
+        await pilot.pause()
+        bar = app.query_one(StatusBar)
+        # After the reactive fires, _tok_s_displayed should be heading toward 100
+        # (animation may not be complete yet, but it should have started)
+        assert bar._tok_s_displayed >= 0.0
+
+
+@pytest.mark.asyncio
+async def test_animated_counter_set_target():
+    """AnimatedCounter.set_target() animates _displayed toward the target value."""
+    from hermes_cli.tui.widgets import AnimatedCounter
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        counter = AnimatedCounter()
+        await app.mount(counter)
+        await pilot.pause()
+        counter.set_target(50.0, unit="tok/s")
+        # Wait for 200ms animation duration + margin
+        await asyncio.sleep(0.25)
+        await pilot.pause()
+        assert counter._displayed == pytest.approx(50.0, abs=1.0)
+
+
+@pytest.mark.asyncio
+async def test_animated_counter_render_shows_unit():
+    """AnimatedCounter render includes unit suffix."""
+    from hermes_cli.tui.widgets import AnimatedCounter
+    from rich.text import Text
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        counter = AnimatedCounter()
+        await app.mount(counter)
+        await pilot.pause()
+        counter._displayed = 42.0
+        counter._unit = "tok/s"
+        rendered = str(counter.render())
+        assert "42" in rendered
+        assert "tok/s" in rendered

@@ -2,7 +2,7 @@
 
 **Branch:** `feat/textual-migration`  
 **Last updated:** 2026-04-11  
-**Test suite:** 302 tests, 0 failures
+**Test suite:** 390 tests, 0 failures
 
 ---
 
@@ -16,6 +16,7 @@
 | `OutputPanel` — scrollable, holds all `MessagePanel`s | `hermes_cli/tui/widgets.py` | ✅ Complete |
 | `MessagePanel` — per-turn grouping: rule + reasoning + log | `hermes_cli/tui/widgets.py` | ✅ Complete |
 | `LiveLineWidget` — streaming in-progress line | `hermes_cli/tui/widgets.py` | ✅ Complete |
+| `LiveLineWidget` typewriter animation — `feed()`/`_drain_chars()`/`flush()`; burst compensation; ANSI-atomic split | `hermes_cli/tui/widgets.py` | ✅ `tui-streaming-typewriter.md` |
 | `ToolPendingLine` — in-progress tool activity (single, replaceable) | `hermes_cli/tui/widgets.py` | ✅ Phase 3 |
 | `ToolBlock` + `ToolHeader` + `ToolBodyContainer` — collapsible tool output | `hermes_cli/tui/tool_blocks.py` | ✅ Phase 7 |
 | `StreamingToolBlock` — IDLE→STREAMING→COMPLETED; 60fps flush, 200-line cap, 2kB/line cap | `hermes_cli/tui/tool_blocks.py` | ✅ Phase 7 §8 |
@@ -26,21 +27,23 @@
 | `ReasoningPanel` — collapsible reasoning with `▌` gutter | `hermes_cli/tui/widgets.py` | ✅ Complete |
 | `CopyableRichLog` — RichLog with plain-text clipboard backing | `hermes_cli/tui/widgets.py` | ✅ Complete |
 | Skin/theme engine — CSS variable injection via `get_css_variables()` | `hermes_cli/skin_engine.py` + `app.py` | ✅ Complete |
-| `skin_loader.py` — JSON/YAML → Textual CSS variable dict (semantic fan-out) | `hermes_cli/tui/skin_loader.py` | ✅ Autocomplete engine |
+| `skin_loader.py` — JSON/YAML → Textual CSS variable dict (semantic fan-out) | `hermes_cli/tui/skin_loader.py` | ✅ `../../tui-autocomplete-engine-spec.md` |
 | Overlay system — clarify, approval, sudo, secret (all with countdown) | `hermes_cli/tui/widgets.py` | ✅ Complete |
 | `VoiceStatusBar` — voice recording indicator | `hermes_cli/tui/widgets.py` | ✅ Complete |
 | `ImageBar` — attached image list | `hermes_cli/tui/widgets.py` | ✅ Complete |
-| `PathSearchProvider` — threaded filesystem walker, batched candidates | `hermes_cli/tui/path_search.py` | ✅ Autocomplete engine |
-| `fuzzy_rank` — subsequence ranker with match-span highlighting | `hermes_cli/tui/fuzzy.py` | ✅ Autocomplete engine |
-| `VirtualCompletionList` — O(viewport) virtualized list, 10k+ items at 60fps | `hermes_cli/tui/completion_list.py` | ✅ Autocomplete engine |
-| `detect_context` — regex trigger dispatcher (/, @, NATURAL) | `hermes_cli/tui/completion_context.py` | ✅ Autocomplete engine |
-| `CompletionOverlay` — container: list + preview, glassmorphism | `hermes_cli/tui/completion_overlay.py` | ✅ Autocomplete engine |
-| `HistorySuggester` — Fish-style ghost text via native Textual Suggester API | `hermes_cli/tui/history_suggester.py` | ✅ Autocomplete engine |
-| `PreviewPanel` — syntax-highlighted file preview, binary sniff, 128KB cap | `hermes_cli/tui/preview_panel.py` | ✅ Autocomplete engine |
+| `ContextMenu` — right-click overlay (layer:overlay); `MenuItem` dataclass; `_build_context_items` dispatch; `_flash_hint` feedback | `hermes_cli/tui/context_menu.py` | ✅ `tui-context-menu.md` |
+| `TteRunner` — `/effects` command; `run_effect()`; TTE suspend via `App.suspend()`; skin gradient | `hermes_cli/tui/tte_runner.py` | ✅ `tui-text-effects.md` |
+| `PathSearchProvider` — threaded filesystem walker, batched candidates | `hermes_cli/tui/path_search.py` | ✅ `../../tui-autocomplete-engine-spec.md` |
+| `fuzzy_rank` — subsequence ranker with match-span highlighting | `hermes_cli/tui/fuzzy.py` | ✅ `../../tui-autocomplete-engine-spec.md` |
+| `VirtualCompletionList` — O(viewport) virtualized list, 10k+ items at 60fps | `hermes_cli/tui/completion_list.py` | ✅ `../../tui-autocomplete-engine-spec.md` |
+| `detect_context` — regex trigger dispatcher (/, @, NATURAL) | `hermes_cli/tui/completion_context.py` | ✅ `../../tui-autocomplete-engine-spec.md` |
+| `CompletionOverlay` — container: list + preview, glassmorphism | `hermes_cli/tui/completion_overlay.py` | ✅ `../../tui-autocomplete-engine-spec.md` |
+| `HistorySuggester` — Fish-style ghost text via native Textual Suggester API | `hermes_cli/tui/history_suggester.py` | ✅ `../../tui-autocomplete-engine-spec.md` |
+| `PreviewPanel` — syntax-highlighted file preview, binary sniff, 128KB cap | `hermes_cli/tui/preview_panel.py` | ✅ `../../tui-autocomplete-engine-spec.md` |
 
 ### Markdown + rich output rendering
 
-The response text pipeline is fully implemented. `agent/rich_output.py` (2359 lines) provides:
+The response text pipeline is fully implemented. `agent/rich_output.py` (2360 lines) provides:
 
 | Function | Purpose |
 |---|---|
@@ -69,7 +72,7 @@ Keyboard-driven navigation through all `ToolBlock` widgets in session order:
 | `Escape` | Exit browse mode |
 | Any other printable key | Exit browse mode + insert character into input |
 
-`StatusBar` switches to `BROWSE ▸N/T  hint` layout at three width tiers (≥60 / 40–59 / <40).
+`StatusBar` switches to `BROWSE ▸N/T  hint` layout at three width tiers (≥60 / 40–59 / <40). Full hint (`Tab · Enter · c copy · a expand-all · Esc exit`) shown for first 3 browse visits (`_browse_uses` counter); compact (`Tab · c · a/A · Esc`) after that.
 
 ### Key bindings (always-on)
 
@@ -94,21 +97,6 @@ Keyboard-driven navigation through all `ToolBlock` widgets in session order:
 | Ghost text (right-side) | History match | Press `→` or `End` to accept Fish-style suggestion |
 | `Enter` | Any | Submit input as typed — NEVER auto-accepts highlighted candidate |
 
-### Browse mode key bindings
-
-| Key | Action |
-|---|---|
-| `Escape` (idle, no overlay, agent stopped) | Enter browse mode |
-| `Tab` / `Shift+Tab` | Cycle `ToolHeader` focus (wraps) |
-| `Enter` | Toggle collapse state of focused block |
-| `c` | Copy plain-text content (OSC 52) + `⎘→✓` flash |
-| `a` | Expand all `ToolBlock`s in the session |
-| `A` (shift+a) | Collapse all `ToolBlock`s in the session |
-| `Escape` | Exit browse mode |
-| Any other printable key | Exit browse mode + insert character into input |
-
-`StatusBar` switches to `BROWSE ▸N/T  hint` layout at three width tiers (≥60 / 40–59 / <40). Full hint (`Tab · Enter · c copy · a expand-all · Esc exit`) shown for first 3 browse visits; compact (`Tab · c · a/A · Esc`) after that.
-
 ### Thread → App communication
 
 | Pattern | Used for |
@@ -117,6 +105,9 @@ Keyboard-driven navigation through all `ToolBlock` widgets in session order:
 | `app.write_output(text)` / `app.flush_output()` | Streaming text (via bounded `asyncio.Queue`, 4096 cap) |
 | `app.call_from_thread(app.mount_tool_block, label, lines, plain)` | Mount completed tool output block |
 | `app.call_from_thread(app.open_reasoning, title)` etc. | Reasoning panel open/append/close |
+| `app.call_from_thread(app.open_streaming_tool_block, tool_call_id, label)` | Begin a `StreamingToolBlock` (IDLE→STREAMING) |
+| `app.call_from_thread(app.append_streaming_line, tool_call_id, line)` | Append a line to an active `StreamingToolBlock` |
+| `app.call_from_thread(app.close_streaming_tool_block, tool_call_id, duration_str)` | Finalize a `StreamingToolBlock` (STREAMING→COMPLETED) |
 | `app.call_from_thread(_safe_widget_call, app, ToolPendingLine, method, ...)` | Tool progress line updates |
 
 ### Backpressure handling
@@ -172,10 +163,7 @@ Browse mode requires keyboard. Click-to-toggle on a ToolHeader is deferred per t
 
 ## Specs written, not yet implemented
 
-| Spec | Status | Tests planned |
-|---|---|---|
-| `tui-context-menu.md` — right-click menu + copy/paste feedback | Draft | 20 tests |
-| `tui-text-effects.md` — `/effects` command, TTE port to Textual, 15 effects | Draft | 28 tests |
+_All specs have been implemented. See "Completed spec work" below._
 
 ---
 
@@ -221,11 +209,15 @@ These are ordered by user impact. Each warrants a standalone spec before impleme
 |---|---|---|
 | `tool-output-streamline.md` Phases 1–3 (ToolPendingLine, indented blocks, tier system) | ✅ | ~20 tests |
 | `tool-output-streamline.md` Phase 4 (ToolBlock, browse mode, StatusBar) | ✅ `tool-block-browse-mode.md` | 28 tests |
-| `tool-output-streamline.md` Phase 7 §8 steps 21–25 (StreamingToolBlock, execute_streaming, backpressure, scroll lock, terminal wiring) | ✅ 2026-04-11 | 22 tests |
-| Textual migration (app, widgets, overlays, input, theme) | ✅ `project_textual_migration.md` | 183 tests |
+| `tool-output-streamline.md` Phase 7 §8 steps 21–25 (StreamingToolBlock, execute_streaming, backpressure, scroll lock, terminal wiring) | ✅ 2026-04-11 | 11 tests (`test_streaming_tool_block.py`) |
+| Textual migration (app, widgets, overlays, input, theme) | ✅ `../../textual-migration.md` | 183 tests |
 | Markdown/rich output rendering (inline, block, streaming, code highlight) | ✅ (on this branch, `agent/rich_output.py`) | 300+ tests |
 | Speculative inline markdown (zero-stall partial flush) | ✅ | 8 tests |
-| Clipboard/selection in CopyableRichLog | ✅ | 6 tests |
+| Clipboard/selection in CopyableRichLog | ✅ | 10 tests |
+| `tui-context-menu.md` — right-click overlay, `_build_context_items` dispatch, copy/paste feedback, `_flash_hint` | ✅ 2026-04-11 | 21 tests |
+| `tui-text-effects.md` — `/effects` command, `TteRunner`, `run_effect()`, skin gradient, `App.suspend()` integration | ✅ 2026-04-11 | 12 tests |
+| `tui-streaming-typewriter.md` — `LiveLineWidget.feed()` typewriter animation, `_drain_chars()`, burst compensation, ANSI-atomic split, `flush()` | ✅ 2026-04-11 | 17 tests |
+| `tui-animation-novel-techniques.md` — `animation.py` (`lerp`, `ease_*`, `pulse_phase`, `lerp_color`, `PulseMixin`); `ThinkingWidget` skeleton shimmer; `MessagePanel` fade-in; non-typewriter blink cursor; `StatusBar` pulse + animated tok/s counter + compaction lerp; `AnimatedCounter` widget | ✅ 2026-04-11 | 49 new tests (390 total) |
 
 ---
 

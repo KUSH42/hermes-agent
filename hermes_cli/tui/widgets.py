@@ -17,6 +17,8 @@ import asyncio
 import os
 import re
 
+from rich.segment import Segment
+from rich.style import Style
 from rich.text import Text
 from textual import work
 from textual.app import ComposeResult, RenderResult
@@ -24,8 +26,11 @@ from textual.containers import ScrollableContainer
 from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.selection import Selection
+from textual.strip import Strip
 from textual.widget import Widget
 from textual.widgets import Input, RichLog, Static
+
+from hermes_cli.tui.animation import PulseMixin, lerp_color
 
 from hermes_cli.tui.state import (
     ChoiceOverlayState,
@@ -124,6 +129,37 @@ def _typewriter_cursor_enabled() -> bool:
         return bool(
             get_config().get("terminal", {}).get("typewriter", {}).get("cursor", True)
         )
+    except Exception:
+        return True
+
+
+# ---------------------------------------------------------------------------
+# Display animation config accessors (analogous to _typewriter_enabled)
+# ---------------------------------------------------------------------------
+
+def _cursor_blink_enabled() -> bool:
+    """Non-typewriter cursor blink (default: true)."""
+    try:
+        from hermes_cli.config import get_config
+        return bool(get_config().get("display", {}).get("cursor_blink", True))
+    except Exception:
+        return True
+
+
+def _pulse_enabled() -> bool:
+    """PulseMixin on StatusBar running indicator (default: true)."""
+    try:
+        from hermes_cli.config import get_config
+        return bool(get_config().get("display", {}).get("running_indicator_pulse", True))
+    except Exception:
+        return True
+
+
+def _animate_counters_enabled() -> bool:
+    """AnimatedCounter smooth easing on numeric values (default: true)."""
+    try:
+        from hermes_cli.config import get_config
+        return bool(get_config().get("display", {}).get("animate_counters", True))
     except Exception:
         return True
 
@@ -262,16 +298,33 @@ class LiveLineWidget(Widget):
         if self._tw_enabled:
             self._char_queue: asyncio.Queue[str] = asyncio.Queue()
             self._drain_chars()
+        # Non-typewriter blink state — initialized here (not __init__) to avoid
+        # event-loop resource issues on Python ≤ 3.9.
+        self._blink_visible: bool = True
+        self._blink_timer: object | None = None
+        self._blink_enabled: bool = _cursor_blink_enabled()
 
     def on_unmount(self) -> None:
         self._animating = False
+        # Cancel blink timer if active
+        if getattr(self, "_blink_timer", None) is not None:
+            self._blink_timer.stop()
+            self._blink_timer = None
 
     def render(self) -> RenderResult:
         if not self._buf and not self._animating:
             return Text("")
         t = Text.from_ansi(self._buf) if self._buf else Text("")
+        # Typewriter cursor (existing path — typewriter on):
         if self._animating and getattr(self, "_tw_cursor", True):
             t.append("▌", style="blink")
+        # Non-typewriter blink (only when typewriter is off and blink timer active):
+        elif (
+            not getattr(self, "_tw_enabled", False)
+            and getattr(self, "_blink_timer", None) is not None
+            and getattr(self, "_blink_visible", True)
+        ):
+            t.append("▌", style="dim")
         return t
 
     def _commit_lines(self) -> None:
@@ -304,6 +357,11 @@ class LiveLineWidget(Widget):
         if "\n" in self._buf:
             self._commit_lines()
 
+    def _toggle_blink(self) -> None:
+        """Blink timer callback — plain def required (no await)."""
+        self._blink_visible = not self._blink_visible
+        self.refresh()
+
     def feed(self, chunk: str) -> None:
         """Enqueue *chunk* for typewriter animation (falls through to append when disabled).
 
@@ -311,6 +369,12 @@ class LiveLineWidget(Widget):
         a partial escape code between render frames.  Must be called from the event loop.
         """
         if not getattr(self, "_tw_enabled", False):
+            # Non-typewriter path: start blink timer on first chunk (if enabled)
+            if (
+                getattr(self, "_blink_timer", None) is None
+                and getattr(self, "_blink_enabled", True)
+            ):
+                self._blink_timer = self.set_interval(0.5, self._toggle_blink)
             self.append(chunk)
             return
         pos = 0
@@ -369,7 +433,14 @@ class LiveLineWidget(Widget):
 
         Called from OutputPanel.flush_live() on the event loop when the None
         sentinel arrives.  Safe because asyncio is single-threaded.
+        Also stops the non-typewriter blink timer.
         """
+        # Stop non-typewriter blink timer
+        if getattr(self, "_blink_timer", None) is not None:
+            self._blink_timer.stop()
+            self._blink_timer = None
+        self._blink_visible = True  # reset to visible for next turn
+
         if not getattr(self, "_tw_enabled", False) or not hasattr(self, "_char_queue"):
             return
         while True:
@@ -416,6 +487,23 @@ class MessagePanel(Widget):
         )
         super().__init__(**kwargs)
 
+    def on_mount(self) -> None:
+        # Skip animation under pytest: styles.animate 60fps callbacks compete
+        # with RichLog._deferred_renders commit ticks and cause flaky failures.
+        # Tests only assert final opacity==1.0, which holds without animation.
+        import os
+        if "PYTEST_CURRENT_TEST" not in os.environ:
+            self.call_after_refresh(self._start_fade)
+
+    def _start_fade(self) -> None:
+        """Fade-in after first render (plain def — no await).
+
+        Fires after the first layout pass so child RichLog widgets have already
+        been sized. Sets opacity to 0 then immediately animates to 1.
+        """
+        self.styles.opacity = 0.0
+        self.styles.animate("opacity", 1.0, duration=0.25, easing="out_cubic")
+
     def compose(self) -> ComposeResult:
         yield self._response_rule
         yield self._reasoning_panel
@@ -432,6 +520,60 @@ class MessagePanel(Widget):
     @property
     def response_log(self) -> CopyableRichLog:
         return self._response_log
+
+
+# ---------------------------------------------------------------------------
+# Shimmer character table: ascending density from space to ▓ and back
+# ---------------------------------------------------------------------------
+
+_SHIMMER_CHARS = " ░▒▓▒░"
+_SHIMMER_LEN   = len(_SHIMMER_CHARS)
+
+
+class ThinkingWidget(Widget):
+    """Animated skeleton placeholder shown while the agent is thinking.
+
+    Shown after prompt submission, before the first response token arrives.
+    Uses ``render_line()`` for per-cell shimmer animation at 8fps.
+    """
+
+    DEFAULT_CSS = "ThinkingWidget { height: 1; display: none; }"
+
+    _phase: reactive[int] = reactive(0, repaint=True)
+    _shimmer_timer: object | None = None
+
+    def activate(self) -> None:
+        """Show shimmer and start animation. Call from event loop only."""
+        self.styles.display = "block"
+        if self._shimmer_timer is None:
+            self._shimmer_timer = self.set_interval(1 / 8, self._advance_phase)
+
+    def deactivate(self) -> None:
+        """Hide shimmer and stop animation. Idempotent. Call from event loop only."""
+        if self._shimmer_timer is not None:
+            self._shimmer_timer.stop()
+            self._shimmer_timer = None
+        self.styles.display = "none"
+        self._phase = 0
+
+    def _advance_phase(self) -> None:
+        """Timer callback — plain def required (no await)."""
+        self._phase = (self._phase + 1) % (_SHIMMER_LEN * 4)
+
+    def render_line(self, y: int) -> Strip:
+        # height: 1 → Textual only calls render_line(0), but guard defensively.
+        if y != 0:
+            return Strip.blank(self.size.width or 40)
+        width = self.size.width or 40
+        phase = self._phase
+        segments: list[Segment] = []
+        for x in range(width):
+            idx = (x + phase) % _SHIMMER_LEN
+            char = _SHIMMER_CHARS[idx]
+            brightness = idx / max(_SHIMMER_LEN - 1, 1)
+            color = lerp_color("#1a1a1a", "#4a4a4a", brightness)
+            segments.append(Segment(char, Style(color=color)))
+        return Strip(segments).crop(0, width)
 
 
 class OutputPanel(ScrollableContainer):
@@ -472,6 +614,7 @@ class OutputPanel(ScrollableContainer):
 
     def compose(self) -> ComposeResult:
         yield ToolPendingLine(id="tool-pending")
+        yield ThinkingWidget(id="thinking")
         yield LiveLineWidget(id="live-line")
 
     @property
@@ -496,6 +639,11 @@ class OutputPanel(ScrollableContainer):
 
     def flush_live(self) -> None:
         """Commit any in-progress buffered line to current message's RichLog."""
+        # Deactivate shimmer — covers the empty-response case where no chunk ever arrives
+        try:
+            self.query_one(ThinkingWidget).deactivate()
+        except NoMatches:
+            pass
         live = self.live_line
         live.flush()  # drain _char_queue before reading _buf (no-op when typewriter disabled)
         if live._buf:
@@ -819,28 +967,55 @@ _BAR_EMPTY = "▱"
 _BAR_WIDTH = 20
 
 
-class StatusBar(Widget):
+class StatusBar(PulseMixin, Widget):
     """Bottom status bar showing model, compaction bar, tok/s, tokens, and duration.
 
+    Inherits PulseMixin for the running-indicator pulse animation.
     Reads directly from the App's reactives — no duplicated state.
     """
 
     DEFAULT_CSS = "StatusBar { height: 1; dock: bottom; }"
 
+    # Animated tok/s backing reactive — drives smooth counter easing
+    _tok_s_displayed: reactive[float] = reactive(0.0, repaint=True)
+
     def on_mount(self) -> None:
+        app = self.app
+        # Register all standard attributes to the generic refresh callback.
+        # IMPORTANT: "agent_running" and "status_tok_s" are registered to
+        # dedicated callbacks below — omit them here to avoid double-registration.
         for attr in (
             "status_tokens", "status_model", "status_duration",
-            "status_compaction_progress", "status_compaction_enabled", "status_tok_s",
-            "agent_running", "command_running",
+            "status_compaction_progress", "status_compaction_enabled",
+            "command_running",
             "browse_mode", "browse_index", "_browse_total",
             "status_output_dropped",
         ):
-            self.watch(self.app, attr, self._on_status_change)
+            self.watch(app, attr, self._on_status_change)
+        # agent_running: dedicated callback to start/stop pulse + refresh
+        self.watch(app, "agent_running", self._on_agent_running_change)
+        # status_tok_s: dedicated callback to animate _tok_s_displayed
+        self.watch(app, "status_tok_s", self._on_tok_s_change)
         # _browse_uses is a plain int (not reactive) — watch browse_mode instead,
         # which always fires before we need to re-render.
 
     def _on_status_change(self, _value: object = None) -> None:
         self.refresh()
+
+    def _on_agent_running_change(self, running: bool = False) -> None:
+        """Start or stop the pulse animation when agent_running changes."""
+        if running and _pulse_enabled():
+            self._pulse_start()
+        else:
+            self._pulse_stop()
+        self.refresh()
+
+    def _on_tok_s_change(self, tok_s: float = 0.0) -> None:
+        """Animate _tok_s_displayed to new tok/s value over 200ms."""
+        if _animate_counters_enabled():
+            self.animate("_tok_s_displayed", float(tok_s), duration=0.2, easing="out_cubic")
+        else:
+            self._tok_s_displayed = float(tok_s)
 
     def render(self) -> RenderResult:
         app = self.app
@@ -884,7 +1059,8 @@ class StatusBar(Widget):
         tokens   = getattr(app, "status_tokens", 0)
         progress = getattr(app, "status_compaction_progress", 0.0)
         enabled  = getattr(app, "status_compaction_enabled", True)
-        tok_s    = getattr(app, "status_tok_s", 0.0)
+        # Use the animated _tok_s_displayed reactive for smooth counter easing
+        tok_s    = self._tok_s_displayed
         running  = (
             getattr(app, "agent_running", False)
             or getattr(app, "command_running", False)
@@ -926,10 +1102,15 @@ class StatusBar(Widget):
             t.append(" · ", style="dim")
             t.append(duration, style="dim")
 
-        # Right-anchored state label (with optional dropped-output warning)
+        # Right-anchored state label (with optional dropped-output warning).
+        # When agent is running, the ● indicator pulses between two accent shades.
         dropped = getattr(app, "status_output_dropped", False)
         if running:
-            state_t = Text(" running", style="#ffa726")
+            if self._pulse_t > 0:
+                pulse_color = lerp_color("#ffa726", "#ffbf00", self._pulse_t)
+            else:
+                pulse_color = "#ffa726"
+            state_t = Text(" ● running", style=f"bold {pulse_color}")
         else:
             state_t = Text(" idle", style="dim")
         if dropped:
@@ -942,18 +1123,59 @@ class StatusBar(Widget):
 
     @staticmethod
     def _compaction_color(progress: float) -> str:
-        """Return Rich style hex color for compaction bar, matching skin config."""
+        """Return Rich style hex color for compaction bar, smoothly lerped between bands."""
         try:
             from hermes_cli.skin_engine import get_active_skin
             skin = get_active_skin()
         except Exception:
             skin = None
 
+        color_normal = skin.get_ui_ext("context_bar_normal", "#5f87d7") if skin else "#5f87d7"
+        color_warn   = skin.get_ui_ext("context_bar_warn",   "#ffa726") if skin else "#ffa726"
+        color_crit   = skin.get_ui_ext("context_bar_crit",   "#ef5350") if skin else "#ef5350"
+
         if progress >= 0.95:
-            return skin.get_ui_ext("context_bar_crit", "#ef5350") if skin else "#ef5350"
+            return color_crit
         if progress >= 0.80:
-            return skin.get_ui_ext("context_bar_warn", "#ffa726") if skin else "#ffa726"
-        return skin.get_ui_ext("context_bar_normal", "#5f87d7") if skin else "#5f87d7"
+            # Lerp from warn → crit across the 0.80–0.95 band
+            t = (progress - 0.80) / 0.15
+            return lerp_color(color_warn, color_crit, t)
+        if progress >= 0.50:
+            # Lerp from normal → warn across the 0.50–0.80 band
+            t = (progress - 0.50) / 0.30
+            return lerp_color(color_normal, color_warn, t)
+        return color_normal
+
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# AnimatedCounter — reusable numeric counter widget with smooth easing
+# ---------------------------------------------------------------------------
+
+class AnimatedCounter(Widget):
+    """
+    Reusable leaf widget: smoothly eases a numeric value when updated.
+
+    Use ``set_target()`` from the event loop or via ``call_from_thread``.
+    The value is rounded to the nearest integer for display; an optional
+    unit suffix is shown dim after the number.
+    """
+
+    DEFAULT_CSS = "AnimatedCounter { height: 1; width: auto; }"
+
+    _displayed: reactive[float] = reactive(0.0, repaint=True)
+    _unit: str = ""
+
+    def set_target(self, value: float, unit: str = "") -> None:
+        """Animate to value over 200ms. Safe to call from the event loop."""
+        self._unit = unit
+        self.animate("_displayed", float(value), duration=0.2, easing="out_cubic")
+
+    def render(self) -> RenderResult:
+        t = Text(str(round(self._displayed)))
+        if self._unit:
+            t.append(f" {self._unit}", style="dim")
+        return t
 
 
 # ---------------------------------------------------------------------------

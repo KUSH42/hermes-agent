@@ -308,3 +308,116 @@ async def test_flush_live_calls_flush():
             live._buf = "pending"
             panel.flush_live()
             assert flush_called, "flush() was not called by flush_live()"
+
+
+# ---------------------------------------------------------------------------
+# Non-typewriter blink cursor tests (spec: tui-animation-novel-techniques.md §7)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_no_blink_before_feed():
+    """No blink timer before first feed() call."""
+    import hermes_cli.tui.widgets as _w
+    patches = _tw_patch(enabled=False)
+    with patches[0], patches[1], patches[2], patches[3]:
+        with patch.object(_w, "_cursor_blink_enabled", return_value=True):
+            app = _make_app()
+            async with app.run_test(size=(80, 24)) as pilot:
+                await pilot.pause()
+                live = app.query_one(LiveLineWidget)
+                # Before any feed(), timer must be None
+                assert live._blink_timer is None
+
+
+@pytest.mark.asyncio
+async def test_blink_timer_starts_after_feed():
+    """First feed() call starts blink timer when typewriter is disabled."""
+    import hermes_cli.tui.widgets as _w
+    patches = _tw_patch(enabled=False)
+    with patches[0], patches[1], patches[2], patches[3]:
+        with patch.object(_w, "_cursor_blink_enabled", return_value=True):
+            app = _make_app()
+            async with app.run_test(size=(80, 24)) as pilot:
+                await pilot.pause()
+                live = app.query_one(LiveLineWidget)
+                live.feed("hello")
+                await pilot.pause()
+                assert live._blink_timer is not None
+
+
+@pytest.mark.asyncio
+async def test_flush_stops_blink_timer():
+    """flush() stops the blink timer and resets _blink_visible."""
+    import hermes_cli.tui.widgets as _w
+    patches = _tw_patch(enabled=False)
+    with patches[0], patches[1], patches[2], patches[3]:
+        with patch.object(_w, "_cursor_blink_enabled", return_value=True):
+            app = _make_app()
+            async with app.run_test(size=(80, 24)) as pilot:
+                await pilot.pause()
+                live = app.query_one(LiveLineWidget)
+                live.feed("hello")
+                await pilot.pause()
+                assert live._blink_timer is not None
+                live.flush()
+                assert live._blink_timer is None
+                assert live._blink_visible is True
+
+
+@pytest.mark.asyncio
+async def test_no_double_cursor_when_typewriter_animating():
+    """No non-typewriter ▌ appended when typewriter _animating is True."""
+    import hermes_cli.tui.widgets as _w
+    from unittest.mock import MagicMock
+    patches = _tw_patch(enabled=True, speed=1, cursor=True)
+    with patches[0], patches[1], patches[2], patches[3]:
+        app = _make_app()
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            live = app.query_one(LiveLineWidget)
+            # Manually set typewriter animating state
+            live._animating = True
+            live._blink_timer = MagicMock()  # simulate blink timer active
+            live._blink_visible = True
+            live._buf = "text"
+            rendered = str(live.render())
+            # Count occurrences of ▌ — should be exactly 1 (from typewriter path)
+            assert rendered.count("▌") == 1
+
+
+@pytest.mark.asyncio
+async def test_blink_cursor_appears_when_active():
+    """▌ appears in render when non-typewriter blink is active and visible."""
+    import hermes_cli.tui.widgets as _w
+    from unittest.mock import MagicMock
+    patches = _tw_patch(enabled=False)
+    with patches[0], patches[1], patches[2], patches[3]:
+        with patch.object(_w, "_cursor_blink_enabled", return_value=True):
+            app = _make_app()
+            async with app.run_test(size=(80, 24)) as pilot:
+                await pilot.pause()
+                live = app.query_one(LiveLineWidget)
+                live._buf = "streaming text"
+                live._blink_timer = MagicMock()  # simulate active timer
+                live._blink_visible = True
+                rendered = str(live.render())
+                assert "▌" in rendered
+
+
+@pytest.mark.asyncio
+async def test_blink_cursor_hidden_when_not_visible():
+    """▌ absent in render when blink is active but _blink_visible is False."""
+    import hermes_cli.tui.widgets as _w
+    from unittest.mock import MagicMock
+    patches = _tw_patch(enabled=False)
+    with patches[0], patches[1], patches[2], patches[3]:
+        with patch.object(_w, "_cursor_blink_enabled", return_value=True):
+            app = _make_app()
+            async with app.run_test(size=(80, 24)) as pilot:
+                await pilot.pause()
+                live = app.query_one(LiveLineWidget)
+                live._buf = "streaming text"
+                live._blink_timer = MagicMock()  # simulate active timer
+                live._blink_visible = False
+                rendered = str(live.render())
+                assert "▌" not in rendered

@@ -128,6 +128,9 @@ class HermesApp(App):
         # Spinner frames — read from module-level _COMMAND_SPINNER_FRAMES in cli.py
         self._spinner_frames: tuple[str, ...] = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 
+        # Elapsed time for the current tool call — reset whenever spinner_label changes
+        self._tool_start_time: float = 0.0
+
         # Whether to use HermesInput (step 5) or interim TextArea
         self._use_hermes_input = True
 
@@ -142,7 +145,7 @@ class HermesApp(App):
             yield SecretWidget(id="secret")
         yield HintBar(id="hint-bar")
         yield ImageBar(id="image-bar")
-        yield TitledRule(id="input-rule")
+        yield TitledRule(id="input-rule", show_state=True)
 
         if self._use_hermes_input:
             from hermes_cli.tui.input_widget import HermesInput as _HI
@@ -267,6 +270,11 @@ class HermesApp(App):
         hint_suffix = self._build_hint_text()
         spinner_display = f"{frame} {hint_suffix}" if frame else hint_suffix
 
+        # Append per-tool elapsed time when a tool call is in progress
+        if self._tool_start_time > 0:
+            elapsed = _time.monotonic() - self._tool_start_time
+            spinner_display = f"{spinner_display} · {elapsed:.1f}s"
+
         # Show spinner in overlay, hide input
         try:
             inp = self.query_one("#input-area")
@@ -302,6 +310,11 @@ class HermesApp(App):
         parts: list[str] = []
         label_text = getattr(self, "spinner_label", "")
         if label_text:
+            # Strip verbose prefixes — the tool name is the signal, not the verb
+            for prefix in ("Calling tool: ", "Running tool: ", "Tool: "):
+                if label_text.startswith(prefix):
+                    label_text = label_text[len(prefix):]
+                    break
             parts.append(label_text)
         for label, state_attr in [
             ("approval", "approval_state"),
@@ -375,6 +388,10 @@ class HermesApp(App):
                 self.query_one(HintBar).hint = ""
             except NoMatches:
                 pass
+
+    def watch_spinner_label(self, value: str) -> None:
+        """Reset per-tool elapsed timer whenever the spinner label changes."""
+        self._tool_start_time = _time.monotonic() if value else 0.0
 
     def watch_clarify_state(self, value: ChoiceOverlayState | None) -> None:
         try:

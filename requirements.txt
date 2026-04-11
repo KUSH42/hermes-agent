@@ -11,6 +11,7 @@ rich
 tenacity
 prompt_toolkit
 textual>=1.0.0,<9
+wcwidth
 pyyaml
 requests
 jinja2

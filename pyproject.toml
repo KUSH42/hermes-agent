@@ -26,6 +26,7 @@ dependencies = [
   # Interactive CLI — Textual for the TUI, prompt_toolkit retained for FileHistory
   "textual>=1.0.0,<9",
   "prompt_toolkit>=3.0.52,<4",
+  "wcwidth>=0.2.5",
   # Tools
   "exa-py>=2.9.0,<3",
   "firecrawl-py>=4.16.0,<5",

@@ -484,14 +484,19 @@ def extract_edit_diff(
     return _diff_from_snapshot(snapshot)
 
 
-def _emit_inline_diff(diff_text: str, print_fn) -> bool:
-    """Emit rendered diff text through the CLI's prompt_toolkit-safe printer."""
+def _emit_inline_diff(diff_text: str, print_fn, prefix: str = "") -> bool:
+    """Emit rendered diff text through the CLI's prompt_toolkit-safe printer.
+
+    The header ``  ┊ review diff`` always uses the fixed ``  ┊ `` alignment.
+    Content lines are prefixed with *prefix* (e.g. ``"  ┊ "`` for indented
+    tool blocks).
+    """
     if print_fn is None or not diff_text:
         return False
     try:
         print_fn("  ┊ review diff")
         for line in diff_text.rstrip("\n").splitlines():
-            print_fn(line)
+            print_fn(f"{prefix}{line}")
         return True
     except Exception:
         return False
@@ -629,6 +634,7 @@ def render_edit_diff_with_delta(
     function_args: dict | None = None,
     snapshot: LocalEditSnapshot | None = None,
     print_fn=None,
+    prefix: str = "",
 ) -> bool:
     """Render an edit diff inline without taking over the terminal UI."""
     diff = extract_edit_diff(
@@ -644,7 +650,7 @@ def render_edit_diff_with_delta(
     except Exception as exc:
         logger.debug("Could not render inline diff: %s", exc)
         return False
-    return _emit_inline_diff("\n".join(rendered_lines), print_fn)
+    return _emit_inline_diff("\n".join(rendered_lines), print_fn, prefix=prefix)
 
 
 # =========================================================================
@@ -659,7 +665,7 @@ def set_preview_max_lines(n: int) -> None:
     _PREVIEW_MAX_LINES = n
 
 
-def _emit_highlighted_lines(block: str, print_fn) -> bool:
+def _emit_highlighted_lines(block: str, print_fn, prefix: str = "") -> bool:
     lines = block.rstrip("\n").splitlines()
     if not lines:
         return False
@@ -669,30 +675,34 @@ def _emit_highlighted_lines(block: str, print_fn) -> bool:
             f"\033[2m╌╌ {omitted} more line{'s' if omitted != 1 else ''} omitted ╌╌\033[0m"
         ]
     for line in lines:
-        print_fn(f"  {line}")
+        print_fn(f"{prefix}  {line}")
     return True
 
-def _highlight_block(header: str, content: str, language: str, print_fn) -> bool:
+def _highlight_block(header: str, content: str, language: str, print_fn, prefix: str = "") -> bool:
     """Print a labelled syntax-highlighted block aligned with the ┊ tool log.
 
     Format::
 
         \033[2m  ┊ <header>\033[0m
-        <highlighted content lines>
+        <content lines with prefix>
+
+    *prefix* is prepended to every content line (e.g. ``"  ┊ "`` for indented
+    tool blocks). The header line always uses ``  ┊ `` regardless of prefix so
+    it aligns with the cute message above it.
     """
     _print = print_fn or print
     _print(f"\033[2m  ┊ {header}\033[0m")
     if not _RICH_OUTPUT:
-        return _emit_highlighted_lines(content, _print)
+        return _emit_highlighted_lines(content, _print, prefix=prefix)
     try:
         highlighted = _rich_syntax.to_ansi(content, language=language).rstrip("\n")
-        return _emit_highlighted_lines(highlighted, _print)
+        return _emit_highlighted_lines(highlighted, _print, prefix=prefix)
     except Exception as exc:
         logger.debug("highlight_block failed for %s: %s", header, exc)
         return False
 
 
-def render_execute_code_preview(code: str, print_fn=None) -> bool:
+def render_execute_code_preview(code: str, print_fn=None, prefix: str = "") -> bool:
     """Print *code* with Python syntax highlighting.
 
     The cute_msg line already labels the tool; this function prints only the
@@ -703,16 +713,16 @@ def render_execute_code_preview(code: str, print_fn=None) -> bool:
         return False
     _print = print_fn or print
     if not _RICH_OUTPUT:
-        return _emit_highlighted_lines(code, _print)
+        return _emit_highlighted_lines(code, _print, prefix=prefix)
     try:
         highlighted = _rich_syntax.to_ansi(code, language="python").rstrip("\n")
-        return _emit_highlighted_lines(highlighted, _print)
+        return _emit_highlighted_lines(highlighted, _print, prefix=prefix)
     except Exception as exc:
         logger.debug("execute_code highlight failed: %s", exc)
         return False
 
 
-def render_read_file_preview(path: str, result_json: str, print_fn=None) -> bool:
+def render_read_file_preview(path: str, result_json: str, print_fn=None, prefix: str = "") -> bool:
     """Print the content of a read_file result with syntax highlighting.
 
     Language is detected from *path*'s extension.  Returns False (no output)
@@ -738,7 +748,7 @@ def render_read_file_preview(path: str, result_json: str, print_fn=None) -> bool
         return False  # unknown type — skip, don't guess
 
     header = f"📄 {_Path(path).name}"
-    return _highlight_block(header, content, lang, print_fn)
+    return _highlight_block(header, content, lang, print_fn, prefix=prefix)
 
 
 _FILE_READ_COMMANDS = frozenset({
@@ -803,7 +813,7 @@ def _extract_file_language_from_command(command: str):
     return None, None
 
 
-def render_terminal_preview(command: str, result_json: str, print_fn=None) -> bool:
+def render_terminal_preview(command: str, result_json: str, print_fn=None, prefix: str = "") -> bool:
     """Print terminal output with syntax highlighting when the command reads a source file.
 
     Highlighting is only applied when a known-extension filename can be extracted
@@ -825,7 +835,7 @@ def render_terminal_preview(command: str, result_json: str, print_fn=None) -> bo
         return False
 
     header = f"💻 {filename}"
-    return _highlight_block(header, output, lang, print_fn)
+    return _highlight_block(header, output, lang, print_fn, prefix=prefix)
 
 
 # =========================================================================
@@ -1101,34 +1111,121 @@ def _detect_tool_failure(tool_name: str, result: str | None) -> tuple[bool, str]
     return False, ""
 
 
+# ---------------------------------------------------------------------------
+# Tool display tier classification
+# ---------------------------------------------------------------------------
+
+_TOOL_TIERS: dict[str, str] = {
+    # Verbose: always show cute message + inline diff/preview
+    "write_file": "verbose",
+    "patch": "verbose",
+    "terminal": "verbose",
+    "execute_code": "verbose",
+    "browser_navigate": "verbose",
+    "browser_click": "verbose",
+    "browser_type": "verbose",
+    "browser_fill": "verbose",
+    "browser_snapshot": "verbose",
+    "browser_extract": "verbose",
+    "browser_run_js": "verbose",
+    "browser_wait": "verbose",
+    # Compact: cute message one-liner, no preview
+    "read_file": "compact",
+    "search_files": "compact",
+    "web_search": "compact",
+    "web_extract": "compact",
+    "web_crawl": "compact",
+    "process": "compact",
+    "delegate_task": "compact",
+    # Silent: no output unless failure
+    "todo": "silent",
+    "memory": "silent",
+    "session_search": "silent",
+    "clarify": "silent",
+    "skills_list": "silent",
+    "skill_view": "silent",
+    "skill_manage": "silent",
+}
+
+# Runtime overrides loaded from profile YAML (tool_display.tiers)
+_tool_tier_overrides: dict[str, str] = {}
+
+
+def set_tool_tier_overrides(overrides: dict[str, str]) -> None:
+    """Load tool_display.tiers from the profile YAML."""
+    global _tool_tier_overrides
+    _tool_tier_overrides = {k: v for k, v in overrides.items()
+                            if v in ("verbose", "compact", "silent")}
+
+
+def get_tool_display_tier(tool_name: str) -> str:
+    """Return the display tier for *tool_name*: 'verbose', 'compact', or 'silent'.
+
+    Unknown tools default to 'compact' so dynamically registered MCP/skill
+    tools always get a cute message one-liner.
+    """
+    if tool_name in _tool_tier_overrides:
+        return _tool_tier_overrides[tool_name]
+    return _TOOL_TIERS.get(tool_name, "compact")
+
+
 def get_cute_tool_message(
     tool_name: str, args: dict, duration: float, result: str | None = None,
+    width: int | None = None,
 ) -> str:
     """Generate a formatted tool completion line for CLI quiet mode.
 
-    Format: ``| {emoji} {verb:9} {detail}  {duration}``
+    Format: ``┊ {emoji} {verb:9} {detail}  {duration}``
+
+    Duration is right-aligned to a fixed column (*width* - 4, or 60 by default).
+    Uses wcswidth() for display-width-aware padding so emoji-heavy lines align
+    correctly. Falls back to len() if wcwidth is unavailable.
 
     When *result* is provided the line is checked for failure indicators.
-    Failed tool calls get a red prefix and an informational suffix.
+    Failed tool calls get an informational suffix appended after the duration.
+
+    *width* is the available widget width (TUI: pass self.size.width; PT mode:
+    pass shutil.get_terminal_size().columns). When None, defaults to 64.
     """
     dur = f"{duration:.1f}s"
     is_failure, failure_suffix = _detect_tool_failure(tool_name, result)
     skin_prefix = get_skin_tool_prefix()
 
+    # Target column for the duration string (measured from the ┊ char, which
+    # is the first char of the string returned by this function).
+    # Callers prepend "  " (2 spaces) so the on-screen column is _TARGET + 2.
+    _TARGET = max(40, (width - 4) if width is not None else 60)
+
+    try:
+        from wcwidth import wcswidth as _wcswidth
+        def _display_width(s: str) -> int:
+            w = _wcswidth(s)
+            return len(s) if w < 0 else w
+    except ImportError:
+        def _display_width(s: str) -> int:  # type: ignore[misc]
+            return len(s)
+
     def _trunc(s, n=40):
         s = str(s)
         if _tool_preview_max_len == 0:
             return s  # no limit
-        return (s[:n-3] + "...") if len(s) > n else s
+        return (s[:n-3] + "...") if _display_width(s) > n else s
 
     def _path(p, n=35):
         p = str(p)
         if _tool_preview_max_len == 0:
             return p  # no limit
-        return ("..." + p[-(n-3):]) if len(p) > n else p
+        return ("..." + p[-(n-3):]) if _display_width(p) > n else p
 
-    def _wrap(line: str) -> str:
-        """Apply skin tool prefix and failure suffix."""
+    def _pad_dur(body: str) -> str:
+        """Append duration right-aligned to _TARGET from the start of *body*."""
+        bw = _display_width(body)
+        pad = max(2, _TARGET - bw - len(dur))
+        return f"{body}{' ' * pad}{dur}"
+
+    def _wrap(body: str) -> str:
+        """Pad duration, apply skin prefix, and append failure suffix."""
+        line = _pad_dur(body)
         if skin_prefix != "┊":
             line = line.replace("┊", skin_prefix, 1)
         if not is_failure:
@@ -1136,105 +1233,105 @@ def get_cute_tool_message(
         return f"{line}{failure_suffix}"
 
     if tool_name == "web_search":
-        return _wrap(f"┊ 🔍 search    {_trunc(args.get('query', ''), 42)}  {dur}")
+        return _wrap(f"┊ 🔍 search    {_trunc(args.get('query', ''), 42)}")
     if tool_name == "web_extract":
         urls = args.get("urls", [])
         if urls:
             url = urls[0] if isinstance(urls, list) else str(urls)
             domain = url.replace("https://", "").replace("http://", "").split("/")[0]
             extra = f" +{len(urls)-1}" if len(urls) > 1 else ""
-            return _wrap(f"┊ 📄 fetch     {_trunc(domain, 35)}{extra}  {dur}")
-        return _wrap(f"┊ 📄 fetch     pages  {dur}")
+            return _wrap(f"┊ 📄 fetch     {_trunc(domain, 35)}{extra}")
+        return _wrap(f"┊ 📄 fetch     pages")
     if tool_name == "web_crawl":
         url = args.get("url", "")
         domain = url.replace("https://", "").replace("http://", "").split("/")[0]
-        return _wrap(f"┊ 🕸️  crawl     {_trunc(domain, 35)}  {dur}")
+        return _wrap(f"┊ 🕸️  crawl     {_trunc(domain, 35)}")
     if tool_name == "terminal":
-        return _wrap(f"┊ 💻 $         {_trunc(args.get('command', ''), 42)}  {dur}")
+        return _wrap(f"┊ 💻 $         {_trunc(args.get('command', ''), 42)}")
     if tool_name == "process":
         action = args.get("action", "?")
         sid = args.get("session_id", "")[:12]
         labels = {"list": "ls processes", "poll": f"poll {sid}", "log": f"log {sid}",
                   "wait": f"wait {sid}", "kill": f"kill {sid}", "write": f"write {sid}", "submit": f"submit {sid}"}
-        return _wrap(f"┊ ⚙️  proc      {labels.get(action, f'{action} {sid}')}  {dur}")
+        return _wrap(f"┊ ⚙️  proc      {labels.get(action, f'{action} {sid}')}")
     if tool_name == "read_file":
-        return _wrap(f"┊ 📖 read      {_path(args.get('path', ''))}  {dur}")
+        return _wrap(f"┊ 📖 read      {_path(args.get('path', ''))}")
     if tool_name == "write_file":
-        return _wrap(f"┊ ✍️  write     {_path(args.get('path', ''))}  {dur}")
+        return _wrap(f"┊ ✍️  write     {_path(args.get('path', ''))}")
     if tool_name == "patch":
-        return _wrap(f"┊ 🔧 patch     {_path(args.get('path', ''))}  {dur}")
+        return _wrap(f"┊ 🔧 patch     {_path(args.get('path', ''))}")
     if tool_name == "search_files":
         pattern = _trunc(args.get("pattern", ""), 35)
         target = args.get("target", "content")
         verb = "find" if target == "files" else "grep"
-        return _wrap(f"┊ 🔎 {verb:9} {pattern}  {dur}")
+        return _wrap(f"┊ 🔎 {verb:9} {pattern}")
     if tool_name == "browser_navigate":
         url = args.get("url", "")
         domain = url.replace("https://", "").replace("http://", "").split("/")[0]
-        return _wrap(f"┊ 🌐 navigate  {_trunc(domain, 35)}  {dur}")
+        return _wrap(f"┊ 🌐 navigate  {_trunc(domain, 35)}")
     if tool_name == "browser_snapshot":
         mode = "full" if args.get("full") else "compact"
-        return _wrap(f"┊ 📸 snapshot  {mode}  {dur}")
+        return _wrap(f"┊ 📸 snapshot  {mode}")
     if tool_name == "browser_click":
-        return _wrap(f"┊ 👆 click     {args.get('ref', '?')}  {dur}")
+        return _wrap(f"┊ 👆 click     {args.get('ref', '?')}")
     if tool_name == "browser_type":
-        return _wrap(f"┊ ⌨️  type      \"{_trunc(args.get('text', ''), 30)}\"  {dur}")
+        return _wrap(f"┊ ⌨️  type      \"{_trunc(args.get('text', ''), 30)}\"")
     if tool_name == "browser_scroll":
         d = args.get("direction", "down")
         arrow = {"down": "↓", "up": "↑", "right": "→", "left": "←"}.get(d, "↓")
-        return _wrap(f"┊ {arrow}  scroll    {d}  {dur}")
+        return _wrap(f"┊ {arrow}  scroll    {d}")
     if tool_name == "browser_back":
-        return _wrap(f"┊ ◀️  back      {dur}")
+        return _wrap(f"┊ ◀️  back     ")
     if tool_name == "browser_press":
-        return _wrap(f"┊ ⌨️  press     {args.get('key', '?')}  {dur}")
+        return _wrap(f"┊ ⌨️  press     {args.get('key', '?')}")
     if tool_name == "browser_get_images":
-        return _wrap(f"┊ 🖼️  images    extracting  {dur}")
+        return _wrap(f"┊ 🖼️  images    extracting")
     if tool_name == "browser_vision":
-        return _wrap(f"┊ 👁️  vision    analyzing page  {dur}")
+        return _wrap(f"┊ 👁️  vision    analyzing page")
     if tool_name == "todo":
         todos_arg = args.get("todos")
         merge = args.get("merge", False)
         if todos_arg is None:
-            return _wrap(f"┊ 📋 plan      reading tasks  {dur}")
+            return _wrap(f"┊ 📋 plan      reading tasks")
         elif merge:
-            return _wrap(f"┊ 📋 plan      update {len(todos_arg)} task(s)  {dur}")
+            return _wrap(f"┊ 📋 plan      update {len(todos_arg)} task(s)")
         else:
-            return _wrap(f"┊ 📋 plan      {len(todos_arg)} task(s)  {dur}")
+            return _wrap(f"┊ 📋 plan      {len(todos_arg)} task(s)")
     if tool_name == "session_search":
-        return _wrap(f"┊ 🔍 recall    \"{_trunc(args.get('query', ''), 35)}\"  {dur}")
+        return _wrap(f"┊ 🔍 recall    \"{_trunc(args.get('query', ''), 35)}\"")
     if tool_name == "memory":
         action = args.get("action", "?")
         target = args.get("target", "")
         if action == "add":
-            return _wrap(f"┊ 🧠 memory    +{target}: \"{_trunc(args.get('content', ''), 30)}\"  {dur}")
+            return _wrap(f"┊ 🧠 memory    +{target}: \"{_trunc(args.get('content', ''), 30)}\"")
         elif action == "replace":
-            return _wrap(f"┊ 🧠 memory    ~{target}: \"{_trunc(args.get('old_text', ''), 20)}\"  {dur}")
+            return _wrap(f"┊ 🧠 memory    ~{target}: \"{_trunc(args.get('old_text', ''), 20)}\"")
         elif action == "remove":
-            return _wrap(f"┊ 🧠 memory    -{target}: \"{_trunc(args.get('old_text', ''), 20)}\"  {dur}")
-        return _wrap(f"┊ 🧠 memory    {action}  {dur}")
+            return _wrap(f"┊ 🧠 memory    -{target}: \"{_trunc(args.get('old_text', ''), 20)}\"")
+        return _wrap(f"┊ 🧠 memory    {action}")
     if tool_name == "skills_list":
-        return _wrap(f"┊ 📚 skills    list {args.get('category', 'all')}  {dur}")
+        return _wrap(f"┊ 📚 skills    list {args.get('category', 'all')}")
     if tool_name == "skill_view":
-        return _wrap(f"┊ 📚 skill     {_trunc(args.get('name', ''), 30)}  {dur}")
+        return _wrap(f"┊ 📚 skill     {_trunc(args.get('name', ''), 30)}")
     if tool_name == "image_generate":
-        return _wrap(f"┊ 🎨 create    {_trunc(args.get('prompt', ''), 35)}  {dur}")
+        return _wrap(f"┊ 🎨 create    {_trunc(args.get('prompt', ''), 35)}")
     if tool_name == "text_to_speech":
-        return _wrap(f"┊ 🔊 speak     {_trunc(args.get('text', ''), 30)}  {dur}")
+        return _wrap(f"┊ 🔊 speak     {_trunc(args.get('text', ''), 30)}")
     if tool_name == "vision_analyze":
-        return _wrap(f"┊ 👁️  vision    {_trunc(args.get('question', ''), 30)}  {dur}")
+        return _wrap(f"┊ 👁️  vision    {_trunc(args.get('question', ''), 30)}")
     if tool_name == "mixture_of_agents":
-        return _wrap(f"┊ 🧠 reason    {_trunc(args.get('user_prompt', ''), 30)}  {dur}")
+        return _wrap(f"┊ 🧠 reason    {_trunc(args.get('user_prompt', ''), 30)}")
     if tool_name == "send_message":
-        return _wrap(f"┊ 📨 send      {args.get('target', '?')}: \"{_trunc(args.get('message', ''), 25)}\"  {dur}")
+        return _wrap(f"┊ 📨 send      {args.get('target', '?')}: \"{_trunc(args.get('message', ''), 25)}\"")
     if tool_name == "cronjob":
         action = args.get("action", "?")
         if action == "create":
             skills = args.get("skills") or ([] if not args.get("skill") else [args.get("skill")])
             label = args.get("name") or (skills[0] if skills else None) or args.get("prompt", "task")
-            return _wrap(f"┊ ⏰ cron      create {_trunc(label, 24)}  {dur}")
+            return _wrap(f"┊ ⏰ cron      create {_trunc(label, 24)}")
         if action == "list":
-            return _wrap(f"┊ ⏰ cron      listing  {dur}")
-        return _wrap(f"┊ ⏰ cron      {action} {args.get('job_id', '')}  {dur}")
+            return _wrap(f"┊ ⏰ cron      listing")
+        return _wrap(f"┊ ⏰ cron      {action} {args.get('job_id', '')}")
     if tool_name.startswith("rl_"):
         rl = {
             "rl_list_environments": "list envs", "rl_select_environment": f"select {args.get('name', '')}",
@@ -1243,21 +1340,21 @@ def get_cute_tool_message(
             "rl_stop_training": f"stop {args.get('run_id', '?')[:12]}", "rl_get_results": f"results {args.get('run_id', '?')[:12]}",
             "rl_list_runs": "list runs", "rl_test_inference": "test inference",
         }
-        return _wrap(f"┊ 🧪 rl        {rl.get(tool_name, tool_name.replace('rl_', ''))}  {dur}")
+        return _wrap(f"┊ 🧪 rl        {rl.get(tool_name, tool_name.replace('rl_', ''))}")
     if tool_name == "execute_code":
         if _code_highlight_active:
-            return _wrap(f"┊ 🐍 exec      {dur}")
+            return _wrap(f"┊ 🐍 exec      ")
         code = args.get("code", "")
         first_line = code.strip().split("\n")[0] if code.strip() else ""
-        return _wrap(f"┊ 🐍 exec      {_trunc(first_line, 35)}  {dur}")
+        return _wrap(f"┊ 🐍 exec      {_trunc(first_line, 35)}")
     if tool_name == "delegate_task":
         tasks = args.get("tasks")
         if tasks and isinstance(tasks, list):
-            return _wrap(f"┊ 🔀 delegate  {len(tasks)} parallel tasks  {dur}")
-        return _wrap(f"┊ 🔀 delegate  {_trunc(args.get('goal', ''), 35)}  {dur}")
+            return _wrap(f"┊ 🔀 delegate  {len(tasks)} parallel tasks")
+        return _wrap(f"┊ 🔀 delegate  {_trunc(args.get('goal', ''), 35)}")
 
     preview = build_tool_preview(tool_name, args) or ""
-    return _wrap(f"┊ ⚡ {tool_name[:9]:9} {_trunc(preview, 35)}  {dur}")
+    return _wrap(f"┊ ⚡ {tool_name[:9]:9} {_trunc(preview, 35)}")
 
 
 # =========================================================================

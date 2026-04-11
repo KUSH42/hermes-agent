@@ -317,3 +317,71 @@ async def test_push_tui_status_wires_all_fields():
         assert hasattr(fake_tui, "status_compaction_enabled")
     finally:
         cli_module._hermes_app = orig
+
+
+# ---------------------------------------------------------------------------
+# StatusBar state label (running / idle) — Phase 2 alignment polish
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_status_bar_shows_running_when_agent_active():
+    """StatusBar appends 'running' label when agent_running is True."""
+    from unittest.mock import PropertyMock
+    from textual.geometry import Size
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.agent_running = True
+        app.status_model = "claude"
+        app.status_duration = "1s"
+        await pilot.pause()
+
+        bar = app.query_one(StatusBar)
+        with patch.object(type(bar), "size", new_callable=PropertyMock, return_value=Size(80, 1)):
+            rendered = str(bar.render())
+        assert "running" in rendered
+
+
+@pytest.mark.asyncio
+async def test_status_bar_shows_idle_when_not_running():
+    """StatusBar appends 'idle' label when neither agent nor command is running."""
+    from unittest.mock import PropertyMock
+    from textual.geometry import Size
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.agent_running = False
+        app.command_running = False
+        app.status_model = "claude"
+        app.status_duration = "1s"
+        await pilot.pause()
+
+        bar = app.query_one(StatusBar)
+        with patch.object(type(bar), "size", new_callable=PropertyMock, return_value=Size(80, 1)):
+            rendered = str(bar.render())
+        assert "idle" in rendered
+
+
+@pytest.mark.asyncio
+async def test_status_bar_running_label_right_anchored():
+    """State label appears after padding — not immediately after the model name."""
+    from unittest.mock import PropertyMock
+    from textual.geometry import Size
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.agent_running = False
+        app.status_model = "m"
+        app.status_tokens = 0
+        app.status_duration = "0s"
+        await pilot.pause()
+
+        bar = app.query_one(StatusBar)
+        with patch.object(type(bar), "size", new_callable=PropertyMock, return_value=Size(80, 1)):
+            rendered = str(bar.render())
+        # There should be spaces between the left content and the right-anchored label
+        idle_pos = rendered.rfind("idle")
+        assert idle_pos > 10, f"'idle' too close to start: pos {idle_pos} in {rendered!r}"

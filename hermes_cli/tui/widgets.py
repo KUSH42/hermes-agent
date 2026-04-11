@@ -422,7 +422,11 @@ def _fade_rule(count: int, start_hex: str, end_hex: str) -> Text:
 
 
 class TitledRule(Widget):
-    """Horizontal rule with an embedded title and fading rule chars."""
+    """Horizontal rule with an embedded title and fading rule chars.
+
+    Pass ``show_state=True`` on the input-rule instance to get a right-side
+    state glyph (``⟳`` amber when agent/command is running, hidden when idle).
+    """
 
     DEFAULT_CSS = """
     TitledRule {
@@ -439,6 +443,7 @@ class TitledRule(Widget):
         fade_end: str | None = None,
         accent: str | None = None,
         title_color: str | None = None,
+        show_state: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -447,6 +452,15 @@ class TitledRule(Widget):
         self._fade_end = fade_end or _skin_color("rule_end", "#2A2A2A")
         self._accent = accent or _skin_color("banner_title", "#FFD700")
         self._title_color = title_color or _skin_color("banner_dim", "#B8860B")
+        self._show_state = show_state
+
+    def on_mount(self) -> None:
+        if self._show_state:
+            self.watch(self.app, "agent_running", self._on_state_change)
+            self.watch(self.app, "command_running", self._on_state_change)
+
+    def _on_state_change(self, _value: object = None) -> None:
+        self.refresh()
 
     def render(self) -> RenderResult:
         w = self.size.width
@@ -457,14 +471,26 @@ class TitledRule(Widget):
         accent_char = parts[0] if parts else ""
         rest = (" " + parts[1]) if len(parts) > 1 else ""
 
+        # Right-side state glyph — only on instances with show_state=True,
+        # only visible when the agent is running.
+        state_suffix = Text()
+        if self._show_state:
+            running = (
+                getattr(self.app, "agent_running", False)
+                or getattr(self.app, "command_running", False)
+            )
+            if running:
+                state_suffix = Text(" ⟳", style="#ffa726")
+
         label_len = len(f"{title} ")
-        right = max(0, w - label_len)
+        right = max(0, w - label_len - state_suffix.cell_len)
         t = Text()
         # Title: accent char in bright accent, rest in title_color
         t.append(accent_char, style=f"bold {self._accent}")
         t.append(f"{rest} ", style=f"{self._title_color}")
-        # Right fill: fade out (start → end)
+        # Right fill: fade out (start → end), then optional state glyph
         t.append_text(_fade_rule(right, self._fade_start, self._fade_end))
+        t.append_text(state_suffix)
         return t
 
 
@@ -549,6 +575,7 @@ class StatusBar(Widget):
         for attr in (
             "status_tokens", "status_model", "status_duration",
             "status_compaction_progress", "status_compaction_enabled", "status_tok_s",
+            "agent_running", "command_running",
         ):
             self.watch(self.app, attr, self._on_status_change)
 
@@ -558,28 +585,37 @@ class StatusBar(Widget):
     def render(self) -> RenderResult:
         app = self.app
         width = self.size.width
-        t = Text()
 
-        model    = getattr(app, "status_model", "")
-        duration = getattr(app, "status_duration", "0s")
+        model    = str(getattr(app, "status_model", ""))
+        duration = str(getattr(app, "status_duration", "0s"))
         tokens   = getattr(app, "status_tokens", 0)
         progress = getattr(app, "status_compaction_progress", 0.0)
         enabled  = getattr(app, "status_compaction_enabled", True)
         tok_s    = getattr(app, "status_tok_s", 0.0)
+        running  = (
+            getattr(app, "agent_running", False)
+            or getattr(app, "command_running", False)
+        )
 
+        t = Text()
         t.append(model, style="dim")
 
         if width < 40:
-            # Minimal: model + duration only
-            t.append(f"  {duration}")
+            # Minimal: model · duration
+            t.append(" · ", style="dim")
+            t.append(duration, style="dim")
         elif width < 60:
-            # Compact: compaction % (no bar) + tokens + duration
+            # Compact: % · tokens · duration (no bar)
             if enabled and progress > 0:
                 pct_int = min(int(progress * 100), 100)
-                t.append(f"  {pct_int}%", style=self._compaction_color(progress))
-            t.append(f"  {tokens} tok  {duration}")
+                t.append(" · ", style="dim")
+                t.append(f"{pct_int}%", style=self._compaction_color(progress))
+            t.append(" · ", style="dim")
+            t.append(f"{tokens} tok", style="dim")
+            t.append(" · ", style="dim")
+            t.append(duration, style="dim")
         else:
-            # Full: bar + % + tok/s + tokens + duration
+            # Full: bar % · tok/s · tokens · duration
             if enabled and progress > 0:
                 pct_int = min(int(progress * 100), 100)
                 filled  = min(int(progress * _BAR_WIDTH), _BAR_WIDTH)
@@ -590,8 +626,21 @@ class StatusBar(Widget):
                 t.append(" ")
                 t.append(f"{pct_int}%", style=bar_color)
             if tok_s > 0:
-                t.append(f"  {tok_s:.0f} tok/s", style="dim")
-            t.append(f"  {tokens} tok  {duration}")
+                t.append(" · ", style="dim")
+                t.append(f"{tok_s:.0f} tok/s", style="dim")
+            t.append(" · ", style="dim")
+            t.append(f"{tokens} tok", style="dim")
+            t.append(" · ", style="dim")
+            t.append(duration, style="dim")
+
+        # Right-anchored state label
+        if running:
+            state_t = Text(" running", style="#ffa726")
+        else:
+            state_t = Text(" idle", style="dim")
+        pad = max(0, width - t.cell_len - state_t.cell_len)
+        t.append(" " * pad)
+        t.append_text(state_t)
 
         return t
 

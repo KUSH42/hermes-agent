@@ -6356,9 +6356,7 @@ class HermesCLI:
             self._stream_box_opened = False
         self._close_reasoning_box()
 
-        from agent.display import get_tool_emoji
-        emoji = get_tool_emoji(tool_name, default="⚡")
-        _cprint(f"  ┊ {emoji} preparing {tool_name}…")
+        pass  # preparing line removed — spinner label provides in-progress feedback
 
     # ====================================================================
     # Tool progress callback (audio cues for voice mode)
@@ -6422,6 +6420,7 @@ class HermesCLI:
         if self.tool_progress_mode == "off":
             return
 
+        _TOOL_PREFIX = "  ┊ "
         try:
             from agent.display import render_edit_diff_with_delta
 
@@ -6431,6 +6430,7 @@ class HermesCLI:
                 function_args=function_args,
                 snapshot=snapshot,
                 print_fn=_cprint,
+                prefix=_TOOL_PREFIX,
             )
         except Exception:
             logger.debug("Edit diff preview failed for %s", function_name, exc_info=True)
@@ -6445,11 +6445,11 @@ class HermesCLI:
                 )
                 if function_name == "execute_code":
                     if _result_succeeded(function_result):
-                        render_execute_code_preview(function_args.get("code", ""), print_fn=_cprint)
+                        render_execute_code_preview(function_args.get("code", ""), print_fn=_cprint, prefix=_TOOL_PREFIX)
                 elif function_name == "read_file":
-                    render_read_file_preview(function_args.get("path", ""), function_result, print_fn=_cprint)
+                    render_read_file_preview(function_args.get("path", ""), function_result, print_fn=_cprint, prefix=_TOOL_PREFIX)
                 elif function_name == "terminal":
-                    render_terminal_preview(function_args.get("command", ""), function_result, print_fn=_cprint)
+                    render_terminal_preview(function_args.get("command", ""), function_result, print_fn=_cprint, prefix=_TOOL_PREFIX)
             except Exception:
                 logger.debug("%s highlight failed", function_name, exc_info=True)
 

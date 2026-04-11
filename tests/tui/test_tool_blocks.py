@@ -8,6 +8,7 @@ Steps covered:
   6 — browse keybindings (6 tests)
   7 — StatusBar browse layout (4 tests)
   8 — Integration (3 tests)
+  9 — Click-to-toggle (7 tests, SPEC-D)
 """
 
 from __future__ import annotations
@@ -653,3 +654,157 @@ async def test_integration_exit_clears_all_focused():
         await pilot.pause()
 
         assert not any(h.has_class("focused") for h in headers)
+
+
+# ---------------------------------------------------------------------------
+# Step 9 — Click-to-toggle (SPEC-D)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_click_left_toggles_expanded():
+    """Left-click on ToolHeader with affordances toggles block from collapsed to expanded."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        lines = [f"L{i}" for i in range(COLLAPSE_THRESHOLD + 1)]
+        plain = [f"P{i}" for i in range(COLLAPSE_THRESHOLD + 1)]
+        app.mount_tool_block("diff", lines, plain)
+        await pilot.pause()
+
+        block = app.query_one(ToolBlock)
+        assert block._header.collapsed is True
+        assert not block._body.has_class("expanded")
+
+        await pilot.click(block._header)
+        await pilot.pause()
+
+        assert block._header.collapsed is False
+        assert block._body.has_class("expanded")
+
+
+@pytest.mark.asyncio
+async def test_click_left_toggles_back_to_collapsed():
+    """Second left-click on ToolHeader toggles block back to collapsed."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        lines = [f"L{i}" for i in range(COLLAPSE_THRESHOLD + 1)]
+        plain = [f"P{i}" for i in range(COLLAPSE_THRESHOLD + 1)]
+        app.mount_tool_block("diff", lines, plain)
+        await pilot.pause()
+
+        block = app.query_one(ToolBlock)
+        # First click — expand
+        await pilot.click(block._header)
+        await pilot.pause()
+        assert block._header.collapsed is False
+
+        # Second click — collapse
+        await pilot.click(block._header)
+        await pilot.pause()
+        assert block._header.collapsed is True
+        assert not block._body.has_class("expanded")
+
+
+@pytest.mark.asyncio
+async def test_click_while_streaming_is_ignored():
+    """Left-click while streaming (_spinner_char is not None) leaves block unchanged."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        lines = [f"L{i}" for i in range(COLLAPSE_THRESHOLD + 1)]
+        plain = [f"P{i}" for i in range(COLLAPSE_THRESHOLD + 1)]
+        app.mount_tool_block("diff", lines, plain)
+        await pilot.pause()
+
+        block = app.query_one(ToolBlock)
+        header = block._header
+        # Simulate streaming state
+        header._spinner_char = "◐"
+        original_collapsed = header.collapsed
+
+        await pilot.click(header)
+        await pilot.pause()
+
+        assert header.collapsed == original_collapsed
+
+
+@pytest.mark.asyncio
+async def test_click_no_affordances_is_ignored():
+    """Left-click on no-affordance header (_has_affordances=False) leaves block unchanged."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        # Small block: ≤ COLLAPSE_THRESHOLD lines — no affordances
+        lines = [f"L{i}" for i in range(COLLAPSE_THRESHOLD)]
+        plain = [f"P{i}" for i in range(COLLAPSE_THRESHOLD)]
+        app.mount_tool_block("diff", lines, plain)
+        await pilot.pause()
+
+        block = app.query_one(ToolBlock)
+        header = block._header
+        assert header._has_affordances is False
+        assert header.collapsed is False  # auto-expanded
+
+        await pilot.click(header)
+        await pilot.pause()
+
+        # Should remain expanded — click was a no-op
+        assert header.collapsed is False
+        assert block._body.has_class("expanded")
+
+
+@pytest.mark.asyncio
+async def test_right_click_does_not_toggle():
+    """Right-click on ToolHeader does not toggle the block (bubbles to HermesApp)."""
+    from unittest.mock import patch as _patch
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        lines = [f"L{i}" for i in range(COLLAPSE_THRESHOLD + 1)]
+        plain = [f"P{i}" for i in range(COLLAPSE_THRESHOLD + 1)]
+        app.mount_tool_block("diff", lines, plain)
+        await pilot.pause()
+
+        block = app.query_one(ToolBlock)
+        header = block._header
+        original_collapsed = header.collapsed
+
+        await pilot.click(header, button=3)
+        await pilot.pause()
+
+        assert header.collapsed == original_collapsed
+
+
+@pytest.mark.asyncio
+async def test_click_calls_toggle_exactly_once():
+    """Left-click on ToolHeader calls parent.toggle() exactly once."""
+    from unittest.mock import patch as _patch
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        lines = [f"L{i}" for i in range(COLLAPSE_THRESHOLD + 1)]
+        plain = [f"P{i}" for i in range(COLLAPSE_THRESHOLD + 1)]
+        app.mount_tool_block("diff", lines, plain)
+        await pilot.pause()
+
+        block = app.query_one(ToolBlock)
+        toggle_calls = []
+        original_toggle = block.toggle
+
+        def mock_toggle():
+            toggle_calls.append(1)
+            original_toggle()
+
+        with _patch.object(block, "toggle", side_effect=mock_toggle):
+            await pilot.click(block._header)
+            await pilot.pause()
+
+        assert len(toggle_calls) == 1
+
+
+def test_toolheader_hover_css_rule_present():
+    """ToolHeader:hover CSS rule with background accent is present in hermes.tcss."""
+    import os
+    tcss_path = os.path.join(
+        os.path.dirname(__file__),
+        "..", "..", "hermes_cli", "tui", "hermes.tcss"
+    )
+    with open(os.path.abspath(tcss_path)) as f:
+        content = f.read()
+    assert "ToolHeader:hover" in content
+    assert "background: $accent 8%" in content

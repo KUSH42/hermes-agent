@@ -9481,9 +9481,23 @@ class HermesCLI:
                         if _n_images:
                             _cprint(f"  {_DIM}📎 {_n_images} image{'s' if _n_images > 1 else ''} attached{_RST}")
 
+                    # TUI command intercept (undo/retry/rollback)
+                    if _tui_app is not None and isinstance(user_input, str):
+                        try:
+                            if _tui_app._handle_tui_command(user_input):
+                                continue
+                        except Exception:
+                            pass
+
                     # Regular chat - run agent
                     self._agent_running = True
                     if _tui_app is not None:
+                        try:
+                            _tui_app.call_from_thread(
+                                setattr, _tui_app, "_last_user_input", user_input
+                            )
+                        except Exception:
+                            pass
                         try:
                             _tui_app.call_from_thread(setattr, _tui_app, "agent_running", True)
                         except Exception:
@@ -9590,7 +9604,17 @@ class HermesCLI:
         global _hermes_app
         try:
             from hermes_cli.tui.app import HermesApp as _HApp
-            _tui_app = _HApp(cli=self, startup_fn=self._tui_startup_display)
+            from hermes_cli.tui.osc52_probe import probe_osc52 as _probe_osc52, check_clipboard_env as _check_clipboard_env
+            import asyncio as _aio_probe
+            _clipboard_override = _check_clipboard_env()
+            if _clipboard_override is not None:
+                _clipboard_ok = _clipboard_override
+            else:
+                try:
+                    _clipboard_ok = _aio_probe.run(_probe_osc52())
+                except Exception:
+                    _clipboard_ok = False
+            _tui_app = _HApp(cli=self, startup_fn=self._tui_startup_display, clipboard_available=_clipboard_ok)
             _tui_app._spinner_frames = _COMMAND_SPINNER_FRAMES
             _hermes_app = _tui_app
         except ImportError:

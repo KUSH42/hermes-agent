@@ -11,6 +11,7 @@ All widgets follow these conventions (from the migration spec):
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import asyncio
@@ -22,7 +23,8 @@ from rich.style import Style
 from rich.text import Text
 from textual import work
 from textual.app import ComposeResult, RenderResult
-from textual.containers import ScrollableContainer
+from textual.binding import Binding
+from textual.containers import ScrollableContainer, VerticalScroll
 from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.selection import Selection
@@ -36,6 +38,7 @@ from hermes_cli.tui.state import (
     ChoiceOverlayState,
     OverlayState,
     SecretOverlayState,
+    UndoOverlayState,
 )
 
 if TYPE_CHECKING:
@@ -476,7 +479,7 @@ class MessagePanel(Widget):
 
     _msg_counter: int = 0
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, user_text: str = "", **kwargs: Any) -> None:
         MessagePanel._msg_counter += 1
         self._msg_id = MessagePanel._msg_counter
         self._response_rule = TitledRule(id=f"response-rule-{self._msg_id}")
@@ -485,6 +488,7 @@ class MessagePanel(Widget):
             markup=False, highlight=False, wrap=True,
             id=f"response-{self._msg_id}",
         )
+        self._user_text: str = user_text
         super().__init__(**kwargs)
 
     def on_mount(self) -> None:
@@ -631,9 +635,9 @@ class OutputPanel(ScrollableContainer):
         panels = self.query(MessagePanel)
         return panels.last() if panels else None
 
-    def new_message(self) -> MessagePanel:
+    def new_message(self, user_text: str = "") -> MessagePanel:
         """Create and mount a new MessagePanel for a new turn."""
-        panel = MessagePanel()
+        panel = MessagePanel(user_text=user_text)
         self.mount(panel, before=self.live_line)
         return panel
 
@@ -978,6 +982,9 @@ class StatusBar(PulseMixin, Widget):
 
     # Animated tok/s backing reactive — drives smooth counter easing
     _tok_s_displayed: reactive[float] = reactive(0.0, repaint=True)
+
+    def compose(self) -> "ComposeResult":
+        yield Static("⚠ no clipboard", id="status-clipboard-warning")
 
     def on_mount(self) -> None:
         app = self.app
@@ -1472,3 +1479,307 @@ class SecretWidget(CountdownMixin, Widget):
 
     def hide(self) -> None:
         self.display = False
+
+
+# ---------------------------------------------------------------------------
+# UndoConfirmOverlay (SPEC-C)
+# ---------------------------------------------------------------------------
+
+class UndoConfirmOverlay(CountdownMixin, Widget):
+    """Undo confirmation overlay with 10-second auto-cancel.
+
+    Shows the user text that will be removed and waits for Y/Enter (confirm)
+    or N/Escape (cancel).  CountdownMixin drives the timer tick.
+    """
+
+    _state_attr = "undo_state"
+    _timeout_response = "cancel"
+    _countdown_prefix = "undo"
+
+    DEFAULT_CSS = """
+    UndoConfirmOverlay {
+        display: none;
+        height: auto;
+        border: tall $warning;
+        padding: 1 2;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Static("", id="undo-user-text")
+        yield Static("", id="undo-has-checkpoint")
+        yield Static("", id="undo-countdown")
+
+    def on_mount(self) -> None:
+        self._start_countdown()
+
+    def update(self, state: UndoOverlayState) -> None:
+        """Populate content from typed state and make visible."""
+        self.display = True
+        try:
+            preview = state.user_text[:80] + "…" if len(state.user_text) > 80 else state.user_text
+            self.query_one("#undo-user-text", Static).update(
+                f'Removes: "{preview}"\n+ agent\'s response'
+            )
+            checkpoint_text = "+ filesystem checkpoint revert" if state.has_checkpoint else ""
+            self.query_one("#undo-has-checkpoint", Static).update(checkpoint_text)
+            self.query_one("#undo-countdown", Static).update(
+                f"[bold]\\[Y][/bold] Confirm  [bold]\\[N][/bold] Cancel  "
+                f"[dim]auto-cancel ({state.remaining}s)[/dim]"
+            )
+        except NoMatches:
+            pass
+
+    def hide(self) -> None:
+        self.display = False
+
+
+# ---------------------------------------------------------------------------
+# History Search (SPEC-B)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _TurnEntry:
+    """Metadata for one indexed turn (frozen snapshot; never mutated)."""
+    panel: "MessagePanel"
+    index: int          # 1-based (turn 1 = first ever)
+    plain_text: str     # full joined _plain_lines from panel.response_log
+    display: str        # first non-empty line for the result row
+
+
+@dataclass(frozen=True, slots=True)
+class TurnCandidate:
+    """Candidate for fuzzy_rank() carrying a _TurnEntry reference.
+
+    Re-implements Candidate fields inline (rather than subclassing) to avoid
+    the Python slots-inheritance restriction when both base and child are
+    frozen+slotted dataclasses across different module scopes.
+    fuzzy_rank() only reads .display and calls dataclasses.replace(), which
+    works fine on this standalone frozen dataclass.
+    """
+    display: str
+    score: int = 0
+    match_spans: tuple[tuple[int, int], ...] = ()
+    entry: "_TurnEntry | None" = field(default=None)
+
+
+class TurnResultItem(Static):
+    """Single row in the history search result list."""
+
+    DEFAULT_CSS = """
+    TurnResultItem { height: 1; padding: 0 1; }
+    TurnResultItem.--selected { background: $accent 20%; }
+    TurnResultItem:hover { background: $accent 10%; }
+    """
+
+    def __init__(self, entry: "_TurnEntry | None", **kwargs: Any) -> None:
+        self._entry = entry
+        max_width = 76  # fallback; good enough for most terminals
+        label = ""
+        if entry:
+            first = entry.display or "(no content)"
+            truncated = first[:max_width] + "…" if len(first) > max_width else first
+            label = f"[dim]\\[turn {entry.index:>3}][/dim]  {truncated}"
+        super().__init__(label, **kwargs)
+
+    def on_click(self, event: Any) -> None:
+        """Clicking a result row jumps to the turn."""
+        if event.button == 1:
+            try:
+                overlay = self.app.query_one(HistorySearchOverlay)
+                overlay.action_jump_to(self._entry)
+            except NoMatches:
+                pass
+
+
+class HistorySearchOverlay(Widget):
+    """Ctrl+F history search overlay.
+
+    Shows a fuzzy-searchable list of past conversation turns. Ctrl+F opens
+    it; Escape/Ctrl+F/Enter dismiss it (Enter also jumps to the selected turn).
+    """
+
+    DEFAULT_CSS = """
+    HistorySearchOverlay {
+        layer: overlay;
+        dock: top;
+        margin-top: 2;
+        margin-left: 4;
+        width: 90%;
+        max-width: 90;
+        min-width: 40;
+        height: auto;
+        max-height: 18;
+        display: none;
+        background: $panel;
+        border: tall $primary 50%;
+        padding: 0 1;
+    }
+    HistorySearchOverlay.--visible {
+        display: block;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss", priority=True),
+        Binding("ctrl+f", "dismiss", priority=True),
+        Binding("ctrl+c", "dismiss", priority=True),
+        Binding("up", "move_up", priority=True),
+        Binding("down", "move_down", priority=True),
+        Binding("ctrl+p", "move_up", priority=True),
+        Binding("ctrl+n", "move_down", priority=True),
+        Binding("enter", "jump", priority=True),
+    ]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._index: list[_TurnEntry] = []
+        self._candidates: list[TurnCandidate] = []
+        self._selected_idx: int = 0
+        self._saved_hint: str = ""
+
+    def compose(self) -> ComposeResult:
+        yield Input(placeholder="🔍  Search turns…", id="history-search-input")
+        yield VerticalScroll(id="history-result-list")
+        yield Static("", id="history-status")
+
+    def open_search(self) -> None:
+        """Build frozen snapshot index, show overlay, focus search input."""
+        self._build_index()
+        self._selected_idx = 0
+        # Save and update HintBar hint
+        try:
+            hint_bar = self.app.query_one(HintBar)
+            self._saved_hint = hint_bar.hint
+            hint_bar.hint = "↑↓ navigate  Enter jump  Esc close"
+        except NoMatches:
+            self._saved_hint = ""
+        self._render_results("")
+        self.add_class("--visible")
+        try:
+            self.query_one("#history-search-input", Input).focus()
+        except NoMatches:
+            pass
+
+    def action_dismiss(self) -> None:
+        """Hide overlay, restore hint, return focus to HermesInput."""
+        self.remove_class("--visible")
+        try:
+            self.app.query_one(HintBar).hint = self._saved_hint
+        except NoMatches:
+            pass
+        try:
+            from hermes_cli.tui.input_widget import HermesInput
+            self.app.query_one(HermesInput).focus()
+        except (NoMatches, ImportError):
+            pass
+
+    def _build_index(self) -> None:
+        """Build a frozen snapshot of current turns. DOM access — event loop only."""
+        try:
+            output_panel = self.app.query_one(OutputPanel)
+            panels = list(output_panel.query(MessagePanel))  # snapshot copy
+        except NoMatches:
+            panels = []
+        self._index = [
+            _TurnEntry(
+                panel=p,
+                index=i + 1,
+                plain_text="\n".join(p.response_log._plain_lines),
+                display=next((ln for ln in p.response_log._plain_lines if ln.strip()), ""),
+            )
+            for i, p in enumerate(panels)
+        ]
+        # Build candidates in reverse order so empty-query shows most recent first
+        self._candidates = [
+            TurnCandidate(display=e.plain_text, entry=e)
+            for e in reversed(self._index)
+        ]
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Re-rank and display results on every keystroke."""
+        if event.input.id == "history-search-input":
+            self._render_results(event.value)
+
+    def _render_results(self, query: str) -> None:
+        """Apply fuzzy_rank and populate ResultList with TurnResultItem widgets."""
+        from hermes_cli.tui.fuzzy import fuzzy_rank
+        results = fuzzy_rank(query, self._candidates, limit=200)
+        try:
+            result_list = self.query_one("#history-result-list", VerticalScroll)
+        except NoMatches:
+            return
+        # Replace all children with new TurnResultItem widgets.
+        # Use individual remove() per child (snapshot copy) then mount new items.
+        # remove_children() has a deferred-removal race with subsequent mount() calls
+        # that causes newly-mounted items to be removed; the loop pattern avoids this.
+        for child in list(result_list.children):
+            child.remove()
+        items = [TurnResultItem(r.entry) for r in results]
+        if items:
+            result_list.mount(*items)
+        # Update selection clamping — defer until after mount() completes.
+        # mount() is deferred so query(TurnResultItem) returns 0 in the same tick.
+        self._selected_idx = max(0, min(self._selected_idx, len(items) - 1))
+        self.call_after_refresh(self._update_selection)
+        # Status line
+        total = len(self._index)
+        try:
+            self.query_one("#history-status", Static).update(
+                f"[dim]{len(results)} of {total} turn{'s' if total != 1 else ''}[/dim]"
+            )
+        except NoMatches:
+            pass
+
+    def _update_selection(self) -> None:
+        """Apply --selected CSS class to the currently highlighted row."""
+        try:
+            items = list(self.query(TurnResultItem))
+        except Exception:
+            return
+        for i, item in enumerate(items):
+            item.set_class(i == self._selected_idx, "--selected")
+
+    def action_move_up(self) -> None:
+        self._selected_idx = max(0, self._selected_idx - 1)
+        self._update_selection()
+
+    def action_move_down(self) -> None:
+        count = len(list(self.query(TurnResultItem)))
+        self._selected_idx = min(max(count - 1, 0), self._selected_idx + 1)
+        self._update_selection()
+
+    def action_jump(self) -> None:
+        """Jump to the selected turn and dismiss the overlay."""
+        items = list(self.query(TurnResultItem))
+        if not items:
+            self.action_dismiss()
+            return
+        idx = max(0, min(self._selected_idx, len(items) - 1))
+        entry = items[idx]._entry
+        self.action_dismiss()
+        if entry is None:
+            return
+        panel = entry.panel
+        panel.scroll_visible(animate=True)
+        panel.add_class("--highlighted")
+        panel.set_timer(1.5, lambda: panel.remove_class("--highlighted"))
+
+    def action_jump_to(self, entry: "_TurnEntry | None") -> None:
+        """Jump directly to a specific entry (used by TurnResultItem click)."""
+        self.action_dismiss()
+        if entry is None:
+            return
+        panel = entry.panel
+        panel.scroll_visible(animate=True)
+        panel.add_class("--highlighted")
+        panel.set_timer(1.5, lambda: panel.remove_class("--highlighted"))
+
+    def on_resize(self) -> None:
+        """Re-render results to update truncation width after terminal resize."""
+        if self.has_class("--visible"):
+            try:
+                query = self.query_one("#history-search-input", Input).value
+            except NoMatches:
+                query = ""
+            self._render_results(query)

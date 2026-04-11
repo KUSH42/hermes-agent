@@ -1,6 +1,6 @@
 # TUI Turn Undo / Retry — Feature Specification
 
-**Status:** APPROVED  
+**Status:** IMPLEMENTED 2026-04-11  
 **Impact:** Medium-High  
 **Key:** SPEC-C  
 

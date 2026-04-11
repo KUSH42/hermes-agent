@@ -23,6 +23,7 @@ HermesApp {
 
 MessagePanel {
     margin: 1 0 0 0;
+    transition: opacity 0.3s in_out_cubic;
 }
 
 /* --- Reasoning panel --- */
@@ -155,11 +156,28 @@ PreviewPanel {
     padding: 0 1;
 }
 
+/* --- Clipboard warning indicator --- */
+
+#status-clipboard-warning {
+    color: $warning;
+    display: none;
+    margin-left: 1;
+}
+
+#status-clipboard-warning.--active {
+    display: block;
+}
+
 /* --- ToolBlock widgets --- */
 
 /* ToolHeader: structural height:1 is in DEFAULT_CSS */
 ToolHeader {
     margin-left: 0;
+}
+
+/* ToolHeader — hover affordance */
+ToolHeader:hover {
+    background: $accent 8%;
 }
 
 /* ToolBodyContainer body lines — indent matches the ┊ gutter */
@@ -175,3 +193,43 @@ ToolBodyContainer CopyableRichLog {
 
 ContextMenu > _ContextItem:hover { background: $primary 30%; }
 ContextMenu > _ContextSep { color: $text-muted; }
+
+/* --- History search overlay (SPEC-B) --- */
+
+#history-search-input {
+    border: none;
+    background: $surface;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+#history-result-list {
+    height: auto;
+    max-height: 14;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+#history-status {
+    color: $text-muted;
+    text-align: right;
+    padding: 0 1;
+}
+
+TurnResultItem {
+    height: 1;
+    padding: 0 1;
+}
+
+TurnResultItem.--selected {
+    background: $accent 20%;
+}
+
+TurnResultItem:hover {
+    background: $accent 10%;
+}
+
+MessagePanel.--highlighted {
+    background: $accent 15%;
+    transition: background 1.5s in_out_cubic;
+}

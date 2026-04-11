@@ -16,6 +16,7 @@ from typing import Any
 from rich.text import Text
 from textual.app import ComposeResult, RenderResult
 from textual.css.query import NoMatches
+from textual.events import Click
 from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Static
@@ -86,6 +87,23 @@ class ToolHeader(Widget):
     def _end_flash(self) -> None:
         self._copy_flash = False
         self.refresh()
+
+    def on_click(self, event: Click) -> None:
+        """Left-click toggles the parent ToolBlock.
+
+        Right-clicks (button=3) are not intercepted here — they bubble up to
+        HermesApp.on_click() which builds the context menu.
+        """
+        if event.button != 1:
+            return                          # right/middle click: let bubble to HermesApp
+        if self._spinner_char is not None:
+            return                          # streaming: ignore click
+        if not self._has_affordances:
+            return                          # always-expanded block: nothing to toggle
+        event.prevent_default()
+        parent = self.parent
+        if parent is not None:
+            parent.toggle()
 
 
 class ToolBodyContainer(Widget):

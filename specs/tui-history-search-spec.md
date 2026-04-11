@@ -1,6 +1,6 @@
 # TUI History Search — Feature Specification
 
-**Status:** APPROVED  
+**Status:** IMPLEMENTED 2026-04-11  
 **Impact:** High  
 **Key:** SPEC-B  
 

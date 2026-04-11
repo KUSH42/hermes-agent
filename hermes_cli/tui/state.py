@@ -58,3 +58,19 @@ class SecretOverlayState(OverlayState):
     """
 
     prompt: str = ""
+
+
+@dataclass
+class UndoOverlayState(OverlayState):
+    """State for the undo confirmation overlay.
+
+    Inherits ``deadline: float`` and ``response_queue: queue.Queue`` from
+    OverlayState.
+
+    Attributes:
+        user_text: The user message that will be removed.
+        has_checkpoint: True if a filesystem checkpoint exists.
+    """
+
+    user_text: str = ""
+    has_checkpoint: bool = False

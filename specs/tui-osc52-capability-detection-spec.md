@@ -1,6 +1,6 @@
 # TUI OSC 52 Clipboard Capability Detection — Feature Specification
 
-**Status:** APPROVED  
+**Status:** IMPLEMENTED 2026-04-11  
 **Impact:** Low  
 **Key:** SPEC-E  
 

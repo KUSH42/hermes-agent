@@ -15,6 +15,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import platform
+import queue
+import re
 import threading
 import time as _time
 from datetime import datetime
@@ -33,11 +35,13 @@ from hermes_cli.tui.state import (
     ChoiceOverlayState,
     OverlayState,
     SecretOverlayState,
+    UndoOverlayState,
 )
 from hermes_cli.tui.widgets import (
     ApprovalWidget,
     ClarifyWidget,
     CopyableRichLog,
+    HistorySearchOverlay,
     HintBar,
     ImageBar,
     LiveLineWidget,
@@ -50,6 +54,7 @@ from hermes_cli.tui.widgets import (
     SudoWidget,
     ThinkingWidget,
     TitledRule,
+    UndoConfirmOverlay,
     UserEchoPanel,
     VoiceStatusBar,
     _safe_widget_call,
@@ -111,6 +116,7 @@ class HermesApp(App):
     approval_state: reactive[ChoiceOverlayState | None] = reactive(None)
     sudo_state: reactive[SecretOverlayState | None] = reactive(None)
     secret_state: reactive[SecretOverlayState | None] = reactive(None)
+    undo_state: reactive[UndoOverlayState | None] = reactive(None)
 
     # Status bar data
     status_tokens: reactive[int] = reactive(0)
@@ -145,10 +151,11 @@ class HermesApp(App):
 
     # hint_text is NOT on HermesApp — HintBar.hint is the single source of truth.
 
-    def __init__(self, cli: Any, startup_fn=None, **kwargs: Any) -> None:
+    def __init__(self, cli: Any, startup_fn=None, clipboard_available: bool = True, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.cli = cli
         self._startup_fn = startup_fn
+        self._clipboard_available: bool = clipboard_available
 
         # Bounded queue: prevents unbounded memory growth when agent produces
         # faster than UI renders. 4096 chunks ≈ ~1MB of text at ~256 bytes/chunk.
@@ -174,6 +181,16 @@ class HermesApp(App):
         # Active StreamingToolBlocks keyed by tool_call_id
         self._active_streaming_blocks: dict[str, Any] = {}
 
+        # Undo/retry state
+        self._undo_in_progress: bool = False
+        self._last_user_input: str = ""
+        # Panel/args to act on when undo/rollback overlay is confirmed
+        self._pending_undo_panel: "MessagePanel | None" = None
+        self._pending_rollback_n: int = 0
+        # Timestamp until which _flash_hint has the hint bar reserved.
+        # _tick_spinner must not overwrite before this expires.
+        self._flash_hint_expires: float = 0.0
+
     # --- Compose ---
 
     def compose(self) -> ComposeResult:
@@ -183,6 +200,7 @@ class HermesApp(App):
             yield ApprovalWidget(id="approval")
             yield SudoWidget(id="sudo")
             yield SecretWidget(id="secret")
+            yield UndoConfirmOverlay(id="undo-confirm")
         yield HintBar(id="hint-bar")
         yield ImageBar(id="image-bar")
         yield TitledRule(id="input-rule", show_state=True)
@@ -194,6 +212,7 @@ class HermesApp(App):
             # CompletionOverlay must be composed BEFORE HermesInput so it sits
             # directly above the input in the natural layout flow (no dock/offset).
             yield _CO(id="completion-overlay")
+            yield HistorySearchOverlay(id="history-search")
             with Horizontal(id="input-row"):
                 yield Static("❯ ", id="input-chevron")
                 yield _HI(id="input-area")
@@ -223,6 +242,11 @@ class HermesApp(App):
             self.query_one("#input-area").focus()
         except NoMatches:
             pass
+        if not self._clipboard_available:
+            try:
+                self.query_one("#status-clipboard-warning").add_class("--active")
+            except NoMatches:
+                pass
         if self._startup_fn is not None:
             threading.Thread(target=self._startup_fn, daemon=True).start()
 
@@ -370,14 +394,15 @@ class HermesApp(App):
         except NoMatches:
             pass
 
-        # Also update HintBar for overlay countdowns
-        try:
-            self.query_one(HintBar).hint = hint_suffix if any(
-                getattr(self, attr) is not None
-                for attr in ("approval_state", "clarify_state", "sudo_state", "secret_state")
-            ) else ""
-        except NoMatches:
-            pass
+        # Also update HintBar for overlay countdowns — but don't clobber a flash.
+        if _time.monotonic() >= self._flash_hint_expires:
+            try:
+                self.query_one(HintBar).hint = hint_suffix if any(
+                    getattr(self, attr) is not None
+                    for attr in ("approval_state", "clarify_state", "sudo_state", "secret_state")
+                ) else ""
+            except NoMatches:
+                pass
 
     def _build_hint_text(self) -> str:
         """Build the hint suffix shown beside the spinner.
@@ -441,6 +466,13 @@ class HermesApp(App):
     # --- Reactive watchers ---
 
     def watch_agent_running(self, value: bool) -> None:
+        # --- undo safety guard ---
+        if value and self.undo_state is not None:
+            # Agent started while undo overlay was open — auto-cancel for safety
+            self.undo_state = None
+            self._pending_undo_panel = None
+            self._flash_hint("⚠  Agent started, undo cancelled", 2.0)
+
         try:
             widget = self.query_one("#input-area")
             widget.disabled = value
@@ -455,10 +487,12 @@ class HermesApp(App):
                     pass
         except NoMatches:
             pass
-        # New turn starting — create a new MessagePanel
+        # New turn starting — create a new MessagePanel with the last user input
         if value:
             try:
-                self.query_one(OutputPanel).new_message()
+                self.query_one(OutputPanel).new_message(
+                    user_text=self._last_user_input
+                )
             except NoMatches:
                 pass
         # Clear hint bar when agent stops
@@ -536,6 +570,28 @@ class HermesApp(App):
                 w.update(value)
         except NoMatches:
             pass
+
+    def watch_undo_state(self, value: UndoOverlayState | None) -> None:
+        try:
+            w = self.query_one(UndoConfirmOverlay)
+            w.display = value is not None
+            if value is not None:
+                w.update(value)
+        except NoMatches:
+            pass
+        # Disable input while overlay is open so printable keys (y/n) bubble
+        # up to the app-level on_key handler instead of being typed into the field.
+        try:
+            inp = self.query_one("#input-area")
+            if value is not None:
+                inp.disabled = True
+            elif not self.agent_running and not self.command_running:
+                inp.disabled = False
+        except NoMatches:
+            pass
+        # Clear pending panel ref when overlay is dismissed (including auto-cancel)
+        if value is None:
+            self._pending_undo_panel = None
 
     def watch_voice_mode(self, value: bool) -> None:
         try:
@@ -754,14 +810,31 @@ class HermesApp(App):
             bar = self.query_one(HintBar)
             prior = bar.hint
             bar.hint = text
+            # Reserve the hint bar for the flash duration so _tick_spinner
+            # does not overwrite the message before it expires.
+            self._flash_hint_expires = _time.monotonic() + duration
             self.set_timer(duration, lambda: setattr(bar, "hint", prior))
         except NoMatches:
             pass
 
+    def _copy_text_with_hint(self, text: str) -> None:
+        """Copy text to clipboard with capability guard and hint flash."""
+        if not self._clipboard_available:
+            self._flash_hint("⚠  Clipboard unavailable (terminal has no OSC 52 support)", 2.5)
+            return
+        self.copy_to_clipboard(text)
+        self._flash_hint(f"⎘  {len(text)} chars copied", 1.5)
+
     # --- Right-click context menu ---
 
     def on_click(self, event: Any) -> None:
-        """Intercept right-clicks (button=3) and show a context menu."""
+        """Left-click focuses input; right-click (button=3) shows context menu."""
+        if event.button == 1:
+            try:
+                self.query_one("#input-area").focus()
+            except NoMatches:
+                pass
+            return
         if event.button != 3:
             return
         items = self._build_context_items(event)
@@ -871,8 +944,7 @@ class HermesApp(App):
         """Copy a ToolBlock's plain-text content to clipboard and flash hint."""
         try:
             content = block.copy_content()
-            self.copy_to_clipboard(content)
-            self._flash_hint(f"⎘  {len(content)} chars copied", 1.5)
+            self._copy_text_with_hint(content)
         except Exception:
             self._flash_hint("⚠ copy failed", 1.5)
 
@@ -882,8 +954,7 @@ class HermesApp(App):
             from hermes_cli.tui.widgets import CopyableRichLog as _CRL
             parts = [log.copy_content() for log in self.query(_CRL)]
             content = "\n".join(p for p in parts if p)
-            self.copy_to_clipboard(content)
-            self._flash_hint(f"⎘  {len(content)} chars copied", 1.5)
+            self._copy_text_with_hint(content)
         except Exception:
             self._flash_hint("⚠ copy failed", 1.5)
 
@@ -897,15 +968,13 @@ class HermesApp(App):
                 content = panel.copy_content()
             else:
                 return
-            self.copy_to_clipboard(content)
-            self._flash_hint(f"⎘  {len(content)} chars copied", 1.5)
+            self._copy_text_with_hint(content)
         except Exception:
             self._flash_hint("⚠ copy failed", 1.5)
 
     def _copy_text(self, text: str) -> None:
         """Copy arbitrary text to clipboard and flash hint."""
-        self.copy_to_clipboard(text)
-        self._flash_hint(f"⎘  {len(text)} chars copied", 1.5)
+        self._copy_text_with_hint(text)
 
     def _paste_into_input(self) -> None:
         """Focus the input and show a hint to press ctrl+v."""
@@ -926,6 +995,138 @@ class HermesApp(App):
         except NoMatches:
             pass
 
+    # --- Undo / Retry / Rollback (SPEC-C) ---
+
+    def _handle_tui_command(self, text: str) -> bool:
+        """Intercept TUI-specific slash commands before agent sees them.
+
+        Returns True if the command was handled here (do not forward to agent).
+        Returns False if not a TUI command (forward to agent as normal).
+        """
+        stripped = text.strip()
+        if stripped == "/undo":
+            self._initiate_undo()
+            return True
+        if stripped == "/retry":
+            self._initiate_retry()
+            return True
+        if re.match(r"^/rollback(?:\s+\d+)?$", stripped):
+            self._initiate_rollback(stripped)
+            return True
+        return False
+
+    def _has_rollback_checkpoint(self) -> bool:
+        """Return True if the agent has a filesystem checkpoint available."""
+        try:
+            return bool(getattr(self.cli.agent, "has_checkpoint", lambda: False)())
+        except Exception:
+            return False
+
+    def _initiate_undo(self) -> None:
+        if self._undo_in_progress:
+            self._flash_hint("⚠  Undo in progress", 1.5)
+            return
+        if self.agent_running:
+            self._flash_hint("⚠  Cannot undo while agent is running", 2.0)
+            return
+        panels = list(self.query(MessagePanel))
+        if not panels:
+            self._flash_hint("⚠  Nothing to undo", 1.5)
+            return
+        last_panel = panels[-1]
+        user_text = getattr(last_panel, "_user_text", "")
+        state = UndoOverlayState(
+            deadline=_time.monotonic() + 10,
+            response_queue=queue.Queue(),
+            user_text=user_text[:80] + "…" if len(user_text) > 80 else user_text,
+            has_checkpoint=self._has_rollback_checkpoint(),
+        )
+        self._pending_undo_panel = last_panel
+        self._pending_rollback_n = 0
+        self.undo_state = state
+
+    @work(thread=False)
+    async def _run_undo_sequence(self, panel: MessagePanel) -> None:
+        try:
+            self._undo_in_progress = True
+
+            # Step 1: Opacity fade to signal impending removal
+            panel.styles.opacity = 0.3
+            await asyncio.sleep(0.4)  # wait for CSS transition (0.3s + margin)
+
+            # Step 2: Call agent undo in a thread so event loop stays responsive
+            try:
+                await asyncio.to_thread(self.cli.agent.undo)
+            except (AttributeError, NotImplementedError):
+                self._flash_hint("⚠  Undo not supported by agent", 2.0)
+                panel.styles.opacity = 1.0
+                return
+
+            # Step 3: Remove the MessagePanel from DOM (synchronous in Textual)
+            panel.remove()
+
+            # Step 4: Restore user message to HermesInput (if stored)
+            user_text = getattr(panel, "_user_text", "")
+            if user_text:
+                try:
+                    from hermes_cli.tui.input_widget import HermesInput
+                    hi = self.query_one(HermesInput)
+                    hi.value = user_text
+                    hi.cursor_position = len(user_text)
+                except NoMatches:
+                    pass
+
+            # Step 5: Feedback
+            self._flash_hint("↩  Undo done", 2.0)
+        finally:
+            self._undo_in_progress = False
+
+    def _initiate_retry(self) -> None:
+        if self.agent_running:
+            self._flash_hint("⚠  Cannot retry while agent is running", 2.0)
+            return
+        panels = list(self.query(MessagePanel))
+        if not panels:
+            self._flash_hint("⚠  Nothing to retry", 1.5)
+            return
+        last_user_text = getattr(panels[-1], "_user_text", "")
+        if not last_user_text:
+            self._flash_hint("⚠  No user message to retry", 1.5)
+            return
+        try:
+            from hermes_cli.tui.input_widget import HermesInput
+            hi = self.query_one(HermesInput)
+            hi.value = last_user_text
+            hi.cursor_position = len(last_user_text)
+            hi.action_submit()
+        except NoMatches:
+            pass
+
+    def _initiate_rollback(self, text: str) -> None:
+        m = re.match(r"^/rollback(?:\s+(\d+))?$", text.strip())
+        if not m:
+            self._flash_hint("⚠  Usage: /rollback [N]", 2.0)
+            return
+        n = int(m.group(1)) if m.group(1) else 0
+        # Build a simple rollback state reusing UndoOverlayState
+        state = UndoOverlayState(
+            deadline=_time.monotonic() + 15,
+            response_queue=queue.Queue(),
+            user_text=f"Filesystem rollback (checkpoint {n})",
+            has_checkpoint=True,
+        )
+        self._pending_undo_panel = None
+        self._pending_rollback_n = n
+        self.undo_state = state
+
+    @work(thread=False)
+    async def _run_rollback_sequence(self, n: int) -> None:
+        try:
+            await asyncio.to_thread(self.cli.agent.rollback, n)
+            self._flash_hint("↩  Rollback done", 2.0)
+        except (AttributeError, NotImplementedError):
+            self._flash_hint("⚠  Rollback not supported by agent", 2.0)
+
     # --- Key bindings for overlays, copy, and interrupt ---
 
     def on_key(self, event: Any) -> None:
@@ -938,14 +1139,47 @@ class HermesApp(App):
         """
         key = event.key
 
+        # --- ctrl+f → toggle history search overlay ---
+        if key == "ctrl+f":
+            try:
+                hs = self.query_one(HistorySearchOverlay)
+                if hs.has_class("--visible"):
+                    hs.action_dismiss()
+                else:
+                    hs.open_search()
+            except NoMatches:
+                pass
+            event.prevent_default()
+            return
+
+        # --- undo overlay key dispatch ---
+        if self.undo_state is not None:
+            if event.key in ("y", "enter"):
+                pending_panel = self._pending_undo_panel
+                pending_n = self._pending_rollback_n
+                self.undo_state = None
+                self._pending_undo_panel = None
+                if pending_panel is not None:
+                    # Undo: run undo sequence directly (no thread/queue needed)
+                    self._run_undo_sequence(pending_panel)
+                else:
+                    # Rollback
+                    self._run_rollback_sequence(pending_n)
+                event.prevent_default()
+                return
+            if event.key in ("n", "escape"):
+                self.undo_state = None
+                self._pending_undo_panel = None
+                event.prevent_default()
+                return
+
         # --- ctrl+c: copy / cancel overlay / clear / exit ---
         if key == "ctrl+c":
             # Priority 1: copy selected text from output panels
             # (Input handles its own selection copy internally)
             selected = self._get_selected_text()
             if selected:
-                self.copy_to_clipboard(selected)
-                self._flash_hint(f"⎘  {len(selected)} chars copied", 1.5)
+                self._copy_text_with_hint(selected)
                 event.prevent_default()
                 return
 
@@ -1009,6 +1243,17 @@ class HermesApp(App):
 
         # --- escape: cancel overlay, interrupt agent, browse mode, or enter browse ---
         if key == "escape":
+            # Priority -1: dismiss history search overlay (highest priority — fires
+            # before completion overlay so Escape always closes the search first).
+            try:
+                hs = self.query_one(HistorySearchOverlay)
+                if hs.has_class("--visible"):
+                    hs.action_dismiss()
+                    event.prevent_default()
+                    return
+            except NoMatches:
+                pass
+
             # Priority 0: dismiss completion overlay (before everything else so it
             # doesn't fire agent-interrupt or browse-mode on the same keystroke).
             try:
@@ -1100,7 +1345,7 @@ class HermesApp(App):
                     h = headers[idx]
                     parent = h.parent
                     if hasattr(parent, "copy_content"):
-                        self.copy_to_clipboard(parent.copy_content())
+                        self._copy_text_with_hint(parent.copy_content())
                     h.flash_copy()
                 event.prevent_default()
                 return

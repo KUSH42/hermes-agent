@@ -1,6 +1,6 @@
 # TUI ToolBlock Click-to-Toggle — Feature Specification
 
-**Status:** APPROVED  
+**Status:** IMPLEMENTED 2026-04-11  
 **Impact:** Low-Medium  
 **Key:** SPEC-D  
 

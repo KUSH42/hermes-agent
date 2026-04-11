@@ -247,13 +247,73 @@ async def test_env_var_override_disable():
 
 @pytest.mark.asyncio
 async def test_speed_zero_delay():
-    """speed=0 → _typewriter_delay_s() returns 0.0."""
-    cfg = {"terminal": {"typewriter": {"speed": 0}}}
+    """speed=0 in config → _typewriter_delay_s() returns 0.0.
+
+    Injects get_config into hermes_cli.config via sys.modules so the local
+    import inside _typewriter_delay_s() resolves to the mock.
+    """
+    import sys
+    import types
     import hermes_cli.tui.widgets as _w
-    # Patch the local import inside _typewriter_delay_s
-    with patch("hermes_cli.tui.widgets._typewriter_delay_s", return_value=0.0):
+
+    mock_mod = types.ModuleType("hermes_cli.config")
+    mock_mod.get_config = lambda: {"terminal": {"typewriter": {"speed": 0}}}
+    real_mod = sys.modules.get("hermes_cli.config")
+    sys.modules["hermes_cli.config"] = mock_mod
+    try:
         delay = _w._typewriter_delay_s()
+    finally:
+        if real_mod is not None:
+            sys.modules["hermes_cli.config"] = real_mod
+        else:
+            sys.modules.pop("hermes_cli.config", None)
     assert delay == 0.0
+
+
+@pytest.mark.asyncio
+async def test_ansi_sequences_atomized():
+    """feed() with ANSI escape sequences enqueues complete sequences as single items."""
+    import hermes_cli.tui.widgets as _w
+    patches = _tw_patch(enabled=True, speed=1)  # slow so drainer doesn't drain
+    with patches[0], patches[1], patches[2], patches[3]:
+        app = _make_app()
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            live = app.query_one(LiveLineWidget)
+            # CSI colour sequence + plain chars + reset sequence
+            chunk = "\x1b[31mhi\x1b[0m"
+            live.feed(chunk)
+            # Expected queue items: "\x1b[31m", "h", "i", "\x1b[0m" = 4 items
+            assert live._char_queue.qsize() == 4
+            items = [live._char_queue.get_nowait() for _ in range(4)]
+            assert items[0] == "\x1b[31m"   # full CSI sequence — not split
+            assert items[1] == "h"
+            assert items[2] == "i"
+            assert items[3] == "\x1b[0m"    # full reset sequence — not split
+
+
+@pytest.mark.asyncio
+async def test_feed_empty_chunk_noop():
+    """feed('') is a no-op for both enabled and disabled paths."""
+    import hermes_cli.tui.widgets as _w
+    # Disabled path
+    with patch.object(_w, "_typewriter_enabled", return_value=False):
+        app = _make_app()
+        async with app.run_test(size=(80, 24)) as pilot:
+            live = app.query_one(LiveLineWidget)
+            live.feed("")
+            await pilot.pause()
+            assert live._buf == ""
+
+    # Enabled path
+    patches = _tw_patch(enabled=True, speed=1)
+    with patches[0], patches[1], patches[2], patches[3]:
+        app2 = _make_app()
+        async with app2.run_test(size=(80, 24)) as pilot2:
+            await pilot2.pause()
+            live2 = app2.query_one(LiveLineWidget)
+            live2.feed("")
+            assert live2._char_queue.qsize() == 0
 
 
 @pytest.mark.asyncio

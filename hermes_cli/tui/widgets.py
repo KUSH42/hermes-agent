@@ -94,9 +94,9 @@ def _typewriter_enabled() -> bool:
     if env == "0":
         return False
     try:
-        from hermes_cli.config import get_config
+        from hermes_cli.config import read_raw_config
         return bool(
-            get_config().get("terminal", {}).get("typewriter", {}).get("enabled", False)
+            read_raw_config().get("terminal", {}).get("typewriter", {}).get("enabled", False)
         )
     except Exception:
         return False
@@ -105,8 +105,8 @@ def _typewriter_enabled() -> bool:
 def _typewriter_delay_s() -> float:
     speed = 60
     try:
-        from hermes_cli.config import get_config
-        speed = get_config().get("terminal", {}).get("typewriter", {}).get("speed", 60)
+        from hermes_cli.config import read_raw_config
+        speed = read_raw_config().get("terminal", {}).get("typewriter", {}).get("speed", 60)
     except Exception:
         pass
     if speed <= 0:
@@ -116,8 +116,8 @@ def _typewriter_delay_s() -> float:
 
 def _typewriter_burst_threshold() -> int:
     try:
-        from hermes_cli.config import get_config
-        raw = get_config().get("terminal", {}).get("typewriter", {}).get("burst_threshold", 128)
+        from hermes_cli.config import read_raw_config
+        raw = read_raw_config().get("terminal", {}).get("typewriter", {}).get("burst_threshold", 128)
         return max(1, int(raw))
     except Exception:
         return 128
@@ -125,9 +125,9 @@ def _typewriter_burst_threshold() -> int:
 
 def _typewriter_cursor_enabled() -> bool:
     try:
-        from hermes_cli.config import get_config
+        from hermes_cli.config import read_raw_config
         return bool(
-            get_config().get("terminal", {}).get("typewriter", {}).get("cursor", True)
+            read_raw_config().get("terminal", {}).get("typewriter", {}).get("cursor", True)
         )
     except Exception:
         return True
@@ -140,8 +140,8 @@ def _typewriter_cursor_enabled() -> bool:
 def _cursor_blink_enabled() -> bool:
     """Non-typewriter cursor blink (default: true)."""
     try:
-        from hermes_cli.config import get_config
-        return bool(get_config().get("display", {}).get("cursor_blink", True))
+        from hermes_cli.config import read_raw_config
+        return bool(read_raw_config().get("display", {}).get("cursor_blink", True))
     except Exception:
         return True
 
@@ -149,8 +149,8 @@ def _cursor_blink_enabled() -> bool:
 def _pulse_enabled() -> bool:
     """PulseMixin on StatusBar running indicator (default: true)."""
     try:
-        from hermes_cli.config import get_config
-        return bool(get_config().get("display", {}).get("running_indicator_pulse", True))
+        from hermes_cli.config import read_raw_config
+        return bool(read_raw_config().get("display", {}).get("running_indicator_pulse", True))
     except Exception:
         return True
 
@@ -158,8 +158,8 @@ def _pulse_enabled() -> bool:
 def _animate_counters_enabled() -> bool:
     """AnimatedCounter smooth easing on numeric values (default: true)."""
     try:
-        from hermes_cli.config import get_config
-        return bool(get_config().get("display", {}).get("animate_counters", True))
+        from hermes_cli.config import read_raw_config
+        return bool(read_raw_config().get("display", {}).get("animate_counters", True))
     except Exception:
         return True
 

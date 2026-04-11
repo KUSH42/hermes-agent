@@ -257,7 +257,7 @@ async def test_speed_zero_delay():
     import hermes_cli.tui.widgets as _w
 
     mock_mod = types.ModuleType("hermes_cli.config")
-    mock_mod.get_config = lambda: {"terminal": {"typewriter": {"speed": 0}}}
+    mock_mod.read_raw_config = lambda: {"terminal": {"typewriter": {"speed": 0}}}
     real_mod = sys.modules.get("hermes_cli.config")
     sys.modules["hermes_cli.config"] = mock_mod
     try:

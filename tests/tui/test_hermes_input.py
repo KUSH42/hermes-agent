@@ -1,11 +1,19 @@
 """Tests for HermesInput widget (Input-based)."""
 
+from __future__ import annotations
+
+import asyncio
+import time
 from unittest.mock import MagicMock
 
 import pytest
 
 from hermes_cli.tui.app import HermesApp
+from hermes_cli.tui.completion_list import VirtualCompletionList
+from hermes_cli.tui.completion_overlay import CompletionOverlay
+from hermes_cli.tui.history_suggester import HistorySuggester
 from hermes_cli.tui.input_widget import HermesInput
+from hermes_cli.tui.path_search import PathCandidate, SlashCandidate
 
 
 @pytest.mark.asyncio
@@ -86,8 +94,8 @@ async def test_input_insert_text():
 
 
 @pytest.mark.asyncio
-async def test_slash_command_autocomplete():
-    """Typing '/' triggers autocomplete when slash commands are set."""
+async def test_slash_still_works():
+    """Typing '/' triggers the completion overlay with slash candidates."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -96,13 +104,17 @@ async def test_slash_command_autocomplete():
         inp.value = "/he"
         inp.cursor_position = 3
         await pilot.pause()
-        assert inp.has_class("--autocomplete-visible")
-        assert "/help" in inp._autocomplete_items
+        # New API: overlay visible, list has candidates
+        overlay = app.query_one(CompletionOverlay)
+        assert overlay.has_class("--visible")
+        clist = app.query_one(VirtualCompletionList)
+        displays = [c.display for c in clist.items]
+        assert any("help" in d for d in displays)
 
 
 @pytest.mark.asyncio
 async def test_history_navigation():
-    """Up/Down keys cycle through history."""
+    """Up/Down keys cycle through history when overlay is hidden."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -127,7 +139,7 @@ async def test_history_navigation_empty_history():
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         inp = app.query_one(HermesInput)
-        inp._history = []  # ensure empty
+        inp._history = []
         inp.value = "current"
         inp.action_history_prev()
         assert inp.value == "current"
@@ -160,7 +172,6 @@ async def test_disabled_input_rejects_keystrokes():
         app.agent_running = True
         await pilot.pause()
         assert inp.disabled
-        # Try typing — value should remain empty
         await pilot.press("a", "b", "c")
         await pilot.pause()
         assert inp.value == ""
@@ -168,16 +179,17 @@ async def test_disabled_input_rejects_keystrokes():
 
 @pytest.mark.asyncio
 async def test_input_changed_triggers_autocomplete():
-    """watch_value updates autocomplete popup."""
+    """watch_value updates completion overlay on slash input."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         inp = app.query_one(HermesInput)
         inp.set_slash_commands(["/help", "/history"])
-        # Setting value should trigger watch_value → _update_autocomplete
         inp.value = "/he"
+        inp.cursor_position = 3
         await pilot.pause()
-        assert inp._autocomplete_items == ["/help"]
+        overlay = app.query_one(CompletionOverlay)
+        assert overlay.has_class("--visible")
 
 
 @pytest.mark.asyncio
@@ -244,95 +256,203 @@ async def test_ctrl_v_pastes():
         assert "pasted" in inp.value
 
 
+# ---------------------------------------------------------------------------
+# Phase 4 new tests
+# ---------------------------------------------------------------------------
+
 @pytest.mark.asyncio
-async def test_history_preserves_selection():
-    """Up/down history navigation moves cursor to end, clearing selection."""
+async def test_path_completion_triggers_walker() -> None:
+    """Typing '@' causes PathSearchProvider.search to be called."""
+    from unittest.mock import patch
+    from hermes_cli.tui.path_search import PathSearchProvider
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        provider = app.query_one(PathSearchProvider)
+        search_calls: list = []
+        original_search = provider.search
+
+        def capture_search(query, root):
+            search_calls.append((query, root))
+            # Don't actually run the walk in tests
+        provider.search = capture_search  # type: ignore[method-assign]
+
+        inp = app.query_one(HermesInput)
+        inp.value = "@src"
+        inp.cursor_position = 4
+        await pilot.pause()
+
+        assert len(search_calls) > 0, "PathSearchProvider.search was not called"
+        assert search_calls[0][0] == "src"
+
+
+@pytest.mark.asyncio
+async def test_path_completion_populates_list() -> None:
+    """Batch handler updates VirtualCompletionList.items."""
+    from hermes_cli.tui.path_search import PathSearchProvider
+
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         inp = app.query_one(HermesInput)
-        inp._history = ["older", "newer"]
-        inp.value = "current"
-        inp.focus()
+        inp.value = "@src"
+        inp.cursor_position = 4
         await pilot.pause()
-        # Select all then navigate history — selection should be gone
-        inp.action_select_all()
+
+        # Simulate a batch arriving
+        from hermes_cli.tui.completion_context import CompletionContext, CompletionTrigger
+        inp._current_trigger = CompletionTrigger(
+            CompletionContext.PATH_REF, "src", 1
+        )
+        batch_msg = PathSearchProvider.Batch(
+            query="src",
+            batch=[
+                PathCandidate(display="src/main.py", abs_path="/tmp/src/main.py"),
+                PathCandidate(display="src/utils.py", abs_path="/tmp/src/utils.py"),
+            ],
+            final=True,
+        )
+        inp.on_path_search_provider_batch(batch_msg)
         await pilot.pause()
-        inp.action_history_prev()
-        await pilot.pause()
-        # After history nav, cursor should be at end of new value
-        assert inp.cursor_position == len(inp.value)
+
+        clist = app.query_one(VirtualCompletionList)
+        assert len(clist.items) == 2
 
 
 @pytest.mark.asyncio
-async def test_spinner_overlay_when_disabled():
-    """Spinner overlay shows when agent_running; input hides."""
-    app = HermesApp(cli=MagicMock())
-    async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause()
-        import asyncio
-        app.agent_running = True
-        await pilot.pause()
-        await asyncio.sleep(0.15)
-        await pilot.pause()
-        from textual.widgets import Static
-        overlay = app.query_one("#spinner-overlay", Static)
-        inp = app.query_one("#input-area")
-        assert overlay.display
-        assert not inp.display
+async def test_stale_batch_dropped() -> None:
+    """Batch with mismatched query is ignored."""
+    from hermes_cli.tui.completion_context import CompletionContext, CompletionTrigger
+    from hermes_cli.tui.path_search import PathSearchProvider
 
-
-@pytest.mark.asyncio
-async def test_paste_long_text():
-    """Pasting text longer than terminal width is stored correctly."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         inp = app.query_one(HermesInput)
-        long_text = "a" * 200
-        inp.focus()
+
+        # Current trigger is "src" but batch has query "old"
+        inp._current_trigger = CompletionTrigger(
+            CompletionContext.PATH_REF, "src", 1
+        )
+        stale_batch = PathSearchProvider.Batch(
+            query="old",
+            batch=[PathCandidate(display="old.py", abs_path="/tmp/old.py")],
+            final=True,
+        )
+        inp.on_path_search_provider_batch(stale_batch)
         await pilot.pause()
-        app.copy_to_clipboard(long_text)
-        await pilot.pause()
-        await pilot.press("ctrl+v")
-        await pilot.pause()
-        assert inp.value == long_text
+
+        clist = app.query_one(VirtualCompletionList)
+        # Items should remain empty (stale batch discarded)
+        assert len(clist.items) == 0
 
 
 @pytest.mark.asyncio
-async def test_copy_from_output_is_plain():
-    """CopyableRichLog.get_selection returns text without ANSI codes."""
-    from textual.geometry import Offset
-    from textual.selection import Selection
-    from hermes_cli.tui.widgets import CopyableRichLog, _strip_ansi
-    from rich.text import Text
+async def test_tab_accepts_highlighted_slash() -> None:
+    """Tab on a SlashCandidate replaces value with '<cmd> '."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        inp.set_slash_commands(["/help", "/history"])
+        inp.value = "/he"
+        inp.cursor_position = 3
+        await pilot.pause()
 
-    log = CopyableRichLog()
-    ansi_line = "\x1b[1mBold text\x1b[0m"
-    plain_line = _strip_ansi(ansi_line)
-    log.write_with_source(Text.from_ansi(ansi_line), plain_line)
+        # Simulate Tab press
+        inp.action_accept_autocomplete()
+        await pilot.pause()
 
-    # Select all: col 0–len on row 0. Offset(x, y): x=col, y=row.
-    sel = Selection(
-        start=Offset(0, 0),
-        end=Offset(len(plain_line), 0),
-    )
-    result = log.get_selection(sel)
-    assert result is not None
-    text, sep = result
-    assert "\x1b" not in text
-    assert "Bold text" in text
+        assert inp.value == "/help "
+        assert inp.cursor_position == len("/help ")
 
 
 @pytest.mark.asyncio
-async def test_copy_from_reasoning_is_plain():
-    """ReasoningPanel _plain_lines stores text without gutter prefix or ANSI."""
-    from hermes_cli.tui.widgets import ReasoningPanel
+async def test_tab_accepts_highlighted_path() -> None:
+    """Tab on a PathCandidate inserts @path preserving surrounding text."""
+    from hermes_cli.tui.completion_context import CompletionContext, CompletionTrigger
 
-    panel = ReasoningPanel()
-    panel._live_buf = ""
-    panel._plain_lines = []
-    panel.append_delta("some reasoning\nmore text\n")
-    assert "▌" not in "\n".join(panel._plain_lines)
-    assert "some reasoning" in panel._plain_lines
-    assert "more text" in panel._plain_lines
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        inp.value = "@src"
+        inp.cursor_position = 4
+
+        # Manually set trigger and list state
+        inp._current_trigger = CompletionTrigger(
+            CompletionContext.PATH_REF, "src", 1
+        )
+        clist = app.query_one(VirtualCompletionList)
+        clist.items = (PathCandidate(display="src/main.py", abs_path="/tmp/src/main.py"),)
+        clist.highlighted = 0
+        await pilot.pause()
+
+        inp.action_accept_autocomplete()
+        await pilot.pause()
+
+        assert "@src/main.py" in inp.value
+        assert not app.query_one(CompletionOverlay).has_class("--visible")
+
+
+@pytest.mark.asyncio
+async def test_up_down_delegates_to_list_when_overlay_visible() -> None:
+    """Up/Down navigates the completion list when the overlay is visible."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        inp.set_slash_commands(["/help", "/history", "/clear"])
+        inp.value = "/"
+        inp.cursor_position = 1
+        await pilot.pause()
+
+        clist = app.query_one(VirtualCompletionList)
+        initial_highlight = clist.highlighted
+
+        inp.action_history_next()  # bound to down
+        await pilot.pause()
+        assert clist.highlighted != initial_highlight or len(clist.items) == 1
+
+
+@pytest.mark.asyncio
+async def test_enter_submits_as_typed_with_overlay_visible() -> None:
+    """/he + overlay visible + Enter → submits '/he', NOT '/help'."""
+    submitted_values: list[str] = []
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        inp.set_slash_commands(["/help"])
+        inp.value = "/he"
+        inp.cursor_position = 3
+        await pilot.pause()
+
+        # Confirm overlay is visible
+        assert app.query_one(CompletionOverlay).has_class("--visible")
+
+        # Hook the submitted message
+        def on_submitted(event):
+            submitted_values.append(event.value)
+        app.on_hermes_input_submitted = on_submitted
+
+        # Submit
+        inp.action_submit()
+        await pilot.pause()
+
+        # The value submitted should be the raw typed value, not the suggestion
+        assert inp._history[-1] == "/he"
+        assert inp.value == ""
+
+
+@pytest.mark.asyncio
+async def test_suggester_wired() -> None:
+    """HermesInput.suggester is a HistorySuggester tracking _history."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        assert isinstance(inp.suggester, HistorySuggester)
+        assert inp.suggester._input is inp

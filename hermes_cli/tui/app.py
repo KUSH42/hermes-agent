@@ -56,6 +56,7 @@ from hermes_cli.tui.widgets import (
 
 if TYPE_CHECKING:
     from hermes_cli.tui.input_widget import HermesInput
+    from hermes_cli.tui.path_search import Candidate, PathCandidate
     from hermes_cli.tui.tool_blocks import ToolHeader
 
 logger = logging.getLogger(__name__)
@@ -119,6 +120,10 @@ class HermesApp(App):
     # Spinner label — text shown beside the spinner frame (e.g. "Calling tool…")
     spinner_label: reactive[str] = reactive("")
 
+    # Highlighted completion candidate — drives PreviewPanel via watch_highlighted_candidate.
+    # Uses reactive(None) (no type param) to avoid import cycle at class-definition time.
+    highlighted_candidate: reactive = reactive(None)
+
     # hint_text is NOT on HermesApp — HintBar.hint is the single source of truth.
 
     def __init__(self, cli: Any, startup_fn=None, **kwargs: Any) -> None:
@@ -162,10 +167,17 @@ class HermesApp(App):
 
         if self._use_hermes_input:
             from hermes_cli.tui.input_widget import HermesInput as _HI
+            from hermes_cli.tui.completion_overlay import CompletionOverlay as _CO
+            from hermes_cli.tui.path_search import PathSearchProvider as _PSP
+            # CompletionOverlay must be composed BEFORE HermesInput so it sits
+            # directly above the input in the natural layout flow (no dock/offset).
+            yield _CO(id="completion-overlay")
             with Horizontal(id="input-row"):
                 yield Static("❯ ", id="input-chevron")
                 yield _HI(id="input-area")
                 yield Static("", id="spinner-overlay")
+            # PathSearchProvider is invisible — position is irrelevant.
+            yield _PSP(id="path-search-provider")
         else:
             yield TextArea(id="input-area")
 
@@ -180,11 +192,6 @@ class HermesApp(App):
         self._consume_output()  # starts the @work consumer
         self.set_interval(0.1, self._tick_spinner)
         self.set_interval(1.0, self._tick_duration)
-        # Mount autocomplete popup on screen for absolute positioning
-        self._autocomplete_popup = Static(
-            "", id="autocomplete-popup", classes="hermes-input--autocomplete"
-        )
-        self.screen.mount(self._autocomplete_popup)
         # Focus the input bar so the user can type immediately
         try:
             self.query_one("#input-area").focus()
@@ -412,12 +419,30 @@ class HermesApp(App):
         """Reset per-tool elapsed timer whenever the spinner label changes."""
         self._tool_start_time = _time.monotonic() if value else 0.0
 
+    @property
+    def choice_overlay_active(self) -> bool:
+        """True when an interactive choice overlay (clarify/approval) is up.
+
+        Used by HermesInput._update_autocomplete to suppress completion while
+        the user is answering an approval prompt.
+        """
+        return self.clarify_state is not None or self.approval_state is not None
+
+    def _hide_completion_overlay_if_present(self) -> None:
+        """Hide the completion overlay when a choice overlay activates."""
+        try:
+            from hermes_cli.tui.completion_overlay import CompletionOverlay as _CO
+            self.query_one(_CO).remove_class("--visible")
+        except NoMatches:
+            pass
+
     def watch_clarify_state(self, value: ChoiceOverlayState | None) -> None:
         try:
             w = self.query_one(ClarifyWidget)
             w.display = value is not None
             if value is not None:
                 w.update(value)
+                self._hide_completion_overlay_if_present()
         except NoMatches:
             pass
 
@@ -427,6 +452,17 @@ class HermesApp(App):
             w.display = value is not None
             if value is not None:
                 w.update(value)
+                self._hide_completion_overlay_if_present()
+        except NoMatches:
+            pass
+
+    def watch_highlighted_candidate(self, c: Any) -> None:
+        """Route highlighted candidate to PreviewPanel (PathCandidate only)."""
+        try:
+            from hermes_cli.tui.preview_panel import PreviewPanel as _PP
+            from hermes_cli.tui.path_search import PathCandidate as _PC
+            panel = self.query_one(_PP)
+            panel.candidate = c if isinstance(c, _PC) else None
         except NoMatches:
             pass
 
@@ -568,12 +604,18 @@ class HermesApp(App):
         skin = getattr(self, "_skin_vars", {})
         return {**base, **skin}
 
-    def apply_skin(self, skin_vars: dict[str, str]) -> None:
-        """Apply a skin dict as CSS variable overrides.
+    def apply_skin(self, skin_vars: "dict[str, str] | Path") -> None:
+        """Apply a skin as CSS variable overrides.
 
-        Safe to call via ``call_from_thread``. Keys must be valid Textual
-        CSS variable names (e.g., ``"primary"``, ``"background"``).
+        Accepts either a pre-built ``dict[str, str]`` of Textual CSS variable
+        names, or a ``Path`` to a JSON/YAML skin file (processed via
+        ``skin_loader.load_skin``).
+
+        Safe to call via ``call_from_thread``.
         """
+        if isinstance(skin_vars, Path):
+            from hermes_cli.tui.skin_loader import load_skin
+            skin_vars = load_skin(skin_vars)
         self._skin_vars = skin_vars
         try:
             self.refresh_css()
@@ -672,6 +714,19 @@ class HermesApp(App):
 
         # --- escape: cancel overlay, interrupt agent, browse mode, or enter browse ---
         if key == "escape":
+            # Priority 0: dismiss completion overlay (before everything else so it
+            # doesn't fire agent-interrupt or browse-mode on the same keystroke).
+            try:
+                from hermes_cli.tui.completion_overlay import CompletionOverlay as _CO
+                _co = self.query_one(_CO)
+                if _co.has_class("--visible"):
+                    _co.remove_class("--visible")
+                    _co.remove_class("--slash-only")
+                    event.prevent_default()
+                    return
+            except NoMatches:
+                pass
+
             # Priority 1: exit browse mode
             if self.browse_mode:
                 self.browse_mode = False

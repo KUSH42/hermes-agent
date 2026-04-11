@@ -120,6 +120,41 @@ VoiceStatusBar {
     padding: 0 1;
 }
 
+/* --- Glassmorphism: completion menu --- */
+
+VirtualCompletionList {
+    background: $panel 40%;
+    border: tall $primary 20%;
+    border-top: hkey $accent 50%;
+    tint: $primary 8%;
+    color: $text;
+}
+
+VirtualCompletionList:focus {
+    border: tall $accent 50%;
+    tint: $accent 12%;
+}
+
+/* Selected row background — paired with Strip.apply_style in render_line */
+VirtualCompletionList > .completion--row-selected {
+    background: $accent 25%;
+    text-style: bold;
+}
+
+/* Ghost text styling — Textual's Input renders its own suggestion via the
+ * Suggester API using the built-in dim style.  We tune the component class. */
+Input > .input--suggestion {
+    color: $text-muted 60%;
+    text-style: italic;
+}
+
+/* Preview panel divider */
+PreviewPanel {
+    border-left: vkey $primary 30%;
+    background: $panel 30%;
+    padding: 0 1;
+}
+
 /* --- ToolBlock widgets --- */
 
 /* ToolHeader: structural height:1 is in DEFAULT_CSS */

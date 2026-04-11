@@ -2,7 +2,7 @@
 
 **Branch:** `feat/textual-migration`  
 **Last updated:** 2026-04-11  
-**Test suite:** 211 tests, 0 failures
+**Test suite:** 280 tests, 0 failures
 
 ---
 
@@ -23,9 +23,17 @@
 | `ReasoningPanel` — collapsible reasoning with `▌` gutter | `hermes_cli/tui/widgets.py` | ✅ Complete |
 | `CopyableRichLog` — RichLog with plain-text clipboard backing | `hermes_cli/tui/widgets.py` | ✅ Complete |
 | Skin/theme engine — CSS variable injection via `get_css_variables()` | `hermes_cli/skin_engine.py` + `app.py` | ✅ Complete |
+| `skin_loader.py` — JSON/YAML → Textual CSS variable dict (semantic fan-out) | `hermes_cli/tui/skin_loader.py` | ✅ Autocomplete engine |
 | Overlay system — clarify, approval, sudo, secret (all with countdown) | `hermes_cli/tui/widgets.py` | ✅ Complete |
 | `VoiceStatusBar` — voice recording indicator | `hermes_cli/tui/widgets.py` | ✅ Complete |
 | `ImageBar` — attached image list | `hermes_cli/tui/widgets.py` | ✅ Complete |
+| `PathSearchProvider` — threaded filesystem walker, batched candidates | `hermes_cli/tui/path_search.py` | ✅ Autocomplete engine |
+| `fuzzy_rank` — subsequence ranker with match-span highlighting | `hermes_cli/tui/fuzzy.py` | ✅ Autocomplete engine |
+| `VirtualCompletionList` — O(viewport) virtualized list, 10k+ items at 60fps | `hermes_cli/tui/completion_list.py` | ✅ Autocomplete engine |
+| `detect_context` — regex trigger dispatcher (/, @, NATURAL) | `hermes_cli/tui/completion_context.py` | ✅ Autocomplete engine |
+| `CompletionOverlay` — container: list + preview, glassmorphism | `hermes_cli/tui/completion_overlay.py` | ✅ Autocomplete engine |
+| `HistorySuggester` — Fish-style ghost text via native Textual Suggester API | `hermes_cli/tui/history_suggester.py` | ✅ Autocomplete engine |
+| `PreviewPanel` — syntax-highlighted file preview, binary sniff, 128KB cap | `hermes_cli/tui/preview_panel.py` | ✅ Autocomplete engine |
 
 ### Markdown + rich output rendering
 
@@ -64,9 +72,22 @@ Keyboard-driven navigation through all `ToolBlock` widgets in session order:
 |---|---|
 | `ctrl+c` | Copy selected text → cancel overlay (deny) → clear input → exit |
 | `ctrl+shift+c` | Interrupt agent (double-press within 2s = force exit) |
-| `Escape` | Exit browse mode → cancel overlay (None) → interrupt agent → enter browse mode |
-| `Up` / `Down` | History navigation (in input) / overlay choice selection |
-| `Tab` / `Shift+Tab` | Autocomplete accept / dismiss; browse mode cycling |
+| `Escape` | (Priority 0) dismiss completion overlay → exit browse mode → cancel overlay (None) → interrupt agent → enter browse mode |
+| `Up` / `Down` | Move highlight in completion list (when open) → history navigation (in input) / overlay choice selection |
+| `Tab` | Accept highlighted completion candidate (slash: replace value; @path: splice into text) / browse mode cycling |
+| `Shift+Tab` | Dismiss completion overlay / browse mode reverse cycling |
+
+### Autocomplete key bindings
+
+| Key | Context | Action |
+|---|---|---|
+| `/` at start of input | Any | Opens slash-command completion overlay |
+| `@` (preceded by space or start) | Any | Opens path completion overlay with threaded filesystem walker |
+| `Up` / `Down` | Completion overlay open | Move highlight; `Up` scrolls history when overlay not open |
+| `Tab` | Completion overlay open | Accept highlighted candidate |
+| `Escape` | Completion overlay open | Dismiss overlay (Priority 0 — fires before any other escape handler) |
+| Ghost text (right-side) | History match | Press `→` or `End` to accept Fish-style suggestion |
+| `Enter` | Any | Submit input as typed — NEVER auto-accepts highlighted candidate |
 
 ### Browse mode key bindings
 

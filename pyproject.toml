@@ -115,5 +115,6 @@ include = ["agent", "tools", "tools.*", "hermes_cli", "gateway", "gateway.*", "c
 testpaths = ["tests"]
 markers = [
     "integration: marks tests requiring external services (API keys, Modal, etc.)",
+    "slow: marks performance microbench tests (skipped in unit-test job; run with -m slow)",
 ]
 addopts = "-m 'not integration' -n auto"

@@ -177,6 +177,17 @@ class CopyableRichLog(RichLog):
     def write_with_source(self, styled: Text, plain: str, **kwargs: Any) -> "CopyableRichLog":
         """Write styled text to display, store plain text for copy."""
         self._plain_lines.append(plain)
+        try:
+            from hermes_cli.tui.osc8 import inject_osc8, _osc8_supported
+            if _osc8_supported():
+                import io as _io
+                from rich.console import Console as _Console
+                buf = _io.StringIO()
+                _Console(file=buf, force_terminal=True, width=10000, highlight=False).print(styled, end="")
+                ansi_str = buf.getvalue().rstrip("\n")
+                return self.write(Text.from_ansi(inject_osc8(ansi_str, _enabled=True)), **kwargs)
+        except Exception:
+            pass
         return self.write(styled, **kwargs)
 
     def get_selection(self, selection: Selection) -> tuple[str, str] | None:
@@ -203,6 +214,44 @@ class CopyableRichLog(RichLog):
     def clear(self) -> "CopyableRichLog":
         self._plain_lines.clear()
         return super().clear()
+
+
+class CopyableBlock(Widget):
+    """Wraps CopyableRichLog with a hover-reveal copy button."""
+
+    DEFAULT_CSS = "CopyableBlock { height: auto; }"
+
+    def __init__(self, _log_id: str | None = None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        log_kwargs: dict[str, Any] = {"markup": False, "highlight": False, "wrap": True}
+        if _log_id:
+            log_kwargs["id"] = _log_id
+        self._log = CopyableRichLog(**log_kwargs)
+
+    def compose(self) -> ComposeResult:
+        yield self._log
+        # Copy button is lazy-mounted on first hover to avoid layout interference
+        # with sibling RichLog deferred renders.  See on_click for implementation.
+
+    @property
+    def log(self) -> "CopyableRichLog":
+        return self._log
+
+    def on_click(self, event: Any) -> None:
+        if getattr(event.widget, "id", None) == "copy-btn":
+            text = self.log.copy_content()
+            try:
+                self.app._copy_text_with_hint(text)
+            except Exception:
+                pass
+            event.prevent_default()
+
+    def on_mouse_enter(self, _event: Any) -> None:
+        """Lazily mount the copy button on first hover."""
+        try:
+            self.query_one("#copy-btn")
+        except NoMatches:
+            self.mount(Static("⎘", id="copy-btn"))
 
 
 def _safe_widget_call(app: HermesApp, widget_type: type, method: str, *args: Any) -> None:
@@ -484,38 +533,20 @@ class MessagePanel(Widget):
         self._msg_id = MessagePanel._msg_counter
         self._response_rule = TitledRule(id=f"response-rule-{self._msg_id}")
         self._reasoning_panel = ReasoningPanel(id=f"reasoning-{self._msg_id}")
-        self._response_log = CopyableRichLog(
-            markup=False, highlight=False, wrap=True,
-            id=f"response-{self._msg_id}",
+        self._response_block = CopyableBlock(
+            id=f"response-block-{self._msg_id}",
+            _log_id=f"response-{self._msg_id}",
         )
         self._user_text: str = user_text
         super().__init__(**kwargs)
 
-    def on_mount(self) -> None:
-        # Defer fade-in until after first layout so children are already sized.
-        # CSS transition handles the animation (hermes.tcss: opacity 0.3s in_out_cubic).
-        self.call_after_refresh(self._start_fade)
-
-    def _start_fade(self) -> None:
-        """Fade-in after first render (plain def — no await).
-
-        Fires after the first layout pass so child RichLog widgets have already
-        been sized. Sets opacity to 0, then defers setting it to 1 by one
-        frame so the CSS transition (opacity 0.3s in_out_cubic in hermes.tcss)
-        fires. styles.animate() does not exist in Textual 8.x — use CSS
-        transition + direct property mutation instead.
-        """
-        self.styles.opacity = 0.0
-        self.call_after_refresh(self._finish_fade)
-
     def _finish_fade(self) -> None:
-        """Set opacity to 1 after the zero-opacity frame — triggers CSS transition."""
-        self.styles.opacity = 1.0
+        """Stub kept for API compatibility — fade handled by CSS transition on --entering class."""
 
     def compose(self) -> ComposeResult:
         yield self._response_rule
         yield self._reasoning_panel
-        yield self._response_log
+        yield self._response_block
 
     def show_response_rule(self) -> None:
         """Show the response title rule (called when first content arrives)."""
@@ -527,7 +558,7 @@ class MessagePanel(Widget):
 
     @property
     def response_log(self) -> CopyableRichLog:
-        return self._response_log
+        return self._response_block.log
 
 
 # ---------------------------------------------------------------------------
@@ -640,9 +671,21 @@ class OutputPanel(ScrollableContainer):
         return panels.last() if panels else None
 
     def new_message(self, user_text: str = "") -> MessagePanel:
-        """Create and mount a new MessagePanel for a new turn."""
+        """Create and mount a new MessagePanel for a new turn.
+
+        The panel gets the ``--entering`` CSS class before mounting so the
+        opacity: 0 rule in hermes.tcss applies on first paint.  The class
+        is removed after the first render cycle so the CSS transition
+        animates opacity back to 1 (fade-in effect).
+        """
         panel = MessagePanel(user_text=user_text)
+        panel.add_class("--entering")
         self.mount(panel, before=self.live_line)
+        # Remove --entering after the first render so the CSS opacity transition
+        # plays: opacity 0 → 1 (fade-in).  call_after_refresh fires in the next
+        # event loop pass — fast enough to keep the initial "black flash" invisible
+        # while not blocking layout passes for sibling widgets.
+        self.call_after_refresh(lambda: panel.remove_class("--entering"))
         return panel
 
     def flush_live(self) -> None:
@@ -773,8 +816,8 @@ class ReasoningPanel(Widget):
         self._live_buf = ""
         self._plain_lines.clear()
         self.add_class("visible")
-        # Trigger layout refresh so parent recalculates height after
-        # deferred renders are processed on the next resize event.
+        # Force a layout refresh so the RichLog receives a Resize event and
+        # sets _size_known=True, enabling deferred writes to be committed.
         self.call_after_refresh(self.refresh, layout=True)
 
     def append_delta(self, text: str) -> None:
@@ -793,8 +836,6 @@ class ReasoningPanel(Widget):
             log.write(self._gutter_line(line))
             self._plain_lines.append(line)
             wrote = True
-        if wrote and log._deferred_renders:
-            self.call_after_refresh(self.refresh, layout=True)
 
     def close_box(self) -> None:
         """Flush remaining buffer. The panel stays visible as message history."""
@@ -807,7 +848,6 @@ class ReasoningPanel(Widget):
         # Don't remove "visible" — reasoning stays shown as part of the
         # message so it isn't lost when tool output or the next response
         # pushes new content into the same MessagePanel.
-        self.call_after_refresh(self.refresh, layout=True)
 
 
 # ---------------------------------------------------------------------------
@@ -847,6 +887,7 @@ class TitledRule(Widget):
     """
 
     title_text: reactive[str] = reactive("Hermes")
+    progress: reactive[float] = reactive(0.0, repaint=True)
 
     def __init__(
         self,
@@ -875,6 +916,11 @@ class TitledRule(Widget):
         self.refresh()
 
     def render(self) -> RenderResult:
+        if self.progress >= 0.5:
+            return self._render_progress_bar()
+        return self._render_normal()
+
+    def _render_normal(self) -> RenderResult:
         w = self.size.width
         title = self.title_text
         # Split title into accent char (first non-space) + rest
@@ -903,6 +949,21 @@ class TitledRule(Widget):
         # Right fill: fade out (start → end), then optional state glyph
         t.append_text(_fade_rule(right, self._fade_start, self._fade_end))
         t.append_text(state_suffix)
+        return t
+
+    def _render_progress_bar(self) -> RenderResult:
+        width = max(1, self.size.width)
+        filled = int(width * self.progress)
+        if self.progress >= 0.9:
+            bar_color = _skin_color("error_color", "#E06C75")
+        elif self.progress >= 0.75:
+            bar_color = _skin_color("warning_color", "#FFA726")
+        else:
+            bar_color = _skin_color("caution_color", "#FFBF00")
+        empty_color = _skin_color("rule_dim_color", "#333333")
+        t = Text()
+        t.append("━" * filled, style=bar_color)
+        t.append("─" * (width - filled), style=empty_color)
         return t
 
 
@@ -1309,7 +1370,7 @@ class CountdownMixin:
 # Clarify widget (Step 4)
 # ---------------------------------------------------------------------------
 
-class ClarifyWidget(CountdownMixin, Widget):
+class ClarifyWidget(CountdownMixin, Widget, can_focus=True):
     """Choice overlay with countdown for clarification questions."""
 
     _state_attr = "clarify_state"
@@ -1354,7 +1415,7 @@ class ClarifyWidget(CountdownMixin, Widget):
 # Approval widget (Step 4)
 # ---------------------------------------------------------------------------
 
-class ApprovalWidget(CountdownMixin, Widget):
+class ApprovalWidget(CountdownMixin, Widget, can_focus=True):
     """Choice overlay for dangerous-command approval with 'deny' timeout."""
 
     _state_attr = "approval_state"
@@ -1655,7 +1716,7 @@ class HistorySearchOverlay(Widget):
         self._saved_hint: str = ""
 
     def compose(self) -> ComposeResult:
-        yield Input(placeholder="🔍  Search turns…", id="history-search-input")
+        yield Input(placeholder="Search history  ↑↓ navigate · Enter jump · Esc close", id="history-search-input")
         yield VerticalScroll(id="history-result-list")
         yield Static("", id="history-status")
 

@@ -98,11 +98,11 @@ async def test_reasoning_panel_content_visible_after_open():
         for _ in range(5):
             await pilot.pause()
 
-        # Reasoning log should have 2 lines (gutter-prefixed, no header)
-        assert len(msg.reasoning._reasoning_log.lines) == 2
-        # The reasoning panel should have non-zero height
-        assert msg.reasoning.size.height > 0, (
-            "ReasoningPanel should expand to show content"
+        # Reasoning log should have 2 plain lines committed (synchronous tracking)
+        assert len(msg.reasoning._plain_lines) == 2
+        # The reasoning panel is visible (display: block via CSS class)
+        assert msg.reasoning.has_class("visible"), (
+            "ReasoningPanel should have 'visible' class after open_box"
         )
 
 

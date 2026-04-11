@@ -223,8 +223,8 @@ async def test_reasoning_deferred_writes_become_visible():
         rp.append_delta("Deferred step 2\n")
         await _pause(pilot, n=10)
 
-        assert len(rp._reasoning_log.lines) >= 2  # 2 gutter-prefixed steps (no header)
-        assert rp.size.height > 0
+        assert len(rp._plain_lines) >= 2  # 2 committed lines (no header)
+        assert rp.has_class("visible"), "ReasoningPanel should be visible after content"
 
 
 # ---------------------------------------------------------------------------

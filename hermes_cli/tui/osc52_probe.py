@@ -100,3 +100,19 @@ def check_clipboard_env() -> bool | None:
     if val == "0":
         return False
     return None
+
+
+def find_xclip_cmd() -> list[str] | None:
+    """Return a subprocess argv for piping text to the system clipboard, or None.
+
+    Tries (in order): wl-copy (Wayland), xclip (X11), xsel (X11).
+    Returns None if none are found on PATH.
+    """
+    import shutil
+    if shutil.which("wl-copy"):
+        return ["wl-copy"]
+    if shutil.which("xclip"):
+        return ["xclip", "-selection", "clipboard"]
+    if shutil.which("xsel"):
+        return ["xsel", "--clipboard", "--input"]
+    return None

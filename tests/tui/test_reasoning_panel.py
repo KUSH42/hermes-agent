@@ -54,9 +54,9 @@ async def test_append_delta_writes_complete_lines():
         msg.reasoning.append_delta("step 1\n")
         msg.reasoning.append_delta("step 2\n")
         await pilot.pause()
-        log = msg.reasoning.query_one("#reasoning-log")
-        # 2 committed lines (no header, gutter-prefixed)
-        assert len(log.lines) == 2
+        # _plain_lines is updated synchronously when lines are committed;
+        # log.lines only reflects rendered strips which require _size_known=True
+        assert len(msg.reasoning._plain_lines) == 2
 
 
 @pytest.mark.asyncio
@@ -71,9 +71,8 @@ async def test_append_delta_buffers_partial():
         msg.reasoning.append_delta("partial ")
         msg.reasoning.append_delta("text")
         await pilot.pause()
-        log = msg.reasoning.query_one("#reasoning-log")
-        # No lines committed — partial text is in _live_buf (no header line)
-        assert len(log.lines) == 0
+        # No lines committed — partial text is in _live_buf
+        assert len(msg.reasoning._plain_lines) == 0
         assert msg.reasoning._live_buf == "partial text"
 
 
@@ -89,9 +88,8 @@ async def test_append_delta_flushes_on_newline():
         msg.reasoning.append_delta("hello ")
         msg.reasoning.append_delta("world\nnext")
         await pilot.pause()
-        log = msg.reasoning.query_one("#reasoning-log")
-        # "hello world" committed = 1 line; "next" still in buffer
-        assert len(log.lines) == 1
+        # "hello world" committed = 1 plain line; "next" still in buffer
+        assert len(msg.reasoning._plain_lines) == 1
         assert msg.reasoning._live_buf == "next"
 
 
@@ -102,17 +100,19 @@ async def test_close_box_flushes_and_stays_visible():
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         msg = _ensure_message(app)
+        # Extra pause to let MessagePanel.on_mount call_after_refresh settle
+        await pilot.pause()
         await pilot.pause()
         msg.reasoning.open_box("Reasoning")
         msg.reasoning.append_delta("some content")
         await pilot.pause()
         msg.reasoning.close_box()
         await pilot.pause()
+        await pilot.pause()
         # Panel stays visible so reasoning isn't lost during tool calls
         assert msg.reasoning.has_class("visible")
-        log = msg.reasoning.query_one("#reasoning-log")
-        # Flushed partial = 1 line
-        assert len(log.lines) == 1
+        # Flushed partial = 1 plain line (close_box flushes _live_buf)
+        assert len(msg.reasoning._plain_lines) == 1
 
 
 @pytest.mark.asyncio

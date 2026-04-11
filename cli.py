@@ -9505,8 +9505,22 @@ class HermesCLI:
                     else:
                         app.invalidate()  # Refresh PT status line
 
+                    _chat_error: bool = False
                     try:
                         self.chat(user_input, images=submit_images or None)
+                    except Exception:
+                        _chat_error = True
+                        if _tui_app is not None:
+                            try:
+                                if hasattr(_tui_app, "_set_chevron_phase"):
+                                    _tui_app.call_from_thread(_tui_app._set_chevron_phase, "--phase-error")
+                                    _tui_app.call_from_thread(
+                                        _tui_app.set_timer, 1.0,
+                                        lambda: _tui_app._set_chevron_phase(""),
+                                    )
+                            except Exception:
+                                pass
+                        raise
                     finally:
                         self._agent_running = False
                         self._spinner_text = ""
@@ -9604,7 +9618,11 @@ class HermesCLI:
         global _hermes_app
         try:
             from hermes_cli.tui.app import HermesApp as _HApp
-            from hermes_cli.tui.osc52_probe import probe_osc52 as _probe_osc52, check_clipboard_env as _check_clipboard_env
+            from hermes_cli.tui.osc52_probe import (
+                probe_osc52 as _probe_osc52,
+                check_clipboard_env as _check_clipboard_env,
+                find_xclip_cmd as _find_xclip_cmd,
+            )
             import asyncio as _aio_probe
             _clipboard_override = _check_clipboard_env()
             if _clipboard_override is not None:
@@ -9614,7 +9632,13 @@ class HermesCLI:
                     _clipboard_ok = _aio_probe.run(_probe_osc52())
                 except Exception:
                     _clipboard_ok = False
-            _tui_app = _HApp(cli=self, startup_fn=self._tui_startup_display, clipboard_available=_clipboard_ok)
+            _xclip_cmd = _find_xclip_cmd() if not _clipboard_ok else None
+            _tui_app = _HApp(
+                cli=self,
+                startup_fn=self._tui_startup_display,
+                clipboard_available=_clipboard_ok,
+                xclip_cmd=_xclip_cmd,
+            )
             _tui_app._spinner_frames = _COMMAND_SPINNER_FRAMES
             _hermes_app = _tui_app
         except ImportError:

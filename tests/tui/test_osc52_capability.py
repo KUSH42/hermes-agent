@@ -6,6 +6,7 @@ Covers:
   11-13: check_clipboard_env() env var parsing
   14:   browse-mode 'c' key with clipboard unavailable
   15:   context menu "Copy tool output" with clipboard unavailable
+  16-20: find_xclip_cmd() and xclip fallback in _copy_text_with_hint()
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from hermes_cli.tui.app import HermesApp
-from hermes_cli.tui.osc52_probe import check_clipboard_env, probe_osc52
+from hermes_cli.tui.osc52_probe import check_clipboard_env, find_xclip_cmd, probe_osc52
 from hermes_cli.tui.widgets import HintBar
 
 
@@ -415,3 +416,93 @@ async def test_context_menu_copy_tool_output_clipboard_unavailable():
 
         bar = app.query_one(HintBar)
         assert "clipboard" in bar.hint.lower() or "unavailable" in bar.hint.lower()
+
+
+# ---------------------------------------------------------------------------
+# Tests 16-24: find_xclip_cmd() and xclip fallback
+# ---------------------------------------------------------------------------
+
+
+def test_find_xclip_cmd_returns_wl_copy_when_available():
+    """find_xclip_cmd() returns wl-copy command when wl-copy is on PATH."""
+    with patch("shutil.which", side_effect=lambda x: "/usr/bin/wl-copy" if x == "wl-copy" else None):
+        result = find_xclip_cmd()
+    assert result == ["wl-copy"]
+
+
+def test_find_xclip_cmd_returns_xclip_when_wl_copy_absent():
+    """find_xclip_cmd() returns xclip command when wl-copy absent but xclip present."""
+    def _which(name):
+        return "/usr/bin/xclip" if name == "xclip" else None
+    with patch("shutil.which", side_effect=_which):
+        result = find_xclip_cmd()
+    assert result == ["xclip", "-selection", "clipboard"]
+
+
+def test_find_xclip_cmd_returns_xsel_as_last_resort():
+    """find_xclip_cmd() returns xsel when wl-copy and xclip are both absent."""
+    def _which(name):
+        return "/usr/bin/xsel" if name == "xsel" else None
+    with patch("shutil.which", side_effect=_which):
+        result = find_xclip_cmd()
+    assert result == ["xsel", "--clipboard", "--input"]
+
+
+def test_find_xclip_cmd_returns_none_when_nothing_found():
+    """find_xclip_cmd() returns None when no clipboard tool is on PATH."""
+    with patch("shutil.which", return_value=None):
+        result = find_xclip_cmd()
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_copy_text_with_hint_uses_xclip_when_osc52_unavailable():
+    """When OSC 52 unavailable but xclip present, _copy_text_with_hint uses subprocess."""
+    app = HermesApp(cli=MagicMock(), clipboard_available=False, xclip_cmd=["xclip", "-selection", "clipboard"])
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            app._copy_text_with_hint("hello")
+            await pilot.pause()
+        mock_run.assert_called_once_with(
+            ["xclip", "-selection", "clipboard"],
+            input=b"hello",
+            check=True,
+            timeout=2,
+        )
+        bar = app.query_one(HintBar)
+        assert "5" in bar.hint  # len("hello") == 5
+
+
+@pytest.mark.asyncio
+async def test_copy_text_with_hint_xclip_subprocess_failure_shows_error():
+    """When xclip subprocess raises, _copy_text_with_hint shows an error hint."""
+    app = HermesApp(cli=MagicMock(), clipboard_available=False, xclip_cmd=["xclip", "-selection", "clipboard"])
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        with patch("subprocess.run", side_effect=OSError("xclip not found")):
+            app._copy_text_with_hint("hello")
+            await pilot.pause()
+        bar = app.query_one(HintBar)
+        assert "fail" in bar.hint.lower() or "error" in bar.hint.lower()
+
+
+@pytest.mark.asyncio
+async def test_clipboard_warning_hidden_when_xclip_available():
+    """Status bar clipboard warning is NOT shown when xclip is available as fallback."""
+    app = HermesApp(cli=MagicMock(), clipboard_available=False, xclip_cmd=["xclip", "-selection", "clipboard"])
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        warning = app.query_one("#status-clipboard-warning")
+        assert "--active" not in warning.classes
+
+
+@pytest.mark.asyncio
+async def test_clipboard_warning_shown_when_both_unavailable():
+    """Status bar clipboard warning IS shown when both OSC 52 and xclip are unavailable."""
+    app = HermesApp(cli=MagicMock(), clipboard_available=False, xclip_cmd=None)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        warning = app.query_one("#status-clipboard-warning")
+        assert "--active" in warning.classes

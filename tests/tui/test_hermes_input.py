@@ -281,7 +281,9 @@ async def test_path_completion_triggers_walker() -> None:
         inp = app.query_one(HermesInput)
         inp.value = "@src"
         inp.cursor_position = 4
-        await pilot.pause()
+        # Path completions are now debounced (120ms) — wait enough cycles for timer to fire
+        for _ in range(5):
+            await pilot.pause()
 
         assert len(search_calls) > 0, "PathSearchProvider.search was not called"
         assert search_calls[0][0] == "src"

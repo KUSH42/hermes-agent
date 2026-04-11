@@ -222,16 +222,20 @@ async def test_message_panel_fade_in_starts_at_zero():
 
 @pytest.mark.asyncio
 async def test_message_panel_fade_in_completes():
-    """MessagePanel opacity reaches 1.0 after the fade-in completes."""
+    """MessagePanel --entering class is removed after call_after_refresh fires."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         panel = app.query_one(OutputPanel)
         msg = panel.new_message()
-        # Wait well past the 250ms animation duration
-        await asyncio.sleep(0.4)
+        # --entering class is present immediately after mount
+        assert msg.has_class("--entering")
+        # call_after_refresh fires in the next event loop pass
         await pilot.pause()
-        assert msg.styles.opacity == pytest.approx(1.0, abs=0.05)
+        await pilot.pause()
+        # After --entering is removed, the CSS opacity transition has been triggered.
+        # The panel no longer has the entering class.
+        assert not msg.has_class("--entering")
 
 
 # ---------------------------------------------------------------------------

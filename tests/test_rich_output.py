@@ -1317,7 +1317,7 @@ class TestApplyInlineMarkdown:
         assert "\033[97m" in result
         assert "\033[97m" in result  # code span styled
         assert "foo" in result
-        assert "`" in result  # backticks preserved inside the styled span
+        assert "`" not in result  # backticks stripped; only content is rendered
 
     def test_strikethrough(self):
         result = apply_inline_markdown("~~foo~~")
@@ -1329,44 +1329,43 @@ class TestApplyInlineMarkdown:
         result = apply_inline_markdown("**Line 88**: `cdOffset`")
         assert "\033[1m" in result           # bold applied
         assert "\033[97m" in result          # code span applied
-        assert "\033[97m" in result    # code span applied applied
         assert "**" not in result
-        assert "`" in result  # backticks preserved inside the styled span
+        assert "`" not in result  # backticks stripped
 
     def test_mixed_strikethrough_and_code(self):
         result = apply_inline_markdown("~~deprecated~~ use `new_api()` instead")
         assert "\033[9m" in result
         assert "\033[97m" in result
         assert "~~" not in result
-        assert "`" in result
+        assert "`" not in result  # backticks stripped
 
     def test_mixed_underline_and_code(self):
         result = apply_inline_markdown("<u>important</u>: call `init()` first")
         assert "\033[4m" in result
         assert "\033[97m" in result
         assert "<u>" not in result
-        assert "`" in result
+        assert "`" not in result  # backticks stripped
 
     def test_mixed_bold_italic_and_code(self):
         result = apply_inline_markdown("***critical***: run `setup()` now")
         assert "\033[1;3m" in result
         assert "\033[97m" in result
         assert "***" not in result
-        assert "`" in result
+        assert "`" not in result  # backticks stripped
 
     def test_mixed_mark_and_code(self):
         result = apply_inline_markdown("<mark>highlight</mark> then call `fn()`")
         assert "\033[7m" in result
         assert "\033[97m" in result
         assert "<mark>" not in result
-        assert "`" in result
+        assert "`" not in result  # backticks stripped
 
     def test_mixed_ins_and_code(self):
         result = apply_inline_markdown("<ins>added</ins> via `patch()`")
         assert "\033[4m" in result
         assert "\033[97m" in result
         assert "<ins>" not in result
-        assert "`" in result
+        assert "`" not in result  # backticks stripped
 
     def test_multiple_code_spans_with_bold(self):
         result = apply_inline_markdown("**bold** uses `foo()` and `bar()`")

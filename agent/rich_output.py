@@ -1038,7 +1038,7 @@ def apply_inline_markdown(line: str, reset_suffix: str = "", ref_map: "dict[str,
     protected: list[str] = []
 
     def _protect_code(m: re.Match) -> str:  # type: ignore[type-arg]
-        protected.append(f"{_md_ansi('code_span')}`{m.group(1)}`{rst}")
+        protected.append(f"{_md_ansi('code_span')}{m.group(1)}{rst}")
         return f"\x00{len(protected) - 1}\x00"
 
     line = _MD_CODE_RE.sub(_protect_code, line)

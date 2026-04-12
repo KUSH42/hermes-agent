@@ -1170,6 +1170,14 @@ class HermesApp(App):
     async def on_click(self, event: Any) -> None:
         """Left-click focuses input; right-click (button=3) shows context menu."""
         if event.button == 1:
+            # Don't steal focus when the user clicks inside the output panel —
+            # that breaks text selection and scroll position tracking.
+            from hermes_cli.tui.widgets import OutputPanel as _OP
+            node = getattr(event, "widget", None)
+            while node is not None:
+                if isinstance(node, _OP):
+                    return
+                node = getattr(node, "parent", None)
             try:
                 self.query_one("#input-area").focus()
             except NoMatches:

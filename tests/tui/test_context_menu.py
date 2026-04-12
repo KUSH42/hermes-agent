@@ -204,6 +204,7 @@ async def test_right_click_button_1_ignored():
         # Simulate left-click (button=1): menu should stay hidden
         mock_event = MagicMock()
         mock_event.button = 1
+        mock_event.widget = None  # no widget → parent-walk exits immediately
         await app.on_click(mock_event)
         await pilot.pause()
         assert not menu.has_class("--visible")

@@ -56,16 +56,13 @@ class _ContextItem(Static):
     """
 
     def __init__(self, item: MenuItem, **kwargs) -> None:
-        super().__init__(**kwargs)
+        # Pass content at construction so it renders on first paint without
+        # waiting for on_mount, which fires asynchronously as a message.
+        label = item.label
+        shortcut = item.shortcut
+        text = f"{label}  [dim]{shortcut}[/dim]" if shortcut else label
+        super().__init__(text, **kwargs)
         self._item = item
-
-    def on_mount(self) -> None:
-        label = self._item.label
-        shortcut = self._item.shortcut
-        if shortcut:
-            self.update(f"{label}  [dim]{shortcut}[/dim]")
-        else:
-            self.update(label)
 
     def on_click(self) -> None:
         try:
@@ -122,9 +119,10 @@ class ContextMenu(Widget):
         if not items:
             return
 
-        # Tear down previous contents (if menu was already visible)
+        # Tear down previous contents (if menu was already visible); await
+        # each remove so the DOM is clean before mounting new children.
         for child in list(self.children):
-            child.remove()
+            await child.remove()
 
         # Heuristic width: max of (label length + shortcut length + padding)
         estimated_width = max(
@@ -143,6 +141,10 @@ class ContextMenu(Widget):
         clamped_y = min(screen_y, max(0, app_height - menu_height - 1))
 
         self.styles.offset = (clamped_x, clamped_y)
+        # Set explicit dimensions so the menu sizes correctly under
+        # position:absolute where width/height:auto may not resolve.
+        self.styles.width = estimated_width + 2  # +2 for padding 0 1
+        self.styles.height = menu_height
 
         # Build widget list
         new_widgets: list[Widget] = []
@@ -158,8 +160,18 @@ class ContextMenu(Widget):
         self.focus()
 
     def dismiss(self) -> None:
-        """Hide the context menu (idempotent)."""
+        """Hide the context menu (idempotent).
+
+        Explicitly returns focus to ``#input-area`` when the menu had focus,
+        so that mouse-scroll events reach the OutputPanel rather than being
+        swallowed by a hidden but still-focused ContextMenu widget.
+        """
         self.remove_class("--visible")
+        if self.app.focused is self:
+            try:
+                self.app.query_one("#input-area").focus()
+            except Exception:
+                pass
 
     def on_blur(self) -> None:
         """Dismiss when focus leaves the menu."""

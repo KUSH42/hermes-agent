@@ -456,11 +456,15 @@ class LiveLineWidget(Widget):
             rl = msg.response_log
             msg.show_response_rule()
             for committed in lines[:-1]:
-                plain = _strip_ansi(committed)
-                if isinstance(rl, CopyableRichLog):
-                    rl.write_with_source(Text.from_ansi(committed), plain)
+                engine = getattr(msg, "_response_engine", None)
+                if engine is not None:
+                    engine.process_line(committed)  # engine routes to prose log or code block
                 else:
-                    rl.write(Text.from_ansi(committed))
+                    plain = _strip_ansi(committed)
+                    if isinstance(rl, CopyableRichLog):
+                        rl.write_with_source(Text.from_ansi(committed), plain)
+                    else:
+                        rl.write(Text.from_ansi(committed))
             if rl._deferred_renders:
                 self.call_after_refresh(msg.refresh, layout=True)
         except NoMatches:
@@ -606,7 +610,9 @@ class MessagePanel(Widget):
             id=f"response-block-{self._msg_id}",
             _log_id=f"response-{self._msg_id}",
         )
+        self._prose_blocks: list[CopyableBlock] = [self._response_block]
         self._user_text: str = user_text
+        self._response_engine: "Any | None" = None   # ResponseFlowEngine, set in on_mount
         super().__init__(**kwargs)
 
     def _finish_fade(self) -> None:
@@ -625,9 +631,206 @@ class MessagePanel(Widget):
     def reasoning(self) -> ReasoningPanel:
         return self._reasoning_panel
 
+    def on_mount(self) -> None:
+        """Lazy engine init — panel.app is guaranteed available at mount time."""
+        from hermes_cli.tui.response_flow import MARKDOWN_ENABLED, ResponseFlowEngine
+        self._response_engine = (
+            ResponseFlowEngine(panel=self) if MARKDOWN_ENABLED else None
+        )
+
     @property
     def response_log(self) -> CopyableRichLog:
         return self._response_block.log
+
+    def all_prose_text(self) -> str:
+        """Plain text from all prose sections — for copy-all and history search."""
+        parts = []
+        for block in self._prose_blocks:
+            text = block.log.copy_content()
+            if text:
+                parts.append(text)
+        return "\n".join(parts)
+
+    def first_response_line(self) -> str:
+        """First non-empty display line from any prose section — for history search preview."""
+        for block in self._prose_blocks:
+            for line in block.log._plain_lines:
+                if line.strip():
+                    return line
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# StreamingCodeBlock — fenced code block widget (stream-then-finalize)
+# ---------------------------------------------------------------------------
+
+class CodeBlockHeader(Static):
+    """Language badge + line count + spinner/state indicator.
+
+    Collapse affordance: click toggles --collapsed on parent StreamingCodeBlock
+    (only in COMPLETE state — no collapse during streaming).
+    """
+
+    DEFAULT_CSS = """
+    CodeBlockHeader {
+        height: 1;
+        padding-left: 1;
+        color: $text-muted;
+    }
+    """
+
+    def __init__(self, lang: str, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._lang_label = lang or "text"
+        self._line_count = 0
+        self._phase = "streaming"   # "streaming" | "complete" | "flushed"
+        self._update_display()
+
+    # ------------------------------------------------------------------
+    def _update_display(self) -> None:
+        lang = self._lang_label
+        count = self._line_count
+        if self._phase == "streaming":
+            self.update(f"{lang}   {count} lines  ···")
+        elif self._phase == "flushed":
+            self.update(f"{lang}   {count} lines  (incomplete)")
+        else:  # complete
+            self.update(f"{lang}   {count} lines  [▼]")
+
+    def set_line_count(self, n: int) -> None:
+        self._line_count = n
+        self._update_display()
+
+    def mark_complete(self) -> None:
+        self._phase = "complete"
+        self._update_display()
+
+    def mark_flushed(self) -> None:
+        self._phase = "flushed"
+        self._update_display()
+
+    # ------------------------------------------------------------------
+    def on_click(self) -> None:
+        block = self.parent
+        if not isinstance(block, StreamingCodeBlock):
+            return
+        if block._state != "COMPLETE":
+            return   # no collapse during streaming or after incomplete flush
+        block.toggle_class("--collapsed")
+
+
+class StreamingCodeBlock(Widget, can_focus=True):
+    """Fenced code block widget: streams per-line Pygments highlight, then
+    finalizes to full rich.Syntax on fence close.
+
+    States
+    ------
+    STREAMING → COMPLETE (fence closed — call_after_refresh(_finalize_syntax))
+    STREAMING → FLUSHED  (turn ended before fence closed — content preserved)
+    """
+
+    DEFAULT_CSS = """
+    StreamingCodeBlock {
+        height: auto;
+        border-left: vkey $primary 30%;
+        margin-left: 2;
+        margin-top: 1;
+        margin-bottom: 1;
+    }
+    StreamingCodeBlock.--complete CodeBlockHeader {
+        color: $text-muted;
+    }
+    StreamingCodeBlock.--collapsed > CopyableRichLog {
+        display: none;
+    }
+    """
+
+    def __init__(
+        self,
+        lang: str = "",
+        pygments_theme: str = "monokai",
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._lang = lang
+        self._pygments_theme = pygments_theme
+        self._state: "Literal['STREAMING', 'COMPLETE', 'FLUSHED']" = "STREAMING"
+        self._code_lines: list[str] = []
+        self._header = CodeBlockHeader(lang=lang)
+        self._log = CopyableRichLog(markup=False)
+
+    def compose(self) -> ComposeResult:
+        yield self._header
+        yield self._log
+
+    # ------------------------------------------------------------------
+    # Streaming phase
+    # ------------------------------------------------------------------
+
+    def append_line(self, line: str) -> None:
+        """Called by ResponseFlowEngine for each code line during streaming."""
+        self._code_lines.append(line)
+        highlighted = self._highlight_line(line, self._lang)
+        self._log.write_with_source(Text.from_ansi(highlighted), line)
+        self._header.set_line_count(len(self._code_lines))
+
+    def _highlight_line(self, line: str, lang: str) -> str:
+        """Per-line Pygments highlight — loses multi-line string context but
+        gives correct token highlighting for 90%+ of code."""
+        try:
+            from pygments import highlight  # type: ignore[import-untyped]
+            from pygments.lexers import TextLexer, get_lexer_by_name  # type: ignore[import-untyped]
+            from pygments.formatters import TerminalTrueColorFormatter  # type: ignore[import-untyped]
+            try:
+                lexer = get_lexer_by_name(lang, stripall=False) if lang else TextLexer()
+            except Exception:
+                lexer = TextLexer()  # unknown language name → plain text
+            return highlight(line, lexer, TerminalTrueColorFormatter(style=self._pygments_theme)).rstrip("\n")
+        except Exception:
+            return line  # safe fallback — plain text
+
+    # ------------------------------------------------------------------
+    # Finalization
+    # ------------------------------------------------------------------
+
+    def complete(self, skin_vars: dict[str, str]) -> None:
+        """Fence closed — replace per-line content with full rich.Syntax block."""
+        if self._state != "STREAMING":
+            return
+        self._state = "COMPLETE"
+        self.add_class("--complete")
+        self._header.mark_complete()
+        # Defer clear+write to a single repaint — prevents flash of empty log
+        self.call_after_refresh(self._finalize_syntax, dict(skin_vars))
+
+    def _finalize_syntax(self, skin_vars: dict[str, str]) -> None:
+        from rich.syntax import Syntax
+        from hermes_cli.tui.response_flow import _detect_lang
+        code = "\n".join(self._code_lines)
+        lang = self._lang or _detect_lang(code)
+        syntax = Syntax(
+            code,
+            lexer=lang,
+            theme=skin_vars.get("preview-syntax-theme", "monokai"),
+            line_numbers=True,
+            word_wrap=False,
+            indent_guides=False,
+            background_color=skin_vars.get("app-bg", "#1e1e1e"),
+        )
+        self._log.clear()
+        self._log.write_with_source(syntax, code)  # type: ignore[arg-type]
+
+    # ------------------------------------------------------------------
+    # Partial fence (turn ended before fence closed)
+    # ------------------------------------------------------------------
+
+    def flush(self) -> None:
+        """Turn ended before fence closed. Commit as plain text; no re-render."""
+        if self._state != "STREAMING":
+            return
+        self._state = "FLUSHED"
+        self.add_class("--flushed")
+        self._header.mark_flushed()
 
 
 # ---------------------------------------------------------------------------
@@ -797,20 +1000,33 @@ class OutputPanel(ScrollableContainer):
             pass
         live = self.live_line
         live.flush()  # drain _char_queue before reading _buf (no-op when typewriter disabled)
+
+        # Change 1: route partial final buffer through engine (or direct write)
         if live._buf:
             msg = self.current_message
             if msg is None:
                 msg = self.new_message()
             msg.show_response_rule()
             rl = msg.response_log
-            plain = _strip_ansi(live._buf)
-            if isinstance(rl, CopyableRichLog):
-                rl.write_with_source(Text.from_ansi(live._buf), plain)
+            engine = getattr(msg, "_response_engine", None)
+            if engine is not None:
+                engine.process_line(live._buf)
             else:
-                rl.write(Text.from_ansi(live._buf))
+                plain = _strip_ansi(live._buf)
+                if isinstance(rl, CopyableRichLog):
+                    rl.write_with_source(Text.from_ansi(live._buf), plain)
+                else:
+                    rl.write(Text.from_ansi(live._buf))
             if rl._deferred_renders:
                 self.call_after_refresh(msg.refresh, layout=True)
             live._buf = ""
+
+        # Change 2: close any open code block (re-acquire msg independently)
+        msg2 = self.current_message
+        if msg2 is not None:
+            engine2 = getattr(msg2, "_response_engine", None)
+            if engine2 is not None:
+                engine2.flush()  # closes open StreamingCodeBlock if mid-fence; flushes StreamingBlockBuffer
 
 
 # ---------------------------------------------------------------------------
@@ -2589,8 +2805,8 @@ class HistorySearchOverlay(Widget):
             _TurnEntry(
                 panel=p,
                 index=i + 1,
-                plain_text="\n".join(p.response_log._plain_lines),
-                display=next((ln for ln in p.response_log._plain_lines if ln.strip()), ""),
+                plain_text=p.all_prose_text(),
+                display=p.first_response_line(),
             )
             for i, p in enumerate(panels)
         ]

@@ -111,7 +111,81 @@ class BenchmarkResult:
 # Progress helpers
 # ---------------------------------------------------------------------------
 
-_TOTAL_BENCHMARKS = 12
+_TOTAL_BENCHMARKS = 14
+
+# Maps benchmark name → (user_label, user_impact, feature_group)
+_USER_CONTEXT: dict[str, tuple[str, str, str]] = {
+    "feed() — mid-line chunk": (
+        "Text token speed",
+        "Tokens from the model appear on screen in under 0.5ms each",
+        "Text Streaming",
+    ),
+    "feed() — line commit": (
+        "Line rendering speed",
+        "Completed lines land without any perceptible delay",
+        "Text Streaming",
+    ),
+    "100-chunk queue drain": (
+        "Output queue throughput",
+        "Hermes can handle hundreds of output chunks without skipping",
+        "Text Streaming",
+    ),
+    "watch_scroll_y body": (
+        "Scroll tracking overhead",
+        "Auto-scroll during streaming adds no visible cost",
+        "Text Streaming",
+    ),
+    "Engine prose line": (
+        "Markdown rendering speed",
+        "Bold, italics, headings, and inline code format in real-time as text streams",
+        "Text Streaming",
+    ),
+    "Code block syntax highlight": (
+        "Code highlighting speed",
+        "Syntax colours appear on every line as code streams in",
+        "Text Streaming",
+    ),
+    "fuzzy_rank — 10k paths": (
+        "File search speed (10k files)",
+        "Typing a filename filters 10,000 candidates under 5ms per keystroke",
+        "Autocomplete",
+    ),
+    "fuzzy_rank — 50 history turns": (
+        "History search speed",
+        "Ctrl+F history search responds to every keystroke under 2ms",
+        "Autocomplete",
+    ),
+    "render_line × 200 rows": (
+        "Completion list rendering",
+        "The autocomplete list draws at 60fps even with thousands of files loaded",
+        "Autocomplete",
+    ),
+    "10k items → completion list": (
+        "File list update speed",
+        "10,000 file results populate the autocomplete list without layout overhead",
+        "Autocomplete",
+    ),
+    "arrow-key highlight × 200": (
+        "Arrow key responsiveness",
+        "Up/down through autocomplete results feels instant",
+        "Autocomplete",
+    ),
+    "Path walker — first batch (1k files)": (
+        "File discovery speed",
+        "Files appear in the @ autocomplete list within 50ms of typing",
+        "Autocomplete",
+    ),
+    "Timer delivery under 500-chunk load": (
+        "Timer accuracy under load",
+        "UI animations and countdown timers stay on schedule during heavy model output",
+        "UI Stability",
+    ),
+    "Event-loop jitter under 200-chunk load": (
+        "Event loop stability",
+        "No frame stutters or UI freezes during peak streaming load",
+        "UI Stability",
+    ),
+}
 
 
 def _step(n: int, name: str) -> None:
@@ -623,6 +697,107 @@ async def bench_path_walker_1k() -> BenchmarkResult:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+async def bench_engine_prose_line() -> BenchmarkResult:
+    """ResponseFlowEngine.process_line() — plain prose hot path: StreamingBlockBuffer + inline markdown."""
+    from hermes_cli.tui.app import HermesApp
+    from hermes_cli.tui.widgets import OutputPanel
+
+    app = HermesApp(cli=MagicMock())
+    try:
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            panel = app.query_one(OutputPanel)
+            msg = panel.new_message()
+            await pilot.pause()
+
+            engine = getattr(msg, "_response_engine", None)
+            if engine is None:
+                return BenchmarkResult(
+                    name="Engine prose line", category="Streaming",
+                    description="",
+                    measured=0, budget=0.5,
+                    error="ResponseFlowEngine not available (HERMES_MARKDOWN=0?)",
+                )
+
+            line = "This is a realistic prose response with **bold**, `inline code`, and *emphasis* tokens.\n"
+            batch_size, n_batches = 50, 8 * _SCALE
+            batch_times: list[float] = []
+            for _ in range(n_batches):
+                t0 = time.perf_counter()
+                for _ in range(batch_size):
+                    engine.process_line(line)
+                batch_times.append((time.perf_counter() - t0) * 1000)
+                await pilot.pause()
+
+            per_call = [t / batch_size for t in batch_times]
+            med = statistics.median(per_call)
+            return BenchmarkResult(
+                name="Engine prose line",
+                category="Streaming",
+                description=(
+                    "ResponseFlowEngine.process_line() plain prose — "
+                    "StreamingBlockBuffer setext lookahead + inline markdown render"
+                ),
+                measured=med, budget=0.5, unit="ms",
+                iterations=batch_size * n_batches,
+                p99=max(per_call),
+                notes=f"p99={max(per_call):.3f}ms  {1000/med:.0f} lines/s",
+            )
+    except Exception as e:
+        return BenchmarkResult(
+            name="Engine prose line", category="Streaming",
+            description="", measured=0, budget=0.5, error=str(e),
+        )
+
+
+async def bench_code_block_highlight() -> BenchmarkResult:
+    """StreamingCodeBlock.append_line() — per-line Pygments TerminalTrueColorFormatter cost."""
+    from hermes_cli.tui.app import HermesApp
+    from hermes_cli.tui.widgets import OutputPanel, StreamingCodeBlock
+
+    app = HermesApp(cli=MagicMock())
+    try:
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            panel = app.query_one(OutputPanel)
+            msg = panel.new_message()
+            await pilot.pause()
+
+            block = StreamingCodeBlock(lang="python", pygments_theme="monokai")
+            await msg.mount(block)
+            await pilot.pause()
+
+            line = "    def compute_result(self, value: int) -> str:\n"
+            batch_size, n_batches = 20, 6 * _SCALE
+            batch_times: list[float] = []
+            for _ in range(n_batches):
+                t0 = time.perf_counter()
+                for _ in range(batch_size):
+                    block.append_line(line)
+                batch_times.append((time.perf_counter() - t0) * 1000)
+                await pilot.pause()
+
+            per_call = [t / batch_size for t in batch_times]
+            med = statistics.median(per_call)
+            return BenchmarkResult(
+                name="Code block syntax highlight",
+                category="Streaming",
+                description=(
+                    "StreamingCodeBlock.append_line() — per-line Pygments "
+                    "TerminalTrueColorFormatter during streaming state"
+                ),
+                measured=med, budget=2.0, unit="ms",
+                iterations=batch_size * n_batches,
+                p99=max(per_call),
+                notes=f"p99={max(per_call):.2f}ms  Pygments monokai theme",
+            )
+    except Exception as e:
+        return BenchmarkResult(
+            name="Code block syntax highlight", category="Streaming",
+            description="", measured=0, budget=2.0, error=str(e),
+        )
+
+
 # ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
@@ -639,6 +814,8 @@ async def _run_async_benchmarks() -> list[BenchmarkResult]:
         bench_arrowkey_highlight,
         bench_event_loop_jitter,
         bench_path_walker_1k,
+        bench_engine_prose_line,
+        bench_code_block_highlight,
     ]
     results = []
     step = 2  # pure benches already ran as 1 and 2
@@ -913,6 +1090,49 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     .pct-bar { display: inline-flex; width: 64px; height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; vertical-align: middle; margin-right: 6px; }
     .pct-fill { border-radius: 3px; }
 
+    /* ── Feature group cards ("What does this mean for you?") ──── */
+    .feature-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px; margin-top: 4px;
+    }
+    .feature-card {
+      border-radius: 8px; border: 1px solid var(--border);
+      background: var(--bg-card2); padding: 16px 20px;
+    }
+    .feature-card.feature-pass { border-color: rgba(63,185,80,0.35); }
+    .feature-card.feature-warn { border-color: rgba(210,153,34,0.35); }
+    .feature-card.feature-fail { border-color: rgba(248,81,73,0.35); }
+    .feature-header {
+      font-size: 0.9rem; font-weight: 700; margin-bottom: 12px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .feature-list { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+    .feature-item {
+      display: flex; align-items: flex-start; gap: 8px; font-size: 0.82rem;
+    }
+    .feat-icon { flex-shrink: 0; font-size: 0.75rem; margin-top: 2px; font-weight: 700; }
+    .feat-icon-ok   { color: var(--green); }
+    .feat-icon-warn { color: var(--yellow); }
+    .feat-icon-fail { color: var(--red); }
+    .feat-body { display: flex; flex-direction: column; flex: 1; }
+    .feat-body strong { color: var(--text); font-size: 0.83rem; }
+    .feat-impact { color: var(--text-muted); font-size: 0.76rem; margin-top: 1px; line-height: 1.35; }
+    .feat-metric {
+      flex-shrink: 0; font-family: var(--font-mono); font-size: 0.76rem;
+      color: var(--text-muted); text-align: right; min-width: 62px;
+    }
+
+    /* ── Developer section label ────────────────────────────────── */
+    .dev-label {
+      font-size: 0.73rem; font-weight: 600; font-family: var(--font-mono);
+      text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--text-dim); margin-bottom: 0; padding: 6px 0 10px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .dev-label::after {
+      content: ""; flex: 1; height: 1px; background: var(--border);
+    }
+
     /* ── Methodology ───────────────────────────────────────────── */
     .method-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
     .method-item { padding: 7px 0; font-size: 0.85rem; border-bottom: 1px solid rgba(48,54,61,0.4); }
@@ -959,7 +1179,17 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 </div>
 
 <div class="card">
-  <h2>Budget Utilization by Metric</h2>
+  <h2>What does this mean for you?</h2>
+  <p class="subtitle">
+    Green ✓ means that feature works smoothly within its timing target.
+    Yellow ⚠ means it's within budget but worth watching.
+    Red ✕ means the measured time exceeded the budget — users may notice lag.
+  </p>
+  <div class="feature-grid" id="featureGrid"></div>
+</div>
+
+<div class="card">
+  <div class="dev-label">Developer details — budget utilization by metric</div>
   <p class="subtitle">
     Each bar shows measured time as % of the real-time budget.
     Green ≤ 50% &nbsp;·&nbsp; Yellow 50–80% &nbsp;·&nbsp; Orange 80–100% &nbsp;·&nbsp; Red &gt; 100%.
@@ -972,7 +1202,8 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 </div>
 
 <div class="card">
-  <h2>Detailed Results</h2>
+  <div class="dev-label">Developer details — raw numbers</div>
+  <h2 style="display:none">Detailed Results</h2>
   <table>
     <thead>
       <tr>
@@ -1022,6 +1253,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 
 <script>
 const results = {chart_json};
+const USER_CTX = {user_context_json};
 
 const pctValues = results.map(r => r.error ? null : Math.min(r.pct, 240));
 const labels    = results.map(r => r.name);
@@ -1126,6 +1358,53 @@ new Chart(ctx, {{
     }}
   }}
 }});
+
+// ── Feature-group cards ("What does this mean for you?") ──────────────────
+(function () {{
+  const ICONS = {{'Text Streaming': '💬', 'Autocomplete': '⚡', 'UI Stability': '🛡️'}};
+  const groups = {{}};
+  results.forEach(r => {{
+    const ctx = USER_CTX[r.name] || {{
+      user_label: r.name, user_impact: '', feature_group: 'Other'
+    }};
+    const fg = ctx.feature_group;
+    if (!groups[fg]) groups[fg] = [];
+    groups[fg].push({{...r, user_label: ctx.user_label, user_impact: ctx.user_impact}});
+  }});
+
+  const grid = document.getElementById('featureGrid');
+  if (!grid) return;
+
+  Object.entries(groups).forEach(([group, items]) => {{
+    const anyFail = items.some(x => x.status === 'FAIL' || x.status === 'ERROR');
+    const anyWarn = items.some(x => x.status === 'WARN');
+    const cardClass = anyFail ? 'feature-fail' : anyWarn ? 'feature-warn' : 'feature-pass';
+    const icon = ICONS[group] || '📊';
+
+    const itemHtml = items.map(x => {{
+      const isOk  = x.status === 'GOOD' || x.status === 'OK';
+      const isErr = x.status === 'FAIL' || x.status === 'ERROR';
+      const iconCls  = isOk ? 'feat-icon-ok' : isErr ? 'feat-icon-fail' : 'feat-icon-warn';
+      const iconChar = isOk ? '✓' : isErr ? '✕' : '⚠';
+      const metricStr = x.error ? '—' : (x.measured.toFixed(1) + ' ' + x.unit);
+      const budgetStr = x.budget + ' ' + x.unit;
+      return `<li class="feature-item">
+        <span class="feat-icon ${{iconCls}}">${{iconChar}}</span>
+        <span class="feat-body">
+          <strong>${{x.user_label}}</strong>
+          ${{x.user_impact ? `<span class="feat-impact">${{x.user_impact}}</span>` : ''}}
+        </span>
+        <span class="feat-metric" title="budget: ${{budgetStr}}">${{metricStr}}</span>
+      </li>`;
+    }}).join('');
+
+    grid.insertAdjacentHTML('beforeend', `
+      <div class="feature-card ${{cardClass}}">
+        <div class="feature-header">${{icon}} ${{group}}</div>
+        <ul class="feature-list">${{itemHtml}}</ul>
+      </div>`);
+  }});
+}})();
 </script>
 </body>
 </html>
@@ -1208,23 +1487,30 @@ def render_html(results: list[BenchmarkResult], output_path: Path) -> None:
         for r in results
     ]
 
+    # User-context dict: benchmark name → plain-English labels for non-technical readers
+    user_context_data = {
+        name: {"user_label": lbl, "user_impact": imp, "feature_group": grp}
+        for name, (lbl, imp, grp) in _USER_CONTEXT.items()
+    }
+
     # Use manual substitution — CSS/JS braces would break str.format()
     subs = {
-        "{timestamp}":       datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "{python_version}":  f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
-        "{textual_version}": textual_version,
-        "{platform}":        platform.system(),
-        "{scale}":           str(_SCALE),
-        "{verdict_class}":   verdict_class,
-        "{verdict_icon}":    verdict_icon,
-        "{verdict_text}":    verdict_text,
-        "{n_good}":          str(n_good),
-        "{n_warn}":          str(n_warn),
-        "{n_fail}":          str(n_fail),
-        "{n_error}":         str(n_error),
-        "{n_total}":         str(len(results)),
-        "{table_rows}":      rows_html,
-        "{chart_json}":      json.dumps(chart_data, indent=2),
+        "{timestamp}":          datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "{python_version}":     f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        "{textual_version}":    textual_version,
+        "{platform}":           platform.system(),
+        "{scale}":              str(_SCALE),
+        "{verdict_class}":      verdict_class,
+        "{verdict_icon}":       verdict_icon,
+        "{verdict_text}":       verdict_text,
+        "{n_good}":             str(n_good),
+        "{n_warn}":             str(n_warn),
+        "{n_fail}":             str(n_fail),
+        "{n_error}":            str(n_error),
+        "{n_total}":            str(len(results)),
+        "{table_rows}":         rows_html,
+        "{chart_json}":         json.dumps(chart_data, indent=2),
+        "{user_context_json}":  json.dumps(user_context_data, indent=2),
     }
     html = _HTML_TEMPLATE
     for placeholder, value in subs.items():

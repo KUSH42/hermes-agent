@@ -319,6 +319,9 @@ async def test_full_turn_layout_reasoning_then_response():
         for i in range(8):
             app.write_output(f"Response line {i}\n")
         await _pause(pilot, n=10)
+        # Flush StreamingBlockBuffer setext-lookahead pending line
+        app.flush_output()
+        await _pause(pilot, n=5)
 
         # MessagePanel accommodates both reasoning and response
         assert msg.size.height >= reasoning_h + 8, (
@@ -341,6 +344,9 @@ async def test_rapid_streaming_panels_stay_expanded():
         for i in range(20):
             app.write_output(f"Rapid line {i}\n")
         await _pause(pilot, n=15)
+        # Flush StreamingBlockBuffer setext-lookahead pending line
+        app.flush_output()
+        await _pause(pilot, n=5)
 
         # All content should be committed
         assert len(msg.response_log.lines) >= 20

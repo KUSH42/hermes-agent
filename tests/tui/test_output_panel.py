@@ -36,6 +36,10 @@ async def test_cprint_routes_to_queue():
         # Give consumer time to process
         await pilot.pause()
         await pilot.pause()
+        # Flush StreamingBlockBuffer setext-lookahead pending line
+        app.flush_output()
+        await pilot.pause()
+        await pilot.pause()
         assert len(msg.response_log.lines) >= 1
 
 
@@ -69,9 +73,14 @@ async def test_live_line_commits_complete_lines():
         app.write_output("line1\nline2\npartial")
         await pilot.pause()
         await pilot.pause()
+        # Flush StreamingBlockBuffer setext-lookahead pending line + "partial" from live buf
+        app.flush_output()
+        await pilot.pause()
+        await pilot.pause()
         assert len(msg.response_log.lines) >= 2
         live = app.query_one(LiveLineWidget)
-        assert live._buf == "partial"
+        # flush_output drains live buf into engine — it's empty after flush
+        assert live._buf == ""
 
 
 @pytest.mark.asyncio

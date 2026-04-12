@@ -1536,7 +1536,7 @@ class HermesApp(App):
         try:
             from hermes_cli.tui.widgets import MessagePanel as _MP, CopyableRichLog as _CRL
             if isinstance(panel, _MP):
-                content = panel.response_log.copy_content()
+                content = panel.all_prose_text()
             elif isinstance(panel, _CRL):
                 content = panel.copy_content()
             else:

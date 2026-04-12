@@ -126,6 +126,10 @@ async def test_new_turn_output_not_lost():
         app.write_output("Response line\n")
         for _ in range(5):
             await pilot.pause()
+        # Flush StreamingBlockBuffer setext-lookahead pending line
+        app.flush_output()
+        for _ in range(3):
+            await pilot.pause()
 
         msg = app.query_one(OutputPanel).current_message
         assert msg is not None

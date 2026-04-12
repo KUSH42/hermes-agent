@@ -35,6 +35,7 @@ from hermes_cli.tui.widgets import (
     HistorySearchOverlay,
     LiveLineWidget,
     OutputPanel,
+    StreamingCodeBlock,
     TurnCandidate,
     _TurnEntry,
 )
@@ -387,4 +388,90 @@ async def test_scroll_handler_cost_under_0_1ms() -> None:
         _assert_or_warn(
             median_ms < 0.1,
             f"watch_scroll_y method body: {median_ms:.4f}ms (target <0.1ms)",
+        )
+
+
+# ---------------------------------------------------------------------------
+# §5 — ResponseFlowEngine + StreamingCodeBlock hot paths
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.slow
+@pytest.mark.asyncio
+async def test_engine_process_line_plain_prose_under_0_5ms() -> None:
+    """ResponseFlowEngine.process_line() plain prose: StreamingBlockBuffer + inline-md; target < 0.5ms median.
+
+    Tests the per-line cost of the full prose pipeline: fence detection, setext lookahead
+    buffer, apply_inline_markdown, and write_with_source to CopyableRichLog.
+    """
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        panel = app.query_one(OutputPanel)
+        msg = panel.new_message()
+        await pilot.pause()
+
+        engine = getattr(msg, "_response_engine", None)
+        if engine is None:
+            pytest.skip("ResponseFlowEngine not available (HERMES_MARKDOWN=0?)")
+
+        line = "This is a realistic prose response with **bold**, `inline code`, and *emphasis* tokens.\n"
+        batch_size, n_batches = 50, 8
+        batch_times: list[float] = []
+        for _ in range(n_batches):
+            t0 = time.perf_counter()
+            for _ in range(batch_size):
+                engine.process_line(line)
+            batch_times.append((time.perf_counter() - t0) * 1000)
+            await pilot.pause()
+
+        per_call_ms = [t / batch_size for t in batch_times]
+        median_ms = statistics.median(per_call_ms)
+        p99_approx = max(per_call_ms)
+
+        _assert_or_warn(
+            median_ms < 0.5,
+            f"Engine.process_line() median: {median_ms:.3f}ms (target <0.5ms)",
+        )
+        _assert_or_warn(
+            p99_approx < 2.0,
+            f"Engine.process_line() p99-approx: {p99_approx:.3f}ms (target <2ms)",
+        )
+
+
+@pytest.mark.slow
+@pytest.mark.asyncio
+async def test_code_block_per_line_highlight_under_2ms() -> None:
+    """StreamingCodeBlock.append_line(): per-line Pygments TerminalTrueColorFormatter; target < 2ms median.
+
+    Measures the per-line syntax-highlight cost while a code block is in STREAMING state.
+    Pygments lexing + TerminalTrueColorFormatter + RichLog write.
+    """
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        panel = app.query_one(OutputPanel)
+        msg = panel.new_message()
+        await pilot.pause()
+
+        block = StreamingCodeBlock(lang="python", pygments_theme="monokai")
+        await msg.mount(block)
+        await pilot.pause()
+
+        line = "    def compute_result(self, value: int) -> str:\n"
+        batch_size, n_batches = 20, 6
+        batch_times: list[float] = []
+        for _ in range(n_batches):
+            t0 = time.perf_counter()
+            for _ in range(batch_size):
+                block.append_line(line)
+            batch_times.append((time.perf_counter() - t0) * 1000)
+            await pilot.pause()
+
+        per_call_ms = [t / batch_size for t in batch_times]
+        median_ms = statistics.median(per_call_ms)
+
+        _assert_or_warn(
+            median_ms < 2.0,
+            f"StreamingCodeBlock.append_line() median: {median_ms:.3f}ms (target <2ms)",
         )

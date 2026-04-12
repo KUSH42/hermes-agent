@@ -38,6 +38,9 @@ async def test_complete_line_committed_to_richlog():
 
         app.write_output("Hello world\n")
         await _pause(pilot)
+        # Flush StreamingBlockBuffer setext-lookahead pending line
+        app.flush_output()
+        await _pause(pilot)
 
         msg = panel.current_message
         assert msg is not None
@@ -77,10 +80,13 @@ async def test_mixed_complete_and_partial_lines():
 
         app.write_output("line1\nline2\nline3\npartial")
         await _pause(pilot)
+        # Flush StreamingBlockBuffer setext-lookahead pending line
+        app.flush_output()
+        await _pause(pilot)
 
         msg = panel.current_message
         assert len(msg.response_log.lines) >= 3
-        assert panel.live_line._buf == "partial"
+        assert panel.live_line._buf == ""  # flush_output drains partial into engine too
 
 
 @pytest.mark.asyncio
@@ -97,6 +103,9 @@ async def test_streaming_token_by_token():
         tokens = ["Hello", " ", "world", "\n", "Second", " line", "\n"]
         for token in tokens:
             app.write_output(token)
+        await _pause(pilot)
+        # Flush StreamingBlockBuffer setext-lookahead pending line
+        app.flush_output()
         await _pause(pilot)
 
         msg = panel.current_message
@@ -126,6 +135,9 @@ async def test_cprint_auto_appends_newline_for_tui():
             cli_mod._hermes_app = app
             # _cprint without \n — the fix auto-appends \n in the TUI path
             cli_mod._cprint("no trailing newline")
+            await _pause(pilot)
+            # Flush StreamingBlockBuffer setext-lookahead pending line
+            app.flush_output()
             await _pause(pilot)
 
             msg = panel.current_message
@@ -275,6 +287,9 @@ async def test_output_immediately_after_turn_start():
 
         app.write_output("Immediate line 1\n")
         app.write_output("Immediate line 2\n")
+        await _pause(pilot)
+        # Flush StreamingBlockBuffer setext-lookahead pending line
+        app.flush_output()
         await _pause(pilot)
 
         msg = app.query_one(OutputPanel).current_message
@@ -452,6 +467,9 @@ async def test_reasoning_then_response_streaming():
         app.write_output("Response line 1\n")
         app.write_output("Response line 2\n")
         await _pause(pilot)
+        # Flush StreamingBlockBuffer setext-lookahead pending line
+        app.flush_output()
+        await _pause(pilot)
 
         assert len(msg.response_log.lines) >= 2
         assert len(msg.reasoning._reasoning_log.lines) >= 1  # 1 gutter-prefixed step (no header)
@@ -472,6 +490,9 @@ async def test_rapid_streaming_does_not_lose_content():
         for i in range(50):
             app.write_output(f"Line {i}\n")
         await _pause(pilot, n=10)
+        # Flush StreamingBlockBuffer setext-lookahead pending line
+        app.flush_output()
+        await _pause(pilot, n=5)
 
         msg = panel.current_message
         assert len(msg.response_log.lines) >= 50
@@ -492,9 +513,11 @@ async def test_interleaved_output_and_flush():
         app.write_output("First\n")
         app.write_output("partial")
         await _pause(pilot)
-        app.flush_output()
+        app.flush_output()   # flushes "partial" + drains StreamingBlockBuffer → emits "First"+"partial"
         await _pause(pilot)
         app.write_output("Second\n")
+        await _pause(pilot)
+        app.flush_output()   # drain "Second" from StreamingBlockBuffer pending
         await _pause(pilot)
 
         msg = panel.current_message
@@ -529,14 +552,17 @@ async def test_chunks_render_incrementally_on_new_message():
 
         msg = panel.current_message
         assert msg is not None
-        first_count = len(msg.response_log.lines)
-        assert first_count >= 1, "First chunk should render before second arrives"
 
-        # Send second chunk — should also render (not pile up deferred)
+        # Send second chunk — first line is now emitted from StreamingBlockBuffer
+        # (setext lookahead: "First line" was pending; "Second line" flushes it)
         app.write_output("Second line\n")
         await _pause(pilot)
+        # Flush "Second line" which is still in StreamingBlockBuffer pending
+        app.flush_output()
+        await _pause(pilot)
 
-        assert len(msg.response_log.lines) >= first_count + 1
+        # Both lines should be committed
+        assert len(msg.response_log.lines) >= 2
 
 
 def test_cpython_fast_path_disabled():
@@ -632,6 +658,9 @@ async def test_user_echo_does_not_pollute_response_log():
 
         # Write response content
         app.write_output("response text\n")
+        await _pause(pilot)
+        # Flush StreamingBlockBuffer setext-lookahead pending line
+        app.flush_output()
         await _pause(pilot)
 
         msg = panel.current_message

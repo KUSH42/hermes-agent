@@ -896,16 +896,22 @@ class HermesApp(App):
         lines: list[str],
         plain_lines: list[str],
     ) -> None:
-        """Mount a ToolBlock into the current MessagePanel. Event-loop only."""
+        """Mount a ToolBlock into OutputPanel before the live-output trio.
+
+        Tool blocks are direct children of OutputPanel (not nested inside
+        MessagePanel) so they stay correctly ordered across turns.  Mounting
+        before tool_pending ensures completed blocks remain visually associated
+        with their turn's content even after subsequent turns are appended.
+        """
         if not lines:
             return
         from hermes_cli.tui.tool_blocks import ToolBlock as _ToolBlock
         try:
             output = self.query_one(OutputPanel)
-            panel = output.current_message
-            if panel is None:
-                panel = output.new_message()
-            panel.mount(_ToolBlock(label, lines, plain_lines))
+            # Ensure a MessagePanel exists for this turn (holds response text).
+            if output.current_message is None:
+                output.new_message()
+            output.mount(_ToolBlock(label, lines, plain_lines), before=output.tool_pending)
             # Increment memoized header count to avoid O(n) query in StatusBar
             self._browse_total += 1
         except NoMatches:
@@ -914,7 +920,12 @@ class HermesApp(App):
     # --- StreamingToolBlock lifecycle ---
 
     def open_streaming_tool_block(self, tool_call_id: str, label: str) -> None:
-        """Mount a StreamingToolBlock for incremental output. Event-loop only.
+        """Mount a StreamingToolBlock into OutputPanel before the live-output trio.
+
+        Tool blocks are direct children of OutputPanel (not nested inside
+        MessagePanel) so they stay correctly ordered across turns.  Mounting
+        before tool_pending means completed STBs remain visually adjacent to
+        their turn's content after subsequent turns are appended.
 
         Called via ``call_from_thread`` from the agent thread before the tool
         starts executing.  Subsequent output lines are routed here via
@@ -923,11 +934,11 @@ class HermesApp(App):
         from hermes_cli.tui.tool_blocks import StreamingToolBlock as _STB
         try:
             output = self.query_one(OutputPanel)
-            panel = output.current_message
-            if panel is None:
-                panel = output.new_message()
+            # Ensure a MessagePanel exists for this turn (holds response text).
+            if output.current_message is None:
+                output.new_message()
             block = _STB(label=label)
-            panel.mount(block, before=output.live_line)
+            output.mount(block, before=output.tool_pending)
             self._active_streaming_blocks[tool_call_id] = block
             self._browse_total += 1
         except NoMatches:

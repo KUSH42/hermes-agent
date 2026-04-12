@@ -9618,7 +9618,7 @@ class HermesCLI:
         global _hermes_app
         try:
             import os as _os
-            _os.environ.setdefault("TEXTUAL_FPS", "200")
+            _os.environ.setdefault("TEXTUAL_FPS", "60")
             from hermes_cli.tui.app import HermesApp as _HApp
             from hermes_cli.tui.osc52_probe import (
                 probe_osc52 as _probe_osc52,

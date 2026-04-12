@@ -725,7 +725,7 @@ class OutputPanel(ScrollableContainer):
         """
         panel = MessagePanel(user_text=user_text)
         panel.add_class("--entering")
-        self.mount(panel, before=self.live_line)
+        self.mount(panel, before=self.tool_pending)
         # Remove --entering after the first render so the CSS opacity transition
         # plays: opacity 0 → 1 (fade-in).  call_after_refresh fires in the next
         # event loop pass — fast enough to keep the initial "black flash" invisible

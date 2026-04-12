@@ -591,7 +591,7 @@ class HermesApp(App):
         """
         try:
             panel = self.query_one(OutputPanel)
-            panel.mount(UserEchoPanel(text, images=images), before=panel.live_line)
+            panel.mount(UserEchoPanel(text, images=images), before=panel.tool_pending)
             if not panel._user_scrolled_up:
                 self.call_after_refresh(panel.scroll_end, animate=False)
         except NoMatches:
@@ -1156,7 +1156,7 @@ class HermesApp(App):
 
     # --- Right-click context menu ---
 
-    def on_click(self, event: Any) -> None:
+    async def on_click(self, event: Any) -> None:
         """Left-click focuses input; right-click (button=3) shows context menu."""
         if event.button == 1:
             try:
@@ -1175,7 +1175,7 @@ class HermesApp(App):
         sy = event.screen_y if event.screen_y is not None else event.y
         try:
             from hermes_cli.tui.context_menu import ContextMenu as _CM
-            self.query_one(_CM).show(items, sx, sy)
+            await self.query_one(_CM).show(items, sx, sy)
         except NoMatches:
             pass
 

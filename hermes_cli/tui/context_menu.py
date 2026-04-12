@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.css.query import NoMatches
 from textual.widget import Widget
 from textual.widgets import Static
@@ -53,6 +54,9 @@ class _ContextItem(Static):
     _ContextItem {
         height: 1;
     }
+    _ContextItem.--selected {
+        background: $accent 25%;
+    }
     """
 
     def __init__(self, item: MenuItem, **kwargs) -> None:
@@ -90,6 +94,11 @@ class ContextMenu(Widget):
     - ``on_blur`` fires when focus leaves → calls ``dismiss()``.
     - ``on_key(escape)`` calls ``dismiss()`` and consumes the event.
     - ``_ContextItem.on_click`` calls the item action then ``dismiss()``.
+
+    Keyboard navigation (P0-C)
+    --------------------------
+    Up/Down move the ``--selected`` highlight; Enter executes the selected item.
+    First Down press with no selection jumps to the first non-separator item.
     """
 
     can_focus = True
@@ -102,11 +111,63 @@ class ContextMenu(Widget):
         width: auto;
         height: auto;
         background: $surface;
-        border: tall $primary;
+        border: tall $primary 20%;
         padding: 0 1;
     }
     ContextMenu.--visible { display: block; }
     """
+
+    BINDINGS = [
+        Binding("up", "move_up", show=False, priority=True),
+        Binding("down", "move_down", show=False, priority=True),
+        Binding("enter", "execute_selected", show=False, priority=True),
+    ]
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._selected_index: int = -1  # -1 = no selection
+
+    def _items(self) -> "list[_ContextItem]":
+        """Return all non-separator item widgets in display order."""
+        return list(self.query(_ContextItem))
+
+    def _apply_selection(self) -> None:
+        """Update --selected class to match _selected_index."""
+        items = self._items()
+        for i, item in enumerate(items):
+            item.set_class(i == self._selected_index, "--selected")
+
+    def action_move_up(self) -> None:
+        """Move selection up, skipping separators (P0-C)."""
+        items = self._items()
+        if not items:
+            return
+        if self._selected_index <= 0:
+            self._selected_index = 0
+        else:
+            self._selected_index = max(0, self._selected_index - 1)
+        self._apply_selection()
+
+    def action_move_down(self) -> None:
+        """Move selection down; first press jumps to item 0 (P0-C)."""
+        items = self._items()
+        if not items:
+            return
+        if self._selected_index < 0:
+            self._selected_index = 0
+        else:
+            self._selected_index = min(len(items) - 1, self._selected_index + 1)
+        self._apply_selection()
+
+    def action_execute_selected(self) -> None:
+        """Execute the highlighted item and dismiss (P0-C)."""
+        items = self._items()
+        if 0 <= self._selected_index < len(items):
+            try:
+                items[self._selected_index]._item.action()
+            except Exception:
+                pass
+        self.dismiss()
 
     async def show(self, items: list[MenuItem], screen_x: int, screen_y: int) -> None:
         """Position and reveal the context menu with the given items.
@@ -156,6 +217,7 @@ class ContextMenu(Widget):
         if new_widgets:
             await self.mount(*new_widgets)
 
+        self._selected_index = -1  # reset selection on each new show
         self.add_class("--visible")
         self.focus()
 

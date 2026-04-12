@@ -28,6 +28,9 @@ $cursor-color: #FFF8DC;
 $cursor-selection-bg: #3A5A8C;
 $cursor-placeholder: #555555;
 
+/* Ghost text — dim but legible; $text-muted 60% yields ~1.67:1 contrast (invisible). */
+$ghost-text-color: #555555;
+
 /* Chevron phase colours — ThemeManager overrides via component_vars */
 $chevron-base: #FFF8DC;
 $chevron-file: #FFBF00;
@@ -215,9 +218,11 @@ HermesInput > .input--placeholder {
 }
 
 /* Ghost text styling — scoped to HermesInput only so other Input widgets
- * (history search, sudo/secret overlays) are not inadvertently affected. */
+ * (history search, sudo/secret overlays) are not inadvertently affected.
+ * $text-muted 60% = ~1.67:1 contrast (illegible). $ghost-text-color (#555555)
+ * gives ~2.5:1 — dim but readable. */
 HermesInput > .input--suggestion {
-    color: $text-muted 60%;
+    color: $ghost-text-color;
     text-style: italic;
 }
 
@@ -234,31 +239,36 @@ VoiceStatusBar {
     padding: 0 1;
 }
 
-/* --- Glassmorphism: completion menu --- */
+/* --- Completion overlay: elevated panel design ---
+ *
+ * Depth is achieved through brightness hierarchy, not alpha:
+ *   $app-bg  #1E1E1E  output pane (deepest)
+ *   $panel   #252526  preview panel (mid)
+ *   $surface #2D2D30  list panel (closest, brightest)
+ *
+ * The accent top stripe spans the full overlay width and acts as the
+ * primary elevation signal — like a light catch on a raised surface.
+ * No opacity hacks; Textual composites against parent bg, not content. */
+
+CompletionOverlay {
+    border-top: hkey $accent 60%;
+}
 
 VirtualCompletionList {
-    background: $panel 40%;
-    border: tall $primary 20%;
-    border-top: hkey $accent 50%;
-    tint: $primary 8%;
+    background: $surface-lighten-1;
     color: $text;
 }
 
-VirtualCompletionList:focus {
-    border: tall $accent 50%;
-    tint: $accent 12%;
-}
-
-/* Selected row background — paired with Strip.apply_style in render_line */
+/* Selected row — accent fill + bold; no border needed */
 VirtualCompletionList > .completion--row-selected {
-    background: $accent 25%;
+    background: $accent 18%;
     text-style: bold;
 }
 
-/* Preview panel divider */
+/* Preview panel — one step darker than list, reads as "behind" */
 PreviewPanel {
-    border-left: vkey $primary 30%;
-    background: $panel 30%;
+    border-left: vkey $primary 40%;
+    background: $surface;
     padding: 0 1;
 }
 
@@ -367,6 +377,16 @@ HermesApp.reduced-motion MessagePanel           { transition: none; }
 HermesApp.reduced-motion MessagePanel.--highlighted { transition: none; }
 HermesApp.reduced-motion #input-chevron         { transition: none; }
 HermesApp.reduced-motion ToolHeader             { transition: none; }
+
+/* P0-A: Disable transitions on all overlay widgets under reduced-motion.
+ * Countdown color lerp continues (color change, not positional motion). */
+HermesApp.reduced-motion ClarifyWidget,
+HermesApp.reduced-motion ApprovalWidget,
+HermesApp.reduced-motion SudoWidget,
+HermesApp.reduced-motion SecretWidget,
+HermesApp.reduced-motion UndoConfirmOverlay,
+HermesApp.reduced-motion KeymapOverlay,
+HermesApp.reduced-motion HistorySearchOverlay   { transition: none; }
 
 /* --- FPS HUD overlay --- */
 

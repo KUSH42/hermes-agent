@@ -839,6 +839,25 @@ class HermesApp(App):
             self.add_class("density-compact")
             self._flash_hint("Density: compact", 1.0)
 
+    def _dismiss_floating_panels(self) -> None:
+        """Dismiss HistorySearchOverlay and KeymapOverlay (P0-B stacking).
+
+        Called whenever an agent-triggered overlay becomes active so that the
+        reference/navigation panels do not compete for screen space.
+        """
+        try:
+            hs = self.query_one(HistorySearchOverlay)
+            if hs.has_class("--visible"):
+                hs.action_dismiss()
+        except NoMatches:
+            pass
+        try:
+            ko = self.query_one(KeymapOverlay)
+            if ko.has_class("--visible"):
+                ko.remove_class("--visible")
+        except NoMatches:
+            pass
+
     def watch_clarify_state(self, value: ChoiceOverlayState | None) -> None:
         try:
             w = self.query_one(ClarifyWidget)
@@ -846,6 +865,7 @@ class HermesApp(App):
             if value is not None:
                 w.update(value)
                 self._hide_completion_overlay_if_present()
+                self._dismiss_floating_panels()
                 self.call_after_refresh(w.focus)
             else:
                 if not self.agent_running and not self.command_running:
@@ -864,6 +884,7 @@ class HermesApp(App):
             if value is not None:
                 w.update(value)
                 self._hide_completion_overlay_if_present()
+                self._dismiss_floating_panels()
                 self.call_after_refresh(w.focus)
             else:
                 if not self.agent_running and not self.command_running:
@@ -891,6 +912,7 @@ class HermesApp(App):
             w.display = value is not None
             if value is not None:
                 w.update(value)
+                self._dismiss_floating_panels()
         except NoMatches:
             pass
         self._set_hint_phase(self._compute_hint_phase())
@@ -901,6 +923,7 @@ class HermesApp(App):
             w.display = value is not None
             if value is not None:
                 w.update(value)
+                self._dismiss_floating_panels()
         except NoMatches:
             pass
         self._set_hint_phase(self._compute_hint_phase())
@@ -919,6 +942,24 @@ class HermesApp(App):
             w.display = value is not None
             if value is not None:
                 w.update(value)
+                self._dismiss_floating_panels()
+                # P0-B: pause any active agent overlay countdown while undo confirm is open
+                for widget_type in (ApprovalWidget, ClarifyWidget, SudoWidget, SecretWidget):
+                    try:
+                        aw = self.query_one(widget_type)
+                        if aw.display:
+                            aw.pause_countdown()
+                    except NoMatches:
+                        pass
+            else:
+                # P0-B: resume paused agent overlay countdowns when undo confirm dismisses
+                for widget_type in (ApprovalWidget, ClarifyWidget, SudoWidget, SecretWidget):
+                    try:
+                        aw = self.query_one(widget_type)
+                        if aw.display and getattr(aw, "_was_paused", False):
+                            aw.resume_countdown()
+                    except NoMatches:
+                        pass
         except NoMatches:
             pass
         # Disable input while overlay is open so printable keys (y/n) bubble

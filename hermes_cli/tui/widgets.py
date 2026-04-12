@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 import asyncio
 import os
 import re
+import time
 
 from rich.segment import Segment
 from rich.style import Style
@@ -1885,10 +1886,85 @@ class CountdownMixin:
     _state_attr: str
     _timeout_response: object = None
     _countdown_prefix: str = ""
+    # Stored handle so we can stop/restart the timer for pause/resume.
+    _countdown_timer: "object | None" = None
+    # Pause/resume tracking (P0-B: multi-overlay stacking).
+    _was_paused: bool = False
+    _pause_start: float = 0.0
+    # Initial total seconds — set from state.remaining in each widget's update().
+    # Used to compute the ▓▒░ fill ratio.
+    _countdown_total: int = 30
 
     def _start_countdown(self) -> None:
         """Call from on_mount(). Starts the 1-second tick timer."""
-        self.set_interval(1.0, self._tick_countdown)
+        if self._countdown_timer is not None:
+            return  # already running
+        self._countdown_timer = self.set_interval(1.0, self._tick_countdown)
+
+    def pause_countdown(self) -> None:
+        """Pause the countdown timer (P0-B: multi-overlay stacking).
+
+        Stops the tick without auto-resolving; call ``resume_countdown()`` to
+        restart and compensate the deadline for time spent paused.
+        """
+        if self._countdown_timer is not None:
+            self._countdown_timer.stop()
+            self._countdown_timer = None
+        self._was_paused = True
+        self._pause_start = time.monotonic()
+
+    def resume_countdown(self) -> None:
+        """Resume a previously paused countdown.
+
+        Extends the deadline by the time spent paused so the user is not
+        penalised for an interruption they did not initiate.
+        """
+        if not self._was_paused:
+            return
+        state: "OverlayState | None" = getattr(
+            getattr(self, "app", None), self._state_attr, None
+        )
+        if state is not None:
+            elapsed_paused = time.monotonic() - self._pause_start
+            state.deadline += elapsed_paused
+        self._was_paused = False
+        self._start_countdown()
+
+    def _build_countdown_strip(self, remaining: int, total: int, width: int) -> "Text":
+        """Build a ▓▒░ progress strip for the countdown display.
+
+        Spec §2.3: ▓ = remaining time (left, colored); ░ = elapsed (right, dim).
+        Color phases: >5s → $primary; 1-5s → lerp($primary→$warning); ≤1s → $error.
+        """
+        # Bar color phase
+        if remaining > 5:
+            bar_color = "#5f87d7"  # $primary calm
+        elif remaining > 1:
+            t = (5.0 - remaining) / 4.0
+            bar_color = lerp_color("#5f87d7", "#FFA726", t)
+        else:
+            bar_color = "#ef5350"  # $error critical
+
+        label = f"{remaining:>2}s"
+        label_width = len(label) + 1   # leading space + label
+        bar_width = max(8, width - label_width)
+
+        result = Text()
+        ratio = min(1.0, remaining / max(1, total))
+        filled_cells = int(bar_width * ratio)
+
+        meniscus = min(3, filled_cells)
+        heavy = max(0, filled_cells - meniscus)
+        empty = max(0, bar_width - filled_cells)
+
+        if heavy > 0:
+            result.append("▓" * heavy, Style(color=bar_color))
+        if meniscus > 0:
+            result.append("▒" * meniscus, Style(color=bar_color))
+        if empty > 0:
+            result.append("░" * empty, Style(color="#6e6e6e"))
+        result.append(f" {label}", Style(color="#6e6e6e"))
+        return result
 
     def _tick_countdown(self) -> None:
         """Tick handler — update countdown display and auto-resolve on expiry.
@@ -1896,20 +1972,23 @@ class CountdownMixin:
         Runs ON the event loop (set_interval callback), so direct mutation is
         correct; call_from_thread would be wrong here.
         """
-        state: OverlayState | None = getattr(self.app, self._state_attr)
+        state: "OverlayState | None" = getattr(self.app, self._state_attr)
         if state is None:
             return
+        remaining = state.remaining
         countdown_id = f"#{self._countdown_prefix}-countdown"
         try:
-            self.query_one(countdown_id, Static).update(
-                f"[dim]({state.remaining}s)[/dim]"
-            )
-        except NoMatches:
+            countdown_w = self.query_one(countdown_id, Static)
+            # content_size.width may be 0 if not yet laid out; use 40 as fallback.
+            bar_width = max(10, self.content_size.width)
+            strip = self._build_countdown_strip(remaining, self._countdown_total, bar_width)
+            countdown_w.update(strip)
+        except (NoMatches, AttributeError):
             pass
         if state.expired:
             self._resolve_timeout(state)
 
-    def _resolve_timeout(self, state: OverlayState) -> None:
+    def _resolve_timeout(self, state: "OverlayState") -> None:
         """Put timeout response on queue and clear state. Runs on event loop."""
         state.response_queue.put(self._timeout_response)
         setattr(self.app, self._state_attr, None)
@@ -1930,7 +2009,7 @@ class ClarifyWidget(CountdownMixin, Widget, can_focus=True):
     ClarifyWidget {
         display: none;
         height: auto;
-        border: tall $warning;
+        border-top: hkey $primary 25%;
     }
     """
 
@@ -1945,13 +2024,17 @@ class ClarifyWidget(CountdownMixin, Widget, can_focus=True):
     def update(self, state: ChoiceOverlayState) -> None:
         """Populate content from typed state and make visible."""
         self.display = True
+        self._countdown_total = max(1, state.remaining)
         try:
-            self.query_one("#clarify-question", Static).update(state.question)
-            choices_markup = "\n".join(
-                f"[bold]→[/bold] {c}" if i == state.selected else f"  {c}"
+            self.query_one("#clarify-question", Static).update(
+                f"[dim]?[/dim]  {state.question}"
+            )
+            choices_markup = "  ".join(
+                f"[bold #FFD700]\\[ {c} ←\\][/bold #FFD700]" if i == state.selected
+                else f"[dim]\\[ {c} \\][/dim]"
                 for i, c in enumerate(state.choices)
             )
-            self.query_one("#clarify-choices", Static).update(choices_markup)
+            self.query_one("#clarify-choices", Static).update("     " + choices_markup)
         except NoMatches:
             pass
 
@@ -1974,7 +2057,7 @@ class ApprovalWidget(CountdownMixin, Widget, can_focus=True):
     ApprovalWidget {
         display: none;
         height: auto;
-        border: tall $error;
+        border-top: hkey $warning 35%;
     }
     """
 
@@ -1989,13 +2072,17 @@ class ApprovalWidget(CountdownMixin, Widget, can_focus=True):
     def update(self, state: ChoiceOverlayState) -> None:
         """Populate content from typed state."""
         self.display = True
+        self._countdown_total = max(1, state.remaining)
         try:
-            self.query_one("#approval-question", Static).update(state.question)
-            choices_markup = "\n".join(
-                f"[bold]→[/bold] {c}" if i == state.selected else f"  {c}"
+            self.query_one("#approval-question", Static).update(
+                f"[dim]![/dim]  {state.question}"
+            )
+            choices_markup = "  ".join(
+                f"[bold #FFD700]\\[ {c} ←\\][/bold #FFD700]" if i == state.selected
+                else f"[dim]\\[ {c} \\][/dim]"
                 for i, c in enumerate(state.choices)
             )
-            self.query_one("#approval-choices", Static).update(choices_markup)
+            self.query_one("#approval-choices", Static).update("     " + choices_markup)
         except NoMatches:
             pass
 
@@ -2008,7 +2095,11 @@ class ApprovalWidget(CountdownMixin, Widget, can_focus=True):
 # ---------------------------------------------------------------------------
 
 class SudoWidget(CountdownMixin, Widget):
-    """Password input overlay for sudo commands with countdown."""
+    """Password input overlay for sudo commands with countdown.
+
+    Alt+P toggles masked/unmasked peek (P1-A). The `--unmasked` CSS class is
+    applied when peek is active; re-masked on next keypress, click, or blur.
+    """
 
     _state_attr = "sudo_state"
     _timeout_response = None
@@ -2018,13 +2109,13 @@ class SudoWidget(CountdownMixin, Widget):
     SudoWidget {
         display: none;
         height: auto;
-        border: tall $warning;
+        border-top: hkey $warning 35%;
     }
     """
 
     def compose(self) -> ComposeResult:
         yield Static("", id="sudo-prompt")
-        yield Input(password=True, placeholder="sudo password", id="sudo-input")
+        yield Input(password=True, placeholder="enter passphrase…", id="sudo-input")
         yield Static("", id="sudo-countdown")
 
     def on_mount(self) -> None:
@@ -2038,12 +2129,40 @@ class SudoWidget(CountdownMixin, Widget):
         state.response_queue.put(event.value)
         self.app.sudo_state = None
 
+    def on_key(self, event: Any) -> None:
+        """Alt+P toggles peek (unmask) for the password input (P1-A)."""
+        if event.key == "alt+p":
+            try:
+                inp = self.query_one("#sudo-input", Input)
+                if self.has_class("--unmasked"):
+                    inp.password = True
+                    self.remove_class("--unmasked")
+                else:
+                    inp.password = False
+                    self.add_class("--unmasked")
+            except NoMatches:
+                pass
+            event.prevent_default()
+
+    def on_blur(self, event: Any) -> None:  # type: ignore[override]
+        """Re-mask on focus loss."""
+        try:
+            self.query_one("#sudo-input", Input).password = True
+        except NoMatches:
+            pass
+        self.remove_class("--unmasked")
+
     def update(self, state: SecretOverlayState) -> None:
         """Populate and show the sudo prompt."""
         self.display = True
+        self._countdown_total = max(1, state.remaining)
         try:
-            self.query_one("#sudo-prompt", Static).update(state.prompt)
+            self.query_one("#sudo-prompt", Static).update(
+                f"[dim]#[/dim]  {state.prompt}"
+            )
             inp = self.query_one("#sudo-input", Input)
+            inp.password = True
+            self.remove_class("--unmasked")
             inp.clear()
             inp.focus()
         except NoMatches:
@@ -2058,7 +2177,10 @@ class SudoWidget(CountdownMixin, Widget):
 # ---------------------------------------------------------------------------
 
 class SecretWidget(CountdownMixin, Widget):
-    """Captures a secret value (API key, token, etc.) with masked input."""
+    """Captures a secret value (API key, token, etc.) with masked input.
+
+    Alt+P toggles masked/unmasked peek (P1-A). Re-masked on blur.
+    """
 
     _state_attr = "secret_state"
     _timeout_response = None
@@ -2068,13 +2190,13 @@ class SecretWidget(CountdownMixin, Widget):
     SecretWidget {
         display: none;
         height: auto;
-        border: tall $warning;
+        border-top: hkey $primary 25%;
     }
     """
 
     def compose(self) -> ComposeResult:
         yield Static("", id="secret-prompt")
-        yield Input(password=True, placeholder="enter secret value", id="secret-input")
+        yield Input(password=True, placeholder="enter secret value…", id="secret-input")
         yield Static("", id="secret-countdown")
 
     def on_mount(self) -> None:
@@ -2088,12 +2210,40 @@ class SecretWidget(CountdownMixin, Widget):
         state.response_queue.put(event.value)
         self.app.secret_state = None
 
+    def on_key(self, event: Any) -> None:
+        """Alt+P toggles peek (unmask) for the secret input (P1-A)."""
+        if event.key == "alt+p":
+            try:
+                inp = self.query_one("#secret-input", Input)
+                if self.has_class("--unmasked"):
+                    inp.password = True
+                    self.remove_class("--unmasked")
+                else:
+                    inp.password = False
+                    self.add_class("--unmasked")
+            except NoMatches:
+                pass
+            event.prevent_default()
+
+    def on_blur(self, event: Any) -> None:  # type: ignore[override]
+        """Re-mask on focus loss."""
+        try:
+            self.query_one("#secret-input", Input).password = True
+        except NoMatches:
+            pass
+        self.remove_class("--unmasked")
+
     def update(self, state: SecretOverlayState) -> None:
         """Populate and show the secret prompt."""
         self.display = True
+        self._countdown_total = max(1, state.remaining)
         try:
-            self.query_one("#secret-prompt", Static).update(state.prompt)
+            self.query_one("#secret-prompt", Static).update(
+                f"[dim]*[/dim]  {state.prompt}"
+            )
             inp = self.query_one("#secret-input", Input)
+            inp.password = True
+            self.remove_class("--unmasked")
             inp.clear()
             inp.focus()
         except NoMatches:
@@ -2112,6 +2262,9 @@ class UndoConfirmOverlay(CountdownMixin, Widget):
 
     Shows the user text that will be removed and waits for Y/Enter (confirm)
     or N/Escape (cancel).  CountdownMixin drives the timer tick.
+
+    Border: all-sides ``$warning 35%`` — destructive action demands stronger
+    containment signal than top-only tray modals (spec §2.4).
     """
 
     _state_attr = "undo_state"
@@ -2122,13 +2275,15 @@ class UndoConfirmOverlay(CountdownMixin, Widget):
     UndoConfirmOverlay {
         display: none;
         height: auto;
-        border: tall $warning;
+        border: tall $warning 35%;
     }
     """
 
     def compose(self) -> ComposeResult:
+        yield Static("", id="undo-header")
         yield Static("", id="undo-user-text")
         yield Static("", id="undo-has-checkpoint")
+        yield Static("", id="undo-choices")
         yield Static("", id="undo-countdown")
 
     def on_mount(self) -> None:
@@ -2137,16 +2292,25 @@ class UndoConfirmOverlay(CountdownMixin, Widget):
     def update(self, state: UndoOverlayState) -> None:
         """Populate content from typed state and make visible."""
         self.display = True
+        self._countdown_total = max(1, state.remaining)
         try:
-            preview = state.user_text[:80] + "…" if len(state.user_text) > 80 else state.user_text
-            self.query_one("#undo-user-text", Static).update(
-                f'Removes: "{preview}"\n+ agent\'s response'
+            self.query_one("#undo-header", Static).update(
+                "[dim]<[/dim]  Undo last turn?"
             )
-            checkpoint_text = "+ filesystem checkpoint revert" if state.has_checkpoint else ""
+            echo_raw = state.user_text
+            echo_text = echo_raw[:80] + "…" if len(echo_raw) > 80 else echo_raw
+            self.query_one("#undo-user-text", Static).update(
+                "     This will remove the assistant's last response and re-queue:\n"
+                f'     [dim italic]"{echo_text}"[/dim italic]'
+            )
+            checkpoint_text = (
+                "     [dim]+ filesystem checkpoint revert[/dim]"
+                if state.has_checkpoint else ""
+            )
             self.query_one("#undo-has-checkpoint", Static).update(checkpoint_text)
-            self.query_one("#undo-countdown", Static).update(
-                f"[bold]\\[Y][/bold] Confirm  [bold]\\[N][/bold] Cancel  "
-                f"[dim]auto-cancel ({state.remaining}s)[/dim]"
+            self.query_one("#undo-choices", Static).update(
+                "     [bold]\\[y][/bold] Undo and retry    "
+                "[bold]\\[n][/bold] Cancel"
             )
         except NoMatches:
             pass
@@ -2218,7 +2382,7 @@ class TurnResultItem(Static):
 
 
 class KeymapOverlay(Widget):
-    """Keyboard-shortcut reference card.  Toggle with F1; dismiss with Escape or F1."""
+    """Keyboard-shortcut reference card.  Toggle with F1; dismiss with Escape, F1, or q."""
 
     DEFAULT_CSS = """
     KeymapOverlay {
@@ -2226,11 +2390,12 @@ class KeymapOverlay(Widget):
         display: none;
         dock: top;
         height: auto;
-        max-height: 20;
+        max-height: 24;
         width: 1fr;
+        margin: 0 1;
         padding: 1 2;
         background: $surface;
-        border-bottom: hkey $primary 40%;
+        border: tall $primary 15%;
     }
     KeymapOverlay.--visible { display: block; }
     KeymapOverlay > Static { height: auto; }
@@ -2239,40 +2404,89 @@ class KeymapOverlay(Widget):
     BINDINGS = [
         Binding("escape", "dismiss", "Close", show=False, priority=True),
         Binding("f1", "dismiss", "Close", show=False, priority=True),
+        Binding("q", "dismiss", "Close", show=False, priority=True),
     ]
 
-    _CONTENT = (
-        "[bold]Keyboard Shortcuts[/bold]\n"
+    # Full-width layout (≥80 cols).  Width-breakpoint rendering is handled in
+    # render() on the inner Static; this constant is the ≥80 version.
+    _CONTENT_WIDE = (
+        "[bold]Hermes  Keyboard Reference[/bold]"
+        "                          [dim]\\[F1][/dim] close\n"
+        "─────────────────────────────────────────────────────────────\n"
         "\n"
-        "[dim]Input[/dim]\n"
-        "  [bold]Enter[/bold]          Submit message\n"
-        "  [bold]Tab[/bold]            Accept autocomplete\n"
-        "  [bold]Escape[/bold]         Dismiss autocomplete / cancel\n"
-        "  [bold]↑ / ↓[/bold]          History previous / next\n"
-        "  [bold]Ctrl+A[/bold]         Select all input text\n"
+        "[bold $text]Navigation[/bold $text]\n"
+        "  Previous / next turn            [dim]\\[Alt+↑][/dim]   [dim]\\[Alt+↓][/dim]\n"
+        "  Scroll to live edge             [dim]\\[End][/dim]\n"
+        "  Open history search             [dim]\\[Ctrl+F][/dim]  [dim]\\[Ctrl+G][/dim]\n"
         "\n"
-        "[dim]Navigation[/dim]\n"
-        "  [bold]Ctrl+F / Ctrl+G[/bold]  History search\n"
-        "  [bold]Alt+↑ / Alt+↓[/bold]   Jump to previous / next turn\n"
-        "  [bold]/ [/bold]              Slash-command list\n"
-        "  [bold]@[/bold]               File-path autocomplete\n"
+        "[bold $text]Input[/bold $text]\n"
+        "  Submit message                  [dim]\\[Enter][/dim]\n"
+        "  Accept autocomplete             [dim]\\[Tab][/dim]\n"
+        "  Insert newline                  [dim]\\[Shift+Enter][/dim]\n"
+        "  Previous / next history         [dim]\\[↑][/dim]  [dim]\\[↓][/dim]\n"
         "\n"
-        "[dim]Output[/dim]\n"
-        "  [bold]a / A[/bold]          Expand all / collapse all tool blocks\n"
-        "  [bold]c[/bold]              Copy hovered tool output\n"
-        "  [bold]Ctrl+C[/bold]         Interrupt agent  (double: force quit)\n"
-        "  [bold]Click reasoning[/bold]  Collapse / expand reasoning panel\n"
+        "[bold $text]Tools[/bold $text]\n"
+        "  Expand / collapse tool block    [dim]\\[click header][/dim]\n"
+        "  Expand all / collapse all       [dim]\\[a][/dim]  [dim]\\[A][/dim]  (browse mode)\n"
+        "  Interrupt agent                 [dim]\\[Ctrl+C][/dim]  [dim]\\[Escape][/dim]\n"
         "\n"
-        "[dim]View[/dim]\n"
-        "  [bold]F1 / ?[/bold]         This help overlay\n"
+        "[bold $text]Panels[/bold $text]\n"
+        "  Click reasoning                 Collapse / expand\n"
+        "  Undo last turn                  [dim]\\[Alt+Z][/dim]\n"
+        "  Toggle FPS HUD                  [dim]\\[F8][/dim]\n"
+        "\n"
+        "[bold $text]System[/bold $text]\n"
+        "  This help                       [dim]\\[F1][/dim]\n"
+        "  Quit                            [dim]\\[Ctrl+Q][/dim]\n"
+    )
+
+    _CONTENT_NARROW = (
+        "[bold]Keyboard Reference[/bold]  [dim]\\[F1][/dim] close\n"
+        "\n"
+        "[bold $text]Navigation[/bold $text]\n"
+        "  Prev/next turn\n    [dim]\\[Alt+↑][/dim]  [dim]\\[Alt+↓][/dim]\n"
+        "  History search\n    [dim]\\[Ctrl+F][/dim]\n"
+        "\n"
+        "[bold $text]Input[/bold $text]\n"
+        "  Submit\n    [dim]\\[Enter][/dim]\n"
+        "  Autocomplete\n    [dim]\\[Tab][/dim]\n"
+        "\n"
+        "[bold $text]Tools[/bold $text]\n"
+        "  Expand/collapse\n    [dim]\\[click header][/dim]\n"
+        "  Interrupt\n    [dim]\\[Ctrl+C][/dim]\n"
+        "\n"
+        "[bold $text]System[/bold $text]\n"
+        "  Help  [dim]\\[F1][/dim]    Quit  [dim]\\[Ctrl+Q][/dim]\n"
     )
 
     def compose(self) -> ComposeResult:
-        from textual.widgets import Static
-        yield Static(self._CONTENT, markup=True)
+        yield Static("", id="keymap-content", markup=True)
+
+    def on_mount(self) -> None:
+        self._update_content()
+
+    def on_resize(self) -> None:
+        self._update_content()
+
+    def _update_content(self) -> None:
+        """Choose wide/narrow layout based on terminal width (P1-D)."""
+        try:
+            w = self.app.size.width
+        except Exception:
+            w = 80
+        content = self._CONTENT_WIDE if w >= 80 else self._CONTENT_NARROW
+        try:
+            self.query_one("#keymap-content", Static).update(content)
+        except NoMatches:
+            pass
 
     def action_dismiss(self) -> None:
         self.remove_class("--visible")
+        try:
+            from hermes_cli.tui.input_widget import HermesInput
+            self.app.query_one(HermesInput).focus()
+        except (NoMatches, ImportError):
+            pass
 
 
 class HistorySearchOverlay(Widget):
@@ -2292,10 +2506,10 @@ class HistorySearchOverlay(Widget):
         max-width: 90;
         min-width: 40;
         height: auto;
-        max-height: 18;
+        max-height: 16;
         display: none;
-        background: $panel;
-        border: tall $primary 50%;
+        background: $surface;
+        border: tall $primary 15%;
         padding: 0 1;
     }
     HistorySearchOverlay.--visible {

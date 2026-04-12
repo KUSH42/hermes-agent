@@ -514,3 +514,52 @@ async def test_suggester_wired() -> None:
         inp = app.query_one(HermesInput)
         assert isinstance(inp.suggester, HistorySuggester)
         assert inp.suggester._input is inp
+
+
+@pytest.mark.asyncio
+async def test_tab_with_hidden_overlay_accepts_ghost_text_not_stale_candidate() -> None:
+    """Regression: stale clist.items from prior slash session must not be accepted.
+
+    Bug: user types '/', slash candidates load (highlighted=0 → '/approve').
+    User clears input, types 'show me', ghost text shows history suggestion.
+    Tab was accepting the stale '/approve' candidate instead of the ghost text.
+
+    Fix: action_accept_autocomplete guards with _completion_overlay_visible();
+    when overlay is hidden it delegates to action_cursor_right() for ghost text.
+    """
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+
+        # Step 1: trigger slash completions (loads stale candidates)
+        inp.set_slash_commands(["/approve", "/retry", "/help"])
+        inp.value = "/"
+        await pilot.pause()
+        # Overlay should be visible with /approve highlighted at index 0
+        co = app.query_one(CompletionOverlay)
+        assert co.has_class("--visible")
+        clist = app.query_one(VirtualCompletionList)
+        assert clist.highlighted == 0
+        assert clist.items[0].command == "/approve"
+
+        # Step 2: clear and type unrelated text — overlay hides, candidates stay stale
+        inp.value = "show me"
+        await pilot.pause()
+        assert not co.has_class("--visible"), "overlay should hide for plain text"
+        # Stale: clist.items still contains slash candidates, highlighted still 0
+        assert clist.items, "stale candidates remain in list"
+        assert clist.highlighted == 0
+
+        # Step 3: Tab must NOT accept the stale '/approve'
+        # It should delegate to action_cursor_right (ghost text path).
+        # We just assert value is not corrupted to '/approve'.
+        inp.action_accept_autocomplete()
+        await pilot.pause()
+
+        assert inp.value != "/approve", (
+            "Tab must not accept stale slash candidate when overlay is hidden"
+        )
+        assert "show me" in inp.value or inp.value == "show me", (
+            f"Value should remain 'show me' (or ghost-text extended), got: {inp.value!r}"
+        )

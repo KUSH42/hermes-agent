@@ -435,7 +435,17 @@ class HermesInput(Input, can_focus=True):
     # --- Accept / dismiss ---
 
     def action_accept_autocomplete(self) -> None:
-        """Tab: accept the highlighted candidate into the input."""
+        """Tab: accept highlighted completion or ghost-text suggestion.
+
+        When the completion overlay is not visible the overlay's item list may
+        still contain stale candidates from a prior interaction (highlighted=0).
+        In that case Tab must NOT accept those stale candidates — instead it
+        delegates to the native Input cursor-right which accepts ghost text.
+        """
+        if not self._completion_overlay_visible():
+            # No active overlay: let Tab accept the ghost-text suggestion.
+            self.action_cursor_right()
+            return
         try:
             clist = self.screen.query_one(VirtualCompletionList)
         except NoMatches:

@@ -116,7 +116,7 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     "status-warn-color":    "#FFA726",
     "status-context-color": "#5f87d7",
     # Completion list empty-state background
-    "completion-empty-bg":  "#2A2000",
+    "completion-empty-bg":  "#2A2A2A",
     # TitledRule / PlainRule separator tones
     "rule-dim-color":       "#555555",
     "rule-bg-color":        "#2A2A2A",

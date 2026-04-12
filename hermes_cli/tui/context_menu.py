@@ -111,7 +111,7 @@ class ContextMenu(Widget):
     ContextMenu.--visible { display: block; }
     """
 
-    def show(self, items: list[MenuItem], screen_x: int, screen_y: int) -> None:
+    async def show(self, items: list[MenuItem], screen_x: int, screen_y: int) -> None:
         """Position and reveal the context menu with the given items.
 
         Removes any existing children, mounts fresh ``_ContextItem`` and
@@ -152,7 +152,7 @@ class ContextMenu(Widget):
             new_widgets.append(_ContextItem(item))
 
         if new_widgets:
-            self.mount(*new_widgets)
+            await self.mount(*new_widgets)
 
         self.add_class("--visible")
         self.focus()

@@ -101,7 +101,7 @@ async def test_context_menu_show_adds_visible_class():
         await pilot.pause()
         menu = app.query_one(ContextMenu)
         items = [MenuItem("Copy", "", lambda: None)]
-        menu.show(items, 5, 5)
+        await menu.show(items, 5, 5)
         await pilot.pause()
         assert menu.has_class("--visible")
 
@@ -114,7 +114,7 @@ async def test_context_menu_dismiss_removes_visible_class():
         await pilot.pause()
         menu = app.query_one(ContextMenu)
         items = [MenuItem("Copy", "", lambda: None)]
-        menu.show(items, 5, 5)
+        await menu.show(items, 5, 5)
         await pilot.pause()
         menu.dismiss()
         await pilot.pause()
@@ -133,7 +133,7 @@ async def test_context_menu_show_mounts_items():
             MenuItem("Paste", "", lambda: None),
             MenuItem("Clear", "", lambda: None, separator_above=True),
         ]
-        menu.show(items, 5, 5)
+        await menu.show(items, 5, 5)
         await pilot.pause()
         assert len(menu.query(_ContextItem)) == 3
         assert len(menu.query(_ContextSep)) == 1  # separator_above on 3rd item
@@ -148,7 +148,7 @@ async def test_context_menu_position_clamp_right():
         menu = app.query_one(ContextMenu)
         items = [MenuItem("Copy all output", "", lambda: None)]
         # Request x near the right edge (way too far right)
-        menu.show(items, 999, 5)
+        await menu.show(items, 999, 5)
         await pilot.pause()
         # offset x must be < app width
         offset_x = menu.styles.offset.x.value
@@ -164,7 +164,7 @@ async def test_context_menu_position_clamp_bottom():
         menu = app.query_one(ContextMenu)
         items = [MenuItem("Copy", "", lambda: None)]
         # Request y near the bottom edge
-        menu.show(items, 5, 999)
+        await menu.show(items, 5, 999)
         await pilot.pause()
         offset_y = menu.styles.offset.y.value
         assert offset_y < 24
@@ -178,7 +178,7 @@ async def test_context_menu_escape_dismiss():
         await pilot.pause()
         menu = app.query_one(ContextMenu)
         items = [MenuItem("Copy", "", lambda: None)]
-        menu.show(items, 5, 5)
+        await menu.show(items, 5, 5)
         await pilot.pause()
         assert menu.has_class("--visible")
         # Focus the menu so Escape fires on_key
@@ -204,7 +204,7 @@ async def test_right_click_button_1_ignored():
         # Simulate left-click (button=1): menu should stay hidden
         mock_event = MagicMock()
         mock_event.button = 1
-        app.on_click(mock_event)
+        await app.on_click(mock_event)
         await pilot.pause()
         assert not menu.has_class("--visible")
 

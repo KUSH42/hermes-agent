@@ -210,17 +210,28 @@ class CopyableRichLog(RichLog):
         scroll_end: "bool | None" = None,
         animate: bool = False,
     ) -> "CopyableRichLog":
-        """Override to default expand=True so text fills the actual widget width.
+        """Override to use the full widget width regardless of layout timing.
 
-        Without this, RichLog uses app.console.width (frozen at startup) to
-        measure text, causing lines to wrap at the startup terminal width even
-        after the user has resized to full-screen.
+        RichLog.write(expand=True) computes: max(scrollable_content_region.width, 0).
+        When the first streaming token arrives before layout completes,
+        scrollable_content_region.width is 0, collapsing text to ~1-14 chars.
+        Fix: resolve the target width here and pass it explicitly, falling back
+        to app.size.width when the widget region is not yet populated.
         """
+        if width is None:
+            w = self.scrollable_content_region.width
+            if w < 4:
+                # Widget not yet laid out — use current terminal width as proxy.
+                try:
+                    w = self.app.size.width
+                except Exception:
+                    w = 0
+            width = w or None  # None lets RichLog use its own fallback
         return super().write(  # type: ignore[return-value]
             content,
             width=width,
-            expand=expand,
-            shrink=shrink,
+            expand=False,  # width already resolved above
+            shrink=False,  # don't shrink the explicit width
             scroll_end=scroll_end,
             animate=animate,
         )

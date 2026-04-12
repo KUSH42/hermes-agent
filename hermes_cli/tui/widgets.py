@@ -1002,9 +1002,14 @@ class TitledRule(Widget):
         """
         try:
             v = self.app.get_css_variables()
+            # rule-bg-color is the foreground colour the gradient fades *to* —
+            # it should match the app background so the rule "disappears" at the
+            # right edge.  Fall through to app-bg if rule-bg-color is not
+            # explicitly overridden in the skin.
+            fade_end = v.get("rule-bg-color") or v.get("app-bg", self._fade_end)
             return (
                 v.get("rule-dim-color",        self._fade_start),
-                v.get("rule-bg-color",         self._fade_end),
+                fade_end,
                 v.get("rule-accent-color",     self._accent),
                 v.get("rule-accent-dim-color", self._title_color),
             )
@@ -1090,7 +1095,16 @@ class PlainRule(Widget):
         w = self.size.width
         if self._max_width:
             w = min(w, self._max_width)
-        return _fade_rule(w, self._fade_start, self._fade_end)
+        fade_start = self._fade_start
+        fade_end = self._fade_end
+        try:
+            v = self.app.get_css_variables()
+            fade_start = v.get("rule-dim-color", fade_start)
+            # Same fallback chain as TitledRule: rule-bg-color → app-bg → default
+            fade_end = v.get("rule-bg-color") or v.get("app-bg", fade_end)
+        except Exception:
+            pass
+        return _fade_rule(w, fade_start, fade_end)
 
 
 # ---------------------------------------------------------------------------

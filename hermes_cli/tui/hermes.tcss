@@ -18,6 +18,9 @@
  *     cursor-selection-bg: "#1E4080"
  *     cursor-placeholder:  "#666666"
  */
+/* App-wide background — ThemeManager overrides via component_vars: app-bg */
+$app-bg: #1E1E1E;
+
 $cursor-color: #FFF8DC;
 $cursor-selection-bg: #3A5A8C;
 $cursor-placeholder: #555555;
@@ -45,17 +48,27 @@ $fps-hud-bg: #1a1a2e;
 
 /* TitledRule colours — ThemeManager overrides via component_vars */
 $rule-dim-color: #555555;
-$rule-bg-color: #2A2A2A;
+$rule-bg-color: #1E1E1E;
 $rule-accent-color: #FFD700;
 $rule-accent-dim-color: #B8860B;
 
+/* Screen is the actual DOM root — transparent widgets inherit from it, not from
+ * HermesApp. Both must be set so every widget in the tree shows $app-bg. */
+Screen {
+    background: $app-bg;
+}
+
 HermesApp {
-    background: $background;
+    background: $app-bg;
 }
 
 * {
     scrollbar-size-vertical: 0;
     scrollbar-size-horizontal: 0;
+    scrollbar-background: $app-bg;
+    scrollbar-background-hover: $app-bg;
+    scrollbar-background-active: $app-bg;
+    scrollbar-corner-color: $app-bg;
 }
 
 /* --- Message turns --- */
@@ -63,6 +76,18 @@ HermesApp {
 MessagePanel {
     margin: 1 0 0 0;
     transition: opacity 0.3s in_out_cubic;
+}
+
+/* RichLog.DEFAULT_CSS sets background: $surface.  Override both response-text
+ * and reasoning log to $app-bg so all content areas share the same background
+ * as the chrome widgets above (HermesApp, StatusBar, #input-row, HermesInput).
+ * Users can shift the whole-app tone by setting app-bg in component_vars. */
+CopyableRichLog {
+    background: $app-bg;
+}
+
+ReasoningPanel RichLog {
+    background: $app-bg;
 }
 
 MessagePanel.--entering {
@@ -93,7 +118,7 @@ HintBar {
 /* --- Status bar --- */
 
 StatusBar {
-    background: $background;
+    background: $app-bg;
     color: $text-muted;
     padding: 0 1;
 }
@@ -119,7 +144,7 @@ UndoConfirmOverlay {
 #input-row {
     height: 1;
     padding: 0 1;
-    background: $background;
+    background: $app-bg;
 }
 
 #input-chevron {
@@ -144,7 +169,7 @@ UndoConfirmOverlay {
 }
 
 HermesInput {
-    background: $background;
+    background: $app-bg;
     border: none;
     padding: 0;
     height: 1;
@@ -153,7 +178,7 @@ HermesInput {
 
 /* Prevent Textual's Input:focus tint from creating a contrast stripe */
 HermesInput:focus {
-    background: $background;
+    background: $app-bg;
 }
 
 /* Component Part variables — themed via ThemeManager.component_vars.

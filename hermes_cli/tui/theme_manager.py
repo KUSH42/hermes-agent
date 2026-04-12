@@ -95,6 +95,10 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 COMPONENT_VAR_DEFAULTS: dict[str, str] = {
+    # Global app background — used by HermesApp, chrome widgets, and response
+    # content areas so everything renders at the same shade.  Users can override
+    # in skin component_vars:  app-bg: "#0F0F0F"
+    "app-bg":               "#1E1E1E",
     # HermesInput cursor glyph and block colour
     "cursor-color":         "#FFF8DC",
     # HermesInput text selection highlight
@@ -119,7 +123,7 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     "completion-empty-bg":  "#2A2A2A",
     # TitledRule / PlainRule separator tones
     "rule-dim-color":       "#555555",
-    "rule-bg-color":        "#2A2A2A",
+    "rule-bg-color":        "#1E1E1E",
     "rule-accent-color":    "#FFD700",
     "rule-accent-dim-color":"#B8860B",
 }

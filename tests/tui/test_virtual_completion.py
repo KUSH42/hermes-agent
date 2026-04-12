@@ -115,8 +115,16 @@ async def test_highlight_scrolls_into_view() -> None:
         await pilot.pause()
         clist.highlighted = 500
         await pilot.pause()
-        # After scroll_to_region, scroll_y should be near 500
-        assert clist.scroll_offset.y >= 490  # allow ±10 rows for viewport height
+        # Row 500 must be visible: scroll_y <= 500 < scroll_y + viewport_height.
+        # scroll_to_region with animate=False places the row at the edge of the
+        # viewport (bottom when scrolling down), so scroll_y = 500 - viewport + 1.
+        # The exact scroll offset depends on viewport height — check visibility,
+        # not a hardcoded lower bound.
+        scroll_y = clist.scroll_offset.y
+        viewport_h = clist.size.height
+        assert scroll_y <= 500 < scroll_y + viewport_h, (
+            f"Row 500 not visible: scroll_y={scroll_y}, viewport_h={viewport_h}"
+        )
 
 
 @pytest.mark.asyncio

@@ -281,9 +281,11 @@ async def test_path_completion_triggers_walker() -> None:
         inp = app.query_one(HermesInput)
         inp.value = "@src"
         inp.cursor_position = 4
-        # Path completions are now debounced (120ms) — wait enough cycles for timer to fire
-        for _ in range(5):
-            await pilot.pause()
+        # Debounce is 120ms wall-clock. pilot.pause() is one event-loop tick —
+        # under parallel test load those ticks may accumulate far less than 120ms.
+        # Use asyncio.sleep to guarantee the debounce window actually closes.
+        await asyncio.sleep(0.15)
+        await pilot.pause()  # drain any queued messages after timer fires
 
         assert len(search_calls) > 0, "PathSearchProvider.search was not called"
         assert search_calls[0][0] == "src"

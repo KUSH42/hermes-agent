@@ -103,12 +103,17 @@ def _ensure_current_event_loop(request):
         yield
         return
 
+    # get_running_loop() raises RuntimeError cleanly when no loop is running
+    # (unlike get_event_loop() which emits DeprecationWarning on Python 3.10+
+    # when there is no current loop set).  Sync test fixtures are never inside
+    # a running loop, so this always results in created=True — that's correct.
     try:
-        loop = asyncio.get_event_loop_policy().get_event_loop()
+        loop = asyncio.get_running_loop()
+        created = loop.is_closed()
     except RuntimeError:
         loop = None
+        created = True
 
-    created = loop is None or loop.is_closed()
     if created:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)

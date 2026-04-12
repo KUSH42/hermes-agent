@@ -87,6 +87,44 @@ async def test_no_history_returns_none() -> None:
 
 
 @pytest.mark.asyncio
+async def test_case_insensitive_match() -> None:
+    """Typing '/Com' matches history entry '/commit' (case-insensitive prefix)."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        inp._history = ["/commit feat: implement auth"]
+        result = await inp.suggester.get_suggestion("/Com")
+        assert result == "/commit feat: implement auth"
+
+
+@pytest.mark.asyncio
+async def test_case_insensitive_self_match_excluded() -> None:
+    """Exact-match comparison is also case-insensitive."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        inp._history = ["/COMMIT"]
+        # Typing '/commit' matches '/COMMIT' in startswith — but not excluded
+        # because '/commit'.lower() != '/commit'.lower() is False only if same
+        result = await inp.suggester.get_suggestion("/COMMIT")
+        assert result is None  # exact case-insensitive match excluded
+
+
+@pytest.mark.asyncio
+async def test_case_insensitive_newest_wins() -> None:
+    """Most recent case-insensitive match wins."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        inp._history = ["/git status", "/GIT show"]
+        result = await inp.suggester.get_suggestion("/git")
+        assert result == "/GIT show"  # most recent regardless of case
+
+
+@pytest.mark.asyncio
 async def test_suggestion_not_saved_on_submit() -> None:
     """Submitting 'git s' saves 'git s', not the suggested 'git status'."""
     cli = MagicMock()

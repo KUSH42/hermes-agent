@@ -28,7 +28,12 @@ COLLAPSE_THRESHOLD = 3  # >N lines → collapsed by default
 # StreamingToolBlock constants
 _VISIBLE_CAP = 200          # max lines shown in the RichLog
 _LINE_BYTE_CAP = 2000       # truncate single lines beyond this many chars
-_SPINNER_FRAMES = ("◐", "◓", "◑", "◒")
+_SPINNER_FRAMES: tuple[str, ...] = (
+    "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
+)
+
+# Gutter fallback color — avoid duplicating the literal across three call sites
+_GUTTER_FALLBACK: str = "#FFD700"
 
 
 class ToolHeader(Widget):
@@ -60,15 +65,15 @@ class ToolHeader(Widget):
         """Cache focused-gutter colour from CSS variables (supports hot-reload)."""
         try:
             self._focused_gutter_color: str = self.app.get_css_variables().get(
-                "rule-accent-color", "#FFD700"
+                "rule-accent-color", _GUTTER_FALLBACK
             )
         except Exception:
-            self._focused_gutter_color = "#FFD700"
+            self._focused_gutter_color = _GUTTER_FALLBACK
 
     def render(self) -> RenderResult:
         focused = self.has_class("focused")
         if focused:
-            color = getattr(self, "_focused_gutter_color", "#FFD700")
+            color = getattr(self, "_focused_gutter_color", _GUTTER_FALLBACK)
             gutter = Text("  ┃", style=f"bold {color}")
         else:
             gutter = Text("  ┊", style="dim")

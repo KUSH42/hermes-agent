@@ -592,7 +592,8 @@ class HermesApp(App):
         try:
             panel = self.query_one(OutputPanel)
             panel.mount(UserEchoPanel(text, images=images), before=panel.live_line)
-            self.call_after_refresh(panel.scroll_end, animate=False)
+            if not panel._user_scrolled_up:
+                self.call_after_refresh(panel.scroll_end, animate=False)
         except NoMatches:
             pass
 
@@ -963,7 +964,8 @@ class HermesApp(App):
         # Scroll to show the completed (now collapsed) block
         try:
             panel = self.query_one(OutputPanel)
-            self.call_after_refresh(panel.scroll_end, animate=False)
+            if not panel._user_scrolled_up:
+                self.call_after_refresh(panel.scroll_end, animate=False)
         except NoMatches:
             pass
 

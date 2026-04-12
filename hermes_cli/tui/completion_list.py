@@ -31,12 +31,6 @@ if TYPE_CHECKING:
     from .path_search import Candidate
 
 
-# Class-level constant — avoids Style() construction cost per keystroke per row.
-# ``bgcolor="blue"`` is Rich's literal color name; ``"on_blue"`` raises
-# ColorParseError — the ``on_`` prefix is only valid inside Style.parse().
-# Default matches $cursor-selection-bg in hermes.tcss (overridden by skin vars).
-_SELECTED_STYLE = Style(bgcolor="#3A5A8C")
-
 # Pre-built status rows for empty states (avoids allocation in hot render path)
 _SEARCHING_TEXT = Text("  searching…", style="dim italic", overflow="ellipsis", no_wrap=True)
 _NO_MATCH_TEXT  = Text("  no matches", style="dim italic", overflow="ellipsis", no_wrap=True)
@@ -73,7 +67,7 @@ class VirtualCompletionList(ScrollView, can_focus=True):
         self._refresh_fuzzy_color()
 
     def _refresh_fuzzy_color(self) -> None:
-        """Sync fuzzy match highlight and selection colors from the active skin."""
+        """Sync fuzzy match highlight, selection, and empty-state colors from the active skin."""
         try:
             css = self.app.get_css_variables()
             color = css.get("fuzzy-match-color", "#FFD866")
@@ -82,13 +76,28 @@ class VirtualCompletionList(ScrollView, can_focus=True):
             # selection style — consistent across completion list and input widget.
             sel = css.get("cursor-selection-bg", "#3A5A8C")
             self._selected_style = Style(bgcolor=sel)
+            empty_bg = css.get("completion-empty-bg", "#2A2000")
+            self._completion_empty_bg: str = empty_bg
         except Exception:
             pass
 
-    def watch_items(self, new: "tuple[Candidate, ...]") -> None:
-        # Refresh skin-derived colours on every completion update so hot-reloaded
-        # skins take effect without requiring an app restart.
+    def refresh_theme(self) -> None:
+        """Called by HermesApp.apply_skin() after a hot-reload.
+
+        Forces re-read of CSS variables and triggers a repaint. Replaces the
+        bare _refresh_fuzzy_color() call in apply_skin() — the added refresh()
+        ensures the list repaints immediately with new colors rather than waiting
+        for the next item-batch update.
+        """
         self._refresh_fuzzy_color()
+        self.refresh()
+
+    def watch_items(self, old: "tuple[Candidate, ...]", new: "tuple[Candidate, ...]") -> None:
+        # Refresh skin-derived colours once per completion session (empty → non-empty)
+        # so hot-reloaded skins take effect without paying get_css_variables() overhead
+        # on every item-batch update (critical for the 10k-item perf path).
+        if new and not old:
+            self._refresh_fuzzy_color()
         width = max((len(c.display) for c in new), default=0) + 2
         self.virtual_size = Size(width, len(new))
         self.highlighted = 0 if new else -1
@@ -123,7 +132,11 @@ class VirtualCompletionList(ScrollView, can_focus=True):
                 msg = _SEARCHING_TEXT if self.searching else _NO_MATCH_TEXT
                 segs = list(msg.render(self.app.console))
                 strip = Strip(segs, msg.cell_len)
-                return strip.extend_cell_length(self.size.width)
+                strip = strip.extend_cell_length(self.size.width)
+                if not self.searching:
+                    empty_bg = getattr(self, "_completion_empty_bg", "#2A2000")
+                    strip = strip.apply_style(Style(bgcolor=empty_bg))
+                return strip
             return Strip.blank(self.size.width)
 
         if data_idx < 0 or data_idx >= len(self.items):

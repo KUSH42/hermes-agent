@@ -183,6 +183,30 @@ class CopyableRichLog(RichLog):
         super().__init__(**kwargs)
         self._plain_lines: list[str] = []
 
+    def write(  # type: ignore[override]
+        self,
+        content: Any,
+        width: "int | None" = None,
+        expand: bool = True,
+        shrink: bool = True,
+        scroll_end: "bool | None" = None,
+        animate: bool = False,
+    ) -> "CopyableRichLog":
+        """Override to default expand=True so text fills the actual widget width.
+
+        Without this, RichLog uses app.console.width (frozen at startup) to
+        measure text, causing lines to wrap at the startup terminal width even
+        after the user has resized to full-screen.
+        """
+        return super().write(  # type: ignore[return-value]
+            content,
+            width=width,
+            expand=expand,
+            shrink=shrink,
+            scroll_end=scroll_end,
+            animate=animate,
+        )
+
     def write_with_source(self, styled: Text, plain: str, **kwargs: Any) -> "CopyableRichLog":
         """Write styled text to display, store plain text for copy."""
         self._plain_lines.append(plain)
@@ -857,7 +881,7 @@ class ReasoningPanel(Widget):
         # Commit complete lines
         while "\n" in self._live_buf:
             line, self._live_buf = self._live_buf.split("\n", 1)
-            log.write(self._gutter_line(line))
+            log.write(self._gutter_line(line), expand=True)
             self._plain_lines.append(line)
             wrote = True
 
@@ -866,7 +890,7 @@ class ReasoningPanel(Widget):
         # Flush any partial line
         buf = self._live_buf
         if buf:
-            self._reasoning_log.write(self._gutter_line(buf))
+            self._reasoning_log.write(self._gutter_line(buf), expand=True)
             self._plain_lines.append(buf)
             self._live_buf = ""
         # Don't remove "visible" — reasoning stays shown as part of the

@@ -10,6 +10,24 @@ from unittest.mock import patch
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _reset_message_panel_counter():
+    """Reset MessagePanel._msg_counter between tests.
+
+    MessagePanel uses a class-level counter to generate unique widget IDs.
+    Without reset, the counter grows across the test suite (600+ tests →
+    counter reaches 100+). High counter values cause cross-test contamination
+    where layout/timer behavior differs from isolation runs.  Reset to 0
+    before each test to guarantee consistent widget IDs.
+    """
+    try:
+        from hermes_cli.tui.widgets import MessagePanel
+        MessagePanel._msg_counter = 0
+    except ImportError:
+        pass
+    yield
+
 # Ensure project root is importable
 PROJECT_ROOT = Path(__file__).parent.parent
 if str(PROJECT_ROOT) not in sys.path:

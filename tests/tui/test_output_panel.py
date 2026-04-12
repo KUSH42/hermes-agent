@@ -283,18 +283,19 @@ async def test_agent_running_triggers_pulse():
 @pytest.mark.asyncio
 async def test_context_bar_color_changes_with_progress():
     """Compaction bar color changes smoothly as progress increases."""
-    from hermes_cli.tui.animation import lerp_color
-    from unittest.mock import patch
+    from hermes_cli.tui.widgets import StatusBar
 
-    with patch("hermes_cli.skin_engine.get_active_skin", side_effect=Exception("no skin")):
-        from hermes_cli.tui.widgets import StatusBar
-        # At 0.0 — normal
-        c0 = StatusBar._compaction_color(0.0)
-        assert c0 == "#5f87d7"
-        # At 0.65 — somewhere in the lerp band
-        c65 = StatusBar._compaction_color(0.65)
-        assert c65 != "#5f87d7"
-        assert c65 != "#ffa726"
-        # At 0.99 — crit
-        c99 = StatusBar._compaction_color(0.99)
-        assert c99 == "#ef5350"
+    _vars: dict = {}  # empty → falls back to hardcoded defaults (lowercase)
+    # At 0.0 — normal (direct return, lowercase default)
+    c0 = StatusBar._compaction_color(0.0, _vars)
+    assert c0 == "#5f87d7"
+    # At 0.65 — somewhere in the lerp band
+    c65 = StatusBar._compaction_color(0.65, _vars)
+    assert c65 != "#5f87d7"
+    assert c65 != "#ffa726"
+    # At 0.99 — crit (direct return, lowercase default)
+    c99 = StatusBar._compaction_color(0.99, _vars)
+    assert c99 == "#ef5350"
+    # Custom vars respected
+    c_custom = StatusBar._compaction_color(0.60, {"status-warn-color": "#FF0000"})
+    assert c_custom != "#5f87d7"  # in lerp band; uses custom warn color

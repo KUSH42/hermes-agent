@@ -93,14 +93,15 @@ async def test_compaction_bar_renders_filled():
 async def test_compaction_bar_color_thresholds():
     """Color thresholds: normal < 50%, lerp 50–95%, crit >= 95%."""
     from hermes_cli.tui.animation import lerp_color
+    _vars: dict = {}
     color = StatusBar._compaction_color
-    # Normal (below lerp band)
-    assert color(0.3) in ("#5f87d7",)
+    # Normal (below lerp band — direct return, lowercase default)
+    assert color(0.3, _vars) in ("#5f87d7",)
     # At 0.85: in warn→crit lerp band
     expected_085 = lerp_color("#ffa726", "#ef5350", (0.85 - 0.80) / 0.15)
-    assert color(0.85) == expected_085
-    # Crit
-    assert color(0.99) in ("#ef5350",)
+    assert color(0.85, _vars) == expected_085
+    # Crit (direct return, lowercase default)
+    assert color(0.99, _vars) in ("#ef5350",)
 
 
 @pytest.mark.asyncio
@@ -212,31 +213,31 @@ async def test_session_timer_ticks():
 
 
 def test_compaction_bar_color_from_skin():
-    """_compaction_color reads from skin.get_ui_ext(), falling back to hardcoded hex."""
+    """_compaction_color uses CSS vars dict, falling back to hardcoded hex."""
     from hermes_cli.tui.animation import lerp_color
 
-    # Without a skin (exception path), hardcoded defaults are returned
-    with patch("hermes_cli.skin_engine.get_active_skin", side_effect=Exception("no skin")):
-        assert StatusBar._compaction_color(0.5)  == "#5f87d7"
-        # At 0.85: lerp between warn and crit (warn→crit band)
-        expected_085 = lerp_color("#ffa726", "#ef5350", (0.85 - 0.80) / 0.15)
-        assert StatusBar._compaction_color(0.85) == expected_085
-        assert StatusBar._compaction_color(0.99) == "#ef5350"
+    # Empty vars → hardcoded defaults
+    _vars: dict = {}
+    # At 0.5: in lerp band → goes through lerp_color (outputs lowercase)
+    result_05 = StatusBar._compaction_color(0.5, _vars)
+    assert result_05 == lerp_color("#5f87d7", "#FFA726", 0.0)
+    # At 0.85: lerp between warn and crit (warn→crit band) — outputs lowercase
+    expected_085 = lerp_color("#FFA726", "#EF5350", (0.85 - 0.80) / 0.15)
+    assert StatusBar._compaction_color(0.85, _vars) == expected_085
+    # Crit: direct return (lowercase fallback matches lerp_color output convention)
+    assert StatusBar._compaction_color(0.99, _vars) == "#ef5350"
 
-    # With a mock skin that returns custom colors via get_ui_ext()
-    fake_skin = MagicMock()
-    fake_skin.get_ui_ext.side_effect = lambda key, default: {
-        "context_bar_normal": "#aabbcc",
-        "context_bar_warn":   "#ddeeff",
-        "context_bar_crit":   "#112233",
-    }.get(key, default)
-
-    with patch("hermes_cli.skin_engine.get_active_skin", return_value=fake_skin):
-        assert StatusBar._compaction_color(0.5)  == "#aabbcc"
-        # At 0.85: lerp between skin warn and skin crit
-        expected_skin = lerp_color("#ddeeff", "#112233", (0.85 - 0.80) / 0.15)
-        assert StatusBar._compaction_color(0.85) == expected_skin
-        assert StatusBar._compaction_color(0.99) == "#112233"
+    # Custom CSS vars override defaults
+    custom_vars = {
+        "status-context-color": "#aabbcc",
+        "status-warn-color":    "#ddeeff",
+        "status-error-color":   "#112233",
+    }
+    assert StatusBar._compaction_color(0.3, custom_vars) == "#aabbcc"
+    # At 0.85: lerp between custom warn and crit
+    expected_skin = lerp_color("#ddeeff", "#112233", (0.85 - 0.80) / 0.15)
+    assert StatusBar._compaction_color(0.85, custom_vars) == expected_skin
+    assert StatusBar._compaction_color(0.99, custom_vars) == "#112233"
 
 
 @pytest.mark.asyncio
@@ -369,7 +370,8 @@ async def test_status_bar_shows_idle_when_not_running():
         bar = app.query_one(StatusBar)
         with patch.object(type(bar), "size", new_callable=PropertyMock, return_value=Size(80, 1)):
             rendered = str(bar.render())
-        assert "idle" in rendered
+        # Idle now shows rotating hints; first hint contains "F1 help"
+        assert "F1 help" in rendered
 
 
 @pytest.mark.asyncio
@@ -390,9 +392,9 @@ async def test_status_bar_running_label_right_anchored():
         bar = app.query_one(StatusBar)
         with patch.object(type(bar), "size", new_callable=PropertyMock, return_value=Size(80, 1)):
             rendered = str(bar.render())
-        # There should be spaces between the left content and the right-anchored label
-        idle_pos = rendered.rfind("idle")
-        assert idle_pos > 10, f"'idle' too close to start: pos {idle_pos} in {rendered!r}"
+        # There should be spaces between the left content and the right-anchored hint label
+        hint_pos = rendered.rfind("F1 help")
+        assert hint_pos > 10, f"Hint too close to start: pos {hint_pos} in {rendered!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -400,28 +402,31 @@ async def test_status_bar_running_label_right_anchored():
 # ---------------------------------------------------------------------------
 
 def test_compaction_color_normal_below_fifty():
-    """_compaction_color returns the normal color when progress < 0.50."""
-    with patch("hermes_cli.skin_engine.get_active_skin", side_effect=Exception("no skin")):
-        assert StatusBar._compaction_color(0.3) == "#5f87d7"
-        assert StatusBar._compaction_color(0.0) == "#5f87d7"
+    """_compaction_color returns the normal color when progress < 0.50 (direct return)."""
+    _vars: dict = {}
+    # Direct returns use the fallback string verbatim (lowercase — matches CSS vars)
+    assert StatusBar._compaction_color(0.3, _vars) == "#5f87d7"
+    assert StatusBar._compaction_color(0.0, _vars) == "#5f87d7"
 
 
 def test_compaction_color_blend_at_seventy():
-    """_compaction_color at 0.70 is between normal and warn colors."""
+    """_compaction_color at 0.70 is between normal and warn colors (lerp band)."""
     from hermes_cli.tui.animation import lerp_color
-    with patch("hermes_cli.skin_engine.get_active_skin", side_effect=Exception("no skin")):
-        result = StatusBar._compaction_color(0.70)
-        expected = lerp_color("#5f87d7", "#ffa726", (0.70 - 0.50) / 0.30)
-        assert result == expected
+    _vars: dict = {}
+    result = StatusBar._compaction_color(0.70, _vars)
+    # lerp_color() always outputs lowercase; inputs are the fallback values
+    expected = lerp_color("#5f87d7", "#FFA726", (0.70 - 0.50) / 0.30)
+    assert result == expected
 
 
 def test_compaction_color_blend_at_ninety():
-    """_compaction_color at 0.90 is between warn and crit colors."""
+    """_compaction_color at 0.90 is between warn and crit colors (lerp band)."""
     from hermes_cli.tui.animation import lerp_color
-    with patch("hermes_cli.skin_engine.get_active_skin", side_effect=Exception("no skin")):
-        result = StatusBar._compaction_color(0.90)
-        expected = lerp_color("#ffa726", "#ef5350", (0.90 - 0.80) / 0.15)
-        assert result == expected
+    _vars: dict = {}
+    result = StatusBar._compaction_color(0.90, _vars)
+    # lerp_color() always outputs lowercase; inputs are the fallback values
+    expected = lerp_color("#FFA726", "#EF5350", (0.90 - 0.80) / 0.15)
+    assert result == expected
 
 
 @pytest.mark.asyncio

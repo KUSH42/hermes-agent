@@ -61,15 +61,16 @@ def test_bindings_has_ctrl_f():
     assert "ctrl+f" in keys
 
 
-def test_bindings_has_ctrl_r():
-    """HermesApp.BINDINGS includes ctrl+r → action_open_history_search."""
+def test_bindings_has_ctrl_g():
+    """HermesApp.BINDINGS includes ctrl+g → action_open_history_search (replaces ctrl+r)."""
     keys = {b.key for b in HermesApp.BINDINGS}
-    assert "ctrl+r" in keys
+    assert "ctrl+g" in keys
+    assert "ctrl+r" not in keys  # ctrl+r was removed (M1 fix)
 
 
 def test_bindings_action_name():
-    """Both ctrl+f and ctrl+r route to action_open_history_search."""
-    actions = {b.action for b in HermesApp.BINDINGS if b.key in ("ctrl+f", "ctrl+r")}
+    """Both ctrl+f and ctrl+g route to action_open_history_search."""
+    actions = {b.action for b in HermesApp.BINDINGS if b.key in ("ctrl+f", "ctrl+g")}
     assert actions == {"open_history_search"}
 
 
@@ -80,13 +81,13 @@ def test_action_open_history_search_method_exists():
 
 
 @pytest.mark.asyncio
-async def test_ctrl_r_opens_history_search():
-    """Pressing ctrl+r opens the HistorySearchOverlay."""
+async def test_ctrl_g_opens_history_search():
+    """Pressing ctrl+g opens the HistorySearchOverlay (replaces ctrl+r)."""
     from hermes_cli.tui.widgets import HistorySearchOverlay
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        await pilot.press("ctrl+r")
+        await pilot.press("ctrl+g")
         await pilot.pause()
         hs = app.query_one(HistorySearchOverlay)
         assert hs.has_class("--visible")

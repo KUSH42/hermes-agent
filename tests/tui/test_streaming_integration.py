@@ -346,7 +346,7 @@ async def test_reasoning_partial_line_buffering():
         msg = app.query_one(OutputPanel).current_message
         rp = msg.reasoning
         rp.open_box("Reasoning")
-        await pilot.pause()
+        await _pause(pilot)  # wait for RichLog resize event → _size_known=True
 
         # Send partial tokens
         rp.append_delta("thinking")

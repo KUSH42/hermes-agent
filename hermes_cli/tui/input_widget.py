@@ -27,6 +27,7 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Input, Static
 
+from hermes_cli.tui.constants import ICON_COPY
 from .completion_context import CompletionContext, CompletionTrigger, detect_context
 from .completion_list import VirtualCompletionList
 from .completion_overlay import CompletionOverlay
@@ -491,7 +492,7 @@ class HermesInput(Input, can_focus=True):
         """
         n = len(event.text)
         try:
-            self.app._flash_hint(f"📋  {n} chars", 1.2)
+            self.app._flash_hint(f"{ICON_COPY}  {n} chars pasted", 1.2)
         except Exception:
             pass
 

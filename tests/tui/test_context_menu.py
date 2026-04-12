@@ -75,7 +75,7 @@ async def test_paste_flashes_hint():
         await pilot.pause()
         bar = app.query_one(HintBar)
         assert "11" in bar.hint  # len("hello world") == 11
-        assert "📋" in bar.hint
+        assert "⎘" in bar.hint  # ICON_COPY replaces 📋
 
 
 # ---------------------------------------------------------------------------

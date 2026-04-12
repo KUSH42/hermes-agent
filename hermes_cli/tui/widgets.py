@@ -177,8 +177,15 @@ def _fps_hud_enabled() -> bool:
         return False
 
 
-class CopyableRichLog(RichLog):
+class CopyableRichLog(RichLog, can_focus=False):
     """RichLog that stores plain text for clipboard operations.
+
+    ``can_focus=False`` prevents Textual from calling ``scroll_visible`` on the
+    parent ``OutputPanel`` when this widget is clicked.  ``RichLog`` inherits
+    ``can_focus=True`` from ``ScrollView``; without the override, a click on any
+    response text would focus the widget and animate ``OutputPanel`` to y=0
+    (scroll-to-top bug).  Mouse-based text selection still works because Textual
+    delivers mouse events by cursor position, not by focus.
 
     Overrides ``overflow-y: scroll`` from RichLog.DEFAULT_CSS to ``hidden``
     so that mouse-scroll events are NOT stopped here and can bubble up to
@@ -719,7 +726,7 @@ class CodeBlockHeader(Static):
         block.toggle_class("--collapsed")
 
 
-class StreamingCodeBlock(Widget, can_focus=True):
+class StreamingCodeBlock(Widget):
     """Fenced code block widget: streams per-line Pygments highlight, then
     finalizes to full rich.Syntax on fence close.
 

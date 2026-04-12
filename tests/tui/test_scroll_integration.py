@@ -140,8 +140,13 @@ async def test_user_echo_triggers_scroll():
 
 
 @pytest.mark.asyncio
-async def test_user_echo_suppressed_when_scrolled_up():
-    """echo_user_message respects the scroll-suppression flag."""
+async def test_user_echo_always_scrolls_even_when_scrolled_up():
+    """echo_user_message always scrolls to show the user's own message.
+
+    When the user submits a message they always expect to see it — even if they
+    had scrolled up to read earlier content.  Submission implies intent to see the
+    new exchange, so _user_scrolled_up is reset and scroll_end is always queued.
+    """
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         output = await _setup(pilot)
@@ -150,7 +155,9 @@ async def test_user_echo_suppressed_when_scrolled_up():
         with patch.object(output, "scroll_end") as mock_se:
             app.echo_user_message("hello world")
             await pilot.pause()
-            assert not mock_se.called
+            assert mock_se.called, "scroll_end must fire for user's own message"
+        # Flag should be cleared so auto-scroll re-engages for the new response
+        assert output._user_scrolled_up is False
 
 
 @pytest.mark.asyncio

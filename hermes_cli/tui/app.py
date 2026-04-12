@@ -379,7 +379,13 @@ class HermesApp(App):
                 # Sentinel: flush live line; reset first-chunk flag for next turn
                 _first_chunk_in_turn = True
                 try:
-                    self.query_one(OutputPanel).flush_live()
+                    panel = self.query_one(OutputPanel)
+                    panel.flush_live()
+                    # flush_live() may commit a pending buffered line (setext lookahead),
+                    # extending the virtual height AFTER the last chunk's scroll_end fired.
+                    # Queue one more scroll_end so the final line is always visible.
+                    if not panel._user_scrolled_up:
+                        self.call_after_refresh(panel.scroll_end, animate=False)
                 except NoMatches:
                     pass
                 continue
@@ -606,8 +612,11 @@ class HermesApp(App):
         try:
             panel = self.query_one(OutputPanel)
             panel.mount(UserEchoPanel(text, images=images), before=panel.tool_pending)
-            if not panel._user_scrolled_up:
-                self.call_after_refresh(panel.scroll_end, animate=False)
+            # Always scroll to show the user's own message regardless of scroll
+            # position — the user just submitted, they expect to see the exchange.
+            # Re-engage auto-scroll for the upcoming assistant response.
+            panel._user_scrolled_up = False
+            self.call_after_refresh(panel.scroll_end, animate=False)
         except NoMatches:
             pass
 

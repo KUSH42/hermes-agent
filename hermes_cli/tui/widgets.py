@@ -177,7 +177,25 @@ def _fps_hud_enabled() -> bool:
 
 
 class CopyableRichLog(RichLog):
-    """RichLog that stores plain text for clipboard operations."""
+    """RichLog that stores plain text for clipboard operations.
+
+    Overrides ``overflow-y: scroll`` from RichLog.DEFAULT_CSS to ``hidden``
+    so that mouse-scroll events are NOT stopped here and can bubble up to
+    the parent OutputPanel (the intended scroll container).  Without this,
+    Textual's ``_on_mouse_scroll_up`` sees ``allow_vertical_scroll=True``
+    on CopyableRichLog, calls ``event.stop()``, and OutputPanel never scrolls.
+    Note: the ``MessagePanel RichLog`` CSS rule doesn't help here because
+    Textual matches on ``_css_type_name`` ("CopyableRichLog"), not on the
+    base-class name "RichLog".
+    """
+
+    DEFAULT_CSS = """
+    CopyableRichLog {
+        height: auto;
+        overflow-y: hidden;
+        overflow-x: hidden;
+    }
+    """
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)

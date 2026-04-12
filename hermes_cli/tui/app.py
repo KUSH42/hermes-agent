@@ -89,6 +89,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+import os as _os_mod
+
+
+def _animations_enabled_check() -> bool:
+    """Return False if the user has opted out of animations via env vars."""
+    for key in ("NO_ANIMATIONS", "REDUCE_MOTION"):
+        val = _os_mod.environ.get(key, "").strip().lower()
+        if val in ("1", "true", "yes"):
+            return False
+    return True
+
 
 def _run_effect_sync(effect_name: str, text: str) -> None:
     """Run a TTE animation synchronously.
@@ -246,6 +257,10 @@ class HermesApp(App):
         # Panel/args to act on when undo/rollback overlay is confirmed
         self._pending_undo_panel: "MessagePanel | None" = None
         self._pending_rollback_n: int = 0
+        # Animation feature flag — checked by all shimmer/pulse paths
+        self._animations_enabled: bool = _animations_enabled_check()
+        # Current hint phase — tracks what the user is doing
+        self._hint_phase: str = "idle"
         # Timestamp until which _flash_hint has the hint bar reserved.
         # _tick_spinner must not overwrite before this expires.
         self._flash_hint_expires: float = 0.0
@@ -334,11 +349,8 @@ class HermesApp(App):
         # Wire slash commands from COMMAND_REGISTRY into the autocomplete engine
         if self._use_hermes_input:
             self._populate_slash_commands()
-        # Startup micro-hint — visible until the first agent turn or flash replaces it
-        try:
-            self.query_one(HintBar).hint = "F1 help  Ctrl+F search  /cmd  @path"
-        except NoMatches:
-            pass
+        # Initialize hint bar to idle phase — shows key-badge hints immediately
+        self._set_hint_phase("idle")
 
     # --- Output consumer (bounded queue → RichLog) ---
 
@@ -599,6 +611,39 @@ class HermesApp(App):
 
     # --- Reactive watchers ---
 
+    def _compute_hint_phase(self) -> str:
+        """Compute hint phase from current app state, in priority order."""
+        if getattr(self, "voice_mode", False):
+            return "voice"
+        # Any overlay open?
+        if any(
+            getattr(self, attr) is not None
+            for attr in ("approval_state", "clarify_state", "sudo_state", "secret_state")
+        ):
+            return "overlay"
+        if getattr(self, "browse_mode", False):
+            return "browse"
+        if getattr(self, "agent_running", False) or getattr(self, "command_running", False):
+            return "stream"
+        if bool(getattr(self, "status_error", "")):
+            return "error"
+        # Typing phase: check if input has content
+        try:
+            inp = self.query_one("#input-area")
+            if hasattr(inp, "value") and inp.value:
+                return "typing"
+        except NoMatches:
+            pass
+        return "idle"
+
+    def _set_hint_phase(self, phase: str) -> None:
+        """Apply hint phase to HintBar safely."""
+        self._hint_phase = phase
+        try:
+            self.query_one(HintBar).set_phase(phase)
+        except NoMatches:
+            pass
+
     def _set_chevron_phase(self, phase: str) -> None:
         """Set exactly one phase class on #input-chevron, clearing all others."""
         try:
@@ -613,11 +658,7 @@ class HermesApp(App):
     def watch_agent_running(self, value: bool) -> None:
         if value:
             self._set_chevron_phase("--phase-stream")
-            # Clear startup micro-hint so spinner text has full HintBar width
-            try:
-                self.query_one(HintBar).hint = ""
-            except NoMatches:
-                pass
+            self._set_hint_phase("stream")
         else:
             try:
                 chevron = self.query_one("#input-chevron", Static)
@@ -679,12 +720,9 @@ class HermesApp(App):
                 )
             except NoMatches:
                 pass
-        # Clear hint bar when agent stops
-        if not value and not self.command_running:
-            try:
-                self.query_one(HintBar).hint = ""
-            except NoMatches:
-                pass
+        # Recompute hint phase when agent stops
+        if not value:
+            self._set_hint_phase(self._compute_hint_phase())
 
     def watch_spinner_label(self, value: str) -> None:
         """Reset per-tool elapsed timer and extract active file path."""
@@ -697,12 +735,15 @@ class HermesApp(App):
                 m = _PATH_EXTRACT_RE.search(value)
                 self.status_active_file = m.group(1) if m else ""
                 self._set_chevron_phase("--phase-file")
+                self._set_hint_phase("file")
             elif tool_name in _SHELL_TOOLS:
                 self.status_active_file = ""
                 self._set_chevron_phase("--phase-shell")
+                self._set_hint_phase("stream")
             else:
                 self.status_active_file = ""
                 self._set_chevron_phase("--phase-stream")
+                self._set_hint_phase("stream")
         else:
             self.status_active_file = ""
             if self.agent_running:
@@ -778,6 +819,7 @@ class HermesApp(App):
                         pass
         except NoMatches:
             pass
+        self._set_hint_phase(self._compute_hint_phase())
 
     def watch_approval_state(self, value: ChoiceOverlayState | None) -> None:
         try:
@@ -795,6 +837,7 @@ class HermesApp(App):
                         pass
         except NoMatches:
             pass
+        self._set_hint_phase(self._compute_hint_phase())
 
     def watch_highlighted_candidate(self, c: Any) -> None:
         """Route highlighted candidate to PreviewPanel (PathCandidate only)."""
@@ -814,6 +857,7 @@ class HermesApp(App):
                 w.update(value)
         except NoMatches:
             pass
+        self._set_hint_phase(self._compute_hint_phase())
 
     def watch_secret_state(self, value: SecretOverlayState | None) -> None:
         try:
@@ -823,6 +867,15 @@ class HermesApp(App):
                 w.update(value)
         except NoMatches:
             pass
+        self._set_hint_phase(self._compute_hint_phase())
+
+    def watch_status_error(self, value: str) -> None:
+        """Update TitledRule error state and hint phase when error changes."""
+        try:
+            self.query_one("#input-rule", TitledRule).set_error(bool(value))
+        except NoMatches:
+            pass
+        self._set_hint_phase(self._compute_hint_phase())
 
     def watch_undo_state(self, value: UndoOverlayState | None) -> None:
         try:
@@ -846,6 +899,52 @@ class HermesApp(App):
         if value is None:
             self._pending_undo_panel = None
 
+    def on_input_changed(self, event: Any) -> None:
+        """Update hint phase on input content change (typing phase detection)."""
+        # Only react to the main input area, not overlay inputs
+        if getattr(event, "input", None) is not None:
+            inp = event.input
+            if getattr(inp, "id", None) == "input-area":
+                # Don't override if agent is running or overlays are active
+                if (
+                    not getattr(self, "agent_running", False)
+                    and not getattr(self, "command_running", False)
+                    and not getattr(self, "browse_mode", False)
+                    and not bool(getattr(self, "status_error", ""))
+                    and not any(
+                        getattr(self, attr) is not None
+                        for attr in ("approval_state", "clarify_state", "sudo_state", "secret_state")
+                    )
+                ):
+                    has_content = bool(getattr(inp, "value", ""))
+                    self._set_hint_phase("typing" if has_content else "idle")
+
+    def watch_size(self, size: Any) -> None:
+        """Hide bottom-bar widgets when terminal is too short (height < 12)."""
+        try:
+            h = size.height
+        except AttributeError:
+            return
+        try:
+            plain_rule = self.query_one("#input-rule-bottom")
+            plain_rule.display = h >= 8
+        except NoMatches:
+            pass
+        try:
+            image_bar = self.query_one(ImageBar)
+            # Only hide if it was visible (has images)
+            if h < 10:
+                image_bar.styles.display = "none"
+            elif image_bar._static_content:
+                image_bar.styles.display = "block"
+        except (NoMatches, AttributeError):
+            pass
+        try:
+            hint_bar = self.query_one(HintBar)
+            hint_bar.display = h >= 9
+        except NoMatches:
+            pass
+
     def watch_status_compaction_progress(self, value: float) -> None:
         if value == 0.0:
             self._compaction_warned = False
@@ -862,6 +961,7 @@ class HermesApp(App):
             self.query_one(VoiceStatusBar).set_class(value, "active")
         except NoMatches:
             pass
+        self._set_hint_phase("voice" if value else self._compute_hint_phase())
 
     def watch_voice_recording(self, value: bool) -> None:
         try:
@@ -1029,6 +1129,7 @@ class HermesApp(App):
         except NoMatches:
             pass
         self._apply_browse_focus()
+        self._set_hint_phase("browse" if value else self._compute_hint_phase())
 
     def watch_browse_index(self, _value: int) -> None:
         self._apply_browse_focus()
@@ -1071,6 +1172,15 @@ class HermesApp(App):
         else:
             self._theme_manager.load([skin_vars])
         self._theme_manager.apply()
+        # Invalidate hint cache on skin change so key-badge colors are rebuilt
+        from hermes_cli.tui.widgets import _hint_cache
+        _hint_cache.clear()
+        # Invalidate StatusBar idle tips cache
+        try:
+            sb = self.query_one(StatusBar)
+            sb._idle_tips_cache = None
+        except NoMatches:
+            pass
         # Propagate new skin colors to the completion list cache and repaint.
         try:
             from .completion_list import VirtualCompletionList

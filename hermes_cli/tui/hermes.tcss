@@ -21,6 +21,9 @@
 /* App-wide background — ThemeManager overrides via component_vars: app-bg */
 $app-bg: #1E1E1E;
 
+/* TitledRule idle glyph color — darken-3 of $primary */
+$primary-darken-3: #2d4a6e;
+
 $cursor-color: #FFF8DC;
 $cursor-selection-bg: #3A5A8C;
 $cursor-placeholder: #555555;
@@ -113,6 +116,7 @@ ReasoningPanel {
  */
 HintBar {
     color: $text-muted;
+    padding: 0 1;
 }
 
 /* --- Status bar --- */

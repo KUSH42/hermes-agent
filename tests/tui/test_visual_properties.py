@@ -159,32 +159,31 @@ async def test_hintbar_and_statusbar_share_muted_color():
 
 @pytest.mark.asyncio
 async def test_hintbar_displays_hint_text():
-    """Setting HintBar.hint causes update() to store the text in _Static__content."""
+    """Setting HintBar.hint causes render() to display the text."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         hint = app.query_one(HintBar)
         hint.hint = "⎘  10 chars copied"
         await pilot.pause()
-        # Static stores content in _Static__content after update()
-        content = str(hint._Static__content)
-        assert "10 chars copied" in content or "⎘" in content, (
-            f"HintBar should display the hint text, content: {content!r}"
+        # HintBar is now a Widget with render() — check the hint reactive directly
+        assert "10 chars copied" in hint.hint or "⎘" in hint.hint, (
+            f"HintBar should display the hint text, hint: {hint.hint!r}"
         )
 
 
 @pytest.mark.asyncio
 async def test_hintbar_empty_hint_is_blank():
-    """Empty hint stores empty string — widget shows nothing when idle."""
+    """Empty hint stores empty string — widget shows phase-based hint when idle."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         hint = app.query_one(HintBar)
         hint.hint = ""
         await pilot.pause()
-        content = str(hint._Static__content).strip()
-        assert content == "", (
-            f"Empty HintBar should have blank content, got: {content!r}"
+        # HintBar is now a Widget with render() — empty hint means phase-based display
+        assert hint.hint == "", (
+            f"Empty HintBar.hint should be empty string, got: {hint.hint!r}"
         )
 
 

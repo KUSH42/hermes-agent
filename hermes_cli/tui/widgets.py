@@ -32,7 +32,7 @@ from textual.strip import Strip
 from textual.widget import Widget
 from textual.widgets import Input, RichLog, Static
 
-from hermes_cli.tui.animation import PulseMixin, lerp_color
+from hermes_cli.tui.animation import PulseMixin, lerp_color, shimmer_text
 
 from hermes_cli.tui.state import (
     ChoiceOverlayState,
@@ -951,7 +951,7 @@ def _fade_rule(count: int, start_hex: str, end_hex: str) -> Text:
     return t
 
 
-class TitledRule(Widget):
+class TitledRule(PulseMixin, Widget):
     """Horizontal rule with an embedded title and fading rule chars.
 
     Pass ``show_state=True`` on the input-rule instance to get a right-side
@@ -984,6 +984,7 @@ class TitledRule(Widget):
         self._accent = accent or _skin_color("banner_title", "#FFD700")
         self._title_color = title_color or _skin_color("banner_dim", "#B8860B")
         self._show_state = show_state
+        self._glyph_error: bool = False
 
     def on_mount(self) -> None:
         if self._show_state:
@@ -991,6 +992,21 @@ class TitledRule(Widget):
             self.watch(self.app, "command_running", self._on_state_change)
 
     def _on_state_change(self, _value: object = None) -> None:
+        running = (
+            getattr(self.app, "agent_running", False)
+            or getattr(self.app, "command_running", False)
+        )
+        if running and getattr(self.app, "_animations_enabled", True):
+            self._pulse_start()
+        else:
+            self._pulse_stop()
+        self.refresh()
+
+    def set_error(self, is_error: bool) -> None:
+        """Set error state — hard red glyph, no animation."""
+        self._glyph_error = is_error
+        if is_error:
+            self._pulse_stop()
         self.refresh()
 
     def _live_colors(self) -> tuple[str, str, str, str]:
@@ -1031,10 +1047,28 @@ class TitledRule(Widget):
         accent_char = parts[0] if parts else ""
         rest = (" " + parts[1]) if len(parts) > 1 else ""
 
+        # Determine glyph color: error → hard red; running → pulse; idle → darken-3
+        try:
+            v = self.app.get_css_variables()
+            glyph_idle = v.get("primary-darken-3", "#2d4a6e")
+            glyph_active = v.get("primary", "#5f87d7")
+            glyph_err = v.get("status-error-color", "#EF5350")
+        except Exception:
+            glyph_idle = "#2d4a6e"
+            glyph_active = "#5f87d7"
+            glyph_err = "#EF5350"
+
+        if self._glyph_error:
+            glyph_color = glyph_err
+        elif self._pulse_t > 0:
+            glyph_color = lerp_color(glyph_idle, glyph_active, self._pulse_t)
+        else:
+            glyph_color = glyph_idle
+
         # Right-side state glyph — only on instances with show_state=True,
         # only visible when the agent is running.
         state_suffix = Text()
-        if self._show_state:
+        if self._show_state and not self._glyph_error:
             running = (
                 getattr(self.app, "agent_running", False)
                 or getattr(self.app, "command_running", False)
@@ -1045,8 +1079,8 @@ class TitledRule(Widget):
         label_len = len(f"{title} ")
         right = max(0, w - label_len - state_suffix.cell_len)
         t = Text()
-        # Title: accent char in bright accent, rest in title_color
-        t.append(accent_char, style=f"bold {accent}")
+        # Title: accent char with dynamic glyph color, rest in title_color
+        t.append(accent_char, style=f"bold {glyph_color}")
         t.append(f"{rest} ", style=f"{title_color}")
         # Right fill: fade out (start → end), then optional state glyph
         t.append_text(_fade_rule(right, fade_start, fade_end))
@@ -1108,10 +1142,107 @@ class PlainRule(Widget):
 
 
 # ---------------------------------------------------------------------------
+# Hint cache + helpers (Phase 1)
+# ---------------------------------------------------------------------------
+
+_hint_cache: dict[tuple[str, str], dict[str, str]] = {}
+
+_SEP = "  [dim]·[/dim]  "
+
+
+def _build_hints(phase: str, key_color: str) -> dict[str, str]:
+    """Build {long, medium, short, minimal} hint variants for a phase+color."""
+    k = key_color
+
+    def _fmt(entries: list[tuple[str, str | None]], sep: str = _SEP) -> str:
+        parts = []
+        for key, desc in entries:
+            if desc is not None:
+                parts.append(f"[bold {k}]{key}[/] [dim]{desc}[/dim]")
+            else:
+                parts.append(f"[bold {k}]{key}[/]")
+        return sep.join(parts)
+
+    if phase == "idle":
+        long_ = _fmt([("F1", "help"), ("^F", "search"), ("/", "cmd"), ("@", "path")])
+        medium = long_
+        short = _fmt([("F1", None), ("^F", None), ("/", None), ("@", None)])
+        minimal = f"[bold {k}]F1[/]"
+    elif phase == "typing":
+        long_ = _fmt([("↵", "send"), ("Esc", "clear"), ("@", "path"), ("/", "cmd")])
+        medium = long_
+        short = _fmt([("↵", None), ("Esc", None), ("@", None), ("/", None)])
+        minimal = f"[bold {k}]↵[/]"
+    elif phase in ("stream", "file"):
+        s = f"[bold {k}]^C[/] [dim]interrupt[/dim]{_SEP}[bold {k}]Esc[/] [dim]dismiss[/dim]"
+        long_ = s
+        medium = s
+        short = f"[bold {k}]^C[/]{_SEP}[bold {k}]Esc[/]"
+        minimal = f"[bold {k}]^C[/]"
+    elif phase == "browse":
+        long_ = _fmt([("⇥", "next"), ("c", "copy"), ("a", "expand"), ("A", "collapse"), ("Esc", "exit")])
+        medium = long_
+        short = _fmt([("⇥", None), ("c", None), ("a", None), ("A", None), ("Esc", None)])
+        minimal = f"[bold {k}]⇥[/]"
+    elif phase == "overlay":
+        long_ = _fmt([("↑↓", "navigate"), ("↵", "confirm"), ("Esc", "close")])
+        medium = long_
+        short = _fmt([("↑↓", None), ("↵", None), ("Esc", None)])
+        minimal = f"[bold {k}]↵[/]"
+    elif phase == "voice":
+        long_ = _fmt([("␣", "stop"), ("Esc", "cancel")])
+        medium = long_
+        short = _fmt([("␣", None), ("Esc", None)])
+        minimal = f"[bold {k}]␣[/]"
+    elif phase == "error":
+        long_ = _fmt([("^Z", "undo"), ("^C", "new prompt"), ("F1", "help")])
+        medium = long_
+        short = _fmt([("^Z", None), ("^C", None), ("F1", None)])
+        minimal = f"[bold {k}]^Z[/]"
+    else:
+        # Fallback: idle
+        long_ = _fmt([("F1", "help"), ("^F", "search")])
+        medium = long_
+        short = f"[bold {k}]F1[/]"
+        minimal = f"[bold {k}]F1[/]"
+
+    return {"long": long_, "medium": medium, "short": short, "minimal": minimal}
+
+
+def _hints_for(phase: str, key_color: str) -> dict[str, str]:
+    """Return {long, medium, short, minimal} for this phase+color. Cached."""
+    cache_key = (phase, key_color.lower())
+    if cache_key not in _hint_cache:
+        _hint_cache[cache_key] = _build_hints(phase, key_color)
+    return _hint_cache[cache_key]
+
+
+def _build_streaming_hint(key_color: str) -> "tuple[Text, list[tuple[int, int]]]":
+    """
+    Returns the streaming-phase hint Text and the character ranges of key
+    badge names that must be excluded from shimmer.
+    """
+    text = Text()
+    badges: list[tuple[int, int]] = []
+
+    def badge(key: str, desc: str, sep: bool = False) -> None:
+        if sep:
+            text.append("  ·  ", style="dim")
+        start = len(text)
+        text.append(key, style=Style(color=key_color, bold=True))
+        badges.append((start, len(text)))   # end is exclusive
+        text.append(f" {desc}", style="dim")
+
+    badge("^C", "interrupt")
+    badge("Esc", "dismiss", sep=True)
+    return text, badges
+
+
+# ---------------------------------------------------------------------------
 # Hint bar + spinner (Step 3)
 # ---------------------------------------------------------------------------
 
-class HintBar(Static):
+class HintBar(Widget):
     """Single-line hint / countdown display below the overlay layer.
 
     ``HermesApp`` has NO ``hint_text`` reactive. ``HintBar.hint`` is the
@@ -1120,6 +1251,10 @@ class HintBar(Static):
 
     Always occupies exactly 1 line (no display:none toggling) to prevent
     layout reflow jitter when hints appear/disappear during streaming.
+
+    Phase-aware: set_phase() transitions the hint bar between context-
+    sensitive hint states. When hint is non-empty it always overrides phase
+    display (overlay countdowns, flash messages).
     """
 
     DEFAULT_CSS = """
@@ -1129,9 +1264,92 @@ class HintBar(Static):
     """
 
     hint: reactive[str] = reactive("")
+    _shimmer_tick: reactive[int] = reactive(0, repaint=True)
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._phase: str = "idle"
+        self._shimmer_timer: object | None = None
+        self._shimmer_base: "Text | None" = None
+        self._shimmer_skip: list[tuple[int, int]] = []
 
     def watch_hint(self, value: str) -> None:
-        self.update(value)
+        # Trigger repaint — render() picks up hint directly
+        self.refresh()
+
+    def _get_key_color(self) -> str:
+        """Read key badge color from CSS variables."""
+        try:
+            v = self.app.get_css_variables()
+            return v.get("primary", "#5f87d7")
+        except Exception:
+            return "#5f87d7"
+
+    def set_phase(self, phase: str) -> None:
+        """Transition to a new hint phase. Manages shimmer lifecycle."""
+        if phase == self._phase and self._shimmer_timer is not None:
+            return  # already in this phase and shimmer is running
+        # Stop any existing shimmer first
+        self._shimmer_stop()
+        self._phase = phase
+        if phase in ("stream", "file") and getattr(self.app, "_animations_enabled", True):
+            self._shimmer_start()
+        else:
+            self.refresh()
+
+    def _shimmer_start(self) -> None:
+        """Start the streaming/file shimmer."""
+        if not getattr(self.app, "_animations_enabled", True):
+            self.refresh()
+            return
+        key_color = self._get_key_color()
+        base_text, skip = _build_streaming_hint(key_color)
+        self._shimmer_base = base_text
+        self._shimmer_skip = skip
+        self._shimmer_tick = 0
+        if self._shimmer_timer is None:
+            self._shimmer_timer = self.set_interval(1 / 8, self._shimmer_step)
+
+    def _shimmer_stop(self) -> None:
+        """Stop the shimmer. Idempotent."""
+        if self._shimmer_timer is not None:
+            self._shimmer_timer.stop()
+            self._shimmer_timer = None
+        self._shimmer_base = None
+        self._shimmer_skip = []
+        self._shimmer_tick = 0
+
+    def _shimmer_step(self) -> None:
+        """8Hz shimmer timer callback — plain def."""
+        self._shimmer_tick += 1
+
+    def render(self) -> "RenderResult":
+        # Override: flash/overlay hints take priority
+        if self.hint:
+            return Text.from_markup(self.hint)
+        # Shimmer active: render shimmer
+        if self._shimmer_base is not None and self._shimmer_timer is not None:
+            return shimmer_text(
+                self._shimmer_base,
+                self._shimmer_tick,
+                dim="#6e6e6e",
+                peak="#909090",
+                period=32,
+                skip_ranges=self._shimmer_skip,
+            )
+        # Phase-based static hint
+        key_color = self._get_key_color()
+        hints = _hints_for(self._phase, key_color)
+        w = self.content_size.width
+        if w >= 118:
+            variant = hints.get("long", hints["medium"])
+        elif w >= 78:
+            variant = hints["medium"]
+        elif w >= 48:
+            variant = hints["short"]
+        else:
+            variant = hints["minimal"]
+        return Text.from_markup(variant)
 
 
 # ---------------------------------------------------------------------------
@@ -1155,16 +1373,36 @@ class StatusBar(PulseMixin, Widget):
     # Animated tok/s backing reactive — drives smooth counter easing
     _tok_s_displayed: reactive[float] = reactive(0.0, repaint=True)
 
-    _IDLE_HINTS: tuple[str, ...] = (
-        "F1 help · ctrl+f history",
-        "ctrl+z undo · ctrl+g history",
-        "@ file · / command · tab accept",
-        "right-click for options",
-        "ctrl+c interrupt · esc dismiss",
-    )
+    # Built lazily in _get_idle_tips() — skin not loaded at class definition time
+    _idle_tips_cache: "list[str] | None" = None
 
     def compose(self) -> "ComposeResult":
         yield Static("⚠ no clipboard", id="status-clipboard-warning")
+
+    def _get_idle_tips(self) -> list[str]:
+        """Build idle tips lazily with key-badge format."""
+        if self._idle_tips_cache is not None:
+            return self._idle_tips_cache
+        try:
+            k = self.app.get_css_variables().get("primary", "#5f87d7")
+        except Exception:
+            k = "#5f87d7"
+        sep = "  ·  "
+        mouse_enabled = getattr(self.app, "_mouse_enabled", True)
+        tip5 = (
+            f"[bold {k}]right-click[/] [dim]for options[/dim]"
+            if mouse_enabled else
+            f"[bold {k}]^D[/] [dim]attach image[/dim]{sep}[bold {k}]^V[/] [dim]paste[/dim]"
+        )
+        tips = [
+            f"[bold {k}]F1[/] [dim]help[/dim]{sep}[bold {k}]^F[/] [dim]history search[/dim]",
+            f"[bold {k}]^Z[/] [dim]undo last turn[/dim]{sep}[bold {k}]^G[/] [dim]retry[/dim]",
+            f"[bold {k}]@[/][dim]file[/dim]{sep}[bold {k}]/[/][dim]command[/dim]{sep}[bold {k}]⇥[/] [dim]accept[/dim]",
+            f"[bold {k}]^L[/] [dim]clear[/dim]{sep}[bold {k}]^K[/] [dim]new session[/dim]",
+            tip5,
+        ]
+        self._idle_tips_cache = tips
+        return tips
 
     def on_mount(self) -> None:
         app = self.app
@@ -1189,6 +1427,7 @@ class StatusBar(PulseMixin, Widget):
         # status_error: triggers repaint when a persistent error is set/cleared
         self.watch(app, "status_error", self._on_status_change)
         self._hint_idx: int = 0
+        self._hint_phase: str = "idle"
         self.set_interval(5.0, self._rotate_hint)
 
     def _on_status_change(self, _value: object = None) -> None:
@@ -1210,8 +1449,19 @@ class StatusBar(PulseMixin, Widget):
             self._tok_s_displayed = float(tok_s)
 
     def _rotate_hint(self) -> None:
-        """Advance idle hint text to the next entry in _IDLE_HINTS."""
-        self._hint_idx = (self._hint_idx + 1) % len(self._IDLE_HINTS)
+        """Advance idle hint text to the next entry — idle phase only."""
+        # Only rotate when in idle phase (no agent/browse/error active)
+        app = self.app
+        is_idle = (
+            not getattr(app, "agent_running", False)
+            and not getattr(app, "command_running", False)
+            and not getattr(app, "browse_mode", False)
+            and not bool(getattr(app, "status_error", ""))
+        )
+        if not is_idle:
+            return
+        tips = self._get_idle_tips()
+        self._hint_idx = (self._hint_idx + 1) % len(tips)
         self.refresh()
 
     def render(self) -> RenderResult:
@@ -1265,7 +1515,11 @@ class StatusBar(PulseMixin, Widget):
         )
 
         t = Text()
-        t.append(model, style="dim")
+        # Startup state: show "connecting…" when model is not yet loaded
+        if not model:
+            t.append("connecting…", style=f"dim")
+        else:
+            t.append(model, style="dim")
 
         if width < 40:
             # Minimal: model · duration
@@ -1320,16 +1574,35 @@ class StatusBar(PulseMixin, Widget):
         if running:
             _run_lo = _vars.get("status-running-color", "#FFBF00")
             _run_hi = _vars.get("chevron-file", "#FFA726")
+            # Use hardcoded dim — text-muted CSS var returns non-hex like "auto 60%"
+            _shimmer_dim = "#6e6e6e"
             if self._pulse_t > 0:
                 pulse_color = lerp_color(_run_hi, _run_lo, self._pulse_t)
             else:
                 pulse_color = _run_hi
-            state_t = Text(" ● running", style=f"bold {pulse_color}")
+            state_t = Text()
+            state_t.append(" ● ", style=f"bold {pulse_color}")
+            # Shimmer the "running" word using the existing _pulse_tick as tick source
+            if getattr(app, "_animations_enabled", True):
+                running_shimmer = shimmer_text(
+                    "running",
+                    self._pulse_tick,
+                    dim=_shimmer_dim,
+                    peak=_run_lo,
+                    period=32,
+                )
+                state_t.append_text(running_shimmer)
+            else:
+                state_t.append("running", style=f"bold {pulse_color}")
         elif _status_err:
             state_t = Text(f" ⚠ {_status_err}", style=f"bold {_err_color}")
         else:
-            hint = self._IDLE_HINTS[getattr(self, "_hint_idx", 0)]
-            state_t = Text(f" {hint}", style="dim")
+            tips = self._get_idle_tips()
+            hint_idx = getattr(self, "_hint_idx", 0)
+            hint = tips[hint_idx % len(tips)]
+            state_t = Text()
+            state_t.append(" ")
+            state_t.append_text(Text.from_markup(hint))
 
         if dropped:
             state_t = Text(f" ⚠ output truncated", style=_err_color) + state_t
@@ -1428,8 +1701,12 @@ class VoiceStatusBar(Widget):
 # Image bar (Step 3)
 # ---------------------------------------------------------------------------
 
-class ImageBar(Static):
-    """Displays attached image filenames; hidden when empty."""
+class ImageBar(Widget):
+    """Displays attached image filenames; hidden when empty.
+
+    Converted from Static to Widget to support render() override and
+    one-pass shimmer animation on image attach (Phase 4).
+    """
 
     DEFAULT_CSS = """
     ImageBar {
@@ -1438,15 +1715,75 @@ class ImageBar(Static):
     }
     """
 
+    _shimmer_tick: reactive[int] = reactive(0, repaint=True)
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._shimmer_timer: object | None = None
+        self._shimmer_base: "Text | None" = None
+        self._shimmer_skip: list[tuple[int, int]] = []
+        self._static_content: "Text" = Text()
+
+    def _shimmer_stop(self) -> None:
+        """Stop shimmer. Idempotent."""
+        if self._shimmer_timer is not None:
+            self._shimmer_timer.stop()
+            self._shimmer_timer = None
+        self._shimmer_base = None
+        self._shimmer_skip = []
+        self._shimmer_tick = 0
+
+    def _shimmer_once(self, base_text: "Text", fps: int = 15, period: int = 15) -> None:
+        """Run one shimmer pass then settle to static. Used on image attach."""
+        if not getattr(self.app, "_animations_enabled", True):
+            self._static_content = base_text
+            self.refresh()
+            return
+
+        self._shimmer_base = base_text
+        self._shimmer_skip = []
+        self._shimmer_tick = 0
+        _ticks_remaining = [period]  # mutable cell for closure
+
+        def _step() -> None:
+            if not self.is_mounted:
+                return
+            self._shimmer_tick += 1
+            _ticks_remaining[0] -= 1
+            if _ticks_remaining[0] <= 0:
+                self._shimmer_stop()
+                self._static_content = base_text
+                self.refresh()
+
+        if self._shimmer_timer is not None:
+            self._shimmer_timer.stop()
+        self._shimmer_timer = self.set_interval(1 / fps, _step)
+
+    def render(self) -> "RenderResult":
+        if self._shimmer_base is not None and self._shimmer_timer is not None:
+            return shimmer_text(
+                self._shimmer_base,
+                self._shimmer_tick,
+                dim="#6e6e6e",
+                peak="#cccccc",
+                period=15,
+                skip_ranges=self._shimmer_skip,
+            )
+        return self._static_content
+
     def update_images(self, images: list) -> None:
         """Update the displayed image list and toggle visibility."""
         if images:
             self.display = True
             names = ", ".join(getattr(img, "name", str(img)) for img in images)
-            self.update(f"[dim]📎 {names}[/dim]")
+            base_text = Text(f"📎 {names}", style="dim")
+            self._static_content = base_text
+            self._shimmer_once(base_text)
         else:
             self.display = False
-            self.update("")
+            self._shimmer_stop()
+            self._static_content = Text()
+            self.refresh()
 
 
 # ---------------------------------------------------------------------------

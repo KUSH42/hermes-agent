@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import math
 
+from rich.style import Style
+from rich.text import Text
+
 
 # ---------------------------------------------------------------------------
 # Pure numeric helpers
@@ -127,3 +130,61 @@ class PulseMixin:
         self._pulse_tick += 1
         self._pulse_t = pulse_phase(self._pulse_tick, period=30)
         self.refresh()  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# Shimmer
+# ---------------------------------------------------------------------------
+
+def shimmer_text(
+    source: "str | Text",
+    tick: int,
+    dim: str,
+    peak: str,
+    period: int = 40,
+    skip_ranges: "list[tuple[int, int]] | None" = None,
+) -> Text:
+    """
+    Returns a Rich Text where each character's foreground color is driven by
+    a traveling sine wave — left edge leads, right edge trails.
+
+    The wave completes one traversal across the full text in `period` ticks:
+      At 15fps / period=40 → ~2.7s traversal
+      At  8fps / period=32 → ~4.0s traversal (subtler, less distracting)
+
+    Existing bold/italic/dim span attributes are preserved. Only foreground
+    color is overridden per character via Text.stylize().
+
+    Args:
+        source:       Plain str or Rich Text. Source is never mutated.
+        tick:         Monotonically increasing animation tick (int).
+        dim:          Hex color at wave trough (leading/trailing edge).
+        peak:         Hex color at wave crest (traveling highlight).
+        period:       Ticks for one full wave traversal across the text.
+        skip_ranges:  List of (start, end) character index pairs where end
+                      is EXCLUSIVE (matches Python slice convention). Characters
+                      in these ranges keep their existing color — use this to
+                      protect key badge names from the shimmer wave.
+
+    Returns:
+        New Rich Text with shimmer applied. Caller owns the result.
+    """
+    result = Text(source) if isinstance(source, str) else source.copy()
+    n = len(result)
+    if n == 0:
+        return result
+
+    protected: set[int] = set()
+    if skip_ranges:
+        for start, end in skip_ranges:  # end is exclusive
+            protected.update(range(start, end))
+
+    for i in range(n):
+        if i in protected:
+            continue
+        char_tick = tick - int(i / n * period)
+        t = pulse_phase(char_tick, period=period)
+        color = lerp_color(dim, peak, t)
+        result.stylize(Style(color=color), start=i, end=i + 1)
+
+    return result

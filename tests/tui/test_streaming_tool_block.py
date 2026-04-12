@@ -320,7 +320,11 @@ async def test_streaming_tool_block_mounts_tool_tail():
 
 @pytest.mark.asyncio
 async def test_tool_tail_dismissed_on_complete():
-    """complete() resets _tail_new_count and dismisses ToolTail."""
+    """complete() dismisses ToolTail unconditionally.
+
+    The count lives in tail._new_line_count (single source of truth);
+    complete() calls tail.dismiss() which resets it to 0.
+    """
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -332,16 +336,16 @@ async def test_tool_tail_dismissed_on_complete():
         block = output.query_one(StreamingToolBlock)
         tail = block.query_one(ToolTail)
 
-        # Manually set the tail count (simulating scroll-away state)
-        block._tail_new_count = 5
+        # Arm the tail (simulating scroll-away state)
         tail.update_count(5)
         await pilot.pause()
         assert tail.display is True
+        assert tail._new_line_count == 5
 
         app.close_streaming_tool_block("t1", "1.2s")
         await pilot.pause()
         assert tail.display is False
-        assert block._tail_new_count == 0
+        assert tail._new_line_count == 0
 
 
 @pytest.mark.asyncio

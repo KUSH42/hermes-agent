@@ -1137,6 +1137,8 @@ class HermesApp(App):
             output.mount(block, before=output.tool_pending)
             self._active_streaming_blocks[tool_call_id] = block
             self._browse_total += 1
+            if not output._user_scrolled_up:
+                self.call_after_refresh(output.scroll_end, animate=False)
         except NoMatches:
             pass
 

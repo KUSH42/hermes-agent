@@ -25,6 +25,7 @@ from textual import work
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import RichLog
+from textual.worker import get_current_worker
 
 from .path_search import PathCandidate
 
@@ -82,16 +83,26 @@ class PreviewPanel(RichLog):
 
     @work(thread=True, exclusive=True, group="preview")
     def _load_preview(self, abs_path: str) -> None:
+        # P0-C: check cancellation before any I/O — rapid selection changes
+        # may cancel this worker before it starts meaningful work.
+        worker = get_current_worker()
+        if worker.is_cancelled:
+            return
         try:
             path = Path(abs_path)
             size = path.stat().st_size
             if size > _MAX_PREVIEW_BYTES:
-                self.post_message(self.PlainReady(f"(too large: {size // 1024} KB)"))
+                if not worker.is_cancelled:
+                    self.post_message(self.PlainReady(f"(too large: {size // 1024} KB)"))
                 return
             # Read raw bytes first so we can binary-sniff without corrupting
             # the decode on a non-UTF-8 text file.
             with path.open("rb") as fb:
                 raw = fb.read(_MAX_PREVIEW_BYTES)
+            # P0-C: check again after the blocking read — cancellation can't
+            # interrupt open().read(), so the earliest safe checkpoint is here.
+            if worker.is_cancelled:
+                return
             if _looks_binary(raw):
                 self.post_message(self.PlainReady(f"(binary file: {size} bytes)"))
                 return
@@ -105,9 +116,11 @@ class PreviewPanel(RichLog):
                 word_wrap=False,
                 indent_guides=False,
             )
-            self.post_message(self.SyntaxReady(syntax))
+            if not worker.is_cancelled:
+                self.post_message(self.SyntaxReady(syntax))
         except OSError as e:
-            self.post_message(self.PlainReady(f"(cannot read: {e})"))
+            if not worker.is_cancelled:
+                self.post_message(self.PlainReady(f"(cannot read: {e})"))
 
     # --- Message handlers (run on event loop) ---
 

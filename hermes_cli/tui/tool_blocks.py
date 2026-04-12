@@ -280,7 +280,6 @@ class StreamingToolBlock(ToolBlock):
         self._spinner_frame: int = 0
         self._completed: bool = False
         self._tail = ToolTail()
-        self._tail_new_count: int = 0  # lines added while user scrolled away
 
     def compose(self) -> ComposeResult:
         yield self._header
@@ -338,7 +337,6 @@ class StreamingToolBlock(ToolBlock):
         # Final synchronous flush
         self._flush_pending()
         # Hide tail badge unconditionally
-        self._tail_new_count = 0
         self._tail.dismiss()
         # Update header: remove spinner, add duration + line count
         self._header._spinner_char = None
@@ -398,9 +396,12 @@ class StreamingToolBlock(ToolBlock):
             except Exception:
                 scrolled_up = False
             if scrolled_up:
-                self._tail_new_count += lines_written
+                # _new_line_count is the source of truth; it is reset to 0 by
+                # ToolTail.dismiss() (called by watch_scroll_y) so resuming a
+                # second scroll session always starts from 0.
+                new_total = self._tail._new_line_count + lines_written
                 try:
-                    self._tail.update_count(self._tail_new_count)
+                    self._tail.update_count(new_total)
                 except Exception:
                     pass
 

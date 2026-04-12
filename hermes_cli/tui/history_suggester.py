@@ -38,13 +38,14 @@ class HistorySuggester(Suggester):
     """
 
     def __init__(self, input_widget: "HermesInput") -> None:
-        super().__init__(use_cache=False, case_sensitive=True)
+        super().__init__(use_cache=False, case_sensitive=False)
         self._input = input_widget
 
     async def get_suggestion(self, value: str) -> str | None:
         if not value:
             return None
+        value_lower = value.lower()
         for entry in reversed(self._input._history):
-            if entry != value and entry.startswith(value):
+            if entry.lower() != value_lower and entry.lower().startswith(value_lower):
                 return entry
         return None

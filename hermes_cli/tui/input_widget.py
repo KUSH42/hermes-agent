@@ -430,6 +430,8 @@ class HermesInput(Input, can_focus=True):
             clist = self.screen.query_one(VirtualCompletionList)
         except NoMatches:
             return
+        # Propagate current query so empty-state label shows "no results for X"
+        clist.current_query = self._current_trigger.fragment
         clist.items = tuple(candidates)
 
     # --- Accept / dismiss ---
@@ -452,6 +454,14 @@ class HermesInput(Input, can_focus=True):
             return
         if not clist.items or clist.highlighted < 0:
             return
+
+        # P0-G: mid-cursor guard — if the cursor is not at the end of the
+        # typed fragment, the user has repositioned it.  Accept would corrupt
+        # multi-token inputs, so dismiss only without splicing.
+        if self.cursor_position < len(self.value):
+            self._hide_completion_overlay()
+            return
+
         c = clist.items[clist.highlighted]
         trig = self._current_trigger
 

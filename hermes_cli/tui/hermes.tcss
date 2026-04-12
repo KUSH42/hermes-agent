@@ -39,8 +39,6 @@ $status-error-color: #ef5350;
 $status-warn-color: #FFA726;
 $status-context-color: #5f87d7;
 
-/* Tool body max-height — overridable via TCSS $var substitution */
-$tool-body-max-height: 60;
 
 /* FPS HUD background — ThemeManager overrides via component_vars */
 $fps-hud-bg: #1a1a2e;
@@ -260,15 +258,15 @@ ToolHeader.--flash-complete {
     background: $success 18%;
 }
 
-/* ToolBodyContainer body lines — indent matches the ┊ gutter.
- * max-height increased from 40 → 60 to reduce scroll fatigue on long outputs. */
+/* ToolBodyContainer body lines — no individual scroll.
+ * Content flows into OutputPanel (the single scroll container).
+ * overflow: hidden prevents nested scroll from creating stale offsets
+ * that corrupt dirty-rect renders when the mouse moves after scrolling. */
 ToolBodyContainer CopyableRichLog {
     padding-left: 0;
     height: auto;
-    max-height: $tool-body-max-height;
-    overflow-y: auto;
-    overflow-x: auto;
-    scrollbar-size-horizontal: 1;   /* scoped override of the global size-0 rule */
+    overflow-y: hidden;
+    overflow-x: hidden;
 }
 
 /* --- Context menu ---
@@ -354,7 +352,6 @@ HermesApp.density-compact HintBar               { padding: 0; }
 HermesApp.density-compact ImageBar              { padding: 0; }
 HermesApp.density-compact VoiceStatusBar        { padding: 0; }
 HermesApp.density-compact #input-row            { padding: 0; }
-HermesApp.density-compact ToolBodyContainer CopyableRichLog { max-height: 25; }
 /* Overlays: trim extra padding to match standard 0 1 in compact mode */
 HermesApp.density-compact ClarifyWidget,
 HermesApp.density-compact ApprovalWidget,

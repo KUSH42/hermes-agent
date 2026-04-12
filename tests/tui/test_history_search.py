@@ -354,6 +354,9 @@ async def test_enter_adds_highlighted_class():
 
         overlay = app.query_one(HistorySearchOverlay)
         overlay.open_search()
+        # _render_results mounts TurnResultItem widgets asynchronously;
+        # give the event loop enough cycles to settle before action_jump queries them.
+        await asyncio.sleep(0.05)
         await pilot.pause()
 
         overlay.action_jump()
@@ -367,7 +370,7 @@ async def test_enter_adds_highlighted_class():
 
 @pytest.mark.asyncio
 async def test_highlighted_removed_after_timeout():
-    """--highlighted class is removed after the 1.5s timer fires."""
+    """--highlighted class is removed after the 0.5s timer fires."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -376,13 +379,15 @@ async def test_highlighted_removed_after_timeout():
 
         overlay = app.query_one(HistorySearchOverlay)
         overlay.open_search()
+        # Let TurnResultItem mounts settle before action_jump queries them.
+        await asyncio.sleep(0.05)
         await pilot.pause()
 
         overlay.action_jump()
         await pilot.pause()
         assert panel.has_class("--highlighted")
 
-        await asyncio.sleep(1.6)
+        await asyncio.sleep(0.7)
         await pilot.pause()
         assert not panel.has_class("--highlighted")
 

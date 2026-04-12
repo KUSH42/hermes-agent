@@ -626,6 +626,25 @@ class HermesApp(App):
                     self.set_timer(0.4, lambda: self._set_chevron_phase(""))
             except NoMatches:
                 pass
+            # Safety net: flush live buffer + stop all per-turn timers.
+            # flush_output() is never called from cli.py so the None sentinel
+            # that drives flush_live() via _consume_output never arrives.
+            # flush_live() handles: (1) ThinkingWidget.deactivate(),
+            # (2) LiveLineWidget.flush() → stops blink timer + resets
+            #     _blink_visible, (3) commits any partial _buf to MessagePanel.
+            try:
+                self.query_one(OutputPanel).flush_live()
+            except NoMatches:
+                pass
+            # Clear stale spinner/file breadcrumb — cli.py resets _spinner_text
+            # locally but never pushes spinner_label="" to the app, so the last
+            # tool label persists into turn 2 and StatusBar shows a stale file path.
+            self.spinner_label = ""
+            self.status_active_file = ""
+            # Clear any blocks left open from an interrupted turn (agent stopped
+            # without calling close_streaming_tool_block).  Leaked refs prevent GC
+            # of the widget objects and cause stale entries on the next turn.
+            self._active_streaming_blocks.clear()
 
         # --- undo safety guard ---
         if value and self.undo_state is not None:

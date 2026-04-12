@@ -1913,6 +1913,11 @@ class HistorySearchOverlay(Widget):
 
     def action_dismiss(self) -> None:
         """Hide overlay, restore hint, return focus to HermesInput."""
+        # Cancel any pending debounce so _render_results() doesn't run
+        # against a hidden overlay, removing and re-mounting DOM children.
+        if self._debounce_handle is not None:
+            self._debounce_handle.stop()
+            self._debounce_handle = None
         self.remove_class("--visible")
         try:
             self.app.query_one(HintBar).hint = self._saved_hint

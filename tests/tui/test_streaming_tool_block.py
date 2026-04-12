@@ -141,8 +141,13 @@ async def test_line_byte_cap():
         await asyncio.sleep(0.05)
         await pilot.pause()
 
-        assert len(block._all_plain[0]) < _LINE_BYTE_CAP
-        assert "…" in block._all_plain[0]
+        truncated = block._all_plain[0]
+        # Truncated at _LINE_BYTE_CAP chars of content + "… (+N chars)" trailer
+        assert truncated.startswith("x" * _LINE_BYTE_CAP), "First _LINE_BYTE_CAP chars must be preserved"
+        assert "…" in truncated, "Truncation marker must be present"
+        assert "+500 chars" in truncated, "Overrun count must be reported"
+        # Total length is _LINE_BYTE_CAP + len of the trailer, NOT the old hardcoded 200
+        assert len(truncated) < _LINE_BYTE_CAP + 30, "Total should not greatly exceed _LINE_BYTE_CAP"
 
 
 # ---------------------------------------------------------------------------

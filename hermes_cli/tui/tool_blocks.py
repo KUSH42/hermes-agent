@@ -180,8 +180,8 @@ class ToolBlock(Widget):
     def on_mount(self) -> None:
         try:
             log = self._body.query_one(CopyableRichLog)
-            for line in self._lines:
-                log.write(Text.from_ansi(line))
+            for styled, plain in zip(self._lines, self._plain_lines):
+                log.write_with_source(Text.from_ansi(styled), plain)
         except NoMatches:
             pass  # body not yet in DOM — safe to skip
         if not self._header.collapsed:
@@ -295,8 +295,8 @@ class StreamingToolBlock(ToolBlock):
             return
         # Byte cap
         if len(raw) > _LINE_BYTE_CAP:
-            over = len(raw) - 200
-            raw = raw[:200] + f"… (+{over} chars)"
+            over = len(raw) - _LINE_BYTE_CAP
+            raw = raw[:_LINE_BYTE_CAP] + f"… (+{over} chars)"
         plain = _strip_ansi(raw)
         self._total_received += 1
         self._pending.append((raw, plain))

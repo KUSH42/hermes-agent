@@ -2689,9 +2689,18 @@ class HermesCLI:
                     if _RICH_RESPONSE:
                         styled, self._stream_spec_stack = _apply_spec_inline_md(
                             chunk, self._stream_spec_stack, reset_suffix=_tc)
-                        _cprint(f"{_tc}{styled}{_RST}" if _tc else f"{styled}{_RST}")
+                        emit = f"{_tc}{styled}{_RST}" if _tc else f"{styled}{_RST}"
                     else:
-                        _cprint(f"{_tc}{chunk}{_RST}" if _tc else chunk)
+                        emit = f"{_tc}{chunk}{_RST}" if _tc else chunk
+                    # In TUI mode send WITHOUT \n — the chunk shows in the live
+                    # line preview and must not be committed to the RichLog as a
+                    # complete line.  _cprint() always appends \n, which would
+                    # cause LiveLineWidget to split each 12-char flush into its
+                    # own committed line (the narrow-wrap bug).
+                    if _hermes_app is not None and _hermes_app._event_loop is not None:
+                        _hermes_app.write_output(emit)
+                    else:
+                        _cprint(emit)
 
     def _flush_stream(self) -> None:
         """Emit any remaining partial line from the stream buffer and close the box."""

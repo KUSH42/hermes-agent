@@ -219,14 +219,15 @@ class CopyableRichLog(RichLog):
         to app.size.width when the widget region is not yet populated.
         """
         if width is None:
-            w = self.scrollable_content_region.width
-            if w < 4:
-                # Widget not yet laid out — use current terminal width as proxy.
-                try:
-                    w = self.app.size.width
-                except Exception:
-                    w = 0
-            width = w or None  # None lets RichLog use its own fallback
+            region_w = self.scrollable_content_region.width
+            # app.size.width is the terminal column count — always available.
+            # Take the max so pre-layout writes (region_w may be any small
+            # number, not just 0) still use the full terminal width.
+            try:
+                app_w = self.app.size.width
+            except Exception:
+                app_w = 0
+            width = max(region_w, app_w) or None
         return super().write(  # type: ignore[return-value]
             content,
             width=width,

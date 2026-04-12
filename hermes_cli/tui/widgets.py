@@ -592,9 +592,14 @@ class MessagePanel(Widget):
     _msg_counter: int = 0
 
     def __init__(self, user_text: str = "", **kwargs: Any) -> None:
+        import datetime as _dt
         MessagePanel._msg_counter += 1
         self._msg_id = MessagePanel._msg_counter
-        self._response_rule = TitledRule(id=f"response-rule-{self._msg_id}")
+        self._created_at = _dt.datetime.now()
+        self._response_rule = TitledRule(
+            id=f"response-rule-{self._msg_id}",
+            created_at=self._created_at,
+        )
         self._reasoning_panel = ReasoningPanel(id=f"reasoning-{self._msg_id}")
         self._response_block = CopyableBlock(
             id=f"response-block-{self._msg_id}",
@@ -669,11 +674,20 @@ class ThinkingWidget(Widget):
         width = self.size.width or 40
         phase = self._phase
         segments: list[Segment] = []
+        # Compute shimmer colors relative to app-bg for theme-awareness.
+        # Falls back to dark defaults so pre-mount renders and light skins both work.
+        try:
+            v = self.app.get_css_variables()
+            app_bg = v.get("app-bg", "#1E1E1E")
+        except Exception:
+            app_bg = "#1E1E1E"
+        trough = lerp_color(app_bg, "#000000", 0.3)
+        peak = lerp_color(app_bg, "#888888", 0.35)
         for x in range(width):
             idx = (x + phase) % _SHIMMER_LEN
             char = _SHIMMER_CHARS[idx]
             brightness = idx / max(_SHIMMER_LEN - 1, 1)
-            color = lerp_color("#1a1a1a", "#4a4a4a", brightness)
+            color = lerp_color(trough, peak, brightness)
             segments.append(Segment(char, Style(color=color)))
         return Strip(segments).crop(0, width)
 
@@ -704,11 +718,21 @@ class OutputPanel(ScrollableContainer):
         """Re-engage auto-scroll when the user scrolls back to the bottom."""
         # max_scroll_y can be 0 when the panel hasn't laid out yet; guard against that.
         if self.max_scroll_y > 0 and new_y >= self.max_scroll_y - 1:
+            was_scrolled = self._user_scrolled_up
             self._user_scrolled_up = False
+            if was_scrolled:
+                # User returned to the live edge — dismiss all scroll-lock badges
+                from hermes_cli.tui.tool_blocks import ToolTail as _TT
+                for tail in self.query(_TT):
+                    tail.dismiss()
 
     # Lines scrolled per mouse wheel tick.  1 is the OS default; 3 matches
     # most browser/editor defaults and reduces scroll fatigue on long outputs.
     _SCROLL_LINES: int = 3
+
+    def is_user_scrolled_up(self) -> bool:
+        """Whether the user has manually scrolled away from the live edge."""
+        return self._user_scrolled_up
 
     def on_mouse_scroll_up(self, event: Any) -> None:
         """Scroll up 3 lines per wheel tick and suppress auto-scroll."""
@@ -819,7 +843,6 @@ class UserEchoPanel(Widget):
         yield Static(self._format_message(), id="echo-text")
         if self._images:
             yield Static(self._format_images(), id="echo-images")
-        yield PlainRule(max_width=self._ECHO_RULE_WIDTH, id="echo-rule-bottom")
 
     def _format_message(self) -> Text:
         try:
@@ -853,6 +876,9 @@ class ReasoningPanel(Widget):
     Hidden by default via CSS ``display: none``. Toggled visible via the
     ``visible`` CSS class when reasoning output arrives. Each committed
     line is prefixed with a ``▌`` gutter marker in dim style.
+
+    After ``close_box()`` is called, clicking the panel header toggles
+    the body between expanded and collapsed states.
     """
 
     GUTTER = "▌ "
@@ -871,15 +897,29 @@ class ReasoningPanel(Widget):
         overflow-y: hidden;
         overflow-x: hidden;
     }
+    ReasoningPanel #reasoning-header {
+        height: 1;
+        display: none;
+    }
+    ReasoningPanel.--closeable #reasoning-header {
+        display: block;
+    }
+    ReasoningPanel.--closeable:hover {
+        background: $accent 5%;
+    }
     """
 
     def __init__(self, **kwargs: Any) -> None:
         self._reasoning_log = RichLog(markup=False, highlight=False, wrap=True, id="reasoning-log")
+        self._header = Static("", id="reasoning-header")
         super().__init__(**kwargs)
         self._live_buf = ""
         self._plain_lines: list[str] = []
+        self._is_closed: bool = False
+        self._body_collapsed: bool = False
 
     def compose(self) -> ComposeResult:
+        yield self._header
         yield self._reasoning_log
 
     def _gutter_line(self, content: str) -> Text:
@@ -889,10 +929,37 @@ class ReasoningPanel(Widget):
         t.append(content, style="dim italic")
         return t
 
+    def _update_header(self) -> None:
+        """Rebuild the collapse-toggle header text after close_box()."""
+        n = len(self._plain_lines)
+        toggle = "▸" if self._body_collapsed else "▾"
+        verb = "expand" if self._body_collapsed else "collapse"
+        try:
+            k = self.app.get_css_variables().get("primary", "#5f87d7")
+        except Exception:
+            k = "#5f87d7"
+        self._header.update(
+            Text.from_markup(
+                f"[dim]▌ Reasoning  {n}L  [bold {k}]{toggle}[/]  {verb}[/dim]"
+            )
+        )
+
+    def on_click(self) -> None:
+        """Toggle body visibility after streaming completes."""
+        if not self._is_closed:
+            return
+        self._body_collapsed = not self._body_collapsed
+        self._reasoning_log.styles.display = "none" if self._body_collapsed else "block"
+        self._update_header()
+
     def open_box(self, title: str) -> None:
         """Show the reasoning panel."""
         self._live_buf = ""
         self._plain_lines.clear()
+        self._is_closed = False
+        self._body_collapsed = False
+        self.remove_class("--closeable")
+        self._reasoning_log.styles.display = "block"
         self.add_class("visible")
         # Force a layout refresh so the RichLog receives a Resize event and
         # sets _size_known=True, enabling deferred writes to be committed.
@@ -907,22 +974,24 @@ class ReasoningPanel(Widget):
         """
         self._live_buf += text
         log = self._reasoning_log
-        wrote = False
         # Commit complete lines
         while "\n" in self._live_buf:
             line, self._live_buf = self._live_buf.split("\n", 1)
             log.write(self._gutter_line(line), expand=True)
             self._plain_lines.append(line)
-            wrote = True
 
     def close_box(self) -> None:
-        """Flush remaining buffer. The panel stays visible as message history."""
+        """Flush remaining buffer and activate collapse affordance."""
         # Flush any partial line
         buf = self._live_buf
         if buf:
             self._reasoning_log.write(self._gutter_line(buf), expand=True)
             self._plain_lines.append(buf)
             self._live_buf = ""
+        self._is_closed = True
+        # Show collapse header — panel is now interactive
+        self._update_header()
+        self.add_class("--closeable")
         # Don't remove "visible" — reasoning stays shown as part of the
         # message so it isn't lost when tool output or the next response
         # pushes new content into the same MessagePanel.
@@ -975,6 +1044,7 @@ class TitledRule(PulseMixin, Widget):
         accent: str | None = None,
         title_color: str | None = None,
         show_state: bool = False,
+        created_at: "Any | None" = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -984,6 +1054,7 @@ class TitledRule(PulseMixin, Widget):
         self._accent = accent or _skin_color("banner_title", "#FFD700")
         self._title_color = title_color or _skin_color("banner_dim", "#B8860B")
         self._show_state = show_state
+        self._created_at = created_at  # datetime | None — shown as HH:MM when set
         self._glyph_error: bool = False
 
     def on_mount(self) -> None:
@@ -1076,14 +1147,25 @@ class TitledRule(PulseMixin, Widget):
             if running:
                 state_suffix = Text(" ⟳", style="#FFA726")
 
+        # Right-side timestamp — HH:MM when created_at is set (response rules only)
+        ts_text = ""
+        if self._created_at is not None and not self._show_state:
+            try:
+                ts_text = self._created_at.strftime("%H:%M")
+            except Exception:
+                ts_text = ""
+        ts_len = (len(ts_text) + 1) if ts_text else 0  # +1 for leading space
+
         label_len = len(f"{title} ")
-        right = max(0, w - label_len - state_suffix.cell_len)
+        right = max(0, w - label_len - state_suffix.cell_len - ts_len)
         t = Text()
         # Title: accent char with dynamic glyph color, rest in title_color
         t.append(accent_char, style=f"bold {glyph_color}")
         t.append(f"{rest} ", style=f"{title_color}")
-        # Right fill: fade out (start → end), then optional state glyph
+        # Right fill: fade out (start → end), then optional timestamp + state glyph
         t.append_text(_fade_rule(right, fade_start, fade_end))
+        if ts_text:
+            t.append(f" {ts_text}", style="dim")
         t.append_text(state_suffix)
         return t
 
@@ -2171,6 +2253,7 @@ class KeymapOverlay(Widget):
         "\n"
         "[dim]Navigation[/dim]\n"
         "  [bold]Ctrl+F / Ctrl+G[/bold]  History search\n"
+        "  [bold]Alt+↑ / Alt+↓[/bold]   Jump to previous / next turn\n"
         "  [bold]/ [/bold]              Slash-command list\n"
         "  [bold]@[/bold]               File-path autocomplete\n"
         "\n"
@@ -2178,6 +2261,7 @@ class KeymapOverlay(Widget):
         "  [bold]a / A[/bold]          Expand all / collapse all tool blocks\n"
         "  [bold]c[/bold]              Copy hovered tool output\n"
         "  [bold]Ctrl+C[/bold]         Interrupt agent  (double: force quit)\n"
+        "  [bold]Click reasoning[/bold]  Collapse / expand reasoning panel\n"
         "\n"
         "[dim]View[/dim]\n"
         "  [bold]F1 / ?[/bold]         This help overlay\n"

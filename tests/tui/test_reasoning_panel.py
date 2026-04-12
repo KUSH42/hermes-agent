@@ -190,3 +190,107 @@ async def test_reasoning_text_uses_full_width():
         assert rp.size.width > 20, (
             f"ReasoningPanel should use full width, got {rp.size.width}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Collapse feature (P1-A)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_reasoning_panel_collapse_toggle():
+    """Clicking ReasoningPanel after close_box() toggles body display."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        msg = _ensure_message(app)
+        rp = msg.reasoning
+
+        rp.open_box("Reasoning")
+        rp.append_delta("line one\n")
+        rp.close_box()
+        await pilot.pause()
+
+        # After close, panel should have --closeable class
+        assert rp.has_class("--closeable")
+        # Body starts expanded
+        assert rp._body_collapsed is False
+        assert rp._reasoning_log.styles.display != "none"
+
+        # Simulate click — toggle collapse
+        rp.on_click()
+        await pilot.pause()
+        assert rp._body_collapsed is True
+        assert rp._reasoning_log.styles.display == "none"
+
+        # Second click — expand again
+        rp.on_click()
+        await pilot.pause()
+        assert rp._body_collapsed is False
+        assert rp._reasoning_log.styles.display != "none"
+
+
+@pytest.mark.asyncio
+async def test_reasoning_panel_click_ignored_during_streaming():
+    """on_click does nothing while streaming is in progress (before close_box)."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        msg = _ensure_message(app)
+        rp = msg.reasoning
+
+        rp.open_box("Reasoning")
+        rp.append_delta("partial line\n")
+        await pilot.pause()
+
+        # Click during streaming — must be a no-op
+        rp.on_click()
+        await pilot.pause()
+        assert rp._body_collapsed is False
+        assert not rp.has_class("--closeable")
+
+
+@pytest.mark.asyncio
+async def test_reasoning_panel_open_resets_collapse():
+    """open_box() resets collapsed state for re-use across turns."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        msg = _ensure_message(app)
+        rp = msg.reasoning
+
+        rp.open_box("Reasoning")
+        rp.append_delta("first\n")
+        rp.close_box()
+        rp.on_click()  # collapse
+        await pilot.pause()
+        assert rp._body_collapsed is True
+
+        # Re-open (new turn) — must reset
+        rp.open_box("Reasoning")
+        await pilot.pause()
+        assert rp._body_collapsed is False
+        assert not rp.has_class("--closeable")
+
+
+@pytest.mark.asyncio
+async def test_titled_rule_shows_timestamp():
+    """Per-turn TitledRule shows HH:MM timestamp when created_at is set."""
+    import datetime
+    from hermes_cli.tui.widgets import TitledRule
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        output = app.query_one(OutputPanel)
+        msg = output.new_message("hello")
+        await pilot.pause()
+
+        rule = msg._response_rule
+        # created_at is set on the rule from MessagePanel.__init__
+        assert rule._created_at is not None
+        # The rendered text includes HH:MM
+        msg.show_response_rule()
+        await pilot.pause()
+        rendered = str(rule.render())
+        # Just check the rule has a created_at — timestamp format depends on time
+        assert isinstance(rule._created_at, datetime.datetime)

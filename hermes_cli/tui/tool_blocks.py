@@ -82,6 +82,11 @@ class ToolHeader(Widget):
         label_str = self._label
         if self._duration:
             label_str += f"  {self._duration}"
+        w = self.size.width
+        if w > 0:
+            available = max(8, w - 25)
+            if len(label_str) > available:
+                label_str = label_str[:available - 1] + "…"
         t.append(f"   ╌╌ {label_str}", style="dim")
         if self._spinner_char is not None:
             # Streaming in progress — show spinner, no line count or toggle yet
@@ -274,7 +279,13 @@ class StreamingToolBlock(ToolBlock):
         self._cap_marker_written: bool = False
         self._spinner_frame: int = 0
         self._completed: bool = False
+        self._tail = ToolTail()
         self._tail_new_count: int = 0  # lines added while user scrolled away
+
+    def compose(self) -> ComposeResult:
+        yield self._header
+        yield self._body
+        yield self._tail
 
     def on_mount(self) -> None:
         """Start expanded (user wants to see streaming output) + start timers."""
@@ -327,10 +338,8 @@ class StreamingToolBlock(ToolBlock):
         # Final synchronous flush
         self._flush_pending()
         # Hide tail badge unconditionally
-        try:
-            self.query_one(ToolTail).dismiss()
-        except NoMatches:
-            pass
+        self._tail_new_count = 0
+        self._tail.dismiss()
         # Update header: remove spinner, add duration + line count
         self._header._spinner_char = None
         self._header._duration = duration
@@ -369,10 +378,12 @@ class StreamingToolBlock(ToolBlock):
         except NoMatches:
             return
 
+        lines_written = 0
         for raw, plain in batch:
             if self._visible_count < _VISIBLE_CAP:
                 log.write_with_source(Text.from_ansi(raw), plain)
                 self._visible_count += 1
+                lines_written += 1
             elif not self._cap_marker_written:
                 log.write(Text.from_markup(
                     f"[dim]  … (showing first {_VISIBLE_CAP} of "
@@ -380,6 +391,18 @@ class StreamingToolBlock(ToolBlock):
                 ))
                 self._cap_marker_written = True
             # Lines beyond cap are still in _all_plain (appended in append_line)
+
+        if lines_written:
+            try:
+                scrolled_up = getattr(self.app.query_one("#output-panel"), "_user_scrolled_up", False)
+            except Exception:
+                scrolled_up = False
+            if scrolled_up:
+                self._tail_new_count += lines_written
+                try:
+                    self._tail.update_count(self._tail_new_count)
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------------
     # Override copy_content to return all plain lines, not just visible

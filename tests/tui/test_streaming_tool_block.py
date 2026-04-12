@@ -293,3 +293,86 @@ async def test_output_panel_scroll_flag_initial_state():
         await pilot.pause()
         panel = app.query_one(OutputPanel)
         assert panel._user_scrolled_up is False
+
+
+# ---------------------------------------------------------------------------
+# ToolTail mounted in StreamingToolBlock
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_streaming_tool_block_mounts_tool_tail():
+    """StreamingToolBlock now composes a ToolTail — it must be present in DOM."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        output = app.query_one(OutputPanel)
+
+        app.open_streaming_tool_block("t1", "bash")
+        await pilot.pause()
+
+        block = output.query_one(StreamingToolBlock)
+        # ToolTail must be mounted as a direct child
+        tail = block.query_one(ToolTail)
+        assert tail is not None
+        # Initially hidden
+        assert tail.display is False
+
+
+@pytest.mark.asyncio
+async def test_tool_tail_dismissed_on_complete():
+    """complete() resets _tail_new_count and dismisses ToolTail."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        output = app.query_one(OutputPanel)
+
+        app.open_streaming_tool_block("t1", "bash")
+        await pilot.pause()
+
+        block = output.query_one(StreamingToolBlock)
+        tail = block.query_one(ToolTail)
+
+        # Manually set the tail count (simulating scroll-away state)
+        block._tail_new_count = 5
+        tail.update_count(5)
+        await pilot.pause()
+        assert tail.display is True
+
+        app.close_streaming_tool_block("t1", "1.2s")
+        await pilot.pause()
+        assert tail.display is False
+        assert block._tail_new_count == 0
+
+
+@pytest.mark.asyncio
+async def test_scroll_to_bottom_dismisses_tool_tail():
+    """OutputPanel.watch_scroll_y dismisses ToolTail when user returns to live edge.
+
+    max_scroll_y is 0 in headless tests (no overflow content), so we patch it
+    to a non-zero value to exercise the guard branch.
+    """
+    from unittest.mock import PropertyMock, patch
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        output = app.query_one(OutputPanel)
+
+        app.open_streaming_tool_block("t1", "bash")
+        await pilot.pause()
+
+        block = output.query_one(StreamingToolBlock)
+        tail = block.query_one(ToolTail)
+
+        # Arm the scroll flag and tail
+        output._user_scrolled_up = True
+        tail.update_count(3)
+        await pilot.pause()
+        assert tail.display is True
+
+        # Patch max_scroll_y so the guard passes, then trigger the watcher
+        with patch.object(type(output), "max_scroll_y", new_callable=PropertyMock, return_value=10):
+            output._user_scrolled_up = True
+            output.watch_scroll_y(10)
+        await pilot.pause()
+        assert output._user_scrolled_up is False
+        assert tail.display is False

@@ -103,6 +103,11 @@ ReasoningPanel {
     margin: 0 1;
 }
 
+/* Hover affordance on closeable reasoning panels */
+ReasoningPanel.--closeable:hover {
+    background: $accent 5%;
+}
+
 /* --- Input rule separator --- */
 
 #input-rule {

@@ -143,6 +143,8 @@ class HermesApp(App):
         Binding("ctrl+g", "open_history_search", "History search", show=False, priority=True),
         Binding("f1", "show_help", "Keyboard shortcuts", show=False),
         Binding("f8", "toggle_fps_hud", "FPS HUD", show=False),
+        Binding("alt+up", "prev_turn", "Previous turn", show=False),
+        Binding("alt+down", "next_turn", "Next turn", show=False),
     ]
 
     _CHEVRON_PHASE_CLASSES: frozenset[str] = frozenset({
@@ -791,6 +793,40 @@ class HermesApp(App):
                 overlay.remove_class("--visible")
             else:
                 overlay.add_class("--visible")
+        except NoMatches:
+            pass
+
+    def action_prev_turn(self) -> None:
+        """Scroll to the previous assistant MessagePanel."""
+        try:
+            output = self.query_one(OutputPanel)
+            panels = list(self.query(MessagePanel))
+            if not panels:
+                return
+            scroll_y = output.scroll_y
+            # Walk in reverse — find first panel whose virtual top is above current scroll
+            for panel in reversed(panels):
+                panel_top = panel.virtual_region.y
+                if panel_top < scroll_y - 1:
+                    panel.scroll_visible(animate=True)
+                    return
+            panels[0].scroll_visible(animate=True)
+        except NoMatches:
+            pass
+
+    def action_next_turn(self) -> None:
+        """Scroll to the next assistant MessagePanel."""
+        try:
+            output = self.query_one(OutputPanel)
+            panels = list(self.query(MessagePanel))
+            if not panels:
+                return
+            scroll_y = output.scroll_y
+            for panel in panels:
+                panel_top = panel.virtual_region.y
+                if panel_top > scroll_y + 1:
+                    panel.scroll_visible(animate=True)
+                    return
         except NoMatches:
             pass
 

@@ -418,18 +418,22 @@ async def test_user_echo_image_attachment_shown():
 
 @pytest.mark.asyncio
 async def test_user_echo_panel_has_top_and_bottom_rules():
-    """UserEchoPanel wraps the message between two short horizontal rules."""
+    """UserEchoPanel has a top rule; bottom rule removed (redundant — response TitledRule separates turns)."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         panel = await _mount_echo(app, "test message")
         await pilot.pause()
 
-        # Both echo rules should exist
+        # Top rule must exist; bottom rule was removed
         top = panel.query_one("#echo-rule-top")
-        bottom = panel.query_one("#echo-rule-bottom")
         assert top is not None, "echo-rule-top must exist"
-        assert bottom is not None, "echo-rule-bottom must exist"
+        from textual.css.query import NoMatches
+        try:
+            panel.query_one("#echo-rule-bottom")
+            assert False, "echo-rule-bottom should not exist (removed)"
+        except NoMatches:
+            pass
 
 
 # ===========================================================================

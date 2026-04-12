@@ -601,7 +601,7 @@ async def test_echo_user_message_before_response():
 
 @pytest.mark.asyncio
 async def test_user_echo_has_short_rulers():
-    """UserEchoPanel contains PlainRule widgets with max_width set."""
+    """UserEchoPanel has a top PlainRule with max_width set."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -611,7 +611,8 @@ async def test_user_echo_has_short_rulers():
 
         echo = app.query_one(UserEchoPanel)
         rules = echo.query(PlainRule)
-        assert len(rules) == 2
+        # Bottom rule removed (redundant — response TitledRule separates turns)
+        assert len(rules) == 1
         for rule in rules:
             assert rule._max_width == UserEchoPanel._ECHO_RULE_WIDTH
 

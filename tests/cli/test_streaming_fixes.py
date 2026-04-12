@@ -4,6 +4,7 @@ Covers:
 - Orphan </think> tag stripping in _emit_stream_text
 - Word-boundary flush skipping unclosed markdown delimiters
 - Reasoning _cprint isolation in TUI mode (no leak to response RichLog)
+- Word-boundary flush suppressed inside fenced code blocks
 """
 
 import unittest
@@ -31,6 +32,7 @@ def _make_emit_cli(stream_buf="", show_reasoning=False):
     cli._stream_block_buf = MagicMock()
     cli._stream_block_buf.process_line = MagicMock(side_effect=lambda x: x)
     cli._stream_code_hl = MagicMock()
+    cli._stream_code_hl._in_block = False  # must be False so word-boundary flush is not suppressed
     cli._stream_code_hl.process_line = MagicMock(side_effect=lambda x: x)
     return cli
 
@@ -344,3 +346,91 @@ class TestStreamDeltaTagFilter(unittest.TestCase):
         assert "</think>" not in joined
         # visible text should come through
         assert "visible" in joined
+
+
+# ---------------------------------------------------------------------------
+# Word-boundary flush suppressed inside fenced code blocks
+# ---------------------------------------------------------------------------
+
+
+class TestWordBoundaryFlushInsideCodeBlock(unittest.TestCase):
+    """Regression: word-boundary flush must not fire while StreamingCodeBlockHighlighter
+    is accumulating a code block (_in_block=True).
+
+    Bug: LLM outputs ```java\\npublic class HelloWorld {\\n...; the fence line
+    is consumed by _stream_code_hl, so _stream_buf starts with "public class…".
+    Since "p" is not a structural char, the flush fires, emitting "public " as
+    plain text outside the syntax-highlighted block.
+    """
+
+    def _make_cli(self, stream_buf: str, in_block: bool) -> object:
+        """Return a minimal _emit_stream_text stub with _stream_code_hl state."""
+        cli = _make_emit_cli(stream_buf=stream_buf)
+        # Replace the mock with a real-ish object that has _in_block
+        code_hl = MagicMock()
+        code_hl._in_block = in_block
+        code_hl.process_line = MagicMock(side_effect=lambda x: x)
+        cli._stream_code_hl = code_hl
+        return cli
+
+    @patch("cli._cprint")
+    @patch("cli._RICH_RESPONSE", True)
+    @patch("cli._RST", "\033[0m")
+    def test_no_flush_when_inside_code_block(self, mock_cprint):
+        """Word-boundary flush is suppressed when _stream_code_hl._in_block is True."""
+        # Buffer: first line of code block body (> _PARTIAL_FLUSH_CHARS, non-structural)
+        cli = self._make_cli(
+            stream_buf="public class HelloWorld {",
+            in_block=True,
+        )
+        # Feed a chunk that does not contain a newline (so no complete-line path)
+        cli._emit_stream_text("  // no newline yet")
+
+        # write_output must NOT have been called with the partial "public " word
+        write_calls = []
+        # write_output is accessed via the app — it's not called in PT mode;
+        # in this test _hermes_app is None so the fallback _cprint path would fire.
+        # Assert _cprint was NOT called with "public" as a partial word.
+        for call in mock_cprint.call_args_list:
+            arg = call.args[0]
+            assert not (arg.strip().startswith("public") and "class" not in arg), (
+                f"Partial word 'public' emitted outside code block: {arg!r}"
+            )
+
+    @patch("cli._cprint")
+    @patch("cli._RICH_RESPONSE", True)
+    @patch("cli._RST", "\033[0m")
+    def test_flush_allowed_when_not_in_code_block(self, mock_cprint):
+        """Word-boundary flush still fires for prose when _in_block is False."""
+        cli = self._make_cli(
+            stream_buf="public class HelloWorld {",
+            in_block=False,
+        )
+        with patch("cli._apply_spec_inline_md", return_value=("public class ", [])):
+            cli._emit_stream_text(" more text here now")
+
+        # _cprint (or write_output path) should have fired for prose flush
+        # Not asserting exact content — just that flushing was not fully suppressed.
+        # (Either mock_cprint was called, or _stream_buf was reduced)
+        final_buf = cli._stream_buf
+        initial_total = len("public class HelloWorld { more text here now")
+        # Buffer should be shorter than the combined length (flush occurred)
+        assert len(final_buf) < initial_total, (
+            f"Expected flush to reduce buffer for prose, buf={final_buf!r}"
+        )
+
+    @patch("cli._cprint")
+    @patch("cli._RICH_RESPONSE", False)
+    @patch("cli._RST", "\033[0m")
+    def test_no_code_hl_suppression_when_rich_response_off(self, mock_cprint):
+        """When _RICH_RESPONSE is False, _stream_code_hl is not consulted."""
+        cli = self._make_cli(
+            stream_buf="public class HelloWorld {",
+            in_block=True,  # irrelevant when _RICH_RESPONSE is False
+        )
+        # With _RICH_RESPONSE=False, the structural check ignores _stream_code_hl.
+        # This test just confirms no AttributeError or crash — not asserting output.
+        try:
+            cli._emit_stream_text(" extra")
+        except Exception as e:
+            self.fail(f"_emit_stream_text raised {e!r} with _RICH_RESPONSE=False")

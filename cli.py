@@ -2680,6 +2680,14 @@ class HermesCLI:
                 _ch0 in "#>|` \t+"
                 or (_ch0 in "-*" and len(self._stream_buf) > 1 and self._stream_buf[1] == " ")
                 or _ch0 in "0123456789"
+                # Inside a fenced code block: suppress word-boundary flush so
+                # partial lines (e.g. "public ") aren't emitted as plain text
+                # outside the syntax-highlighted block.
+                or (
+                    _RICH_RESPONSE
+                    and getattr(self, "_stream_code_hl", None) is not None
+                    and self._stream_code_hl._in_block
+                )
             )
             if not _structural:
                 cut = self._stream_buf.rfind(" ")

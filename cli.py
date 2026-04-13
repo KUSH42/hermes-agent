@@ -3705,7 +3705,14 @@ class HermesCLI:
             pass  # Don't crash on import errors
     
     def _show_status(self):
-        """Show current status bar."""
+        """Show current status bar.
+
+        Skipped in TUI mode — the Textual StatusBar widget renders live model
+        info from app reactives; printing via console would route to the output
+        panel as content (not to the status bar).
+        """
+        if _hermes_app is not None:
+            return
         # Get tool count
         tools = get_tool_definitions(enabled_toolsets=self.enabled_toolsets, quiet_mode=True)
         tool_count = len(tools) if tools else 0

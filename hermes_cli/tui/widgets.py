@@ -776,8 +776,8 @@ class StreamingCodeBlock(Widget):
     StreamingCodeBlock #code-copy-btn {
         display: none;
         height: 1;
-        color: $primary;
-        background: $primary 10%;
+        color: $text-muted;
+        background: $surface-lighten-1;
         padding: 0 2;
     }
     StreamingCodeBlock.--complete #code-copy-btn {
@@ -979,11 +979,8 @@ class OutputPanel(ScrollableContainer):
         super().__init__(**kwargs)
         self._user_scrolled_up: bool = False
 
-    def watch_scroll_y(self, old_y: float, new_y: float) -> None:
+    def watch_scroll_y(self, new_y: float) -> None:
         """Re-engage auto-scroll when the user scrolls back to the bottom."""
-        # Delegate to base class first so _refresh_scroll() fires and the
-        # viewport actually repaints when scroll position changes.
-        super().watch_scroll_y(old_y, new_y)
         # max_scroll_y can be 0 when the panel hasn't laid out yet; guard against that.
         if self.max_scroll_y > 0 and new_y >= self.max_scroll_y - 1:
             was_scrolled = self._user_scrolled_up

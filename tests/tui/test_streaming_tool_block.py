@@ -376,7 +376,7 @@ async def test_scroll_to_bottom_dismisses_tool_tail():
         # Patch max_scroll_y so the guard passes, then trigger the watcher
         with patch.object(type(output), "max_scroll_y", new_callable=PropertyMock, return_value=10):
             output._user_scrolled_up = True
-            output.watch_scroll_y(0.0, 10)
+            output.watch_scroll_y(10)
         await pilot.pause()
         assert output._user_scrolled_up is False
         assert tail.display is False

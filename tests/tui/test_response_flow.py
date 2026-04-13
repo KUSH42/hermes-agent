@@ -467,6 +467,7 @@ async def test_code_block_streams_live():
         app.write_output("print('hello')\n")
         await asyncio.sleep(0.05)
         await pilot.pause()
+        await pilot.pause()
 
         msg = app.query_one(OutputPanel).current_message
         assert msg is not None
@@ -550,7 +551,6 @@ async def test_complete_code_block_has_footer():
         assert "copy" in block._controls_text_plain
         assert "collapse" not in block._controls_text_plain
         footer = block.query_one(CodeBlockFooter)
-        assert "copy" in str(footer._Static__content)
         assert footer.styles.display == "block"
 
 
@@ -918,3 +918,25 @@ async def test_space_separated_prenumbered_lines_strip_duplicate_gutter():
         copied = block.copy_content().splitlines()
         assert copied[0] == "public class HelloWorld {"
         assert copied[-1] == "}"
+
+
+@pytest.mark.asyncio
+async def test_code_block_copy_content_strips_ansi_sequences():
+    """Code-block clipboard content must use plain source text, not terminal escapes."""
+    from hermes_cli.tui.widgets import StreamingCodeBlock
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        msg = app.query_one(OutputPanel).new_message()
+        block = StreamingCodeBlock(lang="python")
+        await msg.mount(block)
+        await pilot.pause()
+
+        block.append_line("\x1b[97mprint('hello')\x1b[39m")
+        block.append_line("\x1b[31mvalue = 42\x1b[0m")
+        block.complete(app.get_css_variables())
+        await asyncio.sleep(0.05)
+        await pilot.pause()
+
+        assert block.copy_content() == "print('hello')\nvalue = 42"

@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -423,29 +423,45 @@ async def test_context_menu_copy_tool_output_clipboard_unavailable():
 # ---------------------------------------------------------------------------
 
 
-def test_find_xclip_cmd_returns_wl_copy_when_available():
-    """find_xclip_cmd() returns wl-copy command when wl-copy is on PATH."""
-    with patch("shutil.which", side_effect=lambda x: "/usr/bin/wl-copy" if x == "wl-copy" else None):
+def test_find_xclip_cmd_prefers_wl_copy_on_wayland():
+    """Wayland sessions prefer wl-copy when both clipboard tool classes exist."""
+    def _which(name):
+        return f"/usr/bin/{name}" if name in {"wl-copy", "xclip", "xsel"} else None
+
+    with patch.dict("os.environ", {"WAYLAND_DISPLAY": "wayland-0"}, clear=True), \
+         patch("shutil.which", side_effect=_which):
         result = find_xclip_cmd()
     assert result == ["wl-copy"]
 
 
-def test_find_xclip_cmd_returns_xclip_when_wl_copy_absent():
-    """find_xclip_cmd() returns xclip command when wl-copy absent but xclip present."""
+def test_find_xclip_cmd_prefers_xclip_on_x11_even_if_wl_copy_exists():
+    """X11 sessions prefer xclip over wl-copy when both are installed."""
     def _which(name):
-        return "/usr/bin/xclip" if name == "xclip" else None
-    with patch("shutil.which", side_effect=_which):
+        return f"/usr/bin/{name}" if name in {"wl-copy", "xclip"} else None
+
+    with patch.dict("os.environ", {"DISPLAY": ":0"}, clear=True), \
+         patch("shutil.which", side_effect=_which):
         result = find_xclip_cmd()
     assert result == ["xclip", "-selection", "clipboard"]
 
 
-def test_find_xclip_cmd_returns_xsel_as_last_resort():
-    """find_xclip_cmd() returns xsel when wl-copy and xclip are both absent."""
+def test_find_xclip_cmd_prefers_xsel_on_x11_when_xclip_absent():
+    """X11 sessions fall back to xsel before wl-copy."""
     def _which(name):
-        return "/usr/bin/xsel" if name == "xsel" else None
-    with patch("shutil.which", side_effect=_which):
+        return f"/usr/bin/{name}" if name in {"wl-copy", "xsel"} else None
+
+    with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}, clear=True), \
+         patch("shutil.which", side_effect=_which):
         result = find_xclip_cmd()
     assert result == ["xsel", "--clipboard", "--input"]
+
+
+def test_find_xclip_cmd_falls_back_to_wl_copy_without_session_hint():
+    """Without session hints, the first available backend is still acceptable."""
+    with patch.dict("os.environ", {}, clear=True), \
+         patch("shutil.which", side_effect=lambda x: "/usr/bin/wl-copy" if x == "wl-copy" else None):
+        result = find_xclip_cmd()
+    assert result == ["wl-copy"]
 
 
 def test_find_xclip_cmd_returns_none_when_nothing_found():
@@ -470,6 +486,8 @@ async def test_copy_text_with_hint_uses_xclip_when_osc52_unavailable():
             input=b"hello",
             check=True,
             timeout=2,
+            stdout=ANY,
+            stderr=ANY,
         )
         bar = app.query_one(HintBar)
         assert "5" in bar.hint  # len("hello") == 5

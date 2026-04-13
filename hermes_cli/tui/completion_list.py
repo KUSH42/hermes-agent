@@ -44,6 +44,16 @@ _NO_MATCH_PREFIX = "  no results"
 _SEARCHING_PLAIN = Text("  searching…", style="dim italic", overflow="ellipsis", no_wrap=True)
 
 
+def _normalize_segments(segments: list[Segment]) -> list[Segment]:
+    """Ensure all rendered segments carry a concrete Rich Style.
+
+    Textual's monochrome filter assumes ``segment.style`` is never None.
+    Rich may emit padding / spacer segments with ``style=None``, so normalize
+    them at the boundary before constructing a Strip.
+    """
+    return [Segment(seg.text, seg.style or Style(), seg.control) for seg in segments]
+
+
 class VirtualCompletionList(ScrollView, can_focus=True):
     """O(viewport) completion list.  Handles 10k+ items at 60fps.
 
@@ -284,7 +294,7 @@ class VirtualCompletionList(ScrollView, can_focus=True):
                 query = self.current_query
                 label = (f'{_NO_MATCH_PREFIX} for \u201c{query}\u201d' if query else _NO_MATCH_PREFIX)
                 t = Text(label, style="dim italic", overflow="ellipsis", no_wrap=True)
-                segs = list(t.render(self.app.console))
+                segs = _normalize_segments(list(t.render(self.app.console)))
                 strip = Strip(segs, t.cell_len)
                 strip = strip.extend_cell_length(self.size.width)
                 empty_bg = getattr(self, "_completion_empty_bg", "#2A2000")
@@ -299,12 +309,13 @@ class VirtualCompletionList(ScrollView, can_focus=True):
         is_selected = data_idx == self.highlighted
         text = self._styled_candidate(candidate, is_selected)
 
-        segments = list(text.render(self.app.console))
+        segments = _normalize_segments(list(text.render(self.app.console)))
         strip = Strip(segments, text.cell_len)
         # Order matters: extend FIRST so the selected background covers the
         # full row width, THEN crop to horizontal scroll window.  Cropping
         # first would leave an un-styled gap on short rows.
         strip = strip.extend_cell_length(self.size.width)
+        strip = Strip(_normalize_segments(list(strip)), strip.cell_length)
         if scroll_x:
             strip = strip.crop(scroll_x, scroll_x + self.size.width)
         if is_selected:
@@ -312,7 +323,7 @@ class VirtualCompletionList(ScrollView, can_focus=True):
         return strip
 
     def _styled_candidate(self, c: "Candidate", selected: bool) -> Text:
-        base_style = "" if selected else "dim"
+        base_style = Style() if selected else Style(dim=True)
         t = Text(overflow="ellipsis", no_wrap=True)
         last = 0
         for start, end in c.match_spans:

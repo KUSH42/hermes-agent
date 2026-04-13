@@ -256,6 +256,48 @@ async def test_ctrl_v_pastes():
         assert "pasted" in inp.value
 
 
+@pytest.mark.asyncio
+async def test_input_value_strips_unicode_control_chars() -> None:
+    """Direct value updates strip control/format characters and normalize tabs/newlines."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        inp.value = "a\u200bb\tc\n\x00d"
+        await pilot.pause()
+        assert inp.value == "ab c d"
+
+
+@pytest.mark.asyncio
+async def test_insert_text_strips_unicode_control_chars() -> None:
+    """insert_text sanitizes hidden controls before insertion."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        inp.value = "hello"
+        inp.cursor_position = 5
+        inp.insert_text("\u200b\t\x00 world")
+        await pilot.pause()
+        assert inp.value == "hello  world"
+
+
+@pytest.mark.asyncio
+async def test_submit_uses_sanitized_input_value() -> None:
+    """Submitted/history text should not contain hidden control characters."""
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        inp.value = "hi\u200b\tthere"
+        await pilot.pause()
+        inp.action_submit()
+        await pilot.pause()
+
+        assert inp._history[-1] == "hi there"
+
+
 # ---------------------------------------------------------------------------
 # Phase 4 new tests
 # ---------------------------------------------------------------------------

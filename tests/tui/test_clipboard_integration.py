@@ -102,6 +102,10 @@ async def test_copy_text_xclip_fallback():
             await pilot.pause()
 
         mock_run.assert_called_once()
+        _, kwargs = mock_run.call_args
+        assert kwargs["stdout"] is subprocess.DEVNULL
+        assert kwargs["stderr"] is subprocess.DEVNULL
+        assert app.clipboard == "data"
         assert "⎘" in bar.hint, f"Expected copy icon in hint, got: {bar.hint!r}"
         assert "4" in bar.hint, f"Expected char count '4' in hint, got: {bar.hint!r}"
 

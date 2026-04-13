@@ -436,3 +436,42 @@ async def test_copy_all_output_joins_logs():
         assert len(copied) == 1
         assert "response1" in copied[0]
         assert "response2" in copied[0]
+
+
+@pytest.mark.asyncio
+async def test_paste_into_input_inserts_local_clipboard_text():
+    """Context-menu paste inserts clipboard text into HermesInput."""
+    from hermes_cli.tui.input_widget import HermesInput
+
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        inp.value = "hi "
+        inp.cursor_position = len(inp.value)
+        app._clipboard = "there"
+
+        app._paste_into_input()
+        await pilot.pause()
+
+        assert inp.value == "hi there"
+        assert app.query_one(HintBar).hint.endswith("chars pasted")
+
+
+@pytest.mark.asyncio
+async def test_paste_into_input_empty_clipboard_shows_hint_without_edit():
+    """Empty local clipboard leaves input unchanged and shows a hint."""
+    from hermes_cli.tui.input_widget import HermesInput
+
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        inp.value = "unchanged"
+        app._clipboard = ""
+
+        app._paste_into_input()
+        await pilot.pause()
+
+        assert inp.value == "unchanged"
+        assert "clipboard empty" in app.query_one(HintBar).hint.lower()

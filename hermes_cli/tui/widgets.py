@@ -25,7 +25,7 @@ from rich.text import Text
 from textual import work
 from textual.app import ComposeResult, RenderResult
 from textual.binding import Binding
-from textual.containers import ScrollableContainer, VerticalScroll
+from textual.containers import Horizontal, ScrollableContainer, VerticalScroll
 from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.selection import Selection
@@ -68,7 +68,9 @@ def _skin_branding(key: str, fallback: str) -> str:
         return fallback
 
 
-_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_ANSI_RE = re.compile(
+    r"\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]"
+)
 _PRENUMBERED_LINE_RE = re.compile(r"^\s*(\d+)(?:\s*[│|:]\s?|\s{2,})(.*)$")
 def _strip_ansi(text: str) -> str:
     """Strip ANSI CSI escape sequences from text."""
@@ -327,18 +329,76 @@ class CopyableBlock(Widget):
             self.mount(Static("⎘", id="copy-btn"))
 
 
-class CodeBlockFooter(Static):
-    """Dedicated footer row for code block controls."""
+class CodeBlockFooter(Widget):
+    """Dedicated footer row with distinct click targets for code actions."""
 
     DEFAULT_CSS = """
     CodeBlockFooter {
         height: 1;
         margin-top: 0;
         margin-left: 1;
+        background: transparent;
+        layout: horizontal;
+    }
+    CodeBlockFooter > Static {
+        width: auto;
         color: $text-muted;
         background: transparent;
     }
+    CodeBlockFooter > .sep {
+        color: $text-muted;
+    }
+    CodeBlockFooter > .action:hover {
+        color: $accent;
+    }
     """
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._copy = Static("", id="code-copy-action", classes="action")
+        self._sep = Static("", classes="sep")
+        self._toggle = Static("", id="code-toggle-action", classes="action")
+
+    def compose(self) -> ComposeResult:
+        yield self._copy
+        yield self._sep
+        yield self._toggle
+
+    def set_actions(self, *, copy_label: str, toggle_label: str | None) -> None:
+        self._copy.update(copy_label)
+        if toggle_label:
+            self._sep.update("  ·  ")
+            self._toggle.update(toggle_label)
+            self._sep.styles.display = "block"
+            self._toggle.styles.display = "block"
+        else:
+            self._sep.update("")
+            self._toggle.update("")
+            self._sep.styles.display = "none"
+            self._toggle.styles.display = "none"
+
+    def on_click(self, event: Any) -> None:
+        """Route clicks on footer actions to the parent StreamingCodeBlock."""
+        if getattr(event, "button", 1) != 1:
+            return
+        parent = self.parent
+        if parent is None:
+            return
+        target_id = getattr(getattr(event, "widget", None), "id", None)
+        if target_id == "code-copy-action":
+            try:
+                self.app._copy_code_block(parent)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            event.prevent_default()
+            return
+        if target_id == "code-toggle-action":
+            try:
+                if parent.can_toggle():
+                    parent.toggle_collapsed()
+                    event.prevent_default()
+            except Exception:
+                pass
 
 
 def _safe_widget_call(app: HermesApp, widget_type: type, method: str, *args: Any) -> None:
@@ -735,9 +795,10 @@ class StreamingCodeBlock(Widget):
 
     def append_line(self, line: str) -> None:
         """Called by ResponseFlowEngine for each code line during streaming."""
-        self._code_lines.append(line)
-        highlighted = self._highlight_line(line, self._lang)
-        self._log.write_with_source(Text.from_ansi(highlighted), line)
+        plain_line = _strip_ansi(line)
+        self._code_lines.append(plain_line)
+        highlighted = self._highlight_line(plain_line, self._lang)
+        self._log.write_with_source(Text.from_ansi(highlighted), plain_line)
 
     def _highlight_line(self, line: str, lang: str) -> str:
         """Per-line Pygments highlight — loses multi-line string context but
@@ -843,7 +904,12 @@ class StreamingCodeBlock(Widget):
         return t
 
     def _sync_footer(self) -> None:
-        self._footer.update(self._controls_text())
+        copy_label = "✓ copy" if self._copy_flash else "⎘ copy"
+        toggle_label = "expand" if (self.can_toggle() and self._collapsed) else (
+            "collapse" if self.can_toggle() else None
+        )
+        self._footer.set_actions(copy_label=copy_label, toggle_label=toggle_label)
+        self._controls_text()
         self._footer.styles.display = "none" if self._state == "STREAMING" else "block"
         self._footer.refresh(layout=True)
 
@@ -876,6 +942,7 @@ class StreamingCodeBlock(Widget):
             m = _PRENUMBERED_LINE_RE.match(line)
             stripped_lines.append(m.group(2) if m else line)
         return stripped_lines
+
 
 
 

@@ -1368,11 +1368,21 @@ class HermesApp(App):
 
     def _copy_text_with_hint(self, text: str) -> None:
         """Copy text to clipboard with capability guard and hint flash."""
+        # Keep Textual's local clipboard in sync even when we have to fall back
+        # to external clipboard tools, so app-level paste actions still work.
+        self._clipboard = text
         if not self._clipboard_available:
             if self._xclip_cmd:
                 try:
                     import subprocess
-                    subprocess.run(self._xclip_cmd, input=text.encode(), check=True, timeout=2)
+                    subprocess.run(
+                        self._xclip_cmd,
+                        input=text.encode(),
+                        check=True,
+                        timeout=2,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
                     self._flash_hint(f"⎘  {len(text)} chars copied", 1.5)
                 except Exception:
                     self.set_status_error("copy failed", auto_clear_s=10.0)
@@ -1583,10 +1593,20 @@ class HermesApp(App):
         self._copy_text_with_hint(text)
 
     def _paste_into_input(self) -> None:
-        """Focus the input and show a hint to press ctrl+v."""
+        """Paste app clipboard content into the input and flash a paste hint."""
         try:
-            self.query_one("#input-area").focus()
-            self._flash_hint("press ctrl+v to paste", 1.5)
+            inp = self.query_one("#input-area")
+            text = self.clipboard
+            if not text:
+                inp.focus()
+                self._flash_hint("clipboard empty", 1.5)
+                return
+            if hasattr(inp, "insert_text"):
+                inp.insert_text(text)
+            elif hasattr(inp, "value"):
+                inp.value = f"{getattr(inp, 'value', '')}{text}"
+            inp.focus()
+            self._flash_hint(f"⎘  {len(text)} chars pasted", 1.2)
         except NoMatches:
             pass
 

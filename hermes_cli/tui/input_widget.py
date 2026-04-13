@@ -14,6 +14,7 @@ Hermes-specific features on top:
 from __future__ import annotations
 
 import os
+import unicodedata
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -41,6 +42,24 @@ if TYPE_CHECKING:
 # History file path — same location as prompt_toolkit's FileHistory used
 _HERMES_HOME = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
 _HISTORY_FILE = _HERMES_HOME / ".hermes_history"
+
+
+def _sanitize_input_text(text: str) -> str:
+    """Normalize input text for the single-line prompt.
+
+    Strips Unicode control / format characters that should not survive into
+    prompts or slash commands. Newlines and tabs are normalized to spaces so
+    pasted multi-line content doesn't inject hidden structure into the input.
+    """
+    sanitized: list[str] = []
+    for ch in text:
+        if ch in ("\n", "\r", "\t"):
+            sanitized.append(" ")
+            continue
+        if unicodedata.category(ch).startswith("C"):
+            continue
+        sanitized.append(ch)
+    return "".join(sanitized)
 
 
 class HermesInput(Input, can_focus=True):
@@ -105,6 +124,7 @@ class HermesInput(Input, can_focus=True):
         )
         self._raw_candidates: list[PathCandidate] = []
         self._path_debounce_timer: "Any | None" = None
+        self._sanitizing_value = False
 
     def on_mount(self) -> None:
         self._load_history()
@@ -122,7 +142,7 @@ class HermesInput(Input, can_focus=True):
 
     @content.setter
     def content(self, val: str) -> None:
-        self.value = val
+        self.value = _sanitize_input_text(val)
 
     @property
     def cursor_pos(self) -> int:
@@ -262,6 +282,18 @@ class HermesInput(Input, can_focus=True):
     # --- Autocomplete ---
 
     def watch_value(self, value: str) -> None:
+        if self._sanitizing_value:
+            return
+        sanitized = _sanitize_input_text(value)
+        if sanitized != value:
+            self._sanitizing_value = True
+            try:
+                cursor_prefix = _sanitize_input_text(value[: self.cursor_position])
+                self.value = sanitized
+                self.cursor_position = min(len(sanitized), len(cursor_prefix))
+            finally:
+                self._sanitizing_value = False
+            return
         self._update_autocomplete()
         # Suggester (ghost text) is driven natively by Input — no manual hook.
 
@@ -518,6 +550,9 @@ class HermesInput(Input, can_focus=True):
 
     def insert_text(self, text: str) -> None:
         """Insert text at cursor position (for paste support / external callers)."""
+        text = _sanitize_input_text(text)
+        if not text:
+            return
         pos = self.cursor_position
         self.value = self.value[:pos] + text + self.value[pos:]
         self.cursor_position = pos + len(text)

@@ -105,14 +105,24 @@ def check_clipboard_env() -> bool | None:
 def find_xclip_cmd() -> list[str] | None:
     """Return a subprocess argv for piping text to the system clipboard, or None.
 
-    Tries (in order): wl-copy (Wayland), xclip (X11), xsel (X11).
+    Prefers clipboard tools that match the active session type when possible:
+    Wayland sessions prefer wl-copy; X11 sessions prefer xclip/xsel.
+    Falls back to any available tool if the preferred class is absent.
     Returns None if none are found on PATH.
     """
     import shutil
-    if shutil.which("wl-copy"):
-        return ["wl-copy"]
-    if shutil.which("xclip"):
-        return ["xclip", "-selection", "clipboard"]
-    if shutil.which("xsel"):
-        return ["xsel", "--clipboard", "--input"]
-    return None
+
+    session_type = os.environ.get("XDG_SESSION_TYPE", "").strip().lower()
+    has_wayland = bool(os.environ.get("WAYLAND_DISPLAY")) or session_type == "wayland"
+    has_x11 = bool(os.environ.get("DISPLAY")) or session_type == "x11"
+
+    wl_copy = ["wl-copy"] if shutil.which("wl-copy") else None
+    xclip = ["xclip", "-selection", "clipboard"] if shutil.which("xclip") else None
+    xsel = ["xsel", "--clipboard", "--input"] if shutil.which("xsel") else None
+
+    if has_wayland:
+        return wl_copy or xclip or xsel
+    if has_x11:
+        return xclip or xsel or wl_copy
+
+    return wl_copy or xclip or xsel

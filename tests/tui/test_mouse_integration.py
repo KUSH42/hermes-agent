@@ -435,6 +435,70 @@ async def test_code_block_footer_toggle_collapses_log():
         assert "collapse" in block._controls_text_plain
 
 
+@pytest.mark.asyncio
+async def test_code_block_footer_copy_action_click_copies():
+    """Left-click on the footer copy action should copy the code block."""
+    from hermes_cli.tui.widgets import CodeBlockFooter
+
+    app = _make_app()
+    async with app.run_test(size=(80, 40)) as pilot:
+        await _pause(pilot)
+        output = app.query_one(OutputPanel)
+        mp = output.new_message()
+        await _pause(pilot)
+
+        block = StreamingCodeBlock(lang="python")
+        await mp.mount(block)
+        block.append_line("answer = 42")
+        block.complete({})
+        await asyncio.sleep(0.05)
+        await _pause(pilot)
+
+        copy_btn = block.query_one("#code-copy-action")
+        footer = block.query_one(CodeBlockFooter)
+        with patch.object(app, "_copy_text_with_hint") as mock_copy:
+            footer.on_click(_left_click(copy_btn))
+            await _pause(pilot)
+
+        mock_copy.assert_called_once()
+        assert "answer = 42" in mock_copy.call_args[0][0]
+        assert "cop" in block._controls_text_plain.lower()
+
+
+@pytest.mark.asyncio
+async def test_code_block_footer_toggle_action_click_toggles():
+    """Left-click on the footer toggle action should collapse and expand."""
+    from hermes_cli.tui.widgets import CodeBlockFooter
+
+    app = _make_app()
+    async with app.run_test(size=(80, 40)) as pilot:
+        await _pause(pilot)
+        output = app.query_one(OutputPanel)
+        mp = output.new_message()
+        await _pause(pilot)
+
+        block = StreamingCodeBlock(lang="python")
+        await mp.mount(block)
+        block.append_line("x = 1")
+        block.append_line("y = 2")
+        block.complete({})
+        await asyncio.sleep(0.05)
+        await _pause(pilot)
+
+        toggle_btn = block.query_one("#code-toggle-action")
+        footer = block.query_one(CodeBlockFooter)
+        footer.on_click(_left_click(toggle_btn))
+        await _pause(pilot)
+        assert block._collapsed
+        assert "expand" in block._controls_text_plain
+
+        toggle_btn = block.query_one("#code-toggle-action")
+        footer.on_click(_left_click(toggle_btn))
+        await _pause(pilot)
+        assert not block._collapsed
+        assert "collapse" in block._controls_text_plain
+
+
 # ---------------------------------------------------------------------------
 # Context menu routing from prose and code block targets
 # ---------------------------------------------------------------------------

@@ -177,14 +177,18 @@ def _fps_hud_enabled() -> bool:
         return False
 
 
-class CopyableRichLog(RichLog, can_focus=True):
+class CopyableRichLog(RichLog, can_focus=False):
     """RichLog that stores plain text for clipboard operations.
 
-    ``can_focus=True`` allows Textual to activate its built-in selection
-    tracking when the user clicks and drags over output text.  The scroll-
-    to-top side-effect of focus (Textual's ``Screen.set_focus`` calls
-    ``widget.scroll_visible()``, which would ask ``OutputPanel`` to scroll
-    to y=0) is suppressed by overriding ``scroll_visible()`` as a no-op.
+    ``can_focus=False`` prevents Textual's focus machinery from calling
+    ``Screen.scroll_to_center`` → ``scroll_to_widget`` → ``OutputPanel.
+    scroll_to_region`` when this widget is clicked, which would scroll the
+    output to y=0 (scroll-to-top regression).
+
+    Text selection still works: in Textual 8.x selection is gated on
+    ``ALLOW_SELECT`` / ``allow_select()`` (default True), not on ``can_focus``.
+    Mouse events (MouseDown/Move/Up) are delivered by cursor position, not
+    focus, so drag-to-select is unaffected.
 
     Overrides ``overflow-y: scroll`` from RichLog.DEFAULT_CSS to ``hidden``
     so that mouse-scroll events are NOT stopped here and can bubble up to
@@ -207,18 +211,6 @@ class CopyableRichLog(RichLog, can_focus=True):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._plain_lines: list[str] = []
-
-    def scroll_visible(self, **kwargs: Any) -> None:  # type: ignore[override]
-        """Suppress focus-triggered scroll to prevent OutputPanel scroll-to-top.
-
-        When this widget gains focus (for text selection), Textual's
-        ``Screen.set_focus()`` calls ``widget.scroll_visible(animate=True)``.
-        Because ``CopyableRichLog`` has ``overflow-y: hidden``, that call
-        delegates upward to ``OutputPanel``, which scrolls to y=0 — the
-        scroll-to-top regression.  Returning immediately here stops that
-        delegation while preserving all other widget behaviour.
-        """
-        return
 
     def write(  # type: ignore[override]
         self,

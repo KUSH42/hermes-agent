@@ -1,8 +1,8 @@
 """Tests for HistorySearchOverlay (SPEC-B — History Search).
 
-22 tests covering:
+25 tests covering:
   1–3   Open/close/escape overlay
-  4–5   Empty-query browse-all + fuzzy filter
+  4–7   Empty-query browse-all + contiguous filter across user/assistant text
   6–9   Up/Down navigation + clamping
   10–13 Enter jump: scroll_visible + dismiss + --highlighted + timer fade
   14–15 Edge cases: 0 turns + 1 turn
@@ -12,6 +12,9 @@
   20    Snapshot frozen after open
   21    on_resize re-renders without crash
   22    ctrl+c dismisses overlay
+  23    Cross-boundary mixed query does not match
+  24    First turn excluded as startup/banner
+  25    Clearing query restores full list
 """
 
 from __future__ import annotations
@@ -28,8 +31,7 @@ from hermes_cli.tui.widgets import (
     MessagePanel,
     OutputPanel,
     TurnResultItem,
-    _TurnEntry,
-    TurnCandidate,
+    UserEchoPanel,
 )
 from textual.widgets import Input, Static
 
@@ -42,12 +44,24 @@ def _make_app() -> HermesApp:
     return HermesApp(cli=MagicMock())
 
 
-def _add_turn(app: HermesApp, text: str) -> MessagePanel:
-    """Mount a MessagePanel with plain text in its response_log."""
+def _ensure_startup_turn(app: HermesApp) -> None:
+    """Mount the initial banner/startup assistant turn once."""
     output = app.query_one(OutputPanel)
-    panel = MessagePanel()
-    output.mount(panel)
-    panel.response_log._plain_lines.append(text)
+    if list(output.query(MessagePanel)):
+        return
+    startup = MessagePanel()
+    output.mount(startup)
+    startup.response_log._plain_lines.append("Hermes startup banner")
+
+
+def _add_turn(app: HermesApp, user_text: str, assistant_text: str) -> MessagePanel:
+    """Mount a realistic user+assistant turn after the startup turn."""
+    _ensure_startup_turn(app)
+    output = app.query_one(OutputPanel)
+    output.mount(UserEchoPanel(user_text), before=output.tool_pending)
+    panel = MessagePanel(user_text=user_text)
+    output.mount(panel, before=output.tool_pending)
+    panel.response_log._plain_lines.append(assistant_text)
     return panel
 
 
@@ -124,25 +138,25 @@ async def test_escape_closes_overlay():
 
 @pytest.mark.asyncio
 async def test_empty_query_shows_all_turns_reverse():
-    """Empty query shows all turns, most recent (highest index) first."""
+    """Empty query shows all indexed user turns, most recent first."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        _add_turn(app, "first turn text")
-        _add_turn(app, "second turn text")
-        _add_turn(app, "third turn text")
+        _add_turn(app, "first user ask", "first assistant text")
+        _add_turn(app, "second user ask", "second assistant text")
+        _add_turn(app, "third user ask", "third assistant text")
         await pilot.pause()
 
         overlay = app.query_one(HistorySearchOverlay)
         overlay.open_search()
         await pilot.pause()
 
-        items = list(overlay.query(TurnResultItem))
+        result_list = overlay.query_one("#history-result-list")
+        items = [child for child in result_list.children if isinstance(child, TurnResultItem)]
         assert len(items) == 3
-        # Most recent first: third turn has index 3, first has index 1
-        assert items[0]._entry.index == 3
-        assert items[1]._entry.index == 2
-        assert items[2]._entry.index == 1
+        assert items[0]._entry.display == "third user ask"
+        assert items[1]._entry.display == "second user ask"
+        assert items[2]._entry.display == "first user ask"
 
 
 # ---------------------------------------------------------------------------
@@ -150,14 +164,14 @@ async def test_empty_query_shows_all_turns_reverse():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_fuzzy_filter_returns_matching_turns():
-    """Non-empty query filters results to matching entries only."""
+async def test_filter_matches_user_text_case_insensitively():
+    """Non-empty query matches contiguous substrings in user text."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        _add_turn(app, "parse ISO dates")
-        _add_turn(app, "memory architecture")
-        _add_turn(app, "rollback behavior")
+        _add_turn(app, "Parse ISO dates", "assistant one")
+        _add_turn(app, "Memory architecture", "assistant two")
+        _add_turn(app, "Rollback behavior", "assistant three")
         await pilot.pause()
 
         overlay = app.query_one(HistorySearchOverlay)
@@ -165,7 +179,6 @@ async def test_fuzzy_filter_returns_matching_turns():
         await pilot.pause()
         await pilot.pause()  # allow on_resize events to settle
 
-        # Type "memory" into the search input to trigger on_input_changed
         inp = overlay.query_one("#history-search-input", Input)
         inp.value = "memory"
         await pilot.pause()
@@ -174,11 +187,69 @@ async def test_fuzzy_filter_returns_matching_turns():
 
         items = list(overlay.query(TurnResultItem))
         assert len(items) == 1
-        assert items[0]._entry.plain_text == "memory architecture"
+        assert items[0]._entry.user_text == "Memory architecture"
 
 
 # ---------------------------------------------------------------------------
-# 6. Down moves selection
+# 6. Non-empty query matches assistant plain text
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_filter_matches_assistant_plain_text():
+    """Non-empty query can match assistant text even if user text does not."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        _add_turn(app, "User request one", "parse ISO dates")
+        _add_turn(app, "User request two", "memory architecture")
+        _add_turn(app, "User request three", "rollback behavior")
+        await pilot.pause()
+
+        overlay = app.query_one(HistorySearchOverlay)
+        overlay.open_search()
+        await pilot.pause()
+
+        inp = overlay.query_one("#history-search-input", Input)
+        inp.value = "memory"
+        await pilot.pause()
+        await asyncio.sleep(0.16)
+        await pilot.pause()
+
+        items = list(overlay.query(TurnResultItem))
+        assert len(items) == 1
+        assert items[0]._entry.assistant_text == "memory architecture"
+        assert items[0]._entry.display == "User request two"
+
+
+# ---------------------------------------------------------------------------
+# 7. Non-consecutive substring does not match
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_filter_requires_consecutive_match():
+    """Subsequence-only query does not match."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        _add_turn(app, "User request", "Memory architecture")
+        await pilot.pause()
+
+        overlay = app.query_one(HistorySearchOverlay)
+        overlay.open_search()
+        await pilot.pause()
+
+        inp = overlay.query_one("#history-search-input", Input)
+        inp.value = "mry"
+        await pilot.pause()
+        await asyncio.sleep(0.16)
+        await pilot.pause()
+
+        items = list(overlay.query(TurnResultItem))
+        assert len(items) == 0
+
+
+# ---------------------------------------------------------------------------
+# 8. Down moves selection
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -187,8 +258,8 @@ async def test_down_moves_selection():
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        _add_turn(app, "turn one")
-        _add_turn(app, "turn two")
+        _add_turn(app, "turn one", "assistant one")
+        _add_turn(app, "turn two", "assistant two")
         await pilot.pause()
 
         overlay = app.query_one(HistorySearchOverlay)
@@ -209,7 +280,7 @@ async def test_down_moves_selection():
 
 
 # ---------------------------------------------------------------------------
-# 7. Up moves selection
+# 9. Up moves selection
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -218,9 +289,9 @@ async def test_up_moves_selection():
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        _add_turn(app, "turn one")
-        _add_turn(app, "turn two")
-        _add_turn(app, "turn three")
+        _add_turn(app, "turn one", "assistant one")
+        _add_turn(app, "turn two", "assistant two")
+        _add_turn(app, "turn three", "assistant three")
         await pilot.pause()
 
         overlay = app.query_one(HistorySearchOverlay)
@@ -238,7 +309,7 @@ async def test_up_moves_selection():
 
 
 # ---------------------------------------------------------------------------
-# 8. Up at row 0 clamps (no wrap)
+# 10. Up at row 0 clamps (no wrap)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -247,7 +318,7 @@ async def test_up_clamps_at_row_zero():
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        _add_turn(app, "only turn")
+        _add_turn(app, "only turn", "assistant")
         await pilot.pause()
 
         overlay = app.query_one(HistorySearchOverlay)
@@ -262,7 +333,7 @@ async def test_up_clamps_at_row_zero():
 
 
 # ---------------------------------------------------------------------------
-# 9. Down at last row clamps (no wrap)
+# 11. Down at last row clamps (no wrap)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -271,8 +342,8 @@ async def test_down_clamps_at_last_row():
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        _add_turn(app, "turn A")
-        _add_turn(app, "turn B")
+        _add_turn(app, "turn A", "assistant A")
+        _add_turn(app, "turn B", "assistant B")
         await pilot.pause()
 
         overlay = app.query_one(HistorySearchOverlay)
@@ -289,7 +360,7 @@ async def test_down_clamps_at_last_row():
 
 
 # ---------------------------------------------------------------------------
-# 10. Enter calls scroll_visible on correct panel
+# 12. Enter calls scroll_visible on correct panel
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -298,8 +369,8 @@ async def test_enter_calls_scroll_visible_on_panel():
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        panel1 = _add_turn(app, "alpha content")
-        panel2 = _add_turn(app, "beta content")
+        panel1 = _add_turn(app, "alpha request", "alpha content")
+        panel2 = _add_turn(app, "beta request", "beta content")
         await pilot.pause()
 
         overlay = app.query_one(HistorySearchOverlay)
@@ -317,7 +388,7 @@ async def test_enter_calls_scroll_visible_on_panel():
 
 
 # ---------------------------------------------------------------------------
-# 11. Enter dismisses overlay
+# 13. Enter dismisses overlay
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -326,7 +397,7 @@ async def test_enter_dismisses_overlay():
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        _add_turn(app, "some turn")
+        _add_turn(app, "some turn", "assistant")
         await pilot.pause()
 
         overlay = app.query_one(HistorySearchOverlay)
@@ -340,7 +411,7 @@ async def test_enter_dismisses_overlay():
 
 
 # ---------------------------------------------------------------------------
-# 12. Enter adds --highlighted to target panel
+# 14. Enter adds --highlighted to target panel
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -349,7 +420,7 @@ async def test_enter_adds_highlighted_class():
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        panel = _add_turn(app, "highlighted turn")
+        panel = _add_turn(app, "highlighted turn", "assistant")
         await pilot.pause()
 
         overlay = app.query_one(HistorySearchOverlay)
@@ -365,7 +436,7 @@ async def test_enter_adds_highlighted_class():
 
 
 # ---------------------------------------------------------------------------
-# 13. --highlighted removed after 1.5 s
+# 15. --highlighted removed after 1.5 s
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -374,7 +445,7 @@ async def test_highlighted_removed_after_timeout():
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        panel = _add_turn(app, "fading turn")
+        panel = _add_turn(app, "fading turn", "assistant")
         await pilot.pause()
 
         overlay = app.query_one(HistorySearchOverlay)
@@ -393,7 +464,7 @@ async def test_highlighted_removed_after_timeout():
 
 
 # ---------------------------------------------------------------------------
-# 14. 0-turn conversation → empty results, "0 of 0 turns"
+# 16. 0-turn conversation → empty results, "0 of 0 turns"
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -416,16 +487,16 @@ async def test_zero_turns_shows_empty_status():
 
 
 # ---------------------------------------------------------------------------
-# 15. 1-turn conversation → single entry with correct first_line
+# 17. 1-turn conversation → single entry with correct user display
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_single_turn_shows_correct_first_line():
-    """Single turn renders with its first non-empty line as display text."""
+async def test_single_turn_shows_correct_user_display():
+    """Single indexed turn renders with its user text as display text."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        panel = _add_turn(app, "hello world response")
+        panel = _add_turn(app, "hello world request", "hello world response")
         await pilot.pause()
 
         overlay = app.query_one(HistorySearchOverlay)
@@ -434,12 +505,13 @@ async def test_single_turn_shows_correct_first_line():
 
         items = list(overlay.query(TurnResultItem))
         assert len(items) == 1
-        assert items[0]._entry.display == "hello world response"
-        assert items[0]._entry.index == 1
+        assert items[0]._entry.display == "hello world request"
+        assert items[0]._entry.assistant_text == "hello world response"
+        assert items[0]._entry.index == 2
 
 
 # ---------------------------------------------------------------------------
-# 16. Click on TurnResultItem triggers jump
+# 18. Click on TurnResultItem triggers jump
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -448,7 +520,7 @@ async def test_click_result_item_triggers_jump():
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        panel = _add_turn(app, "clickable turn")
+        panel = _add_turn(app, "clickable turn", "assistant")
         await pilot.pause()
 
         overlay = app.query_one(HistorySearchOverlay)
@@ -468,7 +540,7 @@ async def test_click_result_item_triggers_jump():
 
 
 # ---------------------------------------------------------------------------
-# 17. HintBar shows navigation hint when overlay is open
+# 19. HintBar shows navigation hint when overlay is open
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -487,7 +559,7 @@ async def test_hint_bar_shows_navigation_hint():
 
 
 # ---------------------------------------------------------------------------
-# 18. HintBar hint restored after overlay closes
+# 20. HintBar hint restored after overlay closes
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -511,7 +583,7 @@ async def test_hint_bar_hint_restored_after_close():
 
 
 # ---------------------------------------------------------------------------
-# 19. Overlay opens even when agent_running=True
+# 21. Overlay opens even when agent_running=True
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -531,7 +603,7 @@ async def test_overlay_opens_when_agent_running():
 
 
 # ---------------------------------------------------------------------------
-# 20. Snapshot is frozen: new panel after open is NOT in results
+# 22. Snapshot is frozen: new panel after open is NOT in results
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -540,7 +612,7 @@ async def test_snapshot_frozen_after_open():
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        _add_turn(app, "pre-open turn")
+        _add_turn(app, "pre-open turn", "assistant pre-open")
         await pilot.pause()
 
         overlay = app.query_one(HistorySearchOverlay)
@@ -550,14 +622,14 @@ async def test_snapshot_frozen_after_open():
         index_len_at_open = len(overlay._index)
 
         # Add a new turn AFTER open_search() — should NOT appear in results
-        _add_turn(app, "post-open turn")
+        _add_turn(app, "post-open turn", "assistant post-open")
         await pilot.pause()
 
         assert len(overlay._index) == index_len_at_open
 
 
 # ---------------------------------------------------------------------------
-# 21. on_resize re-renders without crash
+# 23. on_resize re-renders without crash
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -566,7 +638,7 @@ async def test_on_resize_rerenders_without_crash():
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        _add_turn(app, "resize test turn")
+        _add_turn(app, "resize test turn", "assistant")
         await pilot.pause()
 
         overlay = app.query_one(HistorySearchOverlay)
@@ -585,7 +657,7 @@ async def test_on_resize_rerenders_without_crash():
 
 
 # ---------------------------------------------------------------------------
-# 22. ctrl+c dismisses overlay
+# 24. ctrl+c dismisses overlay
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -605,3 +677,87 @@ async def test_ctrl_c_dismisses_overlay():
         overlay.action_dismiss()
         await pilot.pause()
         assert not overlay.has_class("--visible")
+
+
+# ---------------------------------------------------------------------------
+# 25. Mixed query must not match across user/assistant boundary
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_mixed_boundary_query_does_not_match():
+    """Query must not match by crossing synthetic user/assistant boundary."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        _add_turn(app, "fix history", "search bug")
+        await pilot.pause()
+
+        overlay = app.query_one(HistorySearchOverlay)
+        overlay.open_search()
+        await pilot.pause()
+
+        inp = overlay.query_one("#history-search-input", Input)
+        inp.value = "history search"
+        await pilot.pause()
+        await asyncio.sleep(0.16)
+        await pilot.pause()
+
+        items = list(overlay.query(TurnResultItem))
+        assert len(items) == 0
+
+
+# ---------------------------------------------------------------------------
+# 26. First turn excluded as startup/banner
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_first_turn_is_excluded_from_history():
+    """Initial startup/banner MessagePanel is not indexed."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        _ensure_startup_turn(app)
+        await pilot.pause()
+
+        overlay = app.query_one(HistorySearchOverlay)
+        overlay.open_search()
+        await pilot.pause()
+
+        assert len(list(overlay.query(TurnResultItem))) == 0
+
+
+# ---------------------------------------------------------------------------
+# 27. Clearing query restores full list
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_clearing_query_restores_full_list():
+    """Clearing search input restores full reverse-chronological result set."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        _add_turn(app, "alpha request", "assistant one")
+        _add_turn(app, "beta request", "memory architecture")
+        await pilot.pause()
+
+        overlay = app.query_one(HistorySearchOverlay)
+        overlay.open_search()
+        await pilot.pause()
+
+        inp = overlay.query_one("#history-search-input", Input)
+        inp.value = "memory"
+        await pilot.pause()
+        await asyncio.sleep(0.16)
+        await pilot.pause()
+        assert len(list(overlay.query(TurnResultItem))) == 1
+
+        inp.value = ""
+        await pilot.pause()
+        await asyncio.sleep(0.16)
+        await pilot.pause()
+
+        result_list = overlay.query_one("#history-result-list")
+        items = [child for child in result_list.children if isinstance(child, TurnResultItem)]
+        assert len(items) == 2
+        assert items[0]._entry.display == "beta request"
+        assert items[1]._entry.display == "alpha request"

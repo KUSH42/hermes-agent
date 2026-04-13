@@ -2763,8 +2763,10 @@ class _TurnEntry:
     """Metadata for one indexed turn (frozen snapshot; never mutated)."""
     panel: "MessagePanel"
     index: int          # 1-based (turn 1 = first ever)
-    plain_text: str     # full joined _plain_lines from panel.response_log
-    display: str        # first non-empty line for the result row
+    user_text: str      # paired text from preceding UserEchoPanel
+    assistant_text: str # full plain assistant prose from the panel
+    search_text: str    # combined contiguous-search haystack
+    display: str        # user-facing row label
 
 
 @dataclass(frozen=True, slots=True)
@@ -2967,7 +2969,6 @@ class HistorySearchOverlay(Widget):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._index: list[_TurnEntry] = []
-        self._candidates: list[TurnCandidate] = []
         self._selected_idx: int = 0
         self._saved_hint: str = ""
         self._debounce_handle: Any = None  # Timer | None; cancelled on each new keystroke
@@ -3017,23 +3018,29 @@ class HistorySearchOverlay(Widget):
         """Build a frozen snapshot of current turns. DOM access — event loop only."""
         try:
             output_panel = self.app.query_one(OutputPanel)
-            panels = list(output_panel.query(MessagePanel))  # snapshot copy
+            panels = [
+                child for child in output_panel.children if isinstance(child, MessagePanel)
+            ]
         except NoMatches:
-            panels = []
-        self._index = [
-            _TurnEntry(
-                panel=p,
-                index=i + 1,
-                plain_text=p.all_prose_text(),
-                display=p.first_response_line(),
+            self._index = []
+            return
+
+        entries: list[_TurnEntry] = []
+        chronological_panels = list(reversed(panels))
+        for message_count, panel in enumerate(chronological_panels[1:], start=2):
+            user_text = panel._user_text or "(no user message)"
+            assistant_text = panel.all_prose_text()
+            entries.append(
+                _TurnEntry(
+                    panel=panel,
+                    index=message_count,
+                    user_text=user_text,
+                    assistant_text=assistant_text,
+                    search_text=f"{user_text}\n\n{assistant_text}",
+                    display=user_text,
+                )
             )
-            for i, p in enumerate(panels)
-        ]
-        # Build candidates in reverse order so empty-query shows most recent first
-        self._candidates = [
-            TurnCandidate(display=e.plain_text, entry=e)
-            for e in reversed(self._index)
-        ]
+        self._index = entries
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Debounce keystrokes (150ms) before re-ranking results."""
@@ -3046,17 +3053,20 @@ class HistorySearchOverlay(Widget):
         self._debounce_handle = self.set_timer(0.15, lambda: self._render_results(query))
 
     def _render_results(self, query: str) -> None:
-        """Apply fuzzy_rank and update the result list.
+        """Apply contiguous substring filtering and update the result list.
 
         Reuses existing TurnResultItem widgets when the result count is
         unchanged (update-in-place via Static.update()).  Only adds or removes
         widgets when the count changes, cutting DOM churn on stable queries.
         """
         self._debounce_handle = None
-        from hermes_cli.tui.fuzzy import fuzzy_rank
         # Cap at 15: overlay max-height 18 minus input + status rows = ~16 visible.
         # Rendering more than fits is wasted DOM work.
-        results = fuzzy_rank(query, self._candidates, limit=15)
+        entries = list(self._index)
+        if query:
+            needle = query.casefold()
+            entries = [entry for entry in entries if needle in entry.search_text.casefold()]
+        results = entries[:15]
         try:
             result_list = self.query_one("#history-result-list", VerticalScroll)
         except NoMatches:
@@ -3068,22 +3078,22 @@ class HistorySearchOverlay(Widget):
 
         if new_count == old_count:
             # Common case: same number of results — update in place, zero DOM add/remove.
-            for widget, r in zip(existing, results):
-                widget._entry = r.entry
-                widget.update(_turn_result_label(r.entry))
+            for widget, entry in zip(existing, results):
+                widget._entry = entry
+                widget.update(_turn_result_label(entry))
         elif new_count < old_count:
             # Fewer results: update kept widgets, remove the tail.
-            for widget, r in zip(existing[:new_count], results):
-                widget._entry = r.entry
-                widget.update(_turn_result_label(r.entry))
+            for widget, entry in zip(existing[:new_count], results):
+                widget._entry = entry
+                widget.update(_turn_result_label(entry))
             for widget in existing[new_count:]:
                 widget.remove()
         else:
             # More results: update existing, mount only the new additions.
-            for widget, r in zip(existing, results[:old_count]):
-                widget._entry = r.entry
-                widget.update(_turn_result_label(r.entry))
-            new_items = [TurnResultItem(r.entry) for r in results[old_count:]]
+            for widget, entry in zip(existing, results[:old_count]):
+                widget._entry = entry
+                widget.update(_turn_result_label(entry))
+            new_items = [TurnResultItem(entry) for entry in results[old_count:]]
             result_list.mount(*new_items)
 
         self._selected_idx = max(0, min(self._selected_idx, new_count - 1))

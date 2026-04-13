@@ -695,11 +695,12 @@ def test_reasoning_panel_gutter_line_has_no_text_prefix():
 
 
 @pytest.mark.asyncio
-async def test_reasoning_panel_header_has_no_text_gutter():
-    """After close_box(), the header Static must not contain ▌ text.
+async def test_reasoning_panel_collapsed_stub_has_no_text_gutter():
+    """The collapsed stub must not contain a text gutter marker.
 
     CSS border-left on ReasoningPanel provides the visual gutter for ALL rows.
-    Including ▌ in the header text would create a double-gutter: CSS border + text ▌.
+    Including ▌ in the collapsed stub would create a double-gutter:
+    CSS border + text ▌.
     """
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
@@ -712,14 +713,15 @@ async def test_reasoning_panel_header_has_no_text_gutter():
         reasoning.open_box("Reasoning")
         reasoning.append_delta("some thought\n")
         reasoning.close_box()
+        reasoning.on_click()
         await _pause(pilot)
 
-        header_content = str(reasoning._header._Static__content)
-        assert "▌" not in header_content, (
-            "ReasoningPanel header text must not include ▌ — "
+        stub_content = str(reasoning._collapsed_stub._Static__content)
+        assert "▌" not in stub_content, (
+            "ReasoningPanel collapsed stub must not include ▌ — "
             "CSS border-left provides the gutter character to avoid double-gutter."
         )
-        assert "Reasoning" in header_content, "Header must still say 'Reasoning'"
+        assert "Reasoning" in stub_content, "Collapsed stub must still identify reasoning"
 
 
 def test_reasoning_panel_css_has_border_left():

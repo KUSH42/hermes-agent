@@ -536,7 +536,7 @@ class LiveLineWidget(Widget):
             msg = panel.current_message
             if msg is None:
                 msg = panel.new_message()
-            rl = msg.response_log
+            rl = msg.current_prose_log()
             msg.show_response_rule()
             for committed in lines[:-1]:
                 engine = getattr(msg, "_response_engine", None)
@@ -658,7 +658,7 @@ class LiveLineWidget(Widget):
 
 
 class MessagePanel(Widget):
-    """Groups a response TitledRule + ReasoningPanel + response RichLog for one assistant turn."""
+    """Owns all assistant-turn content blocks for one message."""
 
     DEFAULT_CSS = """
     MessagePanel {
@@ -688,12 +688,14 @@ class MessagePanel(Widget):
             id=f"response-rule-{self._msg_id}",
             created_at=self._created_at,
         )
-        self._reasoning_panel = ReasoningPanel(id=f"reasoning-{self._msg_id}")
         self._response_block = CopyableBlock(
             id=f"response-block-{self._msg_id}",
             _log_id=f"response-{self._msg_id}",
         )
         self._prose_blocks: list[CopyableBlock] = [self._response_block]
+        self._thinking_blocks: list[ReasoningPanel] = []
+        self._active_thinking_block: ReasoningPanel | None = None
+        self._active_prose_block: CopyableBlock = self._response_block
         self._user_text: str = user_text
         self._response_engine: "Any | None" = None   # ResponseFlowEngine, set in on_mount
         super().__init__(**kwargs)
@@ -703,7 +705,6 @@ class MessagePanel(Widget):
 
     def compose(self) -> ComposeResult:
         yield self._response_rule
-        yield self._reasoning_panel
         yield self._response_block
 
     def show_response_rule(self) -> None:
@@ -712,10 +713,20 @@ class MessagePanel(Widget):
 
     @property
     def reasoning(self) -> ReasoningPanel:
-        return self._reasoning_panel
+        if self._active_thinking_block is not None:
+            return self._active_thinking_block
+        if self._thinking_blocks:
+            return self._thinking_blocks[-1]
+        rp = ReasoningPanel(id=f"reasoning-{self._msg_id}-1")
+        self._thinking_blocks.append(rp)
+        self._mount_nonprose_block(rp)
+        return rp
 
     def on_mount(self) -> None:
         """Lazy engine init — panel.app is guaranteed available at mount time."""
+        for block in self._thinking_blocks:
+            if block.parent is None:
+                self._mount_nonprose_block(block)
         from hermes_cli.tui.response_flow import MARKDOWN_ENABLED, ResponseFlowEngine
         self._response_engine = (
             ResponseFlowEngine(panel=self) if MARKDOWN_ENABLED else None
@@ -724,6 +735,105 @@ class MessagePanel(Widget):
     @property
     def response_log(self) -> CopyableRichLog:
         return self._response_block.log
+
+    def current_prose_log(self) -> CopyableRichLog:
+        return self.ensure_prose_block().log
+
+    def _has_any_prose_content(self) -> bool:
+        return any(block.log._plain_lines for block in self._prose_blocks)
+
+    def _mount_nonprose_block(self, block: Widget) -> None:
+        """Mount a non-prose block in timeline order.
+
+        Before the first prose line appears, keep the bootstrap response block
+        at the end so reasoning/tool/code blocks can appear above it and prose
+        can still flow into the existing response block later.
+        """
+        if not self.is_attached:
+            return
+        if (
+            self._response_block.parent is self
+            and self.children
+            and self.children[-1] is self._response_block
+            and not self._has_any_prose_content()
+        ):
+            self.mount(block, before=self._response_block)
+        else:
+            self.mount(block)
+
+    def ensure_prose_block(self) -> CopyableBlock:
+        """Return the current prose destination, creating a trailing block if needed."""
+        active = self._active_prose_block
+        if active is self._response_block and active.parent is None:
+            return active
+        if active.parent is self and self.children and self.children[-1] is active:
+            return active
+
+        new_prose = CopyableBlock(
+            id=f"prose-{self._msg_id}-{len(self._prose_blocks)}",
+            _log_id=f"prose-log-{self._msg_id}-{len(self._prose_blocks)}",
+        )
+        self.mount(new_prose)
+        self._prose_blocks.append(new_prose)
+        self._active_prose_block = new_prose
+        return new_prose
+
+    def open_thinking_block(self, title: str = "Reasoning") -> ReasoningPanel:
+        """Open a new thinking block for this message."""
+        if self._active_thinking_block is not None:
+            self._active_thinking_block.close_box()
+            self._active_thinking_block = None
+
+        if (
+            self._thinking_blocks
+            and self._thinking_blocks[-1].parent is self
+            and not self._thinking_blocks[-1].has_class("visible")
+            and not self._thinking_blocks[-1]._plain_lines
+            and not self._thinking_blocks[-1]._live_buf
+        ):
+            block = self._thinking_blocks[-1]
+        else:
+            block = ReasoningPanel(
+                id=f"reasoning-{self._msg_id}-{len(self._thinking_blocks) + 1}"
+            )
+            self._thinking_blocks.append(block)
+            self._mount_nonprose_block(block)
+        self._active_thinking_block = block
+        block.open_box(title)
+        return block
+
+    def append_thinking(self, delta: str) -> None:
+        if not delta:
+            return
+        block = self._active_thinking_block or self.open_thinking_block("Reasoning")
+        block.append_delta(delta)
+
+    def close_thinking_block(self) -> None:
+        block = self._active_thinking_block
+        if block is None:
+            return
+        block.close_box()
+        self._active_thinking_block = None
+
+    def mount_tool_block(
+        self,
+        label: str,
+        lines: list[str],
+        plain_lines: list[str],
+        rerender_fn=None,
+    ) -> Widget | None:
+        if not lines:
+            return None
+        from hermes_cli.tui.tool_blocks import ToolBlock as _ToolBlock
+        block = _ToolBlock(label, lines, plain_lines, rerender_fn=rerender_fn)
+        self._mount_nonprose_block(block)
+        return block
+
+    def open_streaming_tool_block(self, label: str) -> Widget:
+        from hermes_cli.tui.tool_blocks import StreamingToolBlock as _STB
+        block = _STB(label=label)
+        self._mount_nonprose_block(block)
+        return block
 
     def all_prose_text(self) -> str:
         """Plain text from all prose sections — for copy-all and history search."""
@@ -1141,7 +1251,7 @@ class OutputPanel(ScrollableContainer):
             if msg is None:
                 msg = self.new_message()
             msg.show_response_rule()
-            rl = msg.response_log
+            rl = msg.current_prose_log()
             engine = getattr(msg, "_response_engine", None)
             if engine is not None:
                 engine.process_line(live._buf)
@@ -1226,9 +1336,9 @@ class ReasoningPanel(Widget):
 
     Hidden by default via CSS ``display: none``. Toggled visible via the
     ``visible`` CSS class when reasoning output arrives. Each committed
-    line is prefixed with a ``▌`` gutter marker in dim style.
+    line is rendered in dim italic text, with the gutter supplied by CSS.
 
-    After ``close_box()`` is called, clicking the panel header toggles
+    After ``close_box()`` is called, clicking anywhere on the panel toggles
     the body between expanded and collapsed states.
     """
 
@@ -1241,11 +1351,11 @@ class ReasoningPanel(Widget):
     ReasoningPanel.visible {
         display: block;
     }
-    ReasoningPanel #reasoning-header {
+    ReasoningPanel #reasoning-collapsed {
         height: 1;
         display: none;
     }
-    ReasoningPanel.--closeable #reasoning-header {
+    ReasoningPanel.--closeable.--collapsed #reasoning-collapsed {
         display: block;
     }
     ReasoningPanel.--closeable:hover {
@@ -1255,7 +1365,7 @@ class ReasoningPanel(Widget):
 
     def __init__(self, **kwargs: Any) -> None:
         self._reasoning_log = CopyableRichLog(markup=False, highlight=False, wrap=True, id="reasoning-log")
-        self._header = Static("", id="reasoning-header")
+        self._collapsed_stub = Static("", id="reasoning-collapsed")
         super().__init__(**kwargs)
         self._live_buf = ""
         self._plain_lines: list[str] = []
@@ -1263,7 +1373,7 @@ class ReasoningPanel(Widget):
         self._body_collapsed: bool = False
 
     def compose(self) -> ComposeResult:
-        yield self._header
+        yield self._collapsed_stub
         yield self._reasoning_log
 
     def _gutter_line(self, content: str) -> Text:
@@ -1276,28 +1386,35 @@ class ReasoningPanel(Widget):
         """
         return Text(content, style="dim italic")
 
-    def _update_header(self) -> None:
-        """Rebuild the collapse-toggle header text after close_box()."""
+    def _update_collapsed_stub(self) -> None:
+        """Rebuild the one-line collapsed summary."""
         n = len(self._plain_lines)
-        toggle = "▸" if self._body_collapsed else "▾"
-        verb = "expand" if self._body_collapsed else "collapse"
         try:
             k = self.app.get_css_variables().get("primary", "#5f87d7")
         except Exception:
             k = "#5f87d7"
-        self._header.update(
+        self._collapsed_stub.update(
             Text.from_markup(
-                f"[dim]Reasoning  {n}L  [bold {k}]{toggle}[/]  {verb}[/dim]"
+                f"[dim]Reasoning collapsed  {n}L  [bold {k}]click to expand[/][/dim]"
             )
         )
 
-    def on_click(self) -> None:
+    def _sync_collapsed_state(self) -> None:
+        self._reasoning_log.styles.display = "none" if self._body_collapsed else "block"
+        self.set_class(self._body_collapsed, "--collapsed")
+        if self._body_collapsed:
+            self._update_collapsed_stub()
+
+    def on_click(self, event: Any | None = None) -> None:
         """Toggle body visibility after streaming completes."""
         if not self._is_closed:
             return
+        if event is not None and getattr(event, "button", 1) != 1:
+            return
+        if event is not None:
+            event.prevent_default()
         self._body_collapsed = not self._body_collapsed
-        self._reasoning_log.styles.display = "none" if self._body_collapsed else "block"
-        self._update_header()
+        self._sync_collapsed_state()
 
     def open_box(self, title: str) -> None:
         """Show the reasoning panel."""
@@ -1306,7 +1423,8 @@ class ReasoningPanel(Widget):
         self._is_closed = False
         self._body_collapsed = False
         self.remove_class("--closeable")
-        self._reasoning_log.styles.display = "block"
+        self.remove_class("--collapsed")
+        self._sync_collapsed_state()
         self.add_class("visible")
         # Force a layout refresh so the RichLog receives a Resize event and
         # sets _size_known=True, enabling deferred writes to be committed.
@@ -1336,9 +1454,8 @@ class ReasoningPanel(Widget):
             self._plain_lines.append(buf)
             self._live_buf = ""
         self._is_closed = True
-        # Show collapse header — panel is now interactive
-        self._update_header()
         self.add_class("--closeable")
+        self._sync_collapsed_state()
         # Don't remove "visible" — reasoning stays shown as part of the
         # message so it isn't lost when tool output or the next response
         # pushes new content into the same MessagePanel.

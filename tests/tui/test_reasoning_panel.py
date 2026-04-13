@@ -220,12 +220,15 @@ async def test_reasoning_panel_collapse_toggle():
         rp.on_click()
         await pilot.pause()
         assert rp._body_collapsed is True
+        assert rp.has_class("--collapsed")
         assert rp._reasoning_log.styles.display == "none"
+        assert "click to expand" in str(rp._collapsed_stub._Static__content)
 
         # Second click — expand again
         rp.on_click()
         await pilot.pause()
         assert rp._body_collapsed is False
+        assert not rp.has_class("--collapsed")
         assert rp._reasoning_log.styles.display != "none"
 
 
@@ -269,6 +272,7 @@ async def test_reasoning_panel_open_resets_collapse():
         rp.open_box("Reasoning")
         await pilot.pause()
         assert rp._body_collapsed is False
+        assert not rp.has_class("--collapsed")
         assert not rp.has_class("--closeable")
 
 

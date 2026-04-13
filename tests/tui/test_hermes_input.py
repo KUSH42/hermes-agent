@@ -394,6 +394,28 @@ async def test_stale_batch_dropped() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cursor_watcher_keeps_path_query_in_sync() -> None:
+    """Autocomplete must use latest typed char after cursor settles."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+
+        # Simulate Textual update order: value watcher sees new text while the
+        # cursor still points at the previous position.
+        inp.value = "@text"
+        inp.cursor_position = 4
+        inp.watch_value("@text")
+        clist = app.query_one(VirtualCompletionList)
+        assert clist.current_query == "tex"
+
+        # Cursor watcher should reconcile to the actual current input.
+        inp.cursor_position = 5
+        inp.watch_cursor_position(5)
+        assert clist.current_query == "text"
+
+
+@pytest.mark.asyncio
 async def test_tab_accepts_highlighted_slash() -> None:
     """Tab on a SlashCandidate replaces value with '<cmd> '."""
     app = HermesApp(cli=MagicMock())

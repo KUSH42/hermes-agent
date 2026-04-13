@@ -1068,67 +1068,39 @@ class StreamingCodeBlock(Widget):
 
 
 
-# ---------------------------------------------------------------------------
-# Shimmer character table: ascending density from space to ▓ and back
-# ---------------------------------------------------------------------------
-
-_SHIMMER_CHARS = " ░▒▓▒░"
-_SHIMMER_LEN   = len(_SHIMMER_CHARS)
-
-
 class ThinkingWidget(Widget):
-    """Animated skeleton placeholder shown while the agent is thinking.
+    """Static placeholder shown while agent is thinking.
 
     Shown after prompt submission, before the first response token arrives.
-    Uses ``render_line()`` for per-cell shimmer animation at 8fps.
     """
 
     DEFAULT_CSS = "ThinkingWidget { height: 1; display: none; }"
 
-    _phase: reactive[int] = reactive(0, repaint=True)
     _shimmer_timer: object | None = None
 
     def activate(self) -> None:
-        """Show shimmer and start animation. Call from event loop only."""
+        """Show placeholder. Call from event loop only."""
         self.styles.display = "block"
-        if self._shimmer_timer is None:
-            self._shimmer_timer = self.set_interval(1 / 8, self._advance_phase)
 
     def deactivate(self) -> None:
-        """Hide shimmer and stop animation. Idempotent. Call from event loop only."""
-        if self._shimmer_timer is not None:
-            self._shimmer_timer.stop()
-            self._shimmer_timer = None
+        """Hide placeholder. Idempotent. Call from event loop only."""
         self.styles.display = "none"
-        self._phase = 0
-
-    def _advance_phase(self) -> None:
-        """Timer callback — plain def required (no await)."""
-        self._phase = (self._phase + 1) % (_SHIMMER_LEN * 4)
 
     def render_line(self, y: int) -> Strip:
-        # height: 1 → Textual only calls render_line(0), but guard defensively.
         if y != 0:
             return Strip.blank(self.size.width or 40)
         width = self.size.width or 40
-        phase = self._phase
-        segments: list[Segment] = []
-        # Compute shimmer colors relative to app-bg for theme-awareness.
-        # Falls back to dark defaults so pre-mount renders and light skins both work.
-        try:
-            v = self.app.get_css_variables()
-            app_bg = v.get("app-bg", "#1E1E1E")
-        except Exception:
-            app_bg = "#1E1E1E"
-        trough = lerp_color(app_bg, "#000000", 0.3)
-        peak = lerp_color(app_bg, "#888888", 0.35)
-        for x in range(width):
-            idx = (x + phase) % _SHIMMER_LEN
-            char = _SHIMMER_CHARS[idx]
-            brightness = idx / max(_SHIMMER_LEN - 1, 1)
-            color = lerp_color(trough, peak, brightness)
-            segments.append(Segment(char, Style(color=color)))
-        return Strip(segments).crop(0, width)
+        text = Text(" thinking…", style="dim", no_wrap=True, overflow="ellipsis")
+        segments = [
+            Segment(seg.text, seg.style or Style(), seg.control)
+            for seg in text.render(self.app.console)
+        ]
+        strip = Strip(segments, text.cell_len).extend_cell_length(width)
+        strip = Strip(
+            [Segment(seg.text, seg.style or Style(), seg.control) for seg in strip],
+            strip.cell_length,
+        )
+        return strip.crop(0, width)
 
 
 class OutputPanel(ScrollableContainer):

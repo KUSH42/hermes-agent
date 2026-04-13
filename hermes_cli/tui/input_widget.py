@@ -297,6 +297,19 @@ class HermesInput(Input, can_focus=True):
         self._update_autocomplete()
         # Suggester (ghost text) is driven natively by Input — no manual hook.
 
+    def watch_cursor_position(self, _cursor_position: int) -> None:
+        """Re-run completion after cursor updates.
+
+        Input value and cursor reactives do not settle in lockstep. During
+        typing, ``watch_value`` can observe the new text with the previous
+        cursor position, which makes completion lag one character behind.
+        The cursor watcher applies the same update once the final cursor
+        location is known.
+        """
+        if self._sanitizing_value:
+            return
+        self._update_autocomplete()
+
     def _update_autocomplete(self) -> None:
         """Dispatch to the correct completion provider based on context.
 

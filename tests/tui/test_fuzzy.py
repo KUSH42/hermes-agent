@@ -37,10 +37,10 @@ def test_empty_query_respects_limit() -> None:
 
 
 def test_consecutive_run_bonus() -> None:
-    """abcxyz ranks higher than axbxc for query 'abc'."""
+    """Only contiguous matches qualify; contiguous hit ranks first."""
     items = _paths("abcxyz", "axbxc")
     result = fuzzy_rank("abc", items)
-    assert result[0].display == "abcxyz"
+    assert [c.display for c in result] == ["abcxyz"]
 
 
 def test_word_boundary_bonus() -> None:
@@ -52,19 +52,12 @@ def test_word_boundary_bonus() -> None:
 
 
 def test_match_spans_correct() -> None:
-    """Spans cover exactly the matched characters in order."""
-    items = _paths("abcdef")
-    result = fuzzy_rank("ace", items)
+    """Spans cover exact contiguous substring."""
+    items = _paths("xxabcyy")
+    result = fuzzy_rank("abc", items)
     assert len(result) == 1
     c = result[0]
-    # Each matched char should appear somewhere in the spans
-    display = c.display
-    matched_chars = set()
-    for start, end in c.match_spans:
-        matched_chars.update(display[start:end])
-    assert "a" in matched_chars
-    assert "c" in matched_chars
-    assert "e" in matched_chars
+    assert c.match_spans == ((2, 5),)
 
 
 def test_no_match_excluded() -> None:
@@ -80,6 +73,13 @@ def test_polymorphic_slash_candidate() -> None:
     result = fuzzy_rank("hi", items)
     displays = [c.display for c in result]
     assert "/hint" in displays or "/history" in displays
+
+
+def test_subsequence_match_excluded() -> None:
+    """Split-letter subsequence matches should not qualify."""
+    items = _paths("axbxc", "alphabetic", "foo")
+    result = fuzzy_rank("abc", items)
+    assert result == []
 
 
 def test_limit_respected() -> None:
@@ -100,7 +100,7 @@ def test_tiebreak_is_deterministic() -> None:
 def test_span_does_not_overlap() -> None:
     """Match spans are non-overlapping and in ascending order."""
     items = _paths("foo_bar_baz.py")
-    result = fuzzy_rank("fbb", items)
+    result = fuzzy_rank("bar", items)
     if result:
         spans = result[0].match_spans
         for i in range(1, len(spans)):

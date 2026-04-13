@@ -532,25 +532,86 @@ async def test_copy_prose_plain_text():
 
 
 @pytest.mark.asyncio
-async def test_code_block_collapse_click():
-    """Click on CodeBlockHeader collapses a COMPLETE StreamingCodeBlock."""
-    from hermes_cli.tui.widgets import CodeBlockHeader, StreamingCodeBlock
+async def test_complete_code_block_has_copy_button():
+    """A #code-copy-btn widget is mounted when the code block transitions to COMPLETE."""
+    from hermes_cli.tui.widgets import StreamingCodeBlock
+    from textual.widgets import Static
 
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await _run_turn(app, pilot, chunks=["```python\nfoo\n```\n"])
-        await pilot.pause()  # let _finalize_syntax fire
-        await pilot.pause()  # CSS engine settle
+        await pilot.pause()  # let complete() mount the button
 
         msg = app.query_one(OutputPanel).current_message
         assert msg is not None
         block = msg.query_one(StreamingCodeBlock)
         assert block._state == "COMPLETE"
 
+        btn = block.query_one("#code-copy-btn", Static)
+        assert "⎘" in str(btn.content), "copy button must display ⎘"
+
+
+@pytest.mark.asyncio
+async def test_copy_button_absent_during_streaming():
+    """#code-copy-btn is in the DOM but hidden (display:none) while still streaming."""
+    from textual.widgets import Static
+    from hermes_cli.tui.widgets import StreamingCodeBlock
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.agent_running = True
+        await pilot.pause()
+        app.write_output("```python\n")
+        app.write_output("x = 1\n")
+        await asyncio.sleep(0.05)
+        await pilot.pause()
+
+        block = app.query_one(OutputPanel).current_message.query_one(StreamingCodeBlock)
+        assert block._state == "STREAMING"
+        # Button is pre-mounted but hidden via CSS display:none until --complete
+        btn = block.query_one("#code-copy-btn", Static)
+        assert not block.has_class("--complete"), "block must still be STREAMING"
+
+
+@pytest.mark.asyncio
+async def test_copy_button_click_copies_code():
+    """Clicking #code-copy-btn copies the source code to clipboard."""
+    from unittest.mock import patch
+    from hermes_cli.tui.widgets import StreamingCodeBlock
+    from textual.widgets import Static
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _run_turn(app, pilot, chunks=["```python\nfoo = 42\n```\n"])
+        await pilot.pause()  # let _finalize_syntax + button mount fire
+
+        block = app.query_one(OutputPanel).current_message.query_one(StreamingCodeBlock)
+        assert block._state == "COMPLETE"
+
+        btn = block.query_one("#code-copy-btn", Static)
+        with patch.object(app, "_copy_text_with_hint") as mock_copy:
+            await pilot.click(btn)
+            await pilot.pause()
+
+        mock_copy.assert_called_once()
+        assert "foo = 42" in mock_copy.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_code_block_header_click_collapses():
+    """Clicking CodeBlockHeader still collapses a COMPLETE block (unchanged behaviour)."""
+    from hermes_cli.tui.widgets import CodeBlockHeader, StreamingCodeBlock
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _run_turn(app, pilot, chunks=["```python\nfoo\n```\n"])
+        await pilot.pause()
+
+        block = app.query_one(OutputPanel).current_message.query_one(StreamingCodeBlock)
+        assert block._state == "COMPLETE"
+
         header = block.query_one(CodeBlockHeader)
         await pilot.click(header)
-        await pilot.pause()  # on_click fires toggle_class
-        await pilot.pause()  # CSS engine computes display:none
-
+        await pilot.pause()
         assert block.has_class("--collapsed")
-        assert not block._log.display

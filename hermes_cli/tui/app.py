@@ -1476,6 +1476,20 @@ class HermesApp(App):
             except ImportError:
                 pass
 
+            # --- StreamingCodeBlock ---
+            try:
+                from hermes_cli.tui.widgets import StreamingCodeBlock as _SCB
+                if isinstance(node, _SCB):
+                    cb = node
+                    items = [
+                        MenuItem("⎘  Copy code block", "", lambda b=cb: self._copy_code_block(b)),
+                    ]
+                    if cb._state == "COMPLETE":
+                        items.append(MenuItem("▸/▾  Expand/Collapse", "", lambda b=cb: b.toggle_class("--collapsed")))
+                    return items
+            except ImportError:
+                pass
+
             # --- MessagePanel ---
             try:
                 from hermes_cli.tui.widgets import MessagePanel as _MP
@@ -1521,6 +1535,15 @@ class HermesApp(App):
         return items
 
     # --- Context menu action helpers ---
+
+    def _copy_code_block(self, block: Any) -> None:
+        """Copy a StreamingCodeBlock's plain-text content to clipboard and flash hint."""
+        try:
+            content = block.copy_content()
+            self._copy_text_with_hint(content)
+            block._header.flash_copy()
+        except Exception:
+            self._flash_hint("⚠ copy failed", 1.5)
 
     def _copy_tool_output(self, block: Any) -> None:
         """Copy a ToolBlock's plain-text content to clipboard and flash hint."""

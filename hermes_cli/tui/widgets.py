@@ -177,15 +177,14 @@ def _fps_hud_enabled() -> bool:
         return False
 
 
-class CopyableRichLog(RichLog, can_focus=False):
+class CopyableRichLog(RichLog, can_focus=True):
     """RichLog that stores plain text for clipboard operations.
 
-    ``can_focus=False`` prevents Textual from calling ``scroll_visible`` on the
-    parent ``OutputPanel`` when this widget is clicked.  ``RichLog`` inherits
-    ``can_focus=True`` from ``ScrollView``; without the override, a click on any
-    response text would focus the widget and animate ``OutputPanel`` to y=0
-    (scroll-to-top bug).  Mouse-based text selection still works because Textual
-    delivers mouse events by cursor position, not by focus.
+    ``can_focus=True`` allows Textual to activate its built-in selection
+    tracking when the user clicks and drags over output text.  The scroll-
+    to-top side-effect of focus (Textual's ``Screen.set_focus`` calls
+    ``widget.scroll_visible()``, which would ask ``OutputPanel`` to scroll
+    to y=0) is suppressed by overriding ``scroll_visible()`` as a no-op.
 
     Overrides ``overflow-y: scroll`` from RichLog.DEFAULT_CSS to ``hidden``
     so that mouse-scroll events are NOT stopped here and can bubble up to
@@ -208,6 +207,18 @@ class CopyableRichLog(RichLog, can_focus=False):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._plain_lines: list[str] = []
+
+    def scroll_visible(self, **kwargs: Any) -> None:  # type: ignore[override]
+        """Suppress focus-triggered scroll to prevent OutputPanel scroll-to-top.
+
+        When this widget gains focus (for text selection), Textual's
+        ``Screen.set_focus()`` calls ``widget.scroll_visible(animate=True)``.
+        Because ``CopyableRichLog`` has ``overflow-y: hidden``, that call
+        delegates upward to ``OutputPanel``, which scrolls to y=0 — the
+        scroll-to-top regression.  Returning immediately here stops that
+        delegation while preserving all other widget behaviour.
+        """
+        return
 
     def write(  # type: ignore[override]
         self,
@@ -691,18 +702,20 @@ class CodeBlockHeader(Static):
         self._lang_label = lang or "text"
         self._line_count = 0
         self._phase = "streaming"   # "streaming" | "complete" | "flushed"
+        self._copy_flash = False
         self._update_display()
 
     # ------------------------------------------------------------------
     def _update_display(self) -> None:
         lang = self._lang_label
         count = self._line_count
+        copy_icon = "  ✓" if self._copy_flash else "  ⎘"
         if self._phase == "streaming":
             self.update(f"{lang}   {count} lines  ···")
         elif self._phase == "flushed":
-            self.update(f"{lang}   {count} lines  (incomplete)")
+            self.update(f"{lang}   {count} lines  (incomplete){copy_icon}")
         else:  # complete
-            self.update(f"{lang}   {count} lines  [▼]")
+            self.update(f"{lang}   {count} lines  [▼]{copy_icon}")
 
     def set_line_count(self, n: int) -> None:
         self._line_count = n
@@ -714,6 +727,16 @@ class CodeBlockHeader(Static):
 
     def mark_flushed(self) -> None:
         self._phase = "flushed"
+        self._update_display()
+
+    def flash_copy(self) -> None:
+        """Flash ⎘ → ✓ for 1.5 s then revert (mirrors ToolHeader.flash_copy)."""
+        self._copy_flash = True
+        self._update_display()
+        self.set_timer(1.5, self._end_copy_flash)
+
+    def _end_copy_flash(self) -> None:
+        self._copy_flash = False
         self._update_display()
 
     # ------------------------------------------------------------------
@@ -745,10 +768,24 @@ class StreamingCodeBlock(Widget):
         margin-bottom: 1;
     }
     StreamingCodeBlock.--complete CodeBlockHeader {
-        color: $text-muted;
+        color: $text 55%;
     }
     StreamingCodeBlock.--collapsed > CopyableRichLog {
         display: none;
+    }
+    StreamingCodeBlock #code-copy-btn {
+        display: none;
+        height: 1;
+        color: $primary;
+        background: $primary 10%;
+        padding: 0 2;
+    }
+    StreamingCodeBlock.--complete #code-copy-btn {
+        display: block;
+    }
+    StreamingCodeBlock #code-copy-btn:hover {
+        color: $accent;
+        background: $accent 20%;
     }
     """
 
@@ -764,10 +801,12 @@ class StreamingCodeBlock(Widget):
         self._state: "Literal['STREAMING', 'COMPLETE', 'FLUSHED']" = "STREAMING"
         self._code_lines: list[str] = []
         self._header = CodeBlockHeader(lang=lang)
+        self._copy_btn = Static("⎘ copy", id="code-copy-btn")
         self._log = CopyableRichLog(markup=False)
 
     def compose(self) -> ComposeResult:
         yield self._header
+        yield self._copy_btn   # hidden during STREAMING; shown via --complete CSS
         yield self._log
 
     # ------------------------------------------------------------------
@@ -805,7 +844,7 @@ class StreamingCodeBlock(Widget):
         if self._state != "STREAMING":
             return
         self._state = "COMPLETE"
-        self.add_class("--complete")
+        self.add_class("--complete")  # CSS shows #code-copy-btn via .--complete rule
         self._header.mark_complete()
         # Defer clear+write to a single repaint — prevents flash of empty log
         self.call_after_refresh(self._finalize_syntax, dict(skin_vars))
@@ -838,6 +877,21 @@ class StreamingCodeBlock(Widget):
         self._state = "FLUSHED"
         self.add_class("--flushed")
         self._header.mark_flushed()
+
+    def copy_content(self) -> str:
+        """Plain text of the code block for clipboard operations."""
+        return self._log.copy_content()
+
+    def on_click(self, event: Any) -> None:
+        """Copy code to clipboard when the ⎘ button is clicked."""
+        if getattr(event.widget, "id", None) != "code-copy-btn":
+            return
+        try:
+            self.app._copy_text_with_hint(self.copy_content())  # type: ignore[attr-defined]
+            self._header.flash_copy()
+        except Exception:
+            pass
+        event.prevent_default()
 
 
 # ---------------------------------------------------------------------------
@@ -925,8 +979,11 @@ class OutputPanel(ScrollableContainer):
         super().__init__(**kwargs)
         self._user_scrolled_up: bool = False
 
-    def watch_scroll_y(self, new_y: float) -> None:
+    def watch_scroll_y(self, old_y: float, new_y: float) -> None:
         """Re-engage auto-scroll when the user scrolls back to the bottom."""
+        # Delegate to base class first so _refresh_scroll() fires and the
+        # viewport actually repaints when scroll position changes.
+        super().watch_scroll_y(old_y, new_y)
         # max_scroll_y can be 0 when the panel hasn't laid out yet; guard against that.
         if self.max_scroll_y > 0 and new_y >= self.max_scroll_y - 1:
             was_scrolled = self._user_scrolled_up
@@ -948,12 +1005,12 @@ class OutputPanel(ScrollableContainer):
     def on_mouse_scroll_up(self, event: Any) -> None:
         """Scroll up 3 lines per wheel tick and suppress auto-scroll."""
         self._user_scrolled_up = True
-        self.scroll_relative(y=-self._SCROLL_LINES, animate=False)
+        self.scroll_relative(y=-self._SCROLL_LINES, animate=False, immediate=True)
         event.prevent_default()
 
     def on_mouse_scroll_down(self, event: Any) -> None:
         """Scroll down 3 lines per wheel tick; re-engage auto-scroll at bottom."""
-        self.scroll_relative(y=self._SCROLL_LINES, animate=False)
+        self.scroll_relative(y=self._SCROLL_LINES, animate=False, immediate=True)
         event.prevent_default()
         # watch_scroll_y handles re-engaging auto-scroll when near the bottom.
 
@@ -1105,8 +1162,6 @@ class ReasoningPanel(Widget):
     the body between expanded and collapsed states.
     """
 
-    GUTTER = "▌ "
-
     DEFAULT_CSS = """
     ReasoningPanel {
         display: none;
@@ -1115,11 +1170,6 @@ class ReasoningPanel(Widget):
     }
     ReasoningPanel.visible {
         display: block;
-    }
-    ReasoningPanel RichLog {
-        height: auto;
-        overflow-y: hidden;
-        overflow-x: hidden;
     }
     ReasoningPanel #reasoning-header {
         height: 1;
@@ -1134,7 +1184,7 @@ class ReasoningPanel(Widget):
     """
 
     def __init__(self, **kwargs: Any) -> None:
-        self._reasoning_log = RichLog(markup=False, highlight=False, wrap=True, id="reasoning-log")
+        self._reasoning_log = CopyableRichLog(markup=False, highlight=False, wrap=True, id="reasoning-log")
         self._header = Static("", id="reasoning-header")
         super().__init__(**kwargs)
         self._live_buf = ""
@@ -1147,11 +1197,14 @@ class ReasoningPanel(Widget):
         yield self._reasoning_log
 
     def _gutter_line(self, content: str) -> Text:
-        """Build a dim gutter-prefixed line for the reasoning log."""
-        t = Text()
-        t.append(self.GUTTER, style="dim")
-        t.append(content, style="dim italic")
-        return t
+        """Build a dim italic line for the reasoning log.
+
+        The left gutter marker is rendered as a CSS ``border-left: vkey`` on
+        the whole ``ReasoningPanel``, so it appears on every visual row of a
+        wrapped line — not just the first row (which was the bug with the old
+        text-prepended ``▌`` approach).
+        """
+        return Text(content, style="dim italic")
 
     def _update_header(self) -> None:
         """Rebuild the collapse-toggle header text after close_box()."""
@@ -1164,7 +1217,7 @@ class ReasoningPanel(Widget):
             k = "#5f87d7"
         self._header.update(
             Text.from_markup(
-                f"[dim]▌ Reasoning  {n}L  [bold {k}]{toggle}[/]  {verb}[/dim]"
+                f"[dim]Reasoning  {n}L  [bold {k}]{toggle}[/]  {verb}[/dim]"
             )
         )
 

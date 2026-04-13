@@ -333,7 +333,7 @@ async def test_watch_scroll_y_clears_flag_at_bottom():
         output._user_scrolled_up = True
 
         with patch.object(type(output), "max_scroll_y", new_callable=PropertyMock, return_value=20):
-            output.watch_scroll_y(20)
+            output.watch_scroll_y(0.0, 20)
 
         assert output._user_scrolled_up is False
 
@@ -347,7 +347,7 @@ async def test_watch_scroll_y_clears_flag_within_one_line_of_bottom():
         output._user_scrolled_up = True
 
         with patch.object(type(output), "max_scroll_y", new_callable=PropertyMock, return_value=20):
-            output.watch_scroll_y(19)
+            output.watch_scroll_y(0.0, 19)
 
         assert output._user_scrolled_up is False
 
@@ -361,7 +361,7 @@ async def test_watch_scroll_y_preserves_flag_mid_scroll():
         output._user_scrolled_up = True
 
         with patch.object(type(output), "max_scroll_y", new_callable=PropertyMock, return_value=100):
-            output.watch_scroll_y(50)
+            output.watch_scroll_y(0.0, 50)
 
         assert output._user_scrolled_up is True
 
@@ -376,7 +376,7 @@ async def test_watch_scroll_y_noop_when_max_scroll_is_zero():
         output._user_scrolled_up = True
 
         with patch.object(type(output), "max_scroll_y", new_callable=PropertyMock, return_value=0):
-            output.watch_scroll_y(0)
+            output.watch_scroll_y(0.0, 0)
 
         assert output._user_scrolled_up is True, "flag must not be cleared when max_scroll_y is 0"
 
@@ -406,7 +406,7 @@ async def test_flag_clears_after_streaming_then_scroll_return():
 
         # User scrolls back to the live edge
         with patch.object(type(output), "max_scroll_y", new_callable=PropertyMock, return_value=30):
-            output.watch_scroll_y(30)
+            output.watch_scroll_y(0.0, 30)
         assert output._user_scrolled_up is False
 
         # Now streaming should scroll again
@@ -490,7 +490,7 @@ async def test_tool_tail_dismissed_when_scroll_returns():
         assert tail.display is True
 
         with patch.object(type(output), "max_scroll_y", new_callable=PropertyMock, return_value=50):
-            output.watch_scroll_y(50)
+            output.watch_scroll_y(0.0, 50)
         await pilot.pause()
 
         assert tail.display is False, "ToolTail must be dismissed when user returns to the live edge"
@@ -551,7 +551,7 @@ async def test_tool_tail_resets_between_scroll_sessions():
 
         # Return to bottom — dismisses tail (resets _new_line_count to 0)
         with patch.object(type(output), "max_scroll_y", new_callable=PropertyMock, return_value=40):
-            output.watch_scroll_y(40)
+            output.watch_scroll_y(0.0, 40)
         await pilot.pause()
         assert tail.display is False
         assert tail._new_line_count == 0
@@ -735,7 +735,7 @@ async def test_mouse_scroll_up_moves_three_lines():
         output = await _setup(pilot)
         with patch.object(output, "scroll_relative") as mock_sr:
             output.on_mouse_scroll_up(_make_scroll_event(_MSU))
-            mock_sr.assert_called_once_with(y=-3, animate=False)
+            mock_sr.assert_called_once_with(y=-3, animate=False, immediate=True)
 
 
 @pytest.mark.asyncio
@@ -747,7 +747,7 @@ async def test_mouse_scroll_down_moves_three_lines():
         output = await _setup(pilot)
         with patch.object(output, "scroll_relative") as mock_sr:
             output.on_mouse_scroll_down(_make_scroll_event(_MSD))
-            mock_sr.assert_called_once_with(y=3, animate=False)
+            mock_sr.assert_called_once_with(y=3, animate=False, immediate=True)
 
 
 @pytest.mark.asyncio

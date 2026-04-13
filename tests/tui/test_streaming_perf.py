@@ -381,7 +381,7 @@ async def test_scroll_handler_cost_under_0_1ms() -> None:
         times: list[float] = []
         for _ in range(1000):
             t0 = time.perf_counter()
-            panel.watch_scroll_y(9999.0)  # max_scroll_y ≈ 0 → True branch → _user_scrolled_up=False
+            panel.watch_scroll_y(0.0, 9999.0)  # max_scroll_y ≈ 0 → True branch → _user_scrolled_up=False
             times.append((time.perf_counter() - t0) * 1000)
 
         median_ms = statistics.median(times)

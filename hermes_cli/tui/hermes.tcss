@@ -21,8 +21,8 @@
 /* App-wide background — ThemeManager overrides via component_vars: app-bg */
 $app-bg: #1E1E1E;
 
-/* TitledRule idle glyph color — darken-3 of $primary */
-$primary-darken-3: #2d4a6e;
+/* TitledRule idle glyph color — visible but dimmer than $primary for pulse contrast */
+$primary-darken-3: #4a7aaa;
 
 $cursor-color: #FFF8DC;
 $cursor-selection-bg: #3A5A8C;
@@ -53,7 +53,7 @@ $status-context-color: #5f87d7;
 $fps-hud-bg: #1a1a2e;
 
 /* TitledRule colours — ThemeManager overrides via component_vars */
-$rule-dim-color: #555555;
+$rule-dim-color: #888888;
 $rule-bg-color: #1E1E1E;
 $rule-accent-color: #FFD700;
 $rule-accent-dim-color: #B8860B;
@@ -92,18 +92,19 @@ CopyableRichLog {
     background: $app-bg;
 }
 
-ReasoningPanel RichLog {
-    background: $app-bg;
-}
 
 MessagePanel.--entering {
     opacity: 0.0;
 }
 
-/* --- Reasoning panel --- */
+/* --- Reasoning panel ---
+ * border-left: vkey draws the vertical gutter character on EVERY visual row
+ * (including line-wrap continuations), fixing the alignment bug that text-
+ * prepended ▌ had — it only appeared on the first row of wrapped lines. */
 
 ReasoningPanel {
     margin: 0 1;
+    border-left: vkey $primary 40%;
 }
 
 /* Hover affordance on closeable reasoning panels */
@@ -111,11 +112,9 @@ ReasoningPanel.--closeable:hover {
     background: $accent 5%;
 }
 
-/* --- Input rule separator --- */
-
-#input-rule {
-    color: $primary-darken-3;
-}
+/* --- Input rule separator ---
+ * TitledRule manages all its own colors via _live_colors() + inline Rich styles.
+ * No CSS color override needed here — it would conflict with the inline styles. */
 
 /* --- Hint bar ---
  * Always 1 line tall (no display:none toggling) to prevent layout reflow

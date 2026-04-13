@@ -122,10 +122,15 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     # Completion list empty-state background
     "completion-empty-bg":  "#2A2A2A",
     # TitledRule / PlainRule separator tones
-    "rule-dim-color":       "#555555",
+    "rule-dim-color":       "#888888",
     "rule-bg-color":        "#1E1E1E",
     "rule-accent-color":    "#FFD700",
-    "rule-accent-dim-color":"#B8860B",
+    "rule-accent-dim-color":"#CC9920",
+    # TitledRule idle glyph — visible but dimmer than primary (#5f87d7) so
+    # the pulse animation from idle→active is meaningful.
+    # NOT in Textual's default theme vars; must be injected here so
+    # _live_colors() get_css_variables() lookup succeeds at runtime.
+    "primary-darken-3":     "#4a7aaa",
 }
 
 

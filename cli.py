@@ -1325,7 +1325,10 @@ class ChatConsole:
         self._inner.print(*args, **kwargs)
         output = self._buffer.getvalue()
         for line in output.rstrip("\n").split("\n"):
-            _cprint(line)
+            # Append \n so LiveLineWidget._commit_lines() fires and the line
+            # is committed to the CopyableRichLog rather than buffered as the
+            # live/typewriter line (which only shows the *last* fed chunk).
+            _cprint(line + "\n")
 
 # ASCII Art - HERMES-AGENT logo (full width, single line - requires ~95 char terminal)
 HERMES_AGENT_LOGO = """[bold #FFD700]██╗  ██╗███████╗██████╗ ███╗   ███╗███████╗███████╗       █████╗  ██████╗ ███████╗███╗   ██╗████████╗[/]

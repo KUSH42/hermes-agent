@@ -1484,8 +1484,8 @@ class HermesApp(App):
                     items = [
                         MenuItem("⎘  Copy code block", "", lambda b=cb: self._copy_code_block(b)),
                     ]
-                    if cb._state == "COMPLETE":
-                        items.append(MenuItem("▸/▾  Expand/Collapse", "", lambda b=cb: b.toggle_class("--collapsed")))
+                    if cb.can_toggle():
+                        items.append(MenuItem("▸/▾  Expand/Collapse", "", lambda b=cb: b.toggle_collapsed()))
                     return items
             except ImportError:
                 pass
@@ -1537,11 +1537,12 @@ class HermesApp(App):
     # --- Context menu action helpers ---
 
     def _copy_code_block(self, block: Any) -> None:
-        """Copy a StreamingCodeBlock's plain-text content to clipboard and flash hint."""
+        """Copy a StreamingCodeBlock's plain-text content to clipboard and flash footer."""
         try:
             content = block.copy_content()
             self._copy_text_with_hint(content)
-            block._header.flash_copy()
+            if hasattr(block, "flash_copy"):
+                block.flash_copy()
         except Exception:
             self._flash_hint("⚠ copy failed", 1.5)
 

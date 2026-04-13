@@ -92,6 +92,20 @@ CopyableRichLog {
     background: $app-bg;
 }
 
+StreamingCodeBlock {
+    background: $app-bg;
+}
+
+CodeBlockFooter {
+    color: $text-muted;
+    background: $app-bg;
+}
+
+CodeBlockFooter:hover {
+    color: $accent;
+    background: $accent 8%;
+}
+
 
 MessagePanel.--entering {
     opacity: 0.0;

@@ -332,131 +332,9 @@ async def test_tool_header_no_affordances_for_small_block():
 # ---------------------------------------------------------------------------
 
 
-def test_code_block_header_shows_spinner_during_streaming():
-    """CodeBlockHeader shows ··· while in streaming state."""
-    from hermes_cli.tui.widgets import CodeBlockHeader
-    header = CodeBlockHeader(lang="python")
-    header._line_count = 5
-    # _phase = "streaming" is the initial default
-    # Static stores content in name-mangled _Static__content
-    content = str(header._Static__content)
-    assert "···" in content, "CodeBlockHeader must show ··· spinner during streaming"
-    assert "[▼]" not in content
-
-
-def test_code_block_header_shows_collapse_and_copy_after_complete():
-    """CodeBlockHeader shows [▼] and ⎘ after mark_complete()."""
-    from hermes_cli.tui.widgets import CodeBlockHeader
-    header = CodeBlockHeader(lang="python")
-    header._line_count = 3
-    header.mark_complete()
-    content = str(header._Static__content)
-    assert "[▼]" in content, "CodeBlockHeader must show [▼] affordance after fence close"
-    assert "⎘" in content, "CodeBlockHeader must show ⎘ copy affordance after fence close"
-    assert "···" not in content
-
-
-def test_code_block_header_shows_copy_on_flush():
-    """CodeBlockHeader shows (incomplete) and ⎘ after mark_flushed()."""
-    from hermes_cli.tui.widgets import CodeBlockHeader
-    header = CodeBlockHeader(lang="bash")
-    header.mark_flushed()
-    content = str(header._Static__content)
-    assert "(incomplete)" in content
-    assert "⎘" in content, "CodeBlockHeader must show ⎘ copy affordance after flush"
-    assert "[▼]" not in content
-
-
-def test_code_block_header_no_copy_during_streaming():
-    """CodeBlockHeader shows no ⎘ while streaming (only ···)."""
-    from hermes_cli.tui.widgets import CodeBlockHeader
-    header = CodeBlockHeader(lang="python")
-    content = str(header._Static__content)
-    assert "···" in content
-    assert "⎘" not in content, "CodeBlockHeader must NOT show ⎘ during streaming"
-
-
 @pytest.mark.asyncio
-async def test_code_block_collapse_click_in_full_layout():
-    """Clicking CodeBlockHeader collapses a COMPLETE block in a real app layout."""
-    app = _make_app()
-    async with app.run_test(size=(80, 40)) as pilot:
-        await _pause(pilot)
-        output = app.query_one(OutputPanel)
-        mp = output.new_message()
-        await _pause(pilot)
-
-        block = StreamingCodeBlock(lang="python")
-        await mp.mount(block)
-        await _pause(pilot)
-
-        block.append_line("result = 42")
-        block._header.set_line_count(1)
-        await _pause(pilot)
-
-        block.complete({})
-        await asyncio.sleep(0.05)
-        await _pause(pilot)
-
-        assert block._state == "COMPLETE"
-        assert not block.has_class("--collapsed")
-
-        block._header.on_click()
-        await _pause(pilot)
-        assert block.has_class("--collapsed"), "Header click must collapse the block"
-
-
-@pytest.mark.asyncio
-async def test_code_block_click_ignored_during_streaming():
-    """Clicking CodeBlockHeader during streaming state is a no-op."""
-    app = _make_app()
-    async with app.run_test(size=(80, 40)) as pilot:
-        await _pause(pilot)
-        output = app.query_one(OutputPanel)
-        mp = output.new_message()
-        await _pause(pilot)
-
-        block = StreamingCodeBlock(lang="go")
-        await mp.mount(block)
-        await _pause(pilot)
-
-        assert block._state == "STREAMING"
-        block._header.on_click()
-        await _pause(pilot)
-        assert not block.has_class("--collapsed")
-
-
-@pytest.mark.asyncio
-async def test_streaming_code_block_expand_collapse_toggle():
-    """Header click collapses; second click expands."""
-    app = _make_app()
-    async with app.run_test(size=(80, 40)) as pilot:
-        await _pause(pilot)
-        output = app.query_one(OutputPanel)
-        mp = output.new_message()
-        await _pause(pilot)
-
-        block = StreamingCodeBlock(lang="rust")
-        await mp.mount(block)
-        await _pause(pilot)
-
-        block.complete({})
-        await asyncio.sleep(0.05)
-        await _pause(pilot)
-
-        block._header.on_click()
-        await _pause(pilot)
-        assert block.has_class("--collapsed")
-
-        block._header.on_click()
-        await _pause(pilot)
-        assert not block.has_class("--collapsed"), "Second header click must re-expand"
-
-
-@pytest.mark.asyncio
-async def test_code_block_copy_button_visible_after_complete():
-    """#code-copy-btn is mounted and shows ⎘ once the fence closes."""
-    from textual.widgets import Static
+async def test_code_block_footer_visible_after_complete():
+    """Integrated controls row shows copy once the fence closes."""
     app = _make_app()
     async with app.run_test(size=(80, 40)) as pilot:
         await _pause(pilot)
@@ -473,14 +351,36 @@ async def test_code_block_copy_button_visible_after_complete():
         await asyncio.sleep(0.05)
         await _pause(pilot)
 
-        btn = block.query_one("#code-copy-btn", Static)
-        assert "⎘" in str(btn.content)
+        assert block.has_class("--complete")
+        assert "copy" in block._controls_text_plain
 
 
 @pytest.mark.asyncio
-async def test_code_block_copy_button_click_copies():
-    """Clicking #code-copy-btn copies the source code."""
-    from textual.widgets import Static
+async def test_code_block_footer_visible_after_flush():
+    """Integrated controls row is shown for FLUSHED blocks too."""
+    app = _make_app()
+    async with app.run_test(size=(80, 40)) as pilot:
+        await _pause(pilot)
+        output = app.query_one(OutputPanel)
+        mp = output.new_message()
+        await _pause(pilot)
+
+        block = StreamingCodeBlock(lang="python")
+        await mp.mount(block)
+        block.append_line("x = 1")
+        await _pause(pilot)
+
+        block.flush()
+        await _pause(pilot)
+
+        assert block._state == "FLUSHED"
+        assert block.has_class("--flushed")
+        assert "copy" in block._controls_text_plain
+
+
+@pytest.mark.asyncio
+async def test_code_block_footer_copy_left_zone():
+    """Copying a code block flashes the integrated controls row."""
     app = _make_app()
     async with app.run_test(size=(80, 40)) as pilot:
         await _pause(pilot)
@@ -495,14 +395,44 @@ async def test_code_block_copy_button_click_copies():
         await asyncio.sleep(0.05)
         await _pause(pilot)
 
-        btn = block.query_one("#code-copy-btn", Static)
         with patch.object(app, "_copy_text_with_hint") as mock_copy:
-            btn.on_click = None  # click routes to StreamingCodeBlock.on_click via event
-            await pilot.click(btn)
+            app._copy_code_block(block)
             await _pause(pilot)
 
         mock_copy.assert_called_once()
         assert "answer = 42" in mock_copy.call_args[0][0]
+        assert "copied" in block._controls_text_plain
+
+
+@pytest.mark.asyncio
+async def test_code_block_footer_toggle_collapses_log():
+    """toggle_collapsed() collapses/expands the code log."""
+    app = _make_app()
+    async with app.run_test(size=(80, 40)) as pilot:
+        await _pause(pilot)
+        output = app.query_one(OutputPanel)
+        mp = output.new_message()
+        await _pause(pilot)
+
+        block = StreamingCodeBlock(lang="python")
+        await mp.mount(block)
+        block.append_line("x = 1")
+        block.append_line("y = 2")
+        block.complete({})
+        await asyncio.sleep(0.05)
+        await _pause(pilot)
+
+        assert not block._collapsed
+
+        block.toggle_collapsed()
+        await _pause(pilot)
+        assert block._collapsed
+        assert "expand" in block._controls_text_plain
+
+        block.toggle_collapsed()
+        await _pause(pilot)
+        assert not block._collapsed
+        assert "collapse" in block._controls_text_plain
 
 
 # ---------------------------------------------------------------------------
@@ -575,6 +505,8 @@ async def test_right_click_on_complete_code_block_shows_expand_collapse():
         block = StreamingCodeBlock(lang="python")
         await mp.mount(block)
         await _pause(pilot)
+        block.append_line("x = 1")
+        block.append_line("y = 2")
         block.complete({})
         await asyncio.sleep(0.05)
         await _pause(pilot)
@@ -588,6 +520,33 @@ async def test_right_click_on_complete_code_block_shows_expand_collapse():
         assert any("Expand/Collapse" in lbl for lbl in labels), (
             "COMPLETE StreamingCodeBlock right-click must include Expand/Collapse item"
         )
+
+
+@pytest.mark.asyncio
+async def test_right_click_on_single_line_code_block_hides_expand_collapse():
+    """Single-line COMPLETE StreamingCodeBlock should not show Expand/Collapse."""
+    app = _make_app()
+    async with app.run_test(size=(80, 40)) as pilot:
+        await _pause(pilot)
+        output = app.query_one(OutputPanel)
+        mp = output.new_message()
+        await _pause(pilot)
+
+        block = StreamingCodeBlock(lang="python")
+        await mp.mount(block)
+        await _pause(pilot)
+        block.append_line("x = 1")
+        block.complete({})
+        await asyncio.sleep(0.05)
+        await _pause(pilot)
+
+        await app.on_click(_right_click(block, 10, 5))
+        await _pause(pilot)
+
+        menu = app.query_one(ContextMenu)
+        items = list(menu.query(_ContextItem))
+        labels = [i._item.label for i in items]
+        assert not any("Expand/Collapse" in lbl for lbl in labels)
 
 
 # ---------------------------------------------------------------------------
@@ -647,93 +606,6 @@ async def test_left_click_on_code_block_log_does_not_move_scroll():
         assert output.scroll_y == initial_scroll, (
             "Left-click on code block's CopyableRichLog must not alter OutputPanel scroll_y"
         )
-
-
-# ---------------------------------------------------------------------------
-# Code block header visibility — mounted-app integration
-# (Guards against CSS color making affordances invisible)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_code_block_header_complete_class_set_in_full_layout():
-    """After complete(), StreamingCodeBlock has --complete CSS class in mounted app.
-
-    --complete triggers the CodeBlockHeader color change (dim → visible).
-    This test catches regressions where complete() forgets to add_class.
-    """
-    app = _make_app()
-    async with app.run_test(size=(80, 40)) as pilot:
-        await _pause(pilot)
-        output = app.query_one(OutputPanel)
-        mp = output.new_message()
-        await _pause(pilot)
-
-        block = StreamingCodeBlock(lang="python")
-        await mp.mount(block)
-        await _pause(pilot)
-
-        block.append_line("x = 1")
-        block.complete({})
-        await asyncio.sleep(0.05)
-        await _pause(pilot)
-
-        assert block.has_class("--complete"), (
-            "StreamingCodeBlock must gain --complete class after fence close; "
-            "this class drives the CodeBlockHeader color change for visible affordances"
-        )
-
-
-@pytest.mark.asyncio
-async def test_code_block_header_content_in_mounted_app():
-    """CodeBlockHeader shows [▼] and ⎘ in content when block is mounted and complete.
-
-    Checks the MOUNTED widget's content (not just standalone), confirming
-    that complete() + call_after_refresh(_finalize_syntax) fires correctly
-    and the header reflects the final COMPLETE state.
-    """
-    app = _make_app()
-    async with app.run_test(size=(80, 40)) as pilot:
-        await _pause(pilot)
-        output = app.query_one(OutputPanel)
-        mp = output.new_message()
-        await _pause(pilot)
-
-        block = StreamingCodeBlock(lang="java")
-        await mp.mount(block)
-        await _pause(pilot)
-
-        block.append_line("System.out.println(42);")
-        block.complete({})
-        await asyncio.sleep(0.05)
-        await _pause(pilot)
-
-        header_content = str(block._header._Static__content)
-        assert "[▼]" in header_content, (
-            "Mounted CodeBlockHeader must show [▼] after fence close. "
-            "If this fails, complete() is not calling mark_complete() correctly."
-        )
-        assert "⎘" in header_content, (
-            "Mounted CodeBlockHeader must show ⎘ copy affordance after fence close. "
-            "If this fails, _update_display() in COMPLETE state is missing ⎘."
-        )
-        assert "···" not in header_content, "Header must not show spinner after complete()"
-
-
-@pytest.mark.asyncio
-async def test_code_block_header_not_dim_during_complete():
-    """CodeBlockHeader DEFAULT_CSS is $text-muted but --complete class must change it.
-
-    The streaming state (dim header) was intended to de-emphasise the header
-    while content is streaming. After complete, the header must be brighter
-    so ⎘ and [▼] are actually visible to the user.
-    """
-    # Check that the DEFAULT_CSS has a brighter color for --complete state
-    css = StreamingCodeBlock.DEFAULT_CSS
-    assert "$text-muted" not in css.split("--complete")[1].split("}")[0], (
-        "StreamingCodeBlock.--complete CodeBlockHeader must NOT use $text-muted — "
-        "that color is invisible against the dark background. Use $text 55% or similar."
-    )
 
 
 # ---------------------------------------------------------------------------

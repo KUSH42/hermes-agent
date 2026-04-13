@@ -69,8 +69,7 @@ def _skin_branding(key: str, fallback: str) -> str:
 
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-
-
+_PRENUMBERED_LINE_RE = re.compile(r"^\s*(\d+)(?:\s*[│|:]\s?|\s{2,})(.*)$")
 def _strip_ansi(text: str) -> str:
     """Strip ANSI CSI escape sequences from text."""
     return _ANSI_RE.sub("", text)
@@ -326,6 +325,20 @@ class CopyableBlock(Widget):
             self.query_one("#copy-btn")
         except NoMatches:
             self.mount(Static("⎘", id="copy-btn"))
+
+
+class CodeBlockFooter(Static):
+    """Dedicated footer row for code block controls."""
+
+    DEFAULT_CSS = """
+    CodeBlockFooter {
+        height: 1;
+        margin-top: 0;
+        margin-left: 1;
+        color: $text-muted;
+        background: transparent;
+    }
+    """
 
 
 def _safe_widget_call(app: HermesApp, widget_type: type, method: str, *args: Any) -> None:
@@ -674,73 +687,6 @@ class MessagePanel(Widget):
 # StreamingCodeBlock — fenced code block widget (stream-then-finalize)
 # ---------------------------------------------------------------------------
 
-class CodeBlockHeader(Static):
-    """Language badge + line count + spinner/state indicator.
-
-    Collapse affordance: click toggles --collapsed on parent StreamingCodeBlock
-    (only in COMPLETE state — no collapse during streaming).
-    """
-
-    DEFAULT_CSS = """
-    CodeBlockHeader {
-        height: 1;
-        padding-left: 1;
-        color: $text-muted;
-    }
-    """
-
-    def __init__(self, lang: str, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self._lang_label = lang or "text"
-        self._line_count = 0
-        self._phase = "streaming"   # "streaming" | "complete" | "flushed"
-        self._copy_flash = False
-        self._update_display()
-
-    # ------------------------------------------------------------------
-    def _update_display(self) -> None:
-        lang = self._lang_label
-        count = self._line_count
-        copy_icon = "  ✓" if self._copy_flash else "  ⎘"
-        if self._phase == "streaming":
-            self.update(f"{lang}   {count} lines  ···")
-        elif self._phase == "flushed":
-            self.update(f"{lang}   {count} lines  (incomplete){copy_icon}")
-        else:  # complete
-            self.update(f"{lang}   {count} lines  [▼]{copy_icon}")
-
-    def set_line_count(self, n: int) -> None:
-        self._line_count = n
-        self._update_display()
-
-    def mark_complete(self) -> None:
-        self._phase = "complete"
-        self._update_display()
-
-    def mark_flushed(self) -> None:
-        self._phase = "flushed"
-        self._update_display()
-
-    def flash_copy(self) -> None:
-        """Flash ⎘ → ✓ for 1.5 s then revert (mirrors ToolHeader.flash_copy)."""
-        self._copy_flash = True
-        self._update_display()
-        self.set_timer(1.5, self._end_copy_flash)
-
-    def _end_copy_flash(self) -> None:
-        self._copy_flash = False
-        self._update_display()
-
-    # ------------------------------------------------------------------
-    def on_click(self) -> None:
-        block = self.parent
-        if not isinstance(block, StreamingCodeBlock):
-            return
-        if block._state != "COMPLETE":
-            return   # no collapse during streaming or after incomplete flush
-        block.toggle_class("--collapsed")
-
-
 class StreamingCodeBlock(Widget):
     """Fenced code block widget: streams per-line Pygments highlight, then
     finalizes to full rich.Syntax on fence close.
@@ -754,30 +700,10 @@ class StreamingCodeBlock(Widget):
     DEFAULT_CSS = """
     StreamingCodeBlock {
         height: auto;
-        border-left: vkey $primary 30%;
+        layout: vertical;
         margin-left: 2;
         margin-top: 1;
         margin-bottom: 1;
-    }
-    StreamingCodeBlock.--complete CodeBlockHeader {
-        color: $text 55%;
-    }
-    StreamingCodeBlock.--collapsed > CopyableRichLog {
-        display: none;
-    }
-    StreamingCodeBlock #code-copy-btn {
-        display: none;
-        height: 1;
-        color: $text-muted;
-        background: $surface-lighten-1;
-        padding: 0 2;
-    }
-    StreamingCodeBlock.--complete #code-copy-btn {
-        display: block;
-    }
-    StreamingCodeBlock #code-copy-btn:hover {
-        color: $accent;
-        background: $accent 20%;
     }
     """
 
@@ -792,14 +718,16 @@ class StreamingCodeBlock(Widget):
         self._pygments_theme = pygments_theme
         self._state: "Literal['STREAMING', 'COMPLETE', 'FLUSHED']" = "STREAMING"
         self._code_lines: list[str] = []
-        self._header = CodeBlockHeader(lang=lang)
-        self._copy_btn = Static("⎘ copy", id="code-copy-btn")
         self._log = CopyableRichLog(markup=False)
+        self._footer = CodeBlockFooter(classes="code-block-footer")
+        self._footer.styles.display = "none"
+        self._collapsed = False
+        self._copy_flash = False
+        self._controls_text_plain = ""
 
     def compose(self) -> ComposeResult:
-        yield self._header
-        yield self._copy_btn   # hidden during STREAMING; shown via --complete CSS
         yield self._log
+        yield self._footer
 
     # ------------------------------------------------------------------
     # Streaming phase
@@ -810,7 +738,6 @@ class StreamingCodeBlock(Widget):
         self._code_lines.append(line)
         highlighted = self._highlight_line(line, self._lang)
         self._log.write_with_source(Text.from_ansi(highlighted), line)
-        self._header.set_line_count(len(self._code_lines))
 
     def _highlight_line(self, line: str, lang: str) -> str:
         """Per-line Pygments highlight — loses multi-line string context but
@@ -836,15 +763,13 @@ class StreamingCodeBlock(Widget):
         if self._state != "STREAMING":
             return
         self._state = "COMPLETE"
-        self.add_class("--complete")  # CSS shows #code-copy-btn via .--complete rule
-        self._header.mark_complete()
-        # Defer clear+write to a single repaint — prevents flash of empty log
+        self.add_class("--complete")
         self.call_after_refresh(self._finalize_syntax, dict(skin_vars))
 
     def _finalize_syntax(self, skin_vars: dict[str, str]) -> None:
         from rich.syntax import Syntax
         from hermes_cli.tui.response_flow import _detect_lang
-        code = "\n".join(self._code_lines)
+        code = "\n".join(self._display_code_lines())
         lang = self._lang or _detect_lang(code)
         syntax = Syntax(
             code,
@@ -856,7 +781,10 @@ class StreamingCodeBlock(Widget):
             background_color=skin_vars.get("app-bg", "#1e1e1e"),
         )
         self._log.clear()
-        self._log.write_with_source(syntax, code)  # type: ignore[arg-type]
+        if not self._collapsed:
+            self._log.write_with_source(syntax, code)  # type: ignore[arg-type]
+        self._sync_footer()
+        self.refresh(layout=True)
 
     # ------------------------------------------------------------------
     # Partial fence (turn ended before fence closed)
@@ -868,22 +796,87 @@ class StreamingCodeBlock(Widget):
             return
         self._state = "FLUSHED"
         self.add_class("--flushed")
-        self._header.mark_flushed()
+        self._render_flushed_content()
 
     def copy_content(self) -> str:
         """Plain text of the code block for clipboard operations."""
-        return self._log.copy_content()
+        return "\n".join(self._display_code_lines())
 
-    def on_click(self, event: Any) -> None:
-        """Copy code to clipboard when the ⎘ button is clicked."""
-        if getattr(event.widget, "id", None) != "code-copy-btn":
+    def toggle_collapsed(self) -> None:
+        """Collapse/expand code body after the block is complete/flushed."""
+        if self._state == "STREAMING" or not self.can_toggle():
             return
-        try:
-            self.app._copy_text_with_hint(self.copy_content())  # type: ignore[attr-defined]
-            self._header.flash_copy()
-        except Exception:
-            pass
-        event.prevent_default()
+        self._collapsed = not self._collapsed
+        if self._state == "COMPLETE":
+            self._finalize_syntax(self.app.get_css_variables())
+        else:
+            self._render_flushed_content()
+
+    def can_toggle(self) -> bool:
+        """Only completed multi-line code blocks get a collapse affordance."""
+        return self._state != "STREAMING" and len(self._code_lines) > 1
+
+    def flash_copy(self) -> None:
+        """Flash copy confirmation in controls row."""
+        self._copy_flash = True
+        if self._state == "COMPLETE":
+            self._finalize_syntax(self.app.get_css_variables())
+        elif self._state == "FLUSHED":
+            self._render_flushed_content()
+        self.set_timer(1.5, self._end_copy_flash)
+
+    def _end_copy_flash(self) -> None:
+        self._copy_flash = False
+        if self._state == "COMPLETE":
+            self._finalize_syntax(self.app.get_css_variables())
+        elif self._state == "FLUSHED":
+            self._render_flushed_content()
+
+    def _controls_text(self) -> Text:
+        label = "✓ copied" if self._copy_flash else "⎘ copy"
+        t = Text(" ")
+        t.append(label, style="dim")
+        if self.can_toggle():
+            t.append("  ·  ", style="dim")
+            t.append("expand" if self._collapsed else "collapse", style="dim")
+        self._controls_text_plain = t.plain
+        return t
+
+    def _sync_footer(self) -> None:
+        self._footer.update(self._controls_text())
+        self._footer.styles.display = "none" if self._state == "STREAMING" else "block"
+        self._footer.refresh(layout=True)
+
+    def _render_flushed_content(self) -> None:
+        self._log.clear()
+        if not self._collapsed:
+            for line in self._display_code_lines():
+                highlighted = self._highlight_line(line, self._lang)
+                self._log.write_with_source(Text.from_ansi(highlighted), line)
+        self._sync_footer()
+        self.refresh(layout=True)
+
+    def _display_code_lines(self) -> list[str]:
+        """Normalize code lines for display/copy, stripping duplicate model-added gutters."""
+        nonempty = [line for line in self._code_lines if line.strip()]
+        if not nonempty:
+            return list(self._code_lines)
+        matches = [_PRENUMBERED_LINE_RE.match(line) for line in nonempty]
+        threshold = 1 if len(nonempty) == 1 else max(2, (len(nonempty) * 3 + 4) // 5)
+        if sum(1 for m in matches if m) < threshold:
+            return list(self._code_lines)
+        numbers = [int(m.group(1)) for m in matches if m]
+        if len(numbers) >= threshold:
+            expected = list(range(numbers[0], numbers[0] + len(numbers)))
+            sequential_hits = sum(1 for a, b in zip(numbers, expected) if a == b)
+            if sequential_hits < threshold:
+                return list(self._code_lines)
+        stripped_lines: list[str] = []
+        for line in self._code_lines:
+            m = _PRENUMBERED_LINE_RE.match(line)
+            stripped_lines.append(m.group(2) if m else line)
+        return stripped_lines
+
 
 
 # ---------------------------------------------------------------------------

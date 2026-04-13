@@ -54,6 +54,22 @@ _FENCE_OPEN_RE = re.compile(r"^(`{3,}|~{3,})(\S*)\s*$")
 # Matches closing fence (no language specifier)
 # Group 1: fence chars
 _FENCE_CLOSE_RE = re.compile(r"^(`{3,}|~{3,})\s*$")
+_INDENTED_CODE_RE = re.compile(r"^(?: {4}|\t)(.*)$")
+_SOURCE_KEYWORD_RE = re.compile(
+    r"\b(class|public|private|protected|static|void|func|function|def|return|import|from|package|const|let|var|fn|use|SELECT|INSERT|CREATE|UPDATE)\b"
+)
+_SOURCE_COMMAND_RE = re.compile(
+    r"^(javac|java|python|python3|node|npm|yarn|pnpm|pip|pip3|pytest|cargo|go|git|make|uv|bash|sh)\b"
+)
+_LIST_PREFIX_RE = re.compile(r"^\s*(?:[-*+•]|\d+[.)])\s+")
+_CODE_INTRO_LABEL_RE = re.compile(
+    r"^(?:to run it|run it|output|result|results|response|command|commands|example|examples|stderr|stdout|log|logs)\s*:$",
+    re.IGNORECASE,
+)
+_INLINE_CODE_LABEL_RE = re.compile(
+    r"^(to run it|run it|output|result|results|response|command|commands|example|examples|stderr|stdout|log|logs)\s*:\s*(.+)$",
+    re.IGNORECASE,
+)
 
 # Same pattern as rich_output._MD_HR_RE — standalone HR line
 _HR_RE = re.compile(r"^(-{3,}|\*{3,}|_{3,})$")
@@ -84,6 +100,31 @@ def _strip_ansi(text: str) -> str:
     return _ANSI_RE.sub("", text)
 
 
+def _looks_like_source_line(raw: str) -> bool:
+    stripped = raw.strip()
+    if not stripped:
+        return False
+    if stripped.endswith(":"):
+        return False
+    if _LIST_PREFIX_RE.match(raw):
+        return False
+    if " - " in stripped or " – " in stripped:
+        return False
+    if _SOURCE_COMMAND_RE.match(stripped):
+        return True
+    if _SOURCE_KEYWORD_RE.search(stripped):
+        return True
+    if any(tok in raw for tok in ("{", "}", "();", ");", "->", "::", "#include", "System.out.", "fmt.", "println!")):
+        return True
+    if "=" in raw and "==" not in raw and len(stripped.split()) <= 8:
+        return True
+    return False
+
+
+def _is_code_intro_label(line: str) -> bool:
+    return bool(_CODE_INTRO_LABEL_RE.match(line.strip()))
+
+
 # ---------------------------------------------------------------------------
 # ResponseFlowEngine
 # ---------------------------------------------------------------------------
@@ -108,10 +149,12 @@ class ResponseFlowEngine:
         self._skin_vars: dict[str, str] = panel.app.get_css_variables()
         self._pygments_theme: str = self._skin_vars.get("preview-syntax-theme", "monokai")
         self._block_buf: StreamingBlockBuffer = StreamingBlockBuffer()
-        self._state: Literal["NORMAL", "IN_CODE"] = "NORMAL"
+        self._state: Literal["NORMAL", "IN_CODE", "IN_INDENTED_CODE", "IN_SOURCE_LIKE"] = "NORMAL"
         self._fence_char: str = "`"
         self._fence_depth: int = 3
         self._active_block: "StreamingCodeBlock | None" = None
+        self._pending_source_line: str | None = None
+        self._pending_code_intro: bool = False
         self._prose_section_counter: int = 0  # for unique CopyableBlock IDs
 
     # ------------------------------------------------------------------
@@ -125,6 +168,43 @@ class ResponseFlowEngine:
         # Phase 1: Code block boundary detection (bypass StreamingBlockBuffer)
         if self._state == "NORMAL":
             stripped = raw.strip()
+            intro_candidate = _is_code_intro_label(raw)
+            was_pending_code_intro = self._pending_code_intro
+            if was_pending_code_intro:
+                self._pending_code_intro = False
+                if (
+                    stripped
+                    and not _FENCE_OPEN_RE.match(stripped)
+                    and not _INDENTED_CODE_RE.match(raw)
+                    and not _looks_like_source_line(raw)
+                    and not _LIST_PREFIX_RE.match(raw)
+                    and not stripped.endswith(":")
+                ):
+                    self._flush_block_buf()
+                    self._emit_complete_code_block([raw])
+                    return
+            if intro_candidate:
+                self._pending_code_intro = True
+            if self._pending_source_line is not None:
+                if _looks_like_source_line(raw):
+                    self._flush_block_buf()
+                    self._state = "IN_SOURCE_LIKE"
+                    self._active_block = self._open_code_block("")
+                    self._active_block.append_line(self._pending_source_line)
+                    self._active_block.append_line(raw)
+                    self._pending_source_line = None
+                    return
+                pending = self._pending_source_line
+                self._pending_source_line = None
+                block_result = self._block_buf.process_line(pending)
+                if block_result is not None:
+                    if _is_horizontal_rule(block_result):
+                        self._emit_rule()
+                    else:
+                        block_ansi = apply_block_line(block_result)
+                        inline_ansi = apply_inline_markdown(block_ansi)
+                        plain = _strip_ansi(inline_ansi)
+                        self._prose_log.write_with_source(Text.from_ansi(inline_ansi), plain)
             m = _FENCE_OPEN_RE.match(stripped)
             if m:
                 lang = m.group(2).strip() if m.group(2) else ""
@@ -138,6 +218,29 @@ class ResponseFlowEngine:
                 self._fence_depth = fence_depth
                 self._active_block = self._open_code_block(lang)
                 return  # fence open line itself not written to any log
+            indent_m = _INDENTED_CODE_RE.match(raw)
+            if indent_m:
+                # Treat Markdown-style indented code blocks as first-class code widgets.
+                self._flush_block_buf()
+                self._state = "IN_INDENTED_CODE"
+                self._active_block = self._open_code_block("")
+                self._active_block.append_line(indent_m.group(1))
+                return
+            inline_label_m = _INLINE_CODE_LABEL_RE.match(stripped)
+            if inline_label_m:
+                value = inline_label_m.group(2).strip()
+                if value and not stripped.endswith(":"):
+                    self._flush_block_buf()
+                    label = f"{inline_label_m.group(1)}:"
+                    block_ansi = apply_block_line(label)
+                    inline_ansi = apply_inline_markdown(block_ansi)
+                    plain = _strip_ansi(inline_ansi)
+                    self._prose_log.write_with_source(Text.from_ansi(inline_ansi), plain)
+                    self._emit_complete_code_block([value])
+                    return
+            if _looks_like_source_line(raw):
+                self._pending_source_line = raw
+                return
 
         if self._state == "IN_CODE":
             stripped = raw.strip()
@@ -156,6 +259,28 @@ class ResponseFlowEngine:
             self._active_block.append_line(raw)
             return  # code lines go to StreamingCodeBlock, not prose log
 
+        if self._state == "IN_INDENTED_CODE":
+            assert self._active_block is not None
+            indent_m = _INDENTED_CODE_RE.match(raw)
+            if raw == "":
+                self._active_block.append_line("")
+                return
+            if indent_m:
+                self._active_block.append_line(indent_m.group(1))
+                return
+            self._active_block.complete(self._skin_vars)
+            self._active_block = None
+            self._state = "NORMAL"
+
+        if self._state == "IN_SOURCE_LIKE":
+            assert self._active_block is not None
+            if _looks_like_source_line(raw):
+                self._active_block.append_line(raw)
+                return
+            self._active_block.complete(self._skin_vars)
+            self._active_block = None
+            self._state = "NORMAL"
+
         # Phase 2: Prose — through StreamingBlockBuffer (setext, tables, BQ continuation)
         block_result = self._block_buf.process_line(raw)
         if block_result is None:
@@ -173,6 +298,7 @@ class ResponseFlowEngine:
         # Phase 5: Write to prose log
         plain = _strip_ansi(inline_ansi)
         self._prose_log.write_with_source(Text.from_ansi(inline_ansi), plain)
+        self._pending_code_intro = intro_candidate or _is_code_intro_label(plain)
 
     def flush(self) -> None:
         """Turn ended — close any open code block; flush StreamingBlockBuffer pending state."""
@@ -180,6 +306,22 @@ class ResponseFlowEngine:
             self._active_block.flush()  # marks FLUSHED, stops spinner
             self._active_block = None
             self._state = "NORMAL"
+        elif self._active_block is not None and self._state in ("IN_INDENTED_CODE", "IN_SOURCE_LIKE"):
+            self._active_block.complete(self._skin_vars)
+            self._active_block = None
+            self._state = "NORMAL"
+        if self._pending_source_line is not None:
+            pending = self._pending_source_line
+            self._pending_source_line = None
+            block_result = self._block_buf.process_line(pending)
+            if block_result is not None:
+                if _is_horizontal_rule(block_result):
+                    self._emit_rule()
+                else:
+                    block_ansi = apply_block_line(block_result)
+                    inline_ansi = apply_inline_markdown(block_ansi)
+                    plain = _strip_ansi(inline_ansi)
+                    self._prose_log.write_with_source(Text.from_ansi(inline_ansi), plain)
         # Flush any prose pending in StreamingBlockBuffer (setext, tables)
         self._flush_block_buf()
 
@@ -238,3 +380,11 @@ class ResponseFlowEngine:
         self._prose_log = new_prose.log            # future prose writes go here
 
         return block
+
+    def _emit_complete_code_block(self, lines: list[str], lang: str = "") -> None:
+        """Mount a code block and finalize it after the next refresh."""
+        block = self._open_code_block(lang)
+        for line in lines:
+            block.append_line(line)
+        self._active_block = None
+        self._panel.call_after_refresh(block.complete, dict(self._skin_vars))

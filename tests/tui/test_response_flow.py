@@ -250,10 +250,11 @@ async def test_code_block_complete_on_close():
         block = msg.query_one(StreamingCodeBlock)
         assert block._state == "COMPLETE"
         assert block.has_class("--complete")
-        # _finalize_syntax: single write replaces per-line content
+        # Final syntax body remains in the log; controls render in the footer widget.
         assert len(block._log._plain_lines) == 1
         assert "line1" in block._log._plain_lines[0]
         assert "line2" in block._log._plain_lines[0]
+        assert "copy" in block._controls_text_plain
 
 
 @pytest.mark.asyncio
@@ -281,7 +282,7 @@ async def test_code_block_flush_incomplete():
         assert block._state == "FLUSHED"
         assert block.has_class("--flushed")
         assert not block.has_class("--complete")
-        # content preserved (no clear, no Syntax)
+        # preserved content remains in the log; controls render in the footer widget.
         assert len(block._log.lines) == 2
 
 
@@ -491,6 +492,7 @@ async def test_code_block_finalizes_on_close():
         assert "x = 1" in block._log._plain_lines[0]
         # no ANSI escape codes in the plain source
         assert "\x1b" not in block._log._plain_lines[0]
+        assert "copy" in block._controls_text_plain
 
 
 @pytest.mark.asyncio
@@ -515,6 +517,7 @@ async def test_code_block_flush_on_agent_stop():
         block = msg.query_one(StreamingCodeBlock)
         assert block._state == "FLUSHED"
         assert len(block._log.lines) == 1  # content not lost
+        assert "copy" in block._controls_text_plain
 
 
 @pytest.mark.asyncio
@@ -532,29 +535,28 @@ async def test_copy_prose_plain_text():
 
 
 @pytest.mark.asyncio
-async def test_complete_code_block_has_copy_button():
-    """A #code-copy-btn widget is mounted when the code block transitions to COMPLETE."""
-    from hermes_cli.tui.widgets import StreamingCodeBlock
-    from textual.widgets import Static
+async def test_complete_code_block_has_footer():
+    """Integrated controls row is visible when the code block completes."""
+    from hermes_cli.tui.widgets import StreamingCodeBlock, CodeBlockFooter
 
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await _run_turn(app, pilot, chunks=["```python\nfoo\n```\n"])
-        await pilot.pause()  # let complete() mount the button
+        await pilot.pause()
 
-        msg = app.query_one(OutputPanel).current_message
-        assert msg is not None
-        block = msg.query_one(StreamingCodeBlock)
+        block = app.query_one(OutputPanel).current_message.query_one(StreamingCodeBlock)
         assert block._state == "COMPLETE"
-
-        btn = block.query_one("#code-copy-btn", Static)
-        assert "⎘" in str(btn.content), "copy button must display ⎘"
+        assert block.has_class("--complete")
+        assert "copy" in block._controls_text_plain
+        assert "collapse" not in block._controls_text_plain
+        footer = block.query_one(CodeBlockFooter)
+        assert "copy" in str(footer._Static__content)
+        assert footer.styles.display == "block"
 
 
 @pytest.mark.asyncio
-async def test_copy_button_absent_during_streaming():
-    """#code-copy-btn is in the DOM but hidden (display:none) while still streaming."""
-    from textual.widgets import Static
+async def test_footer_absent_during_streaming():
+    """No controls row is rendered while still streaming."""
     from hermes_cli.tui.widgets import StreamingCodeBlock
 
     app = HermesApp(cli=MagicMock())
@@ -569,39 +571,86 @@ async def test_copy_button_absent_during_streaming():
 
         block = app.query_one(OutputPanel).current_message.query_one(StreamingCodeBlock)
         assert block._state == "STREAMING"
-        # Button is pre-mounted but hidden via CSS display:none until --complete
-        btn = block.query_one("#code-copy-btn", Static)
+        assert not block.has_class("--complete")
         assert not block.has_class("--complete"), "block must still be STREAMING"
+        assert block._controls_text_plain == ""
 
 
 @pytest.mark.asyncio
-async def test_copy_button_click_copies_code():
-    """Clicking #code-copy-btn copies the source code to clipboard."""
+async def test_footer_copy_copies_code():
+    """block.flash_copy() updates the integrated controls row."""
     from unittest.mock import patch
     from hermes_cli.tui.widgets import StreamingCodeBlock
-    from textual.widgets import Static
 
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await _run_turn(app, pilot, chunks=["```python\nfoo = 42\n```\n"])
-        await pilot.pause()  # let _finalize_syntax + button mount fire
+        await pilot.pause()
 
         block = app.query_one(OutputPanel).current_message.query_one(StreamingCodeBlock)
         assert block._state == "COMPLETE"
 
-        btn = block.query_one("#code-copy-btn", Static)
         with patch.object(app, "_copy_text_with_hint") as mock_copy:
-            await pilot.click(btn)
+            app._copy_code_block(block)
             await pilot.pause()
 
         mock_copy.assert_called_once()
         assert "foo = 42" in mock_copy.call_args[0][0]
+        assert "copied" in block._controls_text_plain
 
 
 @pytest.mark.asyncio
-async def test_code_block_header_click_collapses():
-    """Clicking CodeBlockHeader still collapses a COMPLETE block (unchanged behaviour)."""
-    from hermes_cli.tui.widgets import CodeBlockHeader, StreamingCodeBlock
+async def test_footer_toggle_collapses_code_log():
+    """toggle_collapsed() collapses then re-expands the code log."""
+    from hermes_cli.tui.widgets import StreamingCodeBlock
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _run_turn(app, pilot, chunks=["```python\nfoo\nbar\n```\n"])
+        await pilot.pause()
+
+        block = app.query_one(OutputPanel).current_message.query_one(StreamingCodeBlock)
+        assert not block._collapsed
+
+        block.toggle_collapsed()
+        await pilot.pause()
+        assert block._collapsed
+        assert "expand" in block._controls_text_plain
+
+        block.toggle_collapsed()
+        await pilot.pause()
+        assert not block._collapsed
+        assert "collapse" in block._controls_text_plain
+
+
+@pytest.mark.asyncio
+async def test_block_toggle_collapsed_updates_footer_and_log():
+    """StreamingCodeBlock.toggle_collapsed() drives integrated controls + body."""
+    from hermes_cli.tui.widgets import StreamingCodeBlock
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _run_turn(app, pilot, chunks=["```python\nfoo\nbar\n```\n"])
+        await pilot.pause()
+
+        block = app.query_one(OutputPanel).current_message.query_one(StreamingCodeBlock)
+        assert not block._collapsed
+
+        block.toggle_collapsed()
+        await pilot.pause()
+        assert block._collapsed
+        assert "expand" in block._controls_text_plain
+
+        block.toggle_collapsed()
+        await pilot.pause()
+        assert not block._collapsed
+        assert "collapse" in block._controls_text_plain
+
+
+@pytest.mark.asyncio
+async def test_single_line_code_block_footer_is_copy_only():
+    """Single-line code block shows copy affordance but no collapse affordance."""
+    from hermes_cli.tui.widgets import StreamingCodeBlock
 
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
@@ -609,9 +658,263 @@ async def test_code_block_header_click_collapses():
         await pilot.pause()
 
         block = app.query_one(OutputPanel).current_message.query_one(StreamingCodeBlock)
-        assert block._state == "COMPLETE"
+        assert block._controls_text_plain.strip() == "⎘ copy"
+        assert not block.can_toggle()
 
-        header = block.query_one(CodeBlockHeader)
-        await pilot.click(header)
+
+@pytest.mark.asyncio
+async def test_code_block_followed_by_prose_keeps_footer_visible():
+    """Controls row stays visible when prose continues after a completed code block."""
+    from hermes_cli.tui.widgets import StreamingCodeBlock, CopyableBlock
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _run_turn(
+            app,
+            pilot,
+            chunks=[
+                "```java\npublic class HelloWorld {\n  public static void main(String[] args) {\n    System.out.println(\"Hello\");\n  }\n}\n```\n",
+                "Explanation:\nfoo\nbar\n",
+            ],
+        )
         await pilot.pause()
-        assert block.has_class("--collapsed")
+
+        msg = app.query_one(OutputPanel).current_message
+        block = msg.query_one(StreamingCodeBlock)
+        prose_blocks = list(msg.query(CopyableBlock))
+
+        assert block._controls_text_plain.strip() != ""
+        assert len(prose_blocks) >= 2
+        assert prose_blocks[-1].log.copy_content() == "Explanation:\nfoo\nbar"
+
+
+@pytest.mark.asyncio
+async def test_indented_code_block_mounts_widget_and_keeps_footer():
+    """Markdown-style indented code blocks should render as StreamingCodeBlock widgets."""
+    from hermes_cli.tui.widgets import StreamingCodeBlock, CopyableBlock, CodeBlockFooter
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _run_turn(
+            app,
+            pilot,
+            chunks=[
+                "Here's a classic Java Hello World:\n",
+                "\n",
+                "    public class HelloWorld {\n",
+                "        public static void main(String[] args) {\n",
+                "            System.out.println(\"Hello, World!\");\n",
+                "        }\n",
+                "    }\n",
+                "\n",
+                "Run it:\n",
+            ],
+        )
+        await pilot.pause()
+
+        msg = app.query_one(OutputPanel).current_message
+        assert msg is not None
+        block = msg.query_one(StreamingCodeBlock)
+        footer = block.query_one(CodeBlockFooter)
+        prose_blocks = list(msg.query(CopyableBlock))
+
+        assert block._state == "COMPLETE"
+        assert "public class HelloWorld" in block.copy_content()
+        assert "copy" in block._controls_text_plain
+        assert footer.styles.display == "block"
+        assert len(prose_blocks) >= 2
+        assert prose_blocks[-1].log.copy_content() == "Run it:"
+
+
+@pytest.mark.asyncio
+async def test_source_like_prose_mounts_code_widgets_and_footer():
+    """Unfenced source-looking prose lines should mount StreamingCodeBlock widgets."""
+    from hermes_cli.tui.widgets import StreamingCodeBlock, CopyableBlock, CodeBlockFooter
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _run_turn(
+            app,
+            pilot,
+            chunks=[
+                "Sure, here's a classic Java Hello World:\n",
+                "public class HelloWorld {\n",
+                "    public static void main(String[] args) {\n",
+                "        System.out.println(\"Hello, World!\");\n",
+                "    }\n",
+                "}\n",
+                "\n",
+                "To run it:\n",
+                "javac HelloWorld.java\n",
+                "java HelloWorld\n",
+                "\n",
+                "Output:\n",
+                "Hello, World!\n",
+            ],
+        )
+        await pilot.pause()
+
+        msg = app.query_one(OutputPanel).current_message
+        assert msg is not None
+        blocks = list(msg.query(StreamingCodeBlock))
+        prose_blocks = list(msg.query(CopyableBlock))
+
+        assert len(blocks) >= 2
+        assert "public class HelloWorld" in blocks[0].copy_content()
+        assert "javac HelloWorld.java" in blocks[1].copy_content()
+        assert "copy" in blocks[0]._controls_text_plain
+        assert blocks[0].query_one(CodeBlockFooter).styles.display == "block"
+        assert len(prose_blocks) >= 2
+        prose = msg.all_prose_text()
+        assert "To run it:" in prose
+        assert "Output:" in prose
+
+
+@pytest.mark.asyncio
+async def test_source_like_heuristic_does_not_swallow_explanation_bullets_or_following_prose():
+    """Explanation bullets and trailing prose must stay in prose, not synthetic code blocks."""
+    from hermes_cli.tui.widgets import StreamingCodeBlock
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(100, 50)) as pilot:
+        await _run_turn(
+            app,
+            pilot,
+            chunks=[
+                "Sure, here's a simple Java Hello World example:\n",
+                "public class HelloWorld {\n",
+                "    public static void main(String[] args) {\n",
+                "        System.out.println(\"Hello, World!\");\n",
+                "    }\n",
+                "}\n",
+                "\n",
+                "How it works:\n",
+                "• public class HelloWorld - defines a public class named HelloWorld\n",
+                "• public static void main(String[] args) - the entry point Java looks for\n",
+                "• System.out.println(\"Hello, World!\"); - prints to the console\n",
+                "\n",
+                "Want to see something more interesting next?\n",
+            ],
+        )
+        await pilot.pause()
+
+        msg = app.query_one(OutputPanel).current_message
+        assert msg is not None
+        blocks = list(msg.query(StreamingCodeBlock))
+
+        assert len(blocks) == 1
+        prose = msg.all_prose_text()
+        assert "How it works:" in prose
+        assert "defines a public class named HelloWorld" in prose
+        assert "the entry point Java looks for" in prose
+        assert "Want to see something more interesting next?" in prose
+
+
+@pytest.mark.asyncio
+async def test_output_label_promotes_single_plain_line_to_code_block():
+    """`Output:` followed by a single plain line should still get a code block footer."""
+    from hermes_cli.tui.widgets import StreamingCodeBlock, CodeBlockFooter
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _run_turn(
+            app,
+            pilot,
+            chunks=[
+                "Output:\n",
+                "Hello, World!\n",
+                "\n",
+                "Next line of prose.\n",
+            ],
+        )
+        await pilot.pause()
+
+        msg = app.query_one(OutputPanel).current_message
+        assert msg is not None
+        block = msg.query_one(StreamingCodeBlock)
+        assert block.copy_content() == "Hello, World!"
+        assert block.query_one(CodeBlockFooter).styles.display == "block"
+        assert "Next line of prose." in msg.all_prose_text()
+
+
+@pytest.mark.asyncio
+async def test_inline_output_label_value_promotes_single_line_code_block():
+    """`Output: value` on one line should still render a one-line code block with controls."""
+    from hermes_cli.tui.widgets import StreamingCodeBlock, CodeBlockFooter
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _run_turn(
+            app,
+            pilot,
+            chunks=[
+                "Output: Hello, World!\n",
+                "Next line of prose.\n",
+            ],
+        )
+        await pilot.pause()
+
+        msg = app.query_one(OutputPanel).current_message
+        assert msg is not None
+        block = msg.query_one(StreamingCodeBlock)
+        assert block.copy_content() == "Hello, World!"
+        assert block.query_one(CodeBlockFooter).styles.display == "block"
+        assert "Output:" in msg.all_prose_text()
+        assert "Next line of prose." in msg.all_prose_text()
+
+
+@pytest.mark.asyncio
+async def test_prenumbered_source_lines_strip_duplicate_gutter_in_code_block():
+    """Pre-numbered model output should not render a second line-number column."""
+    from hermes_cli.tui.widgets import StreamingCodeBlock
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _run_turn(
+            app,
+            pilot,
+            chunks=[
+                "1 │ public class HelloWorld {\n",
+                "2 │     public static void main(String[] args) {\n",
+                "3 │         System.out.println(\"Hello\");\n",
+                "4 │     }\n",
+                "5 │ }\n",
+            ],
+        )
+        await pilot.pause()
+
+        msg = app.query_one(OutputPanel).current_message
+        assert msg is not None
+        block = msg.query_one(StreamingCodeBlock)
+        copied = block.copy_content().splitlines()
+        assert copied[0] == "public class HelloWorld {"
+        assert copied[1].startswith("    public static void main")
+        assert all("│" not in line[:6] for line in copied)
+
+
+@pytest.mark.asyncio
+async def test_space_separated_prenumbered_lines_strip_duplicate_gutter():
+    """Pre-numbered lines without a visible bar should still lose the model-added number column."""
+    from hermes_cli.tui.widgets import StreamingCodeBlock
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _run_turn(
+            app,
+            pilot,
+            chunks=[
+                "1  public class HelloWorld {\n",
+                "2      public static void main(String[] args) {\n",
+                "3          System.out.println(\"Hello\");\n",
+                "4      }\n",
+                "5  }\n",
+            ],
+        )
+        await pilot.pause()
+
+        msg = app.query_one(OutputPanel).current_message
+        assert msg is not None
+        block = msg.query_one(StreamingCodeBlock)
+        copied = block.copy_content().splitlines()
+        assert copied[0] == "public class HelloWorld {"
+        assert copied[-1] == "}"

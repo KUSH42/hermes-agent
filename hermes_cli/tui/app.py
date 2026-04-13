@@ -68,6 +68,7 @@ from hermes_cli.tui.widgets import (
     ReasoningPanel,
     SecretWidget,
     StatusBar,
+    StreamingCodeBlock,
     SudoWidget,
     ThinkingWidget,
     TitledRule,
@@ -1100,6 +1101,7 @@ class HermesApp(App):
         label: str,
         lines: list[str],
         plain_lines: list[str],
+        rerender_fn=None,
     ) -> None:
         """Mount a ToolBlock into OutputPanel before the live-output trio.
 
@@ -1116,7 +1118,7 @@ class HermesApp(App):
             # Ensure a MessagePanel exists for this turn (holds response text).
             if output.current_message is None:
                 output.new_message()
-            output.mount(_ToolBlock(label, lines, plain_lines), before=output.tool_pending)
+            output.mount(_ToolBlock(label, lines, plain_lines, rerender_fn=rerender_fn), before=output.tool_pending)
             # Increment memoized header count to avoid O(n) query in StatusBar
             self._browse_total += 1
         except NoMatches:
@@ -1275,6 +1277,14 @@ class HermesApp(App):
             self.query_one(VirtualCompletionList).refresh_theme()
         except Exception:
             pass
+        try:
+            from hermes_cli.tui.tool_blocks import ToolBlock
+            for block in self.query(ToolBlock):
+                block.refresh_skin()
+        except Exception:
+            pass
+        for block in self.query(StreamingCodeBlock):
+            block.refresh_skin(self.get_css_variables())
 
     def refresh_slash_commands(self, extra: list[str] | None = None) -> None:
         """Update the slash command list after plugins are loaded.

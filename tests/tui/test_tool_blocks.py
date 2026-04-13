@@ -204,6 +204,33 @@ def test_on_tool_complete_pt_mode_calls_cprint():
     assert printed == fake_lines
 
 
+def test_on_tool_complete_execute_code_tui_passes_rerender_callback():
+    """execute_code previews mounted in the TUI should carry a rerender callback."""
+    import cli as cli_module
+
+    mock_tui = MagicMock()
+    cli_obj = _make_cli_obj()
+    cli_obj.tool_progress_mode = "verbose"
+    cli_obj._code_highlight_enabled = True
+
+    with patch.object(cli_module, "_hermes_app", mock_tui):
+        cli_obj._on_tool_complete(
+            "id3",
+            "execute_code",
+            {"code": "print('hello')"},
+            '{"success": true}',
+        )
+
+    mount_calls = [
+        call for call in mock_tui.call_from_thread.call_args_list
+        if call[0] and call[0][0] == mock_tui.mount_tool_block
+    ]
+    assert mount_calls, "Expected mount_tool_block call for execute_code preview"
+    args = mount_calls[0][0]
+    assert args[1] == "code"
+    assert callable(args[4])
+
+
 # ---------------------------------------------------------------------------
 # Step 5 — browse reactives
 # ---------------------------------------------------------------------------

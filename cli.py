@@ -6572,10 +6572,22 @@ class HermesCLI:
                         # Skip static preview when a StreamingToolBlock was used
                         if not _was_streaming and _result_succeeded(function_result):
                             display_lines = []
-                            render_execute_code_preview(function_args.get("code", ""), print_fn=display_lines.append, prefix=_TOOL_PREFIX)
+                            code = function_args.get("code", "")
+                            render_execute_code_preview(code, print_fn=display_lines.append, prefix=_TOOL_PREFIX)
                             if display_lines:
                                 plain = [_strip_ansi(l).removeprefix("  ┊ ").removeprefix("  ┊   ") for l in display_lines]
-                                tui.call_from_thread(tui.mount_tool_block, "code", display_lines, plain)
+                                def _rerender_execute_code_preview(_code=code):
+                                    rerendered: list[str] = []
+                                    render_execute_code_preview(_code, print_fn=rerendered.append, prefix=_TOOL_PREFIX)
+                                    rerendered_plain = [
+                                        _strip_ansi(l).removeprefix("  ┊ ").removeprefix("  ┊   ")
+                                        for l in rerendered
+                                    ]
+                                    return rerendered, rerendered_plain
+
+                                tui.call_from_thread(
+                                    tui.mount_tool_block, "code", display_lines, plain, _rerender_execute_code_preview
+                                )
                     elif function_name == "read_file":
                         display_lines = []
                         render_read_file_preview(function_args.get("path", ""), function_result, print_fn=display_lines.append, prefix=_TOOL_PREFIX)

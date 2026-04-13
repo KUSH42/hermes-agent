@@ -778,6 +778,7 @@ class StreamingCodeBlock(Widget):
         self._pygments_theme = pygments_theme
         self._state: "Literal['STREAMING', 'COMPLETE', 'FLUSHED']" = "STREAMING"
         self._code_lines: list[str] = []
+        self._resolved_lang: str | None = None
         self._log = CopyableRichLog(markup=False)
         self._footer = CodeBlockFooter(classes="code-block-footer")
         self._footer.styles.display = "none"
@@ -824,6 +825,7 @@ class StreamingCodeBlock(Widget):
         if self._state != "STREAMING":
             return
         self._state = "COMPLETE"
+        self._pygments_theme = skin_vars.get("preview-syntax-theme", self._pygments_theme)
         self.add_class("--complete")
         self.call_after_refresh(self._finalize_syntax, dict(skin_vars))
 
@@ -831,11 +833,13 @@ class StreamingCodeBlock(Widget):
         from rich.syntax import Syntax
         from hermes_cli.tui.response_flow import _detect_lang
         code = "\n".join(self._display_code_lines())
-        lang = self._lang or _detect_lang(code)
+        lang = self._resolved_lang or self._lang or _detect_lang(code)
+        self._resolved_lang = lang
+        self._pygments_theme = skin_vars.get("preview-syntax-theme", self._pygments_theme)
         syntax = Syntax(
             code,
             lexer=lang,
-            theme=skin_vars.get("preview-syntax-theme", "monokai"),
+            theme=self._pygments_theme,
             line_numbers=True,
             word_wrap=False,
             indent_guides=False,
@@ -862,6 +866,14 @@ class StreamingCodeBlock(Widget):
     def copy_content(self) -> str:
         """Plain text of the code block for clipboard operations."""
         return "\n".join(self._display_code_lines())
+
+    def refresh_skin(self, css_vars: dict[str, str]) -> None:
+        """Refresh theme-dependent rendering without remounting the widget."""
+        self._pygments_theme = css_vars.get("preview-syntax-theme", self._pygments_theme)
+        if self._state == "COMPLETE":
+            self._finalize_syntax(css_vars)
+        elif self._state == "FLUSHED":
+            self._sync_footer()
 
     def toggle_collapsed(self) -> None:
         """Collapse/expand code body after the block is complete/flushed."""

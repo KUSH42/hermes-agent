@@ -11,7 +11,7 @@ StreamingToolBlock extends ToolBlock with IDLE→STREAMING→COMPLETED lifecycle
 from __future__ import annotations
 
 import collections
-from typing import Any
+from typing import Any, Callable
 
 from rich.text import Text
 from textual.app import ComposeResult, RenderResult
@@ -165,12 +165,14 @@ class ToolBlock(Widget):
         label: str,
         lines: list[str],       # ANSI display lines
         plain_lines: list[str], # plain text for copy (no ANSI, no gutter)
+        rerender_fn: Callable[[], tuple[list[str], list[str]]] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self._label = label
         self._lines = list(lines)
         self._plain_lines = list(plain_lines)
+        self._rerender_fn = rerender_fn
         auto_expand = len(lines) <= COLLAPSE_THRESHOLD
         self._header = ToolHeader(label, len(lines))
         self._body = ToolBodyContainer()
@@ -183,14 +185,18 @@ class ToolBlock(Widget):
         yield self._body
 
     def on_mount(self) -> None:
+        self._render_body()
+        if not self._header.collapsed:
+            self._body.add_class("expanded")
+
+    def _render_body(self) -> None:
         try:
             log = self._body.query_one(CopyableRichLog)
+            log.clear()
             for styled, plain in zip(self._lines, self._plain_lines):
                 log.write_with_source(Text.from_ansi(styled), plain)
         except NoMatches:
             pass  # body not yet in DOM — safe to skip
-        if not self._header.collapsed:
-            self._body.add_class("expanded")
 
     def toggle(self) -> None:
         """Toggle collapsed ↔ expanded. No-op for ≤3-line blocks."""
@@ -206,6 +212,22 @@ class ToolBlock(Widget):
     def copy_content(self) -> str:
         """Plain-text content for clipboard — no ANSI, no gutter, no line numbers."""
         return "\n".join(self._plain_lines)
+
+    def refresh_skin(self) -> None:
+        """Rebuild styled lines from canonical source when this block supports it."""
+        if self._rerender_fn is None:
+            return
+        lines, plain_lines = self._rerender_fn()
+        self._lines = list(lines)
+        self._plain_lines = list(plain_lines)
+        self._header._line_count = len(self._lines)
+        self._header._has_affordances = len(self._lines) > COLLAPSE_THRESHOLD
+        if not self._header._has_affordances:
+            self._header.collapsed = False
+            self._body.add_class("expanded")
+        self._render_body()
+        self._header.refresh()
+        self.refresh(layout=True)
 
 
 # ---------------------------------------------------------------------------

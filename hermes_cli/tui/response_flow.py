@@ -85,6 +85,22 @@ def _is_horizontal_rule(line: str) -> bool:
 
 def _detect_lang(code: str) -> str:
     """Best-effort language detection for fences with no language specifier."""
+    stripped = code.strip()
+    if not stripped:
+        return "text"
+
+    # Fast-path heuristics for short snippets where Pygments guess_lexer()
+    # often falls back to plain text.
+    if any(token in code for token in ("System.out.", "public class ", "String[] args", "import java.", "package ")):
+        return "java"
+    if any(token in code for token in ("def ", "__name__ == ", "print(", "import ", "from ")):
+        return "python"
+    if all(
+        line.strip() == "" or _SOURCE_COMMAND_RE.match(line.strip())
+        for line in stripped.splitlines()
+    ):
+        return "bash"
+
     try:
         from pygments.lexers import guess_lexer  # type: ignore[import-untyped]
         lexer = guess_lexer(code)

@@ -940,3 +940,25 @@ async def test_code_block_copy_content_strips_ansi_sequences():
         await pilot.pause()
 
         assert block.copy_content() == "print('hello')\nvalue = 42"
+
+
+def test_detect_lang_prefers_java_for_short_hello_world_snippet():
+    """Short Java snippets should not fall back to plain text."""
+    from hermes_cli.tui.response_flow import _detect_lang
+
+    code = (
+        "public class HelloWorld {\n"
+        "    public static void main(String[] args) {\n"
+        "        System.out.println(\"Hello, World!\");\n"
+        "    }\n"
+        "}"
+    )
+    assert _detect_lang(code) == "java"
+
+
+def test_detect_lang_prefers_bash_for_command_blocks():
+    """Command-only blocks should finalize with shell highlighting."""
+    from hermes_cli.tui.response_flow import _detect_lang
+
+    code = "javac HelloWorld.java\njava HelloWorld"
+    assert _detect_lang(code) == "bash"

@@ -1594,6 +1594,9 @@ class HermesCLI:
         self._stream_spec_stack: list[tuple[str, str]] = []  # Speculative inline-md open delimiters
         self._stream_started = False  # True once first delta arrives
         self._stream_box_opened = False  # True once the response box header is printed
+        self._message_wall_start_time: float | None = None
+        self._message_stream_active_s: float = 0.0
+        self._message_stream_output_tokens: int = 0
         self._reasoning_stream_started = False  # True once live reasoning starts streaming
         self._reasoning_preview_buf = ""  # Coalesce tiny reasoning chunks for [thinking] output
         self._stream_code_hl = _CodeBlockHL() if _RICH_RESPONSE else None
@@ -1884,6 +1887,16 @@ class HermesCLI:
             snapshot["compressions"] = getattr(compressor, "compression_count", 0) or 0
             if context_length:
                 snapshot["context_percent"] = max(0, min(100, round((context_tokens / context_length) * 100)))
+        if not snapshot["context_length"]:
+            try:
+                from agent.model_metadata import get_model_context_length
+                snapshot["context_length"] = get_model_context_length(
+                    getattr(agent, "model", self.model),
+                    provider=getattr(agent, "provider", getattr(self, "provider", None)),
+                    base_url=getattr(agent, "base_url", getattr(self, "base_url", None)),
+                ) or None
+            except Exception:
+                pass
 
         return snapshot
 
@@ -2421,6 +2434,7 @@ class HermesCLI:
         """
         if text is None:
             self._flush_stream()
+            self._pause_stream_state(intermediate=True)
             self._reset_stream_state()
             return
         if not text:
@@ -2429,7 +2443,10 @@ class HermesCLI:
         self._stream_started = True
         if not hasattr(self, "_stream_start_time") or self._stream_start_time is None:
             import time as _time_mod
-            self._stream_start_time = _time_mod.monotonic()
+            _now = _time_mod.monotonic()
+            self._stream_start_time = _now
+            if self._message_wall_start_time is None:
+                self._message_wall_start_time = _now
             tui = _hermes_app
             if tui is not None and hasattr(tui, "mark_response_stream_started"):
                 tui.call_from_thread(tui.mark_response_stream_started)
@@ -2742,23 +2759,21 @@ class HermesCLI:
 
         # No bottom border — next turn's top rule provides separation
 
-    def _reset_stream_state(self) -> None:
-        """Reset streaming state before each agent invocation."""
-        # Calculate tok/s from the just-completed stream before resetting
+    def _pause_stream_state(self, intermediate: bool = False) -> None:
+        """Pause current streamed response segment and accumulate message metrics."""
         import time as _time_mod
         if self._stream_started and getattr(self, "_stream_start_time", None) is not None:
-            stream_duration = _time_mod.monotonic() - self._stream_start_time
+            self._message_stream_active_s += max(0.0, _time_mod.monotonic() - self._stream_start_time)
             agent = getattr(self, "agent", None)
-            turn_output_tokens = getattr(agent, "_last_turn_output_tokens", 0)
-            tok_s = 0.0
-            if stream_duration > 0.1 and turn_output_tokens > 0:
-                tok_s = turn_output_tokens / stream_duration
+            self._message_stream_output_tokens += max(
+                0, int(getattr(agent, "_last_turn_output_tokens", 0) or 0)
+            )
             tui = _hermes_app
-            if tui is not None:
-                if tok_s > 0:
-                    tui.call_from_thread(setattr, tui, "status_tok_s", tok_s)
-                if hasattr(tui, "finalize_response_metrics"):
-                    tui.call_from_thread(tui.finalize_response_metrics, tok_s, stream_duration)
+            if intermediate and tui is not None and hasattr(tui, "pause_response_stream"):
+                tui.call_from_thread(tui.pause_response_stream)
+
+    def _reset_stream_state(self) -> None:
+        """Reset streaming state before each agent invocation."""
         self._stream_start_time = None
         self._stream_buf = ""
         self._stream_spec_stack: list[tuple[str, str]] = []
@@ -7682,6 +7697,9 @@ class HermesCLI:
 
             # Reset streaming display state for this turn
             self._reset_stream_state()
+            self._message_wall_start_time = None
+            self._message_stream_active_s = 0.0
+            self._message_stream_output_tokens = 0
             # Separate from _reset_stream_state because this must persist
             # across intermediate turn boundaries (tool-calling loops) — only
             # reset at the start of each user turn.
@@ -7853,6 +7871,27 @@ class HermesCLI:
 
             # Flush any remaining streamed text and close the box
             self._flush_stream()
+            self._pause_stream_state(intermediate=False)
+            import time as _time_mod
+            _message_total_elapsed = (
+                max(0.0, _time_mod.monotonic() - self._message_wall_start_time)
+                if self._message_wall_start_time is not None else 0.0
+            )
+            _message_stream_elapsed = self._message_stream_active_s
+            _message_stream_tokens = self._message_stream_output_tokens
+            _message_tok_s = (
+                _message_stream_tokens / _message_stream_elapsed
+                if _message_stream_elapsed > 0.1 and _message_stream_tokens > 0 else 0.0
+            )
+            tui = _hermes_app
+            if tui is not None:
+                if _message_tok_s > 0:
+                    tui.call_from_thread(setattr, tui, "status_tok_s", _message_tok_s)
+                if hasattr(tui, "finalize_response_metrics"):
+                    tui.call_from_thread(
+                        tui.finalize_response_metrics, _message_tok_s, _message_total_elapsed
+                    )
+            self._message_wall_start_time = None
 
             # Signal end-of-text to TTS consumer and wait for it to finish
             if use_streaming_tts and text_queue is not None:

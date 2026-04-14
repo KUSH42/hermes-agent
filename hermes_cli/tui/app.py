@@ -255,7 +255,9 @@ class HermesApp(App):
 
         # Active StreamingToolBlocks keyed by tool_call_id
         self._active_streaming_blocks: dict[str, Any] = {}
-        self._response_start_time: float | None = None
+        self._response_metrics_active: bool = False
+        self._response_wall_start_time: float | None = None
+        self._response_segment_start_time: float | None = None
         self._response_token_window: collections.deque[tuple[float, int]] = collections.deque()
 
         # Undo/retry state
@@ -694,7 +696,10 @@ class HermesApp(App):
 
     def watch_agent_running(self, value: bool) -> None:
         if value:
-            self._response_start_time = None
+            self._response_metrics_active = False
+            self._response_wall_start_time = None
+            self._response_segment_start_time = None
+            self._response_token_window.clear()
             self._set_chevron_phase("--phase-stream")
             self._set_hint_phase("stream")
         else:
@@ -720,7 +725,10 @@ class HermesApp(App):
             # tool label persists into turn 2 and StatusBar shows a stale file path.
             self.spinner_label = ""
             self.status_active_file = ""
-            self._response_start_time = None
+            self._response_metrics_active = False
+            self._response_wall_start_time = None
+            self._response_segment_start_time = None
+            self._response_token_window.clear()
             # Clear any blocks left open from an interrupted turn (agent stopped
             # without calling close_streaming_tool_block).  Leaked refs prevent GC
             # of the widget objects and cause stale entries on the next turn.
@@ -765,8 +773,7 @@ class HermesApp(App):
 
     def _refresh_live_response_metrics(self) -> None:
         """Refresh current message header while a streamed response is active."""
-        start = self._response_start_time
-        if start is None:
+        if not self._response_metrics_active:
             return
         try:
             output = self.query_one(OutputPanel)
@@ -775,8 +782,11 @@ class HermesApp(App):
         msg = output.current_message
         if msg is None:
             return
-        elapsed = max(0.0, _time.monotonic() - start)
+        wall_start = self._response_wall_start_time
+        if wall_start is None:
+            return
         now = _time.monotonic()
+        elapsed = max(0.0, now - wall_start)
         window_s = 0.75
         while self._response_token_window and now - self._response_token_window[0][0] > window_s:
             self._response_token_window.popleft()
@@ -789,15 +799,17 @@ class HermesApp(App):
 
     def mark_response_stream_started(self) -> None:
         """Start live response timing for current assistant turn."""
-        if self._response_start_time is not None:
-            return
-        self._response_start_time = _time.monotonic()
-        self._response_token_window.clear()
+        if not self._response_metrics_active:
+            self._response_metrics_active = True
+            self._response_wall_start_time = _time.monotonic()
+            self._response_token_window.clear()
+        if self._response_segment_start_time is None:
+            self._response_segment_start_time = _time.monotonic()
         self._refresh_live_response_metrics()
 
     def mark_response_stream_delta(self, text: str) -> None:
         """Record streamed response text for rolling live tok/s."""
-        if self._response_start_time is None or not text:
+        if self._response_segment_start_time is None or not text:
             return
         from agent.model_metadata import estimate_tokens_rough
         est_tokens = estimate_tokens_rough(text)
@@ -806,9 +818,16 @@ class HermesApp(App):
         self._response_token_window.append((_time.monotonic(), est_tokens))
         self._refresh_live_response_metrics()
 
+    def pause_response_stream(self) -> None:
+        """Pause live message timing while agent waits on tool execution."""
+        self._response_segment_start_time = None
+        self._response_token_window.clear()
+
     def finalize_response_metrics(self, tok_s: float, elapsed_s: float) -> None:
         """Freeze tok/s + elapsed on current assistant message header."""
-        self._response_start_time = None
+        self.pause_response_stream()
+        self._response_metrics_active = False
+        self._response_wall_start_time = None
         self._response_token_window.clear()
         try:
             output = self.query_one(OutputPanel)

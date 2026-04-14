@@ -2130,7 +2130,7 @@ class StatusBar(PulseMixin, Widget):
                 t.append(ctx_label, style="dim")
         elif width < 60:
             # Compact: % · ctx (no bar)
-            if enabled and progress > 0:
+            if enabled:
                 pct_int = min(int(progress * 100), 100)
                 t.append(" · ", style="dim")
                 t.append(f"{pct_int}%", style=StatusBar._compaction_color(progress, _vars))
@@ -2139,7 +2139,7 @@ class StatusBar(PulseMixin, Widget):
                 t.append(ctx_label, style="dim")
         else:
             # Full: bar % · ctx
-            if enabled and progress > 0:
+            if enabled:
                 pct_int = min(int(progress * 100), 100)
                 filled  = min(int(progress * _BAR_WIDTH), _BAR_WIDTH)
                 bar_str = _BAR_FILLED * filled + _BAR_EMPTY * (_BAR_WIDTH - filled)

@@ -71,13 +71,20 @@ async def test_status_bar_renders_model_and_ctx_window():
 
 @pytest.mark.asyncio
 async def test_compaction_bar_renders_at_zero():
-    """No compaction bar shown when progress is 0.0."""
+    """Compaction bar shows 0% and ctx window at startup."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
+        app.status_model = "claude"
+        app.status_context_tokens = 0
+        app.status_context_max = 128_000
         app.status_compaction_progress = 0.0
         await pilot.pause()
-        # No error; bar renders without compaction section
+        bar = app.query_one(StatusBar)
+        rendered = str(bar.render())
+        assert "0%" in rendered
+        assert "0/128k" in rendered
+        assert "▱" in rendered
 
 
 @pytest.mark.asyncio
@@ -227,6 +234,41 @@ async def test_live_response_metrics_tick():
         assert "s" in rendered
 
 
+@pytest.mark.asyncio
+async def test_live_response_metrics_pause_and_resume():
+    """Tool pause keeps tok/s paused but elapsed wall time continues."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        output = app.query_one(OutputPanel)
+        msg = output.new_message("hello")
+        msg.show_response_rule()
+
+        app.mark_response_stream_started()
+        app.mark_response_stream_delta("abcdefgh" * 8)
+        await asyncio.sleep(0.12)
+        await pilot.pause()
+
+        app.pause_response_stream()
+        paused_render = str(msg._response_rule.render())
+        await asyncio.sleep(0.12)
+        app._refresh_live_response_metrics()
+        await pilot.pause()
+        later_render = str(msg._response_rule.render())
+        assert "tok/s" in later_render
+        assert later_render != paused_render
+
+        app.mark_response_stream_started()
+        app.mark_response_stream_delta("abcdefgh" * 8)
+        await asyncio.sleep(0.12)
+        await pilot.pause()
+        app.finalize_response_metrics(40.0, 0.24)
+
+        rendered = str(msg._response_rule.render())
+        assert "40 tok/s" in rendered
+        assert "0.2" in rendered or "0.3" in rendered
+
+
 def test_compaction_bar_color_from_skin():
     """_compaction_color uses CSS vars dict, falling back to hardcoded hex."""
     from hermes_cli.tui.animation import lerp_color
@@ -339,6 +381,52 @@ async def test_push_tui_status_wires_all_fields():
         assert hasattr(fake_tui, "status_context_max")
         assert hasattr(fake_tui, "status_compaction_progress")
         assert hasattr(fake_tui, "status_compaction_enabled")
+    finally:
+        cli_module._hermes_app = orig
+
+
+@pytest.mark.asyncio
+async def test_push_tui_status_falls_back_to_model_context_length():
+    """_push_tui_status() fills ctx max from model metadata when compressor lacks it."""
+    import cli as cli_module
+    from types import SimpleNamespace
+
+    fake_tui = MagicMock()
+    fake_tui.call_from_thread = lambda fn, *a: fn(*a)
+
+    orig = cli_module._hermes_app
+    try:
+        cli_module._hermes_app = fake_tui
+
+        from cli import HermesCLI
+        obj = HermesCLI.__new__(HermesCLI)
+        obj.model = "anthropic/claude-sonnet-4-20250514"
+        obj.session_start = datetime.now() - timedelta(seconds=10)
+        obj.conversation_history = []
+        obj.agent = SimpleNamespace(
+            model=obj.model,
+            provider="anthropic",
+            base_url="",
+            session_input_tokens=0,
+            session_output_tokens=0,
+            session_cache_read_tokens=0,
+            session_cache_write_tokens=0,
+            session_prompt_tokens=0,
+            session_completion_tokens=0,
+            session_total_tokens=0,
+            session_api_calls=0,
+            context_compressor=SimpleNamespace(
+                last_prompt_tokens=0,
+                context_length=0,
+                threshold_tokens=0,
+                compression_count=0,
+            ),
+        )
+        obj.compression_enabled = True
+
+        obj._push_tui_status()
+
+        assert getattr(fake_tui, "status_context_max", 0) > 0
     finally:
         cli_module._hermes_app = orig
 

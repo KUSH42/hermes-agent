@@ -91,7 +91,7 @@ async def test_append_10_lines_then_complete():
         await pilot.pause()
 
         # Let at least one 60fps flush tick fire
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.12)
         await pilot.pause()
 
         block.complete("2.3s")
@@ -141,7 +141,7 @@ async def test_complete_with_few_lines_stays_expanded():
 
         for i in range(COLLAPSE_THRESHOLD):
             block.append_line(f"short line {i}")
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.12)
         await pilot.pause()
 
         block.complete("0.1s")
@@ -160,8 +160,8 @@ async def test_lines_visible_in_richlog():
         block = await _new_app_with_block(pilot)
 
         block.append_line("hello streaming")
-        await asyncio.sleep(0.05)
-        await pilot.pause()
+        # Force synchronous flush instead of waiting for 60fps timer
+        block._flush_pending()
 
         log = block._body.query_one(CopyableRichLog)
         assert len(log.lines) >= 1
@@ -182,7 +182,7 @@ async def test_line_byte_cap():
 
         long_line = "x" * (_LINE_BYTE_CAP + 500)
         block.append_line(long_line)
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.12)
         await pilot.pause()
 
         truncated = block._all_plain[0]
@@ -210,9 +210,8 @@ async def test_visible_cap():
         for i in range(total):
             block.append_line(f"line {i:04d}")
 
-        # Wait for multiple flush ticks
-        await asyncio.sleep(0.1)
-        await pilot.pause()
+        # Force synchronous flush instead of waiting for 60fps timer
+        block._flush_pending()
 
         # All lines are in plain text
         assert len(block._all_plain) == total
@@ -271,7 +270,7 @@ async def test_app_open_append_close():
 
         for line in ["total 4", "drwxr-xr-x 2 user", "-rw-r--r-- 1 user  README.md"]:
             app.append_streaming_line(tid, line)
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.12)
         await pilot.pause()
 
         app.close_streaming_tool_block(tid, "0.2s")

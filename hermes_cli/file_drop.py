@@ -122,6 +122,10 @@ def format_link_token(path: Path, cwd: Path) -> str:
     return f"@{text}"
 
 
+_MAX_FILE_DROP_CHARS = 4096  # paste payloads longer than this are prose, not file drops
+_MAX_FILE_DROP_LINES = 10  # drag-and-drop rarely drops more than a handful of files
+
+
 def parse_dragged_file_paste(text: str) -> list[Path] | None:
     """Return file paths when a paste payload looks like terminal drag-and-drop.
 
@@ -130,8 +134,15 @@ def parse_dragged_file_paste(text: str) -> list[Path] | None:
     """
     if not isinstance(text, str):
         return None
+    # Early bail-out: long paste payloads are prose, not file drops.
+    # Without this guard, each line triggers a path.exists() syscall,
+    # hanging the TUI on multi-KB pastes.
+    if len(text) > _MAX_FILE_DROP_CHARS:
+        return None
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if not lines:
+        return None
+    if len(lines) > _MAX_FILE_DROP_LINES:
         return None
 
     paths: list[Path] = []

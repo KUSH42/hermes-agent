@@ -1,6 +1,8 @@
 from pathlib import Path
 
 from hermes_cli.file_drop import (
+    _MAX_FILE_DROP_CHARS,
+    _MAX_FILE_DROP_LINES,
     classify_dropped_file,
     format_link_token,
     parse_dragged_file_paste,
@@ -52,3 +54,32 @@ def test_parse_dragged_file_paste_rejects_mixed_text(tmp_path):
     a = tmp_path / "a.py"
     a.write_text("a\n")
     assert parse_dragged_file_paste(f"{a} please review") is None
+
+
+def test_parse_dragged_file_paste_rejects_long_text():
+    """Pasting multi-KB prose must bail out immediately without stat() calls."""
+    long_text = "a]line of prose\n" * 300  # ~4800 chars, well over 4096
+    assert parse_dragged_file_paste(long_text) is None
+
+
+def test_parse_dragged_file_paste_rejects_many_lines(tmp_path):
+    """More than _MAX_FILE_DROP_LINES lines is clearly prose, not a file drop."""
+    # Create valid files but exceed the line limit
+    lines = []
+    for i in range(_MAX_FILE_DROP_LINES + 1):
+        p = tmp_path / f"f{i}.py"
+        p.write_text("x\n")
+        lines.append(str(p))
+    assert parse_dragged_file_paste("\n".join(lines)) is None
+
+
+def test_parse_dragged_file_paste_accepts_up_to_limit(tmp_path):
+    """Exactly _MAX_FILE_DROP_LINES existing files should still parse."""
+    lines = []
+    for i in range(_MAX_FILE_DROP_LINES):
+        p = tmp_path / f"f{i}.py"
+        p.write_text("x\n")
+        lines.append(str(p))
+    result = parse_dragged_file_paste("\n".join(lines))
+    assert result is not None
+    assert len(result) == _MAX_FILE_DROP_LINES

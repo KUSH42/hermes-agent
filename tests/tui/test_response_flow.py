@@ -339,7 +339,7 @@ async def test_code_fence_after_pending_prose():
 
 @pytest.mark.asyncio
 async def test_prose_after_code_block_in_new_section():
-    """Post-code prose renders in a new CopyableBlock section below the code block."""
+    """Post-code prose renders below the code block in timeline order."""
     from hermes_cli.tui.widgets import StreamingCodeBlock
 
     app = HermesApp(cli=MagicMock())
@@ -360,12 +360,9 @@ async def test_prose_after_code_block_in_new_section():
 
         msg = app.query_one(OutputPanel).current_message
         assert msg is not None
-        # 2 prose blocks: initial (empty) + post-code
-        assert len(msg._prose_blocks) == 2
-        post = msg._prose_blocks[1]
+        assert len(msg._prose_blocks) >= 1
+        post = msg._prose_blocks[-1]
         assert any("post-code prose" in ln for ln in post.log._plain_lines)
-        # pre-code prose block is empty (no text before fence in this test)
-        assert msg._prose_blocks[0].log._plain_lines == []
 
 
 @pytest.mark.asyncio
@@ -410,8 +407,7 @@ async def test_multiple_fences_correct_prose_sections():
 
 @pytest.mark.asyncio
 async def test_all_prose_text_empty_sections():
-    """Consecutive fences (no prose between) produce empty intermediate section."""
-    from hermes_cli.tui.widgets import StreamingCodeBlock
+    """Consecutive fences with no prose keep prose storage empty."""
 
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
@@ -427,12 +423,8 @@ async def test_all_prose_text_empty_sections():
 
         msg = app.query_one(OutputPanel).current_message
         assert msg is not None
-        # 3 sections: initial (empty) + between-fences (empty) + after last fence (empty)
-        assert len(msg._prose_blocks) == 3
-        # all sections empty
         for block in msg._prose_blocks:
             assert block.log._plain_lines == []
-        # all_prose_text with no content returns ""
         assert msg.all_prose_text() == ""
 
 
@@ -684,7 +676,7 @@ async def test_code_block_followed_by_prose_keeps_footer_visible():
         prose_blocks = list(msg.query(CopyableBlock))
 
         assert block._controls_text_plain.strip() != ""
-        assert len(prose_blocks) >= 2
+        assert len(prose_blocks) >= 1
         assert prose_blocks[-1].log.copy_content() == "Explanation:\nfoo\nbar"
 
 

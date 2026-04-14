@@ -1101,31 +1101,30 @@ class HermesApp(App):
 
     # --- Reasoning panel helpers (called via call_from_thread) ---
 
-    def _current_reasoning(self) -> ReasoningPanel | None:
-        """Return the ReasoningPanel of the current MessagePanel, or None."""
+    def _current_message_panel(self) -> MessagePanel | None:
+        """Return the current MessagePanel, or None."""
         try:
-            msg = self.query_one(OutputPanel).current_message
-            return msg.reasoning if msg is not None else None
+            return self.query_one(OutputPanel).current_message
         except NoMatches:
             return None
 
     def open_reasoning(self, title: str = "Reasoning") -> None:
         """Open the reasoning panel. Safe to call from any thread via call_from_thread."""
-        rp = self._current_reasoning()
-        if rp is not None:
-            rp.open_box(title)
+        msg = self._current_message_panel()
+        if msg is not None:
+            msg.open_thinking_block(title)
 
     def append_reasoning(self, delta: str) -> None:
         """Append reasoning delta. Safe to call from any thread via call_from_thread."""
-        rp = self._current_reasoning()
-        if rp is not None:
-            rp.append_delta(delta)
+        msg = self._current_message_panel()
+        if msg is not None:
+            msg.append_thinking(delta)
 
     def close_reasoning(self) -> None:
         """Close the reasoning panel. Safe to call from any thread via call_from_thread."""
-        rp = self._current_reasoning()
-        if rp is not None:
-            rp.close_box()
+        msg = self._current_message_panel()
+        if msg is not None:
+            msg.close_thinking_block()
 
     # --- ToolBlock mounting ---
 
@@ -1145,15 +1144,15 @@ class HermesApp(App):
         """
         if not lines:
             return
-        from hermes_cli.tui.tool_blocks import ToolBlock as _ToolBlock
         try:
             output = self.query_one(OutputPanel)
             # Ensure a MessagePanel exists for this turn (holds response text).
-            if output.current_message is None:
-                output.new_message()
-            output.mount(_ToolBlock(label, lines, plain_lines, rerender_fn=rerender_fn), before=output.tool_pending)
+            msg = output.current_message or output.new_message()
+            msg.mount_tool_block(label, lines, plain_lines, rerender_fn=rerender_fn)
             # Increment memoized header count to avoid O(n) query in StatusBar
             self._browse_total += 1
+            if not output._user_scrolled_up:
+                self.call_after_refresh(output.scroll_end, animate=False)
         except NoMatches:
             pass
 
@@ -1171,14 +1170,11 @@ class HermesApp(App):
         starts executing.  Subsequent output lines are routed here via
         ``append_streaming_line()``.
         """
-        from hermes_cli.tui.tool_blocks import StreamingToolBlock as _STB
         try:
             output = self.query_one(OutputPanel)
             # Ensure a MessagePanel exists for this turn (holds response text).
-            if output.current_message is None:
-                output.new_message()
-            block = _STB(label=label)
-            output.mount(block, before=output.tool_pending)
+            msg = output.current_message or output.new_message()
+            block = msg.open_streaming_tool_block(label=label)
             self._active_streaming_blocks[tool_call_id] = block
             self._browse_total += 1
             if not output._user_scrolled_up:

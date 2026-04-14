@@ -374,9 +374,8 @@ async def test_file_breadcrumb_does_not_leak_into_turn_2():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_reasoning_panel_resets_plain_lines_on_second_open():
-    """open_box() clears _plain_lines so history search and clipboard only
-    see the current reasoning block, not an accumulated mix of all blocks."""
+async def test_reasoning_panel_preserves_multiple_blocks_in_same_turn():
+    """A second thinking phase mounts a new block instead of overwriting the first."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -388,24 +387,22 @@ async def test_reasoning_panel_resets_plain_lines_on_second_open():
         panel = app.query_one(OutputPanel)
         msg = panel.current_message
         assert msg is not None
-        rp = msg.query_one(ReasoningPanel)
 
         # First reasoning block
-        rp.open_box("Reasoning")
-        rp.append_delta("thought one\n")
-        rp.close_box()
-        assert "thought one" in rp._plain_lines
+        rp1 = msg.open_thinking_block("Reasoning")
+        rp1.append_delta("thought one\n")
+        rp1.close_box()
+        assert "thought one" in rp1._plain_lines
 
         # Second reasoning block in the same turn (e.g. after a tool call)
-        rp.open_box("Reasoning")
-        rp.append_delta("thought two\n")
-        rp.close_box()
+        rp2 = msg.open_thinking_block("Reasoning")
+        rp2.append_delta("thought two\n")
+        rp2.close_box()
 
-        # _plain_lines must contain only the SECOND block — open_box() cleared it
-        assert "thought two" in rp._plain_lines
-        assert "thought one" not in rp._plain_lines, (
-            "_plain_lines should be reset on open_box(); stale lines cause wrong clipboard/search output"
-        )
+        blocks = list(msg.query(ReasoningPanel))
+        assert len(blocks) == 2
+        assert "thought one" in rp1._plain_lines
+        assert "thought two" in rp2._plain_lines
 
 
 @pytest.mark.asyncio
@@ -421,16 +418,16 @@ async def test_reasoning_panel_live_buf_cleared_on_open():
 
         msg = app.query_one(OutputPanel).current_message
         assert msg is not None
-        rp = msg.query_one(ReasoningPanel)
+        rp = msg.open_thinking_block("Reasoning")
 
         # Start reasoning, append partial line, do NOT call close_box()
-        rp.open_box("Reasoning")
         rp.append_delta("partial without newline")
         assert rp._live_buf == "partial without newline"
 
         # Second open_box() without close — must clear buf
-        rp.open_box("Reasoning 2")
-        assert rp._live_buf == "", "open_box() must clear _live_buf even if close_box() was skipped"
+        rp2 = msg.open_thinking_block("Reasoning 2")
+        assert rp2._live_buf == "", "new block must start with a clean live buffer"
+        assert rp._live_buf == "", "previous open block should be auto-closed before a new one starts"
 
         app.agent_running = False
         await pilot.pause()

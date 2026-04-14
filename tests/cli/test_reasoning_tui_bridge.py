@@ -154,15 +154,18 @@ class TestStreamReasoningDeltaTuiBridge:
             cli._stream_reasoning_delta("hello\n")
 
     @patch("cli._cprint")
-    def test_suppressed_when_stream_box_opened(self, mock_cprint):
-        """No TUI calls when _stream_box_opened is True (response already started)."""
+    def test_flushes_live_output_and_still_routes_reasoning_when_stream_box_opened(self, mock_cprint):
+        """Late reasoning after response start flushes live prose, then opens a new thinking block."""
         tui = _make_mock_tui()
         with patch("cli._hermes_app", tui):
             cli = _make_reasoning_cli()
             cli._stream_box_opened = True
             cli._stream_reasoning_delta("should be suppressed\n")
 
-        assert not tui.call_from_thread.called
+        assert tui.call_from_thread.called
+        fns = [c.args[0] for c in tui.call_from_thread.call_args_list if c.args]
+        assert any(fn == tui.open_reasoning or fn == tui.append_reasoning for fn in fns)
+        assert tui.append_reasoning in fns
 
     @patch("cli._cprint")
     def test_every_delta_sent_even_without_newline(self, mock_cprint):

@@ -161,7 +161,10 @@ class ResponseFlowEngine:
     def __init__(self, *, panel: "MessagePanel") -> None:
         from agent.rich_output import StreamingBlockBuffer
         self._panel = panel
-        self._prose_log: CopyableRichLog = panel.response_log
+        getter = getattr(type(panel), "current_prose_log", None)
+        self._prose_log: CopyableRichLog = (
+            panel.current_prose_log() if callable(getter) else panel.response_log
+        )
         self._skin_vars: dict[str, str] = panel.app.get_css_variables()
         self._pygments_theme: str = self._skin_vars.get("preview-syntax-theme", "monokai")
         self._block_buf: StreamingBlockBuffer = StreamingBlockBuffer()
@@ -172,6 +175,15 @@ class ResponseFlowEngine:
         self._pending_source_line: str | None = None
         self._pending_code_intro: bool = False
         self._prose_section_counter: int = 0  # for unique CopyableBlock IDs
+
+    def _sync_prose_log(self) -> None:
+        """Refresh the active prose destination from the owning message panel."""
+        getter = getattr(type(self._panel), "current_prose_log", None)
+        self._prose_log = (
+            self._panel.current_prose_log()
+            if callable(getter)
+            else self._panel.response_log
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -312,6 +324,7 @@ class ResponseFlowEngine:
         inline_ansi = apply_inline_markdown(block_ansi)
 
         # Phase 5: Write to prose log
+        self._sync_prose_log()
         plain = _strip_ansi(inline_ansi)
         self._prose_log.write_with_source(Text.from_ansi(inline_ansi), plain)
         self._pending_code_intro = intro_candidate or _is_code_intro_label(plain)
@@ -358,6 +371,7 @@ class ResponseFlowEngine:
     def _emit_rule(self) -> None:
         """Emit a resize-responsive horizontal rule to the prose log."""
         from rich.rule import Rule as RichRule
+        self._sync_prose_log()
         self._prose_log.write(RichRule(style="dim"))
         self._prose_log._plain_lines.append("---")  # plain copy source
 
@@ -373,28 +387,18 @@ class ResponseFlowEngine:
                 else:
                     block_ansi = apply_block_line(line)
                     inline_ansi = apply_inline_markdown(block_ansi)
+                    self._sync_prose_log()
                     plain = _strip_ansi(inline_ansi)
                     self._prose_log.write_with_source(Text.from_ansi(inline_ansi), plain)
 
     def _open_code_block(self, lang: str) -> "StreamingCodeBlock":
-        """Mount a StreamingCodeBlock + next prose CopyableBlock into MessagePanel."""
-        from hermes_cli.tui.widgets import CopyableBlock, StreamingCodeBlock
+        """Mount a StreamingCodeBlock in timeline order and retarget prose."""
+        from hermes_cli.tui.widgets import StreamingCodeBlock
 
-        # 1. Mount the code block (appended as last child of MessagePanel)
         block = StreamingCodeBlock(lang=lang, pygments_theme=self._pygments_theme)
-        self._panel.mount(block)
+        self._panel._mount_nonprose_block(block)
         self._active_block = block
-
-        # 2. Mount the next prose section immediately after the code block
-        self._prose_section_counter += 1
-        new_prose: CopyableBlock = CopyableBlock(
-            id=f"prose-{self._panel._msg_id}-{self._prose_section_counter}",
-            _log_id=f"prose-log-{self._panel._msg_id}-{self._prose_section_counter}",
-        )
-        self._panel.mount(new_prose)               # appended after the code block
-        self._panel._prose_blocks.append(new_prose)
-        self._prose_log = new_prose.log            # future prose writes go here
-
+        self._sync_prose_log()
         return block
 
     def _emit_complete_code_block(self, lines: list[str], lang: str = "") -> None:

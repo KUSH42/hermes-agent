@@ -42,6 +42,7 @@ class Candidate:
 @dataclass(frozen=True, slots=True)
 class PathCandidate(Candidate):
     abs_path: str = ""                              # full path on disk
+    insert_text: str = ""                           # text inserted into input on accept
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,12 +87,25 @@ class PathSearchProvider(Widget):
             self.batch = batch
             self.final = final
 
-    def search(self, query: str, root: Path) -> None:
+    def search(
+        self,
+        query: str,
+        root: Path,
+        *,
+        match_query: str | None = None,
+        insert_prefix: str = "",
+    ) -> None:
         """Start a new walk; cancels any prior ``"path-search"`` worker."""
-        self._walk(query, root)
+        self._walk(query, root, match_query or query, insert_prefix)
 
     @work(thread=True, exclusive=True, group="path-search")
-    def _walk(self, query: str, root: Path) -> None:
+    def _walk(
+        self,
+        query: str,
+        root: Path,
+        match_query: str,
+        insert_prefix: str,
+    ) -> None:
         # --------------- perf instrumentation --------------------------------
         # Target: first batch in <50 ms so the overlay populates before the
         # user finishes typing.  Total scan of 50 k files should finish <2 s.
@@ -106,7 +120,7 @@ class PathSearchProvider(Widget):
         BATCH = 512
         IGNORE = {".git", "node_modules", "__pycache__", ".venv", "dist", "build"}
         buf: list[PathCandidate] = []
-        q_lower = query.lower()
+        q_lower = match_query.lower()
         root_str = str(root)
         worker = get_current_worker()  # correct API; WorkerManager has no .current
 
@@ -128,6 +142,7 @@ class PathSearchProvider(Widget):
                 buf.append(PathCandidate(
                     display=rel,
                     abs_path=os.path.join(dirpath, name),
+                    insert_text=f"{insert_prefix}{rel}" if insert_prefix else rel,
                 ))
                 if len(buf) >= BATCH:
                     if not first_batch_sent:

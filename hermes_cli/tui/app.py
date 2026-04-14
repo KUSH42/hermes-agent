@@ -273,7 +273,6 @@ class HermesApp(App):
         # Timestamp until which _flash_hint has the hint bar reserved.
         # _tick_spinner must not overwrite before this expires.
         self._flash_hint_expires: float = 0.0
-
         # Compaction warning state — reset when progress returns to 0
         self._compaction_warned: bool = False
 
@@ -486,6 +485,17 @@ class HermesApp(App):
             return bool(future.result())
         except Exception:
             return False
+
+    def get_working_directory(self) -> Path:
+        """Return TUI workspace root used for path completion and file-drop links."""
+        candidate = getattr(self.cli, "terminal_cwd", None)
+        if not isinstance(candidate, (str, bytes, Path)) or not str(candidate).strip():
+            candidate = None
+        candidate = candidate or _os_mod.environ.get("TERMINAL_CWD") or _os_mod.getcwd()
+        try:
+            return Path(candidate).expanduser().resolve()
+        except Exception:
+            return Path(_os_mod.getcwd()).resolve()
 
     def flush_output(self) -> None:
         """Thread-safe: send flush sentinel to commit any trailing partial line."""
@@ -1214,7 +1224,7 @@ class HermesApp(App):
             self._flash_hint("file drop unavailable while prompt is open", 1.5)
             return
 
-        cwd = Path.cwd()
+        cwd = self.get_working_directory()
         link_tokens: list[str] = []
         image_paths: list[Path] = []
         rejected: list[str] = []

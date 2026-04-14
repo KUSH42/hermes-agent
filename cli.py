@@ -1724,6 +1724,11 @@ class HermesCLI:
         self._providers_order = pr.get("order")
         self._provider_require_params = pr.get("require_parameters", False)
         self._provider_data_collection = pr.get("data_collection")
+
+        # Session workspace root used by TUI helpers. Keep aligned with terminal_tool.
+        self.terminal_cwd = os.path.abspath(
+            os.path.expanduser(os.getenv("TERMINAL_CWD", os.getcwd()))
+        )
         
         # Fallback provider chain — tried in order when primary fails after retries.
         # Supports new list format (fallback_providers) and legacy single-dict (fallback_model).

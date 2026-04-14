@@ -7,7 +7,7 @@ Hermes-specific features on top:
 - History: backed by ~/.hermes/.hermes_history via FileHistory format
 - Autocomplete: multi-context dispatcher (slash commands, path refs)
 - Ghost text: native Input.suggester + HistorySuggester (Fish-style)
-- Spinner overlay: sibling widget toggled when disabled
+- Spinner text: rendered via the Input placeholder while disabled
 - Property bridge: content/cursor_pos aliases for callers still using old API
 """
 
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import unicodedata
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -61,6 +62,14 @@ def _sanitize_input_text(text: str) -> str:
             continue
         sanitized.append(ch)
     return "".join(sanitized)
+
+
+@dataclass(frozen=True, slots=True)
+class _PathSearchRequest:
+    batch_key: str
+    match_query: str
+    root: Path
+    insert_prefix: str
 
 
 class HermesInput(Input, can_focus=True):
@@ -350,7 +359,11 @@ class HermesInput(Input, can_focus=True):
 
             if trigger.context is CompletionContext.SLASH_COMMAND:
                 self._show_slash_completions(trigger.fragment)
-            elif trigger.context in (CompletionContext.PATH_REF, CompletionContext.PLAIN_PATH_REF):
+            elif trigger.context in (
+                CompletionContext.PATH_REF,
+                CompletionContext.PLAIN_PATH_REF,
+                CompletionContext.ABSOLUTE_PATH_REF,
+            ):
                 self._show_path_completions(trigger.fragment)
             else:
                 self._hide_completion_overlay()
@@ -406,7 +419,11 @@ class HermesInput(Input, can_focus=True):
 
     def _fire_path_search(self, fragment: str) -> None:
         self._path_debounce_timer = None
-        if self._current_trigger.context not in (CompletionContext.PATH_REF, CompletionContext.PLAIN_PATH_REF):
+        if self._current_trigger.context not in (
+            CompletionContext.PATH_REF,
+            CompletionContext.PLAIN_PATH_REF,
+            CompletionContext.ABSOLUTE_PATH_REF,
+        ):
             return
         if self._current_trigger.fragment != fragment:
             return
@@ -414,7 +431,67 @@ class HermesInput(Input, can_focus=True):
             provider = self.screen.query_one(PathSearchProvider)
         except NoMatches:
             return
-        provider.search(fragment, Path.cwd())
+        request = self._resolve_path_search_request()
+        provider.search(
+            request.batch_key,
+            request.root,
+            match_query=request.match_query,
+            insert_prefix=request.insert_prefix,
+        )
+
+    def _working_directory(self) -> Path:
+        app = getattr(self, "app", None)
+        getter = getattr(app, "get_working_directory", None)
+        if callable(getter):
+            return getter()
+        return Path.cwd()
+
+    def _resolve_path_search_request(self) -> _PathSearchRequest:
+        trig = self._current_trigger
+        cwd = self._working_directory()
+        if trig.context is CompletionContext.PATH_REF:
+            raw = trig.fragment
+        else:
+            raw = self.value[trig.start:self.cursor_position]
+
+        if not raw:
+            return _PathSearchRequest("", "", cwd, "")
+
+        if raw.startswith("~/"):
+            anchor = Path.home()
+            remainder = raw[2:]
+        elif raw.startswith("/"):
+            anchor = Path("/")
+            remainder = raw[1:]
+        else:
+            anchor = cwd
+            remainder = raw
+
+        if raw.endswith("/"):
+            dir_part = remainder.rstrip("/")
+            leaf = ""
+        else:
+            dir_part, _, leaf = remainder.rpartition("/")
+
+        intended_base = (anchor / dir_part).resolve(strict=False) if dir_part else anchor
+        base = intended_base
+        missing_parts: list[str] = []
+        while not (base.exists() and base.is_dir()):
+            part = base.name
+            parent = base.parent
+            if part:
+                missing_parts.append(part)
+            if parent == base:
+                break
+            base = parent
+        if not (base.exists() and base.is_dir()):
+            base = anchor
+        query_parts = list(reversed(missing_parts))
+        if leaf:
+            query_parts.append(leaf)
+        match_query = "/".join(part for part in query_parts if part)
+        insert_prefix = raw[:-len(match_query)] if match_query else raw
+        return _PathSearchRequest(raw, match_query, base, insert_prefix)
 
     def _set_searching(self, value: bool) -> None:
         try:
@@ -472,15 +549,22 @@ class HermesInput(Input, can_focus=True):
         """Accumulate walker batches and re-rank candidates."""
         # Belt + suspenders: exclusive=True already cancels in-flight walkers,
         # but a batch can be in the message queue when cancellation lands.
-        if self._current_trigger.context not in (CompletionContext.PATH_REF, CompletionContext.PLAIN_PATH_REF):
+        if self._current_trigger.context not in (
+            CompletionContext.PATH_REF,
+            CompletionContext.PLAIN_PATH_REF,
+            CompletionContext.ABSOLUTE_PATH_REF,
+        ):
             return
         if message.query != self._current_trigger.fragment:
             return
 
         if len(self._raw_candidates) < 4096:
             self._raw_candidates.extend(message.batch)
+        request = self._resolve_path_search_request()
         ranked = fuzzy_rank(
-            self._current_trigger.fragment, self._raw_candidates, limit=200,
+            request.match_query or self._current_trigger.fragment,
+            self._raw_candidates,
+            limit=200,
         )
         self._push_to_list(ranked)
         # Clear searching state once the final batch arrives
@@ -493,7 +577,8 @@ class HermesInput(Input, can_focus=True):
         except NoMatches:
             return
         # Propagate current query so empty-state label shows "no results for X"
-        clist.current_query = self._current_trigger.fragment
+        request = self._resolve_path_search_request()
+        clist.current_query = request.match_query or self._current_trigger.fragment
         clist.items = tuple(candidates)
 
     # --- Accept / dismiss ---
@@ -531,24 +616,27 @@ class HermesInput(Input, can_focus=True):
             new_value = c.command + " "
             new_cursor = len(new_value)
         elif isinstance(c, PathCandidate):
-            if trig.context is CompletionContext.PLAIN_PATH_REF:
-                # Replace ./fragment (or ../fragment, ~/fragment).
-                # trig.start is the position of '.' or '~'; the prefix ends at
-                # the first '/' after trig.start.
-                prefix_end = self.value.index("/", trig.start) + 1
-                path_prefix = self.value[trig.start:prefix_end]  # "./" or "../" or "~/"
+            insert_text = c.insert_text or c.display
+            if trig.context in (
+                CompletionContext.PLAIN_PATH_REF,
+                CompletionContext.ABSOLUTE_PATH_REF,
+            ):
+                if trig.context is CompletionContext.PLAIN_PATH_REF and not c.insert_text:
+                    prefix_end = self.value.index("/", trig.start) + 1
+                    path_prefix = self.value[trig.start:prefix_end]
+                    insert_text = f"{path_prefix}{c.display}"
                 before = self.value[:trig.start]
-                after = self.value[trig.start + len(path_prefix) + len(trig.fragment):]
+                after = self.value[self.cursor_position:]
                 tail = " " if not after else ""
-                new_value = f"{before}{path_prefix}{c.display}{tail}{after}"
-                new_cursor = len(before) + len(path_prefix) + len(c.display) + len(tail)
+                new_value = f"{before}{insert_text}{tail}{after}"
+                new_cursor = len(before) + len(insert_text) + len(tail)
             else:
                 # PATH_REF: replace @fragment span; trig.start - 1 is the @.
                 before = self.value[: trig.start - 1]
-                after = self.value[trig.start + len(trig.fragment):]
+                after = self.value[self.cursor_position:]
                 tail = " " if not after else ""
-                new_value = f"{before}@{c.display}{tail}{after}"
-                new_cursor = len(before) + 1 + len(c.display) + len(tail)
+                new_value = f"{before}@{insert_text}{tail}{after}"
+                new_cursor = len(before) + 1 + len(insert_text) + len(tail)
         else:
             return
 

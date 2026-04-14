@@ -31,6 +31,7 @@ class CompletionContext(Enum):
     PATH_REF = 2       # triggered by @fragment
     NATURAL = 3
     PLAIN_PATH_REF = 4 # triggered by ./fragment, ../fragment, ~/fragment
+    ABSOLUTE_PATH_REF = 5 # triggered by /abs/path after whitespace
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +46,7 @@ class CompletionTrigger:
 _SLASH_RE = re.compile(r"^/([\w-]*)$")
 _PATH_RE = re.compile(r"(?:^|\s)@([\w./\-]*)$")     # anchored to cursor head
 _PLAIN_PATH_RE = re.compile(r"(?:^|\s)((?:\.\.?|~)/[\w./\-]*)$")  # ./x, ../x, ~/x
+_ABS_PATH_RE = re.compile(r"(?:^|\s)(/[\w.\-]+/[\w./\-]*)$")
 
 
 def detect_context(value: str, cursor: int) -> CompletionTrigger:
@@ -78,6 +80,16 @@ def detect_context(value: str, cursor: int) -> CompletionTrigger:
             fragment=fragment,
             start=m.start(1),              # position of '.' or '~' in the input
         )
+
+    m = _ABS_PATH_RE.search(head)
+    if m:
+        full_path = m.group(1)
+        if not head.startswith(full_path):
+            return CompletionTrigger(
+                context=CompletionContext.ABSOLUTE_PATH_REF,
+                fragment=full_path,
+                start=m.start(1),
+            )
 
     # NATURAL has no fragment — it's the absence of a completion context,
     # not a 0-length match against the whole head.

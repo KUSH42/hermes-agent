@@ -138,3 +138,16 @@ def test_dot_slash_not_mid_word() -> None:
     """foo./bar is NOT PLAIN_PATH_REF (no space or SOL before '.')."""
     t = detect_context("foo./bar", 8)
     assert t.context is CompletionContext.NATURAL
+
+
+def test_absolute_path_after_space_is_absolute_path_ref() -> None:
+    """Absolute paths after whitespace trigger path completion, not slash commands."""
+    t = detect_context("open /tmp/demo", 14)
+    assert t.context is CompletionContext.ABSOLUTE_PATH_REF
+    assert t.fragment == "/tmp/demo"
+
+
+def test_absolute_path_at_start_stays_slash_context() -> None:
+    """SOL /tmp stays slash-context to preserve slash-command semantics."""
+    t = detect_context("/tmp", 4)
+    assert t.context is CompletionContext.SLASH_COMMAND

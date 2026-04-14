@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -303,20 +304,22 @@ async def test_submit_uses_sanitized_input_value() -> None:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_path_completion_triggers_walker() -> None:
+async def test_path_completion_triggers_walker(tmp_path: Path) -> None:
     """Typing '@' causes PathSearchProvider.search to be called."""
-    from unittest.mock import patch
     from hermes_cli.tui.path_search import PathSearchProvider
 
-    app = HermesApp(cli=MagicMock())
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    cli = MagicMock()
+    cli.terminal_cwd = str(workspace)
+    app = HermesApp(cli=cli)
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         provider = app.query_one(PathSearchProvider)
         search_calls: list = []
-        original_search = provider.search
 
-        def capture_search(query, root):
-            search_calls.append((query, root))
+        def capture_search(query, root, **kwargs):
+            search_calls.append((query, root, kwargs))
             # Don't actually run the walk in tests
         provider.search = capture_search  # type: ignore[method-assign]
 
@@ -331,6 +334,69 @@ async def test_path_completion_triggers_walker() -> None:
 
         assert len(search_calls) > 0, "PathSearchProvider.search was not called"
         assert search_calls[0][0] == "src"
+        assert search_calls[0][1] == workspace
+        assert search_calls[0][2]["match_query"] == "src"
+        assert search_calls[0][2]["insert_prefix"] == ""
+
+
+@pytest.mark.asyncio
+async def test_path_completion_resolves_parent_root(tmp_path: Path) -> None:
+    """@../src searches from parent directory and preserves ../ prefix on insert."""
+    from hermes_cli.tui.path_search import PathSearchProvider
+
+    workspace = tmp_path / "project" / "app"
+    workspace.mkdir(parents=True)
+    cli = MagicMock()
+    cli.terminal_cwd = str(workspace)
+    app = HermesApp(cli=cli)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        provider = app.query_one(PathSearchProvider)
+        search_calls: list = []
+
+        def capture_search(query, root, **kwargs):
+            search_calls.append((query, root, kwargs))
+
+        provider.search = capture_search  # type: ignore[method-assign]
+
+        inp = app.query_one(HermesInput)
+        inp.value = "@../src"
+        inp.cursor_position = len("@../src")
+        await asyncio.sleep(0.15)
+        await pilot.pause()
+
+        assert search_calls[0][0] == "../src"
+        assert search_calls[0][1] == workspace.parent
+        assert search_calls[0][2]["match_query"] == "src"
+        assert search_calls[0][2]["insert_prefix"] == "../"
+
+
+@pytest.mark.asyncio
+async def test_path_completion_resolves_absolute_root() -> None:
+    """@/tmp/demo splits absolute path into root + query for out-of-cwd search."""
+    from hermes_cli.tui.path_search import PathSearchProvider
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        provider = app.query_one(PathSearchProvider)
+        search_calls: list = []
+
+        def capture_search(query, root, **kwargs):
+            search_calls.append((query, root, kwargs))
+
+        provider.search = capture_search  # type: ignore[method-assign]
+
+        inp = app.query_one(HermesInput)
+        inp.value = "@/tmp/demo"
+        inp.cursor_position = len("@/tmp/demo")
+        await asyncio.sleep(0.15)
+        await pilot.pause()
+
+        assert search_calls[0][0] == "/tmp/demo"
+        assert search_calls[0][1] == Path("/tmp")
+        assert search_calls[0][2]["match_query"] == "demo"
+        assert search_calls[0][2]["insert_prefix"] == "/tmp/"
 
 
 @pytest.mark.asyncio
@@ -353,8 +419,8 @@ async def test_path_completion_populates_list() -> None:
         batch_msg = PathSearchProvider.Batch(
             query="src",
             batch=[
-                PathCandidate(display="src/main.py", abs_path="/tmp/src/main.py"),
-                PathCandidate(display="src/utils.py", abs_path="/tmp/src/utils.py"),
+                PathCandidate(display="src/main.py", abs_path="/tmp/src/main.py", insert_text="src/main.py"),
+                PathCandidate(display="src/utils.py", abs_path="/tmp/src/utils.py", insert_text="src/utils.py"),
             ],
             final=True,
         )
@@ -520,6 +586,39 @@ async def test_tab_accepts_plain_path_candidate() -> None:
         await pilot.pause()
 
         assert inp.value == "./src/main.py "
+        assert not app.query_one(CompletionOverlay).has_class("--visible")
+
+
+@pytest.mark.asyncio
+async def test_tab_accepts_absolute_path_candidate() -> None:
+    """Absolute path completion uses candidate insert_text, not relative display."""
+    from hermes_cli.tui.completion_context import CompletionContext, CompletionTrigger
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        inp.value = "open /tmp/de"
+        inp.cursor_position = len("open /tmp/de")
+
+        inp._current_trigger = CompletionTrigger(
+            CompletionContext.ABSOLUTE_PATH_REF, "/tmp/de", 5
+        )
+        clist = app.query_one(VirtualCompletionList)
+        clist.items = (
+            PathCandidate(
+                display="demo/file.txt",
+                abs_path="/tmp/demo/file.txt",
+                insert_text="/tmp/demo/file.txt",
+            ),
+        )
+        clist.highlighted = 0
+        await pilot.pause()
+
+        inp.action_accept_autocomplete()
+        await pilot.pause()
+
+        assert inp.value == "open /tmp/demo/file.txt "
         assert not app.query_one(CompletionOverlay).has_class("--visible")
 
 

@@ -219,6 +219,13 @@ class ToolBlock(Widget):
 
     Lines with ≤ COLLAPSE_THRESHOLD are auto-expanded and show no toggle or
     copy affordance. Lines with > COLLAPSE_THRESHOLD start collapsed.
+
+    Used for post-completion tool output summaries (diff previews, code/file
+    previews, terminal output).  Content arrives all-at-once via ``lines`` /
+    ``plain_lines`` and can be re-rendered on skin change via ``rerender_fn``.
+
+    For real-time streaming output during tool execution, see
+    ``StreamingToolBlock``.
     """
 
     DEFAULT_CSS = "ToolBlock { height: auto; }"
@@ -359,6 +366,13 @@ class StreamingToolBlock(ToolBlock):
       the RichLog.  Additional lines are tracked only in plain-text storage.
     * **Byte cap** — lines longer than ``_LINE_BYTE_CAP`` (2000 chars) are
       truncated before rendering and before plain-text storage.
+
+    Used for real-time output during tool execution (terminal, execute_code).
+    Content is written directly to the RichLog via ``_flush_pending()`` — the
+    inherited ``self._lines`` / ``self._plain_lines`` are always empty.
+
+    For post-completion summaries with full skin-refresh support, see
+    ``ToolBlock`` (static).
     """
 
     DEFAULT_CSS = "StreamingToolBlock { height: auto; }"
@@ -525,3 +539,20 @@ class StreamingToolBlock(ToolBlock):
 
     def copy_content(self) -> str:
         return "\n".join(self._all_plain)
+
+    def refresh_skin(self) -> None:
+        """Refresh header cosmetics only — skip body re-render.
+
+        StreamingToolBlock writes content directly to the RichLog via
+        ``_flush_pending()``; ``self._lines`` / ``self._plain_lines`` are
+        always empty.  The inherited ``_render_body()`` would be a no-op
+        (returns early on empty lines), so we skip it entirely.
+
+        Body content cannot be re-styled: per-line Pygments highlighting
+        loses multi-line string/decorator context that ``complete()``
+        never reconstructed.  Only header visuals (gutter color, tool
+        icon) are refreshed.
+        """
+        self._header._refresh_gutter_color()
+        self._header._refresh_tool_icon()
+        self._header.refresh()

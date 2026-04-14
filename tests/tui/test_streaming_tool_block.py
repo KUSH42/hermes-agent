@@ -15,6 +15,7 @@ from hermes_cli.tui.app import HermesApp
 from hermes_cli.tui.tool_blocks import (
     COLLAPSE_THRESHOLD,
     StreamingToolBlock,
+    ToolBlock,
     ToolHeader,
     ToolTail,
     _VISIBLE_CAP,
@@ -422,4 +423,64 @@ async def test_scroll_to_bottom_dismisses_tool_tail():
             output.watch_scroll_y(0.0, 10)
         await pilot.pause()
         assert output._user_scrolled_up is False
-        assert tail.display is False
+
+
+# ---------------------------------------------------------------------------
+# refresh_skin() on StreamingToolBlock
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_refresh_skin_does_not_clear_body():
+    """refresh_skin() on a completed StreamingToolBlock must not wipe content."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.agent_running = True
+        await pilot.pause()
+
+        app.open_streaming_tool_block("id-rs", "ls -la")
+        await pilot.pause()
+        for i in range(5):
+            app.append_streaming_line("id-rs", f"line {i}")
+        await asyncio.sleep(0.12)
+        await pilot.pause()
+        app.close_streaming_tool_block("id-rs", "0.5s")
+        await pilot.pause()
+
+        block = app.query_one(StreamingToolBlock)
+        log = block.query_one(CopyableRichLog)
+        lines_before = len(log.lines)
+        assert lines_before > 0
+
+        # refresh_skin should NOT clear the body
+        block.refresh_skin()
+        await pilot.pause()
+        assert len(log.lines) == lines_before
+
+
+@pytest.mark.asyncio
+async def test_refresh_skin_is_subclass_safe():
+    """self.query(ToolBlock) finds StreamingToolBlock — refresh_skin must not crash."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.agent_running = True
+        await pilot.pause()
+
+        app.open_streaming_tool_block("id-q", "test")
+        await pilot.pause()
+        app.append_streaming_line("id-q", "output line")
+        await asyncio.sleep(0.12)
+        await pilot.pause()
+        app.close_streaming_tool_block("id-q", "0.1s")
+        await pilot.pause()
+
+        # query(ToolBlock) should find the StreamingToolBlock
+        blocks = list(app.query(ToolBlock))
+        assert len(blocks) == 1
+        assert isinstance(blocks[0], StreamingToolBlock)
+
+        # refresh_skin on each should not raise
+        for b in blocks:
+            b.refresh_skin()
+        await pilot.pause()

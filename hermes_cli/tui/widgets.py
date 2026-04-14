@@ -824,11 +824,18 @@ class MessagePanel(Widget):
         lines: list[str],
         plain_lines: list[str],
         rerender_fn=None,
+        header_stats=None,
     ) -> Widget | None:
         if not lines:
             return None
         from hermes_cli.tui.tool_blocks import ToolBlock as _ToolBlock
-        block = _ToolBlock(label, lines, plain_lines, rerender_fn=rerender_fn)
+        block = _ToolBlock(
+            label,
+            lines,
+            plain_lines,
+            rerender_fn=rerender_fn,
+            header_stats=header_stats,
+        )
         self._mount_nonprose_block(block)
         return block
 

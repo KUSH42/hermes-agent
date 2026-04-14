@@ -1217,6 +1217,7 @@ class HermesApp(App):
         lines: list[str],
         plain_lines: list[str],
         rerender_fn=None,
+        header_stats=None,
     ) -> None:
         """Mount a ToolBlock into OutputPanel before the live-output trio.
 
@@ -1231,7 +1232,13 @@ class HermesApp(App):
             output = self.query_one(OutputPanel)
             # Ensure a MessagePanel exists for this turn (holds response text).
             msg = output.current_message or output.new_message()
-            msg.mount_tool_block(label, lines, plain_lines, rerender_fn=rerender_fn)
+            msg.mount_tool_block(
+                label,
+                lines,
+                plain_lines,
+                rerender_fn=rerender_fn,
+                header_stats=header_stats,
+            )
             # Increment memoized header count to avoid O(n) query in StatusBar
             self._browse_total += 1
             if not output._user_scrolled_up:

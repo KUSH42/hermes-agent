@@ -242,8 +242,8 @@ async def test_copyable_block_copy_button_click_calls_copy():
 
 
 @pytest.mark.asyncio
-async def test_tool_header_renders_copy_icon_for_large_block():
-    """ToolHeader.render() includes ⎘ for blocks with more than COLLAPSE_THRESHOLD lines."""
+async def test_tool_header_omits_copy_icon_for_large_block():
+    """ToolHeader.render() shows chevron only; passive copy icon is removed."""
     from hermes_cli.tui.tool_blocks import COLLAPSE_THRESHOLD
 
     app = _make_app()
@@ -257,9 +257,33 @@ async def test_tool_header_renders_copy_icon_for_large_block():
 
         header = block.query_one(ToolHeader)
         rendered = str(header.render())
-        assert "⎘" in rendered, (
-            f"ToolHeader with {COLLAPSE_THRESHOLD + 1} lines must show ⎘ copy icon"
-        )
+        assert "⎘" not in rendered
+        assert "▸" in rendered
+
+
+@pytest.mark.asyncio
+async def test_tool_header_renders_diff_delta_counts():
+    """Diff tool headers show colored +N / -N counts instead of total line sum."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _pause(pilot)
+        output = app.query_one(OutputPanel)
+        lines = [
+            "review diff",
+            "@@ -1,2 +1,2 @@",
+            "   1 - old",
+            "   1 + new",
+            "   2 + newer",
+        ]
+        block = ToolBlock("diff", lines, lines)
+        await output.mount(block)
+        await _pause(pilot)
+
+        header = block.query_one(ToolHeader)
+        rendered = str(header.render())
+        assert "+2" in rendered
+        assert "-1" in rendered
+        assert "5L" not in rendered
 
 
 @pytest.mark.asyncio
@@ -306,7 +330,7 @@ async def test_tool_header_renders_collapse_chevron_when_collapsed():
 
 @pytest.mark.asyncio
 async def test_tool_header_no_affordances_for_small_block():
-    """ToolHeader with ≤ COLLAPSE_THRESHOLD lines shows no ⎘ and no chevron."""
+    """ToolHeader with ≤ COLLAPSE_THRESHOLD lines shows no copy icon and no chevron."""
     from hermes_cli.tui.tool_blocks import COLLAPSE_THRESHOLD
 
     app = _make_app()
@@ -320,9 +344,7 @@ async def test_tool_header_no_affordances_for_small_block():
 
         header = block.query_one(ToolHeader)
         rendered = str(header.render())
-        assert "⎘" not in rendered, (
-            f"ToolHeader with ≤{COLLAPSE_THRESHOLD} lines must NOT show ⎘"
-        )
+        assert "⎘" not in rendered
         assert "▾" not in rendered
         assert "▸" not in rendered
 

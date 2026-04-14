@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 
 from hermes_cli.tui.app import HermesApp
 from hermes_cli.tui.tool_blocks import COLLAPSE_THRESHOLD, ToolBlock, ToolBodyContainer, ToolHeader
+from hermes_cli.tui.widgets import CopyableRichLog
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +86,46 @@ async def test_copy_content_returns_plain_text():
     lines = ["  ┊ " + p for p in plain]
     block = ToolBlock("diff", lines, plain)
     assert block.copy_content() == "first line\nsecond line\nthird line\nfourth line"
+
+
+@pytest.mark.asyncio
+async def test_diff_block_header_shows_add_delete_counts():
+    """Diff blocks show +N / -N header counts instead of raw rendered-line total."""
+    lines = [
+        "review diff",
+        "@@ -1,2 +1,2 @@",
+        "   1 - old",
+        "   1 + new",
+        "   2 + newer",
+    ]
+    block = ToolBlock("diff", lines, lines)
+    rendered = str(block._header.render())
+    assert "+2" in rendered
+    assert "-1" in rendered
+    assert "5L" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_diff_block_body_has_trailing_blank_line():
+    """Expanded diff body ends with a blank separator line for visual spacing."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        lines = [
+            "review diff",
+            "@@ -1,1 +1,1 @@",
+            "   1 - old",
+            "   1 + new",
+        ]
+        app.mount_tool_block("diff", lines, lines)
+        await pilot.pause()
+
+        block = app.query_one(ToolBlock)
+        block.toggle()
+        await pilot.pause()
+
+        log = block._body.query_one(CopyableRichLog)
+        assert len(log.lines) == len(lines) + 1
+        assert "".join(segment.text for segment in log.lines[-1]) == ""
 
 
 @pytest.mark.asyncio

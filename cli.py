@@ -6575,6 +6575,20 @@ class HermesCLI:
                     function_args=function_args,
                     snapshot=snapshot,
                 )
+                header_stats = None
+                if diff_text:
+                    from hermes_cli.tui.tool_blocks import ToolHeaderStats
+                    additions = 0
+                    deletions = 0
+                    for raw_line in diff_text.splitlines():
+                        if raw_line.startswith("+++ ") or raw_line.startswith("--- "):
+                            continue
+                        if raw_line.startswith("+"):
+                            additions += 1
+                        elif raw_line.startswith("-"):
+                            deletions += 1
+                    if additions or deletions:
+                        header_stats = ToolHeaderStats(additions=additions, deletions=deletions)
                 display_lines: list[str] = []
                 render_captured_diff_preview(diff_text, print_fn=display_lines.append, prefix=_TOOL_PREFIX)
                 if display_lines:
@@ -6590,7 +6604,7 @@ class HermesCLI:
                         return rerendered, _plain_lines(rerendered)
 
                     tui.call_from_thread(
-                        tui.mount_tool_block, "diff", display_lines, plain, _rerender_diff
+                        tui.mount_tool_block, "diff", display_lines, plain, _rerender_diff, header_stats
                     )
             except Exception:
                 logger.debug("Edit diff preview failed for %s", function_name, exc_info=True)

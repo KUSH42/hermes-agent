@@ -11,6 +11,8 @@ StreamingToolBlock extends ToolBlock with IDLE→STREAMING→COMPLETED lifecycle
 from __future__ import annotations
 
 import collections
+import re
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from rich.text import Text
@@ -34,10 +36,39 @@ _SPINNER_FRAMES: tuple[str, ...] = (
 
 # Gutter fallback color — avoid duplicating the literal across three call sites
 _GUTTER_FALLBACK: str = "#FFD700"
+_DIFF_ADD_FALLBACK: str = "#5fd75f"
+_DIFF_DEL_FALLBACK: str = "#ef5350"
+_VISIBLE_DIFF_ROW_RE = re.compile(r"^\s*\d+\s+([+-])\s")
+
+
+@dataclass(frozen=True, slots=True)
+class ToolHeaderStats:
+    additions: int = 0
+    deletions: int = 0
+
+    @property
+    def has_diff_counts(self) -> bool:
+        return self.additions > 0 or self.deletions > 0
+
+
+def _count_visible_diff_rows(lines: list[str]) -> ToolHeaderStats | None:
+    additions = 0
+    deletions = 0
+    for line in lines:
+        match = _VISIBLE_DIFF_ROW_RE.match(line)
+        if not match:
+            continue
+        if match.group(1) == "+":
+            additions += 1
+        else:
+            deletions += 1
+    if additions == 0 and deletions == 0:
+        return None
+    return ToolHeaderStats(additions=additions, deletions=deletions)
 
 
 class ToolHeader(Widget):
-    """Single-line header: '  ╌╌ {label}  {N}L  [▸/▾  ⎘]'.
+    """Single-line header: '  ╌╌ {label}  {stats}  [▸/▾]'.
 
     During streaming ``_spinner_char`` replaces the toggle chevron.
     After completion ``_duration`` is appended to the label.
@@ -47,10 +78,17 @@ class ToolHeader(Widget):
 
     collapsed: reactive[bool] = reactive(True, repaint=True)
 
-    def __init__(self, label: str, line_count: int, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        label: str,
+        line_count: int,
+        stats: ToolHeaderStats | None = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self._label = label
         self._line_count = line_count
+        self._stats = stats
         # ≤ threshold: always open, no affordances shown
         self._has_affordances = line_count > COLLAPSE_THRESHOLD
         self._copy_flash = False
@@ -64,11 +102,14 @@ class ToolHeader(Widget):
     def _refresh_gutter_color(self) -> None:
         """Cache focused-gutter colour from CSS variables (supports hot-reload)."""
         try:
-            self._focused_gutter_color: str = self.app.get_css_variables().get(
-                "rule-accent-color", _GUTTER_FALLBACK
-            )
+            css = self.app.get_css_variables()
+            self._focused_gutter_color = css.get("rule-accent-color", _GUTTER_FALLBACK)
+            self._diff_add_color = css.get("addition-marker-fg", _DIFF_ADD_FALLBACK)
+            self._diff_del_color = css.get("deletion-marker-fg", _DIFF_DEL_FALLBACK)
         except Exception:
             self._focused_gutter_color = _GUTTER_FALLBACK
+            self._diff_add_color = _DIFF_ADD_FALLBACK
+            self._diff_del_color = _DIFF_DEL_FALLBACK
 
     def render(self) -> RenderResult:
         focused = self.has_class("focused")
@@ -92,13 +133,18 @@ class ToolHeader(Widget):
             # Streaming in progress — show spinner, no line count or toggle yet
             t.append(f"  {self._spinner_char}", style="dim")
         else:
-            if self._line_count:
+            if self._stats and self._stats.has_diff_counts:
+                add_color = getattr(self, "_diff_add_color", _DIFF_ADD_FALLBACK)
+                del_color = getattr(self, "_diff_del_color", _DIFF_DEL_FALLBACK)
+                if self._stats.additions:
+                    t.append(f"  +{self._stats.additions}", style=f"bold {add_color}")
+                if self._stats.deletions:
+                    t.append(f"  -{self._stats.deletions}", style=f"bold {del_color}")
+            elif self._line_count:
                 t.append(f"  {self._line_count}L", style="dim")
             if self._has_affordances:
                 toggle = "  ▾" if not self.collapsed else "  ▸"
-                icon = "  ✓" if self._copy_flash else "  ⎘"
                 t.append(toggle, style="dim")
-                t.append(icon, style="dim")
         return t
 
     def flash_copy(self) -> None:
@@ -166,6 +212,7 @@ class ToolBlock(Widget):
         lines: list[str],       # ANSI display lines
         plain_lines: list[str], # plain text for copy (no ANSI, no gutter)
         rerender_fn: Callable[[], tuple[list[str], list[str]]] | None = None,
+        header_stats: ToolHeaderStats | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -173,8 +220,11 @@ class ToolBlock(Widget):
         self._lines = list(lines)
         self._plain_lines = list(plain_lines)
         self._rerender_fn = rerender_fn
+        self._header_stats = header_stats
+        if self._header_stats is None and label == "diff":
+            self._header_stats = _count_visible_diff_rows(self._plain_lines)
         auto_expand = len(lines) <= COLLAPSE_THRESHOLD
-        self._header = ToolHeader(label, len(lines))
+        self._header = ToolHeader(label, len(lines), stats=self._header_stats)
         self._body = ToolBodyContainer()
         if auto_expand:
             self._header.collapsed = False
@@ -195,6 +245,8 @@ class ToolBlock(Widget):
             log.clear()
             for styled, plain in zip(self._lines, self._plain_lines):
                 log.write_with_source(Text.from_ansi(styled), plain)
+            if self._header_stats and self._header_stats.has_diff_counts and self._lines:
+                log.write(Text(""))
         except NoMatches:
             pass  # body not yet in DOM — safe to skip
 
@@ -220,6 +272,9 @@ class ToolBlock(Widget):
         lines, plain_lines = self._rerender_fn()
         self._lines = list(lines)
         self._plain_lines = list(plain_lines)
+        if self._label == "diff" and self._header_stats is None:
+            self._header_stats = _count_visible_diff_rows(self._plain_lines)
+        self._header._stats = self._header_stats
         self._header._line_count = len(self._lines)
         self._header._has_affordances = len(self._lines) > COLLAPSE_THRESHOLD
         if not self._header._has_affordances:

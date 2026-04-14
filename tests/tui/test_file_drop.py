@@ -21,6 +21,7 @@ def _make_cli() -> MagicMock:
 async def test_handle_file_drop_links_text_file(tmp_path, monkeypatch) -> None:
     app = HermesApp(cli=_make_cli())
     monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("TERMINAL_CWD", raising=False)
     file_path = tmp_path / "src" / "main.py"
     file_path.parent.mkdir()
     file_path.write_text("print('hi')\n")
@@ -110,6 +111,7 @@ async def test_handle_file_drop_rejects_while_overlay_active(tmp_path, monkeypat
 async def test_input_paste_intercepts_dragged_file_path(tmp_path, monkeypatch) -> None:
     app = HermesApp(cli=_make_cli())
     monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("TERMINAL_CWD", raising=False)
     file_path = tmp_path / "main.py"
     file_path.write_text("print('hi')\n")
 

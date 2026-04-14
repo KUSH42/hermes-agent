@@ -228,6 +228,12 @@ class HermesInput(Input, can_focus=True):
             self.post_message(self.FilesDropped(dropped_paths))
             event.stop()
             return
+        # Flash paste hint before letting Input handle the paste
+        try:
+            from hermes_cli.tui.constants import ICON_COPY
+            self.app._flash_hint(f"{ICON_COPY}  {len(event.text)} chars pasted", 1.2)
+        except Exception:
+            pass
         super()._on_paste(event)
 
     # --- Actions ---
@@ -654,17 +660,7 @@ class HermesInput(Input, can_focus=True):
 
     # --- Convenience ---
 
-    def on_paste(self, event) -> None:
-        """Flash HintBar when text is pasted into the input.
 
-        ``Input`` handles the actual paste — we must NOT call
-        ``event.prevent_default()`` here.
-        """
-        n = len(event.text)
-        try:
-            self.app._flash_hint(f"{ICON_COPY}  {n} chars pasted", 1.2)
-        except Exception:
-            pass
 
     def insert_text(self, text: str) -> None:
         """Insert text at cursor position (for paste support / external callers)."""

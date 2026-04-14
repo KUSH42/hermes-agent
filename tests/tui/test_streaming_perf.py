@@ -63,7 +63,9 @@ def _make_candidates(n: int) -> list[TurnCandidate]:
             entry=_TurnEntry(
                 panel=MagicMock(),
                 index=i,
-                plain_text=body,
+                user_text="",
+                assistant_text=body,
+                search_text=body,
                 display="word word",
             ),
         )

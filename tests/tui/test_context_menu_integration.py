@@ -150,7 +150,9 @@ async def test_right_click_on_streaming_tool_block_opens_menu():
         await _pause(pilot)
 
         output = app.query_one(OutputPanel)
-        stb = next(c for c in output.children if isinstance(c, StreamingToolBlock))
+        stbs = list(output.query(StreamingToolBlock))
+        assert stbs, "StreamingToolBlock not found in OutputPanel"
+        stb = stbs[-1]
 
         await app.on_click(_right_click_event(stb, 10, 5))
         await _pause(pilot)
@@ -173,7 +175,9 @@ async def test_right_click_on_tool_block_via_mount_tool_block():
         await _pause(pilot)
 
         output = app.query_one(OutputPanel)
-        block = next(c for c in output.children if isinstance(c, ToolBlock))
+        blocks = list(output.query(ToolBlock))
+        assert blocks, "ToolBlock not found in OutputPanel"
+        block = blocks[-1]
 
         await app.on_click(_right_click_event(block, 5, 5))
         await _pause(pilot)
@@ -457,7 +461,9 @@ async def test_streaming_tool_block_copy_content_after_lines():
         await _pause(pilot)
 
         output = app.query_one(OutputPanel)
-        stb = next(c for c in output.children if isinstance(c, StreamingToolBlock))
+        stbs = list(output.query(StreamingToolBlock))
+        assert stbs, "StreamingToolBlock not found in OutputPanel"
+        stb = stbs[-1]
         stb.append_line("output line 1")
         stb.append_line("output line 2")
         await asyncio.sleep(0.05)  # let _flush_pending fire

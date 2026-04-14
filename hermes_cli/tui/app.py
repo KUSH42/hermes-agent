@@ -102,7 +102,7 @@ def _animations_enabled_check() -> bool:
     return True
 
 
-def _run_effect_sync(effect_name: str, text: str) -> None:
+def _run_effect_sync(effect_name: str, text: str, params: dict[str, object] | None = None) -> bool:
     """Run a TTE animation synchronously.
 
     Must be called after the Textual TUI has been suspended (i.e. inside
@@ -111,8 +111,9 @@ def _run_effect_sync(effect_name: str, text: str) -> None:
     """
     from hermes_cli.tui.tte_runner import run_effect
     print()
-    run_effect(effect_name, text)
+    rendered = run_effect(effect_name, text, params=params)
     print()
+    return rendered
 
 
 # Always use call_soon_threadsafe for cross-thread queue access.
@@ -434,8 +435,24 @@ class HermesApp(App):
         except RuntimeError:
             pass  # Event loop closed
 
+    async def _play_effects_async(
+        self,
+        effect_name: str,
+        text: str,
+        params: dict[str, object] | None = None,
+    ) -> bool:
+        """Suspend Textual, run TTE animation, then resume."""
+        loop = asyncio.get_running_loop()
+        with self.suspend():
+            return await loop.run_in_executor(None, _run_effect_sync, effect_name, text, params)
+
     @work
-    async def _play_effects(self, effect_name: str, text: str) -> None:
+    async def _play_effects(
+        self,
+        effect_name: str,
+        text: str,
+        params: dict[str, object] | None = None,
+    ) -> None:
         """Suspend Textual, run a TTE animation, then resume.
 
         ``App.suspend()`` is a **synchronous** context manager — use ``with``,
@@ -444,9 +461,25 @@ class HermesApp(App):
 
         Safe to call from any thread; ``@work`` handles dispatch.
         """
-        loop = asyncio.get_running_loop()
-        with self.suspend():
-            await loop.run_in_executor(None, _run_effect_sync, effect_name, text)
+        await self._play_effects_async(effect_name, text, params)
+
+    def play_effects_blocking(
+        self,
+        effect_name: str,
+        text: str,
+        params: dict[str, object] | None = None,
+    ) -> bool:
+        """Run a TTE animation and block caller until it completes."""
+        if self._event_loop is None:
+            return False
+        future = asyncio.run_coroutine_threadsafe(
+            self._play_effects_async(effect_name, text, params),
+            self._event_loop,
+        )
+        try:
+            return bool(future.result())
+        except Exception:
+            return False
 
     def flush_output(self) -> None:
         """Thread-safe: send flush sentinel to commit any trailing partial line."""

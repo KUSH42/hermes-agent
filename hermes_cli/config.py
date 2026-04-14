@@ -403,6 +403,11 @@ DEFAULT_CONFIG = {
         "spinner_style": "",      # TUI spinner animation: dots|bounce|grow|arrows|star|moon|pulse|clock|none (empty = skin default)
         "show_cost": False,       # Show $ cost in the status bar (off by default)
         "skin": "default",
+        "startup_text_effect": {
+            "enabled": False,
+            "effect": "matrix",
+            "params": {},
+        },
         "tool_progress_command": False,  # Enable /verbose command in messaging gateway
         "tool_progress_overrides": {},  # Per-platform overrides: {"signal": "off", "telegram": "all"}
         "tool_preview_length": 0,  # Max chars for tool call previews (0 = no limit, show full paths/commands)
@@ -576,7 +581,7 @@ DEFAULT_CONFIG = {
     },
 
     # Config schema version - bump this when adding new required fields
-    "_config_version": 13,
+    "_config_version": 14,
 }
 
 # =============================================================================

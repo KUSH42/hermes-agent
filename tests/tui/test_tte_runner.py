@@ -138,6 +138,58 @@ class TestRunEffectSkinGradient:
         assert isinstance(stops, tuple)
         assert all(isinstance(c, FakeColor) for c in stops)
 
+    def test_effect_specific_params_are_applied(self):
+        from hermes_cli.tui.tte_runner import run_effect
+
+        fake_mod, fake_effect, fake_cfg, fake_graphics, FakeColor = self._make_fake_tte()
+        fake_cfg.rain_time = 15
+        fake_cfg.rain_symbols = ("a", "b")
+
+        fake_skin = MagicMock()
+        fake_skin.get_color = MagicMock(side_effect=lambda key, default: default)
+
+        def fake_import(name):
+            if "effect_matrix" in name:
+                return fake_mod
+            if "graphics" in name:
+                return fake_graphics
+            raise ImportError(f"unexpected import: {name}")
+
+        with patch("importlib.import_module", side_effect=fake_import):
+            rendered = run_effect(
+                "matrix",
+                "Hermes",
+                skin=fake_skin,
+                params={"rain_time": "7", "rain_symbols": ["x", "y", "z"]},
+            )
+
+        assert rendered is True
+        assert fake_cfg.rain_time == 7
+        assert fake_cfg.rain_symbols == ("x", "y", "z")
+
+    def test_unknown_params_are_ignored_with_warning(self, capsys):
+        from hermes_cli.tui.tte_runner import run_effect
+
+        fake_mod, fake_effect, fake_cfg, fake_graphics, FakeColor = self._make_fake_tte()
+        fake_cfg.rain_time = 15
+
+        fake_skin = MagicMock()
+        fake_skin.get_color = MagicMock(side_effect=lambda key, default: default)
+
+        def fake_import(name):
+            if "effect_matrix" in name:
+                return fake_mod
+            if "graphics" in name:
+                return fake_graphics
+            raise ImportError(f"unexpected import: {name}")
+
+        with patch("importlib.import_module", side_effect=fake_import):
+            run_effect("matrix", "Hermes", skin=fake_skin, params={"bogus": 1})
+
+        out = capsys.readouterr().out
+        assert "Ignoring unknown" in out
+        assert fake_cfg.rain_time == 15
+
     def test_skin_failure_does_not_crash(self):
         """If the skin raises, run_effect should still run with default TTE colors."""
         from hermes_cli.tui.tte_runner import run_effect

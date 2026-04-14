@@ -386,6 +386,11 @@ def load_cli_config() -> Dict[str, Any]:
             "busy_input_mode": "interrupt",
             "syntax_bold": True,
             "skin": "default",
+            "startup_text_effect": {
+                "enabled": False,
+                "effect": "matrix",
+                "params": {},
+            },
         },
         "clarify": {
             "timeout": 120,  # Seconds to wait for a clarify answer before auto-proceeding
@@ -707,7 +712,7 @@ from run_agent import AIAgent
 from model_tools import get_tool_definitions, get_toolset_for_tool
 
 # Extracted CLI modules (Phase 3)
-from hermes_cli.banner import build_welcome_banner
+from hermes_cli.banner import build_welcome_banner, resolve_banner_logo_assets
 from hermes_cli.commands import SlashCommandCompleter, SlashCommandAutoSuggest
 from toolsets import get_all_toolsets, get_toolset_info, validate_toolset
 
@@ -3127,7 +3132,64 @@ class HermesCLI:
     
     def show_banner(self):
         """Display the welcome banner in Claude Code style."""
-        self.console.clear()
+        self.show_banner_with_startup_effect()
+
+    def _use_compact_banner(self) -> bool:
+        """Return whether startup should render the compact banner."""
+        term_width = shutil.get_terminal_size().columns
+        return self.compact or term_width < 80
+
+    def _get_startup_text_effect_config(self) -> tuple[str, dict[str, object]] | None:
+        """Return configured startup text effect, or None when disabled/invalid."""
+        config = getattr(self, "config", CLI_CONFIG)
+        display_cfg = (config.get("display") or {}) if isinstance(config, dict) else {}
+        effect_cfg = display_cfg.get("startup_text_effect") or {}
+        if not isinstance(effect_cfg, dict) or not effect_cfg.get("enabled", False):
+            return None
+        effect_name = str(effect_cfg.get("effect", "")).strip().lower()
+        if not effect_name:
+            return None
+        params = effect_cfg.get("params") or {}
+        if not isinstance(params, dict):
+            params = {}
+        return effect_name, dict(params)
+
+    def _play_startup_text_effect(self, tui: bool = False) -> bool:
+        """Play configured startup text effect once before banner render."""
+        if self._use_compact_banner():
+            return False
+        effect_cfg = self._get_startup_text_effect_config()
+        if effect_cfg is None:
+            return False
+
+        effect_name, params = effect_cfg
+        _, plain_logo = resolve_banner_logo_assets()
+        if not plain_logo.strip():
+            return False
+
+        if tui:
+            app = _hermes_app
+            if app is None:
+                return False
+            return app.play_effects_blocking(effect_name, plain_logo, params)
+
+        from hermes_cli.tui.tte_runner import run_effect
+        print()
+        rendered = run_effect(effect_name, plain_logo, params=params)
+        print()
+        return rendered
+
+    def show_banner_with_startup_effect(self, tui: bool = False) -> None:
+        """Render startup effect first, then the normal banner."""
+        if not tui:
+            self.console.clear()
+        effect_rendered = self._play_startup_text_effect(tui=tui)
+        self._show_banner_body(clear=False, print_logo=not effect_rendered)
+
+    def _show_banner_body(self, clear: bool = True, print_logo: bool = True) -> None:
+        """Display the welcome banner body."""
+        if clear:
+            self.console.clear()
 
         # Get context length for display before branching so it remains
         # available to the low-context warning logic in compact mode too.
@@ -3137,8 +3199,7 @@ class HermesCLI:
         
         # Auto-compact for narrow terminals — the full banner with caduceus
         # + tool list needs ~80 columns minimum to render without wrapping.
-        term_width = shutil.get_terminal_size().columns
-        use_compact = self.compact or term_width < 80
+        use_compact = self._use_compact_banner()
         
         if use_compact:
             self.console.print(_build_compact_banner())
@@ -3159,6 +3220,7 @@ class HermesCLI:
                 enabled_toolsets=self.enabled_toolsets,
                 session_id=self.session_id,
                 context_length=ctx_len,
+                print_logo=print_logo,
             )
         
         # Show tool availability warnings if any tools are disabled
@@ -3428,7 +3490,7 @@ class HermesCLI:
         # → TUI output queue.  Must happen before show_banner() so banner output
         # goes to the panel, not stdout.
         self.console = ChatConsole()
-        self.show_banner()
+        self.show_banner_with_startup_effect(tui=True)
         if self._resumed:
             if self._preload_resumed_session():
                 self._display_resumed_history()

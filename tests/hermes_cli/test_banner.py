@@ -68,3 +68,38 @@ def test_build_welcome_banner_uses_normalized_toolset_names():
     assert "homeassistant_tools:" not in output
     assert "honcho_tools:" not in output
     assert "web_tools:" not in output
+
+
+def test_resolve_banner_logo_assets_strips_rich_markup():
+    markup_logo, plain_logo = banner.resolve_banner_logo_assets()
+    assert "[bold" in markup_logo
+    assert "[/" not in plain_logo
+    assert "Hermes" not in plain_logo or isinstance(plain_logo, str)
+    assert "██" in plain_logo
+
+
+def test_build_welcome_banner_can_suppress_logo_print():
+    with (
+        patch.object(
+            model_tools,
+            "check_tool_availability",
+            return_value=([], []),
+        ),
+        patch.object(banner, "get_available_skills", return_value={}),
+        patch.object(banner, "get_update_result", return_value=None),
+        patch.object(tools.mcp_tool, "get_mcp_status", return_value=[]),
+    ):
+        console = Console(
+            record=True, force_terminal=False, color_system=None, width=160
+        )
+        banner.build_welcome_banner(
+            console=console,
+            model="anthropic/test-model",
+            cwd="/tmp/project",
+            tools=[],
+            print_logo=False,
+        )
+
+    output = console.export_text()
+    assert "Available Tools" in output
+    assert "███████" not in output

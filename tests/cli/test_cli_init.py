@@ -110,6 +110,18 @@ class TestVerboseAndToolProgress:
         assert cli.tool_progress_mode in ("off", "new", "all", "verbose")
 
 
+class TestStartupTextEffectConfig:
+    def test_default_startup_text_effect_shape_present(self):
+        import importlib
+        import cli as _cli_mod
+
+        _cli_mod = importlib.reload(_cli_mod)
+        effect_cfg = _cli_mod.load_cli_config()["display"]["startup_text_effect"]
+        assert effect_cfg["enabled"] is False
+        assert effect_cfg["effect"] == "matrix"
+        assert effect_cfg["params"] == {}
+
+
 class TestBusyInputMode:
     def test_default_busy_input_mode_is_interrupt(self):
         cli = _make_cli()

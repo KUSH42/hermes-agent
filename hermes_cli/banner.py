@@ -17,6 +17,7 @@ from typing import Dict, List, Optional
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 from prompt_toolkit import print_formatted_text as _pt_print
 from prompt_toolkit.formatted_text import ANSI as _PT_ANSI
@@ -103,6 +104,25 @@ COMPACT_BANNER = """
 [bold #FFD700]║[/]  [#CD7F32]Messenger of the Digital Gods[/]    [dim #B8860B]Nous Research[/]   [bold #FFD700]║[/]
 [bold #FFD700]╚══════════════════════════════════════════════════════════════╝[/]
 """
+
+
+def resolve_banner_logo_assets() -> tuple[str, str]:
+    """Return startup banner logo as (Rich-markup text, plain text)."""
+    try:
+        from hermes_cli.skin_engine import get_active_skin
+        skin = get_active_skin()
+        markup_logo = (
+            skin.banner_logo
+            if hasattr(skin, "banner_logo") and skin.banner_logo
+            else HERMES_AGENT_LOGO
+        )
+    except Exception:
+        markup_logo = HERMES_AGENT_LOGO
+    try:
+        plain_logo = Text.from_markup(markup_logo).plain
+    except Exception:
+        plain_logo = markup_logo
+    return markup_logo, plain_logo
 
 
 # =========================================================================
@@ -331,7 +351,8 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
                          enabled_toolsets: List[str] = None,
                          session_id: str = None,
                          get_toolset_for_tool=None,
-                         context_length: int = None):
+                         context_length: int = None,
+                         print_logo: bool = True):
     """Build and print a welcome banner with caduceus on left and info on right.
 
     Args:
@@ -542,8 +563,8 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
 
     console.print()
     term_width = shutil.get_terminal_size().columns
-    if term_width >= 95:
-        _logo = _bskin.banner_logo if _bskin and hasattr(_bskin, 'banner_logo') and _bskin.banner_logo else HERMES_AGENT_LOGO
-        console.print(_logo)
+    if print_logo and term_width >= 95:
+        markup_logo, _ = resolve_banner_logo_assets()
+        console.print(markup_logo)
         console.print()
     console.print(outer_panel)

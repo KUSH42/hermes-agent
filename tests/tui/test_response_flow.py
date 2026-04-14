@@ -803,6 +803,33 @@ async def test_source_like_heuristic_does_not_swallow_explanation_bullets_or_fol
 
 
 @pytest.mark.asyncio
+async def test_source_like_block_can_fall_back_to_prose_without_intro_candidate_crash():
+    """Leaving source-like mode for normal prose must not reference an unset intro flag."""
+    from hermes_cli.tui.widgets import StreamingCodeBlock
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _run_turn(
+            app,
+            pilot,
+            chunks=[
+                "javac HelloWorld.java\n",
+                "java HelloWorld\n",
+                "Let me run the relevant TUI tests to verify nothing is broken.\n",
+            ],
+        )
+        await pilot.pause()
+
+        msg = app.query_one(OutputPanel).current_message
+        assert msg is not None
+        blocks = list(msg.query(StreamingCodeBlock))
+
+        assert len(blocks) == 1
+        assert "javac HelloWorld.java" in blocks[0].copy_content()
+        assert "Let me run the relevant TUI tests to verify nothing is broken." in msg.all_prose_text()
+
+
+@pytest.mark.asyncio
 async def test_output_label_promotes_single_plain_line_to_code_block():
     """`Output:` followed by a single plain line should still get a code block footer."""
     from hermes_cli.tui.widgets import StreamingCodeBlock, CodeBlockFooter

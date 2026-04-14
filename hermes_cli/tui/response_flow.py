@@ -194,9 +194,9 @@ class ResponseFlowEngine:
         from agent.rich_output import apply_block_line, apply_inline_markdown
 
         # Phase 1: Code block boundary detection (bypass StreamingBlockBuffer)
+        intro_candidate = _is_code_intro_label(raw)
         if self._state == "NORMAL":
             stripped = raw.strip()
-            intro_candidate = _is_code_intro_label(raw)
             was_pending_code_intro = self._pending_code_intro
             if was_pending_code_intro:
                 self._pending_code_intro = False

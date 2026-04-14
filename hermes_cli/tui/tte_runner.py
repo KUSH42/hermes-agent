@@ -36,6 +36,29 @@ EFFECT_MAP: dict[str, tuple[str, str]] = {
     "highlight":   ("terminaltexteffects.effects.effect_highlight",    "Highlight"),
     # Fun
     "wipe":        ("terminaltexteffects.effects.effect_wipe",         "Wipe"),
+    # Additional effects (20+ more from TTE library)
+    "colorshift":  ("terminaltexteffects.effects.effect_colorshift",   "ColorShift"),
+    "crumble":     ("terminaltexteffects.effects.effect_crumble",       "Crumble"),
+    "burn":        ("terminaltexteffects.effects.effect_burn",          "Burn"),
+    "errorcorrect": ("terminaltexteffects.effects.effect_errorcorrect", "ErrorCorrect"),
+    "expand":      ("terminaltexteffects.effects.effect_expand",        "Expand"),
+    "fireworks":   ("terminaltexteffects.effects.effect_fireworks",     "Fireworks"),
+    "middleout":   ("terminaltexteffects.effects.effect_middleout",     "MiddleOut"),
+    "orbittingvolley": ("terminaltexteffects.effects.effect_orbittingvolley", "OrbittingVolley"),
+    "pour":        ("terminaltexteffects.effects.effect_pour",          "Pour"),
+    "randomsequence": ("terminaltexteffects.effects.effect_randomsequence", "RandomSequence"),
+    "rings":       ("terminaltexteffects.effects.effect_rings",         "Rings"),
+    "scattered":   ("terminaltexteffects.effects.effect_scattered",     "Scattered"),
+    "slice":       ("terminaltexteffects.effects.effect_slice",         "Slice"),
+    "smoke":       ("terminaltexteffects.effects.effect_smoke",         "Smoke"),
+    "spotlights":  ("terminaltexteffects.effects.effect_spotlights",    "Spotlights"),
+    "spray":       ("terminaltexteffects.effects.effect_spray",         "Spray"),
+    "swarm":       ("terminaltexteffects.effects.effect_swarm",         "Swarm"),
+    "thunderstorm": ("terminaltexteffects.effects.effect_thunderstorm", "Thunderstorm"),
+    "unstable":    ("terminaltexteffects.effects.effect_unstable",      "Unstable"),
+    "vhstape":     ("terminaltexteffects.effects.effect_vhstape",       "VHSTape"),
+    "bouncyballs": ("terminaltexteffects.effects.effect_bouncyballs",   "BouncyBalls"),
+    "bubbles":     ("terminaltexteffects.effects.effect_bubbles",       "Bubbles"),
 }
 
 EFFECT_DESCRIPTIONS: dict[str, str] = {
@@ -54,6 +77,29 @@ EFFECT_DESCRIPTIONS: dict[str, str] = {
     "slide":      "Characters slide in from the edges",
     "highlight":  "Spotlight scans and highlights text",
     "wipe":       "Clean directional wipe",
+    # Additional effect descriptions
+    "colorshift": "Gradient colors shift across the display",
+    "crumble":    "Characters crumble into dust then reform",
+    "burn":       "Characters ignite and burn up the screen",
+    "errorcorrect": "Text flickers with errors before correcting",
+    "expand":     "Text expands outward from a point",
+    "fireworks":  "Text explodes into colorful fireworks",
+    "middleout":  "Text reveals from center outward",
+    "orbittingvolley": "Characters orbit around a central point",
+    "pour":       "Text pours like liquid from top to bottom",
+    "randomsequence": "Random characters cycle through the text",
+    "rings":      "Concentric rings form through the text",
+    "scattered":  "Text scatters and reforms in place",
+    "slice":      "Text is sliced through by a moving blade",
+    "smoke":      "Text dissolves into smoke and reforms",
+    "spotlights": "Text illuminated by moving spotlights",
+    "spray":      "Text is sprayed with particles",
+    "swarm":      "Characters swarm and orbit around text",
+    "thunderstorm": "Lightning strikes through the text",
+    "unstable":   "Text appears unstable with glitch effects",
+    "vhstape":    "Retro VHS tape with glitches and scanlines",
+    "bouncyballs": "Characters fall as bouncy balls then settle",
+    "bubbles":    "Characters form bubbles that float and pop",
 }
 
 
@@ -64,6 +110,53 @@ EFFECT_DESCRIPTIONS: dict[str, str] = {
 def resolve_effect(name: str) -> tuple[str, str] | None:
     """Return (module_path, class_name) for *name*, or None if unknown."""
     return EFFECT_MAP.get(name.strip().lower())
+
+
+def iter_frames(effect_name: str, text: str, skin=None, params: dict[str, object] | None = None):
+    """Yield TTE animation frames as ANSI strings without stdout takeover."""
+    import importlib
+
+    spec = resolve_effect(effect_name)
+    if spec is None:
+        return
+
+    try:
+        mod = importlib.import_module(spec[0])
+        cls = getattr(mod, spec[1])
+    except ImportError:
+        return
+
+    effect = cls(text)
+    color_cls = None
+
+    try:
+        color_mod = importlib.import_module("terminaltexteffects.utils.graphics")
+        color_cls = getattr(color_mod, "Color")
+    except Exception:
+        color_mod = None
+
+    has_colors_override = _apply_effect_params(effect_name, effect, color_cls, params)
+
+    try:
+        if skin is None:
+            from hermes_cli.skin_engine import get_active_skin
+            skin = get_active_skin()
+        gradient = (
+            skin.get_color("banner_title", "#FFD700"),
+            skin.get_color("banner_accent", "#FFBF00"),
+            skin.get_color("banner_dim", "#CD7F32"),
+        )
+        cfg = getattr(effect, "effect_config", None)
+        if color_cls is not None and cfg and hasattr(cfg, "final_gradient_stops") and not has_colors_override:
+            effect.effect_config.final_gradient_stops = tuple(color_cls(c) for c in gradient)
+        tc = getattr(effect, "terminal_config", None)
+        if tc:
+            tc.frame_rate = 0
+    except Exception:
+        pass
+
+    for frame in effect:
+        yield frame
 
 
 def _coerce_effect_param(raw: object, current: object, color_cls: type | None) -> object:
@@ -128,11 +221,13 @@ def _apply_effect_params(
         return
     known_keys = set(getattr(cfg, "__dict__", {}).keys())
     known_keys.update(getattr(type(cfg), "__dict__", {}).keys())
+    has_colors_override = False
 
     for key, raw in params.items():
         if key == "final_gradient_stops":
-            # Hermes owns this from the active skin.
-            print("  Ignoring startup_text_effect.params.final_gradient_stops; skin controls startup palette.")
+            # Allow users to override skin-derived colors
+            print(f"  Using custom colors from config (will override skin palette).")
+            has_colors_override = True
             continue
         if key == "parser_spec" or key not in known_keys:
             print(f"  Ignoring unknown {effect_name} param: {key}")
@@ -144,6 +239,8 @@ def _apply_effect_params(
             print(f"  Ignoring invalid {effect_name} param {key!r}: {raw!r}")
             continue
         setattr(cfg, key, value)
+
+    return has_colors_override
 
 
 def run_effect(effect_name: str, text: str, skin=None, params: dict[str, object] | None = None) -> bool:
@@ -185,9 +282,10 @@ def run_effect(effect_name: str, text: str, skin=None, params: dict[str, object]
     except Exception:
         color_mod = None
 
-    _apply_effect_params(effect_name, effect, color_cls, params)
+    has_colors_override = _apply_effect_params(effect_name, effect, color_cls, params)
 
     # Skin-aware gradient — applied to effects that support final_gradient_stops
+    # Skip if colors were explicitly overridden via config params
     try:
         if skin is None:
             from hermes_cli.skin_engine import get_active_skin
@@ -199,7 +297,12 @@ def run_effect(effect_name: str, text: str, skin=None, params: dict[str, object]
         )
         cfg = getattr(effect, "effect_config", None)
         if color_cls is not None and cfg and hasattr(cfg, "final_gradient_stops"):
-            effect.effect_config.final_gradient_stops = tuple(color_cls(c) for c in gradient)
+            # Only apply skin colors if not already overridden via params
+            if not has_colors_override:
+                effect.effect_config.final_gradient_stops = tuple(color_cls(c) for c in gradient)
+                print(f"  Using skin-derived colors: {skin.get_color('banner_title')}, {skin.get_color('banner_accent')}, {skin.get_color('banner_dim')}")
+            else:
+                print(f"  Using custom colors from config params")
         tc = getattr(effect, "terminal_config", None)
         if tc:
             tc.frame_rate = 0   # unlimited — let the terminal pace it

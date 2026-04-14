@@ -246,6 +246,13 @@ ImageBar {
     padding: 0 1;
 }
 
+/* --- TTE startup effect widget --- */
+
+TTEWidget {
+    background: $app-bg;
+    height: auto;
+}
+
 /* --- Voice status bar --- */
 
 VoiceStatusBar {

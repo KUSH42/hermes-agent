@@ -3311,3 +3311,88 @@ class FPSCounter(Widget):
         t.append("Hz ", style="dim")
         t.append(f"{self.avg_ms:.0f}ms", style="dim")
         return t
+
+
+# ---------------------------------------------------------------------------
+# TTEWidget — non-blocking Terminal Text Effects inside Textual
+# ---------------------------------------------------------------------------
+
+class TTEWidget(Widget):
+    """Renders a Terminal Text Effects animation inside Textual."""
+
+    DEFAULT_CSS = """
+    TTEWidget {
+        height: auto;
+        min-height: 5;
+        display: none;
+    }
+    TTEWidget.active {
+        display: block;
+    }
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._done_event: "threading.Event | None" = None
+
+    def compose(self) -> ComposeResult:
+        yield Static("", id="tte-frame")
+
+    def play(
+        self,
+        effect_name: str,
+        text: str,
+        params: dict[str, object] | None = None,
+        done_event: "threading.Event | None" = None,
+    ) -> None:
+        """Start a TTE animation. Non-blocking."""
+        self.stop()
+        self._done_event = done_event
+        self.add_class("active")
+        self._run_animation(effect_name, text, params)
+
+    def stop(self) -> None:
+        """Stop current animation and hide widget."""
+        self.remove_class("active")
+        try:
+            frame = self.query_one("#tte-frame", Static)
+            frame.update("")
+        except NoMatches:
+            pass
+        if self._done_event is not None:
+            self._done_event.set()
+            self._done_event = None
+
+    @work(thread=True, exclusive=True)
+    def _run_animation(
+        self,
+        effect_name: str,
+        text: str,
+        params: dict[str, object] | None = None,
+    ) -> None:
+        """Background worker — generates TTE frames and pushes to UI."""
+        try:
+            from hermes_cli.tui.tte_runner import iter_frames
+
+            for frame in iter_frames(effect_name, text, params=params):
+                if not self.is_mounted:
+                    return
+                rich_text = Text.from_ansi(frame)
+                self.app.call_from_thread(self._update_frame, rich_text)
+                time.sleep(0.02)
+        except Exception:
+            pass
+        finally:
+            if self.is_mounted:
+                self.app.call_from_thread(self.remove_class, "active")
+            if self._done_event is not None:
+                self._done_event.set()
+                self._done_event = None
+
+    def _update_frame(self, rich_text: Text) -> None:
+        """Update frame widget on event loop."""
+        try:
+            frame = self.query_one("#tte-frame", Static)
+            frame.update(rich_text)
+        except NoMatches:
+            pass

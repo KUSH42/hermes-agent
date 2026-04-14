@@ -71,6 +71,7 @@ from hermes_cli.tui.widgets import (
     StatusBar,
     StreamingCodeBlock,
     SudoWidget,
+    TTEWidget,
     ThinkingWidget,
     TitledRule,
     UndoConfirmOverlay,
@@ -280,6 +281,7 @@ class HermesApp(App):
 
     def compose(self) -> ComposeResult:
         yield OutputPanel(id="output-panel")
+        yield TTEWidget(id="tte-effect")
         with Vertical(id="overlay-layer"):
             yield ClarifyWidget(id="clarify")
             yield ApprovalWidget(id="approval")
@@ -496,6 +498,64 @@ class HermesApp(App):
             return Path(candidate).expanduser().resolve()
         except Exception:
             return Path(_os_mod.getcwd()).resolve()
+
+    def _play_tte_main(
+        self,
+        effect_name: str,
+        text: str,
+        params: dict[str, object] | None = None,
+        done_event: "threading.Event | None" = None,
+    ) -> bool:
+        try:
+            widget = self.query_one("#tte-effect", TTEWidget)
+            widget.play(effect_name, text, params=params, done_event=done_event)
+            return True
+        except NoMatches:
+            if done_event is not None:
+                done_event.set()
+            return False
+
+    def play_tte(
+        self,
+        effect_name: str,
+        text: str,
+        params: dict[str, object] | None = None,
+        done_event: "threading.Event | None" = None,
+    ) -> bool:
+        """Play a TTE animation inline in TUI."""
+        if self._event_loop is not None and threading.current_thread() is not threading.main_thread():
+            self.call_from_thread(self._play_tte_main, effect_name, text, params, done_event)
+            return True
+        return self._play_tte_main(effect_name, text, params, done_event)
+
+    def play_tte_blocking(
+        self,
+        effect_name: str,
+        text: str,
+        params: dict[str, object] | None = None,
+        timeout_s: float = 15.0,
+    ) -> bool:
+        """Play a TTE animation inline and wait for completion."""
+        done_event = threading.Event()
+        started = self.play_tte(effect_name, text, params=params, done_event=done_event)
+        if not started:
+            return False
+        done_event.wait(timeout_s)
+        return True
+
+    def _stop_tte_main(self) -> None:
+        try:
+            widget = self.query_one("#tte-effect", TTEWidget)
+            widget.stop()
+        except NoMatches:
+            pass
+
+    def stop_tte(self) -> None:
+        """Stop any running inline TTE animation."""
+        if self._event_loop is not None and threading.current_thread() is not threading.main_thread():
+            self.call_from_thread(self._stop_tte_main)
+            return
+        self._stop_tte_main()
 
     def flush_output(self) -> None:
         """Thread-safe: send flush sentinel to commit any trailing partial line."""

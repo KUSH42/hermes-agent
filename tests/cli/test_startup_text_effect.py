@@ -61,7 +61,7 @@ def test_show_banner_with_startup_effect_disabled_keeps_static_logo(_isolate):
     obj._show_banner_body.assert_called_once_with(clear=False, print_logo=True)
 
 
-def test_show_banner_with_startup_effect_tui_uses_app_blocking_runner(_isolate):
+def test_show_banner_with_startup_effect_tui_uses_tte_widget_runner(_isolate):
     import cli
 
     obj = _make_cli_obj()
@@ -70,7 +70,7 @@ def test_show_banner_with_startup_effect_tui_uses_app_blocking_runner(_isolate):
         "effect": "beams",
         "params": {"beam_delay": 3},
     }
-    fake_app = SimpleNamespace(play_effects_blocking=MagicMock(return_value=True))
+    fake_app = SimpleNamespace(play_tte_blocking=MagicMock(return_value=True))
 
     with (
         patch("shutil.get_terminal_size", return_value=os.terminal_size((120, 40))),
@@ -80,7 +80,7 @@ def test_show_banner_with_startup_effect_tui_uses_app_blocking_runner(_isolate):
         cli.HermesCLI.show_banner_with_startup_effect(obj, tui=True)
 
     obj.console.clear.assert_not_called()
-    fake_app.play_effects_blocking.assert_called_once_with(
+    fake_app.play_tte_blocking.assert_called_once_with(
         "beams",
         "logo",
         {"beam_delay": 3},

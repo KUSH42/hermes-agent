@@ -28,9 +28,9 @@ class TestResolveEffect:
         from hermes_cli.tui.tte_runner import resolve_effect
         assert resolve_effect("not_a_real_effect") is None
 
-    def test_all_15_effects_resolve(self):
+    def test_all_37_effects_resolve(self):
         from hermes_cli.tui.tte_runner import resolve_effect, EFFECT_MAP
-        assert len(EFFECT_MAP) == 15
+        assert len(EFFECT_MAP) == 37
         for name in EFFECT_MAP:
             assert resolve_effect(name) is not None, f"Effect '{name}' did not resolve"
 

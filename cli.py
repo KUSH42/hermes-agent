@@ -3155,7 +3155,7 @@ class HermesCLI:
             app = _hermes_app
             if app is None:
                 return False
-            return app.play_effects_blocking(effect_name, plain_logo, params)
+            return app.play_tte_blocking(effect_name, plain_logo, params)
 
         from hermes_cli.tui.tte_runner import run_effect
         print()

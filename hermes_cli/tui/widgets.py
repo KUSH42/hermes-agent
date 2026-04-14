@@ -1447,6 +1447,8 @@ class ReasoningPanel(Widget):
             line, self._live_buf = self._live_buf.split("\n", 1)
             log.write(self._gutter_line(line), expand=True)
             self._plain_lines.append(line)
+        if log._deferred_renders:
+            self.call_after_refresh(self.refresh, layout=True)
         if self._live_buf:
             self._live_line.update(self._gutter_line(self._live_buf))
             self._live_line.styles.display = "block"
@@ -1463,6 +1465,8 @@ class ReasoningPanel(Widget):
             self._reasoning_log.write(self._gutter_line(buf), expand=True)
             self._plain_lines.append(buf)
             self._live_buf = ""
+        if self._reasoning_log._deferred_renders:
+            self.call_after_refresh(self.refresh, layout=True)
         self._live_line.styles.display = "none"
         self._live_line.update("")
         self._is_closed = True

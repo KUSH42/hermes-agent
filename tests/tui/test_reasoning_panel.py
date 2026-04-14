@@ -144,6 +144,28 @@ async def test_close_box_reasserts_visible_class():
 
 
 @pytest.mark.asyncio
+async def test_close_box_flushes_deferred_render_after_immediate_finalize():
+    """Immediate close after a partial delta must flush deferred RichLog renders."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        msg = _ensure_message(app)
+        rp = msg.reasoning
+
+        # No pause between open, append, and close: this reproduces the
+        # finalize path where live text disappears before deferred log lines mount.
+        rp.open_box("Reasoning")
+        rp.append_delta("partial without newline")
+        rp.close_box()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert not rp._reasoning_log._deferred_renders
+        assert len(rp._plain_lines) == 1
+        assert len(rp._reasoning_log.lines) >= 1
+
+
+@pytest.mark.asyncio
 async def test_safe_widget_call_swallows_no_matches():
     """_safe_widget_call does not raise when widget is not found."""
     app = HermesApp(cli=MagicMock())

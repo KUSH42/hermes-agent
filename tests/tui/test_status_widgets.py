@@ -46,11 +46,29 @@ async def test_spinner_stops_when_agent_not_running():
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         app.agent_running = True
+        await asyncio.sleep(0.15)
         await pilot.pause()
         app.agent_running = False
         await pilot.pause()
         bar = app.query_one(HintBar)
         assert bar.hint == ""
+
+
+@pytest.mark.asyncio
+async def test_spinner_writes_to_hint_bar():
+    """_tick_spinner writes spinner_display to HintBar.hint (bottom bar)."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.spinner_label = "terminal"
+        app.agent_running = True
+        await pilot.pause()
+        # Wait for at least one spinner tick
+        await asyncio.sleep(0.15)
+        await pilot.pause()
+        bar = app.query_one(HintBar)
+        assert bar.hint != ""
+        assert "terminal" in bar.hint
 
 
 @pytest.mark.asyncio

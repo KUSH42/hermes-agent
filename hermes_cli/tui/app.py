@@ -598,7 +598,9 @@ class HermesApp(App):
             elapsed = _time.monotonic() - self._tool_start_time
             spinner_display = f"{spinner_display} · {elapsed:.1f}s"
 
-        # Keep input visible; deliver spinner text via placeholder (zero layout reflow)
+        # Deliver spinner text to HintBar (the bottom bar) so commands and
+        # elapsed time are always visible.  Also set input placeholder as
+        # secondary display when the input is disabled.
         try:
             inp = self.query_one("#input-area")
             overlay = self.query_one("#spinner-overlay", Static)
@@ -610,13 +612,10 @@ class HermesApp(App):
         except NoMatches:
             pass
 
-        # Also update HintBar for overlay countdowns — but don't clobber a flash.
+        # Write spinner to HintBar — but don't clobber a timed flash.
         if _time.monotonic() >= self._flash_hint_expires:
             try:
-                self.query_one(HintBar).hint = hint_suffix if any(
-                    getattr(self, attr) is not None
-                    for attr in ("approval_state", "clarify_state", "sudo_state", "secret_state")
-                ) else ""
+                self.query_one(HintBar).hint = spinner_display
             except NoMatches:
                 pass
 
@@ -824,6 +823,11 @@ class HermesApp(App):
                     widget.placeholder = ""
                 try:
                     self.query_one("#spinner-overlay", Static).display = False
+                except NoMatches:
+                    pass
+                # Clear the HintBar spinner when the agent stops
+                try:
+                    self.query_one(HintBar).hint = ""
                 except NoMatches:
                     pass
                 # GAP-17: restore focus so the user can type immediately without clicking

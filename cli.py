@@ -6546,6 +6546,13 @@ class HermesCLI:
 
         tui.call_from_thread(tui.open_streaming_tool_block, tool_call_id, label, function_name)
 
+        # Remove ToolPendingLine — the StreamingToolBlock header supersedes it.
+        try:
+            from hermes_cli.tui.widgets import ToolPendingLine as _TPL, _safe_widget_call as _sc
+            tui.call_from_thread(_sc, tui, _TPL, "remove_line", function_name)
+        except Exception:
+            pass
+
         # Register the streaming line callback so terminal_tool / execute_code
         # can route output lines directly to the block.
         try:

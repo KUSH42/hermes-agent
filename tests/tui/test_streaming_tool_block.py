@@ -28,14 +28,14 @@ from hermes_cli.tui.widgets import CopyableRichLog, OutputPanel
 # ---------------------------------------------------------------------------
 
 async def _new_app_with_block(pilot, label="test cmd"):
-    """Mount a StreamingToolBlock into the app's current message panel."""
+    """Mount a StreamingToolBlock into current MessagePanel timeline."""
     app = pilot.app
     output = app.query_one(OutputPanel)
     panel = output.current_message
     if panel is None:
         panel = output.new_message()
     block = StreamingToolBlock(label=label)
-    await panel.mount(block, before=output.live_line)
+    await panel.mount(block)
     await pilot.pause()
     return block
 

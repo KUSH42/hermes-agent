@@ -1,11 +1,10 @@
 # Run with: pytest -o "addopts=" tests/tui/test_mount_order.py
 """Integration tests for DOM mount order and layout fixes in the Hermes TUI.
 
-These tests verify that widgets are always mounted in the correct position
-within OutputPanel — specifically that the live-output trio (ToolPendingLine,
-ThinkingWidget, LiveLineWidget) always sits at the bottom, and that all
-content widgets (MessagePanel, UserEchoPanel, ToolBlock, StreamingToolBlock)
-are mounted *before* that trio via the ``before=output.tool_pending`` anchor.
+These tests verify that OutputPanel keeps live-output trio
+(``ToolPendingLine``, ``ThinkingWidget``, ``LiveLineWidget``) at bottom, while
+per-turn content mounts ahead of that trio. Tool blocks now live inside their
+turn's ``MessagePanel`` timeline, not as direct ``OutputPanel`` children.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ from hermes_cli.tui.app import HermesApp
 from hermes_cli.tui.widgets import (
     OutputPanel,
     MessagePanel,
-    UserEchoPanel,
+    UserMessagePanel,
     LiveLineWidget,
     ToolPendingLine,
     ThinkingWidget,
@@ -83,7 +82,7 @@ async def test_new_message_goes_before_tool_pending():
 
 @pytest.mark.asyncio
 async def test_echo_user_message_goes_before_tool_pending():
-    """UserEchoPanel mounted via echo_user_message() must appear before ToolPendingLine."""
+    """UserMessagePanel mounted via echo_user_message() must appear before ToolPendingLine."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await _pause(pilot)
@@ -91,11 +90,11 @@ async def test_echo_user_message_goes_before_tool_pending():
         await _pause(pilot)
         output = app.query_one(OutputPanel)
         children = list(output.children)
-        uep = next((c for c in children if isinstance(c, UserEchoPanel)), None)
-        assert uep is not None, "UserEchoPanel not found in OutputPanel children"
+        uep = next((c for c in children if isinstance(c, UserMessagePanel)), None)
+        assert uep is not None, "UserMessagePanel not found in OutputPanel children"
         tp = output.tool_pending
         assert children.index(uep) < children.index(tp), (
-            "UserEchoPanel must come before ToolPendingLine"
+            "UserMessagePanel must come before ToolPendingLine"
         )
 
 
@@ -133,7 +132,7 @@ async def test_live_trio_always_last_after_messages():
 
 @pytest.mark.asyncio
 async def test_tool_block_mounts_before_tool_pending():
-    """ToolBlock from mount_tool_block() must appear before ToolPendingLine."""
+    """ToolBlock from mount_tool_block() stays in current MessagePanel timeline."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await _pause(pilot)
@@ -143,18 +142,21 @@ async def test_tool_block_mounts_before_tool_pending():
         app.mount_tool_block("output", ["line1", "line2"], ["line1", "line2"])
         await _pause(pilot)
         output = app.query_one(OutputPanel)
-        children = list(output.children)
+        msg = output.current_message
+        assert msg is not None, "Current MessagePanel missing"
+        children = list(msg.children)
         tb = next((c for c in children if isinstance(c, ToolBlock)), None)
-        assert tb is not None, "ToolBlock not found in OutputPanel children"
+        assert tb is not None, "ToolBlock not found in MessagePanel children"
         tp = output.tool_pending
-        assert children.index(tb) < children.index(tp), (
-            "ToolBlock must come before ToolPendingLine"
+        assert msg.parent is output
+        assert list(output.children).index(msg) < list(output.children).index(tp), (
+            "MessagePanel containing ToolBlock must come before ToolPendingLine"
         )
 
 
 @pytest.mark.asyncio
 async def test_streaming_tool_block_mounts_before_tool_pending():
-    """STB from open_streaming_tool_block() must appear before ToolPendingLine."""
+    """STB from open_streaming_tool_block() stays in current MessagePanel timeline."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await _pause(pilot)
@@ -163,26 +165,30 @@ async def test_streaming_tool_block_mounts_before_tool_pending():
         app.open_streaming_tool_block("id1", "bash")
         await _pause(pilot)
         output = app.query_one(OutputPanel)
-        children = list(output.children)
+        msg = output.current_message
+        assert msg is not None, "Current MessagePanel missing"
+        children = list(msg.children)
         stb = next((c for c in children if isinstance(c, StreamingToolBlock)), None)
-        assert stb is not None, "StreamingToolBlock not found in OutputPanel children"
+        assert stb is not None, "StreamingToolBlock not found in MessagePanel children"
         tp = output.tool_pending
         tw = output.query_one(ThinkingWidget)
         ll = output.live_line
-        assert children.index(stb) < children.index(tp), (
-            "StreamingToolBlock must come before ToolPendingLine"
+        output_children = list(output.children)
+        assert msg.parent is output
+        assert output_children.index(msg) < output_children.index(tp), (
+            "MessagePanel containing StreamingToolBlock must come before ToolPendingLine"
         )
-        assert children.index(stb) < children.index(tw), (
-            "StreamingToolBlock must come before ThinkingWidget"
+        assert output_children.index(msg) < output_children.index(tw), (
+            "MessagePanel containing StreamingToolBlock must come before ThinkingWidget"
         )
-        assert children.index(stb) < children.index(ll), (
-            "StreamingToolBlock must come before LiveLineWidget"
+        assert output_children.index(msg) < output_children.index(ll), (
+            "MessagePanel containing StreamingToolBlock must come before LiveLineWidget"
         )
 
 
 @pytest.mark.asyncio
 async def test_streaming_tool_block_is_in_output_panel_not_message_panel():
-    """STB must be a direct child of OutputPanel, not nested inside MessagePanel."""
+    """STB must be nested inside current MessagePanel, not mounted at OutputPanel root."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await _pause(pilot)
@@ -191,22 +197,18 @@ async def test_streaming_tool_block_is_in_output_panel_not_message_panel():
         app.open_streaming_tool_block("id2", "bash")
         await _pause(pilot)
         output = app.query_one(OutputPanel)
-        # Direct children only — not recursive query
-        direct_children = list(output.children)
-        stb = next((c for c in direct_children if isinstance(c, StreamingToolBlock)), None)
-        assert stb is not None, (
-            "StreamingToolBlock must be a direct child of OutputPanel, "
-            "not nested inside MessagePanel or elsewhere"
-        )
-        # Extra guard: its parent must literally be the OutputPanel
-        assert stb.parent is output, (
-            f"STB parent is {stb.parent!r}, expected OutputPanel"
+        msg = output.current_message
+        assert msg is not None, "Current MessagePanel missing"
+        stb = next((c for c in msg.children if isinstance(c, StreamingToolBlock)), None)
+        assert stb is not None, "StreamingToolBlock must be mounted in current MessagePanel"
+        assert stb.parent is msg, (
+            f"STB parent is {stb.parent!r}, expected MessagePanel"
         )
 
 
 @pytest.mark.asyncio
 async def test_completed_stb_stays_above_next_turn():
-    """A completed STB from turn 1 must appear before the MessagePanel from turn 2."""
+    """Completed STB stays in turn-1 MessagePanel, which stays before turn 2."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await _pause(pilot)
@@ -224,16 +226,14 @@ async def test_completed_stb_stays_above_next_turn():
         mp2 = output.new_message()
         await _pause(pilot)
 
-        children = list(output.children)
-        stb = next((c for c in children if isinstance(c, StreamingToolBlock)), None)
-        assert stb is not None, "StreamingToolBlock not found after close"
+        stb = next((c for c in mp1.children if isinstance(c, StreamingToolBlock)), None)
+        assert stb is not None, "StreamingToolBlock not found in turn-1 MessagePanel after close"
 
+        children = list(output.children)
         i_mp1 = children.index(mp1)
-        i_stb = children.index(stb)
         i_mp2 = children.index(mp2)
 
-        assert i_mp1 < i_stb, f"MP-1 ({i_mp1}) must precede STB ({i_stb})"
-        assert i_stb < i_mp2, f"STB ({i_stb}) must precede MP-2 ({i_mp2})"
+        assert i_mp1 < i_mp2, f"MP-1 ({i_mp1}) must precede MP-2 ({i_mp2})"
 
 
 @pytest.mark.asyncio
@@ -259,8 +259,8 @@ async def test_multi_turn_order():
         children = list(output.children)
 
         # Collect user echo panels in order
-        ue_panels = [c for c in children if isinstance(c, UserEchoPanel)]
-        assert len(ue_panels) >= 2, "Expected at least 2 UserEchoPanels"
+        ue_panels = [c for c in children if isinstance(c, UserMessagePanel)]
+        assert len(ue_panels) >= 2, "Expected at least 2 UserMessagePanels"
         ue1, ue2 = ue_panels[0], ue_panels[1]
 
         tp = output.tool_pending

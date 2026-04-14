@@ -11,7 +11,7 @@ import pytest
 from hermes_cli.tui.app import HermesApp, _CPYTHON_FAST_PATH
 from hermes_cli.tui.widgets import (
     LiveLineWidget, MessagePanel, OutputPanel, PlainRule,
-    ReasoningPanel, UserEchoPanel,
+    ReasoningPanel, UserMessagePanel,
 )
 
 
@@ -340,7 +340,7 @@ async def test_reasoning_open_close_lifecycle():
         rp.append_delta("Step 2\n")
         await _pause(pilot)
         # 2 gutter-prefixed lines (no header)
-        assert len(rp._reasoning_log.lines) == 2
+        assert len(rp._plain_lines) == 2
 
         # Close (stays visible as history)
         rp.close_box()
@@ -370,13 +370,13 @@ async def test_reasoning_partial_line_buffering():
         await _pause(pilot)
 
         # No lines committed; partial stays in buffer (no header)
-        assert len(rp._reasoning_log.lines) == 0
+        assert len(rp._plain_lines) == 0
         assert "thinking about this" in rp._live_buf
 
         # Complete the line
         rp.append_delta("\n")
         await _pause(pilot)
-        assert len(rp._reasoning_log.lines) == 1  # completed line (no header)
+        assert len(rp._plain_lines) == 1  # completed line (no header)
         assert rp._live_buf == ""
 
 
@@ -403,7 +403,7 @@ async def test_reasoning_close_flushes_partial():
         rp.close_box()
         await _pause(pilot)
         assert rp._live_buf == ""
-        assert len(rp._reasoning_log.lines) == 1  # flushed partial (no header)
+        assert len(rp._plain_lines) == 1  # flushed partial (no header)
 
 
 @pytest.mark.asyncio
@@ -427,7 +427,7 @@ async def test_reasoning_via_app_helpers():
         app.append_reasoning("Step 2\n")
         await _pause(pilot)
 
-        assert len(msg.reasoning._reasoning_log.lines) == 2
+        assert len(msg.reasoning._plain_lines) == 2
 
         app.close_reasoning()
         await _pause(pilot)
@@ -472,7 +472,7 @@ async def test_reasoning_then_response_streaming():
         await _pause(pilot)
 
         assert len(msg.response_log.lines) >= 2
-        assert len(msg.reasoning._reasoning_log.lines) >= 1  # 1 gutter-prefixed step (no header)
+        assert len(msg.reasoning._plain_lines) >= 1  # 1 reasoning line (no header)
 
 
 @pytest.mark.asyncio
@@ -592,7 +592,7 @@ async def test_write_output_uses_call_soon_threadsafe():
 
 @pytest.mark.asyncio
 async def test_echo_user_message_mounts_panel():
-    """echo_user_message mounts a UserEchoPanel into OutputPanel."""
+    """echo_user_message mounts a UserMessagePanel into OutputPanel."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -600,13 +600,13 @@ async def test_echo_user_message_mounts_panel():
         app.echo_user_message("Hello world")
         await _pause(pilot)
 
-        panels = app.query(UserEchoPanel)
+        panels = app.query(UserMessagePanel)
         assert len(panels) == 1
 
 
 @pytest.mark.asyncio
 async def test_echo_user_message_before_response():
-    """UserEchoPanel appears before the response MessagePanel."""
+    """UserMessagePanel appears before the response MessagePanel."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -618,16 +618,16 @@ async def test_echo_user_message_before_response():
         panel.new_message()
         await _pause(pilot)
 
-        # UserEchoPanel should be before MessagePanel in the DOM
+        # UserMessagePanel should be before MessagePanel in the DOM
         children = list(panel.children)
-        echo_idx = next(i for i, c in enumerate(children) if isinstance(c, UserEchoPanel))
+        echo_idx = next(i for i, c in enumerate(children) if isinstance(c, UserMessagePanel))
         msg_idx = next(i for i, c in enumerate(children) if isinstance(c, MessagePanel))
         assert echo_idx < msg_idx
 
 
 @pytest.mark.asyncio
 async def test_user_echo_has_short_rulers():
-    """UserEchoPanel has a top PlainRule with max_width set."""
+    """UserMessagePanel has a top PlainRule with max_width set."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -635,12 +635,12 @@ async def test_user_echo_has_short_rulers():
         app.echo_user_message("test")
         await _pause(pilot)
 
-        echo = app.query_one(UserEchoPanel)
+        echo = app.query_one(UserMessagePanel)
         rules = echo.query(PlainRule)
         # Bottom rule removed (redundant — response TitledRule separates turns)
         assert len(rules) == 1
         for rule in rules:
-            assert rule._max_width == UserEchoPanel._ECHO_RULE_WIDTH
+            assert rule._max_width == UserMessagePanel._ECHO_RULE_WIDTH
 
 
 @pytest.mark.asyncio

@@ -34,11 +34,14 @@ MALFORMED_ANSI = "\x1b[32mgreen text\x1b["  # truncated escape
 # ---------------------------------------------------------------------------
 
 async def _new_block(pilot, label: str) -> StreamingToolBlock:
-    """Mount a StreamingToolBlock in OutputPanel before tool_pending."""
+    """Mount a StreamingToolBlock in current MessagePanel timeline."""
     app = pilot.app
     output = app.query_one(OutputPanel)
+    panel = output.current_message
+    if panel is None:
+        panel = output.new_message()
     block = StreamingToolBlock(label=label)
-    await output.mount(block, before=output.tool_pending)
+    await panel.mount(block)
     await pilot.pause()
     return block
 
@@ -267,6 +270,7 @@ async def test_visible_cap_omitted_marker_written_once():
         for i in range(_VISIBLE_CAP + 5):
             block.append_line(f"line {i}")
         await _flush_block(block, pilot)
+        await pilot.pause()
 
         assert block._cap_marker_written is True, "_cap_marker_written should be True"
 
@@ -290,6 +294,7 @@ async def test_visible_cap_marker_shows_correct_count():
         for i in range(total):
             block.append_line(f"line {i}")
         await _flush_block(block, pilot)
+        await pilot.pause()
 
         assert block._total_received == total, (
             f"expected _total_received={total}, got {block._total_received}"

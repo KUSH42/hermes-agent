@@ -714,6 +714,20 @@ class MessagePanel(Widget):
             return
         self._response_rule.add_class("visible")
 
+    def set_response_metrics(
+        self,
+        *,
+        tok_s: float | None = None,
+        elapsed_s: float | None = None,
+        streaming: bool = False,
+    ) -> None:
+        """Update right-side response metrics on this turn's header."""
+        self._response_rule.set_response_metrics(
+            tok_s=tok_s,
+            elapsed_s=elapsed_s,
+            streaming=streaming,
+        )
+
     @property
     def reasoning(self) -> ReasoningPanel:
         if self._active_thinking_block is not None:
@@ -1502,6 +1516,9 @@ class TitledRule(PulseMixin, Widget):
         self._show_state = show_state
         self._created_at = created_at  # datetime | None — shown as HH:MM when set
         self._glyph_error: bool = False
+        self._response_tok_s: float | None = None
+        self._response_elapsed_s: float | None = None
+        self._response_streaming: bool = False
 
     def on_mount(self) -> None:
         if self._show_state:
@@ -1525,6 +1542,32 @@ class TitledRule(PulseMixin, Widget):
         if is_error:
             self._pulse_stop()
         self.refresh()
+
+    def set_response_metrics(
+        self,
+        *,
+        tok_s: float | None = None,
+        elapsed_s: float | None = None,
+        streaming: bool = False,
+    ) -> None:
+        """Update per-response header metrics shown left of timestamp."""
+        self._response_tok_s = tok_s if tok_s and tok_s > 0 else None
+        if elapsed_s is not None:
+            self._response_elapsed_s = elapsed_s
+        self._response_streaming = streaming
+        self.refresh()
+
+    def _response_metrics_text(self) -> str:
+        if self._show_state:
+            return ""
+        parts: list[str] = []
+        if self._response_tok_s is not None:
+            parts.append(f"{self._response_tok_s:.0f} tok/s")
+        elif self._response_streaming:
+            parts.append("… tok/s")
+        if self._response_elapsed_s is not None:
+            parts.append(_format_elapsed_compact(self._response_elapsed_s))
+        return " · ".join(parts)
 
     def _live_colors(self) -> tuple[str, str, str, str]:
         """Read rule colours from CSS variables for hot-reload support.
@@ -1600,16 +1643,20 @@ class TitledRule(PulseMixin, Widget):
                 ts_text = self._created_at.strftime("%H:%M")
             except Exception:
                 ts_text = ""
+        metrics_text = self._response_metrics_text()
+        metrics_len = (len(metrics_text) + 1) if metrics_text else 0
         ts_len = (len(ts_text) + 1) if ts_text else 0  # +1 for leading space
 
         label_len = len(f"{title} ")
-        right = max(0, w - label_len - state_suffix.cell_len - ts_len)
+        right = max(0, w - label_len - state_suffix.cell_len - metrics_len - ts_len)
         t = Text()
         # Title: accent char with dynamic glyph color, rest in title_color
         t.append(accent_char, style=f"bold {glyph_color}")
         t.append(f"{rest} ", style=f"{title_color}")
         # Right fill: fade out (start → end), then optional timestamp + state glyph
         t.append_text(_fade_rule(right, fade_start, fade_end))
+        if metrics_text:
+            t.append(f" {metrics_text}", style="dim")
         if ts_text:
             t.append(f" {ts_text}", style="dim")
         t.append_text(state_suffix)
@@ -1889,8 +1936,37 @@ _BAR_EMPTY = "▱"
 _BAR_WIDTH = 20
 
 
+def _format_compact_tokens(value: int) -> str:
+    """Format token counts as short lowercase units, e.g. 96000 -> 96k."""
+    value = max(0, int(value))
+    if value >= 1_000_000:
+        scaled = value / 1_000_000
+        return f"{scaled:.1f}".rstrip("0").rstrip(".") + "m"
+    if value >= 1_000:
+        scaled = value / 1_000
+        rounded = round(scaled)
+        if abs(scaled - rounded) < 0.05:
+            return f"{rounded}k"
+        return f"{scaled:.1f}".rstrip("0").rstrip(".") + "k"
+    return str(value)
+
+
+def _format_elapsed_compact(seconds: float) -> str:
+    """Format response elapsed time compactly for message headers."""
+    seconds = max(0.0, float(seconds))
+    if seconds < 10:
+        return f"{seconds:.1f}s"
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    minutes, sec = divmod(int(round(seconds)), 60)
+    if minutes < 60:
+        return f"{minutes}m {sec:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes:02d}m"
+
+
 class StatusBar(PulseMixin, Widget):
-    """Bottom status bar showing model, compaction bar, tok/s, tokens, and duration.
+    """Bottom status bar showing model, compaction bar, ctx usage, and state.
 
     Inherits PulseMixin for the running-indicator pulse animation.
     Reads directly from the App's reactives — no duplicated state.
@@ -1938,7 +2014,7 @@ class StatusBar(PulseMixin, Widget):
         # IMPORTANT: "agent_running" and "status_tok_s" are registered to
         # dedicated callbacks below — omit them here to avoid double-registration.
         for attr in (
-            "status_tokens", "status_model", "status_duration",
+            "status_model", "status_context_tokens", "status_context_max",
             "status_compaction_progress", "status_compaction_enabled",
             "command_running",
             "browse_mode", "browse_index", "_browse_total",
@@ -2012,18 +2088,14 @@ class StatusBar(PulseMixin, Widget):
                     left.append("  Tab · c · a/A · Esc", style="dim")
             elif width >= 40:
                 left.append("  Tab · c · Esc", style="dim")
-            # Right side: tokens · duration
-            tokens = getattr(app, "status_tokens", 0)
-            duration = str(getattr(app, "status_duration", "0s"))
+            ctx_tokens = getattr(app, "status_context_tokens", 0)
+            ctx_max = getattr(app, "status_context_max", 0)
+            ctx_label = (
+                f"{_format_compact_tokens(ctx_tokens)}/{_format_compact_tokens(ctx_max)}"
+                if ctx_max > 0 else _format_compact_tokens(ctx_tokens)
+            )
             right = Text()
-            if width >= 60:
-                right.append(f"{tokens} tok", style="dim")
-                right.append("  ", style="dim")
-                right.append(duration, style="dim")
-            elif width >= 40:
-                right.append(f"{tokens} tok", style="dim")
-            else:
-                right.append(duration, style="dim")
+            right.append(ctx_label, style="dim")
             pad = max(0, width - left.cell_len - right.cell_len)
             left.append(" " * pad)
             left.append_text(right)
@@ -2031,15 +2103,17 @@ class StatusBar(PulseMixin, Widget):
 
         _vars    = getattr(app, "get_css_variables", lambda: {})()
         model    = str(getattr(app, "status_model", ""))
-        duration = str(getattr(app, "status_duration", "0s"))
-        tokens   = getattr(app, "status_tokens", 0)
+        ctx_tokens = getattr(app, "status_context_tokens", 0)
+        ctx_max    = getattr(app, "status_context_max", 0)
         progress = getattr(app, "status_compaction_progress", 0.0)
         enabled  = getattr(app, "status_compaction_enabled", True)
-        # Use the animated _tok_s_displayed reactive for smooth counter easing
-        tok_s    = self._tok_s_displayed
         running  = (
             getattr(app, "agent_running", False)
             or getattr(app, "command_running", False)
+        )
+        ctx_label = (
+            f"{_format_compact_tokens(ctx_tokens)}/{_format_compact_tokens(ctx_max)}"
+            if ctx_max > 0 else _format_compact_tokens(ctx_tokens)
         )
 
         t = Text()
@@ -2050,21 +2124,21 @@ class StatusBar(PulseMixin, Widget):
             t.append(model, style="dim")
 
         if width < 40:
-            # Minimal: model · duration
-            t.append(" · ", style="dim")
-            t.append(duration, style="dim")
+            # Minimal: model · ctx
+            if ctx_label:
+                t.append(" · ", style="dim")
+                t.append(ctx_label, style="dim")
         elif width < 60:
-            # Compact: % · tokens · duration (no bar)
+            # Compact: % · ctx (no bar)
             if enabled and progress > 0:
                 pct_int = min(int(progress * 100), 100)
                 t.append(" · ", style="dim")
                 t.append(f"{pct_int}%", style=StatusBar._compaction_color(progress, _vars))
-            t.append(" · ", style="dim")
-            t.append(f"{tokens} tok", style="dim")
-            t.append(" · ", style="dim")
-            t.append(duration, style="dim")
+            if ctx_label:
+                t.append(" · ", style="dim")
+                t.append(ctx_label, style="dim")
         else:
-            # Full: bar % · tok/s · tokens · duration
+            # Full: bar % · ctx
             if enabled and progress > 0:
                 pct_int = min(int(progress * 100), 100)
                 filled  = min(int(progress * _BAR_WIDTH), _BAR_WIDTH)
@@ -2074,13 +2148,9 @@ class StatusBar(PulseMixin, Widget):
                 t.append(bar_str, style=bar_color)
                 t.append(" ")
                 t.append(f"{pct_int}%", style=bar_color)
-            if tok_s > 0:
+            if ctx_label:
                 t.append(" · ", style="dim")
-                t.append(f"{tok_s:.0f} tok/s", style="dim")
-            t.append(" · ", style="dim")
-            t.append(f"{tokens} tok", style="dim")
-            t.append(" · ", style="dim")
-            t.append(duration, style="dim")
+                t.append(ctx_label, style="dim")
 
         # Active-file breadcrumb — shown when agent is using a file-touching tool
         active_file = str(getattr(app, "status_active_file", ""))

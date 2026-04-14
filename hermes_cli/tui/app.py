@@ -13,6 +13,7 @@ in its ``finally`` block — replaces all ``hasattr(self, "_app")`` guards.
 from __future__ import annotations
 
 import asyncio
+import collections
 import logging
 import platform
 import queue
@@ -33,7 +34,6 @@ _PATH_EXTRACT_RE = re.compile(
     r'["\']?(/[\w./\-]+|[\w./\-]+\.[\w]{1,6})["\']?'
 )
 import time as _time
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -169,9 +169,9 @@ class HermesApp(App):
     undo_state: reactive[UndoOverlayState | None] = reactive(None)
 
     # Status bar data
-    status_tokens: reactive[int] = reactive(0)
     status_model: reactive[str] = reactive("")
-    status_duration: reactive[str] = reactive("0s")
+    status_context_tokens: reactive[int] = reactive(0)
+    status_context_max: reactive[int] = reactive(0)
 
     # Compaction state
     status_compaction_progress: reactive[float] = reactive(0.0)  # 0.0–1.0
@@ -255,6 +255,8 @@ class HermesApp(App):
 
         # Active StreamingToolBlocks keyed by tool_call_id
         self._active_streaming_blocks: dict[str, Any] = {}
+        self._response_start_time: float | None = None
+        self._response_token_window: collections.deque[tuple[float, int]] = collections.deque()
 
         # Undo/retry state
         self._undo_in_progress: bool = False
@@ -545,6 +547,8 @@ class HermesApp(App):
             except NoMatches:
                 pass
 
+        self._refresh_live_response_metrics()
+
     def _build_hint_text(self) -> str:
         """Build the hint suffix shown beside the spinner.
 
@@ -572,10 +576,10 @@ class HermesApp(App):
                 parts.append(f" — waiting for {label} ({state.remaining}s)")
         return " ".join(parts) if parts else ""
 
-    # --- Session duration timer ---
+    # --- Session / response timers ---
 
     def _tick_duration(self) -> None:
-        """Update session duration and run 1-Hz diagnostics."""
+        """Run 1-Hz diagnostics and refresh live response metrics."""
         # --- Diagnostic probes (run unconditionally at 1 Hz) ---
         if self._event_loop_probe is not None:
             self._event_loop_probe.tick()
@@ -583,20 +587,7 @@ class HermesApp(App):
             self._worker_watcher.tick()
         if self._theme_manager is not None:
             self._theme_manager.check_for_changes()
-
-        # --- Session duration display ---
-        cli = getattr(self, "cli", None)
-        if cli is None:
-            return
-        session_start = getattr(cli, "session_start", None)
-        if session_start is None:
-            return
-        try:
-            from agent.usage_pricing import format_duration_compact
-            elapsed = max(0.0, (datetime.now() - session_start).total_seconds())
-            self.status_duration = format_duration_compact(elapsed)
-        except Exception:
-            pass
+        self._refresh_live_response_metrics()
 
     # --- FPS HUD ticker ---
 
@@ -703,6 +694,7 @@ class HermesApp(App):
 
     def watch_agent_running(self, value: bool) -> None:
         if value:
+            self._response_start_time = None
             self._set_chevron_phase("--phase-stream")
             self._set_hint_phase("stream")
         else:
@@ -728,6 +720,7 @@ class HermesApp(App):
             # tool label persists into turn 2 and StatusBar shows a stale file path.
             self.spinner_label = ""
             self.status_active_file = ""
+            self._response_start_time = None
             # Clear any blocks left open from an interrupted turn (agent stopped
             # without calling close_streaming_tool_block).  Leaked refs prevent GC
             # of the widget objects and cause stale entries on the next turn.
@@ -769,6 +762,62 @@ class HermesApp(App):
         # Recompute hint phase when agent stops
         if not value:
             self._set_hint_phase(self._compute_hint_phase())
+
+    def _refresh_live_response_metrics(self) -> None:
+        """Refresh current message header while a streamed response is active."""
+        start = self._response_start_time
+        if start is None:
+            return
+        try:
+            output = self.query_one(OutputPanel)
+        except NoMatches:
+            return
+        msg = output.current_message
+        if msg is None:
+            return
+        elapsed = max(0.0, _time.monotonic() - start)
+        now = _time.monotonic()
+        window_s = 0.75
+        while self._response_token_window and now - self._response_token_window[0][0] > window_s:
+            self._response_token_window.popleft()
+        live_tok_s = 0.0
+        if self._response_token_window:
+            token_sum = sum(tokens for _, tokens in self._response_token_window)
+            span = max(now - self._response_token_window[0][0], 0.05)
+            live_tok_s = token_sum / span
+        msg.set_response_metrics(tok_s=live_tok_s, elapsed_s=elapsed, streaming=True)
+
+    def mark_response_stream_started(self) -> None:
+        """Start live response timing for current assistant turn."""
+        if self._response_start_time is not None:
+            return
+        self._response_start_time = _time.monotonic()
+        self._response_token_window.clear()
+        self._refresh_live_response_metrics()
+
+    def mark_response_stream_delta(self, text: str) -> None:
+        """Record streamed response text for rolling live tok/s."""
+        if self._response_start_time is None or not text:
+            return
+        from agent.model_metadata import estimate_tokens_rough
+        est_tokens = estimate_tokens_rough(text)
+        if est_tokens <= 0:
+            return
+        self._response_token_window.append((_time.monotonic(), est_tokens))
+        self._refresh_live_response_metrics()
+
+    def finalize_response_metrics(self, tok_s: float, elapsed_s: float) -> None:
+        """Freeze tok/s + elapsed on current assistant message header."""
+        self._response_start_time = None
+        self._response_token_window.clear()
+        try:
+            output = self.query_one(OutputPanel)
+        except NoMatches:
+            return
+        msg = output.current_message
+        if msg is None:
+            return
+        msg.set_response_metrics(tok_s=tok_s, elapsed_s=elapsed_s, streaming=False)
 
     def watch_spinner_label(self, value: str) -> None:
         """Reset per-tool elapsed timer and extract active file path."""

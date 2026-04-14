@@ -1898,8 +1898,9 @@ class HermesCLI:
         # Model
         tui.call_from_thread(setattr, tui, "status_model", snapshot["model_short"])
 
-        # Total session tokens
-        tui.call_from_thread(setattr, tui, "status_tokens", snapshot["session_total_tokens"])
+        # Current context usage
+        tui.call_from_thread(setattr, tui, "status_context_tokens", snapshot["context_tokens"])
+        tui.call_from_thread(setattr, tui, "status_context_max", snapshot["context_length"] or 0)
 
         # Compaction progress
         agent = getattr(self, "agent", None)
@@ -2429,6 +2430,9 @@ class HermesCLI:
         if not hasattr(self, "_stream_start_time") or self._stream_start_time is None:
             import time as _time_mod
             self._stream_start_time = _time_mod.monotonic()
+            tui = _hermes_app
+            if tui is not None and hasattr(tui, "mark_response_stream_started"):
+                tui.call_from_thread(tui.mark_response_stream_started)
 
         # ── Tag-based reasoning suppression ──
         # Track whether we're inside a reasoning/thinking block.
@@ -2530,6 +2534,10 @@ class HermesCLI:
 
         # Close the live reasoning box before opening the response box
         self._close_reasoning_box()
+
+        tui = _hermes_app
+        if tui is not None and hasattr(tui, "mark_response_stream_delta"):
+            tui.call_from_thread(tui.mark_response_stream_delta, text)
 
         # Open the response box header on the very first visible text
         if not self._stream_box_opened:
@@ -2742,11 +2750,15 @@ class HermesCLI:
             stream_duration = _time_mod.monotonic() - self._stream_start_time
             agent = getattr(self, "agent", None)
             turn_output_tokens = getattr(agent, "_last_turn_output_tokens", 0)
+            tok_s = 0.0
             if stream_duration > 0.1 and turn_output_tokens > 0:
                 tok_s = turn_output_tokens / stream_duration
-                tui = _hermes_app
-                if tui is not None:
+            tui = _hermes_app
+            if tui is not None:
+                if tok_s > 0:
                     tui.call_from_thread(setattr, tui, "status_tok_s", tok_s)
+                if hasattr(tui, "finalize_response_metrics"):
+                    tui.call_from_thread(tui.finalize_response_metrics, tok_s, stream_duration)
         self._stream_start_time = None
         self._stream_buf = ""
         self._stream_spec_stack: list[tuple[str, str]] = []

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from hermes_cli.tui.app import HermesApp
-from hermes_cli.tui.widgets import HintBar, ImageBar, StatusBar, VoiceStatusBar
+from hermes_cli.tui.widgets import HintBar, ImageBar, OutputPanel, StatusBar, VoiceStatusBar
 
 
 @pytest.mark.asyncio
@@ -54,17 +54,19 @@ async def test_spinner_stops_when_agent_not_running():
 
 
 @pytest.mark.asyncio
-async def test_status_bar_renders_model_tokens_duration():
-    """StatusBar renders status_model, status_tokens, and status_duration (str)."""
+async def test_status_bar_renders_model_and_ctx_window():
+    """StatusBar renders status_model and ctx usage."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         app.status_model = "claude-opus"
-        app.status_tokens = 1234
-        app.status_duration = "5m 42s"
+        app.status_context_tokens = 96_000
+        app.status_context_max = 128_000
         await pilot.pause()
         bar = app.query_one(StatusBar)
-        # Force re-render check — the bar should exist and have rendered
+        rendered = str(bar.render())
+        assert "claude-opus" in rendered
+        assert "96k/128k" in rendered
 
 
 @pytest.mark.asyncio
@@ -106,24 +108,32 @@ async def test_compaction_bar_color_thresholds():
 
 @pytest.mark.asyncio
 async def test_tok_s_displayed():
-    """status_tok_s renders in status bar when > 0."""
+    """status_tok_s no longer renders in bottom status bar."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
+        app.status_model = "claude"
+        app.status_context_tokens = 96_000
+        app.status_context_max = 128_000
         app.status_tok_s = 35.0
         await pilot.pause()
-        # No error; bar renders with tok/s section
+        bar = app.query_one(StatusBar)
+        assert "tok/s" not in str(bar.render())
 
 
 @pytest.mark.asyncio
 async def test_tok_s_zero_hidden():
-    """Tok/s not shown when 0.0."""
+    """Tok/s remains hidden when 0.0."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
+        app.status_model = "claude"
+        app.status_context_tokens = 96_000
+        app.status_context_max = 128_000
         app.status_tok_s = 0.0
         await pilot.pause()
-        # No error; bar renders without tok/s
+        bar = app.query_one(StatusBar)
+        assert "tok/s" not in str(bar.render())
 
 
 @pytest.mark.asyncio
@@ -199,17 +209,22 @@ async def test_image_bar_shows_on_attach():
 
 
 @pytest.mark.asyncio
-async def test_session_timer_ticks():
-    """status_duration updates every second from cli.session_start."""
-    cli = MagicMock()
-    cli.session_start = datetime.now() - timedelta(seconds=5)
-    app = HermesApp(cli=cli)
+async def test_live_response_metrics_tick():
+    """Live response header timer + rolling tok/s update while streaming."""
+    app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        # Wait for at least one 1-second tick
-        await asyncio.sleep(1.1)
+        output = app.query_one(OutputPanel)
+        msg = output.new_message("hello")
+        msg.show_response_rule()
+        app.mark_response_stream_started()
+        app.mark_response_stream_delta("abcdefgh" * 8)
+        await asyncio.sleep(0.15)
         await pilot.pause()
-        assert app.status_duration != "0s"
+        rendered = str(msg._response_rule.render())
+        assert "tok/s" in rendered
+        assert "… tok/s" not in rendered
+        assert "s" in rendered
 
 
 def test_compaction_bar_color_from_skin():
@@ -250,25 +265,24 @@ async def test_status_bar_narrow_width():
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         app.status_model = "claude"
-        app.status_duration = "5s"
         app.status_compaction_progress = 0.5
         app.status_compaction_enabled = True
-        app.status_tokens = 1000
+        app.status_context_tokens = 96_000
+        app.status_context_max = 128_000
         await pilot.pause()
 
         bar = app.query_one(StatusBar)
 
-        # At width < 40: minimal — only model + duration, no bar or tokens
+        # At width < 40: minimal — model + ctx, no bar
         with patch.object(type(bar), "size", new_callable=PropertyMock, return_value=Size(30, 1)):
             rendered_narrow = str(bar.render())
-        assert "5s" in rendered_narrow
+        assert "96k/128k" in rendered_narrow
         assert "▰" not in rendered_narrow
-        assert "1000" not in rendered_narrow
 
-        # At width 40–59: compact — % and tokens, no full bar
+        # At width 40–59: compact — % and ctx, no full bar
         with patch.object(type(bar), "size", new_callable=PropertyMock, return_value=Size(50, 1)):
             rendered_compact = str(bar.render())
-        assert "1000" in rendered_compact
+        assert "96k/128k" in rendered_compact
         assert "▰" not in rendered_compact
 
         # At width >= 60: full — bar glyphs present
@@ -279,7 +293,7 @@ async def test_status_bar_narrow_width():
 
 @pytest.mark.asyncio
 async def test_push_tui_status_wires_all_fields():
-    """_push_tui_status() sets status_model, status_tokens, and compaction fields on TUI."""
+    """_push_tui_status() sets status_model, ctx usage, and compaction fields on TUI."""
     import cli as cli_module
     from types import SimpleNamespace
 
@@ -321,7 +335,8 @@ async def test_push_tui_status_wires_all_fields():
 
         # call_from_thread executed setattr(fake_tui, attr, value) for each field
         assert hasattr(fake_tui, "status_model")
-        assert hasattr(fake_tui, "status_tokens")
+        assert hasattr(fake_tui, "status_context_tokens")
+        assert hasattr(fake_tui, "status_context_max")
         assert hasattr(fake_tui, "status_compaction_progress")
         assert hasattr(fake_tui, "status_compaction_enabled")
     finally:
@@ -343,7 +358,8 @@ async def test_status_bar_shows_running_when_agent_active():
         await pilot.pause()
         app.agent_running = True
         app.status_model = "claude"
-        app.status_duration = "1s"
+        app.status_context_tokens = 96_000
+        app.status_context_max = 128_000
         await pilot.pause()
 
         bar = app.query_one(StatusBar)
@@ -364,7 +380,8 @@ async def test_status_bar_shows_idle_when_not_running():
         app.agent_running = False
         app.command_running = False
         app.status_model = "claude"
-        app.status_duration = "1s"
+        app.status_context_tokens = 96_000
+        app.status_context_max = 128_000
         await pilot.pause()
 
         bar = app.query_one(StatusBar)
@@ -385,8 +402,8 @@ async def test_status_bar_running_label_right_anchored():
         await pilot.pause()
         app.agent_running = False
         app.status_model = "m"
-        app.status_tokens = 0
-        app.status_duration = "0s"
+        app.status_context_tokens = 0
+        app.status_context_max = 128_000
         await pilot.pause()
 
         bar = app.query_one(StatusBar)

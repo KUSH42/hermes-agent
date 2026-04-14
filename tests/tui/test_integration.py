@@ -63,8 +63,8 @@ async def test_agent_turn_lifecycle():
 
         # End agent
         app.agent_running = False
-        app.status_tokens = 500
-        app.status_duration = 3.2
+        app.status_context_tokens = 500
+        app.status_context_max = 128_000
         await pilot.pause()
         app.flush_output()
         await pilot.pause()

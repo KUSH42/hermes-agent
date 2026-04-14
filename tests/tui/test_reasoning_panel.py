@@ -178,7 +178,9 @@ async def test_reasoning_text_uses_full_width():
         for _ in range(5):
             await pilot.pause()
 
-        msg = app.query_one(OutputPanel).current_message
+        output = app.query_one(OutputPanel)
+        msg = output.current_message or output.new_message("hello")
+        await pilot.pause()
         rp = msg.reasoning
 
         rp.open_box("Reasoning")
@@ -298,6 +300,27 @@ async def test_titled_rule_shows_timestamp():
         rendered = str(rule.render())
         # Just check the rule has a created_at — timestamp format depends on time
         assert isinstance(rule._created_at, datetime.datetime)
+        assert rule._created_at.strftime("%H:%M") in rendered
+
+
+@pytest.mark.asyncio
+async def test_titled_rule_shows_response_metrics_before_timestamp():
+    """Per-turn TitledRule shows tok/s + elapsed left of timestamp."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        output = app.query_one(OutputPanel)
+        msg = output.new_message("hello")
+        msg.show_response_rule()
+        msg.set_response_metrics(tok_s=42.0, elapsed_s=2.4, streaming=False)
+        await pilot.pause()
+
+        rule = msg._response_rule
+        rendered = str(rule.render())
+        ts = rule._created_at.strftime("%H:%M")
+        assert "42 tok/s" in rendered
+        assert "2.4s" in rendered
+        assert rendered.index("42 tok/s") < rendered.index(ts)
 
 
 @pytest.mark.asyncio

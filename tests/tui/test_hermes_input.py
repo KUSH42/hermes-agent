@@ -497,11 +497,14 @@ async def test_app_relays_batch_to_hermes_input() -> None:
 async def test_tab_accepts_plain_path_candidate() -> None:
     """Tab on a PathCandidate with PLAIN_PATH_REF preserves the ./ prefix."""
     from hermes_cli.tui.completion_context import CompletionContext, CompletionTrigger
+    from hermes_cli.tui.path_search import PathSearchProvider
 
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         inp = app.query_one(HermesInput)
+        provider = app.query_one(PathSearchProvider)
+        provider.search = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
         inp.value = "./src"
         inp.cursor_position = 5
 

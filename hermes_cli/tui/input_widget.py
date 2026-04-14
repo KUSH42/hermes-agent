@@ -18,6 +18,7 @@ import unicodedata
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from hermes_cli.file_drop import parse_dragged_file_paste
 from hermes_cli.tui.perf import measure
 
 from rich.text import Text
@@ -99,6 +100,13 @@ class HermesInput(Input, can_focus=True):
         def __init__(self, value: str) -> None:
             super().__init__()
             self.value = value
+
+    class FilesDropped(Message):
+        """Emitted when terminal drag-and-drop pastes one or more local paths."""
+
+        def __init__(self, paths: list[Path]) -> None:
+            super().__init__()
+            self.paths = paths
 
     def __init__(
         self,
@@ -203,6 +211,15 @@ class HermesInput(Input, can_focus=True):
             event.prevent_default()
             return
         await super()._on_key(event)
+
+    def _on_paste(self, event: events.Paste) -> None:
+        """Intercept terminal drag-and-drop before Input inserts raw path text."""
+        dropped_paths = parse_dragged_file_paste(event.text)
+        if dropped_paths:
+            self.post_message(self.FilesDropped(dropped_paths))
+            event.stop()
+            return
+        super()._on_paste(event)
 
     # --- Actions ---
 

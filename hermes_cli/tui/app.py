@@ -46,6 +46,7 @@ from textual.reactive import reactive
 from textual.widgets import Static, TextArea
 from textual import work
 
+from hermes_cli.file_drop import classify_dropped_file, format_link_token
 from hermes_cli.tui.state import (
     ChoiceOverlayState,
     OverlayState,
@@ -1099,6 +1100,88 @@ class HermesApp(App):
         except NoMatches:
             pass
 
+    def _append_attached_images(self, images: list[Path]) -> None:
+        """Keep TUI image state and CLI submit payload in sync."""
+        if not images:
+            return
+        current = list(self.attached_images)
+        current.extend(images)
+        self.attached_images = current
+        cli = getattr(self, "cli", None)
+        if cli is not None and hasattr(cli, "_attached_images"):
+            cli._attached_images.extend(images)
+
+    def _clear_attached_images(self) -> None:
+        self.attached_images = []
+        cli = getattr(self, "cli", None)
+        if cli is not None and hasattr(cli, "_attached_images"):
+            cli._attached_images.clear()
+
+    def _insert_link_tokens(self, tokens: list[str]) -> None:
+        if not tokens:
+            return
+        try:
+            inp = self.query_one("#input-area")
+        except NoMatches:
+            return
+        selection = getattr(inp, "selection", None)
+        start = end = getattr(inp, "cursor_position", 0)
+        if selection is not None and not selection.is_empty:
+            start, end = selection.start, selection.end
+
+        before = inp.value[:start]
+        after = inp.value[end:]
+        prefix = "" if not before or before[-1].isspace() else " "
+        suffix = "" if not after or after[0].isspace() else " "
+        payload = prefix + " ".join(tokens) + suffix
+        if selection is not None and not selection.is_empty:
+            inp.replace(payload, start, end)
+        else:
+            inp.insert_text(payload)
+
+    def handle_file_drop(self, paths: list[Path]) -> None:
+        """Route terminal drag-and-drop pasted paths into links and attachments."""
+        if any(getattr(self, attr) is not None for attr in ("approval_state", "clarify_state", "sudo_state", "secret_state")):
+            self._flash_hint("file drop unavailable while prompt is open", 1.5)
+            return
+
+        cwd = Path.cwd()
+        link_tokens: list[str] = []
+        image_paths: list[Path] = []
+        rejected: list[str] = []
+
+        for path in paths:
+            dropped = classify_dropped_file(path, cwd)
+            if dropped.kind == "image":
+                image_paths.append(path)
+                continue
+            if dropped.kind == "linkable_text":
+                try:
+                    link_tokens.append(format_link_token(path, cwd))
+                except ValueError as exc:
+                    rejected.append(f"{path.name}: {exc}")
+                continue
+            rejected.append(f"{path.name}: {dropped.reason}")
+
+        if image_paths:
+            self._append_attached_images(image_paths)
+        if link_tokens:
+            self._insert_link_tokens(link_tokens)
+
+        hint_parts: list[str] = []
+        if link_tokens:
+            noun = "file" if len(link_tokens) == 1 else "files"
+            hint_parts.append(f"linked {len(link_tokens)} {noun}")
+        if image_paths:
+            noun = "image" if len(image_paths) == 1 else "images"
+            hint_parts.append(f"attached {len(image_paths)} {noun}")
+        if rejected:
+            noun = "item" if len(rejected) == 1 else "items"
+            hint_parts.append(f"rejected {len(rejected)} {noun}")
+
+        if hint_parts:
+            self._flash_hint(" · ".join(hint_parts), 1.8 if rejected else 1.2)
+
     # --- Reasoning panel helpers (called via call_from_thread) ---
 
     def _current_message_panel(self) -> MessagePanel | None:
@@ -2101,5 +2184,15 @@ class HermesApp(App):
             pass
         if hasattr(self, "cli") and self.cli is not None:
             text = event.value
+            images = list(self.attached_images)
+            if images:
+                self._clear_attached_images()
+                payload = (text, images)
+            else:
+                payload = text
             if hasattr(self.cli, "_pending_input"):
-                self.cli._pending_input.put(text)
+                self.cli._pending_input.put(payload)
+
+    def on_hermes_input_files_dropped(self, event: Any) -> None:
+        """Handle terminal drag-and-drop pasted paths from HermesInput."""
+        self.handle_file_drop(event.paths)

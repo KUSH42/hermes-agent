@@ -1242,10 +1242,7 @@ def _dim_lines(text: str) -> list[str]:
 # File-drop detection — extracted as a pure function for testability.
 # ---------------------------------------------------------------------------
 
-_IMAGE_EXTENSIONS = frozenset({
-    '.png', '.jpg', '.jpeg', '.gif', '.webp',
-    '.bmp', '.tiff', '.tif', '.svg', '.ico',
-})
+from hermes_cli.file_drop import detect_file_drop_text
 
 
 def _detect_file_drop(user_input: str) -> "dict | None":
@@ -1265,33 +1262,13 @@ def _detect_file_drop(user_input: str) -> "dict | None":
 
     Returns ``None`` when the input is not a real file path.
     """
-    if not isinstance(user_input, str) or not user_input.startswith("/"):
+    match = detect_file_drop_text(user_input)
+    if match is None:
         return None
-
-    # Walk the string absorbing backslash-escaped spaces ("\ ").
-    raw = user_input
-    pos = 0
-    while pos < len(raw):
-        ch = raw[pos]
-        if ch == '\\' and pos + 1 < len(raw) and raw[pos + 1] == ' ':
-            pos += 2  # skip escaped space
-        elif ch == ' ':
-            break
-        else:
-            pos += 1
-
-    first_token_raw = raw[:pos]
-    first_token = first_token_raw.replace('\\ ', ' ')
-    drop_path = Path(first_token)
-
-    if not drop_path.exists() or not drop_path.is_file():
-        return None
-
-    remainder = raw[pos:].strip()
     return {
-        "path": drop_path,
-        "is_image": drop_path.suffix.lower() in _IMAGE_EXTENSIONS,
-        "remainder": remainder,
+        "path": match.path,
+        "is_image": match.is_image,
+        "remainder": match.remainder,
     }
 
 

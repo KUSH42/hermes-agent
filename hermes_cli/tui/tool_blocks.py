@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import collections
 import re
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -82,11 +83,13 @@ class ToolHeader(Widget):
         self,
         label: str,
         line_count: int,
+        tool_name: str | None = None,
         stats: ToolHeaderStats | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self._label = label
+        self._tool_name = tool_name
         self._line_count = line_count
         self._stats = stats
         # ≤ threshold: always open, no affordances shown
@@ -95,9 +98,11 @@ class ToolHeader(Widget):
         # Streaming state — set by StreamingToolBlock
         self._spinner_char: str | None = None   # non-None while streaming
         self._duration: str = ""                # set on completion
+        self._tool_icon: str = ""
 
     def on_mount(self) -> None:
         self._refresh_gutter_color()
+        self._refresh_tool_icon()
 
     def _refresh_gutter_color(self) -> None:
         """Cache focused-gutter colour from CSS variables (supports hot-reload)."""
@@ -110,6 +115,17 @@ class ToolHeader(Widget):
             self._focused_gutter_color = _GUTTER_FALLBACK
             self._diff_add_color = _DIFF_ADD_FALLBACK
             self._diff_del_color = _DIFF_DEL_FALLBACK
+
+    def _refresh_tool_icon(self) -> None:
+        """Resolve current tool icon, so skin reloads can update header glyphs."""
+        if not self._tool_name:
+            self._tool_icon = ""
+            return
+        try:
+            from agent.display import get_tool_icon
+            self._tool_icon = get_tool_icon(self._tool_name)
+        except Exception:
+            self._tool_icon = ""
 
     def render(self) -> RenderResult:
         focused = self.has_class("focused")
@@ -128,7 +144,8 @@ class ToolHeader(Widget):
             available = max(8, w - 25)
             if len(label_str) > available:
                 label_str = label_str[:available - 1] + "…"
-        t.append(f"   ╌╌ {label_str}", style="dim")
+        prefix = f" {self._tool_icon}" if self._tool_icon else ""
+        t.append(f"   ╌╌{prefix} {label_str}", style="dim")
         if self._spinner_char is not None:
             # Streaming in progress — show spinner, no line count or toggle yet
             t.append(f"  {self._spinner_char}", style="dim")
@@ -211,12 +228,14 @@ class ToolBlock(Widget):
         label: str,
         lines: list[str],       # ANSI display lines
         plain_lines: list[str], # plain text for copy (no ANSI, no gutter)
+        tool_name: str | None = None,
         rerender_fn: Callable[[], tuple[list[str], list[str]]] | None = None,
         header_stats: ToolHeaderStats | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self._label = label
+        self._tool_name = tool_name
         self._lines = list(lines)
         self._plain_lines = list(plain_lines)
         self._rerender_fn = rerender_fn
@@ -224,7 +243,7 @@ class ToolBlock(Widget):
         if self._header_stats is None and label == "diff":
             self._header_stats = _count_visible_diff_rows(self._plain_lines)
         auto_expand = len(lines) <= COLLAPSE_THRESHOLD
-        self._header = ToolHeader(label, len(lines), stats=self._header_stats)
+        self._header = ToolHeader(label, len(lines), tool_name=tool_name, stats=self._header_stats)
         self._body = ToolBodyContainer()
         if auto_expand:
             self._header.collapsed = False
@@ -267,16 +286,17 @@ class ToolBlock(Widget):
 
     def refresh_skin(self) -> None:
         """Rebuild styled lines from canonical source when this block supports it."""
-        if self._rerender_fn is None:
-            return
-        lines, plain_lines = self._rerender_fn()
-        self._lines = list(lines)
-        self._plain_lines = list(plain_lines)
+        if self._rerender_fn is not None:
+            lines, plain_lines = self._rerender_fn()
+            self._lines = list(lines)
+            self._plain_lines = list(plain_lines)
         if self._label == "diff" and self._header_stats is None:
             self._header_stats = _count_visible_diff_rows(self._plain_lines)
         self._header._stats = self._header_stats
         self._header._line_count = len(self._lines)
         self._header._has_affordances = len(self._lines) > COLLAPSE_THRESHOLD
+        self._header._refresh_gutter_color()
+        self._header._refresh_tool_icon()
         if not self._header._has_affordances:
             self._header.collapsed = False
             self._body.add_class("expanded")
@@ -343,9 +363,9 @@ class StreamingToolBlock(ToolBlock):
 
     DEFAULT_CSS = "StreamingToolBlock { height: auto; }"
 
-    def __init__(self, label: str, **kwargs: Any) -> None:
+    def __init__(self, label: str, tool_name: str | None = None, **kwargs: Any) -> None:
         # Initialise parent with empty lines — content arrives via append_line()
-        super().__init__(label=label, lines=[], plain_lines=[], **kwargs)
+        super().__init__(label=label, lines=[], plain_lines=[], tool_name=tool_name, **kwargs)
         self._stream_label = label
         # Lines buffered between 60fps flush ticks
         self._pending: list[tuple[str, str]] = []  # (raw_ansi, plain)
@@ -369,8 +389,11 @@ class StreamingToolBlock(ToolBlock):
         self._header.collapsed = False
         self._header._has_affordances = False  # no toggle while streaming
         self._header._spinner_char = _SPINNER_FRAMES[0]
+        self._stream_started_at = time.monotonic()
+        self._header._duration = "0.0s"
         self._render_timer = self.set_interval(1 / 60, self._flush_pending)
         self._spinner_timer = self.set_interval(0.25, self._tick_spinner)
+        self._duration_timer = self.set_interval(0.1, self._tick_duration)
 
     # ------------------------------------------------------------------
     # Streaming API (called from event loop via call_from_thread)
@@ -399,6 +422,10 @@ class StreamingToolBlock(ToolBlock):
             self._spinner_timer.stop()
         except Exception:
             pass
+        try:
+            self._duration_timer.stop()
+        except Exception:
+            pass
 
     def complete(self, duration: str) -> None:
         """Transition to COMPLETED state: flush remaining lines, update header."""
@@ -409,6 +436,7 @@ class StreamingToolBlock(ToolBlock):
         try:
             self._render_timer.stop()
             self._spinner_timer.stop()
+            self._duration_timer.stop()
         except Exception:
             pass
         # Final synchronous flush
@@ -439,6 +467,15 @@ class StreamingToolBlock(ToolBlock):
             return
         self._spinner_frame = (self._spinner_frame + 1) % len(_SPINNER_FRAMES)
         self._header._spinner_char = _SPINNER_FRAMES[self._spinner_frame]
+        self._header.refresh()
+
+    def _tick_duration(self) -> None:
+        if self._completed:
+            return
+        started = getattr(self, "_stream_started_at", None)
+        if started is None:
+            return
+        self._header._duration = f"{time.monotonic() - started:.1f}s"
         self._header.refresh()
 
     def _flush_pending(self) -> None:

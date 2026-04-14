@@ -403,6 +403,7 @@ DEFAULT_CONFIG = {
         "spinner_style": "",      # TUI spinner animation: dots|bounce|grow|arrows|star|moon|pulse|clock|none (empty = skin default)
         "show_cost": False,       # Show $ cost in the status bar (off by default)
         "skin": "default",
+        "tool_icon_mode": "auto",  # auto|nerdfont|emoji|ascii
         "startup_text_effect": {
             "enabled": False,
             "effect": "matrix",
@@ -581,7 +582,7 @@ DEFAULT_CONFIG = {
     },
 
     # Config schema version - bump this when adding new required fields
-    "_config_version": 14,
+    "_config_version": 15,
 }
 
 # =============================================================================

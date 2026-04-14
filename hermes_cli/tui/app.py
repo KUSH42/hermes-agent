@@ -406,6 +406,7 @@ class HermesApp(App):
             try:
                 panel = self.query_one(OutputPanel)
                 panel.live_line.feed(chunk)
+                panel.refresh(layout=True)
                 if not panel._user_scrolled_up:
                     self.call_after_refresh(panel.scroll_end, animate=False)
             except NoMatches:
@@ -1286,6 +1287,7 @@ class HermesApp(App):
         plain_lines: list[str],
         rerender_fn=None,
         header_stats=None,
+        tool_name: str | None = None,
     ) -> None:
         """Mount a ToolBlock into OutputPanel before the live-output trio.
 
@@ -1304,9 +1306,11 @@ class HermesApp(App):
                 label,
                 lines,
                 plain_lines,
+                tool_name=tool_name,
                 rerender_fn=rerender_fn,
                 header_stats=header_stats,
             )
+            msg.refresh(layout=True)
             # Increment memoized header count to avoid O(n) query in StatusBar
             self._browse_total += 1
             if not output._user_scrolled_up:
@@ -1316,7 +1320,7 @@ class HermesApp(App):
 
     # --- StreamingToolBlock lifecycle ---
 
-    def open_streaming_tool_block(self, tool_call_id: str, label: str) -> None:
+    def open_streaming_tool_block(self, tool_call_id: str, label: str, tool_name: str | None = None) -> None:
         """Mount a StreamingToolBlock into OutputPanel before the live-output trio.
 
         Tool blocks are direct children of OutputPanel (not nested inside
@@ -1332,8 +1336,9 @@ class HermesApp(App):
             output = self.query_one(OutputPanel)
             # Ensure a MessagePanel exists for this turn (holds response text).
             msg = output.current_message or output.new_message()
-            block = msg.open_streaming_tool_block(label=label)
+            block = msg.open_streaming_tool_block(label=label, tool_name=tool_name)
             self._active_streaming_blocks[tool_call_id] = block
+            msg.refresh(layout=True)
             self._browse_total += 1
             if not output._user_scrolled_up:
                 self.call_after_refresh(output.scroll_end, animate=False)

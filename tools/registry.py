@@ -18,6 +18,8 @@ import json
 import logging
 from typing import Callable, Dict, List, Optional, Set
 
+from hermes_cli.tool_icons import get_default_tool_icon
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,12 +28,12 @@ class ToolEntry:
 
     __slots__ = (
         "name", "toolset", "schema", "handler", "check_fn",
-        "requires_env", "is_async", "description", "emoji",
+        "requires_env", "is_async", "description", "icon", "emoji",
         "max_result_size_chars",
     )
 
     def __init__(self, name, toolset, schema, handler, check_fn,
-                 requires_env, is_async, description, emoji,
+                 requires_env, is_async, description, icon, emoji,
                  max_result_size_chars=None):
         self.name = name
         self.toolset = toolset
@@ -41,6 +43,7 @@ class ToolEntry:
         self.requires_env = requires_env
         self.is_async = is_async
         self.description = description
+        self.icon = icon
         self.emoji = emoji
         self.max_result_size_chars = max_result_size_chars
 
@@ -66,6 +69,7 @@ class ToolRegistry:
         requires_env: list = None,
         is_async: bool = False,
         description: str = "",
+        icon: str = "",
         emoji: str = "",
         max_result_size_chars: int | float | None = None,
     ):
@@ -86,6 +90,7 @@ class ToolRegistry:
             requires_env=requires_env or [],
             is_async=is_async,
             description=description or schema.get("description", ""),
+            icon=icon or get_default_tool_icon(name, default=""),
             emoji=emoji,
             max_result_size_chars=max_result_size_chars,
         )
@@ -196,6 +201,11 @@ class ToolRegistry:
         """Return the toolset a tool belongs to, or None."""
         entry = self._tools.get(name)
         return entry.toolset if entry else None
+
+    def get_icon(self, name: str, default: str = "") -> str:
+        """Return the nerd font icon for a tool, or *default* if unset."""
+        entry = self._tools.get(name)
+        return (entry.icon if entry and entry.icon else default)
 
     def get_emoji(self, name: str, default: str = "⚡") -> str:
         """Return the emoji for a tool, or *default* if unset."""

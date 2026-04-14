@@ -74,6 +74,8 @@ async def test_append_delta_buffers_partial():
         # No lines committed — partial text is in _live_buf
         assert len(msg.reasoning._plain_lines) == 0
         assert msg.reasoning._live_buf == "partial text"
+        assert msg.reasoning._live_line.display is True
+        assert "partial text" in str(msg.reasoning._live_line.render())
 
 
 @pytest.mark.asyncio
@@ -91,6 +93,8 @@ async def test_append_delta_flushes_on_newline():
         # "hello world" committed = 1 plain line; "next" still in buffer
         assert len(msg.reasoning._plain_lines) == 1
         assert msg.reasoning._live_buf == "next"
+        assert msg.reasoning._live_line.display is True
+        assert "next" in str(msg.reasoning._live_line.render())
 
 
 @pytest.mark.asyncio
@@ -113,6 +117,7 @@ async def test_close_box_flushes_and_stays_visible():
         assert msg.reasoning.has_class("visible")
         # Flushed partial = 1 plain line (close_box flushes _live_buf)
         assert len(msg.reasoning._plain_lines) == 1
+        assert msg.reasoning._live_line.display is False
 
 
 @pytest.mark.asyncio

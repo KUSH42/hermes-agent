@@ -301,6 +301,30 @@ class TestEmojiMetadata:
         assert reg.get_emoji("t") == "⚡"
 
 
+class TestIconMetadata:
+    """Verify nerd font icon registration and lookup."""
+
+    def test_register_stores_explicit_icon(self):
+        reg = ToolRegistry()
+        reg.register(
+            name="t", toolset="s", schema=_make_schema(),
+            handler=_dummy_handler, icon="X",
+        )
+        assert reg._tools["t"].icon == "X"
+
+    def test_get_icon_uses_default_mapping_for_known_tool(self):
+        reg = ToolRegistry()
+        reg.register(
+            name="terminal", toolset="s", schema=_make_schema("terminal"),
+            handler=_dummy_handler,
+        )
+        assert reg.get_icon("terminal") == ""
+
+    def test_get_icon_returns_default_for_unknown_tool(self):
+        reg = ToolRegistry()
+        assert reg.get_icon("nonexistent", default="fallback") == "fallback"
+
+
 class TestSecretCaptureResultContract:
     def test_secret_request_result_does_not_include_secret_value(self):
         result = {

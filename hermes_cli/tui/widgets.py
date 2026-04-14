@@ -837,6 +837,7 @@ class MessagePanel(Widget):
         label: str,
         lines: list[str],
         plain_lines: list[str],
+        tool_name: str | None = None,
         rerender_fn=None,
         header_stats=None,
     ) -> Widget | None:
@@ -847,15 +848,16 @@ class MessagePanel(Widget):
             label,
             lines,
             plain_lines,
+            tool_name=tool_name,
             rerender_fn=rerender_fn,
             header_stats=header_stats,
         )
         self._mount_nonprose_block(block)
         return block
 
-    def open_streaming_tool_block(self, label: str) -> Widget:
+    def open_streaming_tool_block(self, label: str, tool_name: str | None = None) -> Widget:
         from hermes_cli.tui.tool_blocks import StreamingToolBlock as _STB
-        block = _STB(label=label)
+        block = _STB(label=label, tool_name=tool_name)
         self._mount_nonprose_block(block)
         return block
 
@@ -1361,6 +1363,7 @@ class ReasoningPanel(Widget):
 
     def __init__(self, **kwargs: Any) -> None:
         self._reasoning_log = CopyableRichLog(markup=False, highlight=False, wrap=True, id="reasoning-log")
+        self._live_line = Static("", id="reasoning-live")
         self._collapsed_stub = Static("", id="reasoning-collapsed")
         super().__init__(**kwargs)
         self._live_buf = ""
@@ -1371,6 +1374,7 @@ class ReasoningPanel(Widget):
     def compose(self) -> ComposeResult:
         yield self._collapsed_stub
         yield self._reasoning_log
+        yield self._live_line
 
     def _gutter_line(self, content: str) -> Text:
         """Build a dim italic line for the reasoning log.
@@ -1418,6 +1422,8 @@ class ReasoningPanel(Widget):
         self._plain_lines.clear()
         self._is_closed = False
         self._body_collapsed = False
+        self._live_line.styles.display = "none"
+        self._live_line.update("")
         self.remove_class("--closeable")
         self.remove_class("--collapsed")
         self._sync_collapsed_state()
@@ -1440,6 +1446,13 @@ class ReasoningPanel(Widget):
             line, self._live_buf = self._live_buf.split("\n", 1)
             log.write(self._gutter_line(line), expand=True)
             self._plain_lines.append(line)
+        if self._live_buf:
+            self._live_line.update(self._gutter_line(self._live_buf))
+            self._live_line.styles.display = "block"
+        else:
+            self._live_line.styles.display = "none"
+            self._live_line.update("")
+        self.refresh(layout=True)
 
     def close_box(self) -> None:
         """Flush remaining buffer and activate collapse affordance."""
@@ -1449,6 +1462,8 @@ class ReasoningPanel(Widget):
             self._reasoning_log.write(self._gutter_line(buf), expand=True)
             self._plain_lines.append(buf)
             self._live_buf = ""
+        self._live_line.styles.display = "none"
+        self._live_line.update("")
         self._is_closed = True
         self.add_class("--closeable")
         self._sync_collapsed_state()

@@ -55,6 +55,26 @@ async def test_block_starts_expanded():
         assert block._body.has_class("expanded")
         # Header should show a spinner char
         assert block._header._spinner_char is not None
+        # Timer starts immediately
+        assert block._header._duration.endswith("s")
+
+
+@pytest.mark.asyncio
+async def test_live_timer_updates_while_streaming():
+    """Header duration updates while the tool is still active."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        block = await _new_app_with_block(pilot)
+
+        first = block._header._duration
+        await asyncio.sleep(0.22)
+        await pilot.pause()
+        second = block._header._duration
+
+        assert first.endswith("s")
+        assert second.endswith("s")
+        assert second != first
 
 
 @pytest.mark.asyncio
@@ -85,6 +105,29 @@ async def test_append_10_lines_then_complete():
         assert block._header._spinner_char is None
         # Total received count
         assert block._total_received == 10
+
+
+@pytest.mark.asyncio
+async def test_complete_freezes_timer_to_final_duration():
+    """Final duration overrides live timer and stays fixed after complete()."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        block = await _new_app_with_block(pilot, label="echo test")
+
+        await asyncio.sleep(0.18)
+        await pilot.pause()
+        live_value = block._header._duration
+        assert live_value.endswith("s")
+
+        block.complete("1.7s")
+        await pilot.pause()
+        frozen = block._header._duration
+        await asyncio.sleep(0.18)
+        await pilot.pause()
+
+        assert frozen == "1.7s"
+        assert block._header._duration == "1.7s"
 
 
 @pytest.mark.asyncio

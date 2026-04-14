@@ -1,123 +1,104 @@
-"""Tests for get_tool_emoji in agent/display.py — skin + registry integration."""
+"""Tests for tool icon and emoji resolution in ``agent.display``."""
 
-from unittest.mock import patch as mock_patch, MagicMock
+import sys
+from unittest.mock import MagicMock, patch as mock_patch
 
-from agent.display import get_tool_emoji
+from agent.display import get_tool_emoji, get_tool_icon, set_tool_icon_mode
+
+
+class TestGetToolIcon:
+    """Verify nerd font → emoji → ASCII fallback behavior."""
+
+    def teardown_method(self):
+        set_tool_icon_mode("auto")
+
+    def test_auto_prefers_registry_icon(self):
+        mock_reg = MagicMock()
+        mock_reg.get_icon.return_value = ""
+        mock_reg.get_emoji.return_value = "💻"
+        mock_module = MagicMock()
+        mock_module.registry = mock_reg
+        with mock_patch("agent.display._get_skin", return_value=None), \
+             mock_patch.dict(sys.modules, {"tools.registry": mock_module}):
+            assert get_tool_icon("terminal") == ""
+
+    def test_nerdfont_mode_falls_back_to_emoji(self):
+        mock_reg = MagicMock()
+        mock_reg.get_icon.return_value = ""
+        mock_reg.get_emoji.return_value = "💻"
+        mock_module = MagicMock()
+        mock_module.registry = mock_reg
+        with mock_patch("agent.display._get_skin", return_value=None), \
+             mock_patch.dict(sys.modules, {"tools.registry": mock_module}):
+            assert get_tool_icon("terminal", mode="nerdfont") == "💻"
+
+    def test_auto_falls_back_to_ascii_when_icon_and_emoji_missing(self):
+        mock_reg = MagicMock()
+        mock_reg.get_icon.return_value = ""
+        mock_reg.get_emoji.return_value = ""
+        mock_module = MagicMock()
+        mock_module.registry = mock_reg
+        with mock_patch("agent.display._get_skin", return_value=None), \
+             mock_patch.dict(sys.modules, {"tools.registry": mock_module}):
+            assert get_tool_icon("terminal", mode="auto") == ">"
+
+    def test_skin_tool_icons_override_registry(self):
+        skin = MagicMock()
+        skin.tool_icons = {"terminal": "X"}
+        skin.tool_emojis = {"terminal": "💻"}
+        with mock_patch("agent.display._get_skin", return_value=skin):
+            assert get_tool_icon("terminal") == "X"
+
+    def test_emoji_mode_uses_legacy_emoji_chain(self):
+        skin = MagicMock()
+        skin.tool_icons = {"terminal": ""}
+        skin.tool_emojis = {"terminal": "💻"}
+        with mock_patch("agent.display._get_skin", return_value=skin):
+            assert get_tool_icon("terminal", mode="emoji") == "💻"
 
 
 class TestGetToolEmoji:
-    """Verify the skin → registry → fallback resolution chain."""
+    """Verify legacy emoji path still works for compatibility."""
 
     def test_returns_registry_emoji_when_no_skin(self):
-        """Registry-registered emoji is used when no skin is active."""
-        mock_registry = MagicMock()
-        mock_registry.get_emoji.return_value = "🎨"
+        mock_reg = MagicMock()
+        mock_reg.get_emoji.return_value = "📖"
+        mock_module = MagicMock()
+        mock_module.registry = mock_reg
         with mock_patch("agent.display._get_skin", return_value=None), \
-             mock_patch("agent.display.registry", mock_registry, create=True):
-            # Need to patch the import inside get_tool_emoji
-            pass
-        # Direct test: patch the lazy import path
-        with mock_patch("agent.display._get_skin", return_value=None):
-            # get_tool_emoji will try to import registry — mock that
-            mock_reg = MagicMock()
-            mock_reg.get_emoji.return_value = "📖"
-            with mock_patch.dict("sys.modules", {}):
-                import sys
-                # Patch tools.registry module
-                mock_module = MagicMock()
-                mock_module.registry = mock_reg
-                with mock_patch.dict(sys.modules, {"tools.registry": mock_module}):
-                    result = get_tool_emoji("read_file")
-                    assert result == "📖"
+             mock_patch.dict(sys.modules, {"tools.registry": mock_module}):
+            assert get_tool_emoji("read_file") == "📖"
 
     def test_skin_override_takes_precedence(self):
-        """Skin tool_emojis override registry defaults."""
         skin = MagicMock()
         skin.tool_emojis = {"terminal": "⚔"}
         with mock_patch("agent.display._get_skin", return_value=skin):
-            result = get_tool_emoji("terminal")
-            assert result == "⚔"
-
-    def test_skin_empty_dict_falls_through(self):
-        """Empty skin tool_emojis falls through to registry."""
-        skin = MagicMock()
-        skin.tool_emojis = {}
-        mock_reg = MagicMock()
-        mock_reg.get_emoji.return_value = "💻"
-        import sys
-        mock_module = MagicMock()
-        mock_module.registry = mock_reg
-        with mock_patch("agent.display._get_skin", return_value=skin), \
-             mock_patch.dict(sys.modules, {"tools.registry": mock_module}):
-            result = get_tool_emoji("terminal")
-            assert result == "💻"
-
-    def test_fallback_default(self):
-        """When neither skin nor registry has an emoji, use the default."""
-        skin = MagicMock()
-        skin.tool_emojis = {}
-        mock_reg = MagicMock()
-        mock_reg.get_emoji.return_value = ""
-        import sys
-        mock_module = MagicMock()
-        mock_module.registry = mock_reg
-        with mock_patch("agent.display._get_skin", return_value=skin), \
-             mock_patch.dict(sys.modules, {"tools.registry": mock_module}):
-            result = get_tool_emoji("unknown_tool")
-            assert result == "⚡"
-
-    def test_custom_default(self):
-        """Custom default is returned when nothing matches."""
-        with mock_patch("agent.display._get_skin", return_value=None):
-            mock_reg = MagicMock()
-            mock_reg.get_emoji.return_value = ""
-            import sys
-            mock_module = MagicMock()
-            mock_module.registry = mock_reg
-            with mock_patch.dict(sys.modules, {"tools.registry": mock_module}):
-                result = get_tool_emoji("x", default="⚙️")
-                assert result == "⚙️"
-
-    def test_skin_override_only_for_matching_tool(self):
-        """Skin override for one tool doesn't affect others."""
-        skin = MagicMock()
-        skin.tool_emojis = {"terminal": "⚔"}
-        mock_reg = MagicMock()
-        mock_reg.get_emoji.return_value = "🔍"
-        import sys
-        mock_module = MagicMock()
-        mock_module.registry = mock_reg
-        with mock_patch("agent.display._get_skin", return_value=skin), \
-             mock_patch.dict(sys.modules, {"tools.registry": mock_module}):
-            assert get_tool_emoji("terminal") == "⚔"  # skin override
-            assert get_tool_emoji("web_search") == "🔍"  # registry fallback
+            assert get_tool_emoji("terminal") == "⚔"
 
 
-class TestSkinConfigToolEmojis:
-    """Verify SkinConfig handles tool_emojis field correctly."""
+class TestSkinConfigToolIcons:
+    """Verify SkinConfig handles both tool_icons and legacy tool_emojis."""
 
-    def test_skin_config_has_tool_emojis_field(self):
+    def test_skin_config_has_tool_icons_field(self):
         from hermes_cli.skin_engine import SkinConfig
         skin = SkinConfig(name="test")
+        assert skin.tool_icons == {}
         assert skin.tool_emojis == {}
 
-    def test_skin_config_accepts_tool_emojis(self):
-        from hermes_cli.skin_engine import SkinConfig
-        emojis = {"terminal": "⚔", "web_search": "🔮"}
-        skin = SkinConfig(name="test", tool_emojis=emojis)
-        assert skin.tool_emojis == emojis
-
-    def test_build_skin_config_includes_tool_emojis(self):
+    def test_build_skin_config_reads_tool_icons(self):
         from hermes_cli.skin_engine import _build_skin_config
-        data = {
+        skin = _build_skin_config({
             "name": "custom",
-            "tool_emojis": {"terminal": "🗡️", "patch": "⚒️"},
-        }
-        skin = _build_skin_config(data)
-        assert skin.tool_emojis == {"terminal": "🗡️", "patch": "⚒️"}
-
-    def test_build_skin_config_empty_tool_emojis_default(self):
-        from hermes_cli.skin_engine import _build_skin_config
-        data = {"name": "minimal"}
-        skin = _build_skin_config(data)
+            "tool_icons": {"terminal": "", "patch": ""},
+        })
+        assert skin.tool_icons == {"terminal": "", "patch": ""}
         assert skin.tool_emojis == {}
+
+    def test_build_skin_config_legacy_tool_emojis_populate_tool_icons(self):
+        from hermes_cli.skin_engine import _build_skin_config
+        skin = _build_skin_config({
+            "name": "legacy",
+            "tool_emojis": {"terminal": "💻", "patch": "🔧"},
+        })
+        assert skin.tool_icons == {"terminal": "💻", "patch": "🔧"}
+        assert skin.tool_emojis == {"terminal": "💻", "patch": "🔧"}

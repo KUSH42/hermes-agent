@@ -386,6 +386,7 @@ def load_cli_config() -> Dict[str, Any]:
             "busy_input_mode": "interrupt",
             "syntax_bold": True,
             "skin": "default",
+            "tool_icon_mode": "auto",
             "startup_text_effect": {
                 "enabled": False,
                 "effect": "matrix",
@@ -660,7 +661,9 @@ except Exception:
 
 # Initialize tool preview length from config
 try:
-    from agent.display import set_tool_preview_max_len
+    from agent.display import set_tool_icon_mode, set_tool_preview_max_len
+    _tim = CLI_CONFIG.get("display", {}).get("tool_icon_mode", "auto")
+    set_tool_icon_mode(_tim)
     _tpl = CLI_CONFIG.get("display", {}).get("tool_preview_length", 0)
     set_tool_preview_max_len(int(_tpl) if _tpl else 0)
 except Exception:
@@ -6445,11 +6448,11 @@ class HermesCLI:
         # Show an in-progress line in the TUI pending widget.
         tui = _hermes_app
         if tui is not None:
-            from agent.display import get_tool_emoji
+            from agent.display import get_tool_icon
             from rich.text import Text
             from hermes_cli.tui.widgets import ToolPendingLine
-            emoji = get_tool_emoji(tool_name, default="⚡")
-            styled = Text.from_ansi(f"  ┊ {emoji} {tool_name}  …")
+            icon = get_tool_icon(tool_name)
+            styled = Text.from_ansi(f"  ┊ {icon} {tool_name}  …")
             tui.call_from_thread(
                 _safe_widget_call, tui, ToolPendingLine, "set_line",
                 tool_name, styled,
@@ -6470,14 +6473,14 @@ class HermesCLI:
         if event_type != "tool.started":
             return
         if function_name and not function_name.startswith("_"):
-            from agent.display import get_tool_emoji
-            emoji = get_tool_emoji(function_name)
+            from agent.display import get_tool_icon
+            icon = get_tool_icon(function_name)
             label = preview or function_name
             from agent.display import get_tool_preview_max_len
             _pl = get_tool_preview_max_len()
             if _pl > 0 and len(label) > _pl:
                 label = label[:_pl - 3] + "..."
-            self._spinner_text = f"{emoji} {label}"
+            self._spinner_text = f"{icon} {label}"
             self._invalidate()
 
         if not self._voice_mode:
@@ -6536,7 +6539,7 @@ class HermesCLI:
         if len(label) > 60:
             label = label[:57] + "…"
 
-        tui.call_from_thread(tui.open_streaming_tool_block, tool_call_id, label)
+        tui.call_from_thread(tui.open_streaming_tool_block, tool_call_id, label, function_name)
 
         # Register the streaming line callback so terminal_tool / execute_code
         # can route output lines directly to the block.
@@ -6631,7 +6634,7 @@ class HermesCLI:
                         return rerendered, _plain_lines(rerendered)
 
                     tui.call_from_thread(
-                        tui.mount_tool_block, "diff", display_lines, plain, _rerender_diff, header_stats
+                        tui.mount_tool_block, "diff", display_lines, plain, _rerender_diff, header_stats, function_name
                     )
             except Exception:
                 logger.debug("Edit diff preview failed for %s", function_name, exc_info=True)
@@ -6658,7 +6661,7 @@ class HermesCLI:
                                     return rerendered, _plain_lines(rerendered)
 
                                 tui.call_from_thread(
-                                    tui.mount_tool_block, "code", display_lines, plain, _rerender_execute_code_preview
+                                    tui.mount_tool_block, "code", display_lines, plain, _rerender_execute_code_preview, None, function_name
                                 )
                     elif function_name == "read_file":
                         display_lines = []
@@ -6683,6 +6686,8 @@ class HermesCLI:
                                 display_lines,
                                 plain,
                                 _rerender_read_file_preview,
+                                None,
+                                function_name,
                             )
                     elif function_name == "terminal":
                         # Skip static preview when a StreamingToolBlock was used
@@ -6709,6 +6714,8 @@ class HermesCLI:
                                     display_lines,
                                     plain,
                                     _rerender_terminal_preview,
+                                    None,
+                                    function_name,
                                 )
                 except Exception:
                     logger.debug("%s highlight failed", function_name, exc_info=True)

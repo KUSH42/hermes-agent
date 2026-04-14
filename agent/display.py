@@ -14,6 +14,12 @@ from dataclasses import dataclass, field
 from difflib import unified_diff
 from pathlib import Path
 
+from hermes_cli.tool_icons import (
+    GENERIC_ASCII_TOOL_ICON,
+    GENERIC_NERD_FONT_TOOL_ICON,
+    get_ascii_tool_icon,
+)
+
 # ANSI escape codes for coloring tool failure indicators
 _RED = "\033[31m"
 _RESET = "\033[0m"
@@ -128,6 +134,7 @@ class LocalEditSnapshot:
 # Set once at startup by CLI or gateway from display.tool_preview_length config.
 # =========================================================================
 _tool_preview_max_len: int = 0  # 0 = unlimited
+_tool_icon_mode: str = "auto"
 
 
 def set_tool_preview_max_len(n: int) -> None:
@@ -139,6 +146,24 @@ def set_tool_preview_max_len(n: int) -> None:
 def get_tool_preview_max_len() -> int:
     """Return the configured max preview length (0 = unlimited)."""
     return _tool_preview_max_len
+
+
+def set_tool_icon_mode(mode: str | None) -> None:
+    """Set global tool icon rendering mode.
+
+    Valid values: ``auto``, ``nerdfont``, ``emoji``, ``ascii``.
+    Invalid values fall back to ``auto``.
+    """
+    global _tool_icon_mode
+    normalized = str(mode or "auto").strip().lower()
+    if normalized not in {"auto", "nerdfont", "emoji", "ascii"}:
+        normalized = "auto"
+    _tool_icon_mode = normalized
+
+
+def get_tool_icon_mode() -> str:
+    """Return the current global tool icon rendering mode."""
+    return _tool_icon_mode
 
 
 # =========================================================================
@@ -206,6 +231,49 @@ def get_tool_emoji(tool_name: str, default: str = "⚡") -> str:
         pass
     # 3. Hardcoded fallback
     return default
+
+
+def get_tool_icon(tool_name: str, default: str = GENERIC_NERD_FONT_TOOL_ICON, mode: str | None = None) -> str:
+    """Resolve display glyph for a tool.
+
+    Resolution order depends on *mode*:
+
+    - ``auto``: skin tool_icons → registry icon → skin tool_emojis →
+      registry emoji → ASCII fallback
+    - ``nerdfont``: skin tool_icons → registry icon → skin tool_emojis →
+      registry emoji → ASCII fallback
+    - ``emoji``: skin tool_emojis → registry emoji → ASCII fallback
+    - ``ascii``: ASCII fallback
+    """
+    resolved_mode = str(mode or _tool_icon_mode or "auto").strip().lower()
+    if resolved_mode not in {"auto", "nerdfont", "emoji", "ascii"}:
+        resolved_mode = "auto"
+
+    skin = _get_skin()
+
+    if resolved_mode in {"auto", "nerdfont"}:
+        skin_icons = getattr(skin, "tool_icons", None)
+        if skin_icons:
+            override = skin_icons.get(tool_name)
+            if override:
+                return override
+        try:
+            from tools.registry import registry
+            icon = registry.get_icon(tool_name, default="")
+            if icon:
+                return icon
+        except Exception:
+            pass
+
+    if resolved_mode in {"auto", "nerdfont", "emoji"}:
+        emoji = get_tool_emoji(tool_name, default="")
+        if emoji:
+            return emoji
+
+    ascii_fallback = get_ascii_tool_icon(tool_name, default=GENERIC_ASCII_TOOL_ICON)
+    if resolved_mode in {"auto", "nerdfont", "emoji", "ascii"}:
+        return ascii_fallback
+    return default or ascii_fallback
 
 
 # =========================================================================
@@ -1185,10 +1253,10 @@ def get_cute_tool_message(
 ) -> str:
     """Generate a formatted tool completion line for CLI quiet mode.
 
-    Format: ``┊ {emoji} {verb:9} {detail}  {duration}``
+    Format: ``┊ {icon} {verb:9} {detail}  {duration}``
 
     Duration is right-aligned to a fixed column (*width* - 4, or 60 by default).
-    Uses wcswidth() for display-width-aware padding so emoji-heavy lines align
+    Uses wcswidth() for display-width-aware padding so icon-heavy lines align
     correctly. Falls back to len() if wcwidth is unavailable.
 
     When *result* is provided the line is checked for failure indicators.
@@ -1242,62 +1310,64 @@ def get_cute_tool_message(
             return line
         return f"{line}{failure_suffix}"
 
+    icon = get_tool_icon(tool_name)
+
     if tool_name == "web_search":
-        return _wrap(f"┊ 🔍 search    {_trunc(args.get('query', ''), 42)}")
+        return _wrap(f"┊ {icon} search    {_trunc(args.get('query', ''), 42)}")
     if tool_name == "web_extract":
         urls = args.get("urls", [])
         if urls:
             url = urls[0] if isinstance(urls, list) else str(urls)
             domain = url.replace("https://", "").replace("http://", "").split("/")[0]
             extra = f" +{len(urls)-1}" if len(urls) > 1 else ""
-            return _wrap(f"┊ 📄 fetch     {_trunc(domain, 35)}{extra}")
-        return _wrap(f"┊ 📄 fetch     pages")
+            return _wrap(f"┊ {icon} fetch     {_trunc(domain, 35)}{extra}")
+        return _wrap(f"┊ {icon} fetch     pages")
     if tool_name == "web_crawl":
         url = args.get("url", "")
         domain = url.replace("https://", "").replace("http://", "").split("/")[0]
-        return _wrap(f"┊ 🕸️  crawl     {_trunc(domain, 35)}")
+        return _wrap(f"┊ {icon} crawl     {_trunc(domain, 35)}")
     if tool_name == "terminal":
-        return _wrap(f"┊ 💻 $         {_trunc(args.get('command', ''), 42)}")
+        return _wrap(f"┊ {icon} $         {_trunc(args.get('command', ''), 42)}")
     if tool_name == "process":
         action = args.get("action", "?")
         sid = args.get("session_id", "")[:12]
         labels = {"list": "ls processes", "poll": f"poll {sid}", "log": f"log {sid}",
                   "wait": f"wait {sid}", "kill": f"kill {sid}", "write": f"write {sid}", "submit": f"submit {sid}"}
-        return _wrap(f"┊ ⚙️  proc      {labels.get(action, f'{action} {sid}')}")
+        return _wrap(f"┊ {icon} proc      {labels.get(action, f'{action} {sid}')}")
     if tool_name == "read_file":
-        return _wrap(f"┊ 📖 read      {_path(args.get('path', ''))}")
+        return _wrap(f"┊ {icon} read      {_path(args.get('path', ''))}")
     if tool_name == "write_file":
-        return _wrap(f"┊ ✍️  write     {_path(args.get('path', ''))}")
+        return _wrap(f"┊ {icon} write     {_path(args.get('path', ''))}")
     if tool_name == "patch":
-        return _wrap(f"┊ 🔧 patch     {_path(args.get('path', ''))}")
+        return _wrap(f"┊ {icon} patch     {_path(args.get('path', ''))}")
     if tool_name == "search_files":
         pattern = _trunc(args.get("pattern", ""), 35)
         target = args.get("target", "content")
         verb = "find" if target == "files" else "grep"
-        return _wrap(f"┊ 🔎 {verb:9} {pattern}")
+        return _wrap(f"┊ {icon} {verb:9} {pattern}")
     if tool_name == "browser_navigate":
         url = args.get("url", "")
         domain = url.replace("https://", "").replace("http://", "").split("/")[0]
-        return _wrap(f"┊ 🌐 navigate  {_trunc(domain, 35)}")
+        return _wrap(f"┊ {icon} navigate  {_trunc(domain, 35)}")
     if tool_name == "browser_snapshot":
         mode = "full" if args.get("full") else "compact"
-        return _wrap(f"┊ 📸 snapshot  {mode}")
+        return _wrap(f"┊ {icon} snapshot  {mode}")
     if tool_name == "browser_click":
-        return _wrap(f"┊ 👆 click     {args.get('ref', '?')}")
+        return _wrap(f"┊ {icon} click     {args.get('ref', '?')}")
     if tool_name == "browser_type":
-        return _wrap(f"┊ ⌨️  type      \"{_trunc(args.get('text', ''), 30)}\"")
+        return _wrap(f"┊ {icon} type      \"{_trunc(args.get('text', ''), 30)}\"")
     if tool_name == "browser_scroll":
         d = args.get("direction", "down")
         arrow = {"down": "↓", "up": "↑", "right": "→", "left": "←"}.get(d, "↓")
-        return _wrap(f"┊ {arrow}  scroll    {d}")
+        return _wrap(f"┊ {icon} {arrow:1} scroll    {d}")
     if tool_name == "browser_back":
-        return _wrap(f"┊ ◀️  back     ")
+        return _wrap(f"┊ {icon} back      ")
     if tool_name == "browser_press":
-        return _wrap(f"┊ ⌨️  press     {args.get('key', '?')}")
+        return _wrap(f"┊ {icon} press     {args.get('key', '?')}")
     if tool_name == "browser_get_images":
-        return _wrap(f"┊ 🖼️  images    extracting")
+        return _wrap(f"┊ {icon} images    extracting")
     if tool_name == "browser_vision":
-        return _wrap(f"┊ 👁️  vision    analyzing page")
+        return _wrap(f"┊ {icon} vision    analyzing page")
     if tool_name == "todo":
         todos_arg = args.get("todos")
         merge = args.get("merge", False)

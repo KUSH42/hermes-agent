@@ -170,6 +170,22 @@ async def test_mount_tool_block_appears_in_dom():
 
 
 @pytest.mark.asyncio
+async def test_mount_tool_block_resolves_header_icon_from_tool_name():
+    """ToolBlock header resolves icon from originating tool name."""
+    app = _make_app()
+    with patch("agent.display.get_tool_icon", return_value="X"):
+        async with app.run_test(size=(80, 24)) as pilot:
+            lines = [f"line {i}" for i in range(5)]
+            plain = [f"plain {i}" for i in range(5)]
+            app.mount_tool_block("diff", lines, plain, tool_name="write_file")
+            await pilot.pause()
+
+            block = app.query_one(ToolBlock)
+            assert block._header._tool_icon == "X"
+            assert "X" in str(block._header.render())
+
+
+@pytest.mark.asyncio
 async def test_mount_tool_block_empty_lines_no_mount():
     """mount_tool_block() with empty lines list does not mount any ToolBlock."""
     app = _make_app()
@@ -178,6 +194,19 @@ async def test_mount_tool_block_empty_lines_no_mount():
         await pilot.pause()
 
         assert list(app.query(ToolBlock)) == []
+
+
+@pytest.mark.asyncio
+async def test_open_streaming_tool_block_resolves_header_icon_from_tool_name():
+    """Streaming tool headers resolve icon from tool name."""
+    app = _make_app()
+    with patch("agent.display.get_tool_icon", return_value="T"):
+        async with app.run_test(size=(80, 24)) as pilot:
+            app.open_streaming_tool_block("tool-1", "bash -lc ls", "terminal")
+            await pilot.pause()
+
+            block = app.query_one(ToolBlock)
+            assert block._header._tool_icon == "T"
 
 
 # ---------------------------------------------------------------------------

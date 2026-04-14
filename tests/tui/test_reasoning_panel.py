@@ -298,3 +298,19 @@ async def test_titled_rule_shows_timestamp():
         rendered = str(rule.render())
         # Just check the rule has a created_at — timestamp format depends on time
         assert isinstance(rule._created_at, datetime.datetime)
+
+
+@pytest.mark.asyncio
+async def test_startup_message_panel_hides_response_rule():
+    """Startup/banner panel should not show the per-turn titled rule."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        output = app.query_one(OutputPanel)
+        msg = output.new_message(show_header=False)
+        await pilot.pause()
+
+        msg.show_response_rule()
+        await pilot.pause()
+
+        assert not msg._response_rule.has_class("visible")

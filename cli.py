@@ -3458,6 +3458,17 @@ class HermesCLI:
         Switches self.console to ChatConsole so all subsequent console.print()
         calls appear in the TUI output panel rather than on raw stdout.
         """
+        global _hermes_app
+        if _hermes_app is not None:
+            try:
+                from hermes_cli.tui.widgets import OutputPanel
+                _hermes_app.call_from_thread(
+                    _hermes_app.query_one(OutputPanel).new_message,
+                    "",
+                    False,
+                )
+            except Exception:
+                pass
         # Switch to ChatConsole: routes all self.console.print() through _cprint
         # → TUI output queue.  Must happen before show_banner() so banner output
         # goes to the panel, not stdout.

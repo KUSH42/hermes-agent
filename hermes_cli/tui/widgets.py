@@ -679,10 +679,11 @@ class MessagePanel(Widget):
 
     _msg_counter: int = 0
 
-    def __init__(self, user_text: str = "", **kwargs: Any) -> None:
+    def __init__(self, user_text: str = "", show_header: bool = True, **kwargs: Any) -> None:
         import datetime as _dt
         MessagePanel._msg_counter += 1
         self._msg_id = MessagePanel._msg_counter
+        self._show_header = show_header
         self._created_at = _dt.datetime.now()
         self._response_rule = TitledRule(
             id=f"response-rule-{self._msg_id}",
@@ -709,6 +710,8 @@ class MessagePanel(Widget):
 
     def show_response_rule(self) -> None:
         """Show the response title rule (called when first content arrives)."""
+        if not self._show_header:
+            return
         self._response_rule.add_class("visible")
 
     @property
@@ -1189,7 +1192,7 @@ class OutputPanel(ScrollableContainer):
         panels = self.query(MessagePanel)
         return panels.last() if panels else None
 
-    def new_message(self, user_text: str = "") -> MessagePanel:
+    def new_message(self, user_text: str = "", show_header: bool = True) -> MessagePanel:
         """Create and mount a new MessagePanel for a new turn.
 
         The panel gets the ``--entering`` CSS class before mounting so the
@@ -1197,7 +1200,7 @@ class OutputPanel(ScrollableContainer):
         is removed after the first render cycle so the CSS transition
         animates opacity back to 1 (fade-in effect).
         """
-        panel = MessagePanel(user_text=user_text)
+        panel = MessagePanel(user_text=user_text, show_header=show_header)
         panel.add_class("--entering")
         self.mount(panel, before=self.tool_pending)
         # Remove --entering after the first render so the CSS opacity transition

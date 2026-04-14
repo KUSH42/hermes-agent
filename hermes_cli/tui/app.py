@@ -75,7 +75,7 @@ from hermes_cli.tui.widgets import (
     ThinkingWidget,
     TitledRule,
     UndoConfirmOverlay,
-    UserEchoPanel,
+    UserMessagePanel,
     VoiceStatusBar,
     _fps_hud_enabled,
     _safe_widget_call,
@@ -703,14 +703,14 @@ class HermesApp(App):
     # --- User message echo ---
 
     def echo_user_message(self, text: str, images: int = 0) -> None:
-        """Mount a UserEchoPanel showing the user's submitted message.
+        """Mount a UserMessagePanel showing the user's submitted message.
 
         Called from the agent thread via ``call_from_thread`` before
         ``agent_running`` is set to True (which creates the new MessagePanel).
         """
         try:
             panel = self.query_one(OutputPanel)
-            panel.mount(UserEchoPanel(text, images=images), before=panel.tool_pending)
+            panel.mount(UserMessagePanel(text, images=images), before=panel.tool_pending)
             # Always scroll to show the user's own message regardless of scroll
             # position — the user just submitted, they expect to see the exchange.
             # Re-engage auto-scroll for the upcoming assistant response.

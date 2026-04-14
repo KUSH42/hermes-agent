@@ -2,6 +2,14 @@
 
 Instructions for AI coding assistants and developers working on the hermes-agent codebase.
 
+## Project memory
+
+For durable project-specific context that should survive across sessions, use
+`~/.hermes/project-memory.md` as the primary memory file.
+
+Keep `docs/project-memory.md` as the repo-local mirror for important project
+context that should travel with the repository.
+
 ## Development Environment
 
 ```bash

@@ -47,6 +47,8 @@ $status-running-color: #FFBF00;
 $status-error-color: #ef5350;
 $status-warn-color: #FFA726;
 $status-context-color: #5f87d7;
+$running-indicator-hi-color: #FFA726;
+$user-echo-bullet-color: #FFBF00;
 
 
 /* FPS HUD background — ThemeManager overrides via component_vars */
@@ -420,7 +422,7 @@ FPSCounter {
 
 HermesApp.density-compact MessagePanel          { margin: 0; }
 HermesApp.density-compact ReasoningPanel        { margin: 0; }
-HermesApp.density-compact UserEchoPanel         { margin: 0; padding: 0 1; }
+HermesApp.density-compact UserMessagePanel         { margin: 0; padding: 0 1; }
 HermesApp.density-compact StatusBar             { padding: 0; }
 HermesApp.density-compact HintBar               { padding: 0; }
 HermesApp.density-compact ImageBar              { padding: 0; }

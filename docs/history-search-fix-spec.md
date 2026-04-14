@@ -60,14 +60,14 @@ History search must index one logical turn as:
 - paired with the user message that immediately preceded that assistant turn
 
 For the TUI, "accompanying user message" means the text shown in the preceding
-`UserEchoPanel`, or an equivalent stored copy of that same submitted user text.
+`UserMessagePanel`, or an equivalent stored copy of that same submitted user text.
 The implementation may derive this either from DOM adjacency at index-build
 time or from explicit turn metadata stored on `MessagePanel` or another
 turn-owned structure. The final behavior matters more than the storage choice.
 
 The pairing rule must be deterministic:
 
-- If a `MessagePanel` has a preceding `UserEchoPanel`, use that echo text.
+- If a `MessagePanel` has a preceding `UserMessagePanel`, use that echo text.
 - If no paired user text exists, use `"(no user message)"` as display text.
 - Assistant prose may still exist on the turn. It must not drive the
   empty-query row label, but it must participate in the non-empty-query
@@ -205,7 +205,7 @@ Required assertions:
 
 Recommended fixture change:
 
-- Build realistic turns with both `UserEchoPanel` and `MessagePanel` instead of
+- Build realistic turns with both `UserMessagePanel` and `MessagePanel` instead of
   response-only helper rows, because this spec depends on turn pairing.
 
 ## File scope

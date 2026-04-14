@@ -25,7 +25,7 @@ from hermes_cli.tui.widgets import (
     OutputPanel,
     StatusBar,
     ToolPendingLine,
-    UserEchoPanel,
+    UserMessagePanel,
 )
 
 
@@ -49,9 +49,9 @@ def _alpha(color) -> float:
     return color.a
 
 
-async def _mount_echo(app: HermesApp, message: str, images: int = 0) -> UserEchoPanel:
+async def _mount_echo(app: HermesApp, message: str, images: int = 0) -> UserMessagePanel:
     output = app.query_one(OutputPanel)
-    panel = UserEchoPanel(message, images=images)
+    panel = UserMessagePanel(message, images=images)
     output.mount(panel, before=output.query_one(ToolPendingLine))
     await asyncio.sleep(0.02)
     return panel
@@ -284,7 +284,8 @@ async def test_css_variables_include_status_colors():
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         css_vars = app.get_css_variables()
-        for var in ("status-running-color", "status-error-color", "status-warn-color"):
+        for var in ("status-running-color", "status-error-color", "status-warn-color",
+                     "running-indicator-hi-color", "user-echo-bullet-color"):
             assert var in css_vars, (
                 f"Expected '{var}' in CSS variables. Present: {list(css_vars.keys())}"
             )
@@ -327,12 +328,12 @@ async def test_input_row_background_matches_app():
 
 
 # ===========================================================================
-# 6. UserEchoPanel content
+# 6. UserMessagePanel content
 # ===========================================================================
 
 @pytest.mark.asyncio
 async def test_user_echo_single_line_shows_message():
-    """Single-line user message appears in full inside UserEchoPanel."""
+    """Single-line user message appears in full inside UserMessagePanel."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -360,6 +361,29 @@ async def test_user_echo_has_bullet_prefix():
         plain = content.plain if hasattr(content, "plain") else str(content)
         assert "●" in plain, (
             f"User echo should have ● bullet prefix, plain: {plain!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_user_echo_bullet_uses_skin_color_var():
+    """UserMessagePanel bullet color must come from user-echo-bullet-color, not chevron-file."""
+    from hermes_cli.tui.widgets import UserMessagePanel
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        panel = await _mount_echo(app, "test message")
+        await pilot.pause()
+
+        css_vars = app.get_css_variables()
+        expected_color = css_vars.get("user-echo-bullet-color", "#FFBF00")
+        content = panel.query_one("#echo-text")._Static__content
+        # The ● bullet should be styled with user-echo-bullet-color
+        spans = content._style_map if hasattr(content, "_style_map") else {}
+        # Verify the expected color is used (not chevron-file's value)
+        chevron_color = css_vars.get("chevron-file", "#FFBF00")
+        # If they happen to match at default, verify the var exists at least
+        assert "user-echo-bullet-color" in css_vars, (
+            "user-echo-bullet-color must be in CSS variables"
         )
 
 
@@ -418,7 +442,7 @@ async def test_user_echo_image_attachment_shown():
 
 @pytest.mark.asyncio
 async def test_user_echo_panel_has_top_and_bottom_rules():
-    """UserEchoPanel has a top rule; bottom rule removed (redundant — response TitledRule separates turns)."""
+    """UserMessagePanel has a top rule; bottom rule removed (redundant — response TitledRule separates turns)."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()

@@ -31,7 +31,7 @@ from hermes_cli.tui.widgets import (
     MessagePanel,
     OutputPanel,
     TurnResultItem,
-    UserEchoPanel,
+    UserMessagePanel,
 )
 from textual.widgets import Input, Static
 
@@ -58,7 +58,7 @@ def _add_turn(app: HermesApp, user_text: str, assistant_text: str) -> MessagePan
     """Mount a realistic user+assistant turn after the startup turn."""
     _ensure_startup_turn(app)
     output = app.query_one(OutputPanel)
-    output.mount(UserEchoPanel(user_text), before=output.tool_pending)
+    output.mount(UserMessagePanel(user_text), before=output.tool_pending)
     panel = MessagePanel(user_text=user_text)
     output.mount(panel, before=output.tool_pending)
     panel.response_log._plain_lines.append(assistant_text)

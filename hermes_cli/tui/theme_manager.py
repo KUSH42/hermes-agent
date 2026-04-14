@@ -119,6 +119,10 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     "status-error-color":   "#ef5350",
     "status-warn-color":    "#FFA726",
     "status-context-color": "#5f87d7",
+    # Running indicator high-color (StatusBar ● + shimmer)
+    "running-indicator-hi-color": "#FFA726",
+    # User echo panel bullet color
+    "user-echo-bullet-color": "#FFBF00",
     # Completion list empty-state background
     "completion-empty-bg":  "#2A2A2A",
     # TitledRule / PlainRule separator tones

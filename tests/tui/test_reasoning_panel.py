@@ -121,6 +121,29 @@ async def test_close_box_flushes_and_stays_visible():
 
 
 @pytest.mark.asyncio
+async def test_close_box_reasserts_visible_class():
+    """close_box keeps finalized reasoning mounted even if visibility was lost."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        msg = _ensure_message(app)
+        await pilot.pause()
+        rp = msg.reasoning
+
+        rp.open_box("Reasoning")
+        rp.append_delta("some content")
+        await pilot.pause()
+
+        # Simulate external class churn during finalize path.
+        rp.remove_class("visible")
+        rp.close_box()
+        await pilot.pause()
+
+        assert rp.has_class("visible")
+        assert len(rp._plain_lines) == 1
+
+
+@pytest.mark.asyncio
 async def test_safe_widget_call_swallows_no_matches():
     """_safe_widget_call does not raise when widget is not found."""
     app = HermesApp(cli=MagicMock())

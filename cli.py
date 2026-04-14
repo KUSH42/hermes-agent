@@ -7698,7 +7698,7 @@ class HermesCLI:
         self.conversation_history.append({"role": "user", "content": message})
 
         # PT mode: print a separator bar between user echo and response.
-        # TUI mode: the UserEchoPanel + TitledRule widgets provide separation.
+        # TUI mode: the UserMessagePanel + TitledRule widgets provide separation.
         if _hermes_app is None:
             ChatConsole().print(f"[{_accent_hex()}]{'─' * 40}[/]")
             print(flush=True)

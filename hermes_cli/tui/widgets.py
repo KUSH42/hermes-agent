@@ -1275,15 +1275,15 @@ class OutputPanel(ScrollableContainer):
 # User echo panel
 # ---------------------------------------------------------------------------
 
-class UserEchoPanel(Widget):
+class UserMessagePanel(Widget):
     """Displays the user's submitted message framed by short fade rulers.
 
     Mounted into OutputPanel when the user sends a message, before the new
-    MessagePanel is created for the response.
+    MessagePanel.
     """
 
     DEFAULT_CSS = """
-    UserEchoPanel {
+    UserMessagePanel {
         height: auto;
         margin: 1 0 0 0;
         padding: 0 1;
@@ -1305,7 +1305,8 @@ class UserEchoPanel(Widget):
 
     def _format_message(self) -> Text:
         try:
-            bullet_color = self.app.get_css_variables().get("chevron-file", "#FFBF00")
+            v = self.app.get_css_variables()
+            bullet_color = v.get("user-echo-bullet-color") or v.get("rule-accent-color", "#FFBF00")
         except Exception:
             bullet_color = "#FFBF00"
         t = Text()
@@ -1465,6 +1466,9 @@ class ReasoningPanel(Widget):
         self._live_line.styles.display = "none"
         self._live_line.update("")
         self._is_closed = True
+        # Defensive: finalization must never drop the panel from the transcript,
+        # even if a concurrent class toggle/race stripped visibility earlier.
+        self.add_class("visible")
         self.add_class("--closeable")
         self._sync_collapsed_state()
         # Don't remove "visible" — reasoning stays shown as part of the
@@ -1649,7 +1653,8 @@ class TitledRule(PulseMixin, Widget):
                 or getattr(self.app, "command_running", False)
             )
             if running:
-                state_suffix = Text(" ⟳", style="#FFA726")
+                warn_color = v.get("status-warn-color", "#FFA726")
+                state_suffix = Text(" ⟳", style=warn_color)
 
         # Right-side timestamp — HH:MM when created_at is set (response rules only)
         ts_text = ""
@@ -2186,7 +2191,7 @@ class StatusBar(PulseMixin, Widget):
 
         if running:
             _run_lo = _vars.get("status-running-color", "#FFBF00")
-            _run_hi = _vars.get("chevron-file", "#FFA726")
+            _run_hi = _vars.get("running-indicator-hi-color", "#FFA726")
             # Use hardcoded dim — text-muted CSS var returns non-hex like "auto 60%"
             _shimmer_dim = "#6e6e6e"
             if self._pulse_t > 0:
@@ -2858,7 +2863,7 @@ class _TurnEntry:
     """Metadata for one indexed turn (frozen snapshot; never mutated)."""
     panel: "MessagePanel"
     index: int          # 1-based (turn 1 = first ever)
-    user_text: str      # paired text from preceding UserEchoPanel
+    user_text: str      # paired text from preceding UserMessagePanel
     assistant_text: str # full plain assistant prose from the panel
     search_text: str    # combined contiguous-search haystack
     display: str        # user-facing row label

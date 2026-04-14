@@ -1,11 +1,15 @@
 """Tests for theme/skin system — Step 6."""
 
 import asyncio
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from hermes_cli.tui.app import HermesApp
+from hermes_cli.tui.completion_overlay import CompletionOverlay
+from hermes_cli.tui.path_search import PathCandidate
+from hermes_cli.tui.preview_panel import PreviewPanel
 from hermes_cli.tui.tool_blocks import ToolBlock
 from hermes_cli.tui.widgets import OutputPanel, StreamingCodeBlock
 
@@ -164,3 +168,30 @@ async def test_apply_skin_rerenders_tool_preview_blocks_with_callback():
 
         assert block._lines == ["new"]
         assert block.copy_content() == "plain"
+
+
+@pytest.mark.asyncio
+async def test_apply_skin_rerenders_preview_panel_without_reloading_file(tmp_path: Path):
+    """PreviewPanel should recolor cached source in place on skin change."""
+    py_file = tmp_path / "hello.py"
+    py_file.write_text("def hello():\n    return 1\n", encoding="utf-8")
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        app.query_one(CompletionOverlay).add_class("--visible")
+        panel = app.query_one(PreviewPanel)
+        panel.candidate = PathCandidate(display="hello.py", abs_path=str(py_file))
+        await asyncio.sleep(0.5)
+        await pilot.pause()
+
+        assert panel._syntax_abs_path == str(py_file)
+        assert panel._syntax_head is not None
+
+        with patch.object(panel, "_render_syntax", wraps=panel._render_syntax) as render_spy, \
+             patch.object(panel, "_load_preview", wraps=panel._load_preview) as load_spy:
+            app.apply_skin({"preview-syntax-theme": "emacs", "app-bg": "#1e1e1e"})
+            await pilot.pause()
+
+        assert render_spy.called
+        assert not load_spy.called

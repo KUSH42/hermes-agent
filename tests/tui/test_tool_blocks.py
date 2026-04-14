@@ -162,14 +162,15 @@ def test_on_tool_complete_tui_calls_mount_tool_block():
 
     fake_lines = ["  ┊ -old", "  ┊ +new"]
 
-    def fake_render(tool_name, result, *, function_args=None, snapshot=None, print_fn=None, prefix=""):
+    def fake_render(diff, *, print_fn=None, prefix=""):
         if print_fn:
             for line in fake_lines:
                 print_fn(line)
         return True
 
     with patch.object(cli_module, "_hermes_app", mock_tui), \
-         patch("agent.display.render_edit_diff_with_delta", side_effect=fake_render), \
+         patch("agent.display.extract_edit_diff", return_value="rawdiff"), \
+         patch("agent.display.render_captured_diff_preview", side_effect=fake_render), \
          patch("hermes_cli.tui.widgets._strip_ansi", side_effect=lambda x: x):
         cli_obj._on_tool_complete("id1", "write_file", {}, '{"success": true}')
 
@@ -228,6 +229,95 @@ def test_on_tool_complete_execute_code_tui_passes_rerender_callback():
     assert mount_calls, "Expected mount_tool_block call for execute_code preview"
     args = mount_calls[0][0]
     assert args[1] == "code"
+    assert callable(args[4])
+
+
+def test_on_tool_complete_diff_tui_passes_rerender_callback():
+    """Diff previews mounted in the TUI should carry a rerender callback."""
+    import cli as cli_module
+
+    mock_tui = MagicMock()
+    cli_obj = _make_cli_obj()
+
+    fake_lines = ["  ┊ -old", "  ┊ +new"]
+
+    def fake_render(diff, *, print_fn=None, prefix=""):
+        if print_fn:
+            for line in fake_lines:
+                print_fn(line)
+        return True
+
+    with patch.object(cli_module, "_hermes_app", mock_tui), \
+         patch("agent.display.extract_edit_diff", return_value="rawdiff"), \
+         patch("agent.display.render_captured_diff_preview", side_effect=fake_render), \
+         patch("hermes_cli.tui.widgets._strip_ansi", side_effect=lambda x: x):
+        cli_obj._on_tool_complete("id-diff", "write_file", {}, '{"success": true}')
+
+    mount_calls = [
+        call for call in mock_tui.call_from_thread.call_args_list
+        if call[0] and call[0][0] == mock_tui.mount_tool_block
+    ]
+    assert mount_calls
+    args = mount_calls[0][0]
+    assert args[1] == "diff"
+    assert callable(args[4])
+
+
+def test_on_tool_complete_read_file_tui_passes_rerender_callback():
+    """read_file previews mounted in the TUI should carry a rerender callback."""
+    import cli as cli_module
+
+    mock_tui = MagicMock()
+    cli_obj = _make_cli_obj()
+    cli_obj.tool_progress_mode = "verbose"
+    cli_obj._code_highlight_enabled = True
+
+    result = '{"content": "def hello():\\n    return 1\\n"}'
+
+    with patch.object(cli_module, "_hermes_app", mock_tui):
+        cli_obj._on_tool_complete(
+            "id-read",
+            "read_file",
+            {"path": "hello.py"},
+            result,
+        )
+
+    mount_calls = [
+        call for call in mock_tui.call_from_thread.call_args_list
+        if call[0] and call[0][0] == mock_tui.mount_tool_block
+    ]
+    assert mount_calls
+    args = mount_calls[0][0]
+    assert args[1] == "code"
+    assert callable(args[4])
+
+
+def test_on_tool_complete_terminal_preview_tui_passes_rerender_callback():
+    """terminal file previews mounted in the TUI should carry a rerender callback."""
+    import cli as cli_module
+
+    mock_tui = MagicMock()
+    cli_obj = _make_cli_obj()
+    cli_obj.tool_progress_mode = "verbose"
+    cli_obj._code_highlight_enabled = True
+
+    result = '{"output": "def hello():\\n    return 1\\n"}'
+
+    with patch.object(cli_module, "_hermes_app", mock_tui):
+        cli_obj._on_tool_complete(
+            "id-terminal",
+            "terminal",
+            {"command": "cat hello.py"},
+            result,
+        )
+
+    mount_calls = [
+        call for call in mock_tui.call_from_thread.call_args_list
+        if call[0] and call[0][0] == mock_tui.mount_tool_block
+    ]
+    assert mount_calls
+    args = mount_calls[0][0]
+    assert args[1] == "output"
     assert callable(args[4])
 
 

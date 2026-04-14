@@ -1304,20 +1304,31 @@ class HermesApp(App):
             sb._idle_tips_cache = None
         except NoMatches:
             pass
-        # Propagate new skin colors to the completion list cache and repaint.
         try:
             from .completion_list import VirtualCompletionList
             self.query_one(VirtualCompletionList).refresh_theme()
-        except Exception:
+        except NoMatches:
             pass
+        except Exception:
+            logger.debug("Completion list theme refresh failed", exc_info=True)
         try:
-            from hermes_cli.tui.tool_blocks import ToolBlock
-            for block in self.query(ToolBlock):
-                block.refresh_skin()
-        except Exception:
+            from .preview_panel import PreviewPanel
+            self.query_one(PreviewPanel).refresh_theme()
+        except NoMatches:
             pass
+        except Exception:
+            logger.debug("Preview panel theme refresh failed", exc_info=True)
+        from hermes_cli.tui.tool_blocks import ToolBlock
+        for block in self.query(ToolBlock):
+            try:
+                block.refresh_skin()
+            except Exception:
+                logger.debug("ToolBlock theme refresh failed", exc_info=True)
         for block in self.query(StreamingCodeBlock):
-            block.refresh_skin(self.get_css_variables())
+            try:
+                block.refresh_skin(self.get_css_variables())
+            except Exception:
+                logger.debug("StreamingCodeBlock theme refresh failed", exc_info=True)
 
     def refresh_slash_commands(self, extra: list[str] | None = None) -> None:
         """Update the slash command list after plugins are loaded.

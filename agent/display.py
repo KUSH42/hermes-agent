@@ -643,6 +643,16 @@ def render_edit_diff_with_delta(
         function_args=function_args,
         snapshot=snapshot,
     )
+    return render_captured_diff_preview(diff, print_fn=print_fn, prefix=prefix)
+
+
+def render_captured_diff_preview(
+    diff: str | None,
+    *,
+    print_fn=None,
+    prefix: str = "",
+) -> bool:
+    """Render an already captured unified diff with current skin colors."""
     if not diff:
         return False
     try:

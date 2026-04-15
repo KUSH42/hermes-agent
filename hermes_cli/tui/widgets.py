@@ -25,6 +25,7 @@ from rich.text import Text
 from textual import work
 from textual.app import ComposeResult, RenderResult
 from textual.binding import Binding
+from textual.cache import FIFOCache, LRUCache
 from textual.containers import Horizontal, ScrollableContainer, VerticalScroll
 from textual.css.query import NoMatches
 from textual.reactive import reactive
@@ -66,6 +67,17 @@ def _skin_branding(key: str, fallback: str) -> str:
         return get_active_skin().get_branding(key, fallback)
     except Exception:
         return fallback
+
+
+def _boost_layout_caches(
+    widget: Widget,
+    *,
+    box_model_maxsize: int = 128,
+    arrangement_maxsize: int = 16,
+) -> None:
+    """Raise Textual's tiny default layout caches on heavy auto-height widgets."""
+    widget._box_model_cache = LRUCache(box_model_maxsize)
+    widget._arrangement_cache = FIFOCache(arrangement_maxsize)
 
 
 _ANSI_RE = re.compile(
@@ -211,6 +223,7 @@ class CopyableRichLog(RichLog, can_focus=False):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        _boost_layout_caches(self)
         self._plain_lines: list[str] = []
 
     def render_line(self, y: int) -> Strip:
@@ -665,6 +678,7 @@ class MessagePanel(Widget):
         self._user_text: str = user_text
         self._response_engine: "Any | None" = None   # ResponseFlowEngine, set in on_mount
         super().__init__(**kwargs)
+        _boost_layout_caches(self, box_model_maxsize=256, arrangement_maxsize=32)
 
     def _finish_fade(self) -> None:
         """Stub kept for API compatibility — fade handled by CSS transition on --entering class."""
@@ -905,6 +919,7 @@ class StreamingCodeBlock(Widget):
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
+        _boost_layout_caches(self)
         self._lang = lang
         self._pygments_theme = pygments_theme
         self._state: "Literal['STREAMING', 'COMPLETE', 'FLUSHED']" = "STREAMING"
@@ -1144,6 +1159,7 @@ class OutputPanel(ScrollableContainer):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        _boost_layout_caches(self, box_model_maxsize=256, arrangement_maxsize=32)
         self._user_scrolled_up: bool = False
 
     def watch_scroll_y(self, old_y: float, new_y: float) -> None:
@@ -1390,6 +1406,7 @@ class ReasoningPanel(Widget):
         self._live_line = Static("", id="reasoning-live")
         self._collapsed_stub = Static("", id="reasoning-collapsed")
         super().__init__(**kwargs)
+        _boost_layout_caches(self)
         self._live_buf = ""
         self._plain_lines: list[str] = []
         self._is_closed: bool = False

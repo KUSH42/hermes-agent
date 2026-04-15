@@ -15,6 +15,7 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
+from rich.text import Text
 
 from hermes_cli.tui.app import HermesApp
 from hermes_cli.tui.tool_blocks import ToolBlock, ToolBodyContainer
@@ -504,6 +505,55 @@ async def test_reasoning_panel_no_content_leak_on_reuse():
 
         app.agent_running = False
         await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_large_single_turn_resize_does_not_crash():
+    """Long single-turn transcripts must survive reflow without Textual cache KeyErrors."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(132, 45)) as pilot:
+        await pilot.pause()
+
+        app.agent_running = True
+        await pilot.pause()
+
+        output = app.query_one(OutputPanel)
+        msg = output.current_message
+        assert msg is not None
+
+        # One turn with many reasoning/tool/prose transitions used to thrash
+        # Textual's tiny default layout caches during resize/reflow.
+        for i in range(40):
+            rp = msg.open_thinking_block("Reasoning")
+            rp.append_delta(f"thought {i}\n")
+            rp.close_box()
+
+            tool_lines = [f"tool {i} line {j}" for j in range(4)]
+            msg.mount_tool_block(
+                label=f"tool-{i}",
+                lines=tool_lines,
+                plain_lines=tool_lines,
+                tool_name="terminal",
+            )
+
+            prose = msg.ensure_prose_block()
+            prose.log.write_with_source(Text(f"after tool {i}"), f"after tool {i}")
+
+            if i % 10 == 9:
+                await pilot.pause()
+
+        await pilot.pause()
+        assert len(msg.children) > 100, "test needs a large single-turn DOM"
+
+        app.agent_running = False
+        await pilot.pause()
+
+        await pilot.resize_terminal(133, 46)
+        await pilot.pause()
+        await pilot.resize_terminal(120, 40)
+        await pilot.pause()
+
+        assert output.current_message is msg
 
 
 # ---------------------------------------------------------------------------

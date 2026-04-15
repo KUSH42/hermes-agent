@@ -24,7 +24,12 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Static
 
-from hermes_cli.tui.widgets import CopyableRichLog, _skin_color, _strip_ansi
+from hermes_cli.tui.widgets import (
+    CopyableRichLog,
+    _boost_layout_caches,
+    _skin_color,
+    _strip_ansi,
+)
 
 COLLAPSE_THRESHOLD = 3  # >N lines → collapsed by default
 
@@ -242,6 +247,7 @@ class ToolBlock(Widget):
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
+        _boost_layout_caches(self)
         self._label = label
         self._tool_name = tool_name
         self._lines = list(lines)

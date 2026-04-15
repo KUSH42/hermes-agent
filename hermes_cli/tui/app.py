@@ -56,7 +56,7 @@ from textual.reactive import reactive
 from textual.widgets import Static, TextArea
 from textual import work
 
-from hermes_cli.file_drop import classify_dropped_file, format_link_token
+from hermes_cli.file_drop import classify_dropped_file
 from hermes_cli.tui.state import (
     ChoiceOverlayState,
     OverlayState,
@@ -1309,48 +1309,61 @@ class HermesApp(App):
         else:
             inp.insert_text(payload)
 
+    @staticmethod
+    def _drop_path_display(path: Path, cwd: Path) -> str:
+        """Format a dropped file path: relative if in cwd/child/parent, else absolute."""
+        try:
+            return path.relative_to(cwd).as_posix()
+        except ValueError:
+            pass
+        # Check parent level with os.path.relpath
+        try:
+            rel = _os_mod.path.relpath(path, cwd)
+        except ValueError:
+            return path.as_posix()
+        # Count leading ../ segments — allow single level (parent/sibling)
+        depth = 0
+        r = rel
+        while r.startswith(".."):
+            depth += 1
+            r = r[3:] if len(r) > 2 else ""
+        if depth <= 1:
+            return rel.replace(_os_mod.sep, "/")
+        return path.as_posix()
+
     def handle_file_drop(self, paths: list[Path]) -> None:
-        """Route terminal drag-and-drop pasted paths into links and attachments."""
+        """Route terminal drag-and-drop pasted paths into input bar."""
         if any(getattr(self, attr) is not None for attr in ("approval_state", "clarify_state", "sudo_state", "secret_state")):
             self._flash_hint("file drop unavailable while prompt is open", 1.5)
             return
 
         cwd = self.get_working_directory()
-        link_tokens: list[str] = []
+        quoted_tokens: list[str] = []
         image_paths: list[Path] = []
-        rejected: list[str] = []
 
         for path in paths:
             dropped = classify_dropped_file(path, cwd)
             if dropped.kind == "image":
                 image_paths.append(path)
-                continue
-            if dropped.kind == "linkable_text":
-                try:
-                    link_tokens.append(format_link_token(path, cwd))
-                except ValueError as exc:
-                    rejected.append(f"{path.name}: {exc}")
-                continue
-            rejected.append(f"{path.name}: {dropped.reason}")
+            # Insert quoted path for ALL files (including images)
+            path_str = self._drop_path_display(path, cwd)
+            quoted_tokens.append(f"'{path_str}'")
 
         if image_paths:
             self._append_attached_images(image_paths)
-        if link_tokens:
-            self._insert_link_tokens(link_tokens)
+        if quoted_tokens:
+            self._insert_link_tokens(quoted_tokens)
 
         hint_parts: list[str] = []
-        if link_tokens:
-            noun = "file" if len(link_tokens) == 1 else "files"
-            hint_parts.append(f"linked {len(link_tokens)} {noun}")
+        if quoted_tokens:
+            noun = "file" if len(quoted_tokens) == 1 else "files"
+            hint_parts.append(f"linked {len(quoted_tokens)} {noun}")
         if image_paths:
             noun = "image" if len(image_paths) == 1 else "images"
             hint_parts.append(f"attached {len(image_paths)} {noun}")
-        if rejected:
-            noun = "item" if len(rejected) == 1 else "items"
-            hint_parts.append(f"rejected {len(rejected)} {noun}")
 
         if hint_parts:
-            self._flash_hint(" · ".join(hint_parts), 1.8 if rejected else 1.2)
+            self._flash_hint(" · ".join(hint_parts), 1.2)
 
     # --- Reasoning panel helpers (called via call_from_thread) ---
 
@@ -1498,6 +1511,20 @@ class HermesApp(App):
             if not panel._user_scrolled_up:
                 self.call_after_refresh(panel.scroll_end, animate=False)
         except NoMatches:
+            pass
+
+    def remove_streaming_tool_block(self, tool_call_id: str) -> None:
+        """Remove a streaming block from the DOM entirely. Event-loop only.
+
+        Used when a static preview block (diff, code) replaces the streaming
+        block — avoids showing both for the same tool call.
+        """
+        block = self._active_streaming_blocks.pop(tool_call_id, None)
+        if block is None:
+            return
+        try:
+            block.remove()
+        except Exception:
             pass
 
     # --- Browse mode ---

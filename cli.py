@@ -1903,34 +1903,34 @@ class HermesCLI:
         }
 
         agent = getattr(self, "agent", None)
-        if not agent:
-            return snapshot
+        if agent:
+            snapshot["session_input_tokens"] = getattr(agent, "session_input_tokens", 0) or 0
+            snapshot["session_output_tokens"] = getattr(agent, "session_output_tokens", 0) or 0
+            snapshot["session_cache_read_tokens"] = getattr(agent, "session_cache_read_tokens", 0) or 0
+            snapshot["session_cache_write_tokens"] = getattr(agent, "session_cache_write_tokens", 0) or 0
+            snapshot["session_prompt_tokens"] = getattr(agent, "session_prompt_tokens", 0) or 0
+            snapshot["session_completion_tokens"] = getattr(agent, "session_completion_tokens", 0) or 0
+            snapshot["session_total_tokens"] = getattr(agent, "session_total_tokens", 0) or 0
+            snapshot["session_api_calls"] = getattr(agent, "session_api_calls", 0) or 0
 
-        snapshot["session_input_tokens"] = getattr(agent, "session_input_tokens", 0) or 0
-        snapshot["session_output_tokens"] = getattr(agent, "session_output_tokens", 0) or 0
-        snapshot["session_cache_read_tokens"] = getattr(agent, "session_cache_read_tokens", 0) or 0
-        snapshot["session_cache_write_tokens"] = getattr(agent, "session_cache_write_tokens", 0) or 0
-        snapshot["session_prompt_tokens"] = getattr(agent, "session_prompt_tokens", 0) or 0
-        snapshot["session_completion_tokens"] = getattr(agent, "session_completion_tokens", 0) or 0
-        snapshot["session_total_tokens"] = getattr(agent, "session_total_tokens", 0) or 0
-        snapshot["session_api_calls"] = getattr(agent, "session_api_calls", 0) or 0
+            compressor = getattr(agent, "context_compressor", None)
+            if compressor:
+                context_tokens = getattr(compressor, "last_prompt_tokens", 0) or 0
+                context_length = getattr(compressor, "context_length", 0) or 0
+                snapshot["context_tokens"] = context_tokens
+                snapshot["context_length"] = context_length or None
+                snapshot["compressions"] = getattr(compressor, "compression_count", 0) or 0
+                if context_length:
+                    snapshot["context_percent"] = max(0, min(100, round((context_tokens / context_length) * 100)))
 
-        compressor = getattr(agent, "context_compressor", None)
-        if compressor:
-            context_tokens = getattr(compressor, "last_prompt_tokens", 0) or 0
-            context_length = getattr(compressor, "context_length", 0) or 0
-            snapshot["context_tokens"] = context_tokens
-            snapshot["context_length"] = context_length or None
-            snapshot["compressions"] = getattr(compressor, "compression_count", 0) or 0
-            if context_length:
-                snapshot["context_percent"] = max(0, min(100, round((context_tokens / context_length) * 100)))
+        # Always populate max context from model metadata if not yet known
         if not snapshot["context_length"]:
             try:
                 from agent.model_metadata import get_model_context_length
                 snapshot["context_length"] = get_model_context_length(
-                    getattr(agent, "model", self.model),
-                    provider=getattr(agent, "provider", getattr(self, "provider", None)),
-                    base_url=getattr(agent, "base_url", getattr(self, "base_url", None)),
+                    getattr(agent, "model", self.model) if agent else self.model,
+                    provider=getattr(agent, "provider", getattr(self, "provider", None)) if agent else getattr(self, "provider", None),
+                    base_url=getattr(agent, "base_url", getattr(self, "base_url", None)) if agent else getattr(self, "base_url", None),
                 ) or None
             except Exception:
                 pass
@@ -5516,6 +5516,9 @@ class HermesCLI:
             self.show_config()
         elif canonical == "clear":
             self.new_session(silent=True)
+            # Push reset context stats to TUI bottom bar
+            if _hermes_app is not None:
+                self._push_tui_status()
             # Clear terminal screen.  Inside the TUI, Rich's console.clear()
             # goes through patch_stdout's StdoutProxy which swallows the
             # screen-clear escape sequences.  Use prompt_toolkit's output
@@ -6921,10 +6924,11 @@ class HermesCLI:
         """
         snapshot = self._pending_edit_snapshots.pop(tool_call_id, None)
 
-        # --- Close streaming block (ALL tools, not just terminal/execute_code) ---
+        # --- Streaming block state (compute early, act after preview decision) ---
         tui = _hermes_app
         _was_streaming = tool_call_id in self._active_stream_tool_ids
         self._active_stream_tool_ids.discard(tool_call_id)
+        _stream_duration = ""
         if tui is not None and _was_streaming:
             # Reset the ContextVar callback (only if registered — streaming tools only)
             try:
@@ -6934,17 +6938,19 @@ class HermesCLI:
                     _reset_cb(token)
             except Exception:
                 pass
-            # Compute duration and close the block
             import time as _t
             start = self._stream_start_times.pop(tool_call_id, None)
-            duration = f"{_t.monotonic() - start:.1f}s" if start is not None else ""
-            tui.call_from_thread(tui.close_streaming_tool_block, tool_call_id, duration)
+            _stream_duration = f"{_t.monotonic() - start:.1f}s" if start is not None else ""
 
         if self.tool_progress_mode == "off":
+            # No preview will be mounted — close streaming block normally
+            if tui is not None and _was_streaming:
+                tui.call_from_thread(tui.close_streaming_tool_block, tool_call_id, _stream_duration)
             return
 
         _TOOL_PREFIX = "  ┊ "
         tui = _hermes_app
+        _will_mount_preview = False
         if tui is not None:
             from hermes_cli.tui.widgets import _strip_ansi
             def _plain_lines(display_lines: list[str]) -> list[str]:
@@ -6978,6 +6984,10 @@ class HermesCLI:
                 display_lines: list[str] = []
                 render_captured_diff_preview(diff_text, print_fn=display_lines.append, prefix=_TOOL_PREFIX)
                 if display_lines:
+                    _will_mount_preview = True
+                    # Remove streaming block — preview replaces it
+                    if _was_streaming:
+                        tui.call_from_thread(tui.remove_streaming_tool_block, tool_call_id)
                     plain = _plain_lines(display_lines)
 
                     def _rerender_diff(_diff_text=diff_text):
@@ -7020,31 +7030,33 @@ class HermesCLI:
                                     tui.mount_tool_block, "code", display_lines, plain, _rerender_execute_code_preview, None, function_name
                                 )
                     elif function_name == "read_file":
-                        display_lines = []
-                        path = function_args.get("path", "")
-                        render_read_file_preview(path, function_result, print_fn=display_lines.append, prefix=_TOOL_PREFIX)
-                        if display_lines:
-                            plain = _plain_lines(display_lines)
+                        # Skip static preview when a StreamingToolBlock was used
+                        if not _was_streaming:
+                            display_lines = []
+                            path = function_args.get("path", "")
+                            render_read_file_preview(path, function_result, print_fn=display_lines.append, prefix=_TOOL_PREFIX)
+                            if display_lines:
+                                plain = _plain_lines(display_lines)
 
-                            def _rerender_read_file_preview(_path=path, _result=function_result):
-                                rerendered: list[str] = []
-                                render_read_file_preview(
-                                    _path,
-                                    _result,
-                                    print_fn=rerendered.append,
-                                    prefix=_TOOL_PREFIX,
+                                def _rerender_read_file_preview(_path=path, _result=function_result):
+                                    rerendered: list[str] = []
+                                    render_read_file_preview(
+                                        _path,
+                                        _result,
+                                        print_fn=rerendered.append,
+                                        prefix=_TOOL_PREFIX,
+                                    )
+                                    return rerendered, _plain_lines(rerendered)
+
+                                tui.call_from_thread(
+                                    tui.mount_tool_block,
+                                    "code",
+                                    display_lines,
+                                    plain,
+                                    _rerender_read_file_preview,
+                                    None,
+                                    function_name,
                                 )
-                                return rerendered, _plain_lines(rerendered)
-
-                            tui.call_from_thread(
-                                tui.mount_tool_block,
-                                "code",
-                                display_lines,
-                                plain,
-                                _rerender_read_file_preview,
-                                None,
-                                function_name,
-                            )
                     elif function_name == "terminal":
                         # Skip static preview when a StreamingToolBlock was used
                         if not _was_streaming:
@@ -7075,6 +7087,11 @@ class HermesCLI:
                                 )
                 except Exception:
                     logger.debug("%s highlight failed", function_name, exc_info=True)
+
+            # If no preview was mounted, close the streaming block normally
+            if _was_streaming and not _will_mount_preview:
+                tui.call_from_thread(tui.close_streaming_tool_block, tool_call_id, _stream_duration)
+
         else:
             # --- PT mode path: unchanged ---
             try:

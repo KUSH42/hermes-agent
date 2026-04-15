@@ -49,6 +49,13 @@ async def _new_block(pilot, label: str) -> StreamingToolBlock:
 async def _flush_block(block: StreamingToolBlock, pilot) -> None:
     """Synchronously flush pending lines and wait for Textual to settle."""
     block._flush_pending()
+    # In headless tests RichLog._size_known is False, so write() defers to
+    # _deferred_renders instead of populating log.lines.  Drain them.
+    log = block._body.query_one(CopyableRichLog)
+    if not log._size_known:
+        log._size_known = True
+        while log._deferred_renders:
+            log.write(*log._deferred_renders.popleft())
     await pilot.pause()
 
 

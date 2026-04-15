@@ -164,6 +164,12 @@ async def test_lines_visible_in_richlog():
         block._flush_pending()
 
         log = block._body.query_one(CopyableRichLog)
+        # In headless tests RichLog._size_known is False, so writes go to
+        # _deferred_renders.  Drain them so log.lines is populated.
+        if not log._size_known:
+            log._size_known = True
+            while log._deferred_renders:
+                log.write(*log._deferred_renders.popleft())
         assert len(log.lines) >= 1
         assert block._all_plain == ["hello streaming"]
 
@@ -220,6 +226,12 @@ async def test_visible_cap():
         assert block._cap_marker_written is True
 
         log = block._body.query_one(CopyableRichLog)
+        # In headless tests RichLog._size_known is False, so writes go to
+        # _deferred_renders.  Drain them so log.lines is populated.
+        if not log._size_known:
+            log._size_known = True
+            while log._deferred_renders:
+                log.write(*log._deferred_renders.popleft())
         # +1 for the cap marker line
         assert len(log.lines) == _VISIBLE_CAP + 1
 

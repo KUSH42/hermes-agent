@@ -42,6 +42,17 @@ _SPINNER_FRAMES: tuple[str, ...] = (
 
 # Gutter fallback color — avoid duplicating the literal across three call sites
 _GUTTER_FALLBACK: str = "#FFD700"
+
+
+def _tool_gutter_enabled() -> bool:
+    """Show ┊/┃ gutter symbols on tool call blocks (default: true)."""
+    try:
+        from hermes_cli.config import read_raw_config
+        return bool(read_raw_config().get("display", {}).get("tool_gutter", True))
+    except Exception:
+        return True
+
+
 _DIFF_ADD_FALLBACK: str = "#5fd75f"
 _DIFF_DEL_FALLBACK: str = "#ef5350"
 _VISIBLE_DIFF_ROW_RE = re.compile(r"^\s*\d+\s+([+-])\s")
@@ -134,13 +145,14 @@ class ToolHeader(Widget):
 
     def render(self) -> RenderResult:
         focused = self.has_class("focused")
-        if focused:
-            color = getattr(self, "_focused_gutter_color", _GUTTER_FALLBACK)
-            gutter = Text("  ┃", style=f"bold {color}")
-        else:
-            gutter = Text("  ┊", style="dim")
         t = Text()
-        t.append_text(gutter)
+        if _tool_gutter_enabled():
+            if focused:
+                color = getattr(self, "_focused_gutter_color", _GUTTER_FALLBACK)
+                gutter = Text("  ┃", style=f"bold {color}")
+            else:
+                gutter = Text("  ┊", style="dim")
+            t.append_text(gutter)
         label_str = self._label
         if self._duration:
             label_str += f"  {self._duration}"

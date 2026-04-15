@@ -260,6 +260,9 @@ class HermesInput(Input, can_focus=True):
         dropped_paths = parse_dragged_file_paste(event.text)
         if dropped_paths:
             self.post_message(self.FilesDropped(dropped_paths))
+            # Block Input._on_paste from dispatching — Textual yields handlers
+            # from ALL MRO classes, so both this and Input._on_paste would run.
+            event._no_default_action = True
             event.stop()
             return
         # Flash paste hint before letting Input handle the paste

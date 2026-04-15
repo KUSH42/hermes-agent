@@ -404,6 +404,7 @@ DEFAULT_CONFIG = {
         "show_cost": False,       # Show $ cost in the status bar (off by default)
         "skin": "default",
         "tool_icon_mode": "auto",  # auto|nerdfont|emoji|ascii
+        "tool_gutter": True,       # Show ┊/┃ gutter symbols on tool call blocks
         "startup_text_effect": {
             "enabled": False,
             "effect": "matrix",

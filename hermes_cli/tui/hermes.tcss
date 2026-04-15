@@ -79,6 +79,11 @@ HermesApp {
     scrollbar-corner-color: $app-bg;
 }
 
+/* OutputPanel: show scrollbar so terminal scrollbar controls pane scrolling */
+OutputPanel {
+    scrollbar-size-vertical: 1;
+}
+
 /* --- Message turns --- */
 
 MessagePanel {

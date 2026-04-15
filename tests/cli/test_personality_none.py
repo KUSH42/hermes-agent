@@ -64,9 +64,9 @@ class TestCLIPersonalityNone:
 
     def test_list_shows_none_option(self):
         cli = self._make_cli()
-        with patch("builtins.print") as mock_print:
+        with patch("cli._cprint") as mock_cprint:
             cli._handle_personality_command("/personality")
-        output = " ".join(str(c) for c in mock_print.call_args_list)
+        output = " ".join(str(c) for c in mock_cprint.call_args_list)
         assert "none" in output.lower()
 
 

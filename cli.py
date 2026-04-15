@@ -1223,10 +1223,37 @@ def _cprint(text: str) -> None:
             pass
         except RuntimeError:
             # Event loop closed or not yet started — fall through to stdout
-            _pt_print(_PT_ANSI(_normalize_ansi_c1(text)))
+            try:
+                _pt_print(_PT_ANSI(_normalize_ansi_c1(text)))
+            except ValueError:
+                # stdout closed (e.g. test environment)
+                pass
     else:
-        # Single-query / no-TUI mode: use prompt_toolkit renderer
-        _pt_print(_PT_ANSI(_normalize_ansi_c1(text)))
+        # Single-query / no-TUI mode: use prompt_toolkit renderer.
+        # But prompt_toolkit's AppSession caches sys.stdout at import time.
+        # When sys.stdout is redirected (pytest capsys, pipes, etc.),
+        # _pt_print writes to the original fd, bypassing capture.
+        # Detect this and fall back to plain print().
+        import sys as _sys
+        try:
+            from prompt_toolkit.application.current import get_app_session as _gas
+            _session_stdout = _gas().output.stdout
+            _stdout_redirected = _session_stdout is not _sys.stdout
+        except Exception:
+            # Module not available or mock-corrupted — assume redirected
+            _stdout_redirected = True
+
+        if _stdout_redirected:
+            # stdout was redirected — use plain print() for capture compat
+            try:
+                print(text)
+            except ValueError:
+                pass
+        else:
+            try:
+                _pt_print(_PT_ANSI(_normalize_ansi_c1(text)))
+            except ValueError:
+                pass
 
 
 _REASONING_GUTTER = "▌ "
@@ -3475,7 +3502,7 @@ class HermesCLI:
         """Display the startup banner and welcome text inside the Textual TUI.
 
         Called from HermesApp.on_mount() in a daemon thread after the event
-        loop is running, so _cprint() routes through the output queue.
+        loop is running, so _cprint("") routes through the output queue.
         Switches self.console to ChatConsole so all subsequent console.print()
         calls appear in the TUI output panel rather than on raw stdout.
         """
@@ -3554,14 +3581,14 @@ class HermesCLI:
         from tools.checkpoint_manager import format_checkpoint_list
 
         if not hasattr(self, 'agent') or not self.agent:
-            print("  No active agent session.")
+            _cprint("  No active agent session.")
             return
 
         mgr = self.agent._checkpoint_mgr
         if not mgr.enabled:
-            print("  Checkpoints are not enabled.")
-            print("  Enable with: hermes --checkpoints")
-            print("  Or in config.yaml: checkpoints: { enabled: true }")
+            _cprint("  Checkpoints are not enabled.")
+            _cprint("  Enable with: hermes --checkpoints")
+            _cprint("  Or in config.yaml: checkpoints: { enabled: true }")
             return
 
         cwd = os.getenv("TERMINAL_CWD", os.getcwd())
@@ -3571,17 +3598,17 @@ class HermesCLI:
         if not args:
             # List checkpoints
             checkpoints = mgr.list_checkpoints(cwd)
-            print(format_checkpoint_list(checkpoints, cwd))
+            _cprint(format_checkpoint_list(checkpoints, cwd))
             return
 
         # Handle /rollback diff <N>
         if args[0].lower() == "diff":
             if len(args) < 2:
-                print("  Usage: /rollback diff <N>")
+                _cprint("  Usage: /rollback diff <N>")
                 return
             checkpoints = mgr.list_checkpoints(cwd)
             if not checkpoints:
-                print(f"  No checkpoints found for {cwd}")
+                _cprint(f"  No checkpoints found for {cwd}")
                 return
             target_hash = self._resolve_checkpoint_ref(args[1], checkpoints)
             if not target_hash:
@@ -3591,26 +3618,26 @@ class HermesCLI:
                 stat = result.get("stat", "")
                 diff = result.get("diff", "")
                 if not stat and not diff:
-                    print("  No changes since this checkpoint.")
+                    _cprint("  No changes since this checkpoint.")
                 else:
                     if stat:
-                        print(f"\n{stat}")
+                        _cprint(f"\n{stat}")
                     if diff:
                         # Limit diff output to avoid terminal flood
                         diff_lines = diff.splitlines()
                         if len(diff_lines) > 80:
-                            print("\n".join(diff_lines[:80]))
-                            print(f"\n  ... ({len(diff_lines) - 80} more lines, showing first 80)")
+                            _cprint("\n".join(diff_lines[:80]))
+                            _cprint(f"\n  ... ({len(diff_lines) - 80} more lines, showing first 80)")
                         else:
-                            print(f"\n{diff}")
+                            _cprint(f"\n{diff}")
             else:
-                print(f"  ❌ {result['error']}")
+                _cprint(f"  ❌ {result['error']}")
             return
 
         # Resolve checkpoint reference (number or hash)
         checkpoints = mgr.list_checkpoints(cwd)
         if not checkpoints:
-            print(f"  No checkpoints found for {cwd}")
+            _cprint(f"  No checkpoints found for {cwd}")
             return
 
         target_hash = self._resolve_checkpoint_ref(args[0], checkpoints)
@@ -3623,18 +3650,18 @@ class HermesCLI:
         result = mgr.restore(cwd, target_hash, file_path=file_path)
         if result["success"]:
             if file_path:
-                print(f"  ✅ Restored {file_path} from checkpoint {result['restored_to']}: {result['reason']}")
+                _cprint(f"  ✅ Restored {file_path} from checkpoint {result['restored_to']}: {result['reason']}")
             else:
-                print(f"  ✅ Restored to checkpoint {result['restored_to']}: {result['reason']}")
-            print("  A pre-rollback snapshot was saved automatically.")
+                _cprint(f"  ✅ Restored to checkpoint {result['restored_to']}: {result['reason']}")
+            _cprint("  A pre-rollback snapshot was saved automatically.")
 
             # Also undo the last conversation turn so the agent's context
             # matches the restored filesystem state
             if self.conversation_history:
                 self.undo_last()
-                print("  Chat turn undone to match restored file state.")
+                _cprint("  Chat turn undone to match restored file state.")
         else:
-            print(f"  ❌ {result['error']}")
+            _cprint(f"  ❌ {result['error']}")
 
     def _resolve_checkpoint_ref(self, ref: str, checkpoints: list) -> str | None:
         """Resolve a checkpoint number or hash to a full commit hash."""
@@ -3661,12 +3688,12 @@ class HermesCLI:
         running = [p for p in processes if p.get("status") == "running"]
 
         if not running:
-            print("  No running background processes.")
+            _cprint("  No running background processes.")
             return
 
-        print(f"  Stopping {len(running)} background process(es)...")
+        _cprint(f"  Stopping {len(running)} background process(es)...")
         killed = process_registry.kill_all()
-        print(f"  ✅ Stopped {killed} process(es).")
+        _cprint(f"  ✅ Stopped {killed} process(es).")
 
     def _handle_paste_command(self):
         """Handle /paste — explicitly check clipboard for an image.
@@ -3914,9 +3941,9 @@ class HermesCLI:
 
         names = parts[2:]
         if not names:
-            print(f"(._.) Usage: /tools {subcommand} <name> [name ...]")
-            print(f"  Built-in toolset:  /tools {subcommand} web")
-            print(f"  MCP tool:          /tools {subcommand} github:create_issue")
+            _cprint(f"(._.) Usage: /tools {subcommand} <name> [name ...]")
+            _cprint(f"  Built-in toolset:  /tools {subcommand} web")
+            _cprint(f"  MCP tool:          /tools {subcommand} github:create_issue")
             return
 
         # Apply the change directly — the user typing the command is implicit
@@ -3941,14 +3968,14 @@ class HermesCLI:
         all_toolsets = get_all_toolsets()
         
         # Header
-        print()
+        _cprint("")
         title = "(^_^)b Available Toolsets"
         width = 58
         pad = width - len(title)
-        print("+" + "-" * width + "+")
-        print("|" + " " * (pad // 2) + title + " " * (pad - pad // 2) + "|")
-        print("+" + "-" * width + "+")
-        print()
+        _cprint("+" + "-" * width + "+")
+        _cprint("|" + " " * (pad // 2) + title + " " * (pad - pad // 2) + "|")
+        _cprint("+" + "-" * width + "+")
+        _cprint("")
         
         for name in sorted(all_toolsets.keys()):
             info = get_toolset_info(name)
@@ -3958,14 +3985,14 @@ class HermesCLI:
                 
                 # Mark if currently enabled
                 marker = "(*)" if self.enabled_toolsets and name in self.enabled_toolsets else "   "
-                print(f"  {marker} {name:<18} [{tool_count:>2} tools] - {desc}")
+                _cprint(f"  {marker} {name:<18} [{tool_count:>2} tools] - {desc}")
         
-        print()
-        print("  (*) = currently enabled")
-        print()
-        print("  Tip: Use 'all' or '*' to enable all toolsets")
-        print("  Example: python cli.py --toolsets web,terminal")
-        print()
+        _cprint("")
+        _cprint("  (*) = currently enabled")
+        _cprint("")
+        _cprint("  Tip: Use 'all' or '*' to enable all toolsets")
+        _cprint("  Example: python cli.py --toolsets web,terminal")
+        _cprint("")
     
     def _handle_profile_command(self):
         """Display active profile name and home directory."""
@@ -3981,13 +4008,13 @@ class HermesCLI:
         except ValueError:
             profile_name = None
 
-        print()
+        _cprint("")
         if profile_name:
-            print(f"  Profile: {profile_name}")
+            _cprint(f"  Profile: {profile_name}")
         else:
-            print("  Profile: default")
-        print(f"  Home:    {display}")
-        print()
+            _cprint("  Profile: default")
+        _cprint(f"  Home:    {display}")
+        _cprint("")
 
     def show_config(self):
         """Display current configuration with kawaii ASCII art."""
@@ -4006,38 +4033,38 @@ class HermesCLI:
         
         api_key_display = '********' + self.api_key[-4:] if self.api_key and len(self.api_key) > 4 else 'Not set!'
         
-        print()
+        _cprint("")
         title = "(^_^) Configuration"
         width = 50
         pad = width - len(title)
-        print("+" + "-" * width + "+")
-        print("|" + " " * (pad // 2) + title + " " * (pad - pad // 2) + "|")
-        print("+" + "-" * width + "+")
-        print()
-        print("  -- Model --")
-        print(f"  Model:     {self.model}")
-        print(f"  Base URL:  {self.base_url}")
-        print(f"  API Key:   {api_key_display}")
-        print()
-        print("  -- Terminal --")
-        print(f"  Environment:  {terminal_env}")
+        _cprint("+" + "-" * width + "+")
+        _cprint("|" + " " * (pad // 2) + title + " " * (pad - pad // 2) + "|")
+        _cprint("+" + "-" * width + "+")
+        _cprint("")
+        _cprint("  -- Model --")
+        _cprint(f"  Model:     {self.model}")
+        _cprint(f"  Base URL:  {self.base_url}")
+        _cprint(f"  API Key:   {api_key_display}")
+        _cprint("")
+        _cprint("  -- Terminal --")
+        _cprint(f"  Environment:  {terminal_env}")
         if terminal_env == "ssh":
             ssh_host = os.getenv("TERMINAL_SSH_HOST", "not set")
             ssh_user = os.getenv("TERMINAL_SSH_USER", "not set")
             ssh_port = os.getenv("TERMINAL_SSH_PORT", "22")
-            print(f"  SSH Target:   {ssh_user}@{ssh_host}:{ssh_port}")
-        print(f"  Working Dir:  {terminal_cwd}")
-        print(f"  Timeout:      {terminal_timeout}s")
-        print()
-        print("  -- Agent --")
-        print(f"  Max Turns:  {self.max_turns}")
-        print(f"  Toolsets:   {', '.join(self.enabled_toolsets) if self.enabled_toolsets else 'all'}")
-        print(f"  Verbose:    {self.verbose}")
-        print()
-        print("  -- Session --")
-        print(f"  Started:     {self.session_start.strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"  Config File: {config_path} {config_status}")
-        print()
+            _cprint(f"  SSH Target:   {ssh_user}@{ssh_host}:{ssh_port}")
+        _cprint(f"  Working Dir:  {terminal_cwd}")
+        _cprint(f"  Timeout:      {terminal_timeout}s")
+        _cprint("")
+        _cprint("  -- Agent --")
+        _cprint(f"  Max Turns:  {self.max_turns}")
+        _cprint(f"  Toolsets:   {', '.join(self.enabled_toolsets) if self.enabled_toolsets else 'all'}")
+        _cprint(f"  Verbose:    {self.verbose}")
+        _cprint("")
+        _cprint("  -- Session --")
+        _cprint(f"  Started:     {self.session_start.strftime('%Y-%m-%d %H:%M:%S')}")
+        _cprint(f"  Config File: {config_path} {config_status}")
+        _cprint("")
     
     def _list_recent_sessions(self, limit: int = 10) -> list[dict[str, Any]]:
         """Return recent CLI sessions for in-chat browsing/resume affordances."""
@@ -4086,7 +4113,7 @@ class HermesCLI:
         """Display conversation history."""
         if not self.conversation_history:
             if not self._show_recent_sessions(reason="history"):
-                print("(._.) No conversation history yet.")
+                _cprint("(._.) No conversation history yet.")
             return
 
         preview_limit = 400
@@ -4099,14 +4126,14 @@ class HermesCLI:
                 return
 
             noun = "message" if hidden_tool_messages == 1 else "messages"
-            print("\n  [Tools]")
-            print(f"    ({hidden_tool_messages} tool {noun} hidden)")
+            _cprint("\n  [Tools]")
+            _cprint(f"    ({hidden_tool_messages} tool {noun} hidden)")
             hidden_tool_messages = 0
 
-        print()
-        print("+" + "-" * 50 + "+")
-        print("|" + " " * 12 + "(^_^) Conversation History" + " " * 11 + "|")
-        print("+" + "-" * 50 + "+")
+        _cprint("")
+        _cprint("+" + "-" * 50 + "+")
+        _cprint("|" + " " * 12 + "(^_^) Conversation History" + " " * 11 + "|")
+        _cprint("+" + "-" * 50 + "+")
 
         for msg in self.conversation_history:
             role = msg.get("role", "unknown")
@@ -4125,13 +4152,13 @@ class HermesCLI:
             content_text = "" if content is None else str(content)
 
             if role == "user":
-                print(f"\n  [You #{visible_index}]")
-                print(
+                _cprint(f"\n  [You #{visible_index}]")
+                _cprint(
                     f"    {content_text[:preview_limit]}{'...' if len(content_text) > preview_limit else ''}"
                 )
                 continue
 
-            print(f"\n  [Hermes #{visible_index}]")
+            _cprint(f"\n  [Hermes #{visible_index}]")
             tool_calls = msg.get("tool_calls") or []
             if content_text:
                 preview = content_text[:preview_limit]
@@ -4144,10 +4171,10 @@ class HermesCLI:
             else:
                 preview = "(no text response)"
                 suffix = ""
-            print(f"    {preview}{suffix}")
+            _cprint(f"    {preview}{suffix}")
 
         flush_tool_summary()
-        print()
+        _cprint("")
     
     def _notify_session_boundary(self, event_type: str) -> None:
         """Fire a session-boundary plugin hook (on_session_finalize or on_session_reset).
@@ -4223,7 +4250,7 @@ class HermesCLI:
             self._notify_session_boundary("on_session_reset")
 
         if not silent:
-            print("(^_^)v New session started!")
+            _cprint("(^_^)v New session started!")
 
     def _handle_resume_command(self, cmd_original: str) -> None:
         """Handle /resume <session_id_or_title> — switch to a previous session mid-conversation."""
@@ -4418,7 +4445,7 @@ class HermesCLI:
     def save_conversation(self):
         """Save the current conversation to a file."""
         if not self.conversation_history:
-            print("(;_;) No conversation to save.")
+            _cprint("(;_;) No conversation to save.")
             return
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -4431,9 +4458,9 @@ class HermesCLI:
                     "session_start": self.session_start.isoformat(),
                     "messages": self.conversation_history,
                 }, f, indent=2, ensure_ascii=False)
-            print(f"(^_^)v Conversation saved to: {filename}")
+            _cprint(f"(^_^)v Conversation saved to: {filename}")
         except Exception as e:
-            print(f"(x_x) Failed to save: {e}")
+            _cprint(f"(x_x) Failed to save: {e}")
     
     def retry_last(self):
         """Retry the last user message by removing the last exchange and re-sending.
@@ -4443,7 +4470,7 @@ class HermesCLI:
         Returns the message to re-send, or None if there's nothing to retry.
         """
         if not self.conversation_history:
-            print("(._.) No messages to retry.")
+            _cprint("(._.) No messages to retry.")
             return None
         
         # Walk backwards to find the last user message
@@ -4454,14 +4481,14 @@ class HermesCLI:
                 break
         
         if last_user_idx is None:
-            print("(._.) No user message found to retry.")
+            _cprint("(._.) No user message found to retry.")
             return None
         
         # Extract the message text and remove everything from that point forward
         last_message = self.conversation_history[last_user_idx].get("content", "")
         self.conversation_history = self.conversation_history[:last_user_idx]
         
-        print(f"(^_^)b Retrying: \"{last_message[:60]}{'...' if len(last_message) > 60 else ''}\"")
+        _cprint(f"(^_^)b Retrying: \"{last_message[:60]}{'...' if len(last_message) > 60 else ''}\"")
         return last_message
     
     def undo_last(self):
@@ -4471,7 +4498,7 @@ class HermesCLI:
         onward (including assistant responses, tool calls, etc.).
         """
         if not self.conversation_history:
-            print("(._.) No messages to undo.")
+            _cprint("(._.) No messages to undo.")
             return
         
         # Walk backwards to find the last user message
@@ -4482,7 +4509,7 @@ class HermesCLI:
                 break
         
         if last_user_idx is None:
-            print("(._.) No user message found to undo.")
+            _cprint("(._.) No user message found to undo.")
             return
         
         # Count how many messages we're removing
@@ -4492,9 +4519,9 @@ class HermesCLI:
         # Truncate history to before the last user message
         self.conversation_history = self.conversation_history[:last_user_idx]
         
-        print(f"(^_^)b Undid {removed_count} message(s). Removed: \"{removed_msg[:60]}{'...' if len(removed_msg) > 60 else ''}\"")
+        _cprint(f"(^_^)b Undid {removed_count} message(s). Removed: \"{removed_msg[:60]}{'...' if len(removed_msg) > 60 else ''}\"")
         remaining = len(self.conversation_history)
-        print(f"  {remaining} message(s) remaining in history.")
+        _cprint(f"  {remaining} message(s) remaining in history.")
     
     def _handle_model_switch(self, cmd_original: str):
         """Handle /model command — switch model for this session.
@@ -4699,8 +4726,8 @@ class HermesCLI:
             current = raw_provider
         current_label = _PROVIDER_LABELS.get(current, current)
 
-        print(f"\n  Current: {self.model} via {current_label}")
-        print()
+        _cprint(f"\n  Current: {self.model} via {current_label}")
+        _cprint("")
 
         # Show all authenticated providers with their models
         providers = list_available_providers()
@@ -4708,41 +4735,41 @@ class HermesCLI:
         unauthed = [p for p in providers if not p["authenticated"]]
 
         if authed:
-            print("  Authenticated providers & models:")
+            _cprint("  Authenticated providers & models:")
             for p in authed:
                 is_active = p["id"] == current
                 marker = " ← active" if is_active else ""
-                print(f"    [{p['id']}]{marker}")
+                _cprint(f"    [{p['id']}]{marker}")
                 curated = curated_models_for_provider(p["id"])
                 # Fetch pricing for providers that support it (openrouter, nous)
                 pricing_map = get_pricing_for_provider(p["id"]) if p["id"] in ("openrouter", "nous") else {}
                 if curated and pricing_map:
                     cur_model = self.model if is_active else ""
                     for line in format_model_pricing_table(curated, pricing_map, current_model=cur_model):
-                        print(line)
+                        _cprint(line)
                 elif curated:
                     for mid, desc in curated:
                         current_marker = " ← current" if (is_active and mid == self.model) else ""
-                        print(f"      {mid}{current_marker}")
+                        _cprint(f"      {mid}{current_marker}")
                 elif p["id"] == "custom":
                     from hermes_cli.models import _get_custom_base_url
                     custom_url = _get_custom_base_url()
                     if custom_url:
-                        print(f"      endpoint: {custom_url}")
+                        _cprint(f"      endpoint: {custom_url}")
                     if is_active:
-                        print(f"      model: {self.model} ← current")
-                    print("      (use hermes model to change)")
+                        _cprint(f"      model: {self.model} ← current")
+                    _cprint("      (use hermes model to change)")
                 else:
-                    print("      (use hermes model to change)")
-                print()
+                    _cprint("      (use hermes model to change)")
+                _cprint("")
 
         if unauthed:
             names = ", ".join(p["label"] for p in unauthed)
-            print(f"  Not configured: {names}")
-            print("  Run: hermes setup")
-            print()
+            _cprint(f"  Not configured: {names}")
+            _cprint("  Run: hermes setup")
+            _cprint("")
 
-        print("  To change model or provider, use: hermes model")
+        _cprint("  To change model or provider, use: hermes model")
 
     def _handle_prompt_command(self, cmd: str):
         """Handle the /prompt command to view or set system prompt."""
@@ -4756,24 +4783,24 @@ class HermesCLI:
                 self.system_prompt = ""
                 self.agent = None  # Force re-init
                 if save_config_value("agent.system_prompt", ""):
-                    print("(^_^)b System prompt cleared (saved to config)")
+                    _cprint("(^_^)b System prompt cleared (saved to config)")
                 else:
-                    print("(^_^) System prompt cleared (session only)")
+                    _cprint("(^_^) System prompt cleared (session only)")
             else:
                 self.system_prompt = new_prompt
                 self.agent = None  # Force re-init
                 if save_config_value("agent.system_prompt", new_prompt):
-                    print("(^_^)b System prompt set (saved to config)")
+                    _cprint("(^_^)b System prompt set (saved to config)")
                 else:
-                    print("(^_^) System prompt set (session only)")
-                print(f"  \"{new_prompt[:60]}{'...' if len(new_prompt) > 60 else ''}\"")
+                    _cprint("(^_^) System prompt set (session only)")
+                _cprint(f"  \"{new_prompt[:60]}{'...' if len(new_prompt) > 60 else ''}\"")
         else:
             # Show current prompt
-            print()
-            print("+" + "-" * 50 + "+")
-            print("|" + " " * 15 + "(^_^) System Prompt" + " " * 15 + "|")
-            print("+" + "-" * 50 + "+")
-            print()
+            _cprint("")
+            _cprint("+" + "-" * 50 + "+")
+            _cprint("|" + " " * 15 + "(^_^) System Prompt" + " " * 15 + "|")
+            _cprint("+" + "-" * 50 + "+")
+            _cprint("")
             if self.system_prompt:
                 # Word wrap the prompt for display
                 words = self.system_prompt.split()
@@ -4788,15 +4815,15 @@ class HermesCLI:
                 if current_line:
                     lines.append(current_line)
                 for line in lines:
-                    print(f"  {line}")
+                    _cprint(f"  {line}")
             else:
-                print("  (no custom prompt set - using default)")
-            print()
-            print("  Usage:")
-            print("    /prompt <text>  - Set a custom system prompt")
-            print("    /prompt clear   - Remove custom prompt")
-            print("    /personality    - Use a predefined personality")
-            print()
+                _cprint("  (no custom prompt set - using default)")
+            _cprint("")
+            _cprint("  Usage:")
+            _cprint("    /prompt <text>  - Set a custom system prompt")
+            _cprint("    /prompt clear   - Remove custom prompt")
+            _cprint("    /personality    - Use a predefined personality")
+            _cprint("")
     
 
     @staticmethod
@@ -4823,38 +4850,38 @@ class HermesCLI:
                 self.system_prompt = ""
                 self.agent = None  # Force re-init
                 if save_config_value("agent.system_prompt", ""):
-                    print("(^_^)b Personality cleared (saved to config)")
+                    _cprint("(^_^)b Personality cleared (saved to config)")
                 else:
-                    print("(^_^) Personality cleared (session only)")
-                print("  No personality overlay — using base agent behavior.")
+                    _cprint("(^_^) Personality cleared (session only)")
+                _cprint("  No personality overlay — using base agent behavior.")
             elif personality_name in self.personalities:
                 self.system_prompt = self._resolve_personality_prompt(self.personalities[personality_name])
                 self.agent = None  # Force re-init
                 if save_config_value("agent.system_prompt", self.system_prompt):
-                    print(f"(^_^)b Personality set to '{personality_name}' (saved to config)")
+                    _cprint(f"(^_^)b Personality set to '{personality_name}' (saved to config)")
                 else:
-                    print(f"(^_^) Personality set to '{personality_name}' (session only)")
-                print(f"  \"{self.system_prompt[:60]}{'...' if len(self.system_prompt) > 60 else ''}\"")
+                    _cprint(f"(^_^) Personality set to '{personality_name}' (session only)")
+                _cprint(f"  \"{self.system_prompt[:60]}{'...' if len(self.system_prompt) > 60 else ''}\"")
             else:
-                print(f"(._.) Unknown personality: {personality_name}")
-                print(f"  Available: none, {', '.join(self.personalities.keys())}")
+                _cprint(f"(._.) Unknown personality: {personality_name}")
+                _cprint(f"  Available: none, {', '.join(self.personalities.keys())}")
         else:
             # Show available personalities
-            print()
-            print("+" + "-" * 50 + "+")
-            print("|" + " " * 12 + "(^o^)/ Personalities" + " " * 15 + "|")
-            print("+" + "-" * 50 + "+")
-            print()
-            print(f"  {'none':<12} - (no personality overlay)")
+            _cprint("")
+            _cprint("+" + "-" * 50 + "+")
+            _cprint("|" + " " * 12 + "(^o^)/ Personalities" + " " * 15 + "|")
+            _cprint("+" + "-" * 50 + "+")
+            _cprint("")
+            _cprint(f"  {'none':<12} - (no personality overlay)")
             for name, prompt in self.personalities.items():
                 if isinstance(prompt, dict):
                     preview = prompt.get("description") or prompt.get("system_prompt", "")[:50]
                 else:
                     preview = str(prompt)[:50]
-                print(f"  {name:<12} - {preview}")
-            print()
-            print("  Usage: /personality <name>")
-            print()
+                _cprint(f"  {name:<12} - {preview}")
+            _cprint("")
+            _cprint("  Usage: /personality <name>")
+            _cprint("")
     
     def _handle_cron_command(self, cmd: str):
         """Handle the /cron command to manage scheduled tasks."""
@@ -4899,7 +4926,7 @@ class HermesCLI:
                     try:
                         opts["repeat"] = int(tokens[i + 1])
                     except ValueError:
-                        print("(._.) --repeat must be an integer")
+                        _cprint("(._.) --repeat must be an integer")
                         return None
                     i += 2
                 elif token == "--skill" and i + 1 < len(tokens):
@@ -4931,40 +4958,40 @@ class HermesCLI:
         tokens = shlex.split(cmd)
 
         if len(tokens) == 1:
-            print()
-            print("+" + "-" * 68 + "+")
-            print("|" + " " * 22 + "(^_^) Scheduled Tasks" + " " * 23 + "|")
-            print("+" + "-" * 68 + "+")
-            print()
-            print("  Commands:")
-            print("    /cron list")
-            print('    /cron add "every 2h" "Check server status" [--skill blogwatcher]')
-            print('    /cron edit <job_id> --schedule "every 4h" --prompt "New task"')
-            print("    /cron edit <job_id> --skill blogwatcher --skill find-nearby")
-            print("    /cron edit <job_id> --remove-skill blogwatcher")
-            print("    /cron edit <job_id> --clear-skills")
-            print("    /cron pause <job_id>")
-            print("    /cron resume <job_id>")
-            print("    /cron run <job_id>")
-            print("    /cron remove <job_id>")
-            print()
+            _cprint("")
+            _cprint("+" + "-" * 68 + "+")
+            _cprint("|" + " " * 22 + "(^_^) Scheduled Tasks" + " " * 23 + "|")
+            _cprint("+" + "-" * 68 + "+")
+            _cprint("")
+            _cprint("  Commands:")
+            _cprint("    /cron list")
+            _cprint('    /cron add "every 2h" "Check server status" [--skill blogwatcher]')
+            _cprint('    /cron edit <job_id> --schedule "every 4h" --prompt "New task"')
+            _cprint("    /cron edit <job_id> --skill blogwatcher --skill find-nearby")
+            _cprint("    /cron edit <job_id> --remove-skill blogwatcher")
+            _cprint("    /cron edit <job_id> --clear-skills")
+            _cprint("    /cron pause <job_id>")
+            _cprint("    /cron resume <job_id>")
+            _cprint("    /cron run <job_id>")
+            _cprint("    /cron remove <job_id>")
+            _cprint("")
             result = _cron_api(action="list")
             jobs = result.get("jobs", []) if result.get("success") else []
             if jobs:
-                print("  Current Jobs:")
-                print("  " + "-" * 63)
+                _cprint("  Current Jobs:")
+                _cprint("  " + "-" * 63)
                 for job in jobs:
                     repeat_str = job.get("repeat", "?")
-                    print(f"    {job['job_id'][:12]:<12} | {job['schedule']:<15} | {repeat_str:<8}")
+                    _cprint(f"    {job['job_id'][:12]:<12} | {job['schedule']:<15} | {repeat_str:<8}")
                     if job.get("skills"):
-                        print(f"      Skills: {', '.join(job['skills'])}")
-                    print(f"      {job.get('prompt_preview', '')}")
+                        _cprint(f"      Skills: {', '.join(job['skills'])}")
+                    _cprint(f"      {job.get('prompt_preview', '')}")
                     if job.get("next_run_at"):
-                        print(f"      Next: {job['next_run_at']}")
-                    print()
+                        _cprint(f"      Next: {job['next_run_at']}")
+                    _cprint("")
             else:
-                print("  No scheduled jobs. Use '/cron add' to create one.")
-            print()
+                _cprint("  No scheduled jobs. Use '/cron add' to create one.")
+            _cprint("")
             return
 
         subcommand = tokens[1].lower()
@@ -4976,36 +5003,36 @@ class HermesCLI:
             result = _cron_api(action="list", include_disabled=opts["all"])
             jobs = result.get("jobs", []) if result.get("success") else []
             if not jobs:
-                print("(._.) No scheduled jobs.")
+                _cprint("(._.) No scheduled jobs.")
                 return
 
-            print()
-            print("Scheduled Jobs:")
-            print("-" * 80)
+            _cprint("")
+            _cprint("Scheduled Jobs:")
+            _cprint("-" * 80)
             for job in jobs:
-                print(f"  ID: {job['job_id']}")
-                print(f"  Name: {job['name']}")
-                print(f"  State: {job.get('state', '?')}")
-                print(f"  Schedule: {job['schedule']} ({job.get('repeat', '?')})")
-                print(f"  Next run: {job.get('next_run_at', 'N/A')}")
+                _cprint(f"  ID: {job['job_id']}")
+                _cprint(f"  Name: {job['name']}")
+                _cprint(f"  State: {job.get('state', '?')}")
+                _cprint(f"  Schedule: {job['schedule']} ({job.get('repeat', '?')})")
+                _cprint(f"  Next run: {job.get('next_run_at', 'N/A')}")
                 if job.get("skills"):
-                    print(f"  Skills: {', '.join(job['skills'])}")
-                print(f"  Prompt: {job.get('prompt_preview', '')}")
+                    _cprint(f"  Skills: {', '.join(job['skills'])}")
+                _cprint(f"  Prompt: {job.get('prompt_preview', '')}")
                 if job.get("last_run_at"):
-                    print(f"  Last run: {job['last_run_at']} ({job.get('last_status', '?')})")
-                print()
+                    _cprint(f"  Last run: {job['last_run_at']} ({job.get('last_status', '?')})")
+                _cprint("")
             return
 
         if subcommand in {"add", "create"}:
             positionals = opts["positionals"]
             if not positionals:
-                print("(._.) Usage: /cron add <schedule> <prompt>")
+                _cprint("(._.) Usage: /cron add <schedule> <prompt>")
                 return
             schedule = opts["schedule"] or positionals[0]
             prompt = opts["prompt"] or " ".join(positionals[1:])
             skills = _normalize_skills(opts["skills"])
             if not prompt and not skills:
-                print("(._.) Please provide a prompt or at least one skill")
+                _cprint("(._.) Please provide a prompt or at least one skill")
                 return
             result = _cron_api(
                 action="create",
@@ -5017,24 +5044,24 @@ class HermesCLI:
                 skills=skills or None,
             )
             if result.get("success"):
-                print(f"(^_^)b Created job: {result['job_id']}")
-                print(f"  Schedule: {result['schedule']}")
+                _cprint(f"(^_^)b Created job: {result['job_id']}")
+                _cprint(f"  Schedule: {result['schedule']}")
                 if result.get("skills"):
-                    print(f"  Skills: {', '.join(result['skills'])}")
-                print(f"  Next run: {result['next_run_at']}")
+                    _cprint(f"  Skills: {', '.join(result['skills'])}")
+                _cprint(f"  Next run: {result['next_run_at']}")
             else:
-                print(f"(x_x) Failed to create job: {result.get('error')}")
+                _cprint(f"(x_x) Failed to create job: {result.get('error')}")
             return
 
         if subcommand == "edit":
             positionals = opts["positionals"]
             if not positionals:
-                print("(._.) Usage: /cron edit <job_id> [--schedule ...] [--prompt ...] [--skill ...]")
+                _cprint("(._.) Usage: /cron edit <job_id> [--schedule ...] [--prompt ...] [--skill ...]")
                 return
             job_id = positionals[0]
             existing = get_job(job_id)
             if not existing:
-                print(f"(._.) Job not found: {job_id}")
+                _cprint(f"(._.) Job not found: {job_id}")
                 return
 
             final_skills = None
@@ -5064,42 +5091,42 @@ class HermesCLI:
             )
             if result.get("success"):
                 job = result["job"]
-                print(f"(^_^)b Updated job: {job['job_id']}")
-                print(f"  Schedule: {job['schedule']}")
+                _cprint(f"(^_^)b Updated job: {job['job_id']}")
+                _cprint(f"  Schedule: {job['schedule']}")
                 if job.get("skills"):
-                    print(f"  Skills: {', '.join(job['skills'])}")
+                    _cprint(f"  Skills: {', '.join(job['skills'])}")
                 else:
-                    print("  Skills: none")
+                    _cprint("  Skills: none")
             else:
-                print(f"(x_x) Failed to update job: {result.get('error')}")
+                _cprint(f"(x_x) Failed to update job: {result.get('error')}")
             return
 
         if subcommand in {"pause", "resume", "run", "remove", "rm", "delete"}:
             positionals = opts["positionals"]
             if not positionals:
-                print(f"(._.) Usage: /cron {subcommand} <job_id>")
+                _cprint(f"(._.) Usage: /cron {subcommand} <job_id>")
                 return
             job_id = positionals[0]
             action = "remove" if subcommand in {"remove", "rm", "delete"} else subcommand
             result = _cron_api(action=action, job_id=job_id, reason="paused from /cron" if action == "pause" else None)
             if not result.get("success"):
-                print(f"(x_x) Failed to {action} job: {result.get('error')}")
+                _cprint(f"(x_x) Failed to {action} job: {result.get('error')}")
                 return
             if action == "pause":
-                print(f"(^_^)b Paused job: {result['job']['name']} ({job_id})")
+                _cprint(f"(^_^)b Paused job: {result['job']['name']} ({job_id})")
             elif action == "resume":
-                print(f"(^_^)b Resumed job: {result['job']['name']} ({job_id})")
-                print(f"  Next run: {result['job'].get('next_run_at')}")
+                _cprint(f"(^_^)b Resumed job: {result['job']['name']} ({job_id})")
+                _cprint(f"  Next run: {result['job'].get('next_run_at')}")
             elif action == "run":
-                print(f"(^_^)b Triggered job: {result['job']['name']} ({job_id})")
-                print("  It will run on the next scheduler tick.")
+                _cprint(f"(^_^)b Triggered job: {result['job']['name']} ({job_id})")
+                _cprint("  It will run on the next scheduler tick.")
             else:
                 removed = result.get("removed_job", {})
-                print(f"(^_^)b Removed job: {removed.get('name', job_id)} ({job_id})")
+                _cprint(f"(^_^)b Removed job: {removed.get('name', job_id)} ({job_id})")
             return
 
-        print(f"(._.) Unknown cron command: {subcommand}")
-        print("  Available: list, add, edit, pause, resume, run, remove")
+        _cprint(f"(._.) Unknown cron command: {subcommand}")
+        _cprint("  Available: list, add, edit, pause, resume, run, remove")
     
     def _handle_skills_command(self, cmd: str):
         """Handle /skills slash command — delegates to hermes_cli.skills_hub."""
@@ -5110,17 +5137,17 @@ class HermesCLI:
         """Show status of the gateway and connected messaging platforms."""
         from gateway.config import load_gateway_config, Platform
         
-        print()
-        print("+" + "-" * 60 + "+")
-        print("|" + " " * 15 + "(✿◠‿◠) Gateway Status" + " " * 17 + "|")
-        print("+" + "-" * 60 + "+")
-        print()
+        _cprint("")
+        _cprint("+" + "-" * 60 + "+")
+        _cprint("|" + " " * 15 + "(✿◠‿◠) Gateway Status" + " " * 17 + "|")
+        _cprint("+" + "-" * 60 + "+")
+        _cprint("")
         
         try:
             config = load_gateway_config()
             
-            print("  Messaging Platform Configuration:")
-            print("  " + "-" * 55)
+            _cprint("  Messaging Platform Configuration:")
+            _cprint("  " + "-" * 55)
             
             platform_status = {
                 Platform.TELEGRAM: ("Telegram", "TELEGRAM_BOT_TOKEN"),
@@ -5133,34 +5160,34 @@ class HermesCLI:
                 if pconfig and pconfig.enabled:
                     home = config.get_home_channel(platform)
                     home_str = f" → {home.name}" if home else ""
-                    print(f"    ✓ {name:<12} Enabled{home_str}")
+                    _cprint(f"    ✓ {name:<12} Enabled{home_str}")
                 else:
-                    print(f"    ○ {name:<12} Not configured ({env_var})")
+                    _cprint(f"    ○ {name:<12} Not configured ({env_var})")
             
-            print()
-            print("  Session Reset Policy:")
-            print("  " + "-" * 55)
+            _cprint("")
+            _cprint("  Session Reset Policy:")
+            _cprint("  " + "-" * 55)
             policy = config.default_reset_policy
-            print(f"    Mode: {policy.mode}")
-            print(f"    Daily reset at: {policy.at_hour}:00")
-            print(f"    Idle timeout: {policy.idle_minutes} minutes")
+            _cprint(f"    Mode: {policy.mode}")
+            _cprint(f"    Daily reset at: {policy.at_hour}:00")
+            _cprint(f"    Idle timeout: {policy.idle_minutes} minutes")
             
-            print()
-            print("  To start the gateway:")
-            print("    python cli.py --gateway")
-            print()
-            print(f"  Configuration file: {display_hermes_home()}/config.yaml")
-            print()
+            _cprint("")
+            _cprint("  To start the gateway:")
+            _cprint("    python cli.py --gateway")
+            _cprint("")
+            _cprint(f"  Configuration file: {display_hermes_home()}/config.yaml")
+            _cprint("")
             
         except Exception as e:
-            print(f"  Error loading gateway config: {e}")
-            print()
-            print("  To configure the gateway:")
-            print("    1. Set environment variables:")
-            print("       TELEGRAM_BOT_TOKEN=your_token")
-            print("       DISCORD_BOT_TOKEN=your_token")
-            print(f"    2. Or configure settings in {display_hermes_home()}/config.yaml")
-            print()
+            _cprint(f"  Error loading gateway config: {e}")
+            _cprint("")
+            _cprint("  To configure the gateway:")
+            _cprint("    1. Set environment variables:")
+            _cprint("       TELEGRAM_BOT_TOKEN=your_token")
+            _cprint("       DISCORD_BOT_TOKEN=your_token")
+            _cprint(f"    2. Or configure settings in {display_hermes_home()}/config.yaml")
+            _cprint("")
     
     def process_command(self, command: str) -> bool:
         """
@@ -5351,10 +5378,10 @@ class HermesCLI:
                 mgr = get_plugin_manager()
                 plugins = mgr.list_plugins()
                 if not plugins:
-                    print("No plugins installed.")
-                    print(f"Drop plugin directories into {display_hermes_home()}/plugins/ to get started.")
+                    _cprint("No plugins installed.")
+                    _cprint(f"Drop plugin directories into {display_hermes_home()}/plugins/ to get started.")
                 else:
-                    print(f"Plugins ({len(plugins)}):")
+                    _cprint(f"Plugins ({len(plugins)}):")
                     for p in plugins:
                         status = "✓" if p["enabled"] else "✗"
                         version = f" v{p['version']}" if p["version"] else ""
@@ -5363,9 +5390,9 @@ class HermesCLI:
                         parts = [x for x in [tools, hooks] if x]
                         detail = f" ({', '.join(parts)})" if parts else ""
                         error = f" — {p['error']}" if p["error"] else ""
-                        print(f"  {status} {p['name']}{version}{detail}{error}")
+                        _cprint(f"  {status} {p['name']}{version}{detail}{error}")
             except Exception as e:
-                print(f"Plugin system error: {e}")
+                _cprint(f"Plugin system error: {e}")
         elif canonical == "rollback":
             self._handle_rollback_command(cmd_original)
         elif canonical == "stop":
@@ -5392,7 +5419,7 @@ class HermesCLI:
             self._handle_voice_command(cmd_original)
         elif canonical == "effects":
             if _base_word == "easteregg":
-                print("  /easteregg is deprecated — use /effects instead.")
+                _cprint("  /easteregg is deprecated — use /effects instead.")
             self._handle_effects_command(cmd_original)
         else:
             # Check for user-defined quick commands (bypass agent loop, no LLM call)
@@ -5609,7 +5636,7 @@ class HermesCLI:
                     self._app.invalidate()
                     import time as _tmod
                     _tmod.sleep(0.05)  # brief pause for refresh
-                print()
+                _cprint("")
                 ChatConsole().print(f"[{_accent_hex()}]{'─' * 40}[/]")
                 _cprint(f"  ✅ Background task #{task_num} complete")
                 _cprint(f"  Prompt: \"{prompt[:60]}{'...' if len(prompt) > 60 else ''}\"")
@@ -5627,7 +5654,7 @@ class HermesCLI:
                         _resp_text = "#FFF8DC"
 
                     _chat_console = ChatConsole()
-                    _chat_console.print(Panel(
+                    _chat_console._cprint(Panel(
                         _rich_text_from_ansi(response),
                         title=f"[{_resp_color} bold]{label} (background #{task_num})[/]",
                         title_align="left",
@@ -5650,7 +5677,7 @@ class HermesCLI:
                     self._app.invalidate()
                     import time as _tmod
                     _tmod.sleep(0.05)
-                print()
+                _cprint("")
                 _cprint(f"  ❌ Background task #{task_num} failed: {e}")
             finally:
                 self._background_tasks.pop(task_id, None)
@@ -5740,7 +5767,7 @@ class HermesCLI:
                 if self._app:
                     self._app.invalidate()
                     time.sleep(0.05)
-                print()
+                _cprint("")
 
                 if response:
                     try:
@@ -5769,7 +5796,7 @@ class HermesCLI:
                 if self._app:
                     self._app.invalidate()
                     time.sleep(0.05)
-                print()
+                _cprint("")
                 _cprint(f"  ❌ /btw failed: {e}")
             finally:
                 if self._app:
@@ -5825,7 +5852,7 @@ class HermesCLI:
             except Exception:
                 pass
 
-            print()
+            _cprint("")
 
             # Extract port for connectivity checks
             _port = 9222
@@ -5847,10 +5874,10 @@ class HermesCLI:
                 pass
 
             if _already_open:
-                print(f"   ✓ Chrome is already listening on port {_port}")
+                _cprint(f"   ✓ Chrome is already listening on port {_port}")
             elif cdp_url == _DEFAULT_CDP:
                 # Try to auto-launch Chrome with remote debugging
-                print("   Chrome isn't running with remote debugging — attempting to launch...")
+                _cprint("   Chrome isn't running with remote debugging — attempting to launch...")
                 _launched = self._try_launch_chrome_debug(_port, _plat.system())
                 if _launched:
                     # Wait for the port to come up
@@ -5866,12 +5893,12 @@ class HermesCLI:
                         except (OSError, socket.timeout):
                             _time.sleep(0.5)
                     if _already_open:
-                        print(f"   ✓ Chrome launched and listening on port {_port}")
+                        _cprint(f"   ✓ Chrome launched and listening on port {_port}")
                     else:
-                        print(f"   ⚠ Chrome launched but port {_port} isn't responding yet")
-                        print("     You may need to close existing Chrome windows first and retry")
+                        _cprint(f"   ⚠ Chrome launched but port {_port} isn't responding yet")
+                        _cprint("     You may need to close existing Chrome windows first and retry")
                 else:
-                    print("   ⚠ Could not auto-launch Chrome")
+                    _cprint("   ⚠ Could not auto-launch Chrome")
                     # Show manual instructions as fallback
                     sys_name = _plat.system()
                     if sys_name == "Darwin":
@@ -5880,15 +5907,15 @@ class HermesCLI:
                         chrome_cmd = 'chrome.exe --remote-debugging-port=9222'
                     else:
                         chrome_cmd = "google-chrome --remote-debugging-port=9222"
-                    print(f"     Launch Chrome manually: {chrome_cmd}")
+                    _cprint(f"     Launch Chrome manually: {chrome_cmd}")
             else:
-                print(f"   ⚠ Port {_port} is not reachable at {cdp_url}")
+                _cprint(f"   ⚠ Port {_port} is not reachable at {cdp_url}")
 
             os.environ["BROWSER_CDP_URL"] = cdp_url
-            print()
-            print("🌐 Browser connected to live Chrome via CDP")
-            print(f"   Endpoint: {cdp_url}")
-            print()
+            _cprint("")
+            _cprint("🌐 Browser connected to live Chrome via CDP")
+            _cprint(f"   Endpoint: {cdp_url}")
+            _cprint("")
 
             # Inject context message so the model knows
             if hasattr(self, '_pending_input'):
@@ -5910,10 +5937,10 @@ class HermesCLI:
                     cleanup_all_browsers()
                 except Exception:
                     pass
-                print()
-                print("🌐 Browser disconnected from live Chrome")
-                print("   Browser tools reverted to default mode (local headless or cloud provider)")
-                print()
+                _cprint("")
+                _cprint("🌐 Browser disconnected from live Chrome")
+                _cprint("   Browser tools reverted to default mode (local headless or cloud provider)")
+                _cprint("")
 
                 if hasattr(self, '_pending_input'):
                     self._pending_input.put(
@@ -5921,15 +5948,15 @@ class HermesCLI:
                         "Browser tools are back to default mode (headless local browser or cloud provider).]"
                     )
             else:
-                print()
-                print("Browser is not connected to live Chrome (already using default mode)")
-                print()
+                _cprint("")
+                _cprint("Browser is not connected to live Chrome (already using default mode)")
+                _cprint("")
 
         elif sub == "status":
-            print()
+            _cprint("")
             if current:
-                print("🌐 Browser: connected to live Chrome via CDP")
-                print(f"   Endpoint: {current}")
+                _cprint("🌐 Browser: connected to live Chrome via CDP")
+                _cprint(f"   Endpoint: {current}")
 
                 _port = 9222
                 try:
@@ -5942,9 +5969,9 @@ class HermesCLI:
                     s.settimeout(1)
                     s.connect(("127.0.0.1", _port))
                     s.close()
-                    print("   Status: ✓ reachable")
+                    _cprint("   Status: ✓ reachable")
                 except (OSError, Exception):
-                    print("   Status: ⚠ not reachable (Chrome may not be running)")
+                    _cprint("   Status: ⚠ not reachable (Chrome may not be running)")
             else:
                 try:
                     from tools.browser_tool import _get_cloud_provider
@@ -5953,29 +5980,29 @@ class HermesCLI:
                     provider = None
 
                 if provider is not None:
-                    print(f"🌐 Browser: {provider.provider_name()} (cloud)")
+                    _cprint(f"🌐 Browser: {provider.provider_name()} (cloud)")
                 else:
-                    print("🌐 Browser: local headless Chromium (agent-browser)")
-            print()
-            print("   /browser connect      — connect to your live Chrome")
-            print("   /browser disconnect   — revert to default")
-            print()
+                    _cprint("🌐 Browser: local headless Chromium (agent-browser)")
+            _cprint("")
+            _cprint("   /browser connect      — connect to your live Chrome")
+            _cprint("   /browser disconnect   — revert to default")
+            _cprint("")
 
         else:
-            print()
-            print("Usage: /browser connect|disconnect|status")
-            print()
-            print("   connect      Connect browser tools to your live Chrome session")
-            print("   disconnect   Revert to default browser backend")
-            print("   status       Show current browser mode")
-            print()
+            _cprint("")
+            _cprint("Usage: /browser connect|disconnect|status")
+            _cprint("")
+            _cprint("   connect      Connect browser tools to your live Chrome session")
+            _cprint("   disconnect   Revert to default browser backend")
+            _cprint("   status       Show current browser mode")
+            _cprint("")
 
     def _handle_skin_command(self, cmd: str):
         """Handle /skin [name] — show or change the display skin."""
         try:
             from hermes_cli.skin_engine import list_skins, set_active_skin, get_active_skin_name
         except ImportError:
-            print("Skin engine not available.")
+            _cprint("Skin engine not available.")
             return
 
         parts = cmd.strip().split(maxsplit=1)
@@ -5983,21 +6010,21 @@ class HermesCLI:
             # Show current skin and list available
             current = get_active_skin_name()
             skins = list_skins()
-            print(f"\n  Current skin: {current}")
-            print("  Available skins:")
+            _cprint(f"\n  Current skin: {current}")
+            _cprint("  Available skins:")
             for s in skins:
                 marker = " ●" if s["name"] == current else "  "
                 source = f" ({s['source']})" if s["source"] == "user" else ""
-                print(f"   {marker} {s['name']}{source} — {s['description']}")
-            print("\n  Usage: /skin <name>")
-            print(f"  Custom skins: drop a YAML file in {display_hermes_home()}/skins/\n")
+                _cprint(f"   {marker} {s['name']}{source} — {s['description']}")
+            _cprint("\n  Usage: /skin <name>")
+            _cprint(f"  Custom skins: drop a YAML file in {display_hermes_home()}/skins/\n")
             return
 
         new_skin = parts[1].strip().lower()
         available = {s["name"] for s in list_skins()}
         if new_skin not in available:
-            print(f"  Unknown skin: {new_skin}")
-            print(f"  Available: {', '.join(sorted(available))}")
+            _cprint(f"  Unknown skin: {new_skin}")
+            _cprint(f"  Available: {', '.join(sorted(available))}")
             return
 
         set_active_skin(new_skin)
@@ -6012,12 +6039,12 @@ class HermesCLI:
         _spinner_key = _config_style or _skin_style or "dots"
         _COMMAND_SPINNER_FRAMES = _SPINNER_STYLES.get(_spinner_key, _SPINNER_STYLES["dots"])
         if save_config_value("display.skin", new_skin):
-            print(f"  Skin set to: {new_skin} (saved)")
+            _cprint(f"  Skin set to: {new_skin} (saved)")
         else:
-            print(f"  Skin set to: {new_skin}")
-        print("  Note: banner colors will update on next session start.")
+            _cprint(f"  Skin set to: {new_skin}")
+        _cprint("  Note: banner colors will update on next session start.")
         if self._apply_tui_skin_style():
-            print("  Prompt + TUI colors updated.")
+            _cprint("  Prompt + TUI colors updated.")
 
     def _toggle_verbose(self):
         """Cycle tool progress mode: off → new → all → verbose → off."""
@@ -6064,10 +6091,10 @@ class HermesCLI:
         current = bool(os.environ.get("HERMES_YOLO_MODE"))
         if current:
             os.environ.pop("HERMES_YOLO_MODE", None)
-            self.console.print("  ⚠ YOLO mode [bold red]OFF[/] — dangerous commands will require approval.")
+            _cprint("  ⚠ YOLO mode \033[1;31mOFF\033[0m — dangerous commands will require approval.")
         else:
             os.environ["HERMES_YOLO_MODE"] = "1"
-            self.console.print("  ⚡ YOLO mode [bold green]ON[/] — all commands auto-approved. Use with caution.")
+            _cprint("  ⚡ YOLO mode \033[1;32mON\033[0m — all commands auto-approved. Use with caution.")
 
     def _handle_reasoning_command(self, cmd: str):
         """Handle /reasoning — manage effort level and display toggle.
@@ -6147,22 +6174,22 @@ class HermesCLI:
     def _manual_compress(self):
         """Manually trigger context compression on the current conversation."""
         if not self.conversation_history or len(self.conversation_history) < 4:
-            print("(._.) Not enough conversation to compress (need at least 4 messages).")
+            _cprint("(._.) Not enough conversation to compress (need at least 4 messages).")
             return
 
         if not self.agent:
-            print("(._.) No active agent -- send a message first.")
+            _cprint("(._.) No active agent -- send a message first.")
             return
 
         if not self.agent.compression_enabled:
-            print("(._.) Compression is disabled in config.")
+            _cprint("(._.) Compression is disabled in config.")
             return
 
         original_count = len(self.conversation_history)
         try:
             from agent.model_metadata import estimate_messages_tokens_rough
             approx_tokens = estimate_messages_tokens_rough(self.conversation_history)
-            print(f"🗜️  Compressing {original_count} messages (~{approx_tokens:,} tokens)...")
+            _cprint(f"🗜️  Compressing {original_count} messages (~{approx_tokens:,} tokens)...")
 
             compressed, new_system = self.agent._compress_context(
                 self.conversation_history,
@@ -6172,34 +6199,34 @@ class HermesCLI:
             self.conversation_history = compressed
             new_count = len(self.conversation_history)
             new_tokens = estimate_messages_tokens_rough(self.conversation_history)
-            print(
+            _cprint(
                 f"  ✅ Compressed: {original_count} → {new_count} messages "
                 f"(~{approx_tokens:,} → ~{new_tokens:,} tokens)"
             )
 
         except Exception as e:
-            print(f"  ❌ Compression failed: {e}")
+            _cprint(f"  ❌ Compression failed: {e}")
 
     def _show_usage(self):
         """Show rate limits (if available) and session token usage."""
         if not self.agent:
-            print("(._.) No active agent -- send a message first.")
+            _cprint("(._.) No active agent -- send a message first.")
             return
 
         agent = self.agent
         calls = agent.session_api_calls
 
         if calls == 0:
-            print("(._.) No API calls made yet in this session.")
+            _cprint("(._.) No API calls made yet in this session.")
             return
 
         # ── Rate limits (shown first when available) ────────────────
         rl_state = agent.get_rate_limit_state()
         if rl_state and rl_state.has_data:
             from agent.rate_limit_tracker import format_rate_limit_display
-            print()
-            print(format_rate_limit_display(rl_state))
-            print()
+            _cprint("")
+            _cprint(format_rate_limit_display(rl_state))
+            _cprint("")
 
         # ── Session token usage ─────────────────────────────────────
         input_tokens = getattr(agent, "session_input_tokens", 0) or 0
@@ -6230,33 +6257,33 @@ class HermesCLI:
         )
         elapsed = format_duration_compact((datetime.now() - self.session_start).total_seconds())
 
-        print("  📊 Session Token Usage")
-        print(f"  {'─' * 40}")
-        print(f"  Model:                     {agent.model}")
-        print(f"  Input tokens:              {input_tokens:>10,}")
-        print(f"  Cache read tokens:         {cache_read_tokens:>10,}")
-        print(f"  Cache write tokens:        {cache_write_tokens:>10,}")
-        print(f"  Output tokens:             {output_tokens:>10,}")
-        print(f"  Prompt tokens (total):     {prompt:>10,}")
-        print(f"  Completion tokens:         {completion:>10,}")
-        print(f"  Total tokens:              {total:>10,}")
-        print(f"  API calls:                 {calls:>10,}")
-        print(f"  Session duration:          {elapsed:>10}")
-        print(f"  Cost status:              {cost_result.status:>10}")
-        print(f"  Cost source:              {cost_result.source:>10}")
+        _cprint("  📊 Session Token Usage")
+        _cprint(f"  {'─' * 40}")
+        _cprint(f"  Model:                     {agent.model}")
+        _cprint(f"  Input tokens:              {input_tokens:>10,}")
+        _cprint(f"  Cache read tokens:         {cache_read_tokens:>10,}")
+        _cprint(f"  Cache write tokens:        {cache_write_tokens:>10,}")
+        _cprint(f"  Output tokens:             {output_tokens:>10,}")
+        _cprint(f"  Prompt tokens (total):     {prompt:>10,}")
+        _cprint(f"  Completion tokens:         {completion:>10,}")
+        _cprint(f"  Total tokens:              {total:>10,}")
+        _cprint(f"  API calls:                 {calls:>10,}")
+        _cprint(f"  Session duration:          {elapsed:>10}")
+        _cprint(f"  Cost status:              {cost_result.status:>10}")
+        _cprint(f"  Cost source:              {cost_result.source:>10}")
         if cost_result.amount_usd is not None:
             prefix = "~" if cost_result.status == "estimated" else ""
-            print(f"  Total cost:              {prefix}${float(cost_result.amount_usd):>10.4f}")
+            _cprint(f"  Total cost:              {prefix}${float(cost_result.amount_usd):>10.4f}")
         elif cost_result.status == "included":
-            print(f"  Total cost:              {'included':>10}")
+            _cprint(f"  Total cost:              {'included':>10}")
         else:
-            print(f"  Total cost:              {'n/a':>10}")
-        print(f"  {'─' * 40}")
-        print(f"  Current context:  {last_prompt:,} / {ctx_len:,} ({pct:.0f}%)")
-        print(f"  Messages:         {msg_count}")
-        print(f"  Compressions:     {compressions}")
+            _cprint(f"  Total cost:              {'n/a':>10}")
+        _cprint(f"  {'─' * 40}")
+        _cprint(f"  Current context:  {last_prompt:,} / {ctx_len:,} ({pct:.0f}%)")
+        _cprint(f"  Messages:         {msg_count}")
+        _cprint(f"  Compressions:     {compressions}")
         if cost_result.status == "unknown":
-            print(f"  Note:             Pricing unknown for {agent.model}")
+            _cprint(f"  Note:             Pricing unknown for {agent.model}")
 
         if self.verbose:
             logging.getLogger().setLevel(logging.DEBUG)
@@ -6279,7 +6306,7 @@ class HermesCLI:
                 try:
                     days = int(parts[i + 1])
                 except ValueError:
-                    print(f"  Invalid --days value: {parts[i + 1]}")
+                    _cprint(f"  Invalid --days value: {parts[i + 1]}")
                     return
                 i += 2
             elif parts[i] == "--source" and i + 1 < len(parts):
@@ -6295,10 +6322,10 @@ class HermesCLI:
             db = SessionDB()
             engine = InsightsEngine(db)
             report = engine.generate(days=days, source=source)
-            print(engine.format_terminal(report))
+            _cprint(engine.format_terminal(report))
             db.close()
         except Exception as e:
-            print(f"  Error generating insights: {e}")
+            _cprint(f"  Error generating insights: {e}")
 
     def _check_config_mcp_changes(self) -> None:
         """Detect mcp_servers changes in config.yaml and auto-reload MCP connections.
@@ -6371,7 +6398,7 @@ class HermesCLI:
                 old_servers = set(_servers.keys())
 
             if not self._command_running:
-                print("🔄 Reloading MCP servers...")
+                _cprint("🔄 Reloading MCP servers...")
 
             # Shutdown existing connections
             shutdown_mcp_servers()
@@ -6388,15 +6415,15 @@ class HermesCLI:
             reconnected = connected_servers & old_servers
 
             if reconnected:
-                print(f"  ♻️  Reconnected: {', '.join(sorted(reconnected))}")
+                _cprint(f"  ♻️  Reconnected: {', '.join(sorted(reconnected))}")
             if added:
-                print(f"  ➕ Added: {', '.join(sorted(added))}")
+                _cprint(f"  ➕ Added: {', '.join(sorted(added))}")
             if removed:
-                print(f"  ➖ Removed: {', '.join(sorted(removed))}")
+                _cprint(f"  ➖ Removed: {', '.join(sorted(removed))}")
             if not connected_servers:
-                print("  No MCP servers connected.")
+                _cprint("  No MCP servers connected.")
             else:
-                print(f"  🔧 {len(new_tools)} tool(s) available from {len(connected_servers)} server(s)")
+                _cprint(f"  🔧 {len(new_tools)} tool(s) available from {len(connected_servers)} server(s)")
 
             # Refresh the agent's tool list so the model can call new tools
             if self.agent is not None:
@@ -6438,10 +6465,10 @@ class HermesCLI:
                 except Exception:
                     pass  # Best-effort
 
-            print(f"  ✅ Agent updated — {len(self.agent.tools if self.agent else [])} tool(s) available")
+            _cprint(f"  ✅ Agent updated — {len(self.agent.tools if self.agent else [])} tool(s) available")
 
         except Exception as e:
-            print(f"  ❌ MCP reload failed: {e}")
+            _cprint(f"  ❌ MCP reload failed: {e}")
 
     # ====================================================================
     # Tool-call generation indicator (shown during streaming)
@@ -7054,10 +7081,10 @@ class HermesCLI:
 
         # /effects list — print catalogue
         if len(parts) >= 2 and parts[1].strip().lower() == "list":
-            print()
+            _cprint("")
             for name, desc in sorted(EFFECT_DESCRIPTIONS.items()):
-                print(f"  {name:<14} {desc}")
-            print()
+                _cprint(f"  {name:<14} {desc}")
+            _cprint("")
             return
 
         effect_name = "matrix"

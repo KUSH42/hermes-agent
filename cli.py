@@ -2327,8 +2327,11 @@ class HermesCLI:
                 except Exception:
                     pass
 
-        # Open reasoning box on first reasoning token
-        if not getattr(self, "_reasoning_box_opened", False):
+        # Open reasoning box on first reasoning token.
+        # Skip if tool gen has already started — reopening reasoning after
+        # a tool block mounts would place the reasoning panel BELOW the tool
+        # call in the DOM, visually inverting the expected order.
+        if not getattr(self, "_reasoning_box_opened", False) and not getattr(self, "_tool_gen_active", False):
             self._reasoning_box_opened = True
             tui = _hermes_app
             if tui is not None:
@@ -2796,6 +2799,7 @@ class HermesCLI:
         self._reasoning_box_opened = False
         self._reasoning_buf = ""
         self._reasoning_preview_buf = ""
+        self._tool_gen_active = False
         # Close TUI reasoning panel if it was opened in non-streaming mode
         if getattr(self, "_on_reasoning_tui_opened", False):
             tui = _hermes_app
@@ -6471,6 +6475,7 @@ class HermesCLI:
         then opens a StreamingToolBlock so the user sees an animated header
         (spinner + timer) while argument generation is in progress.
         """
+        self._tool_gen_active = True
         if getattr(self, "_stream_box_opened", False):
             self._flush_stream()
             self._stream_box_opened = False

@@ -229,6 +229,7 @@ class ToolBlock(Widget):
     """
 
     DEFAULT_CSS = "ToolBlock { height: auto; }"
+    _content_type: str = "tool"
 
     def __init__(
         self,

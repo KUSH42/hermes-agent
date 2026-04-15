@@ -311,6 +311,7 @@ class CopyableBlock(Widget):
     """Wraps CopyableRichLog with a hover-reveal copy button."""
 
     DEFAULT_CSS = "CopyableBlock { height: auto; }"
+    _content_type: str = "prose"
 
     def __init__(self, _log_id: str | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -720,6 +721,23 @@ class MessagePanel(Widget):
     def _has_any_prose_content(self) -> bool:
         return any(block.log._plain_lines for block in self._prose_blocks)
 
+    def _maybe_insert_type_gap(self, block: Widget) -> None:
+        """Insert a spacer line if the previous sibling is a different content type."""
+        if not self.children:
+            return
+        prev = self.children[-1]
+        # Skip non-content children (TitledRule, hidden separators, etc.)
+        prev_type = getattr(prev, "_content_type", None)
+        if prev_type is None:
+            return
+        new_type = getattr(block, "_content_type", None)
+        if new_type is None or new_type == prev_type:
+            return
+        spacer = Static("")
+        spacer.styles.height = 1
+        spacer.styles.min_height = 1
+        self.mount(spacer)
+
     def _mount_nonprose_block(self, block: Widget) -> None:
         """Mount a non-prose block in timeline order.
 
@@ -735,8 +753,18 @@ class MessagePanel(Widget):
             and self.children[-1] is self._response_block
             and not self._has_any_prose_content()
         ):
+            # Bootstrap: mount before response_block, then add type gap
+            # between the new block and response_block if types differ.
             self.mount(block, before=self._response_block)
+            block_type = getattr(block, "_content_type", None)
+            resp_type = getattr(self._response_block, "_content_type", None)
+            if block_type and resp_type and block_type != resp_type:
+                spacer = Static("")
+                spacer.styles.height = 1
+                spacer.styles.min_height = 1
+                self.mount(spacer, before=self._response_block)
         else:
+            self._maybe_insert_type_gap(block)
             self.mount(block)
 
     def ensure_prose_block(self) -> CopyableBlock:
@@ -751,6 +779,7 @@ class MessagePanel(Widget):
             id=f"prose-{self._msg_id}-{len(self._prose_blocks)}",
             _log_id=f"prose-log-{self._msg_id}-{len(self._prose_blocks)}",
         )
+        self._maybe_insert_type_gap(new_prose)
         self.mount(new_prose)
         self._prose_blocks.append(new_prose)
         self._active_prose_block = new_prose
@@ -864,6 +893,7 @@ class StreamingCodeBlock(Widget):
         margin-bottom: 1;
     }
     """
+    _content_type: str = "code"
 
     def __init__(
         self,
@@ -1350,6 +1380,7 @@ class ReasoningPanel(Widget):
         background: $accent 5%;
     }
     """
+    _content_type: str = "reasoning"
 
     def __init__(self, **kwargs: Any) -> None:
         self._reasoning_log = CopyableRichLog(markup=False, highlight=False, wrap=True, id="reasoning-log")

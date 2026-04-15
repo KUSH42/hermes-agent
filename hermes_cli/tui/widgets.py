@@ -3399,7 +3399,7 @@ class TTEWidget(Widget):
             pass
 
 
-class StartupBannerWidget(Widget):
+class StartupBannerWidget(Static):
     """Lightweight inline startup banner host inside OutputPanel.
 
     Used for startup TTE frames so animation doesn't go through
@@ -3413,10 +3413,8 @@ class StartupBannerWidget(Widget):
     }
     """
 
-    frame = reactive(Text(""), repaint=True)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(Text(""), **kwargs)
 
     def set_frame(self, rich_text: Text) -> None:
-        self.frame = rich_text
-
-    def render(self) -> RenderResult:
-        return self.frame
+        self.update(rich_text)

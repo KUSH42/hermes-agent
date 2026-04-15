@@ -3226,7 +3226,12 @@ class HermesCLI:
 
     def _ensure_tui_startup_banner_widget(self):
         """Ensure a lightweight startup banner widget exists in OutputPanel."""
-        from hermes_cli.tui.widgets import OutputPanel, StartupBannerWidget, ThinkingWidget
+        from hermes_cli.tui.widgets import (
+            MessagePanel,
+            OutputPanel,
+            StartupBannerWidget,
+            ThinkingWidget,
+        )
 
         app = _hermes_app
         if app is None:
@@ -3244,7 +3249,14 @@ class HermesCLI:
                         break
                 if widget is None:
                     widget = StartupBannerWidget(id="startup-banner")
-                    panel.mount(widget, before=panel.query_one(ThinkingWidget))
+                    anchor = None
+                    for child in panel.children:
+                        if isinstance(child, MessagePanel):
+                            anchor = child
+                            break
+                    if anchor is None:
+                        anchor = panel.query_one(ThinkingWidget)
+                    panel.mount(widget, before=anchor)
                 result["widget"] = widget
             except Exception:
                 result["widget"] = None
@@ -3293,17 +3305,20 @@ class HermesCLI:
                             log = msg.current_prose_log()
                             width = int(getattr(log.scrollable_content_region, "width", 0) or 0)
                             if width > 0:
-                                result["width"] = width
+                                result["width"] = max(1, width - 1)
                                 return
 
                         panel_width = int(getattr(panel.scrollable_content_region, "width", 0) or 0)
                         if panel_width > 0:
-                            result["width"] = panel_width
+                            result["width"] = max(1, panel_width - 1)
                             return
 
                     app_width = int(getattr(getattr(app, "size", None), "width", 0) or 0)
                     if app_width > 0:
-                        # OutputPanel reserves a 1-cell vertical scrollbar.
+                        # Reserve one cell for the vertical scrollbar even
+                        # before overflow has occurred, otherwise startup
+                        # content is rendered one column too wide and shifts
+                        # when the welcome text makes the pane scrollable.
                         result["width"] = max(1, app_width - 1)
                 finally:
                     done.set()
@@ -3797,14 +3812,7 @@ class HermesCLI:
         # → TUI output queue.  Must happen before show_banner() so banner output
         # goes to the panel, not stdout.
         self.console = ChatConsole()
-        self.show_banner_with_startup_effect(tui=True)
-        # When startup animation uses StartupBannerWidget, there may be no
-        # MessagePanel yet. Create the usual headerless startup message so the
-        # welcome/help lines render below the banner without a titled rule.
         self._ensure_tui_startup_message()
-        if self._resumed:
-            if self._preload_resumed_session():
-                self._display_resumed_history()
         try:
             from hermes_cli.skin_engine import get_active_skin
             _welcome_skin = get_active_skin()
@@ -3824,6 +3832,10 @@ class HermesCLI:
             )
             self._startup_skills_line_shown = True
         self.console.print()
+        self.show_banner_with_startup_effect(tui=True)
+        if self._resumed:
+            if self._preload_resumed_session():
+                self._display_resumed_history()
         # Push initial status bar data to TUI
         try:
             self._push_tui_status()

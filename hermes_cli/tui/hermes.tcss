@@ -124,7 +124,7 @@ MessagePanel.--entering {
  * prepended ▌ had — it only appeared on the first row of wrapped lines. */
 
 ReasoningPanel {
-    margin: 0 1;
+    margin: 0 2;
     border-left: vkey $primary 40%;
 }
 
@@ -428,6 +428,7 @@ FPSCounter {
 
 HermesApp.density-compact MessagePanel          { margin: 0; }
 HermesApp.density-compact ReasoningPanel        { margin: 0; }
+HermesApp.density-compact CopyableBlock         { margin: 0; }
 HermesApp.density-compact UserMessagePanel         { margin: 0; padding: 0 1; }
 HermesApp.density-compact StatusBar             { padding: 0; }
 HermesApp.density-compact HintBar               { padding: 0; }

@@ -244,18 +244,21 @@ class CopyableRichLog(RichLog, can_focus=False):
         When the first streaming token arrives before layout completes,
         scrollable_content_region.width is 0, collapsing text to ~1-14 chars.
         Fix: resolve the target width here and pass it explicitly, falling back
-        to app.size.width when the widget region is not yet populated.
+        to self.size.width (post-layout) or app.width - scrollbar (pre-layout).
         """
         if width is None:
             region_w = self.scrollable_content_region.width
-            # app.size.width is the terminal column count — always available.
-            # Take the max so pre-layout writes (region_w may be any small
-            # number, not just 0) still use the full terminal width.
-            try:
-                app_w = self.app.size.width
-            except Exception:
-                app_w = 0
-            width = max(region_w, app_w) or None
+            if region_w > 0:
+                width = region_w
+            elif self.size.width > 0:
+                # Post-layout: widget size accounts for parent scrollbar + margins
+                width = self.size.width
+            else:
+                # Pre-layout fallback: subtract OutputPanel scrollbar (1 col)
+                try:
+                    width = max(self.app.size.width - 1, 20)
+                except Exception:
+                    width = 80
         return super().write(  # type: ignore[return-value]
             content,
             width=width,
@@ -310,7 +313,7 @@ class CopyableRichLog(RichLog, can_focus=False):
 class CopyableBlock(Widget):
     """Wraps CopyableRichLog with a hover-reveal copy button."""
 
-    DEFAULT_CSS = "CopyableBlock { height: auto; }"
+    DEFAULT_CSS = "CopyableBlock { height: auto; margin: 0 2; }"
     _content_type: str = "prose"
 
     def __init__(self, _log_id: str | None = None, **kwargs: Any) -> None:
@@ -1364,7 +1367,7 @@ class ReasoningPanel(Widget):
     ReasoningPanel {
         display: none;
         height: auto;
-        margin: 0 1;
+        margin: 0 2;
     }
     ReasoningPanel.visible {
         display: block;

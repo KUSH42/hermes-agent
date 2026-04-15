@@ -1705,7 +1705,7 @@ class TitledRule(PulseMixin, Widget):
         if metrics_text:
             t.append(f" {metrics_text}", style="dim")
         if ts_text:
-            t.append(f" {ts_text}", style="dim")
+            t.append(f" · {ts_text}", style="dim")
         t.append_text(state_suffix)
         return t
 
@@ -2169,34 +2169,34 @@ class StatusBar(PulseMixin, Widget):
             t.append("connecting…", style=f"dim")
         else:
             t.append(model, style="dim")
+            t.append(" · ", style="dim")
 
         if width < 40:
             # Minimal: model · ctx
             if ctx_label:
-                t.append(" · ", style="dim")
                 t.append(ctx_label, style="dim")
         elif width < 60:
-            # Compact: % · ctx (no bar)
+            # Compact: model · % · ctx (no bar)
             if enabled:
                 pct_int = min(int(progress * 100), 100)
-                t.append(" · ", style="dim")
                 t.append(f"{pct_int}%", style=StatusBar._compaction_color(progress, _vars))
+                if ctx_label:
+                    t.append(" · ", style="dim")
             if ctx_label:
-                t.append(" · ", style="dim")
                 t.append(ctx_label, style="dim")
         else:
-            # Full: bar % · ctx
+            # Full: model · bar % · ctx
             if enabled:
                 pct_int = min(int(progress * 100), 100)
                 filled  = min(int(progress * _BAR_WIDTH), _BAR_WIDTH)
                 bar_str = _BAR_FILLED * filled + _BAR_EMPTY * (_BAR_WIDTH - filled)
                 bar_color = StatusBar._compaction_color(progress, _vars)
-                t.append("  ")
                 t.append(bar_str, style=bar_color)
                 t.append(" ")
                 t.append(f"{pct_int}%", style=bar_color)
+                if ctx_label:
+                    t.append(" · ", style="dim")
             if ctx_label:
-                t.append(" · ", style="dim")
                 t.append(ctx_label, style="dim")
 
         # Active-file breadcrumb — shown when agent is using a file-touching tool

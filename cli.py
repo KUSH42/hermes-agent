@@ -3094,6 +3094,9 @@ class HermesCLI:
             # Route agent status output through prompt_toolkit so ANSI escape
             # sequences aren't garbled by patch_stdout's StdoutProxy (#2262).
             self.agent._print_fn = _cprint
+            # Wire TUI status push on every API response (live ctx/compaction)
+            if _hermes_app is not None and hasattr(self.agent, "context_compressor"):
+                self.agent.context_compressor.on_usage_update = self._push_tui_status
             self._active_agent_route_signature = (
                 effective_model,
                 runtime.get("provider"),

@@ -7,7 +7,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from hermes_cli.tui.app import HermesApp
-from hermes_cli.tui.widgets import LiveLineWidget, MessagePanel, OutputPanel, ThinkingWidget
+from hermes_cli.tui.widgets import (
+    LiveLineWidget,
+    MessagePanel,
+    OutputPanel,
+    ThinkingWidget,
+    UserMessagePanel,
+)
 
 
 @pytest.mark.asyncio
@@ -359,6 +365,10 @@ async def test_copyable_rich_log_widget_and_offset_resolves():
         log = msg.query_one(CopyableRichLog)
         log.write(Text("selectable content"))
         await pilot.pause()
+        # Force layout settle — CopyableRichLog height:auto needs a refresh
+        # cycle to populate the compositor map before get_widget_and_offset_at.
+        log.refresh()
+        await pilot.pause()
 
         region = app.screen.find_widget(log).region
 
@@ -368,3 +378,49 @@ async def test_copyable_rich_log_widget_and_offset_resolves():
         )
         assert _widget is log, f"expected CopyableRichLog, got {_widget}"
         assert offset is not None, "offset must not be None for selection"
+
+
+@pytest.mark.asyncio
+async def test_evict_old_turns_no_eviction_under_threshold():
+    """evict_old_turns is a no-op when turn count is within threshold."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        output = app.query_one(OutputPanel)
+        # Mount a few messages — well under threshold
+        for i in range(5):
+            ump = UserMessagePanel(f"msg {i}")
+            output.mount(ump, before=output.query_one(ThinkingWidget))
+            mp = output.new_message(user_text=f"msg {i}")
+        await pilot.pause()
+        output.evict_old_turns()
+        await pilot.pause()
+        panels = list(output.query(MessagePanel))
+        assert len(panels) == 5
+
+
+@pytest.mark.asyncio
+async def test_evict_old_turns_removes_beyond_threshold():
+    """evict_old_turns removes the oldest turn panels when count exceeds threshold."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        output = app.query_one(OutputPanel)
+        # Mount 30 turns (60 turn-boundary children) — exceeds _EVICTION_THRESHOLD=25
+        for i in range(30):
+            ump = UserMessagePanel(f"msg {i}")
+            output.mount(ump, before=output.query_one(ThinkingWidget))
+            mp = output.new_message(user_text=f"msg {i}")
+        await pilot.pause()
+        panels_before = list(output.query(MessagePanel))
+        assert len(panels_before) == 30
+
+        output.evict_old_turns()
+        await pilot.pause()
+
+        panels_after = list(output.query(MessagePanel))
+        # Should keep at most _MAX_TURNS=20
+        assert len(panels_after) <= output._MAX_TURNS
+        # The newest panels should survive
+        assert panels_after[-1] is panels_before[-1]
+        # UserMessagePanel count should also be reduced
+        ump_count = len(output.query(UserMessagePanel))
+        assert ump_count <= output._MAX_TURNS

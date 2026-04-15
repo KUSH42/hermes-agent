@@ -1190,6 +1190,38 @@ class OutputPanel(ScrollableContainer):
         self.call_after_refresh(lambda: panel.remove_class("--entering"))
         return panel
 
+    # Max turns to keep in OutputPanel.  When exceeded, oldest turns are evicted
+    # at turn-end to prevent Textual compositor cache thrash (LRU maxsize=16
+    # cannot cope with 300+ children → KeyError on reflow).
+    _MAX_TURNS: int = 20
+    _EVICTION_THRESHOLD: int = 25
+
+    def evict_old_turns(self) -> None:
+        """Remove MessagePanel+UserMessagePanel pairs beyond ``_EVICTION_THRESHOLD``.
+
+        Safe to call at turn-end (idle) when no mounts are in flight.
+        Uses per-child ``remove()`` — NOT ``remove_children()`` — to avoid the
+        deferred-removal race with subsequent ``mount()`` calls.
+        """
+        # Collect removable turn-boundary children (MessagePanel / UserMessagePanel).
+        # StreamingToolBlock, ReasoningPanel, etc. are *inside* MessagePanel —
+        # removing the panel removes them transitively.
+        turn_children: list[Widget] = []
+        for child in self.children:
+            if isinstance(child, (MessagePanel, UserMessagePanel)):
+                turn_children.append(child)
+        # Each turn produces ~2 panels (UserMessagePanel + MessagePanel).
+        # Keep last _MAX_TURNS * 2 panels, evict everything older.
+        max_keep = self._MAX_TURNS * 2
+        if len(turn_children) <= max_keep:
+            return
+        to_remove = turn_children[: len(turn_children) - max_keep]
+        for child in to_remove:
+            try:
+                child.remove()
+            except Exception:
+                pass  # widget may already be mid-removal from a previous call
+
     def flush_live(self) -> None:
         """Commit any in-progress buffered line to current message's RichLog."""
         # Deactivate shimmer — covers the empty-response case where no chunk ever arrives

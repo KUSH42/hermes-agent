@@ -790,7 +790,11 @@ class HermesApp(App):
             # (2) LiveLineWidget.flush() → stops blink timer + resets
             #     _blink_visible, (3) commits any partial _buf to MessagePanel.
             try:
-                self.query_one(OutputPanel).flush_live()
+                output = self.query_one(OutputPanel)
+                output.flush_live()
+                # Evict old turns at idle to prevent compositor cache thrash
+                # (Textual LRU maxsize=16 can't cope with 300+ children).
+                output.evict_old_turns()
             except NoMatches:
                 pass
             # Clear stale spinner/file breadcrumb — cli.py resets _spinner_text

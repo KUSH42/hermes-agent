@@ -746,14 +746,15 @@ class MessagePanel(Widget):
             self._active_thinking_block.close_box()
             self._active_thinking_block = None
 
+        prev = self._thinking_blocks[-1] if self._thinking_blocks else None
         if (
-            self._thinking_blocks
-            and self._thinking_blocks[-1].parent is self
-            and not self._thinking_blocks[-1].has_class("visible")
-            and not self._thinking_blocks[-1]._plain_lines
-            and not self._thinking_blocks[-1]._live_buf
+            prev is not None
+            and prev.parent is self
+            and not prev._plain_lines
+            and not prev._live_buf
+            and not prev._reasoning_log.lines
         ):
-            block = self._thinking_blocks[-1]
+            block = prev
         else:
             block = ReasoningPanel(
                 id=f"reasoning-{self._msg_id}-{len(self._thinking_blocks) + 1}"
@@ -1361,6 +1362,9 @@ class ReasoningPanel(Widget):
         """Show the reasoning panel."""
         self._live_buf = ""
         self._plain_lines.clear()
+        # Clear RichLog to prevent stale deferred renders from a previous
+        # session leaking into the new one when the panel is reused.
+        self._reasoning_log.clear()
         self._is_closed = False
         self._body_collapsed = False
         self._live_line.styles.display = "none"

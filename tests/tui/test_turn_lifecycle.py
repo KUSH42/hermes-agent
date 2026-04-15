@@ -433,6 +433,79 @@ async def test_reasoning_panel_live_buf_cleared_on_open():
         await pilot.pause()
 
 
+@pytest.mark.asyncio
+async def test_reasoning_panel_reuse_after_close_with_no_content():
+    """Empty closed panel should be reused instead of creating a new one."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+
+        app.agent_running = True
+        await pilot.pause()
+
+        msg = app.query_one(OutputPanel).current_message
+        assert msg is not None
+
+        # Open and immediately close with NO content (simulates interrupted reasoning)
+        rp1 = msg.open_thinking_block("Reasoning")
+        rp1.close_box()
+        assert rp1.has_class("visible")
+        assert not rp1._plain_lines
+        assert not rp1._live_buf
+
+        # Second open should REUSE the empty panel (not create a new one)
+        rp2 = msg.open_thinking_block("Reasoning 2")
+        assert rp2 is rp1, "empty closed panel should be reused, not replaced"
+        assert rp2.has_class("visible")
+        assert not rp2._is_closed
+
+        # Verify the reused panel works correctly
+        rp2.append_delta("actual content\n")
+        assert "actual content" in rp2._plain_lines
+
+        # Only one panel should exist in the DOM
+        blocks = list(msg.query(ReasoningPanel))
+        assert len(blocks) == 1
+
+        app.agent_running = False
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_reasoning_panel_no_content_leak_on_reuse():
+    """Reused panel must not show stale content from a previous session."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+
+        app.agent_running = True
+        await pilot.pause()
+
+        msg = app.query_one(OutputPanel).current_message
+        assert msg is not None
+
+        # Open, add content, close
+        rp1 = msg.open_thinking_block("R1")
+        rp1.append_delta("old content\n")
+        rp1.close_box()
+        assert "old content" in rp1._plain_lines
+
+        # Second open should NOT reuse (panel has content)
+        rp2 = msg.open_thinking_block("R2")
+        assert rp2 is not rp1, "panel with content should not be reused"
+
+        # Third open on empty panel should reuse
+        rp2.close_box()
+        rp3 = msg.open_thinking_block("R3")
+        assert rp3 is rp2, "empty closed panel should be reused"
+        rp3.append_delta("new content\n")
+        assert "new content" in rp3._plain_lines
+        assert "old content" not in rp3._plain_lines
+
+        app.agent_running = False
+        await pilot.pause()
+
+
 # ---------------------------------------------------------------------------
 # MessagePanel ID uniqueness across many turns (GAP-1)
 # ---------------------------------------------------------------------------

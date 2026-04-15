@@ -738,3 +738,377 @@ async def test_tab_with_hidden_overlay_accepts_ghost_text_not_stale_candidate() 
         assert "show me" in inp.value or inp.value == "show me", (
             f"Value should remain 'show me' (or ghost-text extended), got: {inp.value!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Undo/Redo tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_undo_basic():
+    """Type text, push snapshot, Ctrl+Z restores empty."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        inp.value = "hello"
+        await pilot.pause()
+        inp._push_undo_snapshot()
+        # Stack should contain the pre-edit value (empty)
+        assert len(inp._undo_stack) == 1
+        assert inp._undo_stack[0].value == ""
+        assert inp._pre_undo_value == "hello"
+
+        inp.action_undo_edit()
+        assert inp.value == ""
+        assert inp.cursor_position == 0
+
+
+@pytest.mark.asyncio
+async def test_undo_multi_step():
+    """Two edit bursts, two undos restore both states."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+
+        # First edit burst
+        inp.value = "hello"
+        inp._push_undo_snapshot()  # pushes "" to undo
+
+        # Second edit burst
+        inp.value = "hello world"
+        inp.cursor_position = 11
+        inp._push_undo_snapshot()  # pushes "hello" to undo
+
+        inp.action_undo_edit()
+        assert inp.value == "hello"
+
+        inp.action_undo_edit()
+        assert inp.value == ""
+
+
+@pytest.mark.asyncio
+async def test_redo_roundtrip():
+    """Undo then Ctrl+Shift+Z restores the value."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+
+        inp.value = "hello"
+        inp._push_undo_snapshot()
+
+        inp.action_undo_edit()
+        assert inp.value == ""
+
+        inp.action_redo_edit()
+        assert inp.value == "hello"
+        assert inp.cursor_position == 5
+
+
+@pytest.mark.asyncio
+async def test_redo_ctrl_y():
+    """Ctrl+Y action (same as Ctrl+Shift+Z) works."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+
+        inp.value = "test"
+        inp._push_undo_snapshot()
+
+        inp.action_undo_edit()
+        assert inp.value == ""
+
+        inp.action_redo_edit()
+        assert inp.value == "test"
+
+
+@pytest.mark.asyncio
+async def test_completion_undo():
+    """Undo restores pre-completion state."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+
+        # Simulate typing "hel"
+        inp.value = "hel"
+        inp.cursor_position = 3
+        inp._push_undo_snapshot()  # pushes "" to undo, pre_undo="hel"
+
+        # Second _push_undo_snapshot before completion: pre_undo is still "hel",
+        # so it tries to push "hel" — but _pre_undo_value IS "hel" from first push.
+        # Wait: first push sets _pre_undo_value = "hel". Second push pushes "hel" (same).
+        # Dedup: stack top is ("", 0), new is ("hel", 0) — different, so pushed.
+        inp._push_undo_snapshot()  # pushes "hel" to undo, pre_undo="hel"
+        inp.value = "hello"
+        inp.cursor_position = 5
+
+        # Undo pops "hel", restores "hel"
+        inp.action_undo_edit()
+        assert inp.value == "hel"
+
+
+@pytest.mark.asyncio
+async def test_submit_clears_stacks():
+    """Submit clears both undo and redo stacks."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        inp.set_slash_commands([])
+
+        inp.value = "hello"
+        inp._push_undo_snapshot()
+
+        inp.value = "hello world"
+        inp._push_undo_snapshot()
+
+        # Simulate submit
+        inp.action_submit()
+        await pilot.pause()
+
+        assert inp._undo_stack == []
+        assert inp._redo_stack == []
+
+
+@pytest.mark.asyncio
+async def test_history_nav_clears_stacks():
+    """Up/Down clears both undo and redo stacks."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+
+        inp.value = "hello"
+        inp._push_undo_snapshot()
+
+        # Simulate history prev
+        inp._history = ["old message"]
+        inp.action_history_prev()
+        await pilot.pause()
+
+        assert inp._undo_stack == []
+        assert inp._redo_stack == []
+
+
+@pytest.mark.asyncio
+async def test_stack_cap():
+    """Pushes beyond 50, oldest discarded, cap at 50."""
+    from hermes_cli.tui.input_widget import _MAX_UNDO
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+
+        for i in range(_MAX_UNDO + 1):
+            inp.value = f"text-{i}"
+            inp._push_undo_snapshot()
+
+        assert len(inp._undo_stack) == _MAX_UNDO
+
+
+@pytest.mark.asyncio
+async def test_undo_disabled_noop():
+    """Undo on disabled input is a no-op."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+
+        inp.value = "hello"
+        inp._push_undo_snapshot()
+
+        inp.disabled = True
+        inp.action_undo_edit()
+        assert inp.value == "hello"  # unchanged
+
+
+@pytest.mark.asyncio
+async def test_undo_empty_stack_noop():
+    """Undo with empty stack is a no-op."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+
+        inp.value = "hello"
+        inp.action_undo_edit()  # stack is empty
+        assert inp.value == "hello"
+
+
+@pytest.mark.asyncio
+async def test_redo_empty_stack_noop():
+    """Redo with empty redo stack is a no-op."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+
+        inp.value = "hello"
+        inp.action_redo_edit()  # redo stack is empty
+        assert inp.value == "hello"
+
+
+@pytest.mark.asyncio
+async def test_undo_empty_state():
+    """Type then clear, undo restores the text."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+
+        # First edit burst: type "hello"
+        inp.value = "hello"
+        inp._push_undo_snapshot()  # pushes "" to undo
+
+        # Second edit burst: clear
+        inp.value = ""
+        inp.cursor_position = 0
+        inp._push_undo_snapshot()  # pushes "hello" to undo
+
+        inp.action_undo_edit()
+        assert inp.value == "hello"
+        assert inp.cursor_position == 5
+
+
+@pytest.mark.asyncio
+async def test_edit_after_undo_clears_redo():
+    """New edit after undo clears the redo stack."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+
+        inp.value = "hello"
+        inp._push_undo_snapshot()
+
+        inp.value = "hello world"
+        inp._push_undo_snapshot()
+
+        inp.action_undo_edit()
+        assert inp.value == "hello"
+        assert len(inp._redo_stack) == 1
+
+        # New edit clears redo
+        inp.value = "hello there"
+        inp._push_undo_snapshot()
+        assert inp._redo_stack == []
+
+
+@pytest.mark.asyncio
+async def test_debounce_cancelled_by_push():
+    """_push_undo_snapshot cancels pending debounce timer."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+
+        # Start a debounce timer
+        inp.value = "hello"
+        inp._schedule_undo_snapshot()
+        assert inp._undo_timer is not None
+
+        # Push snapshot directly (simulates completion hook)
+        inp._push_undo_snapshot()
+        assert inp._undo_timer is None  # timer was cancelled
+
+        # pre-edit value was pushed (empty, since _pre_undo_value was "")
+        assert len(inp._undo_stack) == 1
+        assert inp._undo_stack[0].value == ""
+
+
+@pytest.mark.asyncio
+async def test_dedup_skips_identical_top():
+    """Pushing same pre_undo_value twice in a row is deduped."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+
+        inp.value = "hello"
+        inp._push_undo_snapshot()  # pushes "" to undo, pre_undo="hello"
+        assert len(inp._undo_stack) == 1
+        assert inp._undo_stack[0].value == ""
+
+        # Change value, then push — now _pre_undo_value is "hello"
+        inp.value = "hello world"
+        inp._push_undo_snapshot()  # pushes "hello" to undo
+        assert len(inp._undo_stack) == 2
+
+        # Push again without changing value — _pre_undo_value is still "hello world"
+        # so it pushes "hello world" — but stack top is already "hello world"... wait no.
+        # After second push: stack=["", "hello"]. _pre_undo="hello world".
+        # Third push: pushes "hello world", stack top is "hello" — different, pushed.
+        # To test dedup, push the SAME _pre_undo_value as stack top.
+        inp._push_undo_snapshot()  # pushes "hello world" — dedup: stack top is "hello", different, pushed
+        assert len(inp._undo_stack) == 3
+
+        # Now push again — _pre_undo is still "hello world", stack top IS "hello world" → dedup!
+        inp._push_undo_snapshot()
+        assert len(inp._undo_stack) == 3  # unchanged — dedup
+
+
+@pytest.mark.asyncio
+async def test_undo_cursor_preserved():
+    """Undo restores cursor position from the undo entry."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+
+        # First burst: "hello" at cursor 5
+        inp.value = "hello"
+        inp.cursor_position = 5
+        inp._push_undo_snapshot()  # pushes ("", 0)
+
+        # Undo restores empty at cursor 0
+        inp.action_undo_edit()
+        assert inp.value == ""
+        assert inp.cursor_position == 0
+
+        # Redo restores "hello" at cursor 5
+        inp.action_redo_edit()
+        assert inp.value == "hello"
+        assert inp.cursor_position == 5
+
+
+@pytest.mark.asyncio
+async def test_full_undo_redo_chain():
+    """Full chain: type A, type B, undo, undo, redo, redo."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+
+        # Burst 1: type "foo"
+        inp.value = "foo"
+        inp._push_undo_snapshot()  # undo: [""], pre_undo="foo"
+
+        # Burst 2: type "foo bar"
+        inp.value = "foo bar"
+        inp._push_undo_snapshot()  # undo: ["", "foo"], pre_undo="foo bar"
+
+        assert inp.value == "foo bar"
+
+        # Undo 1: restore "foo"
+        inp.action_undo_edit()
+        assert inp.value == "foo"
+        assert inp._redo_stack[-1].value == "foo bar"
+
+        # Undo 2: restore ""
+        inp.action_undo_edit()
+        assert inp.value == ""
+        assert len(inp._redo_stack) == 2
+
+        # Redo 1: restore "foo"
+        inp.action_redo_edit()
+        assert inp.value == "foo"
+
+        # Redo 2: restore "foo bar"
+        inp.action_redo_edit()
+        assert inp.value == "foo bar"
+        assert inp._redo_stack == []

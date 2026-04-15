@@ -2191,6 +2191,7 @@ class HermesApp(App):
                 try:
                     inp = self.query_one("#input-area")
                     if hasattr(inp, "content") and inp.content:
+                        inp._push_undo_snapshot()
                         inp.content = ""
                         inp.cursor_pos = 0
                     else:

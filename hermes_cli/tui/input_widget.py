@@ -50,6 +50,22 @@ _HISTORY_FILE = _HERMES_HOME / ".hermes_history"
 # Used to bypass cursor-position-dependent detection (see _update_autocomplete).
 _SLASH_FULL_RE = re.compile(r"^/([\w-]*)$")
 
+# Undo stack limits
+_MAX_UNDO = 50
+_UNDO_DEBOUNCE_S = 0.8
+
+
+@dataclass(slots=True)
+class _UndoEntry:
+    """Snapshot of input state for undo/redo."""
+    value: str
+    cursor: int
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, _UndoEntry):
+            return NotImplemented
+        return self.value == other.value and self.cursor == other.cursor
+
 
 def _sanitize_input_text(text: str) -> str:
     """Normalize input text for the single-line prompt.
@@ -95,13 +111,16 @@ class HermesInput(Input, can_focus=True):
     """
 
     BINDINGS = [
-        Binding("up",       "history_prev",           "Previous history",     show=False),
-        Binding("down",     "history_next",            "Next history",         show=False),
-        Binding("pageup",   "completion_page_up",      "Page up completion",   show=False),
-        Binding("pagedown", "completion_page_down",    "Page down completion", show=False),
-        Binding("escape",   "dismiss_autocomplete",    "Dismiss",              show=False),
-        Binding("tab",      "accept_autocomplete",     "Accept completion",    show=False),
-        Binding("ctrl+a",   "select_all",              "Select all",           show=False),
+        Binding("up",           "history_prev",           "Previous history",     show=False),
+        Binding("down",         "history_next",            "Next history",         show=False),
+        Binding("pageup",       "completion_page_up",      "Page up completion",   show=False),
+        Binding("pagedown",     "completion_page_down",    "Page down completion", show=False),
+        Binding("escape",       "dismiss_autocomplete",    "Dismiss",              show=False),
+        Binding("tab",          "accept_autocomplete",     "Accept completion",    show=False),
+        Binding("ctrl+a",       "select_all",              "Select all",           show=False),
+        Binding("ctrl+z",       "undo_edit",               "Undo edit",            show=False),
+        Binding("ctrl+shift+z", "redo_edit",               "Redo edit",            show=False),
+        Binding("ctrl+y",       "redo_edit",               "Redo edit",            show=False),
     ]
 
     # Spinner text shown when disabled (set by app's _tick_spinner)
@@ -149,6 +168,12 @@ class HermesInput(Input, can_focus=True):
         self._path_debounce_timer: "Any | None" = None
         self._sanitizing_value = False
 
+        # Undo/redo state
+        self._undo_stack: list[_UndoEntry] = []
+        self._redo_stack: list[_UndoEntry] = []
+        self._undo_timer: Any | None = None
+        self._pre_undo_value: str = ""  # value before the current edit burst
+
     def on_mount(self) -> None:
         self._load_history()
 
@@ -156,6 +181,9 @@ class HermesInput(Input, can_focus=True):
         if self._path_debounce_timer is not None:
             self._path_debounce_timer.stop()
             self._path_debounce_timer = None
+        if self._undo_timer is not None:
+            self._undo_timer.stop()
+            self._undo_timer = None
 
     # --- Property bridges (old API → Input API) ---
 
@@ -240,7 +268,71 @@ class HermesInput(Input, can_focus=True):
             self.app._flash_hint(f"{ICON_COPY}  {len(event.text)} chars pasted", 1.2)
         except Exception:
             pass
+        self._push_undo_snapshot()
         super()._on_paste(event)
+
+    # --- Undo/Redo ---
+
+    def _schedule_undo_snapshot(self) -> None:
+        """Start/reset the debounce timer for pushing an undo snapshot.
+
+        On fire: pushes _pre_undo_value (the state before this edit burst)
+        to the undo stack, then updates _pre_undo_value to the current value.
+        """
+        if self._undo_timer is not None:
+            self._undo_timer.stop()
+        self._undo_timer = self.set_timer(_UNDO_DEBOUNCE_S, self._flush_undo)
+
+    def _flush_undo(self) -> None:
+        """Timer callback: commit the pre-edit value to the undo stack."""
+        self._undo_timer = None
+        # Push the value that existed before this edit burst
+        entry = _UndoEntry(self._pre_undo_value, 0)
+        if not (self._undo_stack and self._undo_stack[-1] == entry):
+            self._undo_stack.append(entry)
+            if len(self._undo_stack) > _MAX_UNDO:
+                self._undo_stack.pop(0)
+        self._redo_stack.clear()
+        self._pre_undo_value = self.value
+
+    def _push_undo_snapshot(self) -> None:
+        """Push current _pre_undo_value to undo stack immediately.
+
+        Used by pre-mutation hooks (completion accept, paste, insert_text).
+        Cancels any pending debounce timer to prevent the timer from also
+        firing and pushing a duplicate.
+        """
+        if self._undo_timer is not None:
+            self._undo_timer.stop()
+            self._undo_timer = None
+        entry = _UndoEntry(self._pre_undo_value, 0)
+        if not (self._undo_stack and self._undo_stack[-1] == entry):
+            self._undo_stack.append(entry)
+            if len(self._undo_stack) > _MAX_UNDO:
+                self._undo_stack.pop(0)
+        self._redo_stack.clear()
+        self._pre_undo_value = self.value
+
+    def action_undo_edit(self) -> None:
+        """Ctrl+Z: undo the last text edit."""
+        if self.disabled or not self._undo_stack:
+            return
+        self._redo_stack.append(_UndoEntry(self.value, self.cursor_position))
+        entry = self._undo_stack.pop()
+        self.value = entry.value
+        # If entry cursor is 0 (default from debounce), place at end of text
+        self.cursor_position = entry.cursor if entry.cursor else len(entry.value)
+        self._pre_undo_value = entry.value
+
+    def action_redo_edit(self) -> None:
+        """Ctrl+Shift+Z / Ctrl+Y: redo a previously undone edit."""
+        if self.disabled or not self._redo_stack:
+            return
+        self._undo_stack.append(_UndoEntry(self.value, self.cursor_position))
+        entry = self._redo_stack.pop()
+        self.value = entry.value
+        self.cursor_position = entry.cursor
+        self._pre_undo_value = entry.value
 
     # --- Actions ---
 
@@ -256,10 +348,20 @@ class HermesInput(Input, can_focus=True):
         self._save_to_history(text)
         self._hide_completion_overlay()
         self.post_message(self.Submitted(text))
+        # Clear undo state — undo should not reach across submissions
+        if self._undo_timer is not None:
+            self._undo_timer.stop()
+            self._undo_timer = None
         self.value = ""
         self._history_idx = -1
+        self._undo_stack.clear()
+        self._redo_stack.clear()
+        self._pre_undo_value = ""
 
     def action_history_prev(self) -> None:
+        self._undo_stack.clear()
+        self._redo_stack.clear()
+        self._pre_undo_value = ""
         # Slash-only preview: dismiss and go to history
         if self._completion_overlay_slash_only():
             self._hide_completion_overlay()
@@ -281,6 +383,9 @@ class HermesInput(Input, can_focus=True):
         self.cursor_position = len(self.value)
 
     def action_history_next(self) -> None:
+        self._undo_stack.clear()
+        self._redo_stack.clear()
+        self._pre_undo_value = ""
         # Slash-only preview: dismiss and go to history
         if self._completion_overlay_slash_only():
             self._hide_completion_overlay()
@@ -340,6 +445,7 @@ class HermesInput(Input, can_focus=True):
             finally:
                 self._sanitizing_value = False
             return
+        self._schedule_undo_snapshot()
         self._update_autocomplete()
         # Suggester (ghost text) is driven natively by Input — no manual hook.
 
@@ -684,6 +790,7 @@ class HermesInput(Input, can_focus=True):
         else:
             return
 
+        self._push_undo_snapshot()
         self.value = new_value
         self.cursor_position = new_cursor
         self._hide_completion_overlay()
@@ -705,6 +812,7 @@ class HermesInput(Input, can_focus=True):
         text = _sanitize_input_text(text)
         if not text:
             return
+        self._push_undo_snapshot()
         pos = self.cursor_position
         self.value = self.value[:pos] + text + self.value[pos:]
         self.cursor_position = pos + len(text)

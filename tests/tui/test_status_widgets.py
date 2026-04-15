@@ -55,8 +55,12 @@ async def test_spinner_stops_when_agent_not_running():
 
 
 @pytest.mark.asyncio
-async def test_spinner_writes_to_hint_bar():
-    """_tick_spinner writes spinner_display to HintBar.hint (bottom bar)."""
+async def test_spinner_writes_to_input_bar_not_hint_bar():
+    """_tick_spinner writes spinner_display to input bar placeholder, NOT HintBar.
+
+    HintBar shows phase-based hints (e.g. ^C interrupt · Esc dismiss) when
+    agent is running — spinner/timer are in the input bar only.
+    """
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -66,9 +70,13 @@ async def test_spinner_writes_to_hint_bar():
         # Wait for at least one spinner tick
         await asyncio.sleep(0.15)
         await pilot.pause()
+        # HintBar should NOT have spinner — shows phase hints instead
         bar = app.query_one(HintBar)
-        assert bar.hint != ""
-        assert "terminal" in bar.hint
+        assert bar.hint == ""
+        # Input bar should have spinner + tool label
+        inp = app.query_one("#input-area")
+        assert hasattr(inp, "placeholder")
+        assert "terminal" in inp.placeholder
 
 
 @pytest.mark.asyncio
@@ -162,8 +170,8 @@ async def test_tok_s_zero_hidden():
 
 
 @pytest.mark.asyncio
-async def test_agent_running_disables_input():
-    """Setting agent_running=True disables the input area."""
+async def test_agent_running_keeps_input_enabled():
+    """Setting agent_running=True does NOT disable input — user can interrupt."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -171,7 +179,8 @@ async def test_agent_running_disables_input():
         assert not input_widget.disabled
         app.agent_running = True
         await pilot.pause()
-        assert input_widget.disabled
+        # Input stays enabled so user can submit to interrupt + send new message
+        assert not input_widget.disabled
 
 
 @pytest.mark.asyncio

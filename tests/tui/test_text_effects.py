@@ -119,7 +119,7 @@ async def test_suspend_focuses_input_on_resume():
 async def test_text_effects_not_triggered_during_agent_run():
     """on_hermes_input_submitted never calls _play_effects — it only routes to cli.
 
-    Even when agent_running=True and action_submit() is disabled, posting
+    Even when agent_running=True (input stays enabled for interrupt), posting
     HermesInput.Submitted directly hits on_hermes_input_submitted which only
     calls cli._pending_input.put().  _play_effects must not be called from
     the TUI layer at all.

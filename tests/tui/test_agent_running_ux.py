@@ -78,15 +78,15 @@ async def test_input_visible_during_agent_run():
 
 
 @pytest.mark.asyncio
-async def test_input_disabled_during_agent_run():
-    """Input is disabled (not hidden) during agent runs."""
+async def test_input_enabled_during_agent_run():
+    """Input stays enabled (not hidden) during agent runs for interrupt."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         app.agent_running = True
         await pilot.pause()
         inp = app.query_one("#input-area")
-        assert inp.disabled, "Input must be disabled during agent run"
-        assert inp.display, "Input must still be visible while disabled"
+        assert not inp.disabled, "Input must be enabled during agent run for interrupt"
+        assert inp.display, "Input must still be visible while agent is running"
 
 
 # ---------------------------------------------------------------------------

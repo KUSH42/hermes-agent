@@ -54,8 +54,8 @@ async def test_content_property_bridge():
 
 
 @pytest.mark.asyncio
-async def test_input_disabled_when_agent_running():
-    """Input is disabled when agent_running is True."""
+async def test_input_enabled_when_agent_running():
+    """Input stays enabled when agent_running is True — user can interrupt."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -63,7 +63,7 @@ async def test_input_disabled_when_agent_running():
         assert not inp.disabled
         app.agent_running = True
         await pilot.pause()
-        assert inp.disabled
+        assert not inp.disabled
 
 
 @pytest.mark.asyncio
@@ -163,8 +163,8 @@ async def test_history_save_on_submit():
 
 
 @pytest.mark.asyncio
-async def test_disabled_input_rejects_keystrokes():
-    """Typing into disabled HermesInput has no effect."""
+async def test_input_accepts_keystrokes_when_agent_running():
+    """Typing works when agent_running=True — input stays enabled for interrupt."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -172,10 +172,10 @@ async def test_disabled_input_rejects_keystrokes():
         inp.focus()
         app.agent_running = True
         await pilot.pause()
-        assert inp.disabled
+        assert not inp.disabled
         await pilot.press("a", "b", "c")
         await pilot.pause()
-        assert inp.value == ""
+        assert inp.value == "abc"
 
 
 @pytest.mark.asyncio

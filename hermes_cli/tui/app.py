@@ -33,6 +33,16 @@ _SHELL_TOOLS: frozenset[str] = frozenset({
 _PATH_EXTRACT_RE = re.compile(
     r'["\']?(/[\w./\-]+|[\w./\-]+\.[\w]{1,6})["\']?'
 )
+
+
+def _looks_like_slash_command(text: str) -> bool:
+    """Return True if text looks like a slash command, not a file path."""
+    if not text or not text.startswith("/"):
+        return False
+    first_word = text.split()[0]
+    return "/" not in first_word[1:]
+
+
 import time as _time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -603,9 +613,9 @@ class HermesApp(App):
             elapsed = _time.monotonic() - self._tool_start_time
             spinner_display = f"{spinner_display} · {elapsed:.1f}s"
 
-        # Deliver spinner text to HintBar (the bottom bar) so commands and
-        # elapsed time are always visible.  Also set input placeholder as
-        # secondary display when the input is disabled.
+        # Deliver spinner text to input bar (placeholder + spinner_text).
+        # HintBar shows phase-based hints (e.g. "^C interrupt · Esc dismiss")
+        # — spinner/elapsed are already visible in the input bar, no duplication.
         try:
             inp = self.query_one("#input-area")
             overlay = self.query_one("#spinner-overlay", Static)
@@ -616,13 +626,6 @@ class HermesApp(App):
                 inp.spinner_text = spinner_display
         except NoMatches:
             pass
-
-        # Write spinner to HintBar — but don't clobber a timed flash.
-        if _time.monotonic() >= self._flash_hint_expires:
-            try:
-                self.query_one(HintBar).hint = spinner_display
-            except NoMatches:
-                pass
 
         self._refresh_live_response_metrics()
 
@@ -829,7 +832,8 @@ class HermesApp(App):
 
         try:
             widget = self.query_one("#input-area")
-            widget.disabled = value
+            # Input stays enabled when agent is running — user can submit
+            # to interrupt + send new message.  Only overlays disable input.
             if not value:
                 if hasattr(widget, "spinner_text"):
                     widget.spinner_text = ""
@@ -2364,20 +2368,46 @@ class HermesApp(App):
     # --- Input submission handler ---
 
     def on_hermes_input_submitted(self, event: Any) -> None:
-        """Handle input submission from HermesInput."""
-        # Activate thinking shimmer — deactivated when first chunk arrives or on flush
+        """Handle input submission from HermesInput.
+
+        When agent is running: interrupt first, then send new message
+        (except /queue and /btw which queue without interrupting).
+        """
+        text = event.value
+        images = list(self.attached_images)
+        if images:
+            self._clear_attached_images()
+            payload = (text, images)
+        else:
+            payload = text
+
+        # If agent is running, decide: interrupt or queue
+        if self.agent_running and text:
+            _cmd = text.lstrip("/").split()[0].lower() if text.startswith("/") else ""
+            if _cmd in ("queue", "btw"):
+                # /queue and /btw queue without interrupting
+                if hasattr(self.cli, "_pending_input"):
+                    self.cli._pending_input.put(payload)
+                return
+            # Everything else: interrupt agent, then send as new message
+            # Activate thinking shimmer for the upcoming new turn
+            try:
+                self.query_one(ThinkingWidget).activate()
+            except NoMatches:
+                pass
+            if hasattr(self.cli, "agent") and self.cli.agent:
+                self.cli.agent.interrupt()
+            if hasattr(self.cli, "_pending_input"):
+                self.cli._pending_input.put(payload)
+            return
+
+        # Normal submission (agent idle)
+        # Activate thinking shimmer — deactivated when first chunk arrives
         try:
             self.query_one(ThinkingWidget).activate()
         except NoMatches:
             pass
         if hasattr(self, "cli") and self.cli is not None:
-            text = event.value
-            images = list(self.attached_images)
-            if images:
-                self._clear_attached_images()
-                payload = (text, images)
-            else:
-                payload = text
             if hasattr(self.cli, "_pending_input"):
                 self.cli._pending_input.put(payload)
 

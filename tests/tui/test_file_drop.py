@@ -32,7 +32,7 @@ async def test_handle_file_drop_links_text_file(tmp_path, monkeypatch) -> None:
         await pilot.pause()
 
         inp = app.query_one(HermesInput)
-        assert inp.value == "@src/main.py"
+        assert inp.value == "'src/main.py'"
 
 
 @pytest.mark.asyncio
@@ -40,6 +40,7 @@ async def test_handle_file_drop_attaches_image_and_submit_bundles_payload(tmp_pa
     cli = _make_cli()
     app = HermesApp(cli=cli)
     monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("TERMINAL_CWD", raising=False)
     img = tmp_path / "shot.png"
     img.write_bytes(b"\x89PNG\r\n\x1a\n")
 
@@ -52,6 +53,8 @@ async def test_handle_file_drop_attaches_image_and_submit_bundles_payload(tmp_pa
         assert cli._attached_images == [img]
 
         inp = app.query_one(HermesInput)
+        # Image path is also inserted quoted at cursor
+        assert inp.value == "'shot.png'"
         inp.value = "describe this"
         inp.action_submit()
         await pilot.pause()
@@ -66,6 +69,7 @@ async def test_handle_file_drop_attaches_image_and_submit_bundles_payload(tmp_pa
 async def test_handle_file_drop_rejects_text_path_with_spaces(tmp_path, monkeypatch) -> None:
     app = HermesApp(cli=_make_cli())
     monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("TERMINAL_CWD", raising=False)
     file_path = tmp_path / "my notes.py"
     file_path.write_text("print('hi')\n")
 
@@ -75,8 +79,8 @@ async def test_handle_file_drop_rejects_text_path_with_spaces(tmp_path, monkeypa
         await pilot.pause()
 
         inp = app.query_one(HermesInput)
-        assert inp.value == ""
-        assert "rejected 1 item" in app.query_one("#hint-bar").hint
+        # Files with spaces are now inserted quoted — no rejection
+        assert inp.value == "'my notes.py'"
 
 
 @pytest.mark.asyncio
@@ -121,4 +125,4 @@ async def test_input_paste_intercepts_dragged_file_path(tmp_path, monkeypatch) -
         inp._on_paste(events.Paste(str(file_path)))
         await pilot.pause()
 
-        assert inp.value == "@main.py"
+        assert inp.value == "'main.py'"

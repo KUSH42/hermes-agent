@@ -715,7 +715,7 @@ from run_agent import AIAgent
 from model_tools import get_tool_definitions, get_toolset_for_tool
 
 # Extracted CLI modules (Phase 3)
-from hermes_cli.banner import build_welcome_banner, resolve_banner_logo_assets
+from hermes_cli.banner import build_welcome_banner
 from hermes_cli.commands import SlashCommandCompleter, SlashCommandAutoSuggest
 from toolsets import get_all_toolsets, get_toolset_info, validate_toolset
 
@@ -3175,7 +3175,11 @@ class HermesCLI:
         return effect_name, dict(params)
 
     def _play_startup_text_effect(self, tui: bool = False) -> bool:
-        """Play configured startup text effect once before banner render."""
+        """Play configured startup text effect on the caduceus hero art.
+
+        Non-TUI: renders directly to stdout (replaces caduceus region).
+        TUI: streams frames through OutputPanel via call_from_thread.
+        """
         if self._use_compact_banner():
             return False
         effect_cfg = self._get_startup_text_effect_config()
@@ -3183,30 +3187,313 @@ class HermesCLI:
             return False
 
         effect_name, params = effect_cfg
-        _, plain_logo = resolve_banner_logo_assets()
-        if not plain_logo.strip():
+        from hermes_cli.banner import resolve_banner_hero_assets
+        _, plain_hero = resolve_banner_hero_assets()
+        if not plain_hero.strip():
             return False
 
         if tui:
-            app = _hermes_app
-            if app is None:
-                return False
-            return app.play_tte_blocking(effect_name, plain_logo, params)
+            return self._play_tte_in_output_panel(effect_name, plain_hero, params)
 
         from hermes_cli.tui.tte_runner import run_effect
         print()
-        rendered = run_effect(effect_name, plain_logo, params=params)
+        rendered = run_effect(effect_name, plain_hero, params=params)
         print()
         return rendered
 
+    def _ensure_tui_startup_message(self):
+        """Ensure TUI startup output has a headerless MessagePanel to write into."""
+        from hermes_cli.tui.widgets import OutputPanel
+
+        app = _hermes_app
+        if app is None:
+            return None
+
+        result = {"message": None}
+
+        def _ensure():
+            try:
+                panel = app.query_one(OutputPanel)
+                msg = panel.current_message
+                if msg is None:
+                    msg = panel.new_message("", show_header=False)
+                result["message"] = msg
+            except Exception:
+                result["message"] = None
+
+        app.call_from_thread(_ensure)
+        return result["message"]
+
+    def _ensure_tui_startup_banner_widget(self):
+        """Ensure a lightweight startup banner widget exists in OutputPanel."""
+        from hermes_cli.tui.widgets import OutputPanel, StartupBannerWidget, ThinkingWidget
+
+        app = _hermes_app
+        if app is None:
+            return None
+
+        result = {"widget": None}
+
+        def _ensure():
+            try:
+                panel = app.query_one(OutputPanel)
+                widget = None
+                for child in panel.children:
+                    if isinstance(child, StartupBannerWidget):
+                        widget = child
+                        break
+                if widget is None:
+                    widget = StartupBannerWidget(id="startup-banner")
+                    panel.mount(widget, before=panel.query_one(ThinkingWidget))
+                result["widget"] = widget
+            except Exception:
+                result["widget"] = None
+
+        app.call_from_thread(_ensure)
+        return result["widget"]
+
+    def _render_startup_banner_text(
+        self,
+        *,
+        print_hero: bool = True,
+        hero_text: str | None = None,
+    ):
+        """Render the startup banner into a Rich Text blob for TUI in-place updates."""
+        from rich.console import Console as _Console
+        from rich.text import Text
+        from model_tools import get_tool_definitions
+        from hermes_cli.banner import build_welcome_banner
+
+        tools = get_tool_definitions(enabled_toolsets=self.enabled_toolsets, quiet_mode=True)
+        ctx_len = None
+        if hasattr(self, 'agent') and self.agent and hasattr(self.agent, 'context_compressor'):
+            ctx_len = self.agent.context_compressor.context_length
+        cwd = os.getenv("TERMINAL_CWD", os.getcwd())
+
+        app = _hermes_app
+        capture_width = None
+        if app is not None:
+            import threading as _threading
+
+            done = _threading.Event()
+            result = {"width": None}
+
+            def _resolve_width() -> None:
+                try:
+                    from hermes_cli.tui.widgets import OutputPanel
+
+                    try:
+                        panel = app.query_one(OutputPanel)
+                    except Exception:
+                        panel = None
+
+                    if panel is not None:
+                        msg = panel.current_message
+                        if msg is not None:
+                            log = msg.current_prose_log()
+                            width = int(getattr(log.scrollable_content_region, "width", 0) or 0)
+                            if width > 0:
+                                result["width"] = width
+                                return
+
+                        panel_width = int(getattr(panel.scrollable_content_region, "width", 0) or 0)
+                        if panel_width > 0:
+                            result["width"] = panel_width
+                            return
+
+                    app_width = int(getattr(getattr(app, "size", None), "width", 0) or 0)
+                    if app_width > 0:
+                        # OutputPanel reserves a 1-cell vertical scrollbar.
+                        result["width"] = max(1, app_width - 1)
+                finally:
+                    done.set()
+
+            app.call_from_thread(_resolve_width)
+            done.wait(timeout=1)
+            capture_width = result["width"]
+        if not capture_width:
+            capture_width = shutil.get_terminal_size((80, 24)).columns
+
+        capture = _Console(
+            record=True,
+            force_terminal=True,
+            color_system="truecolor",
+            width=capture_width,
+        )
+        hero_renderable = Text.from_ansi(hero_text) if hero_text is not None else None
+        if hero_renderable is not None:
+            hero_renderable.no_wrap = True
+            hero_renderable.overflow = "ignore"
+        build_welcome_banner(
+            console=capture,
+            model=self.model,
+            cwd=cwd,
+            tools=tools,
+            enabled_toolsets=self.enabled_toolsets,
+            session_id=self.session_id,
+            context_length=ctx_len,
+            print_hero=print_hero if hero_renderable is None else False,
+            hero_renderable=hero_renderable,
+        )
+        return Text.from_ansi(capture.export_text(styles=True))
+
+    def _build_startup_banner_template(self, plain_hero: str):
+        """Pre-render a startup banner with a placeholder hero block.
+
+        Returns a dict containing template line Texts and the hero insertion
+        rectangle so per-frame updates only replace the animated hero region.
+        """
+        from rich.text import Text
+
+        marker = "\u2588"
+        hero_lines = plain_hero.splitlines() or [plain_hero]
+        hero_width = max((len(line) for line in hero_lines), default=1)
+        placeholder_lines = [marker * hero_width for _ in hero_lines]
+        placeholder_text = "\n".join(placeholder_lines)
+        template = self._render_startup_banner_text(hero_text=placeholder_text)
+        template_lines = list(template.split("\n", allow_blank=True))
+
+        start_row = None
+        start_col = None
+        for row, line in enumerate(template_lines):
+            idx = line.plain.find(placeholder_lines[0])
+            if idx != -1:
+                start_row = row
+                start_col = idx
+                break
+
+        if start_row is None or start_col is None:
+            return None
+
+        return {
+            "lines": template_lines,
+            "hero_row": start_row,
+            "hero_col": start_col,
+            "hero_width": hero_width,
+            "hero_height": len(placeholder_lines),
+        }
+
+    def _splice_startup_banner_frame(self, template: dict[str, object], frame_text: str):
+        """Return banner Text with the animated hero frame spliced in."""
+        from rich.text import Text
+
+        base_lines = template["lines"]
+        hero_row = int(template["hero_row"])
+        hero_col = int(template["hero_col"])
+        hero_width = int(template["hero_width"])
+        hero_height = int(template["hero_height"])
+        frame_lines = frame_text.splitlines()
+
+        out = Text()
+        total_lines = len(base_lines)
+        for row, base_line in enumerate(base_lines):
+            if hero_row <= row < hero_row + hero_height:
+                rel = row - hero_row
+                frame_line = frame_lines[rel] if rel < len(frame_lines) else ""
+                hero_line = Text.from_ansi(frame_line)
+                hero_line.no_wrap = True
+                hero_line.overflow = "ignore"
+                composed = base_line[:hero_col] + hero_line + base_line[hero_col + hero_width :]
+            else:
+                composed = base_line.copy()
+            out.append_text(composed)
+            if row != total_lines - 1:
+                out.append("\n")
+        return out
+
+    def _play_tte_in_output_panel(
+        self, effect_name: str, plain_hero: str, params: dict
+    ) -> bool:
+        """Play TTE animation inside the OutputPanel at the correct position.
+
+        Called from the daemon startup thread.  All widget mutations go through
+        app.call_from_thread.
+        """
+        import threading as _threading
+        from rich.text import Text
+
+        app = _hermes_app
+        if app is None:
+            return False
+
+        banner_widget = self._ensure_tui_startup_banner_widget()
+        if banner_widget is None:
+            logger.warning("TTE: mount failed: could not create startup banner widget")
+            return False
+
+        # --- Stream TTE frames — each frame is a full banner render ---
+        from hermes_cli.tui.tte_runner import iter_frames
+        MAX_FRAMES = 3000
+        rendered_any = False
+        banner_template = self._build_startup_banner_template(plain_hero)
+        state_lock = _threading.Lock()
+        render_done = _threading.Event()
+        latest_frame: Text | None = None
+        update_in_flight = False
+
+        def _drain_latest() -> None:
+            nonlocal latest_frame, update_in_flight
+            while True:
+                with state_lock:
+                    frame = latest_frame
+                    latest_frame = None
+                if frame is None:
+                    with state_lock:
+                        update_in_flight = False
+                    render_done.set()
+                    return
+                banner_widget.set_frame(frame)
+
+        def _queue_frame(rich_text: Text, *, wait: bool = False) -> None:
+            nonlocal latest_frame, update_in_flight
+            render_done.clear()
+            should_schedule = False
+            with state_lock:
+                latest_frame = rich_text
+                if not update_in_flight:
+                    update_in_flight = True
+                    should_schedule = True
+            if should_schedule:
+                app.call_from_thread(_drain_latest)
+            if wait:
+                render_done.wait(timeout=1)
+
+        try:
+            for i, frame in enumerate(iter_frames(effect_name, plain_hero, params=params)):
+                if i >= MAX_FRAMES:
+                    break
+                rendered_any = True
+                if banner_template is not None:
+                    rich_frame = self._splice_startup_banner_frame(banner_template, frame)
+                else:
+                    rich_frame = self._render_startup_banner_text(hero_text=frame)
+                _queue_frame(rich_frame, wait=False)
+        except Exception as e:
+            logger.warning("TTE frame error: %s", e)
+
+        if rendered_any:
+            final_banner = self._render_startup_banner_text(print_hero=True)
+            _queue_frame(final_banner, wait=True)
+
+        return rendered_any
+
     def show_banner_with_startup_effect(self, tui: bool = False) -> None:
-        """Render startup effect first, then the normal banner."""
+        """Render startup effect then the static banner.
+
+        TUI: effect plays inside OutputPanel at the caduceus position,
+        then the final static banner is printed.
+        Non-TUI: effect plays on stdout, then banner prints below.
+        """
         if not tui:
             self.console.clear()
-        effect_rendered = self._play_startup_text_effect(tui=tui)
-        self._show_banner_body(clear=False, print_logo=not effect_rendered)
+        played = self._play_startup_text_effect(tui=tui)
+        if tui and played:
+            return
+        if tui:
+            self._ensure_tui_startup_message()
+        self._show_banner_body(clear=False, print_hero=True)
 
-    def _show_banner_body(self, clear: bool = True, print_logo: bool = True) -> None:
+    def _show_banner_body(self, clear: bool = True, print_hero: bool = True) -> None:
         """Display the welcome banner body."""
         if clear:
             self.console.clear()
@@ -3240,7 +3527,7 @@ class HermesCLI:
                 enabled_toolsets=self.enabled_toolsets,
                 session_id=self.session_id,
                 context_length=ctx_len,
-                print_logo=print_logo,
+                print_hero=print_hero,
             )
         
         # Show tool availability warnings if any tools are disabled
@@ -3506,22 +3793,15 @@ class HermesCLI:
         Switches self.console to ChatConsole so all subsequent console.print()
         calls appear in the TUI output panel rather than on raw stdout.
         """
-        global _hermes_app
-        if _hermes_app is not None:
-            try:
-                from hermes_cli.tui.widgets import OutputPanel
-                _hermes_app.call_from_thread(
-                    _hermes_app.query_one(OutputPanel).new_message,
-                    "",
-                    False,
-                )
-            except Exception:
-                pass
         # Switch to ChatConsole: routes all self.console.print() through _cprint
         # → TUI output queue.  Must happen before show_banner() so banner output
         # goes to the panel, not stdout.
         self.console = ChatConsole()
         self.show_banner_with_startup_effect(tui=True)
+        # When startup animation uses StartupBannerWidget, there may be no
+        # MessagePanel yet. Create the usual headerless startup message so the
+        # welcome/help lines render below the banner without a titled rule.
+        self._ensure_tui_startup_message()
         if self._resumed:
             if self._preload_resumed_session():
                 self._display_resumed_history()

@@ -253,11 +253,12 @@ ImageBar {
     padding: 0 1;
 }
 
-/* --- TTE startup effect widget --- */
+/* --- TTE startup effect widget ---
+ * Structural CSS (layer, dock, display) is in TTEWidget.DEFAULT_CSS.
+ * Only visual overrides here. */
 
 TTEWidget {
     background: $app-bg;
-    height: auto;
 }
 
 /* --- Voice status bar --- */

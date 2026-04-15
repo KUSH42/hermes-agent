@@ -151,7 +151,8 @@ def iter_frames(effect_name: str, text: str, skin=None, params: dict[str, object
             effect.effect_config.final_gradient_stops = tuple(color_cls(c) for c in gradient)
         tc = getattr(effect, "terminal_config", None)
         if tc:
-            tc.frame_rate = 0
+            from textual.constants import MAX_FPS
+            tc.frame_rate = MAX_FPS
     except Exception:
         pass
 
@@ -305,7 +306,8 @@ def run_effect(effect_name: str, text: str, skin=None, params: dict[str, object]
                 print(f"  Using custom colors from config params")
         tc = getattr(effect, "terminal_config", None)
         if tc:
-            tc.frame_rate = 0   # unlimited — let the terminal pace it
+            from textual.constants import MAX_FPS
+            tc.frame_rate = MAX_FPS
     except Exception:
         pass  # skin failure is non-fatal; default TTE colours apply
 

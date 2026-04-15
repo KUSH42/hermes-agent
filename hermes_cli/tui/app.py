@@ -78,6 +78,7 @@ from hermes_cli.tui.widgets import (
     PlainRule,
     ReasoningPanel,
     SecretWidget,
+    StartupBannerWidget,
     StatusBar,
     StreamingCodeBlock,
     SudoWidget,
@@ -291,6 +292,10 @@ class HermesApp(App):
 
     def compose(self) -> ComposeResult:
         yield OutputPanel(id="output-panel")
+        # TTEWidget uses layer: overlay + dock: top in its DEFAULT_CSS so it
+        # floats over the banner area when active.  Banner content is already
+        # in OutputPanel underneath; when effect ends the overlay hides and
+        # the static caduceus is visible in-place.
         yield TTEWidget(id="tte-effect")
         with Vertical(id="overlay-layer"):
             yield ClarifyWidget(id="clarify")

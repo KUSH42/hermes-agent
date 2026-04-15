@@ -103,3 +103,61 @@ def test_build_welcome_banner_can_suppress_logo_print():
     output = console.export_text()
     assert "Available Tools" in output
     assert "███████" not in output
+
+
+def test_build_welcome_banner_accepts_ansi_hero_renderable():
+    with (
+        patch.object(
+            model_tools,
+            "check_tool_availability",
+            return_value=([], []),
+        ),
+        patch.object(banner, "get_available_skills", return_value={}),
+        patch.object(banner, "get_update_result", return_value=None),
+        patch.object(tools.mcp_tool, "get_mcp_status", return_value=[]),
+    ):
+        console = Console(
+            record=True, force_terminal=True, color_system="truecolor", width=160
+        )
+        hero = banner.Text.from_ansi("\x1b[38;2;255;255;255mX\x1b[0m\n\x1b[38;2;0;255;0mY\x1b[0m")
+        banner.build_welcome_banner(
+            console=console,
+            model="anthropic/test-model",
+            cwd="/tmp/project",
+            tools=[],
+            print_logo=False,
+            print_hero=False,
+            hero_renderable=hero,
+        )
+
+    output = console.export_text()
+    assert "Available Tools" in output
+    assert "X" in output
+    assert "Y" in output
+
+
+def test_build_welcome_banner_uses_fixed_hero_column_width():
+    with (
+        patch.object(
+            model_tools,
+            "check_tool_availability",
+            return_value=([], []),
+        ),
+        patch.object(banner, "get_available_skills", return_value={}),
+        patch.object(banner, "get_update_result", return_value=None),
+        patch.object(tools.mcp_tool, "get_mcp_status", return_value=[]),
+        patch.object(banner, "resolve_banner_hero_assets", return_value=("", "abc\n12345")),
+    ):
+        console = Console(
+            record=True, force_terminal=False, color_system=None, width=80
+        )
+        banner.build_welcome_banner(
+            console=console,
+            model="anthropic/test-model",
+            cwd="/tmp/project",
+            tools=[],
+            print_logo=False,
+        )
+
+    tables = [r for r in console.export_text().splitlines() if "│" in r]
+    assert any("Available Tools" in line for line in tables)

@@ -3324,7 +3324,7 @@ class TTEWidget(Widget):
     DEFAULT_CSS = """
     TTEWidget {
         height: auto;
-        min-height: 5;
+        min-height: 0;
         display: none;
     }
     TTEWidget.active {
@@ -3397,3 +3397,26 @@ class TTEWidget(Widget):
             frame.update(rich_text)
         except NoMatches:
             pass
+
+
+class StartupBannerWidget(Widget):
+    """Lightweight inline startup banner host inside OutputPanel.
+
+    Used for startup TTE frames so animation doesn't go through
+    ``CopyableRichLog.clear()+write()`` on every frame.
+    """
+
+    DEFAULT_CSS = """
+    StartupBannerWidget {
+        height: auto;
+        margin: 1 0 0 0;
+    }
+    """
+
+    frame = reactive(Text(""), repaint=True)
+
+    def set_frame(self, rich_text: Text) -> None:
+        self.frame = rich_text
+
+    def render(self) -> RenderResult:
+        return self.frame

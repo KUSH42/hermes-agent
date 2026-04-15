@@ -1495,7 +1495,7 @@ class HermesApp(App):
         except NoMatches:
             pass
 
-    def close_streaming_tool_block(self, tool_call_id: str, duration: str) -> None:
+    def close_streaming_tool_block(self, tool_call_id: str, duration: str, is_error: bool = False) -> None:
         """Transition streaming block to COMPLETED state. Event-loop only.
 
         Called via ``call_from_thread`` from the agent thread after the tool
@@ -1504,7 +1504,7 @@ class HermesApp(App):
         block = self._active_streaming_blocks.pop(tool_call_id, None)
         if block is None:
             return
-        block.complete(duration)
+        block.complete(duration, is_error=is_error)
         # Scroll to show the completed (now collapsed) block
         try:
             panel = self.query_one(OutputPanel)

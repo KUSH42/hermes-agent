@@ -6942,10 +6942,20 @@ class HermesCLI:
             start = self._stream_start_times.pop(tool_call_id, None)
             _stream_duration = f"{_t.monotonic() - start:.1f}s" if start is not None else ""
 
+        # Detect tool error for icon coloring
+        _is_tool_error = False
+        try:
+            import json as _json
+            _data = _json.loads(function_result)
+            if isinstance(_data, dict) and (_data.get("error") or _data.get("success") is False):
+                _is_tool_error = True
+        except Exception:
+            pass
+
         if self.tool_progress_mode == "off":
             # No preview will be mounted — close streaming block normally
             if tui is not None and _was_streaming:
-                tui.call_from_thread(tui.close_streaming_tool_block, tool_call_id, _stream_duration)
+                tui.call_from_thread(tui.close_streaming_tool_block, tool_call_id, _stream_duration, _is_tool_error)
             return
 
         _TOOL_PREFIX = "  ┊ "
@@ -7090,7 +7100,7 @@ class HermesCLI:
 
             # If no preview was mounted, close the streaming block normally
             if _was_streaming and not _will_mount_preview:
-                tui.call_from_thread(tui.close_streaming_tool_block, tool_call_id, _stream_duration)
+                tui.call_from_thread(tui.close_streaming_tool_block, tool_call_id, _stream_duration, _is_tool_error)
 
         else:
             # --- PT mode path: unchanged ---

@@ -24,6 +24,7 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Static
 
+from hermes_cli.tui.animation import PulseMixin, lerp_color
 from hermes_cli.tui.widgets import (
     CopyableRichLog,
     _boost_layout_caches,
@@ -84,11 +85,14 @@ def _count_visible_diff_rows(lines: list[str]) -> ToolHeaderStats | None:
     return ToolHeaderStats(additions=additions, deletions=deletions)
 
 
-class ToolHeader(Widget):
+class ToolHeader(PulseMixin, Widget):
     """Single-line header: '  ╌╌ {label}  {stats}  [▸/▾]'.
 
     During streaming ``_spinner_char`` replaces the toggle chevron.
     After completion ``_duration`` is appended to the label.
+
+    Inherits PulseMixin — tool icon pulses green during streaming,
+    settles to green (success) or red (error) on completion.
     """
 
     DEFAULT_CSS = "ToolHeader { height: 1; }"
@@ -115,6 +119,8 @@ class ToolHeader(Widget):
         self._spinner_char: str | None = None   # non-None while streaming
         self._duration: str = ""                # set on completion
         self._tool_icon: str = ""
+        # Icon color state
+        self._tool_icon_error: bool = False
 
     def on_mount(self) -> None:
         self._refresh_gutter_color()
@@ -162,7 +168,32 @@ class ToolHeader(Widget):
             if len(label_str) > available:
                 label_str = label_str[:available - 1] + "…"
         prefix = f" {self._tool_icon}" if self._tool_icon else ""
-        t.append(f"   ╌╌{prefix} {label_str}", style="dim")
+        # Tool icon color: pulse green while streaming, fixed green/red on complete
+        if self._tool_icon and prefix:
+            if self._spinner_char is not None:
+                # Streaming — pulse between dim and addition color
+                icon_dim = "#6e6e6e"
+                icon_peak = getattr(self, "_diff_add_color", _DIFF_ADD_FALLBACK)
+                icon_color = lerp_color(icon_dim, icon_peak, self._pulse_t)
+                t.append("   ╌╌", style="dim")
+                t.append(prefix, style=f"bold {icon_color}")
+                t.append(f" {label_str}", style="dim")
+            elif self._tool_icon_error:
+                # Error — red
+                err_color = getattr(self, "_diff_del_color", _DIFF_DEL_FALLBACK)
+                t.append("   ╌╌", style="dim")
+                t.append(prefix, style=f"bold {err_color}")
+                t.append(f" {label_str}", style="dim")
+            elif self._duration:
+                # Success complete — green
+                ok_color = getattr(self, "_diff_add_color", _DIFF_ADD_FALLBACK)
+                t.append("   ╌╌", style="dim")
+                t.append(prefix, style=f"bold {ok_color}")
+                t.append(f" {label_str}", style="dim")
+            else:
+                t.append(f"   ╌╌{prefix} {label_str}", style="dim")
+        else:
+            t.append(f"   ╌╌{prefix} {label_str}", style="dim")
         if self._spinner_char is not None:
             # Streaming in progress — show spinner, no line count or toggle yet
             t.append(f"  {self._spinner_char}", style="dim")
@@ -180,6 +211,10 @@ class ToolHeader(Widget):
                 toggle = "  ▾" if not self.collapsed else "  ▸"
                 t.append(toggle, style="dim")
         return t
+
+    def set_error(self, is_error: bool) -> None:
+        """Mark tool result as error — icon turns red on completion."""
+        self._tool_icon_error = is_error
 
     def flash_copy(self) -> None:
         """Flash ⎘ → ✓ for 1.5 s, then revert."""
@@ -427,6 +462,8 @@ class StreamingToolBlock(ToolBlock):
         self._render_timer = self.set_interval(1 / 60, self._flush_pending)
         self._spinner_timer = self.set_interval(0.25, self._tick_spinner)
         self._duration_timer = self.set_interval(0.1, self._tick_duration)
+        # Start icon pulse
+        self._header._pulse_start()
 
     # ------------------------------------------------------------------
     # Streaming API (called from event loop via call_from_thread)
@@ -460,7 +497,7 @@ class StreamingToolBlock(ToolBlock):
         except Exception:
             pass
 
-    def complete(self, duration: str) -> None:
+    def complete(self, duration: str, is_error: bool = False) -> None:
         """Transition to COMPLETED state: flush remaining lines, update header."""
         if self._completed:
             return
@@ -472,6 +509,9 @@ class StreamingToolBlock(ToolBlock):
             self._duration_timer.stop()
         except Exception:
             pass
+        # Stop icon pulse, set error state
+        self._header._pulse_stop()
+        self._header.set_error(is_error)
         # Final synchronous flush
         self._flush_pending()
         # Hide tail badge unconditionally

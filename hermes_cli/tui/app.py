@@ -625,10 +625,12 @@ class HermesApp(App):
             inp = self.query_one("#input-area")
             overlay = self.query_one("#spinner-overlay", Static)
             overlay.display = False  # always hidden; placeholder replaces overlay
+            # Leading space so cursor doesn't obscure first char when input is focused
+            padded = f" {spinner_display}" if spinner_display else ""
             if hasattr(inp, "placeholder"):
-                inp.placeholder = spinner_display if spinner_display else ""
+                inp.placeholder = padded
             if hasattr(inp, "spinner_text"):
-                inp.spinner_text = spinner_display
+                inp.spinner_text = padded
         except NoMatches:
             pass
 

@@ -14,6 +14,7 @@ Hermes-specific features on top:
 from __future__ import annotations
 
 import os
+import re
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +45,10 @@ if TYPE_CHECKING:
 # History file path — same location as prompt_toolkit's FileHistory used
 _HERMES_HOME = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
 _HISTORY_FILE = _HERMES_HOME / ".hermes_history"
+
+# Slash-command value regex — matches entire input "/cmd" with word+hyphen chars.
+# Used to bypass cursor-position-dependent detection (see _update_autocomplete).
+_SLASH_FULL_RE = re.compile(r"^/([\w-]*)$")
 
 
 def _sanitize_input_text(text: str) -> str:
@@ -134,6 +139,7 @@ class HermesInput(Input, can_focus=True):
         self._history_idx: int = -1
         self._history_draft: str = ""
         self._slash_commands: list[str] = []
+        self._suppress_autocomplete_once: bool = False
 
         # Autocomplete dispatcher state
         self._current_trigger: CompletionTrigger = CompletionTrigger(
@@ -254,8 +260,12 @@ class HermesInput(Input, can_focus=True):
         self._history_idx = -1
 
     def action_history_prev(self) -> None:
-        # Delegate to completion list when overlay is visible
-        if self._completion_overlay_visible():
+        # Slash-only preview: dismiss and go to history
+        if self._completion_overlay_slash_only():
+            self._hide_completion_overlay()
+            self._suppress_autocomplete_once = True
+        # Full overlay (path completions): navigate list
+        elif self._completion_overlay_visible():
             self._move_highlight(-1)
             return
         if self.disabled or not self._history:
@@ -271,8 +281,12 @@ class HermesInput(Input, can_focus=True):
         self.cursor_position = len(self.value)
 
     def action_history_next(self) -> None:
-        # Delegate to completion list when overlay is visible
-        if self._completion_overlay_visible():
+        # Slash-only preview: dismiss and go to history
+        if self._completion_overlay_slash_only():
+            self._hide_completion_overlay()
+            self._suppress_autocomplete_once = True
+        # Full overlay (path completions): navigate list
+        elif self._completion_overlay_visible():
             self._move_highlight(+1)
             return
         if self.disabled or self._history_idx == -1:
@@ -350,10 +364,27 @@ class HermesInput(Input, can_focus=True):
         Torture test: 100 chars/s input while a 50 k-file tree is being walked.
         """
         with measure("input._update_autocomplete", budget_ms=4.0):
+            # One-shot suppression: used when history nav dismisses slash overlay
+            if self._suppress_autocomplete_once:
+                self._suppress_autocomplete_once = False
+                return
             # Choice overlay wins: completion is suppressed while an approval
             # prompt is up.
             if getattr(self.app, "choice_overlay_active", False):
                 self._hide_completion_overlay()
+                return
+
+            # Slash commands: use full value, not cursor position.
+            # watch_value fires before cursor_position settles (Textual reactivity
+            # order), so value[:cursor] drops the last typed char.  Since slash
+            # commands are always the entire input, just slice value directly.
+            if self.value.startswith("/") and _SLASH_FULL_RE.match(self.value):
+                fragment = self.value[1:]  # strip leading '/'
+                self._current_trigger = CompletionTrigger(
+                    CompletionContext.SLASH_COMMAND, fragment, 1,
+                )
+                self._raw_candidates = []
+                self._show_slash_completions(fragment)
                 return
 
             trigger = detect_context(self.value, self.cursor_position)
@@ -535,6 +566,13 @@ class HermesInput(Input, can_focus=True):
     def _completion_overlay_visible(self) -> bool:
         try:
             return self.screen.query_one(CompletionOverlay).has_class("--visible")
+        except NoMatches:
+            return False
+
+    def _completion_overlay_slash_only(self) -> bool:
+        try:
+            overlay = self.screen.query_one(CompletionOverlay)
+            return overlay.has_class("--visible") and overlay.has_class("--slash-only")
         except NoMatches:
             return False
 

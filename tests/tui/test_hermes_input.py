@@ -623,23 +623,30 @@ async def test_tab_accepts_absolute_path_candidate() -> None:
 
 
 @pytest.mark.asyncio
-async def test_up_down_delegates_to_list_when_overlay_visible() -> None:
-    """Up/Down navigates the completion list when the overlay is visible."""
+async def test_up_dismisses_slash_only_and_navigates_history() -> None:
+    """Up on slash-only overlay dismisses it and goes to history."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         inp = app.query_one(HermesInput)
         inp.set_slash_commands(["/help", "/history", "/clear"])
+        # Seed history
+        inp._history = ["/help", "/clear"]
         inp.value = "/"
         inp.cursor_position = 1
         await pilot.pause()
 
-        clist = app.query_one(VirtualCompletionList)
-        initial_highlight = clist.highlighted
+        # Slash-only overlay should be visible
+        overlay = app.query_one(CompletionOverlay)
+        assert overlay.has_class("--visible")
+        assert overlay.has_class("--slash-only")
 
-        inp.action_history_next()  # bound to down
+        # ArrowUp dismisses overlay and goes to history
+        inp.action_history_prev()
         await pilot.pause()
-        assert clist.highlighted != initial_highlight or len(clist.items) == 1
+
+        assert not overlay.has_class("--visible")
+        assert inp.value == "/clear"  # most recent history entry
 
 
 @pytest.mark.asyncio

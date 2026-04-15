@@ -1611,6 +1611,8 @@ class HermesCLI:
         self._stream_start_times: dict[str, float] = {}
         # Tokens for reset_streaming_callback, keyed by tool_call_id
         self._stream_callback_tokens: dict[str, object] = {}
+        # Queue correlating gen_start StreamingToolBlocks with tool_start tool_call_ids
+        self._pending_gen_queue: list = []
 
         # Configuration - priority: CLI args > env vars > config file
         # Model comes from: CLI arg or config.yaml (single source of truth).
@@ -3081,10 +3083,10 @@ class HermesCLI:
                 checkpoint_max_snapshots=self.checkpoint_max_snapshots,
                 pass_session_id=self.pass_session_id,
                 tool_progress_callback=self._on_tool_progress,
-                tool_start_callback=self._on_tool_start if self._inline_diffs_enabled else None,
-                tool_complete_callback=self._on_tool_complete if self._inline_diffs_enabled else None,
+                tool_start_callback=self._on_tool_start,
+                tool_complete_callback=self._on_tool_complete,
                 stream_delta_callback=self._stream_delta if self.streaming_enabled else None,
-                tool_gen_callback=self._on_tool_gen_start if self.streaming_enabled else None,
+                tool_gen_callback=self._on_tool_gen_start,
             )
             # Store reference for atexit memory provider shutdown
             global _active_agent_ref
@@ -6438,30 +6440,51 @@ class HermesCLI:
     # Tool-call generation indicator (shown during streaming)
     # ====================================================================
 
+    def _build_tool_label(self, function_name: str, function_args: dict) -> str:
+        """Build a human-readable label for a tool header."""
+        if function_name == "terminal":
+            label = function_args.get("command", "terminal")
+        elif function_name == "execute_code":
+            code = function_args.get("code", "execute_code")
+            label = next((l.strip() for l in code.splitlines() if l.strip()), "execute_code")
+        else:
+            label = function_name
+        if len(label) > 60:
+            label = label[:57] + "…"
+        return label
+
+    def _update_block_label(self, block, function_name: str, function_args: dict) -> None:
+        """Update a StreamingToolBlock's label from tool name to actual command."""
+        label = self._build_tool_label(function_name, function_args)
+        block._header._label = label
+        block._header._tool_name = function_name
+        block._header._refresh_tool_icon()
+        block._header.refresh()
+
     def _on_tool_gen_start(self, tool_name: str) -> None:
         """Called when the model begins generating tool-call arguments.
 
         Closes any open streaming boxes (reasoning / response) exactly once,
-        then prints a short status line so the user sees activity instead of
-        a frozen screen while a large payload (e.g. 45 KB write_file) streams.
+        then opens a StreamingToolBlock so the user sees an animated header
+        (spinner + timer) while argument generation is in progress.
         """
         if getattr(self, "_stream_box_opened", False):
             self._flush_stream()
             self._stream_box_opened = False
         self._close_reasoning_box()
 
-        # Show an in-progress line in the TUI pending widget.
+        # Open a StreamingToolBlock at gen_start time.
         tui = _hermes_app
-        if tui is not None:
-            from agent.display import get_tool_icon
-            from rich.text import Text
-            from hermes_cli.tui.widgets import ToolPendingLine
-            icon = get_tool_icon(tool_name)
-            styled = Text.from_ansi(f"  ┊ {icon} {tool_name}  …")
-            tui.call_from_thread(
-                _safe_widget_call, tui, ToolPendingLine, "set_line",
-                tool_name, styled,
-            )
+        if tui is None:
+            return  # PT mode: no visual widget
+
+        # call_from_thread to mount on event loop, capture block reference
+        result = [None]
+        def _open():
+            result[0] = tui._open_gen_block(tool_name)
+        tui.call_from_thread(_open)
+        if result[0] is not None:
+            self._pending_gen_queue.append(result[0])
 
     # ====================================================================
     # Tool progress callback (audio cues for voice mode)
@@ -6505,66 +6528,62 @@ class HermesCLI:
     def _on_tool_start(self, tool_call_id: str, function_name: str, function_args: dict):
         """Capture local before-state for write-capable tools.
 
-        Also opens a StreamingToolBlock for terminal / execute_code foreground
-        commands when the TUI is active.
+        Opens a StreamingToolBlock for ALL tools (not just terminal/execute_code).
+        Dequeues a pending gen block if one was created at gen_start, otherwise
+        creates a new block directly. Non-streaming tools show header-only
+        (spinner + timer, empty body).
         """
+        # Edit snapshot capture (unchanged)
         try:
             from agent.display import capture_local_edit_snapshot
-
             snapshot = capture_local_edit_snapshot(function_name, function_args)
             if snapshot is not None:
                 self._pending_edit_snapshots[tool_call_id] = snapshot
         except Exception:
             logger.debug("Edit snapshot capture failed for %s", function_name, exc_info=True)
 
-        # --- Streaming block setup ---
-        _STREAMING_TOOLS = {"terminal", "execute_code"}
-        if function_name not in _STREAMING_TOOLS:
-            return
-        # Foreground-only for terminal (background=True uses process_registry, not streaming)
-        if function_name == "terminal" and function_args.get("background"):
-            return
-
+        # --- Background terminal: discard pending gen block, no animated display ---
         tui = _hermes_app
+        if function_name == "terminal" and function_args.get("background"):
+            if tui is not None and self._pending_gen_queue:
+                discarded = self._pending_gen_queue.pop(0)
+                tui.call_from_thread(discarded.remove)
+            return  # no streaming block for background tools
+
         if tui is None:
-            return
+            return  # PT mode: no streaming block
 
-        import time as _t
-        getattr(self, "_stream_start_times", {})[tool_call_id] = _t.monotonic()
-        getattr(self, "_active_stream_tool_ids", set()).add(tool_call_id)
+        # --- Dequeue pending gen block, re-key to tool_call_id ---
+        block = self._pending_gen_queue.pop(0) if self._pending_gen_queue else None
 
-        # Build a human-readable label for the block header
-        if function_name == "terminal":
-            label = function_args.get("command", "terminal")
+        if block is not None:
+            # Re-key: move from gen queue to active dict
+            tui._active_streaming_blocks[tool_call_id] = block
+            # Update label with actual command
+            self._update_block_label(block, function_name, function_args)
         else:
-            # execute_code — show the first non-empty line of the code
-            code = function_args.get("code", "execute_code")
-            label = next((l.strip() for l in code.splitlines() if l.strip()), "execute_code")
-        # Cap label at 60 chars
-        if len(label) > 60:
-            label = label[:57] + "…"
+            # Fallback: gen_start didn't fire (tool_gen_callback was None, or queue race)
+            # Create a new StreamingToolBlock directly
+            label = self._build_tool_label(function_name, function_args)
+            tui.call_from_thread(tui.open_streaming_tool_block, tool_call_id, label, function_name)
 
-        tui.call_from_thread(tui.open_streaming_tool_block, tool_call_id, label, function_name)
+        # Track ALL tools (not just streaming-capable ones)
+        import time as _t
+        self._stream_start_times[tool_call_id] = _t.monotonic()
+        self._active_stream_tool_ids.add(tool_call_id)
 
-        # Remove ToolPendingLine — the StreamingToolBlock header supersedes it.
-        try:
-            from hermes_cli.tui.widgets import ToolPendingLine as _TPL, _safe_widget_call as _sc
-            tui.call_from_thread(_sc, tui, _TPL, "remove_line", function_name)
-        except Exception:
-            pass
-
-        # Register the streaming line callback so terminal_tool / execute_code
-        # can route output lines directly to the block.
-        try:
-            from tools.terminal_tool import set_streaming_callback as _set_cb
-            token = _set_cb(
-                lambda line, _tid=tool_call_id: tui.call_from_thread(
-                    tui.append_streaming_line, _tid, line
+        # Register streaming callback for terminal/execute_code only
+        if function_name in ("terminal", "execute_code"):
+            try:
+                from tools.terminal_tool import set_streaming_callback as _set_cb
+                token = _set_cb(
+                    lambda line, _tid=tool_call_id: tui.call_from_thread(
+                        tui.append_streaming_line, _tid, line
+                    )
                 )
-            )
-            getattr(self, "_stream_callback_tokens", {})[tool_call_id] = token
-        except Exception:
-            logger.debug("Failed to register streaming callback for %s", function_name, exc_info=True)
+                self._stream_callback_tokens[tool_call_id] = token
+            except Exception:
+                logger.debug("Failed to register streaming callback for %s", function_name, exc_info=True)
 
     def _on_tool_complete(self, tool_call_id: str, function_name: str, function_args: dict, function_result: str):
         """Render file edits with inline diff / code preview after tools complete.
@@ -6575,26 +6594,24 @@ class HermesCLI:
         """
         snapshot = self._pending_edit_snapshots.pop(tool_call_id, None)
 
-        # --- Close streaming block (terminal / execute_code foreground) ---
-        _active_ids = getattr(self, "_active_stream_tool_ids", set())
-        _was_streaming = tool_call_id in _active_ids
-        if _was_streaming:
-            _active_ids.discard(tool_call_id)
-            # Reset the ContextVar callback
+        # --- Close streaming block (ALL tools, not just terminal/execute_code) ---
+        tui = _hermes_app
+        _was_streaming = tool_call_id in self._active_stream_tool_ids
+        self._active_stream_tool_ids.discard(tool_call_id)
+        if tui is not None and _was_streaming:
+            # Reset the ContextVar callback (only if registered — streaming tools only)
             try:
                 from tools.terminal_tool import reset_streaming_callback as _reset_cb
-                token = getattr(self, "_stream_callback_tokens", {}).pop(tool_call_id, None)
+                token = self._stream_callback_tokens.pop(tool_call_id, None)
                 if token is not None:
                     _reset_cb(token)
             except Exception:
                 pass
             # Compute duration and close the block
             import time as _t
-            start = getattr(self, "_stream_start_times", {}).pop(tool_call_id, None)
+            start = self._stream_start_times.pop(tool_call_id, None)
             duration = f"{_t.monotonic() - start:.1f}s" if start is not None else ""
-            tui = _hermes_app
-            if tui is not None:
-                tui.call_from_thread(tui.close_streaming_tool_block, tool_call_id, duration)
+            tui.call_from_thread(tui.close_streaming_tool_block, tool_call_id, duration)
 
         if self.tool_progress_mode == "off":
             return
@@ -6764,14 +6781,6 @@ class HermesCLI:
                         render_terminal_preview(function_args.get("command", ""), function_result, print_fn=_cprint, prefix=_TOOL_PREFIX)
                 except Exception:
                     logger.debug("%s highlight failed", function_name, exc_info=True)
-
-        # Clear the in-progress pending line now that the cute message is in the RichLog.
-        tui = _hermes_app
-        if tui is not None:
-            from hermes_cli.tui.widgets import ToolPendingLine, _safe_widget_call
-            tui.call_from_thread(
-                _safe_widget_call, tui, ToolPendingLine, "remove_line", function_name,
-            )
 
     # ====================================================================
     # Voice mode methods

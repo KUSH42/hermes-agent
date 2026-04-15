@@ -68,6 +68,10 @@ def _make_tool_cli(tool_progress_mode="verbose", code_highlight_enabled=True):
     cli.tool_progress_mode = tool_progress_mode
     cli._code_highlight_enabled = code_highlight_enabled
     cli._pending_edit_snapshots = {}
+    cli._active_stream_tool_ids = set()
+    cli._stream_start_times = {}
+    cli._stream_callback_tokens = {}
+    cli._pending_gen_queue = []
     return cli
 
 

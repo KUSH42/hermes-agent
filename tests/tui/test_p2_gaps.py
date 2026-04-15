@@ -26,7 +26,6 @@ from hermes_cli.tui.widgets import (
     MessagePanel,
     OutputPanel,
     ThinkingWidget,
-    ToolPendingLine,
     CopyableRichLog,
 )
 
@@ -47,10 +46,10 @@ def _make_block(n_lines: int, label: str = "cmd") -> ToolBlock:
 
 
 async def _mount_block(app: HermesApp, pilot, n_lines: int = COLLAPSE_THRESHOLD + 2, label: str = "cmd") -> ToolBlock:
-    """Mount a ToolBlock into OutputPanel before ToolPendingLine."""
+    """Mount a ToolBlock into OutputPanel before ThinkingWidget."""
     output = app.query_one(OutputPanel)
     block = _make_block(n_lines, label)
-    output.mount(block, before=output.query_one(ToolPendingLine))
+    output.mount(block, before=output.query_one(ThinkingWidget))
     await pilot.pause()
     return block
 

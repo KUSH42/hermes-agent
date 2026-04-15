@@ -24,7 +24,7 @@ from hermes_cli.tui.widgets import (
     HintBar,
     OutputPanel,
     StatusBar,
-    ToolPendingLine,
+    ThinkingWidget,
     UserMessagePanel,
 )
 
@@ -52,7 +52,7 @@ def _alpha(color) -> float:
 async def _mount_echo(app: HermesApp, message: str, images: int = 0) -> UserMessagePanel:
     output = app.query_one(OutputPanel)
     panel = UserMessagePanel(message, images=images)
-    output.mount(panel, before=output.query_one(ToolPendingLine))
+    output.mount(panel, before=output.query_one(ThinkingWidget))
     await asyncio.sleep(0.02)
     return panel
 

@@ -220,6 +220,10 @@ def _make_cli_obj():
     cli_obj.tool_progress_mode = "normal"
     cli_obj._code_highlight_enabled = False
     cli_obj._pending_edit_snapshots = {}
+    cli_obj._active_stream_tool_ids = set()
+    cli_obj._stream_start_times = {}
+    cli_obj._stream_callback_tokens = {}
+    cli_obj._pending_gen_queue = []
     return cli_obj
 
 
@@ -244,7 +248,7 @@ def test_on_tool_complete_tui_calls_mount_tool_block():
          patch("hermes_cli.tui.widgets._strip_ansi", side_effect=lambda x: x):
         cli_obj._on_tool_complete("id1", "write_file", {}, '{"success": true}')
 
-    # First call_from_thread is mount_tool_block; second is remove_line (ToolPendingLine)
+    # First call_from_thread is mount_tool_block
     assert mock_tui.call_from_thread.call_count >= 1
     first_call = mock_tui.call_from_thread.call_args_list[0]
     assert first_call[0][0] == mock_tui.mount_tool_block

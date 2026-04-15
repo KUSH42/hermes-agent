@@ -709,7 +709,7 @@ class HermesApp(App):
         """
         try:
             panel = self.query_one(OutputPanel)
-            panel.mount(UserMessagePanel(text, images=images), before=panel.tool_pending)
+            panel.mount(UserMessagePanel(text, images=images), before=panel.query_one(ThinkingWidget))
             # Always scroll to show the user's own message regardless of scroll
             # position — the user just submitted, they expect to see the exchange.
             # Re-engage auto-scroll for the upcoming assistant response.
@@ -803,6 +803,15 @@ class HermesApp(App):
             # without calling close_streaming_tool_block).  Leaked refs prevent GC
             # of the widget objects and cause stale entries on the next turn.
             self._active_streaming_blocks.clear()
+            # Clear any gen blocks left open from interrupted turns
+            pending = getattr(self.cli, "_pending_gen_queue", None)
+            if pending:
+                for block in pending:
+                    try:
+                        block.remove()
+                    except Exception:
+                        pass
+                pending.clear()
 
         # --- undo safety guard ---
         if value and self.undo_state is not None:
@@ -1363,12 +1372,12 @@ class HermesApp(App):
         header_stats=None,
         tool_name: str | None = None,
     ) -> None:
-        """Mount a ToolBlock into OutputPanel before the live-output trio.
+        """Mount a ToolBlock into OutputPanel before the live-output duo.
 
-        Tool blocks are direct children of OutputPanel (not nested inside
-        MessagePanel) so they stay correctly ordered across turns.  Mounting
-        before tool_pending ensures completed blocks remain visually associated
-        with their turn's content even after subsequent turns are appended.
+        Tool blocks are direct children of MessagePanel so they stay correctly
+        ordered across turns.  Mounting before ThinkingWidget/LiveLineWidget
+        ensures completed blocks remain visually associated with their turn's
+        content even after subsequent turns are appended.
         """
         if not lines:
             return
@@ -1394,13 +1403,31 @@ class HermesApp(App):
 
     # --- StreamingToolBlock lifecycle ---
 
-    def open_streaming_tool_block(self, tool_call_id: str, label: str, tool_name: str | None = None) -> None:
-        """Mount a StreamingToolBlock into OutputPanel before the live-output trio.
+    def _open_gen_block(self, tool_name: str) -> "Any | None":
+        """Open a StreamingToolBlock at gen_start time. Event-loop only.
 
-        Tool blocks are direct children of OutputPanel (not nested inside
-        MessagePanel) so they stay correctly ordered across turns.  Mounting
-        before tool_pending means completed STBs remain visually adjacent to
-        their turn's content after subsequent turns are appended.
+        Called via call_from_thread from the agent thread during streaming
+        argument generation. Returns the block reference for queue correlation,
+        or None if the mount failed.
+        """
+        try:
+            output = self.query_one(OutputPanel)
+            msg = output.current_message or output.new_message()
+            block = msg.open_streaming_tool_block(label=tool_name, tool_name=tool_name)
+            self._browse_total += 1
+            if not output._user_scrolled_up:
+                self.call_after_refresh(output.scroll_end, animate=False)
+            return block
+        except NoMatches:
+            return None
+
+    def open_streaming_tool_block(self, tool_call_id: str, label: str, tool_name: str | None = None) -> None:
+        """Mount a StreamingToolBlock into OutputPanel before the live-output duo.
+
+        Tool blocks are direct children of MessagePanel so they stay correctly
+        ordered across turns.  Mounting before ThinkingWidget/LiveLineWidget
+        means completed STBs remain visually adjacent to their turn's content
+        after subsequent turns are appended.
 
         Called via ``call_from_thread`` from the agent thread before the tool
         starts executing.  Subsequent output lines are routed here via

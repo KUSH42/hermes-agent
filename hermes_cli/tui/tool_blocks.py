@@ -466,6 +466,10 @@ class StreamingToolBlock(ToolBlock):
             self._header._has_affordances = True
             self._header.collapsed = True
             self._body.remove_class("expanded")
+        elif self._total_received == 0:
+            # Hide empty body entirely (non-streaming tools with no output)
+            self._body.styles.display = "none"
+            self._header.collapsed = False
         else:
             self._header.collapsed = False
         self._header.refresh()

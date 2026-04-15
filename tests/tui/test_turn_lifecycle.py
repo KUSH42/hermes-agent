@@ -310,7 +310,7 @@ async def test_tool_body_copyable_richlog_has_no_individual_scroll():
         lines = [f"output line {i}" for i in range(80)]
         block = ToolBlock(label="test tool", lines=lines, plain_lines=lines)
         panel = app.query_one(OutputPanel)
-        await panel.mount(block, before=panel.tool_pending)
+        await panel.mount(block, before=panel.query_one(ThinkingWidget))
         block.toggle()  # expand it
         await pilot.pause()
 

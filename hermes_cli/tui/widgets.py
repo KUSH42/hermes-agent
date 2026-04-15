@@ -418,61 +418,6 @@ def _safe_widget_call(app: HermesApp, widget_type: type, method: str, *args: Any
 # Output pipeline (Step 1)
 # ---------------------------------------------------------------------------
 
-class ToolPendingLine(Widget):
-    """Shows in-progress tool calls as a stacked list while they are executing.
-
-    Each pending entry is keyed by *tool_id* (typically the tool name).
-    Lines are added via :meth:`set_line` when argument generation begins and
-    removed via :meth:`remove_line` once the tool completes and the final
-    cute-message is committed to the RichLog.  The widget auto-hides when the
-    pending dict is empty.
-    """
-
-    DEFAULT_CSS = """
-    ToolPendingLine {
-        height: auto;
-        display: none;
-    }
-    """
-
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self._lines: dict[str, Text] = {}
-        self._order: list[str] = []
-
-    def set_line(self, tool_id: str, styled: Text) -> None:
-        """Add or update the in-progress line for *tool_id*."""
-        if tool_id not in self._lines:
-            self._order.append(tool_id)
-        self._lines[tool_id] = styled
-        self.display = True
-        self.refresh()
-
-    def remove_line(self, tool_id: str) -> None:
-        """Remove the pending line for *tool_id*.  Auto-hides when empty."""
-        if tool_id in self._lines:
-            del self._lines[tool_id]
-            self._order = [k for k in self._order if k in self._lines]
-        if not self._lines:
-            self.display = False
-        self.refresh()
-
-    def get_content_height(self, container, viewport, width: int) -> int:  # type: ignore[override]
-        return max(1, len(self._lines))
-
-    def render(self) -> RenderResult:
-        if not self._lines:
-            return Text("")
-        t = Text()
-        for i, key in enumerate(self._order):
-            if key not in self._lines:
-                continue
-            if i > 0:
-                t.append("\n")
-            t.append_text(self._lines[key])
-        return t
-
-
 class LiveLineWidget(Widget):
     """Renders the current in-progress streaming chunk before it is committed.
 
@@ -1197,17 +1142,12 @@ class OutputPanel(ScrollableContainer):
         self._user_scrolled_up = True
 
     def compose(self) -> ComposeResult:
-        yield ToolPendingLine(id="tool-pending")
         yield ThinkingWidget(id="thinking")
         yield LiveLineWidget(id="live-line")
 
     @property
     def live_line(self) -> LiveLineWidget:
         return self.query_one(LiveLineWidget)
-
-    @property
-    def tool_pending(self) -> ToolPendingLine:
-        return self.query_one(ToolPendingLine)
 
     @property
     def current_message(self) -> MessagePanel | None:
@@ -1225,7 +1165,7 @@ class OutputPanel(ScrollableContainer):
         """
         panel = MessagePanel(user_text=user_text, show_header=show_header)
         panel.add_class("--entering")
-        self.mount(panel, before=self.tool_pending)
+        self.mount(panel, before=self.query_one(ThinkingWidget))
         # Remove --entering after the first render so the CSS opacity transition
         # plays: opacity 0 → 1 (fade-in).  call_after_refresh fires in the next
         # event loop pass — fast enough to keep the initial "black flash" invisible

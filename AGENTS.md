@@ -10,6 +10,12 @@ For durable project-specific context that should survive across sessions, use
 Keep `docs/project-memory.md` as the repo-local mirror for important project
 context that should travel with the repository.
 
+## Project Directory
+
+```bash
+cd ~/.hermes/hermes-agent
+```
+
 ## Development Environment
 
 ```bash

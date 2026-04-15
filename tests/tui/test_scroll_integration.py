@@ -161,9 +161,9 @@ async def test_user_echo_always_scrolls_even_when_scrolled_up():
 
 
 @pytest.mark.asyncio
-async def test_user_echo_mounts_panel_before_tool_pending():
-    """UserMessagePanel appears in the DOM before ToolPendingLine."""
-    from hermes_cli.tui.widgets import ToolPendingLine
+async def test_user_echo_mounts_panel_before_duo():
+    """UserMessagePanel appears in the DOM before ThinkingWidget."""
+    from hermes_cli.tui.widgets import ThinkingWidget
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await _setup(pilot)
@@ -173,10 +173,10 @@ async def test_user_echo_mounts_panel_before_tool_pending():
         children = list(output.children)
         types = [type(c).__name__ for c in children]
         assert "UserMessagePanel" in types
-        assert "ToolPendingLine" in types
+        assert "ThinkingWidget" in types
         echo_idx = next(i for i, t in enumerate(types) if t == "UserMessagePanel")
-        tp_idx = types.index("ToolPendingLine")
-        assert echo_idx < tp_idx, "UserMessagePanel must sit before ToolPendingLine"
+        tw_idx = types.index("ThinkingWidget")
+        assert echo_idx < tw_idx, "UserMessagePanel must sit before ThinkingWidget"
 
 
 # ===========================================================================

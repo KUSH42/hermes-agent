@@ -22,7 +22,6 @@ from hermes_cli.tui.widgets import (
     LiveLineWidget,
     OutputPanel,
     ThinkingWidget,
-    ToolPendingLine,
 )
 
 
@@ -400,8 +399,8 @@ async def test_overwrite_on_second_open_same_id():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_tool_block_mount_order_before_trio():
-    """StreamingToolBlock is mounted before the ToolPendingLine/ThinkingWidget/LiveLineWidget trio."""
+async def test_tool_block_mount_order_before_duo():
+    """StreamingToolBlock is mounted before the ThinkingWidget/LiveLineWidget duo."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -414,23 +413,19 @@ async def test_tool_block_mount_order_before_trio():
         output = app.query_one(OutputPanel)
         children = list(output.children)
 
-        assert len(children) >= 3, "OutputPanel must have at least 3 children"
-        last3 = children[-3:]
+        assert len(children) >= 2, "OutputPanel must have at least 2 children"
+        last2 = children[-2:]
 
-        assert isinstance(last3[0], ToolPendingLine), (
-            f"3rd-from-last must be ToolPendingLine, got {type(last3[0]).__name__}"
+        assert isinstance(last2[0], ThinkingWidget), (
+            f"2nd-from-last must be ThinkingWidget, got {type(last2[0]).__name__}"
         )
-        assert isinstance(last3[1], ThinkingWidget), (
-            f"2nd-from-last must be ThinkingWidget, got {type(last3[1]).__name__}"
-        )
-        assert isinstance(last3[2], LiveLineWidget), (
-            f"Last child must be LiveLineWidget, got {type(last3[2]).__name__}"
+        assert isinstance(last2[1], LiveLineWidget), (
+            f"Last child must be LiveLineWidget, got {type(last2[1]).__name__}"
         )
 
-        # The StreamingToolBlock must NOT be in the last 3
-        assert not isinstance(last3[0], StreamingToolBlock)
-        assert not isinstance(last3[1], StreamingToolBlock)
-        assert not isinstance(last3[2], StreamingToolBlock)
+        # The StreamingToolBlock must NOT be in the last 2
+        assert not isinstance(last2[0], StreamingToolBlock)
+        assert not isinstance(last2[1], StreamingToolBlock)
 
         app.agent_running = False
         await pilot.pause()

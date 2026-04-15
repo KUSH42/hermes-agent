@@ -1,9 +1,9 @@
 # Run with: pytest -o "addopts=" tests/tui/test_mount_order.py
 """Integration tests for DOM mount order and layout fixes in the Hermes TUI.
 
-These tests verify that OutputPanel keeps live-output trio
-(``ToolPendingLine``, ``ThinkingWidget``, ``LiveLineWidget``) at bottom, while
-per-turn content mounts ahead of that trio. Tool blocks now live inside their
+These tests verify that OutputPanel keeps live-output duo
+(``ThinkingWidget``, ``LiveLineWidget``) at bottom, while
+per-turn content mounts ahead of that duo. Tool blocks now live inside their
 turn's ``MessagePanel`` timeline, not as direct ``OutputPanel`` children.
 """
 
@@ -18,7 +18,6 @@ from hermes_cli.tui.widgets import (
     MessagePanel,
     UserMessagePanel,
     LiveLineWidget,
-    ToolPendingLine,
     ThinkingWidget,
 )
 from hermes_cli.tui.tool_blocks import StreamingToolBlock, ToolBlock
@@ -44,28 +43,26 @@ def _make_app() -> HermesApp:
 
 @pytest.mark.asyncio
 async def test_output_panel_initial_compose_order():
-    """The three compose-time widgets must appear in the right order with no messages."""
+    """The two compose-time widgets must appear in the right order with no messages."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await _pause(pilot)
         panel = app.query_one(OutputPanel)
         children = list(panel.children)
         types = [type(c) for c in children]
-        assert ToolPendingLine in types
         assert ThinkingWidget in types
         assert LiveLineWidget in types
-        tp_idx = types.index(ToolPendingLine)
         tw_idx = types.index(ThinkingWidget)
         ll_idx = types.index(LiveLineWidget)
-        assert tp_idx < tw_idx < ll_idx, (
-            f"Expected ToolPendingLine < ThinkingWidget < LiveLineWidget, "
-            f"got indices {tp_idx}, {tw_idx}, {ll_idx}"
+        assert tw_idx < ll_idx, (
+            f"Expected ThinkingWidget < LiveLineWidget, "
+            f"got indices {tw_idx}, {ll_idx}"
         )
 
 
 @pytest.mark.asyncio
-async def test_new_message_goes_before_tool_pending():
-    """MessagePanel mounted via new_message() must appear before ToolPendingLine."""
+async def test_new_message_goes_before_duo():
+    """MessagePanel mounted via new_message() must appear before the duo."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await _pause(pilot)
@@ -74,15 +71,15 @@ async def test_new_message_goes_before_tool_pending():
         await _pause(pilot)
         children = list(output.children)
         assert mp in children, "MessagePanel not found in OutputPanel children"
-        tp = output.tool_pending
-        assert children.index(mp) < children.index(tp), (
-            "MessagePanel must come before ToolPendingLine"
+        tw = output.query_one(ThinkingWidget)
+        assert children.index(mp) < children.index(tw), (
+            "MessagePanel must come before ThinkingWidget"
         )
 
 
 @pytest.mark.asyncio
-async def test_echo_user_message_goes_before_tool_pending():
-    """UserMessagePanel mounted via echo_user_message() must appear before ToolPendingLine."""
+async def test_echo_user_message_goes_before_duo():
+    """UserMessagePanel mounted via echo_user_message() must appear before the duo."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await _pause(pilot)
@@ -92,15 +89,15 @@ async def test_echo_user_message_goes_before_tool_pending():
         children = list(output.children)
         uep = next((c for c in children if isinstance(c, UserMessagePanel)), None)
         assert uep is not None, "UserMessagePanel not found in OutputPanel children"
-        tp = output.tool_pending
-        assert children.index(uep) < children.index(tp), (
-            "UserMessagePanel must come before ToolPendingLine"
+        tw = output.query_one(ThinkingWidget)
+        assert children.index(uep) < children.index(tw), (
+            "UserMessagePanel must come before ThinkingWidget"
         )
 
 
 @pytest.mark.asyncio
-async def test_live_trio_always_last_after_messages():
-    """ToolPendingLine, ThinkingWidget, LiveLineWidget must always be the last three children."""
+async def test_live_duo_always_last_after_messages():
+    """ThinkingWidget, LiveLineWidget must always be the last two children."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await _pause(pilot)
@@ -118,20 +115,17 @@ async def test_live_trio_always_last_after_messages():
 
         children = list(output.children)
         n = len(children)
-        assert n >= 3, "OutputPanel must have at least 3 children"
+        assert n >= 2, "OutputPanel must have at least 2 children"
         assert isinstance(children[-1], LiveLineWidget), (
             f"Last child must be LiveLineWidget, got {type(children[-1])}"
         )
         assert isinstance(children[-2], ThinkingWidget), (
             f"Second-to-last child must be ThinkingWidget, got {type(children[-2])}"
         )
-        assert isinstance(children[-3], ToolPendingLine), (
-            f"Third-to-last child must be ToolPendingLine, got {type(children[-3])}"
-        )
 
 
 @pytest.mark.asyncio
-async def test_tool_block_mounts_before_tool_pending():
+async def test_tool_block_mounts_before_duo():
     """ToolBlock from mount_tool_block() stays in current MessagePanel timeline."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
@@ -147,15 +141,15 @@ async def test_tool_block_mounts_before_tool_pending():
         children = list(msg.children)
         tb = next((c for c in children if isinstance(c, ToolBlock)), None)
         assert tb is not None, "ToolBlock not found in MessagePanel children"
-        tp = output.tool_pending
+        tw = output.query_one(ThinkingWidget)
         assert msg.parent is output
-        assert list(output.children).index(msg) < list(output.children).index(tp), (
-            "MessagePanel containing ToolBlock must come before ToolPendingLine"
+        assert list(output.children).index(msg) < list(output.children).index(tw), (
+            "MessagePanel containing ToolBlock must come before ThinkingWidget"
         )
 
 
 @pytest.mark.asyncio
-async def test_streaming_tool_block_mounts_before_tool_pending():
+async def test_streaming_tool_block_mounts_before_duo():
     """STB from open_streaming_tool_block() stays in current MessagePanel timeline."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
@@ -170,14 +164,10 @@ async def test_streaming_tool_block_mounts_before_tool_pending():
         children = list(msg.children)
         stb = next((c for c in children if isinstance(c, StreamingToolBlock)), None)
         assert stb is not None, "StreamingToolBlock not found in MessagePanel children"
-        tp = output.tool_pending
         tw = output.query_one(ThinkingWidget)
         ll = output.live_line
         output_children = list(output.children)
         assert msg.parent is output
-        assert output_children.index(msg) < output_children.index(tp), (
-            "MessagePanel containing StreamingToolBlock must come before ToolPendingLine"
-        )
         assert output_children.index(msg) < output_children.index(tw), (
             "MessagePanel containing StreamingToolBlock must come before ThinkingWidget"
         )
@@ -238,7 +228,7 @@ async def test_completed_stb_stays_above_next_turn():
 
 @pytest.mark.asyncio
 async def test_multi_turn_order():
-    """Two turns: UE-1, MP-1, UE-2, MP-2, ToolPendingLine, ThinkingWidget, LiveLineWidget."""
+    """Two turns: UE-1, MP-1, UE-2, MP-2, ThinkingWidget, LiveLineWidget."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await _pause(pilot)
@@ -263,7 +253,6 @@ async def test_multi_turn_order():
         assert len(ue_panels) >= 2, "Expected at least 2 UserMessagePanels"
         ue1, ue2 = ue_panels[0], ue_panels[1]
 
-        tp = output.tool_pending
         tw = output.query_one(ThinkingWidget)
         ll = output.live_line
 
@@ -272,9 +261,8 @@ async def test_multi_turn_order():
         assert i(ue1) < i(mp1), "UE-1 must precede MP-1"
         assert i(mp1) < i(ue2), "MP-1 must precede UE-2"
         assert i(ue2) < i(mp2), "UE-2 must precede MP-2"
-        # Trio must be after all content
-        assert i(mp2) < i(tp), "MP-2 must precede ToolPendingLine"
-        assert i(tp) < i(tw), "ToolPendingLine must precede ThinkingWidget"
+        # Duo must be after all content
+        assert i(mp2) < i(tw), "MP-2 must precede ThinkingWidget"
         assert i(tw) < i(ll), "ThinkingWidget must precede LiveLineWidget"
 
 
@@ -321,7 +309,7 @@ async def test_scroll_guard_on_close_streaming_tool_block():
 
 @pytest.mark.asyncio
 async def test_thinking_widget_activates_without_layout_shift():
-    """Activating ThinkingWidget must not change the trio's relative ordering."""
+    """Activating ThinkingWidget must not change the duo's relative ordering."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await _pause(pilot)
@@ -335,23 +323,19 @@ async def test_thinking_widget_activates_without_layout_shift():
         # ThinkingWidget must now be visible
         assert tw.styles.display == "block", "ThinkingWidget must be visible after activate()"
 
-        # The trio must still be the last three children in the correct order
+        # The duo must still be the last two children in the correct order
         children = list(output.children)
         n = len(children)
-        assert n >= 3
+        assert n >= 2
         assert isinstance(children[-1], LiveLineWidget), (
             f"Last child must still be LiveLineWidget, got {type(children[-1])}"
         )
         assert isinstance(children[-2], ThinkingWidget), (
             f"Second-to-last must still be ThinkingWidget, got {type(children[-2])}"
         )
-        assert isinstance(children[-3], ToolPendingLine), (
-            f"Third-to-last must still be ToolPendingLine, got {type(children[-3])}"
-        )
-        # ThinkingWidget is in the trio, not relocated
-        tp = output.tool_pending
+        # ThinkingWidget is before LiveLineWidget
         ll = output.live_line
         i = children.index
-        assert i(tp) < i(tw) < i(ll), (
-            "ThinkingWidget must remain between ToolPendingLine and LiveLineWidget"
+        assert i(tw) < i(ll), (
+            "ThinkingWidget must precede LiveLineWidget"
         )

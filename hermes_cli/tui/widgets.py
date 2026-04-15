@@ -1100,14 +1100,14 @@ class OutputPanel(ScrollableContainer):
     def watch_scroll_y(self, old_y: float, new_y: float) -> None:
         """Re-engage auto-scroll when the user scrolls back to the bottom.
 
-        Must call ``_refresh_scroll()`` so the viewport repaints when the
-        scroll position changes.  ``scroll_y`` is a reactive with
-        ``repaint=False`` — without this, setting ``scroll_y`` only updates
-        internal state; the display never repaints until some unrelated event
-        (e.g. a keypress) happens to trigger a refresh.
+        Calls ``super()`` to let the base ``Widget.watch_scroll_y`` update
+        ``vertical_scrollbar.position`` (so the thumb tracks the viewport)
+        *and* trigger ``_refresh_scroll()`` for the viewport repaint.
+        ``scroll_y`` is a reactive with ``repaint=False`` — without
+        ``_refresh_scroll()`` the display stays frozen until an unrelated
+        event triggers a refresh.
         """
-        if round(old_y) != round(new_y):
-            self._refresh_scroll()
+        super().watch_scroll_y(old_y, new_y)
         # max_scroll_y can be 0 when the panel hasn't laid out yet; guard against that.
         if self.max_scroll_y > 0 and new_y >= self.max_scroll_y - 1:
             was_scrolled = self._user_scrolled_up

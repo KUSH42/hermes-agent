@@ -213,6 +213,22 @@ class CopyableRichLog(RichLog, can_focus=False):
         super().__init__(**kwargs)
         self._plain_lines: list[str] = []
 
+    def render_line(self, y: int) -> Strip:
+        """Override to add offset metadata for text selection.
+
+        RichLog.render_line() returns strips without ``style.meta["offset"]``,
+        so ``Compositor.get_widget_and_offset_at()`` always returns offset
+        ``None`` — Textual's selection system can't track position within the
+        widget and drag-to-select silently fails.
+
+        ``Log._render_line()`` calls ``apply_offsets(scroll_x, y)`` to fix
+        this.  We do the same here.
+        """
+        scroll_x, scroll_y = self.scroll_offset
+        line = self._render_line(scroll_y + y, scroll_x, self.scrollable_content_region.width)
+        strip = line.apply_style(self.rich_style)
+        return strip.apply_offsets(scroll_x, scroll_y + y)
+
     def write(  # type: ignore[override]
         self,
         content: Any,

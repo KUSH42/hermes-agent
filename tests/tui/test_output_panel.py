@@ -308,3 +308,63 @@ async def test_context_bar_color_changes_with_progress():
     # Custom vars respected
     c_custom = StatusBar._compaction_color(0.60, {"status-warn-color": "#FF0000"})
     assert c_custom != "#5f87d7"  # in lerp band; uses custom warn color
+
+
+@pytest.mark.asyncio
+async def test_copyable_rich_log_render_line_has_offsets():
+    """CopyableRichLog.render_line() adds offset metadata for text selection.
+
+    RichLog.render_line() strips lack ``style.meta["offset"]``, so the
+    compositor's ``get_widget_and_offset_at()`` returns offset None and
+    Textual's drag-to-select silently fails.  Our override must call
+    ``apply_offsets()`` so selection works in the output panel.
+    """
+    from rich.text import Text
+
+    from hermes_cli.tui.widgets import CopyableRichLog
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        log = CopyableRichLog(markup=False)
+        await app.mount(log)
+        log.write(Text("hello world"))
+        await pilot.pause()
+
+        strip = log.render_line(0)
+        has_offset = any(
+            seg.style is not None
+            and seg.style._meta is not None
+            and "offset" in seg.style.meta
+            for seg in strip._segments
+        )
+        assert has_offset, "render_line must add offset metadata for selection"
+
+
+@pytest.mark.asyncio
+async def test_copyable_rich_log_widget_and_offset_resolves():
+    """get_widget_and_offset_at returns a valid offset on CopyableRichLog."""
+    from rich.text import Text
+
+    from hermes_cli.tui.widgets import CopyableRichLog, MessagePanel, OutputPanel
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        panel = app.query_one(OutputPanel)
+        msg = MessagePanel()
+        await panel.mount(msg, before=panel.query_one(ThinkingWidget))
+
+        # Write directly to the CopyableRichLog inside the MessagePanel
+        log = msg.query_one(CopyableRichLog)
+        log.write(Text("selectable content"))
+        await pilot.pause()
+
+        region = app.screen.find_widget(log).region
+
+        # Query offset at a point inside the log
+        _widget, offset = app.screen.get_widget_and_offset_at(
+            region.x + 2, region.y
+        )
+        assert _widget is log, f"expected CopyableRichLog, got {_widget}"
+        assert offset is not None, "offset must not be None for selection"

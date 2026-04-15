@@ -229,6 +229,27 @@ class TestThemeManagerHotReload:
         p.unlink()
         assert tm.check_for_changes() is False
 
+    def test_background_watcher_reloads_off_thread(self, tmp_path: Path) -> None:
+        p = _json(tmp_path, {"accent": "#aaa"})
+        app = _mock_app()
+        app.call_from_thread = lambda fn, *args: fn(*args)
+        tm = ThemeManager(app)
+        tm.load(p)
+        app.refresh_css.reset_mock()
+        tm.start_hot_reload(0.01)
+        try:
+            time.sleep(0.02)
+            p.write_text(json.dumps({"accent": "#bbb"}), encoding="utf-8")
+            deadline = time.time() + 1.0
+            while time.time() < deadline:
+                if app.refresh_css.called:
+                    break
+                time.sleep(0.02)
+            assert app.refresh_css.called
+            assert tm.css_variables["primary"] == "#bbb"
+        finally:
+            tm.stop_hot_reload()
+
 
 # ---------------------------------------------------------------------------
 # HermesApp integration — ThemeManager wired into get_css_variables

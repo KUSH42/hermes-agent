@@ -78,6 +78,7 @@ Before/After::
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
@@ -157,6 +158,10 @@ class ThemeManager:
         # Hot-reload tracking
         self._source_path: Path | None = None
         self._source_mtime: float = 0.0
+        self._watcher_thread: threading.Thread | None = None
+        self._watcher_stop = threading.Event()
+        self._watcher_interval_s: float = 1.0
+        self._pending_reload_mtime: float = 0.0
 
     # ------------------------------------------------------------------
     # Public load API
@@ -207,6 +212,35 @@ class ThemeManager:
         except Exception as exc:
             log.warning(f"[THEME] refresh_css failed: {exc}")
 
+    def start_hot_reload(self, poll_interval_s: float = 1.0) -> None:
+        """Start background skin watcher.
+
+        Polling the filesystem from the UI thread can stall Textual on slower
+        filesystems. The watcher keeps the blocking ``stat()`` / file-read work
+        off the event loop and only schedules the final ``refresh_css()`` back
+        onto the app thread.
+        """
+        self._watcher_interval_s = max(0.1, float(poll_interval_s))
+        thread = self._watcher_thread
+        if thread is not None and thread.is_alive():
+            return
+        self._watcher_stop.clear()
+        self._watcher_thread = threading.Thread(
+            target=self._watch_loop,
+            name="hermes-theme-watcher",
+            daemon=True,
+        )
+        self._watcher_thread.start()
+
+    def stop_hot_reload(self) -> None:
+        """Stop background skin watcher."""
+        self._watcher_stop.set()
+        thread = self._watcher_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=max(0.2, self._watcher_interval_s + 0.1))
+        self._watcher_thread = None
+        self._pending_reload_mtime = 0.0
+
     # ------------------------------------------------------------------
     # Hot reload (call from set_interval at ~1 Hz)
     # ------------------------------------------------------------------
@@ -234,6 +268,60 @@ class ThemeManager:
         except Exception as exc:
             log.warning(f"[THEME] hot-reload failed: {exc}")
             return False
+
+    def _watch_loop(self) -> None:
+        """Background hot-reload poller.
+
+        Does blocking filesystem work off-thread, then schedules final state
+        update + ``refresh_css()`` onto Textual's event loop via
+        ``call_from_thread``.
+        """
+        while not self._watcher_stop.wait(self._watcher_interval_s):
+            path = self._source_path
+            if path is None:
+                continue
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                continue
+            baseline = max(self._source_mtime, self._pending_reload_mtime)
+            if mtime <= baseline:
+                continue
+            try:
+                css_vars, component_vars = load_skin_full(path)
+            except Exception as exc:
+                log.warning(f"[THEME] hot-reload failed: {exc}")
+                continue
+            self._pending_reload_mtime = mtime
+            try:
+                self._app.call_from_thread(
+                    self._apply_hot_reload_payload,
+                    path,
+                    mtime,
+                    css_vars,
+                    component_vars,
+                )
+            except RuntimeError:
+                return
+
+    def _apply_hot_reload_payload(
+        self,
+        path: Path,
+        mtime: float,
+        css_vars: dict[str, str],
+        component_vars: dict[str, str],
+    ) -> None:
+        """Apply background-loaded skin data on the app thread."""
+        self._pending_reload_mtime = 0.0
+        if self._source_path != path or mtime <= self._source_mtime:
+            return
+        updated_component = dict(COMPONENT_VAR_DEFAULTS)
+        updated_component.update(component_vars)
+        self._css_vars = css_vars
+        self._component_vars = updated_component
+        self._source_mtime = mtime
+        log(f"[THEME] hot-reload triggered: {path}")
+        self.apply()
 
     # ------------------------------------------------------------------
     # CSS variable output (consumed by HermesApp.get_css_variables)

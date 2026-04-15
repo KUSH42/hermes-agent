@@ -327,6 +327,7 @@ class HermesApp(App):
         self._event_loop = asyncio.get_running_loop()
         self._worker_watcher = WorkerWatcher(self)
         self._event_loop_probe = EventLoopLatencyProbe()
+        self._theme_manager.start_hot_reload()
         from textual import constants as _tc
         _frame_interval = 1.0 / _tc.MAX_FPS  # matches Screen._update_timer cadence
         # window=MAX_FPS → 1 s of rolling history; log every MAX_FPS ticks → 1 log/s
@@ -361,6 +362,10 @@ class HermesApp(App):
             self._populate_slash_commands()
         # Initialize hint bar to idle phase — shows key-badge hints immediately
         self._set_hint_phase("idle")
+
+    def on_unmount(self) -> None:
+        """Stop background helpers tied to app lifetime."""
+        self._theme_manager.stop_hot_reload()
 
     # --- Output consumer (bounded queue → RichLog) ---
 
@@ -657,8 +662,6 @@ class HermesApp(App):
             self._event_loop_probe.tick()
         if self._worker_watcher is not None:
             self._worker_watcher.tick()
-        if self._theme_manager is not None:
-            self._theme_manager.check_for_changes()
         self._refresh_live_response_metrics()
 
     # --- FPS HUD ticker ---

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 import asyncio
 import os
 import re
+import shutil
 import time
 
 from rich.segment import Segment
@@ -87,6 +88,80 @@ _PRENUMBERED_LINE_RE = re.compile(r"^\s*(\d+)(?:\s*[│|:]\s?|\s{2,})(.*)$")
 def _strip_ansi(text: str) -> str:
     """Strip ANSI CSI escape sequences from text."""
     return _ANSI_RE.sub("", text)
+
+
+def _prewrap_code_line(highlighted: str, indent: str = "    ", width: int | None = None) -> list[str]:
+    """Pre-wrap an ANSI-highlighted code line, indenting continuation chunks.
+
+    Returns a list of strings — one per visual line.  Short lines return
+    ``[highlighted]`` unchanged.  Long lines are split at the last space
+    before *width*; continuation rows carry *indent* plus the active ANSI
+    state so colours stay consistent.
+    """
+    if width is None:
+        try:
+            width = shutil.get_terminal_size((80, 24)).columns - 6  # account for margins + scrollbar
+        except Exception:
+            width = 74
+    plain = _strip_ansi(highlighted)
+    if len(plain) <= width:
+        return [highlighted]
+
+    # Tokenise into (type, value) pairs: 'ansi' or 'text'
+    tokens: list[tuple[str, str]] = []
+    pos = 0
+    for m in _ANSI_RE.finditer(highlighted):
+        if m.start() > pos:
+            tokens.append(("text", highlighted[pos:m.start()]))
+        tokens.append(("ansi", m.group()))
+        pos = m.end()
+    if pos < len(highlighted):
+        tokens.append(("text", highlighted[pos:]))
+
+    active_ansi: list[str] = []
+    chunks: list[str] = []
+    cur = ""
+    cur_vis = 0
+
+    def _flush() -> None:
+        nonlocal cur, cur_vis
+        if cur:
+            chunks.append(cur)
+        cur = indent + "".join(active_ansi)
+        cur_vis = len(indent)
+
+    for ttype, tval in tokens:
+        if ttype == "ansi":
+            cur += tval
+            active_ansi.append(tval)
+            continue
+        remaining = tval
+        while remaining:
+            space_left = width - cur_vis
+            if space_left <= 0:
+                _flush()
+                space_left = width - len(indent)
+            if len(remaining) <= space_left:
+                cur += remaining
+                cur_vis += len(remaining)
+                break
+            seg = remaining[:space_left]
+            last_sp = seg.rfind(" ")
+            if last_sp > 0:
+                cur += remaining[:last_sp + 1]
+                remaining = remaining[last_sp + 1:]
+            else:
+                cur += remaining[:space_left]
+                remaining = remaining[space_left:]
+            _flush()
+
+    if cur:
+        if cur_vis > len(indent) or not chunks:
+            chunks.append(cur)
+        elif chunks:
+            chunks[-1] += cur
+
+    return chunks if chunks else [highlighted]
 
 
 # Matches complete ANSI/VT escape sequences as atomic units for typewriter animation.
@@ -945,7 +1020,13 @@ class StreamingCodeBlock(Widget):
         plain_line = _strip_ansi(line)
         self._code_lines.append(plain_line)
         highlighted = self._highlight_line(plain_line, self._lang)
-        self._log.write_with_source(Text.from_ansi(highlighted), plain_line)
+        # Pre-wrap long lines with continuation indent so wrapping in
+        # CopyableRichLog doesn't produce visually noisy continuation rows.
+        for wrapped_line in _prewrap_code_line(highlighted, indent="    "):
+            self._log.write_with_source(
+                Text.from_ansi(wrapped_line),
+                _strip_ansi(wrapped_line),
+            )
 
     def _highlight_line(self, line: str, lang: str) -> str:
         """Per-line Pygments highlight — loses multi-line string context but
@@ -1076,7 +1157,11 @@ class StreamingCodeBlock(Widget):
         if not self._collapsed:
             for line in self._display_code_lines():
                 highlighted = self._highlight_line(line, self._lang)
-                self._log.write_with_source(Text.from_ansi(highlighted), line)
+                for wrapped_line in _prewrap_code_line(highlighted, indent="    "):
+                    self._log.write_with_source(
+                        Text.from_ansi(wrapped_line),
+                        _strip_ansi(wrapped_line),
+                    )
         self._sync_footer()
         self.refresh(layout=True)
 

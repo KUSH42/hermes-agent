@@ -2138,16 +2138,114 @@ class StreamingBlockBuffer:
 # Code block line numbers
 # ---------------------------------------------------------------------------
 
-def _number_code_lines(highlighted: str) -> str:
-    """Prepend dim line numbers to each line of a highlighted code block."""
+def _number_code_lines(highlighted: str, wrap_width: int | None = None) -> str:
+    """Prepend dim right-justified line numbers to each line of a highlighted code block.
+
+    Long lines are pre-wrapped so continuation rows carry a blank gutter indent
+    (spaces matching the ``  N │ `` width) instead of starting at column 0 and
+    visually colliding with adjacent line numbers.
+    """
     lines = highlighted.splitlines()
     if not lines:
         return highlighted
     width = len(str(len(lines)))
+    # "  N │ " gutter: width (num) + 3 (2spc + pipe + spc) + 1 (post-gutter spc)
+    gutter_vis = width + 3
+    gutter_blank = "\033[2m" + " " * (width) + " \u2502\033[0m "
+    if wrap_width is None:
+        try:
+            wrap_width = shutil.get_terminal_size((80, 24)).columns
+        except Exception:
+            wrap_width = 80
+    avail = max(wrap_width - gutter_vis, 20)
     out = []
+    ansi_re = re.compile(r"\x1b\[[0-9;]*m")
     for i, line in enumerate(lines, 1):
-        out.append(f"\033[2m{i:>{width}} \u2502\033[0m {line}")
+        gutter = f"\033[2m{i:>{width}} \u2502\033[0m "
+        # Measure visual length (ANSI stripped)
+        plain = ansi_re.sub("", line)
+        if len(plain) <= avail:
+            out.append(f"{gutter}{line}")
+            continue
+        # Pre-wrap: split into chunks that fit within avail
+        # Preserve ANSI spans across wraps by walking the line
+        chunks = _split_ansi_line(line, avail)
+        out.append(f"{gutter}{chunks[0]}")
+        for cont in chunks[1:]:
+            out.append(f"{gutter_blank}{cont}")
     return "\n".join(out)
+
+
+def _split_ansi_line(line: str, max_width: int) -> list[str]:
+    """Split an ANSI-formatted line into chunks of at most *max_width* visual cols.
+
+    ANSI escape sequences are carried forward (re-emitted at the start of each
+    continuation chunk so colours stay consistent).  Splits happen at the last
+    space before the limit; if no space exists, a hard break at *max_width*.
+    """
+    ansi_re = re.compile(r"\x1b\[[0-9;]*m")
+    # Parse into tokens: (type, text) where type is 'ansi' or 'text'
+    tokens: list[tuple[str, str]] = []
+    pos = 0
+    for m in ansi_re.finditer(line):
+        if m.start() > pos:
+            tokens.append(("text", line[pos:m.start()]))
+        tokens.append(("ansi", m.group()))
+        pos = m.end()
+    if pos < len(line):
+        tokens.append(("text", line[pos:]))
+
+    # Walk tokens, accumulating into chunks
+    active_ansi: list[str] = []  # ANSI codes seen so far (re-emit on new chunk)
+    chunks: list[str] = []
+    cur = ""
+    cur_vis = 0
+
+    def _start_new_chunk() -> None:
+        nonlocal cur, cur_vis
+        if cur:
+            chunks.append(cur)
+        cur = "".join(active_ansi)
+        cur_vis = 0
+
+    for ttype, tval in tokens:
+        if ttype == "ansi":
+            cur += tval
+            active_ansi.append(tval)
+            continue
+        # Text token — may need splitting
+        remaining = tval
+        while remaining:
+            space_left = max_width - cur_vis
+            if space_left <= 0:
+                _start_new_chunk()
+                space_left = max_width
+            if len(remaining) <= space_left:
+                cur += remaining
+                cur_vis += len(remaining)
+                break
+            # Find last space within space_left
+            segment = remaining[:space_left]
+            last_sp = segment.rfind(" ")
+            if last_sp > 0:
+                # Split at the space
+                cur += remaining[:last_sp + 1]
+                remaining = remaining[last_sp + 1:]
+            else:
+                # No space — hard break
+                cur += remaining[:space_left]
+                remaining = remaining[space_left:]
+            _start_new_chunk()
+
+    if cur:
+        # Strip trailing ANSI-only chunk (no visible content)
+        if cur_vis > 0:
+            chunks.append(cur)
+        elif chunks:
+            # Append ANSI codes to last chunk so they carry forward
+            chunks[-1] += cur
+
+    return chunks if chunks else [line]
 
 
 # ---------------------------------------------------------------------------
@@ -2178,16 +2276,7 @@ def _highlight_inline_code(text: str) -> str:
     )
 
 
-def _number_code_lines(highlighted: str) -> str:
-    """Prepend dim right-justified line numbers to each line of a highlighted code block."""
-    lines = highlighted.splitlines()
-    if not lines:
-        return highlighted
-    width = len(str(len(lines)))
-    out = []
-    for i, line in enumerate(lines, 1):
-        out.append(f"\033[2m{i:>{width}} \u2502\033[0m {line}")
-    return "\n".join(out)
+
 
 
 def format_response(text: str, reset_suffix: str = "") -> str:

@@ -2138,18 +2138,17 @@ class StreamingBlockBuffer:
 # Code block line numbers
 # ---------------------------------------------------------------------------
 
-def _number_code_lines(highlighted: str, wrap_width: int | None = None) -> str:
+def _number_code_lines(highlighted: str, wrap_width: int | None = None, source_lines: list[str] | None = None) -> str:
     """Prepend dim right-justified line numbers to each line of a highlighted code block.
 
     Long lines are pre-wrapped so continuation rows carry a blank gutter indent
-    (spaces matching the ``  N │ `` width) instead of starting at column 0 and
-    visually colliding with adjacent line numbers.
+    plus the same leading whitespace as the original source line, instead of
+    starting at column 0 and visually colliding with adjacent line numbers.
     """
     lines = highlighted.splitlines()
     if not lines:
         return highlighted
     width = len(str(len(lines)))
-    # "  N │ " gutter: width (num) + 3 (2spc + pipe + spc) + 1 (post-gutter spc)
     gutter_vis = width + 3
     gutter_blank = "\033[2m" + " " * (width) + " \u2502\033[0m "
     if wrap_width is None:
@@ -2162,17 +2161,23 @@ def _number_code_lines(highlighted: str, wrap_width: int | None = None) -> str:
     ansi_re = re.compile(r"\x1b\[[0-9;]*m")
     for i, line in enumerate(lines, 1):
         gutter = f"\033[2m{i:>{width}} \u2502\033[0m "
-        # Measure visual length (ANSI stripped)
         plain = ansi_re.sub("", line)
         if len(plain) <= avail:
             out.append(f"{gutter}{line}")
             continue
-        # Pre-wrap: split into chunks that fit within avail
-        # Preserve ANSI spans across wraps by walking the line
-        chunks = _split_ansi_line(line, avail)
+        # Detect source line's leading whitespace for continuation indent
+        src = source_lines[i - 1] if source_lines and i - 1 < len(source_lines) else plain
+        src_stripped = src.lstrip(" \t")
+        src_indent_len = len(src) - len(src_stripped)
+        if src_indent_len > 0:
+            cont_indent = src[:src_indent_len]
+        else:
+            cont_indent = ""
+        cont_avail = max(avail - len(cont_indent), 10)
+        chunks = _split_ansi_line(line, cont_avail)
         out.append(f"{gutter}{chunks[0]}")
         for cont in chunks[1:]:
-            out.append(f"{gutter_blank}{cont}")
+            out.append(f"{gutter_blank}{cont_indent}{cont}")
     return "\n".join(out)
 
 
@@ -2303,7 +2308,7 @@ def format_response(text: str, reset_suffix: str = "") -> str:
         if not lang:
             lang = _det.detect_from_content(code)
         highlighted = _hl.to_ansi(code, language=lang).rstrip("\n")
-        return _number_code_lines(highlighted)
+        return _number_code_lines(highlighted, source_lines=code.splitlines())
 
     # Match fenced code blocks of any depth (3+ backticks); \1 backreference
     # ensures the closing fence uses the same backtick sequence as the opener.
@@ -2422,13 +2427,14 @@ class StreamingCodeBlockHighlighter:
         self._hl.refresh()
 
     def _flush_block(self) -> str:
+        source_lines = list(self._buf)
         code = "\n".join(self._buf)
         lang = self._lang or self._det.detect_from_content(code)
         highlighted = self._hl.to_ansi(code, language=lang).rstrip("\n")
         self._in_block = False
         self._lang = None
         self._buf = []
-        return _number_code_lines(highlighted)
+        return _number_code_lines(highlighted, source_lines=source_lines)
 
 
 # ---------------------------------------------------------------------------

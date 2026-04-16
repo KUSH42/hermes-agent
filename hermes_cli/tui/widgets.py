@@ -90,13 +90,16 @@ def _strip_ansi(text: str) -> str:
     return _ANSI_RE.sub("", text)
 
 
-def _prewrap_code_line(highlighted: str, indent: str = "    ", width: int | None = None) -> list[str]:
+def _prewrap_code_line(highlighted: str, source_line: str = "", width: int | None = None) -> list[str]:
     """Pre-wrap an ANSI-highlighted code line, indenting continuation chunks.
+
+    Continuation rows carry the same leading whitespace as *source_line*
+    (the original un-highlighted code).  If *source_line* is empty or has
+    no leading whitespace, a 4-space indent is used as fallback.
 
     Returns a list of strings — one per visual line.  Short lines return
     ``[highlighted]`` unchanged.  Long lines are split at the last space
-    before *width*; continuation rows carry *indent* plus the active ANSI
-    state so colours stay consistent.
+    before *width*; ANSI colour state is re-emitted at each chunk start.
     """
     if width is None:
         try:
@@ -106,6 +109,14 @@ def _prewrap_code_line(highlighted: str, indent: str = "    ", width: int | None
     plain = _strip_ansi(highlighted)
     if len(plain) <= width:
         return [highlighted]
+
+    # Detect original line's leading whitespace for continuation indent
+    stripped_src = source_line.lstrip(" \t")
+    src_indent_len = len(source_line) - len(stripped_src)
+    if src_indent_len > 0:
+        indent = source_line[:src_indent_len]
+    else:
+        indent = "    "
 
     # Tokenise into (type, value) pairs: 'ansi' or 'text'
     tokens: list[tuple[str, str]] = []
@@ -1020,9 +1031,8 @@ class StreamingCodeBlock(Widget):
         plain_line = _strip_ansi(line)
         self._code_lines.append(plain_line)
         highlighted = self._highlight_line(plain_line, self._lang)
-        # Pre-wrap long lines with continuation indent so wrapping in
-        # CopyableRichLog doesn't produce visually noisy continuation rows.
-        for wrapped_line in _prewrap_code_line(highlighted, indent="    "):
+        # Pre-wrap long lines with continuation indent matching source indentation
+        for wrapped_line in _prewrap_code_line(highlighted, source_line=plain_line):
             self._log.write_with_source(
                 Text.from_ansi(wrapped_line),
                 _strip_ansi(wrapped_line),
@@ -1157,7 +1167,7 @@ class StreamingCodeBlock(Widget):
         if not self._collapsed:
             for line in self._display_code_lines():
                 highlighted = self._highlight_line(line, self._lang)
-                for wrapped_line in _prewrap_code_line(highlighted, indent="    "):
+                for wrapped_line in _prewrap_code_line(highlighted, source_line=line):
                     self._log.write_with_source(
                         Text.from_ansi(wrapped_line),
                         _strip_ansi(wrapped_line),

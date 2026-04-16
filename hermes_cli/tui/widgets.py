@@ -1105,38 +1105,119 @@ class StreamingCodeBlock(Widget):
 
 
 class ThinkingWidget(Widget):
-    """Static placeholder shown while agent is thinking.
+    """Animated placeholder shown while agent is thinking.
 
-    Shown after prompt submission, before the first response token arrives.
+    Lines 0-1: drawille helix animation (height 3 braille, 2 terminal rows).
+    Line 2: "Thinking..." with animated dots cycling at 250ms.
     """
 
-    DEFAULT_CSS = "ThinkingWidget { height: 1; display: none; }"
+    DEFAULT_CSS = "ThinkingWidget { height: 3; display: none; }"
 
     _shimmer_timer: object | None = None
+    _dot_phase: int = 0
+    _helix_frames: tuple[str, ...] = ()
+    _helix_idx: int = 0
+    _last_helix_w: int = 0
+
+    _THINKING_DOTS = ("Thinking.  ", "Thinking.. ", "Thinking...")
 
     def activate(self) -> None:
-        """Show placeholder. Call from event loop only."""
+        """Show placeholder and start animation timers. Call from event loop only."""
         self.styles.display = "block"
+        self._dot_phase = 0
+        self._helix_idx = 0
+        self._build_helix_if_needed()
+        if self._shimmer_timer is None:
+            self._shimmer_timer = self.set_interval(0.25, self._tick_shimmer)
 
     def deactivate(self) -> None:
-        """Hide placeholder. Idempotent. Call from event loop only."""
+        """Hide placeholder and stop timers. Idempotent. Call from event loop only."""
         self.styles.display = "none"
+        if self._shimmer_timer is not None:
+            self._shimmer_timer.stop()
+            self._shimmer_timer = None
+
+    def _tick_shimmer(self) -> None:
+        """Advance dot animation phase and helix frame."""
+        self._dot_phase = (self._dot_phase + 1) % 3
+        if self._helix_frames:
+            self._helix_idx = (self._helix_idx + 1) % len(self._helix_frames)
+        self.refresh()
+
+    def _build_helix_if_needed(self) -> None:
+        """Build drawille helix frames if width changed."""
+        try:
+            from hermes_cli.tui.app import _drawille
+        except ImportError:
+            return
+        if _drawille is None:
+            return
+        widget_w = self.size.width or 40
+        # 2-cell indent on right before scrollbar
+        canvas_w = max(4, widget_w - 2)
+        if canvas_w == self._last_helix_w and self._helix_frames:
+            return
+        self._last_helix_w = canvas_w
+        self._helix_frames = self._build_helix_frames(_drawille, canvas_w)
+        self._helix_idx = 0
+
+    @staticmethod
+    def _build_helix_frames(drawille_mod, width_cells: int) -> tuple[str, ...]:
+        """Precompute drawille frames for a 3-strand helix, height 3 (12 dot rows)."""
+        import math
+        width_points = max(2, width_cells * 2)
+        amplitude = 2.5
+        midpoint = 6.0
+        frame_count = 24
+        frames: list[str] = []
+
+        for frame_idx in range(frame_count):
+            canvas = drawille_mod.Canvas()
+            phase = (frame_idx / frame_count) * (2 * math.pi)
+            for strand_idx in range(3):
+                strand_phase = phase + (strand_idx * 2 * math.pi / 3)
+                for x in range(width_points):
+                    theta = strand_phase + (x * 0.42)
+                    y = midpoint + (math.sin(theta) * amplitude)
+                    canvas.set(x, int(round(max(0.0, min(11.0, y)))))
+            rendered = canvas.frame()
+            lines = rendered.splitlines() if rendered else []
+            # Take first 3 terminal lines (12 dot rows / 4 dots per braille row)
+            block = "\n".join(lines[:3]) if lines else ""
+            # Pad each line to width_cells
+            padded_lines = []
+            for line in lines[:3]:
+                padded_lines.append(line.ljust(width_cells)[:width_cells])
+            while len(padded_lines) < 3:
+                padded_lines.append(" " * width_cells)
+            frames.append("\n".join(padded_lines))
+        return tuple(frames)
 
     def render_line(self, y: int) -> Strip:
-        if y != 0:
-            return Strip.blank(self.size.width or 40)
         width = self.size.width or 40
-        text = Text(" thinking…", style="dim", no_wrap=True, overflow="ellipsis")
-        segments = [
-            Segment(seg.text, seg.style or Style(), seg.control)
-            for seg in text.render(self.app.console)
-        ]
-        strip = Strip(segments, text.cell_len).extend_cell_length(width)
-        strip = Strip(
-            [Segment(seg.text, seg.style or Style(), seg.control) for seg in strip],
-            strip.cell_length,
-        )
-        return strip.crop(0, width)
+        # Lines 0-1: drawille helix animation (3 braille rows = 2 terminal lines shown)
+        if y < 2 and self._helix_frames:
+            self._build_helix_if_needed()
+            frame = self._helix_frames[self._helix_idx % len(self._helix_frames)]
+            frame_lines = frame.splitlines()
+            line_idx = y if y < len(frame_lines) else 0
+            raw = frame_lines[line_idx] if line_idx < len(frame_lines) else ""
+            text = Text(raw, style="dim", no_wrap=True, overflow="ellipsis")
+            segments = [
+                Segment(seg.text, seg.style or Style(), seg.control)
+                for seg in text.render(self.app.console)
+            ]
+            return Strip(segments, text.cell_len).extend_cell_length(width).crop(0, width)
+        # Line 2 (or fallback): animated dots text
+        if y == 2 or (y == 0 and not self._helix_frames):
+            dots = self._THINKING_DOTS[self._dot_phase % 3]
+            text = Text(f" {dots}", style="italic dim", no_wrap=True, overflow="ellipsis")
+            segments = [
+                Segment(seg.text, seg.style or Style(), seg.control)
+                for seg in text.render(self.app.console)
+            ]
+            return Strip(segments, text.cell_len).extend_cell_length(width).crop(0, width)
+        return Strip.blank(width)
 
 
 class OutputPanel(ScrollableContainer):

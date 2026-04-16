@@ -80,25 +80,27 @@ async def test_spinner_writes_to_input_bar_not_hint_bar():
 
 
 @pytest.mark.asyncio
-async def test_spinner_switches_to_helix_after_delay():
-    """After 3s of tool runtime, the input placeholder switches to helix frames."""
+async def test_thinking_widget_shows_dots_animation():
+    """ThinkingWidget cycles through Thinking. / Thinking.. / Thinking... at 250ms."""
+    from hermes_cli.tui.widgets import ThinkingWidget
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        app.agent_running = True
-        app.spinner_label = "terminal"
-        app._tool_start_time = 100.0
+        tw = app.query_one(ThinkingWidget)
+        tw.activate()
         await pilot.pause()
-        with patch("hermes_cli.tui.app._time.monotonic", return_value=103.2), \
-             patch.object(HermesApp, "_build_helix_frames", return_value=("HELIX",)):
-            app._tick_spinner()
-        inp = app.query_one("#input-area")
-        assert "HELIX" in inp.placeholder
+        # Initial render should show "Thinking.  " on the text line
+        strip = tw.render_line(2 if tw._helix_frames else 0)
+        text_parts = "".join(seg.text for seg in strip)
+        assert "Thinking" in text_parts
+        # After one tick (250ms), phase should advance
+        tw._tick_shimmer()
+        assert tw._dot_phase == 1
 
 
 @pytest.mark.asyncio
-async def test_spinner_falls_back_when_drawille_missing():
-    """If drawille is unavailable, the spinner keeps the current behavior."""
+async def test_input_bar_no_helix():
+    """Input bar spinner uses dot frames only — drawille helix moved to ThinkingWidget."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -106,11 +108,10 @@ async def test_spinner_falls_back_when_drawille_missing():
         app.spinner_label = "terminal"
         app._tool_start_time = 100.0
         await pilot.pause()
-        with patch("hermes_cli.tui.app._time.monotonic", return_value=103.2), \
-             patch("hermes_cli.tui.app._drawille", None):
+        with patch("hermes_cli.tui.app._time.monotonic", return_value=103.2):
             app._tick_spinner()
         inp = app.query_one("#input-area")
-        assert "HELIX" not in inp.placeholder
+        # Should contain spinner dots + label, never drawille helix
         assert "terminal" in inp.placeholder
 
 

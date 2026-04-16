@@ -660,19 +660,7 @@ class HermesApp(App):
         return max(region_width, widget_width, app_width)
 
     def _next_spinner_frame(self, text_after_frame: str, elapsed: float, input_width: int) -> str:
-        """Return the next spinner frame, switching to a helix after a delay."""
-        helix_frame = self._helix_spinner_frame(
-            elapsed=elapsed,
-            text_after_frame=text_after_frame,
-            input_width=input_width,
-        )
-        if helix_frame is not None:
-            width_cells = self._helix_width(text_after_frame, input_width)
-            frames = self._helix_frame_cache.get(width_cells, ())
-            if frames:
-                self._spinner_idx = (self._spinner_idx + 1) % len(frames)
-            return helix_frame
-
+        """Return the next spinner frame. Drawille helix moved to ThinkingWidget."""
         frames = self._spinner_frames
         if frames:
             self._spinner_idx = (self._spinner_idx + 1) % len(frames)

@@ -28,9 +28,9 @@ $cursor-color: #FFF8DC;
 $cursor-selection-bg: #3A5A8C;
 $cursor-placeholder: #555555;
 
-/* Scrollbar thumb color — ThemeManager overrides via component_vars.
-   Must be named $scrollbar (Textual's built-in var) so ScrollBar picks it up. */
-$scrollbar: #5f87d7;
+/* Scrollbar thumb color — lives in get_css_variables() via component_vars.
+   Do NOT declare $scrollbar here — local declarations override global vars
+   and prevent runtime theme switching. */
 
 /* Ghost text — dim but legible; $text-muted 60% yields ~1.67:1 contrast (invisible). */
 $ghost-text-color: #555555;

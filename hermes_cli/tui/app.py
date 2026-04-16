@@ -1657,9 +1657,14 @@ class HermesApp(App):
         which ThemeManager injects here.
         """
         base = super().get_css_variables()
-        # _theme_manager may not exist yet if called during super().__init__()
+        # _theme_manager may not exist yet if called during super().__init__().
+        # Fall back to COMPONENT_VAR_DEFAULTS so CSS vars resolve on first parse.
         tm = getattr(self, "_theme_manager", None)
-        overrides = tm.css_variables if tm is not None else {}
+        if tm is not None:
+            overrides = tm.css_variables
+        else:
+            from hermes_cli.tui.theme_manager import COMPONENT_VAR_DEFAULTS
+            overrides = COMPONENT_VAR_DEFAULTS
         return {**base, **overrides}
 
     def apply_skin(self, skin_vars: "dict[str, str] | Path") -> None:

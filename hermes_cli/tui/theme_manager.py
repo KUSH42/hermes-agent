@@ -106,6 +106,8 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     "cursor-selection-bg":  "#3A5A8C",
     # HermesInput placeholder text
     "cursor-placeholder":   "#555555",
+    # Ghost text color — used for inline ghost/suggestion text
+    "ghost-text-color":     "#555555",
     # Chevron phase colours
     "chevron-base":         "#FFF8DC",
     "chevron-file":         "#FFBF00",
@@ -124,6 +126,8 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     "running-indicator-hi-color": "#FFA726",
     # Running indicator dim-color (StatusBar ● pulse trough + shimmer base)
     "running-indicator-dim-color": "#6e6e6e",
+    # FPS HUD background
+    "fps-hud-bg":           "#1a1a2e",
     # User echo panel bullet color
     "user-echo-bullet-color": "#FFBF00",
     # Completion list empty-state background
@@ -132,7 +136,7 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     "rule-dim-color":       "#888888",
     "rule-bg-color":        "#1E1E1E",
     "rule-accent-color":    "#FFD700",
-    "rule-accent-dim-color":"#CC9920",
+    "rule-accent-dim-color":"#B8860B",
     # TitledRule idle glyph — visible but dimmer than primary (#5f87d7) so
     # the pulse animation from idle→active is meaningful.
     # NOT in Textual's default theme vars; must be injected here so

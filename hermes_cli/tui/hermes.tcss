@@ -18,51 +18,8 @@
  *     cursor-selection-bg: "#1E4080"
  *     cursor-placeholder:  "#666666"
  */
-/* App-wide background — ThemeManager overrides via component_vars: app-bg */
-$app-bg: #1E1E1E;
-
-/* TitledRule idle glyph color — visible but dimmer than $primary for pulse contrast */
-$primary-darken-3: #4a7aaa;
-
-$cursor-color: #FFF8DC;
-$cursor-selection-bg: #3A5A8C;
-$cursor-placeholder: #555555;
-
-/* Scrollbar thumb color — lives in get_css_variables() via component_vars.
-   Do NOT declare $scrollbar here — local declarations override global vars
-   and prevent runtime theme switching. */
-
-/* Ghost text — dim but legible; $text-muted 60% yields ~1.67:1 contrast (invisible). */
-$ghost-text-color: #555555;
-
-/* Chevron phase colours — ThemeManager overrides via component_vars */
-$chevron-base: #FFF8DC;
-$chevron-file: #FFBF00;
-$chevron-stream: #6EA8D4;
-$chevron-shell: #A8D46E;
-$chevron-done: #4CAF50;
-$chevron-error: #E06C75;
-
-/* Fuzzy match highlight — ThemeManager overrides via component_vars */
-$fuzzy-match-color: #FFD866;
-
-/* Status / pulse indicators — ThemeManager overrides via component_vars */
-$status-running-color: #FFBF00;
-$status-error-color: #ef5350;
-$status-warn-color: #FFA726;
-$status-context-color: #5f87d7;
-$running-indicator-hi-color: #FFA726;
-$user-echo-bullet-color: #FFBF00;
-
-
-/* FPS HUD background — ThemeManager overrides via component_vars */
-$fps-hud-bg: #1a1a2e;
-
-/* TitledRule colours — ThemeManager overrides via component_vars */
-$rule-dim-color: #888888;
-$rule-bg-color: #1E1E1E;
-$rule-accent-color: #FFD700;
-$rule-accent-dim-color: #B8860B;
+/* All $var defaults live in COMPONENT_VAR_DEFAULTS (theme_manager.py).
+   Local declarations here block runtime skin overrides. */
 
 /* Screen is the actual DOM root — transparent widgets inherit from it, not from
  * HermesApp. Both must be set so every widget in the tree shows $app-bg. */

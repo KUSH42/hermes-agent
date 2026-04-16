@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import logging
+import math
 import platform
 import queue
 import re
@@ -95,6 +96,12 @@ from hermes_cli.tui.widgets import (
 from hermes_cli.tui.constants import ICON_COPY
 from hermes_cli.tui.perf import EventLoopLatencyProbe, FrameRateProbe, WorkerWatcher
 from hermes_cli.tui.theme_manager import ThemeManager
+from wcwidth import wcswidth
+
+try:
+    import drawille as _drawille
+except ImportError:
+    _drawille = None
 
 if TYPE_CHECKING:
     from hermes_cli.tui.input_widget import HermesInput
@@ -137,6 +144,9 @@ _CPYTHON_FAST_PATH = False
 
 # CSS file path — relative to this module
 _CSS_PATH = Path(__file__).parent / "hermes.tcss"
+_HELIX_DELAY_S = 3.0
+_HELIX_FRAME_COUNT = 24
+_HELIX_MIN_CELLS = 6
 
 
 class HermesApp(App):
@@ -255,6 +265,7 @@ class HermesApp(App):
 
         # Spinner frames — read from module-level _COMMAND_SPINNER_FRAMES in cli.py
         self._spinner_frames: tuple[str, ...] = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+        self._helix_frame_cache: dict[int, tuple[str, ...]] = {}
 
         # Elapsed time for the current tool call — reset whenever spinner_label changes
         self._tool_start_time: float = 0.0
@@ -603,20 +614,13 @@ class HermesApp(App):
         if not (self.agent_running or self.command_running):
             return
 
-        frames = self._spinner_frames
-        if frames:
-            self._spinner_idx = (self._spinner_idx + 1) % len(frames)
-            frame = frames[self._spinner_idx]
-        else:
-            frame = ""
-
         hint_suffix = self._build_hint_text()
-        spinner_display = f"{frame} {hint_suffix}" if frame else hint_suffix
 
         # Append per-tool elapsed time when a tool call is in progress
+        elapsed = 0.0
         if self._tool_start_time > 0:
-            elapsed = _time.monotonic() - self._tool_start_time
-            spinner_display = f"{spinner_display} · {elapsed:.1f}s"
+            elapsed = max(0.0, _time.monotonic() - self._tool_start_time)
+            hint_suffix = f"{hint_suffix} · {elapsed:.1f}s" if hint_suffix else f"{elapsed:.1f}s"
 
         # Deliver spinner text to input bar (placeholder + spinner_text).
         # HintBar shows phase-based hints (e.g. "^C interrupt · Esc dismiss")
@@ -625,6 +629,12 @@ class HermesApp(App):
             inp = self.query_one("#input-area")
             overlay = self.query_one("#spinner-overlay", Static)
             overlay.display = False  # always hidden; placeholder replaces overlay
+            frame = self._next_spinner_frame(
+                text_after_frame=hint_suffix,
+                elapsed=elapsed,
+                input_width=self._input_bar_width(inp),
+            )
+            spinner_display = f"{frame} {hint_suffix}" if frame and hint_suffix else (frame or hint_suffix)
             # Leading space so cursor doesn't obscure first char when input is focused
             padded = f" {spinner_display}" if spinner_display else ""
             if hasattr(inp, "placeholder"):
@@ -635,6 +645,87 @@ class HermesApp(App):
             pass
 
         self._refresh_live_response_metrics()
+
+    @staticmethod
+    def _cell_width(text: str) -> int:
+        """Return visible cell width for terminal layout math."""
+        width = wcswidth(text)
+        return max(0, width)
+
+    def _input_bar_width(self, inp: Any) -> int:
+        """Best-effort live width of the input widget in terminal cells."""
+        region_width = getattr(getattr(inp, "content_size", None), "width", 0) or 0
+        widget_width = getattr(getattr(inp, "size", None), "width", 0) or 0
+        app_width = max(0, getattr(getattr(self, "size", None), "width", 0) - 4)
+        return max(region_width, widget_width, app_width)
+
+    def _next_spinner_frame(self, text_after_frame: str, elapsed: float, input_width: int) -> str:
+        """Return the next spinner frame, switching to a helix after a delay."""
+        helix_frame = self._helix_spinner_frame(
+            elapsed=elapsed,
+            text_after_frame=text_after_frame,
+            input_width=input_width,
+        )
+        if helix_frame is not None:
+            width_cells = self._helix_width(text_after_frame, input_width)
+            frames = self._helix_frame_cache.get(width_cells, ())
+            if frames:
+                self._spinner_idx = (self._spinner_idx + 1) % len(frames)
+            return helix_frame
+
+        frames = self._spinner_frames
+        if frames:
+            self._spinner_idx = (self._spinner_idx + 1) % len(frames)
+            return frames[self._spinner_idx]
+        return ""
+
+    def _helix_width(self, text_after_frame: str, input_width: int) -> int:
+        """Compute how many cells remain for the animated helix."""
+        suffix_width = self._cell_width(text_after_frame)
+        spacer = 1 if text_after_frame else 0
+        # Reserve the leading padding cell added before placeholder text.
+        available = max(0, input_width - suffix_width - spacer - 1)
+        return available
+
+    def _helix_spinner_frame(self, elapsed: float, text_after_frame: str, input_width: int) -> str | None:
+        """Return a cached drawille helix frame when the timer has run long enough."""
+        if _drawille is None or elapsed < _HELIX_DELAY_S:
+            return None
+        width_cells = self._helix_width(text_after_frame, input_width)
+        if width_cells < _HELIX_MIN_CELLS:
+            return None
+        frames = self._helix_frame_cache.get(width_cells)
+        if frames is None:
+            frames = self._build_helix_frames(width_cells)
+            self._helix_frame_cache[width_cells] = frames
+        if not frames:
+            return None
+        return frames[self._spinner_idx % len(frames)]
+
+    def _build_helix_frames(self, width_cells: int) -> tuple[str, ...]:
+        """Precompute one-line drawille frames for a 3-strand helix."""
+        if _drawille is None or width_cells < _HELIX_MIN_CELLS:
+            return ()
+
+        width_points = max(2, width_cells * 2)
+        amplitude = 1.35
+        midpoint = 1.5
+        frames: list[str] = []
+
+        for frame_idx in range(_HELIX_FRAME_COUNT):
+            canvas = _drawille.Canvas()
+            phase = (frame_idx / _HELIX_FRAME_COUNT) * (2 * math.pi)
+            for strand_idx in range(3):
+                strand_phase = phase + (strand_idx * 2 * math.pi / 3)
+                for x in range(width_points):
+                    theta = strand_phase + (x * 0.42)
+                    y = midpoint + (math.sin(theta) * amplitude)
+                    canvas.set(x, int(round(max(0.0, min(3.0, y)))))
+            rendered = canvas.frame()
+            frame = rendered.splitlines()[0] if rendered else ""
+            frames.append(frame.ljust(width_cells)[:width_cells])
+
+        return tuple(frames)
 
     def _build_hint_text(self) -> str:
         """Build the hint suffix shown beside the spinner.

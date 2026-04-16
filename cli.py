@@ -8613,13 +8613,14 @@ class HermesCLI:
             try:
                 from hermes_cli.skin_engine import get_active_skin
                 skin = get_active_skin()
-                primary = skin.get_color("accent", None)
-                background = skin.get_color("background", None)
                 skin_vars: dict[str, str] = {}
+                # Map CLI skin colors → Textual CSS vars
+                primary = skin.get_color("ui_accent", "")
                 if primary:
                     skin_vars["primary"] = primary
-                if background:
-                    skin_vars["background"] = background
+                # Merge component_vars (app-bg, cursor-color, chevron colors, etc.)
+                if skin.component_vars:
+                    skin_vars.update(skin.component_vars)
                 if skin_vars:
                     _hermes_app.call_from_thread(_hermes_app.apply_skin, skin_vars)
             except Exception:
@@ -10196,6 +10197,20 @@ class HermesCLI:
             )
             _tui_app._spinner_frames = _COMMAND_SPINNER_FRAMES
             _hermes_app = _tui_app
+            # Apply skin to TUI at startup — component_vars + ui_accent
+            try:
+                from hermes_cli.skin_engine import get_active_skin as _get_startup_skin
+                _startup_skin = _get_startup_skin()
+                _skin_vars: dict[str, str] = {}
+                _primary = _startup_skin.get_color("ui_accent", "")
+                if _primary:
+                    _skin_vars["primary"] = _primary
+                if _startup_skin.component_vars:
+                    _skin_vars.update(_startup_skin.component_vars)
+                if _skin_vars:
+                    _tui_app.apply_skin(_skin_vars)
+            except Exception:
+                pass
         except ImportError:
             _tui_app = None
 

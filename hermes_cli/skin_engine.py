@@ -564,12 +564,13 @@ class SkinConfig:
     tool_emojis: Dict[str, str] = field(default_factory=dict)  # per-tool emoji overrides
     banner_logo: str = ""    # Rich-markup ASCII art logo (replaces HERMES_AGENT_LOGO)
     banner_hero: str = ""    # Rich-markup hero art (replaces HERMES_CADUCEUS)
-    # New in theme-integration: syntax, diff, markdown, ui_ext
+    # New in theme-integration: syntax, diff, markdown, ui_ext, component_vars
     syntax_scheme: str = "hermes"
     syntax: Dict[str, str] = field(default_factory=dict)       # per-token overrides
     diff: Dict[str, str] = field(default_factory=dict)
     markdown: Dict[str, Any] = field(default_factory=dict)     # Any: lists + strings
     ui_ext: Dict[str, Any] = field(default_factory=dict)       # Any: lists + strings
+    component_vars: Dict[str, str] = field(default_factory=dict)  # TUI CSS variable overrides
 
     def get_color(self, key: str, fallback: str = "") -> str:
         """Get a color value with fallback."""
@@ -1139,6 +1140,12 @@ def _build_skin_config(data: Dict[str, Any]) -> SkinConfig:
                     v = _UI_EXT_DEFAULTS.get(k, [])
             ui_ext[k] = v
 
+    # --- component_vars: TUI CSS variable overrides (passed to ThemeManager) ---
+    raw_cv = data.get("component_vars", {})
+    component_vars: Dict[str, str] = {}
+    if isinstance(raw_cv, dict):
+        component_vars = {str(k): str(v) for k, v in raw_cv.items()}
+
     return SkinConfig(
         name=data.get("name", "unknown"),
         description=data.get("description", ""),
@@ -1155,6 +1162,7 @@ def _build_skin_config(data: Dict[str, Any]) -> SkinConfig:
         diff=diff,
         markdown=markdown,
         ui_ext=ui_ext,
+        component_vars=component_vars,
     )
 
 

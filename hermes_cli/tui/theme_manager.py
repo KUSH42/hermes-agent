@@ -122,6 +122,8 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     "status-context-color": "#5f87d7",
     # Running indicator high-color (StatusBar ● + shimmer)
     "running-indicator-hi-color": "#FFA726",
+    # Running indicator dim-color (StatusBar ● pulse trough + shimmer base)
+    "running-indicator-dim-color": "#6e6e6e",
     # User echo panel bullet color
     "user-echo-bullet-color": "#FFBF00",
     # Completion list empty-state background
@@ -136,6 +138,12 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     # NOT in Textual's default theme vars; must be injected here so
     # _live_colors() get_css_variables() lookup succeeds at runtime.
     "primary-darken-3":     "#4a7aaa",
+    # Brand glyph color — dedicated color for the ⟁/⚕ glyph in TitledRule.
+    # Allows skins to give the brand glyph its own accent separate from
+    # the title text and the idle/active pulse colors.
+    "brand-glyph-color":    "#FFD700",
+    # Scrollbar thumb color — dedicated var so skins can match scrollbar to theme.
+    "scrollbar-thumb-color": "#5f87d7",
 }
 
 

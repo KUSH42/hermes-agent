@@ -64,7 +64,7 @@ def test_show_banner_with_startup_effect_disabled_prints_hero_statically(_isolat
 
 
 def test_show_banner_with_startup_effect_tui_updates_startup_widget(_isolate):
-    """In TUI mode: TTE frames update one startup banner widget."""
+    """In TUI mode: TTE frames shown directly, widget removed, then full banner rendered."""
     import cli
 
     obj = _make_cli_obj()
@@ -91,18 +91,21 @@ def test_show_banner_with_startup_effect_tui_updates_startup_widget(_isolate):
         patch("hermes_cli.banner.resolve_banner_hero_assets", return_value=("[gold]hero[/]", "hero")),
         patch("hermes_cli.tui.tte_runner.iter_frames", return_value=["\x1b[38;2;0;255;0mA\x1b[0m"]),
         patch.object(obj, "_ensure_tui_startup_banner_widget", return_value=fake_widget),
-        patch.object(obj, "_build_startup_banner_template", return_value={"lines": [], "hero_row": 0, "hero_col": 0, "hero_width": 1, "hero_height": 1}),
-        patch.object(obj, "_splice_startup_banner_frame", return_value="frame-text"),
+        patch.object(obj, "_remove_tui_startup_banner_widget") as mock_remove,
         patch.object(obj, "_render_startup_banner_text", return_value="final-text"),
         patch.object(cli, "_hermes_app", fake_app),
     ):
         cli.HermesCLI.show_banner_with_startup_effect(obj, tui=True)
 
     obj.console.clear.assert_not_called()
-    assert fake_widget.set_frame.call_count == 2
-    fake_widget.set_frame.assert_any_call("frame-text")
-    fake_widget.set_frame.assert_any_call("final-text")
-    obj._show_banner_body.assert_not_called()
+    # One set_frame call for the raw TTE animation frame (Text object)
+    assert fake_widget.set_frame.call_count == 1
+    frame_arg = fake_widget.set_frame.call_args[0][0]
+    assert "A" in frame_arg.plain  # TTE frame content preserved
+    # Widget is removed after animation
+    mock_remove.assert_called_once()
+    # Full banner is rendered after animation
+    obj._show_banner_body.assert_called_once_with(clear=False, print_hero=True)
 
 
 def test_render_startup_banner_text_uses_live_tui_width(_isolate):

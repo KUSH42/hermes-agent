@@ -3224,6 +3224,26 @@ class HermesCLI:
         app.call_from_thread(_ensure)
         return result["message"]
 
+    def _remove_tui_startup_banner_widget(self):
+        """Remove the StartupBannerWidget from OutputPanel after TTE animation."""
+        from hermes_cli.tui.widgets import OutputPanel, StartupBannerWidget
+
+        app = _hermes_app
+        if app is None:
+            return
+
+        def _remove():
+            try:
+                panel = app.query_one(OutputPanel)
+                for child in panel.children:
+                    if isinstance(child, StartupBannerWidget):
+                        child.remove()
+                        break
+            except Exception:
+                pass
+
+        app.call_from_thread(_remove)
+
     def _ensure_tui_startup_banner_widget(self):
         """Ensure a lightweight startup banner widget exists in OutputPanel."""
         from hermes_cli.tui.widgets import (
@@ -3436,11 +3456,13 @@ class HermesCLI:
             logger.warning("TTE: mount failed: could not create startup banner widget")
             return False
 
-        # --- Stream TTE frames — each frame is a full banner render ---
+        # --- Stream TTE frames directly into the widget ---
+        # TTE frames use absolute cursor positioning (designed for full terminal).
+        # Splicing them into a partial banner region causes character corruption.
+        # Instead: show raw animation frames, then render full banner after.
         from hermes_cli.tui.tte_runner import iter_frames
         MAX_FRAMES = 3000
         rendered_any = False
-        banner_template = self._build_startup_banner_template(plain_hero)
         state_lock = _threading.Lock()
         render_done = _threading.Event()
         latest_frame: Text | None = None
@@ -3478,17 +3500,19 @@ class HermesCLI:
                 if i >= MAX_FRAMES:
                     break
                 rendered_any = True
-                if banner_template is not None:
-                    rich_frame = self._splice_startup_banner_frame(banner_template, frame)
-                else:
-                    rich_frame = self._render_startup_banner_text(hero_text=frame)
+                # Show raw TTE frame directly — no banner splicing.
+                # TTE uses absolute cursor positioning; splicing into
+                # the banner template corrupts the output.
+                rich_frame = Text.from_ansi(frame)
+                rich_frame.no_wrap = True
+                rich_frame.overflow = "ignore"
                 _queue_frame(rich_frame, wait=False)
         except Exception as e:
             logger.warning("TTE frame error: %s", e)
 
         if rendered_any:
-            final_banner = self._render_startup_banner_text(print_hero=True)
-            _queue_frame(final_banner, wait=True)
+            # Remove the TTE widget so the full banner can render cleanly.
+            self._remove_tui_startup_banner_widget()
 
         return rendered_any
 
@@ -3502,8 +3526,8 @@ class HermesCLI:
         if not tui:
             self.console.clear()
         played = self._play_startup_text_effect(tui=tui)
-        if tui and played:
-            return
+        # In TUI mode, TTE animation widget is removed after playing.
+        # Always render the full banner (with hero) so the final state is clean.
         if tui:
             self._ensure_tui_startup_message()
         self._show_banner_body(clear=False, print_hero=True)
@@ -8618,9 +8642,10 @@ class HermesCLI:
                 primary = skin.get_color("ui_accent", "")
                 if primary:
                     skin_vars["primary"] = primary
-                # Merge component_vars (app-bg, cursor-color, chevron colors, etc.)
+                # Pass component_vars as nested key so load_dict() extracts them
+                # into the component_vars layer (overriding COMPONENT_VAR_DEFAULTS).
                 if skin.component_vars:
-                    skin_vars.update(skin.component_vars)
+                    skin_vars["component_vars"] = dict(skin.component_vars)
                 if skin_vars:
                     _hermes_app.call_from_thread(_hermes_app.apply_skin, skin_vars)
             except Exception:
@@ -10205,8 +10230,11 @@ class HermesCLI:
                 _primary = _startup_skin.get_color("ui_accent", "")
                 if _primary:
                     _skin_vars["primary"] = _primary
+                # Pass component_vars as nested key so load_dict() extracts them
+                # into the component_vars layer (not the css_vars layer).
+                # This prevents COMPONENT_VAR_DEFAULTS from overwriting skin values.
                 if _startup_skin.component_vars:
-                    _skin_vars.update(_startup_skin.component_vars)
+                    _skin_vars["component_vars"] = dict(_startup_skin.component_vars)
                 if _skin_vars:
                     _tui_app.apply_skin(_skin_vars)
             except Exception:

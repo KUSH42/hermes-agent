@@ -1659,7 +1659,7 @@ class TitledRule(PulseMixin, Widget):
         self._fade_start = fade_start or _skin_color("rule_start", "#555555")
         self._fade_end = fade_end or _skin_color("rule_end", "#2A2A2A")
         self._accent = accent or _skin_color("banner_title", "#FFD700")
-        self._title_color = title_color or _skin_color("banner_dim", "#B8860B")
+        self._title_color = title_color or _skin_color("banner_title", "#FFD700")
         self._show_state = show_state
         self._created_at = created_at  # datetime | None — shown as HH:MM when set
         self._glyph_error: bool = False
@@ -1734,7 +1734,7 @@ class TitledRule(PulseMixin, Widget):
                 v.get("rule-dim-color",        self._fade_start),
                 fade_end,
                 v.get("rule-accent-color",     self._accent),
-                v.get("rule-accent-dim-color", self._title_color),
+                v.get("rule-accent-color",     self._title_color),
             )
         except Exception:
             return self._fade_start, self._fade_end, self._accent, self._title_color
@@ -1754,15 +1754,17 @@ class TitledRule(PulseMixin, Widget):
         accent_char = parts[0] if parts else ""
         rest = (" " + parts[1]) if len(parts) > 1 else ""
 
-        # Determine glyph color: error → hard red; running → pulse; idle → darken-3
+        # Determine glyph color: error → hard red; running → pulse; idle → brand-glyph-color
+        # brand-glyph-color gives skins a dedicated var for the ⟁/⚕ glyph,
+        # independent of the title text color and the pulse active color.
         try:
             v = self.app.get_css_variables()
-            glyph_idle = v.get("primary-darken-3", "#2d4a6e")
-            glyph_active = v.get("primary", "#5f87d7")
+            glyph_idle = v.get("brand-glyph-color", v.get("primary-darken-3", _skin_color("banner_dim", "#2d4a6e")))
+            glyph_active = v.get("primary", _skin_color("banner_title", "#5f87d7"))
             glyph_err = v.get("status-error-color", "#EF5350")
         except Exception:
-            glyph_idle = "#2d4a6e"
-            glyph_active = "#5f87d7"
+            glyph_idle = _skin_color("banner_title", "#FFD700")
+            glyph_active = _skin_color("banner_title", "#5f87d7")
             glyph_err = "#EF5350"
 
         if self._glyph_error:
@@ -2318,28 +2320,27 @@ class StatusBar(PulseMixin, Widget):
         _status_err = getattr(app, "status_error", "")
 
         if running:
-            _run_lo = _vars.get("status-running-color", "#FFBF00")
-            _run_hi = _vars.get("running-indicator-hi-color", "#FFA726")
-            # Use hardcoded dim — text-muted CSS var returns non-hex like "auto 60%"
-            _shimmer_dim = "#6e6e6e"
+            _run_theme = _vars.get("status-running-color", "#FFBF00")
+            _run_dim = _vars.get("running-indicator-dim-color", "#6e6e6e")
+            # ● glyph: pulse between dim (trough) and theme color (peak) via PulseMixin
             if self._pulse_t > 0:
-                pulse_color = lerp_color(_run_hi, _run_lo, self._pulse_t)
+                glyph_color = lerp_color(_run_dim, _run_theme, self._pulse_t)
             else:
-                pulse_color = _run_hi
+                glyph_color = _run_theme
             state_t = Text()
-            state_t.append(" ● ", style=f"bold {pulse_color}")
-            # Shimmer the "running" word using the existing _pulse_tick as tick source
+            state_t.append(" ● ", style=f"bold {glyph_color}")
+            # Shimmer "running": base=dim, wave peak=theme color (inverted visibility)
             if getattr(app, "_animations_enabled", True):
                 running_shimmer = shimmer_text(
                     "running",
                     self._pulse_tick,
-                    dim=_shimmer_dim,
-                    peak=_run_lo,
+                    dim=_run_dim,
+                    peak=_run_theme,
                     period=32,
                 )
                 state_t.append_text(running_shimmer)
             else:
-                state_t.append("running", style=f"bold {pulse_color}")
+                state_t.append("running", style=f"bold {_run_dim}")
         elif _status_err:
             state_t = Text(f" ⚠ {_status_err}", style=f"bold {_err_color}")
         else:

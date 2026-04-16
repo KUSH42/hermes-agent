@@ -28,6 +28,9 @@ $cursor-color: #FFF8DC;
 $cursor-selection-bg: #3A5A8C;
 $cursor-placeholder: #555555;
 
+/* Scrollbar thumb color — ThemeManager overrides via component_vars */
+$scrollbar-thumb-color: #5f87d7;
+
 /* Ghost text — dim but legible; $text-muted 60% yields ~1.67:1 contrast (invisible). */
 $ghost-text-color: #555555;
 
@@ -79,9 +82,12 @@ HermesApp {
     scrollbar-corner-color: $app-bg;
 }
 
-/* OutputPanel: show scrollbar so terminal scrollbar controls pane scrolling */
+/* OutputPanel: show scrollbar so terminal scrollbar controls pane scrolling.
+   $scrollbar-thumb-color is a dedicated component var — skins override it in
+   component_vars to match the scrollbar to their palette. */
 OutputPanel {
     scrollbar-size-vertical: 1;
+    scrollbar-color: $scrollbar-thumb-color 60%;
 }
 
 /* --- Message turns --- */

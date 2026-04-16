@@ -32,6 +32,12 @@ All fields are optional. Missing values inherit from the ``default`` skin.
       response_border: "#FFD700"         # Response box border (ANSI)
       session_label: "#DAA520"           # Session label color
       session_border: "#8B8682"          # Session ID dim color
+      rule_start: "#555555"              # TitledRule/PlainRule gradient start (bright end)
+      rule_end: "#2A2A2A"                # TitledRule/PlainRule gradient end (fades to app-bg; MUST match app-bg)
+      statusbar_bg: "#1a1a2e"            # Prompt_toolkit status bar background (ANSI mode only)
+      error_color: "#E06C75"             # Context bar critical / TUI error indicator
+      warning_color: "#FFA726"           # Context bar warning / TUI warning indicator
+      caution_color: "#FFBF00"           # Context bar caution / TUI caution indicator
 
     # Spinner: customize the animated spinner during API calls
     spinner:
@@ -64,9 +70,21 @@ All fields are optional. Missing values inherit from the ``default`` skin.
     # Tool icons: override the default tool glyph for any tool.
     # Nerd font glyphs preferred; legacy tool_emojis still load.
     tool_icons:
-      terminal: ""
-      web_search: ""
+      terminal: ""
+      web_search: ""
       # Any tool not listed here uses its registry default
+
+    # Legacy tool emoji overrides (tool_icons takes precedence if both set)
+    tool_emojis:
+      terminal: "⚡"
+      read_file: "📄"
+
+    # Banner art: Rich-markup strings (use |- or |2- YAML block scalars)
+    # Lines must be padded to equal length with spaces before closing [/] tag.
+    # banner_logo replaces the default ASCII logo text
+    banner_logo: ""
+    # banner_hero replaces the default caduceus art
+    banner_hero: ""
 
     # Syntax highlighting color scheme
     syntax_scheme: monokai      # Named scheme from built-in list
@@ -111,10 +129,45 @@ All fields are optional. Missing values inherit from the ``default`` skin.
       context_bar_normal: "#5f87d7"
       context_bar_warn: "#ffa726"
       context_bar_crit: "#ef5350"
+      tool_error_prefix: "red"            # Tool error line prefix style
+      tool_disabled: "red"                # Disabled tool style
+      tool_lazy: "yellow"                 # Lazy-loaded tool style
       menu_cursor: ["fg_green", "bold"]   # List — prompt_toolkit style tuple
       menu_highlight: ["fg_green"]
+      table_header: "bold"
       table_col_accent: "bold cyan"
+      table_col_dim: "dim"
       panel_border: "cyan"
+
+    # TUI Component Part variables — injected via ThemeManager into Textual CSS.
+    # These override $var values declared in hermes.tcss.
+    # Omitted keys fall back to COMPONENT_VAR_DEFAULTS in theme_manager.py.
+    component_vars:
+      app-bg: "#1E1E1E"                   # Global app background (Screen + HermesApp + chrome)
+      cursor-color: "#FFF8DC"             # Input cursor glyph/block
+      cursor-selection-bg: "#3A5A8C"      # Text selection highlight
+      cursor-placeholder: "#555555"       # Placeholder text
+      ghost-text-color: "#555555"         # Autocomplete ghost text (not $text-muted 60%)
+      chevron-base: "#FFF8DC"             # Input chevron idle
+      chevron-file: "#FFBF00"             # Input chevron file mode
+      chevron-stream: "#6EA8D4"           # Input chevron streaming
+      chevron-shell: "#A8D46E"            # Input chevron shell mode
+      chevron-done: "#4CAF50"             # Input chevron done
+      chevron-error: "#E06C75"            # Input chevron error
+      fuzzy-match-color: "#FFD866"        # Autocomplete fuzzy match highlight
+      status-running-color: "#FFBF00"     # StatusBar running indicator
+      status-error-color: "#ef5350"       # StatusBar error
+      status-warn-color: "#FFA726"        # StatusBar warning
+      status-context-color: "#5f87d7"     # StatusBar context info
+      running-indicator-hi-color: "#FFA726"  # Running indicator bright phase
+      user-echo-bullet-color: "#FFBF00"   # User message bullet
+      completion-empty-bg: "#2A2A2A"      # Completion list empty state
+      rule-dim-color: "#888888"           # Rule separator dim text
+      rule-bg-color: "#1E1E1E"            # Rule gradient endpoint (MUST match app-bg)
+      rule-accent-color: "#FFD700"        # Rule accent (TitledRule title text)
+      rule-accent-dim-color: "#CC9920"    # Rule accent dim variant
+      primary-darken-3: "#4a7aaa"         # TitledRule idle glyph (dimmer than $primary)
+      fps-hud-bg: "#1a1a2e"               # FPS counter background
 
 USAGE
 =====

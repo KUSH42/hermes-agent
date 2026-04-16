@@ -2225,13 +2225,32 @@ def format_response(text: str, reset_suffix: str = "") -> str:
     text = render_stateful_blocks(text)
     # Pass 3: per non-ANSI line — block + inline markdown.
     # Use splitlines() (no keepends) so apply_block_line never receives a trailing
-    # \n that its capture groups would silently drop.  Rejoin manually and restore
+    # \\n that its capture groups would silently drop.  Rejoin manually and restore
     # the final newline if the original text ended with one.
+    # Track list state for continuation indent (hanging indent on wrapped lines).
     lines = text.splitlines()
-    result = "\n".join(
-        l if "\x1b" in l else apply_inline_markdown(apply_block_line(l), ref_map=ref_map)
-        for l in lines
-    )
+    result_lines: list[str] = []
+    _list_cont_indent: str = ""
+    for l in lines:
+        if "\x1b" in l:
+            result_lines.append(l)
+            continue
+        ul_m = _MD_UL_RE.match(l)
+        ol_m = _MD_OL_RE.match(l)
+        if ul_m:
+            _list_cont_indent = " " * (len(ul_m.group(1)) + 2)
+        elif ol_m:
+            _list_cont_indent = " " * (len(ol_m.group(1)) + len(ol_m.group(2)) + 2)
+        elif l.strip() == "":
+            _list_cont_indent = ""
+        elif (_list_cont_indent and l and not l[0:1].isspace()
+              and not _MD_HEADING_RE.match(l)
+              and not _MD_HR_RE.match(l.strip())
+              and not _MD_BQ_LEVEL_RE.match(l)
+              and not _FENCE_OPEN_LINE_RE.match(l.strip())):
+            l = _list_cont_indent + l
+        result_lines.append(l if "\x1b" in l else apply_inline_markdown(apply_block_line(l), ref_map=ref_map))
+    result = "\n".join(result_lines)
     if text.endswith("\n"):
         result += "\n"
     if reset_suffix:

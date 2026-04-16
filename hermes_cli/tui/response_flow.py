@@ -142,6 +142,65 @@ def _is_code_intro_label(line: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# List continuation indent helpers
+# ---------------------------------------------------------------------------
+
+_MD_UL_RE = re.compile(r"^(\s*)([-*+])\s+(.+)")
+_MD_OL_RE = re.compile(r"^(\s*)(\d+)[.)]\s+(.+)")
+
+# Approximate available width for pre-wrapping list items.
+# Accounts for CopyableBlock margin (0 2 = 4 chars) + scrollbar (1 char).
+_LIST_WRAP_WIDTH = 75
+
+
+def _detect_list_cont_indent(line: str) -> str:
+    """Return continuation indent string if *line* is a list item, else ``""``."""
+    m = _MD_UL_RE.match(line)
+    if m:
+        return " " * (len(m.group(1)) + 2)  # indent + bullet+spc
+    m = _MD_OL_RE.match(line)
+    if m:
+        return " " * (len(m.group(1)) + len(m.group(2)) + 2)  # indent + num+dot+spc
+    return ""
+
+
+def _apply_cont_indent(line: str, indent: str, width: int = _LIST_WRAP_WIDTH) -> str:
+    """Pre-wrap *line* with hanging *indent* so indent survives RichLog wrapping."""
+    if not indent:
+        return line
+    visual_line_len = len(_strip_ansi(line))
+    if visual_line_len <= width:
+        return line
+    # Pre-wrap: first line up to (width), rest at (width - len(indent))
+    first_width = width
+    rest_width = max(width - len(indent), 20)
+    words = line.split(" ")
+    out_lines: list[str] = []
+    cur = ""
+    cur_vis = 0
+    is_first = True
+    limit = first_width if is_first else rest_width
+    for word in words:
+        wlen = len(word)
+        if cur:
+            if cur_vis + 1 + wlen > limit:
+                out_lines.append(cur)
+                is_first = False
+                limit = rest_width
+                cur = indent + word
+                cur_vis = len(indent) + wlen
+            else:
+                cur += " " + word
+                cur_vis += 1 + wlen
+        else:
+            cur = word
+            cur_vis = wlen
+    if cur:
+        out_lines.append(cur)
+    return "\n".join(out_lines)
+
+
+# ---------------------------------------------------------------------------
 # ResponseFlowEngine
 # ---------------------------------------------------------------------------
 
@@ -175,6 +234,7 @@ class ResponseFlowEngine:
         self._pending_source_line: str | None = None
         self._pending_code_intro: bool = False
         self._prose_section_counter: int = 0  # for unique CopyableBlock IDs
+        self._list_cont_indent: str = ""  # continuation indent for list items
 
     def _sync_prose_log(self) -> None:
         """Refresh the active prose destination from the owning message panel."""
@@ -217,6 +277,7 @@ class ResponseFlowEngine:
                 if _looks_like_source_line(raw):
                     self._flush_block_buf()
                     self._state = "IN_SOURCE_LIKE"
+                    self._list_cont_indent = ""
                     self._active_block = self._open_code_block("")
                     self._active_block.append_line(self._pending_source_line)
                     self._active_block.append_line(raw)
@@ -244,6 +305,7 @@ class ResponseFlowEngine:
                 self._state = "IN_CODE"
                 self._fence_char = fence_char
                 self._fence_depth = fence_depth
+                self._list_cont_indent = ""
                 self._active_block = self._open_code_block(lang)
                 return  # fence open line itself not written to any log
             indent_m = _INDENTED_CODE_RE.match(raw)
@@ -251,6 +313,7 @@ class ResponseFlowEngine:
                 # Treat Markdown-style indented code blocks as first-class code widgets.
                 self._flush_block_buf()
                 self._state = "IN_INDENTED_CODE"
+                self._list_cont_indent = ""
                 self._active_block = self._open_code_block("")
                 self._active_block.append_line(indent_m.group(1))
                 return
@@ -320,7 +383,27 @@ class ResponseFlowEngine:
             return
 
         # Phase 4: Block + inline rendering via existing PT-mode pipeline
-        block_ansi = apply_block_line(block_result)
+        # Track list state for continuation indent
+        list_ci = _detect_list_cont_indent(block_result)
+        if list_ci:
+            # This line is a list item — set continuation indent
+            self._list_cont_indent = list_ci
+            block_ansi = apply_block_line(block_result)
+        elif (self._list_cont_indent and block_result and not block_result[0:1].isspace()
+              and not _HR_RE.match(block_result.strip())
+              and not _FENCE_OPEN_RE.match(block_result.strip())
+              and not _LIST_PREFIX_RE.match(block_result)):
+            # Plain prose line following a list item — add hanging indent
+            indented = _apply_cont_indent(block_result, self._list_cont_indent)
+            block_ansi = apply_block_line(indented)
+        else:
+            block_ansi = apply_block_line(block_result)
+            # Reset list state for structural elements
+            stripped = block_result.strip()
+            if (stripped == ""
+                or _HR_RE.match(stripped)
+                or _FENCE_OPEN_RE.match(stripped)):
+                self._list_cont_indent = ""
         inline_ansi = apply_inline_markdown(block_ansi)
 
         # Phase 5: Write to prose log
@@ -384,12 +467,25 @@ class ResponseFlowEngine:
             for line in result.splitlines():
                 if _is_horizontal_rule(line):
                     self._emit_rule()
+                    continue
+                list_ci = _detect_list_cont_indent(line)
+                if list_ci:
+                    self._list_cont_indent = list_ci
+                    block_ansi = apply_block_line(line)
+                elif (self._list_cont_indent and line and not line[0:1].isspace()
+                      and not _HR_RE.match(line.strip())
+                      and not _FENCE_OPEN_RE.match(line.strip())
+                      and not _LIST_PREFIX_RE.match(line)):
+                    indented = _apply_cont_indent(line, self._list_cont_indent)
+                    block_ansi = apply_block_line(indented)
                 else:
                     block_ansi = apply_block_line(line)
-                    inline_ansi = apply_inline_markdown(block_ansi)
-                    self._sync_prose_log()
-                    plain = _strip_ansi(inline_ansi)
-                    self._prose_log.write_with_source(Text.from_ansi(inline_ansi), plain)
+                    if line.strip() == "":
+                        self._list_cont_indent = ""
+                inline_ansi = apply_inline_markdown(block_ansi)
+                self._sync_prose_log()
+                plain = _strip_ansi(inline_ansi)
+                self._prose_log.write_with_source(Text.from_ansi(inline_ansi), plain)
 
     def _open_code_block(self, lang: str) -> "StreamingCodeBlock":
         """Mount a StreamingCodeBlock in timeline order and retarget prose."""

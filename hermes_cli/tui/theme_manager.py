@@ -142,8 +142,9 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     # Allows skins to give the brand glyph its own accent separate from
     # the title text and the idle/active pulse colors.
     "brand-glyph-color":    "#FFD700",
-    # Scrollbar thumb color — dedicated var so skins can match scrollbar to theme.
-    "scrollbar-thumb-color": "#5f87d7",
+    # Scrollbar thumb color — ThemeManager overrides via component_vars.
+    # Named "scrollbar" to match Textual's built-in CSS var.
+    "scrollbar": "#5f87d7",
 }
 
 

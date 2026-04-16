@@ -1748,11 +1748,20 @@ class TitledRule(PulseMixin, Widget):
         fade_start, fade_end, accent, title_color = self._live_colors()
         w = self.size.width
         title = self.title_text
-        # Split title into accent char (first non-space) + rest
-        # e.g. "⚕ Hermes" → accent="⚕", rest=" Hermes"
-        parts = title.split(" ", 1)
-        accent_char = parts[0] if parts else ""
-        rest = (" " + parts[1]) if len(parts) > 1 else ""
+        # Split title into leading spaces + accent char (first non-space) + rest.
+        # Some skins intentionally prefix response_label with a space, e.g.
+        # " ⟁ Matrix". split(" ", 1) would treat the glyph as normal text and
+        # lose the dedicated brand-glyph-color path entirely.
+        leading = len(title) - len(title.lstrip(" "))
+        if leading < len(title):
+            accent_index = leading
+            prefix = title[:accent_index]
+            accent_char = title[accent_index]
+            rest = title[accent_index + 1 :]
+        else:
+            prefix = ""
+            accent_char = ""
+            rest = ""
 
         # Determine glyph color: error → hard red; running → pulse; idle → brand-glyph-color
         # brand-glyph-color gives skins a dedicated var for the ⟁/⚕ glyph,
@@ -1800,7 +1809,10 @@ class TitledRule(PulseMixin, Widget):
         label_len = len(f"{title} ")
         right = max(0, w - label_len - state_suffix.cell_len - metrics_len - ts_len)
         t = Text()
-        # Title: accent char with dynamic glyph color, rest in title_color
+        # Title: preserve leading spaces, accent char gets dynamic glyph color,
+        # remainder stays in title_color.
+        if prefix:
+            t.append(prefix, style=f"{title_color}")
         t.append(accent_char, style=f"bold {glyph_color}")
         t.append(f"{rest} ", style=f"{title_color}")
         # Right fill: fade out (start → end), then optional timestamp + state glyph

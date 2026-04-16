@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+from rich.console import Console
 
 from hermes_cli.tui.app import HermesApp
 from hermes_cli.tui.widgets import OutputPanel, ReasoningPanel, _safe_widget_call
@@ -374,6 +375,39 @@ async def test_titled_rule_shows_response_metrics_before_timestamp():
         assert "42 tok/s" in rendered
         assert "2.4s" in rendered
         assert rendered.index("42 tok/s") < rendered.index(ts)
+
+
+@pytest.mark.asyncio
+async def test_titled_rule_uses_brand_glyph_color_with_leading_space_label():
+    """Leading-space labels should still color the first non-space glyph."""
+    from hermes_cli.tui.widgets import TitledRule
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.apply_skin(
+            {
+                "component_vars": {
+                    "brand-glyph-color": "#00ff9f",
+                    "rule-accent-color": "#00ff41",
+                }
+            }
+        )
+        await pilot.pause()
+
+        rule = TitledRule(title=" ⟁ Matrix")
+        await app.mount(rule)
+        await pilot.pause()
+
+        rendered = rule.render()
+        console = Console(force_terminal=True, color_system="truecolor", width=80)
+        glyph_style = rendered.get_style_at_offset(console, 1)
+        text_style = rendered.get_style_at_offset(console, 3)
+
+        assert glyph_style.color is not None
+        assert text_style.color is not None
+        assert glyph_style.color.triplet.hex == "#00ff9f"
+        assert text_style.color.triplet.hex == "#00ff41"
 
 
 @pytest.mark.asyncio

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from rich.text import Text
 
 
 @pytest.fixture
@@ -64,7 +65,7 @@ def test_show_banner_with_startup_effect_disabled_prints_hero_statically(_isolat
 
 
 def test_show_banner_with_startup_effect_tui_updates_startup_widget(_isolate):
-    """In TUI mode: TTE frames shown directly, widget removed, then full banner rendered."""
+    """In TUI mode: frames are spliced into the banner widget and the last frame stays."""
     import cli
 
     obj = _make_cli_obj()
@@ -91,21 +92,21 @@ def test_show_banner_with_startup_effect_tui_updates_startup_widget(_isolate):
         patch("hermes_cli.banner.resolve_banner_hero_assets", return_value=("[gold]hero[/]", "hero")),
         patch("hermes_cli.tui.tte_runner.iter_frames", return_value=["\x1b[38;2;0;255;0mA\x1b[0m"]),
         patch.object(obj, "_ensure_tui_startup_banner_widget", return_value=fake_widget),
-        patch.object(obj, "_remove_tui_startup_banner_widget") as mock_remove,
-        patch.object(obj, "_render_startup_banner_text", return_value="final-text"),
+        patch.object(obj, "_build_startup_banner_template", return_value={"template": True}),
+        patch.object(obj, "_splice_startup_banner_frame", return_value=Text("spliced-frame")) as mock_splice,
+        patch.object(obj, "_set_tui_startup_banner_static") as mock_set_static,
+        patch.object(obj, "_show_banner_postamble") as mock_postamble,
         patch.object(cli, "_hermes_app", fake_app),
     ):
         cli.HermesCLI.show_banner_with_startup_effect(obj, tui=True)
 
     obj.console.clear.assert_not_called()
-    # One set_frame call for the raw TTE animation frame (Text object)
+    mock_splice.assert_called_once_with({"template": True}, "\x1b[38;2;0;255;0mA\x1b[0m")
     assert fake_widget.set_frame.call_count == 1
-    frame_arg = fake_widget.set_frame.call_args[0][0]
-    assert "A" in frame_arg.plain  # TTE frame content preserved
-    # Widget is removed after animation
-    mock_remove.assert_called_once()
-    # Full banner is rendered after animation
-    obj._show_banner_body.assert_called_once_with(clear=False, print_hero=True)
+    assert fake_widget.set_frame.call_args_list[0][0][0].plain == "spliced-frame"
+    mock_set_static.assert_not_called()
+    obj._show_banner_body.assert_not_called()
+    mock_postamble.assert_called_once()
 
 
 def test_render_startup_banner_text_uses_live_tui_width(_isolate):
@@ -160,4 +161,38 @@ def test_splice_startup_banner_frame_replaces_only_hero_region(_isolate):
     }
 
     out = obj._splice_startup_banner_frame(template, "xyz\nq")
-    assert out.plain == "header\nAAxyzZZ\nBBqYY\nfooter"
+    assert out.plain == "header\nAAxyzZZ\nBBq  YY\nfooter"
+
+
+def test_splice_startup_banner_frame_pads_or_crops_to_hero_region(_isolate):
+    from rich.text import Text
+
+    import cli
+
+    obj = _make_cli_obj()
+    template = {
+        "lines": [Text("L" + ("#" * 4) + "R")],
+        "hero_row": 0,
+        "hero_col": 1,
+        "hero_width": 4,
+        "hero_height": 1,
+    }
+
+    short = obj._splice_startup_banner_frame(template, "x")
+    long = obj._splice_startup_banner_frame(template, "abcdef")
+
+    assert short.plain == "Lx   R"
+    assert long.plain == "LabcdR"
+
+
+def test_plain_skin_hero_gets_banner_text_color(_isolate):
+    from rich.console import Console
+
+    from hermes_cli.banner import render_banner_hero_text
+
+    hero = render_banner_hero_text("/\\\\")
+    console = Console(record=True, force_terminal=True, color_system="truecolor", width=20)
+    console.print(hero)
+
+    rendered = console.export_text(styles=True)
+    assert "\x1b[" in rendered

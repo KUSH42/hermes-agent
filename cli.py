@@ -3224,26 +3224,6 @@ class HermesCLI:
         app.call_from_thread(_ensure)
         return result["message"]
 
-    def _remove_tui_startup_banner_widget(self):
-        """Remove the StartupBannerWidget from OutputPanel after TTE animation."""
-        from hermes_cli.tui.widgets import OutputPanel, StartupBannerWidget
-
-        app = _hermes_app
-        if app is None:
-            return
-
-        def _remove():
-            try:
-                panel = app.query_one(OutputPanel)
-                for child in panel.children:
-                    if isinstance(child, StartupBannerWidget):
-                        child.remove()
-                        break
-            except Exception:
-                pass
-
-        app.call_from_thread(_remove)
-
     def _ensure_tui_startup_banner_widget(self):
         """Ensure a lightweight startup banner widget exists in OutputPanel."""
         from hermes_cli.tui.widgets import (
@@ -3428,6 +3408,12 @@ class HermesCLI:
                 hero_line = Text.from_ansi(frame_line)
                 hero_line.no_wrap = True
                 hero_line.overflow = "ignore"
+                hero_plain = hero_line.plain
+                if len(hero_plain) > hero_width:
+                    hero_line = hero_line[:hero_width]
+                elif len(hero_plain) < hero_width:
+                    hero_line = hero_line.copy()
+                    hero_line.append(" " * (hero_width - len(hero_plain)))
                 composed = base_line[:hero_col] + hero_line + base_line[hero_col + hero_width :]
             else:
                 composed = base_line.copy()
@@ -3456,10 +3442,6 @@ class HermesCLI:
             logger.warning("TTE: mount failed: could not create startup banner widget")
             return False
 
-        # --- Stream TTE frames directly into the widget ---
-        # TTE frames use absolute cursor positioning (designed for full terminal).
-        # Splicing them into a partial banner region causes character corruption.
-        # Instead: show raw animation frames, then render full banner after.
         from hermes_cli.tui.tte_runner import iter_frames
         MAX_FRAMES = 3000
         rendered_any = False
@@ -3467,6 +3449,7 @@ class HermesCLI:
         render_done = _threading.Event()
         latest_frame: Text | None = None
         update_in_flight = False
+        template = self._build_startup_banner_template(plain_hero)
 
         def _drain_latest() -> None:
             nonlocal latest_frame, update_in_flight
@@ -3500,19 +3483,16 @@ class HermesCLI:
                 if i >= MAX_FRAMES:
                     break
                 rendered_any = True
-                # Show raw TTE frame directly — no banner splicing.
-                # TTE uses absolute cursor positioning; splicing into
-                # the banner template corrupts the output.
-                rich_frame = Text.from_ansi(frame)
+                rich_frame = (
+                    self._splice_startup_banner_frame(template, frame)
+                    if template is not None
+                    else Text.from_ansi(frame)
+                )
                 rich_frame.no_wrap = True
                 rich_frame.overflow = "ignore"
                 _queue_frame(rich_frame, wait=False)
         except Exception as e:
             logger.warning("TTE frame error: %s", e)
-
-        if rendered_any:
-            # Remove the TTE widget so the full banner can render cleanly.
-            self._remove_tui_startup_banner_widget()
 
         return rendered_any
 
@@ -3526,11 +3506,74 @@ class HermesCLI:
         if not tui:
             self.console.clear()
         played = self._play_startup_text_effect(tui=tui)
-        # In TUI mode, TTE animation widget is removed after playing.
-        # Always render the full banner (with hero) so the final state is clean.
         if tui:
             self._ensure_tui_startup_message()
+            if not played:
+                self._set_tui_startup_banner_static()
+            self._show_banner_postamble()
+            return
         self._show_banner_body(clear=False, print_hero=True)
+
+    def _set_tui_startup_banner_static(self) -> None:
+        """Render the final static startup banner into the inline banner widget."""
+        app = _hermes_app
+        if app is None:
+            return
+
+        banner_widget = self._ensure_tui_startup_banner_widget()
+        if banner_widget is None:
+            return
+
+        final_banner = self._render_startup_banner_text(print_hero=True)
+        app.call_from_thread(banner_widget.set_frame, final_banner)
+
+    def _show_banner_postamble(self) -> None:
+        """Print banner warnings and spacing after the main banner render."""
+        ctx_len = None
+        if hasattr(self, 'agent') and self.agent and hasattr(self.agent, 'context_compressor'):
+            ctx_len = self.agent.context_compressor.context_length
+
+        self._show_tool_availability_warnings()
+
+        if ctx_len and ctx_len <= 8192:
+            self.console.print()
+            self.console.print(
+                f"[yellow]⚠️  Context length is only {ctx_len:,} tokens — "
+                f"this is likely too low for agent use with tools.[/]"
+            )
+            self.console.print(
+                "[dim]   Hermes needs 16k–32k minimum. Tool schemas + system prompt alone use ~4k–8k.[/]"
+            )
+            base_url = getattr(self, "base_url", "") or ""
+            if "11434" in base_url or "ollama" in base_url.lower():
+                self.console.print(
+                    "[dim]   Ollama fix: OLLAMA_CONTEXT_LENGTH=32768 ollama serve[/]"
+                )
+            elif "1234" in base_url:
+                self.console.print(
+                    "[dim]   LM Studio fix: Set context length in model settings → reload model[/]"
+                )
+            else:
+                self.console.print(
+                    "[dim]   Fix: Set model.context_length in config.yaml, or increase your server's context setting[/]"
+                )
+
+        model_name = getattr(self, "model", "") or ""
+        if "hermes" in model_name.lower():
+            self.console.print()
+            self.console.print(
+                "[bold yellow]⚠  Nous Research Hermes 3 & 4 models are NOT agentic and are not "
+                "designed for use with Hermes Agent.[/]"
+            )
+            self.console.print(
+                "[dim]   They lack tool-calling capabilities required for agent workflows. "
+                "Consider using an agentic model (Claude, GPT, Gemini, DeepSeek, etc.).[/]"
+            )
+            self.console.print(
+                "[dim]   Switch with: /model sonnet  or  /model gpt5[/]"
+            )
+
+        self.console.print()
 
     def _show_banner_body(self, clear: bool = True, print_hero: bool = True) -> None:
         """Display the welcome banner body."""
@@ -3568,51 +3611,7 @@ class HermesCLI:
                 context_length=ctx_len,
                 print_hero=print_hero,
             )
-        
-        # Show tool availability warnings if any tools are disabled
-        self._show_tool_availability_warnings()
-
-        # Warn about very low context lengths (common with local servers)
-        if ctx_len and ctx_len <= 8192:
-            self.console.print()
-            self.console.print(
-                f"[yellow]⚠️  Context length is only {ctx_len:,} tokens — "
-                f"this is likely too low for agent use with tools.[/]"
-            )
-            self.console.print(
-                "[dim]   Hermes needs 16k–32k minimum. Tool schemas + system prompt alone use ~4k–8k.[/]"
-            )
-            base_url = getattr(self, "base_url", "") or ""
-            if "11434" in base_url or "ollama" in base_url.lower():
-                self.console.print(
-                    "[dim]   Ollama fix: OLLAMA_CONTEXT_LENGTH=32768 ollama serve[/]"
-                )
-            elif "1234" in base_url:
-                self.console.print(
-                    "[dim]   LM Studio fix: Set context length in model settings → reload model[/]"
-                )
-            else:
-                self.console.print(
-                    "[dim]   Fix: Set model.context_length in config.yaml, or increase your server's context setting[/]"
-                )
-
-        # Warn if the configured model is a Nous Hermes LLM (not agentic)
-        model_name = getattr(self, "model", "") or ""
-        if "hermes" in model_name.lower():
-            self.console.print()
-            self.console.print(
-                "[bold yellow]⚠  Nous Research Hermes 3 & 4 models are NOT agentic and are not "
-                "designed for use with Hermes Agent.[/]"
-            )
-            self.console.print(
-                "[dim]   They lack tool-calling capabilities required for agent workflows. "
-                "Consider using an agentic model (Claude, GPT, Gemini, DeepSeek, etc.).[/]"
-            )
-            self.console.print(
-                "[dim]   Switch with: /model sonnet  or  /model gpt5[/]"
-            )
-
-        self.console.print()
+        self._show_banner_postamble()
 
     def _preload_resumed_session(self) -> bool:
         """Load a resumed session's history from the DB early (before first chat).

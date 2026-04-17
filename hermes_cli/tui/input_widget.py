@@ -1,14 +1,14 @@
 """Custom input widget for Hermes TUI.
 
-Extends Textual's built-in Input widget to get selection, clipboard, mouse
-drag, shift+arrow, and all standard keybindings for free.  Layers
+Extends Textual's TextArea for multiline (1–3 row) support.  Layers
 Hermes-specific features on top:
 
 - History: backed by ~/.hermes/.hermes_history via FileHistory format
 - Autocomplete: multi-context dispatcher (slash commands, path refs)
-- Ghost text: native Input.suggester + HistorySuggester (Fish-style)
-- Spinner text: rendered via the Input placeholder while disabled
-- Property bridge: content/cursor_pos aliases for callers still using old API
+- Ghost text: TextArea.suggestion reactive, Fish-style (update_suggestion override)
+- Spinner text: rendered via TextArea.placeholder while agent runs
+- Property bridge: value/content/cursor_pos/cursor_position for callers still using
+  the old single-line API
 """
 
 from __future__ import annotations
@@ -23,20 +23,17 @@ from typing import TYPE_CHECKING, Any
 from hermes_cli.file_drop import parse_dragged_file_paste
 from hermes_cli.tui.perf import measure
 
-from rich.text import Text
 from textual import events
 from textual.binding import Binding
 from textual.css.query import NoMatches
 from textual.message import Message
-from textual.reactive import reactive
-from textual.widgets import Input, Static
+from textual.widgets import TextArea, Static
 
 from hermes_cli.tui.constants import ICON_COPY
 from .completion_context import CompletionContext, CompletionTrigger, detect_context
 from .completion_list import VirtualCompletionList
 from .completion_overlay import CompletionOverlay
 from .fuzzy import fuzzy_rank
-from .history_suggester import HistorySuggester
 from .path_search import Candidate, PathCandidate, PathSearchProvider, SlashCandidate
 
 if TYPE_CHECKING:
@@ -47,39 +44,23 @@ _HERMES_HOME = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
 _HISTORY_FILE = _HERMES_HOME / ".hermes_history"
 
 # Slash-command value regex — matches entire input "/cmd" with word+hyphen chars.
-# Used to bypass cursor-position-dependent detection (see _update_autocomplete).
 _SLASH_FULL_RE = re.compile(r"^/([\w-]*)$")
-
-# Undo stack limits
-_MAX_UNDO = 50
-_UNDO_DEBOUNCE_S = 0.8
-
-
-@dataclass(slots=True)
-class _UndoEntry:
-    """Snapshot of input state for undo/redo."""
-    value: str
-    cursor: int
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, _UndoEntry):
-            return NotImplemented
-        return self.value == other.value and self.cursor == other.cursor
 
 
 def _sanitize_input_text(text: str) -> str:
-    """Normalize input text for the single-line prompt.
+    """Normalize input text for the multiline prompt.
 
-    Strips Unicode control / format characters that should not survive into
-    prompts or slash commands. Newlines and tabs are normalized to spaces so
-    pasted multi-line content doesn't inject hidden structure into the input.
+    Keeps newlines (multiline support), strips bare CR, converts tabs to space,
+    and strips other Unicode control/format characters.
     """
     sanitized: list[str] = []
     for ch in text:
-        if ch in ("\n", "\r", "\t"):
+        if ch == "\r":
+            continue
+        if ch == "\t":
             sanitized.append(" ")
             continue
-        if unicodedata.category(ch).startswith("C"):
+        if unicodedata.category(ch).startswith("C") and ch != "\n":
             continue
         sanitized.append(ch)
     return "".join(sanitized)
@@ -93,38 +74,28 @@ class _PathSearchRequest:
     insert_prefix: str
 
 
-class HermesInput(Input, can_focus=True):
-    """Input widget with history, multi-context autocomplete, and ghost text.
+class HermesInput(TextArea, can_focus=True):
+    """Multiline input bar (1–3 rows) with history, autocomplete, and ghost text.
 
-    Extends Textual's Input to inherit selection, clipboard, cursor, and
-    all standard keybindings.  Emits :class:`HermesInput.Submitted` when
-    the user presses Enter with non-empty content.
+    Extends TextArea for multiline support.  Shift+Enter inserts a newline;
+    Enter submits.  Emits :class:`HermesInput.Submitted` on non-empty submit.
     """
 
     DEFAULT_CSS = """
     HermesInput {
-        height: 1;
+        height: auto;
+        max-height: 3;
         background: transparent;
         border: none;
         padding: 0;
+        width: 1fr;
     }
     """
 
     BINDINGS = [
-        Binding("up",           "history_prev",           "Previous history",     show=False),
-        Binding("down",         "history_next",            "Next history",         show=False),
-        Binding("pageup",       "completion_page_up",      "Page up completion",   show=False),
-        Binding("pagedown",     "completion_page_down",    "Page down completion", show=False),
-        Binding("escape",       "dismiss_autocomplete",    "Dismiss",              show=False),
-        Binding("tab",          "accept_autocomplete",     "Accept completion",    show=False),
-        Binding("ctrl+a",       "select_all",              "Select all",           show=False),
-        Binding("ctrl+z",       "undo_edit",               "Undo edit",            show=False),
-        Binding("ctrl+shift+z", "redo_edit",               "Redo edit",            show=False),
-        Binding("ctrl+y",       "redo_edit",               "Redo edit",            show=False),
+        Binding("ctrl+a",       "select_all",  "Select all",  show=False),
+        Binding("ctrl+shift+z", "redo",        "Redo",        show=False),
     ]
-
-    # Spinner text shown when disabled (set by app's _tick_spinner)
-    spinner_text: reactive[str] = reactive("", repaint=True)
 
     # --- Messages ---
     class Submitted(Message):
@@ -149,16 +120,22 @@ class HermesInput(Input, can_focus=True):
         classes: str | None = None,
     ) -> None:
         super().__init__(
-            placeholder=placeholder,
+            text="",
+            soft_wrap=True,
+            compact=True,
+            tab_behavior="focus",
+            show_line_numbers=False,
+            highlight_cursor_line=False,
+            max_checkpoints=50,
             id=id,
             classes=classes,
-            suggester=HistorySuggester(self),  # ghost text via native Suggester API
         )
         self._history: list[str] = []
         self._history_idx: int = -1
         self._history_draft: str = ""
         self._slash_commands: list[str] = []
         self._suppress_autocomplete_once: bool = False
+        self._sanitizing: bool = False
 
         # Autocomplete dispatcher state
         self._current_trigger: CompletionTrigger = CompletionTrigger(
@@ -166,13 +143,6 @@ class HermesInput(Input, can_focus=True):
         )
         self._raw_candidates: list[PathCandidate] = []
         self._path_debounce_timer: "Any | None" = None
-        self._sanitizing_value = False
-
-        # Undo/redo state
-        self._undo_stack: list[_UndoEntry] = []
-        self._redo_stack: list[_UndoEntry] = []
-        self._undo_timer: Any | None = None
-        self._pre_undo_value: str = ""  # value before the current edit burst
 
     def on_mount(self) -> None:
         self._load_history()
@@ -181,27 +151,84 @@ class HermesInput(Input, can_focus=True):
         if self._path_debounce_timer is not None:
             self._path_debounce_timer.stop()
             self._path_debounce_timer = None
-        if self._undo_timer is not None:
-            self._undo_timer.stop()
-            self._undo_timer = None
 
-    # --- Property bridges (old API → Input API) ---
+    # --- Property bridges (old API → TextArea API) ---
+
+    @property
+    def value(self) -> str:
+        return self.text
+
+    @value.setter
+    def value(self, v: str) -> None:
+        # load_text resets undo history and fires Changed asynchronously.
+        # Cursor goes to (0,0) after load_text; callers that need a specific
+        # position should set cursor_position after.
+        self.load_text(v)
 
     @property
     def content(self) -> str:
-        return self.value
+        return self.text
 
     @content.setter
-    def content(self, val: str) -> None:
-        self.value = _sanitize_input_text(val)
+    def content(self, v: str) -> None:
+        self.load_text(_sanitize_input_text(v))
 
     @property
     def cursor_pos(self) -> int:
-        return self.cursor_position
+        """Flat cursor offset compatible with old single-line API."""
+        row, col = self.cursor_location
+        lines = self.text.split("\n")
+        return sum(len(lines[i]) + 1 for i in range(row)) + col
 
     @cursor_pos.setter
-    def cursor_pos(self, val: int) -> None:
-        self.cursor_position = val
+    def cursor_pos(self, pos: int) -> None:
+        lines = self.text.split("\n")
+        row = 0
+        for line in lines:
+            if pos <= len(line):
+                self.move_cursor((row, pos))
+                return
+            pos -= len(line) + 1
+            row += 1
+        self.move_cursor((len(lines) - 1, len(lines[-1])))
+
+    @property
+    def cursor_position(self) -> int:
+        """Alias for cursor_pos (app.py uses both names)."""
+        return self.cursor_pos
+
+    @cursor_position.setter
+    def cursor_position(self, pos: int) -> None:
+        self.cursor_pos = pos
+
+    def _location_to_flat(self, loc: tuple[int, int]) -> int:
+        """Convert (row, col) TextArea location to flat string offset."""
+        row, col = loc
+        lines = self.text.split("\n")
+        return sum(len(lines[i]) + 1 for i in range(row)) + col
+
+    def replace_flat(self, text: str, start: int, end: int) -> None:
+        """Replace flat-offset range with text. Bridge for app.py file-drop code."""
+        lines = self.text.split("\n")
+        s_row, s_col = 0, start
+        for i, line in enumerate(lines):
+            if s_col <= len(line):
+                s_row = i
+                break
+            s_col -= len(line) + 1
+        else:
+            s_row = len(lines) - 1
+            s_col = len(lines[-1]) if lines else 0
+        e_row, e_col = 0, end
+        for i, line in enumerate(lines):
+            if e_col <= len(line):
+                e_row = i
+                break
+            e_col -= len(line) + 1
+        else:
+            e_row = len(lines) - 1
+            e_col = len(lines[-1]) if lines else 0
+        self.replace(text, (s_row, s_col), (e_row, e_col))
 
     # --- History ---
 
@@ -241,135 +268,189 @@ class HermesInput(Input, can_focus=True):
         """Set the available slash commands for autocomplete."""
         self._slash_commands = sorted(commands)
 
-    # --- Disabled key guard ---
+    # --- Key handling ---
 
     async def _on_key(self, event: events.Key) -> None:
-        """Block printable input when disabled.
+        """Override to handle special keys before TextArea's default handling.
 
-        Textual's disabled state only blocks mouse events.  Key events pass
-        through unrestricted, so users can still type into a disabled Input.
-        Guard against that here.  Let ctrl+c and escape bubble for interrupt.
+        TextArea intercepts enter, tab, and navigation keys in its own _on_key,
+        so all special keys must be handled here (not via BINDINGS).
         """
         if self.disabled and event.is_printable:
             event.prevent_default()
             return
+
+        key = event.key
+
+        # Submit
+        if key == "enter":
+            event.prevent_default()
+            self.action_submit()
+            return
+
+        # Newline
+        if key == "shift+enter":
+            event.prevent_default()
+            self.insert("\n")
+            return
+
+        # Tab: accept completion or ghost text
+        if key == "tab":
+            event.prevent_default()
+            self.action_accept_autocomplete()
+            return
+
+        # Escape: dismiss overlay; else bubble to app interrupt/browse handler.
+        # HistorySearchOverlay BINDINGS have priority=True — yield to it when visible.
+        if key == "escape":
+            if self._completion_overlay_visible():
+                try:
+                    from hermes_cli.tui.widgets import HistorySearchOverlay
+                    hs = self.app.query_one(HistorySearchOverlay)
+                    if hs.has_class("--visible"):
+                        # HistorySearch handles this escape via priority BINDING
+                        pass
+                    else:
+                        event.prevent_default()
+                        self._hide_completion_overlay()
+                        return
+                except Exception:
+                    event.prevent_default()
+                    self._hide_completion_overlay()
+                    return
+
+        # PageUp/Down: route to completion overlay when visible
+        if key == "pageup":
+            if self._completion_overlay_visible():
+                event.prevent_default()
+                self.action_completion_page_up()
+                return
+
+        if key == "pagedown":
+            if self._completion_overlay_visible():
+                event.prevent_default()
+                self.action_completion_page_down()
+                return
+
+        # Up: history prev if at top row; else overlay navigation or cursor up
+        if key == "up":
+            if self._completion_overlay_slash_only():
+                event.prevent_default()
+                self._hide_completion_overlay()
+                self._suppress_autocomplete_once = True
+                self.action_history_prev()
+                return
+            elif self._completion_overlay_visible():
+                event.prevent_default()
+                self._move_highlight(-1)
+                return
+            elif self.cursor_location[0] == 0:
+                event.prevent_default()
+                self.action_history_prev()
+                return
+            # else: let TextArea move cursor up
+
+        # Down: history next if at bottom row; else overlay navigation or cursor down
+        if key == "down":
+            if self._completion_overlay_slash_only():
+                event.prevent_default()
+                self._hide_completion_overlay()
+                self._suppress_autocomplete_once = True
+                self.action_history_next()
+                return
+            elif self._completion_overlay_visible():
+                event.prevent_default()
+                self._move_highlight(+1)
+                return
+            else:
+                last_row = self.text.count("\n")
+                if self.cursor_location[0] >= last_row:
+                    event.prevent_default()
+                    self.action_history_next()
+                    return
+            # else: let TextArea move cursor down
+
         await super()._on_key(event)
 
-    def _on_paste(self, event: events.Paste) -> None:
-        """Intercept terminal drag-and-drop before Input inserts raw path text."""
+    async def _on_paste(self, event: events.Paste) -> None:
+        """Intercept terminal drag-and-drop before TextArea inserts raw path text."""
         dropped_paths = parse_dragged_file_paste(event.text)
         if dropped_paths:
             self.post_message(self.FilesDropped(dropped_paths))
-            # Block Input._on_paste from dispatching — Textual yields handlers
-            # from ALL MRO classes, so both this and Input._on_paste would run.
             event._no_default_action = True
             event.stop()
             return
-        # Flash paste hint before letting Input handle the paste
         try:
-            from hermes_cli.tui.constants import ICON_COPY
             self.app._flash_hint(f"{ICON_COPY}  {len(event.text)} chars pasted", 1.2)
         except Exception:
             pass
-        self._push_undo_snapshot()
-        super()._on_paste(event)
+        await super()._on_paste(event)
 
-    # --- Undo/Redo ---
+    # --- TextArea change handler (replaces watch_value + watch_cursor_position) ---
 
-    def _schedule_undo_snapshot(self) -> None:
-        """Start/reset the debounce timer for pushing an undo snapshot.
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        """Sanitize text and update autocomplete on every content change.
 
-        On fire: pushes _pre_undo_value (the state before this edit burst)
-        to the undo stack, then updates _pre_undo_value to the current value.
+        TextArea.Changed fires asynchronously, so by the time this runs,
+        cursor_position has already been set by any synchronous code that
+        followed the triggering edit (e.g. value.setter + cursor_position.setter).
+        This eliminates the cursor-lag race that existed with Input.
         """
-        if self._undo_timer is not None:
-            self._undo_timer.stop()
-        self._undo_timer = self.set_timer(_UNDO_DEBOUNCE_S, self._flush_undo)
-
-    def _flush_undo(self) -> None:
-        """Timer callback: commit the pre-edit value to the undo stack."""
-        self._undo_timer = None
-        # Push the value that existed before this edit burst
-        entry = _UndoEntry(self._pre_undo_value, 0)
-        if not (self._undo_stack and self._undo_stack[-1] == entry):
-            self._undo_stack.append(entry)
-            if len(self._undo_stack) > _MAX_UNDO:
-                self._undo_stack.pop(0)
-        self._redo_stack.clear()
-        self._pre_undo_value = self.value
-
-    def _push_undo_snapshot(self) -> None:
-        """Push current _pre_undo_value to undo stack immediately.
-
-        Used by pre-mutation hooks (completion accept, paste, insert_text).
-        Cancels any pending debounce timer to prevent the timer from also
-        firing and pushing a duplicate.
-        """
-        if self._undo_timer is not None:
-            self._undo_timer.stop()
-            self._undo_timer = None
-        entry = _UndoEntry(self._pre_undo_value, 0)
-        if not (self._undo_stack and self._undo_stack[-1] == entry):
-            self._undo_stack.append(entry)
-            if len(self._undo_stack) > _MAX_UNDO:
-                self._undo_stack.pop(0)
-        self._redo_stack.clear()
-        self._pre_undo_value = self.value
-
-    def action_undo_edit(self) -> None:
-        """Ctrl+Z: undo the last text edit."""
-        if self.disabled or not self._undo_stack:
+        if self._sanitizing:
             return
-        self._redo_stack.append(_UndoEntry(self.value, self.cursor_position))
-        entry = self._undo_stack.pop()
-        self.value = entry.value
-        # If entry cursor is 0 (default from debounce), place at end of text
-        self.cursor_position = entry.cursor if entry.cursor else len(entry.value)
-        self._pre_undo_value = entry.value
-
-    def action_redo_edit(self) -> None:
-        """Ctrl+Shift+Z / Ctrl+Y: redo a previously undone edit."""
-        if self.disabled or not self._redo_stack:
+        raw = self.text
+        sanitized = _sanitize_input_text(raw)
+        if sanitized != raw:
+            self._sanitizing = True
+            try:
+                cursor = self.cursor_location
+                self.load_text(sanitized)
+                self.move_cursor(cursor, select=False)
+            finally:
+                self._sanitizing = False
             return
-        self._undo_stack.append(_UndoEntry(self.value, self.cursor_position))
-        entry = self._redo_stack.pop()
-        self.value = entry.value
-        self.cursor_position = entry.cursor
-        self._pre_undo_value = entry.value
+        self._update_autocomplete()
+
+    # --- Ghost text (Fish-style, via TextArea.suggestion) ---
+
+    def update_suggestion(self) -> None:
+        """Set ghost text from history. Called by TextArea after every edit."""
+        current = self.text
+        # Ghost text only for single-line non-empty text with cursor at end.
+        # Mid-text cursor guard: suggestion must never appear when cursor is
+        # mid-text, or action_cursor_right would corrupt the text on accept.
+        if not current or "\n" in current:
+            self.suggestion = ""
+            return
+        row, col = self.cursor_location
+        if row != 0 or col != len(current):
+            self.suggestion = ""
+            return
+        for entry in reversed(self._history):
+            if entry.startswith(current) and entry != current:
+                self.suggestion = entry[len(current):]
+                return
+        self.suggestion = ""
 
     # --- Actions ---
 
     def action_submit(self) -> None:
-        """Save to history before posting Submitted.
-
-        Enter always submits as typed — never auto-accepts the highlighted
-        candidate.  Tab is the only accept key.  See spec §5.8.8.
-        """
-        text = self.value.strip()
+        """Save to history, post Submitted, then clear the input."""
+        text = self.text.strip()
         if self.disabled or not text:
             return
         self._save_to_history(text)
         self._hide_completion_overlay()
         self.post_message(self.Submitted(text))
-        # Clear undo state — undo should not reach across submissions
-        if self._undo_timer is not None:
-            self._undo_timer.stop()
-            self._undo_timer = None
-        self.value = ""
+        # load_text("") resets undo history — correct post-submit state.
+        self.load_text("")
         self._history_idx = -1
-        self._undo_stack.clear()
-        self._redo_stack.clear()
-        self._pre_undo_value = ""
+        self._suppress_autocomplete_once = False
 
     def action_history_prev(self) -> None:
-        self._undo_stack.clear()
-        self._redo_stack.clear()
-        self._pre_undo_value = ""
-        # Slash-only preview: dismiss and go to history
         if self._completion_overlay_slash_only():
             self._hide_completion_overlay()
             self._suppress_autocomplete_once = True
-        # Full overlay (path completions): navigate list
         elif self._completion_overlay_visible():
             self._move_highlight(-1)
             return
@@ -386,14 +467,9 @@ class HermesInput(Input, can_focus=True):
         self.cursor_position = len(self.value)
 
     def action_history_next(self) -> None:
-        self._undo_stack.clear()
-        self._redo_stack.clear()
-        self._pre_undo_value = ""
-        # Slash-only preview: dismiss and go to history
         if self._completion_overlay_slash_only():
             self._hide_completion_overlay()
             self._suppress_autocomplete_once = True
-        # Full overlay (path completions): navigate list
         elif self._completion_overlay_visible():
             self._move_highlight(+1)
             return
@@ -435,60 +511,24 @@ class HermesInput(Input, can_focus=True):
 
     # --- Autocomplete ---
 
-    def watch_value(self, value: str) -> None:
-        if self._sanitizing_value:
-            return
-        sanitized = _sanitize_input_text(value)
-        if sanitized != value:
-            self._sanitizing_value = True
-            try:
-                cursor_prefix = _sanitize_input_text(value[: self.cursor_position])
-                self.value = sanitized
-                self.cursor_position = min(len(sanitized), len(cursor_prefix))
-            finally:
-                self._sanitizing_value = False
-            return
-        self._schedule_undo_snapshot()
-        self._update_autocomplete()
-        # Suggester (ghost text) is driven natively by Input — no manual hook.
-
-    def watch_cursor_position(self, _cursor_position: int) -> None:
-        """Re-run completion after cursor updates.
-
-        Input value and cursor reactives do not settle in lockstep. During
-        typing, ``watch_value`` can observe the new text with the previous
-        cursor position, which makes completion lag one character behind.
-        The cursor watcher applies the same update once the final cursor
-        location is known.
-        """
-        if self._sanitizing_value:
-            return
-        self._update_autocomplete()
-
     def _update_autocomplete(self) -> None:
-        """Dispatch to the correct completion provider based on context.
-
-        Perf target: <4 ms total (60 FPS budget = 16.67 ms; autocomplete is
-        ~25 % of that budget).  Measured via TEXTUAL_LOG=1 + [PERF] filter.
-        Torture test: 100 chars/s input while a 50 k-file tree is being walked.
-        """
+        """Dispatch to the correct completion provider based on context."""
         with measure("input._update_autocomplete", budget_ms=4.0):
-            # One-shot suppression: used when history nav dismisses slash overlay
             if self._suppress_autocomplete_once:
                 self._suppress_autocomplete_once = False
                 return
-            # Choice overlay wins: completion is suppressed while an approval
-            # prompt is up.
             if getattr(self.app, "choice_overlay_active", False):
                 self._hide_completion_overlay()
                 return
 
-            # Slash commands: use full value, not cursor position.
-            # watch_value fires before cursor_position settles (Textual reactivity
-            # order), so value[:cursor] drops the last typed char.  Since slash
-            # commands are always the entire input, just slice value directly.
-            if self.value.startswith("/") and _SLASH_FULL_RE.match(self.value):
-                fragment = self.value[1:]  # strip leading '/'
+            # Slash commands: use full value (not cursor position).
+            # Multiline input starting with '/' is not a slash command.
+            if (
+                "\n" not in self.value
+                and self.value.startswith("/")
+                and _SLASH_FULL_RE.match(self.value)
+            ):
+                fragment = self.value[1:]
                 self._current_trigger = CompletionTrigger(
                     CompletionContext.SLASH_COMMAND, fragment, 1,
                 )
@@ -498,9 +538,6 @@ class HermesInput(Input, can_focus=True):
 
             trigger = detect_context(self.value, self.cursor_position)
             self._current_trigger = trigger
-
-            # Context change: clear stale walker output.  The new trigger.fragment
-            # becomes the implicit stale-batch key in on_path_search_provider_batch.
             self._raw_candidates = []
 
             if trigger.context is CompletionContext.SLASH_COMMAND:
@@ -557,7 +594,7 @@ class HermesInput(Input, can_focus=True):
             self._path_debounce_timer = None
         self._set_overlay_mode(slash_only=False)
         self._push_to_list([])
-        self._set_searching(True)   # show "searching…" while debounce + walk run
+        self._set_searching(True)
         self._show_completion_overlay()
         self._path_debounce_timer = self.set_timer(
             0.12, lambda: self._fire_path_search(fragment)
@@ -700,27 +737,24 @@ class HermesInput(Input, can_focus=True):
         self, message: PathSearchProvider.Batch,
     ) -> None:
         """Accumulate walker batches and re-rank candidates."""
-        # Belt + suspenders: exclusive=True already cancels in-flight walkers,
-        # but a batch can be in the message queue when cancellation lands.
         if self._current_trigger.context not in (
             CompletionContext.PATH_REF,
             CompletionContext.PLAIN_PATH_REF,
             CompletionContext.ABSOLUTE_PATH_REF,
         ):
             return
-        if message.query != self._current_trigger.fragment:
+        request = self._resolve_path_search_request()
+        if message.query != request.batch_key:
             return
 
         if len(self._raw_candidates) < 4096:
             self._raw_candidates.extend(message.batch)
-        request = self._resolve_path_search_request()
         ranked = fuzzy_rank(
             request.match_query or self._current_trigger.fragment,
             self._raw_candidates,
             limit=200,
         )
         self._push_to_list(ranked)
-        # Clear searching state once the final batch arrives
         if message.final:
             self._set_searching(False)
 
@@ -729,7 +763,6 @@ class HermesInput(Input, can_focus=True):
             clist = self.screen.query_one(VirtualCompletionList)
         except NoMatches:
             return
-        # Propagate current query so empty-state label shows "no results for X"
         request = self._resolve_path_search_request()
         clist.current_query = request.match_query or self._current_trigger.fragment
         clist.items = tuple(candidates)
@@ -739,13 +772,10 @@ class HermesInput(Input, can_focus=True):
     def action_accept_autocomplete(self) -> None:
         """Tab: accept highlighted completion or ghost-text suggestion.
 
-        When the completion overlay is not visible the overlay's item list may
-        still contain stale candidates from a prior interaction (highlighted=0).
-        In that case Tab must NOT accept those stale candidates — instead it
-        delegates to the native Input cursor-right which accepts ghost text.
+        When the completion overlay is not visible, Tab delegates to
+        action_cursor_right() which accepts the ghost-text suggestion (if any).
         """
         if not self._completion_overlay_visible():
-            # No active overlay: let Tab accept the ghost-text suggestion.
             self.action_cursor_right()
             return
         try:
@@ -755,9 +785,7 @@ class HermesInput(Input, can_focus=True):
         if not clist.items or clist.highlighted < 0:
             return
 
-        # P0-G: mid-cursor guard — if the cursor is not at the end of the
-        # typed fragment, the user has repositioned it.  Accept would corrupt
-        # multi-token inputs, so dismiss only without splicing.
+        # P0-G: mid-cursor guard — cursor not at end means user repositioned it.
         if self.cursor_position < len(self.value):
             self._hide_completion_overlay()
             return
@@ -793,34 +821,24 @@ class HermesInput(Input, can_focus=True):
         else:
             return
 
-        self._push_undo_snapshot()
         self.value = new_value
         self.cursor_position = new_cursor
         self._hide_completion_overlay()
 
     def action_dismiss_autocomplete(self) -> None:
-        """Escape: dismiss completion overlay only; preserve agent-interrupt semantics."""
+        """Dismiss completion overlay without affecting agent-interrupt semantics."""
         if self._completion_overlay_visible():
             self._hide_completion_overlay()
-            # Consume the key so the app-level escape handler doesn't also fire
-            return
-        # No overlay — let escape bubble to HermesApp.on_key for interrupt/browse
 
     # --- Convenience ---
-
-
 
     def insert_text(self, text: str) -> None:
         """Insert text at cursor position (for paste support / external callers)."""
         text = _sanitize_input_text(text)
         if not text:
             return
-        self._push_undo_snapshot()
-        pos = self.cursor_position
-        self.value = self.value[:pos] + text + self.value[pos:]
-        self.cursor_position = pos + len(text)
+        self.insert(text)
 
     def clear(self) -> None:
-        """Clear the input content."""
-        self.value = ""
-        self.cursor_position = 0
+        """Clear the input content and reset undo history."""
+        self.load_text("")

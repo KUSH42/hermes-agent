@@ -26,6 +26,7 @@ from hermes_cli.tui.widgets import (
     StatusBar,
     ThinkingWidget,
     UserMessagePanel,
+    _EchoBullet,
 )
 
 
@@ -340,8 +341,8 @@ async def test_user_echo_single_line_shows_message():
         panel = await _mount_echo(app, "hello world")
         await pilot.pause()
 
-        # _Static__content holds a Rich Text object for styled content
-        content = panel.query_one("#echo-text")._Static__content
+        bullet: _EchoBullet = panel.query_one("#echo-text")  # type: ignore[assignment]
+        content = bullet.render()
         plain = content.plain if hasattr(content, "plain") else str(content)
         assert "hello world" in plain, (
             f"User message should appear in echo panel, plain: {plain!r}"
@@ -357,7 +358,8 @@ async def test_user_echo_has_bullet_prefix():
         panel = await _mount_echo(app, "show me hello world in java")
         await pilot.pause()
 
-        content = panel.query_one("#echo-text")._Static__content
+        bullet: _EchoBullet = panel.query_one("#echo-text")  # type: ignore[assignment]
+        content = bullet.render()
         plain = content.plain if hasattr(content, "plain") else str(content)
         assert "●" in plain, (
             f"User echo should have ● bullet prefix, plain: {plain!r}"
@@ -375,15 +377,15 @@ async def test_user_echo_bullet_uses_skin_color_var():
         await pilot.pause()
 
         css_vars = app.get_css_variables()
-        expected_color = css_vars.get("user-echo-bullet-color", "#FFBF00")
-        content = panel.query_one("#echo-text")._Static__content
-        # The ● bullet should be styled with user-echo-bullet-color
-        spans = content._style_map if hasattr(content, "_style_map") else {}
-        # Verify the expected color is used (not chevron-file's value)
-        chevron_color = css_vars.get("chevron-file", "#FFBF00")
-        # If they happen to match at default, verify the var exists at least
         assert "user-echo-bullet-color" in css_vars, (
             "user-echo-bullet-color must be in CSS variables"
+        )
+        bullet: _EchoBullet = panel.query_one("#echo-text")  # type: ignore[assignment]
+        # bullet._bullet_peak should use the skin variable, not a hardcoded chevron color
+        chevron_color = css_vars.get("chevron-file", "#FFBF00")
+        expected_color = css_vars.get("user-echo-bullet-color") or css_vars.get("rule-accent-color", "#FFBF00")
+        assert bullet._bullet_peak == expected_color, (
+            f"Bullet peak color should use skin var, got {bullet._bullet_peak!r}"
         )
 
 
@@ -396,7 +398,8 @@ async def test_user_echo_multiline_shows_first_line_and_count():
         panel = await _mount_echo(app, "line one\nline two\nline three")
         await pilot.pause()
 
-        content = panel.query_one("#echo-text")._Static__content
+        bullet: _EchoBullet = panel.query_one("#echo-text")  # type: ignore[assignment]
+        content = bullet.render()
         plain = content.plain if hasattr(content, "plain") else str(content)
         assert "line one" in plain, f"First line should appear: {plain!r}"
         assert "(+" in plain and "lines" in plain, (
@@ -416,7 +419,8 @@ async def test_user_echo_multiline_correct_count():
         panel = await _mount_echo(app, "first\nsecond\nthird\nfourth")
         await pilot.pause()
 
-        content = panel.query_one("#echo-text")._Static__content
+        bullet: _EchoBullet = panel.query_one("#echo-text")  # type: ignore[assignment]
+        content = bullet.render()
         plain = content.plain if hasattr(content, "plain") else str(content)
         # 4 total lines → 3 additional
         assert "+3" in plain, (
@@ -458,6 +462,68 @@ async def test_user_echo_panel_has_top_and_bottom_rules():
             assert False, "echo-rule-bottom should not exist (removed)"
         except NoMatches:
             pass
+
+
+# ===========================================================================
+# 6b. _EchoBullet pulse lifecycle
+# ===========================================================================
+
+@pytest.mark.asyncio
+async def test_echo_bullet_pulse_starts_on_agent_running():
+    """_EchoBullet starts pulsing when agent_running goes True after mount."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        panel = await _mount_echo(app, "hello")
+        await pilot.pause()
+
+        bullet: _EchoBullet = panel.query_one("#echo-text")  # type: ignore[assignment]
+        assert bullet._pulse_timer is None, "bullet should not pulse before turn starts"
+        app.agent_running = True
+        await pilot.pause()
+        assert bullet._pulse_timer is not None, "bullet should pulse while agent_running"
+
+
+@pytest.mark.asyncio
+async def test_echo_bullet_pulse_stops_on_agent_done():
+    """_EchoBullet stops pulsing and sets _turn_complete when agent_running goes False."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        panel = await _mount_echo(app, "hello")
+        await pilot.pause()
+
+        bullet: _EchoBullet = panel.query_one("#echo-text")  # type: ignore[assignment]
+        app.agent_running = True
+        await pilot.pause()
+        assert bullet._pulse_timer is not None
+
+        app.agent_running = False
+        await pilot.pause()
+        assert bullet._pulse_timer is None
+        assert bullet._turn_complete is True
+
+
+@pytest.mark.asyncio
+async def test_echo_bullet_does_not_restart_on_future_turns():
+    """_EchoBullet ignores agent_running changes after its turn completes."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        panel = await _mount_echo(app, "first message")
+        await pilot.pause()
+
+        bullet: _EchoBullet = panel.query_one("#echo-text")  # type: ignore[assignment]
+        app.agent_running = True
+        await pilot.pause()
+        app.agent_running = False
+        await pilot.pause()
+        assert bullet._turn_complete is True
+
+        # Second turn — bullet should stay static
+        app.agent_running = True
+        await pilot.pause()
+        assert bullet._pulse_timer is None, "bullet must not restart for future turns"
 
 
 # ===========================================================================

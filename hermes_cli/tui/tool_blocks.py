@@ -56,6 +56,7 @@ def _tool_gutter_enabled() -> bool:
 
 _DIFF_ADD_FALLBACK: str = "#5fd75f"
 _DIFF_DEL_FALLBACK: str = "#ef5350"
+_RUNNING_FALLBACK: str = "#c0c0c0"
 _VISIBLE_DIFF_ROW_RE = re.compile(r"^\s*\d+\s+([+-])\s")
 
 
@@ -133,10 +134,12 @@ class ToolHeader(PulseMixin, Widget):
             self._focused_gutter_color = css.get("rule-accent-color", _GUTTER_FALLBACK)
             self._diff_add_color = css.get("addition-marker-fg", _DIFF_ADD_FALLBACK)
             self._diff_del_color = css.get("deletion-marker-fg", _DIFF_DEL_FALLBACK)
+            self._running_icon_color = css.get("status-running-color", _RUNNING_FALLBACK)
         except Exception:
             self._focused_gutter_color = _GUTTER_FALLBACK
             self._diff_add_color = _DIFF_ADD_FALLBACK
             self._diff_del_color = _DIFF_DEL_FALLBACK
+            self._running_icon_color = _RUNNING_FALLBACK
 
     def _refresh_tool_icon(self) -> None:
         """Resolve current tool icon, so skin reloads can update header glyphs."""
@@ -171,9 +174,9 @@ class ToolHeader(PulseMixin, Widget):
         # Tool icon color: pulse green while streaming, fixed green/red on complete
         if self._tool_icon and prefix:
             if self._spinner_char is not None:
-                # Streaming — pulse between dim and addition color
+                # Streaming — pulse between dim and running-state color (not green)
                 icon_dim = "#6e6e6e"
-                icon_peak = getattr(self, "_diff_add_color", _DIFF_ADD_FALLBACK)
+                icon_peak = getattr(self, "_running_icon_color", _RUNNING_FALLBACK)
                 icon_color = lerp_color(icon_dim, icon_peak, self._pulse_t)
                 t.append("   ╌╌", style="dim")
                 t.append(prefix, style=f"bold {icon_color}")

@@ -1563,6 +1563,63 @@ class OutputPanel(ScrollableContainer):
 # User echo panel
 # ---------------------------------------------------------------------------
 
+class _EchoBullet(PulseMixin, Widget):
+    """Single-line user message display with a pulsing ● bullet.
+
+    Pulses from mount until the FIRST agent turn that follows this message
+    completes.  Subsequent turns leave the bullet static (one-shot guard).
+    """
+
+    DEFAULT_CSS = "_EchoBullet { height: 1; }"
+
+    def __init__(self, message: str, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._message = message
+        self._bullet_peak: str = "#FFBF00"
+        self._bullet_dim: str = "#6e6e6e"
+        self._turn_started: bool = False
+        self._turn_complete: bool = False
+
+    def on_mount(self) -> None:
+        try:
+            v = self.app.get_css_variables()
+            self._bullet_peak = (
+                v.get("user-echo-bullet-color") or v.get("rule-accent-color", "#FFBF00")
+            )
+            self._bullet_dim = v.get("running-indicator-dim-color", "#6e6e6e")
+        except Exception:
+            pass
+        self.watch(self.app, "agent_running", self._on_agent_running)
+
+    def _on_agent_running(self, running: bool) -> None:
+        if self._turn_complete:
+            return
+        if running:
+            self._turn_started = True
+            if getattr(self.app, "_animations_enabled", True):
+                self._pulse_start()
+        elif self._turn_started:
+            self._pulse_stop()
+            self._turn_complete = True
+
+    def render(self) -> RenderResult:
+        if self._pulse_timer is not None:
+            color = lerp_color(self._bullet_dim, self._bullet_peak, self._pulse_t)
+        else:
+            color = self._bullet_peak
+        t = Text()
+        t.append("● ", style=f"bold {color}")
+        msg = self._message
+        if "\n" in msg:
+            first_line = msg.split("\n")[0]
+            line_count = msg.count("\n") + 1
+            t.append(first_line, style="bold")
+            t.append(f" (+{line_count - 1} lines)", style="dim")
+        else:
+            t.append(msg, style="bold")
+        return t
+
+
 class UserMessagePanel(Widget):
     """Displays the user's submitted message framed by short fade rulers.
 
@@ -1587,27 +1644,9 @@ class UserMessagePanel(Widget):
 
     def compose(self) -> ComposeResult:
         yield PlainRule(max_width=self._ECHO_RULE_WIDTH, id="echo-rule-top")
-        yield Static(self._format_message(), id="echo-text")
+        yield _EchoBullet(self._message, id="echo-text")
         if self._images:
             yield Static(self._format_images(), id="echo-images")
-
-    def _format_message(self) -> Text:
-        try:
-            v = self.app.get_css_variables()
-            bullet_color = v.get("user-echo-bullet-color") or v.get("rule-accent-color", "#FFBF00")
-        except Exception:
-            bullet_color = "#FFBF00"
-        t = Text()
-        t.append("● ", style=f"bold {bullet_color}")
-        msg = self._message
-        if "\n" in msg:
-            first_line = msg.split("\n")[0]
-            line_count = msg.count("\n") + 1
-            t.append(first_line, style="bold")
-            t.append(f" (+{line_count - 1} lines)", style="dim")
-        else:
-            t.append(msg, style="bold")
-        return t
 
     def _format_images(self) -> Text:
         n = self._images

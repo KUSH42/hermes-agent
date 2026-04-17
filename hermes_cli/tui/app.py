@@ -52,6 +52,7 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.content import Content
 from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.screen import Screen
@@ -95,7 +96,7 @@ from hermes_cli.tui.widgets import (
 )
 
 from hermes_cli.tui.constants import ICON_COPY
-from hermes_cli.tui.animation import AnimationClock
+from hermes_cli.tui.animation import AnimationClock, shimmer_text
 from hermes_cli.tui.perf import EventLoopLatencyProbe, FrameRateProbe, WorkerWatcher
 from hermes_cli.tui.theme_manager import ThemeManager
 from wcwidth import wcswidth
@@ -677,8 +678,7 @@ class HermesApp(App):
         Updates the input widget's spinner_text so the spinner renders
         inside the input field when the agent is running.
         """
-        import time as _t
-        _t0 = _t.perf_counter()
+        _t0 = _time.perf_counter()
         if not (self.agent_running or self.command_running):
             return
         self._shimmer_tick += 1
@@ -709,8 +709,6 @@ class HermesApp(App):
             if hasattr(inp, "placeholder"):
                 if padded and getattr(self, "_animations_enabled", True):
                     try:
-                        from hermes_cli.tui.animation import shimmer_text
-                        from textual.content import Content
                         shimmer = shimmer_text(
                             padded,
                             tick=self._shimmer_tick,
@@ -727,7 +725,7 @@ class HermesApp(App):
             pass
 
         self._refresh_live_response_metrics()
-        _dt = (_t.perf_counter() - _t0) * 1000
+        _dt = (_time.perf_counter() - _t0) * 1000
         if _dt > 16:
             _log_lag(f"_tick_spinner took {_dt:.1f}ms")
 
@@ -1582,10 +1580,7 @@ class HermesApp(App):
             if dropped.kind == "image":
                 image_paths.append(path)
             elif dropped.kind == "linkable_text":
-                try:
-                    link_tokens.append(format_link_token(path, cwd))
-                except ValueError as exc:
-                    rejected.append(str(exc))
+                link_tokens.append(format_link_token(path, cwd))
             elif dropped.kind == "unsupported_binary":
                 rejected.append(dropped.reason or "unsupported file type")
             else:

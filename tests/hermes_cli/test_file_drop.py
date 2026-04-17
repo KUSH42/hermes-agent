@@ -16,26 +16,32 @@ def test_classify_image_file(tmp_path):
     assert dropped.kind == "image"
 
 
-def test_classify_text_file_with_spaces_rejected(tmp_path):
+def test_classify_text_file_with_spaces_accepted(tmp_path):
     file_path = tmp_path / "my notes.py"
     file_path.write_text("print('x')\n")
     dropped = classify_dropped_file(file_path, tmp_path)
-    assert dropped.kind == "invalid"
-    assert dropped.reason == "spaces not supported in @path yet"
+    assert dropped.kind == "linkable_text"
+
+
+def test_format_link_token_quotes_spaces(tmp_path):
+    path = tmp_path / "my notes.py"
+    path.write_text("print('x')\n")
+    token = format_link_token(path, tmp_path)
+    assert token == '"my notes.py"'
 
 
 def test_format_link_token_prefers_relative_path(tmp_path):
     path = tmp_path / "src" / "main.py"
     path.parent.mkdir()
     path.write_text("print('x')\n")
-    assert format_link_token(path, tmp_path) == "@src/main.py"
+    assert format_link_token(path, tmp_path) == "src/main.py"
 
 
 def test_format_link_token_falls_back_to_absolute_path(tmp_path):
     outside = Path("/tmp/hermes-file-drop-absolute.py")
     outside.write_text("print('x')\n")
     try:
-        assert format_link_token(outside, tmp_path) == "@/tmp/hermes-file-drop-absolute.py"
+        assert format_link_token(outside, tmp_path) == "/tmp/hermes-file-drop-absolute.py"
     finally:
         outside.unlink(missing_ok=True)
 
@@ -83,3 +89,39 @@ def test_parse_dragged_file_paste_accepts_up_to_limit(tmp_path):
     result = parse_dragged_file_paste("\n".join(lines))
     assert result is not None
     assert len(result) == _MAX_FILE_DROP_LINES
+
+
+def test_parse_dragged_file_paste_strips_quotes(tmp_path):
+    path = tmp_path / "test.py"
+    path.write_text("x=1\n")
+    # Double-quoted
+    assert parse_dragged_file_paste(f'"{path}"') == [path]
+    # Single-quoted
+    assert parse_dragged_file_paste(f"'{path}'") == [path]
+
+
+def test_parse_dragged_file_paste_accepts_path_with_spaces(tmp_path):
+    path = tmp_path / "my file.py"
+    path.write_text("x=1\n")
+    assert parse_dragged_file_paste(str(path)) == [path]
+    assert parse_dragged_file_paste(f'"{path}"') == [path]
+
+
+def test_parse_dragged_file_paste_multi_file_space_separated(tmp_path):
+    a = tmp_path / "a.py"
+    b = tmp_path / "b.txt"
+    a.write_text("x\n")
+    b.write_text("y\n")
+    result = parse_dragged_file_paste(f"{a} {b}")
+    assert result == [a, b]
+
+
+def test_parse_dragged_file_paste_multi_file_mixed_quotes(tmp_path):
+    a = tmp_path / "a.py"
+    b = tmp_path / "with spaces.txt"
+    c = tmp_path / "c.md"
+    a.write_text("x\n")
+    b.write_text("y\n")
+    c.write_text("z\n")
+    result = parse_dragged_file_paste(f'{a} "{b}" {c}')
+    assert result == [a, b, c]

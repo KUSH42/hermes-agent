@@ -48,6 +48,20 @@ def pulse_phase(tick: int, period: int = 30) -> float:
 # Color helpers
 # ---------------------------------------------------------------------------
 
+_RGB_CACHE: dict[str, tuple[int, int, int]] = {}
+
+def _parse_rgb(h: str) -> tuple[int, int, int]:
+    """Parse hex color to RGB tuple, with caching."""
+    cached = _RGB_CACHE.get(h)
+    if cached is not None:
+        return cached
+    h2 = h.lstrip("#")
+    result = (int(h2[0:2], 16), int(h2[2:4], 16), int(h2[4:6], 16))
+    if len(_RGB_CACHE) < 256:
+        _RGB_CACHE[h] = result
+    return result
+
+
 def lerp_color(hex1: str, hex2: str, t: float) -> str:
     """
     Linearly interpolate between two hex colors.
@@ -63,15 +77,21 @@ def lerp_color(hex1: str, hex2: str, t: float) -> str:
     Interpolation is in linear RGB. Gamma error is negligible (<1 step per
     channel) for terminal truecolor output.
     """
-    def _parse(h: str) -> tuple[int, int, int]:
-        h = h.lstrip("#")
-        return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    r1, g1, b1 = _parse_rgb(hex1)
+    r2, g2, b2 = _parse_rgb(hex2)
+    r = round(r1 + (r2 - r1) * t)
+    g = round(g1 + (g2 - g1) * t)
+    b = round(b1 + (b2 - b1) * t)
+    return f"#{r:02x}{g:02x}{b:02x}"
 
-    r1, g1, b1 = _parse(hex1)
-    r2, g2, b2 = _parse(hex2)
-    r = round(lerp(r1, r2, t))
-    g = round(lerp(g1, g2, t))
-    b = round(lerp(b1, b2, t))
+
+def lerp_color_rgb(
+    c1: tuple[int, int, int], c2: tuple[int, int, int], t: float
+) -> str:
+    """lerp_color from pre-parsed RGB tuples — skip hex parse entirely."""
+    r = round(c1[0] + (c2[0] - c1[0]) * t)
+    g = round(c1[1] + (c2[1] - c1[1]) * t)
+    b = round(c1[2] + (c2[2] - c1[2]) * t)
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
@@ -127,14 +147,22 @@ class AnimationClock:
         _t0 = _t.perf_counter()
         self._tick += 1
         n_subs = len(self._subscribers)
+        slowest_ms = 0.0
+        slowest_id = -1
         for sub_id, (divisor, callback) in list(self._subscribers.items()):
             if self._tick % divisor == 0:
+                _s0 = _t.perf_counter()
                 callback()
+                _s_ms = (_t.perf_counter() - _s0) * 1000
+                if _s_ms > slowest_ms:
+                    slowest_ms = _s_ms
+                    slowest_id = sub_id
         _dt = (_t.perf_counter() - _t0) * 1000
         if _dt > 16 or n_subs > 50:
             try:
                 from hermes_cli.tui.app import _log_lag
-                _log_lag(f"anim_clock.tick took {_dt:.1f}ms ({n_subs} subs)")
+                detail = f" (slowest sub#{slowest_id}: {slowest_ms:.1f}ms)" if slowest_ms > 8 else ""
+                _log_lag(f"anim_clock.tick took {_dt:.1f}ms ({n_subs} subs){detail}")
             except Exception:
                 pass
 
@@ -255,12 +283,31 @@ def shimmer_text(
         for start, end in skip_ranges:  # end is exclusive
             protected.update(range(start, end))
 
+    # Pre-parse dim/peak RGB once (cached)
+    dr, dg, db = _parse_rgb(dim)
+    pr, pg, pb = _parse_rgb(peak)
+
+    # Pre-compute colors for all positions
+    colors: list[str | None] = [None] * n
     for i in range(n):
         if i in protected:
             continue
         char_tick = tick - int(i / n * period)
         t = pulse_phase(char_tick, period=period)
-        color = lerp_color(dim, peak, t)
-        result.stylize(Style(color=color), start=i, end=i + 1)
+        r = round(dr + (pr - dr) * t)
+        g = round(dg + (pg - dg) * t)
+        b = round(db + (pb - db) * t)
+        colors[i] = f"#{r:02x}{g:02x}{b:02x}"
+
+    # Batch consecutive same-color runs into single spans
+    run_start = 0
+    run_color = colors[0]
+    for i in range(1, n + 1):
+        c = colors[i] if i < n else None
+        if c != run_color:
+            if run_color is not None:
+                result.stylize(Style(color=run_color), start=run_start, end=i)
+            run_start = i
+            run_color = c
 
     return result

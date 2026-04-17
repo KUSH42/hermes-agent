@@ -189,15 +189,31 @@ class VirtualCompletionList(ScrollView, can_focus=True):
             app_bg = "#1E1E1E"
         trough = lerp_color(app_bg, "#000000", 0.3)
         peak   = lerp_color(app_bg, "#888888", 0.35)
+        # Pre-parse trough/peak to RGB for batch lerp_color_rgb calls
+        from hermes_cli.tui.animation import _parse_rgb, lerp_color_rgb
+        trough_rgb = _parse_rgb(trough)
+        peak_rgb = _parse_rgb(peak)
         # Stagger each row's phase by its y offset for a diagonal wave effect.
         row_phase = (phase + y * 2) % (_SHIMMER_LEN * 4)
-        segments: list[Segment] = []
+        # Pre-compute chars and colors per position
+        chars: list[str] = []
+        colors: list[str] = []
         for x in range(width):
             idx = (x + row_phase) % _SHIMMER_LEN
-            char = _SHIMMER_CHARS[idx]
+            chars.append(_SHIMMER_CHARS[idx])
             brightness = idx / max(_SHIMMER_LEN - 1, 1)
-            color = lerp_color(trough, peak, brightness)
-            segments.append(Segment(char, Style(color=color)))
+            colors.append(lerp_color_rgb(trough_rgb, peak_rgb, brightness))
+        # Batch consecutive same-color runs into single segments
+        segments: list[Segment] = []
+        run_start = 0
+        run_color = colors[0]
+        for i in range(1, width + 1):
+            c = colors[i] if i < width else None
+            if c != run_color:
+                text = "".join(chars[run_start:i])
+                segments.append(Segment(text, Style(color=run_color)))
+                run_start = i
+                run_color = c
         return Strip(segments).crop(0, width)
 
     # -------------------------------------------------------------------------

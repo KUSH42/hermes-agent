@@ -20,7 +20,7 @@ from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Input, Static
 
-from hermes_cli.tui.animation import AnimationClock, _ClockSubscription, lerp_color
+from hermes_cli.tui.animation import AnimationClock, _ClockSubscription, lerp_color, _parse_rgb, lerp_color_rgb
 from hermes_cli.tui.perf import measure
 
 if TYPE_CHECKING:
@@ -570,29 +570,45 @@ class DrawilleOverlay(Static):
         n_stops = len(colors)
         drift = math.sin(t * self.hue_shift_speed) * 0.25
 
+        # Pre-parse stop colors to RGB tuples (cached via _parse_rgb)
+        stop_rgbs = [_parse_rgb(c) for c in colors]
+
         rows = frame_str.split("\n")
         pieces: list[tuple[str, Style]] = []
         for row in rows:
             row_len = len(row)
-            for char_idx, ch in enumerate(row):
-                # Normalised column position [0, 1] with time drift applied
+            if row_len == 0:
+                pieces.append(("\n", Style()))
+                continue
+
+            # Pre-compute color per position
+            row_colors: list[str] = []
+            for char_idx in range(row_len):
                 pos = char_idx / max(row_len - 1, 1) + drift
-                # Wrap into [0, 1] with a smooth clamp (not hard wrap, to avoid
-                # a jarring jump at the boundary — instead we mirror-fold)
                 pos = abs(pos % 2.0)
                 if pos > 1.0:
                     pos = 2.0 - pos
 
-                # N-stop gradient interpolation
                 if n_stops == 1:
                     hex_c = colors[0]
                 else:
                     segment = pos * (n_stops - 1)
                     seg_idx = min(int(segment), n_stops - 2)
                     seg_t = segment - seg_idx
-                    hex_c = lerp_color(colors[seg_idx], colors[seg_idx + 1], seg_t)
+                    hex_c = lerp_color_rgb(stop_rgbs[seg_idx], stop_rgbs[seg_idx + 1], seg_t)
+                row_colors.append(hex_c)
 
-                pieces.append((ch, Style(color=hex_c)))
+            # Batch consecutive same-color runs
+            run_start = 0
+            run_color = row_colors[0]
+            for i in range(1, row_len + 1):
+                c = row_colors[i] if i < row_len else None
+                if c != run_color:
+                    span = row[run_start:i]
+                    pieces.append((span, Style(color=run_color)))
+                    run_start = i
+                    run_color = c
+
             pieces.append(("\n", Style()))
         return Text.assemble(*pieces)
 

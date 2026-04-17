@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from hermes_cli.file_drop import parse_dragged_file_paste
+from hermes_cli.file_drop import detect_file_drop_text, parse_dragged_file_paste
 from hermes_cli.tui.perf import measure
 
 from textual import events
@@ -137,6 +137,7 @@ class HermesInput(TextArea, can_focus=True):
         self._slash_commands: list[str] = []
         self._suppress_autocomplete_once: bool = False
         self._sanitizing: bool = False
+        self._handling_file_drop: bool = False
 
         # Autocomplete dispatcher state
         self._current_trigger: CompletionTrigger = CompletionTrigger(
@@ -290,9 +291,21 @@ class HermesInput(TextArea, can_focus=True):
 
         key = event.key
 
-        # Submit
+        # Submit — with file-drop guard for GNOME Terminal raw DnD (no bracketed paste).
+        # VTE sends "file:///path\n" as raw chars; the \n fires Enter before
+        # TextArea.Changed (async) can detect the path in on_text_area_changed.
         if key == "enter":
             event.prevent_default()
+            raw = self.text.strip()
+            if raw:
+                try:
+                    drop_match = detect_file_drop_text(raw)
+                    if drop_match is not None:
+                        self.load_text("")
+                        self.post_message(self.FilesDropped([drop_match.path]))
+                        return
+                except Exception:
+                    pass
             self.action_submit()
             return
 
@@ -426,6 +439,29 @@ class HermesInput(TextArea, can_focus=True):
         """
         if self._sanitizing:
             return
+        # Fallback file-drop detection: GNOME Terminal (VTE) DnD inserts paths
+        # as raw characters WITHOUT bracketed paste sequences.  _on_paste never
+        # fires, so we detect file paths that land in the TextArea via non-paste
+        # means and route them through the same FilesDropped path.
+        # Only match absolute paths — DnD always produces absolute paths, while
+        # relative paths (like link tokens from handle_file_drop) would false-positive.
+        if not self._handling_file_drop:
+            raw_text = self.text.strip()
+            if raw_text and "\n" not in raw_text:
+                # Quick check: must look like an absolute path or file:// URI
+                stripped = raw_text
+                if stripped and stripped[0] in ('"', "'") and len(stripped) >= 3:
+                    stripped = stripped[1:-1]  # strip surrounding quotes
+                if stripped.startswith(("/", "~", "file://")):
+                    match = detect_file_drop_text(raw_text)
+                    if match is not None:
+                        self._handling_file_drop = True
+                        try:
+                            self.post_message(self.FilesDropped([match.path]))
+                            self.load_text("")
+                        finally:
+                            self._handling_file_drop = False
+                        return
         raw = self.text
         sanitized = _sanitize_input_text(raw)
         if sanitized != raw:

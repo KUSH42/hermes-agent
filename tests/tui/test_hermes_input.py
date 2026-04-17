@@ -966,3 +966,60 @@ async def test_location_to_flat_multiline() -> None:
         # "hello\n" = 6 chars (0-5 for "hello", 5 for "\n" = offset 6 start of row 1)
         # (1, 2) = row 1 col 2 = "hello\n" + "wo" = offset 8
         assert inp._location_to_flat((1, 2)) == 8
+
+
+@pytest.mark.asyncio
+async def test_enter_with_file_path_fires_files_dropped_not_submitted(tmp_path) -> None:
+    """When Enter arrives after raw DnD chars (GNOME Terminal without bracketed paste),
+    file is routed to FilesDropped instead of Submitted.
+
+    Simulates the GNOME Terminal DnD flow:
+      chars arrive via key events (TextArea doc updated synchronously)
+      → Enter arrives, _on_key guard fires, clears input, posts FilesDropped
+      → TextArea.Changed drains later (empty text, nothing to detect)
+
+    We bypass pilot.pause() between load_text and Enter to ensure TextArea.Changed
+    hasn't drained before the Enter guard runs, matching real DnD timing.
+    """
+    from unittest.mock import MagicMock
+    from textual.events import Key
+    from hermes_cli.file_drop import FileDropMatch
+
+    real_file = tmp_path / "drop_me.py"
+    real_file.write_text("x = 1\n")
+
+    submitted_values: list[str] = []
+    dropped_paths: list = []
+    cli = MagicMock()
+
+    app = HermesApp(cli=cli)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        inp.focus()
+        await pilot.pause()
+
+        # Track messages
+        original_post = inp.post_message
+        def _track_post(msg: object) -> None:
+            if isinstance(msg, HermesInput.Submitted):
+                submitted_values.append(msg.value)
+            elif isinstance(msg, HermesInput.FilesDropped):
+                dropped_paths.append(list(msg.paths))
+            return original_post(msg)
+        inp.post_message = _track_post  # type: ignore[method-assign]
+
+        # load_text sets doc synchronously; TextArea.Changed is QUEUED (not yet drained)
+        # — same as chars arriving via DnD key events before the event queue drains.
+        inp.load_text(str(real_file))
+
+        # Directly invoke _on_key with Enter (no await inside for the file-path path,
+        # so the queue still hasn't drained at this point)
+        key_event = Key("enter", character="\n")
+        await inp._on_key(key_event)
+        await pilot.pause()
+
+        # Guard should have detected file path, cleared input, posted FilesDropped NOT Submitted
+        assert submitted_values == [], f"submitted unexpectedly: {submitted_values}"
+        assert len(dropped_paths) >= 1, "expected FilesDropped to be posted"
+        assert dropped_paths[0] == [real_file]

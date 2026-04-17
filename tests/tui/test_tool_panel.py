@@ -18,7 +18,8 @@ from unittest.mock import MagicMock
 from hermes_cli.tui.app import HermesApp
 from hermes_cli.tui.widgets import OutputPanel
 from hermes_cli.tui.tool_category import ToolCategory, classify_tool, _CATEGORY_DEFAULTS
-from hermes_cli.tui.tool_panel import ToolPanel, ArgsPane, BodyPane, FooterPane
+from hermes_cli.tui.tool_panel import ToolPanel, ArgsPane, BodyPane, FooterPane, _PanelContent
+from hermes_cli.tui.tool_accent import ToolAccent
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +92,7 @@ def test_category_defaults_all_categories():
 
 @pytest.mark.asyncio
 async def test_tool_panel_compose_order():
-    """T-C1: ToolPanel composes ArgsPane → BodyPane → FooterPane."""
+    """T-C1: ToolPanel v3-A: ToolAccent + _PanelContent; ArgsPane/BodyPane/FooterPane in content."""
     from hermes_cli.tui.tool_blocks import ToolBlock
 
     app = _make_app()
@@ -106,15 +107,24 @@ async def test_tool_panel_compose_order():
 
         output = app.query_one(OutputPanel)
         panel = output.query_one(ToolPanel)
-        children = list(panel.children)
-        types = [type(c) for c in children]
+        direct = list(panel.children)
+        direct_types = [type(c) for c in direct]
 
-        assert ArgsPane in types
-        assert BodyPane in types
-        assert FooterPane in types
-        args_idx = types.index(ArgsPane)
-        body_idx = types.index(BodyPane)
-        footer_idx = types.index(FooterPane)
+        # v3-A: ToolAccent + _PanelContent as direct children
+        assert ToolAccent in direct_types, f"ToolAccent must be direct child; got {direct_types}"
+        assert _PanelContent in direct_types, f"_PanelContent must be direct child; got {direct_types}"
+
+        # ArgsPane/BodyPane/FooterPane are inside _PanelContent
+        assert panel.query_one(ArgsPane) is not None
+        assert panel.query_one(BodyPane) is not None
+        assert panel.query_one(FooterPane) is not None
+
+        # Order within _PanelContent
+        content = next(c for c in direct if isinstance(c, _PanelContent))
+        ctypes = [type(c) for c in content.children]
+        args_idx = ctypes.index(ArgsPane)
+        body_idx = ctypes.index(BodyPane)
+        footer_idx = ctypes.index(FooterPane)
         assert args_idx < body_idx < footer_idx, (
             f"Expected ArgsPane < BodyPane < FooterPane, got {args_idx}, {body_idx}, {footer_idx}"
         )

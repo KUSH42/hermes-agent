@@ -25,6 +25,8 @@ from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
 
+from hermes_cli.tui.tool_accent import ToolAccent
+
 if TYPE_CHECKING:
     pass
 
@@ -90,6 +92,7 @@ class GroupHeader(Widget):
         self._group_id = group_id
         self._collapsed = False
         self._member_count = 0
+        self._accent_widget: ToolAccent | None = None
         self._glyph_widget: Static | None = None
         self._label_widget: Static | None = None
         self._sep_widget: Static | None = None
@@ -97,11 +100,13 @@ class GroupHeader(Widget):
         self._stats_widget: Static | None = None
 
     def compose(self) -> ComposeResult:
+        self._accent_widget = ToolAccent()
         self._glyph_widget = Static("▾", classes="group-glyph")
         self._label_widget = Static("0 tools", classes="group-label")
         self._sep_widget = Static(" · ", classes="group-sep")
         self._dot_widget = Static("●", classes="group-dot")
         self._stats_widget = Static("", classes="group-stats")
+        yield self._accent_widget
         yield self._glyph_widget
         yield self._label_widget
         yield self._sep_widget
@@ -195,6 +200,8 @@ class GroupHeader(Widget):
         label = getattr(self, "_label_widget", None)
         if label is not None:
             label.update(f"{self._member_count} {suffix}")
+        if self._accent_widget is not None:
+            self._accent_widget.state = "muted"
         self.refresh_stats()
 
     def on_click(self) -> None:

@@ -1,10 +1,12 @@
 """ToolPanel — Phase 3 detail levels, ArgsPane, FooterPane, keyboard.
 
 Architecture: tui-tool-panel-v2-spec.md §3, §6, §8, §9 Phase 3.
+v3 Phase A: ToolAccent gutter rail, DiffAffordance, CWD stripping.
 
 Phase 1: ToolPanel shell + ToolCategory + accent bar.
 Phase 2: BodyPane._renderer wired; BodyRenderer delegates per-line formatting.
 Phase 3: detail_level watcher active; ArgsPane/FooterPane live; D/0-3/Enter keys.
+v3-A:    ToolAccent replaces border-left; DiffAffordance in FooterPane.
 """
 
 from __future__ import annotations
@@ -19,6 +21,9 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Static
 
+from hermes_cli.tui.tool_accent import ToolAccent
+from hermes_cli.tui.diff_affordance import DiffAffordance
+
 if TYPE_CHECKING:
     from hermes_cli.tui.tool_result_parse import ResultSummary
     from hermes_cli.tui.tool_category import ToolCategory
@@ -31,6 +36,21 @@ def _tool_panel_v2_enabled() -> bool:
         return bool(read_raw_config().get("display", {}).get("tool_panel_v2", True))
     except Exception:
         return True
+
+
+# ---------------------------------------------------------------------------
+# _PanelContent — inner vertical container (right side of ToolAccent)
+# ---------------------------------------------------------------------------
+
+
+class _PanelContent(Widget):
+    """Inner vertical container for ArgsPane/BodyPane/FooterPane.
+
+    Allows ToolPanel to use layout:horizontal with ToolAccent on the left
+    while keeping the panes stacked vertically on the right.
+    """
+
+    DEFAULT_CSS = "_PanelContent { layout: vertical; height: auto; width: 1fr; }"
 
 
 # ---------------------------------------------------------------------------
@@ -202,10 +222,13 @@ class FooterPane(Widget):
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
+        self._diff_affordance: DiffAffordance | None = None
 
     def compose(self) -> ComposeResult:
         self._content = Static("", id="footer-content")
+        self._diff_affordance = DiffAffordance()
         yield self._content
+        yield self._diff_affordance
 
     def update_summary(self, summary: "ResultSummary") -> None:
         """Re-render footer from a ResultSummary."""
@@ -244,13 +267,15 @@ class FooterPane(Widget):
 
 
 class ToolPanel(Widget):
-    """Unified tool-call display container — Phase 3.
+    """Unified tool-call display container — Phase 3 / v3-A.
 
-    Compose tree (all phases):
-        ToolPanel
-        ├── ArgsPane      (display:none unless L3)
-        ├── BodyPane      (hosts the streaming/static block; hidden at L0)
-        └── FooterPane    (shown conditionally)
+    Compose tree (v3-A):
+        ToolPanel  [layout: horizontal]
+        ├── ToolAccent           1-cell vertical gutter rail
+        └── _PanelContent        [layout: vertical]
+            ├── ArgsPane         (display:none unless L3)
+            ├── BodyPane         (hosts the streaming/static block; hidden at L0)
+            └── FooterPane       (shown conditionally; contains DiffAffordance)
 
     detail_level reactive (0..3):
         L0 — header only (collapsed)
@@ -259,7 +284,7 @@ class ToolPanel(Widget):
         L3 — header + ArgsPane (args) + full body + footer (always)
     """
 
-    DEFAULT_CSS = "ToolPanel { height: auto; layout: vertical; }"
+    DEFAULT_CSS = "ToolPanel { height: auto; layout: horizontal; }"
     _content_type: str = "tool"
     can_focus = True
 
@@ -299,24 +324,31 @@ class ToolPanel(Widget):
         self._result_paths: list[str] = []
 
         # Pane refs (set in compose)
+        self._accent: ToolAccent | None = None
         self._args_pane: ArgsPane | None = None
         self._body_pane: BodyPane | None = None
         self._footer_pane: FooterPane | None = None
 
+        # CWD stripping — enable on SHELL category blocks
+        from hermes_cli.tui.tool_category import ToolCategory
+        if self._category == ToolCategory.SHELL and hasattr(block, "_should_strip_cwd"):
+            block._should_strip_cwd = True
+
     def compose(self) -> ComposeResult:
+        self._accent = ToolAccent()
         self._args_pane = ArgsPane()
         self._body_pane = BodyPane(self._block, category=self._category)
         self._footer_pane = FooterPane()
-        yield self._args_pane
-        yield self._body_pane
-        yield self._footer_pane
+        yield self._accent
+        with _PanelContent():
+            yield self._args_pane
+            yield self._body_pane
+            yield self._footer_pane
 
     def on_mount(self) -> None:
         from hermes_cli.tui.tool_category import _CATEGORY_DEFAULTS
 
         self.add_class(f"category-{self._category.value}")
-        if _tool_panel_v2_enabled():
-            self.add_class("tool-panel--accent")
 
         # Set initial detail_level.
         # Static blocks (total_lines > 0 at mount = pre-populated ToolBlock) always
@@ -329,8 +361,12 @@ class ToolPanel(Widget):
         total_lines = self._body_line_count()
         if total_lines > 0:
             initial = 2  # static block: always start expanded
+            if self._accent is not None:
+                self._accent.state = "ok"
         else:
             initial = max(defaults.default_detail, 2)  # streaming: at least L2
+            if self._accent is not None:
+                self._accent.state = "streaming"
         self.detail_level = max(0, min(3, initial))
 
     # ------------------------------------------------------------------
@@ -425,6 +461,9 @@ class ToolPanel(Widget):
         self._completed_at = time.monotonic()
         if self._footer_pane is not None:
             self._footer_pane.update_summary(summary)
+        # Update accent state to reflect completion outcome
+        if self._accent is not None:
+            self._accent.state = "error" if summary.is_error else "ok"
         self._apply_complete_auto_level()
         # Refresh footer visibility
         if self._footer_pane is not None:

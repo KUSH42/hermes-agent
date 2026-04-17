@@ -491,25 +491,19 @@ OmissionBar .omission-btn.-disabled {
     color: $text-disabled;
 }
 
-/* --- Tool Panel v2 (tui-tool-panel-v2-spec.md §10) ---
- * Accent bar rules apply when a panel carries tool-panel--accent class
- * (set when display.tool_panel_v2: true in config). */
+/* --- Tool Panel v3 Phase A (tui-tool-panel-v3-spec.md §5.1) ---
+ * ToolAccent widget replaces v2 border-left AND inline ┊ from ToolHeader.
+ * Only Textual built-in design tokens — component vars fail silently for
+ * background: at TCSS parse time. */
 
-/* --- Tool Panel v2 (tui-tool-panel-v2-spec.md §10) ---
- * Accent bar rules apply when a panel carries tool-panel--accent class
- * (set when display.tool_panel_v2: true in config).
- * Only Textual built-in design tokens used here — component vars ($text-muted
- * etc.) are not resolved at TCSS parse time for border-left. */
+ToolAccent              { background: $primary 15%; }
+ToolAccent.-streaming   { background: $accent; }
+ToolAccent.-ok          { background: $success; }
+ToolAccent.-error       { background: $error; }
+ToolAccent.-warning     { background: $warning; }
+ToolAccent.-muted       { background: $primary 8%; }
 
-ToolPanel.tool-panel--accent                 { border-left: vkey $accent 30%; }
-ToolPanel.category-file.tool-panel--accent   { border-left: vkey $accent 80%; }
-ToolPanel.category-shell.tool-panel--accent  { border-left: vkey $warning 80%; }
-ToolPanel.category-code.tool-panel--accent   { border-left: vkey $primary 80%; }
-ToolPanel.category-search.tool-panel--accent { border-left: vkey $primary 60%; }
-ToolPanel.category-web.tool-panel--accent    { border-left: vkey $success 80%; }
-ToolPanel.category-agent.tool-panel--accent  { border-left: vkey $accent 20%; }
-ToolPanel.tool-panel--error                  { border-left: vkey $error 80%; }
-ToolPanel:focus                              { background: $accent 10%; }
+ToolPanel:focus         { background: $accent 10%; }
 
 /* --- Tool grouping (virtual — no DOM container) --- */
 ToolPanel.tool-panel--grouped { padding-left: 2; }
@@ -519,6 +513,6 @@ GroupHeader {
     height: 1;
     color: $text-muted;
     background: $surface;
-    padding: 0 1 0 2;
+    padding: 0 1 0 0;
 }
 GroupHeader:focus { background: $accent 10%; }

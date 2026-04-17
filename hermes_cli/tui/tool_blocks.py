@@ -189,17 +189,11 @@ class ToolHeader(PulseMixin, Widget):
         t = Text()
 
         # --- Gutter ---
-        if _tool_gutter_enabled():
-            if self._is_child_diff:
-                gutter_text = Text("  ╰─", style="dim")
-                gutter_w = 4
-            elif focused:
-                color = getattr(self, "_focused_gutter_color", _GUTTER_FALLBACK)
-                gutter_text = Text("  ┃", style=f"bold {color}")
-                gutter_w = 3
-            else:
-                gutter_text = Text("  ┊", style="dim")
-                gutter_w = 3
+        # ┊/┃ replaced by ToolAccent widget in ToolPanel (v3 D4 fix).
+        # ╰─ kept for diff-child blocks until DiffAffordance is fully wired.
+        if _tool_gutter_enabled() and self._is_child_diff:
+            gutter_text = Text("  ╰─", style="dim")
+            gutter_w = 4
             t.append_text(gutter_text)
         else:
             gutter_w = 0
@@ -752,6 +746,9 @@ class StreamingToolBlock(ToolBlock):
         self._spinner_frame: int = 0
         self._completed: bool = False
         self._tail = ToolTail()
+        # CWD stripping — set True by ToolPanel for SHELL category blocks
+        self._should_strip_cwd: bool = False
+        self._detected_cwd: str | None = None
 
     def compose(self) -> ComposeResult:
         yield self._header
@@ -780,6 +777,15 @@ class StreamingToolBlock(ToolBlock):
         """Buffer a raw ANSI line for rendering on the next 60fps tick."""
         if self._completed:
             return
+        # CWD token stripping for SHELL category blocks
+        if self._should_strip_cwd:
+            from hermes_cli.tui.cwd_strip import strip_cwd
+            cleaned, cwd = strip_cwd(raw)
+            if cwd is not None:
+                self._detected_cwd = cwd
+            if not cleaned.strip():
+                return  # skip empty CWD-only lines
+            raw = cleaned
         # Byte cap
         if len(raw) > _LINE_BYTE_CAP:
             over = len(raw) - _LINE_BYTE_CAP
@@ -839,6 +845,15 @@ class StreamingToolBlock(ToolBlock):
         else:
             self._header.collapsed = False
         self._header.refresh()
+        # CWD footer dim line
+        if self._detected_cwd:
+            from rich.text import Text as _RichText
+            try:
+                from hermes_cli.tui.widgets import CopyableRichLog as _CRL
+                log = self._body.query_one(_CRL)
+                log.write(_RichText(f"  cwd: {self._detected_cwd}", style="dim"))
+            except Exception:
+                pass
         # Brief success flash to signal completion
         self._header.flash_complete()
 

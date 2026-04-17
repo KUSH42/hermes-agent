@@ -497,4 +497,16 @@ ToolPanel.category-search.tool-panel--accent { border-left: vkey $primary 60%; }
 ToolPanel.category-web.tool-panel--accent    { border-left: vkey $success 80%; }
 ToolPanel.category-agent.tool-panel--accent  { border-left: vkey $accent 20%; }
 ToolPanel.tool-panel--error                  { border-left: vkey $error 80%; }
-ToolPanel.tool-panel--focused                { background: $accent 10%; }
+ToolPanel:focus                              { background: $accent 10%; }
+
+/* --- Tool grouping (virtual — no DOM container) --- */
+ToolPanel.tool-panel--grouped { padding-left: 2; }
+ToolPanel.group-hidden         { display: none; }
+
+GroupHeader {
+    height: 1;
+    color: $text-muted;
+    background: $surface;
+    padding: 0 1;
+}
+GroupHeader:focus { background: $accent 10%; }

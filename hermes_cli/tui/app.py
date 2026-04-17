@@ -1781,6 +1781,26 @@ class HermesApp(App):
     def watch_browse_index(self, _value: int) -> None:
         self._apply_browse_focus()
 
+    # --- ToolPanel J/K navigation ---
+
+    def _focus_tool_panel(self, direction: int) -> None:
+        """Focus the next (direction=+1) or prev (direction=-1) ToolPanel/GroupHeader."""
+        from hermes_cli.tui.tool_panel import ToolPanel as _TP
+        from hermes_cli.tui.tool_group import GroupHeader as _GH
+        try:
+            navigable = [w for w in self.query((_TP, _GH)) if w.is_attached]
+        except Exception:
+            return
+        if not navigable:
+            return
+        focused = self.focused
+        try:
+            idx = navigable.index(focused)
+            next_idx = (idx + direction) % len(navigable)
+        except ValueError:
+            next_idx = 0 if direction > 0 else len(navigable) - 1
+        navigable[next_idx].focus()
+
     # --- Theme / skin system ---
 
     def get_css_variables(self) -> dict[str, str]:
@@ -2625,6 +2645,18 @@ class HermesApp(App):
                 self.browse_mode = True
                 event.prevent_default()
                 return
+
+        # --- J/K: focus next/prev ToolPanel (Phase 3 panel nav) ---
+        # Handle early — works in and out of browse mode so it doesn't fall through
+        # to the "printable key exits browse mode" handler.
+        if key == "J":
+            self._focus_tool_panel(+1)
+            event.prevent_default()
+            return
+        elif key == "K":
+            self._focus_tool_panel(-1)
+            event.prevent_default()
+            return
 
         # --- Browse mode key handling ---
         if self.browse_mode:

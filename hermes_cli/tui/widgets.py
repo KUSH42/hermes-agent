@@ -916,9 +916,18 @@ class MessagePanel(Widget):
         Before the first prose line appears, keep the bootstrap response block
         at the end so reasoning/tool/code blocks can appear above it and prose
         can still flow into the existing response block later.
+
+        Phase 3: evaluate virtual grouping rules before mount so a GroupHeader
+        can be inserted as a sibling without affecting the streaming block.
         """
         if not self.is_attached:
             return
+        # Phase 3: evaluate grouping rules before mount (no reparenting)
+        try:
+            from hermes_cli.tui.tool_group import _maybe_start_group
+            _maybe_start_group(self, block)
+        except Exception:
+            pass
         if (
             self._response_block.parent is self
             and self.children

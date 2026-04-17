@@ -1,44 +1,109 @@
-"""ToolPanel — Phase 1 shell widget wrapping existing tool-call blocks.
+"""ToolPanel — Phase 3 detail levels, ArgsPane, FooterPane, keyboard.
 
-Architecture: tui-tool-panel-v2-spec.md §3, §9 Phase 1.
+Architecture: tui-tool-panel-v2-spec.md §3, §6, §8, §9 Phase 3.
 
-Phase 1 delivers:
-- ToolPanel thin container with category class + accent class (when flag on)
-- ArgsPane, BodyPane, FooterPane composed but hidden (ArgsPane, FooterPane)
-- detail_level reactive pinned to L2 (full body) — watcher activation in Phase 3
-- ToolCategory classification for every mounted block
-
-Phase 2 adds BodyRenderer dispatch. Phase 3 adds detail levels, ArgsPane, FooterPane.
+Phase 1: ToolPanel shell + ToolCategory + accent bar.
+Phase 2: BodyPane._renderer wired; BodyRenderer delegates per-line formatting.
+Phase 3: detail_level watcher active; ArgsPane/FooterPane live; D/0-3/Enter keys.
 """
 
 from __future__ import annotations
 
+import time
+from typing import TYPE_CHECKING
+
+from rich.table import Table
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.reactive import reactive
 from textual.widget import Widget
+from textual.widgets import Static
+
+if TYPE_CHECKING:
+    from hermes_cli.tui.tool_result_parse import ResultSummary
+    from hermes_cli.tui.tool_category import ToolCategory
 
 
 def _tool_panel_v2_enabled() -> bool:
     """Return True if the tool_panel_v2 accent bar is enabled in config."""
     try:
         from hermes_cli.config import read_raw_config
-        return bool(read_raw_config().get("display", {}).get("tool_panel_v2", False))
+        return bool(read_raw_config().get("display", {}).get("tool_panel_v2", True))
     except Exception:
-        return False
+        return True
+
+
+# ---------------------------------------------------------------------------
+# ArgsPane
+# ---------------------------------------------------------------------------
 
 
 class ArgsPane(Widget):
-    """Structured key/value argument view (Phase 3). Hidden in Phase 1."""
+    """Structured key/value argument view. Shown at L3 only.
 
-    DEFAULT_CSS = "ArgsPane { height: auto; padding: 0 2; display: none; }"
+    Renders args_final via the per-category formatter from tool_args_format.py.
+    Two layout modes toggled by on_resize: .wide (≥80 cols) / .narrow (<80 cols).
+    """
+
+    DEFAULT_CSS = """
+    ArgsPane {
+        height: auto;
+        padding: 0 2;
+        display: none;
+        max-height: 20;
+        overflow-y: auto;
+    }
+    """
+
+    COMPONENT_CLASSES = {"args-pane--key", "args-pane--value"}
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+
+    def compose(self) -> ComposeResult:
+        self._content = Static("", id="args-content")
+        yield self._content
+
+    def refresh_rows(self, args: dict | None, category: "ToolCategory") -> None:
+        """Render args using the per-category formatter."""
+        from hermes_cli.tui.tool_category import _CATEGORY_DEFAULTS
+        from hermes_cli.tui.tool_args_format import get_formatter
+
+        defaults = _CATEGORY_DEFAULTS[category]
+        formatter = get_formatter(defaults.args_formatter)
+        rows = formatter(args or {})
+
+        if not rows:
+            self._content.update("(no args)")
+            return
+
+        table = Table.grid(padding=(0, 1))
+        table.add_column("key", style="dim", min_width=8)
+        table.add_column("value")
+        for key, val in rows:
+            table.add_row(key + ":", val)
+        self._content.update(table)
+
+    def on_resize(self, event: object) -> None:
+        width = getattr(getattr(event, "size", None), "width", 80)
+        if width >= 80:
+            self.remove_class("narrow")
+            self.add_class("wide")
+        else:
+            self.remove_class("wide")
+            self.add_class("narrow")
+
+
+# ---------------------------------------------------------------------------
+# BodyPane
+# ---------------------------------------------------------------------------
 
 
 class BodyPane(Widget):
     """Container for the streaming/static block body.
 
-    Phase 1: thin pass-through.
-    Phase 2: stores _renderer (BodyRenderer singleton for the panel's category).
-    Phase 3: uses _renderer for preview mode and perf instrumentation.
+    Phase 2: stores _renderer singleton.
+    Phase 3: set_mode("preview"|"full") toggles between block and preview Static.
     """
 
     DEFAULT_CSS = "BodyPane { height: auto; }"
@@ -51,7 +116,6 @@ class BodyPane(Widget):
     ) -> None:
         super().__init__(**kwargs)
         self._block = block
-        # Store renderer singleton for this category (Phase 2+)
         if category is not None:
             try:
                 from hermes_cli.tui.body_renderer import BodyRenderer
@@ -64,25 +128,135 @@ class BodyPane(Widget):
     def compose(self) -> ComposeResult:
         if self._block is not None:
             yield self._block
+        # _preview_static is None until first set_mode("preview") call (lazy mount).
+        # Do NOT compose it here — an extra child widget (even display:none) can
+        # shift sibling widget positions and break click hit-testing.
+        self._preview_static: Static | None = None
+
+    def set_mode(self, mode: str) -> None:
+        """Switch body between 'full' (streaming block visible) and 'preview'.
+
+        Preview Static is mounted lazily on first preview request to avoid
+        spurious layout refreshes that shift widget screen positions.
+        Only mutates display when the value actually changes.
+        """
+        if mode == "full":
+            if self._block is not None and not self._block.display:
+                self._block.display = True
+            if self._preview_static is not None and self._preview_static.display:
+                self._preview_static.display = False
+        else:  # preview
+            if self._block is not None and self._block.display:
+                self._block.display = False
+            if self._preview_static is None and self.is_attached:
+                self._preview_static = Static("", id="body-preview")
+                self.mount(self._preview_static)
+            if self._preview_static is not None:
+                self._update_preview(self._preview_static)
+                if not self._preview_static.display:
+                    self._preview_static.display = True
+
+    def _update_preview(self, preview: Static) -> None:
+        if self._renderer is None:
+            return
+        all_plain = self._get_all_plain()
+        try:
+            renderable = self._renderer.preview(all_plain, max_lines=3)
+            preview.update(renderable)
+        except Exception:
+            pass
+
+    def _get_all_plain(self) -> list[str]:
+        if self._block is None:
+            return []
+        for attr in ("_all_plain", "_content_lines", "_plain_lines"):
+            lines = getattr(self._block, attr, None)
+            if isinstance(lines, list):
+                return list(lines)
+        return []
+
+
+# ---------------------------------------------------------------------------
+# FooterPane
+# ---------------------------------------------------------------------------
 
 
 class FooterPane(Widget):
-    """Exit-code chip, stat badges, stderr tail, retry hint (Phase 3). Hidden in Phase 1."""
+    """Exit-code chip, stat badges, stderr tail, retry hint.
 
-    DEFAULT_CSS = "FooterPane { height: 1; padding: 0 1; display: none; color: $text-muted; }"
+    Shown conditionally based on _should_show_footer() in ToolPanel.
+    """
+
+    DEFAULT_CSS = """
+    FooterPane {
+        height: 1;
+        padding: 0 1;
+        display: none;
+        color: $text-muted;
+        layout: horizontal;
+    }
+    FooterPane.compact > .footer-stderr { display: none; }
+    """
+
+    COMPONENT_CLASSES = {"footer--exit-chip", "footer--badge", "footer--retry-hint"}
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+
+    def compose(self) -> ComposeResult:
+        self._content = Static("", id="footer-content")
+        yield self._content
+
+    def update_summary(self, summary: "ResultSummary") -> None:
+        """Re-render footer from a ResultSummary."""
+        from rich.text import Text
+
+        parts = Text()
+        if summary.exit_code is not None and summary.exit_code != 0:
+            parts.append(f" exit {summary.exit_code} ", style="bold red")
+            parts.append("  ")
+        for badge in summary.stat_badges:
+            if badge.startswith("+"):
+                parts.append(badge, style="green")
+            elif badge.startswith("-"):
+                parts.append(badge, style="red")
+            else:
+                parts.append(badge, style="dim")
+            parts.append("  ")
+        if summary.stderr_tail:
+            parts.append(summary.stderr_tail[:80], style="dim")
+        if summary.retry_hint:
+            parts.append("  ")
+            parts.append(summary.retry_hint, style="underline cyan")
+        self._content.update(parts)
+
+    def on_resize(self, event: object) -> None:
+        width = getattr(getattr(event, "size", None), "width", 80)
+        if width < 60:
+            self.add_class("compact")
+        else:
+            self.remove_class("compact")
+
+
+# ---------------------------------------------------------------------------
+# ToolPanel
+# ---------------------------------------------------------------------------
 
 
 class ToolPanel(Widget):
-    """Unified tool-call display container.
-
-    Phase 1: thin wrapper that adds category classification to existing blocks
-    with no user-visible behavior change (when display.tool_panel_v2 is false).
+    """Unified tool-call display container — Phase 3.
 
     Compose tree (all phases):
         ToolPanel
-        ├── ArgsPane       (display:none in Phase 1+2)
-        ├── BodyPane       (always visible; hosts the streaming/static block)
-        └── FooterPane     (display:none in Phase 1+2)
+        ├── ArgsPane      (display:none unless L3)
+        ├── BodyPane      (hosts the streaming/static block; hidden at L0)
+        └── FooterPane    (shown conditionally)
+
+    detail_level reactive (0..3):
+        L0 — header only (collapsed)
+        L1 — header + 3-line preview + conditional footer
+        L2 — header + full body + conditional footer
+        L3 — header + ArgsPane (args) + full body + footer (always)
     """
 
     DEFAULT_CSS = "ToolPanel { height: auto; layout: vertical; }"
@@ -96,8 +270,18 @@ class ToolPanel(Widget):
         "tool-panel--focused",
     }
 
-    # Pinned to L2 in Phase 1. Watcher + full cycling wired in Phase 3.
-    detail_level: reactive[int] = reactive(2, layout=True)
+    BINDINGS = [
+        Binding("d", "cycle_detail_forward", "Detail forward", show=False),
+        Binding("D", "cycle_detail_reverse", "Detail reverse", show=False),
+        Binding("0", "set_level_0", "L0", show=False),
+        Binding("1", "set_level_1", "L1", show=False),
+        Binding("2", "set_level_2", "L2", show=False),
+        Binding("3", "set_level_3", "L3", show=False),
+        Binding("enter", "toggle_l1_l2", "Toggle", show=False),
+    ]
+
+    # Compile-time default 1; overridden in on_mount based on category defaults.
+    detail_level: reactive[int] = reactive(1, layout=True)
 
     def __init__(self, block: Widget, tool_name: str | None = None, **kwargs: object) -> None:
         super().__init__(**kwargs)
@@ -106,12 +290,214 @@ class ToolPanel(Widget):
         from hermes_cli.tui.tool_category import classify_tool
         self._category = classify_tool(self._tool_name)
 
+        # Phase 3 state
+        self._user_detail_override: bool = False
+        self._tool_args: dict | None = None
+        self._result_summary: "ResultSummary | None" = None
+        self._start_time: float = time.monotonic()
+        self._completed_at: float | None = None
+        self._result_paths: list[str] = []
+
+        # Pane refs (set in compose)
+        self._args_pane: ArgsPane | None = None
+        self._body_pane: BodyPane | None = None
+        self._footer_pane: FooterPane | None = None
+
     def compose(self) -> ComposeResult:
-        yield ArgsPane()
-        yield BodyPane(self._block, category=self._category)
-        yield FooterPane()
+        self._args_pane = ArgsPane()
+        self._body_pane = BodyPane(self._block, category=self._category)
+        self._footer_pane = FooterPane()
+        yield self._args_pane
+        yield self._body_pane
+        yield self._footer_pane
 
     def on_mount(self) -> None:
+        from hermes_cli.tui.tool_category import _CATEGORY_DEFAULTS
+
         self.add_class(f"category-{self._category.value}")
         if _tool_panel_v2_enabled():
             self.add_class("tool-panel--accent")
+
+        # Set initial detail_level.
+        # Static blocks (total_lines > 0 at mount = pre-populated ToolBlock) always
+        # start at L2 (full body). Hiding a pre-populated static block causes
+        # Textual's layout engine to rebuild the RichLog with 0-width, clearing
+        # the _lines cache. Auto-collapse for static blocks happens only via
+        # _apply_complete_auto_level called from set_result_summary().
+        # Streaming blocks (total_lines = 0 at mount) use max(default_detail, 2).
+        defaults = _CATEGORY_DEFAULTS[self._category]
+        total_lines = self._body_line_count()
+        if total_lines > 0:
+            initial = 2  # static block: always start expanded
+        else:
+            initial = max(defaults.default_detail, 2)  # streaming: at least L2
+        self.detail_level = max(0, min(3, initial))
+
+    # ------------------------------------------------------------------
+    # detail_level watcher
+    # ------------------------------------------------------------------
+
+    def watch_detail_level(self, old: int, new: int) -> None:
+        ap = self._args_pane
+        bp = self._body_pane
+        fp = self._footer_pane
+        if ap is None or bp is None or fp is None:
+            return
+
+        # Only mutate display when the value actually changes.
+        # Redundant writes trigger layout refreshes that can shift widget
+        # screen positions (breaking click hit-testing on child widgets).
+
+        want_ap = new == 3          # ArgsPane: show at L3 only
+        want_bp = new != 0          # BodyPane: hide at L0 only
+        want_fp = self._should_show_footer(new)
+
+        if ap.display != want_ap:
+            ap.styles.display = "block" if want_ap else "none"
+        if bp.display != want_bp:
+            bp.styles.display = "none" if not want_bp else "block"
+        bp.set_mode("preview" if new == 1 else "full")
+        if fp.display != want_fp:
+            fp.styles.display = "block" if want_fp else "none"
+
+        # Refresh ArgsPane when entering L3
+        if new == 3 and self._tool_args is not None:
+            ap.refresh_rows(self._tool_args, self._category)
+
+    def _should_show_footer(self, level: int) -> bool:
+        if level == 0:
+            return False
+        if level == 3:
+            return True
+        # At L1/L2: show if there's something footer-worthy
+        rs = self._result_summary
+        if rs is None:
+            return False
+        if rs.exit_code is not None and rs.exit_code != 0:
+            return True
+        if rs.stat_badges:
+            return True
+        if rs.retry_hint:
+            return True
+        return False
+
+    # ------------------------------------------------------------------
+    # Completion flow
+    # ------------------------------------------------------------------
+
+    def _body_line_count(self) -> int:
+        if self._block is None:
+            return 0
+        for attr in ("_total_received", "_content_line_count"):
+            val = getattr(self._block, attr, None)
+            if isinstance(val, int):
+                return val
+        for attr in ("_plain_lines", "_all_plain", "_content_lines"):
+            lines = getattr(self._block, attr, None)
+            if isinstance(lines, list):
+                return len(lines)
+        return 0
+
+    def _apply_complete_auto_level(self) -> None:
+        from hermes_cli.tui.tool_category import _CATEGORY_DEFAULTS
+        rs = self._result_summary
+        if self._user_detail_override:
+            # Exception: user collapsed to L0 but tool errored — promote to L1
+            if rs is not None and rs.is_error and self.detail_level == 0:
+                self.detail_level = 1
+            return
+        total = self._body_line_count()
+        threshold = _CATEGORY_DEFAULTS[self._category].default_collapsed_lines
+        if total > threshold:
+            self.detail_level = 1  # preview
+        else:
+            self.detail_level = 2  # full
+
+    def set_tool_args(self, args: dict | None) -> None:
+        """Call from app after tool_start to supply parsed args."""
+        self._tool_args = args
+        if self.detail_level == 3 and self._args_pane is not None:
+            self._args_pane.refresh_rows(args, self._category)
+
+    def set_result_summary(self, summary: "ResultSummary") -> None:
+        """Call from app at tool completion to populate footer."""
+        self._result_summary = summary
+        self._completed_at = time.monotonic()
+        if self._footer_pane is not None:
+            self._footer_pane.update_summary(summary)
+        self._apply_complete_auto_level()
+        # Refresh footer visibility
+        if self._footer_pane is not None:
+            show = self._should_show_footer(self.detail_level)
+            self._footer_pane.styles.display = "block" if show else "none"
+
+    def copy_content(self) -> str:
+        """Return full plain-text output regardless of detail level."""
+        if self._block is None:
+            return ""
+        for method in ("copy_content",):
+            fn = getattr(self._block, method, None)
+            if fn is not None:
+                try:
+                    return str(fn())
+                except Exception:
+                    pass
+        for attr in ("_all_plain", "_content_lines", "_plain_lines"):
+            lines = getattr(self._block, attr, None)
+            if isinstance(lines, list):
+                return "\n".join(lines)
+        return ""
+
+    # ------------------------------------------------------------------
+    # Keyboard bindings
+    # ------------------------------------------------------------------
+
+    def _mark_user_override(self) -> None:
+        self._user_detail_override = True
+
+    def action_cycle_detail_forward(self) -> None:
+        """D: cycle L1→L2→L3→L1 (at L0, jump to L1 first)."""
+        self._mark_user_override()
+        if self.detail_level == 0:
+            self.detail_level = 1
+        else:
+            self.detail_level = (self.detail_level % 3) + 1  # 1→2→3→1
+
+    def action_cycle_detail_reverse(self) -> None:
+        """Shift+D: reverse cycle L3→L2→L1→L0."""
+        self._mark_user_override()
+        if self.detail_level == 0:
+            return  # stay at L0
+        self.detail_level = self.detail_level - 1  # 3→2→1→0
+
+    def action_set_level_0(self) -> None:
+        self._mark_user_override()
+        self.detail_level = 0
+
+    def action_set_level_1(self) -> None:
+        self._mark_user_override()
+        self.detail_level = 1
+
+    def action_set_level_2(self) -> None:
+        self._mark_user_override()
+        self.detail_level = 2
+
+    def action_set_level_3(self) -> None:
+        self._mark_user_override()
+        self.detail_level = 3
+
+    def action_toggle_l1_l2(self) -> None:
+        """Enter: cycle L1↔L2; from L0→L1; from L3→L2."""
+        self._mark_user_override()
+        if self.detail_level == 0:
+            self.detail_level = 1
+        elif self.detail_level == 1:
+            self.detail_level = 2
+        elif self.detail_level == 2:
+            self.detail_level = 1
+        else:  # L3
+            self.detail_level = 2
+
+    # Focus styling is done via CSS :focus pseudo-class in hermes.tcss.
+    # No on_focus/on_blur handlers — they trigger layout refreshes that
+    # can interfere with click event hit-testing on child widgets.

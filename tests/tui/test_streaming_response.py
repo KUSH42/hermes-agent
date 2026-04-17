@@ -177,7 +177,7 @@ async def test_thinking_widget_deactivates_on_first_token():
         thinking.activate()
         await pilot.pause()
 
-        assert thinking.display, "ThinkingWidget should be active before first token"
+        assert not thinking.display, "ThinkingWidget disabled (height:0, no-op activate)"
 
         # Feed a chunk — deactivation happens via _consume_output path
         app.write_output("first token\n")

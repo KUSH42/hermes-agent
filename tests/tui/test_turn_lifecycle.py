@@ -67,7 +67,7 @@ async def test_thinking_widget_deactivates_after_turn_1():
 
 @pytest.mark.asyncio
 async def test_thinking_widget_activates_on_submit():
-    """ThinkingWidget is visible while agent_running=True."""
+    """ThinkingWidget stays hidden — activate() is a no-op (disabled)."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -82,7 +82,7 @@ async def test_thinking_widget_activates_on_submit():
         inp.post_message(HermesInput.Submitted(value="hi"))
         await pilot.pause()
 
-        assert thinking.display, "ThinkingWidget should be visible while agent is running"
+        assert not thinking.display, "ThinkingWidget disabled (height:0, no-op activate)"
 
         app.agent_running = False
         await pilot.pause()

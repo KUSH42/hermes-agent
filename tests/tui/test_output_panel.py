@@ -135,7 +135,7 @@ async def test_thinking_widget_hidden_by_default():
 
 @pytest.mark.asyncio
 async def test_thinking_widget_activates_on_submit():
-    """ThinkingWidget becomes visible after on_hermes_input_submitted fires."""
+    """ThinkingWidget.activate() is a no-op (disabled — height:0)."""
     from unittest.mock import MagicMock
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
@@ -143,19 +143,19 @@ async def test_thinking_widget_activates_on_submit():
         widget = app.query_one(ThinkingWidget)
         widget.activate()
         await pilot.pause()
-        assert widget.display
+        assert not widget.display  # disabled: height 0, activate is no-op
 
 
 @pytest.mark.asyncio
 async def test_thinking_widget_deactivates_on_first_chunk():
-    """ThinkingWidget becomes hidden after deactivate() is called."""
+    """ThinkingWidget stays hidden — activate/deactivate are no-ops (disabled)."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         widget = app.query_one(ThinkingWidget)
         widget.activate()
         await pilot.pause()
-        assert widget.display
+        assert not widget.display  # disabled: activate is no-op
         widget.deactivate()
         await pilot.pause()
         assert not widget.display
@@ -174,15 +174,15 @@ async def test_thinking_widget_deactivate_idempotent():
 
 @pytest.mark.asyncio
 async def test_thinking_widget_deactivates_on_flush_live():
-    """OutputPanel.flush_live() calls ThinkingWidget.deactivate()."""
+    """OutputPanel.flush_live() calls ThinkingWidget.deactivate() (no-op, disabled)."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         widget = app.query_one(ThinkingWidget)
         widget.activate()
         await pilot.pause()
-        assert widget.display
-        # flush_live() should deactivate the shimmer
+        assert not widget.display  # disabled: activate is no-op
+        # flush_live() calls deactivate() — no-op but must not raise
         app.query_one(OutputPanel).flush_live()
         await pilot.pause()
         assert not widget.display
@@ -259,18 +259,17 @@ async def test_message_panel_fade_in_completes():
 
 @pytest.mark.asyncio
 async def test_submit_activates_shimmer_first_chunk_hides_it():
-    """Submit → ThinkingWidget active → first chunk → ThinkingWidget hidden."""
+    """Submit → ThinkingWidget disabled (height:0) → stays hidden throughout."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         thinking = app.query_one(ThinkingWidget)
 
-        # Simulate input submission — activates shimmer
+        # activate/deactivate are no-ops (widget disabled)
         thinking.activate()
         await pilot.pause()
-        assert thinking.display
+        assert not thinking.display
 
-        # Simulate first chunk arriving — _consume_output deactivates shimmer
         thinking.deactivate()
         await pilot.pause()
         assert not thinking.display

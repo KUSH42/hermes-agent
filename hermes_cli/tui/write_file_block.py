@@ -13,7 +13,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-from rich.syntax import Syntax
 from rich.text import Text
 from textual.css.query import NoMatches
 
@@ -141,15 +140,12 @@ class WriteFileBlock(StreamingToolBlock):
         except NoMatches:
             return
         try:
+            from hermes_cli.tui.body_renderer import BodyRenderer
+            from hermes_cli.tui.tool_category import ToolCategory
+            renderer = BodyRenderer.for_category(ToolCategory.FILE)
             lang = _lang_for_path(self._path)
-            syntax = Syntax(
-                line,
-                lang,
-                theme="monokai",
-                background_color="default",
-                line_numbers=False,
-            )
-            log.write_with_source(syntax, line)
+            renderable = renderer.render_stream_line(line, line, lang=lang)
+            log.write_with_source(renderable, line)
         except Exception:
             log.write_with_source(Text(line), line)
 
@@ -208,22 +204,20 @@ class WriteFileBlock(StreamingToolBlock):
             self._header.flash_success()
 
     def _rehighlight_body(self) -> None:
-        """Clear body and re-render full content as rich.Syntax."""
+        """Clear body and re-render full content as rich.Syntax via FileRenderer."""
         if not self._content_lines:
             return
         try:
             log = self._body.query_one(CopyableRichLog)
             log.clear()
+            from hermes_cli.tui.body_renderer import BodyRenderer
+            from hermes_cli.tui.tool_category import ToolCategory
+            renderer = BodyRenderer.for_category(ToolCategory.FILE)
             lang = _lang_for_path(self._path)
-            full_content = "\n".join(self._content_lines)
-            syntax = Syntax(
-                full_content,
-                lang,
-                theme="monokai",
-                background_color="default",
-                line_numbers=False,
-            )
-            log.write_with_source(syntax, full_content)
+            renderable = renderer.finalize(self._content_lines, lang=lang)
+            if renderable is not None:
+                full_content = "\n".join(self._content_lines)
+                log.write_with_source(renderable, full_content)
         except Exception:
             pass
 

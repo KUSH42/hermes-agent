@@ -21,6 +21,7 @@ from hermes_cli.tui.widgets import (
     ThinkingWidget,
 )
 from hermes_cli.tui.tool_blocks import StreamingToolBlock, ToolBlock
+from hermes_cli.tui.tool_panel import ToolPanel
 
 
 # ---------------------------------------------------------------------------
@@ -139,8 +140,10 @@ async def test_tool_block_mounts_before_duo():
         msg = output.current_message
         assert msg is not None, "Current MessagePanel missing"
         children = list(msg.children)
-        tb = next((c for c in children if isinstance(c, ToolBlock)), None)
-        assert tb is not None, "ToolBlock not found in MessagePanel children"
+        tp = next((c for c in children if isinstance(c, ToolPanel)), None)
+        assert tp is not None, "ToolPanel not found in MessagePanel children"
+        tb = tp.query_one(ToolBlock)
+        assert tb is not None, "ToolBlock not found inside ToolPanel"
         tw = output.query_one(ThinkingWidget)
         assert msg.parent is output
         assert list(output.children).index(msg) < list(output.children).index(tw), (
@@ -162,8 +165,10 @@ async def test_streaming_tool_block_mounts_before_duo():
         msg = output.current_message
         assert msg is not None, "Current MessagePanel missing"
         children = list(msg.children)
-        stb = next((c for c in children if isinstance(c, StreamingToolBlock)), None)
-        assert stb is not None, "StreamingToolBlock not found in MessagePanel children"
+        tp = next((c for c in children if isinstance(c, ToolPanel)), None)
+        assert tp is not None, "ToolPanel not found in MessagePanel children"
+        stb = tp.query_one(StreamingToolBlock)
+        assert stb is not None, "StreamingToolBlock not found inside ToolPanel"
         tw = output.query_one(ThinkingWidget)
         ll = output.live_line
         output_children = list(output.children)
@@ -189,11 +194,13 @@ async def test_streaming_tool_block_is_in_output_panel_not_message_panel():
         output = app.query_one(OutputPanel)
         msg = output.current_message
         assert msg is not None, "Current MessagePanel missing"
-        stb = next((c for c in msg.children if isinstance(c, StreamingToolBlock)), None)
-        assert stb is not None, "StreamingToolBlock must be mounted in current MessagePanel"
-        assert stb.parent is msg, (
-            f"STB parent is {stb.parent!r}, expected MessagePanel"
+        tp = next((c for c in msg.children if isinstance(c, ToolPanel)), None)
+        assert tp is not None, "ToolPanel must be mounted in current MessagePanel"
+        assert tp.parent is msg, (
+            f"ToolPanel parent is {tp.parent!r}, expected MessagePanel"
         )
+        stb = tp.query_one(StreamingToolBlock)
+        assert stb is not None, "StreamingToolBlock must be inside ToolPanel"
 
 
 @pytest.mark.asyncio
@@ -216,8 +223,10 @@ async def test_completed_stb_stays_above_next_turn():
         mp2 = output.new_message()
         await _pause(pilot)
 
-        stb = next((c for c in mp1.children if isinstance(c, StreamingToolBlock)), None)
-        assert stb is not None, "StreamingToolBlock not found in turn-1 MessagePanel after close"
+        tp = next((c for c in mp1.children if isinstance(c, ToolPanel)), None)
+        assert tp is not None, "ToolPanel not found in turn-1 MessagePanel after close"
+        stb = tp.query_one(StreamingToolBlock)
+        assert stb is not None, "StreamingToolBlock not found inside ToolPanel after close"
 
         children = list(output.children)
         i_mp1 = children.index(mp1)

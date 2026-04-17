@@ -127,6 +127,7 @@ class ToolHeader(PulseMixin, Widget):
         line_count: int,
         tool_name: str | None = None,
         stats: ToolHeaderStats | None = None,
+        panel: "Any | None" = None,  # ToolPanel back-ref; None = legacy path (Phase 1)
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -134,6 +135,7 @@ class ToolHeader(PulseMixin, Widget):
         self._tool_name = tool_name
         self._line_count = line_count
         self._stats = stats
+        self._panel = panel
         # ≤ threshold: always open, no affordances shown
         self._has_affordances = line_count > COLLAPSE_THRESHOLD
         self._copy_flash = False
@@ -490,43 +492,13 @@ class ToolBlock(Widget):
             self._body.add_class("expanded")
 
     def _render_diff_line(self, plain: str) -> "Text | None":
-        """Return styled Rich Text for diff path lines, else None.
-
-        Handles two formats:
-        - Raw: '--- a/src/foo.py' / '+++ b/src/foo.py'
-        - Rendered: 'a/src/foo.py → b/src/foo.py' (from render_captured_diff_preview)
-        """
-        stripped = plain.strip()
-        # ---/+++ format (raw unified diff)
-        m = _DIFF_HEADER_RE.match(stripped)
-        if m:
-            prefix, path_str = m.group(1), m.group(2).strip()
-            path_parts = path_str.rsplit("/", 1)
-            if len(path_parts) == 2 and path_parts[0]:
-                dir_part, fname = path_parts[0] + "/", path_parts[1]
-            else:
-                dir_part, fname = "", path_str
-            t = Text(prefix, style="dim")
-            if dir_part:
-                t.append(dir_part, style="dim")
-            t.append(fname, style="bold")
-            return t
-        # "old_path → new_path" rendered file header
-        m2 = _DIFF_ARROW_RE.match(stripped)
-        if m2:
-            new_path = m2.group(2).strip()
-            if new_path.startswith("b/"):
-                new_path = new_path[2:]
-            parts = new_path.rsplit("/", 1)
-            if len(parts) == 2 and parts[0]:
-                dir_part, fname = parts[0] + "/", parts[1]
-            else:
-                dir_part, fname = "", new_path
-            prefix_str = m2.group(1) + " → " + (dir_part if dir_part else "")
-            t = Text(prefix_str, style="dim")
-            t.append(fname, style="bold")
-            return t
-        return None
+        """Return styled Rich Text for diff path lines. Delegates to FileRenderer."""
+        try:
+            from hermes_cli.tui.body_renderer import BodyRenderer
+            from hermes_cli.tui.tool_category import ToolCategory
+            return BodyRenderer.for_category(ToolCategory.FILE).render_diff_line(plain)
+        except Exception:
+            return None
 
     def _render_body(self) -> None:
         try:

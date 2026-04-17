@@ -1007,6 +1007,7 @@ class MessagePanel(Widget):
         if not lines:
             return None
         from hermes_cli.tui.tool_blocks import ToolBlock as _ToolBlock
+        from hermes_cli.tui.tool_panel import ToolPanel as _ToolPanel
         block = _ToolBlock(
             label,
             lines,
@@ -1019,13 +1020,16 @@ class MessagePanel(Widget):
             block._header._compact_tail = True  # stats/toggle/timer inline after label
         if label == "diff" and self._last_file_tool_block is not None:
             block._header._is_child_diff = True
-        self._mount_nonprose_block(block)
+        panel = _ToolPanel(block, tool_name=tool_name)
+        self._mount_nonprose_block(panel)
         return block
 
     def open_streaming_tool_block(self, label: str, tool_name: str | None = None) -> Widget:
         from hermes_cli.tui.tool_blocks import StreamingToolBlock as _STB, _FILE_TOOL_NAMES
+        from hermes_cli.tui.tool_panel import ToolPanel as _ToolPanel
         block = _STB(label=label, tool_name=tool_name)
-        self._mount_nonprose_block(block)
+        panel = _ToolPanel(block, tool_name=tool_name)
+        self._mount_nonprose_block(panel)
         if tool_name in _FILE_TOOL_NAMES:
             self._last_file_tool_block = block
         return block

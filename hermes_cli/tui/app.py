@@ -1632,10 +1632,12 @@ class HermesApp(App):
         """
         try:
             from hermes_cli.tui.execute_code_block import ExecuteCodeBlock
+            from hermes_cli.tui.tool_panel import ToolPanel as _ToolPanel
             output = self.query_one(OutputPanel)
             msg = output.current_message or output.new_message()
             block = ExecuteCodeBlock(initial_label="python")
-            msg._mount_nonprose_block(block)
+            panel = _ToolPanel(block, tool_name="execute_code")
+            msg._mount_nonprose_block(panel)
             self._browse_total += 1
             if not output._user_scrolled_up:
                 self.call_after_refresh(output.scroll_end, animate=False)
@@ -1651,10 +1653,12 @@ class HermesApp(App):
         """Open a WriteFileBlock at gen_start time. Event-loop only."""
         try:
             from hermes_cli.tui.write_file_block import WriteFileBlock
+            from hermes_cli.tui.tool_panel import ToolPanel as _ToolPanel
             output = self.query_one(OutputPanel)
             msg = output.current_message or output.new_message()
             block = WriteFileBlock(path=path)
-            msg._mount_nonprose_block(block)
+            panel = _ToolPanel(block, tool_name="write_file")
+            msg._mount_nonprose_block(panel)
             msg._last_file_tool_block = block  # always set — write_file is a file tool
             self._browse_total += 1
             if not output._user_scrolled_up:

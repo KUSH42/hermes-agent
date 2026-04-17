@@ -225,21 +225,17 @@ class ExecuteCodeBlock(StreamingToolBlock):
             pass
 
     def _highlight_line(self, line: str) -> str:
-        """Per-line Pygments highlight for Python code."""
+        """Per-line Pygments highlight for Python code. Delegates to CodeRenderer."""
+        theme = "monokai"
         try:
-            from pygments import highlight
-            from pygments.lexers import PythonLexer
-            from pygments.formatters import TerminalTrueColorFormatter
-            # Get theme from CSS vars
-            theme = "monokai"
-            try:
-                css_vars = self.app.get_css_variables()
-                theme = css_vars.get("preview-syntax-theme", theme)
-            except Exception:
-                pass
-            return highlight(line, PythonLexer(), TerminalTrueColorFormatter(style=theme)).rstrip('\n')
+            css_vars = self.app.get_css_variables()
+            theme = css_vars.get("preview-syntax-theme", theme)
         except Exception:
-            return line
+            pass
+        from hermes_cli.tui.body_renderer import BodyRenderer
+        from hermes_cli.tui.tool_category import ToolCategory
+        renderer = BodyRenderer.for_category(ToolCategory.CODE)
+        return renderer.highlight_line(line, theme)
 
     def finalize_code(self, code: str) -> None:
         """Replace streamed per-line render with canonical rich.Syntax. Event-loop only."""
@@ -285,8 +281,6 @@ class ExecuteCodeBlock(StreamingToolBlock):
             code_log.clear()
 
             if code and len(self._code_lines) > 1:
-                from rich.syntax import Syntax
-                body_code = "\n".join(self._code_lines[1:])
                 try:
                     css_vars = self.app.get_css_variables()
                     theme = css_vars.get("preview-syntax-theme", "monokai")
@@ -294,15 +288,12 @@ class ExecuteCodeBlock(StreamingToolBlock):
                 except Exception:
                     theme = "monokai"
                     bg = None
-
-                syntax = Syntax(
-                    body_code,
-                    lexer="python",
-                    theme=theme,
-                    line_numbers=False,
-                    background_color=bg if bg and bg != "default" else None,
-                )
-                code_log.write(syntax)
+                from hermes_cli.tui.body_renderer import BodyRenderer
+                from hermes_cli.tui.tool_category import ToolCategory
+                renderer = BodyRenderer.for_category(ToolCategory.CODE)
+                renderable = renderer.finalize_code(code, theme=theme, bg=bg)
+                if renderable is not None:
+                    code_log.write(renderable)
         except NoMatches:
             pass
 

@@ -478,3 +478,23 @@ OmissionBar .omission-btn:hover {
 OmissionBar .omission-btn.-disabled {
     color: $text-disabled;
 }
+
+/* --- Tool Panel v2 (tui-tool-panel-v2-spec.md §10) ---
+ * Accent bar rules apply when a panel carries tool-panel--accent class
+ * (set when display.tool_panel_v2: true in config). */
+
+/* --- Tool Panel v2 (tui-tool-panel-v2-spec.md §10) ---
+ * Accent bar rules apply when a panel carries tool-panel--accent class
+ * (set when display.tool_panel_v2: true in config).
+ * Only Textual built-in design tokens used here — component vars ($text-muted
+ * etc.) are not resolved at TCSS parse time for border-left. */
+
+ToolPanel.tool-panel--accent                 { border-left: vkey $accent 30%; }
+ToolPanel.category-file.tool-panel--accent   { border-left: vkey $accent 80%; }
+ToolPanel.category-shell.tool-panel--accent  { border-left: vkey $warning 80%; }
+ToolPanel.category-code.tool-panel--accent   { border-left: vkey $primary 80%; }
+ToolPanel.category-search.tool-panel--accent { border-left: vkey $primary 60%; }
+ToolPanel.category-web.tool-panel--accent    { border-left: vkey $success 80%; }
+ToolPanel.category-agent.tool-panel--accent  { border-left: vkey $accent 20%; }
+ToolPanel.tool-panel--error                  { border-left: vkey $error 80%; }
+ToolPanel.tool-panel--focused                { background: $accent 10%; }

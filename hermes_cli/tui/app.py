@@ -1088,13 +1088,14 @@ class HermesApp(App):
             return
         now = _time.monotonic()
         elapsed = max(0.0, now - wall_start)
-        window_s = 0.75
+        window_s = 2.0
         while self._response_token_window and now - self._response_token_window[0][0] > window_s:
             self._response_token_window.popleft()
         live_tok_s = 0.0
         if self._response_token_window:
             token_sum = sum(tokens for _, tokens in self._response_token_window)
-            span = max(now - self._response_token_window[0][0], 0.05)
+            # Floor span at 0.2s to prevent initial spike from tiny windows
+            span = max(now - self._response_token_window[0][0], 0.2)
             live_tok_s = token_sum / span
         msg.set_response_metrics(tok_s=live_tok_s, elapsed_s=elapsed, streaming=True)
 
@@ -1122,7 +1123,7 @@ class HermesApp(App):
     def pause_response_stream(self) -> None:
         """Pause live message timing while agent waits on tool execution."""
         self._response_segment_start_time = None
-        self._response_token_window.clear()
+        # Don't clear token_window — preserves recent tok/s for display
 
     def finalize_response_metrics(self, tok_s: float, elapsed_s: float) -> None:
         """Freeze tok/s + elapsed on current assistant message header."""

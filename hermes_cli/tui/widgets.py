@@ -847,6 +847,11 @@ class MessagePanel(Widget):
         if not self._show_header:
             return
         self._response_rule.add_class("visible")
+        # Trigger a metrics refresh so header shows tok/s immediately
+        try:
+            self.app._refresh_live_response_metrics()
+        except Exception:
+            pass
 
     def set_response_metrics(
         self,

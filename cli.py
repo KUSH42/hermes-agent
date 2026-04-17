@@ -2789,7 +2789,9 @@ class HermesCLI:
             # was empty — e.g. API error hit right after a newline boundary).
             buf_tail = self._stream_block_buf.flush()
             if buf_tail is not None:
-                for hl_line in buf_tail.splitlines():
+                # empty string = trailing blank line, emit it
+                lines_out = buf_tail.splitlines() if buf_tail else [""]
+                for hl_line in lines_out:
                     if "\x1b" not in hl_line:
                         hl_line = _apply_inline_md(_apply_block_line(hl_line, reset_suffix=_tc), reset_suffix=_tc)
                     _cprint(f"{_tc}{hl_line}{_RST}" if _tc else hl_line)

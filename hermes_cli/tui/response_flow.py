@@ -511,9 +511,11 @@ class ResponseFlowEngine:
         """Emit any pending StreamingBlockBuffer state to the prose log."""
         from agent.rich_output import apply_block_line, apply_inline_markdown
         result = self._block_buf.flush()
-        if result:
+        if result is not None:
             # result may be multi-line (e.g. rendered table) — split and emit each
-            for line in result.splitlines():
+            # empty string = trailing blank line, must still be emitted
+            lines_out = result.splitlines() if result else [""]
+            for line in lines_out:
                 if _is_horizontal_rule(line):
                     self._emit_rule()
                     continue

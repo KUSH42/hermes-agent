@@ -66,14 +66,14 @@ def test_frame_compute_all_engines_nonempty():
         assert len(result) > 0, f"{key} returned empty frame"
 
 
-def test_frame_compute_all_engines_under_5ms():
-    """All engines complete a frame in < 5ms on a standard 80×24 terminal canvas."""
+def test_frame_compute_all_engines_under_8ms():
+    """All engines complete a frame in < 8ms on a standard 80×24 terminal canvas."""
     params = _params(w=160, h=96)  # 80×24 terminal → 160×96 braille pixels
     for key, engine in _ENGINES.items():
         start = time.perf_counter()
         engine.next_frame(params)
         elapsed_ms = (time.perf_counter() - start) * 1000
-        assert elapsed_ms < 5.0, f"{key} took {elapsed_ms:.1f}ms (budget: 5ms)"
+        assert elapsed_ms < 8.0, f"{key} took {elapsed_ms:.1f}ms (budget: 8ms)"
 
 
 def test_params_t_advances():

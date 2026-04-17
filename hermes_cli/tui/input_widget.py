@@ -308,24 +308,33 @@ class HermesInput(TextArea, can_focus=True):
             self.action_accept_autocomplete()
             return
 
-        # Escape: dismiss overlay; else bubble to app interrupt/browse handler.
-        # HistorySearchOverlay BINDINGS have priority=True — yield to it when visible.
+        # Escape: dismiss overlay; else forward to app for interrupt/browse.
+        # Must handle here because TextArea._on_key (tab_behavior="indent")
+        # calls event.stop() + prevent_default for escape, blocking bubbling.
         if key == "escape":
-            if self._completion_overlay_visible():
-                try:
-                    from hermes_cli.tui.widgets import HistorySearchOverlay
-                    hs = self.app.query_one(HistorySearchOverlay)
-                    if hs.has_class("--visible"):
-                        # HistorySearch handles this escape via priority BINDING
-                        pass
-                    else:
-                        event.prevent_default()
-                        self._hide_completion_overlay()
-                        return
-                except Exception:
-                    event.prevent_default()
-                    self._hide_completion_overlay()
+            event.stop()
+            event.prevent_default()
+            # Priority 1: HistorySearchOverlay
+            try:
+                from hermes_cli.tui.widgets import HistorySearchOverlay
+                hs = self.app.query_one(HistorySearchOverlay)
+                if hs.has_class("--visible"):
+                    hs.action_dismiss()
                     return
+            except Exception:
+                pass
+            # Priority 2: completion overlay
+            if self._completion_overlay_visible():
+                self._hide_completion_overlay()
+                return
+            # Priority 3: forward to App.on_key for interrupt/browse/overlays.
+            # TextArea._on_key can't be suppressed (Textual MRO dispatch),
+            # so we call App.on_key directly.
+            try:
+                self.app.on_key(event)
+            except Exception:
+                pass
+            return
 
         # PageUp/Down: route to completion overlay when visible
         if key == "pageup":

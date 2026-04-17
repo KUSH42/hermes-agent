@@ -309,9 +309,11 @@ def test_size_large_sets_styles():
         def offset(self, v): pass
 
     ov.styles = StylesMock()
-    cfg = _default_cfg(enabled=True, size="large", position="center", auto_hide_delay=0, fade_in_frames=0)
+    ov.size_name = "large"
+    ov.position = "center"
+    ov.vertical = False
     with patch.object(type(ov), "app", new_callable=PropertyMock, return_value=mock_app):
-        ov._apply_size_position(cfg)
+        ov._apply_layout()
     assert widths[-1] == 70
     assert heights[-1] == 20
 
@@ -338,9 +340,11 @@ def test_size_small_sets_correct_dimensions():
         def offset(self, v): pass
 
     ov.styles = StylesMock()
-    cfg = _default_cfg(enabled=True, size="small", position="top-left", auto_hide_delay=0, fade_in_frames=0)
+    ov.size_name = "small"
+    ov.position = "top-left"
+    ov.vertical = False
     with patch.object(type(ov), "app", new_callable=PropertyMock, return_value=mock_app):
-        ov._apply_size_position(cfg)
+        ov._apply_layout()
     assert ("w", 30) in sizes_set
     assert ("h", 8) in sizes_set
 
@@ -368,14 +372,15 @@ def test_position_center_offset_approx():
         def offset(self, v): offsets_set.append(v)
 
     ov.styles = StylesMock()
-    cfg = _default_cfg(enabled=True, size="medium", position="center", auto_hide_delay=0, fade_in_frames=0)
+    ov.size_name = "medium"
+    ov.position = "center"
+    ov.vertical = False
     with patch.object(type(ov), "app", new_callable=PropertyMock, return_value=mock_app):
-        ov._apply_size_position(cfg)
+        ov._apply_layout()
 
     w, h = 50, 14
     expected = (max(0, (tw - w) // 2), max(0, (th - h) // 2))
-    assert len(offsets_set) == 1
-    assert offsets_set[0] == expected
+    assert offsets_set[-1] == expected
 
 
 # ── Gradient ──────────────────────────────────────────────────────────────────
@@ -814,10 +819,11 @@ def test_vertical_medium_size_uses_portrait_dimensions():
         def offset(self, v): pass
 
     ov.styles = StylesMock()
-    cfg = _default_cfg(enabled=True, size="medium", position="top-right",
-                       vertical=True, auto_hide_delay=0, fade_in_frames=0)
+    ov.size_name = "medium"
+    ov.position = "top-right"
+    ov.vertical = True
     with patch.object(type(ov), "app", new_callable=PropertyMock, return_value=mock_app):
-        ov._apply_size_position(cfg)
+        ov._apply_layout()
     assert widths[-1] == 12
     assert heights[-1] == 22
 
@@ -846,12 +852,12 @@ def test_position_top_right_y_offset_is_1():
         def offset(self, v): offsets_set.append(v)
 
     ov.styles = StylesMock()
-    cfg = _default_cfg(enabled=True, size="medium", position="top-right",
-                       vertical=False, auto_hide_delay=0, fade_in_frames=0)
+    ov.size_name = "medium"
+    ov.position = "top-right"
+    ov.vertical = False
     with patch.object(type(ov), "app", new_callable=PropertyMock, return_value=mock_app):
-        ov._apply_size_position(cfg)
-    assert len(offsets_set) == 1
-    _, y_off = offsets_set[0]
+        ov._apply_layout()
+    _, y_off = offsets_set[-1]
     assert y_off == 1
 
 
@@ -886,7 +892,7 @@ def test_overlay_config_defaults_vertical_true():
 # ── Layer / absolute position ─────────────────────────────────────────────────
 
 def test_drawille_overlay_default_css_no_hardcoded_offset():
-    """DEFAULT_CSS must not hardcode 'offset: 15 5' — position set by _apply_size_position."""
+    """DEFAULT_CSS must not hardcode 'offset: 15 5' — position set by _apply_layout."""
     assert "offset: 15 5" not in DrawilleOverlay.DEFAULT_CSS
 
 

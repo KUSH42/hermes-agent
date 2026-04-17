@@ -381,6 +381,8 @@ class DrawilleOverlay(Static):
     gradient:        reactive[bool] = reactive(False)
     color_b:         reactive[str]  = reactive("$primary")
     dim_bg:          reactive[bool] = reactive(True)
+    show_border:     reactive[bool] = reactive(False)
+    vertical:        reactive[bool] = reactive(False)
     # Multi-color strand coloring — list of hex strings.
     # reactive(list) uses factory form to avoid shared mutable default.
     multi_color:     reactive[list] = reactive(list)
@@ -440,21 +442,43 @@ class DrawilleOverlay(Static):
         except Exception:
             pass
 
+    def watch_position(self, _value: str) -> None:
+        self._apply_layout()
+
+    def watch_size_name(self, _value: str) -> None:
+        self._apply_layout()
+        if self._anim_params is not None:
+            self._anim_params.width = self.size.width * 2
+            self._anim_params.height = self.size.height * 4
+
+    def watch_vertical(self, value: bool) -> None:
+        self._apply_layout()
+        if self._anim_params is not None:
+            self._anim_params.vertical = value
+            self._anim_params.width = self.size.width * 2
+            self._anim_params.height = self.size.height * 4
+
+    def watch_show_border(self, value: bool) -> None:
+        if value:
+            self.add_class("-show-border")
+        else:
+            self.remove_class("-show-border")
+
     # ── show / hide ────────────────────────────────────────────────────────
 
     def show(self, cfg: DrawilleOverlayCfg) -> None:
         """Make overlay visible and start animation.  Idempotent."""
         if not cfg.enabled:
             return
-        self._apply_size_position(cfg)
-        self._fade_step = cfg.fade_in_frames
-        if cfg.show_border:
-            self.add_class("-show-border")
-        else:
-            self.remove_class("-show-border")
-        # Apply multi-color config; triggers watch_multi_color → resolve
+        # Sync reactives from config — triggers watchers for live updates.
+        self.size_name = cfg.size
+        self.vertical = cfg.vertical
+        self.position = cfg.position
+        self.show_border = cfg.show_border
         self.multi_color = list(cfg.multi_color)
         self.hue_shift_speed = cfg.hue_shift_speed
+        self._apply_layout()
+        self._fade_step = cfg.fade_in_frames
         if self._anim_params is not None:
             self._anim_params.vertical = cfg.vertical
         self.add_class("-visible")
@@ -574,13 +598,14 @@ class DrawilleOverlay(Static):
 
     # ── size / position ────────────────────────────────────────────────────
 
-    def _apply_size_position(self, cfg: DrawilleOverlayCfg) -> None:
-        if cfg.size == "fill":
+    def _apply_layout(self) -> None:
+        """Apply size + position from current reactives.  Safe to call any time."""
+        if self.size_name == "fill":
             self.styles.width = "1fr"
             self.styles.height = "1fr"
             self.styles.offset = (0, 0)
             return
-        if cfg.vertical:
+        if self.vertical:
             sizes = {
                 "small":  (10, 16),
                 "medium": (12, 22),
@@ -592,7 +617,7 @@ class DrawilleOverlay(Static):
                 "medium": (50, 14),
                 "large":  (70, 20),
             }
-        w, h = sizes.get(cfg.size, sizes["medium"])
+        w, h = sizes.get(self.size_name, sizes["medium"])
         self.styles.width = w
         self.styles.height = h
         try:
@@ -607,7 +632,7 @@ class DrawilleOverlay(Static):
             "bottom-left":  (2,              th - h - 2),
             "top-left":     (2,              1),
         }
-        ox, oy = positions.get(cfg.position, positions["center"])
+        ox, oy = positions.get(self.position, positions["center"])
         self.styles.offset = (max(0, ox), max(0, oy))
 
 
@@ -839,9 +864,9 @@ class AnimConfigPanel(Widget):
             "gradient":  "gradient",
             "color_b":   "color_b",
             "trigger":   None,    # not a reactive on overlay
-            "show_border": None,  # handled on next show()
+            "show_border": "show_border",
             "dim_bg":    "dim_bg",
-            "vertical":  None,    # applied via _apply_size_position on next show()
+            "vertical":  "vertical",
         }
         attr = attr_map.get(f.name)
         if attr is not None:

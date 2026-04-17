@@ -35,7 +35,7 @@ from textual.strip import Strip
 from textual.widget import Widget
 from textual.widgets import Input, RichLog, Static
 
-from hermes_cli.tui.animation import PulseMixin, lerp_color, shimmer_text
+from hermes_cli.tui.animation import AnimationClock, PulseMixin, lerp_color, shimmer_text
 
 from hermes_cli.tui.state import (
     ChoiceOverlayState,
@@ -85,6 +85,45 @@ _ANSI_RE = re.compile(
     r"\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]"
 )
 _PRENUMBERED_LINE_RE = re.compile(r"^\s*(\d+)(?:\s*[│|:]\s?|\s{2,})(.*)$")
+
+
+def _apply_span_style(strip: Strip, start_x: int, end_x: int, style: Style) -> Strip:
+    """Apply *style* to character range [start_x, end_x) in *strip*.
+
+    Used to paint selection highlights on RichLog strips.  *end_x* == -1
+    means apply to end of strip.  Positions are in characters (code points),
+    matching the coordinate system used by ``apply_offsets`` and
+    ``Selection.get_span``.
+    """
+    from rich.segment import Segment as _Seg
+    segs = list(strip)
+    new_segs: list[_Seg] = []
+    char_pos = 0
+    real_end = sum(len(s.text) for s in segs) if end_x == -1 else end_x
+
+    for seg in segs:
+        text, seg_style, ctrl = seg.text, seg.style, seg.control
+        seg_len = len(text)
+        seg_end = char_pos + seg_len
+
+        if seg_end <= start_x or char_pos >= real_end:
+            new_segs.append(seg)
+        elif char_pos >= start_x and seg_end <= real_end:
+            new_segs.append(_Seg(text, (seg_style + style) if seg_style else style, ctrl))
+        else:
+            a = max(0, start_x - char_pos)
+            b = min(seg_len, real_end - char_pos)
+            if a > 0:
+                new_segs.append(_Seg(text[:a], seg_style, ctrl))
+            new_segs.append(_Seg(text[a:b], (seg_style + style) if seg_style else style, ctrl))
+            if b < seg_len:
+                new_segs.append(_Seg(text[b:], seg_style, ctrl))
+
+        char_pos += seg_len
+
+    return Strip(new_segs, strip.cell_length)
+
+
 def _strip_ansi(text: str) -> str:
     """Strip ANSI CSI escape sequences from text."""
     return _ANSI_RE.sub("", text)
@@ -313,20 +352,37 @@ class CopyableRichLog(RichLog, can_focus=False):
         self._plain_lines: list[str] = []
 
     def render_line(self, y: int) -> Strip:
-        """Override to add offset metadata for text selection.
+        """Override to add offset metadata and selection highlighting.
 
         RichLog.render_line() returns strips without ``style.meta["offset"]``,
         so ``Compositor.get_widget_and_offset_at()`` always returns offset
         ``None`` — Textual's selection system can't track position within the
         widget and drag-to-select silently fails.
 
-        ``Log._render_line()`` calls ``apply_offsets(scroll_x, y)`` to fix
-        this.  We do the same here.
+        RichLog._render_line() also does not paint the ``screen--selection``
+        highlight (unlike ``Log._render_line_strip``).  We apply the selection
+        style here so the visual highlight matches the tracked region.
+
+        Selection is applied before ``apply_offsets`` so the final strip
+        carries both correct metadata and the correct background color.
         """
         scroll_x, scroll_y = self.scroll_offset
-        line = self._render_line(scroll_y + y, scroll_x, self.scrollable_content_region.width)
+        content_y = scroll_y + y
+        line = self._render_line(content_y, scroll_x, self.scrollable_content_region.width)
         strip = line.apply_style(self.rich_style)
-        return strip.apply_offsets(scroll_x, scroll_y + y)
+
+        selection = self.text_selection
+        if selection is not None:
+            span = selection.get_span(content_y)
+            if span is not None:
+                start_x, end_x = span
+                try:
+                    sel_style = self.screen.get_component_rich_style("screen--selection")
+                    strip = _apply_span_style(strip, start_x, end_x, sel_style)
+                except Exception:
+                    pass
+
+        return strip.apply_offsets(scroll_x, content_y)
 
     def write(  # type: ignore[override]
         self,
@@ -354,8 +410,12 @@ class CopyableRichLog(RichLog, can_focus=False):
                 width = self.size.width
             else:
                 # Pre-layout fallback: subtract OutputPanel scrollbar (1 col)
+                # AND CopyableBlock margins (2 left + 2 right = 4).  Without
+                # the margin deduction, text wraps 4 cols too wide and the
+                # rightmost characters spill under the scrollbar / outside
+                # the viewport.
                 try:
-                    width = max(self.app.size.width - 1, 20)
+                    width = max(self.app.size.width - 5, 20)
                 except Exception:
                     width = 80
         return super().write(  # type: ignore[return-value]
@@ -386,18 +446,20 @@ class CopyableRichLog(RichLog, can_focus=False):
     def get_selection(self, selection: Selection) -> tuple[str, str] | None:
         """Return plain text for the selected region.
 
-        Overrides RichLog.get_selection() to return clean markdown without ANSI
-        codes. Uses _plain_lines joined with newlines, then delegates extraction
-        to Selection.extract() which handles line/column offsets correctly.
+        Prefers ``self.lines`` (visual strips) so that selection ``y`` indices
+        — which are visual-line indices — align exactly with the text passed to
+        ``Selection.extract``.  Segment text is plain (Rich renders ANSI to
+        Style objects, not escape codes).
 
-        Note: _plain_lines has one entry per write_with_source() call. RichLog
-        wraps long lines internally, so a single write may produce multiple
-        visual lines. Selection offsets reference the wrapped layout — for short
-        lines this is fine, but wrapped lines may extract partial plain text.
+        Falls back to ``_plain_lines`` when ``self.lines`` is empty (e.g. in
+        tests where the widget is not mounted and writes are still deferred).
         """
-        if not self._plain_lines:
+        if self.lines:
+            text = "\n".join("".join(seg.text for seg in line) for line in self.lines)
+        elif self._plain_lines:
+            text = "\n".join(self._plain_lines)
+        else:
             return None
-        text = "\n".join(self._plain_lines)
         return selection.extract(text), "\n"
 
     def copy_content(self) -> str:
@@ -641,7 +703,13 @@ class LiveLineWidget(Widget):
                 getattr(self, "_blink_timer", None) is None
                 and getattr(self, "_blink_enabled", True)
             ):
-                self._blink_timer = self.set_interval(0.5, self._toggle_blink)
+                clock: AnimationClock | None = getattr(
+                    getattr(self, "app", None), "_anim_clock", None
+                )
+                if clock is not None:
+                    self._blink_timer = clock.subscribe(8, self._toggle_blink)
+                else:
+                    self._blink_timer = self.set_interval(0.5, self._toggle_blink)
             self.append(chunk)
             return
         pos = 0
@@ -1223,7 +1291,13 @@ class ThinkingWidget(Widget):
         self._helix_idx = 0
         self._build_helix_if_needed()
         if self._shimmer_timer is None:
-            self._shimmer_timer = self.set_interval(0.25, self._tick_shimmer)
+            clock: AnimationClock | None = getattr(
+                getattr(self, "app", None), "_anim_clock", None
+            )
+            if clock is not None:
+                self._shimmer_timer = clock.subscribe(4, self._tick_shimmer)
+            else:
+                self._shimmer_timer = self.set_interval(0.25, self._tick_shimmer)
 
     def deactivate(self) -> None:
         """Hide placeholder and stop timers. Idempotent. Call from event loop only."""
@@ -2140,7 +2214,13 @@ class HintBar(Widget):
         self._shimmer_skip = skip
         self._shimmer_tick = 0
         if self._shimmer_timer is None:
-            self._shimmer_timer = self.set_interval(1 / 8, self._shimmer_step)
+            clock: AnimationClock | None = getattr(
+                getattr(self, "app", None), "_anim_clock", None
+            )
+            if clock is not None:
+                self._shimmer_timer = clock.subscribe(2, self._shimmer_step)
+            else:
+                self._shimmer_timer = self.set_interval(1 / 8, self._shimmer_step)
 
     def _shimmer_stop(self) -> None:
         """Stop the shimmer. Idempotent."""
@@ -2289,7 +2369,13 @@ class StatusBar(PulseMixin, Widget):
         self.watch(app, "status_error", self._on_status_change)
         self._hint_idx: int = 0
         self._hint_phase: str = "idle"
-        self.set_interval(5.0, self._rotate_hint)
+        clock: AnimationClock | None = getattr(
+            getattr(self, "app", None), "_anim_clock", None
+        )
+        if clock is not None:
+            self._rotate_timer = clock.subscribe(75, self._rotate_hint)
+        else:
+            self._rotate_timer = self.set_interval(5.0, self._rotate_hint)
 
     def _on_status_change(self, _value: object = None) -> None:
         self.refresh()
@@ -2301,6 +2387,12 @@ class StatusBar(PulseMixin, Widget):
         else:
             self._pulse_stop()
         self.refresh()
+
+    def on_unmount(self) -> None:
+        self._pulse_stop()
+        if getattr(self, "_rotate_timer", None) is not None:
+            self._rotate_timer.stop()
+            self._rotate_timer = None
 
     def _on_tok_s_change(self, tok_s: float = 0.0) -> None:
         """Animate _tok_s_displayed to new tok/s value over 200ms."""
@@ -2671,6 +2763,12 @@ class CountdownMixin:
         if self._countdown_timer is not None:
             return  # already running
         self._countdown_timer = self.set_interval(1.0, self._tick_countdown)
+
+    def on_unmount(self) -> None:
+        """Safety net: cancel countdown timer on removal."""
+        if self._countdown_timer is not None:
+            self._countdown_timer.stop()
+            self._countdown_timer = None
 
     def pause_countdown(self) -> None:
         """Pause the countdown timer (P0-B: multi-overlay stacking).
@@ -3361,9 +3459,14 @@ class HistorySearchOverlay(Widget):
             self._index = []
             return
 
+        # panels[0] is the startup/banner turn (oldest in DOM, not indexed).
+        # Real turns are panels[1:]; iterate newest-first.
+        # Index is 1-based across all panels: startup = 1, first real = 2, etc.
+        real_panels = panels[1:]
+        total = len(panels)
         entries: list[_TurnEntry] = []
-        chronological_panels = list(reversed(panels))
-        for message_count, panel in enumerate(chronological_panels[1:], start=2):
+        for i, panel in enumerate(reversed(real_panels)):
+            message_count = total - i
             user_text = panel._user_text or "(no user message)"
             assistant_text = panel.all_prose_text()
             entries.append(

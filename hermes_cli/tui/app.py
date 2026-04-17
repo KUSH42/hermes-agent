@@ -57,7 +57,7 @@ from textual.reactive import reactive
 from textual.widgets import Static, TextArea
 from textual import work
 
-from hermes_cli.file_drop import classify_dropped_file
+from hermes_cli.file_drop import classify_dropped_file, format_link_token
 from hermes_cli.tui.state import (
     ChoiceOverlayState,
     OverlayState,
@@ -94,6 +94,7 @@ from hermes_cli.tui.widgets import (
 )
 
 from hermes_cli.tui.constants import ICON_COPY
+from hermes_cli.tui.animation import AnimationClock
 from hermes_cli.tui.perf import EventLoopLatencyProbe, FrameRateProbe, WorkerWatcher
 from hermes_cli.tui.theme_manager import ThemeManager
 from wcwidth import wcswidth
@@ -360,9 +361,11 @@ class HermesApp(App):
         self._frame_probe = FrameRateProbe(window=_tc.MAX_FPS, log_every=_tc.MAX_FPS)
         self._fps_hud_update_every = max(1, _tc.MAX_FPS // 4)  # update display at ~4 Hz
         self._consume_output()  # starts the @work consumer
-        self.set_interval(0.1, self._tick_spinner)
-        self.set_interval(_frame_interval, self._tick_fps)
-        self.set_interval(1.0, self._tick_duration)
+        self._anim_clock = AnimationClock()
+        self._anim_clock_h = self.set_interval(1 / 15, self._anim_clock.tick)
+        self._spinner_h = self.set_interval(0.1, self._tick_spinner)
+        self._fps_h = self.set_interval(_frame_interval, self._tick_fps)
+        self._duration_h = self.set_interval(1.0, self._tick_duration)
         # Restore FPS HUD state from config (runtime toggle overrides this)
         if _fps_hud_enabled():
             self.fps_hud_visible = True
@@ -392,6 +395,8 @@ class HermesApp(App):
     def on_unmount(self) -> None:
         """Stop background helpers tied to app lifetime."""
         self._theme_manager.stop_hot_reload()
+        for _h in (self._anim_clock_h, self._spinner_h, self._fps_h, self._duration_h):
+            _h.stop()
 
     # --- Output consumer (bounded queue → RichLog) ---
 
@@ -1417,29 +1422,37 @@ class HermesApp(App):
             return
 
         cwd = self.get_working_directory()
-        quoted_tokens: list[str] = []
+        link_tokens: list[str] = []
         image_paths: list[Path] = []
+        rejected: list[str] = []
 
         for path in paths:
             dropped = classify_dropped_file(path, cwd)
             if dropped.kind == "image":
                 image_paths.append(path)
-            # Insert quoted path for ALL files (including images)
-            path_str = self._drop_path_display(path, cwd)
-            quoted_tokens.append(f"'{path_str}'")
+            elif dropped.kind in ("linkable_text", "unsupported_binary"):
+                try:
+                    link_tokens.append(format_link_token(path, cwd))
+                except ValueError as exc:
+                    rejected.append(str(exc))
+            else:
+                rejected.append(dropped.reason or dropped.kind)
 
         if image_paths:
             self._append_attached_images(image_paths)
-        if quoted_tokens:
-            self._insert_link_tokens(quoted_tokens)
+        if link_tokens:
+            self._insert_link_tokens(link_tokens)
 
         hint_parts: list[str] = []
-        if quoted_tokens:
-            noun = "file" if len(quoted_tokens) == 1 else "files"
-            hint_parts.append(f"linked {len(quoted_tokens)} {noun}")
+        if link_tokens:
+            noun = "file" if len(link_tokens) == 1 else "files"
+            hint_parts.append(f"linked {len(link_tokens)} {noun}")
         if image_paths:
             noun = "image" if len(image_paths) == 1 else "images"
             hint_parts.append(f"attached {len(image_paths)} {noun}")
+        if rejected:
+            noun = "item" if len(rejected) == 1 else "items"
+            hint_parts.append(f"dropped {len(rejected)} unsupported {noun}")
 
         if hint_parts:
             self._flash_hint(" · ".join(hint_parts), 1.2)
@@ -1840,12 +1853,11 @@ class HermesApp(App):
     async def on_click(self, event: Any) -> None:
         """Left-click focuses input; right-click (button=3) shows context menu."""
         if event.button == 1:
-            # Don't steal focus when the user clicks inside the output panel —
-            # that breaks text selection and scroll position tracking.
-            from hermes_cli.tui.widgets import OutputPanel as _OP
+            # Don't steal focus when clicking inside panels that manage their own focus.
+            from hermes_cli.tui.widgets import OutputPanel as _OP, HistorySearchOverlay as _HSO
             node = getattr(event, "widget", None)
             while node is not None:
-                if isinstance(node, _OP):
+                if isinstance(node, (_OP, _HSO)):
                     return
                 node = getattr(node, "parent", None)
             try:

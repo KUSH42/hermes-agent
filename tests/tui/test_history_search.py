@@ -1,6 +1,6 @@
 """Tests for HistorySearchOverlay (SPEC-B — History Search).
 
-25 tests covering:
+28 tests covering:
   1–3   Open/close/escape overlay
   4–7   Empty-query browse-all + contiguous filter across user/assistant text
   6–9   Up/Down navigation + clamping
@@ -15,6 +15,9 @@
   23    Cross-boundary mixed query does not match
   24    First turn excluded as startup/banner
   25    Clearing query restores full list
+  26    Single turn shows correct user display (regression: was showing startup panel)
+  27    Single turn is searchable (regression: empty index with 1 real turn)
+  28    Click inside overlay does not steal focus to input-area
 """
 
 from __future__ import annotations
@@ -46,12 +49,16 @@ def _make_app() -> HermesApp:
 
 
 def _ensure_startup_turn(app: HermesApp) -> None:
-    """Mount the initial banner/startup assistant turn once."""
+    """Mount the initial banner/startup assistant turn once.
+
+    Uses before=ThinkingWidget so the startup panel is oldest in DOM (index 0),
+    matching real-app DOM order where startup is created first via new_message().
+    """
     output = app.query_one(OutputPanel)
     if list(output.query(MessagePanel)):
         return
     startup = MessagePanel()
-    output.mount(startup)
+    output.mount(startup, before=output.query_one(ThinkingWidget))
     startup.response_log._plain_lines.append("Hermes startup banner")
 
 
@@ -762,3 +769,93 @@ async def test_clearing_query_restores_full_list():
         assert len(items) == 2
         assert items[0]._entry.display == "beta request"
         assert items[1]._entry.display == "alpha request"
+
+
+# ---------------------------------------------------------------------------
+# 26. Single turn shows correct user display (regression)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_single_turn_not_startup_panel():
+    """After first real turn, overlay shows that turn — not the startup banner."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        _add_turn(app, "my first real question", "my first real answer")
+        await pilot.pause()
+
+        overlay = app.query_one(HistorySearchOverlay)
+        overlay.open_search()
+        await pilot.pause()
+
+        items = list(overlay.query(TurnResultItem))
+        assert len(items) == 1
+        assert items[0]._entry.display == "my first real question"
+        assert items[0]._entry.user_text == "my first real question"
+
+
+# ---------------------------------------------------------------------------
+# 27. Single turn is searchable (regression: empty index with 1 real turn)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_single_turn_is_searchable():
+    """Search query matches the single real turn (was broken: index was empty)."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        _add_turn(app, "refactor database layer", "refactored")
+        await pilot.pause()
+
+        overlay = app.query_one(HistorySearchOverlay)
+        overlay.open_search()
+        await pilot.pause()
+
+        inp = overlay.query_one("#history-search-input", Input)
+        inp.value = "database"
+        await pilot.pause()
+        await asyncio.sleep(0.16)
+        await pilot.pause()
+
+        items = list(overlay.query(TurnResultItem))
+        assert len(items) == 1
+        assert items[0]._entry.display == "refactor database layer"
+
+
+# ---------------------------------------------------------------------------
+# 28. Click inside overlay does not steal focus to input-area
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_click_inside_overlay_does_not_steal_focus():
+    """on_click on a widget inside HistorySearchOverlay must not focus #input-area."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        _add_turn(app, "focus test turn", "answer")
+        await pilot.pause()
+
+        overlay = app.query_one(HistorySearchOverlay)
+        overlay.open_search()
+        await pilot.pause()
+
+        # Confirm overlay input has focus after open
+        hs_input = overlay.query_one("#history-search-input", Input)
+        assert hs_input.has_focus
+
+        # Simulate a left-click whose widget chain runs through the overlay
+        event = MagicMock()
+        event.button = 1
+        event.widget = hs_input  # click target inside the overlay
+        event.button = 1
+
+        await app.on_click(event)
+        await pilot.pause()
+
+        # Focus must NOT have moved to #input-area
+        focused = app.focused
+        assert getattr(focused, "id", None) != "input-area", (
+            "on_click stole focus from overlay to #input-area"
+        )

@@ -436,6 +436,7 @@ HermesApp.density-compact UndoConfirmOverlay    { padding: 0 1; }
 
 DrawilleOverlay {
     layer: overlay;
+    position: absolute;
     background: $surface 0%;
 }
 

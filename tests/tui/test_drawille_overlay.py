@@ -885,16 +885,22 @@ def test_overlay_config_defaults_vertical_true():
 
 # ── Layer / absolute position ─────────────────────────────────────────────────
 
-def test_drawille_overlay_default_css_has_layer_overlay():
-    """DEFAULT_CSS must include 'layer: overlay' for absolute positioning."""
-    assert "layer: overlay" in DrawilleOverlay.DEFAULT_CSS
-
-
-def test_drawille_overlay_default_css_has_position_absolute():
-    """DEFAULT_CSS must include 'position: absolute' so offset is screen-absolute."""
-    assert "position: absolute" in DrawilleOverlay.DEFAULT_CSS
-
-
 def test_drawille_overlay_default_css_no_hardcoded_offset():
     """DEFAULT_CSS must not hardcode 'offset: 15 5' — position set by _apply_size_position."""
     assert "offset: 15 5" not in DrawilleOverlay.DEFAULT_CSS
+
+
+def test_hermes_tcss_has_layer_overlay_for_drawille():
+    """hermes.tcss must declare layer:overlay and position:absolute for DrawilleOverlay.
+
+    These must live in hermes.tcss, NOT in DEFAULT_CSS — see CSS gotcha:
+    layer:overlay in DEFAULT_CSS corrupts CSS compilation if the class is
+    imported before HermesApp's import chain completes.
+    """
+    import os
+    tcss_path = os.path.join(
+        os.path.dirname(__file__), "../../hermes_cli/tui/hermes.tcss"
+    )
+    content = open(os.path.normpath(tcss_path)).read()
+    assert "layer: overlay" in content
+    assert "position: absolute" in content

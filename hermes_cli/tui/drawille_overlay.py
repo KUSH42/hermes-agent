@@ -360,8 +360,6 @@ class DrawilleOverlay(Static):
 
     DEFAULT_CSS = """
     DrawilleOverlay {
-        layer: overlay;
-        position: absolute;
         display: none;
         width: 12;
         height: 22;

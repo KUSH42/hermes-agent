@@ -373,7 +373,7 @@ class ToolHeader(PulseMixin, Widget):
         return t
 
     def on_click(self, event: Click) -> None:
-        """Left-click toggles the parent ToolBlock.
+        """Left-click: open file if path-clickable, otherwise toggle block.
 
         Right-clicks (button=3) are not intercepted here — they bubble up to
         HermesApp.on_click() which builds the context menu.
@@ -382,6 +382,16 @@ class ToolHeader(PulseMixin, Widget):
             return                          # right/middle click: let bubble to HermesApp
         if self._spinner_char is not None:
             return                          # streaming: ignore click
+        # Path-clickable header: open the file directly
+        if self._path_clickable and self._full_path:
+            event.prevent_default()
+            import sys
+            opener = "open" if sys.platform == "darwin" else "xdg-open"
+            try:
+                self.app._open_path_action(self, self._full_path, opener, False)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            return
         if not self._has_affordances:
             return                          # always-expanded block: nothing to toggle
         event.prevent_default()
@@ -481,6 +491,9 @@ class ToolBlock(Widget):
                         break
             if self._diff_file_path is None:
                 self._diff_file_path = _fallback
+            # Make header path-clickable so left-click opens the file
+            if self._diff_file_path:
+                self._header.set_path(self._diff_file_path)
 
     def compose(self) -> ComposeResult:
         yield self._header

@@ -7150,6 +7150,10 @@ class HermesCLI:
                     if _was_streaming and function_name not in _file_tools:
                         tui.call_from_thread(tui.remove_streaming_tool_block, tool_call_id)
                     plain = _plain_lines(display_lines)
+                    # Strip the CLI-only "review diff" header — not useful in TUI.
+                    if plain and plain[0].strip() == "review diff":
+                        display_lines = display_lines[1:]
+                        plain = plain[1:]
 
                     def _rerender_diff(_diff_text=diff_text):
                         rerendered: list[str] = []

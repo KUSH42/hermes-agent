@@ -276,6 +276,9 @@ class FileRenderer(BodyRenderer):
         Handles two formats:
         - Raw: '--- a/src/foo.py' / '+++ b/src/foo.py'
         - Rendered: 'a/src/foo.py → b/src/foo.py'
+
+        File paths are styled with underline to indicate they are interactive
+        (left-click opens via ToolHeader, right-click shows context menu).
         """
         stripped = plain.strip()
         # ---/+++ format: regex already strips a/ / b/ prefix; group 1 = "--- ", group 2 = path
@@ -289,8 +292,8 @@ class FileRenderer(BodyRenderer):
                 dir_part, fname = "", path_str
             t = Text(prefix, style="dim")
             if dir_part:
-                t.append(dir_part, style="dim")
-            t.append(fname, style="bold")
+                t.append(dir_part, style="dim underline")
+            t.append(fname, style="bold underline")
             return t
         # "old_path → new_path" rendered file header
         m2 = _DIFF_ARROW_RE.match(stripped)
@@ -305,7 +308,7 @@ class FileRenderer(BodyRenderer):
                 dir_part, fname = "", new_path
             prefix_str = m2.group(1) + " → " + (dir_part if dir_part else "")
             t = Text(prefix_str, style="dim")
-            t.append(fname, style="bold")
+            t.append(fname, style="bold underline")
             return t
         return None
 

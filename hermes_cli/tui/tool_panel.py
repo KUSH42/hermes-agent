@@ -430,6 +430,29 @@ class ToolPanel(Widget):
         if self._footer_pane is not None:
             show = self._should_show_footer(self.detail_level)
             self._footer_pane.styles.display = "block" if show else "none"
+        # Notify enclosing GroupHeader so it can refresh dot color + stats
+        self._notify_group_header()
+
+    def _notify_group_header(self) -> None:
+        """Find the GroupHeader for our group (if any) and refresh its stats."""
+        parent = self.parent
+        if parent is None:
+            return
+        group_id: str | None = None
+        for cls in self.classes:
+            if cls.startswith("group-id-"):
+                group_id = cls[9:]
+                break
+        if group_id is None:
+            return
+        try:
+            from hermes_cli.tui.tool_group import GroupHeader as _GH
+            for child in parent.children:
+                if isinstance(child, _GH) and child._group_id == group_id:
+                    child.refresh_stats()
+                    return
+        except Exception:
+            pass
 
     def copy_content(self) -> str:
         """Return full plain-text output regardless of detail level."""

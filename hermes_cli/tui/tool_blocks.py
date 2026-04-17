@@ -204,8 +204,7 @@ class ToolHeader(PulseMixin, Widget):
         else:
             gutter_w = 0
 
-        t.append("   ╌╌", style="dim")
-        dashes_w = 5
+        dashes_w = 0
 
         # --- Icon ---
         icon_str = self._tool_icon or ""

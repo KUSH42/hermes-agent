@@ -15,16 +15,21 @@ No widget is ever removed or remounted. Grouping is achieved via:
 from __future__ import annotations
 
 import os
+import re
 import time
 import uuid
 from typing import TYPE_CHECKING
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
 
 if TYPE_CHECKING:
     pass
+
+_BADGE_ADD_RE = re.compile(r"^\+(\d+)$")
+_BADGE_DEL_RE = re.compile(r"^-(\d+)$")
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +60,11 @@ class GroupHeader(Widget):
 
     Carries `_group_id` used by on_click to find and toggle member visibility.
     No DOM children relationship — members are siblings sharing a CSS class.
+
+    Layout: ▾ N tools · ● +12 -4  2.3s
+    - dot color: amber=streaming, red=any-error, green=all-ok
+    - diff stats: sum of +N/-N badges across all member ResultSummary
+    - duration: wall-clock from earliest start to latest completion (or now)
     """
 
     can_focus = True
@@ -64,11 +74,13 @@ class GroupHeader(Widget):
         height: 1;
         layout: horizontal;
         color: $text-muted;
-        padding: 0 1;
     }
     GroupHeader:focus { background: $accent 10%; }
     GroupHeader > .group-glyph { width: 1; margin-right: 1; }
     GroupHeader > .group-label { width: auto; }
+    GroupHeader > .group-sep   { width: auto; }
+    GroupHeader > .group-dot   { width: 1; margin: 0 1; }
+    GroupHeader > .group-stats { width: auto; }
     """
 
     COMPONENT_CLASSES = {"group-header--focused"}
@@ -78,12 +90,23 @@ class GroupHeader(Widget):
         self._group_id = group_id
         self._collapsed = False
         self._member_count = 0
+        self._glyph_widget: Static | None = None
+        self._label_widget: Static | None = None
+        self._sep_widget: Static | None = None
+        self._dot_widget: Static | None = None
+        self._stats_widget: Static | None = None
 
     def compose(self) -> ComposeResult:
         self._glyph_widget = Static("▾", classes="group-glyph")
         self._label_widget = Static("0 tools", classes="group-label")
+        self._sep_widget = Static(" · ", classes="group-sep")
+        self._dot_widget = Static("●", classes="group-dot")
+        self._stats_widget = Static("", classes="group-stats")
         yield self._glyph_widget
         yield self._label_widget
+        yield self._sep_widget
+        yield self._dot_widget
+        yield self._stats_widget
 
     def update_count(self, count: int) -> None:
         self._member_count = count
@@ -92,12 +115,87 @@ class GroupHeader(Widget):
         if label is not None and label.parent is not None:
             label.update(f"{count} {suffix}")
 
+    def refresh_stats(self) -> None:
+        """Recompute dot color and diff/duration stats from member ToolPanels."""
+        parent = self.parent
+        dot_w = getattr(self, "_dot_widget", None)
+        stats_w = getattr(self, "_stats_widget", None)
+        if parent is None or dot_w is None or stats_w is None:
+            return
+
+        class_name = f"group-id-{self._group_id}"
+        members = [c for c in parent.children if c.has_class(class_name)]
+        if not members:
+            return
+
+        any_streaming = any(getattr(m, "_completed_at", None) is None for m in members)
+        any_error = any(
+            getattr(getattr(m, "_result_summary", None), "is_error", False)
+            for m in members
+        )
+        if any_streaming:
+            dot_color = "#ffb347"  # amber
+        elif any_error:
+            dot_color = "#ef5350"  # red
+        else:
+            dot_color = "#66bb6a"  # green
+        dot_w.update(Text("●", style=f"bold {dot_color}"))
+
+        # Diff stat rollup — sum only +N/-N badges
+        total_add = 0
+        total_del = 0
+        for m in members:
+            rs = getattr(m, "_result_summary", None)
+            if rs is None:
+                continue
+            for badge in getattr(rs, "stat_badges", []):
+                ma = _BADGE_ADD_RE.match(badge)
+                if ma:
+                    total_add += int(ma.group(1))
+                    continue
+                md = _BADGE_DEL_RE.match(badge)
+                if md:
+                    total_del += int(md.group(1))
+
+        # Wall-clock duration: min(start) → max(completed) or now
+        start_times = [getattr(m, "_start_time", None) for m in members]
+        end_times = [getattr(m, "_completed_at", None) for m in members]
+        valid_starts = [t for t in start_times if t is not None]
+        if valid_starts:
+            min_start = min(valid_starts)
+            if any_streaming:
+                max_end = time.monotonic()
+            else:
+                valid_ends = [t for t in end_times if t is not None]
+                max_end = max(valid_ends) if valid_ends else time.monotonic()
+            duration_s = max_end - min_start
+            dur_str = f"  {duration_s:.1f}s"
+        else:
+            dur_str = ""
+
+        parts: list[str] = []
+        if total_add:
+            parts.append(f"+{total_add}")
+        if total_del:
+            parts.append(f"-{total_del}")
+        stats_text = Text()
+        for i, part in enumerate(parts):
+            if i > 0:
+                stats_text.append("  ")
+            if part.startswith("+"):
+                stats_text.append(part, style="green")
+            else:
+                stats_text.append(part, style="red")
+        if dur_str:
+            stats_text.append(dur_str, style="dim")
+        stats_w.update(stats_text)
+
     def on_mount(self) -> None:
-        # Render any count that arrived before compose() ran.
         suffix = "tools" if self._member_count != 1 else "tool"
         label = getattr(self, "_label_widget", None)
         if label is not None:
             label.update(f"{self._member_count} {suffix}")
+        self.refresh_stats()
 
     def on_click(self) -> None:
         self._collapsed = not self._collapsed
@@ -299,7 +397,7 @@ def _apply_group(
     new_panel.add_class(f"group-id-{group_id}")
     new_panel.add_class("tool-panel--grouped")
 
-    # Update GroupHeader member count
+    # Update GroupHeader member count and stats
     gh = _find_group_header(message_panel, group_id)
     if gh is not None:
         # new_panel not yet in message_panel.children (mounts after this returns),
@@ -309,3 +407,4 @@ def _apply_group(
             if c.has_class(f"group-id-{group_id}")
         ) + 1
         gh.update_count(count)
+        gh.refresh_stats()

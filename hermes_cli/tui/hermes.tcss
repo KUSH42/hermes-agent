@@ -507,6 +507,6 @@ GroupHeader {
     height: 1;
     color: $text-muted;
     background: $surface;
-    padding: 0 1;
+    padding: 0 1 0 2;
 }
 GroupHeader:focus { background: $accent 10%; }

@@ -52,6 +52,8 @@ _FILE_TOOL_NAMES: frozenset[str] = frozenset({
 _URL_SCHEMES: tuple[str, ...] = ("http://", "https://", "ftp://", "file://")
 _DIFF_PATH_RE = re.compile(r"^(?:---|\+\+\+)\s+(?:[ab]/)?(.+)$")
 _DIFF_HEADER_RE = re.compile(r"^((?:---|\+\+\+)\s+)(?:[ab]/)?(.+)$")
+# Rendered diff file-header line: "a/src/foo.py → b/src/foo.py" (after ANSI strip)
+_DIFF_ARROW_RE = re.compile(r"^(.+?)\s+→\s+(.+)$")
 
 
 def _safe_cell_width(s: str) -> int:
@@ -444,8 +446,8 @@ class ToolBlock(Widget):
             self._header.collapsed = False
             # _has_affordances is already False when line_count ≤ threshold
 
-        # Path-aware header for file tools
-        if tool_name in _FILE_TOOL_NAMES:
+        # Path-aware header for file tools — not for "diff"/"code"/"output" labels
+        if tool_name in _FILE_TOOL_NAMES and label not in ("diff", "code", "output"):
             self._header.set_path(label)
 
         # Diff body path parsing for context menu
@@ -453,16 +455,28 @@ class ToolBlock(Widget):
         if label == "diff":
             _fallback: str | None = None
             for line in self._plain_lines:
-                m = _DIFF_PATH_RE.match(line.strip())
+                stripped = line.strip()
+                # Raw ---/+++ format
+                m = _DIFF_PATH_RE.match(stripped)
                 if m:
                     candidate = m.group(1).strip()
                     if "/dev/null" in candidate:
                         continue
-                    if line.strip().startswith("+++"):
+                    if stripped.startswith("+++"):
                         self._diff_file_path = candidate
                         break
                     if _fallback is None:
                         _fallback = candidate
+                    continue
+                # Rendered "old_path → new_path" format (from render_captured_diff_preview)
+                m2 = _DIFF_ARROW_RE.match(stripped)
+                if m2:
+                    new_path = m2.group(2).strip()
+                    if new_path.startswith("b/"):
+                        new_path = new_path[2:]
+                    if "/dev/null" not in new_path and new_path:
+                        self._diff_file_path = new_path
+                        break
             if self._diff_file_path is None:
                 self._diff_file_path = _fallback
 
@@ -476,21 +490,43 @@ class ToolBlock(Widget):
             self._body.add_class("expanded")
 
     def _render_diff_line(self, plain: str) -> "Text | None":
-        """Return styled Rich Text for diff +++ / --- path lines, else None."""
-        m = _DIFF_HEADER_RE.match(plain.strip())
-        if not m:
-            return None
-        prefix, path_str = m.group(1), m.group(2).strip()
-        path_parts = path_str.rsplit("/", 1)
-        if len(path_parts) == 2 and path_parts[0]:
-            dir_part, fname = path_parts[0] + "/", path_parts[1]
-        else:
-            dir_part, fname = "", path_str
-        t = Text(prefix, style="dim")
-        if dir_part:
-            t.append(dir_part, style="dim")
-        t.append(fname, style="bold")
-        return t
+        """Return styled Rich Text for diff path lines, else None.
+
+        Handles two formats:
+        - Raw: '--- a/src/foo.py' / '+++ b/src/foo.py'
+        - Rendered: 'a/src/foo.py → b/src/foo.py' (from render_captured_diff_preview)
+        """
+        stripped = plain.strip()
+        # ---/+++ format (raw unified diff)
+        m = _DIFF_HEADER_RE.match(stripped)
+        if m:
+            prefix, path_str = m.group(1), m.group(2).strip()
+            path_parts = path_str.rsplit("/", 1)
+            if len(path_parts) == 2 and path_parts[0]:
+                dir_part, fname = path_parts[0] + "/", path_parts[1]
+            else:
+                dir_part, fname = "", path_str
+            t = Text(prefix, style="dim")
+            if dir_part:
+                t.append(dir_part, style="dim")
+            t.append(fname, style="bold")
+            return t
+        # "old_path → new_path" rendered file header
+        m2 = _DIFF_ARROW_RE.match(stripped)
+        if m2:
+            new_path = m2.group(2).strip()
+            if new_path.startswith("b/"):
+                new_path = new_path[2:]
+            parts = new_path.rsplit("/", 1)
+            if len(parts) == 2 and parts[0]:
+                dir_part, fname = parts[0] + "/", parts[1]
+            else:
+                dir_part, fname = "", new_path
+            prefix_str = m2.group(1) + " → " + (dir_part if dir_part else "")
+            t = Text(prefix_str, style="dim")
+            t.append(fname, style="bold")
+            return t
+        return None
 
     def _render_body(self) -> None:
         try:

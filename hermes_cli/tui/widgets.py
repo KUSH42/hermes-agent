@@ -1015,6 +1015,8 @@ class MessagePanel(Widget):
             rerender_fn=rerender_fn,
             header_stats=header_stats,
         )
+        if label == "diff":
+            block._header._compact_tail = True  # stats/toggle/timer inline after label
         if label == "diff" and self._last_file_tool_block is not None:
             block._header._is_child_diff = True
         self._mount_nonprose_block(block)
@@ -1068,6 +1070,9 @@ class StreamingCodeBlock(Widget):
         margin-top: 1;
         margin-bottom: 1;
     }
+    StreamingCodeBlock.--copy-flash {
+        border: tall $accent;
+    }
     """
     _content_type: str = "code"
 
@@ -1085,15 +1090,12 @@ class StreamingCodeBlock(Widget):
         self._code_lines: list[str] = []
         self._resolved_lang: str | None = None
         self._log = CopyableRichLog(markup=False)
-        self._footer = CodeBlockFooter(classes="code-block-footer")
-        self._footer.styles.display = "none"
         self._collapsed = False
         self._copy_flash = False
         self._controls_text_plain = ""
 
     def compose(self) -> ComposeResult:
         yield self._log
-        yield self._footer
 
     # ------------------------------------------------------------------
     # Streaming phase
@@ -1139,13 +1141,15 @@ class StreamingCodeBlock(Widget):
         self.add_class("--complete")
         self.call_after_refresh(self._finalize_syntax, dict(skin_vars))
 
-    def _finalize_syntax(self, skin_vars: dict[str, str]) -> None:
+    def _render_syntax(self, skin_vars: dict[str, str] | None = None) -> None:
+        """Render code as rich.Syntax with line numbers. Shared by COMPLETE and FLUSHED."""
         from rich.syntax import Syntax
         from hermes_cli.tui.response_flow import _detect_lang
+        vars = skin_vars or (self.app.get_css_variables() if self.app else {})
         code = "\n".join(self._display_code_lines())
         lang = self._resolved_lang or self._lang or _detect_lang(code)
         self._resolved_lang = lang
-        self._pygments_theme = skin_vars.get("preview-syntax-theme", self._pygments_theme)
+        self._pygments_theme = vars.get("preview-syntax-theme", self._pygments_theme)
         syntax = Syntax(
             code,
             lexer=lang,
@@ -1153,24 +1157,29 @@ class StreamingCodeBlock(Widget):
             line_numbers=True,
             word_wrap=False,
             indent_guides=False,
-            background_color=skin_vars.get("app-bg", "#1e1e1e"),
+            background_color=vars.get("app-bg", "#1e1e1e"),
         )
         self._log.clear()
         if not self._collapsed:
             self._log.write_with_source(syntax, code)  # type: ignore[arg-type]
-        self._sync_footer()
+        self._update_controls()
         self.refresh(layout=True)
+
+    def _finalize_syntax(self, skin_vars: dict[str, str]) -> None:
+        """COMPLETE path — delegates to shared _render_syntax."""
+        self._render_syntax(skin_vars)
 
     # ------------------------------------------------------------------
     # Partial fence (turn ended before fence closed)
     # ------------------------------------------------------------------
 
     def flush(self) -> None:
-        """Turn ended before fence closed. Commit as plain text; no re-render."""
+        """Turn ended before fence closed. Finalize with rich.Syntax same as COMPLETE."""
         if self._state != "STREAMING":
             return
         self._state = "FLUSHED"
         self.add_class("--flushed")
+        self.add_class("--complete")
         self._render_flushed_content()
 
     def copy_content(self) -> str:
@@ -1180,73 +1189,50 @@ class StreamingCodeBlock(Widget):
     def refresh_skin(self, css_vars: dict[str, str]) -> None:
         """Refresh theme-dependent rendering without remounting the widget."""
         self._pygments_theme = css_vars.get("preview-syntax-theme", self._pygments_theme)
-        if self._state == "COMPLETE":
-            self._finalize_syntax(css_vars)
-        elif self._state == "FLUSHED":
-            self._sync_footer()
+        if self._state in ("COMPLETE", "FLUSHED"):
+            self._render_syntax(css_vars)
 
     def toggle_collapsed(self) -> None:
         """Collapse/expand code body after the block is complete/flushed."""
         if self._state == "STREAMING" or not self.can_toggle():
             return
         self._collapsed = not self._collapsed
-        if self._state == "COMPLETE":
-            self._finalize_syntax(self.app.get_css_variables())
-        else:
-            self._render_flushed_content()
+        self._render_syntax()
 
     def can_toggle(self) -> bool:
         """Only completed multi-line code blocks get a collapse affordance."""
         return self._state != "STREAMING" and len(self._code_lines) > 1
 
     def flash_copy(self) -> None:
-        """Flash copy confirmation in controls row."""
+        """Flash copy confirmation via border highlight."""
+        self.add_class("--copy-flash")
         self._copy_flash = True
-        if self._state == "COMPLETE":
-            self._finalize_syntax(self.app.get_css_variables())
-        elif self._state == "FLUSHED":
-            self._render_flushed_content()
         self.set_timer(1.5, self._end_copy_flash)
 
     def _end_copy_flash(self) -> None:
+        self.remove_class("--copy-flash")
         self._copy_flash = False
-        if self._state == "COMPLETE":
-            self._finalize_syntax(self.app.get_css_variables())
-        elif self._state == "FLUSHED":
-            self._render_flushed_content()
 
-    def _controls_text(self) -> Text:
-        label = "✓ copied" if self._copy_flash else "⎘ copy"
-        t = Text(" ")
-        t.append(label, style="dim")
+    def _update_controls(self) -> None:
+        """Update _controls_text_plain for backward compat (tests)."""
         if self.can_toggle():
-            t.append("  ·  ", style="dim")
+            t = Text(" ")
             t.append("expand" if self._collapsed else "collapse", style="dim")
-        self._controls_text_plain = t.plain
-        return t
+            self._controls_text_plain = t.plain
+        else:
+            self._controls_text_plain = ""
 
-    def _sync_footer(self) -> None:
-        copy_label = "✓ copy" if self._copy_flash else "⎘ copy"
-        toggle_label = "expand" if (self.can_toggle() and self._collapsed) else (
-            "collapse" if self.can_toggle() else None
-        )
-        self._footer.set_actions(copy_label=copy_label, toggle_label=toggle_label)
-        self._controls_text()
-        self._footer.styles.display = "none" if self._state == "STREAMING" else "block"
-        self._footer.refresh(layout=True)
+    def on_click(self, event: Any) -> None:
+        """Left click toggles expand/collapse on finalized blocks."""
+        if getattr(event, "button", 1) != 1:
+            return
+        if self.can_toggle():
+            self.toggle_collapsed()
+            event.prevent_default()
 
     def _render_flushed_content(self) -> None:
-        self._log.clear()
-        if not self._collapsed:
-            for line in self._display_code_lines():
-                highlighted = self._highlight_line(line, self._lang)
-                for wrapped_line in _prewrap_code_line(highlighted, source_line=line):
-                    self._log.write_with_source(
-                        Text.from_ansi(wrapped_line),
-                        _strip_ansi(wrapped_line),
-                    )
-        self._sync_footer()
-        self.refresh(layout=True)
+        """FLUSHED path — delegates to shared _render_syntax (same visual as COMPLETE)."""
+        self._render_syntax()
 
     def _display_code_lines(self) -> list[str]:
         """Normalize code lines for display/copy, stripping duplicate model-added gutters."""
@@ -3289,6 +3275,98 @@ class TurnCandidate:
     entry: "_TurnEntry | None" = field(default=None)
 
 
+@dataclass(frozen=True)
+class _SearchResult:
+    """Result from _substring_search — carries match metadata for rendering."""
+    entry: _TurnEntry
+    match_spans: tuple[tuple[int, int], ...]  # relative to search_text
+    first_match_offset: int
+
+
+def _substring_search(
+    query: str,
+    entries: list[_TurnEntry],
+    limit: int = 20,
+) -> list[_SearchResult]:
+    """Casefolded contiguous substring search with span tracking.
+
+    Searches combined user+assistant text.  Returns results sorted by:
+    1. Match count × 10 + word-boundary bonus (5) + char-0 bonus (2)
+    2. Recency (newer wins on tie)
+    """
+    needle = query.casefold()
+    results: list[tuple[_TurnEntry, list[tuple[int, int]], int]] = []
+    for entry in entries:
+        haystack = entry.search_text.casefold()
+        spans: list[tuple[int, int]] = []
+        offset = 0
+        while True:
+            pos = haystack.find(needle, offset)
+            if pos == -1:
+                break
+            spans.append((pos, pos + len(needle)))
+            offset = pos + len(needle)  # no overlap
+        if spans:
+            score = len(spans) * 10
+            first = spans[0][0]
+            if first == 0 or entry.search_text[first - 1] in " \n\t/._-":
+                score += 5
+            results.append((entry, spans, score))
+    results.sort(key=lambda r: (-r[2], -r[0].index))
+    return [
+        _SearchResult(entry=e, match_spans=tuple(s), first_match_offset=s[0][0])
+        for e, s, _ in results[:limit]
+    ]
+
+
+def _highlight_spans(text: str, spans: tuple[tuple[int, int], ...]) -> str:
+    """Wrap matched character spans in Rich markup for accent highlighting."""
+    if not spans:
+        return _escape_markup(text)
+    parts: list[str] = []
+    prev = 0
+    for start, end in sorted(spans):
+        if start > prev:
+            parts.append(_escape_markup(text[prev:start]))
+        parts.append(f"[bold $accent]{_escape_markup(text[start:end:])}[/]")
+        prev = end
+    if prev < len(text):
+        parts.append(_escape_markup(text[prev:]))
+    return "".join(parts)
+
+
+def _escape_markup(text: str) -> str:
+    """Escape Rich markup brackets so raw user text renders literally."""
+    return text.replace("[", r"\[").replace("]", r"\]")
+
+
+def _extract_snippet(
+    search_text: str,
+    match_spans: tuple[tuple[int, int], ...],
+    context_chars: int = 40,
+) -> str:
+    """Extract a context window around the first match with accent highlighting."""
+    if not match_spans:
+        raw = search_text[:80]
+        suffix = "…" if len(search_text) > 80 else ""
+        return _escape_markup(raw) + suffix
+    first_start = match_spans[0][0]
+    last_end = match_spans[-1][1]
+    window_start = max(0, first_start - context_chars)
+    window_end = min(len(search_text), last_end + context_chars)
+    # Collapse to single line — strip internal newlines for compact display
+    snippet_raw = search_text[window_start:window_end].replace("\n", " ")
+    # Offset spans into local snippet coordinates
+    local_spans = tuple(
+        (s - window_start, e - window_start)
+        for s, e in match_spans
+        if s >= window_start and e <= window_end
+    )
+    prefix = "…" if window_start > 0 else ""
+    suffix = "…" if window_end < len(search_text) else ""
+    return prefix + _highlight_spans(snippet_raw, local_spans) + suffix
+
+
 def _turn_result_label(entry: "_TurnEntry | None") -> str:
     """Build the Rich-markup label for a TurnResultItem row."""
     if not entry:
@@ -3299,25 +3377,47 @@ def _turn_result_label(entry: "_TurnEntry | None") -> str:
     return f"[dim]\\[turn {entry.index:>3}][/dim]  {truncated}"
 
 
+def _build_result_label(result: "_SearchResult | None") -> str:
+    """Build multi-line Rich-markup label for TurnResultItem with match context."""
+    if result is None:
+        return ""
+    entry = result.entry
+    # Row 1: turn header + first line of user text (escaped)
+    user_first = entry.user_text.split("\n", 1)[0]
+    if len(user_first) > 72:
+        user_first = user_first[:72] + "…"
+    header = f"[dim]\\[turn {entry.index:>3}][/dim]  {_escape_markup(user_first)}"
+    # Row 2: context snippet with match highlighting
+    snippet = _extract_snippet(entry.search_text, result.match_spans)
+    return f"{header}\n  {snippet}"
+
+
 class TurnResultItem(Static):
-    """Single row in the history search result list."""
+    """Single row in the history search result list — multi-line with match context."""
 
     DEFAULT_CSS = """
-    TurnResultItem { height: 1; padding: 0 1; }
+    TurnResultItem { height: auto; min-height: 2; max-height: 4; padding: 0 1; }
     TurnResultItem.--selected { background: $accent 20%; }
     TurnResultItem:hover { background: $accent 10%; }
     """
 
-    def __init__(self, entry: "_TurnEntry | None", **kwargs: Any) -> None:
-        self._entry = entry
-        super().__init__(_turn_result_label(entry), **kwargs)
+    def __init__(self, result: "_SearchResult | None", **kwargs: Any) -> None:
+        self._result = result
+        self._entry = result.entry if result else None
+        super().__init__(_build_result_label(result), **kwargs)
+
+    def update_from(self, result: "_SearchResult | None") -> None:
+        """Update in-place without DOM add/remove."""
+        self._result = result
+        self._entry = result.entry if result else None
+        self.update(_build_result_label(result))
 
     def on_click(self, event: Any) -> None:
         """Clicking a result row jumps to the turn."""
         if event.button == 1:
             try:
                 overlay = self.app.query_one(HistorySearchOverlay)
-                overlay.action_jump_to(self._entry)
+                overlay.action_jump_to(self._entry, self._result)
             except NoMatches:
                 pass
 
@@ -3447,7 +3547,8 @@ class HistorySearchOverlay(Widget):
         max-width: 90;
         min-width: 40;
         height: auto;
-        max-height: 16;
+        max-height: 50%;
+        min-height: 8;
         display: none;
         background: $surface;
         border: tall $primary 15%;
@@ -3473,6 +3574,7 @@ class HistorySearchOverlay(Widget):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._index: list[_TurnEntry] = []
+        self._current_results: list[_SearchResult] = []
         self._selected_idx: int = 0
         self._saved_hint: str = ""
         self._debounce_handle: Any = None  # Timer | None; cancelled on each new keystroke
@@ -3562,48 +3664,45 @@ class HistorySearchOverlay(Widget):
         self._debounce_handle = self.set_timer(0.15, lambda: self._render_results(query))
 
     def _render_results(self, query: str) -> None:
-        """Apply contiguous substring filtering and update the result list.
+        """Search with match highlighting and update the result list.
 
         Reuses existing TurnResultItem widgets when the result count is
-        unchanged (update-in-place via Static.update()).  Only adds or removes
+        unchanged (update-in-place via update_from()).  Only adds or removes
         widgets when the count changes, cutting DOM churn on stable queries.
         """
         self._debounce_handle = None
-        # Cap at 15: overlay max-height 18 minus input + status rows = ~16 visible.
-        # Rendering more than fits is wasted DOM work.
-        entries = list(self._index)
+        # Scored search with span tracking; cap at 20 results.
         if query:
-            needle = query.casefold()
-            entries = [entry for entry in entries if needle in entry.search_text.casefold()]
-        results = entries[:15]
+            search_results = _substring_search(query, self._index, limit=20)
+        else:
+            # No query: show all entries newest-first, no match spans
+            search_results = [
+                _SearchResult(entry=e, match_spans=(), first_match_offset=0)
+                for e in self._index[:20]
+            ]
+        self._current_results = search_results
         try:
             result_list = self.query_one("#history-result-list", VerticalScroll)
         except NoMatches:
             return
 
         existing = list(result_list.query(TurnResultItem))
-        new_count = len(results)
+        new_count = len(search_results)
         old_count = len(existing)
 
         if new_count == old_count:
-            # Common case: same number of results — update in place, zero DOM add/remove.
-            for widget, entry in zip(existing, results):
-                widget._entry = entry
-                widget.update(_turn_result_label(entry))
+            for widget, result in zip(existing, search_results):
+                widget.update_from(result)
         elif new_count < old_count:
-            # Fewer results: update kept widgets, remove the tail.
-            for widget, entry in zip(existing[:new_count], results):
-                widget._entry = entry
-                widget.update(_turn_result_label(entry))
+            for widget, result in zip(existing[:new_count], search_results):
+                widget.update_from(result)
             for widget in existing[new_count:]:
                 widget.remove()
         else:
-            # More results: update existing, mount only the new additions.
-            for widget, entry in zip(existing, results[:old_count]):
-                widget._entry = entry
-                widget.update(_turn_result_label(entry))
-            new_items = [TurnResultItem(entry) for entry in results[old_count:]]
-            result_list.mount(*new_items)
+            for widget, result in zip(existing, search_results[:old_count]):
+                widget.update_from(result)
+            new_items = [TurnResultItem(r) for r in search_results[old_count:]]
+            result_list.mount_all(new_items)
 
         self._selected_idx = max(0, min(self._selected_idx, new_count - 1))
         self.call_after_refresh(self._update_selection)
@@ -3611,9 +3710,12 @@ class HistorySearchOverlay(Widget):
         # Status line
         total = len(self._index)
         try:
-            if results or total == 0:
+            if search_results or total == 0:
+                shown = len(search_results)
+                sel = min(self._selected_idx + 1, shown) if shown else 0
                 status_text = (
-                    f"[dim]{len(results)} of {total} turn{'s' if total != 1 else ''}[/dim]"
+                    f"[dim]{sel}/{shown} shown · "
+                    f"{total} turn{'s' if total != 1 else ''} indexed[/dim]"
                 )
             else:
                 status_text = (
@@ -3648,24 +3750,43 @@ class HistorySearchOverlay(Widget):
             self.action_dismiss()
             return
         idx = max(0, min(self._selected_idx, len(items) - 1))
+        result = items[idx]._result
         entry = items[idx]._entry
         self.action_dismiss()
         if entry is None:
             return
-        panel = entry.panel
-        panel.scroll_visible(animate=True)
-        panel.add_class("--highlighted")
-        panel.set_timer(0.5, lambda: panel.remove_class("--highlighted"))
+        self._scroll_to_match(entry, result)
 
-    def action_jump_to(self, entry: "_TurnEntry | None") -> None:
+    def action_jump_to(
+        self,
+        entry: "_TurnEntry | None",
+        result: "_SearchResult | None" = None,
+    ) -> None:
         """Jump directly to a specific entry (used by TurnResultItem click)."""
         self.action_dismiss()
         if entry is None:
             return
+        self._scroll_to_match(entry, result)
+
+    def _scroll_to_match(
+        self,
+        entry: _TurnEntry,
+        result: "_SearchResult | None",
+    ) -> None:
+        """Scroll to panel, flash highlight, deep-scroll into matched region."""
         panel = entry.panel
         panel.scroll_visible(animate=True)
         panel.add_class("--highlighted")
         panel.set_timer(0.5, lambda: panel.remove_class("--highlighted"))
+        # Deep scroll: if match is deep in assistant text, scroll into it
+        if result and result.first_match_offset > 0:
+            try:
+                log = panel.query_one(CopyableRichLog)
+                lines_before = entry.search_text[:result.first_match_offset].count("\n")
+                if lines_before > 5:
+                    log.scroll_to(0, lines_before - 2, animate=True)
+            except NoMatches:
+                pass
 
     def on_resize(self) -> None:
         """Re-render results to update truncation width after terminal resize."""

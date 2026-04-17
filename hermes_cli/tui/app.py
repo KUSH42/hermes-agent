@@ -1655,8 +1655,7 @@ class HermesApp(App):
             msg = output.current_message or output.new_message()
             block = WriteFileBlock(path=path)
             msg._mount_nonprose_block(block)
-            if path:
-                msg._last_file_tool_block = block
+            msg._last_file_tool_block = block  # always set — write_file is a file tool
             self._browse_total += 1
             if not output._user_scrolled_up:
                 self.call_after_refresh(output.scroll_end, animate=False)

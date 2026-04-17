@@ -1700,6 +1700,15 @@ class ReasoningPanel(Widget):
         self._plain_lines: list[str] = []
         self._is_closed: bool = False
         self._body_collapsed: bool = False
+        self._reasoning_engine = None  # set in on_mount when MARKDOWN_ENABLED
+
+    def on_mount(self) -> None:
+        from hermes_cli.tui.response_flow import MARKDOWN_ENABLED, ReasoningFlowEngine
+        if MARKDOWN_ENABLED:
+            engine = ReasoningFlowEngine(panel=self)
+            engine._skin_vars = self.app.get_css_variables()
+            engine._pygments_theme = engine._skin_vars.get("preview-syntax-theme", "monokai")
+            self._reasoning_engine = engine
 
     def compose(self) -> ComposeResult:
         yield self._collapsed_stub
@@ -1749,10 +1758,11 @@ class ReasoningPanel(Widget):
     def open_box(self, title: str) -> None:
         """Show the reasoning panel."""
         self._live_buf = ""
+        # Only clear the log if no content committed yet.
+        # Guard prevents wiping content when open_box fires after early deltas (race).
+        if not self._plain_lines:
+            self._reasoning_log.clear()
         self._plain_lines.clear()
-        # Clear RichLog to prevent stale deferred renders from a previous
-        # session leaking into the new one when the panel is reused.
-        self._reasoning_log.clear()
         self._is_closed = False
         self._body_collapsed = False
         self._live_line.styles.display = "none"
@@ -1761,6 +1771,16 @@ class ReasoningPanel(Widget):
         self.remove_class("--collapsed")
         self._sync_collapsed_state()
         self.add_class("visible")
+        if self._reasoning_engine is not None:
+            from agent.rich_output import StreamingBlockBuffer
+            self._reasoning_engine._block_buf = StreamingBlockBuffer()
+            self._reasoning_engine._state = "NORMAL"
+            self._reasoning_engine._active_block = None
+            self._reasoning_engine._pending_source_line = None
+            self._reasoning_engine._pending_code_intro = False
+            self._reasoning_engine._list_cont_indent = ""
+            self._reasoning_engine._fence_char = "`"
+            self._reasoning_engine._fence_depth = 3
         # Force a layout refresh so the RichLog receives a Resize event and
         # sets _size_known=True, enabling deferred writes to be committed.
         self.call_after_refresh(self.refresh, layout=True)
@@ -1770,16 +1790,17 @@ class ReasoningPanel(Widget):
 
         Buffers partial lines and commits on newlines so the RichLog
         shows complete lines while still updating in real-time.
-        Each committed line gets a ``▌`` gutter prefix.
+        Each committed line gets dim italic styling (via engine or gutter fallback).
         """
         self._live_buf += text
-        log = self._reasoning_log
-        # Commit complete lines
         while "\n" in self._live_buf:
             line, self._live_buf = self._live_buf.split("\n", 1)
-            log.write(self._gutter_line(line), expand=True)
-            self._plain_lines.append(line)
-        if log._deferred_renders:
+            if self._reasoning_engine is not None:
+                self._reasoning_engine.process_line(line)
+            else:
+                self._reasoning_log.write(self._gutter_line(line), expand=True)
+                self._plain_lines.append(line)
+        if self._reasoning_log._deferred_renders:
             self.call_after_refresh(self.refresh, layout=True)
         if self._live_buf:
             self._live_line.update(self._gutter_line(self._live_buf))
@@ -1791,12 +1812,17 @@ class ReasoningPanel(Widget):
 
     def close_box(self) -> None:
         """Flush remaining buffer and activate collapse affordance."""
-        # Flush any partial line
         buf = self._live_buf
         if buf:
-            self._reasoning_log.write(self._gutter_line(buf), expand=True)
-            self._plain_lines.append(buf)
+            if self._reasoning_engine is not None:
+                self._reasoning_engine.process_line(buf)
+                self._reasoning_engine.flush()
+            else:
+                self._reasoning_log.write(self._gutter_line(buf), expand=True)
+                self._plain_lines.append(buf)
             self._live_buf = ""
+        elif self._reasoning_engine is not None:
+            self._reasoning_engine.flush()
         if self._reasoning_log._deferred_renders:
             self.call_after_refresh(self.refresh, layout=True)
         self._live_line.styles.display = "none"

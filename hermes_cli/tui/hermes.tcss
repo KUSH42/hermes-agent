@@ -97,6 +97,17 @@ ReasoningPanel.--closeable:hover {
     background: $accent 5%;
 }
 
+/* Reasoning panel code blocks — dimmed to match reasoning prose */
+ReasoningPanel StreamingCodeBlock {
+    opacity: 0.7;
+    border: round $surface-darken-2;
+    margin: 0 0 1 2;
+}
+
+ReasoningPanel StreamingCodeBlock .code-block-footer {
+    color: $text-muted;
+}
+
 /* --- Input rule separator ---
  * TitledRule manages all its own colors via _live_colors() + inline Rich styles.
  * No CSS color override needed here — it would conflict with the inline styles. */
@@ -428,6 +439,8 @@ DrawilleOverlay > .drawille-overlay--canvas {
 
 AnimConfigPanel {
     layer: overlay;
+    align: right top;
+    margin: 1 1 0 0;
     border: round $surface-darken-2;
     background: $surface;
     color: $text;

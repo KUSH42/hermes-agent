@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Literal
 from rich.text import Text
 
 if TYPE_CHECKING:
-    from hermes_cli.tui.widgets import CopyableBlock, CopyableRichLog, MessagePanel, StreamingCodeBlock
+    from hermes_cli.tui.widgets import CopyableBlock, CopyableRichLog, MessagePanel, ReasoningPanel, StreamingCodeBlock
 
 # ---------------------------------------------------------------------------
 # Module-level configuration
@@ -198,6 +198,36 @@ def _apply_cont_indent(line: str, indent: str, width: int = _LIST_WRAP_WIDTH) ->
     if cur:
         out_lines.append(cur)
     return "\n".join(out_lines)
+
+
+# ---------------------------------------------------------------------------
+# _DimRichLogProxy
+# ---------------------------------------------------------------------------
+
+class _DimRichLogProxy:
+    """Proxy around CopyableRichLog that injects dim italic on every prose write.
+
+    Used by ReasoningFlowEngine so ResponseFlowEngine.process_line() logic
+    runs unchanged, but every write_with_source() call wraps text in dim italic
+    and appends to panel._plain_lines instead of the log's internal list.
+    """
+
+    def __init__(self, real_log: "CopyableRichLog", plain_list: list[str]) -> None:
+        self._log = real_log
+        self._plain_list = plain_list
+
+    def write_with_source(self, text: "Text", plain: str) -> None:
+        from rich.text import Text as RichText
+        wrapped = RichText(style="dim italic")
+        wrapped.append_text(text)
+        self._log.write(wrapped, expand=True)
+        self._plain_list.append(plain)
+
+    def write(self, renderable, **kw) -> None:
+        self._log.write(renderable, **kw)
+
+    def __getattr__(self, name: str):
+        return getattr(self._log, name)
 
 
 # ---------------------------------------------------------------------------
@@ -487,12 +517,16 @@ class ResponseFlowEngine:
                 plain = _strip_ansi(inline_ansi)
                 self._prose_log.write_with_source(Text.from_ansi(inline_ansi), plain)
 
+    def _mount_code_block(self, block: "StreamingCodeBlock") -> None:
+        """Mount block into output DOM. Override in subclasses."""
+        self._panel._mount_nonprose_block(block)
+
     def _open_code_block(self, lang: str) -> "StreamingCodeBlock":
         """Mount a StreamingCodeBlock in timeline order and retarget prose."""
         from hermes_cli.tui.widgets import StreamingCodeBlock
 
         block = StreamingCodeBlock(lang=lang, pygments_theme=self._pygments_theme)
-        self._panel._mount_nonprose_block(block)
+        self._mount_code_block(block)
         self._active_block = block
         self._sync_prose_log()
         return block
@@ -504,3 +538,63 @@ class ResponseFlowEngine:
             block.append_line(line)
         self._active_block = None
         self._panel.call_after_refresh(block.complete, dict(self._skin_vars))
+
+
+# ---------------------------------------------------------------------------
+# ReasoningFlowEngine
+# ---------------------------------------------------------------------------
+
+class ReasoningFlowEngine(ResponseFlowEngine):
+    """ResponseFlowEngine variant for ReasoningPanel.
+
+    Key differences vs ResponseFlowEngine:
+    - _prose_log is a _DimRichLogProxy — all prose writes get dim italic
+    - _sync_prose_log is a no-op (proxy is stable; no section switching)
+    - Code blocks mounted inside ReasoningPanel, not MessagePanel
+    - _emit_rule writes directly to _reasoning_log (no _plain_lines proxy needed)
+    """
+
+    def __init__(self, *, panel: "ReasoningPanel") -> None:  # type: ignore[override]
+        from agent.rich_output import StreamingBlockBuffer
+        self._panel = panel  # type: ignore[assignment]
+        self._prose_log: _DimRichLogProxy = _DimRichLogProxy(  # type: ignore[assignment]
+            panel._reasoning_log, panel._plain_lines
+        )
+        self._skin_vars: dict[str, str] = {}
+        self._pygments_theme: str = "monokai"
+        self._block_buf: StreamingBlockBuffer = StreamingBlockBuffer()
+        self._state: Literal["NORMAL", "IN_CODE", "IN_INDENTED_CODE", "IN_SOURCE_LIKE"] = "NORMAL"
+        self._fence_char: str = "`"
+        self._fence_depth: int = 3
+        self._active_block: "StreamingCodeBlock | None" = None
+        self._pending_source_line: str | None = None
+        self._pending_code_intro: bool = False
+        self._prose_section_counter: int = 0
+        self._list_cont_indent: str = ""
+
+    def process_line(self, raw: str) -> None:
+        """Override: flush block buffer immediately after every line.
+
+        ResponseFlowEngine keeps one line pending in StreamingBlockBuffer for
+        setext/table lookahead, which causes visible lag during streaming and a
+        flash in typewriter mode (content disappears from live_line before
+        appearing in the log).  Flushing after every call eliminates the lag.
+        Tradeoff: setext headings render as prose + HR; tables as plain rows.
+        Both are rare in reasoning output.
+        """
+        super().process_line(raw)
+        self._flush_block_buf()
+
+    def _sync_prose_log(self) -> None:
+        """No-op — proxy is stable; ReasoningPanel has one log section."""
+        pass
+
+    def _mount_code_block(self, block: "StreamingCodeBlock") -> None:
+        """Mount dim code block inside ReasoningPanel, above the live line."""
+        block.add_class("reasoning-code-block")
+        self._panel.mount(block, before=self._panel._live_line)
+
+    def _emit_rule(self) -> None:
+        from rich.rule import Rule as RichRule
+        self._panel._reasoning_log.write(RichRule(style="dim"))
+        self._panel._plain_lines.append("---")

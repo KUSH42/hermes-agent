@@ -6,7 +6,7 @@ import pytest
 from rich.console import Console
 
 from hermes_cli.tui.app import HermesApp
-from hermes_cli.tui.widgets import OutputPanel, ReasoningPanel, _safe_widget_call
+from hermes_cli.tui.widgets import OutputPanel, ReasoningPanel, StreamingCodeBlock, _safe_widget_call
 from textual.widgets import RichLog
 
 
@@ -424,3 +424,282 @@ async def test_startup_message_panel_hides_response_rule():
         await pilot.pause()
 
         assert not msg._response_rule.has_class("visible")
+
+
+# ---------------------------------------------------------------------------
+# ReasoningFlowEngine — 15 new tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_reasoning_engine_created_on_mount():
+    """ReasoningFlowEngine is created in on_mount when HERMES_MARKDOWN=1."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        msg = _ensure_message(app)
+        rp = msg.reasoning  # trigger lazy mount
+        await pilot.pause()  # let on_mount fire
+        assert rp._reasoning_engine is not None
+
+
+@pytest.mark.asyncio
+async def test_reasoning_engine_absent_when_disabled(monkeypatch):
+    """No engine created when HERMES_MARKDOWN is disabled."""
+    monkeypatch.setattr("hermes_cli.tui.response_flow.MARKDOWN_ENABLED", False)
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        msg = _ensure_message(app)
+        rp = msg.reasoning  # trigger lazy mount
+        await pilot.pause()  # let on_mount fire
+        assert rp._reasoning_engine is None
+
+
+@pytest.mark.asyncio
+async def test_inline_bold_in_reasoning():
+    """Bold markdown processed — raw ** not in plain_lines."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        msg = _ensure_message(app)
+        rp = msg.reasoning  # trigger lazy mount
+        await pilot.pause()  # let on_mount fire
+        rp.open_box("Reasoning")
+        rp.append_delta("**bold text**\n")
+        await pilot.pause()
+        assert len(rp._plain_lines) >= 1
+        assert "**" not in rp._plain_lines[0]
+
+
+@pytest.mark.asyncio
+async def test_inline_code_in_reasoning():
+    """Inline code backticks stripped from plain_lines."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        msg = _ensure_message(app)
+        rp = msg.reasoning  # trigger lazy mount
+        await pilot.pause()  # let on_mount fire
+        rp.open_box("Reasoning")
+        rp.append_delta("`mycode`\n")
+        await pilot.pause()
+        assert len(rp._plain_lines) >= 1
+        assert "`" not in rp._plain_lines[0]
+
+
+@pytest.mark.asyncio
+async def test_heading_in_reasoning():
+    """Heading ## stripped from plain_lines by markdown processing."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        msg = _ensure_message(app)
+        rp = msg.reasoning  # trigger lazy mount
+        await pilot.pause()  # let on_mount fire
+        rp.open_box("Reasoning")
+        rp.append_delta("## My Heading\n")
+        await pilot.pause()
+        assert len(rp._plain_lines) >= 1
+        assert not rp._plain_lines[0].startswith("##")
+
+
+@pytest.mark.asyncio
+async def test_list_item_in_reasoning():
+    """List item processed — plain_lines has content (not raw '- item')."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        msg = _ensure_message(app)
+        rp = msg.reasoning  # trigger lazy mount
+        await pilot.pause()  # let on_mount fire
+        rp.open_box("Reasoning")
+        rp.append_delta("- my item\n")
+        await pilot.pause()
+        assert len(rp._plain_lines) >= 1
+        # Engine renders "- " as a bullet symbol
+        assert rp._plain_lines[0] != "- my item"
+
+
+@pytest.mark.asyncio
+async def test_fenced_code_block_in_reasoning():
+    """Fenced code block mounts a StreamingCodeBlock inside ReasoningPanel."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        msg = _ensure_message(app)
+        rp = msg.reasoning  # trigger lazy mount
+        await pilot.pause()  # let on_mount fire
+        rp.open_box("Reasoning")
+        rp.append_delta("```python\n")
+        rp.append_delta("x = 1\n")
+        rp.append_delta("```\n")
+        await pilot.pause()  # let StreamingCodeBlock mount
+        blocks = list(rp.query(StreamingCodeBlock))
+        assert len(blocks) >= 1
+
+
+@pytest.mark.asyncio
+async def test_reasoning_code_block_has_dim_class():
+    """Code block mounted by ReasoningFlowEngine gets reasoning-code-block class."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        msg = _ensure_message(app)
+        rp = msg.reasoning  # trigger lazy mount
+        await pilot.pause()  # let on_mount fire
+        rp.open_box("Reasoning")
+        rp.append_delta("```python\n")
+        rp.append_delta("y = 2\n")
+        rp.append_delta("```\n")
+        await pilot.pause()  # let StreamingCodeBlock mount
+        blocks = list(rp.query(StreamingCodeBlock))
+        assert len(blocks) >= 1
+        assert blocks[0].has_class("reasoning-code-block")
+
+
+@pytest.mark.asyncio
+async def test_unclosed_fence_flushed_on_close_box():
+    """Unclosed fence is flushed (FLUSHED state) when close_box() is called."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        msg = _ensure_message(app)
+        rp = msg.reasoning  # trigger lazy mount
+        await pilot.pause()  # let on_mount fire
+        rp.open_box("Reasoning")
+        rp.append_delta("```python\n")
+        rp.append_delta("z = 3\n")
+        await pilot.pause()  # let StreamingCodeBlock mount
+        # No closing fence — close_box flushes
+        rp.close_box()
+        await pilot.pause()
+        blocks = list(rp.query(StreamingCodeBlock))
+        assert len(blocks) >= 1
+        assert blocks[0]._state == "FLUSHED"
+        assert rp._reasoning_engine._active_block is None
+
+
+@pytest.mark.asyncio
+async def test_code_block_content_correct():
+    """Code lines inside fence appear in block._code_lines, not _plain_lines."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        msg = _ensure_message(app)
+        rp = msg.reasoning  # trigger lazy mount
+        await pilot.pause()  # let on_mount fire
+        rp.open_box("Reasoning")
+        rp.append_delta("```python\n")
+        rp.append_delta("a = 42\n")
+        rp.append_delta("```\n")
+        await pilot.pause()  # let StreamingCodeBlock mount
+        blocks = list(rp.query(StreamingCodeBlock))
+        assert len(blocks) >= 1
+        assert "a = 42" in blocks[0]._code_lines
+        assert not any("a = 42" in ln for ln in rp._plain_lines)
+
+
+@pytest.mark.asyncio
+async def test_fallback_raw_line_written(monkeypatch):
+    """When engine absent (HERMES_MARKDOWN=0), raw line written to log."""
+    monkeypatch.setattr("hermes_cli.tui.response_flow.MARKDOWN_ENABLED", False)
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        msg = _ensure_message(app)
+        await pilot.pause()
+        rp = msg.reasoning
+        assert rp._reasoning_engine is None
+        rp.open_box("Reasoning")
+        rp.append_delta("raw line\n")
+        await pilot.pause()
+        assert "raw line" in rp._plain_lines
+
+
+@pytest.mark.asyncio
+async def test_open_box_after_delta_preserves_content():
+    """open_box after deltas does NOT call _reasoning_log.clear()."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        msg = _ensure_message(app)
+        await pilot.pause()
+        rp = msg.reasoning
+
+        rp.open_box("First")
+        rp.append_delta("first line\n")
+        await pilot.pause()
+
+        # Intercept clear() to detect if it fires
+        cleared = []
+        orig_clear = rp._reasoning_log.clear
+        rp._reasoning_log.clear = lambda: cleared.append(True) or orig_clear()
+
+        rp.open_box("Second")
+        await pilot.pause()
+
+        assert len(cleared) == 0, "_reasoning_log.clear() called despite prior content"
+
+
+@pytest.mark.asyncio
+async def test_open_box_before_delta_clears_log():
+    """open_box on fresh panel (no prior content) calls _reasoning_log.clear()."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        msg = _ensure_message(app)
+        await pilot.pause()
+        rp = msg.reasoning
+
+        # No deltas before open_box — _plain_lines is empty
+        cleared = []
+        orig_clear = rp._reasoning_log.clear
+        rp._reasoning_log.clear = lambda: cleared.append(True) or orig_clear()
+
+        rp.open_box("Reasoning")
+        await pilot.pause()
+
+        assert len(cleared) == 1, "_reasoning_log.clear() not called on fresh panel"
+
+
+@pytest.mark.asyncio
+async def test_close_box_flushes_engine():
+    """close_box flushes partial line + open fence via engine."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        msg = _ensure_message(app)
+        rp = msg.reasoning  # trigger lazy mount
+        await pilot.pause()  # let on_mount fire
+        rp.open_box("Reasoning")
+        rp.append_delta("```python\n")
+        await pilot.pause()  # let StreamingCodeBlock mount
+        rp.append_delta("partial_code")  # partial line, no newline
+        await pilot.pause()
+        rp.close_box()
+        await pilot.pause()
+        assert rp._live_buf == ""
+        assert rp._reasoning_engine._active_block is None
+        blocks = list(rp.query(StreamingCodeBlock))
+        assert len(blocks) >= 1
+        assert blocks[0]._state == "FLUSHED"
+
+
+@pytest.mark.asyncio
+async def test_close_box_with_no_engine_fallback(monkeypatch):
+    """When engine absent, close_box flushes partial line via raw path."""
+    monkeypatch.setattr("hermes_cli.tui.response_flow.MARKDOWN_ENABLED", False)
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        msg = _ensure_message(app)
+        await pilot.pause()
+        rp = msg.reasoning
+        assert rp._reasoning_engine is None
+        rp.open_box("Reasoning")
+        rp.append_delta("partial no newline")
+        await pilot.pause()
+        rp.close_box()
+        await pilot.pause()
+        assert rp._live_buf == ""
+        assert "partial no newline" in rp._plain_lines

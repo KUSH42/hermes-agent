@@ -339,7 +339,7 @@ async def test_reasoning_open_close_lifecycle():
         rp.append_delta("Step 1\n")
         rp.append_delta("Step 2\n")
         await _pause(pilot)
-        # 2 gutter-prefixed lines (no header)
+        # Both lines committed immediately (ReasoningFlowEngine flushes block buffer)
         assert len(rp._plain_lines) == 2
 
         # Close (stays visible as history)
@@ -376,7 +376,7 @@ async def test_reasoning_partial_line_buffering():
         # Complete the line
         rp.append_delta("\n")
         await _pause(pilot)
-        assert len(rp._plain_lines) == 1  # completed line (no header)
+        assert len(rp._plain_lines) == 1  # completed line (immediate commit)
         assert rp._live_buf == ""
 
 

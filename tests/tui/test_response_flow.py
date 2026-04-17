@@ -966,3 +966,73 @@ def test_detect_lang_prefers_bash_for_command_blocks():
 
     code = "javac HelloWorld.java\njava HelloWorld"
     assert _detect_lang(code) == "bash"
+
+
+# ---------------------------------------------------------------------------
+# List hanging indent tests
+# ---------------------------------------------------------------------------
+
+def test_ol_item_gets_hanging_indent():
+    """Ordered list item should be pre-wrapped with hanging indent."""
+    engine, log, _ = make_engine()
+    long_item = "1. " + "x" * 80  # exceeds _LIST_WRAP_WIDTH (75)
+    engine.process_line(long_item)
+    engine.flush()
+    assert log._plain_lines, "no plain lines written"
+    # Second line (continuation) should be indented by 3 ("1. ".length)
+    combined = "\n".join(log._plain_lines)
+    lines = combined.split("\n")
+    assert len(lines) >= 2, f"expected wrapped line, got: {lines}"
+    assert lines[1].startswith("   "), f"continuation should be indented 3 spaces, got: {repr(lines[1])}"
+
+
+def test_ul_item_gets_hanging_indent():
+    """Unordered list item should be pre-wrapped with hanging indent."""
+    engine, log, _ = make_engine()
+    long_item = "- " + "y" * 80  # exceeds _LIST_WRAP_WIDTH (75)
+    engine.process_line(long_item)
+    engine.flush()
+    assert log._plain_lines, "no plain lines written"
+    combined = "\n".join(log._plain_lines)
+    lines = combined.split("\n")
+    assert len(lines) >= 2, f"expected wrapped line, got: {lines}"
+    assert lines[1].startswith("  "), f"continuation should be indented 2 spaces, got: {repr(lines[1])}"
+
+
+def test_prose_after_list_no_indent():
+    """Prose following a list should NOT get list continuation indent."""
+    engine, log, _ = make_engine()
+    engine.process_line("1. First item here")
+    engine.process_line("")  # blank line resets indent
+    engine.process_line("For tests 1-3, this is prose not a list item.")
+    engine.flush()
+    combined = "\n".join(log._plain_lines)
+    # The prose line should appear without leading spaces
+    assert "For tests 1-3" in combined
+    for line in combined.split("\n"):
+        if "For tests" in line:
+            assert not line.startswith("   "), f"prose should not be indented, got: {repr(line)}"
+
+
+def test_list_indent_resets_on_blank_line():
+    """Blank line between list and prose should reset list continuation indent."""
+    engine, log, _ = make_engine()
+    engine.process_line("- bullet point text")
+    engine.process_line("")  # blank → reset
+    engine.process_line("Some prose paragraph.")
+    engine.flush()
+    combined = "\n".join(log._plain_lines)
+    for line in combined.split("\n"):
+        if "prose paragraph" in line:
+            assert not line.startswith("  "), f"prose after blank should not be indented, got: {repr(line)}"
+
+
+def test_list_prefix_re_no_false_positive():
+    """_LIST_PREFIX_RE should not match '1-3' inside prose like 'For tests 1-3'."""
+    from hermes_cli.tui.response_flow import _LIST_PREFIX_RE
+    assert not _LIST_PREFIX_RE.match("For tests 1-3, something")
+    assert not _LIST_PREFIX_RE.match("See items 1-3 for details")
+    # Real list items should still match
+    assert _LIST_PREFIX_RE.match("1. First item")
+    assert _LIST_PREFIX_RE.match("- bullet")
+    assert _LIST_PREFIX_RE.match("  - nested bullet")

@@ -61,7 +61,7 @@ _SOURCE_KEYWORD_RE = re.compile(
 _SOURCE_COMMAND_RE = re.compile(
     r"^(javac|java|python|python3|node|npm|yarn|pnpm|pip|pip3|pytest|cargo|go|git|make|uv|bash|sh)\b"
 )
-_LIST_PREFIX_RE = re.compile(r"^\s*(?:[-*+•]|\d+[.)])\s+")
+_LIST_PREFIX_RE = re.compile(r"^\s*(?:[-*+•]|\d+[.)])\s+(?=\S)")
 _CODE_INTRO_LABEL_RE = re.compile(
     r"^(?:to run it|run it|output|result|results|response|command|commands|example|examples|stderr|stdout|log|logs)\s*:$",
     re.IGNORECASE,
@@ -416,23 +416,22 @@ class ResponseFlowEngine:
         # Track list state for continuation indent
         list_ci = _detect_list_cont_indent(block_result)
         if list_ci:
-            # This line is a list item — set continuation indent
+            # List item — pre-wrap with hanging indent so wrapped lines
+            # align with text after marker, not flush-left
             self._list_cont_indent = list_ci
-            block_ansi = apply_block_line(block_result)
-        elif (self._list_cont_indent and block_result and not block_result[0:1].isspace()
-              and not _HR_RE.match(block_result.strip())
-              and not _FENCE_OPEN_RE.match(block_result.strip())
-              and not _LIST_PREFIX_RE.match(block_result)):
-            # Plain prose line following a list item — add hanging indent
-            indented = _apply_cont_indent(block_result, self._list_cont_indent)
+            indented = _apply_cont_indent(block_result, list_ci)
             block_ansi = apply_block_line(indented)
         else:
             block_ansi = apply_block_line(block_result)
-            # Reset list state for structural elements
+            # Reset list state on blank line or structural elements
             stripped = block_result.strip()
             if (stripped == ""
                 or _HR_RE.match(stripped)
-                or _FENCE_OPEN_RE.match(stripped)):
+                or _FENCE_OPEN_RE.match(stripped)
+                or _LIST_PREFIX_RE.match(block_result)):
+                self._list_cont_indent = ""
+            elif self._list_cont_indent and not block_result[0:1].isspace():
+                # Non-list prose after list — reset indent, don't apply it
                 self._list_cont_indent = ""
         inline_ansi = apply_inline_markdown(block_ansi)
 
@@ -501,16 +500,17 @@ class ResponseFlowEngine:
                 list_ci = _detect_list_cont_indent(line)
                 if list_ci:
                     self._list_cont_indent = list_ci
-                    block_ansi = apply_block_line(line)
-                elif (self._list_cont_indent and line and not line[0:1].isspace()
-                      and not _HR_RE.match(line.strip())
-                      and not _FENCE_OPEN_RE.match(line.strip())
-                      and not _LIST_PREFIX_RE.match(line)):
-                    indented = _apply_cont_indent(line, self._list_cont_indent)
+                    indented = _apply_cont_indent(line, list_ci)
                     block_ansi = apply_block_line(indented)
                 else:
                     block_ansi = apply_block_line(line)
-                    if line.strip() == "":
+                    stripped = line.strip()
+                    if (stripped == ""
+                        or _HR_RE.match(stripped)
+                        or _FENCE_OPEN_RE.match(stripped)
+                        or _LIST_PREFIX_RE.match(line)):
+                        self._list_cont_indent = ""
+                    elif self._list_cont_indent and not line[0:1].isspace():
                         self._list_cont_indent = ""
                 inline_ansi = apply_inline_markdown(block_ansi)
                 self._sync_prose_log()

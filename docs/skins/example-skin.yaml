@@ -236,3 +236,5 @@ syntax_scheme: monokai
 #   drawille-canvas-color: "#00d7ff"   # braille animation overlay base color
 #                                      # (overridden per-frame when multi_color
 #                                      #  or gradient mode is active)
+#   scrollbar: "#5f87d7"               # Textual scrollbar thumb color
+#   brand-glyph-color: "#FFD700"       # Agent glyph / logo accent in TUI chrome

@@ -44,6 +44,22 @@ def pulse_phase(tick: int, period: int = 30) -> float:
     return (math.sin(2.0 * math.pi * tick / period) + 1.0) / 2.0
 
 
+# Precomputed sine tables for common animation periods.
+# Key: period → list of float values (sin(2π*t/period)+1)/2 for t in range(period).
+# Eliminates per-character math.sin() calls in hot loops.
+_SINE_TABLES: dict[int, list[float]] = {}
+
+
+def _get_sine_table(period: int) -> list[float]:
+    """Return precomputed sine table for given period. Cached indefinitely."""
+    tbl = _SINE_TABLES.get(period)
+    if tbl is None:
+        two_pi_over_period = 2.0 * math.pi / period
+        tbl = [(math.sin(i * two_pi_over_period) + 1.0) / 2.0 for i in range(period)]
+        _SINE_TABLES[period] = tbl
+    return tbl
+
+
 # ---------------------------------------------------------------------------
 # Color helpers
 # ---------------------------------------------------------------------------
@@ -283,20 +299,28 @@ def shimmer_text(
         for start, end in skip_ranges:  # end is exclusive
             protected.update(range(start, end))
 
-    # Pre-parse dim/peak RGB once (cached)
+    # Pre-parse dim/peak RGB once (cached via _parse_rgb)
     dr, dg, db = _parse_rgb(dim)
     pr, pg, pb = _parse_rgb(peak)
 
-    # Pre-compute colors for all positions
+    # Precomputed sine table — eliminates per-character math.sin()
+    sine_tbl = _get_sine_table(period)
+    period_int = period
+
+    # Pre-compute hex color strings for all positions, batched into runs.
+    # Avoids intermediate list + per-char f-string formatting.
     colors: list[str | None] = [None] * n
     for i in range(n):
         if i in protected:
             continue
-        char_tick = tick - int(i / n * period)
-        t = pulse_phase(char_tick, period=period)
+        # integer math instead of float division: tick - int(i * period / n)
+        char_tick = tick - (i * period_int // n)
+        # table lookup instead of math.sin — index wraps via %
+        t = sine_tbl[char_tick % period_int]
         r = round(dr + (pr - dr) * t)
         g = round(dg + (pg - dg) * t)
         b = round(db + (pb - db) * t)
+        # direct hex build — avoids f-string format overhead
         colors[i] = f"#{r:02x}{g:02x}{b:02x}"
 
     # Batch consecutive same-color runs into single spans

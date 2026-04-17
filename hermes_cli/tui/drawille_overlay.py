@@ -393,6 +393,7 @@ class DrawilleOverlay(Static):
     _resolved_color: str = "#00d7ff"
     _resolved_color_b: str = "#8800ff"
     _resolved_multi_colors: list = []   # pre-resolved hex strings; set by watch_multi_color
+    _resolved_multi_color_rgbs: list | None = None  # pre-parsed RGB tuples — avoids per-frame _parse_rgb lookups
     _fade_step: int = 0
     _auto_hide_handle: "Timer | None" = None
 
@@ -404,6 +405,9 @@ class DrawilleOverlay(Static):
             self._resolved_color_b = _resolve_color(self.color_b, self.app)
             self._resolved_multi_colors = [
                 _resolve_color(c, self.app) for c in self.multi_color
+            ]
+            self._resolved_multi_color_rgbs = [
+                _parse_rgb(c) for c in self._resolved_multi_colors
             ]
         except Exception:
             pass
@@ -439,6 +443,7 @@ class DrawilleOverlay(Static):
     def watch_multi_color(self, value: list) -> None:
         try:
             self._resolved_multi_colors = [_resolve_color(c, self.app) for c in value]
+            self._resolved_multi_color_rgbs = [_parse_rgb(c) for c in self._resolved_multi_colors]
         except Exception:
             pass
 
@@ -570,8 +575,11 @@ class DrawilleOverlay(Static):
         n_stops = len(colors)
         drift = math.sin(t * self.hue_shift_speed) * 0.25
 
-        # Pre-parse stop colors to RGB tuples (cached via _parse_rgb)
-        stop_rgbs = [_parse_rgb(c) for c in colors]
+        # Use pre-parsed RGB tuples (cached at resolve time, not per-frame).
+        # Fallback to per-frame parse if cache wasn't populated (e.g. test setup).
+        stop_rgbs = self._resolved_multi_color_rgbs
+        if stop_rgbs is None:
+            stop_rgbs = [_parse_rgb(c) for c in colors]
 
         rows = frame_str.split("\n")
         pieces: list[tuple[str, Style]] = []

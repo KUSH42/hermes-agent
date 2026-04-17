@@ -311,6 +311,8 @@ class HermesApp(App):
         self._output_queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=4096)
         self._spinner_idx = 0
         self._shimmer_tick = 0  # monotonic; never wraps — decoupled from spinner frame count
+        self._cached_input_area = None  # cached DOM ref — avoids per-tick query_one
+        self._cached_spinner_overlay = None  # cached DOM ref — avoids per-tick query_one
         self._event_loop: asyncio.AbstractEventLoop | None = None
 
         # ThemeManager handles skin loading, component vars, and hot reload.
@@ -425,7 +427,7 @@ class HermesApp(App):
         self._consume_output()  # starts the @work consumer
         self._anim_clock = AnimationClock()
         self._anim_clock_h = self.set_interval(1 / 15, self._anim_clock.tick)
-        self._spinner_h = self.set_interval(0.1, self._tick_spinner)
+        self._spinner_h = self.set_interval(0.14, self._tick_spinner)  # ~7Hz — smooth enough, 30% less event-loop pressure vs 10Hz
         self._fps_h = self.set_interval(_frame_interval, self._tick_fps)
         self._duration_h = self.set_interval(1.0, self._tick_duration)
         # Restore FPS HUD state from config (runtime toggle overrides this)
@@ -695,8 +697,14 @@ class HermesApp(App):
         # HintBar shows phase-based hints (e.g. "^C interrupt · Esc dismiss")
         # — spinner/elapsed are already visible in the input bar, no duplication.
         try:
-            inp = self.query_one("#input-area")
-            overlay = self.query_one("#spinner-overlay", Static)
+            inp = self._cached_input_area
+            if inp is None or not inp.is_mounted:
+                inp = self.query_one("#input-area")
+                self._cached_input_area = inp
+            overlay = self._cached_spinner_overlay
+            if overlay is None or not overlay.is_mounted:
+                overlay = self.query_one("#spinner-overlay", Static)
+                self._cached_spinner_overlay = overlay
             overlay.display = False  # always hidden; placeholder replaces overlay
             frame = self._next_spinner_frame(
                 text_after_frame=hint_suffix,

@@ -254,6 +254,7 @@ class HermesApp(App):
         # faster than UI renders. 4096 chunks ≈ ~1MB of text at ~256 bytes/chunk.
         self._output_queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=4096)
         self._spinner_idx = 0
+        self._shimmer_tick = 0  # monotonic; never wraps — decoupled from spinner frame count
         self._event_loop: asyncio.AbstractEventLoop | None = None
 
         # ThemeManager handles skin loading, component vars, and hot reload.
@@ -623,6 +624,7 @@ class HermesApp(App):
         """
         if not (self.agent_running or self.command_running):
             return
+        self._shimmer_tick += 1
 
         hint_suffix = self._build_hint_text()
 
@@ -654,10 +656,10 @@ class HermesApp(App):
                         from textual.content import Content
                         shimmer = shimmer_text(
                             padded,
-                            tick=self._spinner_idx,
+                            tick=self._shimmer_tick,
                             dim="#555555",
                             peak="#d8d8d8",
-                            period=30,
+                            period=60,
                         )
                         inp.placeholder = Content.from_rich_text(shimmer)
                     except Exception:
@@ -2191,11 +2193,14 @@ class HermesApp(App):
             return False
 
     def _open_anim_config(self) -> None:
-        """Open the AnimConfigPanel overlay."""
+        """Toggle the AnimConfigPanel overlay."""
         try:
             from hermes_cli.tui.drawille_overlay import AnimConfigPanel as _ACP
             panel = self.query_one(_ACP)
-            panel.open()
+            if panel.has_class("-open"):
+                panel.close()
+            else:
+                panel.open()
         except NoMatches:
             pass
 

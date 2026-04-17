@@ -35,8 +35,9 @@ async def test_spinner_tick_updates_input_when_agent_running():
         await asyncio.sleep(0.15)
         await pilot.pause()
         inp = app.query_one("#input-area")
-        assert hasattr(inp, "spinner_text")
-        assert inp.spinner_text != ""
+        ph = inp.placeholder
+        ph_text = ph.plain if hasattr(ph, "plain") else str(ph)
+        assert ph_text.strip() != ""
 
 
 @pytest.mark.asyncio
@@ -76,7 +77,8 @@ async def test_spinner_writes_to_input_bar_not_hint_bar():
         # Input bar should have spinner + tool label
         inp = app.query_one("#input-area")
         assert hasattr(inp, "placeholder")
-        assert "terminal" in inp.placeholder
+        ph = inp.placeholder
+        assert "terminal" in (ph.plain if hasattr(ph, "plain") else str(ph))
 
 
 @pytest.mark.asyncio
@@ -112,7 +114,8 @@ async def test_input_bar_no_helix():
             app._tick_spinner()
         inp = app.query_one("#input-area")
         # Should contain spinner dots + label, never drawille helix
-        assert "terminal" in inp.placeholder
+        ph = inp.placeholder
+        assert "terminal" in (ph.plain if hasattr(ph, "plain") else str(ph))
 
 
 @pytest.mark.asyncio

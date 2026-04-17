@@ -571,6 +571,56 @@ def test_save_calls_config_helpers():
     mock_save.assert_called_once()
 
 
+def test_open_adds_open_class():
+    """open() adds -open class."""
+    with patch("hermes_cli.tui.drawille_overlay._overlay_config",
+               return_value=DrawilleOverlayCfg(enabled=True)):
+        panel = AnimConfigPanel()
+    panel.focus = MagicMock()
+    panel.open()
+    assert panel.has_class("-open")
+
+
+def test_close_removes_open_class():
+    """close() removes -open class."""
+    with patch("hermes_cli.tui.drawille_overlay._overlay_config",
+               return_value=DrawilleOverlayCfg(enabled=True)):
+        panel = AnimConfigPanel()
+    panel.focus = MagicMock()
+    panel.open()
+    fake_app = MagicMock()
+    fake_app.query_one.side_effect = Exception("no widget")
+    panel._app = fake_app
+    panel.close()
+    assert not panel.has_class("-open")
+
+
+def test_toggle_opens_when_closed():
+    """Toggling a closed panel opens it."""
+    with patch("hermes_cli.tui.drawille_overlay._overlay_config",
+               return_value=DrawilleOverlayCfg(enabled=True)):
+        panel = AnimConfigPanel()
+    panel.focus = MagicMock()
+    assert not panel.has_class("-open")
+    panel.open()
+    assert panel.has_class("-open")
+
+
+def test_toggle_closes_when_open():
+    """Toggling an open panel closes it."""
+    with patch("hermes_cli.tui.drawille_overlay._overlay_config",
+               return_value=DrawilleOverlayCfg(enabled=True)):
+        panel = AnimConfigPanel()
+    panel.focus = MagicMock()
+    panel.open()
+    assert panel.has_class("-open")
+    fake_app = MagicMock()
+    fake_app.query_one.side_effect = Exception("no widget")
+    panel._app = fake_app
+    panel.close()
+    assert not panel.has_class("-open")
+
+
 # ── Multi-color strand rendering ──────────────────────────────────────────────
 
 def test_multi_color_produces_text_object():

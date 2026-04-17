@@ -32,11 +32,11 @@ async def test_handle_file_drop_links_text_file(tmp_path, monkeypatch) -> None:
         await pilot.pause()
 
         inp = app.query_one(HermesInput)
-        assert inp.value == "'src/main.py'"
+        assert inp.value == "@src/main.py"
 
 
 @pytest.mark.asyncio
-async def test_handle_file_drop_attaches_image_and_submit_bundles_payload(tmp_path, monkeypatch) -> None:
+async def test_handle_file_drop_attaches_image_only(tmp_path, monkeypatch) -> None:
     cli = _make_cli()
     app = HermesApp(cli=cli)
     monkeypatch.chdir(tmp_path)
@@ -53,8 +53,25 @@ async def test_handle_file_drop_attaches_image_and_submit_bundles_payload(tmp_pa
         assert cli._attached_images == [img]
 
         inp = app.query_one(HermesInput)
-        # Image path is also inserted quoted at cursor
-        assert inp.value == "'shot.png'"
+        # Image attaches to ImageBar — no token inserted into input
+        assert inp.value == ""
+
+
+@pytest.mark.asyncio
+async def test_handle_file_drop_image_submit_bundles_payload(tmp_path, monkeypatch) -> None:
+    cli = _make_cli()
+    app = HermesApp(cli=cli)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("TERMINAL_CWD", raising=False)
+    img = tmp_path / "shot.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.handle_file_drop([img])
+        await pilot.pause()
+
+        inp = app.query_one(HermesInput)
         inp.value = "describe this"
         inp.action_submit()
         await pilot.pause()
@@ -79,8 +96,10 @@ async def test_handle_file_drop_rejects_text_path_with_spaces(tmp_path, monkeypa
         await pilot.pause()
 
         inp = app.query_one(HermesInput)
-        # Files with spaces are now inserted quoted — no rejection
-        assert inp.value == "'my notes.py'"
+        # Spaces in @path unsupported — rejected, nothing inserted
+        assert inp.value == ""
+        hint = app.query_one("#hint-bar").hint
+        assert "unsupported" in hint
 
 
 @pytest.mark.asyncio
@@ -112,6 +131,30 @@ async def test_handle_file_drop_rejects_while_overlay_active(tmp_path, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_handle_file_drop_mixed_image_and_text(tmp_path, monkeypatch) -> None:
+    cli = _make_cli()
+    app = HermesApp(cli=cli)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("TERMINAL_CWD", raising=False)
+    img = tmp_path / "shot.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    src = tmp_path / "app.py"
+    src.write_text("x = 1\n")
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.handle_file_drop([img, src])
+        await pilot.pause()
+
+        assert app.attached_images == [img]
+        inp = app.query_one(HermesInput)
+        assert inp.value == "@app.py"
+        hint = app.query_one("#hint-bar").hint
+        assert "linked" in hint
+        assert "attached" in hint
+
+
+@pytest.mark.asyncio
 async def test_input_paste_intercepts_dragged_file_path(tmp_path, monkeypatch) -> None:
     app = HermesApp(cli=_make_cli())
     monkeypatch.chdir(tmp_path)
@@ -122,7 +165,7 @@ async def test_input_paste_intercepts_dragged_file_path(tmp_path, monkeypatch) -
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         inp = app.query_one(HermesInput)
-        inp._on_paste(events.Paste(str(file_path)))
+        await inp._on_paste(events.Paste(str(file_path)))
         await pilot.pause()
 
-        assert inp.value == "'main.py'"
+        assert inp.value == "@main.py"

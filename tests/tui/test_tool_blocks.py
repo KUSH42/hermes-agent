@@ -16,6 +16,7 @@ from __future__ import annotations
 import pytest
 from unittest.mock import MagicMock, patch
 
+from agent.display import capture_local_edit_snapshot
 from hermes_cli.tui.app import HermesApp
 from hermes_cli.tui.tool_blocks import COLLAPSE_THRESHOLD, ToolBlock, ToolBodyContainer, ToolHeader
 from hermes_cli.tui.widgets import CopyableRichLog
@@ -335,6 +336,36 @@ def test_on_tool_complete_diff_tui_passes_rerender_callback():
     args = mount_calls[0][0]
     assert args[1] == "diff"
     assert callable(args[4])
+
+
+def test_on_tool_complete_patch_mode_tui_mounts_diff_from_snapshot(tmp_path):
+    """V4A patch previews mount a diff ToolBlock even when tool result omits diff text."""
+    import cli as cli_module
+
+    mock_tui = MagicMock()
+    cli_obj = _make_cli_obj()
+    target = tmp_path / "note.txt"
+    target.write_text("old\n", encoding="utf-8")
+    function_args = {
+        "mode": "patch",
+        "patch": f"*** Begin Patch\n*** Update File: {target}\n@@\n-old\n+new\n*** End Patch\n",
+    }
+    cli_obj._pending_edit_snapshots["id-patch"] = capture_local_edit_snapshot("patch", function_args)
+    target.write_text("new\n", encoding="utf-8")
+
+    with patch.object(cli_module, "_hermes_app", mock_tui), \
+         patch("hermes_cli.tui.widgets._strip_ansi", side_effect=lambda x: x):
+        cli_obj._on_tool_complete("id-patch", "patch", function_args, '{"success": true}')
+
+    mount_calls = [
+        call for call in mock_tui.call_from_thread.call_args_list
+        if call[0] and call[0][0] == mock_tui.mount_tool_block
+    ]
+    assert mount_calls, "Expected mount_tool_block call for V4A patch diff preview"
+    args = mount_calls[0][0]
+    assert args[1] == "diff"
+    assert any("old" in line for line in args[3])
+    assert any("new" in line for line in args[3])
 
 
 def test_on_tool_complete_read_file_tui_passes_rerender_callback():

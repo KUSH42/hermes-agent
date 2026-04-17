@@ -3,9 +3,12 @@
 from unittest.mock import MagicMock
 
 import pytest
+from rich.segment import Segment
+from rich.style import Style
 from rich.text import Text
+from textual.strip import Strip
 
-from hermes_cli.tui.widgets import CopyableRichLog, _strip_ansi
+from hermes_cli.tui.widgets import CopyableRichLog, _apply_span_style, _strip_ansi
 
 
 def test_strip_ansi_removes_sgr():
@@ -64,18 +67,18 @@ def test_plain_lines_memory_bounded():
 
 
 def test_get_selection_returns_plain_text():
-    """get_selection extracts text from _plain_lines without ANSI.
-
-    Offset(x, y): x=column, y=row. Selection.extract uses transpose=(y, x).
-    """
+    """get_selection extracts text from visual lines without ANSI."""
     from textual.geometry import Offset
     from textual.selection import Selection
 
     log = CopyableRichLog()
-    log.write_with_source(Text("hello"), "hello")
-    log.write_with_source(Text("world"), "world")
+    # Populate visual lines directly (bypassing layout-gated write)
+    log.lines = [
+        Strip([Segment("hello", Style.null())]),
+        Strip([Segment("world", Style.null())]),
+    ]
 
-    # Select "hello": col 0–5 on row 0 → Offset(x=0,y=0) to Offset(x=5,y=0)
+    # Select "hello": col 0–5 on row 0
     sel = Selection(start=Offset(0, 0), end=Offset(5, 0))
     result = log.get_selection(sel)
     assert result is not None
@@ -94,20 +97,191 @@ def test_get_selection_empty_log():
     assert log.get_selection(sel) is None
 
 
+def test_pre_layout_fallback_subtracts_margins():
+    """Pre-layout fallback must subtract scrollbar + CopyableBlock margins.
+
+    Regression: pre-layout used app.width - 1 (scrollbar only), but
+    CopyableBlock has margin: 0 2 (4 chars total). Text wrapped 4 cols
+    too wide, spilling under the scrollbar.
+    """
+    import inspect
+
+    from hermes_cli.tui.widgets import CopyableRichLog
+
+    source = inspect.getsource(CopyableRichLog.write)
+    assert "app.size.width - 5" in source, (
+        "Pre-layout fallback must use 'app.size.width - 5' "
+        "(1 scrollbar + 4 CopyableBlock margin chars)"
+    )
+
+
 def test_get_selection_multiline():
-    """get_selection can span multiple plain lines."""
+    """get_selection can span multiple visual lines."""
     from textual.geometry import Offset
     from textual.selection import Selection
 
     log = CopyableRichLog()
-    log.write_with_source(Text("line one"), "line one")
-    log.write_with_source(Text("line two"), "line two")
+    log.lines = [
+        Strip([Segment("line one", Style.null())]),
+        Strip([Segment("line two", Style.null())]),
+    ]
 
     # Select from col 5 of row 0 ("one") to col 4 of row 1 ("line")
-    # Offset(x=5, y=0) = col 5, row 0; Offset(x=4, y=1) = col 4, row 1
     sel = Selection(start=Offset(5, 0), end=Offset(4, 1))
     result = log.get_selection(sel)
     assert result is not None
     text, _ = result
     assert "one" in text
     assert "line" in text
+
+
+# ---------------------------------------------------------------------------
+# _apply_span_style tests
+# ---------------------------------------------------------------------------
+
+def _make_strip(*texts: str) -> Strip:
+    """Build a Strip from plain text segments (no style)."""
+    segs = [Segment(t, Style.null()) for t in texts]
+    return Strip(segs, sum(len(t) for t in texts))
+
+
+def test_apply_span_style_full_segment():
+    """Style applied to entire segment range."""
+    sel = Style(bgcolor="blue")
+    strip = _make_strip("hello")
+    result = _apply_span_style(strip, 0, 5, sel)
+    segs = list(result)
+    assert len(segs) == 1
+    assert segs[0].text == "hello"
+    assert segs[0].style is not None
+    assert segs[0].style.bgcolor is not None
+
+
+def test_apply_span_style_partial_start():
+    """Style applied from start of string, not covering the end."""
+    sel = Style(bgcolor="red")
+    strip = _make_strip("hello world")
+    result = _apply_span_style(strip, 0, 5, sel)
+    segs = list(result)
+    texts = [s.text for s in segs]
+    assert "hello" in texts
+    assert " world" in texts or "world" in " ".join(texts)
+    # First segment ("hello") should have the selection style
+    hello_seg = next(s for s in segs if s.text == "hello")
+    assert hello_seg.style is not None and hello_seg.style.bgcolor is not None
+
+
+def test_apply_span_style_partial_end():
+    """Style applied from mid-point to end (end_x=-1)."""
+    sel = Style(bgcolor="green")
+    strip = _make_strip("hello world")
+    result = _apply_span_style(strip, 6, -1, sel)
+    segs = list(result)
+    # "world" should be highlighted, "hello " should not
+    world_seg = next((s for s in segs if s.text == "world"), None)
+    assert world_seg is not None
+    assert world_seg.style is not None and world_seg.style.bgcolor is not None
+
+
+def test_apply_span_style_multi_segment_split():
+    """Span spanning multiple segments applies style to each."""
+    sel = Style(bgcolor="yellow")
+    strip = Strip([
+        Segment("foo", Style.null()),
+        Segment("bar", Style.null()),
+        Segment("baz", Style.null()),
+    ], 9)
+    # Select "oob" (chars 2–5): spans end of "foo" and start of "bar"
+    result = _apply_span_style(strip, 2, 5, sel)
+    segs = list(result)
+    # Check that total text is preserved
+    assert "".join(s.text for s in segs) == "foobarbaz"
+    # "o" (char 2 of "foo") and "ba" (chars 0-2 of "bar") should be highlighted
+    highlighted = [s.text for s in segs if s.style and s.style.bgcolor is not None]
+    assert any("o" in t for t in highlighted)
+    assert any("ba" in t for t in highlighted)
+
+
+def test_apply_span_style_no_overlap():
+    """Span outside segment range leaves strip unchanged."""
+    sel = Style(bgcolor="purple")
+    strip = _make_strip("hello")
+    result = _apply_span_style(strip, 10, 15, sel)
+    segs = list(result)
+    assert len(segs) == 1
+    assert segs[0].text == "hello"
+    # No selection style
+    assert segs[0].style == Style.null() or segs[0].style is None or (
+        segs[0].style.bgcolor is None
+    )
+
+
+def test_apply_span_style_end_minus_one_covers_all():
+    """end_x=-1 highlights the entire strip."""
+    sel = Style(bgcolor="cyan")
+    strip = _make_strip("full line")
+    result = _apply_span_style(strip, 0, -1, sel)
+    segs = list(result)
+    assert all(s.style is not None and s.style.bgcolor is not None for s in segs)
+
+
+# ---------------------------------------------------------------------------
+# render_line selection highlight (async, requires app context)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_render_line_produces_offset_metadata():
+    """render_line returns strips with offset metadata for selection tracking."""
+    import asyncio
+    from textual.app import App, ComposeResult
+
+    class _App(App):
+        def compose(self) -> ComposeResult:
+            yield CopyableRichLog(markup=False, id="log")
+
+        async def on_mount(self):
+            log = self.query_one("#log", CopyableRichLog)
+            log.write(Text("hello world"))
+
+    async with _App().run_test(size=(80, 24)) as pilot:
+        await asyncio.sleep(0.2)
+        log = pilot.app.query_one("#log", CopyableRichLog)
+        strip = log.render_line(0)
+        found = any(
+            seg.style and seg.style._meta and "offset" in seg.style.meta
+            for seg in strip
+        )
+        assert found, "render_line must embed offset metadata for selection"
+
+
+@pytest.mark.asyncio
+async def test_render_line_applies_selection_style():
+    """render_line paints screen--selection style when a selection is active."""
+    import asyncio
+    from rich.color import Color
+    from textual.app import App, ComposeResult
+    from textual.geometry import Offset
+    from textual.selection import Selection
+
+    class _App(App):
+        def compose(self) -> ComposeResult:
+            yield CopyableRichLog(markup=False, id="log")
+
+        async def on_mount(self):
+            log = self.query_one("#log", CopyableRichLog)
+            log.write(Text("hello world"))
+
+    async with _App().run_test(size=(80, 24)) as pilot:
+        await asyncio.sleep(0.2)
+        log = pilot.app.query_one("#log", CopyableRichLog)
+
+        # Inject a selection covering "hello" (chars 0–5, row 0)
+        sel = Selection(start=Offset(0, 0), end=Offset(5, 0))
+        pilot.app.screen.selections = {log: sel}
+        log.refresh()
+        await asyncio.sleep(0.1)
+
+        strip = log.render_line(0)
+        segs = list(strip)
+        highlighted = [s for s in segs if s.style and s.style.bgcolor is not None]
+        assert highlighted, "Selected region must have a background color applied"

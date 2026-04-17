@@ -616,9 +616,9 @@ class AnimConfigPanel(Widget):
 
     DEFAULT_CSS = """
     AnimConfigPanel {
-        dock: bottom;
         height: auto;
         max-height: 10;
+        width: auto;
         min-width: 60;
         padding: 0 1;
         display: none;

@@ -45,6 +45,16 @@ _SPINNER_FRAMES: tuple[str, ...] = (
 _GUTTER_FALLBACK: str = "#FFD700"
 
 
+def _safe_cell_width(s: str) -> int:
+    """Return cell width of s; fall back to len(s) if wcwidth unavailable."""
+    try:
+        from wcwidth import wcswidth
+        w = wcswidth(s)
+        return w if w >= 0 else len(s)
+    except ImportError:
+        return len(s)
+
+
 def _tool_gutter_enabled() -> bool:
     """Show ┊/┃ gutter symbols on tool call blocks (default: true)."""
     try:
@@ -155,64 +165,90 @@ class ToolHeader(PulseMixin, Widget):
     def render(self) -> RenderResult:
         focused = self.has_class("focused")
         t = Text()
+
+        # --- Gutter ---
         if _tool_gutter_enabled():
             if focused:
                 color = getattr(self, "_focused_gutter_color", _GUTTER_FALLBACK)
-                gutter = Text("  ┃", style=f"bold {color}")
+                gutter_text = Text("  ┃", style=f"bold {color}")
             else:
-                gutter = Text("  ┊", style="dim")
-            t.append_text(gutter)
-        label_str = self._label
-        if self._duration:
-            label_str += f"  {self._duration}"
-        w = self.size.width
-        if w > 0:
-            available = max(8, w - 25)
-            if len(label_str) > available:
-                label_str = label_str[:available - 1] + "…"
-        prefix = f" {self._tool_icon}" if self._tool_icon else ""
-        # Tool icon color: pulse green while streaming, fixed green/red on complete
-        if self._tool_icon and prefix:
+                gutter_text = Text("  ┊", style="dim")
+            t.append_text(gutter_text)
+            gutter_w = 3
+        else:
+            gutter_w = 0
+
+        t.append("   ╌╌", style="dim")
+        dashes_w = 5
+
+        # --- Icon ---
+        icon_str = self._tool_icon or ""
+        icon_cell_w = _safe_cell_width(icon_str) if icon_str else 0
+        if icon_str:
             if self._spinner_char is not None:
-                # Streaming — pulse between dim and running-state color (not green)
                 icon_dim = "#6e6e6e"
                 icon_peak = getattr(self, "_running_icon_color", _RUNNING_FALLBACK)
                 icon_color = lerp_color(icon_dim, icon_peak, self._pulse_t)
-                t.append("   ╌╌", style="dim")
-                t.append(prefix, style=f"bold {icon_color}")
-                t.append(f" {label_str}", style="dim")
+                icon_style = f"bold {icon_color}"
             elif self._tool_icon_error:
-                # Error — red
                 err_color = getattr(self, "_diff_del_color", _DIFF_DEL_FALLBACK)
-                t.append("   ╌╌", style="dim")
-                t.append(prefix, style=f"bold {err_color}")
-                t.append(f" {label_str}", style="dim")
+                icon_style = f"bold {err_color}"
             elif self._duration:
-                # Success complete — green
                 ok_color = getattr(self, "_diff_add_color", _DIFF_ADD_FALLBACK)
-                t.append("   ╌╌", style="dim")
-                t.append(prefix, style=f"bold {ok_color}")
-                t.append(f" {label_str}", style="dim")
+                icon_style = f"bold {ok_color}"
             else:
-                t.append(f"   ╌╌{prefix} {label_str}", style="dim")
+                icon_style = "dim"
+            t.append(f" {icon_str}", style=icon_style)
+        space_after_icon = 1  # the space before label
+
+        # --- Label style (not dim for streaming or completed) ---
+        if self._tool_icon_error:
+            label_style = "#ef5350"
         else:
-            t.append(f"   ╌╌{prefix} {label_str}", style="dim")
+            label_style = ""   # terminal default — not dim
+
+        # --- Tail (right-aligned part) ---
+        tail = Text()
         if self._spinner_char is not None:
-            # Streaming in progress — show spinner, no line count or toggle yet
-            t.append(f"  {self._spinner_char}", style="dim")
+            tail.append(f"  {self._spinner_char}", style="dim")
+            if self._duration:
+                tail.append(f"  {self._duration}", style="dim")
         else:
             if self._stats and self._stats.has_diff_counts:
                 add_color = getattr(self, "_diff_add_color", _DIFF_ADD_FALLBACK)
                 del_color = getattr(self, "_diff_del_color", _DIFF_DEL_FALLBACK)
                 if self._stats.additions:
-                    t.append(f"  +{self._stats.additions}", style=f"bold {add_color}")
+                    tail.append(f"  +{self._stats.additions}", style=f"bold {add_color}")
                 if self._stats.deletions:
-                    t.append(f"  -{self._stats.deletions}", style=f"bold {del_color}")
+                    tail.append(f"  -{self._stats.deletions}", style=f"bold {del_color}")
             elif self._line_count:
-                t.append(f"  {self._line_count}L", style="dim")
+                tail.append(f"  {self._line_count}L", style="dim")
+            if self._duration:
+                tail.append(f"  {self._duration}", style="dim")
             if self._has_affordances:
                 toggle = "  ▾" if not self.collapsed else "  ▸"
-                t.append(toggle, style="dim")
+                tail.append(toggle, style="dim")
+
+        tail_w = tail.cell_len
+
+        # --- Label with padding ---
+        term_w = self.size.width
+        FIXED_PREFIX_W = gutter_w + dashes_w + icon_cell_w + space_after_icon
+        MIN_LABEL_W = 8
+
+        if term_w <= 0:
+            # Pre-mount: best-effort, no padding
+            t.append(f" {self._label}", style=label_style)
+            t.append_text(tail)
+            return t
+
+        available = max(MIN_LABEL_W, term_w - FIXED_PREFIX_W - tail_w - 2)
+        label_str = self._label
+        if len(label_str) > available:
+            label_str = label_str[:available - 1] + "…"
+        pad = max(0, available - _safe_cell_width(label_str))
+        t.append(f" {label_str}{' ' * pad}", style=label_style)
+        t.append_text(tail)
         return t
 
     def set_error(self, is_error: bool) -> None:
@@ -229,13 +265,19 @@ class ToolHeader(PulseMixin, Widget):
         self._copy_flash = False
         self.refresh()
 
-    def flash_complete(self) -> None:
-        """Brief success-colour flash when a streaming block completes."""
-        self.add_class("--flash-complete")
-        self.set_timer(0.45, self._end_complete_flash)
+    def flash_success(self) -> None:
+        """Green flash on successful completion."""
+        self.add_class("--flash-success")
+        self.set_timer(0.45, lambda: self.remove_class("--flash-success"))
 
-    def _end_complete_flash(self) -> None:
-        self.remove_class("--flash-complete")
+    def flash_error(self) -> None:
+        """Red flash on error completion."""
+        self.add_class("--flash-error")
+        self.set_timer(0.45, lambda: self.remove_class("--flash-error"))
+
+    def flash_complete(self) -> None:
+        """Deprecated: delegates to flash_success."""
+        self.flash_success()
 
     def on_click(self, event: Click) -> None:
         """Left-click toggles the parent ToolBlock.

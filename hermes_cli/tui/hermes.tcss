@@ -306,6 +306,14 @@ ToolHeader:hover {
 ToolHeader.--flash-complete {
     background: $success 18%;
 }
+ToolHeader.--flash-success {
+    background: $success 35%;
+    transition: background 400ms out_cubic;
+}
+ToolHeader.--flash-error {
+    background: $error 35%;
+    transition: background 400ms out_cubic;
+}
 
 /* ToolBodyContainer body lines — no individual scroll.
  * Content flows into OutputPanel (the single scroll container).

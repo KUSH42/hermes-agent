@@ -30,7 +30,7 @@ NERD_FONT_TOOL_ICONS: dict[str, str] = {
     "browser_vision": "󰈈",       # md-eye
     "image_generate": "󰋩",       # md-image
     "vision_analyze": "󰈈",       # md-eye
-    "execute_code": "",         # cod-code
+    "execute_code": "",         # nf-dev-python U+E235
     "delegate_task": "󰘬",        # md-source_branch
     "skills_list": "",          # cod-book
     "skill_view": "",           # cod-book
@@ -66,7 +66,7 @@ ASCII_TOOL_ICONS: dict[str, str] = {
     "browser_press_key": "K",
     "image_generate": "I",
     "vision_analyze": "V",
-    "execute_code": "{",
+    "execute_code": "P",
     "delegate_task": "@",
     "skills_list": "S",
     "skill_view": "S",

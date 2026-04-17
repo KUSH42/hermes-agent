@@ -1,0 +1,419 @@
+"""ExecuteCodeBlock — Python execute_code tool UX redesign.
+
+Extends StreamingToolBlock with:
+- Per-chunk streaming of code argument via PartialJSONCodeExtractor + CharacterPacer
+- rich.Syntax finalization at tool_start
+- Blinking cursor during code streaming
+- Success/error flash on completion
+- Always-on click-to-toggle (even during streaming)
+- Right-aligned header with python nerd-font icon
+"""
+from __future__ import annotations
+
+import time
+from typing import Any
+
+from rich.text import Text
+from textual.app import ComposeResult
+from textual.css.query import NoMatches
+from textual.widget import Widget
+from textual.widgets import Static
+
+from hermes_cli.tui.tool_blocks import (
+    COLLAPSE_THRESHOLD,
+    StreamingToolBlock,
+    ToolBodyContainer,
+    ToolHeader,
+    ToolTail,
+    _SPINNER_FRAMES,
+    _VISIBLE_CAP,
+)
+from hermes_cli.tui.widgets import CopyableRichLog
+
+
+class CodeSection(Widget):
+    """Section containing syntax-highlighted Python source code."""
+
+    DEFAULT_CSS = "CodeSection { height: auto; }"
+
+    def compose(self) -> ComposeResult:
+        yield CopyableRichLog(markup=False, highlight=False, wrap=False)
+
+
+class OutputSection(Widget):
+    """Section containing stdout/stderr streaming output."""
+
+    DEFAULT_CSS = "OutputSection { height: auto; display: none; }"
+
+    def compose(self) -> ComposeResult:
+        yield CopyableRichLog(markup=False, highlight=False, wrap=False)
+
+
+class ExecuteCodeBody(ToolBodyContainer):
+    """Two-section body: CodeSection + OutputSection.
+
+    Overrides ToolBodyContainer.compose() entirely — the parent yields
+    a single CopyableRichLog which is not useful here.
+    """
+
+    def compose(self) -> ComposeResult:
+        yield CodeSection()
+        yield OutputSection()
+
+
+# State constants
+_STATE_STREAMING = "streaming"
+_STATE_FINALIZED = "finalized"
+_STATE_COMPLETED = "completed"
+
+
+class ExecuteCodeBlock(StreamingToolBlock):
+    """StreamingToolBlock variant for execute_code with per-chunk code streaming.
+
+    Lifecycle: GEN_START → GEN_STREAMING → TOOL_START → EXEC_STREAMING → COMPLETED
+    """
+
+    DEFAULT_CSS = "ExecuteCodeBlock { height: auto; }"
+    _content_type: str = "tool"
+
+    def __init__(self, initial_label: str = "python", **kwargs: Any) -> None:
+        super().__init__(label=initial_label, tool_name="execute_code", **kwargs)
+        self._code_state = _STATE_STREAMING
+        self._line_scratch = ""
+        self._code_lines: list[str] = []
+        self._user_toggled = False
+        self._cursor_visible = True
+        self._cursor_timer = None
+        self._label_set = False
+
+        # Initialized post-mount with app reference
+        self._pacer = None
+        self._extractor = None
+
+    def compose(self) -> ComposeResult:
+        yield self._header
+        yield ExecuteCodeBody()
+        yield self._tail
+
+    def on_mount(self) -> None:
+        # StreamingToolBlock.on_mount also fires (Textual chains MRO handlers).
+        # It sets _body = query_one(ToolBodyContainer) and _has_affordances = False.
+        # We override both after the chained on_mount completes.
+        # Since Textual dispatches most-derived first, then parent, the parent's
+        # on_mount will run AFTER ours and overwrite our settings.
+        # Fix: use call_after_refresh to apply our overrides last.
+        self.call_after_refresh(self._apply_execute_mount_overrides)
+
+        # Initialize extractor and pacer
+        from hermes_cli.tui.partial_json import PartialJSONCodeExtractor
+        from hermes_cli.tui.character_pacer import CharacterPacer
+        self._extractor = PartialJSONCodeExtractor(field="code")
+
+        cps = 0
+        try:
+            from hermes_cli.config import read_raw_config
+            cps = int(read_raw_config().get("display", {}).get("execute_code_typewriter_cps", 0))
+        except Exception:
+            pass
+
+        # Reduced-motion check
+        try:
+            css_vars = self.app.get_css_variables()
+            if css_vars.get("reduced-motion", "0") not in ("0", "", None):
+                cps = 0
+        except Exception:
+            pass
+
+        self._pacer = CharacterPacer(
+            cps=cps,
+            on_reveal=self.append_code_chars,
+            app=self.app,
+        )
+
+        # Mount cursor Static inside CodeSection
+        try:
+            code_section = self.query_one(CodeSection)
+            code_section.mount(Static("", id="code-live-cursor"))
+        except Exception:
+            pass
+
+        # Start cursor blink
+        self._start_cursor()
+
+    def _apply_execute_mount_overrides(self) -> None:
+        """Runs after all MRO on_mount handlers. Overrides StreamingToolBlock defaults."""
+        # Override _body to point at ExecuteCodeBody, not ToolBodyContainer
+        try:
+            self._body = self.query_one(ExecuteCodeBody)
+            # StreamingToolBlock.on_mount added "expanded" to the old ToolBodyContainer
+            # instance (which is NOT in the DOM). We need to add it to ExecuteCodeBody.
+            self._body.add_class("expanded")
+        except NoMatches:
+            pass
+        # Allow toggle during streaming (spec §8)
+        self._header._has_affordances = True
+        self._header.collapsed = False
+
+    def _start_cursor(self) -> None:
+        try:
+            css_vars = self.app.get_css_variables()
+            if css_vars.get("reduced-motion", "0") not in ("0", "", None):
+                return
+        except Exception:
+            pass
+        self._cursor_timer = self.set_interval(0.5, self._tick_cursor)
+
+    def _tick_cursor(self) -> None:
+        if self._code_state == _STATE_FINALIZED:
+            return
+        self._cursor_visible = not self._cursor_visible
+        self._refresh_cursor()
+
+    def _refresh_cursor(self) -> None:
+        try:
+            cursor_widget = self.query_one("#code-live-cursor", Static)
+            if self._code_state == _STATE_FINALIZED:
+                cursor_widget.display = False
+                return
+            cursor_char = "▏" if self._cursor_visible else " "
+            cursor_widget.update(f"{self._line_scratch}{cursor_char}")
+        except NoMatches:
+            pass
+
+    def feed_delta(self, delta: str) -> None:
+        """Process a streaming JSON args chunk. Event-loop only."""
+        if self._code_state == _STATE_FINALIZED:
+            return
+        if self._extractor is None:
+            return
+        decoded = self._extractor.feed(delta)
+        if decoded and self._pacer is not None:
+            self._pacer.feed(decoded)
+
+    def append_code_chars(self, chars: str) -> None:
+        """Receive decoded python chars from pacer. Event-loop only."""
+        if self._code_state == _STATE_FINALIZED:
+            return
+        self._line_scratch += chars
+        # Flush complete lines
+        while '\n' in self._line_scratch:
+            line, self._line_scratch = self._line_scratch.split('\n', 1)
+            self._emit_code_line(line)
+        self._refresh_cursor()
+
+    def _emit_code_line(self, line: str) -> None:
+        """Per-line Pygments highlight and write to CodeSection RichLog."""
+        self._code_lines.append(line)
+        # Update label on first non-empty line (once only)
+        if not self._label_set and line.strip():
+            label = line.strip()[:60]
+            self._header._label = label
+            self._label_set = True
+        # Per-line Pygments highlight
+        highlighted = self._highlight_line(line)
+        try:
+            code_log = self.query_one(CodeSection).query_one(CopyableRichLog)
+            code_log.write_with_source(Text.from_ansi(highlighted), line)
+        except NoMatches:
+            pass
+
+    def _highlight_line(self, line: str) -> str:
+        """Per-line Pygments highlight for Python code."""
+        try:
+            from pygments import highlight
+            from pygments.lexers import PythonLexer
+            from pygments.formatters import TerminalTrueColorFormatter
+            # Get theme from CSS vars
+            theme = "monokai"
+            try:
+                css_vars = self.app.get_css_variables()
+                theme = css_vars.get("preview-syntax-theme", theme)
+            except Exception:
+                pass
+            return highlight(line, PythonLexer(), TerminalTrueColorFormatter(style=theme)).rstrip('\n')
+        except Exception:
+            return line
+
+    def finalize_code(self, code: str) -> None:
+        """Replace streamed per-line render with canonical rich.Syntax. Event-loop only."""
+        if self._code_state == _STATE_FINALIZED:
+            return
+        self._code_state = _STATE_FINALIZED
+
+        # Stop cursor
+        if self._cursor_timer is not None:
+            try:
+                self._cursor_timer.stop()
+            except Exception:
+                pass
+            self._cursor_timer = None
+
+        # Flush and stop pacer (canonical code supersedes streamed per-line output)
+        if self._pacer is not None:
+            self._pacer.flush()
+            self._pacer.stop()
+
+        # Hide cursor widget
+        try:
+            cursor_w = self.query_one("#code-live-cursor", Static)
+            cursor_w.display = False
+        except NoMatches:
+            pass
+
+        # Record canonical code lines for collapse threshold
+        if code:
+            self._code_lines = code.splitlines()
+
+        # Clear CodeSection and write Syntax renderable
+        try:
+            code_section = self.query_one(CodeSection)
+            code_log = code_section.query_one(CopyableRichLog)
+            code_log.clear()
+
+            if code:
+                from rich.syntax import Syntax
+                try:
+                    css_vars = self.app.get_css_variables()
+                    theme = css_vars.get("preview-syntax-theme", "monokai")
+                    bg = css_vars.get("app-bg", None)
+                except Exception:
+                    theme = "monokai"
+                    bg = None
+
+                syntax = Syntax(
+                    code,
+                    lexer="python",
+                    theme=theme,
+                    line_numbers=False,
+                    background_color=bg if bg and bg != "default" else None,
+                )
+                code_log.write(syntax)
+        except NoMatches:
+            pass
+
+        # Reveal OutputSection
+        try:
+            output_section = self.query_one(OutputSection)
+            output_section.display = True
+        except NoMatches:
+            pass
+
+    def _flush_pending(self) -> None:
+        """Override: drain pending stdout lines to OutputSection's RichLog."""
+        if not self._pending:
+            return
+        batch = self._pending
+        self._pending = []
+
+        try:
+            from hermes_cli.tui.widgets import _strip_ansi
+            output_log = self.query_one(OutputSection).query_one(CopyableRichLog)
+        except NoMatches:
+            return
+
+        lines_written = 0
+        for raw, plain in batch:
+            if self._visible_count < _VISIBLE_CAP:
+                output_log.write_with_source(Text.from_ansi(raw), plain)
+                self._visible_count += 1
+                lines_written += 1
+            elif not self._cap_marker_written:
+                output_log.write(Text.from_markup(
+                    f"[dim]  … (showing first {_VISIBLE_CAP} of "
+                    f"{self._total_received} lines)[/dim]"
+                ))
+                self._cap_marker_written = True
+
+        if lines_written:
+            try:
+                scrolled_up = getattr(self.app.query_one("#output-panel"), "_user_scrolled_up", False)
+            except Exception:
+                scrolled_up = False
+            if scrolled_up:
+                new_total = self._tail._new_line_count + lines_written
+                try:
+                    self._tail.update_count(new_total)
+                except Exception:
+                    pass
+
+    def complete(self, duration: str, is_error: bool = False) -> None:
+        """Override: add flash_success/flash_error, use code+output for collapse threshold."""
+        if self._completed:
+            return
+        self._completed = True
+
+        # Finalize code if not already done (safety net)
+        if self._code_state != _STATE_FINALIZED:
+            self.finalize_code("")
+
+        # Stop timers
+        try:
+            self._render_timer.stop()
+            self._spinner_timer.stop()
+            self._duration_timer.stop()
+        except Exception:
+            pass
+
+        self._header._pulse_stop()
+        self._header.set_error(is_error)
+
+        # Final stdout flush
+        self._flush_pending()
+        # Hide tail badge
+        self._tail.dismiss()
+
+        # Update header
+        self._header._spinner_char = None
+        self._header._duration = duration
+
+        # Collapse based on code lines + output lines
+        total = len(self._code_lines) + self._total_received
+        self._header._line_count = total
+
+        if not self._user_toggled:
+            if total > COLLAPSE_THRESHOLD:
+                self._header._has_affordances = True
+                self._header.collapsed = True
+                self._body.remove_class("expanded")
+            elif total == 0:
+                self._body.styles.display = "none"
+                self._header.collapsed = False
+            else:
+                self._header._has_affordances = total > 0
+                self._header.collapsed = False
+        else:
+            # User toggled — respect their choice, update affordances
+            self._header._has_affordances = total > 0
+
+        self._header.refresh()
+
+        # Flash success or error
+        if is_error:
+            self._header.flash_error()
+        else:
+            self._header.flash_success()
+
+        self._code_state = _STATE_COMPLETED
+
+    def toggle(self) -> None:
+        """Override: track user-initiated toggles."""
+        self._user_toggled = True
+        super().toggle()
+
+    def on_unmount(self) -> None:
+        super().on_unmount()
+        if self._pacer is not None:
+            self._pacer.stop()
+        if self._cursor_timer is not None:
+            try:
+                self._cursor_timer.stop()
+            except Exception:
+                pass
+
+    def copy_content(self) -> str:
+        """Concatenate code + output plain text with blank-line separator."""
+        code_text = "\n".join(self._code_lines)
+        output_text = "\n".join(self._all_plain)
+        if code_text and output_text:
+            return code_text + "\n\n" + output_text
+        return code_text or output_text

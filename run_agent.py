@@ -497,6 +497,7 @@ class AIAgent:
         step_callback: callable = None,
         stream_delta_callback: callable = None,
         tool_gen_callback: callable = None,
+        tool_gen_args_delta_callback: callable = None,
         status_callback: callable = None,
         max_tokens: int = None,
         reasoning_config: Dict[str, Any] = None,
@@ -630,8 +631,8 @@ class AIAgent:
         self.stream_delta_callback = stream_delta_callback
         self.status_callback = status_callback
         self.tool_gen_callback = tool_gen_callback
+        self.tool_gen_args_delta_callback = tool_gen_args_delta_callback
 
-        
         # Tool execution state — allows _vprint during tool execution
         # even when stream consumers are registered (no tokens streaming then)
         self._executing_tools = False
@@ -4335,7 +4336,7 @@ class AIAgent:
             except Exception:
                 pass
 
-    def _fire_tool_gen_started(self, tool_name: str) -> None:
+    def _fire_tool_gen_started(self, idx: int, tool_name: str) -> None:
         """Notify display layer that the model is generating tool call arguments.
 
         Fires once per tool name when the streaming response begins producing
@@ -4346,7 +4347,21 @@ class AIAgent:
         cb = self.tool_gen_callback
         if cb is not None:
             try:
-                cb(tool_name)
+                cb(idx, tool_name)
+            except Exception:
+                pass
+
+    def _fire_tool_gen_args_delta(self, idx: int, tool_name: str, delta: str, accumulated: str) -> None:
+        """Notify display layer of a partial tool-call argument chunk.
+
+        Fires once per streaming delta while tool-call arguments are being generated.
+        idx is the tool-call slot index (1:1 with _fire_tool_gen_started's ordering).
+        Callback errors are swallowed so a TUI bug can't kill the agent loop.
+        """
+        cb = getattr(self, "tool_gen_args_delta_callback", None)
+        if cb is not None:
+            try:
+                cb(idx, tool_name, delta, accumulated)
             except Exception:
                 pass
 
@@ -4541,6 +4556,14 @@ class AIAgent:
                                 entry["function"]["name"] += tc_delta.function.name
                             if tc_delta.function.arguments:
                                 entry["function"]["arguments"] += tc_delta.function.arguments
+                                # Fire args delta only after gen_start has fired for this idx
+                                if idx in tool_gen_notified:
+                                    self._fire_tool_gen_args_delta(
+                                        idx,
+                                        entry["function"]["name"],
+                                        tc_delta.function.arguments,
+                                        entry["function"]["arguments"],
+                                    )
                         extra = getattr(tc_delta, "extra_content", None)
                         if extra is None and hasattr(tc_delta, "model_extra"):
                             extra = (tc_delta.model_extra or {}).get("extra_content")
@@ -4553,7 +4576,11 @@ class AIAgent:
                         if name and idx not in tool_gen_notified:
                             tool_gen_notified.add(idx)
                             _fire_first_delta()
-                            self._fire_tool_gen_started(name)
+                            self._fire_tool_gen_started(idx, name)
+                            # Replay accumulated args so deltas pre-name aren't lost
+                            args_so_far = entry["function"]["arguments"]
+                            if args_so_far:
+                                self._fire_tool_gen_args_delta(idx, name, args_so_far, args_so_far)
 
                 if chunk.choices[0].finish_reason:
                     finish_reason = chunk.choices[0].finish_reason
@@ -4608,6 +4635,8 @@ class AIAgent:
             """
             has_tool_use = False
             self._reasoning_deltas_fired = False
+            # Per-content-block argument accumulation for tool_use blocks
+            _tool_blocks_by_idx: dict[int, dict] = {}
 
             # Reset stale-stream timer for this attempt
             last_chunk_time["t"] = time.time()
@@ -4621,18 +4650,33 @@ class AIAgent:
 
                     if event_type == "content_block_start":
                         block = getattr(event, "content_block", None)
+                        block_idx = getattr(event, "index", None)
                         if block and getattr(block, "type", None) == "tool_use":
                             has_tool_use = True
-                            tool_name = getattr(block, "name", None)
+                            tool_name = getattr(block, "name", "") or ""
+                            if block_idx is not None:
+                                _tool_blocks_by_idx[block_idx] = {"name": tool_name, "args": ""}
                             if tool_name:
                                 _fire_first_delta()
-                                self._fire_tool_gen_started(tool_name)
+                                self._fire_tool_gen_started(
+                                    block_idx if block_idx is not None else 0,
+                                    tool_name,
+                                )
 
                     elif event_type == "content_block_delta":
                         delta = getattr(event, "delta", None)
+                        block_idx = getattr(event, "index", None)
                         if delta:
                             delta_type = getattr(delta, "type", None)
-                            if delta_type == "text_delta":
+                            if delta_type == "input_json_delta":
+                                partial = getattr(delta, "partial_json", "") or ""
+                                if partial and block_idx is not None and block_idx in _tool_blocks_by_idx:
+                                    entry = _tool_blocks_by_idx[block_idx]
+                                    entry["args"] += partial
+                                    self._fire_tool_gen_args_delta(
+                                        block_idx, entry["name"], partial, entry["args"],
+                                    )
+                            elif delta_type == "text_delta":
                                 text = getattr(delta, "text", "")
                                 if text and not has_tool_use:
                                     _fire_first_delta()

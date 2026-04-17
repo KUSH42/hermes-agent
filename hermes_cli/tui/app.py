@@ -1617,6 +1617,29 @@ class HermesApp(App):
         except NoMatches:
             return None
 
+    def _open_execute_code_block(self, idx: int) -> "Any | None":
+        """Open an ExecuteCodeBlock at gen_start time. Event-loop only.
+
+        Creates and mounts an ExecuteCodeBlock for the given tool-call index.
+        Returns the block reference for gen_blocks_by_idx correlation.
+        """
+        try:
+            from hermes_cli.tui.execute_code_block import ExecuteCodeBlock
+            output = self.query_one(OutputPanel)
+            msg = output.current_message or output.new_message()
+            block = ExecuteCodeBlock(initial_label="python")
+            msg._mount_nonprose_block(block)
+            self._browse_total += 1
+            if not output._user_scrolled_up:
+                self.call_after_refresh(output.scroll_end, animate=False)
+            return block
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "_open_execute_code_block failed for idx=%d: %s", idx, e
+            )
+            return None
+
     def open_streaming_tool_block(self, tool_call_id: str, label: str, tool_name: str | None = None) -> None:
         """Mount a StreamingToolBlock into OutputPanel before the live-output duo.
 

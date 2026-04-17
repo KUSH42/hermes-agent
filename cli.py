@@ -1640,6 +1640,9 @@ class HermesCLI:
         self._stream_callback_tokens: dict[str, object] = {}
         # Queue correlating gen_start StreamingToolBlocks with tool_start tool_call_ids
         self._pending_gen_queue: list = []
+        # ExecuteCodeBlock correlation maps (see §3.3 of ExecuteCodeBlock spec)
+        self._gen_blocks_by_idx: dict[int, object] = {}
+        self._active_execute_blocks_by_idx: dict[int, object] = {}
 
         # Configuration - priority: CLI args > env vars > config file
         # Model comes from: CLI arg or config.yaml (single source of truth).
@@ -3118,6 +3121,7 @@ class HermesCLI:
                 tool_complete_callback=self._on_tool_complete,
                 stream_delta_callback=self._stream_delta if self.streaming_enabled else None,
                 tool_gen_callback=self._on_tool_gen_start,
+                tool_gen_args_delta_callback=self._on_tool_gen_args_delta,
             )
             # Store reference for atexit memory provider shutdown
             global _active_agent_ref
@@ -6813,7 +6817,7 @@ class HermesCLI:
         block._header._refresh_tool_icon()
         block._header.refresh()
 
-    def _on_tool_gen_start(self, tool_name: str) -> None:
+    def _on_tool_gen_start(self, idx: int, tool_name: str) -> None:
         """Called when the model begins generating tool-call arguments.
 
         Closes any open streaming boxes (reasoning / response) exactly once,
@@ -6826,18 +6830,39 @@ class HermesCLI:
             self._stream_box_opened = False
         self._close_reasoning_box()
 
-        # Open a StreamingToolBlock at gen_start time.
         tui = _hermes_app
         if tui is None:
             return  # PT mode: no visual widget
 
-        # call_from_thread to mount on event loop, capture block reference
-        result = [None]
-        def _open():
-            result[0] = tui._open_gen_block(tool_name)
-        tui.call_from_thread(_open)
-        if result[0] is not None:
-            self._pending_gen_queue.append(result[0])
+        if tool_name == "execute_code":
+            # Create an ExecuteCodeBlock and track it in _gen_blocks_by_idx
+            result = [None]
+            def _open_execute():
+                result[0] = tui._open_execute_code_block(idx)
+            tui.call_from_thread(_open_execute)
+            if result[0] is not None:
+                self._gen_blocks_by_idx[idx] = result[0]
+        else:
+            # Open a StreamingToolBlock at gen_start time.
+            result = [None]
+            def _open():
+                result[0] = tui._open_gen_block(tool_name)
+            tui.call_from_thread(_open)
+            if result[0] is not None:
+                self._pending_gen_queue.append(result[0])
+
+    def _on_tool_gen_args_delta(self, idx: int, tool_name: str, delta: str, accumulated: str) -> None:
+        """Route tool gen args delta to the correct ExecuteCodeBlock (if any)."""
+        block = (
+            self._gen_blocks_by_idx.get(idx)
+            or self._active_execute_blocks_by_idx.get(idx)
+        )
+        if block is None:
+            return  # non-execute_code tool, or delta arrived with no registered block
+        tui = _hermes_app
+        if tui is None:
+            return
+        tui.call_from_thread(block.feed_delta, delta)
 
     # ====================================================================
     # Tool progress callback (audio cues for voice mode)
@@ -6906,19 +6931,51 @@ class HermesCLI:
         if tui is None:
             return  # PT mode: no streaming block
 
-        # --- Dequeue pending gen block, re-key to tool_call_id ---
-        block = self._pending_gen_queue.pop(0) if self._pending_gen_queue else None
+        # --- Handle execute_code: use the pre-allocated ExecuteCodeBlock ---
+        if function_name == "execute_code":
+            # Find the block via gen_blocks_by_idx (correlate by tool_call_id ordering)
+            # Since we don't have idx here, use the first available entry
+            block = None
+            idx_used = None
+            for idx_key, blk in list(self._gen_blocks_by_idx.items()):
+                block = blk
+                idx_used = idx_key
+                break
 
-        if block is not None:
-            # Re-key: move from gen queue to active dict
-            tui._active_streaming_blocks[tool_call_id] = block
-            # Update label with actual command
-            self._update_block_label(block, function_name, function_args)
+            if block is not None:
+                if idx_used is not None:
+                    del self._gen_blocks_by_idx[idx_used]
+                    self._active_execute_blocks_by_idx[idx_used] = block
+                tui._active_streaming_blocks[tool_call_id] = block
+                # Finalize code arg
+                code = function_args.get("code", "") if isinstance(function_args, dict) else ""
+                if not isinstance(code, str):
+                    logger.warning(
+                        "execute_code args['code'] is not a string (got %s); treating as empty",
+                        type(code).__name__,
+                    )
+                    code = ""
+                tui.call_from_thread(block.finalize_code, code)
+            else:
+                # Fallback: gen_start didn't fire
+                label = self._build_tool_label(function_name, function_args)
+                tui.call_from_thread(tui.open_streaming_tool_block, tool_call_id, label, function_name)
+
+            # Track tool + register streaming callback (shared code below)
         else:
-            # Fallback: gen_start didn't fire (tool_gen_callback was None, or queue race)
-            # Create a new StreamingToolBlock directly
-            label = self._build_tool_label(function_name, function_args)
-            tui.call_from_thread(tui.open_streaming_tool_block, tool_call_id, label, function_name)
+            # --- Dequeue pending gen block, re-key to tool_call_id ---
+            block = self._pending_gen_queue.pop(0) if self._pending_gen_queue else None
+
+            if block is not None:
+                # Re-key: move from gen queue to active dict
+                tui._active_streaming_blocks[tool_call_id] = block
+                # Update label with actual command
+                self._update_block_label(block, function_name, function_args)
+            else:
+                # Fallback: gen_start didn't fire (tool_gen_callback was None, or queue race)
+                # Create a new StreamingToolBlock directly
+                label = self._build_tool_label(function_name, function_args)
+                tui.call_from_thread(tui.open_streaming_tool_block, tool_call_id, label, function_name)
 
         # Track ALL tools (not just streaming-capable ones)
         import time as _t
@@ -6964,6 +7021,12 @@ class HermesCLI:
             import time as _t
             start = self._stream_start_times.pop(tool_call_id, None)
             _stream_duration = f"{_t.monotonic() - start:.1f}s" if start is not None else ""
+
+        # Clean up execute_code idx maps at tool_complete
+        if function_name == "execute_code":
+            active_exec = getattr(self, "_active_execute_blocks_by_idx", {})
+            for idx_key in list(active_exec.keys()):
+                active_exec.pop(idx_key, None)
 
         # Detect tool error for icon coloring
         _is_tool_error = False

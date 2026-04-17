@@ -539,3 +539,8 @@ GroupHeader {
     padding: 0 1 0 0;
 }
 GroupHeader:focus { background: $accent 10%; }
+
+/* --- v3-C: body renderers --- */
+.empty-state { color: $text-muted; padding: 0 2; height: 1; }
+InlineCodeFence { padding: 0 0 0 2; border-left: vkey $primary 30%; margin: 0 0 1 0; height: auto; }
+VirtualSearchList { height: auto; }

@@ -30,6 +30,7 @@ from hermes_cli.tui.tool_header_bar import ToolHeaderBar
 if TYPE_CHECKING:
     from hermes_cli.tui.tool_result_parse import ResultSummary
     from hermes_cli.tui.tool_category import ToolCategory
+    from hermes_cli.tui.tool_payload import ClassificationResult, ToolPayload
 
 
 def _tool_panel_v2_enabled() -> bool:
@@ -490,7 +491,10 @@ class ToolPanel(Widget):
         return str(first) if first is not None else ""
 
     def _update_kind_from_classifier(self, line_count: int) -> None:
-        """Run content classifier and update ResultPill kind."""
+        """Run content classifier and update ResultPill kind.
+
+        Phase C: also triggers _swap_renderer for non-TEXT/SHELL classified output.
+        """
         if self._header_bar is None:
             return
         try:
@@ -514,6 +518,53 @@ class ToolPanel(Widget):
             )
             result = classify_content(payload)
             self._header_bar.set_kind(result.kind)
+            # Phase C: swap renderer for specialized kinds
+            self._maybe_swap_renderer(result, payload)
+        except Exception:
+            pass
+
+    def _swap_renderer(
+        self,
+        new_renderer_cls: type,
+        payload: "ToolPayload",
+        cls_result: "ClassificationResult",
+    ) -> None:
+        """Replace BodyPane content with a new renderer widget."""
+        if self._body_pane is None:
+            return
+        try:
+            from hermes_cli.tui.body_renderers.base import BodyRenderer as _BR
+            renderer = new_renderer_cls(payload, cls_result)
+            new_widget = renderer.build_widget()
+            # Remove old block, mount new widget
+            old_block = self._block
+            self._body_pane.mount(new_widget)
+            if old_block is not None and old_block.is_attached:
+                old_block.remove()
+            self._block = new_widget
+            self._body_pane._block = new_widget
+        except Exception:
+            pass  # keep old renderer on failure
+
+    def _maybe_swap_renderer(
+        self,
+        result: "ClassificationResult",
+        payload: "ToolPayload",
+    ) -> None:
+        """Conditionally swap body renderer based on classification result."""
+        try:
+            from hermes_cli.tui.tool_payload import ResultKind
+            from hermes_cli.tui.tool_category import ToolCategory
+            from hermes_cli.tui.body_renderers import pick_renderer, FallbackRenderer
+
+            if result.kind in (ResultKind.TEXT, ResultKind.EMPTY):
+                return
+            if self._category == ToolCategory.SHELL:
+                return  # SHELL always keeps its renderer
+            renderer_cls = pick_renderer(result, payload)
+            if renderer_cls is FallbackRenderer:
+                return  # don't swap to fallback unnecessarily
+            self._swap_renderer(renderer_cls, payload, result)
         except Exception:
             pass
 

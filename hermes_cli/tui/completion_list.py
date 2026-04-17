@@ -30,7 +30,7 @@ from textual.reactive import reactive
 from textual.scroll_view import ScrollView
 from textual.strip import Strip
 
-from .animation import lerp_color
+from .animation import AnimationClock, lerp_color
 
 if TYPE_CHECKING:
     from .path_search import Candidate
@@ -152,7 +152,13 @@ class VirtualCompletionList(ScrollView, can_focus=True):
             return
         animations_on = getattr(getattr(self, "app", None), "_animations_enabled", True)
         if animations_on and not self._no_color:
-            self._shimmer_timer = self.set_interval(1 / 8, self._advance_shimmer)
+            clock: AnimationClock | None = getattr(
+                getattr(self, "app", None), "_anim_clock", None
+            )
+            if clock is not None:
+                self._shimmer_timer = clock.subscribe(2, self._advance_shimmer)
+            else:
+                self._shimmer_timer = self.set_interval(1 / 8, self._advance_shimmer)
 
     def _stop_shimmer(self) -> None:
         if self._shimmer_timer is not None:

@@ -2,11 +2,12 @@
 Shared animation utilities for the Hermes TUI.
 
 Pure functions have no side effects and no Textual imports.
-PulseMixin uses duck-typed Textual APIs (set_interval, refresh).
+PulseMixin and AnimationClock use duck-typed Textual APIs (set_interval, refresh).
 """
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 
 from rich.style import Style
 from rich.text import Text
@@ -75,6 +76,60 @@ def lerp_color(hex1: str, hex2: str, t: float) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Shared animation clock
+# ---------------------------------------------------------------------------
+
+class _ClockSubscription:
+    """Adapter so clock subscriptions expose the same .stop() as Textual timer handles."""
+
+    __slots__ = ("_clock", "_sub_id")
+
+    def __init__(self, clock: "AnimationClock", sub_id: int) -> None:
+        self._clock = clock
+        self._sub_id = sub_id
+
+    def stop(self) -> None:
+        self._clock.unsubscribe(self._sub_id)
+
+
+class AnimationClock:
+    """Single 15Hz master tick bus. App creates one and exposes it as ``_anim_clock``.
+
+    Widgets subscribe in start/activate/on_mount and unsubscribe via the returned
+    handle's ``.stop()`` (same interface as Textual timer handles).
+
+    Divisor reference at 15Hz:
+      divisor=1  → 15.0 Hz   (pulse, helix shimmer)
+      divisor=2  → 7.5  Hz   (hint-bar shimmer, completion shimmer)
+      divisor=4  → 3.75 Hz   (thinking shimmer, was 4 Hz)
+      divisor=8  → 1.875 Hz  (cursor blink, was 2 Hz)
+      divisor=75 → 0.2  Hz   (status-bar hint rotation, was 5 s)
+    """
+
+    def __init__(self) -> None:
+        self._tick: int = 0
+        self._subscribers: dict[int, tuple[int, Callable[[], None]]] = {}
+        self._next_id: int = 0
+
+    def subscribe(self, divisor: int, callback: Callable[[], None]) -> _ClockSubscription:
+        """Register *callback* to fire every *divisor* ticks. Returns a stoppable handle."""
+        sub_id = self._next_id
+        self._next_id += 1
+        self._subscribers[sub_id] = (divisor, callback)
+        return _ClockSubscription(self, sub_id)
+
+    def unsubscribe(self, sub_id: int) -> None:
+        self._subscribers.pop(sub_id, None)
+
+    def tick(self) -> None:
+        """15Hz interval callback — must be plain def, registered via set_interval(1/15, ...)."""
+        self._tick += 1
+        for sub_id, (divisor, callback) in list(self._subscribers.items()):
+            if self._tick % divisor == 0:
+                callback()
+
+
+# ---------------------------------------------------------------------------
 # PulseMixin
 # ---------------------------------------------------------------------------
 
@@ -110,9 +165,16 @@ class PulseMixin:
 
     def _pulse_start(self) -> None:
         """Start the pulse. Safe to call multiple times (idempotent)."""
-        if self._pulse_timer is None:
-            self._pulse_tick = 0
-            # set_interval callback MUST be def (not async def) when no await used.
+        if self._pulse_timer is not None:
+            return
+        self._pulse_tick = 0
+        clock: AnimationClock | None = getattr(
+            getattr(self, "app", None), "_anim_clock", None
+        )
+        if clock is not None:
+            self._pulse_timer = clock.subscribe(1, self._pulse_step)
+        else:
+            # Fallback for unit tests (no app / no clock).
             self._pulse_timer = self.set_interval(  # type: ignore[attr-defined]
                 1 / 15, self._pulse_step
             )
@@ -124,6 +186,10 @@ class PulseMixin:
             self._pulse_timer = None
         self._pulse_t = 0.0
         self.refresh()  # type: ignore[attr-defined]
+
+    def on_unmount(self) -> None:
+        """Safety net: stop pulse on widget removal regardless of subclass cleanup."""
+        self._pulse_stop()
 
     def _pulse_step(self) -> None:
         """15Hz timer callback — must be plain def."""

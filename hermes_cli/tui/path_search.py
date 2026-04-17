@@ -164,7 +164,12 @@ class PathSearchProvider(Widget):
     @staticmethod
     def _iwalk(root: Path, ignore: set[str]) -> Iterator[tuple[str, list[str], list[str]]]:
         """scandir-based walk — ~3× faster than os.walk on deep trees because
-        DirEntry.is_dir() avoids the per-entry os.stat syscall."""
+        DirEntry.is_dir() avoids the per-entry os.stat syscall.
+
+        Sorts dirs/files alphabetically per directory.  Dirs are pushed to the
+        stack in reverse order so the LIFO pop yields them in forward alpha
+        (leftmost directory visited first).
+        """
         stack = [str(root)]
         while stack:
             dirpath = stack.pop()
@@ -177,11 +182,16 @@ class PathSearchProvider(Widget):
                             if entry.is_dir(follow_symlinks=False):
                                 if entry.name not in ignore:
                                     dirs.append(entry.name)
-                                    stack.append(entry.path)
                             else:
                                 files.append(entry.name)
                         except OSError:
                             continue
+                    # Deterministic order: alphabetical within each category.
+                    dirs.sort()
+                    files.sort()
+                    # Push in reverse so stack.pop() yields forward alpha order.
+                    for d in reversed(dirs):
+                        stack.append(os.path.join(dirpath, d))
                     yield dirpath, dirs, files
             except OSError:
                 continue

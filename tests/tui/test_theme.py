@@ -118,8 +118,8 @@ async def test_apply_skin_updates_streaming_code_block_theme_without_state_chang
 
 
 @pytest.mark.asyncio
-async def test_apply_skin_does_not_rerender_flushed_code_blocks():
-    """Flushed blocks should remain flushed and keep copy text unchanged."""
+async def test_apply_skin_rerenders_flushed_code_blocks():
+    """Flushed blocks re-render with new theme (same as COMPLETE)."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(100, 40)) as pilot:
         await pilot.pause()
@@ -134,11 +134,9 @@ async def test_apply_skin_does_not_rerender_flushed_code_blocks():
         await pilot.pause()
         copy_before = block.copy_content()
 
-        with patch.object(block._log, "clear", wraps=block._log.clear) as clear_spy:
-            app.apply_skin({"preview-syntax-theme": "emacs", "app-bg": "#1e1e1e"})
-            await pilot.pause()
+        app.apply_skin({"preview-syntax-theme": "emacs", "app-bg": "#1e1e1e"})
+        await pilot.pause()
 
-        assert not clear_spy.called
         assert block._state == "FLUSHED"
         assert block._pygments_theme == "emacs"
         assert block.copy_content() == copy_before

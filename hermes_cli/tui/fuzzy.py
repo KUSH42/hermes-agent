@@ -37,7 +37,11 @@ def fuzzy_rank(
     doesn't bleed into the "no query" display.
     """
     if not query:
-        return [replace(c, score=0, match_spans=()) for c in items][:limit]
+        # No query → deterministic alphabetical sort (match walk order
+        # from _iwalk, which now sorts per-directory).
+        clean = [replace(c, score=0, match_spans=()) for c in items]
+        clean.sort(key=lambda c: c.display)
+        return clean[:limit]
 
     q = query.lower()
     scored: list[tuple[int, _C]] = []

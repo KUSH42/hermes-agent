@@ -355,8 +355,8 @@ async def test_tool_header_no_affordances_for_small_block():
 
 
 @pytest.mark.asyncio
-async def test_code_block_footer_visible_after_complete():
-    """Integrated controls row shows copy once the fence closes."""
+async def test_code_block_complete_has_syntax_and_class():
+    """Code block finalizes with --complete class and rich.Syntax (line numbers)."""
     app = _make_app()
     async with app.run_test(size=(80, 40)) as pilot:
         await _pause(pilot)
@@ -373,13 +373,13 @@ async def test_code_block_footer_visible_after_complete():
         await asyncio.sleep(0.05)
         await _pause(pilot)
 
+        assert block._state == "COMPLETE"
         assert block.has_class("--complete")
-        assert "copy" in block._controls_text_plain
 
 
 @pytest.mark.asyncio
-async def test_code_block_footer_visible_after_flush():
-    """Integrated controls row is shown for FLUSHED blocks too."""
+async def test_code_block_flushed_has_syntax_and_classes():
+    """FLUSHED blocks render with rich.Syntax same as COMPLETE."""
     app = _make_app()
     async with app.run_test(size=(80, 40)) as pilot:
         await _pause(pilot)
@@ -397,12 +397,12 @@ async def test_code_block_footer_visible_after_flush():
 
         assert block._state == "FLUSHED"
         assert block.has_class("--flushed")
-        assert "copy" in block._controls_text_plain
+        assert block.has_class("--complete")
 
 
 @pytest.mark.asyncio
-async def test_code_block_footer_copy_left_zone():
-    """Copying a code block flashes the integrated controls row."""
+async def test_code_block_copy_flashes_border():
+    """Copying a code block adds --copy-flash class then removes it after 1.5s."""
     app = _make_app()
     async with app.run_test(size=(80, 40)) as pilot:
         await _pause(pilot)
@@ -423,11 +423,11 @@ async def test_code_block_footer_copy_left_zone():
 
         mock_copy.assert_called_once()
         assert "answer = 42" in mock_copy.call_args[0][0]
-        assert "copied" in block._controls_text_plain
+        assert block.has_class("--copy-flash")
 
 
 @pytest.mark.asyncio
-async def test_code_block_footer_toggle_collapses_log():
+async def test_code_block_toggle_collapses_log():
     """toggle_collapsed() collapses/expands the code log."""
     app = _make_app()
     async with app.run_test(size=(80, 40)) as pilot:
@@ -458,40 +458,8 @@ async def test_code_block_footer_toggle_collapses_log():
 
 
 @pytest.mark.asyncio
-async def test_code_block_footer_copy_action_click_copies():
-    """Left-click on the footer copy action should copy the code block."""
-    from hermes_cli.tui.widgets import CodeBlockFooter
-
-    app = _make_app()
-    async with app.run_test(size=(80, 40)) as pilot:
-        await _pause(pilot)
-        output = app.query_one(OutputPanel)
-        mp = output.new_message()
-        await _pause(pilot)
-
-        block = StreamingCodeBlock(lang="python")
-        await mp.mount(block)
-        block.append_line("answer = 42")
-        block.complete({})
-        await asyncio.sleep(0.05)
-        await _pause(pilot)
-
-        copy_btn = block.query_one("#code-copy-action")
-        footer = block.query_one(CodeBlockFooter)
-        with patch.object(app, "_copy_text_with_hint") as mock_copy:
-            footer.on_click(_left_click(copy_btn))
-            await _pause(pilot)
-
-        mock_copy.assert_called_once()
-        assert "answer = 42" in mock_copy.call_args[0][0]
-        assert "cop" in block._controls_text_plain.lower()
-
-
-@pytest.mark.asyncio
-async def test_code_block_footer_toggle_action_click_toggles():
-    """Left-click on the footer toggle action should collapse and expand."""
-    from hermes_cli.tui.widgets import CodeBlockFooter
-
+async def test_code_block_left_click_toggles():
+    """Left-click on finalized code block should toggle collapse/expand."""
     app = _make_app()
     async with app.run_test(size=(80, 40)) as pilot:
         await _pause(pilot)
@@ -507,18 +475,39 @@ async def test_code_block_footer_toggle_action_click_toggles():
         await asyncio.sleep(0.05)
         await _pause(pilot)
 
-        toggle_btn = block.query_one("#code-toggle-action")
-        footer = block.query_one(CodeBlockFooter)
-        footer.on_click(_left_click(toggle_btn))
+        assert not block._collapsed
+        block.on_click(_left_click(block))
         await _pause(pilot)
         assert block._collapsed
         assert "expand" in block._controls_text_plain
 
-        toggle_btn = block.query_one("#code-toggle-action")
-        footer.on_click(_left_click(toggle_btn))
+        block.on_click(_left_click(block))
         await _pause(pilot)
         assert not block._collapsed
         assert "collapse" in block._controls_text_plain
+
+
+@pytest.mark.asyncio
+async def test_code_block_single_line_click_no_toggle():
+    """Single-line code blocks cannot be collapsed, click is no-op."""
+    app = _make_app()
+    async with app.run_test(size=(80, 40)) as pilot:
+        await _pause(pilot)
+        output = app.query_one(OutputPanel)
+        mp = output.new_message()
+        await _pause(pilot)
+
+        block = StreamingCodeBlock(lang="python")
+        await mp.mount(block)
+        block.append_line("x = 1")
+        block.complete({})
+        await asyncio.sleep(0.05)
+        await _pause(pilot)
+
+        assert not block.can_toggle()
+        block.on_click(_left_click(block))
+        await _pause(pilot)
+        assert not block._collapsed
 
 
 # ---------------------------------------------------------------------------

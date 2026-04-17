@@ -344,7 +344,7 @@ ContextMenu > _ContextSep { color: $text-muted; }
 
 #history-result-list {
     height: auto;
-    max-height: 14;
+    max-height: 1fr;
     overflow-y: auto;
     overflow-x: hidden;
 }
@@ -356,8 +356,11 @@ ContextMenu > _ContextSep { color: $text-muted; }
 }
 
 TurnResultItem {
-    height: 1;
+    height: auto;
+    min-height: 2;
+    max-height: 4;
     padding: 0 1;
+    margin-bottom: 1;
 }
 
 /* Use $cursor-selection-bg for consistent selection style with VirtualCompletionList

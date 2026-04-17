@@ -491,7 +491,8 @@ async def test_zero_turns_shows_empty_status():
         assert len(items) == 0
 
         status = overlay.query_one("#history-status", Static)
-        assert "0 of 0 turn" in str(status.render())
+        assert "0/0 shown" in str(status.render())
+        assert "0 turns indexed" in str(status.render())
 
 
 # ---------------------------------------------------------------------------

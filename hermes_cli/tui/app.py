@@ -172,6 +172,7 @@ class HermesApp(App):
         Binding("alt+up", "prev_turn", "Previous turn", show=False),
         Binding("alt+down", "next_turn", "Next turn", show=False),
         Binding("ctrl+shift+a", "open_anim_config", "Animation config", show=False, priority=True),
+        Binding("ctrl+b", "open_anim_config", show=False, priority=True),
     ]
 
     _CHEVRON_PHASE_CLASSES: frozenset[str] = frozenset({

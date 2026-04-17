@@ -25,9 +25,9 @@ async def test_ctrl_shift_a_toggles_drawille_overlay():
         await pilot.pause()
         assert not do.has_class("-visible"), "Overlay should hide after ctrl+shift+a"
 
-        await pilot.press("ctrl+shift+a")
+        await pilot.press("ctrl+b")
         await pilot.pause()
-        assert do.has_class("-visible"), "Overlay should show again after second ctrl+shift+a"
+        assert do.has_class("-visible"), "Overlay should show again after ctrl+b"
 
 
 @pytest.mark.asyncio

@@ -58,6 +58,7 @@ component_vars:
   status-running-color: '#00ff9f'
   status-warn-color: '#ffb000'
   user-echo-bullet-color: '#00d849'
+  drawille-canvas-color: '#00ff41'
 description: The Matrix — dark void and hacker green phosphor
 diff:
   addition_bg: '#0a2a14'

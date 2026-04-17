@@ -233,3 +233,6 @@ syntax_scheme: monokai
 #   rule-accent-dim-color: "#CC9920"
 #   primary-darken-3: "#4a7aaa"
 #   fps-hud-bg: "#1a1a2e"
+#   drawille-canvas-color: "#00d7ff"   # braille animation overlay base color
+#                                      # (overridden per-frame when multi_color
+#                                      #  or gradient mode is active)

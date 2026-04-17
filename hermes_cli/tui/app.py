@@ -949,6 +949,13 @@ class HermesApp(App):
             # without calling close_streaming_tool_block).  Leaked refs prevent GC
             # of the widget objects and cause stale entries on the next turn.
             self._active_streaming_blocks.clear()
+            # Clear file-tool block ref so next turn's diff won't inherit connector
+            try:
+                msg = self.query_one(OutputPanel).current_message
+                if msg is not None:
+                    msg._last_file_tool_block = None
+            except NoMatches:
+                pass
             # Clear any gen blocks left open from interrupted turns
             pending = getattr(self.cli, "_pending_gen_queue", None)
             if pending:
@@ -1640,6 +1647,27 @@ class HermesApp(App):
             )
             return None
 
+    def _open_write_file_block(self, idx: int, path: str) -> "Any | None":
+        """Open a WriteFileBlock at gen_start time. Event-loop only."""
+        try:
+            from hermes_cli.tui.write_file_block import WriteFileBlock
+            output = self.query_one(OutputPanel)
+            msg = output.current_message or output.new_message()
+            block = WriteFileBlock(path=path)
+            msg._mount_nonprose_block(block)
+            if path:
+                msg._last_file_tool_block = block
+            self._browse_total += 1
+            if not output._user_scrolled_up:
+                self.call_after_refresh(output.scroll_end, animate=False)
+            return block
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "_open_write_file_block failed idx=%d: %s", idx, e
+            )
+            return None
+
     def open_streaming_tool_block(self, tool_call_id: str, label: str, tool_name: str | None = None) -> None:
         """Mount a StreamingToolBlock into OutputPanel before the live-output duo.
 
@@ -2014,11 +2042,7 @@ class HermesApp(App):
                 from hermes_cli.tui.tool_blocks import ToolBlock as _TB
                 if isinstance(node, _TB):
                     block = node
-                    return [
-                        MenuItem("⎘  Copy tool output", "", lambda b=block: self._copy_tool_output(b)),
-                        MenuItem("▸/▾  Expand/Collapse", "", lambda b=block: b.toggle()),
-                        MenuItem("⎘  Copy all output", "", lambda: self._copy_all_output(), separator_above=True),
-                    ]
+                    return self._build_tool_block_menu_items(block)
             except ImportError:
                 pass
 
@@ -2028,12 +2052,7 @@ class HermesApp(App):
                 if isinstance(node, _TH):
                     parent = node.parent
                     if isinstance(parent, _TB):
-                        block = parent
-                        return [
-                            MenuItem("⎘  Copy tool output", "", lambda b=block: self._copy_tool_output(b)),
-                            MenuItem("▸/▾  Expand/Collapse", "", lambda b=block: b.toggle()),
-                            MenuItem("⎘  Copy all output", "", lambda: self._copy_all_output(), separator_above=True),
-                        ]
+                        return self._build_tool_block_menu_items(parent)
             except ImportError:
                 pass
 
@@ -2124,6 +2143,69 @@ class HermesApp(App):
             self._copy_text_with_hint(content)
         except Exception:
             self._flash_hint("⚠ copy failed", 1.5)
+
+    def _build_tool_block_menu_items(self, block: Any) -> list:
+        """Build context menu items for a ToolBlock, including path actions."""
+        from hermes_cli.tui.context_menu import MenuItem
+        import sys
+        items: list[MenuItem] = []
+        opener = "open" if sys.platform == "darwin" else "xdg-open"
+
+        header = getattr(block, "_header", None)
+        header_path = getattr(header, "_full_path", None) if header is not None else None
+        diff_path = getattr(block, "_diff_file_path", None)
+        path = header_path or diff_path
+        is_url = getattr(header, "_is_url", False) if path == header_path and header is not None else False
+
+        if path:
+            if is_url:
+                items += [
+                    MenuItem("Open link",  "", lambda p=path, h=header, o=opener: self._open_path_action(h, p, o, False)),
+                    MenuItem("Copy link",  "", lambda p=path, h=header:            self._copy_path_action(h, p)),
+                ]
+            else:
+                items += [
+                    MenuItem("Open",                   "", lambda p=path, h=header, o=opener: self._open_path_action(h, p, o, False)),
+                    MenuItem("Copy path",              "", lambda p=path, h=header:            self._copy_path_action(h, p)),
+                    MenuItem("Open containing folder", "", lambda p=path, h=header, o=opener: self._open_path_action(h, p, o, True)),
+                ]
+
+        sep = bool(path)
+        items += [
+            MenuItem("⎘  Copy tool output", "", lambda b=block: self._copy_tool_output(b), separator_above=sep),
+            MenuItem("▸/▾  Expand/Collapse", "", lambda b=block: b.toggle()),
+            MenuItem("⎘  Copy all output",  "", lambda: self._copy_all_output(), separator_above=True),
+        ]
+        return items
+
+    def _copy_path_action(self, header: Any, path: str) -> None:
+        """Copy path/URL to clipboard. Event-loop only."""
+        self._copy_text_with_hint(path)
+        if header is not None:
+            header.flash_success()
+
+    def _open_path_action(self, header: Any, path: str, opener: str, folder: bool) -> None:
+        """Open file/URL or containing folder in a worker thread."""
+        import threading
+
+        def _run() -> None:
+            import subprocess
+            from pathlib import Path
+            if header is not None:
+                self.call_from_thread(header._pulse_start)
+            try:
+                target = str(Path(path).parent) if folder else path
+                subprocess.run([opener, target], check=True)
+                if header is not None:
+                    self.call_from_thread(header._pulse_stop)
+                    self.call_from_thread(header.flash_success)
+            except Exception:
+                if header is not None:
+                    self.call_from_thread(header._pulse_stop)
+                    self.call_from_thread(header.flash_error)
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
 
     def _copy_all_output(self) -> None:
         """Copy plain text from every CopyableRichLog in the output panel."""

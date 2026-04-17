@@ -831,6 +831,7 @@ class MessagePanel(Widget):
         self._active_prose_block: CopyableBlock = self._response_block
         self._user_text: str = user_text
         self._response_engine: "Any | None" = None   # ResponseFlowEngine, set in on_mount
+        self._last_file_tool_block: "Any | None" = None   # tracks most-recent file-tool STB for diff connector
         super().__init__(**kwargs)
         _boost_layout_caches(self, box_model_maxsize=256, arrangement_maxsize=32)
 
@@ -1014,13 +1015,17 @@ class MessagePanel(Widget):
             rerender_fn=rerender_fn,
             header_stats=header_stats,
         )
+        if label == "diff" and self._last_file_tool_block is not None:
+            block._header._is_child_diff = True
         self._mount_nonprose_block(block)
         return block
 
     def open_streaming_tool_block(self, label: str, tool_name: str | None = None) -> Widget:
-        from hermes_cli.tui.tool_blocks import StreamingToolBlock as _STB
+        from hermes_cli.tui.tool_blocks import StreamingToolBlock as _STB, _FILE_TOOL_NAMES
         block = _STB(label=label, tool_name=tool_name)
         self._mount_nonprose_block(block)
+        if tool_name in _FILE_TOOL_NAMES:
+            self._last_file_tool_block = block
         return block
 
     def all_prose_text(self) -> str:

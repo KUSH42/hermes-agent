@@ -44,6 +44,14 @@ _SPINNER_FRAMES: tuple[str, ...] = (
 # Gutter fallback color — avoid duplicating the literal across three call sites
 _GUTTER_FALLBACK: str = "#FFD700"
 
+_FILE_TOOL_NAMES: frozenset[str] = frozenset({
+    "patch", "read_file", "write_file", "create_file",
+    "edit_file", "str_replace_editor", "view",
+})
+_URL_SCHEMES: tuple[str, ...] = ("http://", "https://", "ftp://", "file://")
+_DIFF_PATH_RE = re.compile(r"^(?:---|\+\+\+)\s+(?:[ab]/)?(.+)$")
+_DIFF_HEADER_RE = re.compile(r"^((?:---|\+\+\+)\s+)(?:[ab]/)?(.+)$")
+
 
 def _safe_cell_width(s: str) -> int:
     """Return cell width of s; fall back to len(s) if wcwidth unavailable."""
@@ -136,6 +144,11 @@ class ToolHeader(PulseMixin, Widget):
         self._label_rich: "Text | None" = None
         # Compact tail: no right-align padding, duration in normal color (execute_code)
         self._compact_tail: bool = False
+        # Path-aware rendering
+        self._is_child_diff: bool = False       # ╰─ gutter glyph for diff children
+        self._full_path: str | None = None      # raw untruncated path or URL
+        self._path_clickable: bool = False      # True for file-tool and URL headers
+        self._is_url: bool = False              # True when path starts with http/https/etc.
 
     def on_mount(self) -> None:
         self._refresh_gutter_color()
@@ -172,13 +185,17 @@ class ToolHeader(PulseMixin, Widget):
 
         # --- Gutter ---
         if _tool_gutter_enabled():
-            if focused:
+            if self._is_child_diff:
+                gutter_text = Text("  ╰─", style="dim")
+                gutter_w = 4
+            elif focused:
                 color = getattr(self, "_focused_gutter_color", _GUTTER_FALLBACK)
                 gutter_text = Text("  ┃", style=f"bold {color}")
+                gutter_w = 3
             else:
                 gutter_text = Text("  ┊", style="dim")
+                gutter_w = 3
             t.append_text(gutter_text)
-            gutter_w = 3
         else:
             gutter_w = 0
 
@@ -257,7 +274,9 @@ class ToolHeader(PulseMixin, Widget):
 
         if term_w <= 0:
             # Pre-mount: best-effort, no padding
-            if self._label_rich is not None:
+            if self._path_clickable:
+                t.append_text(self._render_path_label(50))
+            elif self._label_rich is not None:
                 t.append(" ")
                 t.append_text(self._label_rich)
             else:
@@ -266,15 +285,24 @@ class ToolHeader(PulseMixin, Widget):
             return t
 
         available = max(MIN_LABEL_W, term_w - FIXED_PREFIX_W - tail_w - 2)
-        label_str = self._label
-        if len(label_str) > available:
-            label_str = label_str[:available - 1] + "…"
-        pad = max(0, available - _safe_cell_width(label_str))
-        if self._label_rich is not None:
+        if self._path_clickable:
+            path_text = self._render_path_label(available)
+            t.append_text(path_text)
+            pad = max(0, available - path_text.cell_len)
+            t.append(" " * pad)
+        elif self._label_rich is not None:
+            label_str = self._label
+            if len(label_str) > available:
+                label_str = label_str[:available - 1] + "…"
+            pad = max(0, available - _safe_cell_width(label_str))
             t.append(" ")
             t.append_text(self._label_rich)
             t.append(" " * pad)
         else:
+            label_str = self._label
+            if len(label_str) > available:
+                label_str = label_str[:available - 1] + "…"
+            pad = max(0, available - _safe_cell_width(label_str))
             t.append(f" {label_str}{' ' * pad}", style=label_style)
         t.append_text(tail)
         return t
@@ -306,6 +334,38 @@ class ToolHeader(PulseMixin, Widget):
     def flash_complete(self) -> None:
         """Deprecated: delegates to flash_success."""
         self.flash_success()
+
+    def set_path(self, path: str) -> None:
+        """Store full path/URL for path-aware rendering and context menu actions."""
+        self._full_path = path
+        self._path_clickable = True
+        self._is_url = any(path.startswith(s) for s in _URL_SCHEMES)
+
+    def _render_path_label(self, max_cells: int) -> "Text":
+        """Render dir (dim) + filename (bold), truncating dir prefix if needed."""
+        path = self._full_path or self._label
+        parts = path.rsplit("/", 1)
+        if len(parts) == 2 and parts[0]:
+            dir_part, fname = parts[0] + "/", parts[1]
+        else:
+            dir_part, fname = "", path
+
+        fname_w = _safe_cell_width(fname)
+        dir_budget = max(0, max_cells - fname_w - 1)  # -1 for leading space
+
+        if _safe_cell_width(dir_part) > dir_budget:
+            trimmed = dir_part
+            while trimmed and _safe_cell_width("…/" + trimmed) > dir_budget:
+                trimmed = trimmed.split("/", 1)[-1] if "/" in trimmed else ""
+            dir_part = ("…/" + trimmed) if trimmed else "…/"
+
+        t = Text()
+        if dir_part:
+            t.append(" " + dir_part, style="dim")
+        else:
+            t.append(" ", style="dim")
+        t.append(fname, style="bold")
+        return t
 
     def on_click(self, event: Click) -> None:
         """Left-click toggles the parent ToolBlock.
@@ -383,6 +443,28 @@ class ToolBlock(Widget):
             self._header.collapsed = False
             # _has_affordances is already False when line_count ≤ threshold
 
+        # Path-aware header for file tools
+        if tool_name in _FILE_TOOL_NAMES:
+            self._header.set_path(label)
+
+        # Diff body path parsing for context menu
+        self._diff_file_path: str | None = None
+        if label == "diff":
+            _fallback: str | None = None
+            for line in self._plain_lines:
+                m = _DIFF_PATH_RE.match(line.strip())
+                if m:
+                    candidate = m.group(1).strip()
+                    if "/dev/null" in candidate:
+                        continue
+                    if line.strip().startswith("+++"):
+                        self._diff_file_path = candidate
+                        break
+                    if _fallback is None:
+                        _fallback = candidate
+            if self._diff_file_path is None:
+                self._diff_file_path = _fallback
+
     def compose(self) -> ComposeResult:
         yield self._header
         yield self._body
@@ -392,11 +474,33 @@ class ToolBlock(Widget):
         if not self._header.collapsed:
             self._body.add_class("expanded")
 
+    def _render_diff_line(self, plain: str) -> "Text | None":
+        """Return styled Rich Text for diff +++ / --- path lines, else None."""
+        m = _DIFF_HEADER_RE.match(plain.strip())
+        if not m:
+            return None
+        prefix, path_str = m.group(1), m.group(2).strip()
+        path_parts = path_str.rsplit("/", 1)
+        if len(path_parts) == 2 and path_parts[0]:
+            dir_part, fname = path_parts[0] + "/", path_parts[1]
+        else:
+            dir_part, fname = "", path_str
+        t = Text(prefix, style="dim")
+        if dir_part:
+            t.append(dir_part, style="dim")
+        t.append(fname, style="bold")
+        return t
+
     def _render_body(self) -> None:
         try:
             log = self._body.query_one(CopyableRichLog)
             log.clear()
             for styled, plain in zip(self._lines, self._plain_lines):
+                if self._label == "diff":
+                    rich_line = self._render_diff_line(plain)
+                    if rich_line is not None:
+                        log.write(rich_line)
+                        continue
                 log.write_with_source(Text.from_ansi(styled), plain)
             if self._header_stats and self._header_stats.has_diff_counts and self._lines:
                 log.write(Text(""))

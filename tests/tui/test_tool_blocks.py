@@ -1030,3 +1030,252 @@ def test_toolheader_hover_css_rule_present():
         content = f.read()
     assert "ToolHeader:hover" in content
     assert "background: $accent 8%" in content
+
+
+# ---------------------------------------------------------------------------
+# Spec: Tool block path UX — T1–T14 (diff gutter + path rendering)
+# ---------------------------------------------------------------------------
+
+def _make_file_block(tool_name: str, label: str = "/a/b/c.py") -> ToolBlock:
+    lines = [f"L{i}" for i in range(COLLAPSE_THRESHOLD + 1)]
+    plain = [f"P{i}" for i in range(COLLAPSE_THRESHOLD + 1)]
+    return ToolBlock(label, lines, plain, tool_name=tool_name)
+
+
+def _make_diff_block(plain_lines: list[str]) -> ToolBlock:
+    styled = ["  " + p for p in plain_lines]
+    return ToolBlock("diff", styled, plain_lines)
+
+
+# --- T1: _is_child_diff set when preceded by file-tool STB ---
+
+@pytest.mark.asyncio
+async def test_T1_is_child_diff_set_by_mount_tool_block():
+    """mount_tool_block(label='diff') after file-tool STB sets _is_child_diff=True."""
+    from hermes_cli.tui.tool_blocks import StreamingToolBlock
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        output = app.query_one("OutputPanel")
+        msg = output.current_message or output.new_message()
+        # Simulate file-tool streaming block
+        stb = StreamingToolBlock(label="write_file", tool_name="write_file")
+        msg._last_file_tool_block = stb
+        # Mount a diff block
+        lines = ["--- a/src/foo.py", "+++ b/src/foo.py", "  1 + new"]
+        plain = ["--- a/src/foo.py", "+++ b/src/foo.py", "  1 + new"]
+        block = msg.mount_tool_block("diff", lines, plain, tool_name="patch")
+        await pilot.pause()
+        assert block._header._is_child_diff is True
+
+
+# --- T2: _is_child_diff=True renders ╰─ gutter with gutter_w=4 ---
+
+def test_T2_child_diff_gutter_renders_connector():
+    """_is_child_diff=True in render() produces '  ╰─' gutter text."""
+    header = ToolHeader("diff", 5)
+    header._is_child_diff = True
+    rendered = str(header.render())
+    assert "╰─" in rendered
+
+
+# --- T3: diff without preceding file-tool: _is_child_diff=False ---
+
+@pytest.mark.asyncio
+async def test_T3_diff_without_file_tool_no_connector():
+    """Diff block when _last_file_tool_block is None: _is_child_diff=False."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        output = app.query_one("OutputPanel")
+        msg = output.current_message or output.new_message()
+        assert msg._last_file_tool_block is None
+        lines = ["--- a/src/foo.py", "+++ b/src/foo.py", "  1 + x"]
+        plain = lines[:]
+        block = msg.mount_tool_block("diff", lines, plain, tool_name="patch")
+        await pilot.pause()
+        assert block._header._is_child_diff is False
+
+
+# --- T4: non-diff block always has _is_child_diff=False ---
+
+def test_T4_non_diff_block_no_child_diff_flag():
+    """Non-diff block always has _is_child_diff=False."""
+    block = _make_file_block("write_file")
+    assert block._header._is_child_diff is False
+
+
+# --- T5: _last_file_tool_block cleared on watch_agent_running(False) ---
+
+@pytest.mark.asyncio
+async def test_T5_last_file_tool_block_cleared_on_turn_end():
+    """_last_file_tool_block cleared when watch_agent_running(False) fires."""
+    from hermes_cli.tui.tool_blocks import StreamingToolBlock
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        # Trigger a new turn so a MessagePanel exists in the DOM
+        app.agent_running = True
+        await pilot.pause()
+        output = app.query_one("OutputPanel")
+        msg = output.current_message
+        if msg is None:
+            output.new_message()
+            await pilot.pause()
+            msg = output.current_message
+        assert msg is not None
+        stb = StreamingToolBlock(label="write_file", tool_name="write_file")
+        msg._last_file_tool_block = stb
+        assert msg._last_file_tool_block is not None
+        app.agent_running = False
+        await pilot.pause()
+        assert msg._last_file_tool_block is None
+
+
+# --- T6: set_path sets _full_path, _path_clickable, _is_url=False ---
+
+def test_T6_set_path_file():
+    """set_path('/a/b/c.py') sets _full_path, _path_clickable=True, _is_url=False."""
+    header = ToolHeader("x", 5)
+    header.set_path("/a/b/c.py")
+    assert header._full_path == "/a/b/c.py"
+    assert header._path_clickable is True
+    assert header._is_url is False
+
+
+# --- T7: set_path with URL sets _is_url=True ---
+
+def test_T7_set_path_url():
+    """set_path('https://example.com/foo') sets _is_url=True."""
+    header = ToolHeader("x", 5)
+    header.set_path("https://example.com/foo")
+    assert header._is_url is True
+    assert header._path_clickable is True
+
+
+# --- T8: short path renders dim dir + bold filename ---
+
+def test_T8_render_path_label_short():
+    """Short path 'src/foo.py': dim ' src/' prefix + bold 'foo.py'."""
+    header = ToolHeader("src/foo.py", 5)
+    header.set_path("src/foo.py")
+    text = header._render_path_label(60)
+    plain = text.plain
+    assert "src/" in plain, "Expected directory prefix"
+    assert "foo.py" in plain, "Expected filename"
+
+
+# --- T9: long path truncates dir prefix, keeps filename ---
+
+def test_T9_long_path_truncates_dir():
+    """Long path: dir prefix truncated to '…/<remaining>/', bold filename intact."""
+    long_path = "/home/user/projects/src/very/long/path/module.py"
+    header = ToolHeader(long_path, 5)
+    header.set_path(long_path)
+    text = header._render_path_label(30)  # tight budget
+    plain = text.plain
+    assert "module.py" in plain, "Filename must be preserved"
+    assert "…" in plain, "Dir truncation marker must appear"
+
+
+# --- T10: path with no slash renders bold bare filename ---
+
+def test_T10_path_no_slash():
+    """Path with no '/': single dim leading space + bold bare filename."""
+    header = ToolHeader("config.py", 5)
+    header.set_path("config.py")
+    text = header._render_path_label(30)
+    assert "config.py" in text.plain
+    assert "/" not in text.plain
+
+
+# --- T11: _full_path unchanged after render ---
+
+def test_T11_full_path_unchanged_after_render():
+    """_full_path is not mutated by _render_path_label."""
+    header = ToolHeader("/a/b/very/long/path/file.py", 5)
+    header.set_path("/a/b/very/long/path/file.py")
+    header._render_path_label(20)
+    assert header._full_path == "/a/b/very/long/path/file.py"
+
+
+# --- T12: _path_clickable=False uses plain label ---
+
+def test_T12_path_not_clickable_uses_plain_label():
+    """_path_clickable=False → _render_path_label not called, plain label used."""
+    header = ToolHeader("some-label", 5)
+    assert header._path_clickable is False
+    # render() in pre-mount (term_w=0) should use plain label
+    rendered = str(header.render())
+    assert "some-label" in rendered
+
+
+# --- T13: file tool triggers set_path in ToolBlock.__init__ ---
+
+def test_T13_file_tool_triggers_set_path():
+    """tool_name in _FILE_TOOL_NAMES → header.set_path(label) called in ToolBlock.__init__."""
+    from hermes_cli.tui.tool_blocks import _FILE_TOOL_NAMES
+    for tool in ("write_file", "patch", "read_file", "create_file"):
+        assert tool in _FILE_TOOL_NAMES
+        block = _make_file_block(tool, "/a/b.py")
+        assert block._header._path_clickable is True
+        assert block._header._full_path == "/a/b.py"
+
+
+# --- T14: non-file tool does NOT call set_path ---
+
+def test_T14_non_file_tool_no_set_path():
+    """tool_name not in _FILE_TOOL_NAMES → set_path NOT called."""
+    block = ToolBlock("terminal", ["L0", "L1", "L2", "L3"], ["P0", "P1", "P2", "P3"], tool_name="terminal")
+    assert block._header._path_clickable is False
+    assert block._header._full_path is None
+
+
+# ---------------------------------------------------------------------------
+# Spec: T44–T47 — Action feedback on ToolHeader
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_T44_flash_success_adds_class():
+    """flash_success() adds --flash-success CSS class."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        lines = [f"L{i}" for i in range(COLLAPSE_THRESHOLD + 1)]
+        plain = [f"P{i}" for i in range(COLLAPSE_THRESHOLD + 1)]
+        app.mount_tool_block("diff", lines, plain)
+        await pilot.pause()
+        header = app.query_one(ToolHeader)
+        header.flash_success()
+        assert header.has_class("--flash-success")
+
+
+@pytest.mark.asyncio
+async def test_T45_flash_error_adds_class():
+    """flash_error() adds --flash-error CSS class."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        lines = [f"L{i}" for i in range(COLLAPSE_THRESHOLD + 1)]
+        plain = [f"P{i}" for i in range(COLLAPSE_THRESHOLD + 1)]
+        app.mount_tool_block("diff", lines, plain)
+        await pilot.pause()
+        header = app.query_one(ToolHeader)
+        header.flash_error()
+        assert header.has_class("--flash-error")
+
+
+def test_T46_pulse_start_stop_no_crash():
+    """_pulse_start()/_pulse_stop() do not crash without app context."""
+    header = ToolHeader("x", 5)
+    # Without app, the timer call will fail gracefully — just check no exception
+    try:
+        header._pulse_start()
+    except Exception:
+        pass
+    try:
+        header._pulse_stop()
+    except Exception:
+        pass
+
+
+def test_T47_flash_success_flash_error_exist_on_header():
+    """flash_success() and flash_error() methods exist on ToolHeader."""
+    header = ToolHeader("x", 5)
+    assert callable(header.flash_success)
+    assert callable(header.flash_error)

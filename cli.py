@@ -6842,6 +6842,15 @@ class HermesCLI:
             tui.call_from_thread(_open_execute)
             if result[0] is not None:
                 self._gen_blocks_by_idx[idx] = result[0]
+        elif tool_name in ("write_file", "create_file"):
+            # Create a WriteFileBlock — path unknown until tool_start
+            result = [None]
+            _idx_cap = idx
+            def _open_write():
+                result[0] = tui._open_write_file_block(_idx_cap, "")
+            tui.call_from_thread(_open_write)
+            if result[0] is not None:
+                self._gen_blocks_by_idx[idx] = result[0]
         else:
             # Open a StreamingToolBlock at gen_start time.
             result = [None]
@@ -6988,6 +6997,29 @@ class HermesCLI:
                     tui.call_from_thread(ecb_ref[0].finalize_code, code)
 
             # Track tool + register streaming callback (shared code below)
+        elif function_name in ("write_file", "create_file"):
+            # --- Handle write_file/create_file: use pre-allocated WriteFileBlock ---
+            if tool_call_id in tui._active_streaming_blocks:
+                logger.debug("%s tool_call_id %s already registered, skipping", function_name, tool_call_id)
+                return
+            block = None
+            idx_used = None
+            for idx_key, blk in list(self._gen_blocks_by_idx.items()):
+                from hermes_cli.tui.write_file_block import WriteFileBlock as _WFB
+                if isinstance(blk, _WFB):
+                    block = blk
+                    idx_used = idx_key
+                    break
+            path = function_args.get("path", "") if isinstance(function_args, dict) else ""
+            if not isinstance(path, str):
+                path = ""
+            if block is not None:
+                if idx_used is not None:
+                    del self._gen_blocks_by_idx[idx_used]
+                tui._active_streaming_blocks[tool_call_id] = block
+                if path:
+                    tui.call_from_thread(block.set_final_path, path)
+            # Track tool (shared code below — no streaming callback for write_file)
         else:
             # --- Dequeue pending gen block, re-key to tool_call_id ---
             block = self._pending_gen_queue.pop(0) if self._pending_gen_queue else None
@@ -7107,8 +7139,10 @@ class HermesCLI:
                 render_captured_diff_preview(diff_text, print_fn=display_lines.append, prefix=_TOOL_PREFIX)
                 if display_lines:
                     _will_mount_preview = True
-                    # Remove streaming block — preview replaces it
-                    if _was_streaming:
+                    # Remove streaming block — preview replaces it.
+                    # Exception: write_file/create_file — keep the WriteFileBlock visible
+                    # (shows streamed file content); diff adds below it via _is_child_diff.
+                    if _was_streaming and function_name not in ("write_file", "create_file"):
                         tui.call_from_thread(tui.remove_streaming_tool_block, tool_call_id)
                     plain = _plain_lines(display_lines)
 
@@ -7210,8 +7244,12 @@ class HermesCLI:
                 except Exception:
                     logger.debug("%s highlight failed", function_name, exc_info=True)
 
-            # If no preview was mounted, close the streaming block normally
-            if _was_streaming and not _will_mount_preview:
+            # Close the streaming block:
+            # - write_file/create_file: always close (block stays; complete() re-highlights)
+            # - others: only when no preview was mounted (preview replaced them via remove)
+            if _was_streaming and (
+                function_name in ("write_file", "create_file") or not _will_mount_preview
+            ):
                 tui.call_from_thread(tui.close_streaming_tool_block, tool_call_id, _stream_duration, _is_tool_error)
 
         else:

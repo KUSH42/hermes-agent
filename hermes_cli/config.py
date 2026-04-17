@@ -413,6 +413,26 @@ DEFAULT_CONFIG = {
         "tool_progress_command": False,  # Enable /verbose command in messaging gateway
         "tool_progress_overrides": {},  # Per-platform overrides: {"signal": "off", "telegram": "all"}
         "tool_preview_length": 0,  # Max chars for tool call previews (0 = no limit, show full paths/commands)
+        "drawille_overlay": {
+            "enabled": False,
+            "animation": "dna",
+            "trigger": "agent_running",
+            "fps": 15,
+            "position": "center",
+            "size": "medium",
+            "color": "$accent",
+            "gradient": False,
+            "color_secondary": "$primary",
+            "dim_background": True,
+            "show_border": False,
+            "border_style": "round",
+            "border_color": "$accent",
+            "auto_hide_delay": 0,
+            "fade_in_frames": 3,
+            "fade_out_frames": 0,
+            "multi_color": [],
+            "hue_shift_speed": 0.3,
+        },
     },
 
     # Privacy settings

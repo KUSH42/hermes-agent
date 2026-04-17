@@ -171,6 +171,7 @@ class HermesApp(App):
         Binding("f8", "toggle_fps_hud", "FPS HUD", show=False),
         Binding("alt+up", "prev_turn", "Previous turn", show=False),
         Binding("alt+down", "next_turn", "Next turn", show=False),
+        Binding("ctrl+shift+a", "open_anim_config", "Animation config", show=False, priority=True),
     ]
 
     _CHEVRON_PHASE_CLASSES: frozenset[str] = frozenset({
@@ -340,6 +341,10 @@ class HermesApp(App):
         yield PlainRule(id="input-rule-bottom")
         yield VoiceStatusBar(id="voice-status")
         yield StatusBar(id="status-bar")
+        # Drawille animation overlay — before FPSCounter so FPS HUD stays above.
+        from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO, AnimConfigPanel as _ACP
+        yield _DO(id="drawille-overlay")
+        yield _ACP(id="anim-config-panel")
         # FPS HUD — overlay layer, docked top; display:none by default.
         # Must be before ContextMenu so ContextMenu stays topmost in overlay layer.
         yield FPSCounter(id="fps-counter")
@@ -643,9 +648,22 @@ class HermesApp(App):
             # Leading space so cursor doesn't obscure first char when input is focused
             padded = f" {spinner_display}" if spinner_display else ""
             if hasattr(inp, "placeholder"):
-                inp.placeholder = padded
-            if hasattr(inp, "spinner_text"):
-                inp.spinner_text = padded
+                if padded and getattr(self, "_animations_enabled", True):
+                    try:
+                        from hermes_cli.tui.animation import shimmer_text
+                        from textual.content import Content
+                        shimmer = shimmer_text(
+                            padded,
+                            tick=self._spinner_idx,
+                            dim="#555555",
+                            peak="#d8d8d8",
+                            period=30,
+                        )
+                        inp.placeholder = Content.from_rich_text(shimmer)
+                    except Exception:
+                        inp.placeholder = padded
+                else:
+                    inp.placeholder = padded
         except NoMatches:
             pass
 
@@ -861,7 +879,32 @@ class HermesApp(App):
         except NoMatches:
             pass
 
+    def _drawille_show_hide(self, running: bool) -> None:
+        """Show or hide the drawille overlay based on agent state."""
+        try:
+            from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO, _overlay_config
+            overlay = self.query_one(_DO)
+            cfg = _overlay_config()
+            if running and cfg.trigger in ("agent_running", "always"):
+                overlay.show(cfg)
+                if cfg.dim_background:
+                    try:
+                        self.query_one(OutputPanel).add_class("-dim-bg")
+                    except NoMatches:
+                        pass
+            else:
+                overlay.hide(cfg)
+                try:
+                    self.query_one(OutputPanel).remove_class("-dim-bg")
+                except NoMatches:
+                    pass
+        except NoMatches:
+            pass
+        except Exception:
+            pass
+
     def watch_agent_running(self, value: bool) -> None:
+        self._drawille_show_hide(value)
         if value:
             self._response_metrics_active = False
             self._response_wall_start_time = None
@@ -1274,6 +1317,24 @@ class HermesApp(App):
         if value is None:
             self._pending_undo_panel = None
 
+    def on_text_area_changed(self, event: Any) -> None:
+        """Update hint phase when HermesInput (TextArea-based) content changes."""
+        if getattr(event, "text_area", None) is not None:
+            inp = event.text_area
+            if getattr(inp, "id", None) == "input-area":
+                if (
+                    not getattr(self, "agent_running", False)
+                    and not getattr(self, "command_running", False)
+                    and not getattr(self, "browse_mode", False)
+                    and not bool(getattr(self, "status_error", ""))
+                    and not any(
+                        getattr(self, attr) is not None
+                        for attr in ("approval_state", "clarify_state", "sudo_state", "secret_state")
+                    )
+                ):
+                    has_content = bool(getattr(inp, "value", ""))
+                    self._set_hint_phase("typing" if has_content else "idle")
+
     def on_input_changed(self, event: Any) -> None:
         """Update hint phase on input content change (typing phase detection)."""
         # Only react to the main input area, not overlay inputs
@@ -1379,17 +1440,27 @@ class HermesApp(App):
         except NoMatches:
             return
         selection = getattr(inp, "selection", None)
-        start = end = getattr(inp, "cursor_position", 0)
-        if selection is not None and not selection.is_empty:
-            start, end = selection.start, selection.end
+        if hasattr(inp, "_location_to_flat") and selection is not None:
+            # TextArea: convert (row,col) to flat ints for string slicing
+            start = end = inp.cursor_pos
+            if not selection.is_empty:
+                start = inp._location_to_flat(selection.start)
+                end   = inp._location_to_flat(selection.end)
+        else:
+            start = end = getattr(inp, "cursor_position", 0)
+            if selection is not None and not selection.is_empty:
+                start, end = selection.start, selection.end
 
         before = inp.value[:start]
-        after = inp.value[end:]
+        after  = inp.value[end:]
         prefix = "" if not before or before[-1].isspace() else " "
-        suffix = "" if not after or after[0].isspace() else " "
+        suffix = "" if not after  or after[0].isspace()  else " "
         payload = prefix + " ".join(tokens) + suffix
         if selection is not None and not selection.is_empty:
-            inp.replace(payload, start, end)
+            if hasattr(inp, "replace_flat"):
+                inp.replace_flat(payload, start, end)
+            elif hasattr(inp, "replace"):
+                inp.replace(payload, start, end)
         else:
             inp.insert_text(payload)
 
@@ -1974,10 +2045,20 @@ class HermesApp(App):
             try:
                 from hermes_cli.tui.input_widget import HermesInput as _HI
                 if isinstance(node, _HI):
-                    return [
+                    items = []
+                    sel = getattr(node, "selection", None)
+                    if sel is not None and not sel.is_empty:
+                        try:
+                            sel_text = node.get_text_range(sel.start, sel.end)
+                        except Exception:
+                            sel_text = getattr(node, "selected_text", "")
+                        if sel_text:
+                            items.append(MenuItem("⎘  Copy selected", "ctrl+c", lambda t=sel_text: self._copy_text(t)))
+                    items += [
                         MenuItem(f"{ICON_COPY}  Paste", "ctrl+v", lambda: self._paste_into_input()),
                         MenuItem("✕  Clear input", "", lambda: self._clear_input()),
                     ]
+                    return items
             except ImportError:
                 pass
 
@@ -2097,6 +2178,9 @@ class HermesApp(App):
         if stripped == "/compact":
             self.action_toggle_density()
             return True
+        if stripped == "/anim":
+            self._open_anim_config()
+            return True
         return False
 
     def _has_rollback_checkpoint(self) -> bool:
@@ -2105,6 +2189,18 @@ class HermesApp(App):
             return bool(getattr(self.cli.agent, "has_checkpoint", lambda: False)())
         except Exception:
             return False
+
+    def _open_anim_config(self) -> None:
+        """Open the AnimConfigPanel overlay."""
+        try:
+            from hermes_cli.tui.drawille_overlay import AnimConfigPanel as _ACP
+            panel = self.query_one(_ACP)
+            panel.open()
+        except NoMatches:
+            pass
+
+    def action_open_anim_config(self) -> None:
+        self._open_anim_config()
 
     def _initiate_undo(self) -> None:
         if self._undo_in_progress:
@@ -2287,9 +2383,7 @@ class HermesApp(App):
                 try:
                     inp = self.query_one("#input-area")
                     if hasattr(inp, "content") and inp.content:
-                        inp._push_undo_snapshot()
-                        inp.content = ""
-                        inp.cursor_pos = 0
+                        inp.clear()
                     else:
                         self.exit()
                 except NoMatches:

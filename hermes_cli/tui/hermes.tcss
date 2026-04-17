@@ -138,7 +138,7 @@ UndoConfirmOverlay {
 /* --- Input area --- */
 
 #input-row {
-    height: 1;
+    height: auto;
     padding: 0 1;
     background: $app-bg;
 }
@@ -146,7 +146,9 @@ UndoConfirmOverlay {
 #input-chevron {
     color: $chevron-base;
     width: 2;
-    height: 1;
+    height: auto;
+    min-height: 1;
+    content-align: left top;
     transition: color 0.2s in_out_cubic;
 }
 
@@ -168,11 +170,13 @@ HermesInput {
     background: $app-bg;
     border: none;
     padding: 0;
-    height: 1;
+    height: auto;
+    max-height: 3;
     width: 1fr;
+    scrollbar-size: 1 1;
 }
 
-/* Prevent Textual's Input:focus tint from creating a contrast stripe */
+/* Prevent Textual's TextArea:focus tint from creating a contrast stripe */
 HermesInput:focus {
     background: $app-bg;
 }
@@ -187,25 +191,23 @@ HermesInput:focus {
  *     cursor-selection-bg: "#1E4080"
  *     cursor-placeholder:  "#666666"
  */
-HermesInput > .input--cursor {
+HermesInput > .text-area--cursor {
     color: $cursor-color;
     background: $cursor-color;
 }
 
-HermesInput > .input--selection {
+HermesInput > .text-area--selection {
     background: $cursor-selection-bg;
 }
 
-HermesInput > .input--placeholder {
+HermesInput > .text-area--placeholder {
     color: $cursor-placeholder;
     text-style: italic;
 }
 
-/* Ghost text styling — scoped to HermesInput only so other Input widgets
- * (history search, sudo/secret overlays) are not inadvertently affected.
- * $text-muted 60% = ~1.67:1 contrast (illegible). $ghost-text-color (#555555)
- * gives ~2.5:1 — dim but readable. */
-HermesInput > .input--suggestion {
+/* Ghost text styling — scoped to HermesInput only.
+ * $ghost-text-color (#555555) gives ~2.5:1 contrast — dim but readable. */
+HermesInput > .text-area--suggestion {
     color: $ghost-text-color;
     text-style: italic;
 }
@@ -405,3 +407,28 @@ HermesApp.density-compact ApprovalWidget,
 HermesApp.density-compact SudoWidget,
 HermesApp.density-compact SecretWidget          { padding: 0 1; }
 HermesApp.density-compact UndoConfirmOverlay    { padding: 0 1; }
+
+/* ── Drawille Overlay ──────────────────────────────────────── */
+/* layer: overlay lives here (not DEFAULT_CSS) to avoid CSS parse issues
+   when drawille_overlay.py is imported before HermesApp CSS loads. */
+
+DrawilleOverlay {
+    layer: overlay;
+    background: $surface 0%;
+}
+
+DrawilleOverlay.-show-border {
+    border: round $accent;
+}
+
+/* Declaration required at parse time so ThemeManager injection works. */
+DrawilleOverlay > .drawille-overlay--canvas {
+    color: $drawille-canvas-color;
+}
+
+AnimConfigPanel {
+    layer: overlay;
+    border: round $surface-darken-2;
+    background: $surface;
+    color: $text;
+}

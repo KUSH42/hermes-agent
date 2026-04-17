@@ -881,3 +881,20 @@ def test_overlay_config_defaults_vertical_true():
     with patch("hermes_cli.config.read_raw_config", return_value={}):
         cfg = _overlay_config()
     assert cfg.vertical is True
+
+
+# ── Layer / absolute position ─────────────────────────────────────────────────
+
+def test_drawille_overlay_default_css_has_layer_overlay():
+    """DEFAULT_CSS must include 'layer: overlay' for absolute positioning."""
+    assert "layer: overlay" in DrawilleOverlay.DEFAULT_CSS
+
+
+def test_drawille_overlay_default_css_has_position_absolute():
+    """DEFAULT_CSS must include 'position: absolute' so offset is screen-absolute."""
+    assert "position: absolute" in DrawilleOverlay.DEFAULT_CSS
+
+
+def test_drawille_overlay_default_css_no_hardcoded_offset():
+    """DEFAULT_CSS must not hardcode 'offset: 15 5' — position set by _apply_size_position."""
+    assert "offset: 15 5" not in DrawilleOverlay.DEFAULT_CSS

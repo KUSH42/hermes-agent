@@ -2310,17 +2310,21 @@ class HermesApp(App):
 
     def _toggle_drawille_overlay(self) -> None:
         """Ctrl+Shift+A: dismiss overlay if visible, else show it."""
+        from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO, DrawilleOverlayCfg, _overlay_config
         try:
-            from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO, _overlay_config
-            overlay = self.query_one(_DO)
-            cfg = _overlay_config()
-            if overlay.has_class("-visible"):
-                overlay.hide(cfg)
-            else:
-                cfg.enabled = True
-                overlay.show(cfg)
+            overlay = self.query_one("#drawille-overlay", _DO)
         except Exception:
-            pass
+            return
+        if overlay.has_class("-visible"):
+            overlay.remove_class("-visible")
+            overlay._stop_anim()
+        else:
+            try:
+                cfg = _overlay_config()
+                cfg.enabled = True
+            except Exception:
+                cfg = DrawilleOverlayCfg(enabled=True)
+            overlay.show(cfg)
 
     def action_open_anim_config(self) -> None:
         self._toggle_drawille_overlay()
@@ -2722,6 +2726,11 @@ class HermesApp(App):
         (except /queue and /btw which queue without interrupting).
         """
         text = event.value
+
+        # TUI-local commands are intercepted before agent routing
+        if isinstance(text, str) and self._handle_tui_command(text):
+            return
+
         images = list(self.attached_images)
         if images:
             self._clear_attached_images()

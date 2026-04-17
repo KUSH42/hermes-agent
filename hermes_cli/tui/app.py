@@ -1737,12 +1737,20 @@ class HermesApp(App):
 
         Used when a static preview block (diff, code) replaces the streaming
         block — avoids showing both for the same tool call.
+        Removes the wrapping ToolPanel when present (STB lives inside BodyPane
+        inside ToolPanel); falling back to direct block removal.
         """
         block = self._active_streaming_blocks.pop(tool_call_id, None)
         if block is None:
             return
         try:
-            block.remove()
+            from hermes_cli.tui.tool_panel import ToolPanel as _TP
+            body_pane = block.parent
+            tool_panel = body_pane.parent if body_pane is not None else None
+            if isinstance(tool_panel, _TP):
+                tool_panel.remove()
+            else:
+                block.remove()
         except Exception:
             pass
 

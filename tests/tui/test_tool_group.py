@@ -282,6 +282,44 @@ async def test_tg14_add_class_no_unmount():
 
 
 @pytest.mark.asyncio
+async def test_tg_diff_attachment_unattached_panel():
+    """Rule 1 fires for a diff ToolPanel before it is mounted (compose not run).
+
+    Regression: _is_diff_panel previously used panel.query(ToolBlock) which
+    returns nothing on an unattached widget — always blocked rule 1.
+    """
+    from hermes_cli.tui.tool_panel import ToolPanel as _TP
+    from hermes_cli.tui.tool_blocks import StreamingToolBlock as _STB, ToolBlock as _TB
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        from hermes_cli.tui.widgets import OutputPanel
+        output = app.query_one(OutputPanel)
+        msg = output.current_message or output.new_message()
+        await _pause(pilot)
+
+        # Mount patch streaming panel first
+        stb = _STB(label="patch", tool_name="patch")
+        patch_panel = _TP(stb, tool_name="patch")
+        msg._mount_nonprose_block(patch_panel)
+        await _pause(pilot)
+
+        # Build diff ToolBlock (static) wrapped in ToolPanel — not yet mounted
+        diff_block = _TB("diff", ["line"], ["line"], tool_name="patch")
+        diff_panel = _TP(diff_block, tool_name="patch")
+
+        # _maybe_start_group fires before mount; GroupHeader must be inserted
+        _maybe_start_group(msg, diff_panel)
+        await _pause(pilot)
+
+        from hermes_cli.tui.tool_group import GroupHeader as _GH
+        group_headers = list(msg.query(_GH))
+        assert len(group_headers) == 1, "GroupHeader not inserted — rule 1 failed on unattached panel"
+        assert _get_group_id(patch_panel) is not None, "patch panel not tagged with group-id"
+
+
+@pytest.mark.asyncio
 async def test_tg17_multiple_groups_distinct_ids(monkeypatch):
     """Two separate groups in one message get distinct group-id-* classes."""
     # Disable auto-grouping so manual grouping is clean

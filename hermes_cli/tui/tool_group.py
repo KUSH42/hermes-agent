@@ -88,8 +88,16 @@ class GroupHeader(Widget):
     def update_count(self, count: int) -> None:
         self._member_count = count
         suffix = "tools" if count != 1 else "tool"
-        if self._label_widget.parent is not None:
-            self._label_widget.update(f"{count} {suffix}")
+        label = getattr(self, "_label_widget", None)
+        if label is not None and label.parent is not None:
+            label.update(f"{count} {suffix}")
+
+    def on_mount(self) -> None:
+        # Render any count that arrived before compose() ran.
+        suffix = "tools" if self._member_count != 1 else "tool"
+        label = getattr(self, "_label_widget", None)
+        if label is not None:
+            label.update(f"{self._member_count} {suffix}")
 
     def on_click(self) -> None:
         self._collapsed = not self._collapsed
@@ -175,6 +183,12 @@ def _find_diff_target(siblings: list[Widget]) -> Widget | None:
 
 
 def _is_diff_panel(panel: Widget) -> bool:
+    # Check _block directly — compose() hasn't run yet on unattached panels,
+    # so DOM queries return nothing. _block is set in ToolPanel.__init__.
+    block = getattr(panel, "_block", None)
+    if block is not None:
+        return getattr(block, "_label", "") == "diff"
+    # Fallback for already-mounted panels
     try:
         from hermes_cli.tui.tool_blocks import ToolBlock as _TB
         blk = next(iter(panel.query(_TB)), None)
@@ -288,13 +302,10 @@ def _apply_group(
     # Update GroupHeader member count
     gh = _find_group_header(message_panel, group_id)
     if gh is not None:
+        # new_panel not yet in message_panel.children (mounts after this returns),
+        # so add +1 to get the correct member count.
         count = sum(
             1 for c in message_panel.children
             if c.has_class(f"group-id-{group_id}")
-        ) + 1  # +1 for new_panel (class not yet applied above for existing; but it is)
-        # Actually class was applied above — recount properly
-        count = sum(
-            1 for c in message_panel.children
-            if c.has_class(f"group-id-{group_id}")
-        )
+        ) + 1
         gh.update_count(count)

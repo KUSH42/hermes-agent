@@ -453,3 +453,24 @@ AnimConfigPanel {
     background: $surface;
     color: $text;
 }
+
+/* ── OmissionBar — expand/collapse controls for line cap ─────────────── */
+
+OmissionBar .omission-label {
+    width: 1fr;
+    color: $text-muted;
+}
+
+OmissionBar .omission-btn {
+    width: auto;
+    padding: 0 1;
+    color: $primary;
+}
+
+OmissionBar .omission-btn:hover {
+    background: $primary 20%;
+}
+
+OmissionBar .omission-btn.-disabled {
+    color: $text-disabled;
+}

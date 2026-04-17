@@ -37,6 +37,7 @@ COLLAPSE_THRESHOLD = 3  # >N lines → collapsed by default
 # StreamingToolBlock constants
 _VISIBLE_CAP = 200          # max lines shown in the RichLog
 _LINE_BYTE_CAP = 2000       # truncate single lines beyond this many chars
+_PAGE_SIZE = 50             # lines per [+]/[-] step in OmissionBar
 _SPINNER_FRAMES: tuple[str, ...] = (
     "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
 )
@@ -581,6 +582,109 @@ class ToolTail(Static):
 
 
 # ---------------------------------------------------------------------------
+# OmissionBar — interactive expand/collapse controls for the line cap
+# ---------------------------------------------------------------------------
+
+class OmissionBar(Widget):
+    """Interactive bar that replaces the static cap marker in StreamingToolBlock.
+
+    Shows ``… N lines omitted  [--] [-] [+] [++]`` and lets the user reveal
+    or hide lines beyond the _VISIBLE_CAP threshold.
+    """
+
+    DEFAULT_CSS = """
+    OmissionBar {
+        layout: horizontal;
+        height: 1;
+        padding: 0 1;
+    }
+    """
+
+    def __init__(self, parent_block: "StreamingToolBlock", **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._parent_block = parent_block
+        self._visible_end: int = _VISIBLE_CAP
+        self._total: int = 0
+
+    def compose(self) -> ComposeResult:
+        yield Static("", id="omission-label", classes="omission-label")
+        yield Static("[--]", id="btn-collapse-all", classes="omission-btn -disabled")
+        yield Static("[-]",  id="btn-collapse-one", classes="omission-btn -disabled")
+        yield Static("[+]",  id="btn-expand-one",   classes="omission-btn")
+        yield Static("[++]", id="btn-expand-all",   classes="omission-btn")
+
+    def on_click(self, event: Click) -> None:
+        clicked = event.widget
+        if clicked is self:
+            return
+        clicked_id = getattr(clicked, "id", None)
+        if clicked_id is None:
+            return
+        if clicked.has_class("-disabled"):
+            return
+        event.stop()
+        if clicked_id == "btn-collapse-all":
+            self._do_collapse_all()
+        elif clicked_id == "btn-collapse-one":
+            self._do_collapse_one()
+        elif clicked_id == "btn-expand-one":
+            self._do_expand_one()
+        elif clicked_id == "btn-expand-all":
+            self._do_expand_all()
+
+    def update(self, total: int, visible_end: int) -> None:
+        """Refresh label text and button disabled states."""
+        self._total = total
+        self._visible_end = visible_end
+        omitted = max(0, total - visible_end)
+        try:
+            self.query_one("#omission-label", Static).update(
+                f"  … {omitted} lines omitted  "
+            )
+        except NoMatches:
+            pass
+        self._refresh_buttons()
+
+    def _refresh_buttons(self) -> None:
+        at_cap = self._visible_end <= _VISIBLE_CAP
+        at_end = self._visible_end >= self._total
+        try:
+            self.query_one("#btn-collapse-all", Static).set_class(at_cap, "-disabled")
+            self.query_one("#btn-collapse-one", Static).set_class(at_cap, "-disabled")
+            self.query_one("#btn-expand-one",   Static).set_class(at_end, "-disabled")
+            self.query_one("#btn-expand-all",   Static).set_class(at_end, "-disabled")
+        except NoMatches:
+            pass
+
+    def _do_expand_one(self) -> None:
+        new_end = min(self._total, self._visible_end + _PAGE_SIZE)
+        self._parent_block.reveal_lines(self._visible_end, new_end)
+        self._visible_end = new_end
+        self.update(self._total, self._visible_end)
+
+    def _do_expand_all(self) -> None:
+        new_end = self._total
+        self._parent_block.reveal_lines(self._visible_end, new_end)
+        self._visible_end = new_end
+        self.update(self._total, self._visible_end)
+
+    def _do_collapse_one(self) -> None:
+        new_end = max(_VISIBLE_CAP, self._visible_end - _PAGE_SIZE)
+        if new_end == self._visible_end:
+            return
+        self._parent_block.collapse_to(new_end)
+        self._visible_end = new_end
+        self.update(self._total, self._visible_end)
+
+    def _do_collapse_all(self) -> None:
+        if self._visible_end == _VISIBLE_CAP:
+            return
+        self._parent_block.collapse_to(_VISIBLE_CAP)
+        self._visible_end = _VISIBLE_CAP
+        self.update(self._total, self._visible_end)
+
+
+# ---------------------------------------------------------------------------
 # StreamingToolBlock — live output during tool execution
 # ---------------------------------------------------------------------------
 
@@ -618,7 +722,8 @@ class StreamingToolBlock(ToolBlock):
         self._all_plain: list[str] = []
         self._visible_count: int = 0
         self._total_received: int = 0
-        self._cap_marker_written: bool = False
+        self._omission_bar: OmissionBar | None = None
+        self._omission_bar_mounted: bool = False
         self._spinner_frame: int = 0
         self._completed: bool = False
         self._tail = ToolTail()
@@ -750,13 +855,16 @@ class StreamingToolBlock(ToolBlock):
                 log.write_with_source(Text.from_ansi(raw), plain)
                 self._visible_count += 1
                 lines_written += 1
-            elif not self._cap_marker_written:
-                log.write(Text.from_markup(
-                    f"[dim]  … (showing first {_VISIBLE_CAP} of "
-                    f"{self._total_received} lines)[/dim]"
-                ))
-                self._cap_marker_written = True
+            elif not self._omission_bar_mounted:
+                bar = OmissionBar(parent_block=self)
+                self._omission_bar = bar
+                self._omission_bar_mounted = True
+                self._body.mount(bar)
             # Lines beyond cap are still in _all_plain (appended in append_line)
+
+        if self._omission_bar is not None:
+            self._omission_bar.update(self._total_received,
+                                      self._omission_bar._visible_end)
 
         if lines_written:
             try:
@@ -772,6 +880,29 @@ class StreamingToolBlock(ToolBlock):
                     self._tail.update_count(new_total)
                 except Exception:
                     pass
+
+    # ------------------------------------------------------------------
+    # OmissionBar callbacks — expand/collapse the visible line window
+    # ------------------------------------------------------------------
+
+    def reveal_lines(self, start: int, end: int) -> None:
+        """Append _all_plain[start:end] to the RichLog (expand path)."""
+        try:
+            log = self._body.query_one(CopyableRichLog)
+        except NoMatches:
+            return
+        for plain in self._all_plain[start:end]:
+            log.write_with_source(Text(plain), plain)
+
+    def collapse_to(self, new_end: int) -> None:
+        """Clear the RichLog and rewrite _all_plain[:new_end] (collapse path)."""
+        try:
+            log = self._body.query_one(CopyableRichLog)
+        except NoMatches:
+            return
+        log.clear()
+        for plain in self._all_plain[:new_end]:
+            log.write_with_source(Text(plain), plain)
 
     # ------------------------------------------------------------------
     # Override copy_content to return all plain lines, not just visible

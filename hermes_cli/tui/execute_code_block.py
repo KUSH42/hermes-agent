@@ -21,6 +21,7 @@ from textual.widgets import Static
 
 from hermes_cli.tui.tool_blocks import (
     COLLAPSE_THRESHOLD,
+    OmissionBar,
     StreamingToolBlock,
     ToolBodyContainer,
     ToolHeader,
@@ -331,12 +332,15 @@ class ExecuteCodeBlock(StreamingToolBlock):
                 output_log.write_with_source(Text.from_ansi(raw), plain)
                 self._visible_count += 1
                 lines_written += 1
-            elif not self._cap_marker_written:
-                output_log.write(Text.from_markup(
-                    f"[dim]  … (showing first {_VISIBLE_CAP} of "
-                    f"{self._total_received} lines)[/dim]"
-                ))
-                self._cap_marker_written = True
+            elif not self._omission_bar_mounted:
+                bar = OmissionBar(parent_block=self)
+                self._omission_bar = bar
+                self._omission_bar_mounted = True
+                output_section.mount(bar)
+
+        if self._omission_bar is not None:
+            self._omission_bar.update(self._total_received,
+                                      self._omission_bar._visible_end)
 
         if lines_written:
             try:
@@ -423,6 +427,22 @@ class ExecuteCodeBlock(StreamingToolBlock):
                 self._cursor_timer.stop()
             except Exception:
                 pass
+
+    def _get_output_log(self) -> CopyableRichLog:
+        return self.query_one(OutputSection).query_one(CopyableRichLog)
+
+    def reveal_lines(self, start: int, end: int) -> None:
+        """Append output _all_plain[start:end] to OutputSection's RichLog."""
+        log = self._get_output_log()
+        for plain in self._all_plain[start:end]:
+            log.write_with_source(Text(plain), plain)
+
+    def collapse_to(self, new_end: int) -> None:
+        """Clear OutputSection's RichLog and rewrite _all_plain[:new_end]."""
+        log = self._get_output_log()
+        log.clear()
+        for plain in self._all_plain[:new_end]:
+            log.write_with_source(Text(plain), plain)
 
     def copy_content(self) -> str:
         """Concatenate code + output plain text with blank-line separator."""

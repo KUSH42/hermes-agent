@@ -267,8 +267,8 @@ async def test_line_byte_cap_appends_truncation_marker():
 
 
 @pytest.mark.asyncio
-async def test_visible_cap_omitted_marker_written_once():
-    """After _VISIBLE_CAP + 5 lines, _cap_marker_written is True and 'showing first' appears once."""
+async def test_visible_cap_omission_bar_mounted_once():
+    """After _VISIBLE_CAP + 5 lines, OmissionBar is mounted (replaces old plain-text marker)."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -279,19 +279,21 @@ async def test_visible_cap_omitted_marker_written_once():
         await _flush_block(block, pilot)
         await pilot.pause()
 
-        assert block._cap_marker_written is True, "_cap_marker_written should be True"
+        assert block._omission_bar_mounted is True, "_omission_bar_mounted should be True"
+        assert block._omission_bar is not None, "_omission_bar ref must be set"
 
         log = block._body.query_one(CopyableRichLog)
         all_texts = ["".join(seg.text for seg in strip) for strip in log.lines]
+        # No plain-text "showing first" marker any more — that is now a widget
         marker_matches = [t for t in all_texts if "showing first" in t]
-        assert len(marker_matches) == 1, (
-            f"expected exactly 1 'showing first' line, got {len(marker_matches)}: {marker_matches!r}"
+        assert len(marker_matches) == 0, (
+            f"expected no 'showing first' line (now a widget), got: {marker_matches!r}"
         )
 
 
 @pytest.mark.asyncio
-async def test_visible_cap_marker_shows_correct_count():
-    """Cap marker text contains the total received line count."""
+async def test_visible_cap_omission_bar_shows_correct_omitted_count():
+    """OmissionBar label shows the correct number of omitted lines."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -306,13 +308,16 @@ async def test_visible_cap_marker_shows_correct_count():
         assert block._total_received == total, (
             f"expected _total_received={total}, got {block._total_received}"
         )
-
-        log = block._body.query_one(CopyableRichLog)
-        all_texts = ["".join(seg.text for seg in strip) for strip in log.lines]
-        marker_matches = [t for t in all_texts if "showing first" in t]
-        assert len(marker_matches) >= 1, "cap marker line not found in log.lines"
-        assert str(total) in marker_matches[0], (
-            f"total count {total} not in marker text: {marker_matches[0]!r}"
+        assert block._omission_bar is not None, "_omission_bar must be set"
+        assert block._omission_bar._total == total, (
+            f"OmissionBar._total should be {total}, got {block._omission_bar._total}"
+        )
+        omitted = total - _VISIBLE_CAP
+        assert block._omission_bar._visible_end == _VISIBLE_CAP, (
+            "OmissionBar._visible_end should start at _VISIBLE_CAP"
+        )
+        assert block._omission_bar._total - block._omission_bar._visible_end == omitted, (
+            f"Expected {omitted} omitted lines in bar state"
         )
 
 

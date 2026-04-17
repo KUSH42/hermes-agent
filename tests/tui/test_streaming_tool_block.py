@@ -221,9 +221,10 @@ async def test_visible_cap():
 
         # All lines are in plain text
         assert len(block._all_plain) == total
-        # Visible count capped + cap marker written
+        # Visible count capped; OmissionBar mounted instead of plain-text marker
         assert block._visible_count == _VISIBLE_CAP
-        assert block._cap_marker_written is True
+        assert block._omission_bar_mounted is True
+        assert block._omission_bar is not None
 
         log = block._body.query_one(CopyableRichLog)
         # In headless tests RichLog._size_known is False, so writes go to
@@ -232,8 +233,8 @@ async def test_visible_cap():
             log._size_known = True
             while log._deferred_renders:
                 log.write(*log._deferred_renders.popleft())
-        # +1 for the cap marker line
-        assert len(log.lines) == _VISIBLE_CAP + 1
+        # Exactly _VISIBLE_CAP lines — no plain-text marker line any more
+        assert len(log.lines) == _VISIBLE_CAP
 
 
 # ---------------------------------------------------------------------------

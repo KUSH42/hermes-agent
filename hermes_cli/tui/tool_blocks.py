@@ -132,6 +132,10 @@ class ToolHeader(PulseMixin, Widget):
         self._tool_icon: str = ""
         # Icon color state
         self._tool_icon_error: bool = False
+        # Rich-highlighted label (used by ExecuteCodeBlock to show syntax in header)
+        self._label_rich: "Text | None" = None
+        # Compact tail: no right-align padding, duration in normal color (execute_code)
+        self._compact_tail: bool = False
 
     def on_mount(self) -> None:
         self._refresh_gutter_color()
@@ -207,12 +211,16 @@ class ToolHeader(PulseMixin, Widget):
         else:
             label_style = ""   # terminal default — not dim
 
-        # --- Tail (right-aligned part) ---
+        # Duration style: dim for normal blocks, normal for compact-tail (execute_code)
+        compact = getattr(self, "_compact_tail", False)
+        dur_style = "" if compact else "dim"
+
+        # --- Tail ---
         tail = Text()
         if self._spinner_char is not None:
             tail.append(f"  {self._spinner_char}", style="dim")
             if self._duration:
-                tail.append(f"  {self._duration}", style="dim")
+                tail.append(f"  {self._duration}", style=dur_style)
         else:
             if self._stats and self._stats.has_diff_counts:
                 add_color = getattr(self, "_diff_add_color", _DIFF_ADD_FALLBACK)
@@ -224,21 +232,36 @@ class ToolHeader(PulseMixin, Widget):
             elif self._line_count:
                 tail.append(f"  {self._line_count}L", style="dim")
             if self._duration:
-                tail.append(f"  {self._duration}", style="dim")
+                tail.append(f"  {self._duration}", style=dur_style)
             if self._has_affordances:
                 toggle = "  ▾" if not self.collapsed else "  ▸"
                 tail.append(toggle, style="dim")
 
-        tail_w = tail.cell_len
-
         # --- Label with padding ---
         term_w = self.size.width
+
+        # Compact-tail mode (execute_code): no right-align padding, natural flow
+        if compact:
+            if self._label_rich is not None:
+                t.append(" ")
+                t.append_text(self._label_rich)
+            else:
+                t.append(f" {self._label}", style=label_style)
+            t.append_text(tail)
+            return t
+
+        # Normal mode: right-align tail
+        tail_w = tail.cell_len
         FIXED_PREFIX_W = gutter_w + dashes_w + icon_cell_w + space_after_icon
         MIN_LABEL_W = 8
 
         if term_w <= 0:
             # Pre-mount: best-effort, no padding
-            t.append(f" {self._label}", style=label_style)
+            if self._label_rich is not None:
+                t.append(" ")
+                t.append_text(self._label_rich)
+            else:
+                t.append(f" {self._label}", style=label_style)
             t.append_text(tail)
             return t
 
@@ -247,7 +270,12 @@ class ToolHeader(PulseMixin, Widget):
         if len(label_str) > available:
             label_str = label_str[:available - 1] + "…"
         pad = max(0, available - _safe_cell_width(label_str))
-        t.append(f" {label_str}{' ' * pad}", style=label_style)
+        if self._label_rich is not None:
+            t.append(" ")
+            t.append_text(self._label_rich)
+            t.append(" " * pad)
+        else:
+            t.append(f" {label_str}{' ' * pad}", style=label_style)
         t.append_text(tail)
         return t
 

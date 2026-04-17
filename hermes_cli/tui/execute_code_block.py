@@ -142,17 +142,14 @@ class ExecuteCodeBlock(StreamingToolBlock):
 
     def _apply_execute_mount_overrides(self) -> None:
         """Runs after all MRO on_mount handlers. Overrides StreamingToolBlock defaults."""
-        # Override _body to point at ExecuteCodeBody, not ToolBodyContainer
         try:
             self._body = self.query_one(ExecuteCodeBody)
-            # StreamingToolBlock.on_mount added "expanded" to the old ToolBodyContainer
-            # instance (which is NOT in the DOM). We need to add it to ExecuteCodeBody.
             self._body.add_class("expanded")
         except NoMatches:
             pass
-        # Allow toggle during streaming (spec §8)
         self._header._has_affordances = True
         self._header.collapsed = False
+        self._header._compact_tail = True  # natural flow, non-dim duration
 
     def _start_cursor(self) -> None:
         try:
@@ -203,13 +200,22 @@ class ExecuteCodeBlock(StreamingToolBlock):
 
     def _emit_code_line(self, line: str) -> None:
         """Per-line Pygments highlight and write to CodeSection RichLog."""
+        is_first_line = len(self._code_lines) == 0
         self._code_lines.append(line)
-        # Update label on first non-empty line (once only)
+
+        # Update header label on first non-empty line (once only)
         if not self._label_set and line.strip():
             label = line.strip()[:60]
             self._header._label = label
+            # Also build a syntax-highlighted Rich Text for the header
+            self._header._label_rich = Text.from_ansi(self._highlight_line(line.strip()[:60]))
             self._label_set = True
-        # Per-line Pygments highlight
+
+        if is_first_line:
+            # Line 0 shown in header — skip writing to body
+            return
+
+        # Lines 1+ go to CodeSection body
         highlighted = self._highlight_line(line)
         try:
             code_log = self.query_one(CodeSection).query_one(CopyableRichLog)
@@ -264,14 +270,22 @@ class ExecuteCodeBlock(StreamingToolBlock):
         if code:
             self._code_lines = code.splitlines()
 
-        # Clear CodeSection and write Syntax renderable
+        # Update header label + rich label from canonical first line
+        if code:
+            first_line = self._code_lines[0].strip()[:60] if self._code_lines else ""
+            if first_line:
+                self._header._label = first_line
+                self._header._label_rich = Text.from_ansi(self._highlight_line(first_line))
+
+        # Clear CodeSection and write Syntax renderable for lines 1+
         try:
             code_section = self.query_one(CodeSection)
             code_log = code_section.query_one(CopyableRichLog)
             code_log.clear()
 
-            if code:
+            if code and len(self._code_lines) > 1:
                 from rich.syntax import Syntax
+                body_code = "\n".join(self._code_lines[1:])
                 try:
                     css_vars = self.app.get_css_variables()
                     theme = css_vars.get("preview-syntax-theme", "monokai")
@@ -281,7 +295,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
                     bg = None
 
                 syntax = Syntax(
-                    code,
+                    body_code,
                     lexer="python",
                     theme=theme,
                     line_numbers=False,
@@ -366,9 +380,9 @@ class ExecuteCodeBlock(StreamingToolBlock):
         self._header._spinner_char = None
         self._header._duration = duration
 
-        # Collapse based on code lines + output lines
+        # Collapse based on code lines + output lines; suppress "NL" display
         total = len(self._code_lines) + self._total_received
-        self._header._line_count = total
+        self._header._line_count = 0  # don't show line count in execute_code header
 
         if not self._user_toggled:
             if total > COLLAPSE_THRESHOLD:

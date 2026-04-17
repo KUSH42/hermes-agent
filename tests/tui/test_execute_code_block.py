@@ -117,9 +117,12 @@ async def test_gen_streaming_appends_lines():
         panel.new_message()
         block = await _mount_execute_block(pilot, app)
 
-        # Feed chunks that form {"code":"import yaml\n"}
-        block.feed_delta('{"code":"import yaml\\n"}')
+        # Feed two lines: line 0 → header label, line 1 → CodeSection body
+        block.feed_delta('{"code":"import yaml\\nhome = Path.home()\\n"}')
         await _pause(pilot, n=8)
+
+        # Line 0 should be in header label, not in body
+        assert "import yaml" in block._header._label
 
         from hermes_cli.tui.execute_code_block import CodeSection
         from hermes_cli.tui.widgets import CopyableRichLog

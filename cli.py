@@ -6942,6 +6942,11 @@ class HermesCLI:
                 idx_used = idx_key
                 break
 
+            # Guard: if block already registered (duplicate _on_tool_start), skip
+            if tool_call_id in tui._active_streaming_blocks:
+                logger.debug("execute_code tool_call_id %s already registered, skipping", tool_call_id)
+                return
+
             if block is not None:
                 if idx_used is not None:
                     del self._gen_blocks_by_idx[idx_used]
@@ -6957,9 +6962,30 @@ class HermesCLI:
                     code = ""
                 tui.call_from_thread(block.finalize_code, code)
             else:
-                # Fallback: gen_start didn't fire
+                # Fallback: gen_start didn't fire — create ExecuteCodeBlock directly
+                from hermes_cli.tui.execute_code_block import ExecuteCodeBlock as _ECB
                 label = self._build_tool_label(function_name, function_args)
-                tui.call_from_thread(tui.open_streaming_tool_block, tool_call_id, label, function_name)
+                code = function_args.get("code", "") if isinstance(function_args, dict) else ""
+                if not isinstance(code, str):
+                    code = ""
+                ecb_ref = [None]
+                def _create_ecb_fallback(_label=label, _code=code):
+                    try:
+                        from hermes_cli.tui.widgets import OutputPanel
+                        output = tui.query_one(OutputPanel)
+                        msg = output.current_message or output.new_message()
+                        b = _ECB(initial_label=_label)
+                        msg._mount_nonprose_block(b)
+                        tui._active_streaming_blocks[tool_call_id] = b
+                        ecb_ref[0] = b
+                        tui._browse_total += 1
+                        if not output._user_scrolled_up:
+                            tui.call_after_refresh(output.scroll_end, animate=False)
+                    except Exception as _e:
+                        logger.warning("execute_code fallback ECB creation failed: %s", _e)
+                tui.call_from_thread(_create_ecb_fallback)
+                if ecb_ref[0] is not None:
+                    tui.call_from_thread(ecb_ref[0].finalize_code, code)
 
             # Track tool + register streaming callback (shared code below)
         else:

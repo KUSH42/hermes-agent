@@ -505,6 +505,29 @@ ToolAccent.-muted       { background: $primary 8%; }
 
 ToolPanel:focus         { background: $accent 10%; }
 
+/* --- Tool Panel v3 Phase B (tui-tool-panel-v3-spec.md §5.2) ---
+ * ToolHeaderBar chips and layout.
+ * Inner ToolHeader (inside StreamingToolBlock/ToolBlock) is hidden when
+ * ToolHeaderBar is present — both live in the same ToolPanel. */
+
+ToolPanel ToolHeader { display: none; }
+
+ToolHeaderBar {
+    layout: horizontal;
+    height: 1;
+    padding: 0 1 0 0;
+}
+ToolHeaderBar > .tool-header-bar--label      { min-width: 6; max-width: 14; text-style: bold; }
+ToolHeaderBar > .tool-header-bar--arg-summary { width: 1fr; color: $text-muted; }
+ToolHeaderBar > .tool-header-bar--pill        { width: auto; margin: 0 1; }
+ToolHeaderBar > .tool-header-bar--line-count  { width: 5; text-align: right; color: $text-muted; }
+ToolHeaderBar > .tool-header-bar--chevron     { width: 2; text-align: center; color: $text-muted; }
+ToolHeaderBar > .tool-header-bar--duration    { width: 6; text-align: right; color: $text-muted; }
+
+/* ToolPanelMini — single-row compact shell variant */
+ToolPanelMini { height: 1; layout: horizontal; }
+ToolPanelMini:focus { background: $accent 10%; }
+
 /* --- Tool grouping (virtual — no DOM container) --- */
 ToolPanel.tool-panel--grouped { padding-left: 2; }
 ToolPanel.group-hidden         { display: none; }

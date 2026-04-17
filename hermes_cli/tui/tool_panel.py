@@ -2,11 +2,13 @@
 
 Architecture: tui-tool-panel-v2-spec.md §3, §6, §8, §9 Phase 3.
 v3 Phase A: ToolAccent gutter rail, DiffAffordance, CWD stripping.
+v3 Phase B: ToolHeaderBar (status glyph + chips), ToolPanelMini auto-select.
 
 Phase 1: ToolPanel shell + ToolCategory + accent bar.
 Phase 2: BodyPane._renderer wired; BodyRenderer delegates per-line formatting.
 Phase 3: detail_level watcher active; ArgsPane/FooterPane live; D/0-3/Enter keys.
 v3-A:    ToolAccent replaces border-left; DiffAffordance in FooterPane.
+v3-B:    ToolHeaderBar above BodyPane; mini-mode for qualifying SHELL calls.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from textual.widgets import Static
 
 from hermes_cli.tui.tool_accent import ToolAccent
 from hermes_cli.tui.diff_affordance import DiffAffordance
+from hermes_cli.tui.tool_header_bar import ToolHeaderBar
 
 if TYPE_CHECKING:
     from hermes_cli.tui.tool_result_parse import ResultSummary
@@ -325,6 +328,7 @@ class ToolPanel(Widget):
 
         # Pane refs (set in compose)
         self._accent: ToolAccent | None = None
+        self._header_bar: ToolHeaderBar | None = None
         self._args_pane: ArgsPane | None = None
         self._body_pane: BodyPane | None = None
         self._footer_pane: FooterPane | None = None
@@ -336,11 +340,13 @@ class ToolPanel(Widget):
 
     def compose(self) -> ComposeResult:
         self._accent = ToolAccent()
+        self._header_bar = ToolHeaderBar(label=self._tool_name)
         self._args_pane = ArgsPane()
         self._body_pane = BodyPane(self._block, category=self._category)
         self._footer_pane = FooterPane()
         yield self._accent
         with _PanelContent():
+            yield self._header_bar
             yield self._args_pane
             yield self._body_pane
             yield self._footer_pane
@@ -361,12 +367,16 @@ class ToolPanel(Widget):
         total_lines = self._body_line_count()
         if total_lines > 0:
             initial = 2  # static block: always start expanded
-            if self._accent is not None:
-                self._accent.state = "ok"
+            state = "ok"
         else:
             initial = max(defaults.default_detail, 2)  # streaming: at least L2
-            if self._accent is not None:
-                self._accent.state = "streaming"
+            state = "streaming"
+        if self._accent is not None:
+            self._accent.state = state
+        if self._header_bar is not None:
+            self._header_bar.set_state(state)
+            # Populate initial arg summary
+            self._header_bar.set_arg_summary(self._format_arg_summary())
         self.detail_level = max(0, min(3, initial))
 
     # ------------------------------------------------------------------
@@ -395,6 +405,10 @@ class ToolPanel(Widget):
         bp.set_mode("preview" if new == 1 else "full")
         if fp.display != want_fp:
             fp.styles.display = "block" if want_fp else "none"
+
+        # Sync ToolHeaderBar chevron
+        if self._header_bar is not None:
+            self._header_bar.set_chevron(new)
 
         # Refresh ArgsPane when entering L3
         if new == 3 and self._tool_args is not None:
@@ -452,8 +466,78 @@ class ToolPanel(Widget):
     def set_tool_args(self, args: dict | None) -> None:
         """Call from app after tool_start to supply parsed args."""
         self._tool_args = args
+        if self._header_bar is not None:
+            self._header_bar.set_arg_summary(self._format_arg_summary())
         if self.detail_level == 3 and self._args_pane is not None:
             self._args_pane.refresh_rows(args, self._category)
+
+    # ------------------------------------------------------------------
+    # ToolHeaderBar helpers (Phase B)
+    # ------------------------------------------------------------------
+
+    def _format_arg_summary(self) -> str:
+        """Build a short arg summary string for the header bar."""
+        args = self._tool_args or {}
+        if not args:
+            return ""
+        # Prefer common high-signal keys
+        for key in ("command", "cmd", "shell_command", "path", "pattern", "query", "url"):
+            val = args.get(key)
+            if val is not None:
+                return str(val)
+        # Fallback: first value
+        first = next(iter(args.values()), None)
+        return str(first) if first is not None else ""
+
+    def _update_kind_from_classifier(self, line_count: int) -> None:
+        """Run content classifier and update ResultPill kind."""
+        if self._header_bar is None:
+            return
+        try:
+            from hermes_cli.tui.content_classifier import classify_content
+            from hermes_cli.tui.tool_payload import ToolPayload
+            output_raw = ""
+            block = self._block
+            if block is not None:
+                for attr in ("_all_plain", "_content_lines", "_plain_lines"):
+                    lines = getattr(block, attr, None)
+                    if isinstance(lines, list):
+                        output_raw = "\n".join(lines)
+                        break
+            payload = ToolPayload(
+                tool_name=self._tool_name,
+                category=self._category,
+                args=self._tool_args or {},
+                input_display=None,
+                output_raw=output_raw,
+                line_count=line_count,
+            )
+            result = classify_content(payload)
+            self._header_bar.set_kind(result.kind)
+        except Exception:
+            pass
+
+    def _maybe_activate_mini(self, summary: "ResultSummary") -> None:
+        """Activate mini-mode if SHELL+exit0+≤3L+no-stderr criteria met."""
+        from hermes_cli.tui.tool_panel_mini import meets_mini_criteria
+        exit_code = getattr(summary, "exit_code", None)
+        stderr_raw = getattr(summary, "stderr_tail", None) or ""
+        line_count = self._body_line_count()
+        if not meets_mini_criteria(self._category, exit_code, line_count, stderr_raw):
+            return
+        if not self.is_attached or self.parent is None:
+            return
+        try:
+            from hermes_cli.tui.tool_panel_mini import ToolPanelMini
+            cmd = self._format_arg_summary() or self._tool_name
+            dur = 0.0
+            if self._completed_at is not None:
+                dur = self._completed_at - self._start_time
+            mini = ToolPanelMini(source_panel=self, command=cmd, duration_s=dur)
+            self.parent.mount(mini, after=self)
+            self.display = False
+        except Exception:
+            pass
 
     def set_result_summary(self, summary: "ResultSummary") -> None:
         """Call from app at tool completion to populate footer."""
@@ -461,14 +545,24 @@ class ToolPanel(Widget):
         self._completed_at = time.monotonic()
         if self._footer_pane is not None:
             self._footer_pane.update_summary(summary)
-        # Update accent state to reflect completion outcome
+        # Update accent + header bar state
+        final_state = "error" if summary.is_error else "ok"
         if self._accent is not None:
-            self._accent.state = "error" if summary.is_error else "ok"
+            self._accent.state = final_state
+        if self._header_bar is not None:
+            self._header_bar.set_state(final_state)
+            self._header_bar.set_finished(self._completed_at)
+            line_count = self._body_line_count()
+            self._header_bar.set_line_count(line_count)
+            # Classify content and update pill
+            self._update_kind_from_classifier(line_count)
         self._apply_complete_auto_level()
         # Refresh footer visibility
         if self._footer_pane is not None:
             show = self._should_show_footer(self.detail_level)
             self._footer_pane.styles.display = "block" if show else "none"
+        # Activate mini-mode for qualifying SHELL calls
+        self._maybe_activate_mini(summary)
         # Notify enclosing GroupHeader so it can refresh dot color + stats
         self._notify_group_header()
 
@@ -559,6 +653,11 @@ class ToolPanel(Widget):
             self.detail_level = 1
         else:  # L3
             self.detail_level = 2
+
+    def on_tool_header_bar_clicked(self, event: ToolHeaderBar.Clicked) -> None:
+        """ToolHeaderBar click → cycle detail level."""
+        event.stop()
+        self.action_toggle_l1_l2()
 
     # Focus styling is done via CSS :focus pseudo-class in hermes.tcss.
     # No on_focus/on_blur handlers — they trigger layout refreshes that

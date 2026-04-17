@@ -884,7 +884,9 @@ async def test_integration_exit_clears_all_focused():
 
 @pytest.mark.asyncio
 async def test_click_left_toggles_expanded():
-    """Left-click on ToolHeader with affordances toggles block from collapsed to expanded."""
+    """Left-click on ToolHeaderBar cycles detail_level (v3 Phase B: ToolHeader is hidden)."""
+    from hermes_cli.tui.tool_panel import ToolPanel
+    from hermes_cli.tui.tool_header_bar import ToolHeaderBar
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         lines = [f"L{i}" for i in range(COLLAPSE_THRESHOLD + 1)]
@@ -892,20 +894,22 @@ async def test_click_left_toggles_expanded():
         app.mount_tool_block("diff", lines, plain)
         await pilot.pause()
 
-        block = app.query_one(ToolBlock)
-        assert block._header.collapsed is True
-        assert not block._body.has_class("expanded")
+        panel = app.query_one(ToolPanel)
+        header_bar = panel.query_one(ToolHeaderBar)
+        initial_level = panel.detail_level
 
-        await pilot.click(block._header)
+        await pilot.click(header_bar)
         await pilot.pause()
 
-        assert block._header.collapsed is False
-        assert block._body.has_class("expanded")
+        # action_toggle_l1_l2: L2→L1, L1→L2, L0→L1
+        assert panel.detail_level != initial_level
 
 
 @pytest.mark.asyncio
 async def test_click_left_toggles_back_to_collapsed():
-    """Second left-click on ToolHeader toggles block back to collapsed."""
+    """Two ToolHeaderBar clicks toggle detail_level back (v3 Phase B)."""
+    from hermes_cli.tui.tool_panel import ToolPanel
+    from hermes_cli.tui.tool_header_bar import ToolHeaderBar
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         lines = [f"L{i}" for i in range(COLLAPSE_THRESHOLD + 1)]
@@ -913,17 +917,20 @@ async def test_click_left_toggles_back_to_collapsed():
         app.mount_tool_block("diff", lines, plain)
         await pilot.pause()
 
-        block = app.query_one(ToolBlock)
-        # First click — expand
-        await pilot.click(block._header)
-        await pilot.pause()
-        assert block._header.collapsed is False
+        panel = app.query_one(ToolPanel)
+        header_bar = panel.query_one(ToolHeaderBar)
+        initial_level = panel.detail_level
 
-        # Second click — collapse
-        await pilot.click(block._header)
+        # First click
+        await pilot.click(header_bar)
         await pilot.pause()
-        assert block._header.collapsed is True
-        assert not block._body.has_class("expanded")
+        mid_level = panel.detail_level
+        assert mid_level != initial_level
+
+        # Second click — should toggle back
+        await pilot.click(header_bar)
+        await pilot.pause()
+        assert panel.detail_level == initial_level
 
 
 @pytest.mark.asyncio
@@ -995,8 +1002,9 @@ async def test_right_click_does_not_toggle():
 
 @pytest.mark.asyncio
 async def test_click_calls_toggle_exactly_once():
-    """Left-click on ToolHeader calls parent.toggle() exactly once."""
-    from unittest.mock import patch as _patch
+    """Single ToolHeaderBar click changes detail_level exactly once (v3 Phase B)."""
+    from hermes_cli.tui.tool_panel import ToolPanel
+    from hermes_cli.tui.tool_header_bar import ToolHeaderBar
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         lines = [f"L{i}" for i in range(COLLAPSE_THRESHOLD + 1)]
@@ -1004,19 +1012,16 @@ async def test_click_calls_toggle_exactly_once():
         app.mount_tool_block("diff", lines, plain)
         await pilot.pause()
 
-        block = app.query_one(ToolBlock)
-        toggle_calls = []
-        original_toggle = block.toggle
+        panel = app.query_one(ToolPanel)
+        header_bar = panel.query_one(ToolHeaderBar)
+        before = panel.detail_level
 
-        def mock_toggle():
-            toggle_calls.append(1)
-            original_toggle()
+        await pilot.click(header_bar)
+        await pilot.pause()
 
-        with _patch.object(block, "toggle", side_effect=mock_toggle):
-            await pilot.click(block._header)
-            await pilot.pause()
-
-        assert len(toggle_calls) == 1
+        # Exactly one toggle — level changes by exactly 1 step
+        after = panel.detail_level
+        assert abs(after - before) == 1 or (before == 2 and after == 1) or (before == 1 and after == 2)
 
 
 def test_toolheader_hover_css_rule_present():

@@ -231,11 +231,11 @@ class ToolHeader(PulseMixin, Widget):
                     tail.append(f"  -{self._stats.deletions}", style=f"bold {del_color}")
             elif self._line_count:
                 tail.append(f"  {self._line_count}L", style="dim")
-            if self._duration:
-                tail.append(f"  {self._duration}", style=dur_style)
             if self._has_affordances:
                 toggle = "  ▾" if not self.collapsed else "  ▸"
                 tail.append(toggle, style="dim")
+            if self._duration:
+                tail.append(f"  {self._duration}", style=dur_style)
 
         # --- Label with padding ---
         term_w = self.size.width

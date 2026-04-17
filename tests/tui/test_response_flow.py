@@ -968,6 +968,23 @@ def test_detect_lang_prefers_bash_for_command_blocks():
     assert _detect_lang(code) == "bash"
 
 
+def test_detect_lang_identifies_diff():
+    """Diff output with +/- markers should be detected as diff, not Python."""
+    from hermes_cli.tui.response_flow import _detect_lang
+
+    # Pure added lines (what model outputs for git diff without ```diff fence)
+    diff = "+def test_foo():\n+    pass\n+    assert True"
+    assert _detect_lang(diff) == "diff"
+
+    # Mixed add/delete/context
+    diff2 = " def foo():\n-    old\n+    new\n+    extra\n def bar():"
+    assert _detect_lang(diff2) == "diff"
+
+    # Regular Python must NOT be detected as diff
+    py = "def test_foo():\n    pass\n    assert True"
+    assert _detect_lang(py) == "python"
+
+
 # ---------------------------------------------------------------------------
 # List hanging indent tests
 # ---------------------------------------------------------------------------

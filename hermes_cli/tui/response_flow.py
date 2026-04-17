@@ -89,6 +89,26 @@ def _detect_lang(code: str) -> str:
     if not stripped:
         return "text"
 
+    # Diff detection — must come before language heuristics so `+def ...` lines
+    # don't trigger the Python fast-path.  Without this, diff output gets lexed
+    # as Python: `+` becomes a unary operator, `+def` is invalid → no syntax
+    # highlighting, wrong bg on affected lines.
+    lines = stripped.splitlines()
+    nonempty = [l for l in lines if l.strip()]
+    if nonempty:
+        # Count lines starting with +/- (unified diff markers).
+        # In Python source, +/- only appear as mid-line operators, never at col 0.
+        # Threshold 35%: pure diff ≈100%, mixed diff ≈50-70%, regular code ≈0%.
+        diff_markers = sum(
+            1 for l in nonempty
+            if l[0] == "+"
+        ) + sum(
+            1 for l in nonempty
+            if l[0] == "-" and not l.startswith("---")
+        ) + sum(1 for l in nonempty if l.startswith("@@"))
+        if diff_markers >= len(nonempty) * 0.35:
+            return "diff"
+
     # Fast-path heuristics for short snippets where Pygments guess_lexer()
     # often falls back to plain text.
     if any(token in code for token in ("System.out.", "public class ", "String[] args", "import java.", "package ")):

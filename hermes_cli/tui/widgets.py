@@ -1569,6 +1569,7 @@ class _EchoBullet(PulseMixin, Widget):
         self._bullet_dim: str = "#6e6e6e"
         self._turn_started: bool = False
         self._turn_complete: bool = False
+        self._watcher_registered: bool = False
 
     def on_mount(self) -> None:
         try:
@@ -1579,15 +1580,30 @@ class _EchoBullet(PulseMixin, Widget):
             self._bullet_dim = v.get("running-indicator-dim-color", "#6e6e6e")
         except Exception:
             pass
-        self.watch(self.app, "agent_running", self._on_agent_running)
+        self.watch(self.app, "agent_running", self._on_agent_running, init=False)
+        self._watcher_registered = True
+        # Check current state explicitly — avoids init=True timing issues
+        # where the watcher fires before _turn_started is meaningful.
+        try:
+            if getattr(self.app, "agent_running", False):
+                self._turn_started = True
+                if getattr(self.app, "_animations_enabled", True):
+                    self._pulse_start()
+        except Exception:
+            pass
+
+    def on_unmount(self) -> None:
+        """Explicit cleanup — ensure pulse stops even if MRO or watcher is disrupted."""
+        self._pulse_stop()
 
     def _on_agent_running(self, running: bool) -> None:
         if self._turn_complete:
             return
         if running:
-            self._turn_started = True
-            if getattr(self.app, "_animations_enabled", True):
-                self._pulse_start()
+            if not self._turn_started:
+                self._turn_started = True
+                if getattr(self.app, "_animations_enabled", True):
+                    self._pulse_start()
         elif self._turn_started:
             self._pulse_stop()
             self._turn_complete = True

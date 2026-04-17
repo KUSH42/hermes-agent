@@ -2043,11 +2043,15 @@ class TitledRule(PulseMixin, Widget):
             except Exception:
                 ts_text = ""
         metrics_text = self._response_metrics_text()
-        metrics_len = (len(metrics_text) + 1) if metrics_text else 0
-        ts_len = (len(ts_text) + 1) if ts_text else 0  # +1 for leading space
-
-        label_len = len(f"{title} ")
-        right = max(0, w - label_len - state_suffix.cell_len - metrics_len - ts_len)
+        # Compute fill width: total minus every rendered segment.
+        # render appends: f" {metrics}" and f" · {ts}" directly after the fill.
+        fill = w - len(f"{title} ")
+        fill -= state_suffix.cell_len
+        if metrics_text:
+            fill -= 1 + len(metrics_text)          # leading " "
+        if ts_text:
+            fill -= 3 + len(ts_text)               # leading " · "
+        right = max(0, fill)
         t = Text()
         # Title: preserve leading spaces, accent char gets dynamic glyph color,
         # remainder stays in title_color.

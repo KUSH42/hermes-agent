@@ -111,6 +111,19 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+def _log_lag(msg: str) -> None:
+    """Append a timestamped lag diagnostic to $HERMES_HOME/logs/lag.log."""
+    import datetime as _dt
+    from hermes_constants import get_hermes_home
+    ts = _dt.datetime.now().strftime("%H:%M:%S.%f")[:12]
+    try:
+        log_dir = get_hermes_home() / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        with open(log_dir / "lag.log", "a") as f:
+            f.write(f"[{ts}] {msg}\n")
+    except Exception:
+        pass
+
 import os as _os_mod
 
 
@@ -623,6 +636,8 @@ class HermesApp(App):
         Updates the input widget's spinner_text so the spinner renders
         inside the input field when the agent is running.
         """
+        import time as _t
+        _t0 = _t.perf_counter()
         if not (self.agent_running or self.command_running):
             return
         self._shimmer_tick += 1
@@ -671,6 +686,9 @@ class HermesApp(App):
             pass
 
         self._refresh_live_response_metrics()
+        _dt = (_t.perf_counter() - _t0) * 1000
+        if _dt > 16:
+            _log_lag(f"_tick_spinner took {_dt:.1f}ms")
 
     @staticmethod
     def _cell_width(text: str) -> int:
@@ -772,12 +790,17 @@ class HermesApp(App):
 
     def _tick_duration(self) -> None:
         """Run 1-Hz diagnostics and refresh live response metrics."""
+        import time as _t
+        _t0 = _t.perf_counter()
         # --- Diagnostic probes (run unconditionally at 1 Hz) ---
         if self._event_loop_probe is not None:
             self._event_loop_probe.tick()
         if self._worker_watcher is not None:
             self._worker_watcher.tick()
         self._refresh_live_response_metrics()
+        _dt = (_t.perf_counter() - _t0) * 1000
+        if _dt > 16:
+            _log_lag(f"_tick_duration took {_dt:.1f}ms")
 
     # --- FPS HUD ticker ---
 

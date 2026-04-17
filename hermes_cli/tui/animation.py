@@ -123,10 +123,20 @@ class AnimationClock:
 
     def tick(self) -> None:
         """15Hz interval callback — must be plain def, registered via set_interval(1/15, ...)."""
+        import time as _t
+        _t0 = _t.perf_counter()
         self._tick += 1
+        n_subs = len(self._subscribers)
         for sub_id, (divisor, callback) in list(self._subscribers.items()):
             if self._tick % divisor == 0:
                 callback()
+        _dt = (_t.perf_counter() - _t0) * 1000
+        if _dt > 16 or n_subs > 50:
+            try:
+                from hermes_cli.tui.app import _log_lag
+                _log_lag(f"anim_clock.tick took {_dt:.1f}ms ({n_subs} subs)")
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------

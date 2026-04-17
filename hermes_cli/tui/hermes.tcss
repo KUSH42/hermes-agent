@@ -326,6 +326,18 @@ ToolBodyContainer CopyableRichLog {
     overflow-x: hidden;
 }
 
+/* --- ExecuteCodeBlock layout ---
+ * CodeSection and OutputSection body text aligned to header label column 6
+ * (gutter 3 + space 1 + icon 1 + space 1 = 6 for single-cell icons).
+ * ToolBodyContainer CopyableRichLog rule above sets padding-left:0 on the
+ * RichLog; the padding here is on the Section widget container. */
+CodeSection { padding-left: 6; }
+OutputSection { padding-left: 6; }
+
+OutputSeparator .output-sep-label {
+    color: $text-muted;
+}
+
 /* --- Context menu ---
  * Hover uses $accent at low opacity — $primary can be near-black in dark
  * themes, making $primary 30% nearly invisible against $panel background. */

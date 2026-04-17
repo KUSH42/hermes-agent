@@ -50,8 +50,17 @@ class OutputSection(Widget):
         yield CopyableRichLog(markup=False, highlight=False, wrap=False)
 
 
+class OutputSeparator(Widget):
+    """Dim 'output' label shown between code and stdout sections."""
+
+    DEFAULT_CSS = "OutputSeparator { height: 1; display: none; }"
+
+    def compose(self) -> ComposeResult:
+        yield Static("  ─── output", classes="output-sep-label")
+
+
 class ExecuteCodeBody(ToolBodyContainer):
-    """Two-section body: CodeSection + OutputSection.
+    """Two-section body: CodeSection + OutputSeparator + OutputSection.
 
     Overrides ToolBodyContainer.compose() entirely — the parent yields
     a single CopyableRichLog which is not useful here.
@@ -59,6 +68,7 @@ class ExecuteCodeBody(ToolBodyContainer):
 
     def compose(self) -> ComposeResult:
         yield CodeSection()
+        yield OutputSeparator()
         yield OutputSection()
 
 
@@ -297,7 +307,11 @@ class ExecuteCodeBlock(StreamingToolBlock):
         except NoMatches:
             pass
 
-        # Reveal OutputSection
+        # Reveal OutputSeparator + OutputSection
+        try:
+            self.query_one(OutputSeparator).display = True
+        except NoMatches:
+            pass
         try:
             output_section = self.query_one(OutputSection)
             output_section.display = True

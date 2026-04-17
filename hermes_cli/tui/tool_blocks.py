@@ -281,8 +281,10 @@ class ToolHeader(PulseMixin, Widget):
             if self._path_clickable:
                 t.append_text(self._render_path_label(50))
             elif self._label_rich is not None:
+                label_str = self._label
+                display_rich = self._label_rich if _safe_cell_width(label_str) <= 50 else Text(label_str[:49] + "…")
                 t.append(" ")
-                t.append_text(self._label_rich)
+                t.append_text(display_rich)
             else:
                 t.append(f" {self._label}", style=label_style)
             t.append_text(tail)
@@ -296,11 +298,14 @@ class ToolHeader(PulseMixin, Widget):
             t.append(" " * pad)
         elif self._label_rich is not None:
             label_str = self._label
-            if len(label_str) > available:
+            if _safe_cell_width(label_str) > available:
                 label_str = label_str[:available - 1] + "…"
+                display_rich = Text(label_str)
+            else:
+                display_rich = self._label_rich
             pad = max(0, available - _safe_cell_width(label_str))
             t.append(" ")
-            t.append_text(self._label_rich)
+            t.append_text(display_rich)
             t.append(" " * pad)
         else:
             label_str = self._label
@@ -368,7 +373,7 @@ class ToolHeader(PulseMixin, Widget):
             t.append(" " + dir_part, style="dim")
         else:
             t.append(" ", style="dim")
-        t.append(fname, style="bold")
+        t.append(fname, style="bold underline")
         return t
 
     def on_click(self, event: Click) -> None:

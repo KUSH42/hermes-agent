@@ -1046,6 +1046,19 @@ class MessagePanel(Widget):
         self._mount_nonprose_block(panel)
         if tool_name in _FILE_TOOL_NAMES:
             self._last_file_tool_block = block
+        # Bash syntax highlight on header label for shell-category tools
+        if label:
+            try:
+                from hermes_cli.tui.tool_category import classify_tool, ToolCategory
+                if classify_tool(tool_name or "") == ToolCategory.SHELL:
+                    from pygments import highlight as _hl
+                    from pygments.lexers import BashLexer
+                    from pygments.formatters import TerminalTrueColorFormatter
+                    from rich.text import Text as _Text
+                    ansi = _hl(label, BashLexer(), TerminalTrueColorFormatter(style="monokai")).rstrip("\n")
+                    block._header._label_rich = _Text.from_ansi(ansi)
+            except Exception:
+                pass
         return block
 
     def all_prose_text(self) -> str:

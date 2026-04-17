@@ -37,6 +37,7 @@ class DrawilleOverlayCfg:
     fps: int = 15
     position: str = "center"
     size: str = "medium"
+    vertical: bool = False
     color: str = "$accent"
     gradient: bool = False
     color_secondary: str = "$primary"
@@ -77,8 +78,9 @@ def _overlay_config() -> DrawilleOverlayCfg:
         animation=str(d.get("animation", "dna")),
         trigger=str(d.get("trigger", "agent_running")),
         fps=int(d.get("fps", 15)),
-        position=str(d.get("position", "center")),
+        position=str(d.get("position", "top-right")),
         size=str(d.get("size", "medium")),
+        vertical=bool(d.get("vertical", True)),
         color=str(d.get("color", "$accent")),
         gradient=bool(d.get("gradient", False)),
         color_secondary=str(d.get("color_secondary", "$primary")),
@@ -137,6 +139,7 @@ class AnimParams:
     height: int  # braille pixel height = terminal_rows × 4
     t: float = 0.0
     dt: float = 1 / 15
+    vertical: bool = False
 
 
 # ── Engine protocol ───────────────────────────────────────────────────────────
@@ -160,16 +163,28 @@ class DnaHelixEngine:
         canvas = _make_canvas()
         w, h = params.width, params.height
         t = params.t
-        for x in range(w):
-            phase = x * 0.25 + t * 4.0
-            y_a = int((math.sin(phase) + 1) * 0.5 * (h - 1))
-            y_b = int((math.sin(phase + math.pi) + 1) * 0.5 * (h - 1))
-            canvas.set(x, y_a)
-            canvas.set(x, y_b)
-            if x % 8 == 0:
-                y_lo, y_hi = min(y_a, y_b), max(y_a, y_b)
-                for y in range(y_lo, y_hi + 1, 2):
-                    canvas.set(x, y)
+        if params.vertical:
+            for y in range(h):
+                phase = y * 0.25 + t * 4.0
+                x_a = int((math.sin(phase) + 1) * 0.5 * (w - 1))
+                x_b = int((math.sin(phase + math.pi) + 1) * 0.5 * (w - 1))
+                canvas.set(x_a, y)
+                canvas.set(x_b, y)
+                if y % 8 == 0:
+                    x_lo, x_hi = min(x_a, x_b), max(x_a, x_b)
+                    for x in range(x_lo, x_hi + 1, 2):
+                        canvas.set(x, y)
+        else:
+            for x in range(w):
+                phase = x * 0.25 + t * 4.0
+                y_a = int((math.sin(phase) + 1) * 0.5 * (h - 1))
+                y_b = int((math.sin(phase + math.pi) + 1) * 0.5 * (h - 1))
+                canvas.set(x, y_a)
+                canvas.set(x, y_b)
+                if x % 8 == 0:
+                    y_lo, y_hi = min(y_a, y_b), max(y_a, y_b)
+                    for y in range(y_lo, y_hi + 1, 2):
+                        canvas.set(x, y)
         return canvas.frame()
 
 
@@ -440,6 +455,8 @@ class DrawilleOverlay(Static):
         # Apply multi-color config; triggers watch_multi_color → resolve
         self.multi_color = list(cfg.multi_color)
         self.hue_shift_speed = cfg.hue_shift_speed
+        if self._anim_params is not None:
+            self._anim_params.vertical = cfg.vertical
         self.add_class("-visible")
         self._start_anim()
         if cfg.auto_hide_delay > 0:
@@ -558,17 +575,24 @@ class DrawilleOverlay(Static):
     # ── size / position ────────────────────────────────────────────────────
 
     def _apply_size_position(self, cfg: DrawilleOverlayCfg) -> None:
-        sizes = {
-            "small":  (30, 8),
-            "medium": (50, 14),
-            "large":  (70, 20),
-        }
         if cfg.size == "fill":
             self.styles.width = "1fr"
             self.styles.height = "1fr"
             self.styles.offset = (0, 0)
             return
-        w, h = sizes.get(cfg.size, (50, 14))
+        if cfg.vertical:
+            sizes = {
+                "small":  (10, 16),
+                "medium": (12, 22),
+                "large":  (16, 30),
+            }
+        else:
+            sizes = {
+                "small":  (30, 8),
+                "medium": (50, 14),
+                "large":  (70, 20),
+            }
+        w, h = sizes.get(cfg.size, sizes["medium"])
         self.styles.width = w
         self.styles.height = h
         try:
@@ -578,10 +602,10 @@ class DrawilleOverlay(Static):
             tw, th = 80, 24
         positions = {
             "center":       ((tw - w) // 2,  (th - h) // 2),
-            "top-right":    (tw - w - 2,     2),
+            "top-right":    (tw - w - 2,     1),
             "bottom-right": (tw - w - 2,     th - h - 2),
             "bottom-left":  (2,              th - h - 2),
-            "top-left":     (2,              2),
+            "top-left":     (2,              1),
         }
         ox, oy = positions.get(cfg.position, positions["center"])
         self.styles.offset = (max(0, ox), max(0, oy))
@@ -670,6 +694,7 @@ class AnimConfigPanel(Widget):
                         choices=["agent_running", "command_running", "always"]),
             _PanelField("show_border","Border",    "toggle", cfg.show_border),
             _PanelField("dim_bg",     "Dim BG",    "toggle", cfg.dim_background),
+            _PanelField("vertical",   "Vertical",  "toggle", cfg.vertical),
         ]
         self._focus_idx = 0
 
@@ -816,6 +841,7 @@ class AnimConfigPanel(Widget):
             "trigger":   None,    # not a reactive on overlay
             "show_border": None,  # handled on next show()
             "dim_bg":    "dim_bg",
+            "vertical":  None,    # applied via _apply_size_position on next show()
         }
         attr = attr_map.get(f.name)
         if attr is not None:
@@ -889,6 +915,7 @@ def _current_panel_cfg(fields: list[_PanelField]) -> DrawilleOverlayCfg:
         color_secondary=str(fmap.get("color_b", "$primary")),
         dim_background=bool(fmap.get("dim_bg", True)),
         show_border=bool(fmap.get("show_border", False)),
+        vertical=bool(fmap.get("vertical", False)),
         border_style="round",
         border_color="$accent",
         auto_hide_delay=0.0,
@@ -914,6 +941,7 @@ def _fields_to_dict(fields: list[_PanelField]) -> dict:
         "color_secondary": str(fmap.get("color_b", "$primary")),
         "dim_background": bool(fmap.get("dim_bg", True)),
         "show_border": bool(fmap.get("show_border", False)),
+        "vertical": bool(fmap.get("vertical", False)),
         "border_style": "round",
         "border_color": "$accent",
         "auto_hide_delay": 0,

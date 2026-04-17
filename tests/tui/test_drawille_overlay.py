@@ -755,3 +755,129 @@ def test_overlay_config_parses_multi_color_list():
         cfg = _overlay_config()
     assert cfg.multi_color == ["#00ff66", "#004422", "#0066ff"]
     assert cfg.hue_shift_speed == 0.5
+
+
+# ── Vertical mode ─────────────────────────────────────────────────────────────
+
+def test_anim_params_has_vertical_field():
+    """AnimParams.vertical defaults to False."""
+    p = AnimParams(width=100, height=56)
+    assert p.vertical is False
+
+
+def test_anim_params_vertical_true():
+    """AnimParams.vertical=True is accepted."""
+    p = AnimParams(width=24, height=88, vertical=True)
+    assert p.vertical is True
+
+
+def test_vertical_dna_helix_scans_height_axis():
+    """Vertical DnaHelixEngine sets points across y-axis, not x."""
+    engine = DnaHelixEngine()
+    params = AnimParams(width=24, height=88, vertical=True)
+    result = engine.next_frame(params)
+    assert isinstance(result, str)
+    assert len(result) > 0
+
+
+def test_vertical_and_horizontal_dna_differ():
+    """Vertical and horizontal DNA frames differ for same canvas size."""
+    engine = DnaHelixEngine()
+    p_h = AnimParams(width=24, height=88, t=0.0, vertical=False)
+    p_v = AnimParams(width=24, height=88, t=0.0, vertical=True)
+    frame_h = engine.next_frame(p_h)
+    frame_v = engine.next_frame(p_v)
+    assert frame_h != frame_v
+
+
+def test_vertical_medium_size_uses_portrait_dimensions():
+    """vertical=True medium size → (12, 22)."""
+    mock_app = MagicMock()
+    mock_app.size = MagicMock(width=120, height=40)
+    ov = DrawilleOverlay()
+
+    widths: list[int] = []
+    heights: list[int] = []
+
+    class StylesMock:
+        @property
+        def width(self): return 0
+        @width.setter
+        def width(self, v): widths.append(v)
+        @property
+        def height(self): return 0
+        @height.setter
+        def height(self, v): heights.append(v)
+        @property
+        def offset(self): return (0, 0)
+        @offset.setter
+        def offset(self, v): pass
+
+    ov.styles = StylesMock()
+    cfg = _default_cfg(enabled=True, size="medium", position="top-right",
+                       vertical=True, auto_hide_delay=0, fade_in_frames=0)
+    with patch.object(type(ov), "app", new_callable=PropertyMock, return_value=mock_app):
+        ov._apply_size_position(cfg)
+    assert widths[-1] == 12
+    assert heights[-1] == 22
+
+
+def test_position_top_right_y_offset_is_1():
+    """top-right position uses y_offset=1 (1 padding from top)."""
+    tw, th = 120, 40
+    mock_app = MagicMock()
+    mock_app.size = MagicMock(width=tw, height=th)
+    ov = DrawilleOverlay()
+
+    offsets_set: list[tuple] = []
+
+    class StylesMock:
+        @property
+        def width(self): return 0
+        @width.setter
+        def width(self, v): pass
+        @property
+        def height(self): return 0
+        @height.setter
+        def height(self, v): pass
+        @property
+        def offset(self): return (0, 0)
+        @offset.setter
+        def offset(self, v): offsets_set.append(v)
+
+    ov.styles = StylesMock()
+    cfg = _default_cfg(enabled=True, size="medium", position="top-right",
+                       vertical=False, auto_hide_delay=0, fade_in_frames=0)
+    with patch.object(type(ov), "app", new_callable=PropertyMock, return_value=mock_app):
+        ov._apply_size_position(cfg)
+    assert len(offsets_set) == 1
+    _, y_off = offsets_set[0]
+    assert y_off == 1
+
+
+def test_show_propagates_vertical_to_anim_params():
+    """show() sets _anim_params.vertical from cfg.vertical."""
+    mock_app = MagicMock()
+    mock_app.size = MagicMock(width=80, height=24)
+    ov = DrawilleOverlay()
+    ov.styles = MagicMock()
+    ov._start_anim = MagicMock()
+    ov._anim_params = AnimParams(width=24, height=88, vertical=False)
+    cfg = _default_cfg(enabled=True, vertical=True, auto_hide_delay=0, fade_in_frames=0)
+    with patch.object(type(ov), "app", new_callable=PropertyMock, return_value=mock_app):
+        ov.show(cfg)
+    assert ov._anim_params.vertical is True
+
+
+def test_overlay_config_defaults_position_top_right():
+    """_overlay_config() defaults position to 'top-right'."""
+    with patch("hermes_cli.config.read_raw_config", return_value={}):
+        cfg = _overlay_config()
+    assert cfg.position == "top-right"
+
+
+def test_overlay_config_defaults_vertical_true():
+    """_overlay_config() defaults vertical to True."""
+    with patch("hermes_cli.config.read_raw_config", return_value={}):
+        cfg = _overlay_config()
+    assert cfg.vertical is True

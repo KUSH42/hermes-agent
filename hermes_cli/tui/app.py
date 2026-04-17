@@ -2227,8 +2227,22 @@ class HermesApp(App):
         except NoMatches:
             pass
 
+    def _toggle_drawille_overlay(self) -> None:
+        """Ctrl+Shift+A: dismiss overlay if visible, else show it."""
+        try:
+            from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO, _overlay_config
+            overlay = self.query_one(_DO)
+            cfg = _overlay_config()
+            if overlay.has_class("-visible"):
+                overlay.hide(cfg)
+            else:
+                cfg.enabled = True
+                overlay.show(cfg)
+        except Exception:
+            pass
+
     def action_open_anim_config(self) -> None:
-        self._open_anim_config()
+        self._toggle_drawille_overlay()
 
     def _initiate_undo(self) -> None:
         if self._undo_in_progress:

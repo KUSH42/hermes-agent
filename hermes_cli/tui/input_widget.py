@@ -390,13 +390,24 @@ class HermesInput(TextArea, can_focus=True):
         await super()._on_key(event)
 
     async def _on_paste(self, event: events.Paste) -> None:
-        """Intercept terminal drag-and-drop before TextArea inserts raw path text."""
-        dropped_paths = parse_dragged_file_paste(event.text)
+        """Intercept terminal drag-and-drop before TextArea inserts raw path text.
+
+        Always sets _no_default_action to prevent Textual's MRO dispatch from
+        also calling TextArea._on_paste (which would double-paste content).
+        """
+        try:
+            dropped_paths = parse_dragged_file_paste(event.text)
+        except Exception:
+            dropped_paths = None
         if dropped_paths:
             self.post_message(self.FilesDropped(dropped_paths))
             event._no_default_action = True
             event.stop()
             return
+        # Non-file-drop paste: flash hint, then do the paste ourselves.
+        # _no_default_action MUST be set so Textual doesn't also dispatch
+        # TextArea._on_paste via MRO (causes double paste on Shift+Insert).
+        event._no_default_action = True
         try:
             self.app._flash_hint(f"{ICON_COPY}  {len(event.text)} chars pasted", 1.2)
         except Exception:

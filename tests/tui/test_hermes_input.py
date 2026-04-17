@@ -933,7 +933,7 @@ async def test_paste_file_drop_still_works() -> None:
             return_value=[Path(fake_path_text)],
         ):
             paste_event = _events.Paste(fake_path_text)
-            inp._on_paste(paste_event)
+            await inp._on_paste(paste_event)
             await pilot.pause()
 
         # Text should NOT be in input (drag-drop intercepted)

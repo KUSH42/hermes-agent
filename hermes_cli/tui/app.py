@@ -54,8 +54,9 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.reactive import reactive
+from textual.screen import Screen
 from textual.widgets import Static, TextArea
-from textual import work
+from textual import events, work
 
 from hermes_cli.file_drop import classify_dropped_file, format_link_token
 from hermes_cli.tui.state import (
@@ -163,6 +164,42 @@ _HELIX_FRAME_COUNT = 24
 _HELIX_MIN_CELLS = 6
 
 
+class _HermesScreen(Screen):
+    """Custom Screen that prevents focus stealing on right-click.
+
+    Textual's default Screen._forward_event calls set_focus() on ANY
+    MouseDown, including right-click (button=3).  This steals focus from
+    the input bar and loses text selection before the context menu appears.
+    Override: skip the focus change for right-click.
+    """
+
+    def _forward_event(self, event: events.Event) -> None:
+        if (
+            isinstance(event, events.MouseDown)
+            and getattr(event, "button", None) == 3
+            and not self.app.mouse_captured
+        ):
+            # Right-click: forward the event but skip Textual's focus-on-click.
+            # Reproduce the non-focus parts of Screen._forward_event.
+            if event.is_forwarded:
+                return
+            event._set_forwarded()
+            try:
+                widget, region = self.get_widget_at(event.x, event.y)
+            except Exception:
+                return
+            event.style = self.get_style_at(event.screen_x, event.screen_y)
+            if widget.loading:
+                return
+            if widget is self:
+                event._set_forwarded()
+                self.post_message(event)
+            else:
+                widget._forward_event(event._apply_offset(-region.x, -region.y))
+            return
+        super()._forward_event(event)
+
+
 class HermesApp(App):
     """Main Textual application for the Hermes Agent TUI.
 
@@ -176,6 +213,10 @@ class HermesApp(App):
     # Layer declaration — required before any widget uses ``layer: overlay``
     # in CSS.  Draw order: default → overlay.
     LAYERS = ("default", "overlay")
+
+    def get_default_screen(self) -> Screen:
+        """Use custom Screen that prevents focus stealing on right-click."""
+        return _HermesScreen(id="_default")
 
     BINDINGS = [
         Binding("ctrl+f", "open_history_search", "History search", show=False, priority=True),
@@ -1521,6 +1562,12 @@ class HermesApp(App):
 
     def handle_file_drop(self, paths: list[Path]) -> None:
         """Route terminal drag-and-drop pasted paths into input bar."""
+        try:
+            self._handle_file_drop_inner(paths)
+        except Exception:
+            self._flash_hint("file drop failed — see log for details", 2.0)
+
+    def _handle_file_drop_inner(self, paths: list[Path]) -> None:
         if any(getattr(self, attr) is not None for attr in ("approval_state", "clarify_state", "sudo_state", "secret_state")):
             self._flash_hint("file drop unavailable while prompt is open", 1.5)
             return
@@ -1534,11 +1581,13 @@ class HermesApp(App):
             dropped = classify_dropped_file(path, cwd)
             if dropped.kind == "image":
                 image_paths.append(path)
-            elif dropped.kind in ("linkable_text", "unsupported_binary"):
+            elif dropped.kind == "linkable_text":
                 try:
                     link_tokens.append(format_link_token(path, cwd))
                 except ValueError as exc:
                     rejected.append(str(exc))
+            elif dropped.kind == "unsupported_binary":
+                rejected.append(dropped.reason or "unsupported file type")
             else:
                 rejected.append(dropped.reason or dropped.kind)
 

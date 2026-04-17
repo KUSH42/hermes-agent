@@ -42,6 +42,7 @@ if TYPE_CHECKING:
 # History file path — same location as prompt_toolkit's FileHistory used
 _HERMES_HOME = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
 _HISTORY_FILE = _HERMES_HOME / ".hermes_history"
+_MAX_HISTORY = 200  # Cap loaded entries — older = noise from dev/test
 
 # Slash-command value regex — matches entire input "/cmd" with word+hyphen chars.
 _SLASH_FULL_RE = re.compile(r"^/([\w-]*)$")
@@ -123,7 +124,7 @@ class HermesInput(TextArea, can_focus=True):
             text="",
             soft_wrap=True,
             compact=True,
-            tab_behavior="focus",
+            tab_behavior="indent",
             show_line_numbers=False,
             highlight_cursor_line=False,
             max_checkpoints=50,
@@ -233,7 +234,10 @@ class HermesInput(TextArea, can_focus=True):
     # --- History ---
 
     def _load_history(self) -> None:
-        """Load history from the hermes history file (same format as FileHistory)."""
+        """Load history from the hermes history file (same format as FileHistory).
+
+        Loads last _MAX_HISTORY entries to avoid test-remnant bloat.
+        """
         try:
             if _HISTORY_FILE.exists():
                 lines: list[str] = []
@@ -246,13 +250,17 @@ class HermesInput(TextArea, can_focus=True):
                         current_entry = []
                 if current_entry:
                     lines.append("\n".join(current_entry))
-                self._history = lines
+                # Keep only last N entries — older history is noise
+                self._history = lines[-_MAX_HISTORY:]
         except OSError:
             self._history = []
 
     def _save_to_history(self, text: str) -> None:
         """Append an entry to the history file and in-memory list."""
         if not text.strip():
+            return
+        # Dedup: skip if identical to last saved entry
+        if self._history and self._history[-1] == text:
             return
         self._history.append(text)
         try:

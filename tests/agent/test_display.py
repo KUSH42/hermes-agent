@@ -162,6 +162,33 @@ class TestEditDiffPreview:
         assert "-old" in diff
         assert "+new" in diff
 
+    def test_extract_edit_diff_uses_local_snapshot_for_v4a_patch(self, tmp_path):
+        target = tmp_path / "note.txt"
+        target.write_text("old\n", encoding="utf-8")
+
+        snapshot = capture_local_edit_snapshot(
+            "patch",
+            {
+                "mode": "patch",
+                "patch": f"*** Begin Patch\n*** Update File: {target}\n@@\n-old\n+new\n*** End Patch\n",
+            },
+        )
+
+        target.write_text("new\n", encoding="utf-8")
+
+        diff = extract_edit_diff(
+            "patch",
+            '{"success": true}',
+            function_args={"mode": "patch", "patch": f"*** Begin Patch\n*** Update File: {target}\n*** End Patch\n"},
+            snapshot=snapshot,
+        )
+
+        assert diff is not None
+        assert "--- a/" in diff
+        assert "+++ b/" in diff
+        assert "-old" in diff
+        assert "+new" in diff
+
     def test_render_edit_diff_with_delta_invokes_printer(self):
         printer = MagicMock()
 

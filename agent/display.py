@@ -7,6 +7,7 @@ Used by AIAgent._execute_tool_calls for CLI feedback.
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -461,7 +462,27 @@ def _resolve_local_edit_paths(tool_name: str, function_args: dict | None) -> lis
 
     if tool_name == "patch":
         path = function_args.get("path")
-        return [_resolved_path(path)] if path else []
+        if path:
+            return [_resolved_path(path)]
+
+        patch_content = function_args.get("patch")
+        if isinstance(patch_content, str) and patch_content:
+            matches = [
+                _resolved_path(match.group(1).strip())
+                for match in re.finditer(
+                    r"^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s*(.+)$",
+                    patch_content,
+                    re.MULTILINE,
+                )
+            ]
+            seen: set[Path] = set()
+            unique_paths: list[Path] = []
+            for candidate in matches:
+                if candidate in seen:
+                    continue
+                seen.add(candidate)
+                unique_paths.append(candidate)
+            return unique_paths
 
     if tool_name == "skill_manage":
         return _resolve_skill_manage_paths(function_args)

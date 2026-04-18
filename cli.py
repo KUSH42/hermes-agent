@@ -6806,6 +6806,9 @@ class HermesCLI:
     _PATTERN_ARG_TOOLS: frozenset = frozenset({
         "search_files", "grep",
     })
+    _SKILL_NAME_TOOLS: frozenset = frozenset({
+        "skill_view", "skill_manage",
+    })
 
     def _build_tool_label(self, function_name: str, function_args: dict) -> str:
         """Build a human-readable label for a tool header."""
@@ -6818,6 +6821,8 @@ class HermesCLI:
             label = function_args.get("path", function_name) or function_name
         elif function_name in self._PATTERN_ARG_TOOLS:
             label = function_args.get("pattern", function_name) or function_name
+        elif function_name in self._SKILL_NAME_TOOLS:
+            label = function_args.get("name", function_name) or function_name
         else:
             label = function_name
         if len(label) > 60:
@@ -6915,6 +6920,9 @@ class HermesCLI:
                 m = self._PATH_TOKEN_RE.search(cmd)
                 if m:
                     block._header.set_path(m.group(1))
+        # Skill tools: show skill name inline with compact timer
+        if function_name in self._SKILL_NAME_TOOLS:
+            block._header._compact_tail = True
         block._header.refresh()
 
     def _on_tool_gen_start(self, idx: int, tool_name: str) -> None:
@@ -6951,6 +6959,10 @@ class HermesCLI:
             tui.call_from_thread(_open_write)
             if result[0] is not None:
                 self._gen_blocks_by_idx[idx] = result[0]
+        elif tool_name in self._SKILL_NAME_TOOLS:
+            # Skill tools: defer block creation to tool_start so we have the skill name.
+            # Gen block would open with display name "skill" (orphan risk) — skip it.
+            pass
         else:
             # Open a StreamingToolBlock at gen_start time.
             result = [None]

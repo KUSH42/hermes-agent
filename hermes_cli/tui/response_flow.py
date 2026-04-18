@@ -74,6 +74,9 @@ _INLINE_CODE_LABEL_RE = re.compile(
 # Same pattern as rich_output._MD_HR_RE — standalone HR line
 _HR_RE = re.compile(r"^(-{3,}|\*{3,}|_{3,})$")
 
+# Footnote definition line — [^N]: text — collected and suppressed in NORMAL state
+_FOOTNOTE_DEF_RE = re.compile(r'^\s*\[\^(\d{1,4})\]:\s*(.*)')
+
 
 # ---------------------------------------------------------------------------
 # Module-level helpers
@@ -285,6 +288,9 @@ class ResponseFlowEngine:
         self._pending_code_intro: bool = False
         self._prose_section_counter: int = 0  # for unique CopyableBlock IDs
         self._list_cont_indent: str = ""  # continuation indent for list items
+        self._footnote_defs: dict[str, str] = {}   # label → definition text
+        self._footnote_order: list[str] = []       # labels in order of first definition
+        self._footnote_def_open: str | None = None  # label of continuation-in-progress
 
     def _sync_prose_log(self) -> None:
         """Refresh the active prose destination from the owning message panel."""
@@ -306,6 +312,22 @@ class ResponseFlowEngine:
         # Phase 1: Code block boundary detection (bypass StreamingBlockBuffer)
         intro_candidate = _is_code_intro_label(raw)
         if self._state == "NORMAL":
+            # Footnote definition: collect and suppress from main output.
+            # Must be first — runs before pending-code-intro and fence checks.
+            _fn_m = _FOOTNOTE_DEF_RE.match(raw)
+            if _fn_m:
+                label, body = _fn_m.group(1), _fn_m.group(2).strip()
+                if label not in self._footnote_defs:
+                    self._footnote_order.append(label)
+                self._footnote_defs[label] = body
+                self._footnote_def_open = label
+                return
+            # Multi-line continuation (4-space or tab indent):
+            if self._footnote_def_open and (raw.startswith("    ") or raw.startswith("\t")):
+                self._footnote_defs[self._footnote_def_open] += " " + raw.strip()
+                return
+            self._footnote_def_open = None
+
             stripped = raw.strip()
             was_pending_code_intro = self._pending_code_intro
             if was_pending_code_intro:
@@ -485,6 +507,27 @@ class ResponseFlowEngine:
                     self._prose_log.write_with_source(Text.from_ansi(inline_ansi), plain)
         # Flush any prose pending in StreamingBlockBuffer (setext, tables)
         self._flush_block_buf()
+        self._render_footnote_section()
+        self._footnote_defs.clear()
+        self._footnote_order.clear()
+        self._footnote_def_open = None
+
+    def _render_footnote_section(self) -> None:
+        from agent.rich_output import apply_inline_markdown, _to_superscript
+        if not self._footnote_defs:
+            return
+        self._sync_prose_log()
+        sep = Text("─" * 40, style="dim")
+        self._prose_log.write_with_source(sep, "─" * 40)
+        ref_style = self._skin_vars.get("footnote-ref-color", "dim")
+        for label in self._footnote_order:
+            body = self._footnote_defs.get(label, "")
+            sup = _to_superscript(label)
+            styled_body = Text.from_ansi(apply_inline_markdown(body))
+            line = Text()
+            line.append(sup + " ", style=ref_style)
+            line.append_text(styled_body)
+            self._prose_log.write_with_source(line, sup + " " + body)
 
     def refresh_skin(self, css_vars: dict[str, str]) -> None:
         """Called from HermesApp.apply_skin() after hot-reload.
@@ -593,6 +636,9 @@ class ReasoningFlowEngine(ResponseFlowEngine):
         self._pending_code_intro: bool = False
         self._prose_section_counter: int = 0
         self._list_cont_indent: str = ""
+        self._footnote_defs: dict[str, str] = {}
+        self._footnote_order: list[str] = []
+        self._footnote_def_open: str | None = None
 
     def process_line(self, raw: str) -> None:
         """Override: flush block buffer immediately after every line.
@@ -615,6 +661,10 @@ class ReasoningFlowEngine(ResponseFlowEngine):
         """Mount dim code block inside ReasoningPanel, above the live line."""
         block.add_class("reasoning-code-block")
         self._panel.mount(block, before=self._panel._live_line)
+
+    def _render_footnote_section(self) -> None:
+        """No footnote section in reasoning output."""
+        pass
 
     def _emit_rule(self) -> None:
         from rich.rule import Rule as RichRule

@@ -21,6 +21,9 @@
 /* All $var defaults live in COMPONENT_VAR_DEFAULTS (theme_manager.py).
    Local declarations here block runtime skin overrides. */
 
+/* Component variable declarations — must be present for Textual to parse $var refs */
+$footnote-ref-color: #888888;
+
 /* Screen is the actual DOM root — transparent widgets inherit from it, not from
  * HermesApp. Both must be set so every widget in the tree shows $app-bg. */
 Screen {

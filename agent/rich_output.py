@@ -923,6 +923,15 @@ _MD_MARK_ANSI = "\033[7m"
 # Universal reset — always \033[0m regardless of skin
 _MD_RST_ANSI = "\033[0m"
 
+# Footnote inline reference — [^N] → Unicode superscript
+_FOOTNOTE_REF_RE = re.compile(r'\[\^(\d{1,4})\]')
+_SUP_TABLE = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
+
+
+def _to_superscript(n: str) -> str:
+    """'12' → '¹²'  (each digit mapped individually)."""
+    return n.translate(_SUP_TABLE)
+
 # ---------------------------------------------------------------------------
 # Skin-driven markdown ANSI cache
 # ---------------------------------------------------------------------------
@@ -1016,6 +1025,10 @@ def apply_inline_markdown(line: str, reset_suffix: str = "", ref_map: "dict[str,
 
     Returns *line* unchanged if it already contains ANSI escape codes.
     """
+    # Footnote refs: runs before the \x1b guard so refs inside ANSI-decorated
+    # headings are also converted.  Safe: [^N] never appears in ANSI CSI sequences.
+    line = _FOOTNOTE_REF_RE.sub(lambda m: _to_superscript(m.group(1)), line)
+
     if "\x1b" in line:
         return line
 

@@ -1640,6 +1640,8 @@ class HermesCLI:
         self._stream_callback_tokens: dict[str, object] = {}
         # Queue correlating gen_start StreamingToolBlocks with tool_start tool_call_ids
         self._pending_gen_queue: list = []
+        # Deduplication: path → tool_call_id of the active patch block
+        self._pending_patch_paths: dict[str, str] = {}
         # ExecuteCodeBlock correlation maps (see §3.3 of ExecuteCodeBlock spec)
         self._gen_blocks_by_idx: dict[int, object] = {}
         self._active_execute_blocks_by_idx: dict[int, object] = {}
@@ -6896,11 +6898,12 @@ class HermesCLI:
             pattern = function_args.get("pattern", "") if isinstance(function_args, dict) else ""
             if pattern and len(pattern) <= 60:
                 block._header._label_rich = self._highlight_grep_pattern(pattern)
-        # File-tool headers: make path-clickable (file-open on click + context menu)
+        # File-tool headers: make path-clickable; timer inline (not right-aligned)
         if function_name in self._PATH_ARG_TOOLS:
             path = function_args.get("path", "") if isinstance(function_args, dict) else ""
             if path:
                 block._header.set_path(path)
+                block._header._compact_tail = True
         # Shell tools: bash highlighting + $ prompt prefix + path auto-link
         if function_name in self._SHELL_TOOL_NAMES:
             cmd = function_args.get("command", "") if isinstance(function_args, dict) else ""
@@ -7126,6 +7129,16 @@ class HermesCLI:
                 tui._active_streaming_blocks[tool_call_id] = block
                 # Update label with actual command
                 self._update_block_label(block, function_name, function_args)
+                # Deduplicate consecutive patches to the same file — suppress second+ STBs
+                if function_name == "patch":
+                    path = function_args.get("path", "") if isinstance(function_args, dict) else ""
+                    if path:
+                        prev_id = self._pending_patch_paths.get(path)
+                        if prev_id and prev_id in self._active_stream_tool_ids:
+                            # A patch to this path is already active — remove new STB silently
+                            tui.call_from_thread(tui.remove_streaming_tool_block, tool_call_id)
+                        else:
+                            self._pending_patch_paths[path] = tool_call_id
             else:
                 # Fallback: gen_start didn't fire (tool_gen_callback was None, or queue race)
                 # Create a new StreamingToolBlock directly
@@ -7163,6 +7176,11 @@ class HermesCLI:
         tui = _hermes_app
         _was_streaming = tool_call_id in self._active_stream_tool_ids
         self._active_stream_tool_ids.discard(tool_call_id)
+        # Clean up patch deduplication tracker
+        if function_name == "patch":
+            path = function_args.get("path", "") if isinstance(function_args, dict) else ""
+            if path and self._pending_patch_paths.get(path) == tool_call_id:
+                del self._pending_patch_paths[path]
         _stream_duration = ""
         if tui is not None and _was_streaming:
             # Reset the ContextVar callback (only if registered — streaming tools only)
@@ -7262,7 +7280,7 @@ class HermesCLI:
                         return rerendered, _plain_lines(rerendered)
 
                     tui.call_from_thread(
-                        tui.mount_tool_block, "diff", display_lines, plain, _rerender_diff, header_stats, function_name
+                        tui.mount_tool_block, "diff", display_lines, plain, function_name, _rerender_diff, header_stats
                     )
             except Exception:
                 logger.debug("Edit diff preview failed for %s", function_name, exc_info=True)
@@ -7289,7 +7307,7 @@ class HermesCLI:
                                     return rerendered, _plain_lines(rerendered)
 
                                 tui.call_from_thread(
-                                    tui.mount_tool_block, "code", display_lines, plain, _rerender_execute_code_preview, None, function_name
+                                    tui.mount_tool_block, "code", display_lines, plain, function_name, _rerender_execute_code_preview, None
                                 )
                     elif function_name == "read_file":
                         # Skip static preview when a StreamingToolBlock was used
@@ -7315,9 +7333,9 @@ class HermesCLI:
                                     "code",
                                     display_lines,
                                     plain,
+                                    function_name,
                                     _rerender_read_file_preview,
                                     None,
-                                    function_name,
                                 )
                     elif function_name == "terminal":
                         # Skip static preview when a StreamingToolBlock was used
@@ -7343,9 +7361,9 @@ class HermesCLI:
                                     "output",
                                     display_lines,
                                     plain,
+                                    function_name,
                                     _rerender_terminal_preview,
                                     None,
-                                    function_name,
                                 )
                 except Exception:
                     logger.debug("%s highlight failed", function_name, exc_info=True)

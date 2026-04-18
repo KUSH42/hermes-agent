@@ -1,7 +1,7 @@
 """Runtime performance instrumentation for the Hermes TUI.
 
 This module provides three diagnostic primitives that together prove the TUI
-maintains a 60 FPS feel against an Ink/JS competitor:
+maintains a 60 FPS feel:
 
     measure()               — hot-path latency gate using time.perf_counter()
     WorkerWatcher           — leak detector: monitors len(app.workers)
@@ -18,7 +18,7 @@ Then launch the agent::
     TEXTUAL_LOG=1 python -m textual run --dev cli.py
 
 In the console: look for Input.Changed storms (same message >3× per keystroke
-means a feedback loop — the Ink equivalent of unbounded re-renders).
+means a feedback loop).
 
 Repaint border check::
 
@@ -74,8 +74,10 @@ drops to 1 at idle. LOOP jitter stays under 5 ms at rest.
 from __future__ import annotations
 
 import time
+from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from statistics import median, quantiles
 from typing import TYPE_CHECKING, Generator
 
 from textual import log
@@ -349,3 +351,91 @@ class FrameRateProbe:
     def avg_ms(self) -> float:
         """Average ms per tick over the rolling window."""
         return self._avg_ms
+
+
+# ---------------------------------------------------------------------------
+# PerfRegistry — named latency sample store
+# ---------------------------------------------------------------------------
+
+
+class PerfRegistry:
+    """Bounded in-process store for named latency samples.
+
+    Usage::
+
+        _registry.record("path_walk_ms", elapsed_ms)
+        p95 = _registry.p95("path_walk_ms")
+        stats = _registry.stats("path_walk_ms")
+    """
+
+    _MAX_SAMPLES = 200
+
+    def __init__(self) -> None:
+        self._samples: dict[str, deque[float]] = {}
+
+    def record(self, label: str, elapsed_ms: float) -> None:
+        if label not in self._samples:
+            self._samples[label] = deque(maxlen=self._MAX_SAMPLES)
+        self._samples[label].append(elapsed_ms)
+
+    def samples(self, label: str) -> list[float]:
+        return list(self._samples.get(label, []))
+
+    def p50(self, label: str) -> float:
+        s = self.samples(label)
+        return median(s) if s else 0.0
+
+    def p95(self, label: str) -> float:
+        s = self.samples(label)
+        if not s:
+            return 0.0
+        if len(s) < 20:
+            return max(s)
+        return quantiles(s, n=20)[18]
+
+    def stats(self, label: str) -> dict[str, float]:
+        s = self.samples(label)
+        if not s:
+            return {"p50": 0.0, "p95": 0.0, "max": 0.0, "count": 0}
+        return {
+            "p50": self.p50(label),
+            "p95": self.p95(label),
+            "max": max(s),
+            "count": float(len(s)),
+        }
+
+    def clear(self, label: str | None = None) -> None:
+        if label is None:
+            self._samples.clear()
+        elif label in self._samples:
+            self._samples[label].clear()
+
+    def all_labels(self) -> list[str]:
+        return sorted(self._samples)
+
+
+_registry = PerfRegistry()
+
+
+@contextmanager
+def measure_perf(
+    label: str,
+    budget_ms: float = 16.67,
+    *,
+    silent: bool = False,
+) -> Generator[PerfResult, None, None]:
+    """Like ``measure()`` but also records into the module-level ``_registry``."""
+    result = PerfResult(label=label)
+    t0 = time.perf_counter()
+    try:
+        yield result
+    finally:
+        result.elapsed_ms = (time.perf_counter() - t0) * 1000
+        result.over_budget = result.elapsed_ms > budget_ms
+        _registry.record(label, result.elapsed_ms)
+        if not silent:
+            msg = f"[PERF] {label}: {result.elapsed_ms:.2f}ms"
+            if result.over_budget:
+                log.warning(f"{msg} ⚠ OVER {budget_ms:.0f}ms budget")
+            else:
+                log(msg)

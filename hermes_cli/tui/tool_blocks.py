@@ -55,6 +55,43 @@ _DIFF_HEADER_RE = re.compile(r"^((?:---|\+\+\+)\s+)(?:[ab]/)?(.+)$")
 # Rendered diff file-header line: "a/src/foo.py → b/src/foo.py" (after ANSI strip)
 _DIFF_ARROW_RE = re.compile(r"^(.+?)\s+→\s+(.+)$")
 
+_CODE_EXT_MAP: dict[str, str] = {
+    ".py": "python", ".js": "javascript", ".ts": "typescript", ".tsx": "tsx",
+    ".rs": "rust", ".go": "go", ".java": "java", ".c": "c", ".cpp": "cpp",
+    ".h": "c", ".rb": "ruby", ".sh": "bash", ".bash": "bash", ".zsh": "zsh",
+    ".json": "json", ".yaml": "yaml", ".yml": "yaml", ".toml": "toml",
+    ".sql": "sql", ".html": "html", ".css": "css", ".md": "markdown",
+    ".kt": "kotlin", ".scala": "scala", ".php": "php", ".swift": "swift",
+}
+
+
+def _code_lang(path: str) -> str:
+    """Return pygments language id for path, or '' if not a recognised code file."""
+    import os
+    return _CODE_EXT_MAP.get(os.path.splitext(path)[-1].lower(), "")
+
+
+def _word_diff(removed: str, added: str) -> "tuple[Text, Text]":
+    """Word-level diff between two lines. Returns (removed_text, added_text)."""
+    import difflib
+    rem_words = removed.split()
+    add_words = added.split()
+    sm = difflib.SequenceMatcher(None, rem_words, add_words, autojunk=False)
+    rem_t = Text()
+    add_t = Text()
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal":
+            rem_t.append(" ".join(rem_words[i1:i2]) + " ")
+            add_t.append(" ".join(add_words[j1:j2]) + " ")
+        elif tag == "replace":
+            rem_t.append(" ".join(rem_words[i1:i2]) + " ", style="bold underline")
+            add_t.append(" ".join(add_words[j1:j2]) + " ", style="bold underline")
+        elif tag == "delete":
+            rem_t.append(" ".join(rem_words[i1:i2]) + " ", style="bold underline")
+        elif tag == "insert":
+            add_t.append(" ".join(add_words[j1:j2]) + " ", style="bold underline")
+    return rem_t, add_t
+
 
 def _safe_cell_width(s: str) -> int:
     """Return cell width of s; fall back to len(s) if wcwidth unavailable."""
@@ -519,17 +556,84 @@ class ToolBlock(Widget):
 
     def _render_body(self) -> None:
         try:
-            log = self._body.query_one(CopyableRichLog)
-            log.clear()
-            for styled, plain in zip(self._lines, self._plain_lines):
-                if self._label == "diff":
+            rl = self._body.query_one(CopyableRichLog)
+            rl.clear()
+
+            # Syntax highlighting for code files read by file tools
+            if (
+                self._tool_name in _FILE_TOOL_NAMES
+                and self._label not in ("diff", "code", "output")
+                and self._plain_lines
+            ):
+                lang = _code_lang(self._label)
+                if lang:
+                    try:
+                        from rich.syntax import Syntax
+                        rl.write(Syntax(
+                            "\n".join(self._plain_lines),
+                            lang,
+                            line_numbers=True,
+                            theme="monokai",
+                        ))
+                        return
+                    except Exception:
+                        pass  # fall through to plain render
+
+            # Diff rendering with word-diff on adjacent -/+ lines
+            if self._label == "diff":
+                pending_removed: str | None = None
+                for styled, plain in zip(self._lines, self._plain_lines):
                     rich_line = self._render_diff_line(plain)
                     if rich_line is not None:
-                        log.write(rich_line)
+                        if pending_removed is not None:
+                            t = Text("-", style="red")
+                            t.append(pending_removed, style="on #3a1a1a")
+                            rl.write(t)
+                            pending_removed = None
+                        rl.write(rich_line)
                         continue
-                log.write_with_source(Text.from_ansi(styled), plain)
+                    stripped = plain.rstrip("\n")
+                    if stripped.startswith("-") and not stripped.startswith("---"):
+                        if pending_removed is not None:
+                            t = Text("-", style="red")
+                            t.append(pending_removed, style="on #3a1a1a")
+                            rl.write(t)
+                        pending_removed = stripped[1:]
+                    elif stripped.startswith("+") and not stripped.startswith("+++"):
+                        content = stripped[1:]
+                        if pending_removed is not None:
+                            rem_t, add_t = _word_diff(pending_removed, content)
+                            rt = Text("-", style="red")
+                            rt.append_text(rem_t)
+                            rl.write(rt)
+                            at = Text("+", style="green")
+                            at.append_text(add_t)
+                            rl.write(at)
+                            pending_removed = None
+                        else:
+                            t = Text("+", style="green")
+                            t.append(content, style="on #1a3a1a")
+                            rl.write(t)
+                    else:
+                        if pending_removed is not None:
+                            t = Text("-", style="red")
+                            t.append(pending_removed, style="on #3a1a1a")
+                            rl.write(t)
+                            pending_removed = None
+                        rl.write_with_source(Text.from_ansi(styled), plain)
+                if pending_removed is not None:
+                    t = Text("-", style="red")
+                    t.append(pending_removed, style="on #3a1a1a")
+                    rl.write(t)
+                if self._header_stats and self._header_stats.has_diff_counts and self._lines:
+                    rl.write(Text(""))
+                return
+
+            # Plain render
+            for styled, plain in zip(self._lines, self._plain_lines):
+                rl.write_with_source(Text.from_ansi(styled), plain)
             if self._header_stats and self._header_stats.has_diff_counts and self._lines:
-                log.write(Text(""))
+                rl.write(Text(""))
         except NoMatches:
             pass  # body not yet in DOM — safe to skip
 

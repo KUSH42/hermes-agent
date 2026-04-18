@@ -544,3 +544,22 @@ GroupHeader:focus { background: $accent 10%; }
 .empty-state { color: $text-muted; padding: 0 2; height: 1; }
 InlineCodeFence { padding: 0 0 0 2; border-left: vkey $primary 30%; margin: 0 0 1 0; height: auto; }
 VirtualSearchList { height: auto; }
+
+/* --- v3-D: detail level tint --- */
+ToolPanel.-l3 { background: $accent 8%; }
+/* ToolPanel:focus background already declared in v3-A block above.
+   A border: tall rule here would add 2 rows of structural height and break
+   sibling click hit-testing in async pilot tests. */
+
+/* --- v3-D: InputSection --- */
+InputSection { height: auto; padding: 0 0 0 2; margin-bottom: 1; display: none; }
+InputSection.-has-input { display: block; }
+InputSection > #input-content { padding: 0 0 0 1; color: $text-muted; }
+
+/* --- v3-D: SectionDivider --- */
+SectionDivider { height: 1; color: $text-muted; }
+
+/* --- v3-D: TurnPhase containers --- */
+AgentThought { height: auto; }
+ToolSequence { height: auto; }
+AgentFinalResponse { height: auto; }

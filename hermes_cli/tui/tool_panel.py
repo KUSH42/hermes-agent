@@ -3,12 +3,14 @@
 Architecture: tui-tool-panel-v2-spec.md §3, §6, §8, §9 Phase 3.
 v3 Phase A: ToolAccent gutter rail, DiffAffordance, CWD stripping.
 v3 Phase B: ToolHeaderBar (status glyph + chips), ToolPanelMini auto-select.
+v3 Phase D: InputSection, SectionDivider, full keyboard bindings, TurnPhase infra.
 
 Phase 1: ToolPanel shell + ToolCategory + accent bar.
 Phase 2: BodyPane._renderer wired; BodyRenderer delegates per-line formatting.
 Phase 3: detail_level watcher active; ArgsPane/FooterPane live; D/0-3/Enter keys.
 v3-A:    ToolAccent replaces border-left; DiffAffordance in FooterPane.
 v3-B:    ToolHeaderBar above BodyPane; mini-mode for qualifying SHELL calls.
+v3-D:    InputSection + full keybindings (space/y/Y/r) + CSS level classes.
 """
 
 from __future__ import annotations
@@ -31,6 +33,8 @@ if TYPE_CHECKING:
     from hermes_cli.tui.tool_result_parse import ResultSummary
     from hermes_cli.tui.tool_category import ToolCategory
     from hermes_cli.tui.tool_payload import ClassificationResult, ToolPayload
+    from hermes_cli.tui.tool_payload import ResultKind
+    from hermes_cli.tui.input_section import InputSection as _InputSectionT
 
 
 def _tool_panel_v2_enabled() -> bool:
@@ -181,14 +185,37 @@ class BodyPane(Widget):
                     self._preview_static.display = True
 
     def _update_preview(self, preview: Static) -> None:
-        if self._renderer is None:
+        from rich.text import Text
+
+        lines = self._get_all_plain()
+        if not lines:
+            preview.update("(no output)")
             return
-        all_plain = self._get_all_plain()
-        try:
-            renderable = self._renderer.preview(all_plain, max_lines=3)
-            preview.update(renderable)
-        except Exception:
-            pass
+
+        # While streaming: show first 3 lines (head preview).
+        # After completion: show last 3 lines (tail preview).
+        is_streaming = getattr(self._block, "_streaming", False) or getattr(
+            self._block, "_is_streaming", False
+        )
+        if is_streaming:
+            shown = lines[:3]
+            if len(lines) > 3:
+                shown = shown + ["  ⋯"]
+        else:
+            shown = lines[-3:] if len(lines) > 3 else lines
+
+        t = Text()
+        for ln in shown:
+            t.append(ln + "\n", style="dim")
+        preview.update(t)
+
+        # Also try renderer preview for specialised kinds
+        if self._renderer is not None:
+            try:
+                renderable = self._renderer.preview(lines, max_lines=3)
+                preview.update(renderable)
+            except Exception:
+                pass
 
     def _get_all_plain(self) -> list[str]:
         if self._block is None:
@@ -300,13 +327,17 @@ class ToolPanel(Widget):
     }
 
     BINDINGS = [
-        Binding("d", "cycle_detail_forward", "Detail forward", show=False),
-        Binding("D", "cycle_detail_reverse", "Detail reverse", show=False),
+        Binding("d", "cycle_detail_forward", "Detail+", show=False),
+        Binding("D", "cycle_detail_reverse", "Detail-", show=False),
         Binding("0", "set_level_0", "L0", show=False),
         Binding("1", "set_level_1", "L1", show=False),
         Binding("2", "set_level_2", "L2", show=False),
         Binding("3", "set_level_3", "L3", show=False),
         Binding("enter", "toggle_l1_l2", "Toggle", show=False),
+        Binding("space", "toggle_l0_restore", "Collapse", show=False),
+        Binding("y", "copy_output", "Copy output", show=False),
+        Binding("Y", "copy_input", "Copy input", show=False),
+        Binding("r", "rerun", "Rerun", show=False),
     ]
 
     # Compile-time default 1; overridden in on_mount based on category defaults.
@@ -327,9 +358,14 @@ class ToolPanel(Widget):
         self._completed_at: float | None = None
         self._result_paths: list[str] = []
 
+        # Phase D state
+        self._pre_collapse_level: int = 2
+        self._forced_renderer_kind: "ResultKind | None" = None
+
         # Pane refs (set in compose)
         self._accent: ToolAccent | None = None
         self._header_bar: ToolHeaderBar | None = None
+        self._input_section: "InputSection | None" = None
         self._args_pane: ArgsPane | None = None
         self._body_pane: BodyPane | None = None
         self._footer_pane: FooterPane | None = None
@@ -342,6 +378,9 @@ class ToolPanel(Widget):
     def compose(self) -> ComposeResult:
         self._accent = ToolAccent()
         self._header_bar = ToolHeaderBar(label=self._tool_name)
+        # InputSection is mounted lazily in on_mount after layout has settled.
+        # Composing it here invalidates layout-hit-testing caches on sibling widgets,
+        # breaking pilot.click() on ToolHeaderBar in async tests.
         self._args_pane = ArgsPane()
         self._body_pane = BodyPane(self._block, category=self._category)
         self._footer_pane = FooterPane()
@@ -380,14 +419,58 @@ class ToolPanel(Widget):
             self._header_bar.set_arg_summary(self._format_arg_summary())
         self.detail_level = max(0, min(3, initial))
 
+        # Mount InputSection after the first refresh to avoid invalidating
+        # ToolHeaderBar click hit-testing caches during initial layout.
+        self.call_after_refresh(self._mount_input_section_lazy)
+
+    def _mount_input_section_lazy(self) -> None:
+        """Mount InputSection into _PanelContent after layout has settled.
+
+        Called via call_after_refresh from on_mount so that the initial
+        ToolHeaderBar layout cache is populated before we add a new sibling,
+        preventing click hit-testing failures in async tests.
+        """
+        from hermes_cli.tui.input_section import InputSection
+
+        if self._input_section is not None:
+            return  # already mounted
+        try:
+            panel_content = next(
+                c for c in self.children if isinstance(c, _PanelContent)
+            )
+        except StopIteration:
+            return
+
+        self._input_section = InputSection(
+            category=self._category, args=self._tool_args
+        )
+        # Mount before _args_pane so it appears between header_bar and args_pane
+        try:
+            panel_content.mount(self._input_section, before=self._args_pane)
+        except Exception:
+            try:
+                panel_content.mount(self._input_section)
+            except Exception:
+                self._input_section = None
+                return
+
+        # Apply correct initial display state
+        level = self.detail_level
+        want_is = level >= 2 and InputSection.should_show(self._category)
+        if not want_is:
+            self._input_section.styles.display = "none"
+
     # ------------------------------------------------------------------
     # detail_level watcher
     # ------------------------------------------------------------------
 
     def watch_detail_level(self, old: int, new: int) -> None:
+        from hermes_cli.tui.input_section import InputSection
+
         ap = self._args_pane
         bp = self._body_pane
         fp = self._footer_pane
+        ip = self._input_section
         if ap is None or bp is None or fp is None:
             return
 
@@ -398,6 +481,8 @@ class ToolPanel(Widget):
         want_ap = new == 3          # ArgsPane: show at L3 only
         want_bp = new != 0          # BodyPane: hide at L0 only
         want_fp = self._should_show_footer(new)
+        # InputSection: show at L2+ only when category supports it
+        want_is = new >= 2 and InputSection.should_show(self._category)
 
         if ap.display != want_ap:
             ap.styles.display = "block" if want_ap else "none"
@@ -406,6 +491,13 @@ class ToolPanel(Widget):
         bp.set_mode("preview" if new == 1 else "full")
         if fp.display != want_fp:
             fp.styles.display = "block" if want_fp else "none"
+        if ip is not None and ip.display != want_is:
+            ip.styles.display = "block" if want_is else "none"
+
+        # CSS level class — remove old, add new (avoid removing all 4 each time)
+        if old != new:
+            self.remove_class(f"-l{old}")
+            self.add_class(f"-l{new}")
 
         # Sync ToolHeaderBar chevron
         if self._header_bar is not None:
@@ -471,6 +563,8 @@ class ToolPanel(Widget):
             self._header_bar.set_arg_summary(self._format_arg_summary())
         if self.detail_level == 3 and self._args_pane is not None:
             self._args_pane.refresh_rows(args, self._category)
+        if self._input_section is not None:
+            self._input_section.refresh_content(args)
 
     # ------------------------------------------------------------------
     # ToolHeaderBar helpers (Phase B)
@@ -704,6 +798,70 @@ class ToolPanel(Widget):
             self.detail_level = 1
         else:  # L3
             self.detail_level = 2
+
+    def action_toggle_l0_restore(self) -> None:
+        """space: toggle between L0 (collapsed) and previous level."""
+        self._mark_user_override()
+        if self.detail_level == 0:
+            self.detail_level = self._pre_collapse_level
+        else:
+            self._pre_collapse_level = self.detail_level
+            self.detail_level = 0
+
+    def action_copy_output(self) -> None:
+        """y: copy tool output to clipboard."""
+        text = self.copy_content()
+        if text:
+            try:
+                import pyperclip
+                pyperclip.copy(text)
+                self.app.notify("Copied output", timeout=1.5)
+            except Exception:
+                self.app.notify("Copy failed — use mouse select", timeout=3)
+
+    def action_copy_input(self) -> None:
+        """Y: copy tool input summary to clipboard."""
+        if self._input_section is not None:
+            text = self._input_section._build_text()
+            if text:
+                try:
+                    import pyperclip
+                    pyperclip.copy(text)
+                    self.app.notify("Copied input", timeout=1.5)
+                except Exception:
+                    self.app.notify("Copy failed", timeout=3)
+
+    def action_rerun(self) -> None:
+        """r: emit ToolRerunRequested message."""
+        try:
+            from hermes_cli.tui.messages import ToolRerunRequested
+            self.post_message(ToolRerunRequested(panel=self))
+        except Exception:
+            self.app.notify("Rerun not available", timeout=2)
+
+    def force_renderer(self, kind: "ResultKind") -> None:
+        """Override classifier and swap to given kind's renderer."""
+        self._forced_renderer_kind = kind
+        try:
+            from hermes_cli.tui.body_renderers import pick_renderer
+            from hermes_cli.tui.tool_payload import ToolPayload, ClassificationResult
+
+            output_raw = self.copy_content()
+            payload = ToolPayload(
+                tool_name=self._tool_name,
+                category=self._category,
+                args=self._tool_args or {},
+                input_display=None,
+                output_raw=output_raw,
+                line_count=self._body_line_count(),
+            )
+            cls_result = ClassificationResult(kind=kind, confidence=1.0)
+            renderer_cls = pick_renderer(cls_result, payload)
+            self._swap_renderer(renderer_cls, payload, cls_result)
+            if self._header_bar is not None:
+                self._header_bar.set_kind(kind)
+        except Exception:
+            pass
 
     def on_tool_header_bar_clicked(self, event: ToolHeaderBar.Clicked) -> None:
         """ToolHeaderBar click → cycle detail level."""

@@ -228,6 +228,8 @@ class HermesApp(App):
         Binding("alt+down", "next_turn", "Next turn", show=False),
         Binding("ctrl+shift+a", "open_anim_config", "Animation config", show=False, priority=True),
         Binding("ctrl+b", "open_anim_config", show=False, priority=True),
+        Binding("o", "focus_output", "Output", show=False),
+        Binding("i", "focus_input_from_output", "Input", show=False),
     ]
 
     _CHEVRON_PHASE_CLASSES: frozenset[str] = frozenset({
@@ -1250,6 +1252,21 @@ class HermesApp(App):
                     panel.scroll_visible(animate=True)
                     return
         except NoMatches:
+            pass
+
+    def action_focus_output(self) -> None:
+        """o: move focus to OutputPanel."""
+        try:
+            self.query_one(OutputPanel).focus()
+        except Exception:
+            pass
+
+    def action_focus_input_from_output(self) -> None:
+        """i: move focus back to HermesInput from output area."""
+        try:
+            from hermes_cli.tui.input_widget import HermesInput
+            self.query_one(HermesInput).focus()
+        except Exception:
             pass
 
     def action_toggle_density(self) -> None:

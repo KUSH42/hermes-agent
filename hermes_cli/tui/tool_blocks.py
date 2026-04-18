@@ -508,8 +508,8 @@ class ToolBlock(Widget):
         self._tool_name = tool_name
         self._lines = list(lines)
         self._plain_lines = list(plain_lines)
-        self._rerender_fn = rerender_fn
-        self._header_stats = header_stats
+        self._rerender_fn = rerender_fn if callable(rerender_fn) else None
+        self._header_stats = header_stats if isinstance(header_stats, ToolHeaderStats) else None
         if self._header_stats is None and label == "diff":
             self._header_stats = _count_visible_diff_rows(self._plain_lines)
         auto_expand = len(lines) <= COLLAPSE_THRESHOLD
@@ -688,7 +688,7 @@ class ToolBlock(Widget):
             lines, plain_lines = self._rerender_fn()
             self._lines = list(lines)
             self._plain_lines = list(plain_lines)
-        if self._label == "diff" and self._header_stats is None:
+        if self._label == "diff" and not isinstance(self._header_stats, ToolHeaderStats):
             self._header_stats = _count_visible_diff_rows(self._plain_lines)
         self._header._stats = self._header_stats
         self._header._line_count = len(self._lines)

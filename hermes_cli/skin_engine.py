@@ -68,16 +68,10 @@ All fields are optional. Missing values inherit from the ``default`` skin.
     tool_prefix: "┊"
 
     # Tool icons: override the default tool glyph for any tool.
-    # Nerd font glyphs preferred; legacy tool_emojis still load.
     tool_icons:
-      terminal: ""
-      web_search: ""
+      terminal: "󰆍"
+      web_search: " "
       # Any tool not listed here uses its registry default
-
-    # Legacy tool emoji overrides (tool_icons takes precedence if both set)
-    tool_emojis:
-      terminal: "⚡"
-      read_file: "📄"
 
     # Banner art: Rich-markup strings (use |- or |2- YAML block scalars)
     # Lines must be padded to equal length with spaces before closing [/] tag.
@@ -561,7 +555,6 @@ class SkinConfig:
     branding: Dict[str, str] = field(default_factory=dict)
     tool_prefix: str = "┊"
     tool_icons: Dict[str, str] = field(default_factory=dict)   # per-tool glyph overrides
-    tool_emojis: Dict[str, str] = field(default_factory=dict)  # per-tool emoji overrides
     banner_logo: str = ""    # Rich-markup ASCII art logo (replaces HERMES_AGENT_LOGO)
     banner_hero: str = ""    # Rich-markup hero art (replaces HERMES_CADUCEUS)
     # New in theme-integration: syntax, diff, markdown, ui_ext, component_vars
@@ -1154,7 +1147,6 @@ def _build_skin_config(data: Dict[str, Any]) -> SkinConfig:
         branding=branding,
         tool_prefix=data.get("tool_prefix", default.get("tool_prefix", "┊")),
         tool_icons=data.get("tool_icons", data.get("tool_emojis", {})),
-        tool_emojis=data.get("tool_emojis", {}),
         banner_logo=data.get("banner_logo", ""),
         banner_hero=data.get("banner_hero", ""),
         syntax_scheme=syntax_scheme,

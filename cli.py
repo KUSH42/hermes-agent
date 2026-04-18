@@ -6798,18 +6798,92 @@ class HermesCLI:
     # Tool-call generation indicator (shown during streaming)
     # ====================================================================
 
+    _PATH_ARG_TOOLS: frozenset = frozenset({
+        "read_file", "patch", "glob",
+    })
+    _PATTERN_ARG_TOOLS: frozenset = frozenset({
+        "search_files", "grep",
+    })
+
     def _build_tool_label(self, function_name: str, function_args: dict) -> str:
         """Build a human-readable label for a tool header."""
-        if function_name == "terminal":
-            label = function_args.get("command", "terminal")
+        if function_name in ("terminal", "bash"):
+            label = function_args.get("command", function_name)
         elif function_name == "execute_code":
             code = function_args.get("code", "execute_code")
             label = next((l.strip() for l in code.splitlines() if l.strip()), "execute_code")
+        elif function_name in self._PATH_ARG_TOOLS:
+            label = function_args.get("path", function_name) or function_name
+        elif function_name in self._PATTERN_ARG_TOOLS:
+            label = function_args.get("pattern", function_name) or function_name
         else:
             label = function_name
         if len(label) > 60:
             label = label[:57] + "…"
         return label
+
+    def _highlight_grep_pattern(self, pattern: str) -> "Any":
+        """Return a Rich Text with simple regex syntax highlighting for a grep pattern."""
+        try:
+            from rich.text import Text
+            t = Text()
+            i = 0
+            while i < len(pattern):
+                c = pattern[i]
+                if c == "|":
+                    t.append(c, style="bold yellow")
+                elif c in ("(", ")", "[", "]", "{", "}"):
+                    t.append(c, style="cyan")
+                elif c in ("*", "+", "?"):
+                    t.append(c, style="green")
+                elif c in ("^", "$"):
+                    t.append(c, style="magenta")
+                elif c == ".":
+                    t.append(c, style="dim white")
+                elif c == "\\":
+                    # escape sequence: consume next char too
+                    t.append(c, style="bold red")
+                    if i + 1 < len(pattern):
+                        i += 1
+                        t.append(pattern[i], style="bold red")
+                else:
+                    t.append(c)
+                i += 1
+            return t
+        except Exception:
+            return pattern
+
+    def _highlight_bash_command(self, cmd: str) -> "Any":
+        """Return a Rich Text with Pygments BashLexer highlighting for a shell command."""
+        try:
+            from pygments.lexers import BashLexer
+            from pygments.token import Token
+            from rich.text import Text
+            from pygments import lex
+            t = Text()
+            for ttype, value in lex(cmd, BashLexer()):
+                if ttype in Token.Keyword or ttype in Token.Name.Builtin:
+                    t.append(value, style="bold cyan")
+                elif ttype in Token.Literal.String or ttype in Token.Literal.String.Double or ttype in Token.Literal.String.Single:
+                    t.append(value, style="yellow")
+                elif ttype in Token.Comment:
+                    t.append(value, style="dim green")
+                elif ttype in Token.Name.Variable or ttype in Token.Name.Variable.Global:
+                    t.append(value, style="magenta")
+                elif ttype in Token.Operator or ttype in Token.Punctuation:
+                    t.append(value, style="bold white")
+                else:
+                    t.append(value)
+            return t
+        except Exception:
+            try:
+                from rich.text import Text
+                return Text(cmd)
+            except Exception:
+                return cmd
+
+    _SHELL_TOOL_NAMES: frozenset = frozenset({"terminal", "bash"})
+    _PATH_TOKEN_RE = _re_cli.compile(r"(?:^|\s)(/[\w./\-]+)")
 
     def _update_block_label(self, block, function_name: str, function_args: dict) -> None:
         """Update a StreamingToolBlock's label from tool name to actual command."""
@@ -6817,6 +6891,27 @@ class HermesCLI:
         block._header._label = label
         block._header._tool_name = function_name
         block._header._refresh_tool_icon()
+        # Pattern tools: syntax-highlight the regex pattern in the header
+        if function_name in self._PATTERN_ARG_TOOLS:
+            pattern = function_args.get("pattern", "") if isinstance(function_args, dict) else ""
+            if pattern and len(pattern) <= 60:
+                block._header._label_rich = self._highlight_grep_pattern(pattern)
+        # File-tool headers: make path-clickable (file-open on click + context menu)
+        if function_name in self._PATH_ARG_TOOLS:
+            path = function_args.get("path", "") if isinstance(function_args, dict) else ""
+            if path:
+                block._header.set_path(path)
+        # Shell tools: bash highlighting + $ prompt prefix + path auto-link
+        if function_name in self._SHELL_TOOL_NAMES:
+            cmd = function_args.get("command", "") if isinstance(function_args, dict) else ""
+            block._header._shell_prompt = True
+            if cmd and len(cmd) <= 120:
+                block._header._label_rich = self._highlight_bash_command(cmd)
+            # Auto-link first absolute path found in command
+            if cmd:
+                m = self._PATH_TOKEN_RE.search(cmd)
+                if m:
+                    block._header.set_path(m.group(1))
         block._header.refresh()
 
     def _on_tool_gen_start(self, idx: int, tool_name: str) -> None:

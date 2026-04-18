@@ -1,35 +1,25 @@
-"""GroupHeader widget and _maybe_start_group heuristic.
+"""_maybe_start_group heuristic — virtual tool grouping.
 
 Architecture: tui-tool-panel-v2-spec.md §7.
 
 Virtual grouping — no DOM containers, no reparenting.
-A "group" is:
-  - A GroupHeader widget mounted as a sibling before the first member.
-  - All member ToolPanels tagged with class `group-id-<hex>` + `tool-panel--grouped`.
+A "group" is all member ToolPanels tagged with class `group-id-<hex>` + `tool-panel--grouped`.
 
 No widget is ever removed or remounted. Grouping is achieved via:
-  1. mount(GroupHeader, before=anchor_panel)
-  2. anchor_panel.add_class("group-id-<hex>")  # no lifecycle hook
+  anchor_panel.add_class("group-id-<hex>")  # no lifecycle hook
 """
 
 from __future__ import annotations
 
 import os
-import re
 import time
 import uuid
 from typing import TYPE_CHECKING
 
-from rich.text import Text
-from textual.app import ComposeResult
 from textual.widget import Widget
-from textual.widgets import Static
 
 if TYPE_CHECKING:
     pass
-
-_BADGE_ADD_RE = re.compile(r"^\+(\d+)$")
-_BADGE_DEL_RE = re.compile(r"^-(\d+)$")
 
 
 # ---------------------------------------------------------------------------
@@ -51,174 +41,6 @@ def _grouping_enabled() -> bool:
 
 
 # ---------------------------------------------------------------------------
-# GroupHeader widget
-# ---------------------------------------------------------------------------
-
-
-class GroupHeader(Widget):
-    """Virtual group header — one per group, mounted before first member.
-
-    Carries `_group_id` used by on_click to find and toggle member visibility.
-    No DOM children relationship — members are siblings sharing a CSS class.
-
-    Layout: ▾ N tools · ● +12 -4  2.3s
-    - dot color: amber=streaming, red=any-error, green=all-ok
-    - diff stats: sum of +N/-N badges across all member ResultSummary
-    - duration: wall-clock from earliest start to latest completion (or now)
-    """
-
-    can_focus = True
-
-    DEFAULT_CSS = """
-    GroupHeader {
-        height: 1;
-        layout: horizontal;
-        color: $text-muted;
-    }
-    GroupHeader:focus { background: $accent 10%; }
-    GroupHeader > .group-glyph { width: 1; margin-right: 1; }
-    GroupHeader > .group-label { width: auto; }
-    GroupHeader > .group-sep   { width: auto; }
-    GroupHeader > .group-dot   { width: 1; margin: 0 1; }
-    GroupHeader > .group-stats { width: auto; }
-    """
-
-    COMPONENT_CLASSES = {"group-header--focused"}
-
-    def __init__(self, group_id: str, **kwargs: object) -> None:
-        super().__init__(**kwargs)
-        self._group_id = group_id
-        self._collapsed = False
-        self._member_count = 0
-        self._glyph_widget: Static | None = None
-        self._label_widget: Static | None = None
-        self._sep_widget: Static | None = None
-        self._dot_widget: Static | None = None
-        self._stats_widget: Static | None = None
-
-    def compose(self) -> ComposeResult:
-        self._glyph_widget = Static("▾", classes="group-glyph")
-        self._label_widget = Static("0 tools", classes="group-label")
-        self._sep_widget = Static(" · ", classes="group-sep")
-        self._dot_widget = Static("●", classes="group-dot")
-        self._stats_widget = Static("", classes="group-stats")
-        yield self._glyph_widget
-        yield self._label_widget
-        yield self._sep_widget
-        yield self._dot_widget
-        yield self._stats_widget
-
-    def update_count(self, count: int) -> None:
-        self._member_count = count
-        suffix = "tools" if count != 1 else "tool"
-        label = getattr(self, "_label_widget", None)
-        if label is not None and label.parent is not None:
-            label.update(f"{count} {suffix}")
-
-    def refresh_stats(self) -> None:
-        """Recompute dot color and diff/duration stats from member ToolPanels."""
-        parent = self.parent
-        dot_w = getattr(self, "_dot_widget", None)
-        stats_w = getattr(self, "_stats_widget", None)
-        if parent is None or dot_w is None or stats_w is None:
-            return
-
-        class_name = f"group-id-{self._group_id}"
-        members = [c for c in parent.children if c.has_class(class_name)]
-        if not members:
-            return
-
-        any_streaming = any(getattr(m, "_completed_at", None) is None for m in members)
-        any_error = any(
-            getattr(getattr(m, "_result_summary", None), "is_error", False)
-            for m in members
-        )
-        if any_streaming:
-            dot_color = "#ffb347"  # amber
-        elif any_error:
-            dot_color = "#ef5350"  # red
-        else:
-            dot_color = "#66bb6a"  # green
-        dot_w.update(Text("●", style=f"bold {dot_color}"))
-
-        # Diff stat rollup — sum only +N/-N badges
-        total_add = 0
-        total_del = 0
-        for m in members:
-            rs = getattr(m, "_result_summary", None)
-            if rs is None:
-                continue
-            for badge in getattr(rs, "stat_badges", []):
-                ma = _BADGE_ADD_RE.match(badge)
-                if ma:
-                    total_add += int(ma.group(1))
-                    continue
-                md = _BADGE_DEL_RE.match(badge)
-                if md:
-                    total_del += int(md.group(1))
-
-        # Wall-clock duration: min(start) → max(completed) or now
-        start_times = [getattr(m, "_start_time", None) for m in members]
-        end_times = [getattr(m, "_completed_at", None) for m in members]
-        valid_starts = [t for t in start_times if t is not None]
-        if valid_starts:
-            min_start = min(valid_starts)
-            if any_streaming:
-                max_end = time.monotonic()
-            else:
-                valid_ends = [t for t in end_times if t is not None]
-                max_end = max(valid_ends) if valid_ends else time.monotonic()
-            duration_s = max_end - min_start
-            dur_str = f"  {duration_s:.1f}s"
-        else:
-            dur_str = ""
-
-        parts: list[str] = []
-        if total_add:
-            parts.append(f"+{total_add}")
-        if total_del:
-            parts.append(f"-{total_del}")
-        stats_text = Text()
-        for i, part in enumerate(parts):
-            if i > 0:
-                stats_text.append("  ")
-            if part.startswith("+"):
-                stats_text.append(part, style="green")
-            else:
-                stats_text.append(part, style="red")
-        if dur_str:
-            stats_text.append(dur_str, style="dim")
-        stats_w.update(stats_text)
-
-    def on_mount(self) -> None:
-        suffix = "tools" if self._member_count != 1 else "tool"
-        label = getattr(self, "_label_widget", None)
-        if label is not None:
-            label.update(f"{self._member_count} {suffix}")
-        self.refresh_stats()
-
-    def on_click(self) -> None:
-        self._collapsed = not self._collapsed
-        parent = self.parent
-        if parent is None:
-            return
-        self._glyph_widget.update("▸" if self._collapsed else "▾")
-        class_name = f"group-id-{self._group_id}"
-        for child in parent.children:
-            if child.has_class(class_name):
-                if self._collapsed:
-                    child.add_class("group-hidden")
-                else:
-                    child.remove_class("group-hidden")
-
-    def on_focus(self) -> None:
-        self.add_class("group-header--focused")
-
-    def on_blur(self) -> None:
-        self.remove_class("group-header--focused")
-
-
-# ---------------------------------------------------------------------------
 # Group helpers
 # ---------------------------------------------------------------------------
 
@@ -228,13 +50,6 @@ def _get_group_id(panel: Widget) -> str | None:
     for cls in panel.classes:
         if cls.startswith("group-id-"):
             return cls[9:]
-    return None
-
-
-def _find_group_header(message_panel: Widget, group_id: str) -> GroupHeader | None:
-    for child in message_panel.children:
-        if isinstance(child, GroupHeader) and child._group_id == group_id:
-            return child
     return None
 
 
@@ -305,12 +120,13 @@ def _maybe_start_group(message_panel: Widget, new_panel: Widget) -> None:
 
     Called from MessagePanel._mount_nonprose_block BEFORE new_panel is mounted,
     so new_panel is not yet in message_panel.children.
-    Mutates: may call message_panel.mount(GroupHeader) and add CSS classes.
+    Mutates: may add CSS classes to panels.
 
     Rules (§7.1, first match wins):
       1. Diff attachment — patch/write_file/create_file ← diff
       2. Search + open  — search tool ← file tool whose path ∈ result_paths
       3. Shell pipeline — two consecutive shell tools (within 250ms or chained)
+      3b. Search batch  — consecutive SEARCH tools (search_files, grep, web_search)
       4. Same-path chain — consecutive file tools sharing dir prefix depth≥2
     """
     if not _grouping_enabled():
@@ -370,6 +186,14 @@ def _maybe_start_group(message_panel: Widget, new_panel: Widget) -> None:
             _apply_group(message_panel, prev, new_panel)
             return
 
+    # --- Rule 3b: Search batch — consecutive SEARCH tools ---
+    if (
+        _is_category(new_panel, ToolCategory.SEARCH)
+        and _is_category(prev, ToolCategory.SEARCH)
+    ):
+        _apply_group(message_panel, prev, new_panel)
+        return
+
     # --- Rule 4: Same-path chain ---
     if (
         _is_category(new_panel, ToolCategory.FILE)
@@ -385,26 +209,12 @@ def _apply_group(
     existing_panel: Widget,
     new_panel: Widget,
 ) -> None:
-    """Mint or reuse a group_id; tag both panels; mount GroupHeader if new."""
+    """Mint or reuse a group_id; tag both panels with grouping CSS classes."""
     group_id = _get_group_id(existing_panel)
     if group_id is None:
         group_id = uuid.uuid4().hex[:8]
-        header = GroupHeader(group_id=group_id)
-        message_panel.mount(header, before=existing_panel)
         existing_panel.add_class(f"group-id-{group_id}")
         existing_panel.add_class("tool-panel--grouped")
 
     new_panel.add_class(f"group-id-{group_id}")
     new_panel.add_class("tool-panel--grouped")
-
-    # Update GroupHeader member count and stats
-    gh = _find_group_header(message_panel, group_id)
-    if gh is not None:
-        # new_panel not yet in message_panel.children (mounts after this returns),
-        # so add +1 to get the correct member count.
-        count = sum(
-            1 for c in message_panel.children
-            if c.has_class(f"group-id-{group_id}")
-        ) + 1
-        gh.update_count(count)
-        gh.refresh_stats()

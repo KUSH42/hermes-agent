@@ -512,13 +512,6 @@ ToolPanel.tool-panel--error                  { border-left: vkey $error 80%; }
 ToolPanel:focus                              { background: $accent 10%; }
 
 /* --- Tool grouping (virtual — no DOM container) --- */
-ToolPanel.tool-panel--grouped { padding-left: 2; }
-ToolPanel.group-hidden         { display: none; }
-
-GroupHeader {
-    height: 1;
-    color: $text-muted;
-    background: $surface;
-    padding: 0 1 0 2;
-}
-GroupHeader:focus { background: $accent 10%; }
+ToolPanel.tool-panel--grouped    { padding-left: 2; }
+ToolPanel.group-hidden           { display: none; }
+ToolPanel.tool-panel--child-diff { margin-left: 2; }

@@ -191,6 +191,12 @@ class ToolHeader(PulseMixin, Widget):
         self._full_path: str | None = None      # raw untruncated path or URL
         self._path_clickable: bool = False      # True for file-tool and URL headers
         self._is_url: bool = False              # True when path starts with http/https/etc.
+        # Display overrides
+        self._no_underline: bool = False         # suppress underline on clickable paths
+        self._hide_duration: bool = False        # suppress timer display
+        self._bold_label: bool = False           # bold label text (non-path)
+        self._hidden: bool = False               # suppress header entirely
+        self._shell_prompt: bool = False         # prepend "$ " in accent color before label
 
     def on_mount(self) -> None:
         self._refresh_gutter_color()
@@ -222,6 +228,9 @@ class ToolHeader(PulseMixin, Widget):
             self._tool_icon = ""
 
     def render(self) -> RenderResult:
+        if self._hidden:
+            self.styles.height = 0
+            return Text()
         focused = self.has_class("focused")
         t = Text()
 
@@ -263,9 +272,18 @@ class ToolHeader(PulseMixin, Widget):
             t.append(f" {icon_str}", style=icon_style)
         space_after_icon = 1  # the space before label
 
-        # --- Label style (not dim for streaming or completed) ---
+        # --- Shell prompt prefix ($) ---
+        shell_prompt_w = 0
+        if self._shell_prompt:
+            accent = getattr(self, "_focused_gutter_color", _GUTTER_FALLBACK)
+            t.append(" $", style=f"bold {accent}")
+            shell_prompt_w = 2  # " $" occupies 2 cells
+
+        # --- Label style ---
         if self._tool_icon_error:
             label_style = "#ef5350"
+        elif getattr(self, "_bold_label", False):
+            label_style = "bold"
         else:
             label_style = ""   # terminal default — not dim
 
@@ -274,10 +292,11 @@ class ToolHeader(PulseMixin, Widget):
         dur_style = "" if compact else "dim"
 
         # --- Tail ---
+        hide_dur = getattr(self, "_hide_duration", False)
         tail = Text()
         if self._spinner_char is not None:
             tail.append(f"  {self._spinner_char}", style="dim")
-            if self._duration:
+            if self._duration and not hide_dur:
                 tail.append(f"  {self._duration}", style=dur_style)
         else:
             if self._stats and self._stats.has_diff_counts:
@@ -292,7 +311,7 @@ class ToolHeader(PulseMixin, Widget):
             if self._has_affordances:
                 toggle = "  ▾" if not self.collapsed else "  ▸"
                 tail.append(toggle, style="dim")
-            if self._duration:
+            if self._duration and not hide_dur:
                 tail.append(f"  {self._duration}", style=dur_style)
 
         # --- Label with padding ---
@@ -310,7 +329,7 @@ class ToolHeader(PulseMixin, Widget):
 
         # Normal mode: right-align tail
         tail_w = tail.cell_len
-        FIXED_PREFIX_W = gutter_w + dashes_w + icon_cell_w + space_after_icon
+        FIXED_PREFIX_W = gutter_w + dashes_w + icon_cell_w + space_after_icon + shell_prompt_w
         MIN_LABEL_W = 8
 
         if term_w <= 0:
@@ -410,7 +429,8 @@ class ToolHeader(PulseMixin, Widget):
             t.append(" " + dir_part, style="dim")
         else:
             t.append(" ", style="dim")
-        t.append(fname, style="bold underline")
+        fname_style = "bold" if self._no_underline else "bold underline"
+        t.append(fname, style=fname_style)
         return t
 
     def on_click(self, event: Click) -> None:
@@ -498,6 +518,16 @@ class ToolBlock(Widget):
         if auto_expand:
             self._header.collapsed = False
             # _has_affordances is already False when line_count ≤ threshold
+
+        # Per-tool display overrides
+        if tool_name in ("read_file", "patch"):
+            self._header._no_underline = True
+        if tool_name in ("read_file", "search_files"):
+            self._header._hide_duration = True
+        if tool_name in ("search_files", "clarify"):
+            self._header._bold_label = True
+        if tool_name == "terminal":
+            self._header._hidden = True
 
         # Path-aware header for file tools — not for "diff"/"code"/"output" labels
         if tool_name in _FILE_TOOL_NAMES and label not in ("diff", "code", "output"):

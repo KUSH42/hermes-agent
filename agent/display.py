@@ -209,45 +209,23 @@ def get_skin_tool_prefix() -> str:
 
 
 def get_tool_emoji(tool_name: str, default: str = "⚡") -> str:
-    """Get the display emoji for a tool.
-
-    Resolution order:
-    1. Active skin's ``tool_emojis`` overrides (if a skin is loaded)
-    2. Tool registry's per-tool ``emoji`` field
-    3. *default* fallback
-    """
-    # 1. Skin override
-    skin = _get_skin()
-    if skin and skin.tool_emojis:
-        override = skin.tool_emojis.get(tool_name)
-        if override:
-            return override
-    # 2. Registry default
-    try:
-        from tools.registry import registry
-        emoji = registry.get_emoji(tool_name, default="")
-        if emoji:
-            return emoji
-    except Exception:
-        pass
-    # 3. Hardcoded fallback
-    return default
+    """Get the display glyph for a tool.  (Legacy alias — delegates to get_tool_icon.)"""
+    return get_tool_icon(tool_name, default=default)
 
 
 def get_tool_icon(tool_name: str, default: str = GENERIC_NERD_FONT_TOOL_ICON, mode: str | None = None) -> str:
     """Resolve display glyph for a tool.
 
-    Resolution order depends on *mode*:
+    Resolution chain (simplified — no emoji layer):
 
-    - ``auto``: skin tool_icons → registry icon → skin tool_emojis →
-      registry emoji → ASCII fallback
-    - ``nerdfont``: skin tool_icons → registry icon → skin tool_emojis →
-      registry emoji → ASCII fallback
-    - ``emoji``: skin tool_emojis → registry emoji → ASCII fallback
+    - ``auto`` / ``nerdfont``: skin tool_icons → registry icon → ASCII fallback
     - ``ascii``: ASCII fallback
     """
     resolved_mode = str(mode or _tool_icon_mode or "auto").strip().lower()
-    if resolved_mode not in {"auto", "nerdfont", "emoji", "ascii"}:
+    if resolved_mode not in {"auto", "nerdfont", "ascii"}:
+        resolved_mode = "auto"
+    # legacy "emoji" mode → treat as auto
+    if resolved_mode == "emoji":
         resolved_mode = "auto"
 
     skin = _get_skin()
@@ -266,15 +244,7 @@ def get_tool_icon(tool_name: str, default: str = GENERIC_NERD_FONT_TOOL_ICON, mo
         except Exception:
             pass
 
-    if resolved_mode in {"auto", "nerdfont", "emoji"}:
-        emoji = get_tool_emoji(tool_name, default="")
-        if emoji:
-            return emoji
-
-    ascii_fallback = get_ascii_tool_icon(tool_name, default=GENERIC_ASCII_TOOL_ICON)
-    if resolved_mode in {"auto", "nerdfont", "emoji", "ascii"}:
-        return ascii_fallback
-    return default or ascii_fallback
+    return get_ascii_tool_icon(tool_name, default=GENERIC_ASCII_TOOL_ICON)
 
 
 # =========================================================================

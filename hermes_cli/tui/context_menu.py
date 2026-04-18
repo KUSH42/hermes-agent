@@ -70,13 +70,25 @@ class _ContextItem(Static):
 
     def on_click(self) -> None:
         try:
+            menu = self.app.query_one(ContextMenu)
+            prev = menu._prev_focus
+        except (NoMatches, AttributeError):
+            prev = None
+        try:
             self._item.action()
         except Exception:
             pass
         try:
-            self.app.query_one(ContextMenu).dismiss()
+            self.app.query_one(ContextMenu).remove_class("--visible")
         except NoMatches:
             pass
+        if prev is not None and prev.is_attached:
+            prev.focus()
+        else:
+            try:
+                self.app.query_one("#input-area").focus()
+            except Exception:
+                pass
 
 
 class ContextMenu(Widget):
@@ -126,6 +138,7 @@ class ContextMenu(Widget):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._selected_index: int = -1  # -1 = no selection
+        self._prev_focus: Widget | None = None  # widget focused before menu opened
 
     def _items(self) -> "list[_ContextItem]":
         """Return all non-separator item widgets in display order."""
@@ -218,6 +231,7 @@ class ContextMenu(Widget):
             await self.mount(*new_widgets)
 
         self._selected_index = -1  # reset selection on each new show
+        self._prev_focus = self.app.focused  # save for focus restore on item click
         self.add_class("--visible")
         self.focus()
 

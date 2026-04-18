@@ -125,7 +125,7 @@ syntax:
   operator: '#00ff9f'
   string: '#00d849'
 syntax_scheme: monokai
-tool_emojis:
+tool_icons:
   search_files: ⌕
   web_search: ⌕
 tool_prefix: │

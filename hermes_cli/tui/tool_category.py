@@ -52,6 +52,7 @@ _TOOL_CATEGORY: dict[str, ToolCategory] = {
     "bash":               ToolCategory.SHELL,
     "execute_code":       ToolCategory.CODE,
     "web_search":         ToolCategory.SEARCH,
+    "search_files":       ToolCategory.SEARCH,
     "grep":               ToolCategory.SEARCH,
     "glob":               ToolCategory.SEARCH,
     "web_extract":        ToolCategory.WEB,

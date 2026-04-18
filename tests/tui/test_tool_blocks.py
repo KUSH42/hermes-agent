@@ -1078,11 +1078,11 @@ def test_T2_child_diff_gutter_renders_connector():
     assert "╰─" in rendered
 
 
-# --- T3: diff without preceding file-tool: _is_child_diff=False ---
+# --- T3: diff always has _is_child_diff=True (unconditional) ---
 
 @pytest.mark.asyncio
-async def test_T3_diff_without_file_tool_no_connector():
-    """Diff block when _last_file_tool_block is None: _is_child_diff=False."""
+async def test_T3_diff_always_child_diff():
+    """Diff blocks always have _is_child_diff=True regardless of preceding tool."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         output = app.query_one("OutputPanel")
@@ -1092,7 +1092,7 @@ async def test_T3_diff_without_file_tool_no_connector():
         plain = lines[:]
         block = msg.mount_tool_block("diff", lines, plain, tool_name="patch")
         await pilot.pause()
-        assert block._header._is_child_diff is False
+        assert block._header._is_child_diff is True
 
 
 # --- T4: non-diff block always has _is_child_diff=False ---

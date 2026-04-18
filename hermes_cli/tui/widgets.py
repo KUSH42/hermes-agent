@@ -18,7 +18,9 @@ import asyncio
 import os
 import re
 import shutil
+import sys
 import time
+from pathlib import Path
 
 from rich.segment import Segment
 from rich.style import Style
@@ -3969,6 +3971,131 @@ class TTEWidget(Widget):
             frame.update(rich_text)
         except NoMatches:
             pass
+
+
+class InlineImage(Widget):
+    """Display an image inline using TGP, halfblock, or text placeholder."""
+
+    DEFAULT_CSS = """
+    InlineImage {
+        width: 100%;
+        height: auto;
+    }
+    """
+
+    image: reactive = reactive(None)
+    max_rows: reactive = reactive(24)
+
+    def __init__(
+        self,
+        image: "Any" = None,
+        max_rows: int = 24,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._image_id: int | None = None
+        self._rendered_rows: int = 1
+        self._tgp_seq: str = ""
+        self._halfblock_strips: list[Strip] = []
+        self._src_path: str = ""
+        self._pending_image = image
+        self.max_rows = max_rows
+
+    def on_mount(self) -> None:
+        if self._pending_image is not None:
+            self.image = self._pending_image
+
+    def watch_image(self, new_image: "Any") -> None:
+        from hermes_cli.tui.kitty_graphics import (
+            GraphicsCap, _get_renderer, _load_image, get_caps, render_halfblock,
+        )
+        if new_image is None:
+            self._tgp_seq = ""
+            self._rendered_rows = 1
+            self.styles.height = 1
+            self.refresh()
+            return
+        if isinstance(new_image, (str, Path)):
+            self._src_path = str(new_image)
+        img = _load_image(new_image)
+        if img is None:
+            self._tgp_seq = ""
+            self._rendered_rows = 1
+            self.styles.height = 1
+            self.refresh()
+            return
+        cap = get_caps()
+        if cap == GraphicsCap.TGP:
+            self._prepare_tgp(img)
+        elif cap == GraphicsCap.HALFBLOCK:
+            self._prepare_halfblock(img)
+        else:
+            self._rendered_rows = 1
+            self.styles.height = 1
+        self.refresh()
+
+    def _prepare_tgp(self, img: "Any") -> None:
+        from hermes_cli.tui.kitty_graphics import _get_renderer
+        if self._image_id is not None:
+            self._emit_raw(_get_renderer().delete_sequence(self._image_id))
+            self._image_id = None
+        renderer = _get_renderer()
+        renderer._max_cols = self.size.width or 80
+        renderer._max_rows = self.max_rows
+        seq, iid, cols, rows = renderer.render(img)
+        self._image_id = iid
+        self._tgp_seq = seq
+        self._rendered_rows = rows
+        self.styles.height = rows
+
+    def _prepare_halfblock(self, img: "Any") -> None:
+        from hermes_cli.tui.kitty_graphics import render_halfblock
+        max_cols = self.size.width or 80
+        self._halfblock_strips = render_halfblock(img, max_cols, self.max_rows)
+        self._rendered_rows = len(self._halfblock_strips)
+        self.styles.height = self._rendered_rows
+
+    def render_line(self, y: int) -> Strip:
+        from hermes_cli.tui.kitty_graphics import GraphicsCap, get_caps
+        cap = get_caps()
+        if cap == GraphicsCap.TGP:
+            return self._render_tgp_line(y)
+        if cap == GraphicsCap.HALFBLOCK:
+            return self._render_halfblock_line(y)
+        return self._render_placeholder_line(y)
+
+    def _render_tgp_line(self, y: int) -> Strip:
+        if y == 0 and self._tgp_seq:
+            return Strip([Segment(self._tgp_seq)])
+        return Strip([Segment(" " * (self.size.width or 80))])
+
+    def _render_halfblock_line(self, y: int) -> Strip:
+        if y >= len(self._halfblock_strips):
+            return Strip.blank(self.size.width or 80)
+        return self._halfblock_strips[y]
+
+    def _render_placeholder_line(self, y: int) -> Strip:
+        if y == 0:
+            txt = f"[image: {self._src_path or '?'}]"
+            return Strip([Segment(txt)])
+        return Strip.blank(self.size.width or 80)
+
+    def _emit_raw(self, seq: str) -> None:
+        try:
+            sys.stdout.write(seq)
+            sys.stdout.flush()
+        except Exception:
+            pass
+
+    def on_unmount(self) -> None:
+        from hermes_cli.tui.kitty_graphics import _get_renderer
+        if self._image_id is not None:
+            self._emit_raw(_get_renderer().delete_sequence(self._image_id))
+            self._image_id = None
+
+    def on_resize(self, event: object) -> None:
+        if self.image is not None:
+            self.watch_image(self.image)
 
 
 class StartupBannerWidget(Static):

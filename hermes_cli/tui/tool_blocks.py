@@ -55,6 +55,22 @@ _DIFF_HEADER_RE = re.compile(r"^((?:---|\+\+\+)\s+)(?:[ab]/)?(.+)$")
 # Rendered diff file-header line: "a/src/foo.py → b/src/foo.py" (after ANSI strip)
 _DIFF_ARROW_RE = re.compile(r"^(.+?)\s+→\s+(.+)$")
 
+_IMAGE_EXTS: frozenset[str] = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff"})
+_MEDIA_LINE_RE = re.compile(r"(?m)^MEDIA:\s*\S.*$")
+_MEDIA_EXTRACT_RE = re.compile(r"^MEDIA:\s*(.+)$", re.IGNORECASE)
+
+
+def _extract_image_path(raw: str) -> "str | None":
+    """Return path string if raw is a MEDIA: line or a bare image path."""
+    from pathlib import Path as _Path
+    m = _MEDIA_EXTRACT_RE.match(raw.strip())
+    if m:
+        path = m.group(1).strip()
+        return path if _Path(path).suffix.lower() in _IMAGE_EXTS else None
+    suffix = _Path(raw.strip()).suffix.lower()
+    return raw.strip() if suffix in _IMAGE_EXTS else None
+
+
 _CODE_EXT_MAP: dict[str, str] = {
     ".py": "python", ".js": "javascript", ".ts": "typescript", ".tsx": "tsx",
     ".rs": "rust", ".go": "go", ".java": "java", ".c": "c", ".cpp": "cpp",
@@ -982,6 +998,30 @@ class StreamingToolBlock(ToolBlock):
         self._header.refresh()
         # Brief success flash to signal completion
         self._header.flash_complete()
+        # If output contains a MEDIA: path, replace body with an inline image
+        self._try_mount_media()
+
+    def _try_mount_media(self) -> bool:
+        """Replace body with InlineImage if output contains a MEDIA: line.
+
+        Uses the last MEDIA: match so multiple matplotlib figures show the
+        most recent one. Returns True if an image was mounted.
+        """
+        text = "\n".join(self._all_plain)
+        matches = _MEDIA_LINE_RE.findall(text)
+        if not matches:
+            return False
+        path = _extract_image_path(matches[-1])
+        if path is None:
+            return False
+        try:
+            from hermes_cli.tui.widgets import InlineImage
+            self._body.remove_children()
+            self._body.mount(InlineImage(image=path, max_rows=24))
+        except Exception:
+            pass
+        return True
+
 
     # ------------------------------------------------------------------
     # Internal timers

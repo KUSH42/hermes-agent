@@ -64,6 +64,28 @@ SANDBOX_ALLOWED_TOOLS = frozenset([
 
 # Resource limit defaults (overridable via config.yaml → code_execution.*)
 DEFAULT_TIMEOUT = 300        # 5 minutes
+
+# Appended to every sandboxed script to auto-capture matplotlib figures.
+# Runs in the child process; writes MEDIA: lines to stdout if any figures exist.
+_MATPLOTLIB_CAPTURE_SNIPPET = """\
+
+# --- hermes auto-capture matplotlib ---
+import sys as _h_sys
+try:
+    import matplotlib.pyplot as _h_plt
+    import tempfile as _h_tempfile
+    _h_figs = _h_plt.get_fignums()
+    if _h_figs:
+        _h_tmp = _h_tempfile.NamedTemporaryFile(
+            suffix=".png", prefix="hermes_chart_", delete=False
+        )
+        _h_plt.figure(_h_figs[-1]).savefig(_h_tmp.name, dpi=150, bbox_inches="tight")
+        _h_plt.close("all")
+        _h_sys.stdout.write(f"\\nMEDIA: {_h_tmp.name}\\n")
+        _h_sys.stdout.flush()
+except Exception:
+    pass
+"""
 DEFAULT_MAX_TOOL_CALLS = 50
 MAX_STDOUT_BYTES = 50_000    # 50 KB
 MAX_STDERR_BYTES = 10_000    # 10 KB
@@ -936,9 +958,9 @@ def execute_code(
         with open(os.path.join(tmpdir, "hermes_tools.py"), "w") as f:
             f.write(tools_src)
 
-        # Write the user's script
+        # Write the user's script (with matplotlib auto-capture appended)
         with open(os.path.join(tmpdir, "script.py"), "w") as f:
-            f.write(code)
+            f.write(code + _MATPLOTLIB_CAPTURE_SNIPPET)
 
         # --- Start UDS server ---
         server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

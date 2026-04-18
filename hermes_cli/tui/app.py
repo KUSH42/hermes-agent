@@ -95,6 +95,12 @@ from hermes_cli.tui.widgets import (
     _safe_widget_call,
 )
 
+from hermes_cli.tui.overlays import (
+    CommandsOverlay,
+    HelpOverlay,
+    ModelOverlay,
+    UsageOverlay,
+)
 from hermes_cli.tool_icons import get_display_name
 from hermes_cli.tui.constants import ICON_COPY
 from hermes_cli.tui.animation import AnimationClock, shimmer_text
@@ -360,6 +366,8 @@ class HermesApp(App):
         self._flash_hint_expires: float = 0.0
         # Compaction warning state — reset when progress returns to 0
         self._compaction_warned: bool = False
+        # Clear animation guard — prevents re-entry while fade is running
+        self._clear_animation_in_progress: bool = False
 
     # --- Compose ---
 
@@ -389,6 +397,10 @@ class HermesApp(App):
             yield _CO(id="completion-overlay")
             yield HistorySearchOverlay(id="history-search")
             yield KeymapOverlay(id="keymap-help")
+            yield HelpOverlay(id="help-overlay")
+            yield UsageOverlay(id="usage-overlay")
+            yield CommandsOverlay(id="commands-overlay")
+            yield ModelOverlay(id="model-overlay")
             with Horizontal(id="input-row"):
                 yield Static("❯ ", id="input-chevron")
                 yield _HI(id="input-area")
@@ -462,6 +474,15 @@ class HermesApp(App):
         self._theme_manager.stop_hot_reload()
         for _h in (self._anim_clock_h, self._spinner_h, self._fps_h, self._duration_h):
             _h.stop()
+        # Safety-net delete-all: removes any TGP placements that leaked (e.g. crash path)
+        try:
+            import sys as _sys
+            from hermes_cli.tui.kitty_graphics import get_caps, GraphicsCap, _get_renderer
+            if get_caps() == GraphicsCap.TGP:
+                _sys.stdout.write(_get_renderer().delete_all_sequence())
+                _sys.stdout.flush()
+        except Exception:
+            pass
 
     # --- Output consumer (bounded queue → RichLog) ---
 
@@ -980,6 +1001,7 @@ class HermesApp(App):
     def watch_agent_running(self, value: bool) -> None:
         self._drawille_show_hide(value)
         if value:
+            self._dismiss_all_info_overlays()
             self._response_metrics_active = False
             self._response_wall_start_time = None
             self._response_segment_start_time = None
@@ -2395,6 +2417,18 @@ class HermesApp(App):
 
     # --- Undo / Retry / Rollback (SPEC-C) ---
 
+    def _dismiss_all_info_overlays(self) -> None:
+        """Remove --visible from all info overlays.
+
+        Called before showing a new overlay (ensures only one visible at a time)
+        and from watch_agent_running(True) (stale info must not block output view).
+        """
+        for cls in (HelpOverlay, UsageOverlay, CommandsOverlay, ModelOverlay):
+            try:
+                self.query_one(cls).remove_class("--visible")
+            except NoMatches:
+                pass
+
     def _handle_tui_command(self, text: str) -> bool:
         """Intercept TUI-specific slash commands before agent sees them.
 
@@ -2417,7 +2451,92 @@ class HermesApp(App):
         if stripped == "/anim":
             self._open_anim_config()
             return True
+
+        # --- Overlay commands ---
+
+        if stripped == "/help":
+            self._dismiss_all_info_overlays()
+            try:
+                self.query_one(HelpOverlay).show_overlay()
+            except NoMatches:
+                pass
+            return True
+
+        if stripped == "/usage":
+            agent = getattr(self.cli, "agent", None)
+            if agent is None:
+                self._flash_hint("⚠  No active agent — send a message first", 2.0)
+                return True
+            self._dismiss_all_info_overlays()
+            try:
+                overlay = self.query_one(UsageOverlay)
+                overlay.refresh_data(agent)
+                overlay.add_class("--visible")
+            except NoMatches:
+                pass
+            return True
+
+        if stripped == "/commands":
+            self._dismiss_all_info_overlays()
+            try:
+                self.query_one(CommandsOverlay).add_class("--visible")
+            except NoMatches:
+                pass
+            return True
+
+        # /model with NO args → show overlay; /model <name> → fall through to CLI
+        if stripped == "/model":
+            self._dismiss_all_info_overlays()
+            try:
+                overlay = self.query_one(ModelOverlay)
+                overlay.refresh_data(self.cli)
+                overlay.add_class("--visible")
+            except NoMatches:
+                pass
+            return True
+
+        # --- Flash + animation commands ---
+
+        if stripped == "/clear":
+            if not self._clear_animation_in_progress:
+                self._clear_animation_in_progress = True
+                self._handle_clear_tui()
+            return True
+
+        cmd_parts = stripped.split()
+        if cmd_parts and cmd_parts[0] == "/new":
+            # Flash goes to HintWidget (bottom bar) — survives new_session() DOM reset
+            self._flash_hint("✨  New session started", 2.0)
+            return False  # forward to CLI for actual session creation
+
+        if cmd_parts and cmd_parts[0] == "/title":
+            if len(cmd_parts) > 1:
+                self._flash_hint(f"✓  Title: {' '.join(cmd_parts[1:])}", 2.5)
+            else:
+                self._flash_hint("⚠  Usage: /title <name>", 2.0)
+            return False  # forward to CLI for actual title set
+
+        if cmd_parts and cmd_parts[0] == "/stop":
+            self._flash_hint("⏹  Stopping processes…", 1.5)
+            return False  # forward to CLI for actual stop
+
         return False
+
+    @work(thread=False, group="clear")
+    async def _handle_clear_tui(self) -> None:
+        """Fade out MessagePanels, then delegate clear to CLI."""
+        import asyncio as _asyncio
+        try:
+            panels = list(self.query(MessagePanel))
+            for p in panels:
+                p.styles.animate("opacity", value=0.0, duration=0.3)
+            await _asyncio.sleep(0.35)
+            self.cli.new_session(silent=True)
+            if hasattr(self.cli, "_push_tui_status"):
+                self.cli._push_tui_status()
+            self._flash_hint("✨  Fresh start!", 2.0)
+        finally:
+            self._clear_animation_in_progress = False
 
     def _has_rollback_checkpoint(self) -> bool:
         """Return True if the agent has a filesystem checkpoint available."""
@@ -2678,6 +2797,19 @@ class HermesApp(App):
 
         # --- escape: cancel overlay, interrupt agent, browse mode, or enter browse ---
         if key == "escape":
+            # Priority -2: dismiss info overlays (help/usage/commands/model).
+            # These have no Input focus when shown (except HelpOverlay), so their
+            # Binding(escape) doesn't fire — handle here instead.
+            for _cls in (HelpOverlay, UsageOverlay, CommandsOverlay, ModelOverlay):
+                try:
+                    _ov = self.query_one(_cls)
+                    if _ov.has_class("--visible"):
+                        _ov.action_dismiss()
+                        event.prevent_default()
+                        return
+                except NoMatches:
+                    pass
+
             # Priority -1: dismiss history search overlay (highest priority — fires
             # before completion overlay so Escape always closes the search first).
             try:

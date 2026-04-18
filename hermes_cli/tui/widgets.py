@@ -1108,6 +1108,12 @@ class StreamingCodeBlock(Widget):
     StreamingCodeBlock.--copy-flash {
         border: tall $accent;
     }
+    StreamingCodeBlock > .--code-partial {
+        display: none;
+        height: auto;
+        padding-left: 1;
+        color: $text 50%;
+    }
     """
     _content_type: str = "code"
 
@@ -1128,16 +1134,39 @@ class StreamingCodeBlock(Widget):
         self._collapsed = False
         self._copy_flash = False
         self._controls_text_plain = ""
+        self._partial_line: str = ""
+        self._partial_display = Static("", classes="--code-partial")
 
     def compose(self) -> ComposeResult:
         yield self._log
+        yield self._partial_display
 
     # ------------------------------------------------------------------
     # Streaming phase
     # ------------------------------------------------------------------
 
+    def feed_partial(self, fragment: str) -> None:
+        """Preview an in-progress partial line with a dim cursor indicator."""
+        if self._state != "STREAMING":
+            return
+        self._partial_line = fragment
+        highlighted = self._highlight_line(self._partial_line, self._lang)
+        t = Text.from_ansi(highlighted)
+        t.append("▌", style="dim")
+        self._partial_display.update(t)
+        self._partial_display.styles.display = "block"
+
+    def clear_partial(self) -> None:
+        """Remove the partial line preview."""
+        if not self._partial_line:
+            return
+        self._partial_line = ""
+        self._partial_display.update("")
+        self._partial_display.styles.display = "none"
+
     def append_line(self, line: str) -> None:
         """Called by ResponseFlowEngine for each code line during streaming."""
+        self.clear_partial()
         plain_line = _strip_ansi(line)
         self._code_lines.append(plain_line)
         highlighted = self._highlight_line(plain_line, self._lang)
@@ -1169,6 +1198,7 @@ class StreamingCodeBlock(Widget):
 
     def complete(self, skin_vars: dict[str, str]) -> None:
         """Fence closed — replace per-line content with full rich.Syntax block."""
+        self.clear_partial()
         if self._state != "STREAMING":
             return
         self._state = "COMPLETE"
@@ -1210,6 +1240,7 @@ class StreamingCodeBlock(Widget):
 
     def flush(self) -> None:
         """Turn ended before fence closed. Finalize with rich.Syntax same as COMPLETE."""
+        self.clear_partial()
         if self._state != "STREAMING":
             return
         self._state = "FLUSHED"
@@ -1552,7 +1583,7 @@ class OutputPanel(ScrollableContainer):
             rl = msg.current_prose_log()
             engine = getattr(msg, "_response_engine", None)
             if engine is not None:
-                engine.process_line(live._buf)
+                engine._partial = live._buf
             else:
                 plain = _strip_ansi(live._buf)
                 if isinstance(rl, CopyableRichLog):

@@ -660,6 +660,14 @@ class HermesApp(App):
             try:
                 panel = self.query_one(OutputPanel)
                 panel.live_line.feed(chunk)
+                try:
+                    msg = panel.current_message
+                    if msg is not None:
+                        engine = getattr(msg, "_response_engine", None)
+                        if engine is not None:
+                            engine.feed(chunk)
+                except Exception:
+                    pass
                 panel.refresh(layout=True)
                 if not panel._user_scrolled_up:
                     self.call_after_refresh(panel.scroll_end, animate=False)

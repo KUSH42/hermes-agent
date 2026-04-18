@@ -291,6 +291,7 @@ class ResponseFlowEngine:
         self._footnote_defs: dict[str, str] = {}   # label → definition text
         self._footnote_order: list[str] = []       # labels in order of first definition
         self._footnote_def_open: str | None = None  # label of continuation-in-progress
+        self._partial: str = ""                     # accumulated partial tail of current line
 
     def _sync_prose_log(self) -> None:
         """Refresh the active prose destination from the owning message panel."""
@@ -304,6 +305,32 @@ class ResponseFlowEngine:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def feed(self, chunk: str) -> None:
+        """Update partial preview for the in-progress line.
+
+        Called from _consume_output() on every chunk.  Does NOT process
+        complete lines — that remains _commit_lines() → process_line().
+        Manages _partial so flush() can drain it at end-of-turn.
+        """
+        if "\n" in chunk:
+            self._clear_partial_preview()
+            self._partial = chunk.rsplit("\n", 1)[1]
+        else:
+            self._partial += chunk
+        if self._partial:
+            self._route_partial(self._partial)
+
+    def _route_partial(self, fragment: str) -> None:
+        if self._state in ("IN_CODE", "IN_INDENTED_CODE", "IN_SOURCE_LIKE"):
+            if self._active_block is not None:
+                self._active_block.feed_partial(fragment)
+
+    def _clear_partial_preview(self) -> None:
+        if self._state in ("IN_CODE", "IN_INDENTED_CODE", "IN_SOURCE_LIKE"):
+            if self._active_block is not None:
+                self._active_block.clear_partial()
+        self._partial = ""
 
     def process_line(self, raw: str) -> None:
         """Process one complete line (no trailing newline)."""
@@ -485,6 +512,10 @@ class ResponseFlowEngine:
 
     def flush(self) -> None:
         """Turn ended — close any open code block; flush StreamingBlockBuffer pending state."""
+        if self._partial:
+            pending = self._partial
+            self._clear_partial_preview()
+            self.process_line(pending)
         if self._active_block is not None and self._state == "IN_CODE":
             self._active_block.flush()  # marks FLUSHED, stops spinner
             self._active_block = None
@@ -639,6 +670,7 @@ class ReasoningFlowEngine(ResponseFlowEngine):
         self._footnote_defs: dict[str, str] = {}
         self._footnote_order: list[str] = []
         self._footnote_def_open: str | None = None
+        self._partial: str = ""
 
     def process_line(self, raw: str) -> None:
         """Override: flush block buffer immediately after every line.

@@ -1619,6 +1619,14 @@ class HermesCLI:
         )
         set_preview_max_lines(CLI_CONFIG["display"].get("preview_max_lines", 40))
 
+        # Kitty inline-image config (display.inline_images, display.halfblock_dark_threshold)
+        try:
+            from hermes_cli.tui.kitty_graphics import set_inline_images_mode as _sim, set_dark_threshold as _sdt
+            _sim(CLI_CONFIG["display"].get("inline_images", "auto"))
+            _sdt(CLI_CONFIG["display"].get("halfblock_dark_threshold", 0.1))
+        except Exception:
+            pass
+
         # Streaming display state
         self._stream_buf = ""        # Partial line buffer for line-buffered rendering
         self._stream_spec_stack: list[tuple[str, str]] = []  # Speculative inline-md open delimiters
@@ -4195,44 +4203,34 @@ class HermesCLI:
     def show_tools(self):
         """Display available tools with kawaii ASCII art."""
         tools = get_tool_definitions(enabled_toolsets=self.enabled_toolsets, quiet_mode=True)
-        
+
         if not tools:
-            print("(;_;) No tools available")
+            _cprint("  (;_;) No tools available")
             return
-        
-        # Header
-        print()
-        title = "(^_^)/ Available Tools"
-        width = 78
-        pad = width - len(title)
-        print("+" + "-" * width + "+")
-        print("|" + " " * (pad // 2) + title + " " * (pad - pad // 2) + "|")
-        print("+" + "-" * width + "+")
-        print()
-        
-        # Group tools by toolset
-        toolsets = {}
+
+        _cprint("")
+        _cprint("  (^_^)/ Available Tools")
+        _cprint(f"  {'─' * 40}")
+
+        toolsets: dict[str, list[tuple[str, str]]] = {}
         for tool in sorted(tools, key=lambda t: t["function"]["name"]):
             name = tool["function"]["name"]
             toolset = get_toolset_for_tool(name) or "unknown"
             if toolset not in toolsets:
                 toolsets[toolset] = []
-            desc = tool["function"].get("description", "")
-            # First sentence: split on ". " (period+space) to avoid breaking on "e.g." or "v2.0"
-            desc = desc.split("\n")[0]
+            desc = tool["function"].get("description", "").split("\n")[0]
             if ". " in desc:
                 desc = desc[:desc.index(". ") + 1]
             toolsets[toolset].append((name, desc))
-        
-        # Display by toolset
+
         for toolset in sorted(toolsets.keys()):
-            print(f"  [{toolset}]")
+            _cprint(f"  [{toolset}]")
             for name, desc in toolsets[toolset]:
-                print(f"    * {name:<20} - {desc}")
-            print()
-        
-        print(f"  Total: {len(tools)} tools  ヽ(^o^)ノ")
-        print()
+                ChatConsole().print(f"    [bold {_accent_hex()}]{name:<20}[/] {_escape(desc)}")
+            _cprint("")
+
+        _cprint(f"  Total: {len(tools)} tools  ヽ(^o^)ノ")
+        _cprint("")
 
     def _handle_tools_command(self, cmd: str):
         """Handle /tools [list|disable|enable] slash commands.
@@ -4414,22 +4412,22 @@ class HermesCLI:
 
         from hermes_cli.main import _relative_time
 
-        print()
+        _cprint("")
         if reason == "history":
-            print("(._.) No messages in the current chat yet — here are recent sessions you can resume:")
+            _cprint("(._.) No messages in the current chat yet — here are recent sessions you can resume:")
         else:
-            print("  Recent sessions:")
-        print()
-        print(f"  {'Title':<32} {'Preview':<40} {'Last Active':<13} {'ID'}")
-        print(f"  {'─' * 32} {'─' * 40} {'─' * 13} {'─' * 24}")
+            _cprint("  Recent sessions:")
+        _cprint("")
+        _cprint(f"  {'Title':<32} {'Preview':<40} {'Last Active':<13} {'ID'}")
+        _cprint(f"  {'─' * 32} {'─' * 40} {'─' * 13} {'─' * 24}")
         for session in sessions:
             title = (session.get("title") or "—")[:30]
             preview = (session.get("preview") or "")[:38]
             last_active = _relative_time(session.get("last_active"))
-            print(f"  {title:<32} {preview:<40} {last_active:<13} {session['id']}")
-        print()
-        print("  Use /resume <session id or title> to continue where you left off.")
-        print()
+            _cprint(f"  {title:<32} {preview:<40} {last_active:<13} {session['id']}")
+        _cprint("")
+        _cprint("  Use /resume <session id or title> to continue where you left off.")
+        _cprint("")
         return True
 
     def show_history(self):
@@ -5687,6 +5685,15 @@ class HermesCLI:
             self._handle_reasoning_command(cmd_original)
         elif canonical == "compress":
             self._manual_compress()
+        elif canonical == "commands":
+            from hermes_cli.commands import gateway_help_lines
+            lines = gateway_help_lines()
+            _cprint("")
+            _cprint("  Available commands:")
+            _cprint(f"  {'─' * 40}")
+            for line in lines:
+                _cprint(f"  {line}")
+            _cprint("")
         elif canonical == "usage":
             self._show_usage()
         elif canonical == "insights":
@@ -10510,6 +10517,23 @@ class HermesCLI:
 
         try:
             if _tui_app is not None:
+                # Run SDF splash if enabled (pre-TUI, blocking)
+                try:
+                    _splash_cfg = self.config.get("display", {}).get("startup_sdf_splash", {})
+                    if _splash_cfg.get("enabled", False):
+                        from hermes_cli.config import SdfSplashConfig
+                        from hermes_cli.tui.sdf_splash import run_sdf_splash
+                        run_sdf_splash(SdfSplashConfig(
+                            enabled=True,
+                            text=_splash_cfg.get("text", "HERMES"),
+                            morph_ms=_splash_cfg.get("morph_ms", 600),
+                            hold_ms=_splash_cfg.get("hold_ms", 400),
+                            render_mode=_splash_cfg.get("render_mode", "dissolve"),
+                            color=_splash_cfg.get("color", "#00ff66"),
+                            total_duration_s=_splash_cfg.get("total_duration_s", 3.0),
+                        ))
+                except Exception:
+                    pass
                 # Textual path — _hermes_app is already set above; Textual owns the loop
                 _tui_app.run()
             else:

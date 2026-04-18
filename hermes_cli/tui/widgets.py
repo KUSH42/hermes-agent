@@ -4007,9 +4007,10 @@ class InlineImage(Widget):
 
     def watch_image(self, new_image: "Any") -> None:
         from hermes_cli.tui.kitty_graphics import (
-            GraphicsCap, _get_renderer, _load_image, get_caps, render_halfblock,
+            GraphicsCap, _get_renderer, _load_image, get_caps, get_inline_images_mode,
+            render_halfblock,
         )
-        if new_image is None:
+        if new_image is None or get_inline_images_mode() == "off":
             self._tgp_seq = ""
             self._rendered_rows = 1
             self.styles.height = 1
@@ -4035,18 +4036,42 @@ class InlineImage(Widget):
         self.refresh()
 
     def _prepare_tgp(self, img: "Any") -> None:
-        from hermes_cli.tui.kitty_graphics import _get_renderer
+        from hermes_cli.tui.kitty_graphics import _get_renderer, LARGE_IMAGE_BYTES
         if self._image_id is not None:
             self._emit_raw(_get_renderer().delete_sequence(self._image_id))
             self._image_id = None
+        if img.width * img.height * 4 > LARGE_IMAGE_BYTES:
+            self._prepare_tgp_async(img)
+        else:
+            renderer = _get_renderer()
+            renderer._max_cols = self.size.width or 80
+            renderer._max_rows = self.max_rows
+            seq, iid, cols, rows = renderer.render(img)
+            self._apply_tgp_result(seq, iid, cols, rows)
+
+    @work(thread=True)
+    def _prepare_tgp_async(self, img: "Any") -> None:
+        """Encode large images off the event loop to avoid blocking the UI."""
+        from hermes_cli.tui.kitty_graphics import _get_renderer
         renderer = _get_renderer()
         renderer._max_cols = self.size.width or 80
         renderer._max_rows = self.max_rows
-        seq, iid, cols, rows = renderer.render(img)
+        try:
+            seq, iid, cols, rows = renderer.render(img)
+        except Exception:
+            return
+        if self.is_mounted:
+            self.app.call_from_thread(self._apply_tgp_result, seq, iid, cols, rows)
+
+    def _apply_tgp_result(self, seq: str, iid: int, cols: int, rows: int) -> None:
+        """Apply encoded TGP result on the event loop (safe from call_from_thread)."""
+        if not self.is_mounted:
+            return
         self._image_id = iid
         self._tgp_seq = seq
         self._rendered_rows = rows
         self.styles.height = rows
+        self.refresh()
 
     def _prepare_halfblock(self, img: "Any") -> None:
         from hermes_cli.tui.kitty_graphics import render_halfblock

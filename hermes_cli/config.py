@@ -402,6 +402,8 @@ DEFAULT_CONFIG = {
         "syntax_bold": True,      # Keep bold emphasis on syntax-highlighted token styles
         "spinner_style": "",      # TUI spinner animation: dots|bounce|grow|arrows|star|moon|pulse|clock|none (empty = skin default)
         "show_cost": False,       # Show $ cost in the status bar (off by default)
+        "inline_images": "auto",  # auto | on | off — inline image rendering in TUI
+        "halfblock_dark_threshold": 0.1,   # WCAG luminance < this → dark cell in halfblock art
         "skin": "default",
         "tool_icon_mode": "auto",  # auto|nerdfont|emoji|ascii
         "tool_gutter": True,       # Show ┊/┃ gutter symbols on tool call blocks
@@ -432,6 +434,23 @@ DEFAULT_CONFIG = {
             "fade_out_frames": 0,
             "multi_color": [],
             "hue_shift_speed": 0.3,
+            # SDF morph engine settings
+            "sdf_text": "HERMES",
+            "sdf_hold_ms": 900,
+            "sdf_morph_ms": 700,
+            "sdf_render_mode": "dissolve",
+            "sdf_outline_width": 0.08,
+            "sdf_dissolve_spread": 0.15,
+            "sdf_font_size": 96,
+        },
+        "startup_sdf_splash": {
+            "enabled": False,
+            "text": "HERMES",
+            "morph_ms": 600,
+            "hold_ms": 400,
+            "render_mode": "dissolve",
+            "color": "#00ff66",
+            "total_duration_s": 3.0,
         },
     },
 
@@ -1441,6 +1460,18 @@ _VALID_CUSTOM_PROVIDER_FIELDS = {
 
 # Fields that look like they should be inside custom_providers, not at root
 _CUSTOM_PROVIDER_LIKE_FIELDS = {"base_url", "api_key", "rate_limit_delay", "api_mode"}
+
+
+@dataclass
+class SdfSplashConfig:
+    """Configuration for the startup SDF splash animation."""
+    enabled: bool = False
+    text: str = "HERMES"
+    morph_ms: int = 600
+    hold_ms: int = 400
+    render_mode: str = "dissolve"
+    color: str = "#00ff66"
+    total_duration_s: float = 3.0
 
 
 @dataclass

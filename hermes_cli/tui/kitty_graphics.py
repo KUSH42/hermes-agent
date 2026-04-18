@@ -13,6 +13,7 @@ import os
 import struct
 import sys
 import termios
+import threading
 from enum import Enum, auto
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -28,6 +29,44 @@ try:
 except ImportError:
     PILImage = None  # type: ignore[assignment,misc]
     _PIL_AVAILABLE = False
+
+
+# ---------------------------------------------------------------------------
+# Phase D: runtime config (set from cli.py; read by InlineImage and render_halfblock)
+# ---------------------------------------------------------------------------
+
+_inline_images_mode: str = "auto"  # "auto" | "on" | "off"
+_dark_threshold: float = 0.1       # luminance < this → dark cell in halfblock renderer
+
+# Raw-pixel size above which TGP encoding is off-loaded to a worker thread.
+LARGE_IMAGE_BYTES = 2_000_000      # width * height * 4 (RGBA)
+
+
+def set_inline_images_mode(mode: str) -> None:
+    """Called from cli.py after reading display.inline_images config."""
+    global _inline_images_mode
+    _inline_images_mode = mode if mode in ("auto", "on", "off") else "auto"
+
+
+def get_inline_images_mode() -> str:
+    return _inline_images_mode
+
+
+def set_dark_threshold(threshold: float) -> None:
+    """Called from cli.py after reading display.halfblock_dark_threshold config."""
+    global _dark_threshold
+    _dark_threshold = threshold
+
+
+def get_dark_threshold() -> float:
+    return _dark_threshold
+
+
+def _reset_phase_d() -> None:
+    """Test-only: restore Phase D config to defaults."""
+    global _inline_images_mode, _dark_threshold
+    _inline_images_mode = "auto"
+    _dark_threshold = 0.1
 
 
 # ---------------------------------------------------------------------------
@@ -287,6 +326,7 @@ class KittyRenderer:
         self._cw = cw if cw is not None else cell_width_px()
         self._ch = ch if ch is not None else cell_height_px()
         self._next_id: int = 1
+        self._id_lock = threading.Lock()
 
     def render(self, image: "PILImage.Image") -> "tuple[str, int, int, int]":
         """Return (escape_sequence, image_id, actual_cols, actual_rows)."""
@@ -308,8 +348,9 @@ class KittyRenderer:
         return "\x1b_Ga=d,d=A;\x1b\\"
 
     def _alloc_id(self) -> int:
-        iid = self._next_id
-        self._next_id = (self._next_id % 4_294_967_295) + 1
+        with self._id_lock:
+            iid = self._next_id
+            self._next_id = (self._next_id % 4_294_967_295) + 1
         return iid
 
 
@@ -361,8 +402,14 @@ def render_halfblock(
     image: "PILImage.Image",
     max_cols: int = 80,
     max_rows: int = 24,
+    *,
+    dark_threshold: float | None = None,
 ) -> "list[Strip]":
-    """Render image as halfblock art. Returns list[Strip], one per output row."""
+    """Render image as halfblock art. Returns list[Strip], one per output row.
+
+    dark_threshold: luminance < this → treat pixel as dark (default: module _dark_threshold).
+    """
+    dt = _dark_threshold if dark_threshold is None else dark_threshold
     img = image.convert("RGB")
     img = img.resize((max_cols, max_rows * 2), PILImage.LANCZOS)
     w, h = img.size
@@ -374,8 +421,8 @@ def render_halfblock(
         for col in range(w):
             top_rgb: tuple[int, int, int] = px[col, cell_row * 2]
             bot_rgb: tuple[int, int, int] = px[col, cell_row * 2 + 1]
-            top_dark = _luminance(top_rgb) < 0.1
-            bot_dark = _luminance(bot_rgb) < 0.1
+            top_dark = _luminance(top_rgb) < dt
+            bot_dark = _luminance(bot_rgb) < dt
 
             if top_dark and bot_dark:
                 segments.append(Segment(SPACE))

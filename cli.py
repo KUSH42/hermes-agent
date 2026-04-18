@@ -7262,38 +7262,45 @@ class HermesCLI:
                             deletions += 1
                     if additions or deletions:
                         header_stats = ToolHeaderStats(additions=additions, deletions=deletions)
+                _file_tools = frozenset({
+                    "patch", "read_file", "write_file", "create_file",
+                    "edit_file", "str_replace_editor", "view",
+                })
                 display_lines: list[str] = []
                 render_captured_diff_preview(diff_text, print_fn=display_lines.append, prefix=_TOOL_PREFIX)
                 if display_lines:
                     _will_mount_preview = True
-                    # File tools (patch, write_file, create_file, read_file, etc.):
-                    # keep the streaming block visible (transitions to COMPLETED below it),
-                    # and attach the diff below with ╰─ connector via _is_child_diff.
-                    # Non-file tools: remove the streaming block — diff replaces it.
-                    _file_tools = frozenset({
-                        "patch", "read_file", "write_file", "create_file",
-                        "edit_file", "str_replace_editor", "view",
-                    })
-                    if _was_streaming and function_name not in _file_tools:
-                        tui.call_from_thread(tui.remove_streaming_tool_block, tool_call_id)
                     plain = _plain_lines(display_lines)
                     # Strip the CLI-only "review diff" header — not useful in TUI.
                     if plain and plain[0].strip() == "review diff":
                         display_lines = display_lines[1:]
                         plain = plain[1:]
 
-                    def _rerender_diff(_diff_text=diff_text):
-                        rerendered: list[str] = []
-                        render_captured_diff_preview(
-                            _diff_text,
-                            print_fn=rerendered.append,
-                            prefix=_TOOL_PREFIX,
+                    if _was_streaming and function_name in _file_tools:
+                        # Merge diff into STB body: +/- counts appear in header,
+                        # ▸/▾ arrow expands the inline diff — no child block.
+                        tui.call_from_thread(
+                            tui.close_streaming_tool_block_with_diff,
+                            tool_call_id, _stream_duration, _is_tool_error,
+                            display_lines, header_stats,
                         )
-                        return rerendered, _plain_lines(rerendered)
+                    else:
+                        # Non-file or non-streaming: static child diff block.
+                        if _was_streaming:
+                            tui.call_from_thread(tui.remove_streaming_tool_block, tool_call_id)
 
-                    tui.call_from_thread(
-                        tui.mount_tool_block, "diff", display_lines, plain, function_name, _rerender_diff, header_stats
-                    )
+                        def _rerender_diff(_diff_text=diff_text):
+                            rerendered: list[str] = []
+                            render_captured_diff_preview(
+                                _diff_text,
+                                print_fn=rerendered.append,
+                                prefix=_TOOL_PREFIX,
+                            )
+                            return rerendered, _plain_lines(rerendered)
+
+                        tui.call_from_thread(
+                            tui.mount_tool_block, "diff", display_lines, plain, function_name, _rerender_diff, header_stats
+                        )
             except Exception:
                 logger.debug("Edit diff preview failed for %s", function_name, exc_info=True)
 
@@ -7380,13 +7387,9 @@ class HermesCLI:
                 except Exception:
                     logger.debug("%s highlight failed", function_name, exc_info=True)
 
-            # Close the streaming block when it stays visible (file tools) or
-            # when no diff preview was mounted (non-file tool with no diff output).
-            _file_tools = frozenset({
-                "patch", "read_file", "write_file", "create_file",
-                "edit_file", "str_replace_editor", "view",
-            })
-            if _was_streaming and (function_name in _file_tools or not _will_mount_preview):
+            # Close the streaming block only when no diff was merged into it and
+            # no diff child replaced it (i.e. tool produced no diff output).
+            if _was_streaming and not _will_mount_preview:
                 tui.call_from_thread(tui.close_streaming_tool_block, tool_call_id, _stream_duration, _is_tool_error)
 
         else:

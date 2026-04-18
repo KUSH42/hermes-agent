@@ -923,6 +923,13 @@ class StreamingToolBlock(ToolBlock):
         self._pending.append((raw, plain))
         self._all_plain.append(plain)
 
+    def inject_diff(self, diff_lines: list[str], header_stats: "ToolHeaderStats | None") -> None:
+        """Inject diff content into body before complete(); set +/- chips in header."""
+        for raw in diff_lines:
+            self.append_line(raw)
+        if header_stats is not None:
+            self._header._stats = header_stats
+
     def on_unmount(self) -> None:
         """Stop timers so they don't fire against a detached widget."""
         try:

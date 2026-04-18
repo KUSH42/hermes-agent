@@ -1810,6 +1810,27 @@ class HermesApp(App):
         except NoMatches:
             pass
 
+    def close_streaming_tool_block_with_diff(
+        self,
+        tool_call_id: str,
+        duration: str,
+        is_error: bool,
+        diff_lines: list[str],
+        header_stats: object,
+    ) -> None:
+        """Inject diff into a streaming block's body then complete it. Event-loop only."""
+        block = self._active_streaming_blocks.pop(tool_call_id, None)
+        if block is None:
+            return
+        block.inject_diff(diff_lines, header_stats)
+        block.complete(duration, is_error=is_error)
+        try:
+            panel = self.query_one(OutputPanel)
+            if not panel._user_scrolled_up:
+                self.call_after_refresh(panel.scroll_end, animate=False)
+        except NoMatches:
+            pass
+
     def remove_streaming_tool_block(self, tool_call_id: str) -> None:
         """Remove a streaming block from the DOM entirely. Event-loop only.
 

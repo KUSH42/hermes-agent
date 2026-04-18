@@ -268,7 +268,11 @@ class VirtualCompletionList(ScrollView, can_focus=True):
         if new and not old:
             self._refresh_fuzzy_color()
         width = max((len(c.display) for c in new), default=0) + 2
-        self.virtual_size = Size(width, len(new))
+        # When searching with no results yet, keep virtual_size at least 1 row
+        # so the shimmer/searching indicator is visible.  Without this,
+        # height:auto overlay collapses to 0 when virtual_size.height=0.
+        height = max(len(new), 1 if self.searching else 0)
+        self.virtual_size = Size(max(width, 20), height)
         self.highlighted = 0 if new else -1
         self.refresh()
 

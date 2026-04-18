@@ -101,6 +101,14 @@ from hermes_cli.tui.overlays import (
     HelpOverlay,
     ModelOverlay,
     UsageOverlay,
+    WorkspaceOverlay,
+)
+from hermes_cli.tui.workspace_tracker import (
+    GitPoller,
+    GitSnapshot,
+    WorkspaceTracker,
+    WorkspaceUpdated,
+    analyze_complexity,
 )
 from hermes_cli.tool_icons import get_display_name
 from hermes_cli.tui.constants import ICON_COPY
@@ -371,6 +379,10 @@ class HermesApp(App):
         self._clear_animation_in_progress: bool = False
         # InlineImageBar enabled state — set from cli.py before app launch
         self._inline_image_bar_enabled: bool = True
+        # Workspace overlay state
+        self._last_git_snapshot: GitSnapshot | None = None
+        self._git_poll_h: object | None = None  # textual.timer.Timer
+        self._workspace_hint_shown: bool = False
 
     # --- Compose ---
 
@@ -405,6 +417,7 @@ class HermesApp(App):
             yield UsageOverlay(id="usage-overlay")
             yield CommandsOverlay(id="commands-overlay")
             yield ModelOverlay(id="model-overlay")
+            yield WorkspaceOverlay(id="workspace-overlay")
             with Horizontal(id="input-row"):
                 yield Static("❯ ", id="input-chevron")
                 yield _HI(id="input-area")
@@ -477,6 +490,8 @@ class HermesApp(App):
             self.query_one(InlineImageBar)._enabled = self._inline_image_bar_enabled
         except NoMatches:
             pass
+        # Initialize workspace tracker in background thread (subprocess call)
+        self._init_workspace_tracker()
 
     def on_unmount(self) -> None:
         """Stop background helpers tied to app lifetime."""
@@ -492,6 +507,93 @@ class HermesApp(App):
                 _sys.stdout.flush()
         except Exception:
             pass
+
+    # --- Workspace tracker ---
+
+    @work(thread=True)
+    def _init_workspace_tracker(self) -> None:
+        """Resolve repo root in a worker thread, then set tracker on event loop."""
+        import os as _os
+        import subprocess as _sp
+        try:
+            root = _sp.check_output(
+                ["git", "rev-parse", "--show-toplevel"],
+                stderr=_sp.DEVNULL,
+                timeout=5,
+            ).decode().strip()
+        except Exception:
+            root = _os.getcwd()
+        tracker = WorkspaceTracker(root)
+        poller = GitPoller(root)
+        self.call_from_thread(self._set_workspace_tracker, tracker, poller)
+
+    def _set_workspace_tracker(self, tracker: WorkspaceTracker, poller: GitPoller) -> None:
+        self._workspace_tracker = tracker
+        self._git_poller = poller
+
+    def _trigger_git_poll(self) -> None:
+        if getattr(self, "_git_poller", None) is not None:
+            self._run_git_poll()
+
+    @work(thread=True, group="git-poll")
+    def _run_git_poll(self) -> None:
+        poller = getattr(self, "_git_poller", None)
+        if poller is None:
+            return
+        snapshot = poller.poll()
+        self.post_message(WorkspaceUpdated(snapshot))
+
+    @work(thread=True, group="complexity")
+    def _analyze_complexity(self, path: str) -> None:
+        tracker = getattr(self, "_workspace_tracker", None)
+        if tracker is None:
+            return
+        warning = analyze_complexity(path)
+        self.call_from_thread(tracker.set_complexity, path, warning)
+        self.call_from_thread(self._refresh_workspace_overlay)
+
+    def _refresh_workspace_overlay(self) -> None:
+        """Refresh WorkspaceOverlay content if visible. Must run on event loop."""
+        tracker = getattr(self, "_workspace_tracker", None)
+        if tracker is None:
+            return
+        try:
+            ov = self.query_one(WorkspaceOverlay)
+            if ov.has_class("--visible"):
+                ov.refresh_data(tracker, self._last_git_snapshot)
+        except NoMatches:
+            pass
+
+    def on_workspace_updated(self, event: WorkspaceUpdated) -> None:
+        self._last_git_snapshot = event.snapshot
+        tracker = getattr(self, "_workspace_tracker", None)
+        if tracker is None:
+            return
+        tracker.apply_git_status(event.snapshot.status_lines)
+        try:
+            ov = self.query_one(WorkspaceOverlay)
+            if ov.has_class("--visible"):
+                ov.refresh_data(tracker, event.snapshot)
+        except NoMatches:
+            pass
+        if not self._workspace_hint_shown and tracker.entries():
+            self._workspace_hint_shown = True
+            self._flash_hint("w  workspace changes", 3.0)
+
+    def action_toggle_workspace(self) -> None:
+        try:
+            ov = self.query_one(WorkspaceOverlay)
+        except NoMatches:
+            return
+        if ov.has_class("--visible"):
+            ov.action_dismiss()
+        else:
+            self._dismiss_all_info_overlays()
+            tracker = getattr(self, "_workspace_tracker", None)
+            if tracker is not None:
+                ov.refresh_data(tracker, self._last_git_snapshot)
+            ov.show_overlay()
+            self._trigger_git_poll()
 
     # --- InlineImageBar handlers ---
 
@@ -1037,7 +1139,14 @@ class HermesApp(App):
             self._response_token_window.clear()
             self._set_chevron_phase("--phase-stream")
             self._set_hint_phase("stream")
+            # Start 5s background git poll
+            if self._git_poll_h is None:
+                self._git_poll_h = self.set_interval(5.0, self._trigger_git_poll)
         else:
+            # Stop background git poll
+            if self._git_poll_h is not None:
+                self._git_poll_h.stop()
+                self._git_poll_h = None
             try:
                 chevron = self.query_one("#input-chevron", Static)
                 if not chevron.has_class("--phase-error"):
@@ -2452,7 +2561,7 @@ class HermesApp(App):
         Called before showing a new overlay (ensures only one visible at a time)
         and from watch_agent_running(True) (stale info must not block output view).
         """
-        for cls in (HelpOverlay, UsageOverlay, CommandsOverlay, ModelOverlay):
+        for cls in (HelpOverlay, UsageOverlay, CommandsOverlay, ModelOverlay, WorkspaceOverlay):
             try:
                 self.query_one(cls).remove_class("--visible")
             except NoMatches:
@@ -2479,6 +2588,10 @@ class HermesApp(App):
             return True
         if stripped == "/anim":
             self._open_anim_config()
+            return True
+
+        if stripped == "/workspace":
+            self.action_toggle_workspace()
             return True
 
         # --- Overlay commands ---
@@ -2757,6 +2870,19 @@ class HermesApp(App):
                 event.prevent_default()
                 return
 
+        # --- w: toggle workspace overlay (only when input not focused) ---
+        if key == "w":
+            try:
+                from hermes_cli.tui.input_widget import HermesInput as _HI
+                inp = self.query_one(_HI)
+                if inp.has_focus:
+                    return  # let w type normally into input
+            except NoMatches:
+                pass
+            self.action_toggle_workspace()
+            event.prevent_default()
+            return
+
         # --- ctrl+c: copy / cancel overlay / clear / exit ---
         if key == "ctrl+c":
             # Priority 1: copy selected text from output panels
@@ -2829,7 +2955,7 @@ class HermesApp(App):
             # Priority -2: dismiss info overlays (help/usage/commands/model).
             # These have no Input focus when shown (except HelpOverlay), so their
             # Binding(escape) doesn't fire — handle here instead.
-            for _cls in (HelpOverlay, UsageOverlay, CommandsOverlay, ModelOverlay):
+            for _cls in (HelpOverlay, UsageOverlay, CommandsOverlay, ModelOverlay, WorkspaceOverlay):
                 try:
                     _ov = self.query_one(_cls)
                     if _ov.has_class("--visible"):

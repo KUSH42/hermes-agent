@@ -7403,6 +7403,23 @@ class HermesCLI:
             if _was_streaming and not _will_mount_preview:
                 tui.call_from_thread(tui.close_streaming_tool_block, tool_call_id, _stream_duration, _is_tool_error)
 
+            # Workspace tracking — record writes for file-mutating tools
+            _WRITE_TOOLS = frozenset({"patch", "write_file", "create_file", "edit_file", "str_replace_editor"})
+            if function_name in _WRITE_TOOLS and isinstance(function_args, dict):
+                _ws_path = function_args.get("path", "")
+                if _ws_path:
+                    _ws_added = header_stats.additions if header_stats else 0
+                    _ws_removed = header_stats.deletions if header_stats else 0
+                    _ws_tracker = getattr(tui, "_workspace_tracker", None)
+                    if _ws_tracker is not None:
+                        tui.call_from_thread(
+                            _ws_tracker.record_write,
+                            _ws_path, _ws_added, _ws_removed,
+                        )
+                    tui.call_from_thread(tui._trigger_git_poll)
+                    if _ws_tracker is not None:
+                        tui._analyze_complexity(_ws_path)
+
         else:
             # --- PT mode path: unchanged ---
             try:

@@ -28,6 +28,7 @@ from rich.text import Text
 from textual import work
 from textual.app import ComposeResult, RenderResult
 from textual.binding import Binding
+from textual.message import Message
 from textual.cache import FIFOCache, LRUCache
 from textual.containers import Horizontal, ScrollableContainer, VerticalScroll
 from textual.css.query import NoMatches
@@ -3996,6 +3997,7 @@ class InlineImage(Widget):
         self._image_id: int | None = None
         self._rendered_rows: int = 1
         self._tgp_seq: str = ""
+        self._sixel_seq: str = ""
         self._halfblock_strips: list[Strip] = []
         self._src_path: str = ""
         self._pending_image = image
@@ -4028,6 +4030,8 @@ class InlineImage(Widget):
         cap = get_caps()
         if cap == GraphicsCap.TGP:
             self._prepare_tgp(img)
+        elif cap == GraphicsCap.SIXEL:
+            self._prepare_sixel(img)
         elif cap == GraphicsCap.HALFBLOCK:
             self._prepare_halfblock(img)
         else:
@@ -4080,11 +4084,24 @@ class InlineImage(Widget):
         self._rendered_rows = len(self._halfblock_strips)
         self.styles.height = self._rendered_rows
 
+    def _prepare_sixel(self, img: "Any") -> None:
+        from hermes_cli.tui.kitty_graphics import _to_sixel, _cell_px, _fit_image
+        cw, ch = _cell_px()
+        max_cols = self.size.width or 80
+        seq = _to_sixel(img, max_cols=max_cols, max_rows=self.max_rows)
+        self._sixel_seq = seq
+        if seq and cw > 0 and ch > 0:
+            _, _cols, rows = _fit_image(img.convert("RGBA"), max_cols, self.max_rows, cw, ch)
+            self._rendered_rows = rows
+            self.styles.height = rows
+
     def render_line(self, y: int) -> Strip:
         from hermes_cli.tui.kitty_graphics import GraphicsCap, get_caps
         cap = get_caps()
         if cap == GraphicsCap.TGP:
             return self._render_tgp_line(y)
+        if cap == GraphicsCap.SIXEL:
+            return self._render_sixel_line(y)
         if cap == GraphicsCap.HALFBLOCK:
             return self._render_halfblock_line(y)
         return self._render_placeholder_line(y)
@@ -4093,6 +4110,11 @@ class InlineImage(Widget):
         if y == 0 and self._tgp_seq:
             return Strip([Segment(self._tgp_seq)])
         return Strip([Segment(" " * (self.size.width or 80))])
+
+    def _render_sixel_line(self, y: int) -> Strip:
+        if y == 0 and self._sixel_seq:
+            return Strip([Segment(self._sixel_seq)])
+        return Strip.blank(self.size.width or 80)
 
     def _render_halfblock_line(self, y: int) -> Strip:
         if y >= len(self._halfblock_strips):
@@ -4121,6 +4143,96 @@ class InlineImage(Widget):
     def on_resize(self, event: object) -> None:
         if self.image is not None:
             self.watch_image(self.image)
+
+
+class InlineThumbnail(Widget):
+    """Clickable halfblock thumbnail inside InlineImageBar."""
+
+    DEFAULT_CSS = """
+    InlineThumbnail {
+        width: 10;
+        height: 6;
+        margin: 0 1;
+        border: solid $panel-lighten-1;
+    }
+    InlineThumbnail:hover {
+        border: solid $accent;
+    }
+    """
+
+    def __init__(self, path: str, index: int, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._path = path
+        self._index = index
+        self._strips: list[Strip] = []
+
+    def on_mount(self) -> None:
+        self._load_strips()
+
+    @work(thread=True)
+    def _load_strips(self) -> None:
+        from hermes_cli.tui.kitty_graphics import _load_image, render_halfblock
+        img = _load_image(self._path)
+        if img is not None:
+            strips = render_halfblock(img, max_cols=10, max_rows=6)
+        else:
+            strips = []
+        self.app.call_from_thread(self._apply_strips, strips)
+
+    def _apply_strips(self, strips: list[Strip]) -> None:
+        self._strips = strips
+        self.refresh()
+
+    def render_line(self, y: int) -> Strip:
+        if y < len(self._strips):
+            return self._strips[y]
+        return Strip.blank(self.size.width or 10)
+
+    def on_click(self) -> None:
+        self.post_message(InlineImageBar.ThumbnailClicked(self._path, self._index))
+
+
+class InlineImageBar(Widget):
+    """Horizontal strip of image thumbnails for inline images. Hidden when empty."""
+
+    class ThumbnailClicked(Message):
+        def __init__(self, path: str, index: int) -> None:
+            super().__init__()
+            self.path = path
+            self.index = index
+
+    DEFAULT_CSS = """
+    InlineImageBar {
+        height: 7;
+        width: 100%;
+        display: none;
+        overflow-x: scroll;
+        overflow-y: hidden;
+        background: $panel;
+        border-top: solid $panel-lighten-1;
+        padding: 0 1;
+    }
+    InlineImageBar.--visible {
+        display: block;
+    }
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._paths: list[str] = []
+        self._enabled: bool = True
+
+    def compose(self) -> ComposeResult:
+        yield Horizontal()
+
+    def add_image(self, path: str) -> None:
+        """Add a thumbnail. No-op when display.image_bar is disabled."""
+        if not self._enabled:
+            return
+        self._paths.append(path)
+        idx = len(self._paths)
+        self.add_class("--visible")
+        self.query_one(Horizontal).mount(InlineThumbnail(path=path, index=idx))
 
 
 class StartupBannerWidget(Static):

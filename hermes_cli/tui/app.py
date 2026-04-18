@@ -75,6 +75,7 @@ from hermes_cli.tui.widgets import (
     HintBar,
     KeymapOverlay,
     ImageBar,
+    InlineImageBar,
     LiveLineWidget,
     MessagePanel,
     OutputPanel,
@@ -368,6 +369,8 @@ class HermesApp(App):
         self._compaction_warned: bool = False
         # Clear animation guard — prevents re-entry while fade is running
         self._clear_animation_in_progress: bool = False
+        # InlineImageBar enabled state — set from cli.py before app launch
+        self._inline_image_bar_enabled: bool = True
 
     # --- Compose ---
 
@@ -385,6 +388,7 @@ class HermesApp(App):
             yield SecretWidget(id="secret")
             yield UndoConfirmOverlay(id="undo-confirm")
         yield HintBar(id="hint-bar")
+        yield InlineImageBar(id="inline-image-bar")
         yield ImageBar(id="image-bar")
         yield TitledRule(id="input-rule", show_state=True)
 
@@ -468,6 +472,11 @@ class HermesApp(App):
             self._populate_slash_commands()
         # Initialize hint bar to idle phase — shows key-badge hints immediately
         self._set_hint_phase("idle")
+        # Apply InlineImageBar enabled state from config
+        try:
+            self.query_one(InlineImageBar)._enabled = self._inline_image_bar_enabled
+        except NoMatches:
+            pass
 
     def on_unmount(self) -> None:
         """Stop background helpers tied to app lifetime."""
@@ -483,6 +492,26 @@ class HermesApp(App):
                 _sys.stdout.flush()
         except Exception:
             pass
+
+    # --- InlineImageBar handlers ---
+
+    def on_image_mounted(self, event: Any) -> None:
+        """Bubble from StreamingToolBlock.ImageMounted → add thumbnail to InlineImageBar."""
+        try:
+            self.query_one(InlineImageBar).add_image(event.path)
+        except NoMatches:
+            pass
+
+    async def on_inline_image_bar_thumbnail_clicked(self, event: Any) -> None:
+        """Scroll OutputPanel to the InlineImage matching the clicked thumbnail."""
+        from hermes_cli.tui.widgets import InlineImage
+        for widget in self.query(InlineImage):
+            if getattr(widget, "_src_path", "") == event.path:
+                try:
+                    self.query_one(OutputPanel).scroll_to_widget(widget, animate=True)
+                except NoMatches:
+                    pass
+                break
 
     # --- Output consumer (bounded queue → RichLog) ---
 

@@ -20,6 +20,7 @@ from rich.text import Text
 from textual.app import ComposeResult, RenderResult
 from textual.css.query import NoMatches
 from textual.events import Click
+from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Static
@@ -57,6 +58,13 @@ _DIFF_ARROW_RE = re.compile(r"^(.+?)\s+→\s+(.+)$")
 
 _IMAGE_EXTS: frozenset[str] = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff"})
 _MEDIA_LINE_RE = re.compile(r"(?m)^MEDIA:\s*\S.*$")
+
+
+class ImageMounted(Message):
+    """Posted by StreamingToolBlock after an InlineImage is mounted."""
+    def __init__(self, path: str) -> None:
+        super().__init__()
+        self.path = path
 _MEDIA_EXTRACT_RE = re.compile(r"^MEDIA:\s*(.+)$", re.IGNORECASE)
 
 
@@ -1018,6 +1026,7 @@ class StreamingToolBlock(ToolBlock):
             from hermes_cli.tui.widgets import InlineImage
             self._body.remove_children()
             self._body.mount(InlineImage(image=path, max_rows=24))
+            self.post_message(ImageMounted(path))
         except Exception:
             pass
         return True

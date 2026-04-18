@@ -1626,6 +1626,10 @@ class HermesCLI:
             _sdt(CLI_CONFIG["display"].get("halfblock_dark_threshold", 0.1))
         except Exception:
             pass
+        # InlineImageBar enabled state
+        self._inline_image_bar_enabled: bool = bool(
+            CLI_CONFIG["display"].get("image_bar", True)
+        )
 
         # Streaming display state
         self._stream_buf = ""        # Partial line buffer for line-buffered rendering
@@ -10493,6 +10497,7 @@ class HermesCLI:
                 clipboard_available=_clipboard_ok,
                 xclip_cmd=_xclip_cmd,
             )
+            _tui_app._inline_image_bar_enabled = self._inline_image_bar_enabled
             _tui_app._spinner_frames = _COMMAND_SPINNER_FRAMES
             _hermes_app = _tui_app
             # Apply skin to TUI at startup — component_vars + ui_accent

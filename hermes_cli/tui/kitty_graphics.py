@@ -135,10 +135,12 @@ def _detect_caps() -> GraphicsCap:
     if os.environ.get("TMUX"):
         return GraphicsCap.HALFBLOCK
 
-    # Step 6: active APC query
+    # Step 6: active APC query; step 6.5: Sixel DA1 probe
     if term != "dumb" and sys.stdout.isatty():
         if _apc_probe():
             return GraphicsCap.TGP
+        if _sixel_probe():
+            return GraphicsCap.SIXEL
 
     # Step 7: truecolor env
     if os.environ.get("COLORTERM", "").lower() == "truecolor":
@@ -188,6 +190,106 @@ def _apc_probe() -> bool:
                 termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
             except Exception:
                 pass
+
+
+# ---------------------------------------------------------------------------
+# § 4.2.5  Sixel probe + encoding
+# ---------------------------------------------------------------------------
+
+def _sixel_probe() -> bool:
+    """Send DA1 (Primary Device Attributes); return True if terminal reports Sixel."""
+    import select
+    import tty
+    old = None
+    try:
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        tty.setraw(fd)
+        sys.stdout.write("\x1b[c")
+        sys.stdout.flush()
+        rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
+        if not rlist:
+            return False
+        resp = ""
+        while rlist:
+            chunk = os.read(fd, 256)
+            if not chunk:
+                break
+            resp += chunk.decode("ascii", errors="replace")
+            rlist, _, _ = select.select([sys.stdin], [], [], 0.01)
+        return ";4;" in resp or resp.startswith("\x1b[?4;") or ";4c" in resp
+    except Exception:
+        return False
+    finally:
+        if old is not None:
+            try:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old)
+            except Exception:
+                pass
+
+
+def _to_sixel(image: "PILImage.Image", max_cols: int = 80, max_rows: int = 24) -> str:
+    """Encode a PIL image as a DCS Sixel string. Returns "" if PIL unavailable."""
+    if not _PIL_AVAILABLE:
+        return ""
+    cw, ch = _cell_px()
+    if cw <= 0 or ch <= 0:
+        return ""
+    max_px_w = max_cols * cw
+    max_px_h = max_rows * ch
+    img = image.copy()
+    img.thumbnail((max_px_w, max_px_h), PILImage.LANCZOS)
+    img = img.convert("RGB")
+    img_q = img.quantize(colors=256, method=PILImage.Quantize.MEDIANCUT)
+    palette = img_q.getpalette()
+    width, height = img_q.size
+    pixels = list(img_q.getdata())
+    used_indices: set[int] = set(pixels)
+
+    parts: list[str] = ["\x1bPq"]
+    for ci in sorted(used_indices):
+        r = round(palette[ci * 3]     * 100 / 255)
+        g = round(palette[ci * 3 + 1] * 100 / 255)
+        b = round(palette[ci * 3 + 2] * 100 / 255)
+        parts.append(f"#{ci};2;{r};{g};{b}")
+
+    for band_row in range(0, height, 6):
+        band_height = min(6, height - band_row)
+        for ci in sorted(used_indices):
+            sixel_chars = []
+            in_ci = False
+            for col in range(width):
+                val = 0
+                for r in range(band_height):
+                    row = band_row + r
+                    if pixels[row * width + col] == ci:
+                        val |= 1 << r
+                if val:
+                    in_ci = True
+                sixel_chars.append(chr(val + 63))
+            if in_ci:
+                parts.append(f"#{ci}")
+                parts.append(_sixel_rle("".join(sixel_chars)))
+                parts.append("$")
+        parts.append("-")
+
+    parts.append("\x1b\\")
+    return "".join(parts)
+
+
+def _sixel_rle(row: str) -> str:
+    """Run-length encode a sixel row: !N<char> for runs ≥ 3."""
+    out = []
+    i = 0
+    while i < len(row):
+        ch = row[i]
+        j = i + 1
+        while j < len(row) and row[j] == ch:
+            j += 1
+        count = j - i
+        out.append(f"!{count}{ch}" if count >= 3 else ch * count)
+        i = j
+    return "".join(out)
 
 
 # ---------------------------------------------------------------------------

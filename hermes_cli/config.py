@@ -404,6 +404,7 @@ DEFAULT_CONFIG = {
         "show_cost": False,       # Show $ cost in the status bar (off by default)
         "inline_images": "auto",  # auto | on | off — inline image rendering in TUI
         "halfblock_dark_threshold": 0.1,   # WCAG luminance < this → dark cell in halfblock art
+        "image_bar": True,        # Show InlineImageBar thumbnail strip for inline images
         "skin": "default",
         "tool_icon_mode": "auto",  # auto|nerdfont|emoji|ascii
         "tool_gutter": True,       # Show ┊/┃ gutter symbols on tool call blocks

@@ -45,6 +45,13 @@ logger = logging.getLogger(__name__)
 
 _debug = DebugSession("vision_tools", env_var="VISION_TOOLS_DEBUG")
 
+
+def _format_vision_result(result: str, source_path: "str | None") -> str:
+    """Append MEDIA: tag when source is an accessible local path."""
+    if source_path and Path(source_path).exists():
+        return result.rstrip() + f"\nMEDIA: {source_path}\n"
+    return result
+
 # Configurable HTTP download timeout for _download_image().
 # Separate from auxiliary.vision.timeout which governs the LLM API call.
 # Resolution: config.yaml auxiliary.vision.download_timeout → env var → 30s default.
@@ -437,8 +444,9 @@ async def vision_analyze_tool(
         # Log debug information
         _debug.log_call("vision_analyze_tool", debug_call_data)
         _debug.save()
-        
-        return json.dumps(result, indent=2, ensure_ascii=False)
+
+        source_path = str(local_path) if local_path.is_file() else None
+        return _format_vision_result(json.dumps(result, indent=2, ensure_ascii=False), source_path)
         
     except Exception as e:
         error_msg = f"Error analyzing image: {str(e)}"

@@ -180,3 +180,16 @@ def test_absolute_path_nested() -> None:
     t = detect_context("open /etc/h", 11)
     assert t.context is CompletionContext.ABSOLUTE_PATH_REF
     assert t.fragment == "/etc/h"
+
+
+def test_slash_cmd_invocation_suppresses_abs_path() -> None:
+    """/caveman /tui → NATURAL; the /tui arg is not a filesystem path trigger."""
+    t = detect_context("/caveman /tui", 13)
+    assert t.context is CompletionContext.NATURAL
+
+    t2 = detect_context("/skills /home", 13)
+    assert t2.context is CompletionContext.NATURAL
+
+    # Non-slash-command prefix still triggers abs path (e.g. "open /home")
+    t3 = detect_context("open /home", 10)
+    assert t3.context is CompletionContext.ABSOLUTE_PATH_REF

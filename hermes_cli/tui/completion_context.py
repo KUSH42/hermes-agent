@@ -47,6 +47,8 @@ _SLASH_RE = re.compile(r"^/([\w-]*)$")
 _PATH_RE = re.compile(r"(?:^|\s)@([\w./\-]*)$")     # anchored to cursor head
 _PLAIN_PATH_RE = re.compile(r"(?:^|\s)((?:\.\.?|~)(?:/[\w./\-]*)?)$")  # ./x, ../x, ~/x, ., ..
 _ABS_PATH_RE = re.compile(r"(?:^|\s)(/[\w.\-]+(?:/[\w./\-]*)?)$")
+# Slash-command invocation (e.g. "/caveman /tui") — args are NOT filesystem paths
+_SLASH_CMD_INVOCATION_RE = re.compile(r"^/[\w-]+\s")
 
 
 def detect_context(value: str, cursor: int) -> CompletionTrigger:
@@ -87,7 +89,7 @@ def detect_context(value: str, cursor: int) -> CompletionTrigger:
     m = _ABS_PATH_RE.search(head)
     if m:
         full_path = m.group(1)
-        if not head.startswith(full_path):
+        if not head.startswith(full_path) and not _SLASH_CMD_INVOCATION_RE.match(head):
             return CompletionTrigger(
                 context=CompletionContext.ABSOLUTE_PATH_REF,
                 fragment=full_path,

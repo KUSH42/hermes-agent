@@ -15,13 +15,14 @@ from hermes_cli.tui.completion_context import (
 # ---------------------------------------------------------------------------
 
 def test_slash_only_at_start() -> None:
-    """/h at position 0 → SLASH_COMMAND; foo /h → NATURAL."""
+    """/h at position 0 → SLASH_COMMAND; foo /h → ABSOLUTE_PATH_REF."""
     t = detect_context("/h", 2)
     assert t.context is CompletionContext.SLASH_COMMAND
     assert t.fragment == "h"
 
     t2 = detect_context("foo /h", 6)
-    assert t2.context is CompletionContext.NATURAL
+    assert t2.context is CompletionContext.ABSOLUTE_PATH_REF
+    assert t2.fragment == "/h"
 
 
 def test_slash_full_command_is_slash_context() -> None:
@@ -151,3 +152,31 @@ def test_absolute_path_at_start_stays_slash_context() -> None:
     """SOL /tmp stays slash-context to preserve slash-command semantics."""
     t = detect_context("/tmp", 4)
     assert t.context is CompletionContext.SLASH_COMMAND
+
+
+def test_absolute_path_no_trailing_slash() -> None:
+    """/etc (no trailing /) after whitespace → ABSOLUTE_PATH_REF."""
+    t = detect_context("open /etc", 9)
+    assert t.context is CompletionContext.ABSOLUTE_PATH_REF
+    assert t.fragment == "/etc"
+
+
+def test_absolute_path_partial_name() -> None:
+    """/ho partial name after whitespace → ABSOLUTE_PATH_REF."""
+    t = detect_context("check /ho", 9)
+    assert t.context is CompletionContext.ABSOLUTE_PATH_REF
+    assert t.fragment == "/ho"
+
+
+def test_absolute_path_with_trailing_slash() -> None:
+    """/etc/ after whitespace → ABSOLUTE_PATH_REF."""
+    t = detect_context("open /etc/", 10)
+    assert t.context is CompletionContext.ABSOLUTE_PATH_REF
+    assert t.fragment == "/etc/"
+
+
+def test_absolute_path_nested() -> None:
+    """/etc/h nested path after whitespace → ABSOLUTE_PATH_REF."""
+    t = detect_context("open /etc/h", 11)
+    assert t.context is CompletionContext.ABSOLUTE_PATH_REF
+    assert t.fragment == "/etc/h"

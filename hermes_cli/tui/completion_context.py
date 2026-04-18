@@ -45,8 +45,8 @@ class CompletionTrigger:
 # The character class explicitly includes hyphen, which ``\w`` does not.
 _SLASH_RE = re.compile(r"^/([\w-]*)$")
 _PATH_RE = re.compile(r"(?:^|\s)@([\w./\-]*)$")     # anchored to cursor head
-_PLAIN_PATH_RE = re.compile(r"(?:^|\s)((?:\.\.?|~)/[\w./\-]*)$")  # ./x, ../x, ~/x
-_ABS_PATH_RE = re.compile(r"(?:^|\s)(/[\w.\-]+/[\w./\-]*)$")
+_PLAIN_PATH_RE = re.compile(r"(?:^|\s)((?:\.\.?|~)(?:/[\w./\-]*)?)$")  # ./x, ../x, ~/x, ., ..
+_ABS_PATH_RE = re.compile(r"(?:^|\s)(/[\w.\-]+(?:/[\w./\-]*)?)$")
 
 
 def detect_context(value: str, cursor: int) -> CompletionTrigger:
@@ -72,9 +72,12 @@ def detect_context(value: str, cursor: int) -> CompletionTrigger:
 
     m = _PLAIN_PATH_RE.search(head)
     if m:
-        full_path = m.group(1)              # e.g. "./src/main" or "../foo" or "~/bar"
-        slash_idx = full_path.index("/")
-        fragment = full_path[slash_idx + 1:]  # part after the first "/"
+        full_path = m.group(1)              # e.g. "./src/main" or "../foo" or "~/bar" or "." or ".."
+        slash_idx = full_path.find("/")
+        if slash_idx >= 0:
+            fragment = full_path[slash_idx + 1:]  # part after the first "/"
+        else:
+            fragment = ""  # bare "." or ".." with no slash
         return CompletionTrigger(
             context=CompletionContext.PLAIN_PATH_REF,
             fragment=fragment,

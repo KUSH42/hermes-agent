@@ -569,3 +569,100 @@ def _load_image(
         return img
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# § 10  Unicode placeholder protocol helpers (InlineProseLog)
+# ---------------------------------------------------------------------------
+
+_unicode_placeholders_cache: bool | None = None
+
+# Diacritical marks for Kitty row/col encoding (Kitty graphics protocol spec).
+_DIACRITICS: tuple[int, ...] = (
+    0x0305, 0x030D, 0x030E, 0x0310, 0x0312, 0x033D, 0x033E, 0x033F,
+    0x0346, 0x034A, 0x034B, 0x034C, 0x0350, 0x0351, 0x0352, 0x0357,
+    0x035B, 0x0363, 0x0364, 0x0365, 0x0366, 0x0367, 0x0368, 0x0369,
+    0x036A, 0x036B, 0x036C, 0x036D, 0x036E, 0x036F,
+)
+
+_PLACEHOLDER_CHAR = "\U0010EEEE"
+
+
+def _supports_unicode_placeholders() -> bool:
+    """Return True iff the terminal supports Kitty unicode placeholder mode.
+
+    Requires TERM starting with 'xterm-kitty' AND KITTY_WINDOW_ID set.
+    Result is cached for the session.
+    """
+    global _unicode_placeholders_cache
+    if _unicode_placeholders_cache is None:
+        term = os.environ.get("TERM", "")
+        kitty_window = os.environ.get("KITTY_WINDOW_ID", "")
+        _unicode_placeholders_cache = term.startswith("xterm-kitty") and bool(kitty_window)
+    return _unicode_placeholders_cache
+
+
+def _reset_unicode_placeholders_cache() -> None:
+    """Test-only: clear cached placeholder probe result."""
+    global _unicode_placeholders_cache
+    _unicode_placeholders_cache = None
+
+
+def transmit_only_sequence(
+    image_id: int,
+    image: "PILImage.Image",
+    cell_width: int,
+    cell_height: int,
+) -> str:
+    """Build TGP a=T,U=1 sequence: transmit RGBA pixels without display.
+
+    f=32 = RGBA format, t=d = direct data, a=T = transmit-only,
+    U=1 = enable unicode placeholder mode for this image id.
+    """
+    img = image.convert("RGBA")
+    pw, ph = img.size
+    raw = img.tobytes()
+    chunks = _chunk_b64(raw)
+
+    if len(chunks) == 1:
+        return (
+            f"\x1b_Gf=32,t=d,a=T,U=1,i={image_id},"
+            f"s={pw},v={ph},q=2;{chunks[0]}\x1b\\"
+        )
+
+    parts = [
+        f"\x1b_Gf=32,t=d,a=T,U=1,i={image_id},"
+        f"s={pw},v={ph},m=1,q=2;{chunks[0]}\x1b\\"
+    ]
+    for chunk in chunks[1:-1]:
+        parts.append(f"\x1b_Gm=1,q=2;{chunk}\x1b\\")
+    parts.append(f"\x1b_Gm=0,q=2;{chunks[-1]}\x1b\\")
+    return "".join(parts)
+
+
+def build_tgp_placeholder_strips(
+    image_id: int,
+    cell_width: int,
+    cell_height: int,
+) -> list[Strip]:
+    """Build one placeholder Strip per row for a TGP image transmitted with U=1.
+
+    Each cell: U+10EEEE + row diacritical + col diacritical.
+    Foreground color encodes image_id as 24-bit RGB:
+      R = (image_id >> 16) & 0xFF, G = (image_id >> 8) & 0xFF, B = image_id & 0xFF.
+    """
+    r_byte = (image_id >> 16) & 0xFF
+    g_byte = (image_id >> 8) & 0xFF
+    b_byte = image_id & 0xFF
+    fg = rich.color.Color.from_rgb(r_byte, g_byte, b_byte)
+
+    strips: list[Strip] = []
+    for row in range(cell_height):
+        row_diac = chr(_DIACRITICS[row % len(_DIACRITICS)])
+        segments: list[Segment] = []
+        for col in range(cell_width):
+            col_diac = chr(_DIACRITICS[col % len(_DIACRITICS)])
+            cell_text = _PLACEHOLDER_CHAR + row_diac + col_diac
+            segments.append(Segment(cell_text, Style(color=fg)))
+        strips.append(Strip(segments))
+    return strips

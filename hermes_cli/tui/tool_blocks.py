@@ -360,6 +360,7 @@ class ToolHeader(PulseMixin, Widget):
         # v4 fields
         self._elapsed_ms: float | None = None    # raw elapsed time for v4 duration rule
         self._header_args: dict = {}             # live tool args for primary-arg rendering
+        self._primary_hero: str | None = None    # result summary primary shown in tail
 
     def on_mount(self) -> None:
         self._refresh_gutter_color()
@@ -464,6 +465,16 @@ class ToolHeader(PulseMixin, Widget):
                     tail.append(f"  -{self._stats.deletions}", style=f"bold {del_color}")
             elif self._line_count:
                 tail.append(f"  {self._line_count}L", style="dim")
+            # Hero chip: primary result summary (v4 §4.1)
+            if self._primary_hero:
+                try:
+                    from hermes_cli.config import read_raw_config
+                    hero_on = bool(read_raw_config().get("display", {}).get("result_hero", True))
+                except Exception:
+                    hero_on = True
+                if hero_on:
+                    hero_style = "bold red" if self._tool_icon_error else "dim green"
+                    tail.append(f"  {self._primary_hero}", style=hero_style)
             if self._has_affordances:
                 tail.append("  ▾" if not self.collapsed else "  ▸", style="dim")
             if self._duration:   # already v4-formatted by _tick_duration / complete()

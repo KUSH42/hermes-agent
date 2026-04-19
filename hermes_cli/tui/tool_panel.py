@@ -20,7 +20,7 @@ from textual.widget import Widget
 from textual.widgets import Static
 
 if TYPE_CHECKING:
-    from hermes_cli.tui.tool_result_parse import ResultSummary
+    from hermes_cli.tui.tool_result_parse import ResultSummary, ResultSummaryV4
     from hermes_cli.tui.tool_category import ToolCategory
 
 
@@ -230,6 +230,44 @@ class FooterPane(Widget):
             parts.append(summary.retry_hint, style="underline cyan")
         self._content.update(parts)
 
+    def update_summary_v4(self, summary: "ResultSummaryV4") -> None:
+        """Re-render footer from a ResultSummaryV4 (v4 §4.2)."""
+        from rich.text import Text
+
+        parts = Text()
+
+        # Chips row
+        for chip in summary.chips:
+            tone_style = {
+                "success": "bold green",
+                "warning": "bold yellow",
+                "error": "bold red",
+                "accent": "bold cyan",
+                "neutral": "dim",
+            }.get(chip.tone, "dim")
+            parts.append(f" {chip.text} ", style=tone_style)
+
+        # Stderr tail
+        if summary.stderr_tail:
+            parts.append("  ")
+            parts.append(summary.stderr_tail[:80], style="dim red")
+
+        # Action row (hotkey hints)
+        if summary.actions:
+            parts.append("  ")
+            for action in summary.actions:
+                parts.append(f"[{action.hotkey}]", style="dim")
+                parts.append(f" {action.label}", style="dim")
+                parts.append("  ", style="")
+
+        # Artifact chips (file/url labels)
+        if summary.artifacts:
+            for artifact in summary.artifacts:
+                icon = "📎" if artifact.kind == "file" else "🔗" if artifact.kind == "url" else "🖼"
+                parts.append(f" {icon} {artifact.label} ", style="dim cyan")
+
+        self._content.update(parts)
+
     def on_resize(self, event: object) -> None:
         width = getattr(getattr(event, "size", None), "width", 80)
         if width < 60:
@@ -430,6 +468,35 @@ class ToolPanel(Widget):
         if self._footer_pane is not None:
             show = self._should_show_footer(self.detail_level)
             self._footer_pane.styles.display = "block" if show else "none"
+
+    def set_result_summary_v4(self, summary: "ResultSummaryV4") -> None:
+        """Call from app at tool completion to populate v4 footer + header hero chip."""
+        self._completed_at = time.monotonic()
+
+        # Push primary to ToolHeader hero chip
+        if summary.primary is not None:
+            header = getattr(self._block, "_header", None)
+            if header is not None:
+                header._primary_hero = summary.primary
+                header.refresh()
+
+        # Render v4 footer
+        if self._footer_pane is not None:
+            self._footer_pane.update_summary_v4(summary)
+
+        # Auto-level based on error state
+        if summary.is_error and not self._user_detail_override:
+            if self.detail_level == 0:
+                self.detail_level = 1
+        elif not self._user_detail_override:
+            self._apply_complete_auto_level()
+
+        # Show footer when there's something to display
+        if self._footer_pane is not None:
+            has_content = bool(summary.chips or summary.stderr_tail or summary.actions or summary.artifacts)
+            show = has_content and self.detail_level > 0
+            self._footer_pane.styles.display = "block" if show else "none"
+
     def copy_content(self) -> str:
         """Return full plain-text output regardless of detail level."""
         if self._block is None:

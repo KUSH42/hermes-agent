@@ -2578,7 +2578,7 @@ class StatusBar(PulseMixin, Widget):
             "status_model", "status_context_tokens", "status_context_max",
             "status_compaction_progress", "status_compaction_enabled",
             "command_running",
-            "browse_mode", "browse_index", "_browse_total",
+            "browse_mode", "browse_index", "_browse_total", "_browse_hint",
             "status_output_dropped",
             "status_active_file",
         ):
@@ -2653,12 +2653,15 @@ class StatusBar(PulseMixin, Widget):
             browse_total = getattr(app, "_browse_total", 0)
 
             browse_uses = getattr(app, "_browse_uses", 0)
+            browse_hint = getattr(app, "_browse_hint", "")
             left = Text(f"BROWSE ▸{browse_idx + 1}/{browse_total}", style="bold")
-            if width >= 60:
+            if browse_hint:
+                left.append(f"  {browse_hint}", style="dim")
+            elif width >= 60:
                 if browse_uses <= 3:
                     left.append("  Tab · Enter · c copy · a expand-all · Esc exit", style="dim")
                 else:
-                    left.append("  Tab · c · a/A · Esc", style="dim")
+                    left.append("  Tab · c · a/A · [ ] any · { } code · Esc", style="dim")
             elif width >= 40:
                 left.append("  Tab · c · Esc", style="dim")
             ctx_tokens = getattr(app, "status_context_tokens", 0)

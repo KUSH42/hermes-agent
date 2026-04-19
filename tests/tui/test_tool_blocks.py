@@ -431,15 +431,15 @@ def test_on_tool_complete_terminal_preview_tui_passes_rerender_callback():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_browse_mode_stays_false_with_no_headers():
-    """Entering browse mode with no ToolHeaders is a no-op — browse_mode stays False."""
+async def test_browse_mode_allowed_with_no_headers():
+    """Browse mode can be entered even with no ToolHeaders (unified anchor list supports turn-start nav)."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         assert list(app.query(ToolHeader)) == []
         app.browse_mode = True
         await pilot.pause()
-        assert app.browse_mode is False
+        assert app.browse_mode is True
 
 
 @pytest.mark.asyncio

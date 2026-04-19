@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import dataclasses
+import enum
 import logging
 import math
 import platform
@@ -217,6 +219,20 @@ class _HermesScreen(Screen):
         super()._forward_event(event)
 
 
+class BrowseAnchorType(enum.Enum):
+    TURN_START = "turn_start"   # UserMessagePanel
+    CODE_BLOCK = "code_block"   # StreamingCodeBlock (completed)
+    TOOL_BLOCK = "tool_block"   # ToolHeader
+
+
+@dataclasses.dataclass
+class BrowseAnchor:
+    anchor_type: BrowseAnchorType
+    widget: object          # Widget — typed as object to avoid forward-ref issues
+    label: str
+    turn_id: int
+
+
 class HermesApp(App):
     """Main Textual application for the Hermes Agent TUI.
 
@@ -281,6 +297,8 @@ class HermesApp(App):
     browse_index: reactive[int] = reactive(0)
     # Memoized count of mounted ToolHeaders — avoids O(n) DOM query in StatusBar.render()
     _browse_total: reactive[int] = reactive(0)
+    # Unified anchor list hint shown in StatusBar during []/{}/ Alt+↑↓ navigation
+    _browse_hint: reactive[str] = reactive("")
 
     # Output dropped flag — set when queue is full; shown in StatusBar until next successful write
     status_output_dropped: reactive[bool] = reactive(False)
@@ -352,6 +370,9 @@ class HermesApp(App):
 
         # Browse-mode visit counter — first 3 visits show full hint, then compact
         self._browse_uses: int = 0
+        # Unified anchor list for []/{}/ Alt+↑↓ navigation
+        self._browse_anchors: list[BrowseAnchor] = []
+        self._browse_cursor: int = 0
 
         # Active StreamingToolBlocks keyed by tool_call_id
         self._active_streaming_blocks: dict[str, Any] = {}
@@ -1215,6 +1236,9 @@ class HermesApp(App):
                 ov._heat_target = 0.0
             except Exception:
                 pass
+            # Rebuild unified browse anchor list now that all blocks are mounted
+            if self.browse_mode:
+                self._rebuild_browse_anchors()
 
         # --- undo safety guard ---
         if value and self.undo_state is not None:
@@ -2059,13 +2083,14 @@ class HermesApp(App):
                 h.remove_class("focused")
 
     def watch_browse_mode(self, value: bool) -> None:
-        from hermes_cli.tui.tool_blocks import ToolHeader as _TH
         if value:
-            # If no ToolHeaders exist, do not enter browse mode
-            if not list(self.query(_TH)):
-                self.browse_mode = False
-                return
             self._browse_uses += 1
+            # Reset cursor then rebuild unified anchor list
+            self._browse_cursor = 0
+            self._rebuild_browse_anchors()
+        else:
+            self._browse_hint = ""
+            self._clear_browse_highlight()
         # Disable/re-enable input so printable keys bubble to on_key in browse mode
         try:
             inp = self.query_one("#input-area")
@@ -2080,6 +2105,114 @@ class HermesApp(App):
 
     def watch_browse_index(self, _value: int) -> None:
         self._apply_browse_focus()
+
+    # --- Unified browse anchor navigation ---
+
+    def _rebuild_browse_anchors(self) -> None:
+        """Rebuild anchor list in DOM (document) order. Clamp cursor to valid range."""
+        from hermes_cli.tui.tool_blocks import ToolHeader as _TH
+        try:
+            output = self.query_one(OutputPanel)
+        except NoMatches:
+            self._browse_anchors = []
+            self._browse_cursor = 0
+            return
+        anchors: list[BrowseAnchor] = []
+        turn_id = 0
+        for widget in output.walk_children(with_self=False):
+            if isinstance(widget, UserMessagePanel):
+                turn_id += 1
+                anchors.append(BrowseAnchor(
+                    anchor_type=BrowseAnchorType.TURN_START,
+                    widget=widget,
+                    label=f"Turn {turn_id}",
+                    turn_id=turn_id,
+                ))
+            elif isinstance(widget, StreamingCodeBlock):
+                if widget.is_mounted and widget._state != "STREAMING":
+                    anchors.append(BrowseAnchor(
+                        anchor_type=BrowseAnchorType.CODE_BLOCK,
+                        widget=widget,
+                        label=f"Code · {widget._lang or 'text'}",
+                        turn_id=turn_id,
+                    ))
+            elif isinstance(widget, _TH):
+                label = widget._label or "Tool"
+                if widget.has_class("--diff-header"):
+                    label = f"Diff · {label}"
+                anchors.append(BrowseAnchor(
+                    anchor_type=BrowseAnchorType.TOOL_BLOCK,
+                    widget=widget,
+                    label=label,
+                    turn_id=turn_id,
+                ))
+        self._browse_anchors = anchors
+        if anchors:
+            self._browse_cursor = min(self._browse_cursor, len(anchors) - 1)
+        else:
+            self._browse_cursor = 0
+
+    def _jump_anchor(
+        self,
+        direction: int,
+        filter_type: "BrowseAnchorType | None" = None,
+    ) -> None:
+        """Jump to next/previous anchor, optionally filtered by type."""
+        if not self._browse_anchors:
+            self._rebuild_browse_anchors()
+        if not self._browse_anchors:
+            return
+        candidates = [
+            (i, a) for i, a in enumerate(self._browse_anchors)
+            if filter_type is None or a.anchor_type == filter_type
+        ]
+        if not candidates:
+            return
+        if direction == 1:
+            for idx, anchor in candidates:
+                if idx > self._browse_cursor:
+                    self._focus_anchor(idx, anchor)
+                    return
+            self._focus_anchor(*candidates[0])
+        else:
+            for idx, anchor in reversed(candidates):
+                if idx < self._browse_cursor:
+                    self._focus_anchor(idx, anchor)
+                    return
+            self._focus_anchor(*candidates[-1])
+
+    def _focus_anchor(self, idx: int, anchor: "BrowseAnchor", *, _retry: bool = True) -> None:
+        """Scroll to and highlight the given anchor."""
+        w = anchor.widget
+        if not getattr(w, "is_mounted", False):
+            if _retry:
+                self._rebuild_browse_anchors()
+                for new_idx, new_anchor in enumerate(self._browse_anchors):
+                    if new_anchor.anchor_type == anchor.anchor_type:
+                        self._focus_anchor(new_idx, new_anchor, _retry=False)
+                        return
+            return
+        self._browse_cursor = idx
+        try:
+            self.query_one(OutputPanel).scroll_to_widget(w, animate=True, center=True)
+        except NoMatches:
+            pass
+        self._clear_browse_highlight()
+        w.add_class("--browse-focused")
+        self._update_browse_status(anchor)
+
+    def _clear_browse_highlight(self) -> None:
+        """Remove --browse-focused CSS class from all widgets."""
+        for w in self.query(".--browse-focused"):
+            w.remove_class("--browse-focused")
+
+    def _update_browse_status(self, anchor: "BrowseAnchor") -> None:
+        """Update _browse_hint reactive with current anchor context."""
+        anchors = self._browse_anchors
+        typed = [a for a in anchors if a.anchor_type == anchor.anchor_type]
+        pos = next((i + 1 for i, a in enumerate(typed) if a is anchor), 1)
+        total = len(typed)
+        self._browse_hint = f"{anchor.label} {pos}/{total} · Turn {anchor.turn_id}"
 
     # --- ToolPanel J/K navigation ---
 
@@ -3062,7 +3195,8 @@ class HermesApp(App):
                 event.prevent_default()
                 return
 
-            # Priority 4: enter browse mode when idle (no overlay, agent not running)
+            # Priority 4: enter browse mode when idle (no overlay, agent not running).
+            # No ToolHeader requirement — unified anchor list supports text-only turns.
             no_overlay = all(
                 getattr(self, a) is None
                 for a in ("approval_state", "clarify_state", "sudo_state", "secret_state")
@@ -3134,6 +3268,30 @@ class HermesApp(App):
                 return
             elif key == "escape":
                 self.browse_mode = False
+                event.prevent_default()
+                return
+            elif key == "]":
+                self._jump_anchor(+1)
+                event.prevent_default()
+                return
+            elif key == "[":
+                self._jump_anchor(-1)
+                event.prevent_default()
+                return
+            elif key == "}":
+                self._jump_anchor(+1, BrowseAnchorType.CODE_BLOCK)
+                event.prevent_default()
+                return
+            elif key == "{":
+                self._jump_anchor(-1, BrowseAnchorType.CODE_BLOCK)
+                event.prevent_default()
+                return
+            elif key == "alt+down":
+                self._jump_anchor(+1, BrowseAnchorType.TURN_START)
+                event.prevent_default()
+                return
+            elif key == "alt+up":
+                self._jump_anchor(-1, BrowseAnchorType.TURN_START)
                 event.prevent_default()
                 return
             elif event.character is not None:

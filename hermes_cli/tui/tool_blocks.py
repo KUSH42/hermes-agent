@@ -953,6 +953,7 @@ class StreamingToolBlock(ToolBlock):
             self.append_line(raw)
         if header_stats is not None:
             self._header._stats = header_stats
+        self._header.add_class("--diff-header")
 
     def on_unmount(self) -> None:
         """Stop timers so they don't fire against a detached widget."""

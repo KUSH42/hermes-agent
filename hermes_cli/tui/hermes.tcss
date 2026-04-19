@@ -318,6 +318,20 @@ ToolHeader.--flash-error {
     transition: background 400ms out_cubic;
 }
 
+/* Browse mode — unified anchor highlight */
+.--browse-focused {
+    border: tall $accent 40%;
+    background: $accent 8%;
+}
+StreamingCodeBlock.--browse-focused {
+    border: tall $success 40%;
+    background: $success 8%;
+}
+UserMessagePanel.--browse-focused {
+    border: tall $warning 40%;
+    background: $warning 8%;
+}
+
 /* ToolBodyContainer body lines — no individual scroll.
  * Content flows into OutputPanel (the single scroll container).
  * overflow: hidden prevents nested scroll from creating stale offsets

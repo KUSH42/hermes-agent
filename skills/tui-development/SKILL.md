@@ -13,7 +13,7 @@ description: >
 compatibility: "Python 3.11+, Textual >=1.0,<9 (pinned), Rich >=15"
 metadata:
   author: xush
-  version: "3.6"
+  version: "3.7"
   target: code_agent
 ---
 
@@ -135,7 +135,8 @@ Recent changes (details → reference files):
     `hermes_cli/tui/widgets.py §MathBlockWidget/StreamingCodeBlock._finalize_syntax/
     _try_render_mermaid_async/_on_mermaid_rendered`,
     `hermes_cli/tui/hermes.tcss §MathBlockWidget`, `hermes_cli/config.py §display.math*`,
-    `cli.py §_math_enabled/_math_renderer/_mermaid_enabled/_math_dpi/_math_max_rows`,
+    `cli.py §_math_enabled/_math_renderer/_mermaid_enabled/_math_dpi/_math_max_rows/
+    system_prompt math hint (appended in main() after worktree injection, guarded by _math_enabled|_mermaid_enabled)`,
     `tests/tui/test_math_renderer.py` (new, 30 tests)
 - **SDF crossfade warmup** (2026-04-19): No more blank overlay while SDF baker runs. `_get_engine()` sdf_morph
   branch now shows a braille warmup engine (`sdf_warmup_engine`, default `"neural_pulse"`) until

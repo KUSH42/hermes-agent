@@ -736,9 +736,13 @@ class ToolBodyContainer(Widget):
     DEFAULT_CSS = """
     ToolBodyContainer { height: auto; display: none; }
     ToolBodyContainer.expanded { display: block; }
+    ToolBodyContainer .--microcopy { height: 1; display: none; color: $text-muted; padding: 0 2; }
+    ToolBodyContainer .--microcopy.--active { display: block; }
     """
 
     def compose(self) -> ComposeResult:
+        # Microcopy row (v4 §3.3) — always present, shown when v4 active + elapsed≥0.5s
+        yield Static("", classes="--microcopy")
         # No explicit ID — query by type inside ToolBodyContainer to avoid
         # duplicate IDs when multiple ToolBlocks exist per MessagePanel.
         yield CopyableRichLog(markup=False, highlight=False, wrap=False)
@@ -1155,6 +1159,11 @@ class StreamingToolBlock(ToolBlock):
         self._spinner_frame: int = 0
         self._completed: bool = False
         self._tail = ToolTail()
+        # v4 §3 — microcopy + adaptive flush
+        self._bytes_received: int = 0
+        self._last_line_time: float = 0.0
+        self._flush_slow: bool = False       # True when idle≥2s, running at 10Hz
+        self._microcopy_widget: "Static | None" = None
 
     def compose(self) -> ComposeResult:
         yield self._header
@@ -1168,10 +1177,16 @@ class StreamingToolBlock(ToolBlock):
         self._header._has_affordances = False  # no toggle while streaming
         self._header._spinner_char = _SPINNER_FRAMES[0]
         self._stream_started_at = time.monotonic()
+        self._last_line_time = self._stream_started_at
         self._header._duration = "0.0s"
         self._render_timer = self.set_interval(1 / 60, self._flush_pending)
         self._spinner_timer = self.set_interval(0.25, self._tick_spinner)
         self._duration_timer = self.set_interval(0.1, self._tick_duration)
+        # Cache microcopy widget ref (v4 §3.3)
+        try:
+            self._microcopy_widget = self._body.query_one(".--microcopy", Static)
+        except Exception:
+            self._microcopy_widget = None
         # Start icon pulse
         self._header._pulse_start()
 
@@ -1189,8 +1204,15 @@ class StreamingToolBlock(ToolBlock):
             raw = raw[:_LINE_BYTE_CAP] + f"… (+{over} chars)"
         plain = _strip_ansi(raw)
         self._total_received += 1
+        self._bytes_received += len(raw)
+        self._last_line_time = time.monotonic()
         self._pending.append((raw, plain))
         self._all_plain.append(plain)
+        # Restore 60Hz if we had dropped to slow rate (v4 §3.4)
+        if self._flush_slow:
+            self._flush_slow = False
+            self._render_timer.stop()
+            self._render_timer = self.set_interval(1 / 60, self._flush_pending)
 
     def inject_diff(self, diff_lines: list[str], header_stats: "ToolHeaderStats | None") -> None:
         """Inject diff content into body before complete(); set +/- chips in header."""
@@ -1259,10 +1281,28 @@ class StreamingToolBlock(ToolBlock):
         else:
             self._header.collapsed = False
         self._header.refresh()
+        # v4 §3.3: clear microcopy on completion (keep MCP provenance line)
+        if _tool_panel_v4_enabled():
+            self._clear_microcopy_on_complete()
         # Brief success flash to signal completion
         self._header.flash_complete()
         # If output contains a MEDIA: path, replace body with an inline image
         self._try_mount_media()
+
+    def _clear_microcopy_on_complete(self) -> None:
+        """Clear microcopy on completion unless this is an MCP tool (§3.3)."""
+        mc = self._microcopy_widget
+        if mc is None:
+            return
+        try:
+            from hermes_cli.tui.tool_category import spec_for, ToolCategory
+            spec = spec_for(self._tool_name or "")
+            if spec.category == ToolCategory.MCP:
+                return  # MCP provenance line persists
+        except Exception:
+            pass
+        mc.remove_class("--active")
+        mc.update("")
 
     def _try_mount_media(self) -> bool:
         """Mount inline media if output contains a MEDIA: image line or audio/video URLs.
@@ -1343,9 +1383,45 @@ class StreamingToolBlock(ToolBlock):
             self._header._duration = f"{elapsed_ms / 1000:.1f}s"
         self._header.refresh()
 
+    def _update_microcopy(self) -> None:
+        """Update microcopy Static with current streaming state (v4 §3.3)."""
+        mc = self._microcopy_widget
+        if mc is None or not _tool_panel_v4_enabled():
+            return
+        started = getattr(self, "_stream_started_at", None)
+        if started is None:
+            return
+        elapsed_s = time.monotonic() - started
+        if elapsed_s < 0.5:
+            return  # avoid flash for fast tools
+        try:
+            from hermes_cli.tui.tool_category import spec_for
+            from hermes_cli.tui.streaming_microcopy import StreamingState, microcopy_line
+        except Exception:
+            return
+        spec = spec_for(self._tool_name or "")
+        state = StreamingState(
+            lines_received=self._total_received,
+            bytes_received=self._bytes_received,
+            elapsed_s=elapsed_s,
+        )
+        text = microcopy_line(spec, state)
+        if text:
+            mc.update(text)
+            mc.add_class("--active")
+
     def _flush_pending(self) -> None:
         """Drain pending lines into the RichLog (called at 60fps)."""
+        # Adaptive flush: drop to 10Hz after 2s idle (v4 §3.4)
+        if _tool_panel_v4_enabled() and not self._flush_slow and not self._completed:
+            now = time.monotonic()
+            if now - self._last_line_time > 2.0:
+                self._flush_slow = True
+                self._render_timer.stop()
+                self._render_timer = self.set_interval(1 / 10, self._flush_pending)
+
         if not self._pending:
+            self._update_microcopy()
             return
         batch = self._pending
         self._pending = []
@@ -1386,6 +1462,8 @@ class StreamingToolBlock(ToolBlock):
                     self._tail.update_count(new_total)
                 except Exception:
                     pass
+
+        self._update_microcopy()
 
     # ------------------------------------------------------------------
     # OmissionBar callbacks — expand/collapse the visible line window

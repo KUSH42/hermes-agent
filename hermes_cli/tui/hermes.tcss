@@ -23,6 +23,7 @@
 
 /* Component variable declarations — must be present for Textual to parse $var refs */
 $footnote-ref-color: #888888;
+$tool-glyph-mcp: "󰡨";
 
 /* Screen is the actual DOM root — transparent widgets inherit from it, not from
  * HermesApp. Both must be set so every widget in the tree shows $app-bg. */

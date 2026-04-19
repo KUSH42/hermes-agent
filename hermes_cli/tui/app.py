@@ -113,6 +113,12 @@ from hermes_cli.tui.workspace_tracker import (
     analyze_complexity,
 )
 from hermes_cli.tool_icons import get_display_name
+from hermes_cli.tui.tool_category import (
+    MCPServerInfo,
+    ToolSpec,
+    register_mcp_server,
+    register_tool,
+)
 from hermes_cli.tui.constants import ICON_COPY
 from hermes_cli.tui.animation import AnimationClock, shimmer_text
 from hermes_cli.tui.perf import EventLoopLatencyProbe, FrameRateProbe, WorkerWatcher
@@ -217,6 +223,42 @@ class _HermesScreen(Screen):
                 widget._forward_event(event._apply_offset(-region.x, -region.y))
             return
         super()._forward_event(event)
+
+
+# ---------------------------------------------------------------------------
+# MCP event messages (v4 sub-spec A §3)
+# ---------------------------------------------------------------------------
+
+from textual.message import Message as _TxtMessage
+
+
+class MCPServerRegistered(_TxtMessage):
+    """Posted when an MCP server connects and registers its tool list.
+
+    Consumed by HermesApp._on_mcp_server_registered to update the tool registry.
+    """
+    def __init__(
+        self,
+        server: str,
+        icon_nf: str | None,
+        icon_ascii: str,
+        tools: tuple[dict, ...],
+    ) -> None:
+        super().__init__()
+        self.server = server
+        self.icon_nf = icon_nf
+        self.icon_ascii = icon_ascii
+        self.tools: tuple[dict, ...] = tools
+
+
+class MCPServerDisconnected(_TxtMessage):
+    """Posted when an MCP server disconnects. Specs stay registered."""
+    def __init__(self, server: str) -> None:
+        super().__init__()
+        self.server = server
+
+
+# ---------------------------------------------------------------------------
 
 
 class BrowseAnchorType(enum.Enum):
@@ -616,6 +658,33 @@ class HermesApp(App):
         if not self._workspace_hint_shown and tracker.entries():
             self._workspace_hint_shown = True
             self._flash_hint("w  workspace changes", 3.0)
+
+    # ---------------------------------------------------------------------------
+    # MCP registry handlers (v4 P1 — sub-spec B §5.3)
+    # ---------------------------------------------------------------------------
+
+    def on_mcp_server_registered(self, msg: MCPServerRegistered) -> None:
+        """Consume MCPServerRegistered: update tool registry."""
+        kw: dict = {"icon_ascii": msg.icon_ascii}
+        if msg.icon_nf:
+            kw["icon_nf"] = msg.icon_nf
+        try:
+            register_mcp_server(msg.server, **kw)
+        except ValueError:
+            logger.warning("register_mcp_server failed for %r", msg.server)
+            return
+        for tool_meta in msg.tools:
+            try:
+                register_tool(
+                    ToolSpec.from_mcp_meta(tool_meta, server=msg.server),
+                    overwrite=True,
+                )
+            except Exception:
+                logger.debug("Failed to register MCP tool %r from %r", tool_meta.get("name"), msg.server)
+
+    def on_mcp_server_disconnected(self, msg: MCPServerDisconnected) -> None:
+        """Consume MCPServerDisconnected: specs stay — panels may still be on screen."""
+        pass  # deliberate no-op; MCPServerRegistry entry stays for in-flight renders
 
     def action_toggle_workspace(self) -> None:
         try:

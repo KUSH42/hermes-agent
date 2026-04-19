@@ -274,6 +274,15 @@ DEFAULT_CONFIG = {
         # Enabled by default for non-local backends (SSH); local is always opt-in
         # via TERMINAL_LOCAL_PERSISTENT env var.
         "persistent_shell": True,
+        "stream_effect": {
+            "enabled": "none",       # none | flash | gradient_tail | glow_settle | decrypt
+            "color": "",             # accent override hex (empty = use skin accent)
+            "length": 16,            # gradient_tail: tail length in chars
+            "speed": 1.0,            # terminal mode delay multiplier
+            "settle_frames": 6,      # glow_settle: frames to fade to text color
+            "scramble_frames": 14,   # decrypt: frames before word resolves
+            "period": 0.75,          # breathe: oscillation period in seconds
+        },
     },
     
     "browser": {

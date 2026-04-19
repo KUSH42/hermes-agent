@@ -291,6 +291,31 @@ def _cursor_blink_enabled() -> bool:
         return True
 
 
+def _stream_effect_name() -> str:
+    try:
+        from hermes_cli.config import read_raw_config
+        return read_raw_config().get("terminal", {}).get("stream_effect", {}).get("enabled", "none")
+    except Exception:
+        return "none"
+
+
+def _stream_effect_cfg() -> dict:
+    try:
+        from hermes_cli.config import read_raw_config
+        sub = read_raw_config().get("terminal", {}).get("stream_effect", {})
+        return {
+            "stream_effect": sub.get("enabled", "none"),
+            "stream_effect_color": sub.get("color", ""),
+            "stream_effect_length": sub.get("length", 16),
+            "stream_effect_speed": sub.get("speed", 1.0),
+            "stream_effect_settle_frames": sub.get("settle_frames", 6),
+            "stream_effect_scramble_frames": sub.get("scramble_frames", 14),
+            "stream_effect_period": sub.get("period", 0.75),
+        }
+    except Exception:
+        return {"stream_effect": "none"}
+
+
 def _pulse_enabled() -> bool:
     """PulseMixin on StatusBar running indicator (default: true)."""
     try:
@@ -631,6 +656,25 @@ class LiveLineWidget(Widget):
         self._blink_visible: bool = True
         self._blink_timer: object | None = None
         self._blink_enabled: bool = _cursor_blink_enabled()
+        # Stream effect setup
+        self._stream_fx = None
+        self._accent_hex: str = "#FFD700"
+        self._text_hex: str = "#FFF8DC"
+        _fx_name = _stream_effect_name()
+        if _fx_name and _fx_name != "none":
+            try:
+                from hermes_cli.stream_effects import make_stream_effect, _get_accent_hex
+                self._accent_hex = _get_accent_hex()
+                cfg = _stream_effect_cfg()
+                self._stream_fx = make_stream_effect(cfg, lock=None)
+                if self._stream_fx.needs_clock:
+                    clock = getattr(getattr(self, "app", None), "_anim_clock", None)
+                    if clock is not None:
+                        self._stream_fx_clock_h = clock.subscribe(1, self._tick_stream_fx)
+                    else:
+                        self._stream_fx_clock_h = self.set_interval(1 / 15, self._tick_stream_fx)
+            except Exception:
+                self._stream_fx = None
 
     def on_unmount(self) -> None:
         self._animating = False
@@ -638,10 +682,39 @@ class LiveLineWidget(Widget):
         if getattr(self, "_blink_timer", None) is not None:
             self._blink_timer.stop()
             self._blink_timer = None
+        # Cancel stream effect clock subscription if active
+        fx_h = getattr(self, "_stream_fx_clock_h", None)
+        if fx_h is not None:
+            fx_h.stop()
+            self._stream_fx_clock_h = None
+
+    def _tick_stream_fx(self) -> None:
+        try:
+            if self._stream_fx is not None and self._stream_fx.tick_tui():
+                self.refresh()
+        except Exception:
+            pass
 
     def render(self) -> RenderResult:
         if not self._buf and not self._animating:
             return Text("")
+        # Stream effect path
+        if getattr(self, "_stream_fx", None) is not None and self._buf:
+            try:
+                t = self._stream_fx.render_tui(
+                    self._buf, self._accent_hex, self._text_hex
+                )
+                if self._animating and getattr(self, "_blink_visible", True):
+                    t.append("▌", style="blink")
+                elif (
+                    not getattr(self, "_tw_enabled", False)
+                    and getattr(self, "_blink_timer", None) is not None
+                    and getattr(self, "_blink_visible", True)
+                ):
+                    t.append("▌", style="dim")
+                return t
+            except Exception:
+                pass  # fall through to existing render path
         t = Text.from_ansi(self._buf) if self._buf else Text("")
         # Typewriter cursor (existing path — typewriter on):
         if self._animating and getattr(self, "_tw_cursor", True):
@@ -681,11 +754,18 @@ class LiveLineWidget(Widget):
                 self.call_after_refresh(msg.refresh, layout=True)
         except NoMatches:
             pass
+        if getattr(self, "_stream_fx", None) is not None:
+            self._stream_fx.clear_tui()
         self._buf = lines[-1]
 
     def append(self, chunk: str) -> None:
         """Append *chunk* directly; commit complete lines to the MessagePanel's RichLog."""
         self._buf += chunk
+        if getattr(self, "_stream_fx", None) is not None:
+            try:
+                self._stream_fx.register_token_tui(chunk)
+            except Exception:
+                pass
         if "\n" in self._buf:
             self._commit_lines()
 
@@ -744,6 +824,11 @@ class LiveLineWidget(Widget):
 
                 self._animating = True
                 self._buf += char
+                if getattr(self, "_stream_fx", None) is not None and not char.startswith("\x1b"):
+                    try:
+                        self._stream_fx.register_token_tui(char)
+                    except Exception:
+                        pass
                 if "\n" in self._buf:
                     self._commit_lines()
 
@@ -753,6 +838,11 @@ class LiveLineWidget(Widget):
                         try:
                             c = self._char_queue.get_nowait()
                             self._buf += c
+                            if getattr(self, "_stream_fx", None) is not None and not c.startswith("\x1b"):
+                                try:
+                                    self._stream_fx.register_token_tui(c)
+                                except Exception:
+                                    pass
                             if "\n" in self._buf:
                                 self._commit_lines()
                         except asyncio.QueueEmpty:
@@ -778,6 +868,12 @@ class LiveLineWidget(Widget):
             self._blink_timer.stop()
             self._blink_timer = None
         self._blink_visible = True  # reset to visible for next turn
+        # Notify stream effect of turn end
+        if getattr(self, "_stream_fx", None) is not None:
+            try:
+                self._stream_fx.on_turn_end()
+            except Exception:
+                pass
 
         if not getattr(self, "_tw_enabled", False) or not hasattr(self, "_char_queue"):
             return

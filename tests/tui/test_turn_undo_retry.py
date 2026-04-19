@@ -21,7 +21,7 @@
   18  Rollback cancel leaves DOM unchanged
   19  agent.undo() raises NotImplementedError → flash warning
   20  _handle_tui_command("/undo") returns True
-  21  _handle_tui_command("/help") returns False
+  21  _handle_tui_command("/help") returns True (TUI overlay intercept)
   22  _undo_in_progress=True → second /undo flashes "Undo in progress"
   23  agent_running changes to True while overlay open → auto-cancel
 """
@@ -585,17 +585,17 @@ async def test_handle_tui_command_undo_returns_true():
 
 
 # ---------------------------------------------------------------------------
-# 21. _handle_tui_command("/help") returns False
+# 21. _handle_tui_command("/help") returns True (now handled by TUI overlay)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_handle_tui_command_help_returns_false():
-    """_handle_tui_command('/help') returns False (forward to agent)."""
+async def test_handle_tui_command_help_returns_true():
+    """/help is now intercepted by TUI — returns True (not forwarded to agent)."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         result = app._handle_tui_command("/help")
-        assert result is False
+        assert result is True
 
 
 # ---------------------------------------------------------------------------

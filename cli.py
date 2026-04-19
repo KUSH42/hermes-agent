@@ -10775,7 +10775,25 @@ def main(
             f"The original repo is at {wt_info['repo_root']}.]"
         )
         cli.system_prompt = (cli.system_prompt or "") + wt_note
-    
+
+    # Inject math/mermaid rendering hint so the agent uses appropriate syntax
+    if getattr(cli, "_math_enabled", False) or getattr(cli, "_mermaid_enabled", False):
+        _hints: list[str] = []
+        if getattr(cli, "_math_enabled", False):
+            _hints.append(
+                "Mathematical expressions are rendered natively in this terminal: "
+                "use $$...$$ or \\[...\\] for block math (rendered as images), "
+                "$...$ (with LaTeX symbols like \\alpha or operators) for inline math "
+                "(rendered as unicode symbols like α)."
+            )
+        if getattr(cli, "_mermaid_enabled", False):
+            _hints.append(
+                "Mermaid diagram fences (```mermaid) are rendered as diagrams automatically — "
+                "prefer them over ASCII art for flowcharts, sequences, and graphs."
+            )
+        _math_hint = "\n\n[System note: " + " ".join(_hints) + "]"
+        cli.system_prompt = (cli.system_prompt or "") + _math_hint
+
     # Handle list commands (don't init agent for these)
     if list_tools:
         cli.show_banner()

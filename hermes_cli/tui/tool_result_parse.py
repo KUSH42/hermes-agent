@@ -694,7 +694,7 @@ def agent_result_v4(ctx: ParseContext) -> ResultSummaryV4:
             artifacts=(), is_error=True, error_kind=ctx.complete.error_kind,
         )
     return ResultSummaryV4(
-        primary=None, exit_code=None, chips=(),
+        primary="✓ done", exit_code=None, chips=(),
         stderr_tail="", actions=(), artifacts=(), is_error=False,
     )
 

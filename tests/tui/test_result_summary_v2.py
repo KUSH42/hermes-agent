@@ -303,12 +303,12 @@ class TestWebResultV4:
 # ---------------------------------------------------------------------------
 
 class TestAgentResultV4:
-    def test_success_no_primary(self):
+    def test_success_primary_done(self):
         spec = _spec(ToolCategory.AGENT)
         ctx = _ctx(raw_result="done", spec=spec)
         r = parse(ctx)
         assert not r.is_error
-        assert r.primary is None
+        assert r.primary == "✓ done"
         assert len(r.chips) == 0
 
     def test_error_path(self):

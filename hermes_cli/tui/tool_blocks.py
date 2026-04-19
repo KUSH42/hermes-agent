@@ -346,6 +346,7 @@ class ToolHeader(PulseMixin, Widget):
         self._elapsed_ms: float | None = None    # raw elapsed time for v4 duration rule
         self._header_args: dict = {}             # live tool args for primary-arg rendering
         self._primary_hero: str | None = None    # result summary primary shown in tail
+        self._header_chips: list[tuple[str, str]] = []  # [(text, style)] promoted chips
 
     def on_mount(self) -> None:
         self._refresh_gutter_color()
@@ -451,6 +452,9 @@ class ToolHeader(PulseMixin, Widget):
             if self._primary_hero:
                 hero_style = "bold red" if self._tool_icon_error else "dim green"
                 tail.append(f"  {self._primary_hero}", style=hero_style)
+            # Promoted chips (MCP source, exit code not already in hero, etc.)
+            for chip_text, chip_style in (self._header_chips or []):
+                tail.append(f"  {chip_text}", style=chip_style)
             if self._has_affordances:
                 tail.append("  ▾" if not self.collapsed else "  ▸", style="dim")
             if self._duration:   # already v4-formatted by _tick_duration / complete()

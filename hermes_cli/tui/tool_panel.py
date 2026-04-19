@@ -504,12 +504,28 @@ class ToolPanel(Widget):
         """Call from app at tool completion to populate v4 footer + header hero chip."""
         self._completed_at = time.monotonic()
 
-        # Push primary to ToolHeader hero chip
-        if summary.primary is not None:
-            header = getattr(self._block, "_header", None)
-            if header is not None:
+        # Push primary + promoted chips to ToolHeader
+        header = getattr(self._block, "_header", None)
+        if header is not None:
+            if summary.primary is not None:
                 header._primary_hero = summary.primary
-                header.refresh()
+            # Promote chips not already conveyed by _primary_hero
+            # (MCP source, non-redundant counts, etc. — max 2 chips)
+            primary_text = summary.primary or ""
+            promoted: list[tuple[str, str]] = []
+            tone_map = {
+                "success": "bold green", "warning": "bold yellow",
+                "error": "bold red", "accent": "dim cyan", "neutral": "dim",
+            }
+            for chip in (summary.chips or [])[:3]:
+                if chip.text in primary_text:
+                    continue  # already shown in hero
+                style = tone_map.get(chip.tone, "dim")
+                promoted.append((chip.text, style))
+                if len(promoted) >= 2:
+                    break
+            header._header_chips = promoted
+            header.refresh()
 
         # Render v4 footer
         if self._footer_pane is not None:

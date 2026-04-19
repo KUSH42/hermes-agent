@@ -4570,7 +4570,6 @@ class InlineMediaWidget(Widget):
     def _prepare(self) -> None:
         from hermes_cli.tui.media_player import (
             MpvController,
-            _inline_media_config,
             _resolve_youtube_url,
             _fetch_youtube_thumbnail,
             _extract_video_thumbnail,
@@ -4590,6 +4589,8 @@ class InlineMediaWidget(Widget):
         self.app.call_from_thread(self._on_ready, ctrl, thumb_path)
 
     def _on_ready(self, ctrl: Any, thumb_path: "str | None") -> None:
+        if not self.is_mounted:
+            return
         from hermes_cli.tui.media_player import _short_url
         self._ctrl = ctrl
         if thumb_path:
@@ -4598,8 +4599,11 @@ class InlineMediaWidget(Widget):
             except Exception:
                 pass
         self.state = "idle"
-        ctrl_label = self.query_one("#media-controls", Static)
-        ctrl_label.update(f"◉ {_short_url(self._url)}")
+        try:
+            ctrl_label = self.query_one("#media-controls", Static)
+            ctrl_label.update(f"◉ {_short_url(self._url)}")
+        except Exception:
+            pass
 
     def action_play_pause(self) -> None:
         if self.state == "idle":

@@ -1205,6 +1205,16 @@ class HermesApp(App):
                     except Exception:
                         pass
                 pending.clear()
+            # v2 heat injection: signal turn complete to adaptive engines
+            try:
+                from hermes_cli.tui.drawille_overlay import DrawilleOverlay
+                ov = self.query_one(DrawilleOverlay)
+                eng = ov._current_engine_instance
+                if eng is not None and hasattr(eng, "on_signal"):
+                    eng.on_signal("complete", 1.0)
+                ov._heat_target = 0.0
+            except Exception:
+                pass
 
         # --- undo safety guard ---
         if value and self.undo_state is not None:
@@ -1295,6 +1305,13 @@ class HermesApp(App):
         if est_tokens <= 0:
             return
         self._response_token_window.append((_time.monotonic(), est_tokens))
+        # v2 heat injection: bump heat on each streaming token chunk
+        try:
+            from hermes_cli.tui.drawille_overlay import DrawilleOverlay
+            ov = self.query_one(DrawilleOverlay)
+            ov._heat_target = min(1.0, ov._heat_target * 0.9 + 0.3)
+        except Exception:
+            pass
         self._refresh_live_response_metrics()
 
     def pause_response_stream(self) -> None:
@@ -1976,6 +1993,14 @@ class HermesApp(App):
             if not panel._user_scrolled_up:
                 self.call_after_refresh(panel.scroll_end, animate=False)
         except NoMatches:
+            pass
+        # v2 heat injection: bump heat on tool complete
+        try:
+            from hermes_cli.tui.drawille_overlay import DrawilleOverlay
+            ov = self.query_one(DrawilleOverlay)
+            ov._heat_target = 1.0
+            self.set_timer(1.0, lambda: setattr(ov, "_heat_target", 0.3))
+        except Exception:
             pass
 
     def close_streaming_tool_block_with_diff(

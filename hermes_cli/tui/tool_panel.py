@@ -196,7 +196,9 @@ class ToolPanel(Widget):
     ]
 
     # Always start expanded; auto-collapse at completion based on threshold.
-    collapsed: reactive[bool] = reactive(False, layout=True)
+    # layout=False: watch_collapsed sets styles.display which already forces a
+    # layout refresh — no need for a second one from the reactive itself.
+    collapsed: reactive[bool] = reactive(False, layout=False)
 
     def __init__(self, block: Widget, tool_name: str | None = None, **kwargs: object) -> None:
         super().__init__(**kwargs)

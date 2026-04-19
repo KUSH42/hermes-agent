@@ -1643,6 +1643,10 @@ class DrawilleOverlay(Static):
         if self._anim_params is not None:
             self._anim_params.depth_cues = value
 
+    def watch_fps(self, _value: int) -> None:
+        self._stop_anim()
+        self._start_anim()
+
     # ── show / hide ────────────────────────────────────────────────────────
 
     def show(self, cfg: DrawilleOverlayCfg) -> None:
@@ -1656,6 +1660,7 @@ class DrawilleOverlay(Static):
         self.show_border = cfg.show_border
         self.multi_color = list(cfg.multi_color)
         self.hue_shift_speed = cfg.hue_shift_speed
+        self.fps = cfg.fps
         self._apply_layout()
         self._fade_step = cfg.fade_in_frames
         if self._anim_params is not None:
@@ -1715,10 +1720,12 @@ class DrawilleOverlay(Static):
         except Exception:
             pass
         if clock is not None:
-            self._anim_handle = clock.subscribe(1, self._tick)
+            # Divisor: how many 15-fps clock ticks to skip per overlay tick.
+            divisor = max(1, round(15 / max(1, self.fps)))
+            self._anim_handle = clock.subscribe(divisor, self._tick)
         else:
             try:
-                self._anim_handle = self.set_interval(1 / 15, self._tick)
+                self._anim_handle = self.set_interval(1 / max(1, self.fps), self._tick)
             except Exception:
                 pass
 

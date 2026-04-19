@@ -223,6 +223,7 @@ class BrowseAnchorType(enum.Enum):
     TURN_START = "turn_start"   # UserMessagePanel
     CODE_BLOCK = "code_block"   # StreamingCodeBlock (completed)
     TOOL_BLOCK = "tool_block"   # ToolHeader
+    MEDIA      = "media"        # InlineMediaWidget
 
 
 @dataclasses.dataclass
@@ -400,6 +401,8 @@ class HermesApp(App):
         self._clear_animation_in_progress: bool = False
         # InlineImageBar enabled state — set from cli.py before app launch
         self._inline_image_bar_enabled: bool = True
+        # Active media player count — enforces max_concurrent limit (event-loop only)
+        self._active_media_count: int = 0
         # Workspace overlay state
         self._last_git_snapshot: GitSnapshot | None = None
         self._git_poll_h: object | None = None  # textual.timer.Timer
@@ -519,6 +522,19 @@ class HermesApp(App):
         self._theme_manager.stop_hot_reload()
         for _h in (self._anim_clock_h, self._spinner_h, self._fps_h, self._duration_h):
             _h.stop()
+        # Safety-net: stop any lingering media players
+        try:
+            from hermes_cli.tui.widgets import InlineMediaWidget as _IMW
+            for _w in self.query(_IMW):
+                try:
+                    if _w._poller:
+                        _w._poller.stop()
+                    if _w._ctrl:
+                        _w._ctrl.stop()
+                except Exception:
+                    pass
+        except Exception:
+            pass
         # Safety-net delete-all: removes any TGP placements that leaked (e.g. crash path)
         try:
             import sys as _sys
@@ -635,6 +651,25 @@ class HermesApp(App):
                 except NoMatches:
                     pass
                 break
+
+    def _mount_inline_media_widget(self, kind: str, url: str) -> None:
+        """Mount InlineMediaWidget in output panel. Event-loop only."""
+        from hermes_cli.tui.media_player import _inline_media_config
+        from hermes_cli.tui.widgets import InlineMediaWidget
+        cfg = _inline_media_config()
+        if not cfg.enabled:
+            return
+        try:
+            from hermes_cli.tui.tool_blocks import ToolPendingLine
+            output = self.query_one(OutputPanel)
+            widget = InlineMediaWidget(url=url, kind=kind)
+            try:
+                tool_pending = output.query_one(ToolPendingLine)
+                output.mount(widget, before=tool_pending)
+            except NoMatches:
+                output.mount(widget)
+        except Exception:
+            pass
 
     # --- Output consumer (bounded queue → RichLog) ---
 
@@ -2146,6 +2181,19 @@ class HermesApp(App):
                     label=label,
                     turn_id=turn_id,
                 ))
+            else:
+                try:
+                    from hermes_cli.tui.widgets import InlineMediaWidget as _IMW
+                    from hermes_cli.tui.media_player import _short_url as _su
+                    if isinstance(widget, _IMW):
+                        anchors.append(BrowseAnchor(
+                            anchor_type=BrowseAnchorType.MEDIA,
+                            widget=widget,
+                            label=f"Media · {widget._kind} · {_su(widget._url)}",
+                            turn_id=turn_id,
+                        ))
+                except Exception:
+                    pass
         self._browse_anchors = anchors
         if anchors:
             self._browse_cursor = min(self._browse_cursor, len(anchors) - 1)
@@ -3292,6 +3340,14 @@ class HermesApp(App):
                 return
             elif key == "alt+up":
                 self._jump_anchor(-1, BrowseAnchorType.TURN_START)
+                event.prevent_default()
+                return
+            elif key == "m":
+                self._jump_anchor(+1, BrowseAnchorType.MEDIA)
+                event.prevent_default()
+                return
+            elif key == "M":
+                self._jump_anchor(-1, BrowseAnchorType.MEDIA)
                 event.prevent_default()
                 return
             elif event.character is not None:

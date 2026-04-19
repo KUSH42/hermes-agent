@@ -1011,26 +1011,57 @@ class StreamingToolBlock(ToolBlock):
         self._try_mount_media()
 
     def _try_mount_media(self) -> bool:
-        """Replace body with InlineImage if output contains a MEDIA: line.
+        """Mount inline media if output contains a MEDIA: image line or audio/video URLs.
 
-        Uses the last MEDIA: match so multiple matplotlib figures show the
-        most recent one. Returns True if an image was mounted.
+        Image: uses the last MEDIA: match (most recent matplotlib figure).
+        Audio/video: mounts InlineMediaWidget below the tool body.
+        Returns True if anything was mounted.
         """
         text = "\n".join(self._all_plain)
+        mounted = False
+
+        # Existing image detection (unchanged)
         matches = _MEDIA_LINE_RE.findall(text)
-        if not matches:
-            return False
-        path = _extract_image_path(matches[-1])
-        if path is None:
-            return False
+        if matches:
+            path = _extract_image_path(matches[-1])
+            if path is not None:
+                try:
+                    from hermes_cli.tui.widgets import InlineImage
+                    self._body.remove_children()
+                    self._body.mount(InlineImage(image=path, max_rows=24))
+                    self.post_message(ImageMounted(path))
+                    mounted = True
+                except Exception:
+                    pass
+
+        # Audio/video/YouTube URL detection
         try:
-            from hermes_cli.tui.widgets import InlineImage
-            self._body.remove_children()
-            self._body.mount(InlineImage(image=path, max_rows=24))
-            self.post_message(ImageMounted(path))
+            from hermes_cli.tui.media_player import (
+                _AUDIO_EXT_RE, _VIDEO_EXT_RE, _YOUTUBE_RE, _inline_media_config,
+            )
+            from hermes_cli.tui.widgets import InlineMediaWidget
+            cfg = _inline_media_config()
+            if cfg.enabled:
+                seen: set[str] = set()
+                for url in _AUDIO_EXT_RE.findall(text):
+                    if url not in seen:
+                        seen.add(url)
+                        self.mount(InlineMediaWidget(url=url, kind="audio"))
+                        mounted = True
+                for url in _VIDEO_EXT_RE.findall(text):
+                    if url not in seen:
+                        seen.add(url)
+                        self.mount(InlineMediaWidget(url=url, kind="video"))
+                        mounted = True
+                for url in _YOUTUBE_RE.findall(text):
+                    if url not in seen:
+                        seen.add(url)
+                        self.mount(InlineMediaWidget(url=url, kind="youtube"))
+                        mounted = True
         except Exception:
             pass
-        return True
+
+        return mounted
 
 
     # ------------------------------------------------------------------

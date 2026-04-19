@@ -10794,6 +10794,33 @@ def main(
         _math_hint = "\n\n[System note: " + " ".join(_hints) + "]"
         cli.system_prompt = (cli.system_prompt or "") + _math_hint
 
+    # Inline media system prompt hint
+    try:
+        from hermes_cli.tui.media_player import _inline_media_config as _imc
+        _media_cfg = _imc()
+        if _media_cfg.enabled:
+            _media_kinds: list[str] = []
+            if _media_cfg.audio:
+                _media_kinds.append("audio files (mp3, wav, ogg, flac, aac, m4a, opus)")
+            if _media_cfg.video_thumbs:
+                _media_kinds.append("video files (mp4, mkv, webm, mov)")
+            if _media_cfg.youtube:
+                _media_kinds.append("YouTube URLs")
+            if _media_kinds:
+                _media_hint = (
+                    "The terminal supports inline media playback. "
+                    "When referencing " + ", ".join(_media_kinds) + ", "
+                    "include the bare URL on its own line so the player renders automatically. "
+                    "Example: \"Here's the track:\\nhttps://example.com/song.mp3\""
+                )
+                cli.system_prompt = (
+                    (cli.system_prompt + "\n\n" + _media_hint).strip()
+                    if cli.system_prompt
+                    else _media_hint
+                )
+    except Exception:
+        pass
+
     # Handle list commands (don't init agent for these)
     if list_tools:
         cli.show_banner()

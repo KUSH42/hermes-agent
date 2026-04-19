@@ -411,6 +411,17 @@ DEFAULT_CONFIG = {
         "syntax_bold": True,      # Keep bold emphasis on syntax-highlighted token styles
         "spinner_style": "",      # TUI spinner animation: dots|bounce|grow|arrows|star|moon|pulse|clock|none (empty = skin default)
         "show_cost": False,       # Show $ cost in the status bar (off by default)
+        "inline_media": {
+            "enabled": False,
+            "audio": True,
+            "video_thumbs": True,
+            "show_timeline": True,
+            "timeline_auto_s": 30,
+            "player": "mpv",
+            "player_extra_args": [],
+            "youtube": True,
+            "max_concurrent": 2,
+        },
         "inline_images": "auto",  # auto | on | off — inline image rendering in TUI
         "halfblock_dark_threshold": 0.1,   # WCAG luminance < this → dark cell in halfblock art
         "image_bar": True,        # Show InlineImageBar thumbnail strip for inline images

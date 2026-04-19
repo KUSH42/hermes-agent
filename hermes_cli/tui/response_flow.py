@@ -28,7 +28,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Callable, Literal
 
 from rich.text import Text
 
@@ -334,6 +334,9 @@ class ResponseFlowEngine:
         self._footnote_order: list[str] = []       # labels in order of first definition
         self._footnote_def_open: str | None = None  # label of continuation-in-progress
         self._partial: str = ""                     # accumulated partial tail of current line
+        # Media URL detection
+        self._mount_media_callback: "Callable[[str, str], None] | None" = None
+        self._emitted_media_urls: set[str] = set()
 
     def _sync_prose_log(self) -> None:
         """Refresh the active prose destination from the owning message panel."""
@@ -377,6 +380,10 @@ class ResponseFlowEngine:
     def process_line(self, raw: str) -> None:
         """Process one complete line (no trailing newline)."""
         from agent.rich_output import apply_block_line, apply_inline_markdown
+
+        # Media URL scan — runs first so early-return paths don't skip it
+        if self._state == "NORMAL" and self._mount_media_callback is not None:
+            self._scan_media_urls(raw)
 
         # Phase 1: Code block boundary detection (bypass StreamingBlockBuffer)
         intro_candidate = _is_code_intro_label(raw)
@@ -579,6 +586,32 @@ class ResponseFlowEngine:
         self._prose_log.write_with_source(Text.from_ansi(inline_ansi), plain)
         self._pending_code_intro = intro_candidate or _is_code_intro_label(plain)
 
+    def _scan_media_urls(self, line: str) -> None:
+        """Scan a NORMAL-state line for media URLs and invoke _mount_media_callback."""
+        from hermes_cli.tui.media_player import (
+            _YOUTUBE_RE, _VIDEO_EXT_RE, _AUDIO_EXT_RE, _inline_media_config,
+        )
+        cfg = _inline_media_config()
+        if not cfg.enabled:
+            return
+        if cfg.youtube:
+            for url in _YOUTUBE_RE.findall(line):
+                if url not in self._emitted_media_urls:
+                    self._emitted_media_urls.add(url)
+                    if self._mount_media_callback:
+                        self._mount_media_callback("youtube", url)
+        for url in _VIDEO_EXT_RE.findall(line):
+            if url not in self._emitted_media_urls:
+                self._emitted_media_urls.add(url)
+                if self._mount_media_callback:
+                    self._mount_media_callback("video", url)
+        if cfg.audio:
+            for url in _AUDIO_EXT_RE.findall(line):
+                if url not in self._emitted_media_urls:
+                    self._emitted_media_urls.add(url)
+                    if self._mount_media_callback:
+                        self._mount_media_callback("audio", url)
+
     def flush(self) -> None:
         """Turn ended — close any open code block; flush StreamingBlockBuffer pending state."""
         if self._partial:
@@ -616,6 +649,7 @@ class ResponseFlowEngine:
         self._footnote_defs.clear()
         self._footnote_order.clear()
         self._footnote_def_open = None
+        self._emitted_media_urls.clear()
 
     def _render_footnote_section(self) -> None:
         from agent.rich_output import apply_inline_markdown, _to_superscript
@@ -823,6 +857,9 @@ class ReasoningFlowEngine(ResponseFlowEngine):
         self._math_dpi: int = 150
         self._math_max_rows: int = 12
         self._mermaid_enabled: bool = False
+        # Media URL detection — disabled in reasoning output
+        self._mount_media_callback: "Callable[[str, str], None] | None" = None
+        self._emitted_media_urls: set[str] = set()
 
     def process_line(self, raw: str) -> None:
         """Override: flush block buffer immediately after every line.

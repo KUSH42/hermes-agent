@@ -136,6 +136,142 @@ def _tool_gutter_enabled() -> bool:
         return True
 
 
+def _tool_panel_v4_enabled() -> bool:
+    """Return True when v4 header rendering is enabled in config."""
+    try:
+        from hermes_cli.config import read_raw_config
+        return bool(read_raw_config().get("display", {}).get("tool_panel_v4", False))
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# v4 §2.2 — unified duration rule
+# ---------------------------------------------------------------------------
+
+def _format_duration_v4(elapsed_ms: float) -> str:
+    """<50 ms → omit; 50 ms–5 s → NNNms; >5 s → N.Ns."""
+    if elapsed_ms < 50:
+        return ""
+    if elapsed_ms < 5000:
+        return f"{int(elapsed_ms)}ms"
+    return f"{elapsed_ms / 1000:.1f}s"
+
+
+# ---------------------------------------------------------------------------
+# v4 §2.1 — primary-arg header label
+# ---------------------------------------------------------------------------
+
+_AGENT_PRIMARY_ARGS: frozenset[str] = frozenset({"thought", "description", "task"})
+_AGENT_MAX_CELLS: int = 40
+_TRUNCATION_MARGIN: int = 3
+
+
+def header_label_v4(
+    spec: "Any",          # ToolSpec (avoid circular import at module level)
+    args: dict,
+    full_label: str,
+    full_path: "str | None",
+    available: int,
+    accent_color: str = "",
+) -> "Text":
+    """Return header label Text using v4 primary-arg rules (spec §2.1)."""
+    primary = getattr(spec, "primary_arg", None)
+
+    if primary == "path":
+        path = full_path or full_label
+        parts = path.rsplit("/", 1)
+        if len(parts) == 2 and parts[0]:
+            dir_part, fname = parts[0] + "/", parts[1]
+        else:
+            dir_part, fname = "", path
+        fname_w = _safe_cell_width(fname)
+        dir_budget = max(0, available - fname_w - 1)
+        if _safe_cell_width(dir_part) > dir_budget:
+            trimmed = dir_part
+            while trimmed and _safe_cell_width("…/" + trimmed) > dir_budget:
+                trimmed = trimmed.split("/", 1)[-1] if "/" in trimmed else ""
+            dir_part = ("…/" + trimmed) if trimmed else "…/"
+        t = Text()
+        t.append(" " + dir_part if dir_part else " ", style="dim")
+        t.append(fname, style="bold underline")
+        # :{start}-{end} range suffix from args
+        start = args.get("start_line")
+        end = args.get("end_line")
+        lr = args.get("line_range")
+        if isinstance(lr, (list, tuple)) and len(lr) == 2:
+            t.append(f":{lr[0]}-{lr[1]}", style="dim")
+        elif start is not None and end is not None:
+            t.append(f":{start}-{end}", style="dim")
+        return t
+
+    if primary == "command":
+        label_str = full_label
+        trunc = available - _TRUNCATION_MARGIN
+        if _safe_cell_width(label_str) > trunc:
+            label_str = label_str[:max(1, trunc - 1)] + "…"
+        t = Text()
+        # $ prefix only for SHELL category (accent_color non-empty signals SHELL context)
+        cat = getattr(spec, "category", None)
+        try:
+            from hermes_cli.tui.tool_category import ToolCategory as _TC
+            _is_shell = cat == _TC.SHELL
+        except Exception:
+            _is_shell = False
+        if accent_color and _is_shell:
+            t.append(" $", style=f"bold {accent_color}")
+        t.append(f" {label_str}", style="italic")
+        return t
+
+    if primary == "query":
+        label_str = full_label
+        trunc = available - 2 - _TRUNCATION_MARGIN
+        if _safe_cell_width(label_str) > trunc:
+            label_str = label_str[:max(1, trunc - 1)] + "…"
+        t = Text()
+        t.append(f' "{label_str}"', style="bold italic")
+        return t
+
+    if primary == "url":
+        url = full_path or full_label
+        for scheme in ("https://", "http://", "ftp://"):
+            if url.startswith(scheme):
+                rest = url[len(scheme):]
+                host_end = rest.find("/")
+                host = rest[:host_end] if host_end != -1 else rest
+                path_part = rest[host_end:] if host_end != -1 else ""
+                path_avail = available - len(scheme) - len(host) - 1
+                if len(path_part) > path_avail:
+                    path_part = path_part[:max(0, path_avail - 1)] + "…"
+                t = Text()
+                t.append(f" {scheme}", style="dim")
+                t.append(host, style="bold")
+                t.append(path_part, style="dim")
+                return t
+        t = Text()
+        label_str = full_label
+        if _safe_cell_width(label_str) > available:
+            label_str = label_str[:max(1, available - 1)] + "…"
+        t.append(f" {label_str}")
+        return t
+
+    if primary in _AGENT_PRIMARY_ARGS:
+        label_str = full_label
+        if _safe_cell_width(label_str) > _AGENT_MAX_CELLS:
+            label_str = label_str[:_AGENT_MAX_CELLS - 1] + "…"
+        t = Text()
+        t.append(f" {label_str}", style="italic dim")
+        return t
+
+    # None or unknown primary → plain label
+    label_str = full_label
+    if _safe_cell_width(label_str) > available:
+        label_str = label_str[:max(1, available - 1)] + "…"
+    t = Text()
+    t.append(f" {label_str}")
+    return t
+
+
 _DIFF_ADD_FALLBACK: str = "#5fd75f"
 _DIFF_DEL_FALLBACK: str = "#ef5350"
 _RUNNING_FALLBACK: str = "#c0c0c0"
@@ -215,12 +351,15 @@ class ToolHeader(PulseMixin, Widget):
         self._full_path: str | None = None      # raw untruncated path or URL
         self._path_clickable: bool = False      # True for file-tool and URL headers
         self._is_url: bool = False              # True when path starts with http/https/etc.
-        # Display overrides
+        # Display overrides (v2 flags — kept for parity when tool_panel_v4=False)
         self._no_underline: bool = False         # suppress underline on clickable paths
         self._hide_duration: bool = False        # suppress timer display
         self._bold_label: bool = False           # bold label text (non-path)
         self._hidden: bool = False               # suppress header entirely
         self._shell_prompt: bool = False         # prepend "$ " in accent color before label
+        # v4 fields
+        self._elapsed_ms: float | None = None    # raw elapsed time for v4 duration rule
+        self._header_args: dict = {}             # live tool args for primary-arg rendering
 
     def on_mount(self) -> None:
         self._refresh_gutter_color()
@@ -251,7 +390,108 @@ class ToolHeader(PulseMixin, Widget):
         except Exception:
             self._tool_icon = ""
 
+    def _render_v4(self) -> "Text | None":
+        """v4 header render path. Returns Text or None to fall back to v2."""
+        try:
+            from hermes_cli.tui.tool_category import spec_for, ToolCategory
+        except Exception:
+            return None
+        spec = spec_for(self._tool_name or "", args=self._header_args or None)
+        # render_header=False → zero-height (replaces _hidden)
+        if not spec.render_header:
+            self.styles.height = 0
+            return Text()
+
+        focused = self.has_class("focused")
+        t = Text()
+
+        # Gutter (shared with v2)
+        if _tool_gutter_enabled():
+            if self._is_child_diff:
+                gutter_text = Text("  ╰─", style="dim")
+                gutter_w = 4
+            elif focused:
+                color = getattr(self, "_focused_gutter_color", _GUTTER_FALLBACK)
+                gutter_text = Text("  ┃", style=f"bold {color}")
+                gutter_w = 3
+            else:
+                gutter_text = Text("  ┊", style="dim")
+                gutter_w = 3
+            t.append_text(gutter_text)
+        else:
+            gutter_w = 0
+
+        # Icon (shared with v2)
+        icon_str = self._tool_icon or ""
+        icon_cell_w = _safe_cell_width(icon_str) if icon_str else 0
+        if icon_str:
+            if self._spinner_char is not None:
+                icon_dim = "#6e6e6e"
+                icon_peak = getattr(self, "_running_icon_color", _RUNNING_FALLBACK)
+                icon_color = lerp_color(icon_dim, icon_peak, self._pulse_t)
+                icon_style = f"bold {icon_color}"
+            elif self._tool_icon_error:
+                err_color = getattr(self, "_diff_del_color", _DIFF_DEL_FALLBACK)
+                icon_style = f"bold {err_color}"
+            elif self._duration:
+                ok_color = getattr(self, "_diff_add_color", _DIFF_ADD_FALLBACK)
+                icon_style = f"bold {ok_color}"
+            else:
+                icon_style = "dim"
+            t.append(f" {icon_str}", style=icon_style)
+        space_after_icon = 1
+
+        # Shell prefix only for SHELL-category command tools
+        shell_prompt_w = 0
+        if spec.primary_arg == "command" and spec.category == ToolCategory.SHELL:
+            accent = getattr(self, "_focused_gutter_color", _GUTTER_FALLBACK)
+            t.append(" $", style=f"bold {accent}")
+            shell_prompt_w = 2
+
+        # Tail: duration uses v4 rule
+        tail = Text()
+        if self._spinner_char is not None:
+            tail.append(f"  {self._spinner_char}", style="dim")
+            if self._duration:
+                tail.append(f"  {self._duration}", style="dim")
+        else:
+            if self._stats and self._stats.has_diff_counts:
+                add_color = getattr(self, "_diff_add_color", _DIFF_ADD_FALLBACK)
+                del_color = getattr(self, "_diff_del_color", _DIFF_DEL_FALLBACK)
+                if self._stats.additions:
+                    tail.append(f"  +{self._stats.additions}", style=f"bold {add_color}")
+                if self._stats.deletions:
+                    tail.append(f"  -{self._stats.deletions}", style=f"bold {del_color}")
+            elif self._line_count:
+                tail.append(f"  {self._line_count}L", style="dim")
+            if self._has_affordances:
+                tail.append("  ▾" if not self.collapsed else "  ▸", style="dim")
+            if self._duration:   # already v4-formatted by _tick_duration / complete()
+                tail.append(f"  {self._duration}", style="dim")
+
+        # Label via primary-arg rules
+        term_w = self.size.width
+        tail_w = tail.cell_len
+        FIXED_PREFIX_W = gutter_w + icon_cell_w + space_after_icon + shell_prompt_w
+        available = max(8, term_w - FIXED_PREFIX_W - tail_w - 2) if term_w > 0 else 50
+        label_text = header_label_v4(
+            spec, self._header_args or {}, self._label,
+            self._full_path, available,
+            accent_color=getattr(self, "_focused_gutter_color", ""),
+        )
+        t.append_text(label_text)
+        if term_w > 0:
+            label_used = label_text.cell_len
+            pad = max(0, available - label_used)
+            t.append(" " * pad)
+        t.append_text(tail)
+        return t
+
     def render(self) -> RenderResult:
+        if _tool_panel_v4_enabled():
+            result = self._render_v4()
+            if result is not None:
+                return result
         if self._hidden:
             self.styles.height = 0
             return Text()
@@ -429,6 +669,11 @@ class ToolHeader(PulseMixin, Widget):
         self._full_path = path
         self._path_clickable = True
         self._is_url = any(path.startswith(s) for s in _URL_SCHEMES)
+
+    def set_args(self, args: dict) -> None:
+        """Store live tool args for v4 primary-arg label rendering."""
+        self._header_args = args
+        self.refresh()
 
     def _render_path_label(self, max_cells: int) -> "Text":
         """Render dir (dim) + filename (bold), truncating dir prefix if needed."""
@@ -991,7 +1236,16 @@ class StreamingToolBlock(ToolBlock):
         self._tail.dismiss()
         # Update header: remove spinner, add duration + line count
         self._header._spinner_char = None
-        self._header._duration = duration
+        if _tool_panel_v4_enabled():
+            started = getattr(self, "_stream_started_at", None)
+            if started is not None:
+                elapsed_ms = (time.monotonic() - started) * 1000.0
+                self._header._elapsed_ms = elapsed_ms
+                self._header._duration = _format_duration_v4(elapsed_ms)
+            else:
+                self._header._duration = duration
+        else:
+            self._header._duration = duration
         self._header._line_count = self._total_received
         # Apply same collapse logic as static ToolBlock
         if self._total_received > COLLAPSE_THRESHOLD:
@@ -1081,7 +1335,12 @@ class StreamingToolBlock(ToolBlock):
         started = getattr(self, "_stream_started_at", None)
         if started is None:
             return
-        self._header._duration = f"{time.monotonic() - started:.1f}s"
+        elapsed_ms = (time.monotonic() - started) * 1000.0
+        self._header._elapsed_ms = elapsed_ms
+        if _tool_panel_v4_enabled():
+            self._header._duration = _format_duration_v4(elapsed_ms)
+        else:
+            self._header._duration = f"{elapsed_ms / 1000:.1f}s"
         self._header.refresh()
 
     def _flush_pending(self) -> None:

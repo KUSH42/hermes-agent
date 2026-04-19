@@ -10539,23 +10539,6 @@ class HermesCLI:
 
         try:
             if _tui_app is not None:
-                # Run SDF splash if enabled (pre-TUI, blocking)
-                try:
-                    _splash_cfg = self.config.get("display", {}).get("startup_sdf_splash", {})
-                    if _splash_cfg.get("enabled", False):
-                        from hermes_cli.config import SdfSplashConfig
-                        from hermes_cli.tui.sdf_splash import run_sdf_splash
-                        run_sdf_splash(SdfSplashConfig(
-                            enabled=True,
-                            text=_splash_cfg.get("text", "HERMES"),
-                            morph_ms=_splash_cfg.get("morph_ms", 600),
-                            hold_ms=_splash_cfg.get("hold_ms", 400),
-                            render_mode=_splash_cfg.get("render_mode", "dissolve"),
-                            color=_splash_cfg.get("color", "#00ff66"),
-                            total_duration_s=_splash_cfg.get("total_duration_s", 3.0),
-                        ))
-                except Exception:
-                    pass
                 # Textual path — _hermes_app is already set above; Textual owns the loop
                 _tui_app.run()
             else:

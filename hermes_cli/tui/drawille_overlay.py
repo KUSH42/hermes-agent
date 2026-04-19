@@ -86,6 +86,9 @@ class DrawilleOverlayCfg:
     # v2 carousel
     carousel: bool = False
     carousel_interval_s: float = 8.0
+    # sdf crossfade warmup
+    sdf_warmup_engine: str = "neural_pulse"
+    sdf_crossfade_speed: float = 0.03
 
     def __post_init__(self) -> None:
         if self.multi_color is None:
@@ -148,6 +151,8 @@ def _overlay_config() -> DrawilleOverlayCfg:
         ease_out=str(d.get("ease_out", "sine")),
         carousel=bool(d.get("carousel", False)),
         carousel_interval_s=float(d.get("carousel_interval_s", 8.0)),
+        sdf_warmup_engine=str(d.get("sdf_warmup_engine", "neural_pulse")),
+        sdf_crossfade_speed=float(d.get("sdf_crossfade_speed", 0.03)),
     )
 
 
@@ -1512,6 +1517,10 @@ class DrawilleOverlay(Static):
     _fade_step: int = 0
     _auto_hide_handle: "Timer | None" = None
     _sdf_engine: object | None = None  # lazily created SDF morph engine
+    # sdf crossfade warmup state
+    _sdf_warmup_instance: object | None = None
+    _sdf_crossfade: object | None = None   # CrossfadeEngine during warmup→SDF transition
+    _sdf_baker_was_ready: bool = False
     # v2 engine instance cache
     _current_engine_instance: object | None = None
     _current_engine_key: str = ""
@@ -1702,6 +1711,9 @@ class DrawilleOverlay(Static):
         self.remove_class("-visible")
         self._stop_anim()
         self._sdf_engine = None
+        self._sdf_warmup_instance = None
+        self._sdf_crossfade = None
+        self._sdf_baker_was_ready = False
         self._current_engine_instance = None
         self._current_engine_key = ""
 
@@ -1737,15 +1749,58 @@ class DrawilleOverlay(Static):
     def _get_engine(self) -> object:
         """Return cached engine instance, rebuilding if key changed."""
         key = self.animation
-        if key == "sdf_morph":
-            return self._get_sdf_engine(self._anim_params)
-        if self._current_engine_instance is None or self._current_engine_key != key:
-            cls = _ENGINES.get(key, _ENGINES["dna"])
-            self._current_engine_instance = cls()
-            self._current_engine_key = key
-            if hasattr(self._current_engine_instance, "on_mount"):
-                self._current_engine_instance.on_mount(self)
-        return self._current_engine_instance
+
+        # Reset warmup state when switching away from sdf_morph
+        if self._current_engine_key == "sdf_morph" and key != "sdf_morph":
+            self._sdf_warmup_instance = None
+            self._sdf_crossfade = None
+            self._sdf_baker_was_ready = False
+
+        if key != "sdf_morph":
+            if self._current_engine_instance is None or self._current_engine_key != key:
+                cls = _ENGINES.get(key, _ENGINES["dna"])
+                self._current_engine_instance = cls()
+                self._current_engine_key = key
+                if hasattr(self._current_engine_instance, "on_mount"):
+                    self._current_engine_instance.on_mount(self)
+            return self._current_engine_instance
+
+        # ── sdf_morph path ────────────────────────────────────────────────────
+        self._current_engine_key = "sdf_morph"
+        sdf = self._get_sdf_engine(self._anim_params)
+        now_ready = sdf._baker.ready.is_set()
+
+        # Edge: baker just became ready → install CrossfadeEngine(warmup → SDF)
+        if now_ready and not self._sdf_baker_was_ready:
+            self._sdf_baker_was_ready = True
+            warmup = self._sdf_warmup_instance
+            if warmup is not None:
+                cfg = _overlay_config()
+                self._sdf_crossfade = CrossfadeEngine(
+                    engine_a=warmup,
+                    engine_b=sdf,
+                    speed=cfg.sdf_crossfade_speed,
+                )
+                self._sdf_warmup_instance = None  # handed off to crossfade
+            # If warmup is None (bake finished before first tick): go straight to SDF
+
+        # Crossfade in progress
+        if self._sdf_crossfade is not None:
+            if self._sdf_crossfade.progress >= 1.0:
+                self._sdf_crossfade = None  # done; fall through to pure SDF
+            else:
+                return self._sdf_crossfade
+
+        # Baker not ready yet → return warmup engine
+        if not now_ready:
+            if self._sdf_warmup_instance is None:
+                cfg = _overlay_config()
+                wkey = cfg.sdf_warmup_engine if cfg.sdf_warmup_engine in _ENGINES else "dna"
+                self._sdf_warmup_instance = _ENGINES[wkey]()
+            return self._sdf_warmup_instance
+
+        # Baker ready, crossfade done → pure SDF
+        return sdf
 
     def _get_sdf_engine(self, params: AnimParams) -> object:
         """Lazily create SDF morph engine. Calls on_mount on first creation."""
@@ -2283,6 +2338,8 @@ def _current_panel_cfg(fields: list[_PanelField]) -> DrawilleOverlayCfg:
         attractor_type=str(fmap.get("attractor_type", "lorenz")),
         life_seed=str(fmap.get("life_seed", "gosper")),
         depth_cues=bool(fmap.get("depth_cues", True)),
+        sdf_warmup_engine=str(fmap.get("sdf_warmup_engine", "neural_pulse")),
+        sdf_crossfade_speed=float(fmap.get("sdf_crossfade_speed", 0.03)),
     )
 
 
@@ -2319,4 +2376,6 @@ def _fields_to_dict(fields: list[_PanelField]) -> dict:
         "attractor_type": str(fmap.get("attractor_type", "lorenz")),
         "life_seed": str(fmap.get("life_seed", "gosper")),
         "depth_cues": bool(fmap.get("depth_cues", True)),
+        "sdf_warmup_engine": str(fmap.get("sdf_warmup_engine", "neural_pulse")),
+        "sdf_crossfade_speed": float(fmap.get("sdf_crossfade_speed", 0.03)),
     }

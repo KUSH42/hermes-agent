@@ -343,3 +343,138 @@ class TestPanelFloatKind:
         f_low = self._make_float_field(0.0)
         new_val_low = round(max(float(f_low.min_val), min(float(f_low.max_val), float(f_low.value) - f_low.step)), 6)
         assert new_val_low == pytest.approx(0.0)  # clamped at min
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SDF crossfade warmup — 8 tests
+# ─────────────────────────────────────────────────────────────────────────────
+
+from hermes_cli.tui.drawille_overlay import DrawilleOverlay, DrawilleOverlayCfg, _ENGINES
+from unittest.mock import patch, MagicMock, PropertyMock
+
+
+def _make_sdf_overlay() -> DrawilleOverlay:
+    """Return a DrawilleOverlay with animation='sdf_morph' and minimal params."""
+    ov = DrawilleOverlay()
+    ov.animation = "sdf_morph"
+    ov._anim_params = AnimParams(width=50, height=14, dt=1 / 15)
+    return ov
+
+
+def _make_sdf_engine_unready():
+    """Return an SDFMorphEngine whose baker.ready is NOT set."""
+    from hermes_cli.tui.sdf_morph import SDFMorphEngine
+    engine = SDFMorphEngine(text="AB")
+    # baker.ready is a threading.Event — not set by default
+    return engine
+
+
+def _make_sdf_engine_ready():
+    """Return an SDFMorphEngine whose baker.ready IS set (simulate bake done)."""
+    from hermes_cli.tui.sdf_morph import SDFMorphEngine
+    engine = SDFMorphEngine(text="AB")
+    engine._baker.ready.set()
+    return engine
+
+
+class TestSDFCrossfadeWarmup:
+
+    def test_get_engine_returns_warmup_before_baker_ready(self):
+        """Before baker.ready — _get_engine() returns a warmup engine, not SDFMorphEngine."""
+        from hermes_cli.tui.sdf_morph import SDFMorphEngine
+        ov = _make_sdf_overlay()
+        sdf_engine = _make_sdf_engine_unready()
+        ov._sdf_engine = sdf_engine
+        result = ov._get_engine()
+        assert not isinstance(result, SDFMorphEngine)
+
+    def test_get_engine_installs_crossfade_on_ready(self):
+        """When baker transitions to ready, second call returns CrossfadeEngine."""
+        ov = _make_sdf_overlay()
+        sdf_engine = _make_sdf_engine_unready()
+        ov._sdf_engine = sdf_engine
+        # First call while not ready → warmup
+        first = ov._get_engine()
+        assert ov._sdf_warmup_instance is not None or ov._sdf_crossfade is None
+        # Simulate baker ready
+        sdf_engine._baker.ready.set()
+        second = ov._get_engine()
+        assert isinstance(second, CrossfadeEngine)
+
+    def test_get_engine_crossfade_progresses(self):
+        """CrossfadeEngine.progress increases across successive _get_engine() calls."""
+        ov = _make_sdf_overlay()
+        sdf_engine = _make_sdf_engine_unready()
+        ov._sdf_engine = sdf_engine
+        ov._get_engine()  # warmup installed
+        sdf_engine._baker.ready.set()
+        crossfade = ov._get_engine()  # crossfade installed
+        assert isinstance(crossfade, CrossfadeEngine)
+        params = ov._anim_params
+        p0 = crossfade.progress
+        # Mock engine_b (SDF) next_frame — baker cache empty, not the focus here
+        crossfade.engine_b.next_frame = MagicMock(return_value="⠿" * (params.width * params.height // 4))
+        crossfade.next_frame(params)
+        assert crossfade.progress > p0
+
+    def test_get_engine_returns_sdf_after_crossfade_complete(self):
+        """After crossfade.progress >= 1.0, _get_engine() returns SDFMorphEngine."""
+        from hermes_cli.tui.sdf_morph import SDFMorphEngine
+        ov = _make_sdf_overlay()
+        sdf_engine = _make_sdf_engine_unready()
+        ov._sdf_engine = sdf_engine
+        ov._get_engine()  # warmup
+        sdf_engine._baker.ready.set()
+        ov._get_engine()  # installs crossfade
+        # Force crossfade done
+        ov._sdf_crossfade.progress = 1.0
+        result = ov._get_engine()
+        assert isinstance(result, SDFMorphEngine)
+        assert ov._sdf_crossfade is None
+
+    def test_get_engine_warmup_invalid_key_falls_back_to_dna(self):
+        """Invalid sdf_warmup_engine value → warmup instance is DnaHelixEngine."""
+        ov = _make_sdf_overlay()
+        sdf_engine = _make_sdf_engine_unready()
+        ov._sdf_engine = sdf_engine
+        bad_cfg = DrawilleOverlayCfg(enabled=True, sdf_warmup_engine="not_a_real_engine")
+        with patch("hermes_cli.tui.drawille_overlay._overlay_config", return_value=bad_cfg):
+            result = ov._get_engine()
+        assert isinstance(result, DnaHelixEngine)
+
+    def test_hide_resets_warmup_state(self):
+        """hide() clears _sdf_warmup_instance, _sdf_crossfade, _sdf_baker_was_ready."""
+        ov = _make_sdf_overlay()
+        sdf_engine = _make_sdf_engine_unready()
+        ov._sdf_engine = sdf_engine
+        ov._get_engine()  # puts warmup in place
+        assert ov._sdf_warmup_instance is not None
+        cfg = DrawilleOverlayCfg(enabled=True)
+        ov._stop_anim = MagicMock()
+        ov.remove_class = MagicMock()
+        ov.hide(cfg)
+        assert ov._sdf_warmup_instance is None
+        assert ov._sdf_crossfade is None
+        assert ov._sdf_baker_was_ready is False
+
+    def test_warmup_engine_returns_nonempty_frame(self):
+        """Warmup engine (neural_pulse) produces a non-empty frame during bake window."""
+        ov = _make_sdf_overlay()
+        sdf_engine = _make_sdf_engine_unready()
+        ov._sdf_engine = sdf_engine
+        warmup = ov._get_engine()
+        params = ov._anim_params
+        frame = warmup.next_frame(params)
+        assert isinstance(frame, str)
+        assert len(frame) > 0
+
+    def test_bake_already_done_before_first_tick_skips_warmup(self):
+        """If baker is ready before first _get_engine() call, return SDF directly."""
+        from hermes_cli.tui.sdf_morph import SDFMorphEngine
+        ov = _make_sdf_overlay()
+        sdf_engine = _make_sdf_engine_ready()
+        ov._sdf_engine = sdf_engine
+        result = ov._get_engine()
+        assert isinstance(result, SDFMorphEngine)
+        assert ov._sdf_warmup_instance is None
+        assert ov._sdf_crossfade is None

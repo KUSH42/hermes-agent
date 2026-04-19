@@ -1630,6 +1630,12 @@ class HermesCLI:
         self._inline_image_bar_enabled: bool = bool(
             CLI_CONFIG["display"].get("image_bar", True)
         )
+        # Math / mermaid rendering config
+        self._math_enabled: bool = CLI_CONFIG["display"].get("math", "auto") != "off"
+        self._math_renderer: str = CLI_CONFIG["display"].get("math_renderer", "auto")
+        self._mermaid_enabled: bool = CLI_CONFIG["display"].get("mermaid", "auto") != "off"
+        self._math_dpi: int = int(CLI_CONFIG["display"].get("math_dpi", 150))
+        self._math_max_rows: int = int(CLI_CONFIG["display"].get("math_max_rows", 12))
 
         # Streaming display state
         self._stream_buf = ""        # Partial line buffer for line-buffered rendering
@@ -10515,6 +10521,11 @@ class HermesCLI:
                 xclip_cmd=_xclip_cmd,
             )
             _tui_app._inline_image_bar_enabled = self._inline_image_bar_enabled
+            _tui_app._math_enabled = self._math_enabled
+            _tui_app._math_renderer = self._math_renderer
+            _tui_app._mermaid_enabled = self._mermaid_enabled
+            _tui_app._math_dpi = self._math_dpi
+            _tui_app._math_max_rows = self._math_max_rows
             _tui_app._spinner_frames = _COMMAND_SPINNER_FRAMES
             _hermes_app = _tui_app
             # Apply skin to TUI at startup — component_vars + ui_accent

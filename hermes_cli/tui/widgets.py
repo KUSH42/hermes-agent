@@ -1329,6 +1329,27 @@ class StreamingCodeBlock(Widget):
     def _finalize_syntax(self, skin_vars: dict[str, str]) -> None:
         """COMPLETE path — delegates to shared _render_syntax."""
         self._render_syntax(skin_vars)
+        # After syntax rendering, kick off mermaid render if applicable
+        if self._lang == "mermaid" and getattr(self.app, "_mermaid_enabled", True):
+            self._try_render_mermaid_async()
+
+    @work(thread=True)
+    def _try_render_mermaid_async(self) -> None:
+        """Worker: render mermaid diagram to PNG; mount result on app thread."""
+        from hermes_cli.tui.math_renderer import render_mermaid
+        src = "\n".join(self._code_lines)
+        path = render_mermaid(src)
+        self.app.call_from_thread(self._on_mermaid_rendered, path)
+
+    def _on_mermaid_rendered(self, path: "Path | None") -> None:
+        """App-thread: mount InlineImage sibling below this code block."""
+        if path is None:
+            return
+        try:
+            max_rows = getattr(self.app, "_math_max_rows", 24)
+            self.parent.mount(InlineImage(image=path, max_rows=max_rows), after=self)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Partial fence (turn ended before fence closed)
@@ -4273,6 +4294,35 @@ class InlineImage(Widget):
     def on_resize(self, event: object) -> None:
         if self.image is not None:
             self.watch_image(self.image)
+
+
+class MathBlockWidget(Widget):
+    """Rendered block-math formula: label + InlineImage child."""
+
+    DEFAULT_CSS = """
+    MathBlockWidget {
+        width: 100%;
+        height: auto;
+        padding: 0 1;
+        border-left: vkey $accent 40%;
+    }
+    MathBlockWidget .--math-label {
+        color: $text-muted;
+    }
+    """
+
+    def __init__(self, image_path: Path, max_rows: int = 12, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._image_path = image_path
+        self._max_rows = max_rows
+
+    def compose(self) -> ComposeResult:
+        yield Static("∫ Math expression", classes="--math-label")
+        yield InlineImage(image=self._image_path, max_rows=self._max_rows)
+
+    def copy_content(self) -> str:
+        """Return the image path as a hint (original LaTeX not retained here)."""
+        return str(self._image_path)
 
 
 class InlineThumbnail(Widget):

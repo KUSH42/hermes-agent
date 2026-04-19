@@ -532,3 +532,15 @@ ToolPanel:focus                              { background: $accent 10%; }
 ToolPanel.tool-panel--grouped    { padding-left: 2; }
 ToolPanel.group-hidden           { display: none; }
 ToolPanel.tool-panel--child-diff { margin-left: 2; }
+
+/* --- MathBlockWidget (math_renderer.py) --- */
+MathBlockWidget {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+    border-left: vkey $accent 40%;
+    margin: 1 0;
+}
+MathBlockWidget .--math-label {
+    color: $text-muted;
+}

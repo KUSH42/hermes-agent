@@ -13,7 +13,7 @@ description: >
 compatibility: "Python 3.11+, Textual >=1.0,<9 (pinned), Rich >=15"
 metadata:
   author: xush
-  version: "3.5"
+  version: "3.6"
   target: code_agent
 ---
 
@@ -97,7 +97,8 @@ Then load only the focused reference you need:
   `tests/tui/test_streaming_tool_block.py`, `tests/tui/test_omission_bar.py`,
   `tests/tui/test_path_context_menu.py`, `tests/tui/test_browse_nav_markers.py`, and scroll tests
 - `hermes_cli/tui/write_file_block.py` with `tests/tui/test_write_file_block.py`
-- `hermes_cli/tui/response_flow.py` with `tests/tui/test_response_flow.py`
+- `hermes_cli/tui/math_renderer.py` with `tests/tui/test_math_renderer.py`; also touches `response_flow.py`, `widgets.py`, `config.py`, `cli.py`
+- `hermes_cli/tui/response_flow.py` with `tests/tui/test_response_flow.py`, `tests/tui/test_math_renderer.py`
 - `hermes_cli/tui/drawille_overlay.py` with `tests/tui/test_drawille_overlay.py`,
   `tests/tui/test_drawille_toggle.py`, `tests/tui/test_drawille_v2.py`
 - `cli.py` TUI bridge code with `tests/cli/test_reasoning_tui_bridge.py` or
@@ -105,9 +106,52 @@ Then load only the focused reference you need:
 
 ## Validation
 
-Last revalidated: **2026-04-19. 1613 total TUI tests passing** (9 pre-existing SDF morph failures excluded — PIL API incompatibility in `sdf_morph.py`, not caused by recent changes).
+Last revalidated: **2026-04-19. 1669 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
 
 Recent changes (details → reference files):
+- **Math formula & chart inline display** (2026-04-19): `hermes_cli/tui/math_renderer.py` (NEW) —
+  `MathRenderer.render_unicode()` with 50-entry `_SYMBOL_TABLE` + superscript/subscript/frac/mathbf/mathit
+  transforms. `render_block()` via `matplotlib.mathtext` → temp PNG (`transparent=True`; wraps in `$...$`
+  if not already). `render_mermaid()` via `mmdc` or `npx @mermaid-js/mermaid-cli` subprocess (15s timeout).
+  `ResponseFlowEngine` gains `IN_MATH` state + 7 new fields (`_math_lines`, `_math_env`, `_math_enabled`,
+  `_math_renderer_mode`, `_math_dpi`, `_math_max_rows`, `_mermaid_enabled`) read from `panel.app.*` at init.
+  Block math regexes (`_BLOCK_MATH_OPEN_RE`, `_BLOCK_MATH_CLOSE_RE`, `_BLOCK_MATH_ONELINE_RE`) checked
+  **before** `_FENCE_OPEN_RE` in `process_line()` NORMAL block — `$$` would otherwise collide with fence.
+  `_apply_inline_math()`: runs on `raw` line before `apply_block_line`; only substitutes when content
+  contains `\`, `^`, or `_` (guards against `$100`, `$HOME`). `_flush_math_block()`: sync unicode path or
+  async via `self._panel.app.run_worker(fn, thread=True)` + `call_from_thread`. `flush()` drains open
+  `IN_MATH` state as unicode. `MathBlockWidget` in `widgets.py`: label + `InlineImage` child.
+  `StreamingCodeBlock._finalize_syntax()` triggers `_try_render_mermaid_async()` for `lang == "mermaid"`;
+  `_on_mermaid_rendered()` calls `self.parent.mount(InlineImage(...), after=self)` for sibling mount
+  (NOT `self.mount(..., after=self)` — that uses the Textual anchor-resolution gotcha).
+  `ReasoningFlowEngine.__init__` gets all 7 math fields with math/mermaid disabled (Non-Goal).
+  Config: `display.math/math_renderer/mermaid/math_dpi/math_max_rows` in `config.py`; wired through
+  `cli.py` to `HermesApp` plain attrs. 30 new tests in `tests/tui/test_math_renderer.py`.
+  Key gotchas: `ResponseFlowEngine` is NOT a Widget — use `self._panel.app.run_worker()` not `@work`.
+  `MathRenderer` uses lazy singleton `_get_math_renderer()` (avoids matplotlib import at module load).
+  `render_block()` calls `matplotlib.use("Agg")` inside the method — must be before `pyplot` import.
+  → `hermes_cli/tui/math_renderer.py` (new), `hermes_cli/tui/response_flow.py §IN_MATH/math fields/
+    _apply_inline_math/_flush_math_block/_mount_math_widget/_mount_math_unicode`,
+    `hermes_cli/tui/widgets.py §MathBlockWidget/StreamingCodeBlock._finalize_syntax/
+    _try_render_mermaid_async/_on_mermaid_rendered`,
+    `hermes_cli/tui/hermes.tcss §MathBlockWidget`, `hermes_cli/config.py §display.math*`,
+    `cli.py §_math_enabled/_math_renderer/_mermaid_enabled/_math_dpi/_math_max_rows`,
+    `tests/tui/test_math_renderer.py` (new, 30 tests)
+- **SDF crossfade warmup** (2026-04-19): No more blank overlay while SDF baker runs. `_get_engine()` sdf_morph
+  branch now shows a braille warmup engine (`sdf_warmup_engine`, default `"neural_pulse"`) until
+  `baker.ready.is_set()`. On ready edge, installs `CrossfadeEngine(warmup→SDF)`. After crossfade completes
+  (`progress >= 1.0`), returns pure `SDFMorphEngine`. `hide()` resets all three warmup attrs. PIL-broken
+  degradation: warmup runs forever (overlay stays alive). New config fields: `sdf_warmup_engine: str` +
+  `sdf_crossfade_speed: float = 0.03` — round-tripped through `_current_panel_cfg` / `_fields_to_dict`.
+  Key: `_sdf_crossfade`, `_sdf_warmup_instance`, `_sdf_baker_was_ready` are plain class attrs (not
+  reactive). 8 new tests in `TestSDFCrossfadeWarmup` in `tests/tui/test_drawille_v2.py`.
+  → `hermes_cli/tui/drawille_overlay.py §_get_engine/_get_sdf_engine/hide/DrawilleOverlayCfg/_overlay_config`,
+    `tests/tui/test_drawille_v2.py §TestSDFCrossfadeWarmup`
+- **Drawille fps reactive** (2026-04-19): `DrawilleOverlay.fps` reactive now controls actual tick rate.
+  `_start_anim()` uses `self.fps` for both paths: `AnimationClock` gets `divisor = max(1, round(15/fps))`;
+  `set_interval` fallback uses `1/fps`. `watch_fps()` restarts timer on change. `show()` syncs `self.fps =
+  cfg.fps` so YAML/panel changes take immediate effect. `fps: 30` in YAML or AnimConfigPanel now works.
+  → `hermes_cli/tui/drawille_overlay.py §_start_anim/watch_fps/show`
 - **Browse mode unified anchor navigation** (2026-04-19): `BrowseAnchorType` enum + `BrowseAnchor` dataclass
   added at module level in `app.py`. `HermesApp` gains `_browse_anchors: list[BrowseAnchor]`,
   `_browse_cursor: int`, `_browse_hint: reactive[str]`. New methods: `_rebuild_browse_anchors()` (walks

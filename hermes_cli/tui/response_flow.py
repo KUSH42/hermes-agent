@@ -27,12 +27,13 @@ from __future__ import annotations
 
 import os
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from rich.text import Text
 
 if TYPE_CHECKING:
-    from hermes_cli.tui.widgets import CopyableBlock, CopyableRichLog, MessagePanel, ReasoningPanel, StreamingCodeBlock
+    from hermes_cli.tui.widgets import CopyableBlock, CopyableRichLog, MathBlockWidget, MessagePanel, ReasoningPanel, StreamingCodeBlock
 
 # ---------------------------------------------------------------------------
 # Module-level configuration
@@ -76,6 +77,38 @@ _HR_RE = re.compile(r"^(-{3,}|\*{3,}|_{3,})$")
 
 # Footnote definition line — [^N]: text — collected and suppressed in NORMAL state
 _FOOTNOTE_DEF_RE = re.compile(r'^\s*\[\^(\d{1,4})\]:\s*(.*)')
+
+# Block math delimiters — checked BEFORE fence detection to avoid $$ colliding with _FENCE_OPEN_RE
+_BLOCK_MATH_OPEN_RE = re.compile(
+    r"^\$\$\s*$"
+    r"|^\\\[\s*$"
+    r"|^\\begin\{(equation|align|gather|multline|eqnarray)\*?\}\s*$"
+)
+_BLOCK_MATH_CLOSE_RE = re.compile(
+    r"^\$\$\s*$"
+    r"|^\\\]\s*$"
+    r"|^\\end\{(equation|align|gather|multline|eqnarray)\*?\}\s*$"
+)
+# Single-line: $$expr$$ on one line (no newline inside)
+_BLOCK_MATH_ONELINE_RE = re.compile(r"^\$\$(.+)\$\$\s*$")
+
+# Inline math: $expr$ in prose — conservative, requires math indicators
+_INLINE_MATH_RE = re.compile(
+    r"(?<!\$)\$"          # open $, not preceded by $
+    r"([^$\n]{1,120})"    # content: 1–120 chars, no newline
+    r"(?<!\s)\$"          # close $, not preceded by whitespace
+)
+
+# Lazy singleton — loaded on first use (avoids import cost at module load)
+_math_renderer: "MathRenderer | None" = None
+
+
+def _get_math_renderer() -> "MathRenderer":
+    global _math_renderer
+    if _math_renderer is None:
+        from hermes_cli.tui.math_renderer import MathRenderer
+        _math_renderer = MathRenderer()
+    return _math_renderer
 
 
 # ---------------------------------------------------------------------------
@@ -280,10 +313,19 @@ class ResponseFlowEngine:
         self._skin_vars: dict[str, str] = panel.app.get_css_variables()
         self._pygments_theme: str = self._skin_vars.get("preview-syntax-theme", "monokai")
         self._block_buf: StreamingBlockBuffer = StreamingBlockBuffer()
-        self._state: Literal["NORMAL", "IN_CODE", "IN_INDENTED_CODE", "IN_SOURCE_LIKE"] = "NORMAL"
+        self._state: Literal["NORMAL", "IN_CODE", "IN_INDENTED_CODE", "IN_SOURCE_LIKE", "IN_MATH"] = "NORMAL"
         self._fence_char: str = "`"
         self._fence_depth: int = 3
         self._active_block: "StreamingCodeBlock | None" = None
+        # Math rendering state
+        _app = getattr(panel, "app", None)
+        self._math_lines: list[str] = []
+        self._math_env: str = ""
+        self._math_enabled: bool = getattr(_app, "_math_enabled", True)
+        self._math_renderer_mode: str = getattr(_app, "_math_renderer", "auto")
+        self._math_dpi: int = getattr(_app, "_math_dpi", 150)
+        self._math_max_rows: int = getattr(_app, "_math_max_rows", 12)
+        self._mermaid_enabled: bool = getattr(_app, "_mermaid_enabled", True)
         self._pending_source_line: str | None = None
         self._pending_code_intro: bool = False
         self._prose_section_counter: int = 0  # for unique CopyableBlock IDs
@@ -393,6 +435,19 @@ class ResponseFlowEngine:
                         inline_ansi = apply_inline_markdown(block_ansi)
                         plain = _strip_ansi(inline_ansi)
                         self._prose_log.write_with_source(Text.from_ansi(inline_ansi), plain)
+            # Block math — checked BEFORE fence detection ($$ would match _FENCE_OPEN_RE)
+            if self._math_enabled:
+                oneline_m = _BLOCK_MATH_ONELINE_RE.match(stripped)
+                if oneline_m:
+                    self._flush_block_buf()
+                    self._flush_math_block(oneline_m.group(1))
+                    return
+                if _BLOCK_MATH_OPEN_RE.match(stripped):
+                    self._flush_block_buf()
+                    self._math_lines = []
+                    self._math_env = stripped
+                    self._state = "IN_MATH"
+                    return
             m = _FENCE_OPEN_RE.match(stripped)
             if m:
                 lang = m.group(2).strip() if m.group(2) else ""
@@ -471,7 +526,21 @@ class ResponseFlowEngine:
             self._active_block = None
             self._state = "NORMAL"
 
+        if self._state == "IN_MATH":
+            stripped = raw.strip()
+            if _BLOCK_MATH_CLOSE_RE.match(stripped):
+                self._flush_math_block("\n".join(self._math_lines))
+                self._math_lines = []
+                self._math_env = ""
+                self._state = "NORMAL"
+            else:
+                self._math_lines.append(raw)
+            return
+
         # Phase 2: Prose — through StreamingBlockBuffer (setext, tables, BQ continuation)
+        # Apply inline math substitution on raw text before markdown processing
+        if self._math_enabled:
+            raw = self._apply_inline_math(raw)
         block_result = self._block_buf.process_line(raw)
         if block_result is None:
             return  # buffered (table row or setext lookahead pending)
@@ -516,6 +585,11 @@ class ResponseFlowEngine:
             pending = self._partial
             self._clear_partial_preview()
             self.process_line(pending)
+        if self._state == "IN_MATH" and self._math_lines:
+            self._flush_math_block("\n".join(self._math_lines))
+            self._math_lines = []
+            self._math_env = ""
+            self._state = "NORMAL"
         if self._active_block is not None and self._state == "IN_CODE":
             self._active_block.flush()  # marks FLUSHED, stops spinner
             self._active_block = None
@@ -559,6 +633,76 @@ class ResponseFlowEngine:
             line.append(sup + " ", style=ref_style)
             line.append_text(styled_body)
             self._prose_log.write_with_source(line, sup + " " + body)
+
+    # ------------------------------------------------------------------
+    # Math helpers
+    # ------------------------------------------------------------------
+
+    def _apply_inline_math(self, line: str) -> str:
+        """Replace $...$ spans in a prose line with unicode approximations."""
+        if "$" not in line:
+            return line
+
+        def replace_math(m: re.Match) -> str:  # type: ignore[type-arg]
+            inner = m.group(1)
+            # Only substitute when it looks like math (not currency / shell vars)
+            if "\\" in inner or "^" in inner or "_" in inner:
+                return _get_math_renderer().render_unicode(inner)
+            return m.group(0)
+
+        return _INLINE_MATH_RE.sub(replace_math, line)
+
+    def _flush_math_block(self, latex: str) -> None:
+        """Render a collected block-math expression and mount/write result."""
+        from hermes_cli.tui.kitty_graphics import get_caps, GraphicsCap
+        caps = get_caps()
+        use_image = (
+            self._math_enabled
+            and self._math_renderer_mode != "unicode"
+            and caps != GraphicsCap.NONE
+        )
+        if not use_image:
+            # Synchronous unicode fallback — write as italic prose
+            unicode_repr = _get_math_renderer().render_unicode(latex)
+            self._sync_prose_log()
+            t = Text(f"  {unicode_repr}  ", style="italic")
+            self._prose_log.write_with_source(t, unicode_repr)
+            return
+
+        # Async image path — dispatch to worker thread
+        dpi = self._math_dpi
+        max_rows = self._math_max_rows
+        latex_copy = latex  # avoid closure over mutable
+
+        def _render_worker() -> None:
+            path = _get_math_renderer().render_block(latex_copy, dpi=dpi)
+            if path is None:
+                # Fallback: write unicode on the app thread
+                unicode_repr = _get_math_renderer().render_unicode(latex_copy)
+                self._panel.app.call_from_thread(
+                    self._mount_math_unicode, unicode_repr
+                )
+            else:
+                self._panel.app.call_from_thread(
+                    self._mount_math_image, path, max_rows
+                )
+
+        self._panel.app.run_worker(_render_worker, thread=True)
+
+    def _mount_math_unicode(self, unicode_repr: str) -> None:
+        """App-thread: write unicode math fallback to prose log."""
+        self._sync_prose_log()
+        t = Text(f"  {unicode_repr}  ", style="italic")
+        self._prose_log.write_with_source(t, unicode_repr)
+
+    def _mount_math_image(self, path: "Path", max_rows: int) -> None:
+        """App-thread: mount MathBlockWidget for a rendered PNG."""
+        try:
+            from hermes_cli.tui.widgets import MathBlockWidget
+            widget = MathBlockWidget(image_path=path, max_rows=max_rows)
+            self._panel._mount_nonprose_block(widget)
+        except Exception:
+            pass
 
     def refresh_skin(self, css_vars: dict[str, str]) -> None:
         """Called from HermesApp.apply_skin() after hot-reload.
@@ -659,7 +803,7 @@ class ReasoningFlowEngine(ResponseFlowEngine):
         self._skin_vars: dict[str, str] = {}
         self._pygments_theme: str = "monokai"
         self._block_buf: StreamingBlockBuffer = StreamingBlockBuffer()
-        self._state: Literal["NORMAL", "IN_CODE", "IN_INDENTED_CODE", "IN_SOURCE_LIKE"] = "NORMAL"
+        self._state: Literal["NORMAL", "IN_CODE", "IN_INDENTED_CODE", "IN_SOURCE_LIKE", "IN_MATH"] = "NORMAL"
         self._fence_char: str = "`"
         self._fence_depth: int = 3
         self._active_block: "StreamingCodeBlock | None" = None
@@ -671,6 +815,14 @@ class ReasoningFlowEngine(ResponseFlowEngine):
         self._footnote_order: list[str] = []
         self._footnote_def_open: str | None = None
         self._partial: str = ""
+        # Math rendering — disabled in reasoning output (Non-Goal per spec)
+        self._math_lines: list[str] = []
+        self._math_env: str = ""
+        self._math_enabled: bool = False
+        self._math_renderer_mode: str = "unicode"
+        self._math_dpi: int = 150
+        self._math_max_rows: int = 12
+        self._mermaid_enabled: bool = False
 
     def process_line(self, raw: str) -> None:
         """Override: flush block buffer immediately after every line.

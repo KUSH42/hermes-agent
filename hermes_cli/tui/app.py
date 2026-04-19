@@ -419,6 +419,9 @@ class HermesApp(App):
 
         # Active StreamingToolBlocks keyed by tool_call_id
         self._active_streaming_blocks: dict[str, Any] = {}
+        # P7 — per-turn tool call tracking for /tools overlay
+        self._turn_tool_calls: list[dict] = []
+        self._turn_start_monotonic: float | None = None
         self._response_metrics_active: bool = False
         self._response_wall_start_time: float | None = None
         self._response_segment_start_time: float | None = None
@@ -1272,6 +1275,9 @@ class HermesApp(App):
             self._response_token_window.clear()
             self._set_chevron_phase("--phase-stream")
             self._set_hint_phase("stream")
+            # P7: reset per-turn tool call list for fresh turn
+            self._turn_tool_calls = []
+            self._turn_start_monotonic = None
             # Start 5s background git poll
             if self._git_poll_h is None:
                 self._git_poll_h = self.set_interval(5.0, self._trigger_git_poll)
@@ -2075,11 +2081,41 @@ class HermesApp(App):
         ``append_streaming_line()``.
         """
         try:
+            import time as _time
             output = self.query_one(OutputPanel)
             # Ensure a MessagePanel exists for this turn (holds response text).
             msg = output.current_message or output.new_message()
-            block = msg.open_streaming_tool_block(label=label, tool_name=tool_name)
+            # Assign panel ID for /tools overlay jump-to-panel; skip if ID already taken
+            # (same tool_call_id reused across turns is pathological but must not crash)
+            base_panel_id = f"tool-{tool_call_id}"
+            try:
+                self.query_one(f"#{base_panel_id}")
+                panel_id: str | None = None  # already taken; skip ID to avoid DuplicateIds
+            except Exception:
+                panel_id = base_panel_id
+            block = msg.open_streaming_tool_block(label=label, tool_name=tool_name, panel_id=panel_id)
             self._active_streaming_blocks[tool_call_id] = block
+            # P7: record tool call for /tools overlay
+            now = _time.monotonic()
+            if self._turn_start_monotonic is None:
+                self._turn_start_monotonic = now
+            try:
+                from hermes_cli.tui.tool_category import classify_tool
+                cat = classify_tool(tool_name or "").value
+            except Exception:
+                cat = "unknown"
+            self._turn_tool_calls.append({
+                "tool_call_id": tool_call_id,
+                "name": tool_name or label,
+                "category": cat,
+                "start_s": round(now - self._turn_start_monotonic, 4),
+                "dur_ms": None,
+                "is_error": False,
+                "error_kind": None,
+                "args": {},
+                "primary_result": "",
+                "mcp_server": None,
+            })
             msg.refresh(layout=True)
             self._browse_total += 1
             if not output._user_scrolled_up:
@@ -2115,6 +2151,19 @@ class HermesApp(App):
         if block is None:
             return
         block.complete(duration, is_error=is_error)
+        # P7: update dur_ms + is_error on the matching turn entry
+        for entry in self._turn_tool_calls:
+            if entry["tool_call_id"] == tool_call_id:
+                try:
+                    ds = str(duration)
+                    if ds.endswith("ms"):
+                        entry["dur_ms"] = int(float(ds[:-2]))
+                    elif ds.endswith("s"):
+                        entry["dur_ms"] = int(float(ds[:-1]) * 1000)
+                except Exception:
+                    pass
+                entry["is_error"] = is_error
+                break
         # Scroll to show the completed (now collapsed) block
         try:
             panel = self.query_one(OutputPanel)
@@ -2145,6 +2194,19 @@ class HermesApp(App):
             return
         block.inject_diff(diff_lines, header_stats)
         block.complete(duration, is_error=is_error)
+        # P7: update dur_ms + is_error on the matching turn entry
+        for entry in self._turn_tool_calls:
+            if entry["tool_call_id"] == tool_call_id:
+                try:
+                    ds = str(duration)
+                    if ds.endswith("ms"):
+                        entry["dur_ms"] = int(float(ds[:-2]))
+                    elif ds.endswith("s"):
+                        entry["dur_ms"] = int(float(ds[:-1]) * 1000)
+                except Exception:
+                    pass
+                entry["is_error"] = is_error
+                break
         try:
             panel = self.query_one(OutputPanel)
             if not panel._user_scrolled_up:
@@ -2173,6 +2235,14 @@ class HermesApp(App):
                 block.remove()
         except Exception:
             pass
+
+    def current_turn_tool_calls(self) -> list[dict]:
+        """Return a shallow copy of per-turn tool call records (P7 /tools overlay).
+
+        Thread-safe: returns list(self._turn_tool_calls) — a shallow copy.
+        Dicts inside are fresh snapshots; caller must not mutate them.
+        """
+        return list(self._turn_tool_calls)
 
     # --- Browse mode ---
 
@@ -2911,6 +2981,10 @@ class HermesApp(App):
             self.action_toggle_workspace()
             return True
 
+        if stripped == "/tools":
+            self._open_tools_overlay()
+            return True
+
         # --- Overlay commands ---
 
         if stripped == "/help":
@@ -3003,6 +3077,20 @@ class HermesApp(App):
             return bool(getattr(self.cli.agent, "has_checkpoint", lambda: False)())
         except Exception:
             return False
+
+    def _open_tools_overlay(self) -> None:
+        """Push ToolsScreen showing the current turn's tool call timeline."""
+        from hermes_cli.config import read_raw_config
+        if not read_raw_config().get("display", {}).get("tools_overlay", True):
+            self._flash_hint("⚠  /tools disabled in config", 2.0)
+            return
+        self._dismiss_all_info_overlays()
+        snapshot = self.current_turn_tool_calls()
+        if not snapshot:
+            self._flash_hint("⚠  No tool calls in this turn", 2.0)
+            return
+        from hermes_cli.tui.tools_overlay import ToolsScreen
+        self.push_screen(ToolsScreen(snapshot))
 
     def _open_anim_config(self) -> None:
         """Toggle the AnimConfigPanel overlay."""
@@ -3478,6 +3566,10 @@ class HermesApp(App):
                 return
             elif key == "M":
                 self._jump_anchor(-1, BrowseAnchorType.MEDIA)
+                event.prevent_default()
+                return
+            elif key == "T":
+                self._open_tools_overlay()
                 event.prevent_default()
                 return
             elif event.character is not None:

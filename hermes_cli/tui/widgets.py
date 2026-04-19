@@ -1471,11 +1471,11 @@ class MessagePanel(Widget):
         self._mount_nonprose_block(panel)
         return block
 
-    def open_streaming_tool_block(self, label: str, tool_name: str | None = None) -> Widget:
+    def open_streaming_tool_block(self, label: str, tool_name: str | None = None, panel_id: str | None = None) -> Widget:
         from hermes_cli.tui.tool_blocks import StreamingToolBlock as _STB, _FILE_TOOL_NAMES
         from hermes_cli.tui.tool_panel import ToolPanel as _ToolPanel
         block = _STB(label=label, tool_name=tool_name)
-        panel = _ToolPanel(block, tool_name=tool_name)
+        panel = _ToolPanel(block, tool_name=tool_name, id=panel_id)
         self._mount_nonprose_block(panel)
         if tool_name in _FILE_TOOL_NAMES:
             self._last_file_tool_block = block

@@ -446,6 +446,7 @@ DEFAULT_CONFIG = {
         "mcp_microcopy": True,       # show "▸ mcp · <server>" provenance line (independent of master)
         "result_hero": True,         # show hero chip "✓ 6 lines" in header tail (requires tool_panel_v4)
         "tool_group_widget": False,  # real ToolGroup widget (opt-in; default off until battle-tested)
+        "tools_overlay": True,       # /tools timeline overlay + T browse key
         "drawille_overlay": {
             "enabled": False,
             "animation": "dna",

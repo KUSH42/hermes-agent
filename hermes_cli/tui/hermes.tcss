@@ -589,3 +589,34 @@ ToolPanel .--focus-hint {
     color: $text-muted;
     padding: 0 2;
 }
+
+/* --- P7 /tools timeline overlay (ToolsScreen CSS also embedded in DEFAULT_CSS) --- */
+ToolsScreen {
+    layout: vertical;
+    background: $surface;
+}
+ToolsScreen > #tools-header {
+    height: 1;
+    background: $primary 20%;
+    padding: 0 1;
+}
+ToolsScreen > #tools-list {
+    height: 1fr;
+    scrollbar-size: 1 1;
+}
+ToolsScreen > #filter-row {
+    height: 1;
+    padding: 0 1;
+    background: $surface-darken-1;
+}
+ToolsScreen > #filter-row > #filter-input {
+    width: 1fr;
+    border: none;
+    background: transparent;
+}
+ToolsScreen > #tools-footer {
+    height: 1;
+    padding: 0 1;
+    background: $primary 10%;
+    color: $text-muted;
+}

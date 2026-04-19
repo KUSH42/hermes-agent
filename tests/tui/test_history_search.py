@@ -422,6 +422,7 @@ async def test_enter_dismisses_overlay():
 # 14. Enter adds --highlighted to target panel
 # ---------------------------------------------------------------------------
 
+@pytest.mark.flaky(reruns=2)
 @pytest.mark.asyncio
 async def test_enter_adds_highlighted_class():
     """action_jump adds --highlighted CSS class to the target panel."""

@@ -582,3 +582,10 @@ GroupBody {
     padding-left: 2;
     layout: vertical;
 }
+
+/* --- P6 focused-panel hint row --- */
+ToolPanel .--focus-hint {
+    height: auto;
+    color: $text-muted;
+    padding: 0 2;
+}

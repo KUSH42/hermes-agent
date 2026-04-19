@@ -10,7 +10,7 @@ Phase 3: detail_level watcher active; ArgsPane/FooterPane live; D/0-3/Enter keys
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from rich.table import Table
 from textual.app import ComposeResult
@@ -325,6 +325,10 @@ class ToolPanel(Widget):
         Binding("2", "set_level_2", "L2", show=False),
         Binding("3", "set_level_3", "L3", show=False),
         Binding("enter", "toggle_l1_l2", "Toggle", show=False),
+        # OmissionBar keyboard (P6)
+        Binding("+", "expand_lines", "Expand lines", show=False),
+        Binding("-", "collapse_lines", "Collapse lines", show=False),
+        Binding("*", "expand_all_lines", "Expand all lines", show=False),
     ]
 
     # Compile-time default 1; overridden in on_mount based on category defaults.
@@ -349,14 +353,17 @@ class ToolPanel(Widget):
         self._args_pane: ArgsPane | None = None
         self._body_pane: BodyPane | None = None
         self._footer_pane: FooterPane | None = None
+        self._hint_row: Static | None = None  # P6 focus hint
 
     def compose(self) -> ComposeResult:
         self._args_pane = ArgsPane()
         self._body_pane = BodyPane(self._block, category=self._category)
         self._footer_pane = FooterPane()
+        self._hint_row = Static("", classes="--focus-hint")
         yield self._args_pane
         yield self._body_pane
         yield self._footer_pane
+        yield self._hint_row
 
     def on_mount(self) -> None:
         from hermes_cli.tui.tool_category import _CATEGORY_DEFAULTS
@@ -576,5 +583,61 @@ class ToolPanel(Widget):
             self.detail_level = 2
 
     # Focus styling is done via CSS :focus pseudo-class in hermes.tcss.
-    # No on_focus/on_blur handlers — they trigger layout refreshes that
-    # can interfere with click event hit-testing on child widgets.
+    # on_focus/on_blur avoided: they trigger layout refreshes that interfere
+    # with click hit-testing. Use watch_has_focus (content-only update) instead.
+
+    def watch_has_focus(self, value: bool) -> None:
+        """Update focus hint row when panel gains/loses focus (P6)."""
+        if self._hint_row is None:
+            return
+        if value:
+            self._hint_row.update(self._build_hint_text())
+        else:
+            self._hint_row.update("")
+
+    def _build_hint_text(self) -> str:
+        """Build keyboard hint line for the focused-panel hint row."""
+        from rich.text import Text
+        t = Text()
+        t.append("  d/D", style="bold")
+        t.append(" detail  ", style="dim")
+        t.append("0-3", style="bold")
+        t.append(" level  ", style="dim")
+        t.append("Enter", style="bold")
+        t.append(" toggle", style="dim")
+        bar = self._get_omission_bar()
+        if bar is not None:
+            t.append("  +/-", style="bold")
+            t.append(" lines  ", style="dim")
+            t.append("*", style="bold")
+            t.append(" all", style="dim")
+        t.append("  c", style="bold")
+        t.append(" copy", style="dim")
+        return t
+
+    def _get_omission_bar(self) -> "Any | None":
+        """Return the OmissionBar of the inner block, if present and mounted."""
+        try:
+            from hermes_cli.tui.tool_blocks import OmissionBar as _OB
+            block = self._block
+            bar = getattr(block, "_omission_bar", None)
+            if isinstance(bar, _OB) and getattr(block, "_omission_bar_mounted", False):
+                return bar
+        except Exception:
+            pass
+        return None
+
+    def action_expand_lines(self) -> None:
+        bar = self._get_omission_bar()
+        if bar is not None:
+            bar._do_expand_one()
+
+    def action_collapse_lines(self) -> None:
+        bar = self._get_omission_bar()
+        if bar is not None:
+            bar._do_collapse_one()
+
+    def action_expand_all_lines(self) -> None:
+        bar = self._get_omission_bar()
+        if bar is not None:
+            bar._do_expand_all()

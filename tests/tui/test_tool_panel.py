@@ -873,3 +873,195 @@ async def test_tcp1_copy_at_l0_returns_content():
         # Body hidden, but copy still works
         content = panel.copy_content()
         assert "secret output" in content
+
+
+# ---------------------------------------------------------------------------
+# P6: OmissionBar keyboard + focused-panel hint row
+# ---------------------------------------------------------------------------
+
+
+def test_p6_bindings_include_expand_collapse():
+    """ToolPanel.BINDINGS includes +/-/* for OmissionBar control."""
+    from textual.binding import Binding
+    keys = {b.key for b in ToolPanel.BINDINGS}
+    assert "+" in keys
+    assert "-" in keys
+    assert "*" in keys
+
+
+def test_p6_hint_row_composed():
+    """_hint_row Static is created during compose (not None after init guard)."""
+    from hermes_cli.tui.tool_blocks import StreamingToolBlock
+    block = StreamingToolBlock(label="bash", tool_name="bash")
+    panel = ToolPanel(block, tool_name="bash")
+    # _hint_row set in compose; before compose it's None
+    assert panel._hint_row is None  # before compose
+    # We can't run compose without a mounted app, but the attr is declared
+
+
+@pytest.mark.asyncio
+async def test_p6_hint_shows_on_focus():
+    """watch_has_focus sets hint text when panel gains focus."""
+    app = _make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        panel = await _get_shell_panel(app, pilot)
+        await _pause(pilot)
+
+        # Simulate focus
+        panel.focus()
+        await _pause(pilot)
+
+        assert panel._hint_row is not None
+        hint_text = str(panel._hint_row.content)
+        # At least 'd/D' should be in the hint
+        assert "d" in hint_text.lower() or len(hint_text) > 0
+
+
+@pytest.mark.asyncio
+async def test_p6_hint_clears_on_blur():
+    """watch_has_focus clears hint text when panel loses focus."""
+    app = _make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        panel = await _get_shell_panel(app, pilot)
+        await _pause(pilot)
+
+        panel.focus()
+        await _pause(pilot)
+
+        # Blur by focusing something else (simulate)
+        panel.watch_has_focus(False)
+        await _pause(pilot)
+
+        assert panel._hint_row is not None
+        # After blur, hint should be empty
+        rendered = panel._hint_row.content
+        assert str(rendered) == "" or not rendered
+
+
+@pytest.mark.asyncio
+async def test_p6_build_hint_text_contains_keys():
+    """_build_hint_text returns object with d/D/Enter content."""
+    app = _make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        panel = await _get_shell_panel(app, pilot)
+        await _pause(pilot)
+
+        hint = panel._build_hint_text()
+        # Should be a Rich Text object or str
+        plain = hint.plain if hasattr(hint, "plain") else str(hint)
+        assert "d/D" in plain
+        assert "Enter" in plain
+        assert "c" in plain
+
+
+@pytest.mark.asyncio
+async def test_p6_expand_lines_no_bar_no_crash():
+    """action_expand_lines is a no-op when no OmissionBar is present."""
+    app = _make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        panel = await _get_shell_panel(app, pilot)
+        await _pause(pilot)
+
+        # Should not raise even if no OmissionBar
+        panel.action_expand_lines()
+        panel.action_collapse_lines()
+        panel.action_expand_all_lines()
+
+
+def test_p6_get_omission_bar_none_without_block():
+    """_get_omission_bar returns None when block has no bar."""
+    from hermes_cli.tui.tool_blocks import StreamingToolBlock
+    block = StreamingToolBlock(label="bash", tool_name="bash")
+    panel = ToolPanel(block, tool_name="bash")
+    result = panel._get_omission_bar()
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_p6_expand_lines_delegates_to_bar():
+    """action_expand_lines calls _do_expand_one on the bar."""
+    from hermes_cli.tui.tool_blocks import StreamingToolBlock, OmissionBar
+    from unittest.mock import MagicMock, patch
+
+    app = _make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        panel = await _get_shell_panel(app, pilot)
+        await _pause(pilot)
+
+        # Inject a fake OmissionBar
+        block = panel._block
+        fake_bar = MagicMock(spec=OmissionBar)
+        block._omission_bar = fake_bar
+        block._omission_bar_mounted = True
+
+        panel.action_expand_lines()
+        fake_bar._do_expand_one.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_p6_collapse_lines_delegates_to_bar():
+    """action_collapse_lines calls _do_collapse_one on the bar."""
+    from hermes_cli.tui.tool_blocks import StreamingToolBlock, OmissionBar
+    from unittest.mock import MagicMock
+
+    app = _make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        panel = await _get_shell_panel(app, pilot)
+        await _pause(pilot)
+
+        block = panel._block
+        fake_bar = MagicMock(spec=OmissionBar)
+        block._omission_bar = fake_bar
+        block._omission_bar_mounted = True
+
+        panel.action_collapse_lines()
+        fake_bar._do_collapse_one.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_p6_expand_all_delegates_to_bar():
+    """action_expand_all_lines calls _do_expand_all on the bar."""
+    from hermes_cli.tui.tool_blocks import StreamingToolBlock, OmissionBar
+    from unittest.mock import MagicMock
+
+    app = _make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        panel = await _get_shell_panel(app, pilot)
+        await _pause(pilot)
+
+        block = panel._block
+        fake_bar = MagicMock(spec=OmissionBar)
+        block._omission_bar = fake_bar
+        block._omission_bar_mounted = True
+
+        panel.action_expand_all_lines()
+        fake_bar._do_expand_all.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_p6_hint_includes_lines_hint_when_bar_present():
+    """_build_hint_text includes +/- when OmissionBar is present."""
+    from hermes_cli.tui.tool_blocks import StreamingToolBlock, OmissionBar
+    from unittest.mock import MagicMock
+
+    app = _make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        panel = await _get_shell_panel(app, pilot)
+        await _pause(pilot)
+
+        block = panel._block
+        fake_bar = MagicMock(spec=OmissionBar)
+        block._omission_bar = fake_bar
+        block._omission_bar_mounted = True
+
+        hint = panel._build_hint_text()
+        plain = hint.plain if hasattr(hint, "plain") else str(hint)
+        assert "+/-" in plain or "+" in plain

@@ -62,5 +62,13 @@ def microcopy_line(spec: "ToolSpec", state: StreamingState) -> str:
         server = prov[4:] if prov.startswith("mcp:") else "?"
         return f"▸ mcp · {server} server"
 
-    # CODE (uses ExecuteCodeBlock sections), AGENT, UNKNOWN → no microcopy
+    if cat == ToolCategory.CODE:
+        return f"▸ {state.lines_received} lines · {_kb(state.bytes_received)}"
+
+    if cat == ToolCategory.AGENT:
+        return "▸ thinking…"
+
+    if cat == ToolCategory.UNKNOWN:
+        return f"▸ {state.lines_received} lines"
+
     return ""

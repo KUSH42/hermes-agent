@@ -142,18 +142,37 @@ class TestMicrocopyMcp:
         assert "linear" in microcopy_line(spec, s)
 
 
-class TestMicrocopyNoOp:
-    def test_code_returns_empty(self):
+class TestMicrocopyCode:
+    def test_code_shows_lines_and_bytes(self):
         spec = _spec(ToolCategory.CODE)
-        assert microcopy_line(spec, _state()) == ""
+        s = _state(lines_received=5, bytes_received=2048)
+        assert microcopy_line(spec, s) == "▸ 5 lines · 2.0kB"
 
-    def test_agent_returns_empty(self):
+    def test_code_zero_state(self):
+        spec = _spec(ToolCategory.CODE)
+        assert microcopy_line(spec, _state()) == "▸ 0 lines · 0B"
+
+
+class TestMicrocopyAgent:
+    def test_agent_shows_thinking(self):
         spec = _spec(ToolCategory.AGENT)
-        assert microcopy_line(spec, _state()) == ""
+        assert microcopy_line(spec, _state()) == "▸ thinking…"
 
-    def test_unknown_returns_empty(self):
+    def test_agent_static_regardless_of_state(self):
+        spec = _spec(ToolCategory.AGENT)
+        s = _state(lines_received=99, bytes_received=9999)
+        assert microcopy_line(spec, s) == "▸ thinking…"
+
+
+class TestMicrocopyUnknown:
+    def test_unknown_shows_line_count(self):
         spec = _spec(ToolCategory.UNKNOWN)
-        assert microcopy_line(spec, _state()) == ""
+        s = _state(lines_received=7, bytes_received=100)
+        assert microcopy_line(spec, s) == "▸ 7 lines"
+
+    def test_unknown_zero(self):
+        spec = _spec(ToolCategory.UNKNOWN)
+        assert microcopy_line(spec, _state()) == "▸ 0 lines"
 
 
 # ---------------------------------------------------------------------------

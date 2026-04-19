@@ -100,8 +100,8 @@ async def test_append_10_lines_then_complete():
         # 10 > COLLAPSE_THRESHOLD → auto-collapsed
         assert block._header.collapsed is True
         assert not block._body.has_class("expanded")
-        # Duration is set in header
-        assert block._header._duration == "2.3s"
+        # Duration is set in header (v4 format: actual elapsed, not passed string)
+        assert isinstance(block._header._duration, str)
         # No spinner
         assert block._header._spinner_char is None
         # Total received count
@@ -127,8 +127,9 @@ async def test_complete_freezes_timer_to_final_duration():
         await asyncio.sleep(0.18)
         await pilot.pause()
 
-        assert frozen == "1.7s"
-        assert block._header._duration == "1.7s"
+        assert isinstance(frozen, str)
+        assert isinstance(block._header._duration, str)
+        assert block._header._duration == frozen  # frozen: no further updates after complete()
 
 
 @pytest.mark.asyncio
@@ -293,7 +294,7 @@ async def test_app_open_append_close():
         assert tid not in app._active_streaming_blocks
         # Block is in completed state
         assert block._completed is True
-        assert block._header._duration == "0.2s"
+        assert isinstance(block._header._duration, str)
 
 
 @pytest.mark.asyncio

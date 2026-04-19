@@ -182,12 +182,19 @@ class FooterPane(Widget):
 
     DEFAULT_CSS = """
     FooterPane {
-        height: 1;
+        height: auto;
         padding: 0 1;
         display: none;
         color: $text-muted;
-        layout: horizontal;
+        layout: vertical;
     }
+    FooterPane > .footer-main { height: 1; }
+    FooterPane > .footer-stderr {
+        height: 1;
+        display: none;
+        color: $error 80%;
+    }
+    FooterPane.has-stderr > .footer-stderr { display: block; }
     FooterPane.compact > .footer-stderr { display: none; }
     """
 
@@ -197,8 +204,10 @@ class FooterPane(Widget):
         super().__init__(**kwargs)
 
     def compose(self) -> ComposeResult:
-        self._content = Static("", id="footer-content")
+        self._content = Static("", classes="footer-main")
+        self._stderr_row = Static("", classes="footer-stderr")
         yield self._content
+        yield self._stderr_row
 
     def update_summary(self, summary: "ResultSummary") -> None:
         """Re-render footer from a ResultSummary."""
@@ -216,12 +225,20 @@ class FooterPane(Widget):
             else:
                 parts.append(badge, style="dim")
             parts.append("  ")
-        if summary.stderr_tail:
-            parts.append(summary.stderr_tail[:80], style="dim")
         if summary.retry_hint:
             parts.append("  ")
             parts.append(summary.retry_hint, style="underline cyan")
         self._content.update(parts)
+        if summary.stderr_tail:
+            from rich.text import Text as _T
+            stderr_text = _T()
+            stderr_text.append("stderr: ", style="dim")
+            stderr_text.append(summary.stderr_tail[:120], style="bold")
+            self._stderr_row.update(stderr_text)
+            self.add_class("has-stderr")
+        else:
+            self._stderr_row.update("")
+            self.remove_class("has-stderr")
 
     def update_summary_v4(self, summary: "ResultSummaryV4") -> None:
         """Re-render footer from a ResultSummaryV4 (v4 §4.2)."""
@@ -240,11 +257,6 @@ class FooterPane(Widget):
             }.get(chip.tone, "dim")
             parts.append(f" {chip.text} ", style=tone_style)
 
-        # Stderr tail
-        if summary.stderr_tail:
-            parts.append("  ")
-            parts.append(summary.stderr_tail[:80], style="dim red")
-
         # Action row (hotkey hints)
         if summary.actions:
             parts.append("  ")
@@ -260,6 +272,17 @@ class FooterPane(Widget):
                 parts.append(f" {icon} {artifact.label} ", style="dim cyan")
 
         self._content.update(parts)
+
+        # Stderr split row — shown below main row when present
+        if summary.stderr_tail:
+            stderr_text = Text()
+            stderr_text.append("stderr: ", style="dim")
+            stderr_text.append(summary.stderr_tail[:120], style="bold")
+            self._stderr_row.update(stderr_text)
+            self.add_class("has-stderr")
+        else:
+            self._stderr_row.update("")
+            self.remove_class("has-stderr")
 
     def on_resize(self, event: object) -> None:
         width = getattr(getattr(event, "size", None), "width", 80)

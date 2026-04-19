@@ -50,7 +50,7 @@ _CATEGORY_DEFAULTS: dict[ToolCategory, CategoryDefaults] = {
     ToolCategory.CODE:    CategoryDefaults("tool-code-accent",    "tool-glyph-code",    "P", "code_args",    "code_result",    2, 3),
     ToolCategory.SEARCH:  CategoryDefaults("tool-search-accent",  "tool-glyph-search",  "?", "search_args",  "search_result",  1, 6),
     ToolCategory.WEB:     CategoryDefaults("tool-web-accent",     "tool-glyph-web",     "@", "web_args",     "web_result",     1, 6),
-    ToolCategory.AGENT:   CategoryDefaults("tool-agent-accent",   "tool-glyph-agent",   "*", "agent_args",   "agent_result",   0, 1),
+    ToolCategory.AGENT:   CategoryDefaults("tool-agent-accent",   "tool-glyph-agent",   "*", "agent_args",   "agent_result",   1, 1),
     ToolCategory.MCP:     CategoryDefaults("tool-mcp-accent",     "tool-glyph-mcp",     "#", "mcp_args",     "mcp_result",     1, 6, icon_nf="\uf868"),  # 󰡨
     ToolCategory.UNKNOWN: CategoryDefaults("tool-unknown-accent", "tool-glyph-unknown", "?", "generic_args", "generic_result", 1, 3),
 }

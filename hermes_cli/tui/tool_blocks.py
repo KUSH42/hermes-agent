@@ -323,6 +323,7 @@ class ToolHeader(PulseMixin, Widget):
         # Streaming state — set by StreamingToolBlock
         self._spinner_char: str | None = None   # non-None while streaming
         self._duration: str = ""                # set on completion
+        self._is_complete: bool = False         # True after _on_stream_complete
         self._tool_icon: str = ""
         # Icon color state
         self._tool_icon_error: bool = False
@@ -415,7 +416,7 @@ class ToolHeader(PulseMixin, Widget):
             elif self._tool_icon_error:
                 err_color = getattr(self, "_diff_del_color", _DIFF_DEL_FALLBACK)
                 icon_style = f"bold {err_color}"
-            elif self._duration:
+            elif self._is_complete or self._duration:
                 ok_color = getattr(self, "_diff_add_color", _DIFF_ADD_FALLBACK)
                 icon_style = f"bold {ok_color}"
             else:
@@ -1099,8 +1100,9 @@ class StreamingToolBlock(ToolBlock):
         self._flush_pending()
         # Hide tail badge unconditionally
         self._tail.dismiss()
-        # Update header: remove spinner, add duration + line count
+        # Update header: remove spinner, mark complete, add duration + line count
         self._header._spinner_char = None
+        self._header._is_complete = True
         started = getattr(self, "_stream_started_at", None)
         if started is not None:
             elapsed_ms = (time.monotonic() - started) * 1000.0
@@ -1109,8 +1111,17 @@ class StreamingToolBlock(ToolBlock):
         else:
             self._header._duration = duration
         self._header._line_count = self._total_received
+        # Collapse threshold: diff results use 20 lines; others use global default
+        _collapse_threshold = COLLAPSE_THRESHOLD
+        try:
+            from hermes_cli.tui.tool_category import spec_for as _spec_for
+            _spec = _spec_for(self._tool_name or "")
+            if _spec.primary_result == "diff":
+                _collapse_threshold = 20
+        except Exception:
+            pass
         # Apply same collapse logic as static ToolBlock
-        if self._total_received > COLLAPSE_THRESHOLD:
+        if self._total_received > _collapse_threshold:
             self._header._has_affordances = True
             self._header.collapsed = True
             self._body.remove_class("expanded")
@@ -1160,7 +1171,6 @@ class StreamingToolBlock(ToolBlock):
             if path is not None:
                 try:
                     from hermes_cli.tui.widgets import InlineImage
-                    self._body.remove_children()
                     self._body.mount(InlineImage(image=path, max_rows=24))
                     self.post_message(ImageMounted(path))
                     mounted = True

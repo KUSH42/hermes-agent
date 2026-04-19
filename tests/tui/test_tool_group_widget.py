@@ -20,11 +20,8 @@ from hermes_cli.tui.tool_group import (
     RULE_SHELL_PIPE,
     RULE_SEARCH_BATCH,
     _find_rule_match,
-    _find_rule_match_css,
-    _group_widget_enabled,
     _is_streaming,
     _get_tool_group,
-    _apply_group_css,
     _do_apply_group_widget,
     _do_append_to_group,
 )
@@ -241,33 +238,6 @@ def test_t06_rule4_dropped_in_widget_path():
     assert result is None
 
 
-def test_t06b_rule4_present_in_css_path():
-    """Rule 4 IS present in _find_rule_match_css (CSS path)."""
-    from hermes_cli.tui.tool_panel import ToolPanel as _TP
-    from hermes_cli.tui.tool_category import ToolCategory
-
-    file1 = MagicMock(spec=_TP)
-    file1._category = ToolCategory.FILE
-    file1.parent = MagicMock()
-    file1.is_attached = True
-
-    file2 = MagicMock(spec=_TP)
-    file2._category = ToolCategory.FILE
-    file2.parent = MagicMock()
-    file2.is_attached = True
-
-    mp = MagicMock()
-    mp.children = [file1]
-
-    with (
-        patch("hermes_cli.tui.tool_group._is_diff_panel", return_value=False),
-        patch("hermes_cli.tui.tool_group._share_dir_prefix", return_value=True),
-        patch("hermes_cli.tui.tool_group._get_header_label", return_value="/src/a.py"),
-    ):
-        result = _find_rule_match_css(mp, file2)
-
-    assert result is not None
-    assert result[1] == 4
 
 
 # ---------------------------------------------------------------------------
@@ -293,29 +263,6 @@ def test_t11_not_streaming():
     panel._block = block
     assert _is_streaming(panel) is False
 
-
-# ---------------------------------------------------------------------------
-# T08: _group_widget_enabled reads config
-# ---------------------------------------------------------------------------
-
-
-def test_t08_group_widget_disabled_by_default():
-    """tool_group_widget defaults False."""
-    with patch("hermes_cli.tui.tool_group.read_raw_config", return_value={}, create=True):
-        try:
-            result = _group_widget_enabled()
-        except Exception:
-            result = False
-    assert result is False
-
-
-def test_t08b_group_widget_enabled_by_config():
-    with patch(
-        "hermes_cli.config.read_raw_config",
-        return_value={"display": {"tool_group_widget": True}},
-    ):
-        result = _group_widget_enabled()
-    assert result is True
 
 
 # ---------------------------------------------------------------------------
@@ -637,14 +584,12 @@ async def test_t25_reparent_exception_falls_back_to_css():
         b2 = _STB(label="bash", tool_name="bash")
         p2 = _TP(b2, tool_name="bash")
 
-        # Disable widget path so only CSS applies
-        with patch("hermes_cli.tui.tool_group._group_widget_enabled", return_value=False):
-            mp._mount_nonprose_block(p1)
-            await _pause(pilot)
-            mp._mount_nonprose_block(p2)
-            await _pause(pilot)
+        mp._mount_nonprose_block(p1)
+        await _pause(pilot)
+        mp._mount_nonprose_block(p2)
+        await _pause(pilot)
 
-        # Panels mounted without error (CSS or standalone)
+        # Panels mounted without error
         panels = list(mp.query(_TP))
         assert len(panels) >= 2
 
@@ -692,17 +637,6 @@ async def test_t07_third_panel_appends_to_group():
         children = [c for c in tg._body.children if isinstance(c, _TP)]
         assert len(children) == 3
 
-
-# ---------------------------------------------------------------------------
-# T08: widget disabled → no ToolGroup created
-# ---------------------------------------------------------------------------
-
-
-def test_t08_no_tool_group_when_disabled():
-    """_group_widget_enabled returns False when config flag is off."""
-    with patch("hermes_cli.config.read_raw_config", return_value={"display": {"tool_group_widget": False}}):
-        result = _group_widget_enabled()
-    assert result is False
 
 
 # ---------------------------------------------------------------------------

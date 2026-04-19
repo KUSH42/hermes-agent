@@ -127,22 +127,6 @@ def _safe_cell_width(s: str) -> int:
         return len(s)
 
 
-def _tool_gutter_enabled() -> bool:
-    """Show ┊/┃ gutter symbols on tool call blocks (default: true)."""
-    try:
-        from hermes_cli.config import read_raw_config
-        return bool(read_raw_config().get("display", {}).get("tool_gutter", True))
-    except Exception:
-        return True
-
-
-def _tool_panel_v4_enabled() -> bool:
-    """Return True when v4 header rendering is enabled in config."""
-    try:
-        from hermes_cli.config import read_raw_config
-        return bool(read_raw_config().get("display", {}).get("tool_panel_v4", False))
-    except Exception:
-        return False
 
 
 # ---------------------------------------------------------------------------
@@ -406,21 +390,18 @@ class ToolHeader(PulseMixin, Widget):
         focused = self.has_class("focused")
         t = Text()
 
-        # Gutter (shared with v2)
-        if _tool_gutter_enabled():
-            if self._is_child_diff:
-                gutter_text = Text("  ╰─", style="dim")
-                gutter_w = 4
-            elif focused:
-                color = getattr(self, "_focused_gutter_color", _GUTTER_FALLBACK)
-                gutter_text = Text("  ┃", style=f"bold {color}")
-                gutter_w = 3
-            else:
-                gutter_text = Text("  ┊", style="dim")
-                gutter_w = 3
-            t.append_text(gutter_text)
+        # Gutter
+        if self._is_child_diff:
+            gutter_text = Text("  ╰─", style="dim")
+            gutter_w = 4
+        elif focused:
+            color = getattr(self, "_focused_gutter_color", _GUTTER_FALLBACK)
+            gutter_text = Text("  ┃", style=f"bold {color}")
+            gutter_w = 3
         else:
-            gutter_w = 0
+            gutter_text = Text("  ┊", style="dim")
+            gutter_w = 3
+        t.append_text(gutter_text)
 
         # Icon (shared with v2)
         icon_str = self._tool_icon or ""
@@ -467,14 +448,8 @@ class ToolHeader(PulseMixin, Widget):
                 tail.append(f"  {self._line_count}L", style="dim")
             # Hero chip: primary result summary (v4 §4.1)
             if self._primary_hero:
-                try:
-                    from hermes_cli.config import read_raw_config
-                    hero_on = bool(read_raw_config().get("display", {}).get("result_hero", True))
-                except Exception:
-                    hero_on = True
-                if hero_on:
-                    hero_style = "bold red" if self._tool_icon_error else "dim green"
-                    tail.append(f"  {self._primary_hero}", style=hero_style)
+                hero_style = "bold red" if self._tool_icon_error else "dim green"
+                tail.append(f"  {self._primary_hero}", style=hero_style)
             if self._has_affordances:
                 tail.append("  ▾" if not self.collapsed else "  ▸", style="dim")
             if self._duration:   # already v4-formatted by _tick_duration / complete()
@@ -499,153 +474,10 @@ class ToolHeader(PulseMixin, Widget):
         return t
 
     def render(self) -> RenderResult:
-        if _tool_panel_v4_enabled():
-            result = self._render_v4()
-            if result is not None:
-                return result
-        if self._hidden:
-            self.styles.height = 0
-            return Text()
-        focused = self.has_class("focused")
-        t = Text()
-
-        # --- Gutter ---
-        if _tool_gutter_enabled():
-            if self._is_child_diff:
-                gutter_text = Text("  ╰─", style="dim")
-                gutter_w = 4
-            elif focused:
-                color = getattr(self, "_focused_gutter_color", _GUTTER_FALLBACK)
-                gutter_text = Text("  ┃", style=f"bold {color}")
-                gutter_w = 3
-            else:
-                gutter_text = Text("  ┊", style="dim")
-                gutter_w = 3
-            t.append_text(gutter_text)
-        else:
-            gutter_w = 0
-
-        dashes_w = 0
-
-        # --- Icon ---
-        icon_str = self._tool_icon or ""
-        icon_cell_w = _safe_cell_width(icon_str) if icon_str else 0
-        if icon_str:
-            if self._spinner_char is not None:
-                icon_dim = "#6e6e6e"
-                icon_peak = getattr(self, "_running_icon_color", _RUNNING_FALLBACK)
-                icon_color = lerp_color(icon_dim, icon_peak, self._pulse_t)
-                icon_style = f"bold {icon_color}"
-            elif self._tool_icon_error:
-                err_color = getattr(self, "_diff_del_color", _DIFF_DEL_FALLBACK)
-                icon_style = f"bold {err_color}"
-            elif self._duration:
-                ok_color = getattr(self, "_diff_add_color", _DIFF_ADD_FALLBACK)
-                icon_style = f"bold {ok_color}"
-            else:
-                icon_style = "dim"
-            t.append(f" {icon_str}", style=icon_style)
-        space_after_icon = 1  # the space before label
-
-        # --- Shell prompt prefix ($) ---
-        shell_prompt_w = 0
-        if self._shell_prompt:
-            accent = getattr(self, "_focused_gutter_color", _GUTTER_FALLBACK)
-            t.append(" $", style=f"bold {accent}")
-            shell_prompt_w = 2  # " $" occupies 2 cells
-
-        # --- Label style ---
-        if self._tool_icon_error:
-            label_style = "#ef5350"
-        elif getattr(self, "_bold_label", False):
-            label_style = "bold"
-        else:
-            label_style = ""   # terminal default — not dim
-
-        # Duration style: dim for normal blocks, normal for compact-tail (execute_code)
-        compact = getattr(self, "_compact_tail", False)
-        dur_style = "" if compact else "dim"
-
-        # --- Tail ---
-        hide_dur = getattr(self, "_hide_duration", False)
-        tail = Text()
-        if self._spinner_char is not None:
-            tail.append(f"  {self._spinner_char}", style="dim")
-            if self._duration and not hide_dur:
-                tail.append(f"  {self._duration}", style=dur_style)
-        else:
-            if self._stats and self._stats.has_diff_counts:
-                add_color = getattr(self, "_diff_add_color", _DIFF_ADD_FALLBACK)
-                del_color = getattr(self, "_diff_del_color", _DIFF_DEL_FALLBACK)
-                if self._stats.additions:
-                    tail.append(f"  +{self._stats.additions}", style=f"bold {add_color}")
-                if self._stats.deletions:
-                    tail.append(f"  -{self._stats.deletions}", style=f"bold {del_color}")
-            elif self._line_count:
-                tail.append(f"  {self._line_count}L", style="dim")
-            if self._has_affordances:
-                toggle = "  ▾" if not self.collapsed else "  ▸"
-                tail.append(toggle, style="dim")
-            if self._duration and not hide_dur:
-                tail.append(f"  {self._duration}", style=dur_style)
-
-        # --- Label with padding ---
-        term_w = self.size.width
-
-        # Compact-tail mode (execute_code): no right-align padding, natural flow
-        if compact:
-            if self._label_rich is not None:
-                t.append(" ")
-                t.append_text(self._label_rich)
-            else:
-                t.append(f" {self._label}", style=label_style)
-            t.append_text(tail)
-            return t
-
-        # Normal mode: right-align tail
-        tail_w = tail.cell_len
-        FIXED_PREFIX_W = gutter_w + dashes_w + icon_cell_w + space_after_icon + shell_prompt_w
-        MIN_LABEL_W = 8
-
-        if term_w <= 0:
-            # Pre-mount: best-effort, no padding
-            if self._path_clickable:
-                t.append_text(self._render_path_label(50))
-            elif self._label_rich is not None:
-                label_str = self._label
-                display_rich = self._label_rich if _safe_cell_width(label_str) <= 50 else Text(label_str[:49] + "…")
-                t.append(" ")
-                t.append_text(display_rich)
-            else:
-                t.append(f" {self._label}", style=label_style)
-            t.append_text(tail)
-            return t
-
-        available = max(MIN_LABEL_W, term_w - FIXED_PREFIX_W - tail_w - 2)
-        if self._path_clickable:
-            path_text = self._render_path_label(available)
-            t.append_text(path_text)
-            pad = max(0, available - path_text.cell_len)
-            t.append(" " * pad)
-        elif self._label_rich is not None:
-            label_str = self._label
-            if _safe_cell_width(label_str) > available:
-                label_str = label_str[:available - 1] + "…"
-                display_rich = Text(label_str)
-            else:
-                display_rich = self._label_rich
-            pad = max(0, available - _safe_cell_width(label_str))
-            t.append(" ")
-            t.append_text(display_rich)
-            t.append(" " * pad)
-        else:
-            label_str = self._label
-            if len(label_str) > available:
-                label_str = label_str[:available - 1] + "…"
-            pad = max(0, available - _safe_cell_width(label_str))
-            t.append(f" {label_str}{' ' * pad}", style=label_style)
-        t.append_text(tail)
-        return t
+        result = self._render_v4()
+        if result is not None:
+            return result
+        return Text()
 
     def set_error(self, is_error: bool) -> None:
         """Mark tool result as error — icon turns red on completion."""
@@ -1269,14 +1101,11 @@ class StreamingToolBlock(ToolBlock):
         self._tail.dismiss()
         # Update header: remove spinner, add duration + line count
         self._header._spinner_char = None
-        if _tool_panel_v4_enabled():
-            started = getattr(self, "_stream_started_at", None)
-            if started is not None:
-                elapsed_ms = (time.monotonic() - started) * 1000.0
-                self._header._elapsed_ms = elapsed_ms
-                self._header._duration = _format_duration_v4(elapsed_ms)
-            else:
-                self._header._duration = duration
+        started = getattr(self, "_stream_started_at", None)
+        if started is not None:
+            elapsed_ms = (time.monotonic() - started) * 1000.0
+            self._header._elapsed_ms = elapsed_ms
+            self._header._duration = _format_duration_v4(elapsed_ms)
         else:
             self._header._duration = duration
         self._header._line_count = self._total_received
@@ -1293,8 +1122,7 @@ class StreamingToolBlock(ToolBlock):
             self._header.collapsed = False
         self._header.refresh()
         # v4 §3.3: clear microcopy on completion (keep MCP provenance line)
-        if _tool_panel_v4_enabled():
-            self._clear_microcopy_on_complete()
+        self._clear_microcopy_on_complete()
         # Brief success flash to signal completion
         self._header.flash_complete()
         # If output contains a MEDIA: path, replace body with an inline image
@@ -1388,16 +1216,13 @@ class StreamingToolBlock(ToolBlock):
             return
         elapsed_ms = (time.monotonic() - started) * 1000.0
         self._header._elapsed_ms = elapsed_ms
-        if _tool_panel_v4_enabled():
-            self._header._duration = _format_duration_v4(elapsed_ms)
-        else:
-            self._header._duration = f"{elapsed_ms / 1000:.1f}s"
+        self._header._duration = _format_duration_v4(elapsed_ms)
         self._header.refresh()
 
     def _update_microcopy(self) -> None:
         """Update microcopy Static with current streaming state (v4 §3.3)."""
         mc = self._microcopy_widget
-        if mc is None or not _tool_panel_v4_enabled():
+        if mc is None:
             return
         started = getattr(self, "_stream_started_at", None)
         if started is None:
@@ -1424,7 +1249,7 @@ class StreamingToolBlock(ToolBlock):
     def _flush_pending(self) -> None:
         """Drain pending lines into the RichLog (called at 60fps)."""
         # Adaptive flush: drop to 10Hz after 2s idle (v4 §3.4)
-        if _tool_panel_v4_enabled() and not self._flush_slow and not self._completed:
+        if not self._flush_slow and not self._completed:
             now = time.monotonic()
             if now - self._last_line_time > 2.0:
                 self._flush_slow = True

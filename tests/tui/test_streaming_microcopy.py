@@ -244,8 +244,6 @@ async def test_flush_slow_flag_set_on_idle(monkeypatch):
     from hermes_cli.tui.tool_blocks import StreamingToolBlock
     import hermes_cli.tui.tool_blocks as tb
 
-    monkeypatch.setattr(tb, "_tool_panel_v4_enabled", lambda: True)
-
     class _App(App):
         def compose(self) -> ComposeResult:
             yield StreamingToolBlock(label="bash", tool_name="bash")
@@ -265,9 +263,6 @@ async def test_flush_slow_restored_on_append(monkeypatch):
     """append_line while _flush_slow=True restores 60Hz and clears flag."""
     from textual.app import App, ComposeResult
     from hermes_cli.tui.tool_blocks import StreamingToolBlock
-    import hermes_cli.tui.tool_blocks as tb
-
-    monkeypatch.setattr(tb, "_tool_panel_v4_enabled", lambda: True)
 
     class _App(App):
         def compose(self) -> ComposeResult:
@@ -281,13 +276,10 @@ async def test_flush_slow_restored_on_append(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_adaptive_flush_no_op_when_v4_off(monkeypatch):
-    """When v4 disabled, idle 2s does NOT set _flush_slow."""
+async def test_adaptive_flush_active_by_default():
+    """Adaptive flush is always on — idle 2s sets _flush_slow."""
     from textual.app import App, ComposeResult
     from hermes_cli.tui.tool_blocks import StreamingToolBlock
-    import hermes_cli.tui.tool_blocks as tb
-
-    monkeypatch.setattr(tb, "_tool_panel_v4_enabled", lambda: False)
 
     class _App(App):
         def compose(self) -> ComposeResult:
@@ -296,8 +288,9 @@ async def test_adaptive_flush_no_op_when_v4_off(monkeypatch):
     async with _App().run_test() as pilot:
         stb = pilot.app.query_one(StreamingToolBlock)
         stb._last_line_time = time.monotonic() - 3.0
+        stb._flush_slow = False
         stb._flush_pending()
-        assert stb._flush_slow is False
+        assert stb._flush_slow is True
 
 
 # ---------------------------------------------------------------------------
@@ -312,8 +305,6 @@ async def test_mcp_microcopy_persists_after_complete(monkeypatch):
     from textual.widgets import Static
     import hermes_cli.tui.tool_blocks as tb
     from hermes_cli.tui.tool_category import register_tool, ToolSpec, ToolCategory, TOOL_REGISTRY
-
-    monkeypatch.setattr(tb, "_tool_panel_v4_enabled", lambda: True)
 
     mcp_name = "mcp__test-p3__my_tool"
     spec = ToolSpec(
@@ -352,9 +343,6 @@ async def test_non_mcp_microcopy_cleared_after_complete(monkeypatch):
     from textual.app import App, ComposeResult
     from hermes_cli.tui.tool_blocks import StreamingToolBlock
     from textual.widgets import Static
-    import hermes_cli.tui.tool_blocks as tb
-
-    monkeypatch.setattr(tb, "_tool_panel_v4_enabled", lambda: True)
 
     class _App(App):
         def compose(self) -> ComposeResult:

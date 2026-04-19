@@ -25,14 +25,6 @@ if TYPE_CHECKING:
     from hermes_cli.tui.tool_category import ToolCategory
 
 
-def _tool_panel_v2_enabled() -> bool:
-    """Return True if the tool_panel_v2 accent bar is enabled in config."""
-    try:
-        from hermes_cli.config import read_raw_config
-        return bool(read_raw_config().get("display", {}).get("tool_panel_v2", True))
-    except Exception:
-        return True
-
 
 # ---------------------------------------------------------------------------
 # ArgsPane
@@ -369,8 +361,7 @@ class ToolPanel(Widget):
         from hermes_cli.tui.tool_category import _CATEGORY_DEFAULTS
 
         self.add_class(f"category-{self._category.value}")
-        if _tool_panel_v2_enabled():
-            self.add_class("tool-panel--accent")
+        self.add_class("tool-panel--accent")
 
         # Set initial detail_level.
         # Static blocks (total_lines > 0 at mount = pre-populated ToolBlock) always

@@ -186,37 +186,16 @@ class TestHeaderLabelNonePrimary:
 # v2 parity — flag off, old flags still work
 # ---------------------------------------------------------------------------
 
-class TestV2Parity:
-    def test_v2_parity_flag_off_hidden_still_works(self, monkeypatch):
-        monkeypatch.setattr(
-            "hermes_cli.tui.tool_blocks._tool_panel_v4_enabled", lambda: False
-        )
-        # _hidden flag must suppress header in v2 path
-        # We just verify _tool_panel_v4_enabled returns False; render logic is unchanged
-        from hermes_cli.tui.tool_blocks import _tool_panel_v4_enabled
-        assert _tool_panel_v4_enabled() is False
-
-    def test_v2_flag_off_duration_format_unchanged(self, monkeypatch):
-        """When v4 off, _tick_duration still uses N.Ns format (not NNNms)."""
-        monkeypatch.setattr(
-            "hermes_cli.tui.tool_blocks._tool_panel_v4_enabled", lambda: False
-        )
-        import time as _time
-        import hermes_cli.tui.tool_blocks as tb
-        # _tick_duration branches on _tool_panel_v4_enabled; when off → f"{elapsed:.1f}s"
-        # We verify the format function itself: v2 path would produce "0.5s" not "500ms"
-        assert _format_duration_v4(500) == "500ms"  # v4 rule
-        # In v2 path, the old code used f"{elapsed:.1f}s" — we verify by format:
-        elapsed = 0.5
-        assert f"{elapsed:.1f}s" == "0.5s"   # v2 format
-
-    def test_v2_flag_on_duration_sub_50ms_empty(self):
+class TestV4DurationFormat:
+    def test_duration_sub_50ms_empty(self):
         assert _format_duration_v4(10) == ""
         assert _format_duration_v4(49) == ""
 
-    def test_v4_flag_on_uses_ms_format_for_mid_range(self):
-        # v4 rule: 500ms should be "500ms" not "0.5s"
+    def test_duration_ms_format_for_mid_range(self):
         assert _format_duration_v4(500) == "500ms"
+
+    def test_duration_s_format_above_5s(self):
+        assert _format_duration_v4(6000) == "6.0s"
 
     def test_v4_flag_on_uses_s_format_for_over_5s(self):
         assert _format_duration_v4(6000) == "6.0s"

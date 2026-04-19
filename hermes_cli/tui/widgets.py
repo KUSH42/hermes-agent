@@ -1318,12 +1318,6 @@ class MessagePanel(Widget):
         """
         if not self.is_attached:
             return
-        # Phase 3: evaluate grouping rules before mount (no reparenting)
-        try:
-            from hermes_cli.tui.tool_group import _maybe_start_group
-            _maybe_start_group(self, block)
-        except Exception:
-            pass
         if (
             self._response_block.parent is self
             and self.children
@@ -1344,11 +1338,10 @@ class MessagePanel(Widget):
             self._maybe_insert_type_gap(block)
             self.mount(block)
 
-        # Widget grouping (v4 P5): schedule async reparent after normal mount.
+        # Widget grouping: schedule async reparent after normal mount.
         try:
-            from hermes_cli.tui.tool_group import _group_widget_enabled
             from hermes_cli.tui.tool_panel import ToolPanel as _TP_check
-            if _group_widget_enabled() and isinstance(block, _TP_check):
+            if isinstance(block, _TP_check):
                 self._schedule_group_widget(block)
         except Exception:
             pass

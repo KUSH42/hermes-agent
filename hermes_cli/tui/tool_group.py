@@ -65,14 +65,6 @@ def _grouping_enabled() -> bool:
         return True
 
 
-def _group_widget_enabled() -> bool:
-    """Return True when display.tool_group_widget: true (default False)."""
-    try:
-        from hermes_cli.config import read_raw_config
-        return bool(read_raw_config().get("display", {}).get("tool_group_widget", False))
-    except Exception:
-        return False
-
 
 # ---------------------------------------------------------------------------
 # GroupBody
@@ -493,19 +485,8 @@ def _build_summary_text(rule: int, children: list[Widget]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# CSS-only grouping (v2 path)
+# Widget grouping helpers below
 # ---------------------------------------------------------------------------
-
-
-def _apply_group_css(existing_panel: Widget, new_panel: Widget) -> None:
-    """Apply v2 CSS class grouping — no DOM changes."""
-    group_id = _get_group_id(existing_panel)
-    if group_id is None:
-        group_id = uuid.uuid4().hex[:8]
-        existing_panel.add_class(f"group-id-{group_id}")
-        existing_panel.add_class("tool-panel--grouped")
-    new_panel.add_class(f"group-id-{group_id}")
-    new_panel.add_class("tool-panel--grouped")
 
 
 # ---------------------------------------------------------------------------
@@ -581,74 +562,6 @@ def _find_rule_match(
 
     return None
 
-
-def _find_rule_match_css(
-    message_panel: Widget,
-    new_panel: Widget,
-) -> tuple[Widget, int] | None:
-    """CSS-path rule evaluation: includes Rule 4 (same-path chain) per v2 spec."""
-    from hermes_cli.tui.tool_panel import ToolPanel as _TP
-    from hermes_cli.tui.tool_category import ToolCategory
-
-    if not isinstance(new_panel, _TP):
-        return None
-
-    siblings = [
-        c for c in message_panel.children
-        if isinstance(c, _TP) and c is not new_panel
-    ]
-    if not siblings:
-        return None
-
-    prev = siblings[-1]
-
-    if _is_diff_panel(new_panel):
-        target = _find_diff_target(siblings)
-        if target is not None:
-            return target, RULE_DIFF_ATTACH
-
-    if (
-        _is_category(new_panel, ToolCategory.FILE)
-        and _is_category(prev, ToolCategory.SEARCH)
-    ):
-        new_path = _get_header_label(new_panel)
-        prev_paths: list[str] = getattr(prev, "_result_paths", [])
-        if new_path and prev_paths and any(
-            new_path.endswith(p) or p.endswith(new_path) for p in prev_paths
-        ):
-            return prev, RULE_SEARCH_OPEN
-
-    if (
-        _is_category(new_panel, ToolCategory.SHELL)
-        and _is_category(prev, ToolCategory.SHELL)
-    ):
-        prev_cmd = _get_header_label(prev)
-        chained = any(m in prev_cmd for m in ("&&", "||", ";", "|"))
-        prev_start = getattr(prev, "_start_time", None)
-        new_start = getattr(new_panel, "_start_time", None)
-        within_250ms = (
-            prev_start is not None
-            and new_start is not None
-            and abs(new_start - prev_start) < 0.250
-        )
-        if within_250ms or chained:
-            return prev, RULE_SHELL_PIPE
-
-    if (
-        _is_category(new_panel, ToolCategory.SEARCH)
-        and _is_category(prev, ToolCategory.SEARCH)
-    ):
-        return prev, RULE_SEARCH_BATCH
-
-    # Rule 4: same-path chain (CSS path only — dropped in widget path per §5.3)
-    if (
-        _is_category(new_panel, ToolCategory.FILE)
-        and _is_category(prev, ToolCategory.FILE)
-    ):
-        if _share_dir_prefix(_get_header_label(new_panel), _get_header_label(prev), depth=2):
-            return prev, 4
-
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -748,27 +661,3 @@ async def _do_append_to_group(
 # ---------------------------------------------------------------------------
 
 
-def _maybe_start_group(message_panel: Widget, new_panel: Widget) -> None:
-    """Evaluate grouping rules and apply virtual grouping if a rule fires.
-
-    Called from MessagePanel._mount_nonprose_block BEFORE new_panel is mounted
-    (v2 CSS path: `new_panel` not yet in DOM at this point).
-
-    For widget path: scheduling happens AFTER normal mount via worker. This method
-    only handles the CSS path when tool_group_widget=False.
-
-    NOTE: widget path scheduling is done separately in
-    MessagePanel._schedule_group_widget (called after normal mount).
-    """
-    if not _grouping_enabled():
-        return
-
-    from hermes_cli.tui.tool_panel import ToolPanel as _TP
-    if not isinstance(new_panel, _TP):
-        return
-
-    # When widget path is active, CSS grouping still fires for compatibility (§9.3)
-    match = _find_rule_match_css(message_panel, new_panel)
-    if match is not None:
-        existing_panel, _rule = match
-        _apply_group_css(existing_panel, new_panel)

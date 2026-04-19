@@ -441,12 +441,8 @@ DEFAULT_CONFIG = {
         "tool_progress_command": False,  # Enable /verbose command in messaging gateway
         "tool_progress_overrides": {},  # Per-platform overrides: {"signal": "off", "telegram": "all"}
         "tool_preview_length": 0,  # Max chars for tool call previews (0 = no limit, show full paths/commands)
-        # Tool Panel v4 flags — all off by default; additive on v2 rendering
-        "tool_panel_v4": False,      # master gate: enables all v4 visual changes
-        "mcp_microcopy": True,       # show "▸ mcp · <server>" provenance line (independent of master)
-        "result_hero": True,         # show hero chip "✓ 6 lines" in header tail (requires tool_panel_v4)
-        "tool_group_widget": False,  # real ToolGroup widget (opt-in; default off until battle-tested)
-        "tools_overlay": True,       # /tools timeline overlay + T browse key
+        "mcp_microcopy": True,   # show "▸ mcp · <server>" provenance line
+        "tools_overlay": True,   # /tools timeline overlay + T browse key
         "drawille_overlay": {
             "enabled": False,
             "animation": "dna",

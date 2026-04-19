@@ -7240,10 +7240,36 @@ class HermesCLI:
         except Exception:
             pass
 
+        # Parse result summary for ToolPanel auto-collapse + footer chips
+        _summary = None
+        try:
+            from hermes_cli.tui.tool_result_parse import (
+                ParseContext as _ParseContext,
+                ToolStart as _ToolStart,
+                ToolComplete as _ToolComplete,
+                parse as _parse_result,
+            )
+            from hermes_cli.tui.tool_category import spec_for as _spec_for
+            _ctx = _ParseContext(
+                complete=_ToolComplete(
+                    name=function_name,
+                    raw_result=function_result,
+                    is_error=_is_tool_error,
+                ),
+                start=_ToolStart(
+                    name=function_name,
+                    args=function_args if isinstance(function_args, dict) else {},
+                ),
+                spec=_spec_for(function_name),
+            )
+            _summary = _parse_result(_ctx)
+        except Exception:
+            pass
+
         if self.tool_progress_mode == "off":
             # No preview will be mounted — close streaming block normally
             if tui is not None and _was_streaming:
-                tui.call_from_thread(tui.close_streaming_tool_block, tool_call_id, _stream_duration, _is_tool_error)
+                tui.call_from_thread(tui.close_streaming_tool_block, tool_call_id, _stream_duration, _is_tool_error, _summary)
             return
 
         _TOOL_PREFIX = "  ┊ "
@@ -7299,7 +7325,7 @@ class HermesCLI:
                         tui.call_from_thread(
                             tui.close_streaming_tool_block_with_diff,
                             tool_call_id, _stream_duration, _is_tool_error,
-                            display_lines, header_stats,
+                            display_lines, header_stats, _summary,
                         )
                     else:
                         # Non-file or non-streaming: static child diff block.
@@ -7407,7 +7433,7 @@ class HermesCLI:
             # Close the streaming block only when no diff was merged into it and
             # no diff child replaced it (i.e. tool produced no diff output).
             if _was_streaming and not _will_mount_preview:
-                tui.call_from_thread(tui.close_streaming_tool_block, tool_call_id, _stream_duration, _is_tool_error)
+                tui.call_from_thread(tui.close_streaming_tool_block, tool_call_id, _stream_duration, _is_tool_error, _summary)
 
             # Workspace tracking — record writes for file-mutating tools
             _WRITE_TOOLS = frozenset({"patch", "write_file", "create_file", "edit_file", "str_replace_editor"})

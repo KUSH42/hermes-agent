@@ -455,7 +455,7 @@ class ToolHeader(PulseMixin, Widget):
             # Promoted chips (MCP source, exit code not already in hero, etc.)
             for chip_text, chip_style in (self._header_chips or []):
                 tail.append(f"  {chip_text}", style=chip_style)
-            if self._has_affordances:
+            if self._has_affordances and self._panel is None:
                 tail.append("  ▾" if not self.collapsed else "  ▸", style="dim")
             if self._duration:   # already v4-formatted by _tick_duration / complete()
                 tail.append(f"  {self._duration}", style="dim")
@@ -790,6 +790,10 @@ class ToolBlock(Widget):
 
     def toggle(self) -> None:
         """Toggle collapsed ↔ expanded. No-op for ≤3-line blocks."""
+        panel = getattr(self._header, "_panel", None)
+        if panel is not None:
+            panel.action_toggle_collapse()
+            return
         if not self._header._has_affordances:
             return
         self._header.collapsed = not self._header.collapsed
@@ -1019,9 +1023,7 @@ class StreamingToolBlock(ToolBlock):
         yield self._tail
 
     def on_mount(self) -> None:
-        """Start expanded (user wants to see streaming output) + start timers."""
-        self._body.add_class("expanded")
-        self._header.collapsed = False
+        """Start streaming timers. ToolPanel controls body visibility."""
         self._header._has_affordances = False  # no toggle while streaming
         self._header._spinner_char = _SPINNER_FRAMES[0]
         self._stream_started_at = time.monotonic()
@@ -1115,26 +1117,10 @@ class StreamingToolBlock(ToolBlock):
         else:
             self._header._duration = duration
         self._header._line_count = self._total_received
-        # Collapse threshold: diff results use 20 lines; others use global default
-        _collapse_threshold = COLLAPSE_THRESHOLD
-        try:
-            from hermes_cli.tui.tool_category import spec_for as _spec_for
-            _spec = _spec_for(self._tool_name or "")
-            if _spec.primary_result == "diff":
-                _collapse_threshold = 20
-        except Exception:
-            pass
-        # Apply same collapse logic as static ToolBlock
-        if self._total_received > _collapse_threshold:
+        # Enable toggle affordance for static ToolBlocks (unwrapped; STBs in panels
+        # skip the ▾/▸ via _render_v4 guard, but _has_affordances still gates copy)
+        if self._total_received > COLLAPSE_THRESHOLD:
             self._header._has_affordances = True
-            self._header.collapsed = True
-            self._body.remove_class("expanded")
-        elif self._total_received == 0:
-            # Hide empty body entirely (non-streaming tools with no output)
-            self._body.styles.display = "none"
-            self._header.collapsed = False
-        else:
-            self._header.collapsed = False
         self._header.refresh()
         # v4 §3.3: clear microcopy on completion (keep MCP provenance line)
         self._clear_microcopy_on_complete()

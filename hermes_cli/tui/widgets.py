@@ -1469,6 +1469,7 @@ class MessagePanel(Widget):
         from hermes_cli.tui.tool_panel import ToolPanel as _ToolPanel
         block = _STB(label=label, tool_name=tool_name)
         panel = _ToolPanel(block, tool_name=tool_name, id=panel_id)
+        block._tool_panel = panel  # back-ref for result wiring
         self._mount_nonprose_block(panel)
         if tool_name in _FILE_TOOL_NAMES:
             self._last_file_tool_block = block

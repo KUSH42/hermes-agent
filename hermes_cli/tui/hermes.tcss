@@ -333,6 +333,14 @@ UserMessagePanel.--browse-focused {
     background: $warning 8%;
 }
 
+/* ToolBodyContainer inside ToolPanel is always visible — ToolPanel's
+ * watch_collapsed controls BodyPane visibility, not ToolBodyContainer directly.
+ * App TCSS overrides widget DEFAULT_CSS (display:none), so STB inner collapse
+ * assignments have no visual effect and are cleaned up in Phase B. */
+ToolPanel ToolBodyContainer {
+    display: block;
+}
+
 /* ToolBodyContainer body lines — no individual scroll.
  * Content flows into OutputPanel (the single scroll container).
  * overflow: hidden prevents nested scroll from creating stale offsets

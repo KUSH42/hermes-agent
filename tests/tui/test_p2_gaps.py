@@ -512,42 +512,49 @@ async def test_browse_mode_enter_toggles_focused_block():
 
 @pytest.mark.asyncio
 async def test_browse_mode_a_expands_all_blocks():
-    """'a' in browse mode expands all blocks with affordances."""
+    """'a' in browse mode expands all collapsed ToolPanels."""
+    from hermes_cli.tui.tool_panel import ToolPanel
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        blocks = [
-            await _mount_block(app, pilot, n_lines=COLLAPSE_THRESHOLD + 2, label=f"b{i}")
-            for i in range(3)
-        ]
+        lines = [f"output line {i}" for i in range(COLLAPSE_THRESHOLD + 2)]
+        for i in range(3):
+            app.mount_tool_block(f"b{i}", lines, lines)
+        await pilot.pause()
+
+        panels = list(app.query(ToolPanel))
+        assert len(panels) == 3
+        # Manually collapse all
+        for p in panels:
+            p.action_toggle_collapse()
+        await pilot.pause()
+        assert all(p.collapsed for p in panels), "All should be collapsed before 'a'"
+
         app.browse_mode = True
         await pilot.pause()
-        # All start collapsed
-        for b in blocks:
-            assert not b._body.has_class("expanded")
 
         await pilot.press("a")
         await pilot.pause()
 
-        for b in blocks:
-            assert b._body.has_class("expanded"), f"Block {b} should be expanded"
+        assert all(not p.collapsed for p in panels), "All should be expanded after 'a'"
 
 
 @pytest.mark.asyncio
 async def test_browse_mode_shift_a_collapses_all_blocks():
-    """'A' in browse mode collapses all expanded blocks."""
+    """'A' in browse mode collapses all expanded ToolPanels."""
+    from hermes_cli.tui.tool_panel import ToolPanel
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        blocks = [
-            await _mount_block(app, pilot, n_lines=COLLAPSE_THRESHOLD + 2, label=f"b{i}")
-            for i in range(3)
-        ]
-        # Manually expand all
-        for b in blocks:
-            b._body.add_class("expanded")
-            b._header.collapsed = False
+        lines = [f"output line {i}" for i in range(COLLAPSE_THRESHOLD + 2)]
+        for i in range(3):
+            app.mount_tool_block(f"b{i}", lines, lines)
         await pilot.pause()
+
+        panels = list(app.query(ToolPanel))
+        assert len(panels) == 3
+        # All start expanded
+        assert all(not p.collapsed for p in panels), "All should start expanded"
 
         app.browse_mode = True
         await pilot.pause()
@@ -555,8 +562,7 @@ async def test_browse_mode_shift_a_collapses_all_blocks():
         await pilot.press("A")
         await pilot.pause()
 
-        for b in blocks:
-            assert not b._body.has_class("expanded"), f"Block {b} should be collapsed"
+        assert all(p.collapsed for p in panels), "All should be collapsed after 'A'"
 
 
 @pytest.mark.asyncio

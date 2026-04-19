@@ -97,9 +97,9 @@ async def test_append_10_lines_then_complete():
         block.complete("2.3s")
         await pilot.pause()
 
-        # 10 > COLLAPSE_THRESHOLD → auto-collapsed
-        assert block._header.collapsed is True
-        assert not block._body.has_class("expanded")
+        # ToolPanel controls collapse — STB inner collapse removed in binary collapse spec.
+        # STB still sets _has_affordances=True for >threshold lines.
+        assert block._header._has_affordances is True
         # Duration is set in header (v4 format: actual elapsed, not passed string)
         assert isinstance(block._header._duration, str)
         # No spinner

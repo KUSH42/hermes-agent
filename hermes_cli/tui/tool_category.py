@@ -37,22 +37,20 @@ class CategoryDefaults:
     accent_var: str             # TCSS variable name (without $) for accent color
     glyph_var: str              # TCSS variable name for nerd-font glyph
     ascii_fallback: str         # single-char ASCII fallback when nerd-font absent
-    args_formatter: str         # args_preview function name (Phase 3)
-    result_parser: str          # result parser function name (Phase 3)
-    default_detail: int         # default initial detail level 0–3
-    default_collapsed_lines: int  # line threshold for auto-collapse
+    result_parser: str          # result parser function name
+    default_collapsed_lines: int  # line threshold for auto-collapse at completion
     icon_nf: str = ""           # static nerd-font glyph; "" = no static glyph
 
 
 _CATEGORY_DEFAULTS: dict[ToolCategory, CategoryDefaults] = {
-    ToolCategory.FILE:    CategoryDefaults("tool-file-accent",    "tool-glyph-file",    "F", "file_args",    "file_result",    1, 3),
-    ToolCategory.SHELL:   CategoryDefaults("tool-shell-accent",   "tool-glyph-shell",   "$", "shell_args",   "shell_result",   1, 3),
-    ToolCategory.CODE:    CategoryDefaults("tool-code-accent",    "tool-glyph-code",    "P", "code_args",    "code_result",    2, 3),
-    ToolCategory.SEARCH:  CategoryDefaults("tool-search-accent",  "tool-glyph-search",  "?", "search_args",  "search_result",  1, 6),
-    ToolCategory.WEB:     CategoryDefaults("tool-web-accent",     "tool-glyph-web",     "@", "web_args",     "web_result",     1, 6),
-    ToolCategory.AGENT:   CategoryDefaults("tool-agent-accent",   "tool-glyph-agent",   "*", "agent_args",   "agent_result",   1, 1),
-    ToolCategory.MCP:     CategoryDefaults("tool-mcp-accent",     "tool-glyph-mcp",     "#", "mcp_args",     "mcp_result",     1, 6, icon_nf="\uf868"),  # 󰡨
-    ToolCategory.UNKNOWN: CategoryDefaults("tool-unknown-accent", "tool-glyph-unknown", "?", "generic_args", "generic_result", 1, 3),
+    ToolCategory.FILE:    CategoryDefaults("tool-file-accent",    "tool-glyph-file",    "F", "file_result",    3),
+    ToolCategory.SHELL:   CategoryDefaults("tool-shell-accent",   "tool-glyph-shell",   "$", "shell_result",   3),
+    ToolCategory.CODE:    CategoryDefaults("tool-code-accent",    "tool-glyph-code",    "P", "code_result",    3),
+    ToolCategory.SEARCH:  CategoryDefaults("tool-search-accent",  "tool-glyph-search",  "?", "search_result",  6),
+    ToolCategory.WEB:     CategoryDefaults("tool-web-accent",     "tool-glyph-web",     "@", "web_result",     6),
+    ToolCategory.AGENT:   CategoryDefaults("tool-agent-accent",   "tool-glyph-agent",   "*", "agent_result",   1),
+    ToolCategory.MCP:     CategoryDefaults("tool-mcp-accent",     "tool-glyph-mcp",     "#", "mcp_result",     6, icon_nf="\uf868"),  # 󰡨
+    ToolCategory.UNKNOWN: CategoryDefaults("tool-unknown-accent", "tool-glyph-unknown", "?", "generic_result", 3),
 }
 
 

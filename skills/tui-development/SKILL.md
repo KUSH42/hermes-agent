@@ -13,7 +13,7 @@ description: >
 compatibility: "Python 3.11+, Textual >=1.0,<9 (pinned), Rich >=15"
 metadata:
   author: xush
-  version: "3.7"
+  version: "4.0"
   target: code_agent
 ---
 
@@ -106,9 +106,50 @@ Then load only the focused reference you need:
 
 ## Validation
 
-Last revalidated: **2026-04-19. 1669 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
+Last revalidated: **2026-04-19. 1958 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
 
 Recent changes (details → reference files):
+- **Binary collapse** (2026-04-19): `detail_level: reactive[int]` (L0–L3) **replaced** with
+  `collapsed: reactive[bool]` on `ToolPanel`. `ArgsPane` class deleted. `tool_args_format.py` deleted.
+  `CategoryDefaults`: removed `args_formatter` + `default_detail` fields. `ToolPanel.BINDINGS`: removed
+  `d/D/0/1/2/3`; kept `enter/+/-/*`. `_apply_complete_auto_level` → `_apply_complete_auto_collapse`.
+  Architecture invariant: `watch_collapsed` hides `block._body` (ToolBodyContainer), NOT BodyPane —
+  BodyPane stays visible so ToolHeader remains clickable. Browse `a`/`A` handler queries `ToolPanel`
+  (not ToolBlock) and checks `panel.collapsed`. CSS `ToolPanel ToolBodyContainer { display: block; }`
+  in hermes.tcss ensures initial visibility. 1958 tests passing.
+  → `hermes_cli/tui/tool_panel.py`, `hermes_cli/tui/app.py §on_key a/A`,
+    `tests/tui/test_tool_panel.py`, `tests/tui/test_tool_blocks.py`, `tests/tui/test_p2_gaps.py`,
+    `patterns.md §ToolPanel binary collapse`, `gotchas.md §ToolPanel binary collapse gotchas`
+- **v4 graduation / P8** (2026-04-19): All v4 feature guards deleted, v2 dead paths removed.
+  `_tool_panel_v4_enabled()`, `_tool_panel_v2_enabled()`, `_group_widget_enabled()`,
+  `_tool_gutter_enabled()` — all guard functions gone. Config keys `display.tool_panel_v4`,
+  `display.tool_panel_v2`, `display.tool_group_widget`, `display.result_hero` stripped.
+  `ToolHeader.render()` always calls `_render_v4()`; v2 path gone. Widget grouping always runs.
+  Post-graduation UX quick wins: AGENT default_detail 0→1; icon always colored after complete();
+  FILE diff collapse threshold 20 lines; uniform microcopy for CODE/AGENT/UNKNOWN;
+  FooterPane stderr split row; header-tail chips promotion.
+  → `hermes_cli/tui/tool_blocks.py`, `hermes_cli/tui/tool_panel.py`, `hermes_cli/tui/tool_category.py`,
+    `hermes_cli/tui/streaming_microcopy.py`, `hermes_cli/tui/tool_result_parse.py`
+- **ToolsOverlay /tools timeline** (2026-04-19): `hermes_cli/tui/tools_overlay.py` (NEW) —
+  `ToolsScreen(Screen)` first push_screen in this repo. Frozen snapshot at construction.
+  `render_tool_row()` pure function. Gantt bar, export JSON, filter input, staleness pip.
+  `T` key in browse mode + `/tools` slash command. Turn tracking: `_turn_tool_calls`,
+  `_turn_start_monotonic` in HermesApp. `open_streaming_tool_block` assigns `id="tool-{tcid}"`.
+  → `hermes_cli/tui/tools_overlay.py` (new), `hermes_cli/tui/app.py §open/close_streaming_tool_block`,
+    `patterns.md §ToolsOverlay`, `gotchas.md §ToolsScreen async gotchas`
+- **ToolGroup widget** (2026-04-19): `ToolGroup(Widget)` + `GroupHeader` + `GroupBody`.
+  `_schedule_group_widget` always runs (CSS-only path deleted). `_group_reparent_worker` with 5-guard
+  chain. `recompute_aggregate` N>20 bound. Browse integration: 1 anchor per group.
+  → `hermes_cli/tui/tool_group.py`, `hermes_cli/tui/app.py §_schedule_group_widget`,
+    `patterns.md §ToolGroup widget`
+- **v4 P1–P7** (2026-04-19): ToolSpec/ToolCategory expanded (~70→~520 lines): `spec_for()`,
+  `ToolSpec` frozen dataclass, `CategoryDefaults`, `MCPServerInfo`, 20 seed specs, 10 MCP servers.
+  `header_label_v4()` + `_format_duration_v4()` in `tool_blocks.py`. `ResultSummaryV4` pipeline
+  (`tool_result_parse.py` + category parsers). Streaming microcopy (`streaming_microcopy.py` NEW).
+  OmissionBar keyboard bindings in `ToolPanel.BINDINGS` (`+/-/*`). Focused-panel hint row.
+  → `hermes_cli/tui/tool_category.py`, `hermes_cli/tui/tool_blocks.py`,
+    `hermes_cli/tui/tool_result_parse.py`, `hermes_cli/tui/streaming_microcopy.py` (new),
+    `tests/tui/test_tool_spec.py`, `tests/tui/test_tool_header_v4.py`
 - **Math formula & chart inline display** (2026-04-19): `hermes_cli/tui/math_renderer.py` (NEW) —
   `MathRenderer.render_unicode()` with 50-entry `_SYMBOL_TABLE` + superscript/subscript/frac/mathbf/mathit
   transforms. `render_block()` via `matplotlib.mathtext` → temp PNG (`transparent=True`; wraps in `$...$`
@@ -311,7 +352,7 @@ Recent changes (details → reference files):
   from `watch_agent_running(True)`. Escape at Priority -2 in `on_key`.
   `cli.py`: `/commands` handler; `show_tools()` + `_show_recent_sessions()` → `_cprint`. 28 new tests.
   → `hermes_cli/tui/overlays.py`, `app.py §_handle_tui_command`, `app.py §on_key`,
-    `patterns.md §Info overlay pattern`, `gotchas.md §Info overlay escape binding trap`
+    `patterns.md §Overlay protocol`, `gotchas.md §Overlay and input behavior`
 - **Drawille Animations v2** (2026-04-19): `drawille_overlay.py` extended with 12 new engines + compositing.
   `TrailCanvas` class (heat-map decay, threshold, set/decay_all/to_canvas/frame); `_make_trail_canvas(decay)` factory.
   Helpers: `_braille_density_set(canvas,x,y,intensity)`, `_depth_to_density(z,canvas,x,y)`, `_layer_frames(a,b,mode,heat)`,
@@ -337,8 +378,3 @@ Recent changes (details → reference files):
 - **Diff merged into patch STB header** (2026-04-18): `inject_diff(diff_lines, header_stats)` on STB;
   `close_streaming_tool_block_with_diff` on app; cli.py `_on_tool_complete` restructured.
   → `tool_blocks.py`, `app.py`, `cli.py §_on_tool_complete`
-- **ToolPanel v3 A–E + post-E regression fixes** (2026-04-18): Full ToolPanel v3 system —
-  ToolAccent, ToolHeaderBar, body_renderers/, content_classifier, InputSection, TurnPhase, ToolPanelMini,
-  PerfRegistry, high-contrast, reduced-motion. 4 regression bugs fixed (set_result_summary wire, _panel_managed
-  flag, default_collapsed_lines thresholds, _swap_renderer line count stale).
-  → `module-map.md §Core modules`, `patterns.md §ToolPanel v3-*`, `gotchas.md §ToolPanel v3-*`

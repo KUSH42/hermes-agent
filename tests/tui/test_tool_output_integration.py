@@ -240,9 +240,9 @@ async def test_collapse_hides_body_after_many_lines():
         app.close_streaming_tool_block("id1", "0.3s")
         await pilot.pause()
 
-        assert not block._body.has_class("expanded"), (
-            "Block body should be collapsed after complete() with many lines"
-        )
+        # ToolPanel controls collapse — STB inner state no longer drives visibility.
+        # _has_affordances set True for >threshold lines (affordance gate).
+        assert block._header._has_affordances is True
 
         app.agent_running = False
         await pilot.pause()

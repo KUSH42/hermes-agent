@@ -1,7 +1,6 @@
 # TUI patterns
 
-Use these patterns when changing widgets, output flow, overlays, theming, or
-tests.
+Use these patterns when changing widgets, output flow, overlays, theming, or tests.
 
 ## Widget rules
 
@@ -95,6 +94,9 @@ async def _load_preview(self, path: str) -> None:
   inside a worker.
 - Do not call `app.call_from_thread` from an async `@work` worker; it is
   already on the event loop. Reserve it for true background threads.
+- **`ResponseFlowEngine` is NOT a Widget** — `@work` is unavailable on it.
+  Use `self._panel.app.run_worker(fn, thread=True)` + `call_from_thread` for
+  async off-loop work (e.g., `_flush_math_block`).
 
 ## Layout rules
 
@@ -109,6 +111,9 @@ async def _load_preview(self, path: str) -> None:
   Fractional units handle this; hard pixel widths do not.
 - Inner panels must never own horizontal scroll. Only the top-level container
   or `OutputPanel` owns scroll axes.
+- `height: 1fr` on a child of a `height: auto` parent creates a circular
+  dependency. Textual resolves it to 0 or extreme values — omit `height` or use
+  a fixed value for accent/sidebar columns in `height: auto` containers.
 
 ## Keyboard binding conventions
 
@@ -195,7 +200,7 @@ Concrete patterns:
 - Use the streaming/output APIs that match the change you are making:
   `app.write_output(...)`,
   `open_streaming_tool_block(...)`, `append_streaming_line(...)`,
-  `close_streaming_tool_block(...)`.
+  `close_streaming_tool_block(id, duration, is_error=False, summary=None)`.
 
 Important nuance:
 
@@ -207,12 +212,34 @@ Important nuance:
 ## Response flow rules
 
 - `ResponseFlowEngine` owns `StreamingCodeBlock` lifecycle, not `MessagePanel`
-  directly.
-- One engine exists per `MessagePanel`.
+  directly. One engine exists per `MessagePanel`.
 - Read `response_flow.py` before changing markdown heuristics, source-like
   detection, fenced-code behavior, or prose/code ordering.
 - If you touch line routing, run `tests/tui/test_response_flow.py` and at least
   one streaming integration path.
+
+**Chunk streaming API:**
+- `feed(chunk)` accumulates `_partial` and routes to `StreamingCodeBlock.feed_partial()`
+  for in-code states. **Never** calls `process_line()` (single-clock invariant: only
+  `_commit_lines()` drives `process_line`).
+- `flush()` drains `_partial` via `pending = self._partial; _clear_partial_preview();
+  process_line(pending)`.
+- `flush_live()` sets `engine._partial = live._buf` then calls `engine.flush()` —
+  NOT `engine.process_line(live._buf)` (double-processing bug).
+
+**Block math (`$$`) checked BEFORE fence detection** in `process_line()` NORMAL block —
+`$$` would otherwise collide with triple-backtick fence regex.
+
+**`_apply_inline_math(raw)` guards:** only substitutes when line contains `\`, `^`, or `_`
+— prevents false positives on `$100` or `$HOME`.
+
+**InlineCodeFence detection:** `_code_fence_buffer` accumulates lines matching
+`^\s*\d{1,3}\s*\|\s+\S`. Flushes as `InlineCodeFence` widget only when ≥ 2 consecutive
+numbered lines match. Single-line match → normal prose. Buffer flushed on paragraph break.
+
+**ANSI literal replacement:** targets literal string `\x1b[...]` (backslash-x-1-b in text),
+NOT actual ESC bytes (0x1B). Regex: `r"\\x1b\[[0-9;?]*[a-zA-Z]"`. Check for `"\\x1b"`
+substring before applying (fast gate). Applied in `_commit_prose_line` only.
 
 ## Overlay protocol
 
@@ -242,6 +269,12 @@ Overlay expectations:
 - stacking and dismissal policy lives in `HermesApp.watch_*_state(...)`
 - countdown behavior belongs in `CountdownMixin`, not duplicated per overlay
 
+**Info overlay wire-up pattern** for new slash commands:
+1. Add handler in `_handle_tui_command` (returns `True` if handled)
+2. Call `_dismiss_all_info_overlays()` before opening
+3. Add the overlay class to `_dismiss_all_info_overlays()`
+4. Handle escape in `on_key` Priority -2 block
+
 ## Theme and CSS rules
 
 - Use theme variables first; do not scatter raw hex values unless the value is
@@ -253,6 +286,10 @@ Overlay expectations:
   use `$panel`, `$surface`, or `$surface-lighten-1`.
 - If you change theme application or hot reload, verify both the live app path
   and tests covering `ThemeManager`.
+- **`$text-muted 20%` opacity syntax fails in TCSS.** Only Textual native
+  design tokens (`$primary`, `$accent`, `$success`, `$error`, `$warning`) support
+  the `$VAR N%` opacity modifier. Use `$primary 15%` for dim neutral, or a raw
+  hex color. `$text-muted 20%` silently prevents compose from completing.
 
 ### Keeping skin files in sync
 
@@ -265,9 +302,7 @@ When you add a new `component_var` key to `COMPONENT_VAR_DEFAULTS` in
 4. `docs/skins/example-skin.yaml` — add a commented-out entry with description
 
 Failing to update the skin files means the new var silently falls back to the
-`COMPONENT_VAR_DEFAULTS` value regardless of which skin is active, breaking
-skin authors' ability to override it. The example skin doubles as the canonical
-reference for skin authors — keep it complete.
+`COMPONENT_VAR_DEFAULTS` value regardless of which skin is active.
 
 Theme specifics worth remembering:
 
@@ -357,6 +392,12 @@ Testing specifics:
   assume natural overflow exists in tests.
 - If cwd-sensitive logic is involved, remember `TERMINAL_CWD` can override
   `os.getcwd()`.
+- **Browse `a`/`A` key tests require ToolPanels**, not bare ToolBlocks. Use
+  `mount_tool_block()` (creates ToolPanel + ToolBlock). Bare `_mount_block()` is
+  unaffected by the ToolPanel-querying `a`/`A` handler.
+- Tests asserting a specific duration string (e.g., `"2.3s"`) will fail because
+  `_on_stream_complete` computes actual elapsed from `_stream_started_at`. Assert
+  `isinstance(block._header._duration, str)` instead.
 
 Useful commands:
 
@@ -405,6 +446,317 @@ python -m pytest -o addopts='' tests/tui/ -q
 - TCSS component classes: `.text-area--cursor`, `.text-area--selection`,
   `.text-area--placeholder`, `.text-area--suggestion`.
 
+## ToolPanel — binary collapse
+
+**Architecture invariant:** `watch_collapsed` hides `block._body`
+(ToolBodyContainer), NOT BodyPane. BodyPane always stays visible so ToolHeader
+(inside BodyPane → ToolBlock) remains clickable for expand. Hiding BodyPane
+would hide ToolHeader — second click to expand becomes impossible.
+
+```python
+def watch_collapsed(self, old: bool, new: bool) -> None:
+    body_container = getattr(self._block, "_body", None)
+    if body_container is not None:
+        body_container.styles.display = "none" if new else "block"
+    fp = self._footer_pane
+    if fp is None:
+        return
+    want_fp = (not new) and self._has_footer_content()
+    if fp.display != want_fp:
+        fp.styles.display = "block" if want_fp else "none"
+```
+
+CSS `ToolPanel ToolBodyContainer { display: block; }` in `hermes.tcss` ensures
+ToolBodyContainer starts visible (overrides DEFAULT_CSS `display: none`). Python
+`styles.display` inline overrides the CSS rule when collapsing.
+
+**Toggle delegation:** When `header._panel` is set (block inside ToolPanel),
+`ToolBlock.toggle()` delegates to `panel.action_toggle_collapse()` and returns.
+`_body.has_class("expanded")` is no longer set on in-panel blocks.
+
+**Error promotion:** `_apply_complete_auto_collapse()` forces `collapsed = False`
+when `rs.is_error`. Errors always expand regardless of line count threshold.
+
+**Auto-collapse threshold:** `CategoryDefaults.default_collapsed_lines`. When
+`spec.primary_result == "diff"`, threshold is 20 lines. Never auto-collapses at
+mount — only fires in `set_result_summary_v4()`.
+
+**Test patterns:**
+```python
+# Use panel.collapsed, not block._body.has_class("expanded")
+assert panel.collapsed is True
+assert block._body.styles.display == "none"
+assert panel.query_one(BodyPane).styles.display != "none"  # BodyPane always visible
+```
+
+## ToolPanel — ToolSpec and ToolCategory
+
+`tool_category.py` owns all tool classification, icon resolution, and MCP
+server metadata. **Always call `spec_for()` — never duplicate classification logic.**
+
+Key exports: `ToolSpec` (frozen dataclass), `ToolCategory` enum
+(`FILE/SHELL/CODE/SEARCH/WEB/AGENT/MCP/UNKNOWN`), `CategoryDefaults`,
+`MCPServerInfo`, `spec_for(name, args, schema)`, `resolve_icon_final(spec, nerd_font)`,
+`register_tool(spec, overwrite)`, `register_mcp_server(server, ...)`.
+
+**ToolSpec lookup chain:**
+```
+spec_for(name, args, schema)
+    1. TOOL_REGISTRY.get(name)       ← explicit entry always wins (allows overrides)
+    2. _parse_mcp_name(name)          ← recurse on inner + _derive_mcp_spec (ephemeral)
+    3. _classify_args(args)           ← live arg keys from invocation
+    4. _classify_by_schema(schema)    ← JSON schema properties
+    5. ToolSpec(name=name, UNKNOWN)   ← fallback
+```
+
+**Classification arg key sets (exact key names only):**
+- SHELL: `{"command", "cmd"}`
+- CODE: `{"code"}`
+- SEARCH: `{"query", "pattern"}`
+- WEB: `{"url"}`
+- AGENT: `{"thought", "description", "task"}`
+- FILE: `{"path", "file", "filename"}`
+
+Extra keys like `"search_query"`, `"file_path"`, `"shell"` are NOT in these sets.
+
+**`_derive_mcp_spec` result must NOT be written to TOOL_REGISTRY.** MCP-derived
+specs are ephemeral — computed on demand. Writing them would shadow explicit
+overrides registered later.
+
+**Thread-safe registry access:** `register_tool()` and `register_mcp_server()`
+acquire `_REGISTRY_LOCK`. Plain `TOOL_REGISTRY.get()` reads are safe without lock
+(CPython GIL, atomic dict read).
+
+**Config flag guard pattern** (safe in `render()` hot paths):
+```python
+def _tool_panel_v4_enabled() -> bool:
+    try:
+        from hermes_cli.config import read_raw_config
+        return bool(read_raw_config().get("display", {}).get("tool_panel_v4", False))
+    except Exception:
+        return False
+```
+
+## ToolPanel — ResultSummaryV4 pipeline
+
+`ResultSummaryV4` frozen dataclass (`slots=True`): `primary`, `exit_code`, `chips`,
+`stderr_tail`, `actions`, `artifacts`, `is_error`, `error_kind`. Collection fields
+are `tuple[...]` — **never use lists.**
+
+**`parse(ctx)` dispatch is category-keyed:**
+```python
+_V4_PARSERS = {"file": file_result_v4, "shell": shell_result_v4, ...}
+cat = ctx.spec.category.value  # "file" not "FILE" (ToolCategory.value is lowercase)
+```
+Fallback: `generic_result_v4` for unknown categories.
+
+**`ParseContext` input struct:**
+```python
+ParseContext(complete: ToolComplete, start: ToolStart, spec: ToolSpec)
+```
+`ToolComplete.raw_result` is `object` (str | dict). Always call `_raw_str(raw)` before
+string operations. Never assume it's a str.
+
+**`ToolPanel.set_result_summary_v4(summary)` wiring:**
+```
+→ block._header._primary_hero = summary.primary
+→ _footer_pane.update_summary_v4(summary)
+→ _apply_complete_auto_collapse()  [error → force expand; else → check threshold]
+→ footer visibility: show when chips/stderr/actions/artifacts present AND not collapsed
+```
+Access header via `getattr(self._block, "_header", None)` — `_block` may be any Widget.
+
+**`"text"` is NOT a valid `primary_result`.** Valid set:
+`['bytes', 'diff', 'done', 'lines', 'matches', 'none', 'results', 'status']`.
+FILE read → `"lines"` or `"bytes"`. FILE write → `"done"`. MCP → `"results"`.
+
+**Payload cap:** `Action.payload` → `_truncate_payload(text)` → `_PAYLOAD_CAP = 65536`.
+Set `payload_truncated=True` if truncated.
+
+## ToolPanel — streaming microcopy
+
+`streaming_microcopy.py` — per-category progress text shown in `.--microcopy`
+Static inside `ToolBodyContainer`.
+
+**Always compose, never dynamically mount.** The `.--microcopy` Static is in the DOM
+from `compose()` with `display: none`. Shown by adding `--active` class when
+`elapsed_s >= 0.5`. Dynamic mounting mid-stream risks the `before=` anchor resolution
+gotcha (sibling mounts via `self.mount(after=self)` land in wrong container).
+
+**STB caches the ref on mount:**
+```python
+self._microcopy_widget = self._body.query_one(".--microcopy")
+```
+
+**MCP provenance line persists after `complete()`.** `_clear_microcopy_on_complete()`
+checks `spec.category == ToolCategory.MCP` and skips. All other categories: remove
+`--active` class, clear text.
+
+**Adaptive flush timer — stop + restart, not modify.** Textual timer intervals are
+immutable:
+```python
+self._render_timer.stop()
+self._render_timer = self.set_interval(1/hz, self._flush_pending)
+```
+Track `_flush_slow: bool` to avoid stop/restart on every tick. Reset to 60Hz on any
+`append_line()` call; drop to 10Hz after 2s idle.
+
+**Per-category microcopy summary:**
+- SHELL / CODE: `▸ N lines · NkB`
+- FILE read: `▸ N lines` or `▸ NkB`
+- FILE write: `▸ writing…`
+- WEB: `▸ fetching…`
+- MCP: `▸ mcp · {server} server` (persists after complete)
+- AGENT: `▸ thinking…` (static, no counters)
+- UNKNOWN: `▸ N lines`
+
+## ToolGroup widget
+
+**DOM structure:**
+```
+ToolGroup
+├── GroupHeader     (1 line; render() → Text; not focusable)
+└── GroupBody       (height auto; padding-left 2; vertical layout)
+    ├── ToolPanel   (child 1)
+    └── ToolPanel   (child 2+)
+```
+
+**Widget grouping is always active** (feature flag `display.tool_group_widget`
+deleted after v4 graduation). CSS-only grouping path removed.
+
+**`_group_reparent_worker` guards (in order):**
+1. `_find_rule_match` returns None → skip
+2. `existing_panel` is streaming (`_is_streaming`) → skip
+3. Either panel not attached → skip
+4. `_get_tool_group(existing)` is not None → `_do_append_to_group` (3b path)
+5. Else → `_do_apply_group_widget` (3c path: create new group)
+
+Exceptions swallowed silently (CSS classes already applied as fallback).
+
+**`recompute_aggregate` N>20 guard:** skips recompute when `len(children) > 20`
+to avoid O(N²) walk. Aggregate may be stale for large groups.
+
+**Browse mode integration:** `_rebuild_browse_anchors` adds 1 TOOL_BLOCK anchor
+per ToolGroup with label `"Group▾/▸ · {summary} (N)"`. ToolHeaders inside a
+collapsed group are skipped; inside an expanded group they're added individually.
+
+**`ToolGroup.on_tool_panel_completed`:** stops the event (no bubble past group)
+and calls `recompute_aggregate()`. Fires when any child ToolPanel posts
+`ToolPanel.Completed`.
+
+## ToolsOverlay (/tools timeline)
+
+`ToolsScreen(Screen)` in `tools_overlay.py` — pushed via `push_screen`. This is
+the **first use of push_screen / pop_screen** in this repo.
+
+**Key design:** snapshot is frozen at construction — no live reactives inside the
+Screen. Snapshot taken at activation: `app.current_turn_tool_calls()`.
+
+**Activation paths:**
+- `/tools` command in `_handle_tui_command`
+- `T` key in browse mode `on_key` (before printable catch-all)
+
+**Screen vs Widget overlay differences:**
+- Owns focus stack completely — no `inp.disabled=True` hack needed.
+- `_dismiss_all_info_overlays()` does NOT affect it (no `--visible` CSS class).
+- Dismissed only via `self.app.pop_screen()` in `action_dismiss_overlay`.
+- Escape is `priority=True` in BINDINGS; `action_dismiss_overlay` is `async def`.
+
+**`_apply_filter` / `_rebuild` must be `async def`** — they call
+`await listview.clear()` / `await listview.append(...)`. A bare call without
+`await` silently discards the coroutine; ListView never repopulates.
+
+**Double-escape to dismiss:** First Escape closes filter input (if visible);
+second Escape dismisses the overlay via BINDINGS.
+
+**Timer cancellation in `on_unmount`:**
+```python
+def on_unmount(self):
+    if self._stale_timer is not None:
+        self._stale_timer.stop()
+```
+Without this, `_update_staleness_pip` fires after Screen unmount → NoMatches.
+
+**Duplicate panel ID guard:** if a panel with `id="tool-{tool_call_id}"` already
+exists, `panel_id=None` prevents Textual `DuplicateIds`. Jump-to-panel from the
+overlay may not resolve for duplicate IDs — acceptable.
+
+## header_label_v4 and duration format
+
+`header_label_v4(spec, args, full_label, full_path, available, accent_color)` in
+`tool_blocks.py` — returns `rich.text.Text`.
+
+- `primary_arg="path"` → path rendering with optional `:{start}-{end}` line range from `args`
+- `primary_arg="command"` → italic; `$` prefix only when `category == SHELL` AND `accent_color` non-empty (both gates required)
+- `primary_arg="query"` → `bold italic` in `"quotes"`
+- `primary_arg="url"` → dim scheme + bold host + dim path
+- `primary_arg` in `{"thought", "description", "task"}` → italic dim, max 40 cells
+- `primary_arg=None` → plain fallback
+
+**`_format_duration_v4(elapsed_ms: float) -> str`:**
+```
+< 50 ms  →  ""          (omit entirely)
+50–5000  →  "NNNms"     (integer ms)
+> 5000   →  "N.Ns"      (one decimal second)
+```
+
+`ToolHeader.render()` always calls `_render_v4()` — v2 code path removed after
+graduation. `_format_duration_v4` is always active.
+
+**`ToolHeader._is_complete: bool`** — set True in `_on_stream_complete` when
+`_spinner_char = None`. Render check: `elif self._is_complete or self._duration:` →
+green icon. Ensures icon settles to green/red even when duration rounds to `""`.
+
+**Hero chip:** `_primary_hero: str | None` set by `set_result_summary_v4()`. Displayed
+in `_render_v4()` tail. Style: `"bold red"` on error, `"dim green"` on success.
+
+**Header chips:** `_header_chips: list[tuple[str, str]]` — up to 2 non-redundant chips
+promoted from `summary.chips`. MCP source chip (`mcp:server`) is the primary beneficiary.
+
+## Browse mode patterns
+
+**Browse anchors:** `BrowseAnchorType` enum (`TURN_START / CODE_BLOCK / TOOL_BLOCK`) +
+`BrowseAnchor` dataclass in `app.py`. `_rebuild_browse_anchors()` walks
+`OutputPanel.walk_children`.
+
+**Key bindings (all active within browse mode):**
+- `[` / `]` — any anchor (any type)
+- `{` / `}` — CODE_BLOCK only
+- `alt+up` / `alt+down` — TURN_START only
+- `a` — expand all ToolPanels
+- `A` — collapse all ToolPanels
+- `T` — open ToolsOverlay (`ToolsScreen`)
+- `m` / `M` — MEDIA anchors (prev/next)
+
+**`a`/`A` handler queries ToolPanel, not ToolBlock:**
+```python
+elif key == "a":
+    from hermes_cli.tui.tool_panel import ToolPanel as _TP
+    for panel in self.query(_TP):
+        if panel.collapsed:
+            panel.action_toggle_collapse()
+elif key == "A":
+    from hermes_cli.tui.tool_panel import ToolPanel as _TP
+    for panel in self.query(_TP):
+        if not panel.collapsed:
+            panel.action_toggle_collapse()
+```
+
+Bare ToolBlock mounts (no ToolPanel wrapper) are NOT affected by these handlers.
+
+**`_browse_cursor` vs `browse_index` are SEPARATE state.** Tab path updates only
+`browse_index`; `[`/`]` path updates only `_browse_cursor`. `_rebuild_browse_anchors`
+always clamps (never resets) cursor — callers that want reset set `_browse_cursor=0`
+first.
+
+**Focus retry:** On unmounted widget, `_focus_anchor` rebuilds once and retries on
+first same-type anchor (lowest index). `_retry=False` prevents recursion.
+
+**`_browse_hint` reactive in StatusBar:** when non-empty, replaces default Tab hint
+after position indicator.
+
+**`StreamingCodeBlock` excluded while `_state == "STREAMING"`** from anchor list.
+
 ## Drawille overlay coloring
 
 `DrawilleOverlay._tick()` has three coloring branches (highest priority first):
@@ -426,6 +778,16 @@ of canvas width. Colors mirror-fold at edges (no hard wrap jump).
 
 `_resolved_multi_colors` is a pre-resolved `list[str]` of hex strings kept
 in sync with `multi_color` reactive via `watch_multi_color`.
+
+**`_ENGINES` is a `dict[str, type]` of class refs (not instances).** `_get_engine()`
+caches the instance in `_current_engine_instance`; rebuilds on key change. Iterate
+as `engine_cls()` in tests — not `engine_instance` directly.
+
+**SDF crossfade warmup:** `_get_engine()` sdf_morph branch shows a braille warmup
+engine (`sdf_warmup_engine`, default `"neural_pulse"`) until `baker.ready.is_set()`.
+On ready edge, installs `CrossfadeEngine(warmup→SDF)`. After crossfade completes
+(`progress >= 1.0`), returns pure `SDFMorphEngine`. PIL-broken degradation: warmup
+runs forever.
 
 ## Startup text effect (TTE) params
 
@@ -498,262 +860,4 @@ plain `_label` string. Supports syntax-highlighted labels.
 **ToolHeader._compact_tail:** `bool = False` — skips right-align padding, sets
 `dur_style = ""` (normal). Duration appended after toggle affordance.
 
-**ToolHeader tail order:** `NL  ▾  duration` (toggle before duration).
-
 **Config:** `display.execute_code_typewriter_cps: 0` (0 = pass-through).
-
-## ToolPanel v3-A patterns
-
-**ToolPanel compose structure** — `layout: horizontal` with inner vertical container:
-
-```python
-def compose(self) -> ComposeResult:
-    self._accent = ToolAccent()
-    self._args_pane = ArgsPane()
-    self._body_pane = BodyPane(self._block, category=self._category)
-    self._footer_pane = FooterPane()
-    yield self._accent
-    with _PanelContent():          # layout: vertical; width: 1fr
-        yield self._args_pane
-        yield self._body_pane
-        yield self._footer_pane
-```
-
-Never index `panel.children` by position — use `panel.query_one(ArgsPane)` etc.
-
-**ToolAccent state lifecycle:**
-
-```python
-# on_mount: streaming block → "streaming", static block → "ok"
-if total_lines > 0:
-    self._accent.state = "ok"
-else:
-    self._accent.state = "streaming"
-
-# set_result_summary: completion outcome
-self._accent.state = "error" if summary.is_error else "ok"
-```
-
-**ToolAccent state watch — add/remove_class (not set_classes):**
-
-```python
-def watch_state(self, old: str, new: str) -> None:
-    if old:
-        self.remove_class(f"-{old}")  # set_classes() would wipe position classes
-    self.add_class(f"-{new}")
-```
-
-**CWD strip wiring** — flag set in `__init__` before any lines arrive:
-
-```python
-# ToolPanel.__init__:
-from hermes_cli.tui.tool_category import ToolCategory
-if self._category == ToolCategory.SHELL and hasattr(block, "_should_strip_cwd"):
-    block._should_strip_cwd = True
-```
-
-`StreamingToolBlock.append_line` strips and discards empty CWD-only lines.
-`complete()` appends dim `cwd: /path` line if `_detected_cwd` is set.
-
-## ToolPanel v3-B patterns
-
-**ToolPanel compose structure with ToolHeaderBar** — v3-B adds header row first in _PanelContent:
-
-```python
-def compose(self) -> ComposeResult:
-    self._accent = ToolAccent()
-    self._header_bar = ToolHeaderBar(label=self._tool_name)
-    self._args_pane = ArgsPane()
-    self._body_pane = BodyPane(self._block, category=self._category)
-    self._footer_pane = FooterPane()
-    yield self._accent
-    with _PanelContent():
-        yield self._header_bar   # ← NEW first child
-        yield self._args_pane
-        yield self._body_pane
-        yield self._footer_pane
-```
-
-`_PanelContent.children[0]` is now `ToolHeaderBar`.
-
-**ToolHeaderBar state sync** — mirror ToolAccent state changes:
-
-```python
-# on_mount + set_result_summary must both update header_bar and accent:
-state = "streaming"  # or "ok" / "error"
-if self._accent is not None:
-    self._accent.state = state
-if self._header_bar is not None:
-    self._header_bar.set_state(state)
-    self._header_bar.set_finished(self._completed_at)     # freezes timer
-    self._header_bar.set_line_count(self._body_line_count())
-```
-
-**Chevron sync in watch_detail_level:**
-
-```python
-if self._header_bar is not None:
-    self._header_bar.set_chevron(new)  # ▸ for L0/L1, ▾ for L2/L3
-```
-
-**ResultPill update via content classifier stub (Phase B: TEXT/EMPTY only):**
-
-```python
-from hermes_cli.tui.content_classifier import classify_content
-result = classify_content(payload)  # returns ClassificationResult
-self._header_bar.set_kind(result.kind)
-# TEXT → pill hidden; all others → pill visible with correct class/label
-```
-
-**ToolPanelMini auto-select** — evaluated at `set_result_summary`, not mount:
-
-```python
-from hermes_cli.tui.tool_panel_mini import meets_mini_criteria, ToolPanelMini
-if meets_mini_criteria(category, exit_code, line_count, stderr):
-    mini = ToolPanelMini(source_panel=self, command=cmd, duration_s=dur)
-    self.parent.mount(mini, after=self)
-    self.display = False   # hide self, mini is the visible replacement
-```
-
-Expansion: `ToolPanelMini._expand()` calls `source_panel.display = True` then `self.remove()`.
-
-**Semantic GroupHeader label** — `refresh_stats()` now calls semantic helpers:
-
-```python
-from hermes_cli.tui.tool_group import group_semantic_label, group_path_hint
-label = group_semantic_label(members)      # e.g. "patch × 2" or "patch+diff"
-hint  = group_path_hint(members)           # e.g. "widgets.py" or None
-full  = f"{label} · {hint}" if hint else label
-```
-
-`group_semantic_label` deduplicates tool names; `count = len(members)` (all members).
-`group_path_hint` returns common basename if all members share the same filename.
-
-## ToolPanel v3-C patterns
-
-**Selecting a renderer** — `pick_renderer()` from `body_renderers/__init__.py`:
-
-```python
-from hermes_cli.tui.body_renderers import pick_renderer
-from hermes_cli.tui.tool_payload import ToolPayload, ResultKind
-
-# SHELL always gets ShellOutputRenderer (unless EMPTY)
-# confidence > 0.7 → specialized renderer
-# else → FallbackRenderer
-renderer_cls = pick_renderer(cls_result, payload)
-renderer = renderer_cls(payload, cls_result)
-widget = renderer.build_widget()   # returns Widget (CopyableRichLog or custom)
-```
-
-**Full classify_content()** — Phase C heuristic order (first match wins):
-1. Empty/whitespace → EMPTY
-2. Binary (>5% ASCII control chars) → BINARY
-3. `---`/`+++`/`@@` at line start → DIFF
-4. ≥ 3 lines with `\d+[:-]` prefix → SEARCH (+ query from args)
-5. Starts with `{` or `[` and parseable → JSON
-6. ≥ 3 lines, 85% consistent column count → TABLE
-7. ≥ 2 log lines (timestamp or level token) → LOG
-8. Starts with ` ``` ` or path arg ends in code extension → CODE
-9. Default → TEXT
-
-Cache key: `(output_raw, tool_name, arg_query)`. Clear in tests via `classify_content.cache_clear()`.
-
-**Renderer swap in ToolPanel** — after classify, call `_maybe_swap_renderer`:
-
-```python
-# Non-TEXT, non-SHELL kinds trigger swap:
-self._maybe_swap_renderer(cls_result, payload)
-
-def _swap_renderer(self, renderer_cls, payload, cls_result):
-    # imports inside method to avoid circular: tool_panel ← body_renderers ← tool_payload
-    renderer = renderer_cls(payload, cls_result)
-    new_widget = renderer.build_widget()
-    self._body_pane.mount(new_widget)
-    if old_block is not None and old_block.is_attached:
-        old_block.remove()
-    self._block = new_widget
-    self._body_pane._block = new_widget
-```
-
-**InlineCodeFence detection in response_flow** — buffer lines matching `^\s*\d{1,3}\s*\|\s+\S`:
-
-```python
-# _code_fence_buffer accumulates consecutive numbered lines.
-# When ≥ 2 accumulated and next line doesn't match: flush as InlineCodeFence widget.
-# On paragraph break: flush buffer (< 2 → normal prose, ≥ 2 → InlineCodeFence).
-```
-
-**ANSI literal replacement** — replaces literal `\x1b[...]` strings (not actual ESC bytes):
-
-```python
-_LITERAL_ANSI_RE = re.compile(r"\\x1b\[[0-9;?]*[a-zA-Z]")
-# Applies in _commit_prose_line ONLY if "\\x1b" substring present (fast gate).
-# Result: \x1b[?1000h → [?1000h] rendered dim.
-```
-
-**VirtualSearchList** — Widget with `render_line(y) -> Strip` for large search results:
-
-```python
-# y is viewport-relative; use y + _scroll_offset for dataset index.
-# _lines: list[Strip] built from full dataset; only viewport range accessed.
-# Mounted by SearchRenderer.build_widget() when hit_count > 100.
-```
-
-## ToolPanel v3-D patterns
-
-**InputSection visibility in watch_detail_level:**
-```python
-# Shown at L2+ for all categories except CODE (execute_code)
-want_is = new >= 2 and InputSection.should_show(self._category)
-if self._input_section is not None and self._input_section.display != want_is:
-    self._input_section.styles.display = "block" if want_is else "none"
-```
-
-**Detail level CSS class tracking:**
-```python
-# In watch_detail_level — swap only the changed classes:
-self.remove_class(f"-l{old}")
-self.add_class(f"-l{new}")
-# TCSS: ToolPanel.-l3 { background: $accent 8%; }
-```
-
-**space: collapse/restore toggle:**
-```python
-def action_toggle_l0_restore(self) -> None:
-    self._mark_user_override()
-    if self.detail_level == 0:
-        self.detail_level = self._pre_collapse_level  # init to 2 in __init__
-    else:
-        self._pre_collapse_level = self.detail_level
-        self.detail_level = 0
-```
-
-**force_renderer — Re-render as override:**
-```python
-def force_renderer(self, kind: ResultKind) -> None:
-    self._forced_renderer_kind = kind  # stored before swap attempt (persists on failure)
-    # imports inside method to avoid circular
-    from hermes_cli.tui.body_renderers import pick_renderer
-    from hermes_cli.tui.tool_payload import ToolPayload, ClassificationResult
-    payload = ToolPayload(tool_name=..., category=..., args=..., input_display=None,
-                          output_raw=self.copy_content(), line_count=self._body_line_count())
-    cls_result = ClassificationResult(kind=kind, confidence=1.0)
-    renderer_cls = pick_renderer(cls_result, payload)
-    self._swap_renderer(renderer_cls, payload, cls_result)
-    self._header_bar.set_kind(kind)
-```
-
-**App-level o/i bindings:**
-```python
-# In HermesApp.BINDINGS:
-Binding("o", "focus_output", show=False)
-Binding("i", "focus_input_from_output", show=False)
-
-def action_focus_output(self):
-    self.query_one(OutputPanel).focus()
-
-def action_focus_input_from_output(self):
-    self.query_one(HermesInput).focus()
-```
-
-**TurnPhase containers** — implemented but inactive. `display.tool_panel_v3_turn_phases` defaults False. When True, MessagePanel wraps contiguous spans. `AgentFinalResponse.set_multiline(bool)` adds/removes `.-multiline` (border-left rail). Phase E activates.

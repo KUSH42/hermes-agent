@@ -1,50 +1,43 @@
 # TUI gotchas
 
-These are high-value pitfalls worth checking before you edit tricky TUI code.
+High-value pitfalls worth checking before editing tricky TUI code.
 
 ## Tool header / ToolHeader render
 
-- **`mount_tool_block` arg order**: signature is `(label, lines, plain_lines, tool_name=None, rerender_fn=None, header_stats=None)`. Old callers (pre-2026-04-18) passed `rerender_fn` as arg 4 and `tool_name` last — this was a bug. All `call_from_thread(tui.mount_tool_block, ...)` in cli.py pass `function_name` as arg 4 (tool_name), `_rerender_*` as arg 5 (rerender_fn), `header_stats` as arg 6. Tests check `args[5]` for callable, not `args[4]`.
-- **`_compact_tail` for file-tool STBs**: Set `block._header._compact_tail = True` when `set_path()` is called in `_update_block_label`. This makes the duration render inline after the path label, not right-aligned. Diff blocks always get compact_tail via `mount_tool_block`.
+- **`mount_tool_block` arg order**: signature is `(label, lines, plain_lines, tool_name=None, rerender_fn=None, header_stats=None)`. All `call_from_thread(tui.mount_tool_block, ...)` in cli.py pass `function_name` as arg 4 (tool_name), `_rerender_*` as arg 5 (rerender_fn), `header_stats` as arg 6. Tests check `args[5]` for callable, not `args[4]`.
+- **`_compact_tail` for file-tool STBs**: Set `block._header._compact_tail = True` when `set_path()` is called in `_update_block_label`. Makes duration render inline after path label, not right-aligned. Diff blocks always get compact_tail via `mount_tool_block`.
 - **Shell prompt prefix**: `ToolHeader._shell_prompt = True` causes `render()` to prepend `" $"` in accent color (`_focused_gutter_color`) right after the icon. The 2-cell width is tracked via `shell_prompt_w` and added to `FIXED_PREFIX_W` for correct tail right-alignment. Set for terminal/bash tools in `_update_block_label`.
 - **Consecutive patch deduplication**: `HermesCLI._pending_patch_paths: dict[str, str]` maps path → active tool_call_id. When a second patch to the same path arrives while first is active, `remove_streaming_tool_block` is called immediately. The diff from the suppressed patch still mounts and attaches to the first patch via Rule 1 (diff attachment, 10s window). Entry is cleaned up in `_on_tool_complete`.
-- **GroupHeader removed**: Virtual grouping is CSS-only (`group-id-<hex>` + `tool-panel--grouped` classes). No DOM reparenting. Rule 3b added: consecutive SEARCH tool panels auto-group. Diff panels always get `tool-panel--child-diff` class (margin-left: 2) regardless of preceding block.
-- **Context menu focus restore**: `ContextMenu._prev_focus` is saved in `show()` and restored in `_ContextItem.on_click()`. This prevents the input area from stealing focus (deselecting text selection) when a context menu item is clicked.
+- **Virtual grouping is CSS-only** (`group-id-<hex>` + `tool-panel--grouped` classes) with DOM reparenting into `ToolGroup`. There is no longer a CSS-only path for grouping after graduation; `_schedule_group_widget` always runs.
+- **Context menu focus restore**: `ContextMenu._prev_focus` is saved in `show()` and restored in `_ContextItem.on_click()`. Prevents input area from stealing focus when a context menu item is clicked.
 - **`_label_rich` for grep patterns**: Set `block._header._label_rich` to a Rich `Text` with per-character regex coloring in `_update_block_label` for `search_files` and `grep`. `_label_rich` takes precedence over `_label` string in render when `_path_clickable` is False.
 - **`RenderResult` is a type alias, not a callable**: `render()` must return `Text(...)` directly — do NOT write `return RenderResult(Text())`. That throws `TypeError: 'str' object is not callable` in Textual 8.x where `RenderResult` is a string type alias.
+- **Duration string assertions break**: `_on_stream_complete` computes actual elapsed from `_stream_started_at` (set in `on_mount`), not the `duration` string argument. Tests asserting `block._header._duration == "2.3s"` will fail. Assert `isinstance(block._header._duration, str)` instead.
 
-## ToolPanel v3-E: accessibility, perf, reduced-motion
+## ToolPanel binary collapse gotchas
 
-- **PerfRegistry singleton**: `hermes_cli.tui.perf._registry` is the module-level store for v3 counters. Use `measure_v3(label, budget_ms=N, silent=True)` at call sites. Do NOT import inside tight inner loops — the `measure_v3` context manager is negligible overhead but the import cost is not.
-- **TOOL_PANEL_V3_COUNTERS**: `perf.TOOL_PANEL_V3_COUNTERS` is the canonical list of counter names. Append new counters there so `/perf` command can discover them.
-- **High-contrast class**: `HermesApp` gains class `high-contrast` during `on_mount` if `HERMES_THEME` or config `display.theme` starts with `"high-contrast-"`. Use `.high-contrast Widget { ... }` in hermes.tcss for overrides. Detection is read-once at mount, NOT reactive — theme changes after mount do not toggle the class.
-- **scrollbar-gutter: stable**: Added to OutputPanel in hermes.tcss. Textual 8.x may silently ignore this CSS property (not in its CSS engine). Effect: no layout shift in Textual runtime, but the intent is documented for future Textual upgrades. D19 is resolved by `scrollbar-size-vertical: 1` always reserving the column.
-- **HERMES_REDUCED_MOTION** vs **HERMES_REDUCE_MOTION**: The env var in app.py is `HERMES_REDUCED_MOTION` (with 'D'). Spec mentioned `HERMES_REDUCE_MOTION` — both point to the same env check. Use `HERMES_REDUCED_MOTION=1` in tests.
-- **measure_v3 wrapping async calls**: Never wrap `await` expressions inside `measure_v3`. The `perf_counter` timing will include any event-loop yielding time, making measurements useless. Wrap only sync computation blocks.
-- **on_mount delegated to _on_mount_impl**: `ToolPanel.on_mount` now wraps `_on_mount_impl` in `measure_v3("tool_panel_v3_mount_ms")`. If you override `on_mount` in a subclass, call `self._on_mount_impl()`, not `super().on_mount()`, to avoid double-wrapping the timer.
-- **watch_detail_level delegated to _watch_detail_level_impl**: Same pattern — timer wrapper delegates to `_watch_detail_level_impl`. Subclasses call `_watch_detail_level_impl(old, new)`.
+- **`watch_collapsed` must hide `block._body`, NOT BodyPane**. Hiding BodyPane also hides ToolHeader (it's inside BodyPane → ToolBlock), making the second click to expand impossible. Always hide `block._body` (ToolBodyContainer).
+- **ToolBodyContainer needs CSS override**: DEFAULT_CSS sets `ToolBodyContainer { display: none }`. Add `ToolPanel ToolBodyContainer { display: block; }` in `hermes.tcss` to ensure initial visibility. Python `styles.display` inline then overrides when collapsing.
+- **Browse `a`/`A` queries ToolPanel, not ToolBlock**: After binary collapse, `block._body.has_class("expanded")` is no longer the collapse signal. The browse handler calls `self.query(ToolPanel)` and checks `panel.collapsed`. Bare ToolBlock mounts (no ToolPanel wrapper) are NOT affected by these keys.
+- **BodyPane is always `display: block`** after binary collapse. Tests checking `panel.query_one(BodyPane).styles.display` should assert it is NOT `"none"`, never `"none"`.
+- **ToolBlock.toggle() delegates to panel when inside ToolPanel**. `_body.has_class("expanded")` is never set on in-panel blocks. Check `panel.collapsed` in tests.
 
-## ToolPanel v3-D: interaction + InputSection
+## ToolSpec and tool_category gotchas
 
-- **ToolCategory enum values**: The actual enum does NOT have GREP, READ, EDIT, PATCH, EXECUTE_CODE, FETCH, HTTP. Check `tool_category.py` for real values before writing category comparisons in InputSection. The agent mapped: CODE→execute_code (no input), FILE→read/write/edit/patch, SEARCH→grep/search, WEB→fetch/http, SHELL→shell.
-- **InputSection lazy mount**: Composing InputSection directly in `compose()` can break Textual's layout cache before ToolHeaderBar hit-testing regions are computed. Safer: mount lazily via `call_after_refresh` in `on_mount` or via a `compose()` that includes it but default `display: none`.
-- **`ToolPanel:focus { border: tall ... }`**: Adding `border: tall` (2-line structural border) shifts sibling widget screen positions, breaking click hit-testing. Omit focus border or use non-structural CSS instead.
-- **`-l{n}` CSS class management**: Use `remove_class(f"-l{old}")` + `add_class(f"-l{new}")` in `watch_detail_level`. Do NOT remove all 4 levels on each call — unnecessary repaints.
-- **`o`/`i` binding conflicts**: Check existing `app.py` BINDINGS before adding. If `i` is bound to something else app-level, handle collision.
-- **`border-left: vkey $primary 20%`** is valid in external TCSS. `$text-muted` fails. AgentThought uses `$primary 20%`.
-- **TurnPhase activation gated**: `display.tool_panel_v3_turn_phases` defaults False. Containers implemented but MessagePanel wrapping not called until flag is True. Phase E activates.
+- **`spec_for("")` must not raise**. Empty tool name → `ToolSpec(name="")` → `ValueError("non-empty")`. Guard at top of `spec_for`: return UNKNOWN sentinel when `name` is falsy. `_tool_name or ""` pattern exists across codebase — callers frequently pass `None`/`""`.
+- **`_category_glyph` must NOT call `ThemeManager.instance()`**. `ThemeManager` has no `.instance()` classmethod — silently returns `""` on `AttributeError`. Read from `_CATEGORY_DEFAULTS[cat].icon_nf` directly.
+- **MCP server names must NOT contain `__`**. `register_mcp_server` rejects names with `__` because MCP canonical names are `mcp__{server}__{tool}` — double-underscore is the delimiter. Use hyphen-delimited names in tests: `"test-svc"`, `"svr-icon"`.
+- **`_derive_mcp_spec` result must NOT be in TOOL_REGISTRY**. Derived MCP specs are ephemeral. Writing them would shadow explicit overrides. `test_mcp_derived_not_in_tool_registry` verifies this invariant.
+- **ToolSpec validation raises at construction time**. `name=""` → ValueError, bad `provenance` → ValueError, invalid `primary_result` → ValueError. Validation in `__post_init__` (frozen dataclass). No lazy validation.
+- **WEB/MCP `emit_heartbeat` default**: `ToolSpec.emit_heartbeat` defaults `False`. For MCP-derived WEB/MCP specs, always set `emit_heartbeat=True` — the `_derive_mcp_spec` condition `elif category in (WEB, MCP) and not inner_spec.streaming` was never True because `inner_spec.streaming` defaults `True`. Fix: `elif category in (WEB, MCP)`.
+- **`_ENGINES` in drawille_overlay is class refs, not instances**. After v2, `_ENGINES` is `dict[str, type]`. `_get_engine()` caches instance in `_current_engine_instance`. Tests must call `engine_cls()` to get an instance — do NOT iterate `_ENGINES` as instances.
 
-## ToolPanel v3-C: body renderers
+## ToolsScreen async gotchas
 
-- **border-left token scope**: `border-left: vkey $text-muted` FAILS in external `.tcss` files. Only `$primary`, `$accent`, `$surface`, `$boost`, `$background` work in `border-*` in `.tcss`. Use `vkey $primary 30%` or similar. `$text-muted` / `$success` / `$error` etc. fail silently at parse time.
-- **BodyRenderer.build() sync contract**: `build()` returns a Rich renderable, not a widget. `build_widget()` wraps it in CopyableRichLog (default) or a custom Widget (VirtualSearchList). Never mutate DOM inside `build()`.
-- **CopyableRichLog location**: The CopyableRichLog used by renderers is `hermes_cli.tui.tool_blocks.CopyableRichLog`, NOT Textual's built-in `RichLog`. Import from tool_blocks.
-- **classify_content cache key change (v3-C)**: Phase C changed the LRU cache to key on `(output_raw, tool_name, arg_query)`. Tests that relied on the Phase B `(output_raw,)` key signature will silently work but need `classify_content.cache_clear()` in fixtures.
-- **VirtualSearchList render_line**: Widget subclass using `render_line(y) -> Strip`. `_lines` is built from the entire dataset; only visible range is accessed. `y` is viewport-relative, not dataset-relative — add `_scroll_offset` to get dataset index.
-- **InlineCodeFence detection in response_flow**: The `_code_fence_buffer` only flushes as InlineCodeFence when ≥ 2 consecutive numbered lines match `^\s*\d{1,3}\s*\|\s+\S`. Single-line match goes to normal prose. Buffer flushed on paragraph break.
-- **ANSI literal replacement**: Targets the literal STRING `\x1b[...]` (backslash-x-1-b in text), NOT actual ESC bytes (0x1B). Regex: `r"\\x1b\[[0-9;?]*[a-zA-Z]"`. Check for `"\\x1b"` substring before applying.
-- **_swap_renderer circular imports**: pick_renderer, FallbackRenderer, ToolPayload must be imported INSIDE _swap_renderer to avoid circular imports (tool_panel ← body_renderers ← tool_payload).
-
+- **`_apply_filter` / `_rebuild` must be `async def`**. Both call `await listview.clear()` / `await listview.append(...)`. A bare `self._apply_filter()` without `await` silently discards the coroutine — ListView never repopulates. All call sites must `await`.
+- **Timer cancellation required in `on_unmount`**. Without `self._stale_timer.stop()` in `on_unmount`, `_update_staleness_pip` fires after Screen unmount → `NoMatches` on DOM queries.
+- **`_dismiss_all_info_overlays()` does NOT affect `ToolsScreen`**. It's a real Screen pushed via `push_screen`, not a Widget overlay with `--visible` class. Dismissed only via `app.pop_screen()`.
+- **Duplicate panel ID guard**: if `id="tool-{tool_call_id}"` already exists in DOM, `panel_id=None` to avoid Textual `DuplicateIds`. Jump-to-panel from the overlay may silently fail.
 
 ## ReasoningFlowEngine — StreamingBlockBuffer and the `process_line` override
 
@@ -70,6 +63,9 @@ processing: call `rp = msg.reasoning` (triggers lazy mount), then
   teardown pain. Prefer instance state plus async/event-loop dispatch.
 - `post_message(...)` is usually safer than `call_from_thread(...)` for worker
   results that belong to the same widget.
+- **`ResponseFlowEngine` is NOT a Widget.** `@work` is unavailable on it. For
+  async off-loop work (e.g., `_flush_math_block`), use
+  `self._panel.app.run_worker(fn, thread=True)` + `call_from_thread`.
 
 ## Shared animation clock (`AnimationClock`)
 
@@ -164,18 +160,35 @@ fall through to the `set_interval` branch automatically.
   AttributeError on unmount). For `border-left` use ONLY Textual built-in
   design tokens: `$primary`, `$accent`, `$warning`, `$error`, `$success`.
   (Diagnosed during Tool Panel v2 Phase 1, 2026-04-17.)
+- **`$text-muted 20%` is a TCSS parse error.** The opacity-modifier syntax `$VAR N%`
+  only works for Textual native design tokens (`$primary`, `$accent`, etc.). Use
+  `$primary 15%` for dim neutral, or a raw hex color.
 
 ## Textual behavior traps
 
 - `compose()` and `render()` are mutually exclusive in practice for one widget.
-- `Widget.mount(child, before=anchor)` uses `anchor.parent`; choose anchors from
-  the intended parent.
+- `Widget.mount(child, before=anchor)` uses `anchor.parent` for the mount container.
+  Choose anchors from the intended parent. Use `parent.mount(child, after=self)`
+  (sibling mount) not `self.mount(child, after=self)` — the latter silently mounts
+  into the wrong container.
 - `remove_children()` plus immediate `mount()` can race; explicit per-child
   `remove()` is safer in sensitive paths.
 - `pilot.resize_terminal(...)` is async and must be awaited.
 - `scroll_offset` is read-only; use scroll APIs instead.
 - `query_one(...)` raises `NoMatches`; teardown-safe code should guard it.
-- plain `str` from `render()` is literal text, not Rich markup.
+- Plain `str` from `render()` is literal text, not Rich markup.
+- **`Static.renderable` does not exist in Textual.** Tests that check a Static's
+  content must use `str(widget.render())` (the `render()` method), not
+  `widget.renderable`. Applies to all Static-based widgets.
+- **`watch_state` must use `add_class`/`remove_class`, not `set_classes`.** 
+  `set_classes(f"-{new}")` replaces ALL classes, wiping position classes like
+  `-first`, `-last`. Correct pattern:
+  ```python
+  def watch_state(self, old: str, new: str) -> None:
+      if old:
+          self.remove_class(f"-{old}")
+      self.add_class(f"-{new}")
+  ```
 
 ## Completion and preview
 
@@ -227,11 +240,9 @@ fall through to the `set_interval` branch automatically.
 
 - `len(log.lines)`, not `log.line_count`
 - `await pilot.pause()` after message posts or reactive churn
-- browse mode self-resets when no `ToolHeader` widgets exist
-- input placeholder owns spinner text; sibling spinner widgets cause layout
-  churn
-- ResponseFlow changes often need both unit tests and streaming integration
-  checks
+- Input placeholder owns spinner text; sibling spinner widgets cause layout churn
+- ResponseFlow changes often need both unit tests and streaming integration checks
+- `ToolsScreen._apply_filter` is async — always `await` it
 
 ## CSS and layer system traps
 
@@ -246,7 +257,7 @@ Also applies to CSS variables (`$accent`, `$surface-darken-2` etc) — do NOT us
 Without `position: absolute`, a widget's `offset` CSS is relative to its normal layout-flow position, not the screen origin. Symptom: `self.styles.offset = (tw-w-2, 1)` in `_apply_size_position` appears to have no effect — widget stays at its flow position offset by those amounts. Fix: add `position: absolute` to the widget's rule in `hermes.tcss` (next to `layer: overlay`). Both must be in `hermes.tcss` — not `DEFAULT_CSS`.
 
 **Gotcha: `query_one(WidgetType)` in app methods is fragile — prefer `query_one("#id", Type)`**
-`query_one(DrawilleOverlay)` can raise `NoMatches` even when the widget is mounted if the class object differs (import aliasing, hot-reload edge cases). Use `query_one("#drawille-overlay", DrawilleOverlay)` for reliability. When the query is the first line of a toggle/hide handler and is wrapped in `except Exception: pass`, a silent miss means the handler does nothing. Always separate the query guard (`except Exception: return`) from the operation body so the operation errors surface.
+`query_one(DrawilleOverlay)` can raise `NoMatches` even when the widget is mounted if the class object differs (import aliasing, hot-reload edge cases). Use `query_one("#drawille-overlay", DrawilleOverlay)` for reliability. When the query is the first line of a toggle/hide handler and is wrapped in `except Exception: pass`, a silent miss means the handler does nothing. Always separate the query guard (`except Exception: return`) from the operation body so operation errors surface.
 
 **Gotcha: `_handle_tui_command` must be wired into `on_hermes_input_submitted`**
 Slash commands like `/anim`, `/undo`, `/compact` are intercepted in `_handle_tui_command`. This method returns `True` if handled. It must be called at the TOP of `on_hermes_input_submitted`, BEFORE the agent-running branch, so commands work whether the agent is idle or running. Individual handlers check `agent_running` themselves. Forgetting the wire-up causes all TUI commands to be forwarded to the agent as user messages.
@@ -262,6 +273,9 @@ creation, and fallback must create `ExecuteCodeBlock` not `StreamingToolBlock`.
 `load_config()` calls `ensure_hermes_home()` which creates the hermes home directory. If a test sets `HERMES_HOME` to point to `tmp_path`, this creates subdirs (`cron/`, `sessions/`, `SOUL.md` etc.) inside `tmp_path`. The path_search walker then finds these as extra files.
 
 Fix: use `read_raw_config()` instead of `load_config()` for lightweight config reads where you just need a single value. `read_raw_config()` does not call `ensure_hermes_home()`.
+
+**Gotcha: new `$var` refs must be declared in `hermes.tcss`**
+Any new `$my-var` used in `.tcss` files must be declared at file scope in `hermes.tcss`. `get_css_variables()` injection alone is insufficient — Textual's CSS parser rejects undeclared `$var` refs at parse time with no error (silently missing). Example: `$tool-glyph-mcp: "󰡨";` added for ToolCategory MCP icon.
 
 ## Animation perf patterns
 
@@ -337,71 +351,6 @@ input and post `FilesDropped` instead.
 Textual 8.x — confirmed in `_get_dispatch_methods` source (breaks loop when
 the flag is set). `event.prevent_default()` sets `_prevent_default`, which
 is a different flag used for different purposes.
-
-## ToolPanel v3-A layout gotchas
-
-**`background: $text-muted 20%` is a TCSS parse error.**
-The opacity-modifier syntax `$VAR N%` only works for Textual's native design
-tokens (`$primary`, `$accent`, `$success`, etc.). `$text-muted`, `$text`,
-`$text-disabled` are NOT native tokens in this context — the parser rejects
-`$text-muted 20%` silently: `_css_has_errors` stays `False` but
-`app.screen.children` is empty (compose never completes). Use `$primary 15%`
-for a dim neutral default, or omit the percentage to use solid color.
-
-**`height: 1fr` on a child of `height: auto` parent causes OutOfBounds clicks.**
-ToolAccent has `width: 1; height: 1fr` per spec. But ToolPanel is
-`height: auto` — its height is determined by children, creating a circular
-dependency. Textual resolves `1fr` to 0 or an extreme value, placing child
-widgets outside the visible region. Fix: remove `height:` from ToolAccent
-DEFAULT_CSS; in a horizontal layout the child stretches to row height by
-default (Flexbox align-items: stretch).
-
-**`panel.children` direct list changed in v3-A.**
-Before v3-A: `[ArgsPane, BodyPane, FooterPane]`.
-After v3-A: `[ToolAccent, _PanelContent]`.
-ArgsPane/BodyPane/FooterPane are inside `_PanelContent`. Always use
-`panel.query_one(ArgsPane)` (descendant query) — never index `panel.children`
-by position.
-
-**`watch_state` must use `add_class`/`remove_class`, not `set_classes`.**
-`set_classes(f"-{new}")` replaces ALL classes, wiping position classes like
-`-first`, `-last`. Correct pattern:
-```python
-def watch_state(self, old: str, new: str) -> None:
-    if old:
-        self.remove_class(f"-{old}")
-    self.add_class(f"-{new}")
-```
-
-## ToolPanel v3-B header gotchas
-
-**`Static.renderable` does not exist in Textual.**
-`Static` widgets do not expose a `.renderable` attribute. Tests that check a
-Static's content must use `str(widget.render())` (the `render()` method) not
-`widget.renderable`. Same applies to `LineCountChip`, `ResultPill`, chevron
-Static, etc.
-
-**ToolPanel ToolHeader is hidden by Phase B CSS rule.**
-`hermes.tcss` has `ToolPanel ToolHeader { display: none; }` once ToolHeaderBar
-is present. Tests that click on `block._header` (ToolHeader) to toggle collapse
-will fail silently — click lands on a display:none widget. Update those tests to
-click `panel.query_one(ToolHeaderBar)` instead and check `panel.detail_level`.
-
-**DurationChip timer requires mounted widget.**
-`DurationChip.on_mount()` starts a `set_interval` timer. In unit tests (no app),
-`on_mount` never fires — `_timer` stays None. Do not test tick behavior in unit
-tests; only test `set_finished()` side effects and `render()` output.
-
-**ResultPill default `display: none`.**
-`ResultPill` starts with `display: none` in DEFAULT_CSS. `set_kind(TEXT)` keeps
-it hidden. All other kinds call `self.display = True`. Tests must check
-`pill.display is True/False` not CSS class alone.
-
-**ToolPanelMini toast requires `app._mini_toast_shown` flag.**
-`app._mini_toast_shown` is set by ToolPanelMini on first expansion. It is an
-ad-hoc attribute not declared in `HermesApp.__init__`. `getattr(app,
-"_mini_toast_shown", False)` is the correct read pattern. Tests that create
-a fresh app will always see the toast on first expansion.
 
 ## When to expand this file
 

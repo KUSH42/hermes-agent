@@ -503,8 +503,8 @@ async def test_tool_panel_set_result_summary_v4_error_promotes_level():
 
     async with _App().run_test() as pilot:
         tp = pilot.app.query_one(ToolPanel)
-        # Manually collapse to L0
-        tp.detail_level = 0
+        # Manually collapse (binary collapse)
+        tp.collapsed = True
         summary = ResultSummaryV4(
             primary="✗ exit 1",
             exit_code=1,
@@ -516,5 +516,5 @@ async def test_tool_panel_set_result_summary_v4_error_promotes_level():
         )
         tp.set_result_summary_v4(summary)
         await pilot.pause(0.05)
-        # Error at L0 should promote to L1
-        assert tp.detail_level >= 1
+        # Error → force expand (error promotion rule)
+        assert tp.collapsed is False

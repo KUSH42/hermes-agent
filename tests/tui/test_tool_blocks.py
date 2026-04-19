@@ -68,16 +68,18 @@ async def test_toggle_adds_removes_expanded_class():
         app.mount_tool_block("diff", lines, plain)
         await pilot.pause()
 
+        from hermes_cli.tui.tool_panel import ToolPanel
         block = app.query_one(ToolBlock)
-        assert not block._body.has_class("expanded")
+        panel = app.query_one(ToolPanel)
+        assert panel.collapsed is False  # starts expanded (binary collapse spec §6)
 
         block.toggle()
         await pilot.pause()
-        assert block._body.has_class("expanded")
+        assert panel.collapsed is True  # toggle delegates to ToolPanel
 
         block.toggle()
         await pilot.pause()
-        assert not block._body.has_class("expanded")
+        assert panel.collapsed is False
 
 
 @pytest.mark.asyncio
@@ -552,12 +554,13 @@ async def test_browse_enter_toggles_block():
         app.browse_index = 0
         await pilot.pause()
 
-        block = app.query_one(ToolBlock)
-        assert not block._body.has_class("expanded")
+        from hermes_cli.tui.tool_panel import ToolPanel
+        panel = app.query_one(ToolPanel)
+        assert panel.collapsed is False  # starts expanded
 
         await pilot.press("enter")
         await pilot.pause()
-        assert block._body.has_class("expanded")
+        assert panel.collapsed is True  # Enter collapses it
 
 
 @pytest.mark.asyncio
@@ -617,12 +620,13 @@ async def test_browse_a_expands_all():
         app.browse_mode = True
         await pilot.pause()
 
-        blocks = list(app.query(ToolBlock))
-        assert all(not b._body.has_class("expanded") for b in blocks)
+        from hermes_cli.tui.tool_panel import ToolPanel
+        panels = list(app.query(ToolPanel))
+        assert all(not p.collapsed for p in panels)  # all start expanded
 
         await pilot.press("a")
         await pilot.pause()
-        assert all(b._body.has_class("expanded") for b in blocks)
+        assert all(not p.collapsed for p in panels)  # 'a' expands all → still expanded
         assert app.browse_mode is True  # stays in browse mode
 
 
@@ -640,16 +644,17 @@ async def test_browse_A_collapses_all():
         app.browse_mode = True
         await pilot.pause()
 
-        # First expand all
-        blocks = list(app.query(ToolBlock))
-        for b in blocks:
-            b.toggle()
+        from hermes_cli.tui.tool_panel import ToolPanel
+        panels = list(app.query(ToolPanel))
+        # Collapse all first via toggle
+        for p in panels:
+            p.action_toggle_collapse()
         await pilot.pause()
-        assert all(b._body.has_class("expanded") for b in blocks)
+        assert all(p.collapsed for p in panels)
 
         await pilot.press("A")
         await pilot.pause()
-        assert all(not b._body.has_class("expanded") for b in blocks)
+        assert all(p.collapsed for p in panels)  # 'A' collapses all → still collapsed
         assert app.browse_mode is True  # stays in browse mode
 
 
@@ -841,13 +846,15 @@ async def test_integration_enter_expand_c_flash():
         app.browse_index = 0
         await pilot.pause()
 
+        from hermes_cli.tui.tool_panel import ToolPanel
         block = app.query_one(ToolBlock)
+        panel = app.query_one(ToolPanel)
         header = app.query_one(ToolHeader)
 
-        assert not block._body.has_class("expanded")
+        assert panel.collapsed is False  # starts expanded (binary collapse spec §6)
         await pilot.press("enter")
         await pilot.pause()
-        assert block._body.has_class("expanded")
+        assert panel.collapsed is True  # enter delegates to ToolPanel
 
         assert not header._copy_flash
         await pilot.press("c")
@@ -892,15 +899,15 @@ async def test_click_left_toggles_expanded():
         app.mount_tool_block("diff", lines, plain)
         await pilot.pause()
 
+        from hermes_cli.tui.tool_panel import ToolPanel
         block = app.query_one(ToolBlock)
-        assert block._header.collapsed is True
-        assert not block._body.has_class("expanded")
+        panel = app.query_one(ToolPanel)
+        assert panel.collapsed is False  # starts expanded (binary collapse spec §6)
 
         await pilot.click(block._header)
         await pilot.pause()
 
-        assert block._header.collapsed is False
-        assert block._body.has_class("expanded")
+        assert panel.collapsed is True  # click delegates toggle to ToolPanel
 
 
 @pytest.mark.asyncio
@@ -913,17 +920,18 @@ async def test_click_left_toggles_back_to_collapsed():
         app.mount_tool_block("diff", lines, plain)
         await pilot.pause()
 
+        from hermes_cli.tui.tool_panel import ToolPanel
         block = app.query_one(ToolBlock)
-        # First click — expand
+        panel = app.query_one(ToolPanel)
+        # First click — collapse (starts expanded)
         await pilot.click(block._header)
         await pilot.pause()
-        assert block._header.collapsed is False
+        assert panel.collapsed is True
 
-        # Second click — collapse
+        # Second click — expand
         await pilot.click(block._header)
         await pilot.pause()
-        assert block._header.collapsed is True
-        assert not block._body.has_class("expanded")
+        assert panel.collapsed is False
 
 
 @pytest.mark.asyncio

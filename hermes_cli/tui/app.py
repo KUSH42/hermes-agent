@@ -134,6 +134,7 @@ if TYPE_CHECKING:
     from hermes_cli.tui.input_widget import HermesInput
     from hermes_cli.tui.path_search import Candidate, PathCandidate
     from hermes_cli.tui.tool_blocks import ToolHeader
+    from hermes_cli.tui.tool_result_parse import ResultSummaryV4
 
 logger = logging.getLogger(__name__)
 
@@ -2141,7 +2142,13 @@ class HermesApp(App):
         except NoMatches:
             pass
 
-    def close_streaming_tool_block(self, tool_call_id: str, duration: str, is_error: bool = False) -> None:
+    def close_streaming_tool_block(
+        self,
+        tool_call_id: str,
+        duration: str,
+        is_error: bool = False,
+        summary: "ResultSummaryV4 | None" = None,
+    ) -> None:
         """Transition streaming block to COMPLETED state. Event-loop only.
 
         Called via ``call_from_thread`` from the agent thread after the tool
@@ -2151,6 +2158,10 @@ class HermesApp(App):
         if block is None:
             return
         block.complete(duration, is_error=is_error)
+        if summary is not None:
+            panel = getattr(block, "_tool_panel", None)
+            if panel is not None:
+                panel.set_result_summary_v4(summary)
         # P7: update dur_ms + is_error on the matching turn entry
         for entry in self._turn_tool_calls:
             if entry["tool_call_id"] == tool_call_id:
@@ -2187,6 +2198,7 @@ class HermesApp(App):
         is_error: bool,
         diff_lines: list[str],
         header_stats: object,
+        summary: "ResultSummaryV4 | None" = None,
     ) -> None:
         """Inject diff into a streaming block's body then complete it. Event-loop only."""
         block = self._active_streaming_blocks.pop(tool_call_id, None)
@@ -2194,6 +2206,10 @@ class HermesApp(App):
             return
         block.inject_diff(diff_lines, header_stats)
         block.complete(duration, is_error=is_error)
+        if summary is not None:
+            panel = getattr(block, "_tool_panel", None)
+            if panel is not None:
+                panel.set_result_summary_v4(summary)
         # P7: update dur_ms + is_error on the matching turn entry
         for entry in self._turn_tool_calls:
             if entry["tool_call_id"] == tool_call_id:
@@ -3503,19 +3519,19 @@ class HermesApp(App):
                 event.prevent_default()
                 return
             elif key == "a":
-                # Expand all blocks (only those with affordances)
-                from hermes_cli.tui.tool_blocks import ToolBlock as _TB
-                for block in self.query(_TB):
-                    if not block._body.has_class("expanded"):
-                        block.toggle()
+                # Expand all collapsed panels
+                from hermes_cli.tui.tool_panel import ToolPanel as _TP
+                for panel in self.query(_TP):
+                    if panel.collapsed:
+                        panel.action_toggle_collapse()
                 event.prevent_default()
                 return
             elif key == "A":
-                # Collapse all blocks (only those with affordances)
-                from hermes_cli.tui.tool_blocks import ToolBlock as _TB
-                for block in self.query(_TB):
-                    if block._body.has_class("expanded"):
-                        block.toggle()
+                # Collapse all expanded panels
+                from hermes_cli.tui.tool_panel import ToolPanel as _TP
+                for panel in self.query(_TP):
+                    if not panel.collapsed:
+                        panel.action_toggle_collapse()
                 event.prevent_default()
                 return
             elif key == "escape":

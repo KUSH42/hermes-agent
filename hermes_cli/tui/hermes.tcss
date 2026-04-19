@@ -545,3 +545,40 @@ MathBlockWidget {
 MathBlockWidget .--math-label {
     color: $text-muted;
 }
+
+/* --- ToolGroup widget (v4 P5 — display.tool_group_widget: true) --- */
+ToolGroup {
+    height: auto;
+    layout: vertical;
+    margin: 0 0 1 0;
+    border-left: vkey $accent 20%;
+}
+
+ToolGroup:focus {
+    background: $accent 8%;
+    border-left: vkey $accent 60%;
+}
+
+ToolGroup.--collapsed GroupBody {
+    display: none;
+}
+
+ToolGroup.--narrow GroupBody {
+    display: none;
+}
+
+GroupHeader {
+    height: 1;
+    color: $text-muted;
+    background: $surface;
+}
+
+GroupHeader:hover {
+    background: $boost;
+}
+
+GroupBody {
+    height: auto;
+    padding-left: 2;
+    layout: vertical;
+}

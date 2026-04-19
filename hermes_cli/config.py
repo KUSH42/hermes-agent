@@ -444,6 +444,8 @@ DEFAULT_CONFIG = {
         # Tool Panel v4 flags — all off by default; additive on v2 rendering
         "tool_panel_v4": False,      # master gate: enables all v4 visual changes
         "mcp_microcopy": True,       # show "▸ mcp · <server>" provenance line (independent of master)
+        "result_hero": True,         # show hero chip "✓ 6 lines" in header tail (requires tool_panel_v4)
+        "tool_group_widget": False,  # real ToolGroup widget (opt-in; default off until battle-tested)
         "drawille_overlay": {
             "enabled": False,
             "animation": "dna",

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from rich.table import Table
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Static
@@ -284,6 +285,11 @@ class FooterPane(Widget):
 class ToolPanel(Widget):
     """Unified tool-call display container — Phase 3.
 
+    Completion event (v4 §4.3 / P5 aggregate):
+    ToolPanel.Completed is posted on set_result_summary / set_result_summary_v4
+    so ToolGroup can re-aggregate without coupling. Bubbles to MessagePanel and
+    is silently ignored when not inside a ToolGroup.
+
     Compose tree (all phases):
         ToolPanel
         ├── ArgsPane      (display:none unless L3)
@@ -296,6 +302,9 @@ class ToolPanel(Widget):
         L2 — header + full body + conditional footer
         L3 — header + ArgsPane (args) + full body + footer (always)
     """
+
+    class Completed(Message):
+        """Posted when the panel receives a result summary (v4 P5 aggregate)."""
 
     DEFAULT_CSS = "ToolPanel { height: auto; layout: vertical; }"
     _content_type: str = "tool"
@@ -468,6 +477,7 @@ class ToolPanel(Widget):
         if self._footer_pane is not None:
             show = self._should_show_footer(self.detail_level)
             self._footer_pane.styles.display = "block" if show else "none"
+        self.post_message(ToolPanel.Completed())
 
     def set_result_summary_v4(self, summary: "ResultSummaryV4") -> None:
         """Call from app at tool completion to populate v4 footer + header hero chip."""
@@ -496,6 +506,7 @@ class ToolPanel(Widget):
             has_content = bool(summary.chips or summary.stderr_tail or summary.actions or summary.artifacts)
             show = has_content and self.detail_level > 0
             self._footer_pane.styles.display = "block" if show else "none"
+        self.post_message(ToolPanel.Completed())
 
     def copy_content(self) -> str:
         """Return full plain-text output regardless of detail level."""

@@ -2223,6 +2223,13 @@ class HermesApp(App):
             return
         anchors: list[BrowseAnchor] = []
         turn_id = 0
+        _tool_group_cls = None
+        try:
+            from hermes_cli.tui.tool_group import ToolGroup as _TG, GroupBody as _GB
+            _tool_group_cls = _TG
+            _group_body_cls = _GB
+        except Exception:
+            _group_body_cls = None
         for widget in output.walk_children(with_self=False):
             if isinstance(widget, UserMessagePanel):
                 turn_id += 1
@@ -2230,6 +2237,24 @@ class HermesApp(App):
                     anchor_type=BrowseAnchorType.TURN_START,
                     widget=widget,
                     label=f"Turn {turn_id}",
+                    turn_id=turn_id,
+                ))
+            elif _tool_group_cls is not None and isinstance(widget, _tool_group_cls):
+                # ToolGroup registers as a single TOOL_BLOCK anchor
+                header = widget._header
+                label_text = (header._summary_text if header is not None else "") or "Group"
+                child_count = 0
+                if widget._body is not None:
+                    try:
+                        from hermes_cli.tui.tool_panel import ToolPanel as _TP
+                        child_count = sum(1 for c in widget._body.children if isinstance(c, _TP))
+                    except Exception:
+                        pass
+                collapsed_mark = " ▸" if widget.collapsed else " ▾"
+                anchors.append(BrowseAnchor(
+                    anchor_type=BrowseAnchorType.TOOL_BLOCK,
+                    widget=widget,
+                    label=f"Group{collapsed_mark} · {label_text} ({child_count})",
                     turn_id=turn_id,
                 ))
             elif isinstance(widget, StreamingCodeBlock):
@@ -2241,6 +2266,15 @@ class HermesApp(App):
                         turn_id=turn_id,
                     ))
             elif isinstance(widget, _TH):
+                # Skip ToolHeaders inside a collapsed ToolGroup
+                if _group_body_cls is not None and _tool_group_cls is not None:
+                    parent = getattr(widget, "parent", None)
+                    grandparent = getattr(parent, "parent", None)
+                    if isinstance(grandparent, _tool_group_cls) and grandparent.collapsed:
+                        continue
+                    # Also skip if directly inside GroupBody of an expanded group
+                    # (the ToolGroup anchor already represents the group; children shown inline)
+                    # We keep them visible so users can navigate into expanded groups.
                 label = widget._label or "Tool"
                 if widget.has_class("--diff-header"):
                     label = f"Diff · {label}"
@@ -3350,6 +3384,19 @@ class HermesApp(App):
                 event.prevent_default()
                 return
             elif key == "enter":
+                # If a ToolGroup has focus, toggle it and enter on expand
+                focused = self.focused
+                if focused is not None:
+                    try:
+                        from hermes_cli.tui.tool_group import ToolGroup as _TG
+                        if isinstance(focused, _TG):
+                            focused.collapsed = not focused.collapsed
+                            if not focused.collapsed:
+                                focused.focus_first_child()
+                            event.prevent_default()
+                            return
+                    except Exception:
+                        pass
                 if headers:
                     idx = self.browse_index % len(headers)
                     parent = headers[idx].parent
@@ -3384,6 +3431,20 @@ class HermesApp(App):
                 event.prevent_default()
                 return
             elif key == "escape":
+                # Pop focus to parent ToolGroup if currently inside one
+                focused = self.focused
+                if focused is not None:
+                    try:
+                        from hermes_cli.tui.tool_group import ToolGroup as _TG, GroupBody as _GB
+                        parent = getattr(focused, "parent", None)
+                        if isinstance(parent, _GB):
+                            grandparent = getattr(parent, "parent", None)
+                            if isinstance(grandparent, _TG):
+                                grandparent.focus()
+                                event.prevent_default()
+                                return
+                    except Exception:
+                        pass
                 self.browse_mode = False
                 event.prevent_default()
                 return

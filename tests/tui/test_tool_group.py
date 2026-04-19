@@ -13,7 +13,7 @@ from hermes_cli.tui.tool_group import (
     _grouping_enabled,
     _get_group_id,
     _share_dir_prefix,
-    _apply_group,
+    _apply_group_css,
     _maybe_start_group,
 )
 from hermes_cli.tui.app import HermesApp

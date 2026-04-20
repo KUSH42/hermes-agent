@@ -4021,7 +4021,7 @@ class HermesApp(App):
             # Priority -2: dismiss info overlays (help/usage/commands/model).
             # These have no Input focus when shown (except HelpOverlay), so their
             # Binding(escape) doesn't fire — handle here instead.
-            for _cls in (HelpOverlay, UsageOverlay, CommandsOverlay, ModelOverlay, WorkspaceOverlay):
+            for _cls in (HelpOverlay, UsageOverlay, CommandsOverlay, ModelOverlay, WorkspaceOverlay, SessionOverlay):
                 try:
                     _ov = self.query_one(_cls)
                     if _ov.has_class("--visible"):

@@ -158,6 +158,9 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     # Diff background colors — used by ToolBlock._diff_bg_colors()
     "diff-add-bg": "#1a3a1a",
     "diff-del-bg": "#3a1a1a",
+    # Citation chip colors — used by SourcesBar
+    "cite-chip-bg": "#1a2030",
+    "cite-chip-fg": "#8899bb",
 }
 
 

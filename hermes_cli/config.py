@@ -430,6 +430,8 @@ DEFAULT_CONFIG = {
         "mermaid": "auto",        # auto|on|off — render mermaid fences via mmdc if available
         "math_dpi": 150,          # DPI for math PNG rendering
         "math_max_rows": 12,      # max height in terminal rows for math images
+        "citations": True,             # Show clickable source chips from [CITE:N ...] tags
+        "reasoning_rich_prose": True,  # Enable footnotes + citations inside the reasoning panel
         "skin": "default",
         "tool_icon_mode": "auto",  # auto|nerdfont|emoji|ascii
         "tool_gutter": True,       # Show ┊/┃ gutter symbols on tool call blocks

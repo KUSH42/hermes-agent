@@ -23,6 +23,9 @@
 
 /* Component variable declarations — must be present for Textual to parse $var refs */
 $footnote-ref-color: #888888;
+/* Citation chip colors */
+$cite-chip-bg: #1a2030;
+$cite-chip-fg: #8899bb;
 $tool-glyph-mcp: "󰡨";
 $error-timeout: #f59e0b;
 $error-critical: #ef4444;
@@ -649,4 +652,8 @@ ToolsScreen > #tools-footer {
     padding: 0 1;
     background: $primary 10%;
     color: $text-muted;
+}
+
+SourcesBar {
+    margin-top: 1;
 }

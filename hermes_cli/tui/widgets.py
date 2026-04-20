@@ -4992,3 +4992,72 @@ class InlineMediaWidget(Widget):
             self._poller.stop()
         if self._ctrl:
             self._ctrl.stop()
+
+
+# ---------------------------------------------------------------------------
+# Citations / SourcesBar
+# ---------------------------------------------------------------------------
+
+def _extract_domain(url: str) -> str:
+    """'https://www.example.com/path' → 'example.com'"""
+    from urllib.parse import urlparse
+    try:
+        host = urlparse(url).netloc
+        return host.removeprefix("www.") if host else url[:30]
+    except Exception:
+        return url[:30]
+
+
+def _truncate(text: str, max_len: int) -> str:
+    return text if len(text) <= max_len else text[:max_len - 1] + "\u2026"
+
+
+class SourcesBar(Widget):
+    """Clickable source chips mounted below a MessagePanel at turn end."""
+
+    DEFAULT_CSS = """
+    SourcesBar {
+        height: auto;
+        padding: 0 1;
+        border-top: solid $panel-border;
+    }
+    SourcesBar .--cite-label {
+        color: $cite-chip-fg;
+        padding: 0 1 0 0;
+    }
+    SourcesBar .--cite-chip {
+        background: $cite-chip-bg;
+        color: $cite-chip-fg;
+        padding: 0 1;
+        margin-right: 1;
+    }
+    SourcesBar .--cite-chip:hover {
+        background: $accent;
+        color: $background;
+    }
+    """
+
+    def __init__(self, entries: list[tuple[int, str, str]]) -> None:
+        """entries: list of (N, title, url) in display order."""
+        super().__init__()
+        self._entries = entries
+        # Build URL lookup in __init__ — available before compose() runs
+        self._urls: dict[str, str] = {f"cite-{n}": url for n, _, url in entries}
+
+    def compose(self) -> ComposeResult:
+        from textual.widgets import Button, Label
+        yield Label("Sources:", classes="--cite-label")
+        for n, title, url in self._entries:
+            domain = _extract_domain(url)
+            label_text = f"[{n}] {domain}"
+            if title:
+                label_text += f" \u2014 {_truncate(title, 40)}"
+            yield Button(label_text, classes="--cite-chip", id=f"cite-{n}")
+
+    def on_button_pressed(self, event: "Any") -> None:
+        event.stop()
+        url = self._urls.get(event.button.id or "", "")
+        if url:
+            import subprocess
+            opener = "open" if sys.platform == "darwin" else "xdg-open"
+            subprocess.Popen([opener, url])

@@ -78,6 +78,11 @@ _HR_RE = re.compile(r"^(-{3,}|\*{3,}|_{3,})$")
 # Footnote definition line — [^N]: text — collected and suppressed in NORMAL state
 _FOOTNOTE_DEF_RE = re.compile(r'^\s*\[\^(\d{1,4})\]:\s*(.*)')
 
+# Citation tag: [CITE:N Title \u2014 https://url] — suppress and collect
+_CITE_RE = re.compile(
+    r'^\[CITE:(\d{1,4})\s+(.+?)\s+\u2014\s+(https?://\S+)\]$'
+)
+
 # Block math delimiters — checked BEFORE fence detection to avoid $$ colliding with _FENCE_OPEN_RE
 _BLOCK_MATH_OPEN_RE = re.compile(
     r"^\$\$\s*$"
@@ -334,6 +339,10 @@ class ResponseFlowEngine:
         self._footnote_order: list[str] = []       # labels in order of first definition
         self._footnote_def_open: str | None = None  # label of continuation-in-progress
         self._partial: str = ""                     # accumulated partial tail of current line
+        # Citation tag state
+        self._cite_entries: dict[int, tuple[str, str]] = {}   # N → (title, url)
+        self._cite_order: list[int] = []                       # insertion order
+        self._citations_enabled: bool = getattr(_app, "_citations_enabled", True)
         # Media URL detection
         self._mount_media_callback: "Callable[[str, str], None] | None" = None
         self._emitted_media_urls: set[str] = set()
@@ -403,6 +412,18 @@ class ResponseFlowEngine:
                 self._footnote_defs[self._footnote_def_open] += " " + raw.strip()
                 return
             self._footnote_def_open = None
+
+            # Citation tag detection — suppress line and collect entry
+            if self._citations_enabled:
+                _cite_m = _CITE_RE.match(raw.strip())
+                if _cite_m:
+                    _n = int(_cite_m.group(1))
+                    _title = _cite_m.group(2).strip()
+                    _url = _cite_m.group(3)
+                    self._cite_entries[_n] = (_title, _url)
+                    if _n not in self._cite_order:
+                        self._cite_order.append(_n)
+                    return  # suppress from main output
 
             stripped = raw.strip()
             was_pending_code_intro = self._pending_code_intro
@@ -649,7 +670,26 @@ class ResponseFlowEngine:
         self._footnote_defs.clear()
         self._footnote_order.clear()
         self._footnote_def_open = None
+        # Mount SourcesBar if any citations were collected
+        if self._cite_entries and self._citations_enabled:
+            self._mount_sources_bar()   # captures entries before clear below
+        self._cite_entries.clear()
+        self._cite_order.clear()
         self._emitted_media_urls.clear()
+
+    def _mount_sources_bar(self) -> None:
+        """Mount SourcesBar below the panel after the next refresh."""
+        from hermes_cli.tui.widgets import SourcesBar
+        entries = [(n, *self._cite_entries[n]) for n in self._cite_order]
+        panel = self._panel
+
+        def _do_mount() -> None:
+            try:
+                panel.mount(SourcesBar(entries))
+            except Exception:
+                pass
+
+        panel.call_after_refresh(_do_mount)
 
     def _render_footnote_section(self) -> None:
         from agent.rich_output import apply_inline_markdown, _to_superscript
@@ -849,6 +889,12 @@ class ReasoningFlowEngine(ResponseFlowEngine):
         self._footnote_order: list[str] = []
         self._footnote_def_open: str | None = None
         self._partial: str = ""
+        # Citations — mirrored from ResponseFlowEngine.__init__
+        # Gated on BOTH _citations_enabled AND _reasoning_rich_prose
+        _rp = getattr(panel.app, "_reasoning_rich_prose", True)
+        self._cite_entries: dict[int, tuple[str, str]] = {}
+        self._cite_order: list[int] = []
+        self._citations_enabled: bool = getattr(panel.app, "_citations_enabled", True) and _rp
         # Math rendering — disabled in reasoning output (Non-Goal per spec)
         self._math_lines: list[str] = []
         self._math_env: str = ""
@@ -884,8 +930,9 @@ class ReasoningFlowEngine(ResponseFlowEngine):
         self._panel.mount(block, before=self._panel._live_line)
 
     def _render_footnote_section(self) -> None:
-        """No footnote section in reasoning output."""
-        pass
+        if not getattr(self._panel.app, "_reasoning_rich_prose", True):
+            return
+        super()._render_footnote_section()
 
     def _emit_rule(self) -> None:
         from rich.rule import Rule as RichRule

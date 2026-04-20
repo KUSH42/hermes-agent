@@ -1636,6 +1636,9 @@ class HermesCLI:
         self._mermaid_enabled: bool = CLI_CONFIG["display"].get("mermaid", "auto") != "off"
         self._math_dpi: int = int(CLI_CONFIG["display"].get("math_dpi", 150))
         self._math_max_rows: int = int(CLI_CONFIG["display"].get("math_max_rows", 12))
+        # Citations and reasoning rich prose config
+        self._citations_enabled: bool = CLI_CONFIG["display"].get("citations", True)
+        self._reasoning_rich_prose: bool = CLI_CONFIG["display"].get("reasoning_rich_prose", True)
 
         # Streaming display state
         self._stream_buf = ""        # Partial line buffer for line-buffered rendering
@@ -10559,6 +10562,8 @@ class HermesCLI:
             _tui_app._mermaid_enabled = self._mermaid_enabled
             _tui_app._math_dpi = self._math_dpi
             _tui_app._math_max_rows = self._math_max_rows
+            _tui_app._citations_enabled = self._citations_enabled
+            _tui_app._reasoning_rich_prose = self._reasoning_rich_prose
             _tui_app._spinner_frames = _COMMAND_SPINNER_FRAMES
             _hermes_app = _tui_app
             # Apply skin to TUI at startup — component_vars + ui_accent
@@ -10835,6 +10840,18 @@ def main(
         "collapsible footnote section below the response.]"
     )
     cli.system_prompt = (cli.system_prompt or "") + _footnote_hint
+
+    # Citations hint — injected when citations are enabled (TUI mode only)
+    if getattr(cli, "_citations_enabled", True):
+        _cite_hint = (
+            "\n\n[System note: This terminal supports inline source citations. "
+            "When your response references web sources or documents, emit one "
+            "`[CITE:N Title \u2014 URL]` line per source (on its own line, N=1,2,3\u2026). "
+            "These lines are hidden from main output and shown as clickable chips "
+            "in a 'Sources' bar below your response. Use the same N to reference "
+            "the source inline as [N]. Only emit CITE tags when you have a real URL.]"
+        )
+        cli.system_prompt = (cli.system_prompt or "") + _cite_hint
 
     # Inline media system prompt hint
     try:

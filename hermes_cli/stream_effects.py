@@ -43,6 +43,7 @@ VALID_EFFECTS: list[str] = [
     "nier",
     "zalgo",
     "cosmic",
+    "generator",
 ]
 
 
@@ -735,6 +736,76 @@ class CosmicFadeEffect(StreamEffectRenderer):
 
 
 # ---------------------------------------------------------------------------
+# GeneratorEffect  (glitched-writer neo preset)
+# ---------------------------------------------------------------------------
+
+
+class GeneratorEffect(StreamEffectRenderer):
+    """Each char cycles _ → / → - → real, staggered left-to-right by index.
+
+    Mirrors the glitched-writer "neo" preset: steps are randomised per character
+    (default range 3–8), and each character's countdown doesn't begin until
+    global_tick >= char_index * stagger_ticks, so earlier chars resolve first.
+    """
+
+    active = True
+    needs_clock = True
+
+    def __init__(self, cfg: dict, lock: threading.Lock | None = None) -> None:
+        super().__init__(cfg, lock)
+        self._min_steps: int = cfg.get("stream_effect_gen_min_steps", 3)
+        self._max_steps: int = cfg.get("stream_effect_gen_max_steps", 8)
+        self._stagger: int = cfg.get("stream_effect_gen_stagger", 1)
+        self._global_tick: int = 0
+        # [real_char, steps_left, char_index]
+        self._chars: list[list] = []
+        self._char_counter: int = 0
+
+    def register_token_tui(self, token: str) -> None:
+        for ch in token:
+            steps = 0 if ch.isspace() else random.randint(self._min_steps, self._max_steps)
+            self._chars.append([ch, steps, self._char_counter])
+            self._char_counter += 1
+
+    def tick_tui(self) -> bool:
+        self._global_tick += 1
+        changed = False
+        for entry in self._chars:
+            _, steps, idx = entry
+            if steps > 0 and self._global_tick >= idx * self._stagger:
+                entry[1] -= 1
+                changed = True
+        return changed
+
+    def render_tui(self, buf: str, accent_hex: str, text_hex: str) -> "Text":
+        from rich.text import Text
+        t = Text()
+        dim = _lerp_color(text_hex, accent_hex, 0.25)
+        mid = _lerp_color(text_hex, accent_hex, 0.6)
+        near = _lerp_color(text_hex, accent_hex, 0.85)
+        n = min(len(buf), len(self._chars))
+        for i in range(n):
+            real_char, steps, idx = self._chars[i]
+            if steps == 0:
+                t.append(real_char, style=text_hex)
+            elif steps > 5:
+                t.append("_", style=dim)
+            elif steps > 2:
+                t.append("/", style=mid)
+            else:
+                t.append("-", style=near)
+        return t
+
+    def clear_tui(self) -> None:
+        self._chars.clear()
+        self._char_counter = 0
+        self._global_tick = 0
+
+    def on_turn_end(self) -> None:
+        self.clear_tui()
+
+
+# ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
 
@@ -751,6 +822,7 @@ _EFFECT_MAP: dict[str, type[StreamEffectRenderer]] = {
     "nier": NierEffect,
     "zalgo": ZalgoEffect,
     "cosmic": CosmicFadeEffect,
+    "generator": GeneratorEffect,
 }
 
 

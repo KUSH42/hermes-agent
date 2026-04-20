@@ -355,6 +355,69 @@ def test_g3_skin_stream_effect_string_override():
         os.unlink(skin_path)
 
 
+# ---------------------------------------------------------------------------
+# Group H — GeneratorEffect (6 tests)
+# ---------------------------------------------------------------------------
+
+from hermes_cli.stream_effects import GeneratorEffect
+
+
+def test_h1_generator_in_valid_effects():
+    assert "generator" in VALID_EFFECTS
+
+
+def test_h2_generator_factory():
+    fx = make_stream_effect({"stream_effect": "generator"})
+    assert isinstance(fx, GeneratorEffect)
+    assert fx.active is True
+    assert fx.needs_clock is True
+
+
+def test_h3_generator_register_builds_chars():
+    fx = GeneratorEffect({"stream_effect_gen_min_steps": 5, "stream_effect_gen_max_steps": 5})
+    fx.register_token_tui("hi")
+    assert len(fx._chars) == 2
+    assert fx._chars[0][0] == "h"
+    assert fx._chars[1][0] == "i"
+    # both non-space → steps == 5
+    assert fx._chars[0][1] == 5
+    assert fx._chars[1][1] == 5
+
+
+def test_h4_generator_spaces_get_zero_steps():
+    fx = GeneratorEffect({})
+    fx.register_token_tui("a b")
+    # index 1 is space → steps_left == 0
+    assert fx._chars[1][1] == 0
+
+
+def test_h5_generator_render_glyph_ladder():
+    fx = GeneratorEffect({})
+    # manually set up chars with known steps
+    fx._chars = [
+        ["a", 7, 0],   # steps > 5  → "_"
+        ["b", 4, 1],   # steps > 2  → "/"
+        ["c", 1, 2],   # steps > 0  → "-"
+        ["d", 0, 3],   # steps == 0 → "d"
+    ]
+    t = fx.render_tui("abcd", "#FFDD00", "#FFFFFF")
+    assert t.plain == "_/-d"
+
+
+def test_h6_generator_stagger_delays_later_chars():
+    # stagger=2: char at index 1 shouldn't start until tick 2
+    fx = GeneratorEffect({
+        "stream_effect_gen_min_steps": 4,
+        "stream_effect_gen_max_steps": 4,
+        "stream_effect_gen_stagger": 2,
+    })
+    fx.register_token_tui("ab")
+    # tick 1: global_tick=1; char[0] idx=0 → 1>=0 eligible; char[1] idx=1 → 1<2 blocked
+    fx.tick_tui()
+    assert fx._chars[0][1] == 3  # decremented
+    assert fx._chars[1][1] == 4  # not yet started
+
+
 def test_g4_skin_stream_effect_dict_override_with_cascade_ticks():
     """Skin stream_effect dict sets enabled + effect-specific keys."""
     import tempfile, os, yaml

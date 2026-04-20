@@ -110,9 +110,57 @@ Then load only the focused reference you need:
 
 ## Validation
 
-Last revalidated: **2026-04-20. ~2312 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
+Last revalidated: **2026-04-20. ~2362 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
 
 Recent changes (details → reference files):
+- **Crush easy-wins features A/B/C/D** (2026-04-20): 50 tests in `tests/tui/test_crush_easy_wins.py`.
+  **A — context_pct meter**: `HermesApp.context_pct: reactive[float]` + `context_pct` added to
+  `StatusBar.on_mount` watch list. `StatusBar.render()` appends ` ▕ XX%` segment (dim, color by threshold:
+  <70% = context-color, 70-90% = warn, >90% = error) when `context_pct > 0`, `width >= 50`, and
+  `display.context_pct = true` in config. `_push_tui_status()` in `cli.py` computes token pct from
+  `agent.session_prompt_tokens + session_completion_tokens` / `model_context_window(model)`;
+  `model_context_window(model) -> int` added to `config.py` (maps claude-* family to 200k, others 0).
+  **B — OSC 9;4 progress bar**: `hermes_cli/tui/osc_progress.py` (NEW) — `is_supported()` detects
+  Ghostty (`$TERM_PROGRAM=ghostty`), iTerm2 (`TERM_PROGRAM=iTerm.app`), WezTerm, Rio, Windows Terminal
+  (`$WT_SESSION`), plus `$HERMES_OSC_PROGRESS` override. `update(running)` writes `\x1b]9;4;3;\x07`
+  (indeterminate) or `\x1b]9;4;0;\x07` (clear) via `os.write(sys.stdout.fileno(), ...)` (raw bytes).
+  `HermesApp._osc_progress_update(running)` called from `watch_agent_running(True/False)`.
+  **C — desktop notification + sound**: `hermes_cli/tui/desktop_notify.py` (NEW) — `can_notify()`,
+  `notify(title, body, sound=False, sound_name="Glass")`. Linux: `notify-send`; macOS: `osascript`
+  with `json.dumps()` for safe string injection. Sound: macOS `afplay`, Linux `paplay`/`aplay`/`ogg123`.
+  `HermesApp._maybe_notify()` checks `notify_min_seconds` threshold, uses `_last_assistant_text` for
+  body; fires in `watch_agent_running(False)`. Config: `display.desktop_notify/notify_min_seconds/
+  notify_sound/notify_sound_name` + yolo `display.osc_progress/context_pct`.
+  **D — yolo mode indicator**: `HermesApp.yolo_mode: reactive[bool]` initialized from
+  `HERMES_YOLO_MODE` env at `on_mount`. `watch_yolo_mode()` adds/removes `--yolo-active` on
+  `#input-chevron`. `StatusBar.render()` prepends `⚡ YOLO  ` badge (bold warning color) when
+  `yolo_mode=True`. `_toggle_yolo()` in `cli.py` syncs reactive via `tui.call_from_thread(setattr,
+  tui, "yolo_mode", new_value)`. `ResponseFlowEngine._prose_callback` wired in `MessagePanel.on_mount`
+  to update `app._last_assistant_text` on each committed prose line.
+  Key gotchas: `_make_bar()` pattern in tests must use a local subclass (`class _BarStub(StatusBar)`)
+  NOT `type(bar).app = property(...)` — the latter mutates the live `StatusBar` class and breaks
+  subsequent pilot tests. `_tok_s_displayed` reactive must NOT be set via `object.__setattr__` — it
+  still triggers Textual's `__set__` (data descriptor). Skip it; render() doesn't read it.
+  → `hermes_cli/tui/osc_progress.py` (new), `hermes_cli/tui/desktop_notify.py` (new),
+    `hermes_cli/tui/app.py §context_pct/yolo_mode/watch_yolo_mode/_osc_progress_update/_maybe_notify`,
+    `hermes_cli/tui/widgets.py §StatusBar.on_mount/render/_EchoBullet.get_text`,
+    `hermes_cli/tui/response_flow.py §_prose_callback/_write_prose/__init__`,
+    `hermes_cli/config.py §model_context_window/_MODEL_CONTEXT_WINDOW`,
+    `cli.py §_push_tui_status/_toggle_yolo`,
+    `tests/tui/test_crush_easy_wins.py` (new, 50 tests)
+- **Execute-code output display + UX fixes** (2026-04-20):
+  `cli.py._on_tool_complete`: added `execute_code` branch after SEARCH/WEB `_result_lines` block —
+  parses JSON result (`{"output","error","stderr"}`), splits into `_result_lines`, fed into `ECB.append_line()`
+  before `complete()`. Both stdout and stderr now visible in the OutputSection.
+  `hermes_cli/tool_icons.py.DISPLAY_NAMES["execute_code"]`: changed from `"exec"` → `"python"` (removes
+  the stale `[🐍] exec` display name).
+  `widgets.py._EchoBullet`: refactored from `render()`+`height:1` (overflows) to `compose()+Static`+`height:auto`
+  (word-wraps at terminal width). Pulse animation: `_pulse_step()` and `_pulse_stop()` overridden to call
+  `_push()` → updates inner `Static` directly (no longer relies on `self.refresh()` triggering `render()`).
+  `_build_text()` extracts the Rich Text builder; `Text(overflow="fold")` ensures long messages fold at
+  container boundary rather than overflow the terminal.
+  → `cli.py §_on_tool_complete`, `hermes_cli/tool_icons.py §DISPLAY_NAMES`,
+    `hermes_cli/tui/widgets.py §_EchoBullet`
 - **Tool Block Click + Path/URL Linkification** (2026-04-20): 3 sub-features. 35 new tests in
   `tests/tui/test_tool_block_click_links.py`. Spec at `/home/xush/.hermes/tui-tool-block-click-links-spec.md`.
   **Feature 1 (always-clickable toggle)**: `ToolHeader.on_click` now delegates to `panel.action_toggle_collapse()`
@@ -167,6 +215,15 @@ Recent changes (details → reference files):
     ReasoningFlowEngine.__init__`, `hermes_cli/tui/app.py §_resolve_user_emoji/echo_user_message/
     on_resize`, `hermes_cli/config.py §custom_emojis/emoji`, `cli.py §_custom_emojis_enabled/
     _emoji_registry/main emoji injection`, `tests/tui/test_emoji_registry.py`
+- **GeneratorEffect stream effect** (2026-04-20): `GeneratorEffect` (`generator`) added to
+  `hermes_cli/stream_effects.py`. Mirrors the glitched-writer neo preset: each char cycles
+  `_` (steps>5) → `/` (steps>2) → `-` (steps>0) → real char, with per-char random steps (3–8)
+  and left-to-right index stagger (char at index `i` blocked until `global_tick >= i * stagger`).
+  Config keys: `stream_effect_gen_min_steps` (3), `stream_effect_gen_max_steps` (8),
+  `stream_effect_gen_stagger` (1). Spaces get steps=0 (instant reveal). 6 new tests in Group H
+  of `tests/tui/test_stream_effects.py`. `VALID_EFFECTS` now has 13 entries.
+  → `hermes_cli/stream_effects.py §GeneratorEffect/_EFFECT_MAP/VALID_EFFECTS`,
+    `tests/tui/test_stream_effects.py §Group H`
 - **Stream Effects v2 + skin override** (2026-04-20): 5 new `StreamEffectRenderer` subclasses in
   `hermes_cli/stream_effects.py` — `GlitchMorphEffect` (`glitch_morph`), `CascadeRevealEffect`
   (`cascade`), `NierEffect` (`nier`), `ZalgoEffect` (`zalgo`), `CosmicFadeEffect` (`cosmic`).

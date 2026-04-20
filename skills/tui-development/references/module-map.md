@@ -25,6 +25,7 @@ HermesApp
 │   │   ├── StreamingCodeBlock           (fenced code via ResponseFlowEngine)
 │   │   ├── MathBlockWidget              (inline math/mermaid render)
 │   │   ├── InlineMediaWidget            (audio/video/YouTube inline player)
+│   │   ├── InlineImage / AnimatedEmojiWidget  (custom emoji image widgets)
 │   │   ├── InlineProseLog               (prose + inline image compositor)
 │   │   └── CopyableRichLog / CopyableBlock (prose blocks)
 │   ├── ThinkingWidget                   (animated thinking indicator — always last-1)
@@ -218,6 +219,16 @@ High-signal flow:
   `HyperspaceEngine`, `WaveFunctionEngine`, `StrangeAttractorEngine`, `SDFMorphEngine`, plus 8 originals.
   `_ENGINES` is `dict[str, type]` (class refs, not instances). `_get_engine()` caches in `_current_engine_instance`.
   Adaptive `on_signal` protocol — detected via `hasattr` (no Protocol class).
+- **`hermes_cli/tui/emoji_registry.py`** — `EmojiEntry` dataclass, `EmojiRegistry` (load/get/
+  system_prompt_block/reload_normalized), `normalize_emoji()` (cell_height always 1), `_cell_px()`,
+  `AnimatedEmojiWidget` via deferred factory `_build_animated_emoji_widget()` + `get_animated_emoji_widget_class()`.
+  Registry loaded in `cli.py main()`, injected to `HermesApp._emoji_registry` via plain attr.
+  Response-flow side: `_EMOJI_RE` + `_extract_emoji_refs()` + `_mount_emoji()` in `response_flow.py`
+  Phase 6 (after prose write). User-message side: `HermesApp._resolve_user_emoji()` called directly from
+  `echo_user_message` (event-loop thread). `on_resize` triggers `reload_normalized` via `run_worker(thread=True)`
+  when cell_px dims change.
+  Image caps: TGP/Sixel → render image; HALFBLOCK/NONE → write `:name:` as prose fallback.
+  Disk cache: `emojis/.cache/{name}_{cw}x{ch}_{cpw}x{cph}.png`; mtime-guarded; orphan cleanup on load.
 - **`hermes_cli/tui/tte_runner.py`** — TerminalTextEffects frame generation helpers.
 - **`hermes_cli/tui/sdf_morph.py`** / **`hermes_cli/tui/sdf_splash.py`** — SDF baking and splash.
 - **`hermes_cli/stream_effects.py`** — `StreamEffectRenderer` base + 12 effect classes.
@@ -292,6 +303,7 @@ High-signal flow:
 | `test_tools_overlay.py` | ToolsScreen timeline, render_tool_row |
 | `test_workspace_tracker.py` / `test_workspace_overlay.py` | workspace tracker + overlay |
 | `test_omission_bar.py` | OmissionBar expand/collapse/+/-/* keys |
+| `test_emoji_registry.py` | EmojiRegistry load/cache, normalize_emoji, _EMOJI_RE, ResponseFlowEngine Phase 6, _resolve_user_emoji |
 | `test_footnotes.py` | footnote ref conversion, section render |
 | `test_status_widgets.py` | HintBar, StatusBar, browse hint, AnimatedCounter |
 | `test_theme_manager.py` / `test_theme.py` | ThemeManager, skin loading |
@@ -314,6 +326,7 @@ High-signal flow:
 - `overlays.py` + `test_slash_command_overlays.py`
 - `app.py` + `test_turn_lifecycle.py` + `test_integration.py` + focused module test
 - `cli.py` + `tests/cli/test_reasoning_tui_bridge.py`
+- `emoji_registry.py` + `response_flow.py §_EMOJI_RE/_extract_emoji_refs/_mount_emoji` + `app.py §_resolve_user_emoji/on_resize` + `cli.py §_emoji_registry` + `test_emoji_registry.py`
 - `stream_effects.py` + `widgets.py §LiveLineWidget` + `test_stream_effects.py`
 - `write_file_block.py` + `test_write_file_block.py`
 - `math_renderer.py` + `response_flow.py` + `widgets.py` + `config.py` + `cli.py` + `test_math_renderer.py`

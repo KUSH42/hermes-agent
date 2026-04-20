@@ -176,6 +176,10 @@ fall through to the `set_interval` branch automatically.
 - `pilot.resize_terminal(...)` is async and must be awaited.
 - `scroll_offset` is read-only; use scroll APIs instead.
 - `query_one(...)` raises `NoMatches`; teardown-safe code should guard it.
+- **`@work` decorator is `from textual import work`** in Textual 8.x — NOT
+  `from textual.worker import work` (raises `ImportError`). Applies to any
+  deferred class construction that imports `work` inside a factory function
+  (e.g., `_build_animated_emoji_widget()`).
 - Plain `str` from `render()` is literal text, not Rich markup.
 - **`Static.renderable` does not exist in Textual.** Tests that check a Static's
   content must use `str(widget.render())` (the `render()` method), not

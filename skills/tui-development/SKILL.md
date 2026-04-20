@@ -131,9 +131,29 @@ Then load only the focused reference you need:
 
 ## Validation
 
-Last revalidated: **2026-04-20. ~2744 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
+Last revalidated: **2026-04-21. ~2752 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
 
 Recent changes (details → reference files):
+- **Slash command dispatch fix** (2026-04-21): `/slash-commands` shown in completion overlay were flashing
+  "Unknown command" when entered, because `_handle_tui_command` had a hardcoded whitelist (~16 commands)
+  and fired the flash for any `/word` not in the list. Fix: the guard now calls `resolve_command()` against
+  `COMMAND_REGISTRY` before flashing — only commands absent from the registry get the "Unknown command"
+  flash; registry commands not handled by TUI-specific logic fall through to the CLI agent silently.
+  Key invariant: `_handle_tui_command` returns `False` to forward to agent; `True` to consume.
+  8 new tests in `tests/tui/test_slash_command_dispatch.py`.
+  → `hermes_cli/tui/app.py §_handle_tui_command`, `tests/tui/test_slash_command_dispatch.py` (new)
+- **Input bar '/' flicker loop** (2026-04-21): Typing '/' caused the input to clear and re-insert itself
+  in a loop. Root cause: fallback DnD detector in `on_text_area_changed` called `detect_file_drop_text("/")`
+  which matched `Path("/").exists() == True` (root dir), cleared input, posted FilesDropped, re-inserted "/".
+  Fix: added `len(stripped) > 1` guard before calling `detect_file_drop_text` in the DnD path.
+  1 regression test in `tests/tui/test_slash_completion_regression.py`.
+  → `hermes_cli/tui/input_widget.py §on_text_area_changed`
+- **Autocomplete re-entry guard** (2026-04-21): `_update_autocomplete` lacked equality check — same trigger
+  re-pushed items to `VirtualCompletionList` every call, firing `watch_items → refresh → layout → watch_value`
+  feedback cycle. Fix: compute trigger first, compare with `self._current_trigger`, return early if equal.
+  Also added same-content guard in `_push_to_list` (skip assignment when items+query unchanged).
+  2 regression tests in `tests/tui/test_slash_completion_regression.py`.
+  → `hermes_cli/tui/input_widget.py §_update_autocomplete/_push_to_list`
 - **Interrupt/cancel keybinding split + history search fixes** (2026-04-20):
   Keybinding model: ctrl+c = copy selected → cancel overlay (deny) → clear input (NEVER interrupts);
   ctrl+shift+c = dedicated interrupt (double within 2s = force exit); escape = cancel overlay (None) → interrupt.

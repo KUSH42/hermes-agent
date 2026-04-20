@@ -21,8 +21,10 @@ class OutputJSONLWriter:
 
     def write(self, text: str, role: str = "assistant") -> None:
         import re as _re
-        plain = _re.sub(r'\x1b\[[0-9;]*m', '', text)
-        plain = _re.sub(r'\[/?[a-z][a-z0-9_-]*\]', '', plain)
+        # Strip ANSI escape sequences
+        plain = _re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', text)
+        # Strip Rich markup tags (handles [bold], [bold red], [link=x], [#ff0000], etc.)
+        plain = _re.sub(r'\[[^\[\]\n]*\]', '', plain)
         entry = {"ts": time.time(), "text": plain, "role": role}
         self._buf.append(entry)
         while len(self._buf) > self._max:
@@ -98,7 +100,10 @@ class HeadlessSession:
         try:
             result = subprocess.run(
                 ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                capture_output=True, text=True, timeout=3
+                capture_output=True,
+                text=True,
+                timeout=3,
+                cwd=str(self._session_dir),
             )
             return result.stdout.strip()
         except Exception:

@@ -131,9 +131,29 @@ Then load only the focused reference you need:
 
 ## Validation
 
-Last revalidated: **2026-04-20. ~2721 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
+Last revalidated: **2026-04-20. ~2740 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
 
 Recent changes (details → reference files):
+- **Interrupt/cancel keybinding split + history search fixes** (2026-04-20):
+  Keybinding model: ctrl+c = copy selected → cancel overlay (deny) → clear input (NEVER interrupts);
+  ctrl+shift+c = dedicated interrupt (double within 2s = force exit); escape = cancel overlay (None) → interrupt.
+  **P0-2**: `flush_live()` called immediately after `agent.interrupt()` at both dispatch sites — stops blink cursor at
+  point of interrupt, not at next turn boundary.
+  **P0-3**: `except NoMatches` at feedback blocks now `self.log.warning(...)` instead of bare `pass`.
+  **P0-1**: `_active_streaming_blocks.clear()` on `watch_agent_running(False)` — releases GC refs + prevents stale
+  dict entries on next turn. DOM nodes NOT removed — partial tool output stays visible.
+  Key design invariant: `test_interrupt_mid_stream_block_stays_in_dom` confirms blocks must remain in DOM after
+  interrupt. Only the tracking dict is cleared, not the widgets themselves.
+  **_substring_search**: tokens must all match within user OR assistant section independently — cross-boundary
+  matches (token in user text, co-token in assistant text) rejected. Check `all(t in user_hay)` OR
+  `all(t in asst_hay)` before collecting spans.
+  **history search test infra**: `_make_app()` must use `cli._cfg = {}` (not bare `MagicMock()`) — `int(MagicMock())=1`
+  collapses `_max_results` to 1. Cap tests must set `cli._cfg = {"display": {"history_search_max_results": N}}`
+  before `open_search()` (which reads and overrides `_max_results`).
+  19 new tests: `tests/tui/test_interrupt.py` (+13), `tests/tui/test_interrupt_cleanup.py` (new, 6 tests).
+  → `hermes_cli/tui/app.py §watch_agent_running/_active_streaming_blocks/on_key(interrupt sites)`,
+    `hermes_cli/tui/widgets.py §_substring_search`,
+    `tests/tui/test_interrupt.py`, `tests/tui/test_interrupt_cleanup.py` (new)
 - **Custom emoji missing after code/tool blocks** (2026-04-20): `ensure_prose_block()` in `MessagePanel`
   created new `CopyableBlock` without `_log_class=InlineProseLog`. After any code or tool block in a
   response, subsequent prose segments used plain `CopyableRichLog` (no `write_inline`) →

@@ -151,7 +151,10 @@ class SessionManager:
                     capture_output=True, text=True, timeout=2
                 )
                 cmdline = result.stdout
-            return f"--session-id {session_id}" in cmdline or f"--session-id={session_id}" in cmdline
+            return (
+                f"--worktree-session-id {session_id}" in cmdline
+                or f"--worktree-session-id={session_id}" in cmdline
+            )
         except (OSError, subprocess.SubprocessError, FileNotFoundError):
             return False
 

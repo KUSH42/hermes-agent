@@ -805,3 +805,54 @@ async def test_pending_prose_migrated_to_new_panel():
 
         app.agent_running = False
         await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_partial_chunk_migrated_to_new_panel():
+    """Regression: partial chunk ("W" with no newline) buffered in engine._partial
+    must be migrated to new panel when watch_agent_running(True) fires.
+
+    Kitty delivers smaller chunks — "W" alone arrives in engine._partial before
+    the panel switch.  Previous fix only stole _block_buf._pending; _partial was
+    silently dropped → first character of reply disappeared.
+    """
+    from hermes_cli.tui.response_flow import ResponseFlowEngine
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+
+        output = app.query_one(OutputPanel)
+
+        startup_msg = output.new_message(user_text="", show_header=False)
+        await pilot.pause()
+
+        engine: ResponseFlowEngine | None = getattr(startup_msg, "_response_engine", None)
+        if engine is None:
+            app.agent_running = False
+            await pilot.pause()
+            return  # markdown disabled — skip
+
+        # Simulate partial chunk arriving on old panel BEFORE panel switch
+        engine.feed("W")
+        assert engine._partial == "W", "_partial should hold partial chunk 'W'"
+
+        # watch_agent_running(True) must steal _partial and carry to new panel
+        app.agent_running = True
+        await pilot.pause()
+
+        new_msg = output.current_message
+        assert new_msg is not startup_msg
+
+        # Old partial cleared
+        assert engine._partial == "", "old engine._partial must be cleared after steal"
+
+        # New panel's engine should have received the partial via feed()
+        new_engine: ResponseFlowEngine | None = getattr(new_msg, "_response_engine", None)
+        assert new_engine is not None
+        assert new_engine._partial == "W", (
+            "partial chunk 'W' must be migrated to new panel's engine._partial"
+        )
+
+        app.agent_running = False
+        await pilot.pause()

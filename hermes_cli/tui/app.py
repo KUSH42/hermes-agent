@@ -1680,6 +1680,7 @@ class HermesApp(App):
                 # wrong one or lost.
                 prev_msg = output.current_message
                 stolen_pending: str | None = None
+                stolen_partial: str | None = None
                 if prev_msg is not None:
                     prev_engine = getattr(prev_msg, "_response_engine", None)
                     if prev_engine is not None:
@@ -1693,11 +1694,21 @@ class HermesApp(App):
                                 prev_engine._block_buf._pending = None
                         except Exception:
                             pass
+                        try:
+                            # Also steal any partial chunk (no \n yet) buffered by feed()
+                            frag = prev_engine._partial
+                            if frag:
+                                prev_engine._partial = ""
+                                stolen_partial = frag
+                        except Exception:
+                            pass
                 new_msg = output.new_message(user_text=self._last_user_input)
                 # Engine isn't ready yet (on_mount fires next cycle); use
-                # _carry_pending so on_mount processes it once engine exists.
+                # _carry_pending/_carry_partial so on_mount processes them once engine exists.
                 if stolen_pending and new_msg is not None:
                     new_msg._carry_pending = stolen_pending
+                if stolen_partial and new_msg is not None:
+                    new_msg._carry_partial = stolen_partial
             except NoMatches:
                 pass
         # Recompute hint phase when agent stops

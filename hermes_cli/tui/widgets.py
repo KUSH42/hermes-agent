@@ -1327,6 +1327,7 @@ class MessagePanel(Widget):
         self._raw_response_text: str = ""
         self._response_engine: "Any | None" = None   # ResponseFlowEngine, set in on_mount
         self._carry_pending: "str | None" = None   # setext line migrated from prev panel
+        self._carry_partial: "str | None" = None   # partial chunk (no \n) migrated from prev engine
         self._last_file_tool_block: "Any | None" = None   # tracks most-recent file-tool STB for diff connector
         # adjacent-mount anchors: tool_name → most-recently-opened panel to mount siblings after
         self._adj_anchors: "dict[str, Widget]" = {}
@@ -1399,6 +1400,12 @@ class MessagePanel(Widget):
                 except Exception:
                     pass
                 self._carry_pending = None
+            if self._carry_partial is not None:
+                try:
+                    self._response_engine.feed(self._carry_partial)
+                except Exception:
+                    pass
+                self._carry_partial = None
 
     @property
     def response_log(self) -> CopyableRichLog:

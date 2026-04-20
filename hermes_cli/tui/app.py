@@ -103,9 +103,14 @@ from hermes_cli.tui.overlays import (
     CommandsOverlay,
     HelpOverlay,
     ModelOverlay,
+    ModelPickerOverlay,
+    ReasoningPickerOverlay,
     SessionOverlay,
+    SkinPickerOverlay,
     UsageOverlay,
+    VerbosePickerOverlay,
     WorkspaceOverlay,
+    YoloConfirmOverlay,
     _SessionResumedBanner,
 )
 from hermes_cli.tui.session_widgets import (
@@ -538,7 +543,7 @@ class HermesApp(App):
         self._sessions_poll_timer: "object | None" = None
         self._session_records_cache: list = []
         self._session_active_id: str = ""
-        self._sessions_enabled: bool = False    # mirrors config sessions.enabled
+        # _sessions_enabled is a @property — no instance attr needed
         # Workspace overlay state
         self._last_git_snapshot: GitSnapshot | None = None
         self._git_poll_h: object | None = None  # textual.timer.Timer
@@ -603,6 +608,11 @@ class HermesApp(App):
             yield SessionOverlay(id="session-overlay")
             yield NewSessionOverlay(id="new-session-overlay")
             yield MergeConfirmOverlay(id="merge-confirm-overlay")
+            yield ModelPickerOverlay(id="model-picker-overlay")
+            yield ReasoningPickerOverlay(id="reasoning-picker-overlay")
+            yield SkinPickerOverlay(id="skin-picker-overlay")
+            yield YoloConfirmOverlay(id="yolo-confirm-overlay")
+            yield VerbosePickerOverlay(id="verbose-picker-overlay")
             with Horizontal(id="input-row"):
                 yield Static("❯ ", id="input-chevron")
                 yield _HI(id="input-area")
@@ -4085,7 +4095,12 @@ class HermesApp(App):
         and from watch_agent_running(True) (stale info must not block output view).
         """
         from hermes_cli.tui.drawille_overlay import AnimGalleryOverlay as _AGA
-        for cls in (HelpOverlay, UsageOverlay, CommandsOverlay, ModelOverlay, WorkspaceOverlay, SessionOverlay, _AGA):
+        for cls in (
+            HelpOverlay, UsageOverlay, CommandsOverlay, ModelOverlay, WorkspaceOverlay,
+            SessionOverlay, _AGA,
+            ModelPickerOverlay, ReasoningPickerOverlay, SkinPickerOverlay,
+            YoloConfirmOverlay, VerbosePickerOverlay,
+        ):
             try:
                 self.query_one(cls).remove_class("--visible")
             except NoMatches:
@@ -4166,13 +4181,60 @@ class HermesApp(App):
                 pass
             return True
 
-        # /model with NO args → show overlay; /model <name> → fall through to CLI
+        # /model with NO args → show picker overlay; /model <name> → fall through to CLI
         if stripped == "/model":
             self._dismiss_all_info_overlays()
             try:
-                overlay = self.query_one(ModelOverlay)
+                overlay = self.query_one(ModelPickerOverlay)
                 overlay.refresh_data(self.cli)
                 overlay.add_class("--visible")
+                overlay.query_one("#mpo-list").focus()
+            except NoMatches:
+                pass
+            return True
+
+        # /verbose → always open picker overlay
+        if stripped == "/verbose":
+            self._dismiss_all_info_overlays()
+            try:
+                overlay = self.query_one(VerbosePickerOverlay)
+                overlay.refresh_data(self.cli)
+                overlay.add_class("--visible")
+                overlay.query_one("#vpo-list").focus()
+            except NoMatches:
+                pass
+            return True
+
+        # /yolo → always open confirmation overlay
+        if stripped == "/yolo":
+            self._dismiss_all_info_overlays()
+            try:
+                overlay = self.query_one(YoloConfirmOverlay)
+                overlay.refresh_data(self.cli)
+                overlay.add_class("--visible")
+            except NoMatches:
+                pass
+            return True
+
+        # /reasoning bare → open picker; /reasoning <level|show|hide> → fall through to CLI
+        if stripped == "/reasoning":
+            self._dismiss_all_info_overlays()
+            try:
+                overlay = self.query_one(ReasoningPickerOverlay)
+                overlay.refresh_data(self.cli)
+                overlay.add_class("--visible")
+            except NoMatches:
+                pass
+            return True
+
+        # /skin bare → open picker; /skin <name> → fall through to CLI
+        if stripped == "/skin":
+            self._dismiss_all_info_overlays()
+            try:
+                overlay = self.query_one(SkinPickerOverlay)
+                overlay.refresh_data(self.cli)
+                overlay.add_class("--visible")
+                overlay.query_one("#spo-list").focus()
             except NoMatches:
                 pass
             return True

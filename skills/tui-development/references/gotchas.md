@@ -2,6 +2,14 @@
 
 High-value pitfalls worth checking before editing tricky TUI code.
 
+## TGP / Kitty Graphics stdout redirect
+
+- **`sys.stdout` is `_PrintCapture` inside Textual's event loop.** `App._process_messages()` wraps execution in `redirect_stdout(_PrintCapture)`, which routes `write()` to `app._print()` (internal log) and returns `-1` from `fileno()`. Any code that writes APC/TGP Kitty sequences to `sys.stdout` inside the event loop silently swallows them — Kitty never receives the image data, and placeholder chars render as blank.
+- **Fix: use `sys.__stdout__`** for TGP sequence output. `sys.__stdout__` is the original fd-backed stream, unaffected by `redirect_stdout`. Guard with `out = sys.__stdout__ if sys.__stdout__ is not None else sys.stdout` for frozen-interpreter safety.
+- **Affected sites**: `inline_prose.py §InlineImageCache._render()` (TGP upload), `widgets.py §InlineImage._emit_raw()` (TGP upload + delete-on-unmount). Both fixed 2026-04-21.
+- **`get_strips_or_alt()` is the safe render-path variant** — never calls `_render()`, returns alt strips on cache miss. `get_strips()` may call `_render()` and must only be called from pre-render steps (off the render phase).
+- **Symptom**: custom emojis (`:name:`) show as ASCII alt-text or blank in Kitty even though TGP is detected and placeholder strips are returned by the cache. The image was never uploaded.
+
 ## Tool header / ToolHeader render
 
 - **`mount_tool_block` arg order**: signature is `(label, lines, plain_lines, tool_name=None, rerender_fn=None, header_stats=None)`. All `call_from_thread(tui.mount_tool_block, ...)` in cli.py pass `function_name` as arg 4 (tool_name), `_rerender_*` as arg 5 (rerender_fn), `header_stats` as arg 6. Tests check `args[5]` for callable, not `args[4]`.

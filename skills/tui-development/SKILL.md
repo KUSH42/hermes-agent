@@ -131,9 +131,20 @@ Then load only the focused reference you need:
 
 ## Validation
 
-Last revalidated: **2026-04-21. ~2810 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
+Last revalidated: **2026-04-21. ~2846 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
 
 Recent changes (details → reference files):
+- **Config picker overlays** (2026-04-21): 5 new interactive overlays for `/model`, `/reasoning`, `/skin`, `/yolo`, `/verbose`.
+  All in `hermes_cli/tui/overlays.py`. Wired into `app.py §_handle_tui_command` (bare `/cmd` opens overlay; `/cmd <arg>` falls through to CLI), `compose()`, and `_dismiss_all_info_overlays()`.
+  Module-level config helpers `_cfg_read_raw_config`, `_cfg_save_config`, `_cfg_set_nested`, `_cfg_get_hermes_home` imported at top of `overlays.py` (not lazily) so tests can patch them without `AttributeError`.
+  **`VerbosePickerOverlay`**: `OptionList` of 4 modes; `Enter` writes `display.tool_progress` to config.
+  **`YoloConfirmOverlay`**: Enable/Disable/Cancel buttons; Enable sets `approvals.mode="off"` + `os.environ["HERMES_YOLO_MODE"]="1"` + `app.yolo_mode=True`; Disable restores `_previous_mode`; escape/cancel is no-op.
+  **`ReasoningPickerOverlay`**: 6 level buttons (none/low/minimal/medium/high/xhigh) + 2 checkboxes (show panel/rich mode). Level click injects `/reasoning <level>` back through `HermesInput.action_submit()`. Checkboxes write `display.show_reasoning`/`display.rich_reasoning` to config immediately.
+  **`ModelPickerOverlay`**: `OptionList` sourced from `cfg.get("models", {}).keys()` + current model from `cli.agent.model`. Selection injects `/model <name>` via `action_submit()`. Replaces bare `/model` handler (was `ModelOverlay`).
+  **`SkinPickerOverlay`**: Scans `get_hermes_home()/"skins"` for `.yaml/.json` files + `"default"`. Arrow navigation triggers `apply_skin(Path)` live preview. Escape reverts by snapshotting `_theme_manager._css_vars/_component_vars` on open. Enter persists `display.skin` to config.
+  Pre-existing `_sessions_enabled` property/instance-attr conflict in `app.__init__` fixed (removed the instance assignment — the `@property` already handles it).
+  36 tests in `tests/tui/test_config_picker_overlays.py`.
+  → `hermes_cli/tui/overlays.py`, `hermes_cli/tui/app.py §_handle_tui_command/compose/_dismiss_all_info_overlays`, `tests/tui/test_config_picker_overlays.py` (new)
 - **AnimGalleryOverlay z-order fix** (2026-04-21): `AnimGalleryOverlay` lacked `layer: overlay` and `position: absolute`
   in both `DEFAULT_CSS` and `hermes.tcss`. When the animation gallery was opened (`/anim gallery` or keybinding),
   the widget rendered in normal base-layer layout flow as a direct Screen child after `StatusBar` — appearing below

@@ -16,7 +16,30 @@ from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.css.query import NoMatches
 from textual.widget import Widget
-from textual.widgets import Button, ContentSwitcher, Input, Static
+from textual.widgets import Button, Checkbox, ContentSwitcher, Input, OptionList, Static
+from textual.widgets.option_list import Option
+
+
+try:
+    from hermes_cli.config import (
+        _set_nested as _cfg_set_nested,
+        get_hermes_home as _cfg_get_hermes_home,
+        read_raw_config as _cfg_read_raw_config,
+        save_config as _cfg_save_config,
+    )
+except ImportError:
+    def _cfg_read_raw_config():  # type: ignore[misc]
+        return {}
+
+    def _cfg_save_config(cfg):  # type: ignore[misc]
+        pass
+
+    def _cfg_set_nested(cfg, key, value):  # type: ignore[misc]
+        pass
+
+    def _cfg_get_hermes_home():  # type: ignore[misc]
+        from pathlib import Path
+        return Path.home() / ".hermes"
 
 
 class HelpOverlay(Widget):
@@ -782,3 +805,545 @@ class ToolPanelHelpOverlay(Widget):
         if key in ("escape", "question_mark"):
             self.hide_overlay()
             getattr(event, "stop", lambda: None)()
+
+
+# ---------------------------------------------------------------------------
+# Config picker overlays — /verbose, /yolo, /reasoning, /model, /skin
+# ---------------------------------------------------------------------------
+
+
+def _dismiss_overlay_and_focus_input(overlay: Widget) -> None:
+    """Remove --visible and restore focus to HermesInput."""
+    overlay.remove_class("--visible")
+    try:
+        from hermes_cli.tui.input_widget import HermesInput
+        overlay.app.query_one(HermesInput).focus()
+    except (NoMatches, ImportError):
+        pass
+
+
+class VerbosePickerOverlay(Widget):
+    """Tool progress mode picker. Shown by /verbose; dismissed with Esc or selection.
+
+    Config key: display.tool_progress — values: off | new | all | verbose
+    """
+
+    DEFAULT_CSS = """
+    VerbosePickerOverlay {
+        layer: overlay;
+        dock: top;
+        display: none;
+        height: auto;
+        max-height: 12;
+        width: 1fr;
+        max-width: 80;
+        margin: 1 2;
+        padding: 1 2;
+        background: $surface;
+        border: tall $primary 15%;
+    }
+    VerbosePickerOverlay.--visible { display: block; }
+    VerbosePickerOverlay > #vpo-header { color: $accent; }
+    """
+
+    BINDINGS = [Binding("escape", "dismiss", priority=True)]
+
+    _OPTIONS: list[tuple[str, str]] = [
+        ("off",     "off      — no streaming tool output"),
+        ("new",     "new      — stream output for new tools only"),
+        ("all",     "all      — stream all tool output"),
+        ("verbose", "verbose  — stream + expanded collapse thresholds"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        yield Static("  Tool progress", id="vpo-header")
+        ol = OptionList(
+            *[Option(label, id=f"vpo-opt-{key}") for key, label in self._OPTIONS],
+            id="vpo-list",
+        )
+        yield ol
+
+    def refresh_data(self, cli: object) -> None:
+        """Pre-select the current tool_progress value."""
+        cfg = _cfg_read_raw_config()
+        current = cfg.get("display", {}).get("tool_progress", "all")
+        try:
+            ol = self.query_one("#vpo-list", OptionList)
+            keys = [k for k, _ in self._OPTIONS]
+            idx = keys.index(current) if current in keys else 2  # default "all"
+            ol.highlighted = idx
+        except (NoMatches, ValueError):
+            pass
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        """Apply the selected tool_progress mode and dismiss."""
+        event.stop()
+        opt_id = event.option_id or ""
+        if opt_id.startswith("vpo-opt-"):
+            mode = opt_id[len("vpo-opt-"):]
+            self._apply_and_dismiss(mode)
+
+    def _apply_and_dismiss(self, mode: str) -> None:
+        try:
+            cfg = _cfg_read_raw_config()
+            _cfg_set_nested(cfg, "display.tool_progress", mode)
+            _cfg_save_config(cfg)
+        except Exception:
+            pass
+        try:
+            self.app._flash_hint(f"  Tool progress → {mode}", 2.0)
+        except Exception:
+            pass
+        _dismiss_overlay_and_focus_input(self)
+
+    def action_dismiss(self) -> None:
+        _dismiss_overlay_and_focus_input(self)
+
+
+class YoloConfirmOverlay(Widget):
+    """YOLO mode confirmation overlay. Shown by /yolo; dismissed with Esc or button.
+
+    Reads/writes approvals.mode in config + os.environ[HERMES_YOLO_MODE] +
+    app.yolo_mode reactive for immediate live effect.
+    """
+
+    DEFAULT_CSS = """
+    YoloConfirmOverlay {
+        layer: overlay;
+        dock: top;
+        display: none;
+        height: auto;
+        max-height: 12;
+        width: 1fr;
+        max-width: 80;
+        margin: 1 2;
+        padding: 1 2;
+        background: $surface;
+        border: tall $primary 15%;
+    }
+    YoloConfirmOverlay.--visible { display: block; }
+    YoloConfirmOverlay > #yco-header { color: $accent; }
+    YoloConfirmOverlay > #yco-state { color: $warning; }
+    YoloConfirmOverlay > #yco-desc { color: $text-muted; }
+    YoloConfirmOverlay > #yco-buttons { height: auto; margin-top: 1; }
+    YoloConfirmOverlay > #yco-buttons > Button { margin-right: 1; }
+    """
+
+    BINDINGS = [Binding("escape", "dismiss", priority=True)]
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._previous_mode: str = "manual"
+
+    def compose(self) -> ComposeResult:
+        yield Static("  YOLO mode", id="yco-header")
+        yield Static("", id="yco-state")
+        yield Static(
+            "YOLO skips all tool approval prompts.\nAll tool calls run without confirmation.",
+            id="yco-desc",
+        )
+        with Horizontal(id="yco-buttons"):
+            yield Button("Enable",  id="yco-enable",  variant="warning")
+            yield Button("Disable", id="yco-disable", variant="success")
+            yield Button("Cancel",  id="yco-cancel",  variant="default")
+
+    def refresh_data(self, cli: object) -> None:
+        """Sync overlay state from config."""
+        cfg = _cfg_read_raw_config()
+        mode = cfg.get("approvals", {}).get("mode", "manual")
+        is_active = (mode == "off")
+        if not is_active:
+            self._previous_mode = mode  # remember non-yolo mode for restore
+        try:
+            state_w = self.query_one("#yco-state", Static)
+            state_w.update("ACTIVE ⚡" if is_active else "inactive")
+        except NoMatches:
+            pass
+        # Show/hide buttons
+        try:
+            self.query_one("#yco-enable", Button).display = not is_active
+            self.query_one("#yco-disable", Button).display = is_active
+        except NoMatches:
+            pass
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        btn_id = event.button.id or ""
+        if btn_id == "yco-enable":
+            self._set_yolo(True)
+        elif btn_id == "yco-disable":
+            self._set_yolo(False)
+        elif btn_id == "yco-cancel":
+            _dismiss_overlay_and_focus_input(self)
+
+    def _set_yolo(self, enable: bool) -> None:
+        import os as _os
+        try:
+            cfg = _cfg_read_raw_config()
+            if enable:
+                _cfg_set_nested(cfg, "approvals.mode", "off")
+            else:
+                _cfg_set_nested(cfg, "approvals.mode", self._previous_mode)
+            _cfg_save_config(cfg)
+        except Exception:
+            pass
+        # Update env var for live session effect
+        if enable:
+            _os.environ["HERMES_YOLO_MODE"] = "1"
+        else:
+            _os.environ["HERMES_YOLO_MODE"] = ""
+        # Update app reactive
+        try:
+            self.app.yolo_mode = enable
+        except Exception:
+            pass
+        # Flash
+        try:
+            msg = "⚡  YOLO mode enabled" if enable else "  YOLO mode disabled"
+            self.app._flash_hint(msg, 2.0)
+        except Exception:
+            pass
+        _dismiss_overlay_and_focus_input(self)
+
+    def action_dismiss(self) -> None:
+        _dismiss_overlay_and_focus_input(self)
+
+
+class ReasoningPickerOverlay(Widget):
+    """Reasoning level + display toggle overlay. Shown by /reasoning (bare).
+
+    Level buttons inject /reasoning <level> through the submit path.
+    Checkboxes persist display.show_reasoning / display.rich_reasoning to config.
+    """
+
+    DEFAULT_CSS = """
+    ReasoningPickerOverlay {
+        layer: overlay;
+        dock: top;
+        display: none;
+        height: auto;
+        max-height: 16;
+        width: 1fr;
+        max-width: 80;
+        margin: 1 2;
+        padding: 1 2;
+        background: $surface;
+        border: tall $primary 15%;
+    }
+    ReasoningPickerOverlay.--visible { display: block; }
+    ReasoningPickerOverlay > #rpo-header { color: $accent; }
+    ReasoningPickerOverlay > #rpo-levels { height: auto; margin-bottom: 1; }
+    ReasoningPickerOverlay > #rpo-levels > Button { margin-right: 1; }
+    ReasoningPickerOverlay > #rpo-toggles { height: auto; margin-bottom: 1; }
+    ReasoningPickerOverlay > #rpo-toggles > Checkbox { margin-right: 2; }
+    ReasoningPickerOverlay > #rpo-hint { color: $text-muted; }
+    """
+
+    BINDINGS = [Binding("escape", "dismiss", priority=True)]
+
+    _LEVELS: list[str] = ["none", "low", "minimal", "medium", "high", "xhigh"]
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._current_level: str = "medium"
+
+    def compose(self) -> ComposeResult:
+        yield Static("  Reasoning", id="rpo-header")
+        with Horizontal(id="rpo-levels"):
+            for lvl in self._LEVELS:
+                variant = "primary" if lvl == self._current_level else "default"
+                yield Button(lvl, id=f"rpo-btn-{lvl}", variant=variant)
+        with Horizontal(id="rpo-toggles"):
+            yield Checkbox("Show panel", id="rpo-show", value=False)
+            yield Checkbox("Rich mode",  id="rpo-rich", value=True)
+        yield Static("[dim]Select a level to set reasoning effort. Esc to close.[/dim]", id="rpo-hint")
+
+    def refresh_data(self, cli: object) -> None:
+        """Sync checkbox state from config."""
+        cfg = _cfg_read_raw_config()
+        show = bool(cfg.get("display", {}).get("show_reasoning", False))
+        rich = bool(cfg.get("display", {}).get("rich_reasoning", True))
+        try:
+            self.query_one("#rpo-show", Checkbox).value = show
+        except NoMatches:
+            pass
+        try:
+            self.query_one("#rpo-rich", Checkbox).value = rich
+        except NoMatches:
+            pass
+        self._update_level_highlights()
+
+    def _update_level_highlights(self) -> None:
+        for lvl in self._LEVELS:
+            try:
+                btn = self.query_one(f"#rpo-btn-{lvl}", Button)
+                btn.variant = "primary" if lvl == self._current_level else "default"
+            except NoMatches:
+                pass
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        btn_id = event.button.id or ""
+        if btn_id.startswith("rpo-btn-"):
+            level = btn_id[len("rpo-btn-"):]
+            if level in self._LEVELS:
+                self._current_level = level
+                self._update_level_highlights()
+                self._inject_level_command(level)
+
+    def _inject_level_command(self, level: str) -> None:
+        """Forward /reasoning <level> to CLI via HermesInput submit path, then dismiss."""
+        try:
+            from hermes_cli.tui.input_widget import HermesInput
+            inp = self.app.query_one(HermesInput)
+            inp.value = f"/reasoning {level}"
+            inp.action_submit()
+        except (NoMatches, ImportError):
+            pass
+        _dismiss_overlay_and_focus_input(self)
+
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        event.stop()
+        cb_id = event.checkbox.id or ""
+        value = event.value
+        try:
+            cfg = _cfg_read_raw_config()
+            if cb_id == "rpo-show":
+                _cfg_set_nested(cfg, "display.show_reasoning", value)
+            elif cb_id == "rpo-rich":
+                _cfg_set_nested(cfg, "display.rich_reasoning", value)
+            else:
+                return
+            _cfg_save_config(cfg)
+        except Exception:
+            pass
+
+    def action_dismiss(self) -> None:
+        _dismiss_overlay_and_focus_input(self)
+
+
+class ModelPickerOverlay(Widget):
+    """Interactive model picker. Shown by /model (bare); /model <name> bypasses.
+
+    On Enter, injects /model <name> back through HermesInput.action_submit()
+    so the CLI handles the actual model switch.
+    """
+
+    DEFAULT_CSS = """
+    ModelPickerOverlay {
+        layer: overlay;
+        dock: top;
+        display: none;
+        height: auto;
+        max-height: 24;
+        width: 1fr;
+        max-width: 80;
+        margin: 1 2;
+        padding: 1 2;
+        background: $surface;
+        border: tall $primary 15%;
+    }
+    ModelPickerOverlay.--visible { display: block; }
+    ModelPickerOverlay > #mpo-header { color: $accent; }
+    ModelPickerOverlay > #mpo-current { color: $text-muted; }
+    ModelPickerOverlay > #mpo-list { height: auto; max-height: 18; }
+    """
+
+    BINDINGS = [Binding("escape", "dismiss", priority=True)]
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._models: list[str] = []
+        self._current_model: str = ""
+
+    def compose(self) -> ComposeResult:
+        yield Static("  Model", id="mpo-header")
+        yield Static("", id="mpo-current")
+        yield OptionList(id="mpo-list")
+
+    def refresh_data(self, cli: object) -> None:
+        """Populate model list and pre-select the current model."""
+        cfg = _cfg_read_raw_config()
+        models = list(cfg.get("models", {}).keys())
+        current = (
+            getattr(getattr(cli, "agent", None), "model", None)
+            or getattr(cli, "model", None)
+            or "unknown"
+        )
+        if current and current not in models:
+            models.insert(0, current)
+        self._models = models
+        self._current_model = current
+
+        try:
+            self.query_one("#mpo-current", Static).update(f"Current: {current}")
+        except NoMatches:
+            pass
+
+        try:
+            ol = self.query_one("#mpo-list", OptionList)
+            ol.clear_options()
+            for m in models:
+                ol.add_option(Option(m, id=f"mpo-opt-{m}"))
+            # Pre-select current
+            if current in models:
+                ol.highlighted = models.index(current)
+        except NoMatches:
+            pass
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        opt_id = event.option_id or ""
+        if opt_id.startswith("mpo-opt-"):
+            name = opt_id[len("mpo-opt-"):]
+            self._select_model(name)
+
+    def _select_model(self, name: str) -> None:
+        try:
+            from hermes_cli.tui.input_widget import HermesInput
+            inp = self.app.query_one(HermesInput)
+            inp.value = f"/model {name}"
+            inp.action_submit()
+        except (NoMatches, ImportError):
+            pass
+        try:
+            self.app._flash_hint(f"  Model → {name}", 2.0)
+        except Exception:
+            pass
+        _dismiss_overlay_and_focus_input(self)
+
+    def action_dismiss(self) -> None:
+        _dismiss_overlay_and_focus_input(self)
+
+
+class SkinPickerOverlay(Widget):
+    """Skin picker with live preview. Shown by /skin (bare); /skin <name> bypasses.
+
+    Arrow navigation previews skins live. Escape reverts to original skin.
+    Enter persists to display.skin in config.
+    """
+
+    DEFAULT_CSS = """
+    SkinPickerOverlay {
+        layer: overlay;
+        dock: top;
+        display: none;
+        height: auto;
+        max-height: 24;
+        width: 1fr;
+        max-width: 80;
+        margin: 1 2;
+        padding: 1 2;
+        background: $surface;
+        border: tall $primary 15%;
+    }
+    SkinPickerOverlay.--visible { display: block; }
+    SkinPickerOverlay > #spo-header { color: $accent; }
+    SkinPickerOverlay > #spo-current { color: $text-muted; }
+    SkinPickerOverlay > #spo-list { height: auto; max-height: 18; }
+    """
+
+    BINDINGS = [Binding("escape", "dismiss", priority=True)]
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._skins: list[str] = []
+        self._original_skin: str = "default"
+        self._original_css_vars: dict[str, str] = {}
+        self._original_component_vars: dict[str, str] = {}
+
+    def compose(self) -> ComposeResult:
+        yield Static("  Skin", id="spo-header")
+        yield Static("", id="spo-current")
+        yield OptionList(id="spo-list")
+
+    def refresh_data(self, cli: object) -> None:
+        """Populate skin list, snapshot current skin, pre-select current."""
+        cfg = _cfg_read_raw_config()
+        current = cfg.get("display", {}).get("skin", "default")
+        self._original_skin = current
+
+        # Snapshot current theme vars for escape-revert
+        tm = getattr(self.app, "_theme_manager", None)
+        if tm is not None:
+            self._original_css_vars = dict(getattr(tm, "_css_vars", {}))
+            self._original_component_vars = dict(getattr(tm, "_component_vars", {}))
+
+        # Discover skins
+        skins_dir = _cfg_get_hermes_home() / "skins"
+        names: list[str] = []
+        if skins_dir.is_dir():
+            names = sorted(
+                p.stem for p in skins_dir.iterdir()
+                if p.suffix in (".json", ".yaml", ".yml")
+            )
+        if "default" not in names:
+            names.insert(0, "default")
+        self._skins = names
+
+        try:
+            self.query_one("#spo-current", Static).update(f"Current: {current}")
+        except NoMatches:
+            pass
+
+        try:
+            ol = self.query_one("#spo-list", OptionList)
+            ol.clear_options()
+            for name in names:
+                ol.add_option(Option(name, id=f"spo-opt-{name}"))
+            if current in names:
+                ol.highlighted = names.index(current)
+        except NoMatches:
+            pass
+
+    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        """Live preview as user navigates with arrow keys."""
+        event.stop()
+        opt_id = event.option_id or ""
+        if opt_id.startswith("spo-opt-"):
+            name = opt_id[len("spo-opt-"):]
+            self._apply_skin_preview(name)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        opt_id = event.option_id or ""
+        if opt_id.startswith("spo-opt-"):
+            name = opt_id[len("spo-opt-"):]
+            self._confirm_skin(name)
+
+    def _apply_skin_preview(self, name: str) -> None:
+        try:
+            if name == "default":
+                self.app.apply_skin({})
+                return
+            skins_dir = _cfg_get_hermes_home() / "skins"
+            skin_path = skins_dir / f"{name}.yaml"
+            if not skin_path.exists():
+                skin_path = skins_dir / f"{name}.json"
+            if skin_path.exists():
+                self.app.apply_skin(skin_path)
+        except Exception:
+            pass
+
+    def _confirm_skin(self, name: str) -> None:
+        # Persist to config
+        try:
+            cfg = _cfg_read_raw_config()
+            _cfg_set_nested(cfg, "display.skin", name)
+            _cfg_save_config(cfg)
+        except Exception:
+            pass
+        try:
+            self.app._flash_hint(f"  Skin → {name}", 2.0)
+        except Exception:
+            pass
+        _dismiss_overlay_and_focus_input(self)
+
+    def action_dismiss(self) -> None:
+        """Revert to original skin on escape."""
+        combined = {**self._original_css_vars, "component_vars": self._original_component_vars}
+        try:
+            self.app.apply_skin(combined)
+        except Exception:
+            pass
+        _dismiss_overlay_and_focus_input(self)

@@ -109,7 +109,7 @@ def microcopy_line(
             server = spec.name.split("__")[-1]
         if not server:
             server = spec.name or "?"
-        return f"▸ mcp · {server}" + _elapsed_suffix()
+        return f"▸ mcp · {server} server" + _elapsed_suffix()
 
     if cat == ToolCategory.CODE:
         return f"▸ {state.lines_received} lines · {_human_size(state.bytes_received)}" + _elapsed_suffix()

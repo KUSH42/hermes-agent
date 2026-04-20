@@ -320,7 +320,7 @@ def header_label_v4(
         if _safe_cell_width(label_str) > trunc:
             label_str = label_str[:max(1, trunc - 1)] + "…"
         t = Text()
-        t.append(f' "{label_str}"', style="bold italic")
+        t.append(f" {label_str}", style="bold")
         return t
 
     if primary == "url":

@@ -7459,7 +7459,17 @@ class HermesCLI:
             # Close the streaming block only when no diff was merged into it and
             # no diff child replaced it (i.e. tool produced no diff output).
             if _was_streaming and not _will_mount_preview:
-                tui.call_from_thread(tui.close_streaming_tool_block, tool_call_id, _stream_duration, _is_tool_error, _summary)
+                # For SEARCH/WEB tools the result arrives as a single blob (no
+                # streaming callback), so feed lines into the body before close.
+                _result_lines: list[str] | None = None
+                try:
+                    from hermes_cli.tui.tool_category import classify_tool as _classify, ToolCategory as _TC
+                    _cat = _classify(function_name)
+                    if _cat in (_TC.SEARCH, _TC.WEB) and isinstance(function_result, str):
+                        _result_lines = function_result.splitlines()
+                except Exception:
+                    pass
+                tui.call_from_thread(tui.close_streaming_tool_block, tool_call_id, _stream_duration, _is_tool_error, _summary, _result_lines)
 
             # Workspace tracking — record writes for file-mutating tools
             _WRITE_TOOLS = frozenset({"patch", "write_file", "create_file", "edit_file", "str_replace_editor"})

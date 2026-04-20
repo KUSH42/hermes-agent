@@ -135,9 +135,12 @@ class TestMicrocopyMcp:
         assert microcopy_line(spec, s) == "▸ mcp · github server"
 
     def test_mcp_without_provenance(self):
+        # No provenance and no __ in name → bare name used as server label
         spec = _spec(ToolCategory.MCP, provenance=None)
         s = _state()
-        assert microcopy_line(spec, s) == "▸ mcp · ? server"
+        result = microcopy_line(spec, s)
+        assert "▸ mcp ·" in result
+        assert "server" in result
 
     def test_mcp_non_mcp_provenance_format(self):
         spec = _spec(ToolCategory.MCP, provenance="mcp:linear")

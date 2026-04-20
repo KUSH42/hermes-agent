@@ -2236,6 +2236,7 @@ class HermesApp(App):
         duration: str,
         is_error: bool = False,
         summary: "ResultSummaryV4 | None" = None,
+        result_lines: "list[str] | None" = None,
     ) -> None:
         """Transition streaming block to COMPLETED state. Event-loop only.
 
@@ -2245,6 +2246,9 @@ class HermesApp(App):
         block = self._active_streaming_blocks.pop(tool_call_id, None)
         if block is None:
             return
+        if result_lines:
+            for _line in result_lines:
+                block.append_line(_line)
         block.complete(duration, is_error=is_error)
         if summary is not None:
             panel = getattr(block, "_tool_panel", None)

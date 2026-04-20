@@ -3809,13 +3809,21 @@ class HermesApp(App):
             return False  # forward to CLI for actual stop
 
         # SC-12: Flash hint for bare unknown slash commands before forwarding to CLI.
-        # Only fires for /word with no arguments (known CLI-handled commands have
-        # already returned False above, so any bare /word reaching here is unrecognized).
+        # Only fires for /word (with or without arguments) that is NOT in COMMAND_REGISTRY.
+        # Commands in the registry that aren't TUI-handled (e.g. /verbose, /yolo, /profile)
+        # fall through silently to the CLI agent — no false-positive flash.
         # Double-flash guard: the typing-time "Unknown command: /fragment" flash fires
         # while typing (from _show_slash_completions); this submit-time flash is
         # temporally disjoint (fires on Enter after the typing flash has expired).
-        if re.match(r"^/[\w-]+$", stripped):
-            self._flash_hint("⚠  Unknown command — try /help for all commands", 2.0)
+        if re.match(r"^/[\w-]+", stripped):
+            cmd_name = stripped.lstrip("/").split()[0]
+            try:
+                from hermes_cli.commands import resolve_command as _resolve_command
+                in_registry = _resolve_command(cmd_name) is not None
+            except Exception:
+                in_registry = False
+            if not in_registry:
+                self._flash_hint("⚠  Unknown command — try /help for all commands", 2.0)
 
         return False
 
@@ -4642,3 +4650,217 @@ class HermesApp(App):
     def on_hermes_input_files_dropped(self, event: Any) -> None:
         """Handle terminal drag-and-drop pasted paths from HermesInput."""
         self.handle_file_drop(event.paths)
+
+    # ── Parallel worktree session methods ──────────────────────────────────
+
+    @property
+    def _sessions_enabled(self) -> bool:
+        """True when sessions.enabled is set in CLI config."""
+        try:
+            from hermes_cli.config import CLI_CONFIG
+            return bool(CLI_CONFIG.get("sessions", {}).get("enabled", False))
+        except Exception:
+            return False
+
+    def _get_session_records(self) -> list:
+        """Return list of SessionRecord from the active SessionIndex."""
+        try:
+            from hermes_cli.config import CLI_CONFIG
+            from pathlib import Path
+            from hermes_cli.tui.session_manager import SessionIndex
+            session_dir = Path(CLI_CONFIG.get("sessions", {}).get("session_dir", "/tmp/hermes-sessions"))
+            idx = SessionIndex(session_dir / "sessions.json")
+            return idx.get_sessions()
+        except Exception:
+            return []
+
+    def _get_active_session_id(self) -> str:
+        """Return the active session ID from the SessionIndex."""
+        try:
+            from hermes_cli.config import CLI_CONFIG
+            from pathlib import Path
+            from hermes_cli.tui.session_manager import SessionIndex
+            session_dir = Path(CLI_CONFIG.get("sessions", {}).get("session_dir", "/tmp/hermes-sessions"))
+            idx = SessionIndex(session_dir / "sessions.json")
+            return idx.get_active_id()
+        except Exception:
+            return ""
+
+    def action_new_worktree_session(self) -> None:
+        """Binding action: open NewSessionOverlay."""
+        self._open_new_session_overlay()
+
+    def _open_new_session_overlay(self) -> None:
+        """Show the NewSessionOverlay."""
+        if not self._sessions_enabled:
+            self._flash_hint("Sessions disabled — set sessions.enabled=true in config", 2.0)
+            return
+        try:
+            overlay = self.query_one("#new-session-overlay", NewSessionOverlay)
+            overlay.show_overlay()
+        except NoMatches:
+            pass
+
+    def _switch_to_session(self, session_id: str) -> None:
+        """Switch to a parallel session (exec into that process)."""
+        self._flash_hint(f"Switching to session {session_id}…", 1.5)
+
+    def _switch_to_session_by_index(self, n: int) -> None:
+        """Switch to the nth session in the SessionBar."""
+        try:
+            bar = self.query_one(SessionBar)
+            records = bar._sessions_data
+            if 0 <= n < len(records):
+                sid = getattr(records[n], "id", None)
+                if sid:
+                    self._switch_to_session(sid)
+        except Exception:
+            pass
+
+    @work(thread=True)
+    def _create_new_session(self, branch: str, base: str, overlay: object) -> None:
+        """Create a git worktree + spawn a new headless session process."""
+        import subprocess
+        import sys
+        from pathlib import Path
+        from hermes_cli.config import CLI_CONFIG
+        from hermes_cli.tui.session_manager import SessionManager, SessionRecord, send_notification
+
+        sessions_cfg = CLI_CONFIG.get("sessions", {})
+        session_dir = Path(sessions_cfg.get("session_dir", "/tmp/hermes-sessions"))
+        max_sessions = int(sessions_cfg.get("max_sessions", 8))
+        mgr = SessionManager(session_dir, max_sessions)
+        sid = mgr.new_id()
+        sdir = mgr.create_session_dir(sid)
+
+        try:
+            # Determine base ref
+            if base == "main":
+                base_ref = "main"
+            else:
+                result = subprocess.run(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                    capture_output=True, text=True, timeout=5
+                )
+                base_ref = result.stdout.strip() or "HEAD"
+
+            worktree_path = str(session_dir / f"worktree-{sid}")
+            subprocess.run(
+                ["git", "worktree", "add", "-b", branch, worktree_path, base_ref],
+                check=True, capture_output=True, timeout=30
+            )
+        except subprocess.CalledProcessError as exc:
+            err = exc.stderr.decode(errors="replace") if exc.stderr else str(exc)
+            self.call_from_thread(self._flash_hint, f"Worktree error: {err[:60]}", 3.0)
+            try:
+                self.call_from_thread(overlay._set_error, err[:80])
+            except Exception:
+                pass
+            return
+        except Exception as exc:
+            self.call_from_thread(self._flash_hint, f"Session error: {exc}", 3.0)
+            return
+
+        record = SessionRecord(
+            id=sid, branch=branch, worktree_path=worktree_path,
+            pid=0, socket_path=str(sdir / "notify.sock"),
+        )
+        mgr.index.add_session(record)
+
+        # Spawn headless process
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, "-m", "cli", "--headless", f"--worktree-session-id={sid}"],
+                cwd=worktree_path
+            )
+            self.call_from_thread(self._flash_hint, f"Session {sid[:8]} started (pid {proc.pid})", 2.0)
+        except Exception as exc:
+            self.call_from_thread(self._flash_hint, f"Spawn error: {exc}", 3.0)
+
+        self.call_from_thread(overlay.action_dismiss)
+
+    def _kill_session_prompt(self, session_id: str) -> None:
+        """Prompt then kill a session."""
+        self._flash_hint(f"Killing session {session_id}…", 1.5)
+        self._do_kill_session(session_id)
+
+    @work(thread=True)
+    def _do_kill_session(self, session_id: str) -> None:
+        from pathlib import Path
+        from hermes_cli.config import CLI_CONFIG
+        from hermes_cli.tui.session_manager import SessionManager
+        sessions_cfg = CLI_CONFIG.get("sessions", {})
+        session_dir = Path(sessions_cfg.get("session_dir", "/tmp/hermes-sessions"))
+        mgr = SessionManager(session_dir)
+        for rec in mgr.index.get_sessions():
+            if rec.id == session_id:
+                mgr.kill_session(rec)
+                mgr.index.remove_session(session_id)
+                break
+        self.call_from_thread(self._flash_hint, f"Session {session_id[:8]} killed", 1.5)
+
+    def _open_merge_overlay(self, session_id: str) -> None:
+        """Show MergeConfirmOverlay for a session."""
+        try:
+            overlay = self.query_one("#merge-confirm-overlay", MergeConfirmOverlay)
+            overlay.show_for(session_id, "(loading diff…)")
+        except NoMatches:
+            pass
+
+    @work(thread=True)
+    def _run_merge(self, session_id: str, strategy: str, close_on_success: bool, overlay: object) -> None:
+        """Run git merge in worker thread."""
+        import subprocess
+        from pathlib import Path
+        from hermes_cli.config import CLI_CONFIG
+        from hermes_cli.tui.session_manager import SessionManager
+        sessions_cfg = CLI_CONFIG.get("sessions", {})
+        session_dir = Path(sessions_cfg.get("session_dir", "/tmp/hermes-sessions"))
+        mgr = SessionManager(session_dir)
+        target_rec = None
+        for rec in mgr.index.get_sessions():
+            if rec.id == session_id:
+                target_rec = rec
+                break
+        if not target_rec:
+            self.call_from_thread(self._flash_hint, f"Session {session_id} not found", 2.0)
+            return
+        try:
+            branch = target_rec.branch
+            if strategy == "squash":
+                cmd = ["git", "merge", "--squash", branch]
+            elif strategy == "rebase":
+                cmd = ["git", "rebase", branch]
+            else:
+                cmd = ["git", "merge", branch]
+            subprocess.run(cmd, check=True, capture_output=True, timeout=60)
+            self.call_from_thread(self._flash_hint, f"Merged {branch} ({strategy})", 2.0)
+            if close_on_success:
+                mgr.kill_session(target_rec)
+                mgr.index.remove_session(session_id)
+        except subprocess.CalledProcessError as exc:
+            err = exc.stderr.decode(errors="replace") if exc.stderr else str(exc)
+            self.call_from_thread(self._flash_hint, f"Merge failed: {err[:60]}", 3.0)
+        self.call_from_thread(overlay.action_dismiss)
+
+    def _flash_sessions_max(self) -> None:
+        """Flash HintBar indicating max sessions reached."""
+        self._flash_hint("Max sessions reached (limit 8)", 2.0)
+
+    def _reopen_orphan_session(self, session_id: str) -> None:
+        """Attempt to reopen an orphan session."""
+        self._flash_hint(f"Reopen orphan {session_id} — not yet implemented", 2.0)
+
+    def _delete_orphan_session(self, session_id: str) -> None:
+        """Delete an orphan session record."""
+        from pathlib import Path
+        from hermes_cli.config import CLI_CONFIG
+        from hermes_cli.tui.session_manager import SessionIndex
+        try:
+            sessions_cfg = CLI_CONFIG.get("sessions", {})
+            session_dir = Path(sessions_cfg.get("session_dir", "/tmp/hermes-sessions"))
+            idx = SessionIndex(session_dir / "sessions.json")
+            idx.remove_session(session_id)
+            self._flash_hint(f"Orphan {session_id[:8]} deleted", 1.5)
+        except Exception as exc:
+            self._flash_hint(f"Delete failed: {exc}", 2.0)

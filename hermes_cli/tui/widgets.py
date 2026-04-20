@@ -1600,6 +1600,7 @@ class MessagePanel(Widget):
         new_prose = CopyableBlock(
             id=f"prose-{self._msg_id}-{len(self._prose_blocks)}",
             _log_id=f"prose-log-{self._msg_id}-{len(self._prose_blocks)}",
+            _log_class=InlineProseLog,
         )
         self._maybe_insert_type_gap(new_prose)
         self.mount(new_prose)

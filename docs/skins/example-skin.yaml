@@ -121,6 +121,39 @@ tool_prefix: "┊"
 #   [bold #FFD700]  /\  [/]
 #   [bold #FFBF00] /  \ [/]
 
+# ── Stream Effect ───────────────────────────────────────────────────────────
+# Token reveal animation for streaming output in the TUI.
+# Skin-level value overrides display.terminal.stream_effect in config.yaml.
+#
+# Shorthand (effect name only):
+#   stream_effect: cascade
+#
+# Full config (override any tuning key):
+# stream_effect:
+#   enabled: cascade        # Effect name — see VALID_EFFECTS below
+#   cascade_ticks: 2        # cascade: ticks of delay per char index (wave speed)
+#   morph_steps: 10         # glitch_morph: total countdown steps before reveal
+#   zalgo_marks: 5          # zalgo: max combining diacritics per char
+#   fade_frames: 8          # cosmic: ticks from ghost→real char
+#   scramble_frames: 12     # nier/decrypt: scramble duration in ticks
+#   settle_frames: 6        # glow_settle: ticks to settle from accent→text color
+#   length: 16              # gradient_tail: gradient window width in chars
+#   period: 0.75            # breathe: pulse period in seconds
+#
+# Available effects:
+#   none          — plain text (default)
+#   flash         — latest token highlighted in accent color
+#   gradient_tail — text→accent gradient on last N chars
+#   glow_settle   — tokens glow accent on arrival, settle to text color
+#   decrypt       — words scramble then resolve char-by-char
+#   shimmer       — bright wave sweeps across text
+#   breathe       — text pulses between text and accent color
+#   glitch_morph  — each char descends through symbol ladder: _ → symbol → \ → # → real
+#   cascade       — left-to-right wave: _ → \ → # → real char, index-delayed
+#   nier          — Katakana scramble then snap-reveal (NieR:Automata style)
+#   zalgo         — stacked combining diacritics that decay per tick
+#   cosmic        — ghost glyph (·•✦⋆) materialises into real char
+
 # ── Syntax Highlighting ─────────────────────────────────────────────────────
 # Named color scheme applied to fenced code blocks, inline code, and tool
 # output highlights. The scheme controls the Pygments token → color mapping

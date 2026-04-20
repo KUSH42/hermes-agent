@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 _IMPLEMENTED_ACTIONS: frozenset[str] = frozenset({
     "copy_body", "open_first", "copy_err", "copy_paths", "retry",
     "copy_invocation", "copy_urls",  # G1, G2
+    "edit_cmd", "open_url",          # A1, A2
 })
 
 
@@ -311,6 +312,8 @@ class ToolPanel(Widget):
         Binding("-",     "collapse_lines",   "Collapse lines",   show=False),
         Binding("*",     "expand_all_lines", "Expand all",       show=False),
         Binding("r",     "retry",            "Retry",            show=False),
+        Binding("E",     "edit_cmd",         "Edit cmd",         show=False),
+        Binding("O",     "open_url",         "Open URL",         show=False),
         Binding("j",     "scroll_body_down", "↓",                show=False),
         Binding("k",     "scroll_body_up",   "↑",                show=False),
     ]
@@ -410,12 +413,9 @@ class ToolPanel(Widget):
 
     def _apply_complete_auto_collapse(self) -> None:
         from hermes_cli.tui.tool_category import _CATEGORY_DEFAULTS
-        rs = self._result_summary_v4
         if self._user_collapse_override:
-            # Error override: user collapsed but tool errored → force expand
-            if rs is not None and rs.is_error and self.collapsed:
-                self.collapsed = False
             return
+        rs = self._result_summary_v4
         total = self._body_line_count()
         threshold = _CATEGORY_DEFAULTS[self._category].default_collapsed_lines
         # Diff special-case: write_file / edit_file / patch use threshold=20
@@ -463,8 +463,9 @@ class ToolPanel(Widget):
             self._footer_pane.update_summary_v4(summary, promoted_chip_texts=promoted_texts)
 
         # Auto-collapse / error promotion
-        if summary.is_error and not self._user_collapse_override:
-            self.collapsed = False  # always show errors
+        # D1: errors always expand regardless of user collapse override
+        if summary.is_error:
+            self.collapsed = False
         elif not self._user_collapse_override:
             self._apply_complete_auto_collapse()
 
@@ -533,7 +534,7 @@ class ToolPanel(Widget):
         paths: list[str] = []
         if rs is not None:
             for artifact in (rs.artifacts or ()):
-                if artifact.kind == "file":
+                if artifact.kind in ("file", "url"):
                     paths.append(artifact.path_or_url)
         if not paths:
             paths = list(self._result_paths)
@@ -555,19 +556,49 @@ class ToolPanel(Widget):
         self.app._copy_text_with_hint(text)
         self._flash_header("copied")
 
-    def action_open_first(self) -> None:
-        paths = self._result_paths_for_action()
-        if not paths:
+    def action_open_url(self) -> None:
+        """A2: open first URL artifact or open_url action payload."""
+        rs = self._result_summary_v4
+        url: str | None = None
+        if rs is not None:
+            # Prefer explicit open_url payload
+            for action in (rs.actions or ()):
+                if action.kind == "open_url" and action.payload:
+                    url = action.payload
+                    break
+            if not url:
+                for artifact in (rs.artifacts or ()):
+                    if artifact.kind == "url":
+                        url = artifact.path_or_url
+                        break
+        if not url:
             return
-        import os
-        import shlex
-        editor = os.environ.get("EDITOR") or os.environ.get("VISUAL")
-        if editor:
-            subprocess.Popen([*shlex.split(editor), paths[0]])
-        else:
-            open_cmd = "open" if sys.platform == "darwin" else "xdg-open"
-            subprocess.Popen([open_cmd, paths[0]])
-        self._flash_header("opening…")
+        open_cmd = "open" if sys.platform == "darwin" else "xdg-open"
+        try:
+            subprocess.Popen([open_cmd, url])
+            self._flash_header("opening…")
+        except Exception:
+            self._flash_header("open failed")
+
+    def action_edit_cmd(self) -> None:
+        """A1: pre-populate input with the failed command for editing."""
+        rs = self._result_summary_v4
+        payload: str | None = None
+        if rs is not None:
+            for action in (rs.actions or ()):
+                if action.kind == "edit_cmd" and action.payload:
+                    payload = action.payload
+                    break
+        if not payload:
+            return
+        try:
+            from hermes_cli.tui.input_widget import HermesInput
+            inp = self.app.query_one(HermesInput)
+            inp.value = payload
+            inp.focus()
+            self._flash_header("edit cmd")
+        except Exception:
+            self._flash_header("edit unavailable")
 
     def action_copy_err(self) -> None:
         rs = self._result_summary_v4
@@ -769,11 +800,21 @@ class ToolPanel(Widget):
         if rs is not None:
             if rs.is_error:
                 t.append("r", style="bold"); t.append(" retry  ", style="dim")
+                # A1: show edit cmd hint when cmd payload available
+                has_edit = any(
+                    a.kind == "edit_cmd" and a.payload
+                    for a in (rs.actions or ())
+                )
+                if has_edit:
+                    t.append("E", style="bold"); t.append(" edit cmd  ", style="dim")
             if rs.stderr_tail:
                 t.append("e", style="bold"); t.append(" stderr  ", style="dim")
             if self._result_paths_for_action():
                 t.append("o", style="bold"); t.append(" open  ", style="dim")
                 t.append("p", style="bold"); t.append(" paths", style="dim")
+            # A2: show open URL hint when URL artifacts present
+            if any(a.kind == "url" for a in (rs.artifacts or ())):
+                t.append("  O", style="bold"); t.append(" url", style="dim")
         return t
 
     def _get_omission_bar(self) -> "Any | None":

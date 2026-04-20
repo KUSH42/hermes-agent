@@ -42,14 +42,18 @@ class CategoryDefaults:
     icon_nf: str = ""           # static nerd-font glyph; "" = no static glyph
 
 
+# E2: rationalized 3-tier collapse thresholds
+# verbose (AGENT, FILE): 15 — show more before collapsing
+# normal (SHELL, SEARCH, WEB, MCP): 10 — standard
+# compact (CODE, UNKNOWN): 6 — short output expected
 _CATEGORY_DEFAULTS: dict[ToolCategory, CategoryDefaults] = {
-    ToolCategory.FILE:    CategoryDefaults("tool-file-accent",    "tool-glyph-file",    "F", "file_result",    10),
-    ToolCategory.SHELL:   CategoryDefaults("tool-shell-accent",   "tool-glyph-shell",   "$", "shell_result",   8),
-    ToolCategory.CODE:    CategoryDefaults("tool-code-accent",    "tool-glyph-code",    "P", "code_result",    5),
-    ToolCategory.SEARCH:  CategoryDefaults("tool-search-accent",  "tool-glyph-search",  "?", "search_result",  6),
-    ToolCategory.WEB:     CategoryDefaults("tool-web-accent",     "tool-glyph-web",     "@", "web_result",     6),
+    ToolCategory.FILE:    CategoryDefaults("tool-file-accent",    "tool-glyph-file",    "F", "file_result",    15),
+    ToolCategory.SHELL:   CategoryDefaults("tool-shell-accent",   "tool-glyph-shell",   "$", "shell_result",   10),
+    ToolCategory.CODE:    CategoryDefaults("tool-code-accent",    "tool-glyph-code",    "P", "code_result",    6),
+    ToolCategory.SEARCH:  CategoryDefaults("tool-search-accent",  "tool-glyph-search",  "?", "search_result",  10),
+    ToolCategory.WEB:     CategoryDefaults("tool-web-accent",     "tool-glyph-web",     "@", "web_result",     10),
     ToolCategory.AGENT:   CategoryDefaults("tool-agent-accent",   "tool-glyph-agent",   "*", "agent_result",   15),
-    ToolCategory.MCP:     CategoryDefaults("tool-mcp-accent",     "tool-glyph-mcp",     "#", "mcp_result",     6, icon_nf="\uf868"),  # 󰡨
+    ToolCategory.MCP:     CategoryDefaults("tool-mcp-accent",     "tool-glyph-mcp",     "#", "mcp_result",     10, icon_nf="\uf868"),  # 󰡨
     ToolCategory.UNKNOWN: CategoryDefaults("tool-unknown-accent", "tool-glyph-unknown", "?", "generic_result", 6),
 }
 

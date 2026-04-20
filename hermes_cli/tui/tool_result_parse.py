@@ -173,7 +173,8 @@ ActionKind = Literal[
 ArtifactKind = Literal["file", "url", "image"]
 
 _PAYLOAD_CAP = 65536  # 64 KiB
-_ARTIFACT_CAP = 5
+_ARTIFACT_CAP = 5        # legacy alias
+_ARTIFACT_DISPLAY_CAP = 5  # B3: render-time display cap; parse stores ALL
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +182,7 @@ class Chip:
     text: str
     kind: ChipKind
     tone: ChipTone = "neutral"
+    remediation: str | None = None  # A2: hint shown in footer for error chips
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,6 +211,7 @@ class ResultSummaryV4:
     artifacts: tuple[Artifact, ...]
     is_error: bool
     error_kind: str | None = None
+    artifacts_truncated: bool = False  # B3: True when artifacts > _ARTIFACT_DISPLAY_CAP
 
 
 # ---------------------------------------------------------------------------
@@ -442,14 +445,13 @@ _IMAGE_EXTS_V4 = frozenset({'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'})
 
 
 def _extract_media_artifacts(raw: str) -> tuple[Artifact, ...]:
+    """Extract ALL media artifacts (no cap — caller handles B3 truncation)."""
     arts: list[Artifact] = []
     for m in _MEDIA_LINE_RE_V4.finditer(raw):
         path = m.group(1).strip()
         ext = os.path.splitext(path)[1].lower()
         kind: ArtifactKind = "image" if ext in _IMAGE_EXTS_V4 else "file"
         arts.append(Artifact(label=os.path.basename(path), path_or_url=path, kind=kind))
-        if len(arts) >= _ARTIFACT_CAP:
-            break
     return tuple(arts)
 
 
@@ -461,6 +463,7 @@ def code_result_v4(ctx: ParseContext) -> ResultSummaryV4:
     code_text = str(ctx.start.args.get("code") or "")
     stderr_tail = _last_n_chars_v4(raw) if is_error else ""
     artifacts = _extract_media_artifacts(raw)
+    artifacts_truncated = len(artifacts) > _ARTIFACT_DISPLAY_CAP  # B3
 
     if error_kind == "timeout" or is_error:
         code_str = str(exit_code) if exit_code is not None else "?"
@@ -475,6 +478,7 @@ def code_result_v4(ctx: ParseContext) -> ResultSummaryV4:
                 _make_action("edit cmd", "e", "edit_cmd", code_text),
             ),
             artifacts=artifacts, is_error=True, error_kind=error_kind,
+            artifacts_truncated=artifacts_truncated,
         )
 
     n = _count_nonempty_lines(raw)
@@ -487,6 +491,7 @@ def code_result_v4(ctx: ParseContext) -> ResultSummaryV4:
         primary=primary, exit_code=exit_code, chips=(),
         stderr_tail="", actions=(_make_copy_body(raw),),
         artifacts=artifacts, is_error=False,
+        artifacts_truncated=artifacts_truncated,
     )
 
 
@@ -499,6 +504,7 @@ _URL_RE = re.compile(r'^https?://', re.IGNORECASE)
 
 
 def _extract_search_artifacts(result: str) -> tuple[Artifact, ...]:
+    """Extract ALL search artifacts (no cap — caller handles B3 truncation)."""
     arts: list[Artifact] = []
     seen: set[str] = set()
     for line in result.splitlines():
@@ -524,8 +530,6 @@ def _extract_search_artifacts(result: str) -> tuple[Artifact, ...]:
                         path_or_url=candidate, kind="file",
                     ))
                     seen.add(candidate)
-        if len(arts) >= _ARTIFACT_CAP:
-            break
     return tuple(arts)
 
 
@@ -548,6 +552,7 @@ def search_result_v4(ctx: ParseContext) -> ResultSummaryV4:
     lines = [l for l in raw.splitlines() if l.strip()]
     match_count = len(lines)
     artifacts = _extract_search_artifacts(raw)
+    artifacts_truncated = len(artifacts) > _ARTIFACT_DISPLAY_CAP  # B3
     file_count = _count_distinct_files(artifacts)
     has_urls = any(a.kind == "url" for a in artifacts)
 
@@ -575,6 +580,7 @@ def search_result_v4(ctx: ParseContext) -> ResultSummaryV4:
         primary=primary, exit_code=None, chips=chips,
         stderr_tail="", actions=tuple(actions),
         artifacts=artifacts, is_error=False,
+        artifacts_truncated=artifacts_truncated,
     )
 
 
@@ -739,7 +745,11 @@ def mcp_result_v4(ctx: ParseContext) -> ResultSummaryV4:
         return ResultSummaryV4(
             primary=f"✗ mcp · disconnected · {server}",
             exit_code=None,
-            chips=(source_chip, Chip("mcp · disconnected", "mcp-error", "error")),
+            chips=(
+                source_chip,
+                Chip("mcp · disconnected", "mcp-error", "error",
+                     remediation="restart or check server logs"),  # A2
+            ),
             stderr_tail="",
             actions=(
                 _make_copy_err("", raw),
@@ -752,7 +762,11 @@ def mcp_result_v4(ctx: ParseContext) -> ResultSummaryV4:
         return ResultSummaryV4(
             primary=f"✗ mcp · auth · {server}",
             exit_code=None,
-            chips=(source_chip, Chip("mcp · auth", "mcp-error", "error")),
+            chips=(
+                source_chip,
+                Chip("mcp · auth", "mcp-error", "error",
+                     remediation="re-authenticate with /mcp auth"),  # A2
+            ),
             stderr_tail="",
             actions=(
                 _make_copy_err("", raw),
@@ -776,6 +790,7 @@ def mcp_result_v4(ctx: ParseContext) -> ResultSummaryV4:
         )
 
     artifacts = _extract_mcp_artifacts(content)
+    artifacts_truncated = len(artifacts) > _ARTIFACT_DISPLAY_CAP  # B3
     n = len(content)
     if n == 0:
         primary = "✓ empty"
@@ -802,6 +817,7 @@ def mcp_result_v4(ctx: ParseContext) -> ResultSummaryV4:
         primary=primary, exit_code=None, chips=tuple(chips),
         stderr_tail="", actions=tuple(actions),
         artifacts=artifacts, is_error=False,
+        artifacts_truncated=artifacts_truncated,
     )
 
 
@@ -821,6 +837,7 @@ def _parse_mcp_content(raw) -> tuple[list, bool]:
 
 
 def _extract_mcp_artifacts(content: list) -> tuple[Artifact, ...]:
+    """Extract ALL artifacts from MCP content (no cap — caller handles B3 truncation)."""
     arts: list[Artifact] = []
     for i, item in enumerate(content):
         if not isinstance(item, dict):
@@ -841,8 +858,6 @@ def _extract_mcp_artifacts(content: list) -> tuple[Artifact, ...]:
             uri = resource.get("uri", "")
             if uri:
                 arts.append(_uri_to_artifact(uri, i))
-        if len(arts) >= _ARTIFACT_CAP:
-            break
     return tuple(arts)
 
 

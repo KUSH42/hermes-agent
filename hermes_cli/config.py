@@ -441,6 +441,15 @@ DEFAULT_CONFIG = {
         "tool_progress_command": False,  # Enable /verbose command in messaging gateway
         "tool_progress_overrides": {},  # Per-platform overrides: {"signal": "off", "telegram": "all"}
         "tool_preview_length": 0,  # Max chars for tool call previews (0 = no limit, show full paths/commands)
+        # B4: configurable tool body display limits
+        "tool_visible_cap": 200,           # max lines shown in tool RichLog
+        "tool_line_byte_cap": 2000,        # max bytes per line before truncation
+        "tool_page_size": 50,              # lines per OmissionBar page step
+        "tool_collapse_thresholds": {      # per-tier auto-collapse line counts
+            "verbose": 15,
+            "normal": 10,
+            "compact": 6,
+        },
         "mcp_microcopy": True,   # show "▸ mcp · <server>" provenance line
         "tools_overlay": True,   # /tools timeline overlay + T browse key
         "drawille_overlay": {

@@ -378,6 +378,7 @@ class CopyableRichLog(RichLog, can_focus=False):
         super().__init__(**kwargs)
         _boost_layout_caches(self)
         self._plain_lines: list[str] = []
+        self._all_rich: list[Text] = []  # C5: parallel rich Text objects for ANSI/HTML export
 
     def render_line(self, y: int) -> Strip:
         """Override to add offset metadata and selection highlighting.
@@ -458,6 +459,7 @@ class CopyableRichLog(RichLog, can_focus=False):
     def write_with_source(self, styled: Text, plain: str, **kwargs: Any) -> "CopyableRichLog":
         """Write styled text to display, store plain text for copy."""
         self._plain_lines.append(plain)
+        self._all_rich.append(styled)  # C5: parallel rich list for ANSI/HTML export
         try:
             from hermes_cli.tui.osc8 import inject_osc8, _osc8_supported
             if _osc8_supported():

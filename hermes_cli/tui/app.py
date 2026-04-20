@@ -436,6 +436,9 @@ class HermesApp(App):
         self._pending_rollback_n: int = 0
         # Animation feature flag — checked by all shimmer/pulse paths
         self._animations_enabled: bool = _animations_enabled_check()
+        # F2: reduced-motion — disable shimmer/pulse; set from config or env var
+        import os as _os
+        self._reduced_motion: bool = bool(_os.environ.get("HERMES_REDUCED_MOTION"))
         # Current hint phase — tracks what the user is doing
         self._hint_phase: str = "idle"
         # Timestamp until which _flash_hint has the hint bar reserved.

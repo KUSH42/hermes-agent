@@ -417,7 +417,7 @@ async def test_auto_collapse_over_threshold():
         await _pause(pilot)
         panel = await _get_shell_panel(app, pilot)
         block = panel.query_one(StreamingToolBlock)
-        for i in range(10):
+        for i in range(11):  # >10 = new SHELL threshold (E2 raised from 8→10)
             block.append_line(f"line {i}")
         await _pause(pilot)
         panel._user_collapse_override = False

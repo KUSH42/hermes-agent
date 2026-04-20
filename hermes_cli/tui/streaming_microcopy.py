@@ -20,12 +20,21 @@ class StreamingState:
     total_bytes: int | None = None
     last_status: str | None = None
     matches_so_far: int | None = None
+    rate_bps: float | None = None  # B2: streaming rate in bytes/s
 
 
 def _kb(b: int) -> str:
+    """Legacy alias — prefer _human_size for new call sites."""
+    return _human_size(b)
+
+
+def _human_size(b: int) -> str:
+    """D1: human-readable byte count with B/kB/MB suffixes."""
     if b < 1024:
         return f"{b}B"
-    return f"{b / 1024:.1f}kB"
+    if b < 1_048_576:
+        return f"{b / 1024:.1f}kB"
+    return f"{b / 1_048_576:.1f}MB"
 
 
 def _thinking_shimmer(elapsed_s: float) -> Text:
@@ -46,19 +55,40 @@ def _thinking_shimmer(elapsed_s: float) -> Text:
     return result
 
 
-def microcopy_line(spec: "ToolSpec", state: StreamingState) -> "Union[str, Text]":
-    """Return microcopy for current streaming state, or '' for no line."""
+def microcopy_line(
+    spec: "ToolSpec",
+    state: StreamingState,
+    reduced_motion: bool = False,
+) -> "Union[str, Text]":
+    """Return microcopy for current streaming state, or '' for no line.
+
+    D2: reduced_motion=True → static text for AGENT category.
+    D3: all categories append elapsed when state.elapsed_s > 2.0.
+    """
     from hermes_cli.tui.tool_category import ToolCategory
 
     cat = spec.category
+    elapsed_s = state.elapsed_s
+
+    def _elapsed_suffix() -> str:
+        """D3: append · N.Ns when elapsed > 2s."""
+        if elapsed_s > 2.0:
+            return f" · {elapsed_s:.1f}s"
+        return ""
 
     if cat == ToolCategory.SHELL:
-        return f"▸ {state.lines_received} lines · {_kb(state.bytes_received)}"
+        base = f"▸ {state.lines_received} lines · {_human_size(state.bytes_received)}"
+        if state.rate_bps is not None and state.rate_bps > 0:
+            base += f" · {state.rate_bps / 1024:.0f} kB/s"
+        return base + _elapsed_suffix()
 
     if cat == ToolCategory.FILE:
         if spec.primary_result in ("lines", "bytes"):
-            return f"▸ {state.lines_received} lines · {_kb(state.bytes_received)}"
-        return f"▸ {state.lines_received} lines written"
+            base = f"▸ {state.lines_received} lines · {_human_size(state.bytes_received)}"
+            if state.rate_bps is not None and state.rate_bps > 0:
+                base += f" · {state.rate_bps / 1024:.0f} kB/s"
+            return base + _elapsed_suffix()
+        return f"▸ {state.lines_received} lines written" + _elapsed_suffix()
 
     if cat == ToolCategory.SEARCH:
         count = (
@@ -66,24 +96,27 @@ def microcopy_line(spec: "ToolSpec", state: StreamingState) -> "Union[str, Text]
             if state.matches_so_far is not None
             else state.lines_received
         )
-        return f"▸ {count} matches so far…"
+        return f"▸ {count} matches so far…" + _elapsed_suffix()
 
     if cat == ToolCategory.WEB:
         status = state.last_status or "connecting"
-        return f"▸ {status} · {_kb(state.bytes_received)}"
+        return f"▸ {status} · {_human_size(state.bytes_received)}" + _elapsed_suffix()
 
     if cat == ToolCategory.MCP:
         prov = spec.provenance or ""
         server = prov[4:] if prov.startswith("mcp:") else "?"
-        return f"▸ mcp · {server} server"
+        return f"▸ mcp · {server} server" + _elapsed_suffix()
 
     if cat == ToolCategory.CODE:
-        return f"▸ {state.lines_received} lines · {_kb(state.bytes_received)}"
+        return f"▸ {state.lines_received} lines · {_human_size(state.bytes_received)}" + _elapsed_suffix()
 
     if cat == ToolCategory.AGENT:
+        # D2: static text when reduced_motion
+        if reduced_motion:
+            return Text("▸ thinking…")
         return _thinking_shimmer(state.elapsed_s)
 
     if cat == ToolCategory.UNKNOWN:
-        return f"▸ {state.lines_received} lines"
+        return f"▸ {state.lines_received} lines" + _elapsed_suffix()
 
     return ""

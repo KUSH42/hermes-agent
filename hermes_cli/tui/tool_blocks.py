@@ -11,6 +11,7 @@ StreamingToolBlock extends ToolBlock with IDLE→STREAMING→COMPLETED lifecycle
 from __future__ import annotations
 
 import collections
+from collections import deque
 import re
 import time
 from dataclasses import dataclass
@@ -233,6 +234,40 @@ def header_label_v4(
 ) -> "Text":
     """Return header label Text using v4 primary-arg rules (spec §2.1)."""
     primary = getattr(spec, "primary_arg", None)
+
+    # E3: category-based identity overrides for MCP and AGENT
+    try:
+        from hermes_cli.tui.tool_category import ToolCategory as _TC
+        cat = getattr(spec, "category", None)
+        if cat == _TC.MCP:
+            # Format as server::method()
+            prov = getattr(spec, "provenance", None) or ""
+            server = prov[4:] if prov.startswith("mcp:") else "?"
+            name = getattr(spec, "name", "") or ""
+            method = name.split("__", 2)[-1] if "__" in name else name
+            label_str = f"{server}::{method}()"
+            if _safe_cell_width(label_str) > available:
+                label_str = label_str[:max(1, available - 1)] + "…"
+            t = Text()
+            t.append(f" {label_str}", style="bold")
+            return t
+        if cat == _TC.AGENT and primary not in ("path", "command", "query", "url"):
+            # First 60 chars of task or thought arg; fall back to full_label with italic dim
+            text = str(args.get("task") or args.get("thought") or "") or full_label
+            if len(text) > 60:
+                text = text[:59] + "…"
+            t = Text()
+            t.append(f" {text}", style="italic dim")
+            return t
+        if cat == _TC.UNKNOWN and primary is None:
+            t = Text()
+            label_str = full_label
+            if _safe_cell_width(label_str) > available:
+                label_str = label_str[:max(1, available - 1)] + "…"
+            t.append(f" {label_str}")
+            return t
+    except Exception:
+        pass
 
     if primary == "path":
         path = full_path or full_label
@@ -681,12 +716,14 @@ class ToolHeader(PulseMixin, Widget):
 
     def on_click(self, event: Click) -> None:
         """Left-click: open file if path-clickable, otherwise toggle block.
-
-        Right-clicks (button=3) are not intercepted here — they bubble up to
-        HermesApp.on_click() which builds the context menu.
+        Right-click (button=3): show context menu (C3).
         """
+        if event.button == 3:
+            self._show_context_menu(event)
+            event.stop()
+            return
         if event.button != 1:
-            return                          # right/middle click: let bubble to HermesApp
+            return                          # middle click: let bubble
         if self._spinner_char is not None:
             return                          # streaming: ignore click
         # Path-clickable header: open the file directly
@@ -705,6 +742,70 @@ class ToolHeader(PulseMixin, Widget):
         parent = self.parent
         if parent is not None:
             parent.toggle()
+
+    def _show_context_menu(self, event: Click) -> None:
+        """C3: mount context menu on right-click."""
+        import sys
+        from pathlib import Path
+        from hermes_cli.tui.context_menu import ContextMenu, MenuItem
+
+        items: list[MenuItem] = []
+        opener = "open" if sys.platform == "darwin" else "xdg-open"
+
+        # Determine category for SHELL-specific option
+        is_shell = False
+        try:
+            from hermes_cli.tui.tool_category import spec_for, ToolCategory
+            _spec = spec_for(self._tool_name or "")
+            is_shell = _spec.category == ToolCategory.SHELL
+        except Exception:
+            pass
+
+        if self._path_clickable and self._full_path:
+            _path = self._full_path  # closure capture
+            items.append(MenuItem(
+                label="Open file",
+                shortcut="",
+                action=lambda p=_path: self.app._open_path_action(self, p, opener, False),  # type: ignore[attr-defined]
+            ))
+
+        has_path = self._path_clickable or getattr(self, "_diff_file_path", None) is not None
+        if has_path:
+            _copy_path = self._full_path or getattr(self, "_diff_file_path", None)
+            if _copy_path:
+                items.append(MenuItem(
+                    label="Copy path",
+                    shortcut="",
+                    action=lambda cp=_copy_path: self.app._copy_text_with_hint(cp),  # type: ignore[attr-defined]
+                ))
+
+        if is_shell:
+            _cmd = str(self._header_args.get("command") or self._header_args.get("cmd") or self._label)
+            items.append(MenuItem(
+                label="Copy full command",
+                shortcut="",
+                action=lambda c=_cmd: self.app._copy_text_with_hint(c),  # type: ignore[attr-defined]
+            ))
+
+        if self._path_clickable and self._full_path:
+            _parent = str(Path(self._full_path).parent)
+            items.append(MenuItem(
+                label="Reveal in file manager",
+                shortcut="",
+                action=lambda p=_parent: self.app._open_path_action(self, p, opener, False),  # type: ignore[attr-defined]
+            ))
+
+        if not items:
+            return
+
+        try:
+            menu = self.app.query_one(ContextMenu)
+            import asyncio
+            asyncio.get_event_loop().create_task(
+                menu.show(items, event.screen_x, event.screen_y)
+            )
+        except Exception:
+            pass
 
 
 class ToolBodyContainer(Widget):
@@ -1076,6 +1177,20 @@ class OmissionBar(Widget):
     }
     """
 
+    @staticmethod
+    def _reset_label() -> str:
+        """C4: icon-mode-aware label for reset button."""
+        try:
+            from agent.display import get_tool_icon_mode
+            mode = get_tool_icon_mode()
+        except Exception:
+            mode = "ascii"
+        if mode in ("nerdfont", "auto"):
+            return "\U000f09a8 reset"   # nf-md-restore U+F09A8
+        if mode == "emoji":
+            return "🔄 reset"
+        return "[reset]"
+
     def __init__(
         self,
         parent_block: "StreamingToolBlock",
@@ -1098,7 +1213,7 @@ class OmissionBar(Widget):
             yield Button("[↑all]", classes="--ob-up-all")
             yield Button("[↑+50]", classes="--ob-up-page")
         else:
-            yield Button("\\[reset]", classes="--ob-cap")
+            yield Button(self._reset_label(), classes="--ob-cap")
             yield Button("[↑]",    classes="--ob-up")
             yield Button("[↓]",    classes="--ob-down")
             yield Button("[↓all]", classes="--ob-down-all")
@@ -1213,6 +1328,10 @@ class StreamingToolBlock(ToolBlock):
         self._last_line_time: float = 0.0
         self._flush_slow: bool = False       # True when idle≥2s, running at 10Hz
         self._microcopy_widget: "Static | None" = None
+        # B2: rate tracking — (monotonic_time, byte_count) samples, last 20
+        self._rate_samples: deque[tuple[float, int]] = deque(maxlen=20)
+        # B2: last HTTP status line seen in WEB streams
+        self._last_http_status: str | None = None
 
     def compose(self) -> ComposeResult:
         yield self._header
@@ -1229,6 +1348,14 @@ class StreamingToolBlock(ToolBlock):
         self._render_timer = self.set_interval(1 / 60, self._flush_pending)
         self._spinner_timer = self.set_interval(0.25, self._tick_spinner)
         self._duration_timer = self.set_interval(0.1, self._tick_duration)
+        # B4: read configurable limits from app config
+        try:
+            display_cfg = self.app.cfg.get("display", {})  # type: ignore[attr-defined]
+            self._visible_cap: int = int(display_cfg.get("tool_visible_cap", _VISIBLE_CAP))
+            self._line_byte_cap: int = int(display_cfg.get("tool_line_byte_cap", _LINE_BYTE_CAP))
+        except Exception:
+            self._visible_cap = _VISIBLE_CAP
+            self._line_byte_cap = _LINE_BYTE_CAP
         # Cache microcopy widget ref (v4 §3.3)
         try:
             self._microcopy_widget = self._body.query_one(".--microcopy", Static)
@@ -1269,21 +1396,32 @@ class StreamingToolBlock(ToolBlock):
     # Streaming API (called from event loop via call_from_thread)
     # ------------------------------------------------------------------
 
+    # B2: HTTP status line pattern for WEB streams
+    _HTTP_STATUS_LINE_RE = re.compile(r'^HTTP/\S+\s+(\d+\s+.+)$')
+
     def append_line(self, raw: str) -> None:
         """Buffer a raw ANSI line for rendering on the next 60fps tick."""
         if self._completed:
             return
-        # Byte cap
-        if len(raw) > _LINE_BYTE_CAP:
-            over = len(raw) - _LINE_BYTE_CAP
-            raw = raw[:_LINE_BYTE_CAP] + f"… (+{over} chars)"
+        # Byte cap — use instance override (B4) if set, else module constant
+        line_byte_cap = getattr(self, "_line_byte_cap", _LINE_BYTE_CAP)
+        if len(raw) > line_byte_cap:
+            over = len(raw) - line_byte_cap
+            raw = raw[:line_byte_cap] + f"… (+{over} chars)"
         plain = _strip_ansi(raw)
         self._total_received += 1
         self._bytes_received += len(raw)
-        self._last_line_time = time.monotonic()
+        now = time.monotonic()
+        self._last_line_time = now
         self._pending.append((raw, plain))
         self._all_plain.append(plain)
         self._all_rich.append(Text.from_ansi(raw))
+        # B2: rate sample
+        self._rate_samples.append((now, len(raw)))
+        # B2: HTTP status detection for WEB category
+        m = self._HTTP_STATUS_LINE_RE.match(plain.strip())
+        if m:
+            self._last_http_status = m.group(1).strip()
         # Restore 60Hz if we had dropped to slow rate (v4 §3.4)
         if self._flush_slow:
             self._flush_slow = False
@@ -1434,6 +1572,15 @@ class StreamingToolBlock(ToolBlock):
         self._header._duration = _format_duration_v4(elapsed_ms)
         self._header.refresh()
 
+    def _bytes_per_second(self) -> float | None:
+        """B2: compute transfer rate from last 2s of samples."""
+        now = time.monotonic()
+        cutoff = now - 2.0
+        recent = [(t, b) for t, b in self._rate_samples if t >= cutoff]
+        if len(recent) < 2:
+            return None
+        return sum(b for _, b in recent) / 2.0
+
     def _update_microcopy(self) -> None:
         """Update microcopy Static with current streaming state (v4 §3.3)."""
         started = getattr(self, "_stream_started_at", None)
@@ -1452,8 +1599,11 @@ class StreamingToolBlock(ToolBlock):
             lines_received=self._total_received,
             bytes_received=self._bytes_received,
             elapsed_s=elapsed_s,
+            last_status=self._last_http_status,  # B2: WEB HTTP status
+            rate_bps=self._bytes_per_second(),    # B2: transfer rate
         )
-        text = microcopy_line(spec, state)
+        reduced_motion = getattr(getattr(self, "app", None), "_reduced_motion", False)  # D2
+        text = microcopy_line(spec, state, reduced_motion=reduced_motion)
         if text:
             self._body.set_microcopy(text)
 
@@ -1479,8 +1629,9 @@ class StreamingToolBlock(ToolBlock):
             return
 
         lines_written = 0
+        visible_cap = getattr(self, "_visible_cap", _VISIBLE_CAP)  # B4
         for raw, plain in batch:
-            if self._visible_count < _VISIBLE_CAP:
+            if self._visible_count < visible_cap:
                 log.write_with_source(Text.from_ansi(raw), plain)
                 self._visible_count += 1
                 lines_written += 1

@@ -18,7 +18,7 @@ from textual.binding import Binding
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 if TYPE_CHECKING:
     from hermes_cli.tui.tool_result_parse import ResultSummary, ResultSummaryV4
@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 # silently skipped from footer display until implemented.
 _IMPLEMENTED_ACTIONS: frozenset[str] = frozenset({
     "copy_body", "open_first", "copy_err", "copy_paths", "retry",
+    "copy_invocation", "copy_urls",  # G1, G2
 })
 
 
@@ -120,12 +121,17 @@ class FooterPane(Widget):
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
+        self._show_all_artifacts: bool = False  # B3: show all after overflow button click
+        self._last_summary: "ResultSummaryV4 | None" = None
+        self._last_promoted: "frozenset[str]" = frozenset()
 
     def compose(self) -> ComposeResult:
         self._content = Static("", classes="footer-main")
         self._stderr_row = Static("", classes="footer-stderr")
+        self._remediation_row = Static("", classes="footer-remediation")
         yield self._content
         yield self._stderr_row
+        yield self._remediation_row
 
     def _render_stderr(self, tail: str) -> "Any":
         from rich.text import Text
@@ -143,6 +149,16 @@ class FooterPane(Widget):
         promoted_chip_texts: "frozenset[str]" = frozenset(),
     ) -> None:
         """Re-render footer from a ResultSummaryV4 (v4 §4.2)."""
+        self._last_summary = summary
+        self._last_promoted = promoted_chip_texts
+        self._render_footer(summary, promoted_chip_texts)
+
+    def _render_footer(
+        self,
+        summary: "ResultSummaryV4",
+        promoted_chip_texts: "frozenset[str]",
+    ) -> None:
+        """Internal render — called from update_summary_v4 and _rebuild_chips."""
         from rich.text import Text
 
         parts = Text()
@@ -168,13 +184,40 @@ class FooterPane(Widget):
                 parts.append(f"[{action.hotkey}]", style="dim bold")
                 parts.append(f" {action.label}  ", style="dim")
 
-        # Artifact chips (file/url labels)
+        # Artifact chips (file/url labels) — B3: cap at _ARTIFACT_DISPLAY_CAP
+        from hermes_cli.tui.tool_result_parse import _ARTIFACT_DISPLAY_CAP
         if summary.artifacts:
-            for artifact in summary.artifacts:
+            artifacts_to_show = (
+                summary.artifacts
+                if self._show_all_artifacts
+                else summary.artifacts[:_ARTIFACT_DISPLAY_CAP]
+            )
+            for artifact in artifacts_to_show:
                 icon = _artifact_icon(artifact.kind)
                 parts.append(f" {icon} {artifact.label} ", style="dim cyan")
+            # Overflow button — rendered in chips row as inline text hint
+            if (
+                not self._show_all_artifacts
+                and getattr(summary, "artifacts_truncated", False)
+            ):
+                n_hidden = len(summary.artifacts) - _ARTIFACT_DISPLAY_CAP
+                parts.append(f" +{n_hidden} more", style="bold cyan")
 
         self._content.update(parts)
+
+        # B3: overflow button as a proper Button widget — mount/remove dynamically
+        # We use a simple class-tagged approach: remove old overflow button first
+        try:
+            old_btn = self.query_one(".--artifact-overflow", Button)
+            old_btn.remove()
+        except Exception:
+            pass
+        if (
+            not self._show_all_artifacts
+            and getattr(summary, "artifacts_truncated", False)
+        ):
+            n_hidden = len(summary.artifacts) - _ARTIFACT_DISPLAY_CAP
+            self.mount(Button(f"+{n_hidden} more", classes="--artifact-overflow"))
 
         # Stderr split row — multi-line, last 300 chars
         if summary.stderr_tail:
@@ -183,6 +226,31 @@ class FooterPane(Widget):
         else:
             self._stderr_row.update("")
             self.remove_class("has-stderr")
+
+        # A2: remediation hint — any chip with non-None remediation
+        remediation_hints = [
+            c.remediation for c in summary.chips if getattr(c, "remediation", None)
+        ]
+        if remediation_hints:
+            from rich.text import Text as _T
+            rem_text = _T()
+            rem_text.append("  hint: ", style="dim")
+            rem_text.append(remediation_hints[0], style="dim italic")
+            self._remediation_row.update(rem_text)
+        else:
+            self._remediation_row.update("")
+
+    def _rebuild_chips(self) -> None:
+        """B3: re-render after _show_all_artifacts changes."""
+        if self._last_summary is not None:
+            self._render_footer(self._last_summary, self._last_promoted)
+
+    def on_button_pressed(self, event: "Button.Pressed") -> None:
+        """B3: artifact overflow button shows all artifacts."""
+        if "--artifact-overflow" in event.button.classes:
+            self._show_all_artifacts = True
+            self._rebuild_chips()
+            event.stop()
 
     def on_resize(self, event: object) -> None:
         width = getattr(getattr(event, "size", None), "width", 80)
@@ -230,17 +298,21 @@ class ToolPanel(Widget):
     }
 
     BINDINGS = [
-        Binding("enter", "toggle_collapse",  "Toggle",        show=False),
-        Binding("c",     "copy_body",        "Copy output",   show=False),
-        Binding("o",     "open_primary",     "Open",          show=False),
-        Binding("e",     "copy_err",         "Copy stderr",   show=False),
-        Binding("p",     "copy_paths",       "Copy paths",    show=False),
-        Binding("+",     "expand_lines",     "Expand lines",  show=False),
-        Binding("-",     "collapse_lines",   "Collapse lines",show=False),
-        Binding("*",     "expand_all_lines", "Expand all",    show=False),
-        Binding("r",     "retry",            "Retry",         show=False),
-        Binding("j",     "scroll_body_down", "↓",             show=False),
-        Binding("k",     "scroll_body_up",   "↑",             show=False),
+        Binding("enter", "toggle_collapse",  "Toggle",           show=False),
+        Binding("c",     "copy_body",        "Copy output",      show=False),
+        Binding("C",     "copy_ansi",        "Copy +color",      show=False),
+        Binding("H",     "copy_html",        "Copy HTML",        show=False),
+        Binding("I",     "copy_invocation",  "Copy invocation",  show=False),
+        Binding("u",     "copy_urls",        "Copy URLs",        show=False),
+        Binding("o",     "open_primary",     "Open",             show=False),
+        Binding("e",     "copy_err",         "Copy stderr",      show=False),
+        Binding("p",     "copy_paths",       "Copy paths",       show=False),
+        Binding("+",     "expand_lines",     "Expand lines",     show=False),
+        Binding("-",     "collapse_lines",   "Collapse lines",   show=False),
+        Binding("*",     "expand_all_lines", "Expand all",       show=False),
+        Binding("r",     "retry",            "Retry",            show=False),
+        Binding("j",     "scroll_body_down", "↓",                show=False),
+        Binding("k",     "scroll_body_up",   "↑",                show=False),
     ]
 
     # Always start expanded; auto-collapse at completion based on threshold.
@@ -519,6 +591,134 @@ class ToolPanel(Widget):
             self.app._initiate_retry()
         except Exception:
             self._flash_header("retry failed")
+
+    def action_copy_invocation(self) -> None:
+        """G1: copy tool name + args + body as plain text."""
+        terminal_width = getattr(self.app, "size", None)
+        terminal_width = terminal_width.width if terminal_width else 80
+        try:
+            from hermes_cli.tui.tool_category import spec_for, ToolCategory
+            spec = spec_for(self._tool_name or "")
+            is_shell = spec.category == ToolCategory.SHELL
+            cat_name = spec.category.value
+        except Exception:
+            is_shell = False
+            cat_name = "tool"
+        label = self._tool_name or "tool"
+        if is_shell:
+            block = self._block
+            cmd = ""
+            if block is not None:
+                args = getattr(block, "_header", None)
+                args = getattr(args, "_header_args", {}) if args else {}
+                cmd = str(args.get("command") or args.get("cmd") or "")
+            header_line = f"{label} (shell)  $  {cmd}"
+        else:
+            primary_label = self._tool_name or "tool"
+            block = self._block
+            if block is not None:
+                _hdr = getattr(block, "_header", None)
+                if _hdr is not None:
+                    primary_label = _hdr._label or primary_label
+            header_line = f"{label} ({cat_name})    {primary_label}"
+        sep_len = min(40, terminal_width - 4)
+        separator = "─" * sep_len
+        body = self.copy_content()
+        text = "\n".join([header_line, separator, body])
+        self.app._copy_text_with_hint(text)
+        self._flash_header("copied invocation")
+
+    def action_copy_ansi(self) -> None:
+        """C5: copy with ANSI color codes."""
+        import io
+        from rich.console import Console
+        terminal_width = getattr(self.app, "size", None)
+        terminal_width = terminal_width.width if terminal_width else 80
+        block = self._block
+        if block is None:
+            return
+        # Try _all_rich from StreamingToolBlock / CopyableRichLog
+        all_rich = getattr(block, "_all_rich", None)
+        if all_rich is None:
+            try:
+                from hermes_cli.tui.widgets import CopyableRichLog
+                rl = block._body.query_one(CopyableRichLog)
+                all_rich = getattr(rl, "_all_rich", None)
+            except Exception:
+                pass
+        if not all_rich:
+            # Fallback: plain copy
+            self.action_copy_body()
+            return
+        buf = io.StringIO()
+        console = Console(force_terminal=True, width=terminal_width, file=buf, highlight=False)
+        for t in all_rich:
+            console.print(t, highlight=False)
+        ansi_text = buf.getvalue()
+        # Try clipboard first; fallback to /tmp file
+        import subprocess, time as _time
+        copied = False
+        for cmd in (["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"]):
+            try:
+                proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+                proc.communicate(input=ansi_text.encode())
+                if proc.returncode == 0:
+                    copied = True
+                    break
+            except FileNotFoundError:
+                continue
+        if not copied:
+            tmp_path = f"/tmp/hermes_ansi_{int(_time.time())}.txt"
+            with open(tmp_path, "w") as f:
+                f.write(ansi_text)
+            self._flash_header(f"ansi → {tmp_path}")
+            return
+        self._flash_header("copied ansi")
+
+    def action_copy_html(self) -> None:
+        """C5: copy as HTML with inline styles."""
+        import time as _time
+        from rich.console import Console
+        terminal_width = getattr(self.app, "size", None)
+        terminal_width = terminal_width.width if terminal_width else 80
+        block = self._block
+        if block is None:
+            return
+        all_rich = getattr(block, "_all_rich", None)
+        if all_rich is None:
+            try:
+                from hermes_cli.tui.widgets import CopyableRichLog
+                rl = block._body.query_one(CopyableRichLog)
+                all_rich = getattr(rl, "_all_rich", None)
+            except Exception:
+                pass
+        if not all_rich:
+            return
+        console = Console(record=True, width=terminal_width)
+        for t in all_rich:
+            console.print(t, highlight=False)
+        html = console.export_html(inline_styles=True)
+        # Inject skin background color
+        try:
+            bg_hex = self.app.get_css_variables().get("base", "#1e1e2e")
+        except Exception:
+            bg_hex = "#1e1e2e"
+        html = html.replace('<pre style="', f'<pre style="background:{bg_hex}; ', 1)
+        tmp_path = f"/tmp/hermes_copy_{int(_time.time())}.html"
+        with open(tmp_path, "w") as f:
+            f.write(html)
+        self._flash_header(f"html → {tmp_path}")
+
+    def action_copy_urls(self) -> None:
+        """G2: copy newline-joined URL artifacts."""
+        rs = self._result_summary_v4
+        if rs is None:
+            return
+        urls = [a.path_or_url for a in rs.artifacts if a.kind == "url"]
+        if not urls:
+            return
+        self.app._copy_text_with_hint("\n".join(urls))
+        self._flash_header(f"copied {len(urls)} url(s)")
 
     def action_scroll_body_down(self) -> None:
         """Scroll tool body down (j) (C2)."""

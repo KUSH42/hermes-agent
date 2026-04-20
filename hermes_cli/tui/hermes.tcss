@@ -42,6 +42,7 @@ $error-network: #f97316;
  * HermesApp. Both must be set so every widget in the tree shows $app-bg. */
 Screen {
     background: $app-bg;
+    layers: base overlay tooltip;
 }
 
 HermesApp {
@@ -57,11 +58,11 @@ HermesApp {
     scrollbar-corner-color: $app-bg;
 }
 
-/* OutputPanel: show scrollbar so terminal scrollbar controls pane scrolling.
-   $scrollbar is Textual's built-in var — skins override it in component_vars
-   to match the scrollbar to their palette. */
+/* OutputPanel: scrollbar hidden — scroll via mouse wheel or keyboard.
+   A visible but non-functional scrollbar track (liar element) was worse
+   than no scrollbar, since the CopyableRichLog inner log owns the actual
+   scroll state and does not wire to the parent track. */
 OutputPanel {
-    scrollbar-size-vertical: 1;
     scrollbar-color: $scrollbar 60%;
 }
 

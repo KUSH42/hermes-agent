@@ -8438,7 +8438,9 @@ class HermesCLI:
 
         # Initialize agent if needed
         if self.agent is None:
-            _cprint(f"{_DIM}Initializing agent...{_RST}")
+            # Keep this line plain. Some terminals/TUI render paths occasionally
+            # corrupt the first visible glyph on lines that begin with ANSI SGR.
+            _cprint("Initializing agent...")
         if not self._init_agent(
             model_override=turn_route["model"],
             runtime_override=turn_route["runtime"],
@@ -10595,19 +10597,19 @@ class HermesCLI:
             _os.environ.setdefault("TEXTUAL_FPS", "60")
             from hermes_cli.tui.app import HermesApp as _HApp
             from hermes_cli.tui.osc52_probe import (
-                probe_osc52 as _probe_osc52,
                 check_clipboard_env as _check_clipboard_env,
                 find_xclip_cmd as _find_xclip_cmd,
             )
-            import asyncio as _aio_probe
             _clipboard_override = _check_clipboard_env()
             if _clipboard_override is not None:
                 _clipboard_ok = _clipboard_override
             else:
-                try:
-                    _clipboard_ok = _aio_probe.run(_probe_osc52())
-                except Exception:
-                    _clipboard_ok = False
+                # Do not auto-probe OSC 52 at startup. Some terminals surface the
+                # readback payload as raw user input, which pollutes the input bar
+                # with `]52;c;...` clipboard data on a fresh start. Users can still
+                # force-enable clipboard support with HERMES_CLIPBOARD=1, and local
+                # clipboard helpers remain available via xclip/xsel/wl-copy.
+                _clipboard_ok = False
             _xclip_cmd = _find_xclip_cmd() if not _clipboard_ok else None
             _tui_app = _HApp(
                 cli=self,
@@ -10616,6 +10618,8 @@ class HermesCLI:
                 xclip_cmd=_xclip_cmd,
             )
             _tui_app._inline_image_bar_enabled = self._inline_image_bar_enabled
+            _scroll_raw = CLI_CONFIG.get("terminal", {}).get("scroll_lines", 3)
+            _tui_app._scroll_lines = max(1, min(20, int(_scroll_raw)))
             _tui_app._math_enabled = self._math_enabled
             _tui_app._math_renderer = self._math_renderer
             _tui_app._mermaid_enabled = self._mermaid_enabled

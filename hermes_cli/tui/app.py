@@ -121,7 +121,12 @@ from hermes_cli.tui.tool_category import (
 )
 from hermes_cli.tui.constants import ICON_COPY
 from hermes_cli.tui.animation import AnimationClock, shimmer_text
-from hermes_cli.tui.perf import EventLoopLatencyProbe, FrameRateProbe, WorkerWatcher
+from hermes_cli.tui.perf import (
+    EventLoopLatencyProbe,
+    FrameRateProbe,
+    SuspicionDetector,
+    WorkerWatcher,
+)
 from hermes_cli.tui.theme_manager import ThemeManager
 from wcwidth import wcswidth
 
@@ -427,6 +432,10 @@ class HermesApp(App):
         self._worker_watcher: WorkerWatcher | None = None
         self._event_loop_probe: EventLoopLatencyProbe | None = None
         self._frame_probe: FrameRateProbe | None = None
+        self._spinner_perf_alarm: SuspicionDetector | None = None
+        self._duration_perf_alarm: SuspicionDetector | None = None
+        self._workspace_poll_perf_alarm: SuspicionDetector | None = None
+        self._workspace_apply_perf_alarm: SuspicionDetector | None = None
         self._fps_hud_update_every: int = 1  # refined in on_mount once MAX_FPS is known
 
         # Spinner frames — read from module-level _COMMAND_SPINNER_FRAMES in cli.py
@@ -438,6 +447,8 @@ class HermesApp(App):
 
         # Whether to use HermesInput (step 5) or interim TextArea
         self._use_hermes_input = True
+        # Lines scrolled per mouse wheel tick — overridden from config in cli.py
+        self._scroll_lines: int = 3
 
         # Browse-mode visit counter — first 3 visits show full hint, then compact
         self._browse_uses: int = 0
@@ -492,6 +503,10 @@ class HermesApp(App):
         self._last_git_snapshot: GitSnapshot | None = None
         self._git_poll_h: object | None = None  # textual.timer.Timer
         self._workspace_hint_shown: bool = False
+        self._workspace_tracker = None
+        self._git_poller = None
+        self._git_poll_in_flight: bool = False
+        self._git_poll_retrigger: bool = False
 
     # --- Compose ---
 
@@ -557,6 +572,42 @@ class HermesApp(App):
         self._event_loop = asyncio.get_running_loop()
         self._worker_watcher = WorkerWatcher(self)
         self._event_loop_probe = EventLoopLatencyProbe()
+        self._spinner_perf_alarm = SuspicionDetector(
+            "spinner-tick",
+            budget_ms=16.0,
+            severe_ms=50.0,
+            burst_window=5,
+            burst_count=2,
+            streak_count=2,
+            cooldown_s=10.0,
+        )
+        self._duration_perf_alarm = SuspicionDetector(
+            "duration-tick",
+            budget_ms=16.0,
+            severe_ms=50.0,
+            burst_window=5,
+            burst_count=2,
+            streak_count=2,
+            cooldown_s=10.0,
+        )
+        self._workspace_poll_perf_alarm = SuspicionDetector(
+            "workspace-git-poll",
+            budget_ms=250.0,
+            severe_ms=1500.0,
+            burst_window=4,
+            burst_count=2,
+            streak_count=2,
+            cooldown_s=20.0,
+        )
+        self._workspace_apply_perf_alarm = SuspicionDetector(
+            "workspace-apply",
+            budget_ms=16.0,
+            severe_ms=80.0,
+            burst_window=5,
+            burst_count=2,
+            streak_count=2,
+            cooldown_s=10.0,
+        )
         self._theme_manager.start_hot_reload()
         from textual import constants as _tc
         _frame_interval = 1.0 / _tc.MAX_FPS  # matches Screen._update_timer cadence
@@ -673,27 +724,72 @@ class HermesApp(App):
                 stderr=_sp.DEVNULL,
                 timeout=5,
             ).decode().strip()
+            is_git_repo = True
         except Exception:
             root = _os.getcwd()
-        tracker = WorkspaceTracker(root)
-        poller = GitPoller(root)
+            is_git_repo = False
+        tracker = WorkspaceTracker(root, is_git_repo=is_git_repo)
+        poller = GitPoller(root, is_git_repo=is_git_repo)
         self.call_from_thread(self._set_workspace_tracker, tracker, poller)
 
     def _set_workspace_tracker(self, tracker: WorkspaceTracker, poller: GitPoller) -> None:
         self._workspace_tracker = tracker
         self._git_poller = poller
+        if not poller.is_git_repo:
+            self._last_git_snapshot = GitSnapshot(
+                branch="",
+                dirty_count=0,
+                entries=[],
+                staged_count=0,
+                untracked_count=0,
+                modified_count=0,
+                deleted_count=0,
+                renamed_count=0,
+                conflicted_count=0,
+                is_git_repo=False,
+            )
 
     def _trigger_git_poll(self) -> None:
-        if getattr(self, "_git_poller", None) is not None:
-            self._run_git_poll()
+        poller = getattr(self, "_git_poller", None)
+        if poller is None or not getattr(poller, "is_git_repo", False):
+            return
+        if self._git_poll_in_flight:
+            self._git_poll_retrigger = True
+            return
+        self._git_poll_in_flight = True
+        self._run_git_poll()
 
     @work(thread=True, group="git-poll")
     def _run_git_poll(self) -> None:
+        import time as _t
         poller = getattr(self, "_git_poller", None)
         if poller is None:
             return
+        _t0 = _t.perf_counter()
         snapshot = poller.poll()
-        self.post_message(WorkspaceUpdated(snapshot))
+        elapsed_ms = (_t.perf_counter() - _t0) * 1000.0
+        self.post_message(WorkspaceUpdated(snapshot, poll_elapsed_ms=elapsed_ms))
+
+    def _workspace_polling_desired(self) -> bool:
+        poller = getattr(self, "_git_poller", None)
+        if poller is None or not getattr(poller, "is_git_repo", False):
+            return False
+        overlay_visible = False
+        try:
+            overlay_visible = self.query_one(WorkspaceOverlay).has_class("--visible")
+        except NoMatches:
+            pass
+        return overlay_visible or bool(self.agent_running)
+
+    def _sync_workspace_polling_state(self) -> None:
+        desired = self._workspace_polling_desired()
+        if desired:
+            if self._git_poll_h is None:
+                self._git_poll_h = self.set_interval(5.0, self._trigger_git_poll)
+        else:
+            if self._git_poll_h is not None:
+                self._git_poll_h.stop()
+                self._git_poll_h = None
 
     @work(thread=True, group="complexity")
     def _analyze_complexity(self, path: str) -> None:
@@ -717,20 +813,40 @@ class HermesApp(App):
             pass
 
     def on_workspace_updated(self, event: WorkspaceUpdated) -> None:
+        import time as _t
+
+        self._git_poll_in_flight = False
         self._last_git_snapshot = event.snapshot
         tracker = getattr(self, "_workspace_tracker", None)
         if tracker is None:
             return
-        tracker.apply_git_status(event.snapshot.status_lines)
+        if event.poll_elapsed_ms is not None and self._workspace_poll_perf_alarm is not None:
+            self._workspace_poll_perf_alarm.observe(
+                event.poll_elapsed_ms,
+                detail=f"entries={len(event.snapshot.entries)}",
+            )
+        _t0 = _t.perf_counter()
+        tracker.apply_snapshot(event.snapshot)
         try:
             ov = self.query_one(WorkspaceOverlay)
             if ov.has_class("--visible"):
                 ov.refresh_data(tracker, event.snapshot)
         except NoMatches:
             pass
+        apply_ms = (_t.perf_counter() - _t0) * 1000.0
+        if self._workspace_apply_perf_alarm is not None:
+            self._workspace_apply_perf_alarm.observe(
+                apply_ms,
+                detail=f"entries={len(event.snapshot.entries)} overlay_visible={ov.has_class('--visible') if 'ov' in locals() else False}",
+            )
         if not self._workspace_hint_shown and tracker.entries():
             self._workspace_hint_shown = True
             self._flash_hint("w  workspace changes", 3.0)
+        if self._git_poll_retrigger and self._workspace_polling_desired():
+            self._git_poll_retrigger = False
+            self._trigger_git_poll()
+        else:
+            self._git_poll_retrigger = False
 
     # ---------------------------------------------------------------------------
     # MCP registry handlers (v4 P1 — sub-spec B §5.3)
@@ -772,6 +888,7 @@ class HermesApp(App):
             if tracker is not None:
                 ov.refresh_data(tracker, self._last_git_snapshot)
             ov.show_overlay()
+            self._sync_workspace_polling_state()
             self._trigger_git_poll()
 
     # --- InlineImageBar handlers ---
@@ -857,6 +974,7 @@ class HermesApp(App):
                     pass
             try:
                 panel = self.query_one(OutputPanel)
+                panel.record_raw_output(chunk)
                 panel.live_line.feed(chunk)
                 try:
                     msg = panel.current_message
@@ -1095,6 +1213,11 @@ class HermesApp(App):
         _dt = (_time.perf_counter() - _t0) * 1000
         if _dt > 16:
             _log_lag(f"_tick_spinner took {_dt:.1f}ms")
+        if self._spinner_perf_alarm is not None:
+            self._spinner_perf_alarm.observe(
+                _dt,
+                detail=f"agent_running={self.agent_running} command_running={self.command_running}",
+            )
 
     @staticmethod
     def _cell_width(text: str) -> int:
@@ -1207,6 +1330,11 @@ class HermesApp(App):
         _dt = (_t.perf_counter() - _t0) * 1000
         if _dt > 16:
             _log_lag(f"_tick_duration took {_dt:.1f}ms")
+        if self._duration_perf_alarm is not None:
+            self._duration_perf_alarm.observe(
+                _dt,
+                detail=f"agent_running={self.agent_running} workers={len(self.workers)}",
+            )
 
     # --- FPS HUD ticker ---
 
@@ -1258,7 +1386,6 @@ class HermesApp(App):
             panel = self.query_one(OutputPanel)
             ump = UserMessagePanel(text, images=images)
             panel.mount(ump, before=panel.query_one(ThinkingWidget))
-            self._resolve_user_emoji(text, ump)
             # Always scroll to show the user's own message regardless of scroll
             # position — the user just submitted, they expect to see the exchange.
             # Re-engage auto-scroll for the upcoming assistant response.
@@ -1272,6 +1399,12 @@ class HermesApp(App):
 
         Runs on the event-loop thread (called directly from echo_user_message).
         """
+        # User echo is a lightweight transcript row, not rich response prose.
+        # Mounting image widgets into it after first paint can perturb turn
+        # layout and visually corrupt adjacent status lines. Keep raw :name:
+        # text in the echo panel; custom emoji remain enabled in assistant
+        # responses where the richer layout path is designed for it.
+        return
         from hermes_cli.tui.response_flow import _EMOJI_RE
         from hermes_cli.tui.kitty_graphics import get_caps, GraphicsCap
         registry = getattr(self, "_emoji_registry", None)
@@ -1398,16 +1531,15 @@ class HermesApp(App):
             # Track turn start for desktop notify
             import time as _time
             self._turn_start_time = _time.monotonic()
-            # Start 5s background git poll
-            if self._git_poll_h is None:
-                self._git_poll_h = self.set_interval(5.0, self._trigger_git_poll)
+            try:
+                self.query_one(OutputPanel).reset_turn_capture()
+            except NoMatches:
+                pass
+            self._sync_workspace_polling_state()
             # OSC progress bar
             self._osc_progress_update(True)
         else:
-            # Stop background git poll
-            if self._git_poll_h is not None:
-                self._git_poll_h.stop()
-                self._git_poll_h = None
+            self._sync_workspace_polling_state()
             try:
                 chevron = self.query_one("#input-chevron", Static)
                 if not chevron.has_class("--phase-error"):
@@ -2978,9 +3110,40 @@ class HermesApp(App):
         # Resolve screen coords — show() receives ints, not int|None
         sx = event.screen_x if event.screen_x is not None else event.x
         sy = event.screen_y if event.screen_y is not None else event.y
+        await self._show_context_menu_at(items, sx, sy)
+
+    async def _show_context_menu_for_focused(self) -> None:
+        """Show context menu at the center of the currently focused widget.
+
+        Used by keyboard shortcuts that invoke the context menu without a
+        real Click event (no valid screen_x/screen_y).
+        """
+        widget = self.focused
+        items: list = []
+        if widget is not None:
+            class _FakeEvent:
+                button = 3
+                widget = None
+            fake = _FakeEvent()
+            fake.widget = widget
+            items = self._build_context_items(fake)
+        if not items:
+            return
+        x, y = 0, 0
+        if widget is not None:
+            try:
+                region = widget.content_region
+                x = region.x + region.width // 2
+                y = region.y + region.height // 2
+            except Exception:
+                pass
+        await self._show_context_menu_at(items, x, y)
+
+    async def _show_context_menu_at(self, items: list, x: int, y: int) -> None:
+        """Position and reveal the ContextMenu at given screen coordinates."""
         try:
             from hermes_cli.tui.context_menu import ContextMenu as _CM
-            await self.query_one(_CM).show(items, sx, sy)
+            await self.query_one(_CM).show(items, x, y)
         except NoMatches:
             pass
 
@@ -3174,8 +3337,14 @@ class HermesApp(App):
         threading.Thread(target=lambda: subprocess.run([opener, url], check=False), daemon=True).start()
 
     def on_copyable_rich_log_link_clicked(self, event: "Any") -> None:
-        """Handle link clicks bubbled from CopyableRichLog widgets."""
-        self._open_external_url(event.url)
+        """Handle link clicks bubbled from CopyableRichLog widgets.
+
+        Plain click copies to clipboard. Ctrl+click opens in browser/file manager.
+        """
+        if getattr(event, "ctrl", False):
+            self._open_external_url(event.url)
+        else:
+            self._copy_text_with_hint(event.url)
 
     def _open_path_action(self, header: Any, path: str, opener: str, folder: bool) -> None:
         """Open file/URL or containing folder in a worker thread."""
@@ -3270,6 +3439,7 @@ class HermesApp(App):
                 self.query_one(cls).remove_class("--visible")
             except NoMatches:
                 pass
+        self._sync_workspace_polling_state()
 
     def _handle_tui_command(self, text: str) -> bool:
         """Intercept TUI-specific slash commands before agent sees them.

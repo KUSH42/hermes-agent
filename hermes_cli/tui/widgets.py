@@ -39,6 +39,7 @@ from textual.widget import Widget
 from textual.widgets import Input, RichLog, Static
 
 from hermes_cli.tui.animation import AnimationClock, PulseMixin, lerp_color, shimmer_text
+from hermes_cli.tui.tooltip import TooltipMixin
 
 from hermes_cli.tui.state import (
     ChoiceOverlayState,
@@ -87,6 +88,7 @@ def _boost_layout_caches(
 _ANSI_RE = re.compile(
     r"\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]"
 )
+_ORPHAN_CSI_RE = re.compile(r"(?<!\x1b)(?:;[0-9;]+[A-Za-z]|\[[0-9;]*m)")
 _PRENUMBERED_LINE_RE = re.compile(r"^\s*(\d+)(?:\s*[│|:]\s?|\s{2,})(.*)$")
 
 
@@ -129,7 +131,22 @@ def _apply_span_style(strip: Strip, start_x: int, end_x: int, style: Style) -> S
 
 def _strip_ansi(text: str) -> str:
     """Strip ANSI CSI escape sequences from text."""
-    return _ANSI_RE.sub("", text)
+    text = _ANSI_RE.sub("", text)
+    return _ORPHAN_CSI_RE.sub("", text)
+
+
+def _normalize_ansi_for_render(text: str) -> str:
+    """Normalize ANSI-like text before feeding it to Rich.
+
+    Some tool/model output drops the ESC byte and leaves orphaned CSI tails like
+    ``[38;2;...m`` in the stream. Strip those fragments so they never render as
+    visible garbage in the TUI.
+    """
+    if not text:
+        return ""
+    if "\x9b" in text:
+        text = text.replace("\x9b", "\x1b[")
+    return _ORPHAN_CSI_RE.sub("", text)
 
 
 def _prewrap_code_line(highlighted: str, source_line: str = "", width: int | None = None) -> list[str]:
@@ -406,10 +423,15 @@ class CopyableRichLog(RichLog, can_focus=False):
     """
 
     class LinkClicked(Message):
-        """Posted when the user clicks a linkified URL or path in the log."""
-        def __init__(self, url: str) -> None:
+        """Posted when the user clicks a linkified URL or path in the log.
+
+        ``ctrl=True``  → open in browser/file manager (Ctrl+click)
+        ``ctrl=False`` → copy to clipboard (plain click, default)
+        """
+        def __init__(self, url: str, ctrl: bool = False) -> None:
             super().__init__()
             self.url = url
+            self.ctrl = ctrl
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -536,9 +558,15 @@ class CopyableRichLog(RichLog, can_focus=False):
         return "\n".join(self._plain_lines)
 
     def on_click(self, event: "Any") -> None:
-        """Open linkified URL/path on left-click (button 1)."""
+        """Left-click on a link: plain click copies, Ctrl+click opens.
+
+        Plain left-click copies the URL/path to clipboard (safer — avoids
+        accidental file/browser opens). Ctrl+left-click opens in the system
+        browser or file manager.
+        """
         if getattr(event, "button", 1) != 1:
             return
+        ctrl = bool(getattr(event, "ctrl", False))
         scroll_y = self.scroll_offset.y
         content_y = scroll_y + event.y
         # Try Rich meta first (exact span hit)
@@ -551,7 +579,7 @@ class CopyableRichLog(RichLog, can_focus=False):
                     meta = seg.style.meta if seg.style else {}
                     url = meta.get("_link_url")
                     if url:
-                        self.post_message(CopyableRichLog.LinkClicked(url))
+                        self.post_message(CopyableRichLog.LinkClicked(url, ctrl=ctrl))
                         event.stop()
                         return
                 col += seg_len
@@ -559,7 +587,7 @@ class CopyableRichLog(RichLog, can_focus=False):
         if content_y < len(self._line_links):
             url = self._line_links[content_y]
             if url:
-                self.post_message(CopyableRichLog.LinkClicked(url))
+                self.post_message(CopyableRichLog.LinkClicked(url, ctrl=ctrl))
                 event.stop()
 
     def clear(self) -> "CopyableRichLog":
@@ -853,6 +881,11 @@ class InlineProseLog(CopyableRichLog):
         return (-1, 0)
 
 
+class _CopyBtn(TooltipMixin, Static):
+    """Hover-reveal copy button with tooltip affordance."""
+    _tooltip_text = "Copy block"
+
+
 class CopyableBlock(Widget):
     """Wraps CopyableRichLog with a hover-reveal copy button."""
 
@@ -890,7 +923,7 @@ class CopyableBlock(Widget):
         try:
             self.query_one("#copy-btn")
         except NoMatches:
-            self.mount(Static("⎘", id="copy-btn"))
+            self.mount(_CopyBtn("⎘", id="copy-btn"))
 
 
 class CodeBlockFooter(Widget):
@@ -1070,7 +1103,7 @@ class LiveLineWidget(Widget):
                 return t
             except Exception:
                 pass  # fall through to existing render path
-        t = Text.from_ansi(self._buf) if self._buf else Text("")
+        t = Text.from_ansi(_normalize_ansi_for_render(self._buf)) if self._buf else Text("")
         # Typewriter cursor (existing path — typewriter on):
         if self._animating and getattr(self, "_tw_cursor", True):
             t.append("▌", style="blink")
@@ -1102,9 +1135,12 @@ class LiveLineWidget(Widget):
                 else:
                     plain = _strip_ansi(committed)
                     if isinstance(rl, CopyableRichLog):
-                        rl.write_with_source(Text.from_ansi(committed), plain)
+                        rl.write_with_source(
+                            Text.from_ansi(_normalize_ansi_for_render(committed)),
+                            plain,
+                        )
                     else:
-                        rl.write(Text.from_ansi(committed))
+                        rl.write(Text.from_ansi(_normalize_ansi_for_render(committed)))
             if rl._deferred_renders:
                 self.call_after_refresh(msg.refresh, layout=True)
         except NoMatches:
@@ -1285,6 +1321,7 @@ class MessagePanel(Widget):
         self._active_thinking_block: ReasoningPanel | None = None
         self._active_prose_block: CopyableBlock = self._response_block
         self._user_text: str = user_text
+        self._raw_response_text: str = ""
         self._response_engine: "Any | None" = None   # ResponseFlowEngine, set in on_mount
         self._last_file_tool_block: "Any | None" = None   # tracks most-recent file-tool STB for diff connector
         # adjacent-mount anchors: tool_name → most-recently-opened panel to mount siblings after
@@ -1359,6 +1396,14 @@ class MessagePanel(Widget):
 
     def current_prose_log(self) -> CopyableRichLog:
         return self.ensure_prose_block().log
+
+    def set_raw_response_text(self, text: str) -> None:
+        """Store the unprocessed streamed assistant text for this turn."""
+        self._raw_response_text = text
+
+    def raw_response_text(self) -> str:
+        """Return the full unprocessed streamed assistant text for this turn."""
+        return self._raw_response_text
 
     def _has_any_prose_content(self) -> bool:
         return any(block.log._plain_lines for block in self._prose_blocks)
@@ -1648,7 +1693,7 @@ class MessagePanel(Widget):
 # StreamingCodeBlock — fenced code block widget (stream-then-finalize)
 # ---------------------------------------------------------------------------
 
-class StreamingCodeBlock(Widget):
+class StreamingCodeBlock(TooltipMixin, Widget):
     """Fenced code block widget: streams per-line Pygments highlight, then
     finalizes to full rich.Syntax on fence close.
 
@@ -1682,6 +1727,8 @@ class StreamingCodeBlock(Widget):
     def watch__browse_badge(self, badge: str) -> None:
         """Set border_title when badge is non-empty, clear it when empty."""
         self.border_title = badge if badge else ""
+
+    _tooltip_text = "Left-click: expand/collapse  Right-click: copy"
 
     def __init__(
         self,
@@ -1892,8 +1939,16 @@ class StreamingCodeBlock(Widget):
             self._controls_text_plain = ""
 
     def on_click(self, event: Any) -> None:
-        """Left click toggles expand/collapse on finalized blocks."""
+        """Left click toggles expand/collapse; double-click copies all code."""
         if getattr(event, "button", 1) != 1:
+            return
+        if getattr(event, "chain", 1) == 2 and self._state != "STREAMING":
+            code = "\n".join(self._display_code_lines())
+            try:
+                self.app._copy_text_with_hint(code)
+            except Exception:
+                pass
+            event.prevent_default()
             return
         if self.can_toggle():
             self.toggle_collapsed()
@@ -2057,6 +2112,16 @@ class OutputPanel(ScrollableContainer):
         super().__init__(**kwargs)
         _boost_layout_caches(self, box_model_maxsize=256, arrangement_maxsize=32)
         self._user_scrolled_up: bool = False
+        self._turn_raw_output: str = ""
+
+    def reset_turn_capture(self) -> None:
+        """Clear the raw assistant text capture for the next turn."""
+        self._turn_raw_output = ""
+
+    def record_raw_output(self, text: str) -> None:
+        """Append raw streamed assistant text for the current turn."""
+        if text:
+            self._turn_raw_output += text
 
     def watch_scroll_y(self, old_y: float, new_y: float) -> None:
         """Re-engage auto-scroll when the user scrolls back to the bottom.
@@ -2088,14 +2153,16 @@ class OutputPanel(ScrollableContainer):
         return self._user_scrolled_up
 
     def on_mouse_scroll_up(self, event: Any) -> None:
-        """Scroll up 3 lines per wheel tick and suppress auto-scroll."""
+        """Scroll up per wheel tick and suppress auto-scroll."""
         self._user_scrolled_up = True
-        self.scroll_relative(y=-self._SCROLL_LINES, animate=False, immediate=True)
+        n = getattr(self.app, "_scroll_lines", self._SCROLL_LINES)
+        self.scroll_relative(y=-n, animate=False, immediate=True)
         event.prevent_default()
 
     def on_mouse_scroll_down(self, event: Any) -> None:
-        """Scroll down 3 lines per wheel tick; re-engage auto-scroll at bottom."""
-        self.scroll_relative(y=self._SCROLL_LINES, animate=False, immediate=True)
+        """Scroll down per wheel tick; re-engage auto-scroll at bottom."""
+        n = getattr(self.app, "_scroll_lines", self._SCROLL_LINES)
+        self.scroll_relative(y=n, animate=False, immediate=True)
         event.prevent_default()
         # watch_scroll_y handles re-engaging auto-scroll when near the bottom.
 
@@ -2190,9 +2257,12 @@ class OutputPanel(ScrollableContainer):
             else:
                 plain = _strip_ansi(live._buf)
                 if isinstance(rl, CopyableRichLog):
-                    rl.write_with_source(Text.from_ansi(live._buf), plain)
+                    rl.write_with_source(
+                        Text.from_ansi(_normalize_ansi_for_render(live._buf)),
+                        plain,
+                    )
                 else:
-                    rl.write(Text.from_ansi(live._buf))
+                    rl.write(Text.from_ansi(_normalize_ansi_for_render(live._buf)))
             if rl._deferred_renders:
                 self.call_after_refresh(msg.refresh, layout=True)
             live._buf = ""
@@ -2203,6 +2273,7 @@ class OutputPanel(ScrollableContainer):
             engine2 = getattr(msg2, "_response_engine", None)
             if engine2 is not None:
                 engine2.flush()  # closes open StreamingCodeBlock if mid-fence; flushes StreamingBlockBuffer
+            msg2.set_raw_response_text(self._turn_raw_output)
 
 
 # ---------------------------------------------------------------------------
@@ -2356,7 +2427,7 @@ class UserMessagePanel(Widget):
 # Reasoning panel (Step 2)
 # ---------------------------------------------------------------------------
 
-class ReasoningPanel(Widget):
+class ReasoningPanel(TooltipMixin, Widget):
     """Collapsible reasoning display with left gutter marker.
 
     Hidden by default via CSS ``display: none``. Toggled visible via the
@@ -2388,6 +2459,8 @@ class ReasoningPanel(Widget):
     }
     """
     _content_type: str = "reasoning"
+
+    _tooltip_text = "Click to collapse reasoning"
 
     def __init__(self, **kwargs: Any) -> None:
         self._reasoning_log = InlineProseLog(markup=False, highlight=False, wrap=True, id="reasoning-log")
@@ -2444,13 +2517,17 @@ class ReasoningPanel(Widget):
             self._update_collapsed_stub()
 
     def on_click(self, event: Any | None = None) -> None:
-        """Toggle body visibility after streaming completes."""
+        """Single-click toggles collapse; double-click force-expands."""
         if not self._is_closed:
             return
         if event is not None and getattr(event, "button", 1) != 1:
             return
         if event is not None:
             event.prevent_default()
+        if event is not None and getattr(event, "chain", 1) == 2:
+            self._body_collapsed = False
+            self._sync_collapsed_state()
+            return
         self._body_collapsed = not self._body_collapsed
         self._sync_collapsed_state()
 
@@ -4159,13 +4236,28 @@ class TurnResultItem(Static):
         self.update(_build_result_label(result))
 
     def on_click(self, event: Any) -> None:
-        """Clicking a result row jumps to the turn."""
-        if event.button == 1:
-            try:
-                overlay = self.app.query_one(HistorySearchOverlay)
-                overlay.action_jump_to(self._entry, self._result)
-            except NoMatches:
-                pass
+        """Left-click jumps to turn; Shift+left-click range-selects without jumping."""
+        if getattr(event, "button", 1) != 1:
+            return
+        try:
+            overlay = self.app.query_one(HistorySearchOverlay)
+        except NoMatches:
+            return
+        items = list(overlay.query(TurnResultItem))
+        try:
+            my_idx = items.index(self)
+        except ValueError:
+            return
+        if getattr(event, "shift", False) and overlay._last_click_idx is not None:
+            lo = min(overlay._last_click_idx, my_idx)
+            hi = max(overlay._last_click_idx, my_idx)
+            overlay._shift_selected = set(range(lo, hi + 1))
+            for i, item in enumerate(items):
+                item.set_class(lo <= i <= hi, "--selected")
+        else:
+            overlay._last_click_idx = my_idx
+            overlay._shift_selected = set()
+            overlay.action_jump_to(self._entry, self._result)
 
 
 class KeymapOverlay(Widget):
@@ -4324,6 +4416,8 @@ class HistorySearchOverlay(Widget):
         self._selected_idx: int = 0
         self._saved_hint: str = ""
         self._debounce_handle: Any = None  # Timer | None; cancelled on each new keystroke
+        self._last_click_idx: int | None = None  # anchor for shift+click range select
+        self._shift_selected: set[int] = set()    # indices highlighted by shift+click
 
     def compose(self) -> ComposeResult:
         yield Input(placeholder="Search history  ↑↓ navigate · Enter jump · Esc close", id="history-search-input")
@@ -4355,6 +4449,8 @@ class HistorySearchOverlay(Widget):
         if self._debounce_handle is not None:
             self._debounce_handle.stop()
             self._debounce_handle = None
+        self._shift_selected = set()
+        self._last_click_idx = None
         self.remove_class("--visible")
         try:
             self.app.query_one(HintBar).hint = self._saved_hint
@@ -4490,14 +4586,20 @@ class HistorySearchOverlay(Widget):
         self._update_selection()
 
     def action_jump(self) -> None:
-        """Jump to the selected turn and dismiss the overlay."""
+        """Jump to the selected turn (or first shift-selected) and dismiss."""
         items = list(self.query(TurnResultItem))
         if not items:
             self.action_dismiss()
             return
-        idx = max(0, min(self._selected_idx, len(items) - 1))
-        result = items[idx]._result
-        entry = items[idx]._entry
+        if self._shift_selected:
+            first = min(self._shift_selected)
+            first = max(0, min(first, len(items) - 1))
+            result = items[first]._result
+            entry = items[first]._entry
+        else:
+            idx = max(0, min(self._selected_idx, len(items) - 1))
+            result = items[idx]._result
+            entry = items[idx]._entry
         self.action_dismiss()
         if entry is None:
             return
@@ -4701,7 +4803,8 @@ class InlineImage(Widget):
         super().__init__(**kwargs)
         self._image_id: int | None = None
         self._rendered_rows: int = 1
-        self._tgp_seq: str = ""
+        self._tgp_transmitted: bool = False
+        self._tgp_placeholder_strips: list[Strip] = []
         self._sixel_seq: str = ""
         self._halfblock_strips: list[Strip] = []
         self._src_path: str = ""
@@ -4714,11 +4817,17 @@ class InlineImage(Widget):
 
     def watch_image(self, new_image: "Any") -> None:
         from hermes_cli.tui.kitty_graphics import (
-            GraphicsCap, _get_renderer, _load_image, get_caps, get_inline_images_mode,
-            render_halfblock,
+            GraphicsCap,
+            _load_image,
+            _supports_unicode_placeholders,
+            get_caps,
+            get_inline_images_mode,
         )
         if new_image is None or get_inline_images_mode() == "off":
-            self._tgp_seq = ""
+            self._tgp_transmitted = False
+            self._tgp_placeholder_strips = []
+            self._sixel_seq = ""
+            self._halfblock_strips = []
             self._rendered_rows = 1
             self.styles.height = 1
             self.refresh()
@@ -4727,17 +4836,18 @@ class InlineImage(Widget):
             self._src_path = str(new_image)
         img = _load_image(new_image)
         if img is None:
-            self._tgp_seq = ""
+            self._tgp_transmitted = False
+            self._tgp_placeholder_strips = []
+            self._sixel_seq = ""
+            self._halfblock_strips = []
             self._rendered_rows = 1
             self.styles.height = 1
             self.refresh()
             return
         cap = get_caps()
-        if cap == GraphicsCap.TGP:
+        if cap == GraphicsCap.TGP and _supports_unicode_placeholders():
             self._prepare_tgp(img)
-        elif cap == GraphicsCap.SIXEL:
-            self._prepare_sixel(img)
-        elif cap == GraphicsCap.HALFBLOCK:
+        elif cap in (GraphicsCap.TGP, GraphicsCap.SIXEL, GraphicsCap.HALFBLOCK):
             self._prepare_halfblock(img)
         else:
             self._rendered_rows = 1
@@ -4745,39 +4855,52 @@ class InlineImage(Widget):
         self.refresh()
 
     def _prepare_tgp(self, img: "Any") -> None:
-        from hermes_cli.tui.kitty_graphics import _get_renderer, LARGE_IMAGE_BYTES
+        from hermes_cli.tui.kitty_graphics import LARGE_IMAGE_BYTES, _get_renderer
         if self._image_id is not None:
             self._emit_raw(_get_renderer().delete_sequence(self._image_id))
             self._image_id = None
+        self._tgp_transmitted = False
+        self._tgp_placeholder_strips = []
         if img.width * img.height * 4 > LARGE_IMAGE_BYTES:
             self._prepare_tgp_async(img)
         else:
-            renderer = _get_renderer()
-            renderer._max_cols = self.size.width or 80
-            renderer._max_rows = self.max_rows
-            seq, iid, cols, rows = renderer.render(img)
-            self._apply_tgp_result(seq, iid, cols, rows)
+            self._apply_tgp_result(*self._encode_tgp_placeholder(img))
 
     @work(thread=True)
     def _prepare_tgp_async(self, img: "Any") -> None:
         """Encode large images off the event loop to avoid blocking the UI."""
-        from hermes_cli.tui.kitty_graphics import _get_renderer
-        renderer = _get_renderer()
-        renderer._max_cols = self.size.width or 80
-        renderer._max_rows = self.max_rows
         try:
-            seq, iid, cols, rows = renderer.render(img)
+            result = self._encode_tgp_placeholder(img)
         except Exception:
             return
         if self.is_mounted:
-            self.app.call_from_thread(self._apply_tgp_result, seq, iid, cols, rows)
+            self.app.call_from_thread(self._apply_tgp_result, *result)
 
-    def _apply_tgp_result(self, seq: str, iid: int, cols: int, rows: int) -> None:
-        """Apply encoded TGP result on the event loop (safe from call_from_thread)."""
+    def _encode_tgp_placeholder(self, img: "Any") -> tuple[str, int, int, list[Strip]]:
+        from hermes_cli.tui.kitty_graphics import (
+            _cell_px,
+            _fit_image,
+            _get_renderer,
+            build_tgp_placeholder_strips,
+            transmit_only_sequence,
+        )
+        renderer = _get_renderer()
+        max_cols = self.size.width or 80
+        cw, ch = _cell_px()
+        resized, cols, rows = _fit_image(img.convert("RGBA"), max_cols, self.max_rows, cw, ch)
+        image_id = renderer._alloc_id()
+        seq = transmit_only_sequence(image_id, resized, cols, rows)
+        strips = build_tgp_placeholder_strips(image_id, cols, rows)
+        return seq, image_id, rows, strips
+
+    def _apply_tgp_result(self, seq: str, iid: int, rows: int, strips: list[Strip]) -> None:
+        """Transmit TGP out-of-band and render unicode placeholder strips."""
         if not self.is_mounted:
             return
+        self._emit_raw(seq)
         self._image_id = iid
-        self._tgp_seq = seq
+        self._tgp_transmitted = True
+        self._tgp_placeholder_strips = strips
         self._rendered_rows = rows
         self.styles.height = rows
         self.refresh()
@@ -4786,6 +4909,9 @@ class InlineImage(Widget):
         from hermes_cli.tui.kitty_graphics import render_halfblock
         max_cols = self.size.width or 80
         self._halfblock_strips = render_halfblock(img, max_cols, self.max_rows)
+        self._tgp_transmitted = False
+        self._tgp_placeholder_strips = []
+        self._sixel_seq = ""
         self._rendered_rows = len(self._halfblock_strips)
         self.styles.height = self._rendered_rows
 
@@ -4803,23 +4929,19 @@ class InlineImage(Widget):
     def render_line(self, y: int) -> Strip:
         from hermes_cli.tui.kitty_graphics import GraphicsCap, get_caps
         cap = get_caps()
-        if cap == GraphicsCap.TGP:
+        if cap == GraphicsCap.TGP and self._tgp_placeholder_strips:
             return self._render_tgp_line(y)
-        if cap == GraphicsCap.SIXEL:
-            return self._render_sixel_line(y)
-        if cap == GraphicsCap.HALFBLOCK:
+        if cap in (GraphicsCap.TGP, GraphicsCap.SIXEL, GraphicsCap.HALFBLOCK):
             return self._render_halfblock_line(y)
         return self._render_placeholder_line(y)
 
     def _render_tgp_line(self, y: int) -> Strip:
-        if y == 0 and self._tgp_seq:
-            return Strip([Segment(self._tgp_seq)])
-        return Strip([Segment(" " * (self.size.width or 80))])
+        if y >= len(self._tgp_placeholder_strips):
+            return Strip.blank(self.size.width or 80)
+        return self._tgp_placeholder_strips[y]
 
     def _render_sixel_line(self, y: int) -> Strip:
-        if y == 0 and self._sixel_seq:
-            return Strip([Segment(self._sixel_seq)])
-        return Strip.blank(self.size.width or 80)
+        return self._render_halfblock_line(y)
 
     def _render_halfblock_line(self, y: int) -> Strip:
         if y >= len(self._halfblock_strips):
@@ -4879,7 +5001,7 @@ class MathBlockWidget(Widget):
         return str(self._image_path)
 
 
-class InlineThumbnail(Widget):
+class InlineThumbnail(TooltipMixin, Widget):
     """Clickable halfblock thumbnail inside InlineImageBar."""
 
     DEFAULT_CSS = """
@@ -4893,6 +5015,8 @@ class InlineThumbnail(Widget):
         border: solid $accent;
     }
     """
+
+    _tooltip_text = "Click to scroll to image"
 
     def __init__(self, path: str, index: int, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -4992,7 +5116,7 @@ class StartupBannerWidget(Static):
 
 # ── SeekBar ────────────────────────────────────────────────────────────────────
 
-class SeekBar(Widget):
+class SeekBar(TooltipMixin, Widget):
     """Horizontal seek bar — click to seek, ←→ for ±5s, space to pause/resume."""
 
     can_focus = True
@@ -5013,6 +5137,8 @@ class SeekBar(Widget):
 
     _ICON_COLS = 2
     _TIME_COLS = 14
+
+    _tooltip_text = "Click to seek"
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)

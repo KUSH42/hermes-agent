@@ -286,6 +286,8 @@ DEFAULT_CONFIG = {
             "scramble_frames": 14,   # decrypt: frames before word resolves
             "period": 0.75,          # breathe: oscillation period in seconds
         },
+        # Lines scrolled per mouse wheel tick (valid range 1–20; default 3).
+        "scroll_lines": 3,
     },
     
     "browser": {

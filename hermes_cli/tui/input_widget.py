@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
+import sys
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
@@ -401,6 +403,28 @@ class HermesInput(TextArea, can_focus=True):
             # else: let TextArea move cursor down
 
         await super()._on_key(event)
+
+    def on_click(self, event: "Any") -> None:
+        """Middle-click (button 2) pastes the X11 primary selection on Linux."""
+        if getattr(event, "button", 1) != 2:
+            return
+        if sys.platform != "linux":
+            return
+        text = None
+        for cmd in (
+            ["xclip", "-o", "-selection", "primary"],
+            ["xsel", "--primary", "--output"],
+        ):
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=0.5)
+                if result.returncode == 0 and result.stdout:
+                    text = result.stdout
+                    break
+            except Exception:
+                continue
+        if text:
+            self.insert(text)
+        event.stop()
 
     async def _on_paste(self, event: events.Paste) -> None:
         """Intercept terminal drag-and-drop before TextArea inserts raw path text.

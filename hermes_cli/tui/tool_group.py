@@ -249,8 +249,10 @@ class ToolGroup(Widget):
         except Exception:
             pass
 
-    def on_click(self) -> None:
-        """Toggle collapsed on any click within the group header area."""
+    def on_click(self, event: object) -> None:
+        """Toggle collapsed on left-click only (button 1)."""
+        if getattr(event, "button", 1) != 1:
+            return
         self._user_collapsed = not self.collapsed
         self.collapsed = self._user_collapsed
 

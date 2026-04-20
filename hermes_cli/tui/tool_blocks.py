@@ -27,6 +27,7 @@ from textual.widget import Widget
 from textual.widgets import Button, Static
 
 from hermes_cli.tui.animation import PulseMixin, lerp_color
+from hermes_cli.tui.tooltip import TooltipMixin
 from hermes_cli.tui.widgets import (
     CopyableRichLog,
     _boost_layout_caches,
@@ -475,7 +476,7 @@ def _count_visible_diff_rows(lines: list[str]) -> ToolHeaderStats | None:
     return ToolHeaderStats(additions=additions, deletions=deletions)
 
 
-class ToolHeader(PulseMixin, Widget):
+class ToolHeader(TooltipMixin, PulseMixin, Widget):
     """Single-line header: '  ╌╌ {label}  {stats}  [▸/▾]'.
 
     During streaming ``_spinner_char`` replaces the toggle chevron.
@@ -487,6 +488,7 @@ class ToolHeader(PulseMixin, Widget):
 
     DEFAULT_CSS = "ToolHeader { height: 1; }"
 
+    _tooltip_text = "Left-click: open/collapse  Right-click: menu"
     collapsed: reactive[bool] = reactive(True, repaint=True)
 
     def __init__(
@@ -812,6 +814,7 @@ class ToolHeader(PulseMixin, Widget):
 
     def on_click(self, event: Click) -> None:
         """Left-click: open file if path-clickable, otherwise toggle block.
+        Double-click (finalized, no path): copy result summary to clipboard.
         Right-click (button=3): show context menu (C3).
         """
         if event.button == 3:
@@ -831,6 +834,16 @@ class ToolHeader(PulseMixin, Widget):
                 self.app._open_path_action(self, self._full_path, opener, False)  # type: ignore[attr-defined]
             except Exception:
                 pass
+            return
+        # Double-click on a finalized header with no path: copy result summary
+        if event.chain == 2 and self._spinner_char is None and not self._path_clickable:
+            try:
+                parent = self.parent
+                summary = getattr(parent, "_result_summary", None) or self._label
+                self.app._copy_text_with_hint(str(summary))  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            event.prevent_default()
             return
         # Always allow toggle when wrapped in a ToolPanel — bypasses _has_affordances
         # guard so small-result blocks (≤3 lines) are still collapsible.
@@ -1275,7 +1288,7 @@ class ToolTail(Static):
 # OmissionBar — interactive expand/collapse controls for the line cap
 # ---------------------------------------------------------------------------
 
-class OmissionBar(Widget):
+class OmissionBar(TooltipMixin, Widget):
     """Dual-position omission bar for StreamingToolBlock.
 
     position="top"    → shows lines above visible window; [↑all] [↑+50]
@@ -1292,6 +1305,8 @@ class OmissionBar(Widget):
         padding: 0 1;
     }
     """
+
+    _tooltip_text = "Scroll output window"
 
     @staticmethod
     def _reset_label() -> str:

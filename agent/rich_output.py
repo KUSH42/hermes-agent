@@ -887,7 +887,7 @@ _MD_ITALIC_STAR_RE = re.compile(r"\*([^*\n]+?)\*")
 _MD_ITALIC_UNDER_RE = re.compile(r"(?<![_\w])_([^_\n]+)_(?![_\w])")
 _MD_STRIKE_RE = re.compile(r"~~(.+?)~~")
 # Images must be matched before links (![  prefix overlaps with [)
-_MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\([^)]+\)")
+_MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 _MD_LINK_RE = re.compile(r"(?<!\x1b)\[([^\]]+)\]\(([^)]+)\)")
 # Bare URLs — negative lookbehind (?<!\() avoids matching URLs already
 # formatted as "text (url)" by the link step above.
@@ -1086,7 +1086,15 @@ def apply_inline_markdown(line: str, reset_suffix: str = "", ref_map: "dict[str,
     line = _MD_STRIKE_RE.sub(_span(_md_ansi("strike")), line)
 
     # Step 6a: images (before links — ![  prefix overlaps)
-    line = _MD_IMAGE_RE.sub(lambda m: f"{_md_ansi('image_alt')}[img: {m.group(1)}]{_MD_RST_ANSI}{reset_suffix}", line)
+    # Emit as OSC8 hyperlink so the rendered [img: alt] text is clickable.
+    def _img_sub(m: "re.Match[str]") -> str:  # type: ignore[type-arg]
+        alt, url = m.group(1), m.group(2).strip()
+        if url and not url.startswith(("http://", "https://", "file://")):
+            url = f"file://{url}"
+        osc8_open  = f"\x1b]8;;{url}\x1b\\" if url else ""
+        osc8_close = "\x1b]8;;\x1b\\" if url else ""
+        return f"{osc8_open}{_md_ansi('image_alt')}[img: {alt}]{_MD_RST_ANSI}{osc8_close}{reset_suffix}"
+    line = _MD_IMAGE_RE.sub(_img_sub, line)
 
     # Step 6a2: reference link resolution (before inline link step)
     if ref_map:

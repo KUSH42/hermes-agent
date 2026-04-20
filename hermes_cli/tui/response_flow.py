@@ -174,10 +174,18 @@ def _detect_lang(code: str) -> str:
 
 
 def _strip_ansi(text: str) -> str:
-    """Strip ANSI CSI escape sequences (re-use same pattern as widgets.py)."""
+    """Strip ANSI escape sequences, including orphaned CSI residuals.
+
+    Also strips bare `;digits...m` or `[digits...m` fragments that result from
+    interceptors stripping the ESC byte but leaving the rest of the sequence.
+    """
     import re as _re
     _ANSI_RE = _re.compile(r"\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]")
-    return _ANSI_RE.sub("", text)
+    text = _ANSI_RE.sub("", text)
+    # Strip orphaned CSI residuals: bare `;N;N...m` or `[N;N...m` sequences at
+    # start of line or after whitespace (hallmarks of a stripped ESC byte).
+    _ORPHAN_RE = _re.compile(r"(?:^|(?<=\s));[0-9;]+[A-Za-z]|\[[0-9;]+m")
+    return _ORPHAN_RE.sub("", text)
 
 
 def _looks_like_source_line(raw: str) -> bool:

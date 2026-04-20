@@ -306,7 +306,7 @@ def test_on_tool_complete_execute_code_tui_passes_rerender_callback():
     assert mount_calls, "Expected mount_tool_block call for execute_code preview"
     args = mount_calls[0][0]
     assert args[1] == "code"
-    assert callable(args[5])  # rerender_fn is now at position 5 (after tool_name)
+    assert callable(args[4])  # rerender_fn at position 4; tool_name at position 6
 
 
 def test_on_tool_complete_diff_tui_passes_rerender_callback():
@@ -337,7 +337,7 @@ def test_on_tool_complete_diff_tui_passes_rerender_callback():
     assert mount_calls
     args = mount_calls[0][0]
     assert args[1] == "diff"
-    assert callable(args[5])  # rerender_fn is now at position 5 (after tool_name)
+    assert callable(args[4])  # rerender_fn at position 4; tool_name at position 6
 
 
 def test_on_tool_complete_patch_mode_tui_mounts_diff_from_snapshot(tmp_path):
@@ -396,7 +396,7 @@ def test_on_tool_complete_read_file_tui_passes_rerender_callback():
     assert mount_calls
     args = mount_calls[0][0]
     assert args[1] == "code"
-    assert callable(args[5])  # rerender_fn is now at position 5 (after tool_name)
+    assert callable(args[4])  # rerender_fn at position 4; tool_name at position 6
 
 
 def test_on_tool_complete_terminal_preview_tui_passes_rerender_callback():
@@ -425,7 +425,7 @@ def test_on_tool_complete_terminal_preview_tui_passes_rerender_callback():
     assert mount_calls
     args = mount_calls[0][0]
     assert args[1] == "output"
-    assert callable(args[5])  # rerender_fn is now at position 5 (after tool_name)
+    assert callable(args[4])  # rerender_fn at position 4; tool_name at position 6
 
 
 # ---------------------------------------------------------------------------

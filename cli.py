@@ -7379,7 +7379,7 @@ class HermesCLI:
                             return rerendered, _plain_lines(rerendered)
 
                         tui.call_from_thread(
-                            tui.mount_tool_block, "diff", display_lines, plain, function_name, _rerender_diff, header_stats
+                            tui.mount_tool_block, "diff", display_lines, plain, _rerender_diff, header_stats, function_name
                         )
             except Exception:
                 logger.debug("Edit diff preview failed for %s", function_name, exc_info=True)
@@ -7406,7 +7406,7 @@ class HermesCLI:
                                     return rerendered, _plain_lines(rerendered)
 
                                 tui.call_from_thread(
-                                    tui.mount_tool_block, "code", display_lines, plain, function_name, _rerender_execute_code_preview, None
+                                    tui.mount_tool_block, "code", display_lines, plain, _rerender_execute_code_preview, None, function_name
                                 )
                     elif function_name == "read_file":
                         # Skip static preview when a StreamingToolBlock was used
@@ -7432,9 +7432,9 @@ class HermesCLI:
                                     "code",
                                     display_lines,
                                     plain,
-                                    function_name,
                                     _rerender_read_file_preview,
                                     None,
+                                    function_name,
                                 )
                     elif function_name == "terminal":
                         # Skip static preview when a StreamingToolBlock was used
@@ -7460,9 +7460,9 @@ class HermesCLI:
                                     "output",
                                     display_lines,
                                     plain,
-                                    function_name,
                                     _rerender_terminal_preview,
                                     None,
+                                    function_name,
                                 )
                 except Exception:
                     logger.debug("%s highlight failed", function_name, exc_info=True)

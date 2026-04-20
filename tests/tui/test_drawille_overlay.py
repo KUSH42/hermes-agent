@@ -932,3 +932,34 @@ def test_hermes_tcss_has_layer_overlay_for_drawille():
     content = open(os.path.normpath(tcss_path)).read()
     assert "layer: overlay" in content
     assert "position: absolute" in content
+
+
+def test_anim_gallery_overlay_not_in_default_css():
+    """AnimGalleryOverlay must NOT declare layer/position in DEFAULT_CSS.
+
+    These must live in hermes.tcss to avoid parse-time CSS corruption when
+    drawille_overlay.py is imported before HermesApp CSS loads.
+    """
+    from hermes_cli.tui.drawille_overlay import AnimGalleryOverlay
+    assert "layer: overlay" not in AnimGalleryOverlay.DEFAULT_CSS
+    assert "position: absolute" not in AnimGalleryOverlay.DEFAULT_CSS
+
+
+def test_hermes_tcss_has_layer_overlay_for_anim_gallery():
+    """hermes.tcss must declare layer:overlay and position:absolute for AnimGalleryOverlay.
+
+    Without these, the gallery renders in normal layout flow after StatusBar,
+    disrupting the layout and appearing below the input bar when opened.
+    """
+    import os
+    tcss_path = os.path.join(
+        os.path.dirname(__file__), "../../hermes_cli/tui/hermes.tcss"
+    )
+    content = open(os.path.normpath(tcss_path)).read()
+    # Extract the AnimGalleryOverlay block to verify rules are scoped correctly
+    assert "AnimGalleryOverlay" in content
+    # Find the block and check both rules are present after the selector
+    idx = content.index("AnimGalleryOverlay {")
+    block = content[idx: content.index("}", idx) + 1]
+    assert "layer: overlay" in block
+    assert "position: absolute" in block

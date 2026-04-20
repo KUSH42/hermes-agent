@@ -557,6 +557,11 @@ AnimConfigPanel {
     color: $text;
 }
 
+AnimGalleryOverlay {
+    layer: overlay;
+    position: absolute;
+}
+
 /* ── OmissionBar — dual top/bottom scroll controls for line cap ───────── */
 
 OmissionBar .--ob-label {

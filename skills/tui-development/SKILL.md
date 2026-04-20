@@ -116,6 +116,7 @@ Then load only the focused reference you need:
 - `hermes_cli/tui/response_flow.py` with `tests/tui/test_response_flow.py`, `tests/tui/test_math_renderer.py`
 - `hermes_cli/tui/drawille_overlay.py` with `tests/tui/test_drawille_overlay.py`,
   `tests/tui/test_drawille_toggle.py`, `tests/tui/test_drawille_v2.py`
+- `hermes_cli/tui/tooltip.py` with any widget gaining `TooltipMixin`; touches `hermes.tcss §Screen layers`
 - `hermes_cli/tui/workspace_tracker.py` with `tests/tui/test_workspace_tracker.py`
   and `tests/tui/test_workspace_overlay.py`
 - `cli.py` TUI bridge code with `tests/cli/test_reasoning_tui_bridge.py` or
@@ -123,9 +124,63 @@ Then load only the focused reference you need:
 
 ## Validation
 
-Last revalidated: **2026-04-20. ~2362 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
+Last revalidated: **2026-04-20. ~2427 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
 
 Recent changes (details → reference files):
+- **TGP unicode placeholder detection fix** (2026-04-20): `_supports_unicode_placeholders()` was too
+  strict — only accepted `TERM=xterm-kitty`, missing the `TERM_PROGRAM=kitty` path used by many Kitty
+  installs. Result: `get_caps()` → `TGP` (via `TERM_PROGRAM=kitty`) but placeholder check → `False`
+  → silent halfblock fallback in `InlineImage.watch_image`. Fix: also accept `TERM_PROGRAM=kitty` as
+  proof of Kitty identity. Added `_LOG.warning(...)` on TGP→halfblock fallback path so misdetection
+  is visible in logs. 3 new tests in `tests/tui/test_kitty_graphics.py §Unicode placeholder detection`.
+  Key invariant: `_supports_unicode_placeholders()` result is cached per session — call
+  `_reset_unicode_placeholders_cache()` in tests that monkeypatch `TERM`/`TERM_PROGRAM`/`KITTY_WINDOW_ID`.
+  → `hermes_cli/tui/kitty_graphics.py §_supports_unicode_placeholders`,
+    `hermes_cli/tui/widgets.py §InlineImage.watch_image`, `tests/tui/test_kitty_graphics.py`
+- **First-response-line race fix** (2026-04-20): "W" missing from first agent reply ("Wake up Neo").
+  Race: agent streams before `watch_agent_running(True)` fires → first response line buffered in OLD
+  panel's `_block_buf._pending` (setext lookahead) → panel switch → old panel never flushed → lost.
+  Fix: `watch_agent_running(True)` steals `_pending` from old engine, clears it, stores on
+  `new_msg._carry_pending`; `MessagePanel.on_mount` re-processes it through the new engine once ready.
+  Also clears the empty-string sentinel left by banner trailing newlines.
+  Key invariant: `_response_engine` is `None` in `__init__` — only set in `on_mount`. Never call
+  `engine.process_line()` on a freshly created MessagePanel from `watch_agent_running` context.
+  Use `_carry_pending` instead.  2 regression tests in `tests/tui/test_turn_lifecycle.py`.
+  → `hermes_cli/tui/app.py §watch_agent_running`, `hermes_cli/tui/widgets.py §MessagePanel`,
+    `tests/tui/test_turn_lifecycle.py §test_first_response_character_not_swallowed/test_pending_prose_migrated_to_new_panel`
+- **Mouse UX — tooltip system, ctrl+click, scroll config, double-click, shift-select** (2026-04-20):
+  `tooltip.py` (NEW) — `Tooltip(Widget)` + `TooltipMixin`; mounted on `screen.tooltip` layer;
+  positioned via `styles.offset`; 500ms delay timer; dismissed on `on_mouse_leave`.
+  Applied to: `ToolHeader`, `StreamingCodeBlock`, `ReasoningPanel`, `InlineThumbnail`, `SeekBar`,
+  `OmissionBar`, `_CopyBtn` (copy button in `CopyableBlock`).
+  `hermes.tcss`: `Screen { layers: base overlay tooltip; }` added; `OutputPanel scrollbar-size-vertical: 1` removed
+  (dead scrollbar — CopyableRichLog owns scroll state, not OutputPanel track).
+  `ToolGroup.on_click`: `if event.button != 1: return` — right-click no longer accidentally collapses group.
+  `HermesInput.on_click`: button 2 (middle-click) on Linux reads X11 primary selection via
+  `xclip -selection primary` → `xsel --primary` fallback chain; inserts at cursor; `event.stop()`.
+  `CopyableRichLog.on_click` / `LinkClicked`: plain left-click now copies URL to clipboard;
+  Ctrl+left-click opens. `LinkClicked` gained `ctrl: bool` field.
+  `app.on_copyable_rich_log_link_clicked`: branches on `event.ctrl` — copy vs open.
+  `config.py` `terminal.scroll_lines: 3`; `HermesApp._scroll_lines: int = 3`; wired from `cli.py`;
+  `OutputPanel.on_mouse_scroll_*` uses `getattr(self.app, '_scroll_lines', _SCROLL_LINES)`.
+  Double-click via `event.chain == 2` (Textual native — no manual timer):
+  `StreamingCodeBlock.on_click`: chain==2 + state!=STREAMING → copy all code;
+  `ReasoningPanel.on_click`: chain==2 → force-expand (body_collapsed=False);
+  `ToolHeader.on_click`: chain==2 + no path → copy result summary from parent._result_summary.
+  `HistorySearchOverlay`: `_last_click_idx: int | None`, `_shift_selected: set[int]`;
+  `TurnResultItem.on_click`: shift+left-click → range-select [last, current] inclusive, apply
+  `--selected` CSS class, no jump; plain click → single select + jump; reset on dismiss.
+  `action_jump()` updated: if `_shift_selected` non-empty, jumps to first (min index) entry.
+  `app._show_context_menu_at(items, x, y)` extracted helper; `_show_context_menu_for_focused()`
+  computes position from `focused.content_region` center for keyboard-triggered context menu.
+  40 new tests in `tests/tui/test_mouse_ux.py`.
+  Key: `Click.chain` int is native Textual — no manual `_last_click_time` needed.
+  Key: `_CopyBtn` subclass pattern: `class _CopyBtn(TooltipMixin, Static)` — `Static` is concrete,
+  `TooltipMixin` must come first in MRO. `_CopyBtn` replaces `Static("⎘", id="copy-btn")` in
+  `CopyableBlock.on_mouse_enter`.
+  → `hermes_cli/tui/tooltip.py` (new), `widgets.py`, `tool_blocks.py`, `tool_group.py`,
+    `input_widget.py`, `app.py`, `hermes.tcss`, `config.py`, `cli.py`,
+    `tests/tui/test_mouse_ux.py` (new, 40 tests)
 - **Workspace overlay = full Git working tree + low-noise perf alarms** (2026-04-20):
   Workspace view now matches Git working-tree state instead of only Hermes-touched files.
   `workspace_tracker.py` was rebuilt around parsed `GitSnapshotEntry` rows plus Hermes-only

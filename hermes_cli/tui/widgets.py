@@ -48,9 +48,12 @@ from hermes_cli.tui.state import (
     UndoOverlayState,
 )
 
+import logging
+
 if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
 
+_LOG = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Helper
@@ -4816,24 +4819,38 @@ class HistorySearchOverlay(Widget):
                 cli = getattr(getattr(self, "app", None), "cli", None)
                 db = getattr(cli, "_session_db", None)
             current_session_id = getattr(getattr(getattr(self, "app", None), "cli", None), "session_id", None)
-            if db is not None and query:
-                raw = db.search_messages(
-                    query,
-                    role_filter=["user", "assistant"],
-                    limit=40,
-                )
-                for row in raw:
-                    sid = row.get("session_id", "")
-                    preview_raw = row.get("snippet") or row.get("content") or ""
-                    preview = " ".join(str(preview_raw).replace("\n", " ").split())[:80]
-                    results.append(_CrossSessionResult(
-                        session_id=sid,
-                        session_title=row.get("model") or "",  # sessions table has no title col in search_messages
-                        role=row.get("role", ""),
-                        content_preview=preview,
-                        timestamp=float(row.get("timestamp") or row.get("session_started") or 0),
-                        is_current_session=(sid == current_session_id),
-                    ))
+            if db is not None:
+                if not query.strip():
+                    # Empty query: show recent sessions via list_sessions_rich (FTS5 MATCH '' would crash)
+                    sessions = db.list_sessions_rich(limit=20)
+                    for s in sessions:
+                        sid = s.get("id", "")
+                        results.append(_CrossSessionResult(
+                            session_id=sid,
+                            session_title=s.get("title") or "",
+                            role="user",
+                            content_preview=s.get("preview", ""),
+                            timestamp=float(s.get("last_active") or 0.0),
+                            is_current_session=(sid == current_session_id),
+                        ))
+                else:
+                    raw = db.search_messages(
+                        query,
+                        role_filter=["user", "assistant"],
+                        limit=40,
+                    )
+                    for row in raw:
+                        sid = row.get("session_id", "")
+                        preview_raw = row.get("snippet") or row.get("content") or ""
+                        preview = " ".join(str(preview_raw).replace("\n", " ").split())[:80]
+                        results.append(_CrossSessionResult(
+                            session_id=sid,
+                            session_title=row.get("title") or "",
+                            role=row.get("role", ""),
+                            content_preview=preview,
+                            timestamp=float(row.get("timestamp") or row.get("session_started") or 0),
+                            is_current_session=(sid == current_session_id),
+                        ))
         except Exception:
             pass
         self.call_from_thread(self._apply_cross_session_results, results)
@@ -5108,6 +5125,13 @@ class InlineImage(Widget):
         if cap == GraphicsCap.TGP and _supports_unicode_placeholders():
             self._prepare_tgp(img)
         elif cap in (GraphicsCap.TGP, GraphicsCap.SIXEL, GraphicsCap.HALFBLOCK):
+            if cap == GraphicsCap.TGP:
+                _LOG.warning(
+                    "TGP detected but unicode placeholders unavailable "
+                    "(TERM=%r, KITTY_WINDOW_ID=%r) — falling back to halfblock",
+                    os.environ.get("TERM", ""),
+                    os.environ.get("KITTY_WINDOW_ID", ""),
+                )
             self._prepare_halfblock(img)
         else:
             self._rendered_rows = 1

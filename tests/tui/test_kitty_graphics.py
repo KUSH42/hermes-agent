@@ -240,3 +240,37 @@ def test_alloc_id_wraps():
     assert first == 4_294_967_295
     second = r._alloc_id()
     assert second == 1
+
+
+# ---------------------------------------------------------------------------
+# § Unicode placeholder detection (3 tests)
+# ---------------------------------------------------------------------------
+
+def test_placeholder_xterm_kitty_term(monkeypatch):
+    """TERM=xterm-kitty + KITTY_WINDOW_ID → placeholders supported."""
+    from hermes_cli.tui.kitty_graphics import _reset_unicode_placeholders_cache, _supports_unicode_placeholders
+    monkeypatch.setenv("TERM", "xterm-kitty")
+    monkeypatch.delenv("TERM_PROGRAM", raising=False)
+    monkeypatch.setenv("KITTY_WINDOW_ID", "1")
+    _reset_unicode_placeholders_cache()
+    assert _supports_unicode_placeholders() is True
+
+
+def test_placeholder_term_program_kitty(monkeypatch):
+    """TERM_PROGRAM=kitty + KITTY_WINDOW_ID → placeholders supported even if TERM != xterm-kitty."""
+    from hermes_cli.tui.kitty_graphics import _reset_unicode_placeholders_cache, _supports_unicode_placeholders
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.setenv("TERM_PROGRAM", "kitty")
+    monkeypatch.setenv("KITTY_WINDOW_ID", "3")
+    _reset_unicode_placeholders_cache()
+    assert _supports_unicode_placeholders() is True
+
+
+def test_placeholder_requires_window_id(monkeypatch):
+    """TERM=xterm-kitty but no KITTY_WINDOW_ID → placeholders not supported."""
+    from hermes_cli.tui.kitty_graphics import _reset_unicode_placeholders_cache, _supports_unicode_placeholders
+    monkeypatch.setenv("TERM", "xterm-kitty")
+    monkeypatch.delenv("TERM_PROGRAM", raising=False)
+    monkeypatch.delenv("KITTY_WINDOW_ID", raising=False)
+    _reset_unicode_placeholders_cache()
+    assert _supports_unicode_placeholders() is False

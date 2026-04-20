@@ -591,14 +591,16 @@ _PLACEHOLDER_CHAR = "\U0010EEEE"
 def _supports_unicode_placeholders() -> bool:
     """Return True iff the terminal supports Kitty unicode placeholder mode.
 
-    Requires TERM starting with 'xterm-kitty' AND KITTY_WINDOW_ID set.
-    Result is cached for the session.
+    Requires (TERM starting with 'xterm-kitty' OR TERM_PROGRAM=='kitty')
+    AND KITTY_WINDOW_ID set.  Result is cached for the session.
     """
     global _unicode_placeholders_cache
     if _unicode_placeholders_cache is None:
         term = os.environ.get("TERM", "")
+        term_program = os.environ.get("TERM_PROGRAM", "").lower()
         kitty_window = os.environ.get("KITTY_WINDOW_ID", "")
-        _unicode_placeholders_cache = term.startswith("xterm-kitty") and bool(kitty_window)
+        is_kitty = term.startswith("xterm-kitty") or term_program == "kitty"
+        _unicode_placeholders_cache = is_kitty and bool(kitty_window)
     return _unicode_placeholders_cache
 
 

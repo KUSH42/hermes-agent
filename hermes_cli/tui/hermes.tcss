@@ -614,6 +614,12 @@ ToolPanel .--focus-hint {
     padding: 0 2;
 }
 
+ToolPanel > .--focus-hint {
+    border-top: solid $boost;
+    padding: 0 2;
+    color: $text-muted;
+}
+
 /* --- P7 /tools timeline overlay (ToolsScreen CSS also embedded in DEFAULT_CSS) --- */
 ToolsScreen {
     layout: vertical;

@@ -13,6 +13,14 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any
 
+_TONE_STYLES: dict[str, str] = {
+    "success": "bold green",
+    "warning": "bold yellow",
+    "error": "bold red",
+    "accent": "bold cyan",
+    "neutral": "dim",
+}
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
@@ -183,13 +191,7 @@ class FooterPane(Widget):
         # Chips row (skip chips already promoted to header)
         chips = [c for c in summary.chips if c.text not in promoted_chip_texts]
         for chip in chips:
-            tone_style = {
-                "success": "bold green",
-                "warning": "bold yellow",
-                "error": "bold red",
-                "accent": "bold cyan",
-                "neutral": "dim",
-            }.get(chip.tone, "dim")
+            tone_style = _TONE_STYLES.get(chip.tone, "dim")
             parts.append(f" {chip.text} ", style=tone_style)
 
         # Action row — only implemented actions
@@ -222,7 +224,7 @@ class FooterPane(Widget):
             from rich.text import Text as _T
             rem_text = _T()
             rem_text.append("  hint: ", style="dim")
-            rem_text.append(remediation_hints[0], style="dim italic")
+            rem_text.append("  ·  ".join(remediation_hints), style="dim italic")
             self._remediation_row.update(rem_text)
         else:
             self._remediation_row.update("")
@@ -356,6 +358,7 @@ class ToolPanel(Widget):
         Binding("r",     "retry",            "Retry",            show=False),
         Binding("E",     "edit_cmd",         "Edit cmd",         show=False),
         Binding("O",     "open_url",         "Open URL",         show=False),
+        Binding("f",     "toggle_tail_follow", "tail", show=False),
         Binding("j",     "scroll_body_down",      "↓",    show=False),
         Binding("k",     "scroll_body_up",        "↑",    show=False),
         Binding("J",     "scroll_body_page_down", "↓↓",   show=False),
@@ -481,6 +484,14 @@ class ToolPanel(Widget):
         self._result_summary_v4 = summary
         self._completed_at = time.monotonic()
 
+        # F1: schedule "completed Xs ago" age microcopy at 10s post-completion
+        _completed_at_snap = self._completed_at
+        def _show_age() -> None:
+            elapsed = int(time.monotonic() - _completed_at_snap)
+            if hasattr(self._block, "set_age_microcopy"):
+                self._block.set_age_microcopy(f"completed {elapsed}s ago")
+        self.set_timer(10.0, _show_age)
+
         # Push primary + promoted chips to ToolHeader
         promoted_texts: frozenset[str] = frozenset()
         header = getattr(self._block, "_header", None)
@@ -490,14 +501,10 @@ class ToolPanel(Widget):
             header._error_kind = summary.error_kind
             primary_text = summary.primary or ""
             promoted: list[tuple[str, str]] = []
-            tone_map = {
-                "success": "bold green", "warning": "bold yellow",
-                "error": "bold red", "accent": "dim cyan", "neutral": "dim",
-            }
             for chip in (summary.chips or [])[:3]:
                 if chip.text in primary_text:
                     continue
-                style = tone_map.get(chip.tone, "dim")
+                style = _TONE_STYLES.get(chip.tone, "dim")
                 promoted.append((chip.text, style))
                 if len(promoted) >= 2:
                     break
@@ -594,7 +601,7 @@ class ToolPanel(Widget):
         header._flash_msg = msg
         header._flash_expires = time.monotonic() + 1.2
         header.refresh()
-        self.set_timer(1.3, lambda: setattr(header, "_flash_msg", None) or header.refresh())
+        self.set_timer(1.2, lambda: setattr(header, "_flash_msg", None) or header.refresh())
 
     def action_copy_body(self) -> None:
         text = self.copy_content()
@@ -902,11 +909,13 @@ class ToolPanel(Widget):
         if not self.collapsed:
             t.append("j/k", style="bold"); t.append(" scroll  ", style="dim")
         t.append("c", style="bold"); t.append(" copy  ", style="dim")
+        t.append("C/H", style="bold"); t.append(" color/html  ", style="dim")
+        t.append("I", style="bold"); t.append(" invocation  ", style="dim")
         rs = self._result_summary_v4
         if rs is not None:
             if rs.is_error:
                 t.append("r", style="bold"); t.append(" retry  ", style="dim")
-                # A1: show edit cmd hint when cmd payload available
+                # A1: show edit cmd hint when cmd payload present
                 has_edit = any(
                     a.kind == "edit_cmd" and a.payload
                     for a in (rs.actions or ())
@@ -919,8 +928,10 @@ class ToolPanel(Widget):
                 t.append("o", style="bold"); t.append(" open  ", style="dim")
                 t.append("p", style="bold"); t.append(" paths", style="dim")
             # A2: show open URL hint when URL artifacts present
-            if any(a.kind == "url" for a in (rs.artifacts or ())):
-                t.append("  O", style="bold"); t.append(" url", style="dim")
+            has_urls = any(a.kind == "url" for a in (rs.artifacts or ()))
+            if has_urls:
+                t.append("  O", style="bold"); t.append(" url  ", style="dim")
+                t.append("u", style="bold"); t.append(" copy urls", style="dim")
         return t
 
     def _get_omission_bar(self) -> "Any | None":
@@ -960,3 +971,13 @@ class ToolPanel(Widget):
         bar = self._get_omission_bar()
         if bar is not None:
             bar._parent_block.rerender_window(bar._visible_start, bar._total)
+
+    def action_toggle_tail_follow(self) -> None:
+        """C2: toggle tail-follow mode on the streaming block."""
+        from hermes_cli.tui.tool_blocks import StreamingToolBlock
+        block = self._block
+        if not isinstance(block, StreamingToolBlock):
+            return
+        block._follow_tail = not block._follow_tail
+        state = "on" if block._follow_tail else "off"
+        self.notify(f"tail follow {state}", timeout=1.5)

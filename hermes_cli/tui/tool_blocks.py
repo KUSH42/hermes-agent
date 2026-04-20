@@ -869,19 +869,15 @@ class ToolBodyContainer(Widget):
         mc.add_class("--active")
 
     def clear_microcopy(self) -> None:
-        """Clear streaming microcopy; restore secondary args if present (B1)."""
+        """Clear streaming microcopy. Does NOT restore secondary args (G2: completion
+        result header is authoritative — secondary args are no longer shown)."""
         self._microcopy_active = False
         mc = self._mc_widget()
         if mc is None:
             return
-        if self._secondary_text:
-            mc.update(self._secondary_text)
-            mc.add_class("--secondary-args")
-            mc.remove_class("--active")
-        else:
-            mc.remove_class("--active")
-            mc.remove_class("--secondary-args")
-            mc.update("")
+        mc.remove_class("--active")
+        mc.remove_class("--secondary-args")
+        mc.update("")
 
 
 class ToolBlock(Widget):
@@ -1342,6 +1338,8 @@ class StreamingToolBlock(ToolBlock):
         self._rate_samples: deque[tuple[float, int]] = deque(maxlen=20)
         # B2: last HTTP status line seen in WEB streams
         self._last_http_status: str | None = None
+        # C2: tail-follow mode — when True, re-render window to latest lines every 5 appends
+        self._follow_tail: bool = False
 
     def compose(self) -> ComposeResult:
         yield self._header
@@ -1426,6 +1424,11 @@ class StreamingToolBlock(ToolBlock):
         self._pending.append((raw, plain))
         self._all_plain.append(plain)
         self._all_rich.append(Text.from_ansi(raw))
+        # C2: tail-follow — re-render to latest window every 5 lines
+        total = len(self._all_plain)
+        if self._follow_tail and total % 5 == 0:
+            visible_cap = getattr(self, "_visible_cap", _VISIBLE_CAP)
+            self.rerender_window(max(0, total - visible_cap), total)
         # B2: rate sample
         self._rate_samples.append((now, len(raw)))
         # B2: HTTP status detection for WEB category
@@ -1466,6 +1469,8 @@ class StreamingToolBlock(ToolBlock):
         if self._completed:
             return
         self._completed = True
+        # C2: reset tail follow on completion
+        self._follow_tail = False
         # Stop timers — no more streaming ticks needed
         try:
             self._render_timer.stop()
@@ -1761,3 +1766,20 @@ class StreamingToolBlock(ToolBlock):
         self._header._refresh_gutter_color()
         self._header._refresh_tool_icon()
         self._header.refresh()
+
+    def set_age_microcopy(self, text: str) -> None:
+        """F1: update the microcopy slot with age text (only when complete)."""
+        if not self._completed:
+            return
+        from rich.text import Text as _T
+        mc = self._microcopy_widget
+        if mc is None:
+            try:
+                mc = self._body.query_one(".--microcopy", Static)
+                self._microcopy_widget = mc
+            except Exception:
+                return
+        styled = _T(text, style="dim")
+        mc.update(styled)
+        mc.add_class("--active")
+        mc.remove_class("--secondary-args")

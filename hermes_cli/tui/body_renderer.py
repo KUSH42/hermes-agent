@@ -102,12 +102,26 @@ class BodyRenderer:
 
 
 class ShellRenderer(BodyRenderer):
-    """Shell stdout: Text.from_ansi, no finalize."""
+    """Shell stdout: Text.from_ansi; JSON/YAML finalize on completion."""
 
     def render_stream_line(self, raw: str, plain: str) -> "ConsoleRenderable":
         return Text.from_ansi(raw)
 
-    # finalize: None (inherited default)
+    def finalize(self, all_plain: list[str], **kw: object) -> "ConsoleRenderable | None":
+        """C3: re-render as syntax-highlighted block when output is JSON or YAML."""
+        import json as _json
+        from rich.syntax import Syntax
+
+        text = "\n".join(all_plain).strip()
+        if text.startswith(("{", "[")):
+            try:
+                _json.loads(text)
+                return Syntax(text, "json", line_numbers=False, theme="monokai")
+            except Exception:
+                pass
+        if text.startswith("---"):
+            return Syntax(text, "yaml", line_numbers=False, theme="monokai")
+        return None
 
     def preview(self, all_plain: list[str], max_lines: int) -> "ConsoleRenderable":
         tail = all_plain[-max_lines:] if all_plain else []

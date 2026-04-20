@@ -35,6 +35,8 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Static
 
+from hermes_cli.tui.resize_utils import THRESHOLD_TOOL_NARROW, crosses_threshold
+
 if TYPE_CHECKING:
     pass
 
@@ -210,6 +212,7 @@ class ToolGroup(Widget):
         self._user_collapsed = False
         self._header: GroupHeader | None = None
         self._body: GroupBody | None = None
+        self._last_resize_w: int = 0
 
     def compose(self) -> ComposeResult:
         header = GroupHeader()
@@ -258,12 +261,9 @@ class ToolGroup(Widget):
 
     def on_resize(self, event: object) -> None:
         width = getattr(getattr(event, "size", None), "width", 80)
-        if width < 80:
-            if not self.has_class("--narrow"):
-                self.add_class("--narrow")
-        else:
-            if self.has_class("--narrow"):
-                self.remove_class("--narrow")
+        if crosses_threshold(self._last_resize_w, width, THRESHOLD_TOOL_NARROW):
+            self.set_class(width < THRESHOLD_TOOL_NARROW, "--narrow")
+        self._last_resize_w = width
 
     def focus_first_child(self) -> None:
         if self._body is not None:

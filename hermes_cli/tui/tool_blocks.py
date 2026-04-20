@@ -27,6 +27,7 @@ from textual.widget import Widget
 from textual.widgets import Button, Static
 
 from hermes_cli.tui.animation import PulseMixin, lerp_color
+from hermes_cli.tui.resize_utils import THRESHOLD_NARROW, crosses_threshold
 from hermes_cli.tui.tooltip import TooltipMixin
 from hermes_cli.tui.widgets import (
     CopyableRichLog,
@@ -1335,6 +1336,7 @@ class OmissionBar(TooltipMixin, Widget):
         self._visible_end: int = 0
         self._total: int = 0
         self._label: Static | None = None
+        self._last_resize_w: int = 0
 
     def compose(self) -> ComposeResult:
         label = Static("", classes="--ob-label")
@@ -1403,6 +1405,14 @@ class OmissionBar(TooltipMixin, Widget):
         elif "--ob-down-all" in classes:
             pb.rerender_window(vs, tot)
         event.stop()
+
+    def on_resize(self, event: object) -> None:
+        """Hide the count label at narrow widths to make room for buttons."""
+        w = getattr(getattr(event, "size", None), "width", 80)
+        if crosses_threshold(self._last_resize_w, w, THRESHOLD_NARROW):
+            if self._label is not None:
+                self._label.display = w >= THRESHOLD_NARROW
+        self._last_resize_w = w
 
 
 # ---------------------------------------------------------------------------

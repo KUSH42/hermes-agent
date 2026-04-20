@@ -720,3 +720,31 @@ AssistantNameplate {
     padding: 0 1;
     background: transparent;
 }
+
+/* MinSizeBackdrop — full-screen dim shown when terminal is too small */
+MinSizeBackdrop {
+    layer: overlay;
+    width: 100%;
+    height: 100%;
+    background: $surface 70%;
+    align: center middle;
+}
+
+MinSizeBackdrop MinSizeBox {
+    width: auto;
+    height: auto;
+    min-width: 26;
+    min-height: 4;
+    border: round $warning;
+    padding: 0 2;
+    background: $surface;
+}
+
+MinSizeBackdrop .min-size-warning {
+    color: $warning;
+    text-style: bold;
+}
+
+MinSizeBackdrop .min-size-hint {
+    color: $text-muted;
+}

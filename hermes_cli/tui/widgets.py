@@ -2169,6 +2169,20 @@ class OutputPanel(ScrollableContainer):
         """Whether the user has manually scrolled away from the live edge."""
         return self._user_scrolled_up
 
+    def on_resize(self, event: Any) -> None:
+        """Preserve scroll anchor across terminal resize.
+
+        If pinned to the live edge, stay there after reflow.  If the user
+        scrolled up, preserve their fractional position through the reflow.
+        """
+        if not self._user_scrolled_up:
+            self.call_after_refresh(self.scroll_end, animate=False)
+        else:
+            frac = self.scroll_y / max(1, self.virtual_size.height)
+            def _restore() -> None:
+                self.scroll_y = int(frac * self.virtual_size.height)
+            self.call_after_refresh(_restore)
+
     def on_mouse_scroll_up(self, event: Any) -> None:
         """Scroll up per wheel tick and suppress auto-scroll."""
         self._user_scrolled_up = True
@@ -5530,6 +5544,7 @@ class InlineMediaWidget(Widget):
         from hermes_cli.tui.media_player import _short_url
         self.state = "loading"
         sb = self.query_one("#media-seekbar", SeekBar)
+        self._seekbar = sb
         sb.display = False
         if self._show_timeline and self._cfg.timeline_auto_s == 0:
             sb.display = True
@@ -5538,6 +5553,10 @@ class InlineMediaWidget(Widget):
         ctrl_label = self.query_one("#media-controls", Static)
         ctrl_label.update(f"◉ {_short_url(self._url)}  [loading…]")
         self._prepare()
+
+    def on_resize(self, event: Any) -> None:
+        if hasattr(self, "_seekbar"):
+            self._seekbar.refresh()
 
     @work(thread=True)
     def _prepare(self) -> None:
@@ -5797,6 +5816,8 @@ class AssistantNameplate(Widget):
         self._morph_src = ""
         self._morph_dst = ""
         self._morph_dissolve: list[int] = []  # ticks remaining per position
+        self._canvas_width: int = 80
+        self._last_nameplate_w: int = 0
 
     def on_mount(self) -> None:
         try:
@@ -5823,6 +5844,13 @@ class AssistantNameplate(Widget):
         if self._timer:
             self._timer.stop()
             self._timer = None
+
+    def on_resize(self, event: Any) -> None:
+        new_w = getattr(getattr(event, "size", None), "width", self._canvas_width)
+        from hermes_cli.tui.resize_utils import HYSTERESIS
+        if abs(new_w - self._canvas_width) > HYSTERESIS * 2:
+            self._canvas_width = new_w
+        self._last_nameplate_w = new_w
 
     # --- public API ---
 

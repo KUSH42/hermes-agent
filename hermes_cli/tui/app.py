@@ -522,6 +522,9 @@ class HermesApp(App):
         self._git_poller = None
         self._git_poll_in_flight: bool = False
         self._git_poll_retrigger: bool = False
+        # Resize debounce — coalesces rapid resize events before app-level work
+        self._pending_resize: "object | None" = None
+        self._resize_timer: "object | None" = None  # textual Timer
 
     # --- Compose ---
 
@@ -686,7 +689,16 @@ class HermesApp(App):
         self._turn_start_time: float = 0.0
         self._last_assistant_text: str = ""
 
+    _RESIZE_DEBOUNCE_S: float = 0.06  # 60 ms
+
     def on_resize(self, event: "events.Resize") -> None:
+        """Debounce rapid resize events; flush once idle for 60 ms."""
+        self._pending_resize = event
+        if self._resize_timer is not None:
+            self._resize_timer.stop()
+        self._resize_timer = self.set_timer(self._RESIZE_DEBOUNCE_S, self._flush_resize)
+
+    def _maybe_reload_emoji(self, event: "events.Resize") -> None:
         """Re-normalize emoji images when the terminal cell pixel size changes."""
         registry = getattr(self, "_emoji_registry", None)
         if registry is None or registry.is_empty():
@@ -701,6 +713,34 @@ class HermesApp(App):
             return
         self._emoji_cell_px = (cpw, cph)
         self.run_worker(lambda: registry.reload_normalized(cpw, cph), thread=True)
+
+    def _flush_resize(self) -> None:
+        """Run app-level resize work after the debounce window expires."""
+        event = self._pending_resize
+        if event is None:
+            return
+        self._pending_resize = None
+        self._resize_timer = None
+        self._maybe_reload_emoji(event)
+        try:
+            w = event.size.width  # type: ignore[union-attr]
+            h = event.size.height  # type: ignore[union-attr]
+        except AttributeError:
+            return
+        self._apply_min_size_overlay(w, h)
+
+    def _apply_min_size_overlay(self, w: int, h: int) -> None:
+        """Mount or dismiss the MinSizeBackdrop based on current terminal dimensions."""
+        from hermes_cli.tui.min_size_overlay import MinSizeBackdrop
+        from hermes_cli.tui.resize_utils import THRESHOLD_ULTRA_NARROW, THRESHOLD_MIN_HEIGHT
+        too_small = w < THRESHOLD_ULTRA_NARROW or h < THRESHOLD_MIN_HEIGHT
+        existing = self.screen.query("MinSizeBackdrop")
+        if too_small and not existing:
+            self.screen.mount(MinSizeBackdrop(w, h))
+        elif too_small and existing:
+            existing.first(MinSizeBackdrop).update_size(w, h)
+        elif not too_small and existing:
+            existing.first(MinSizeBackdrop).remove()
 
     def on_unmount(self) -> None:
         """Stop background helpers tied to app lifetime."""

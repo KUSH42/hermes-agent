@@ -29,6 +29,8 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
+from hermes_cli.tui.resize_utils import THRESHOLD_NARROW, crosses_threshold
+
 if TYPE_CHECKING:
     from hermes_cli.tui.tool_result_parse import ResultSummary, ResultSummaryV4
     from hermes_cli.tui.tool_category import ToolCategory
@@ -147,6 +149,7 @@ class FooterPane(Widget):
         self._show_all_artifacts: bool = False  # B3: show all after overflow button click
         self._last_summary: "ResultSummaryV4 | None" = None
         self._last_promoted: "frozenset[str]" = frozenset()
+        self._last_resize_w: int = 0
 
     def compose(self) -> ComposeResult:
         self._content = Static("", classes="footer-main")
@@ -299,10 +302,9 @@ class FooterPane(Widget):
 
     def on_resize(self, event: object) -> None:
         width = getattr(getattr(event, "size", None), "width", 80)
-        if width < 60:
-            self.add_class("compact")
-        else:
-            self.remove_class("compact")
+        if crosses_threshold(self._last_resize_w, width, THRESHOLD_NARROW):
+            self.set_class(width < THRESHOLD_NARROW, "compact")
+        self._last_resize_w = width
 
 
 # ---------------------------------------------------------------------------
@@ -385,6 +387,7 @@ class ToolPanel(Widget):
         self._start_time: float = time.monotonic()
         self._completed_at: float | None = None
         self._result_paths: list[str] = []
+        self._last_resize_w: int = 0
 
         # Pane refs (set in compose)
         self._body_pane: BodyPane | None = None

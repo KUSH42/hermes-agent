@@ -127,6 +127,78 @@ def _safe_cell_width(s: str) -> int:
         return len(s)
 
 
+def _secondary_args_text(category: "Any", tool_input: "dict | None") -> str:
+    """Extract secondary display text from tool input args (B1).
+
+    Returns '' if nothing to show.
+    """
+    if not tool_input:
+        return ""
+    try:
+        from hermes_cli.tui.tool_category import ToolCategory as _TC
+        if category == _TC.FILE:
+            # Write: content size
+            content = tool_input.get("content") or tool_input.get("new_content") or ""
+            if content:
+                chars = len(content)
+                lines = content.count("\n") + 1
+                return f"content: {chars} chars · {lines} lines"
+            # Read: offset/limit
+            offset = tool_input.get("offset")
+            limit = tool_input.get("limit")
+            parts = []
+            if offset is not None:
+                parts.append(f"offset: {offset}")
+            if limit is not None:
+                parts.append(f"limit: {limit}")
+            return " · ".join(parts)
+
+        if category == _TC.SHELL:
+            parts = []
+            env = tool_input.get("env") or {}
+            if env and isinstance(env, dict):
+                kv = next(iter(env.items()))
+                parts.append(f"env: {kv[0]}={kv[1]}")
+            cwd = tool_input.get("cwd") or tool_input.get("working_dir")
+            if cwd:
+                import os
+                if cwd != os.getcwd():
+                    parts.append(f"cwd: {cwd}")
+            return " · ".join(parts)
+
+        if category == _TC.SEARCH:
+            glob_pat = tool_input.get("glob") or tool_input.get("include") or tool_input.get("file_pattern")
+            if glob_pat:
+                return f"glob: {glob_pat}"
+            return ""
+
+        if category == _TC.WEB:
+            headers = tool_input.get("headers") or {}
+            if headers and isinstance(headers, dict):
+                return f"headers: {len(headers)}"
+            return ""
+
+        if category == _TC.AGENT:
+            text = tool_input.get("task") or tool_input.get("thought") or ""
+            if text:
+                text = str(text)
+                if len(text) > 80:
+                    return text[:79] + "…"
+                return text
+            return ""
+
+        if category == _TC.MCP:
+            _META_KEYS = frozenset({"name", "server", "tool"})
+            pairs = [(k, v) for k, v in tool_input.items() if k not in _META_KEYS][:2]
+            if pairs:
+                return "args: " + ", ".join(f"{k}: {v}" for k, v in pairs)
+            return ""
+
+    except Exception:
+        pass
+    return ""
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -349,6 +421,8 @@ class ToolHeader(PulseMixin, Widget):
         self._header_args: dict = {}             # live tool args for primary-arg rendering
         self._primary_hero: str | None = None    # result summary primary shown in tail
         self._header_chips: list[tuple[str, str]] = []  # [(text, style)] promoted chips
+        # v4 A1 — error kind for distinct icon/color
+        self._error_kind: str | None = None
 
     def on_mount(self) -> None:
         self._refresh_gutter_color()
@@ -377,7 +451,23 @@ class ToolHeader(PulseMixin, Widget):
             from agent.display import get_tool_icon
             self._tool_icon = get_tool_icon(self._tool_name)
         except Exception:
-            self._tool_icon = ""
+            try:
+                from hermes_cli.tui.tool_category import spec_for, _CATEGORY_DEFAULTS
+                spec = spec_for(self._tool_name)
+                self._tool_icon = _CATEGORY_DEFAULTS[spec.category].ascii_fallback or "?"
+            except Exception:
+                self._tool_icon = "?"
+
+    def _accessible_mode(self) -> bool:
+        """Return True when low-color or HERMES_ACCESSIBLE=1 env var set (F1)."""
+        import os
+        if os.environ.get("HERMES_ACCESSIBLE"):
+            return True
+        try:
+            cs = self.app.console.color_system
+            return cs is None or cs == "standard"
+        except Exception:
+            return False
 
     def _render_v4(self) -> "Text | None":
         """v4 header render path. Returns Text or None to fall back to v2."""
@@ -393,6 +483,15 @@ class ToolHeader(PulseMixin, Widget):
 
         focused = self.has_class("focused")
         t = Text()
+
+        # F1: accessible mode state prefix
+        if self._accessible_mode():
+            if self._spinner_char is not None:
+                t.append("[>] ", style="bold")
+            elif self._tool_icon_error:
+                t.append("[!] ", style="bold red")
+            elif self._is_complete:
+                t.append("[+] ", style="bold green")
 
         # Gutter
         if self._is_child_diff:
@@ -452,8 +551,21 @@ class ToolHeader(PulseMixin, Widget):
                 tail.append(f"  {self._line_count}L", style="dim")
             # Hero chip: primary result summary (v4 §4.1)
             if self._primary_hero:
-                hero_style = "bold red" if self._tool_icon_error else "dim green"
-                tail.append(f"  {self._primary_hero}", style=hero_style)
+                if self._tool_icon_error and self._error_kind:
+                    try:
+                        from hermes_cli.tui.tool_result_parse import _error_kind_display
+                        from agent.display import get_tool_icon_mode
+                        _ek_icon, _, _ek_var = _error_kind_display(
+                            self._error_kind, "", get_tool_icon_mode()
+                        )
+                        _ek_hex = self.app.get_css_variables().get(_ek_var, "#ef4444")
+                        tail.append(f"  {_ek_icon} {self._primary_hero}", style=f"bold {_ek_hex}")
+                    except Exception:
+                        tail.append(f"  {self._primary_hero}", style="bold red")
+                elif self._tool_icon_error:
+                    tail.append(f"  {self._primary_hero}", style="bold red")
+                else:
+                    tail.append(f"  {self._primary_hero}", style="dim green")
             # Promoted chips (MCP source, exit code not already in hero, etc.)
             for chip_text, chip_style in (self._header_chips or []):
                 tail.append(f"  {chip_text}", style=chip_style)
@@ -495,7 +607,11 @@ class ToolHeader(PulseMixin, Widget):
         result = self._render_v4()
         if result is not None:
             return result
-        return Text()
+        # A3: degraded fallback — imports or render failed
+        self.add_class("--header-degraded")
+        t = Text()
+        t.append(f"[tool] {self._label}")
+        return t
 
     def set_error(self, is_error: bool) -> None:
         """Mark tool result as error — icon turns red on completion."""
@@ -601,12 +717,60 @@ class ToolBodyContainer(Widget):
     ToolBodyContainer .--microcopy.--active { display: block; }
     """
 
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._secondary_text: str = ""
+        self._microcopy_active: bool = False
+
     def compose(self) -> ComposeResult:
         # Microcopy row (v4 §3.3) — always present, shown when v4 active + elapsed≥0.5s
         yield Static("", classes="--microcopy")
         # No explicit ID — query by type inside ToolBodyContainer to avoid
         # duplicate IDs when multiple ToolBlocks exist per MessagePanel.
         yield CopyableRichLog(markup=False, highlight=False, wrap=False)
+
+    def _mc_widget(self) -> "Static | None":
+        try:
+            return self.query_one(".--microcopy", Static)
+        except Exception:
+            return None
+
+    def update_secondary_args(self, text: str) -> None:
+        """Store secondary args text; show dim if microcopy not active (B1)."""
+        self._secondary_text = text
+        if self._microcopy_active or not text:
+            return
+        mc = self._mc_widget()
+        if mc is None:
+            return
+        mc.update(text)
+        mc.add_class("--secondary-args")
+        mc.remove_class("--active")
+
+    def set_microcopy(self, text: "str | object") -> None:
+        """Show streaming microcopy — takes precedence over secondary args (B1)."""
+        self._microcopy_active = True
+        mc = self._mc_widget()
+        if mc is None:
+            return
+        mc.update(text)
+        mc.remove_class("--secondary-args")
+        mc.add_class("--active")
+
+    def clear_microcopy(self) -> None:
+        """Clear streaming microcopy; restore secondary args if present (B1)."""
+        self._microcopy_active = False
+        mc = self._mc_widget()
+        if mc is None:
+            return
+        if self._secondary_text:
+            mc.update(self._secondary_text)
+            mc.add_class("--secondary-args")
+            mc.remove_class("--active")
+        else:
+            mc.remove_class("--active")
+            mc.remove_class("--secondary-args")
+            mc.update("")
 
 
 class ToolBlock(Widget):
@@ -1023,10 +1187,11 @@ class StreamingToolBlock(ToolBlock):
 
     DEFAULT_CSS = "StreamingToolBlock { height: auto; }"
 
-    def __init__(self, label: str, tool_name: str | None = None, **kwargs: Any) -> None:
+    def __init__(self, label: str, tool_name: str | None = None, tool_input: "dict | None" = None, **kwargs: Any) -> None:
         # Initialise parent with empty lines — content arrives via append_line()
         super().__init__(label=label, lines=[], plain_lines=[], tool_name=tool_name, **kwargs)
         self._stream_label = label
+        self._tool_input = tool_input
         # Lines buffered between 60fps flush ticks
         self._pending: list[tuple[str, str]] = []  # (raw_ansi, plain)
         # All plain-text lines for clipboard (no display cap)
@@ -1090,6 +1255,15 @@ class StreamingToolBlock(ToolBlock):
             self._omission_bar_bottom_mounted = True
         # Start icon pulse
         self._header._pulse_start()
+        # B1: extract and show secondary args before streaming starts
+        try:
+            from hermes_cli.tui.tool_category import spec_for as _spec_for
+            _spec = _spec_for(self._tool_name or "")
+            _sec = _secondary_args_text(_spec.category, self._tool_input)
+            if _sec:
+                self._body.update_secondary_args(_sec)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Streaming API (called from event loop via call_from_thread)
@@ -1182,12 +1356,8 @@ class StreamingToolBlock(ToolBlock):
         self._try_mount_media()
 
     def _clear_microcopy_on_complete(self) -> None:
-        """Clear microcopy on completion unless this is an MCP tool (§3.3)."""
-        mc = self._microcopy_widget
-        if mc is None:
-            return
-        mc.remove_class("--active")
-        mc.update("")
+        """Clear microcopy on completion; restore secondary args if set (B1)."""
+        self._body.clear_microcopy()
 
     def _try_mount_media(self) -> bool:
         """Mount inline media if output contains a MEDIA: image line or audio/video URLs.
@@ -1266,9 +1436,6 @@ class StreamingToolBlock(ToolBlock):
 
     def _update_microcopy(self) -> None:
         """Update microcopy Static with current streaming state (v4 §3.3)."""
-        mc = self._microcopy_widget
-        if mc is None:
-            return
         started = getattr(self, "_stream_started_at", None)
         if started is None:
             return
@@ -1288,8 +1455,7 @@ class StreamingToolBlock(ToolBlock):
         )
         text = microcopy_line(spec, state)
         if text:
-            mc.update(text)
-            mc.add_class("--active")
+            self._body.set_microcopy(text)
 
     def _flush_pending(self) -> None:
         """Drain pending lines into the RichLog (called at 60fps)."""

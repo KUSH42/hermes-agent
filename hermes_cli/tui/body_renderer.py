@@ -494,3 +494,8 @@ def _lazy_for_category(cls, category: "ToolCategory") -> "BodyRenderer":
 
 
 BodyRenderer.for_category = _lazy_for_category  # type: ignore[method-assign]
+
+
+class PlainBodyRenderer(BodyRenderer):
+    """Fallback renderer — passes lines through unstyled."""
+    pass

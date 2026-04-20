@@ -110,9 +110,22 @@ Then load only the focused reference you need:
 
 ## Validation
 
-Last revalidated: **2026-04-20. ~1786+ total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility). Exact count pending broad suite run; targeted suite (tool_blocks + omission_bar + tool_panel + body_renderer) = 168 passing.
+Last revalidated: **2026-04-20. 2024 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility; 1 flaky perf jitter test in `test_streaming_perf.py` occasionally fails under load — pre-existing, not related to recent changes).
 
 Recent changes (details → reference files):
+- **Tool Call UX Phase 1** (2026-04-20): 26 tests in `tests/tui/test_ux_phase1.py`. Covers A1+A3+B1+C1+C2+F1 from the UX review spec (`/home/xush/.hermes/tui-tool-call-ux-review-2026-04-20.md`).
+  - **A1 — `_error_kind_display(kind, detail, icon_mode)` helper** in `tool_result_parse.py`: `_ERROR_DISPLAY` dict (6 kinds: timeout/exit/signal/auth/network/parse), `_MODE_IDX`, function returns `(icon, label, css_var_name)`. Error CSS vars declared in `hermes.tcss`: `$error-timeout` (amber), `$error-critical` (red), `$error-auth` (yellow), `$error-network` (orange). `ToolHeader.__init__` gains `_error_kind: str | None = None`. `ToolPanel.set_result_summary_v4()` wires `header._error_kind = summary.error_kind`. `_render_v4()` uses `_error_kind` + `_tool_icon_error` to color hero chip. `app.get_css_variables()` returns keys **without `$` prefix**.
+  - **A3 — Silent failure fallbacks**: `_render_v4()` None → ASCII header `"[tool] {label}"` + `--header-degraded` class. `BodyPane.__init__` renderer exception → `PlainBodyRenderer()` fallback + `logging.getLogger(__name__).debug(...)` (NOT `None`). `_refresh_tool_icon()` exception → `_CATEGORY_DEFAULTS[spec.category].ascii_fallback or "?"`. Diff path None → `_diff_file_path` stays `None`, header renders without crash.
+  - **B1 — Secondary args in microcopy slot**: `_secondary_args_text(category, tool_input) -> str` helper in `tool_blocks.py` (FILE write/read, SHELL env/cwd, SEARCH glob, AGENT task, MCP first 2 args). `ToolBodyContainer` gains `_secondary_text`, `_microcopy_active`, `update_secondary_args()`, `set_microcopy()`, `clear_microcopy()`. **CSS class exclusivity**: `set_microcopy()` removes `--secondary-args` before adding `--active`; `clear_microcopy()` removes `--active`, adds `--secondary-args` back if `_secondary_text` non-empty — they NEVER coexist. TCSS: `ToolBodyContainer .--microcopy.--secondary-args { display: block; color: $text-muted; opacity: 0.6; }`. `StreamingToolBlock.__init__` gains `tool_input: dict | None = None`.
+  - **C1 — `action_open_primary()`** on `ToolPanel`: opens `header._full_path` (actual attr — NOT `_label_path`) via `app._open_path_action(header, header._full_path, opener, False)` when `header._path_clickable` (actual attr — NOT `_is_path_clickable`); else falls back to `action_open_first()`. `"open_first"` stays in `_IMPLEMENTED_ACTIONS` (footer chip guard — orthogonal to key binding).
+  - **C2 — j/k scroll**: `Binding("j"/"k", "scroll_body_down/up")` on `ToolPanel`. Guard: `not self.collapsed` (reactive, no underscore).
+  - **F1 — Accessible mode**: `_accessible_mode() -> bool` on `ToolHeader`: `True` when `HERMES_ACCESSIBLE=1` or `app.console.color_system in (None, "standard")`. Prepends `[>]`/`[+]`/`[!]` to header. State from private attrs: `_spinner_char is not None` → `[>]`; `_tool_icon_error` → `[!]`; `_is_complete` → `[+]`. **Do NOT use CSS classes `--completed`/`--error` — they don't exist on `ToolHeader`.**
+  → `hermes_cli/tui/tool_result_parse.py §_ERROR_DISPLAY/_error_kind_display`,
+    `hermes_cli/tui/tool_blocks.py §ToolBodyContainer/ToolHeader._accessible_mode/_error_kind/_render_v4/StreamingToolBlock._secondary_args_text/tool_input`,
+    `hermes_cli/tui/tool_panel.py §BodyPane.__init__/action_open_primary/action_scroll_body_down/up`,
+    `hermes_cli/tui/body_renderer.py §PlainBodyRenderer`,
+    `hermes_cli/tui/hermes.tcss §error-* CSS vars/--secondary-args rule`,
+    `tests/tui/test_ux_phase1.py` (new, 26 tests)
 - **Tool UX Pass 3** (2026-04-20): 11 fixes across P0/P1/P2 categories + ~27 new tests.
   - **§1 MCPBodyRenderer**: New class in `body_renderer.py`; registered for `ToolCategory.MCP`.
     `render_stream_line` = ANSI passthrough. `finalize` extracts `content[].text` from JSON.

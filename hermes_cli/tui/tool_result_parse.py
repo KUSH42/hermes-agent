@@ -261,6 +261,15 @@ def _last_line_v4(text: str, max_len: int = 80) -> str:
     return ""
 
 
+_STDERR_CAP = 300
+
+
+def _last_n_chars_v4(text: str, n: int = _STDERR_CAP) -> str:
+    """Return last N chars of stripped text, preserving internal newlines."""
+    stripped = str(text).strip()
+    return stripped[-n:] if len(stripped) > n else stripped
+
+
 def _raw_str(raw) -> str:
     if isinstance(raw, str):
         return raw
@@ -285,7 +294,7 @@ def _make_copy_body(raw_result) -> Action:
 def _make_copy_err(stderr_tail: str, raw_result=None) -> Action:
     payload = stderr_tail or _last_line_v4(_raw_str(raw_result or ""))
     payload, truncated = _truncate_payload(payload)
-    return Action("copy err", "c", "copy_err", payload, truncated)
+    return Action("copy err", "e", "copy_err", payload, truncated)
 
 
 def _make_action(label: str, hotkey: str, kind: ActionKind,
@@ -316,7 +325,7 @@ def file_result_v4(ctx: ParseContext) -> ResultSummaryV4:
     is_write = ctx.spec.primary_result not in ("lines", "bytes")
 
     if is_error:
-        stderr_tail = _last_line_v4(raw)
+        stderr_tail = _last_n_chars_v4(raw)
         return ResultSummaryV4(
             primary="✗ error", exit_code=None, chips=(),
             stderr_tail=stderr_tail, actions=(_make_copy_err(stderr_tail, raw),),
@@ -385,7 +394,7 @@ def shell_result_v4(ctx: ParseContext) -> ResultSummaryV4:
     is_error = ctx.complete.is_error or (exit_code is not None and exit_code != 0)
     error_kind = ctx.complete.error_kind
     cmd = str(ctx.start.args.get("command") or ctx.start.args.get("cmd") or "")
-    stderr_tail = _last_line_v4(raw) if is_error else ""
+    stderr_tail = _last_n_chars_v4(raw) if is_error else ""
 
     if error_kind == "timeout":
         return ResultSummaryV4(
@@ -450,7 +459,7 @@ def code_result_v4(ctx: ParseContext) -> ResultSummaryV4:
     is_error = ctx.complete.is_error or (exit_code is not None and exit_code != 0)
     error_kind = ctx.complete.error_kind
     code_text = str(ctx.start.args.get("code") or "")
-    stderr_tail = _last_line_v4(raw) if is_error else ""
+    stderr_tail = _last_n_chars_v4(raw) if is_error else ""
     artifacts = _extract_media_artifacts(raw)
 
     if error_kind == "timeout" or is_error:
@@ -531,7 +540,7 @@ def search_result_v4(ctx: ParseContext) -> ResultSummaryV4:
     if is_error:
         return ResultSummaryV4(
             primary="✗ error", exit_code=None, chips=(),
-            stderr_tail=_last_line_v4(raw),
+            stderr_tail=_last_n_chars_v4(raw),
             actions=(_make_copy_err("", raw),),
             artifacts=(), is_error=True, error_kind=ctx.complete.error_kind,
         )
@@ -689,7 +698,7 @@ def agent_result_v4(ctx: ParseContext) -> ResultSummaryV4:
     if ctx.complete.is_error:
         return ResultSummaryV4(
             primary="✗ error", exit_code=None, chips=(),
-            stderr_tail=_last_line_v4(raw),
+            stderr_tail=_last_n_chars_v4(raw),
             actions=(_make_copy_err("", raw),),
             artifacts=(), is_error=True, error_kind=ctx.complete.error_kind,
         )
@@ -863,7 +872,7 @@ def generic_result_v4(ctx: ParseContext) -> ResultSummaryV4:
     if is_error:
         return ResultSummaryV4(
             primary="✗ error", exit_code=None, chips=(),
-            stderr_tail=_last_line_v4(raw),
+            stderr_tail=_last_n_chars_v4(raw),
             actions=(_make_copy_err("", raw),),
             artifacts=(), is_error=True, error_kind=ctx.complete.error_kind,
         )
@@ -872,6 +881,33 @@ def generic_result_v4(ctx: ParseContext) -> ResultSummaryV4:
         stderr_tail="", actions=(_make_copy_body(raw),),
         artifacts=(), is_error=False,
     )
+
+
+# ---------------------------------------------------------------------------
+# v4 error display helpers (A1/E1)
+# ---------------------------------------------------------------------------
+
+_ERROR_DISPLAY: dict[str, tuple[str, str, str, str]] = {
+    # kind:       (nerdfont,  emoji,  ascii,   css_var)
+    "timeout":  ("\U000f0513", "⏳",   "[T]",  "error-timeout"),
+    "exit":     ("\U000f0159", "💢",   "[X]",  "error-critical"),
+    "signal":   ("\U000f140b", "⚡",   "[K]",  "error-critical"),
+    "auth":     ("\U000f033e", "🔑",   "[A]",  "error-auth"),
+    "network":  ("\U000f092e", "📡",   "[W]",  "error-network"),
+    "parse":    ("\U000f02fd", "❓",   "[?]",  "error-network"),
+}
+_MODE_IDX: dict[str, int] = {"nerdfont": 0, "emoji": 1, "ascii": 2}
+
+
+def _error_kind_display(kind: str, detail: str, icon_mode: str) -> tuple[str, str, str]:
+    """Return (icon, label, css_var_name) for an error kind.
+
+    label = detail passthrough (already-formatted string like "exit 1").
+    css_var_name: key for app.get_css_variables() — no $ prefix.
+    """
+    entry = _ERROR_DISPLAY.get(kind, _ERROR_DISPLAY["network"])
+    icon = entry[_MODE_IDX.get(icon_mode, 2)]
+    return (icon, detail, entry[3])
 
 
 # ---------------------------------------------------------------------------

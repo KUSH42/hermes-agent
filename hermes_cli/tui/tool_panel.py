@@ -71,7 +71,12 @@ class BodyPane(Widget):
                 from hermes_cli.tui.body_renderer import BodyRenderer
                 self._renderer = BodyRenderer.for_category(category)
             except Exception:
-                self._renderer = None
+                import logging
+                logging.getLogger(__name__).debug(
+                    "BodyPane renderer init failed for %r", category, exc_info=True
+                )
+                from hermes_cli.tui.body_renderer import PlainBodyRenderer
+                self._renderer = PlainBodyRenderer()
         else:
             self._renderer = None
 
@@ -227,13 +232,15 @@ class ToolPanel(Widget):
     BINDINGS = [
         Binding("enter", "toggle_collapse",  "Toggle",        show=False),
         Binding("c",     "copy_body",        "Copy output",   show=False),
-        Binding("o",     "open_first",       "Open file",     show=False),
+        Binding("o",     "open_primary",     "Open",          show=False),
         Binding("e",     "copy_err",         "Copy stderr",   show=False),
         Binding("p",     "copy_paths",       "Copy paths",    show=False),
         Binding("+",     "expand_lines",     "Expand lines",  show=False),
         Binding("-",     "collapse_lines",   "Collapse lines",show=False),
         Binding("*",     "expand_all_lines", "Expand all",    show=False),
         Binding("r",     "retry",            "Retry",         show=False),
+        Binding("j",     "scroll_body_down", "↓",             show=False),
+        Binding("k",     "scroll_body_up",   "↑",             show=False),
     ]
 
     # Always start expanded; auto-collapse at completion based on threshold.
@@ -361,6 +368,7 @@ class ToolPanel(Widget):
         if header is not None:
             if summary.primary is not None:
                 header._primary_hero = summary.primary
+            header._error_kind = summary.error_kind
             primary_text = summary.primary or ""
             promoted: list[tuple[str, str]] = []
             tone_map = {
@@ -418,6 +426,31 @@ class ToolPanel(Widget):
     def action_toggle_collapse(self) -> None:
         self.collapsed = not self.collapsed
         self._user_collapse_override = True
+
+    def action_open_primary(self) -> None:
+        """Open header path if path-clickable; else fall back to first file artifact (C1)."""
+        import os
+        import shlex
+        header = getattr(self._block, "_header", None)
+        if header is not None and getattr(header, "_path_clickable", False) and header._full_path:
+            opener = "open" if sys.platform == "darwin" else "xdg-open"
+            try:
+                self.app._open_path_action(header, header._full_path, opener, False)  # type: ignore[attr-defined]
+                self._flash_header("opening…")
+            except Exception:
+                pass
+            return
+        # Fallback: first file artifact
+        paths = self._result_paths_for_action()
+        if not paths:
+            return
+        editor = os.environ.get("EDITOR") or os.environ.get("VISUAL")
+        if editor:
+            subprocess.Popen([*shlex.split(editor), paths[0]])
+        else:
+            open_cmd = "open" if sys.platform == "darwin" else "xdg-open"
+            subprocess.Popen([open_cmd, paths[0]])
+        self._flash_header("opening…")
 
     # ------------------------------------------------------------------
     # Footer actions — Phase A
@@ -487,6 +520,28 @@ class ToolPanel(Widget):
         except Exception:
             self._flash_header("retry failed")
 
+    def action_scroll_body_down(self) -> None:
+        """Scroll tool body down (j) (C2)."""
+        if self.collapsed:
+            return
+        try:
+            from hermes_cli.tui.widgets import CopyableRichLog
+            log = self._block._body.query_one(CopyableRichLog)
+            log.scroll_down(animate=False)
+        except Exception:
+            pass
+
+    def action_scroll_body_up(self) -> None:
+        """Scroll tool body up (k) (C2)."""
+        if self.collapsed:
+            return
+        try:
+            from hermes_cli.tui.widgets import CopyableRichLog
+            log = self._block._body.query_one(CopyableRichLog)
+            log.scroll_up(animate=False)
+        except Exception:
+            pass
+
     # Focus styling done via CSS :focus pseudo-class in hermes.tcss.
     # on_focus/on_blur avoided: they trigger layout refreshes that interfere
     # with click hit-testing. watch_has_focus is content-only update.
@@ -507,6 +562,8 @@ class ToolPanel(Widget):
         if bar is not None:
             t.append("+/-", style="bold"); t.append(" lines  ", style="dim")
             t.append("*", style="bold"); t.append(" all  ", style="dim")
+        if not self.collapsed:
+            t.append("j/k", style="bold"); t.append(" scroll  ", style="dim")
         t.append("c", style="bold"); t.append(" copy  ", style="dim")
         rs = self._result_summary_v4
         if rs is not None:

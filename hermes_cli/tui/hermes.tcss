@@ -24,6 +24,10 @@
 /* Component variable declarations — must be present for Textual to parse $var refs */
 $footnote-ref-color: #888888;
 $tool-glyph-mcp: "󰡨";
+$error-timeout: #f59e0b;
+$error-critical: #ef4444;
+$error-auth: #eab308;
+$error-network: #f97316;
 
 /* Screen is the actual DOM root — transparent widgets inherit from it, not from
  * HermesApp. Both must be set so every widget in the tree shows $app-bg. */
@@ -65,6 +69,12 @@ MessagePanel {
  * Users can shift the whole-app tone by setting app-bg in component_vars. */
 CopyableRichLog {
     background: $app-bg;
+}
+
+ToolBodyContainer .--microcopy.--secondary-args {
+    display: block;
+    color: $text-muted;
+    opacity: 0.6;
 }
 
 StreamingCodeBlock {

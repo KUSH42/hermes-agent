@@ -192,6 +192,8 @@ UndoConfirmOverlay {
 #input-chevron.--phase-shell  { color: $chevron-shell; }
 #input-chevron.--phase-done   { color: $chevron-done; }
 #input-chevron.--phase-error  { color: $chevron-error; }
+/* Yolo mode — persistent warning tint; coexists with phase classes */
+#input-chevron.--yolo-active  { color: $chevron-error; }
 
 #spinner-overlay {
     display: none;

@@ -24,6 +24,7 @@ class ToolCategory(Enum):
     SEARCH  = "search"
     WEB     = "web"
     AGENT   = "agent"
+    VISION  = "vision"    # vision, vision_analyze, and similar image-inspection tools
     MCP     = "mcp"       # v4: fallback for unclassifiable MCP tools
     UNKNOWN = "unknown"
 
@@ -53,6 +54,7 @@ _CATEGORY_DEFAULTS: dict[ToolCategory, CategoryDefaults] = {
     ToolCategory.SEARCH:  CategoryDefaults("tool-search-accent",  "tool-glyph-search",  "?", "search_result",  10),
     ToolCategory.WEB:     CategoryDefaults("tool-web-accent",     "tool-glyph-web",     "@", "web_result",     10),
     ToolCategory.AGENT:   CategoryDefaults("tool-agent-accent",   "tool-glyph-agent",   "*", "agent_result",   15),
+    ToolCategory.VISION:  CategoryDefaults("tool-vision-accent",  "tool-glyph-vision",  "V", "vision_result",  10, icon_nf="\uf03e"),  #
     ToolCategory.MCP:     CategoryDefaults("tool-mcp-accent",     "tool-glyph-mcp",     "#", "mcp_result",     10, icon_nf="\uf868"),  # 󰡨
     ToolCategory.UNKNOWN: CategoryDefaults("tool-unknown-accent", "tool-glyph-unknown", "?", "generic_result", 6),
 }
@@ -437,6 +439,7 @@ _CODE   = ToolCategory.CODE
 _SEARCH = ToolCategory.SEARCH
 _WEB    = ToolCategory.WEB
 _AGENT  = ToolCategory.AGENT
+_VISION = ToolCategory.VISION
 
 _SEED_SPECS: list[ToolSpec] = [
     ToolSpec(name="read_file",          category=_FILE,   primary_arg="path",        primary_result="bytes",   streaming=False),
@@ -459,6 +462,8 @@ _SEED_SPECS: list[ToolSpec] = [
     ToolSpec(name="think",              category=_AGENT,  primary_arg="thought",     primary_result="done",    streaming=False),
     ToolSpec(name="plan",               category=_AGENT,  primary_arg="description", primary_result="done",    streaming=False),
     ToolSpec(name="delegate",           category=_AGENT,  primary_arg="task",        primary_result="done",    streaming=False),
+    ToolSpec(name="vision",             category=_VISION, primary_arg="image_path",  primary_result="lines",   streaming=False),
+    ToolSpec(name="vision_analyze",     category=_VISION, primary_arg="image_path",  primary_result="lines",   streaming=False),
 ]
 
 
@@ -497,6 +502,8 @@ _TOOL_CATEGORY: dict[str, ToolCategory] = {
     "think":              ToolCategory.AGENT,
     "plan":               ToolCategory.AGENT,
     "delegate":           ToolCategory.AGENT,
+    "vision":             ToolCategory.VISION,
+    "vision_analyze":     ToolCategory.VISION,
 }
 
 

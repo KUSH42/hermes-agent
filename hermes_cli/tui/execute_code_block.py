@@ -20,7 +20,6 @@ from textual.widget import Widget
 from textual.widgets import Static
 
 from hermes_cli.tui.tool_blocks import (
-    COLLAPSE_THRESHOLD,
     OmissionBar,
     StreamingToolBlock,
     ToolBodyContainer,
@@ -30,6 +29,10 @@ from hermes_cli.tui.tool_blocks import (
     _VISIBLE_CAP,
     _first_link,
 )
+
+# Higher collapse threshold for ExecuteCodeBlock — generic COLLAPSE_THRESHOLD=3
+# would collapse any non-trivial python script before the user sees its output.
+_EXECUTE_COLLAPSE_THRESHOLD = 20
 from hermes_cli.tui.widgets import CopyableRichLog
 
 
@@ -415,7 +418,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
         self._header._line_count = 0  # don't show line count in execute_code header
 
         if not self._user_toggled:
-            if total > COLLAPSE_THRESHOLD:
+            if total > _EXECUTE_COLLAPSE_THRESHOLD:
                 self._header._has_affordances = True
                 self._header.collapsed = True
                 self._body.remove_class("expanded")

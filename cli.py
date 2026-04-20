@@ -7135,6 +7135,17 @@ class HermesCLI:
                     try:
                         from hermes_cli.tui.widgets import OutputPanel
                         from hermes_cli.tui.tool_panel import ToolPanel as _TP
+                        # By the time this fires, _open_execute (queued earlier
+                        # from _on_tool_gen_start) will have already run and
+                        # populated _gen_blocks_by_idx.  Reuse that block to
+                        # avoid creating a duplicate orphan ECB.
+                        for _ik, _blk in list(self._gen_blocks_by_idx.items()):
+                            if isinstance(_blk, _ECB):
+                                del self._gen_blocks_by_idx[_ik]
+                                self._active_execute_blocks_by_idx[_ik] = _blk
+                                tui._active_streaming_blocks[tool_call_id] = _blk
+                                tui.call_after_refresh(lambda _b=_blk, _c=_code: _b.finalize_code(_c))
+                                return
                         output = tui.query_one(OutputPanel)
                         msg = output.current_message or output.new_message()
                         b = _ECB(initial_label=_label)

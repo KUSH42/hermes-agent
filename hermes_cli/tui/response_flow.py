@@ -353,6 +353,17 @@ class ResponseFlowEngine:
         self._emoji_registry = getattr(_app, "_emoji_registry", None)
         self._emoji_images_enabled: bool = getattr(_app, "_emoji_images_enabled", True)
         self._emitted_emoji_anchors: set[int] = set()  # id() of mounted positions
+        # Optional callback fired for each committed prose line (non-blank plain text)
+        self._prose_callback: "Callable[[str], None] | None" = None
+
+    def _write_prose(self, rich_text: "Text", plain: str) -> None:
+        """Write a prose line and optionally fire the prose callback."""
+        self._prose_log.write_with_source(rich_text, plain)
+        if self._prose_callback is not None and plain.strip():
+            try:
+                self._prose_callback(plain)
+            except Exception:
+                pass
 
     def _sync_prose_log(self) -> None:
         """Refresh the active prose destination from the owning message panel."""
@@ -469,7 +480,7 @@ class ResponseFlowEngine:
                         block_ansi = apply_block_line(block_result)
                         inline_ansi = apply_inline_markdown(block_ansi)
                         plain = _strip_ansi(inline_ansi)
-                        self._prose_log.write_with_source(Text.from_ansi(inline_ansi), plain)
+                        self._write_prose(Text.from_ansi(inline_ansi), plain)
             # Block math — checked BEFORE fence detection ($$ would match _FENCE_OPEN_RE)
             if self._math_enabled:
                 oneline_m = _BLOCK_MATH_ONELINE_RE.match(stripped)
@@ -515,7 +526,7 @@ class ResponseFlowEngine:
                     block_ansi = apply_block_line(label)
                     inline_ansi = apply_inline_markdown(block_ansi)
                     plain = _strip_ansi(inline_ansi)
-                    self._prose_log.write_with_source(Text.from_ansi(inline_ansi), plain)
+                    self._write_prose(Text.from_ansi(inline_ansi), plain)
                     self._emit_complete_code_block([value])
                     return
             if _looks_like_source_line(raw):
@@ -609,13 +620,21 @@ class ResponseFlowEngine:
         inline_ansi = apply_inline_markdown(block_ansi)
 
         # Phase 5: Write to prose log
+        # Phase 6 (interleaved): strip :name: emoji tokens from displayed text when
+        # images are enabled so the rendered widget replaces the token instead of
+        # appearing below a duplicate text copy of it.
         self._sync_prose_log()
         plain = _strip_ansi(inline_ansi)
-        self._prose_log.write_with_source(Text.from_ansi(inline_ansi), plain)
+        emoji_names = self._extract_emoji_refs(plain)
+        if emoji_names:
+            display_ansi = _EMOJI_RE.sub("", inline_ansi)
+            display_plain = _EMOJI_RE.sub("", plain)
+            self._write_prose(Text.from_ansi(display_ansi), display_plain)
+        else:
+            self._write_prose(Text.from_ansi(inline_ansi), plain)
         self._pending_code_intro = intro_candidate or _is_code_intro_label(plain)
 
-        # Phase 6: Mount custom emoji images for any :name: tokens in the line
-        for _ename in self._extract_emoji_refs(plain):
+        for _ename in emoji_names:
             self._mount_emoji(_ename)
 
     def _scan_media_urls(self, line: str) -> None:
@@ -685,13 +704,12 @@ class ResponseFlowEngine:
                     panel.mount(widget)
                 elif use_images:
                     from hermes_cli.tui.widgets import InlineImage
-                    img = InlineImage(max_rows=entry.cell_height)
-                    img.image = entry.pil_image
+                    # Pass image as constructor arg so watch_image fires after
+                    # mount when size is valid, not before.
+                    img = InlineImage(image=entry.pil_image, max_rows=entry.cell_height)
                     panel.mount(img)
-                else:
-                    # Text fallback: write the :name: token as prose
-                    self._sync_prose_log()
-                    self._prose_log.write_with_source(Text(f":{name}:"), f":{name}:")
+                # No text fallback — :name: token was stripped from the prose
+                # line in process_line before write_with_source was called.
             except Exception:
                 pass
 

@@ -389,6 +389,12 @@ class HermesApp(App):
     # FPS HUD visibility — toggled via Ctrl+\ or display.fps_hud config
     fps_hud_visible: reactive[bool] = reactive(False)
 
+    # Context-window % meter (Feature A)
+    context_pct: reactive[float] = reactive(0.0, repaint=False)
+
+    # Yolo mode — mirrors HERMES_YOLO_MODE env var; toggled at runtime via /yolo
+    yolo_mode: reactive[bool] = reactive(False, repaint=False)
+
     # hint_text is NOT on HermesApp — HintBar.hint is the single source of truth.
 
     def __init__(
@@ -598,6 +604,12 @@ class HermesApp(App):
         # Apply --no-turn-boundary class if config disables turn boundary rule
         if not self._browse_turn_boundary_always:
             self.add_class("--no-turn-boundary")
+        # Yolo mode: sync reactive with env var state at startup
+        import os as _os2
+        self.yolo_mode = _os2.environ.get("HERMES_YOLO_MODE") == "1"
+        # Desktop notify: track turn start time
+        self._turn_start_time: float = 0.0
+        self._last_assistant_text: str = ""
 
     def on_resize(self, event: "events.Resize") -> None:
         """Re-normalize emoji images when the terminal cell pixel size changes."""
@@ -618,8 +630,13 @@ class HermesApp(App):
     def on_unmount(self) -> None:
         """Stop background helpers tied to app lifetime."""
         self._theme_manager.stop_hot_reload()
-        for _h in (self._anim_clock_h, self._spinner_h, self._fps_h, self._duration_h):
-            _h.stop()
+        for _attr in ("_anim_clock_h", "_spinner_h", "_fps_h", "_duration_h"):
+            _h = getattr(self, _attr, None)
+            if _h is not None:
+                try:
+                    _h.stop()
+                except Exception:
+                    pass
         # Safety-net: stop any lingering media players
         try:
             from hermes_cli.tui.widgets import InlineMediaWidget as _IMW
@@ -1354,6 +1371,17 @@ class HermesApp(App):
         except Exception:
             pass
 
+    def watch_yolo_mode(self, value: bool) -> None:
+        """Update #input-chevron CSS class to reflect yolo state."""
+        try:
+            chevron = self.query_one("#input-chevron", Static)
+            if value:
+                chevron.add_class("--yolo-active")
+            else:
+                chevron.remove_class("--yolo-active")
+        except Exception:
+            pass
+
     def watch_agent_running(self, value: bool) -> None:
         self._drawille_show_hide(value)
         if value:
@@ -1367,9 +1395,14 @@ class HermesApp(App):
             # P7: reset per-turn tool call list for fresh turn
             self._turn_tool_calls = []
             self._turn_start_monotonic = None
+            # Track turn start for desktop notify
+            import time as _time
+            self._turn_start_time = _time.monotonic()
             # Start 5s background git poll
             if self._git_poll_h is None:
                 self._git_poll_h = self.set_interval(5.0, self._trigger_git_poll)
+            # OSC progress bar
+            self._osc_progress_update(True)
         else:
             # Stop background git poll
             if self._git_poll_h is not None:
@@ -1438,6 +1471,10 @@ class HermesApp(App):
             # Rebuild unified browse anchor list now that all blocks are mounted
             if self.browse_mode:
                 self._rebuild_browse_anchors()
+            # OSC progress bar: clear
+            self._osc_progress_update(False)
+            # Desktop notification
+            self._maybe_notify()
 
         # --- undo safety guard ---
         if value and self.undo_state is not None:
@@ -1481,6 +1518,46 @@ class HermesApp(App):
         # Recompute hint phase when agent stops
         if not value:
             self._set_hint_phase(self._compute_hint_phase())
+
+    def _osc_progress_update(self, running: bool) -> None:
+        """Emit OSC 9;4 sequence when config flag is set."""
+        try:
+            from hermes_cli.tui.osc_progress import osc_progress_start, osc_progress_end
+            cfg = getattr(self.cli, "_cfg", {}) if self.cli else {}
+            if (cfg.get("display", {}) if isinstance(cfg, dict) else {}).get("osc_progress", True):
+                if running:
+                    osc_progress_start()
+                else:
+                    osc_progress_end()
+        except Exception:
+            pass
+
+    def _maybe_notify(self) -> None:
+        """Fire desktop notification when turn exceeds threshold."""
+        try:
+            cfg = getattr(self.cli, "_cfg", {}) if self.cli else {}
+            display = (cfg.get("display", {}) if isinstance(cfg, dict) else {})
+            if not display.get("desktop_notify", False):
+                return
+            import time as _time2
+            elapsed = _time2.monotonic() - getattr(self, "_turn_start_time", 0.0)
+            min_s = float(display.get("notify_min_seconds", 10.0))
+            if elapsed < min_s:
+                return
+            from hermes_cli.tui.desktop_notify import notify as _notify
+            body = (getattr(self, "_last_assistant_text", "") or "").strip()
+            if body:
+                body = body.splitlines()[0][:120]
+            else:
+                body = "Task complete"
+            _notify(
+                "Hermes",
+                body,
+                sound=bool(display.get("notify_sound", False)),
+                sound_name=str(display.get("notify_sound_name", "Glass")),
+            )
+        except Exception:
+            pass
 
     def _refresh_live_response_metrics(self) -> None:
         """Refresh current message header while a streamed response is active."""

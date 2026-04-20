@@ -1347,6 +1347,9 @@ class MessagePanel(Widget):
             def _media_cb(kind: str, url: str) -> None:
                 _app.call_from_thread(_app._mount_inline_media_widget, kind, url)
             self._response_engine._mount_media_callback = _media_cb
+            def _prose_cb(line: str) -> None:
+                _app._last_assistant_text = line
+            self._response_engine._prose_callback = _prose_cb
 
     @property
     def response_log(self) -> CopyableRichLog:
@@ -2148,8 +2151,8 @@ class _EchoBullet(PulseMixin, Widget):
     """
 
     DEFAULT_CSS = """
-    _EchoBullet { height: auto; }
-    _EchoBullet > Static { height: auto; }
+    _EchoBullet { height: auto; width: 1fr; }
+    _EchoBullet > Static { height: auto; width: 1fr; }
     """
 
     def __init__(self, message: str, **kwargs: Any) -> None:
@@ -2259,6 +2262,7 @@ class UserMessagePanel(Widget):
     DEFAULT_CSS = """
     UserMessagePanel {
         height: auto;
+        width: 1fr;
         margin: 1 0 0 0;
         padding: 0 1;
     }
@@ -3055,6 +3059,8 @@ class StatusBar(PulseMixin, Widget):
             "browse_mode", "browse_index", "_browse_total", "_browse_hint",
             "status_output_dropped",
             "status_active_file",
+            "context_pct",
+            "yolo_mode",
         ):
             self.watch(app, attr, self._on_status_change)
         # agent_running: dedicated callback to start/stop pulse + refresh
@@ -3166,6 +3172,16 @@ class StatusBar(PulseMixin, Widget):
             if ctx_max > 0 else _format_compact_tokens(ctx_tokens)
         )
 
+        # Context-window % meter
+        _ctx_pct_val = getattr(app, "context_pct", 0.0)
+        _ctx_pct_enabled = bool(
+            getattr(app, "cli", None) and
+            getattr(app.cli, "_cfg", {}).get("display", {}).get("context_pct", True)
+        )
+
+        # Yolo mode badge
+        yolo = getattr(app, "yolo_mode", False)
+
         t = Text()
         # Startup state: show "connecting…" when model is not yet loaded
         if not model:
@@ -3253,6 +3269,28 @@ class StatusBar(PulseMixin, Widget):
 
         if dropped:
             state_t = Text(f" ⚠ output truncated", style=_err_color) + state_t
+
+        # Yolo badge prepended to left side
+        if yolo:
+            _warn = _vars.get("warning-color", "#FFA500")
+            yolo_prefix = Text()
+            yolo_prefix.append("⚡ YOLO  ", style=f"bold {_warn}")
+            t = yolo_prefix + t
+
+        # Context-window % meter appended after model/bar content
+        if _ctx_pct_enabled and _ctx_pct_val > 0 and width >= 50:
+            pct_str = f"{_ctx_pct_val:.0f}%"
+            _color_ok   = _vars.get("status-context-color", "#5f87d7")
+            _color_warn = _vars.get("status-warn-color", "#FFA726")
+            _color_err  = _vars.get("status-error-color", "#ef5350")
+            if _ctx_pct_val >= 90:
+                pct_color = _color_err
+            elif _ctx_pct_val >= 70:
+                pct_color = _color_warn
+            else:
+                pct_color = _color_ok
+            t.append(f" ▕ {pct_str}", style=f"dim {pct_color}")
+
         pad = max(0, width - t.cell_len - state_t.cell_len)
         t.append(" " * pad)
         t.append_text(state_t)

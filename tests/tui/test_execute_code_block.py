@@ -316,7 +316,7 @@ async def test_collapse_rule_few_lines():
 
 @pytest.mark.asyncio
 async def test_collapse_rule_many_lines():
-    """>3 total lines → collapsed at complete."""
+    """>20 total lines → collapsed at complete (ECB-specific threshold)."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -324,7 +324,9 @@ async def test_collapse_rule_many_lines():
         panel.new_message()
         block = await _mount_execute_block(pilot, app)
 
-        block.finalize_code("a = 1\nb = 2\nc = 3\nd = 4")  # 4 lines
+        # 21 lines — must exceed _EXECUTE_COLLAPSE_THRESHOLD=20
+        code = "\n".join(f"x_{i} = {i}" for i in range(21))
+        block.finalize_code(code)
         await _pause(pilot)
         block.complete("0.1s", is_error=False)
         await _pause(pilot)

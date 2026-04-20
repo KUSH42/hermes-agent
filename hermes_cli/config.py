@@ -463,6 +463,13 @@ DEFAULT_CONFIG = {
         },
         "mcp_microcopy": True,   # show "▸ mcp · <server>" provenance line
         "tools_overlay": True,   # /tools timeline overlay + T browse key
+        # Crush easy-wins features
+        "osc_progress": True,          # OSC 9;4 indeterminate progress bar in terminal tab/dock
+        "context_pct": True,           # context-window % meter in StatusBar
+        "desktop_notify": False,       # desktop notification when long turn completes (opt-in)
+        "notify_min_seconds": 10.0,    # minimum turn duration (s) before notify fires
+        "notify_sound": False,         # play a sound alongside the notification
+        "notify_sound_name": "Glass",  # macOS sound name (ignored on Linux)
         "drawille_overlay": {
             "enabled": False,
             "animation": "dna",
@@ -2073,6 +2080,32 @@ def _normalize_max_turns_config(config: Dict[str, Any]) -> Dict[str, Any]:
     config.pop("max_turns", None)
     return config
 
+
+
+_MODEL_CONTEXT_WINDOW: dict[str, int] = {
+    "claude-opus-4":     200_000,
+    "claude-sonnet-4":   200_000,
+    "claude-haiku-4":    200_000,
+    "claude-3-5-sonnet": 200_000,
+    "claude-3-5-haiku":  200_000,
+    "claude-3-opus":     200_000,
+    "claude-3-sonnet":   200_000,
+    "claude-3-haiku":    200_000,
+}
+
+
+def model_context_window(model: str) -> int:
+    """Return context window size for a model name.
+
+    Returns 200_000 for unknown claude-* models, 0 for non-claude models.
+    """
+    m = (model or "").lower()
+    for prefix, size in _MODEL_CONTEXT_WINDOW.items():
+        if m.startswith(prefix):
+            return size
+    if "claude" in m:
+        return 200_000
+    return 0
 
 
 def read_raw_config() -> Dict[str, Any]:

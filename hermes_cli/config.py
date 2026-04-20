@@ -314,6 +314,17 @@ DEFAULT_CONFIG = {
         "max_snapshots": 50,  # Max checkpoints to keep per directory
     },
 
+    # Parallel worktree sessions — run multiple agent branches simultaneously.
+    # Feature-gated: disabled by default.  Set enabled=True to activate.
+    "sessions": {
+        "enabled": False,
+        "session_dir": "/tmp/hermes-sessions",
+        "max_sessions": 8,
+        "output_buffer_lines": 2000,
+        "auto_prune_orphans": False,
+        "default_merge_strategy": "squash",
+    },
+
     # Maximum characters returned by a single read_file call.  Reads that
     # exceed this are rejected with guidance to use offset+limit.
     # 100K chars ≈ 25–35K tokens across typical tokenisers.

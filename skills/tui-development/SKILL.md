@@ -131,7 +131,7 @@ Then load only the focused reference you need:
 
 ## Validation
 
-Last revalidated: **2026-04-20. ~2740 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
+Last revalidated: **2026-04-20. ~2744 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
 
 Recent changes (details → reference files):
 - **Interrupt/cancel keybinding split + history search fixes** (2026-04-20):
@@ -276,7 +276,10 @@ Recent changes (details → reference files):
   `HistorySearchOverlay`: `_last_click_idx: int | None`, `_shift_selected: set[int]`;
   `TurnResultItem.on_click`: shift+left-click → range-select [last, current] inclusive, apply
   `--selected` CSS class, no jump; plain click → single select + jump; reset on dismiss.
-  `action_jump()` updated: if `_shift_selected` non-empty, jumps to first (min index) entry.
+  `action_jump()` updated: if `_shift_selected` non-empty, jumps to first (min index) entry via `action_jump_to`.
+  Key: `open_search()` clears stale `--selected` CSS via `for item in self.query(TurnResultItem): item.set_class(False, "--selected")`
+  BEFORE `_render_results()` runs — `update_from()` updates labels only, never CSS classes, so stale selection
+  highlights persist across overlay open/close without this explicit clear.
   `app._show_context_menu_at(items, x, y)` extracted helper; `_show_context_menu_for_focused()`
   computes position from `focused.content_region` center for keyboard-triggered context menu.
   40 new tests in `tests/tui/test_mouse_ux.py`.

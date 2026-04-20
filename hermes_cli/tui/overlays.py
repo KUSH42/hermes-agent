@@ -13,10 +13,10 @@ from typing import TYPE_CHECKING
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import ScrollableContainer, Vertical
+from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.css.query import NoMatches
 from textual.widget import Widget
-from textual.widgets import Input, Static
+from textual.widgets import Button, ContentSwitcher, Input, Static
 
 
 class HelpOverlay(Widget):
@@ -353,12 +353,17 @@ class WorkspaceOverlay(Widget):
         border: tall $primary 15%;
     }
     WorkspaceOverlay.--visible { display: block; }
-    WorkspaceOverlay #ws-scroll { height: auto; max-height: 16; overflow-y: auto; }
+    WorkspaceOverlay #ws-tab-bar { height: 1; }
+    WorkspaceOverlay #ws-tab-bar > Button { width: auto; min-width: 14; }
+    WorkspaceOverlay #ws-tab-bar .--tab-active { background: $primary 20%; color: $accent; }
+    WorkspaceOverlay #ws-git-pane { height: auto; }
+    WorkspaceOverlay #ws-scroll { height: auto; max-height: 14; overflow-y: auto; }
     WorkspaceOverlay .ws-file { color: $text; }
     WorkspaceOverlay .ws-file-dirty { color: $warning; }
     WorkspaceOverlay .ws-complexity { color: $warning; }
     WorkspaceOverlay .ws-added { color: $success; }
     WorkspaceOverlay .ws-removed { color: $error; }
+    WorkspaceOverlay #ws-switcher { height: auto; }
     """
 
     BINDINGS = [
@@ -368,12 +373,63 @@ class WorkspaceOverlay(Widget):
     ]
 
     def compose(self) -> ComposeResult:
-        yield Static("", id="ws-header")
-        yield Static("", id="ws-summary")
-        with ScrollableContainer(id="ws-scroll"):
-            yield Vertical(id="ws-files")
-            yield Vertical(id="ws-complexity")
+        with Horizontal(id="ws-tab-bar"):
+            yield Button("[ Git Status ]", id="ws-tab-git", classes="--tab-active")
+            yield Button("[ Sessions ]", id="ws-tab-sessions")
+        with ContentSwitcher(initial="ws-git-pane", id="ws-switcher"):
+            with Vertical(id="ws-git-pane"):
+                yield Static("", id="ws-header")
+                yield Static("", id="ws-summary")
+                with ScrollableContainer(id="ws-scroll"):
+                    yield Vertical(id="ws-files")
+                    yield Vertical(id="ws-complexity")
+            from hermes_cli.tui.session_widgets import _SessionsTab
+            yield _SessionsTab(id="ws-sessions-pane")
         yield Static("[dim]w / esc to close[/dim]", id="ws-footer")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        btn_id = event.button.id or ""
+        if btn_id == "ws-tab-git":
+            event.stop()
+            self._switch_tab("ws-git-pane")
+        elif btn_id == "ws-tab-sessions":
+            event.stop()
+            self._switch_tab("ws-sessions-pane")
+            self._refresh_sessions_tab()
+
+    def _switch_tab(self, pane_id: str) -> None:
+        try:
+            sw = self.query_one("#ws-switcher", ContentSwitcher)
+            sw.current = pane_id
+        except Exception:
+            pass
+        # Update tab button active class
+        try:
+            git_btn = self.query_one("#ws-tab-git", Button)
+            sess_btn = self.query_one("#ws-tab-sessions", Button)
+            if pane_id == "ws-git-pane":
+                git_btn.add_class("--tab-active")
+                sess_btn.remove_class("--tab-active")
+            else:
+                sess_btn.add_class("--tab-active")
+                git_btn.remove_class("--tab-active")
+        except Exception:
+            pass
+
+    def _refresh_sessions_tab(self) -> None:
+        try:
+            from hermes_cli.tui.session_widgets import _SessionsTab
+            tab = self.query_one(_SessionsTab)
+            records = []
+            active_id = ""
+            try:
+                records = self.app._get_session_records()
+                active_id = self.app._get_active_session_id()
+            except Exception:
+                pass
+            tab.refresh_sessions(records, active_id)
+        except Exception:
+            pass
 
     def show_overlay(self) -> None:
         self.add_class("--visible")

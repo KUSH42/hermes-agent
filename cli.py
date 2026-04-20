@@ -10828,10 +10828,12 @@ def main(
     w: bool = False,
     checkpoints: bool = False,
     pass_session_id: bool = False,
+    headless: bool = False,
+    worktree_session_id: str = None,
 ):
     """
     Hermes Agent CLI - Interactive AI Assistant
-    
+
     Args:
         query: Single query to execute (then exit). Alias: -q
         q: Shorthand for --query
@@ -10849,7 +10851,9 @@ def main(
         resume: Resume a previous session by its ID (e.g., 20260225_143052_a1b2c3)
         worktree: Run in an isolated git worktree (for parallel agents). Alias: -w
         w: Shorthand for --worktree
-    
+        headless: Run without TUI — background parallel session mode
+        worktree_session_id: Session ID for headless parallel session (used with --headless)
+
     Examples:
         python cli.py                            # Start interactive mode
         python cli.py --toolsets web,terminal    # Use specific toolsets
@@ -10865,7 +10869,23 @@ def main(
     # Signal to terminal_tool that we're in interactive mode
     # This enables interactive sudo password prompts with timeout
     os.environ["HERMES_INTERACTIVE"] = "1"
-    
+
+    # Route to headless mode for background parallel sessions
+    if headless and worktree_session_id:
+        from pathlib import Path as _Path
+        from hermes_cli.tui.headless_session import HeadlessSession as _HS
+        _sessions_cfg = CLI_CONFIG.get("sessions", {})
+        _session_dir = _Path(_sessions_cfg.get("session_dir", "/tmp/hermes-sessions"))
+        _buf_lines = int(_sessions_cfg.get("output_buffer_lines", 2000))
+        # Build a minimal CLI-like object; HeadlessSession.run() calls cli.run()
+        # For now we just register PID and exit — full integration done at wiring time.
+        class _MinimalCLI:
+            def run(self) -> None:
+                pass
+        _hs = _HS(_MinimalCLI(), worktree_session_id, _session_dir, _buf_lines)
+        _hs.run()
+        return
+
     # Handle gateway mode (messaging + cron)
     if gateway:
         import asyncio

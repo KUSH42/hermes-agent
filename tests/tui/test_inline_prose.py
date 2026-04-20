@@ -600,6 +600,33 @@ def test_message_panel_response_log_is_inline_prose_log():
     assert isinstance(panel.response_log, InlineProseLog)
 
 
+def test_ensure_prose_block_new_block_uses_inline_prose_log():
+    """Prose blocks created after code/tool splits must also use InlineProseLog."""
+    from hermes_cli.tui.widgets import MessagePanel, CopyableBlock, InlineProseLog
+    from unittest.mock import patch, MagicMock
+    panel = MessagePanel()
+    # Capture the CopyableBlock constructor args when ensure_prose_block creates a new one
+    created: list[CopyableBlock] = []
+    _orig_init = CopyableBlock.__init__
+
+    def _capture_init(self, *a, **kw):
+        _orig_init(self, *a, **kw)
+        created.append(self)
+
+    # Drive ensure_prose_block into the "create new" branch by making active block
+    # appear non-last (mock parent and children).
+    mock_parent = MagicMock()
+    mock_parent.__bool__ = lambda s: True
+    panel._response_block._parent = mock_parent  # active.parent is not self
+    with patch.object(CopyableBlock, "__init__", _capture_init), \
+         patch.object(panel, "mount"), \
+         patch.object(panel, "_maybe_insert_type_gap"):
+        panel.ensure_prose_block()
+
+    assert created, "ensure_prose_block should have created a new CopyableBlock"
+    assert isinstance(created[-1].log, InlineProseLog)
+
+
 def test_reasoning_panel_reasoning_log_is_inline_prose_log():
     from hermes_cli.tui.widgets import ReasoningPanel, InlineProseLog
     panel = ReasoningPanel()

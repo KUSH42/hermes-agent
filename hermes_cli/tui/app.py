@@ -535,6 +535,11 @@ class HermesApp(App):
         # Resize debounce — coalesces rapid resize events before app-level work
         self._pending_resize: "object | None" = None
         self._resize_timer: "object | None" = None  # textual Timer
+        # Panel-ready gate: cli.py waits on this Event before starting chat() so
+        # streaming only begins after the new MessagePanel and its engine are
+        # mounted.  Eliminates the multi-line-chunk race where lines arrive on the
+        # old panel before watch_agent_running(True) fires.
+        self._panel_ready_event: "threading.Event | None" = None
 
     # --- Compose ---
 

@@ -856,3 +856,45 @@ async def test_partial_chunk_migrated_to_new_panel():
 
         app.agent_running = False
         await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_panel_ready_event_set_on_mount():
+    """Regression: _panel_ready_event must be signalled by MessagePanel.on_mount
+    so cli.py can gate streaming behind engine readiness.
+
+    Without the gate, a multi-line first chunk ("Line 1\\nLine 2\\n") processed
+    before watch_agent_running(True) fires writes Line 1 to the old panel's log
+    (setext lookahead releases it) and Line 2 to _pending; only Line 2 survives
+    the steal — Line 1 disappears.
+
+    The fix: cli.py injects _panel_ready_event before agent_running=True fires;
+    MessagePanel.on_mount signals it after engine init; cli.py then starts chat().
+    """
+    import threading
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+
+        output = app.query_one(OutputPanel)
+
+        # Inject event (as cli.py would) then fire agent_running=True
+        ready_event = threading.Event()
+        app._panel_ready_event = ready_event
+
+        app.agent_running = True
+        await pilot.pause()  # lets watch_agent_running + on_mount run
+
+        # MessagePanel.on_mount must have signalled the event
+        assert ready_event.is_set(), (
+            "MessagePanel.on_mount must call ready_event.set() so cli.py can "
+            "unblock and begin streaming"
+        )
+        # Reference cleared by on_mount — future panels must not fire a stale event
+        assert app._panel_ready_event is None, (
+            "_panel_ready_event must be cleared by on_mount after signalling"
+        )
+
+        app.agent_running = False
+        await pilot.pause()

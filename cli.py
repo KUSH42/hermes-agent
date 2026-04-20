@@ -10639,6 +10639,11 @@ class HermesCLI:
             _tui_app._inline_image_bar_enabled = self._inline_image_bar_enabled
             _scroll_raw = CLI_CONFIG.get("terminal", {}).get("scroll_lines", 3)
             _tui_app._scroll_lines = max(1, min(20, int(_scroll_raw)))
+            _raw_ignore = CLI_CONFIG.get("terminal", {}).get(
+                "path_search_ignore",
+                [".git", "node_modules", "__pycache__", ".venv", "dist", "build"],
+            )
+            _tui_app._path_search_ignore = frozenset(_raw_ignore)
             _tui_app._math_enabled = self._math_enabled
             _tui_app._math_renderer = self._math_renderer
             _tui_app._mermaid_enabled = self._mermaid_enabled

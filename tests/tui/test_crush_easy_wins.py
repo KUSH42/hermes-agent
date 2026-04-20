@@ -455,6 +455,7 @@ class TestYoloIndicator:
         _mock_app.browse_index = 0
         _mock_app._browse_total = 0
         _mock_app._browse_hint = ""
+        _mock_app._completion_hint = ""
         _mock_app.status_output_dropped = False
         _mock_app.status_active_file = ""
         _mock_app.status_error = ""

@@ -373,6 +373,9 @@ class HermesApp(App):
     # Unified anchor list hint shown in StatusBar during []/{}/ Alt+↑↓ navigation
     _browse_hint: reactive[str] = reactive("")
 
+    # Completion overlay hint shown in StatusBar while overlay is visible (A3/C1)
+    _completion_hint: reactive[str] = reactive("")
+
     # Output dropped flag — set when queue is full; shown in StatusBar until next successful write
     status_output_dropped: reactive[bool] = reactive(False)
 
@@ -455,6 +458,8 @@ class HermesApp(App):
         self._use_hermes_input = True
         # Lines scrolled per mouse wheel tick — overridden from config in cli.py
         self._scroll_lines: int = 3
+        # C4: path search ignore set — None means use walker's built-in default
+        self._path_search_ignore: "frozenset[str] | None" = None
 
         # Browse-mode visit counter — first 3 visits show full hint, then compact
         self._browse_uses: int = 0
@@ -1664,7 +1669,8 @@ class HermesApp(App):
                 # Restore input visibility (safety guard) and clear spinner placeholder
                 widget.display = True
                 if hasattr(widget, "placeholder"):
-                    widget.placeholder = ""
+                    # A1: restore idle placeholder, not blank string
+                    widget.placeholder = getattr(widget, "_idle_placeholder", "")
                 try:
                     self.query_one("#spinner-overlay", Static).display = False
                 except NoMatches:
@@ -3135,9 +3141,17 @@ class HermesApp(App):
                 names.append(f"/{cmd.name}")
                 for alias in getattr(cmd, "aliases", []):
                     names.append(f"/{alias}")
+            # B1: build descriptions dict for SlashDescPanel
+            descs: dict[str, str] = {}
+            for cmd in COMMAND_REGISTRY:
+                cmd_desc = getattr(cmd, "description", "") or ""
+                descs[f"/{cmd.name}"] = cmd_desc
+                for alias in getattr(cmd, "aliases", []):
+                    descs[f"/{alias}"] = cmd_desc
             try:
                 inp = self.query_one(_HI)
                 inp.set_slash_commands(names)
+                inp.set_slash_descriptions(descs)
             except NoMatches:
                 pass
         except Exception:

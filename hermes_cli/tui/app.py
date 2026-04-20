@@ -3131,27 +3131,44 @@ class HermesApp(App):
 
         Called once on mount.  Safe to call again after plugin commands are added.
         Includes built-in commands, their aliases, and any registered skill commands.
+        Excludes gateway_only commands (not actionable in TUI).
         """
         try:
             from hermes_cli.tui.input_widget import HermesInput as _HI
-            from hermes_cli.commands import COMMAND_REGISTRY
+            from hermes_cli.commands import COMMAND_REGISTRY, SUBCOMMANDS
             # Build full slash-name list: /name + /alias for each command
+            # SC-10: exclude gateway_only commands (not actionable in TUI)
             names: list[str] = []
             for cmd in COMMAND_REGISTRY:
+                if cmd.gateway_only:
+                    continue
                 names.append(f"/{cmd.name}")
                 for alias in getattr(cmd, "aliases", []):
                     names.append(f"/{alias}")
             # B1: build descriptions dict for SlashDescPanel
             descs: dict[str, str] = {}
+            args_hints: dict[str, str] = {}
+            keybind_hints: dict[str, str] = {}
             for cmd in COMMAND_REGISTRY:
+                if cmd.gateway_only:
+                    continue
                 cmd_desc = getattr(cmd, "description", "") or ""
+                cmd_args = getattr(cmd, "args_hint", "") or ""
+                cmd_keybind = getattr(cmd, "keybind_hint", "") or ""
                 descs[f"/{cmd.name}"] = cmd_desc
+                args_hints[f"/{cmd.name}"] = cmd_args
+                keybind_hints[f"/{cmd.name}"] = cmd_keybind
                 for alias in getattr(cmd, "aliases", []):
                     descs[f"/{alias}"] = cmd_desc
+                    args_hints[f"/{alias}"] = cmd_args
+                    keybind_hints[f"/{alias}"] = cmd_keybind
             try:
                 inp = self.query_one(_HI)
                 inp.set_slash_commands(names)
                 inp.set_slash_descriptions(descs)
+                inp.set_slash_args_hints(args_hints)
+                inp.set_slash_keybind_hints(keybind_hints)
+                inp.set_slash_subcommands(dict(SUBCOMMANDS))
             except NoMatches:
                 pass
         except Exception:

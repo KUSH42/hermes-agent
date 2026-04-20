@@ -39,10 +39,12 @@ def test_slash_with_hyphen_matches() -> None:
     assert t.fragment == "review-pr"
 
 
-def test_slash_with_space_after_is_natural() -> None:
-    """/help (with trailing space) is no longer a slash trigger."""
+def test_slash_with_space_after_is_slash_subcommand() -> None:
+    """/help (with trailing space) triggers SLASH_SUBCOMMAND for arg completion."""
     t = detect_context("/help ", 6)
-    assert t.context is CompletionContext.NATURAL
+    assert t.context is CompletionContext.SLASH_SUBCOMMAND
+    assert t.parent_command == "help"
+    assert t.fragment == ""
 
 
 def test_path_at_token_boundary() -> None:

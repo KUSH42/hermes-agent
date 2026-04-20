@@ -113,6 +113,27 @@ Then load only the focused reference you need:
 Last revalidated: **2026-04-20. ~2102 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility; 1 flaky perf jitter test in `test_streaming_perf.py` occasionally fails under load — pre-existing, not related to recent changes).
 
 Recent changes (details → reference files):
+- **Browse Mode Visual Markers** (2026-04-20): 31 tests across `tests/tui/test_browse_markers.py` + `tests/tui/test_browse_minimap.py`. New file: `hermes_cli/tui/browse_minimap.py`. Spec at `/home/xush/.hermes/tui-browse-mode-markers-spec.md` (v2, reviewed).
+  Key arch invariants:
+  - **`M` / `m` are taken** — MEDIA anchor nav in browse `on_key` Priority -2 block (app.py). Minimap toggle uses `\` (backslash).
+  - **`_clear_browse_pips` removes ALL pip classes** — query `.--has-pip`, then `remove_class("--has-pip", "--anchor-pip-turn", "--anchor-pip-code", "--anchor-pip-tool", "--anchor-pip-diff", "--anchor-pip-media")`. CSS border-left is on type-specific class, not shared class — removing only `--has-pip` leaves border visible.
+  - **`_apply_browse_pips` calls `_clear_browse_pips` first** — always reset before reapplying (prevents class accumulation across rebuilds).
+  - **`StreamingCodeBlock` has no default border** — `StreamingCodeBlock.--anchor-pip-code` must add `border-top: tall $browse-code 25%` alongside `border-left` so `border_title` (badge) renders in top strip. Without it, `border_title` is invisible.
+  - **`watch__browse_badge`** — double underscore is the correct Textual watcher name for reactive `_browse_badge` (`_attr` → `watch__attr`).
+  - **Reasoning markers**: `walk_children` is recursive — reasoning code blocks ARE naturally included as `CODE_BLOCK` anchors. `_apply_browse_pips` checks `_is_in_reasoning(widget)` and skips pip/badge when `_browse_reasoning_markers=False`. Config: `display.browse_markers.reasoning=True` (default on).
+  - **All 4 boundary TCSS rules** in §4.2: base `UserMessagePanel`, `--browse-active` promotion, `--no-turn-boundary` override (×2 — with and without `--browse-active`).
+  - **MEDIA glyph**: use `▶` (U+25B6, single-width) not `🖼` (2-cell emoji). Fallback `[M]` when `HERMES_NO_UNICODE`.
+  - **`BrowseMinimap(Widget)` `dock: right`** inside `OutputPanel` — pins to viewport right edge (not scrolled with content), correct for minimap. Width: 1 cell.
+  - **`_browse_badge_widgets: list[Widget]`** on `HermesApp` — tracks which widgets received badges for cleanup. Capped at 200 for perf.
+  → `hermes_cli/tui/app.py §_apply_browse_pips/_clear_browse_pips/watch_browse_mode/action_toggle_minimap/on_key`,
+    `hermes_cli/tui/browse_minimap.py` (NEW),
+    `hermes_cli/tui/widgets.py §StreamingCodeBlock._browse_badge/watch__browse_badge/complete flash`,
+    `hermes_cli/tui/tool_blocks.py §ToolHeader._browse_badge/render`,
+    `hermes_cli/tui/hermes.tcss §browse-* vars/pip classes/boundary rules`,
+    `hermes_cli/tui/theme_manager.py §browse-* component vars`,
+    `hermes_cli/config.py §display.browse_markers`,
+    `cli.py §_browse_markers_enabled/_browse_reasoning_markers/etc`,
+    `tests/tui/test_browse_markers.py` (new), `tests/tui/test_browse_minimap.py` (new)
 - **Citations & SourcesBar** (2026-04-20): 25 tests in `tests/tui/test_citations.py`. `[CITE:N Title \u2014 URL]` tags suppressed from prose, collected, `SourcesBar` mounted at `flush()`.
   - `_CITE_RE = re.compile(r'^\[CITE:(\d{1,4})\s+(.+?)\s+\u2014\s+(https?://\S+)\]$')` at module level in `response_flow.py`.
   - `ResponseFlowEngine`: `_cite_entries: dict[int, tuple[str,str]]`, `_cite_order: list[int]`, `_citations_enabled: bool`. Cite detection in `process_line()` NORMAL state after footnote check. `_mount_sources_bar()` uses `panel.call_after_refresh` (NOT `call_from_thread` — flush is on event loop).

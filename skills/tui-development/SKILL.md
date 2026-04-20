@@ -131,9 +131,18 @@ Then load only the focused reference you need:
 
 ## Validation
 
-Last revalidated: **2026-04-20. ~2719 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
+Last revalidated: **2026-04-20. ~2721 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
 
 Recent changes (details → reference files):
+- **Custom emoji missing after code/tool blocks** (2026-04-20): `ensure_prose_block()` in `MessagePanel`
+  created new `CopyableBlock` without `_log_class=InlineProseLog`. After any code or tool block in a
+  response, subsequent prose segments used plain `CopyableRichLog` (no `write_inline`) →
+  `_write_prose_inline_emojis` returned False → `:name:` rendered as literal text. First prose block
+  (before any split) always used InlineProseLog correctly; only post-split blocks were broken.
+  Fix: pass `_log_class=InlineProseLog` to `CopyableBlock` constructor in `ensure_prose_block`.
+  Regression test: `test_ensure_prose_block_new_block_uses_inline_prose_log` in `test_inline_prose.py`.
+  Key gotcha: ALL prose blocks in `MessagePanel` must use `InlineProseLog`, not just `_response_block`.
+  → `hermes_cli/tui/widgets.py §MessagePanel.ensure_prose_block`, `tests/tui/test_inline_prose.py`
 - **Anim overlay — premium spinner & /anim redesign** (2026-04-20): 5 phases, 57 new tests in `tests/tui/test_anim_overlay.py`.
   **Phase A:** `DEFAULT_CONFIG["display"]["drawille_overlay"]` promoted to defaults: `enabled=True`, `position="top-right"`, `size="small"`, `color="auto"`, `fps=20`, `dim_background=False`, `animation="neural_pulse"`, `fade_out_frames=8`, `sdf_text=""`, `sdf_morph_ms=400`, `sdf_crossfade_speed=0.045`. NEW `sdf_bake_timeout_s=5.0` field in `DrawilleOverlayCfg` + DEFAULT_CONFIG + `_overlay_config()`. `_resolve_color` gains `dim: float = 1.0` param + `"auto"` → `"$accent"` branch. `DrawilleOverlay` gains `_fade_state: str`, `_fade_step: int` — fade-out lifecycle in `_tick()`. `DrawilleOverlay.signal(event, value=1.0)` centralizes all heat mutations from app.py.
   **Phase B:** `_ENGINE_META` dict (all `_ENGINES` keys + `"sdf_morph"`, keyed with actual short keys like `"dna"` not `"dna_helix"`). `AnimGalleryOverlay` + `_GalleryPreview` widgets in `drawille_overlay.py`. `/anim` command vocabulary expanded: `on`/`off`/`toggle`/`config`/`list`/`<engine_fuzzy>`/`sdf [text]`. `_anim_force: str | None` on `HermesApp`. Gallery wired in compose(), `_dismiss_all_info_overlays()`, escape Priority -2 block.

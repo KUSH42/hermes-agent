@@ -3173,11 +3173,16 @@ class StatusBar(PulseMixin, Widget):
         )
 
         # Context-window % meter
-        _ctx_pct_val = getattr(app, "context_pct", 0.0)
-        _ctx_pct_enabled = bool(
-            getattr(app, "cli", None) and
-            getattr(app.cli, "_cfg", {}).get("display", {}).get("context_pct", True)
+        _display_cfg = (
+            getattr(app.cli, "_cfg", {}).get("display", {})
+            if getattr(app, "cli", None) else {}
         )
+        _ctx_pct_enabled = bool(_display_cfg.get("context_pct", True))
+        _ctx_pct_mode = _display_cfg.get("context_pct_mode", "compaction")
+        if _ctx_pct_mode == "compaction":
+            _ctx_pct_val = getattr(app, "status_compaction_progress", 0.0) * 100.0
+        else:
+            _ctx_pct_val = getattr(app, "context_pct", 0.0)
 
         # Yolo mode badge
         yolo = getattr(app, "yolo_mode", False)
@@ -3280,15 +3285,7 @@ class StatusBar(PulseMixin, Widget):
         # Context-window % meter appended after model/bar content
         if _ctx_pct_enabled and _ctx_pct_val > 0 and width >= 50:
             pct_str = f"{_ctx_pct_val:.0f}%"
-            _color_ok   = _vars.get("status-context-color", "#5f87d7")
-            _color_warn = _vars.get("status-warn-color", "#FFA726")
-            _color_err  = _vars.get("status-error-color", "#ef5350")
-            if _ctx_pct_val >= 90:
-                pct_color = _color_err
-            elif _ctx_pct_val >= 70:
-                pct_color = _color_warn
-            else:
-                pct_color = _color_ok
+            pct_color = StatusBar._compaction_color(_ctx_pct_val / 100.0, _vars)
             t.append(f" ▕ {pct_str}", style=f"dim {pct_color}")
 
         pad = max(0, width - t.cell_len - state_t.cell_len)

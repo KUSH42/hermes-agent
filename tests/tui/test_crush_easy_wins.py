@@ -27,6 +27,7 @@ def _make_app():
     cli = MagicMock()
     cli.agent = None
     cli._cfg = {"display": {"osc_progress": True, "context_pct": True,
+                             "context_pct_mode": "compaction",
                              "desktop_notify": False, "notify_min_seconds": 10.0,
                              "notify_sound": False, "notify_sound_name": "Glass"}}
     return HermesApp(cli=cli)
@@ -332,9 +333,10 @@ class TestModelContextWindow:
 # ===========================================================================
 
 @pytest.mark.asyncio
-async def test_statusbar_context_pct_shown():
-    """context_pct reactive triggers a % segment in the StatusBar."""
+async def test_statusbar_context_pct_overflow_mode():
+    """overflow mode: context_pct reactive shown as XX%."""
     app = _make_app()
+    app.cli._cfg["display"]["context_pct_mode"] = "overflow"
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         app.context_pct = 42.0
@@ -345,16 +347,29 @@ async def test_statusbar_context_pct_shown():
 
 
 @pytest.mark.asyncio
+async def test_statusbar_context_pct_compaction_mode():
+    """compaction mode: status_compaction_progress * 100 shown as XX%."""
+    app = _make_app()
+    app.cli._cfg["display"]["context_pct_mode"] = "compaction"
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.status_compaction_progress = 0.55
+        await pilot.pause()
+        bar = app.query_one(StatusBar)
+        assert "55%" in bar.render().plain
+
+
+@pytest.mark.asyncio
 async def test_statusbar_context_pct_zero_hidden():
-    """context_pct = 0 → no % segment shown."""
+    """context_pct = 0 and compaction_progress = 0 → no % meter shown."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         app.context_pct = 0.0
+        app.status_compaction_progress = 0.0
         await pilot.pause()
         bar = app.query_one(StatusBar)
         rendered = bar.render()
-        # Should not show a standalone XX% context meter segment
         import re
         assert not re.search(r"▕ \d+%", rendered.plain)
 
@@ -364,6 +379,7 @@ async def test_statusbar_context_pct_config_disabled():
     """display.context_pct=false suppresses % segment even when pct > 0."""
     app = _make_app()
     app.cli._cfg["display"]["context_pct"] = False
+    app.cli._cfg["display"]["context_pct_mode"] = "overflow"
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         app.context_pct = 50.0
@@ -375,11 +391,24 @@ async def test_statusbar_context_pct_config_disabled():
 
 
 @pytest.mark.asyncio
-async def test_statusbar_context_pct_100():
+async def test_statusbar_context_pct_100_overflow():
     app = _make_app()
+    app.cli._cfg["display"]["context_pct_mode"] = "overflow"
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         app.context_pct = 100.0
+        await pilot.pause()
+        bar = app.query_one(StatusBar)
+        assert "100%" in bar.render().plain
+
+
+@pytest.mark.asyncio
+async def test_statusbar_context_pct_100_compaction():
+    app = _make_app()
+    app.cli._cfg["display"]["context_pct_mode"] = "compaction"
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.status_compaction_progress = 1.0
         await pilot.pause()
         bar = app.query_one(StatusBar)
         assert "100%" in bar.render().plain

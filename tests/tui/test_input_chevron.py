@@ -71,10 +71,12 @@ async def test_spinner_overlay_exists():
 
 
 @pytest.mark.asyncio
-async def test_no_placeholder_when_idle():
-    """No placeholder text shown when idle."""
+async def test_idle_placeholder_shown():
+    """Idle placeholder shown when input is empty (A1: idle placeholder spec)."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         inp = app.query_one(HermesInput)
-        assert inp.placeholder == ""
+        # A1: idle placeholder is shown; contains affordance text
+        assert inp.placeholder != ""
+        assert "Type a message" in inp.placeholder or "@file" in inp.placeholder

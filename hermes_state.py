@@ -913,16 +913,23 @@ class SessionDB:
             )
             msg_id = cursor.lastrowid
 
-            # Update counters
-            if num_tool_calls > 0:
+            # Update counters — only user and assistant messages count toward message_count
+            if role in ("user", "assistant"):
+                if num_tool_calls > 0:
+                    conn.execute(
+                        """UPDATE sessions SET message_count = message_count + 1,
+                           tool_call_count = tool_call_count + ? WHERE id = ?""",
+                        (num_tool_calls, session_id),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE sessions SET message_count = message_count + 1 WHERE id = ?",
+                        (session_id,),
+                    )
+            elif role == "tool":
+                # Tool result messages: increment tool_call_count only
                 conn.execute(
-                    """UPDATE sessions SET message_count = message_count + 1,
-                       tool_call_count = tool_call_count + ? WHERE id = ?""",
-                    (num_tool_calls, session_id),
-                )
-            else:
-                conn.execute(
-                    "UPDATE sessions SET message_count = message_count + 1 WHERE id = ?",
+                    "UPDATE sessions SET tool_call_count = tool_call_count + 1 WHERE id = ?",
                     (session_id,),
                 )
             return msg_id
@@ -1186,6 +1193,16 @@ class SessionDB:
             else:
                 cursor = self._conn.execute("SELECT COUNT(*) FROM sessions")
             return cursor.fetchone()[0]
+
+    def set_title_if_unset(self, session_id: str, title: str) -> bool:
+        """Set title only if currently NULL. Returns True if updated."""
+        def _do(conn):
+            cur = conn.execute(
+                "UPDATE sessions SET title = ? WHERE id = ? AND title IS NULL",
+                (title, session_id),
+            )
+            return cur.rowcount > 0
+        return self._execute_write(_do)
 
     def message_count(self, session_id: str = None) -> int:
         """Count messages, optionally for a specific session."""

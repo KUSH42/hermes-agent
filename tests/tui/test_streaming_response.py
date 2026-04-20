@@ -274,3 +274,35 @@ async def test_ansi_in_response_stream_renders_without_escapes():
         assert "\x1b" not in combined, (
             f"ANSI escape codes found in _plain_lines: {combined!r}"
         )
+
+
+@pytest.mark.asyncio
+async def test_orphaned_sgr_fragment_not_rendered_in_live_line():
+    """Broken CSI tails like `[38;2;...m` are stripped before Rich render."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        _disable_typewriter(app)
+
+        live = app.query_one(OutputPanel).query_one(LiveLineWidget)
+        live._buf = "[38;2;224;224;224;48;2;10;15;10mhello"
+
+        rendered = live.render()
+        assert "[38;2;" not in rendered.plain
+        assert "hello" in rendered.plain
+
+
+@pytest.mark.asyncio
+async def test_bare_reset_fragment_not_rendered_in_live_line():
+    """A bare `[0m` tail should be stripped even when attached to prose."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        _disable_typewriter(app)
+
+        live = app.query_one(OutputPanel).query_one(LiveLineWidget)
+        live._buf = "pepeLaugh:[0m"
+
+        rendered = live.render()
+        assert "[0m" not in rendered.plain
+        assert "pepeLaugh:" in rendered.plain

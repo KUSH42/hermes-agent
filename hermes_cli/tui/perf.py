@@ -78,7 +78,7 @@ from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from statistics import median, quantiles
-from typing import TYPE_CHECKING, Generator
+from typing import TYPE_CHECKING, Callable, Generator
 
 from textual import log
 
@@ -200,6 +200,94 @@ class WorkerWatcher:
 
 
 # ---------------------------------------------------------------------------
+# SuspicionDetector — low-noise escalation for repeated regressions
+# ---------------------------------------------------------------------------
+
+
+class SuspicionDetector:
+    """Escalate from hunch to scream only on repeated or severe regressions.
+
+    A single slight over-budget sample is treated as noise. Logging starts when
+    one of these happens:
+
+    * two consecutive over-budget samples
+    * a small cluster of recent over-budget samples
+    * one severe spike far above the normal budget
+
+    Cooldown suppresses repeated logs for the same ongoing condition.
+    """
+
+    def __init__(
+        self,
+        label: str,
+        budget_ms: float,
+        *,
+        severe_ms: float | None = None,
+        burst_window: int = 4,
+        burst_count: int = 2,
+        streak_count: int = 2,
+        cooldown_s: float = 15.0,
+        burst_multiplier: float = 1.5,
+        now_fn: Callable[[], float] | None = None,
+    ) -> None:
+        self._label = label
+        self._budget_ms = budget_ms
+        self._severe_ms = severe_ms if severe_ms is not None else max(budget_ms * 3.0, budget_ms + 100.0)
+        self._burst_window = max(2, burst_window)
+        self._burst_count = max(2, min(burst_count, self._burst_window))
+        self._streak_count = max(2, streak_count)
+        self._cooldown_s = max(0.0, cooldown_s)
+        self._burst_multiplier = max(1.0, burst_multiplier)
+        self._now_fn = now_fn or time.perf_counter
+        self._breaches: deque[bool] = deque(maxlen=self._burst_window)
+        self._streak: int = 0
+        self._last_log_at: float = 0.0
+
+    def observe(self, elapsed_ms: float, *, detail: str = "") -> str | None:
+        """Record one sample and maybe emit a warning/error log line."""
+        over_budget = elapsed_ms > self._budget_ms
+        self._breaches.append(over_budget)
+        self._streak = self._streak + 1 if over_budget else 0
+        if not over_budget:
+            return None
+
+        recent_breaches = sum(self._breaches)
+        severe = elapsed_ms >= self._severe_ms
+        burst = (
+            recent_breaches >= self._burst_count
+            and elapsed_ms >= self._budget_ms * self._burst_multiplier
+        )
+        consecutive = self._streak >= self._streak_count
+        if not (severe or burst or consecutive):
+            return None
+
+        now = self._now_fn()
+        in_cooldown = self._last_log_at and (now - self._last_log_at) < self._cooldown_s
+        if in_cooldown and not severe:
+            return None
+
+        if severe:
+            reason = f"severe spike: {elapsed_ms:.1f}ms >= {self._severe_ms:.0f}ms"
+            level = "error"
+        elif consecutive:
+            reason = f"{self._streak} consecutive samples over {self._budget_ms:.0f}ms"
+            level = "warning"
+        else:
+            reason = f"{recent_breaches}/{self._burst_window} recent samples over {self._budget_ms:.0f}ms"
+            level = "warning"
+
+        msg = f"[PERF-ALARM] {self._label}: {reason}"
+        if detail:
+            msg = f"{msg} ({detail})"
+        if level == "error":
+            log.error(msg)
+        else:
+            log.warning(msg)
+        self._last_log_at = now
+        return level
+
+
+# ---------------------------------------------------------------------------
 # EventLoopLatencyProbe — frame-time monitor
 # ---------------------------------------------------------------------------
 
@@ -239,6 +327,16 @@ class EventLoopLatencyProbe:
         self._expected_ms = expected_interval_s * 1000.0
         self._last_tick: float = 0.0
         self._over_budget_count: int = 0
+        self._alarm = SuspicionDetector(
+            "event-loop-jitter",
+            budget_ms=budget_ms,
+            severe_ms=max(250.0, budget_ms * 4.0),
+            burst_window=4,
+            burst_count=2,
+            streak_count=2,
+            cooldown_s=20.0,
+            burst_multiplier=1.25,
+        )
 
     def tick(self) -> float:
         """Measure delivery jitter; return actual interval in ms."""
@@ -257,6 +355,10 @@ class EventLoopLatencyProbe:
                 f"[LOOP] latency spike: actual={actual_ms:.0f}ms "
                 f"jitter=+{jitter_ms:.0f}ms "
                 f"⚠ ({self._over_budget_count} total spikes)"
+            )
+            self._alarm.observe(
+                jitter_ms,
+                detail=f"actual={actual_ms:.0f}ms total_spikes={self._over_budget_count}",
             )
         else:
             log(f"[LOOP] interval={actual_ms:.0f}ms jitter={jitter_ms:.0f}ms")

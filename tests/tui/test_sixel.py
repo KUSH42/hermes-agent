@@ -147,13 +147,15 @@ def test_inline_image_has_sixel_seq_attr() -> None:
 
 
 @pytest.mark.skipif(not _PIL_AVAILABLE, reason="PIL not installed")
-def test_render_sixel_line_y0_returns_sequence() -> None:
+def test_render_sixel_line_y0_returns_strip_without_raw_sequence() -> None:
     from hermes_cli.tui.widgets import InlineImage
     from textual.strip import Strip
     widget = InlineImage()
     widget._sixel_seq = "\x1bPq#0;2;50;0;0$-\x1b\\"
     result = widget._render_sixel_line(0)
     assert isinstance(result, Strip)
+    plain = "".join(s.text for s in result)
+    assert "\x1bP" not in plain
 
 
 @pytest.mark.skipif(not _PIL_AVAILABLE, reason="PIL not installed")

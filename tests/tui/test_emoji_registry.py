@@ -448,8 +448,10 @@ class TestResponseFlowEmojiIntegration:
         panel.response_log = MagicMock()
         panel.current_prose_log = MagicMock(return_value=panel.response_log)
         panel.response_log.write_with_source = MagicMock()
+        panel.response_log.write_inline = MagicMock()
         engine = ResponseFlowEngine.__new__(ResponseFlowEngine)
         engine.__init__(panel=panel)
+        engine._has_image_support = MagicMock(return_value=True)
         return engine
 
     def test_extract_empty_when_no_registry(self):
@@ -477,6 +479,48 @@ class TestResponseFlowEmojiIntegration:
         engine = self._make_engine(registry=registry)
         result = engine._extract_emoji_refs(":smile: and :smile:")
         assert result == ["smile"]
+
+    def test_extract_empty_without_image_support(self):
+        registry = MagicMock()
+        registry.get.return_value = MagicMock()
+        engine = self._make_engine(registry=registry)
+        engine._has_image_support = MagicMock(return_value=False)
+        assert engine._extract_emoji_refs("hello :smile:") == []
+
+    def test_inline_emoji_write_uses_write_inline(self, tmp_path):
+        from hermes_cli.tui.emoji_registry import EmojiEntry
+
+        pil_img = _make_pil_image()
+        entry = EmojiEntry(
+            name="smile",
+            path=tmp_path / "smile.png",
+            description="",
+            pil_image=pil_img,
+            cell_width=2,
+            cell_height=1,
+            n_frames=1,
+        )
+        registry = MagicMock()
+        registry.get.side_effect = lambda name: entry if name == "smile" else None
+        engine = self._make_engine(registry=registry)
+
+        from rich.text import Text
+
+        wrote_inline = engine._write_prose_inline_emojis(Text("hi :smile: there"), "hi :smile: there")
+        assert wrote_inline is True
+        engine._prose_log.write_inline.assert_called_once()
+        engine._prose_log.write_with_source.assert_not_called()
+
+    def test_has_image_support_for_tgp_sixel_and_halfblock(self):
+        engine = self._make_engine(registry=None)
+        del engine._has_image_support
+        from hermes_cli.tui.kitty_graphics import GraphicsCap
+        with patch("hermes_cli.tui.kitty_graphics.get_caps", return_value=GraphicsCap.HALFBLOCK):
+            assert engine._has_image_support() is True
+        with patch("hermes_cli.tui.kitty_graphics.get_caps", return_value=GraphicsCap.TGP):
+            assert engine._has_image_support() is True
+        with patch("hermes_cli.tui.kitty_graphics.get_caps", return_value=GraphicsCap.SIXEL):
+            assert engine._has_image_support() is True
 
     def test_mount_emoji_no_crash_when_registry_none(self):
         engine = self._make_engine(registry=None)
@@ -563,20 +607,8 @@ class TestResolveUserEmoji:
         app._resolve_user_emoji("hello :smile:", panel)
         panel.mount.assert_not_called()
 
-    def test_skips_unknown_emoji(self):
-        from hermes_cli.tui.app import HermesApp
-        registry = MagicMock()
-        registry.get.return_value = None
-        app = self._make_app(registry=registry)
-        panel = MagicMock()
-        # When registry.get returns None, no mount should happen
-        with patch("hermes_cli.tui.kitty_graphics.get_caps") as mock_caps:
-            from hermes_cli.tui.kitty_graphics import GraphicsCap
-            mock_caps.return_value = GraphicsCap.TGP
-            HermesApp._resolve_user_emoji(app, "hello :ghost:", panel)
-        panel.mount.assert_not_called()
-
-    def test_mounts_static_image_for_tgp(self, tmp_path):
+    def test_no_op_even_for_known_or_unknown_emoji(self, tmp_path):
+        """User echo panel keeps raw :name: text; it should not mount image widgets."""
         try:
             from PIL import Image as _PILImage
         except ImportError:
@@ -598,10 +630,5 @@ class TestResolveUserEmoji:
         panel = MagicMock()
 
         from hermes_cli.tui.app import HermesApp
-        with patch("hermes_cli.tui.kitty_graphics.get_caps") as mock_caps:
-            from hermes_cli.tui.kitty_graphics import GraphicsCap
-            mock_caps.return_value = GraphicsCap.TGP
-            with patch("hermes_cli.tui.widgets.InlineImage") as mock_img_cls:
-                mock_img_cls.return_value = MagicMock()
-                HermesApp._resolve_user_emoji(app, "hello :smile:", panel)
-        panel.mount.assert_called_once()
+        HermesApp._resolve_user_emoji(app, "hello :smile: :ghost:", panel)
+        panel.mount.assert_not_called()

@@ -96,8 +96,10 @@ class HermesInput(TextArea, can_focus=True):
     """
 
     BINDINGS = [
-        Binding("ctrl+a",       "select_all",  "Select all",  show=False),
-        Binding("ctrl+shift+z", "redo",        "Redo",        show=False),
+        Binding("ctrl+a",       "select_all",   "Select all",  show=False),
+        Binding("ctrl+shift+z", "redo",         "Redo",        show=False),
+        Binding("ctrl+r",       "rev_search",   "Reverse search", show=False, priority=True),
+        Binding("ctrl+s",       "rev_search_forward", "Forward search", show=False, priority=True),
     ]
 
     # --- Messages ---
@@ -140,6 +142,12 @@ class HermesInput(TextArea, can_focus=True):
         self._suppress_autocomplete_once: bool = False
         self._sanitizing: bool = False
         self._handling_file_drop: bool = False
+
+        # Reverse-search mode (Ctrl+R)
+        self._rev_mode: bool = False
+        self._rev_query: str = ""
+        self._rev_match_idx: int = -1
+        self._rev_saved_value: str = ""
 
         # Autocomplete dispatcher state
         self._current_trigger: CompletionTrigger = CompletionTrigger(
@@ -259,12 +267,18 @@ class HermesInput(TextArea, can_focus=True):
             self._history = []
 
     def _save_to_history(self, text: str) -> None:
-        """Append an entry to the history file and in-memory list."""
+        """Append an entry to the history file and in-memory list.
+
+        Global dedup: if the entry already exists anywhere in history, remove it
+        first (promote-to-end / erasedups semantics).
+        """
         if not text.strip():
             return
-        # Dedup: skip if identical to last saved entry
-        if self._history and self._history[-1] == text:
-            return
+        # Global dedup: remove prior identical entry before appending (promote-to-end)
+        try:
+            self._history.remove(text)
+        except ValueError:
+            pass
         self._history.append(text)
         try:
             _HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -292,6 +306,40 @@ class HermesInput(TextArea, can_focus=True):
             return
 
         key = event.key
+
+        # Reverse-search mode key routing
+        if self._rev_mode:
+            if key == "enter":
+                event.prevent_default()
+                self._exit_rev_mode(accept=True)
+                return
+            if key in ("escape", "ctrl+g"):
+                event.prevent_default()
+                self._exit_rev_mode(accept=False)
+                return
+            if key == "ctrl+r":
+                event.prevent_default()
+                self._rev_search_find(direction=-1)
+                return
+            if key == "ctrl+s":
+                event.prevent_default()
+                self._rev_search_find(direction=+1)
+                return
+            if event.is_printable and event.character:
+                event.prevent_default()
+                self._rev_query += event.character
+                self._rev_search_find(direction=-1)
+                return
+            if key == "backspace":
+                event.prevent_default()
+                if self._rev_query:
+                    self._rev_query = self._rev_query[:-1]
+                    self._rev_search_find(direction=-1)
+                return
+            # Any other control key: exit mode keeping current value
+            if not event.is_printable:
+                self._exit_rev_mode(accept=True)
+            return
 
         # Submit — with file-drop guard for GNOME Terminal raw DnD (no bracketed paste).
         # VTE sends "file:///path\n" as raw chars; the \n fires Enter before
@@ -595,6 +643,70 @@ class HermesInput(TextArea, can_focus=True):
             page = max(1, clist.size.height - 1)
             clist.highlighted = min(len(clist.items) - 1, clist.highlighted + page)
         except NoMatches:
+            pass
+
+    # --- Reverse-search (Ctrl+R) ---
+
+    def action_rev_search(self) -> None:
+        """Enter (or cycle) reverse input history search mode."""
+        if not self._rev_mode:
+            # Enter mode
+            self._rev_mode = True
+            self._rev_query = ""
+            self._rev_match_idx = len(self._history)
+            self._rev_saved_value = self.value
+            self._update_rev_hint()
+        else:
+            # Already in mode: find next older match
+            self._rev_search_find(direction=-1)
+
+    def action_rev_search_forward(self) -> None:
+        """Forward search in reverse-search mode."""
+        if self._rev_mode:
+            self._rev_search_find(direction=+1)
+
+    def _rev_search_find(self, direction: int = -1) -> None:
+        """Search history for _rev_query; set value to match."""
+        if not self._history:
+            return
+        needle = self._rev_query.casefold()
+        start = self._rev_match_idx + direction
+        indices = range(start, -1, -1) if direction == -1 else range(start, len(self._history))
+        for i in indices:
+            if 0 <= i < len(self._history):
+                if not needle or needle in self._history[i].casefold():
+                    self._rev_match_idx = i
+                    self.value = self._history[i]
+                    self.cursor_position = len(self.value)
+                    self._update_rev_hint()
+                    return
+        # No match
+        self._update_rev_hint(no_match=True)
+
+    def _exit_rev_mode(self, *, accept: bool) -> None:
+        """Exit reverse-search mode."""
+        self._rev_mode = False
+        if not accept:
+            self.value = self._rev_saved_value
+            self.cursor_position = len(self.value)
+        # Restore hint bar
+        try:
+            from hermes_cli.tui.widgets import HintBar
+            hint_bar = self.app.query_one(HintBar)
+            hint_bar.hint = ""
+        except Exception:
+            pass
+
+    def _update_rev_hint(self, *, no_match: bool = False) -> None:
+        """Update HintBar with current rev-search query."""
+        try:
+            from hermes_cli.tui.widgets import HintBar
+            hint_bar = self.app.query_one(HintBar)
+            if no_match:
+                hint_bar.hint = f"(no matches) reverse-i-search: {self._rev_query}_"
+            else:
+                hint_bar.hint = f"reverse-i-search: {self._rev_query}_"
+        except Exception:
             pass
 
     # --- Autocomplete ---

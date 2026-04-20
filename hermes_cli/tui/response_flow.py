@@ -28,7 +28,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Literal
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from rich.text import Text
 
@@ -130,6 +130,39 @@ def _is_horizontal_rule(line: str) -> bool:
     return bool(_HR_RE.match(line.strip()))
 
 
+def _resolve_log_width(log_widget: "Any") -> int:
+    """Resolve the visual width a log write should target."""
+    try:
+        region_w = log_widget.scrollable_content_region.width
+    except Exception:
+        region_w = 0
+    if region_w > 0:
+        return region_w
+    try:
+        size_w = log_widget.size.width
+    except Exception:
+        size_w = 0
+    if size_w > 0:
+        return size_w
+    try:
+        # Same pre-layout fallback as CopyableRichLog.write():
+        # app width minus scrollbar + prose margins.
+        return max(log_widget.app.size.width - 5, 20)
+    except Exception:
+        return 80
+
+
+def _make_rule(log_widget: "Any") -> "Text":
+    """Return a dim rule sized to the log widget width, not the terminal width."""
+    w = _resolve_log_width(log_widget)
+    if w <= 0:
+        try:
+            w = log_widget.app.size.width
+        except Exception:
+            w = 80
+    return Text("─" * w, style="dim")
+
+
 def _detect_lang(code: str) -> str:
     """Best-effort language detection for fences with no language specifier."""
     stripped = code.strip()
@@ -187,7 +220,18 @@ def _strip_ansi(text: str) -> str:
     text = _ANSI_RE.sub("", text)
     # Strip orphaned CSI residuals: bare `;N;N...m` or `[N;N...m` sequences at
     # start of line or after whitespace (hallmarks of a stripped ESC byte).
-    _ORPHAN_RE = _re.compile(r"(?:^|(?<=\s));[0-9;]+[A-Za-z]|\[[0-9;]+m")
+    _ORPHAN_RE = _re.compile(r"(?<!\x1b)(?:;[0-9;]+[A-Za-z]|\[[0-9;]*m)")
+    return _ORPHAN_RE.sub("", text)
+
+
+def _normalize_ansi_for_render(text: str) -> str:
+    """Normalize ANSI-like text before passing it to Rich."""
+    import re as _re
+    if not text:
+        return ""
+    if "\x9b" in text:
+        text = text.replace("\x9b", "\x1b[")
+    _ORPHAN_RE = _re.compile(r"(?<!\x1b)(?:;[0-9;]+[A-Za-z]|\[[0-9;]*m)")
     return _ORPHAN_RE.sub("", text)
 
 
@@ -491,7 +535,7 @@ class ResponseFlowEngine:
                         block_ansi = apply_block_line(block_result)
                         inline_ansi = apply_inline_markdown(block_ansi)
                         plain = _strip_ansi(inline_ansi)
-                        self._write_prose(Text.from_ansi(inline_ansi), plain)
+                        self._write_prose(Text.from_ansi(_normalize_ansi_for_render(inline_ansi)), plain)
             # Block math — checked BEFORE fence detection ($$ would match _FENCE_OPEN_RE)
             if self._math_enabled:
                 oneline_m = _BLOCK_MATH_ONELINE_RE.match(stripped)
@@ -537,7 +581,7 @@ class ResponseFlowEngine:
                     block_ansi = apply_block_line(label)
                     inline_ansi = apply_inline_markdown(block_ansi)
                     plain = _strip_ansi(inline_ansi)
-                    self._write_prose(Text.from_ansi(inline_ansi), plain)
+                    self._write_prose(Text.from_ansi(_normalize_ansi_for_render(inline_ansi)), plain)
                     self._emit_complete_code_block([value])
                     return
             if _looks_like_source_line(raw):
@@ -631,22 +675,17 @@ class ResponseFlowEngine:
         inline_ansi = apply_inline_markdown(block_ansi)
 
         # Phase 5: Write to prose log
-        # Phase 6 (interleaved): strip :name: emoji tokens from displayed text when
-        # images are enabled so the rendered widget replaces the token instead of
-        # appearing below a duplicate text copy of it.
+        # Phase 6 (interleaved): route custom emoji through InlineProseLog's
+        # mixed text/image path instead of mounting sibling InlineImage widgets.
+        # That keeps TGP/SIXEL handling inside the existing inline image cache
+        # renderer rather than letting raw graphics protocol bytes touch the
+        # normal transcript flow.
         self._sync_prose_log()
         plain = _strip_ansi(inline_ansi)
-        emoji_names = self._extract_emoji_refs(plain)
-        if emoji_names:
-            display_ansi = _EMOJI_RE.sub("", inline_ansi)
-            display_plain = _EMOJI_RE.sub("", plain)
-            self._write_prose(Text.from_ansi(display_ansi), display_plain)
-        else:
-            self._write_prose(Text.from_ansi(inline_ansi), plain)
+        rich_text = Text.from_ansi(_normalize_ansi_for_render(inline_ansi))
+        if not self._write_prose_inline_emojis(rich_text, plain):
+            self._write_prose(rich_text, plain)
         self._pending_code_intro = intro_candidate or _is_code_intro_label(plain)
-
-        for _ename in emoji_names:
-            self._mount_emoji(_ename)
 
     def _scan_media_urls(self, line: str) -> None:
         """Scan a NORMAL-state line for media URLs and invoke _mount_media_callback."""
@@ -677,11 +716,19 @@ class ResponseFlowEngine:
     def _has_image_support(self) -> bool:
         from hermes_cli.tui.kitty_graphics import get_caps, GraphicsCap
         cap = get_caps()
-        return cap in (GraphicsCap.TGP, GraphicsCap.SIXEL)
+        # Custom emoji are mounted inline inside prose flow. Accept any current
+        # image-capable renderer here. Capability preference still comes from
+        # kitty_graphics.get_caps(), which already prefers TGP over SIXEL when
+        # both are available.
+        return cap in (GraphicsCap.TGP, GraphicsCap.SIXEL, GraphicsCap.HALFBLOCK)
 
     def _extract_emoji_refs(self, text: str) -> "list[str]":
         """Return distinct emoji names found in text that exist in the registry."""
-        if self._emoji_registry is None or not self._emoji_images_enabled:
+        if (
+            self._emoji_registry is None
+            or not self._emoji_images_enabled
+            or not self._has_image_support()
+        ):
             return []
         seen: set[str] = set()
         out: list[str] = []
@@ -691,6 +738,58 @@ class ResponseFlowEngine:
                 seen.add(name)
                 out.append(name)
         return out
+
+    def _write_prose_inline_emojis(self, rich_text: "Text", plain: str) -> bool:
+        """Write one prose line using InlineProseLog image spans when possible."""
+        registry = self._emoji_registry
+        prose_log = self._prose_log
+        if (
+            registry is None
+            or not self._emoji_images_enabled
+            or not self._has_image_support()
+            or not hasattr(prose_log, "write_inline")
+        ):
+            return False
+
+        from hermes_cli.tui.inline_prose import ImageSpan, TextSpan
+
+        spans: list[object] = []
+        cursor = 0
+        found_image = False
+        for match in _EMOJI_RE.finditer(plain):
+            name = match.group(1).lower()
+            entry = registry.get(name)
+            if entry is None:
+                continue
+            start, end = match.span()
+            if start > cursor:
+                spans.append(TextSpan(text=rich_text[cursor:start]))
+            image_path = Path(entry.path)
+            spans.append(
+                ImageSpan(
+                    image_path=image_path,
+                    cell_width=max(1, int(getattr(entry, "cell_width", 2) or 2)),
+                    cell_height=max(1, int(getattr(entry, "cell_height", 1) or 1)),
+                    alt_text=plain[start:end],
+                    cache_key=f"emoji:{name}:{image_path}",
+                )
+            )
+            cursor = end
+            found_image = True
+
+        if not found_image:
+            return False
+
+        if cursor < len(plain):
+            spans.append(TextSpan(text=rich_text[cursor:]))
+
+        prose_log.write_inline(spans)
+        if self._prose_callback is not None and plain.strip():
+            try:
+                self._prose_callback(plain)
+            except Exception:
+                pass
+        return True
 
     def _mount_emoji(self, name: str) -> None:
         """Mount an emoji image widget. Safe to call from either event-loop or worker thread."""
@@ -761,7 +860,10 @@ class ResponseFlowEngine:
                     block_ansi = apply_block_line(block_result)
                     inline_ansi = apply_inline_markdown(block_ansi)
                     plain = _strip_ansi(inline_ansi)
-                    self._prose_log.write_with_source(Text.from_ansi(inline_ansi), plain)
+                    self._prose_log.write_with_source(
+                        Text.from_ansi(_normalize_ansi_for_render(inline_ansi)),
+                        plain,
+                    )
         # Flush any prose pending in StreamingBlockBuffer (setext, tables)
         self._flush_block_buf()
         self._render_footnote_section()
@@ -900,10 +1002,9 @@ class ResponseFlowEngine:
     # ------------------------------------------------------------------
 
     def _emit_rule(self) -> None:
-        """Emit a resize-responsive horizontal rule to the prose log."""
-        from rich.rule import Rule as RichRule
+        """Emit a width-bounded horizontal rule to the prose log."""
         self._sync_prose_log()
-        self._prose_log.write(RichRule(style="dim"))
+        self._prose_log.write(_make_rule(self._prose_log))
         self._prose_log._plain_lines.append("---")  # plain copy source
 
     def _flush_block_buf(self) -> None:
@@ -936,7 +1037,10 @@ class ResponseFlowEngine:
                 inline_ansi = apply_inline_markdown(block_ansi)
                 self._sync_prose_log()
                 plain = _strip_ansi(inline_ansi)
-                self._prose_log.write_with_source(Text.from_ansi(inline_ansi), plain)
+                self._prose_log.write_with_source(
+                    Text.from_ansi(_normalize_ansi_for_render(inline_ansi)),
+                    plain,
+                )
 
     def _mount_code_block(self, block: "StreamingCodeBlock") -> None:
         """Mount block into output DOM. Override in subclasses."""
@@ -1048,6 +1152,5 @@ class ReasoningFlowEngine(ResponseFlowEngine):
         super()._render_footnote_section()
 
     def _emit_rule(self) -> None:
-        from rich.rule import Rule as RichRule
-        self._panel._reasoning_log.write(RichRule(style="dim"))
+        self._panel._reasoning_log.write(_make_rule(self._panel._reasoning_log))
         self._panel._plain_lines.append("---")

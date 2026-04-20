@@ -517,3 +517,82 @@ async def test_rebuild_called_on_agent_stop():
         await pilot.pause()
 
         assert len(rebuild_calls) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Alt+↑/↓ navigation (TestAltArrowNav — spec §A2)
+# ---------------------------------------------------------------------------
+
+class TestAltArrowNav:
+    """Tests for action_jump_turn_prev / action_jump_turn_next (spec §A2)."""
+
+    @pytest.mark.asyncio
+    async def test_alt_up_noop_during_streaming(self):
+        """action_jump_turn_prev is a no-op when agent_running is True."""
+        app = _make_app()
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            app.agent_running = True
+            await pilot.pause()
+
+            jump_calls = []
+            with patch.object(app, "_jump_anchor", side_effect=lambda *a, **kw: jump_calls.append(a)):
+                app.action_jump_turn_prev()
+
+            assert jump_calls == [], "No jump should happen while streaming"
+
+    @pytest.mark.asyncio
+    async def test_alt_down_noop_during_streaming(self):
+        """action_jump_turn_next is a no-op when agent_running is True."""
+        app = _make_app()
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            app.agent_running = True
+            await pilot.pause()
+
+            jump_calls = []
+            with patch.object(app, "_jump_anchor", side_effect=lambda *a, **kw: jump_calls.append(a)):
+                app.action_jump_turn_next()
+
+            assert jump_calls == [], "No jump should happen while streaming"
+
+    @pytest.mark.asyncio
+    async def test_alt_up_delegates_to_jump_anchor(self):
+        """action_jump_turn_prev calls _jump_anchor(-1, BrowseAnchorType.TURN_START)."""
+        app = _make_app()
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            app.agent_running = False
+
+            jump_calls = []
+            with patch.object(app, "_jump_anchor", side_effect=lambda *a, **kw: jump_calls.append(a)):
+                app.action_jump_turn_prev()
+
+            assert len(jump_calls) == 1
+            direction, anchor_type = jump_calls[0]
+            assert direction == -1
+            assert anchor_type == BrowseAnchorType.TURN_START
+
+    @pytest.mark.asyncio
+    async def test_alt_down_delegates_to_jump_anchor(self):
+        """action_jump_turn_next calls _jump_anchor(+1, BrowseAnchorType.TURN_START)."""
+        app = _make_app()
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            app.agent_running = False
+
+            jump_calls = []
+            with patch.object(app, "_jump_anchor", side_effect=lambda *a, **kw: jump_calls.append(a)):
+                app.action_jump_turn_next()
+
+            assert len(jump_calls) == 1
+            direction, anchor_type = jump_calls[0]
+            assert direction == +1
+            assert anchor_type == BrowseAnchorType.TURN_START
+
+    def test_no_prev_turn_action_method(self):
+        """HermesApp has no action_prev_turn attribute (regression guard)."""
+        app = _make_app()
+        assert not hasattr(app, "action_prev_turn"), (
+            "action_prev_turn must be removed; use action_jump_turn_prev instead"
+        )

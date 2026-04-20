@@ -1,41 +1,23 @@
-"""Tests for WorkspaceOverlay TUI integration.
-
-Tests 18–33 (requires Textual pilot).
-
-18. WorkspaceOverlay hidden by default
-19. /workspace shows overlay
-20. w key shows overlay (input NOT focused)
-21. w key does NOT open overlay when HermesInput has focus
-22. Esc hides overlay, restores input focus
-23. refresh_data updates file rows
-24. Modified files show M status char
-25. Added files show A status char
-26. +N -N counts rendered from FileEntry
-27. Dirty indicator ● shown for dirty files
-28. Complexity warning row appears when complexity_warning is set
-29. Complexity section hidden when no warnings
-30. _dismiss_all_info_overlays hides WorkspaceOverlay
-31. Agent start (watch_agent_running True) dismisses WorkspaceOverlay
-32. Flash hint shown once on first file write (not twice)
-33. refresh_data(tracker, snapshot=None) renders header without branch/dirty chip
-"""
+"""Tests for WorkspaceOverlay TUI integration."""
 
 from __future__ import annotations
 
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from hermes_cli.tui.app import HermesApp
+from hermes_cli.commands import COMMANDS
 from hermes_cli.tui.overlays import WorkspaceOverlay
-from hermes_cli.tui.workspace_tracker import FileEntry, GitSnapshot, WorkspaceTracker
+from hermes_cli.tui.workspace_tracker import (
+    GitSnapshot,
+    GitSnapshotEntry,
+    WorkspaceTracker,
+    WorkspaceUpdated,
+)
 from textual.widgets import Static
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _make_app() -> HermesApp:
     cli = MagicMock()
@@ -45,58 +27,74 @@ def _make_app() -> HermesApp:
 
 async def _submit(pilot, app, cmd: str) -> None:
     from hermes_cli.tui.input_widget import HermesInput
+
     inp = app.query_one(HermesInput)
     inp.value = cmd
     inp.action_submit()
     await pilot.pause()
 
 
-def _make_tracker(entries: list[FileEntry] | None = None) -> WorkspaceTracker:
-    t = WorkspaceTracker("/repo")
-    if entries:
-        for e in entries:
-            t._entries[e.path] = e
-    return t
+def _make_tracker(repo_root: str = "/repo", is_git_repo: bool = True) -> WorkspaceTracker:
+    return WorkspaceTracker(repo_root, is_git_repo=is_git_repo)
 
 
-def _entry(
+def test_workspace_slash_command_is_registered():
+    assert "/workspace" in COMMANDS
+
+
+def _snap_entry(
     path: str = "/repo/foo.py",
     rel_path: str = "foo.py",
+    git_xy: str = " M",
     git_status: str = "M",
-    session_added: int = 10,
-    session_removed: int = 2,
     git_staged: bool = False,
-    last_write: float | None = None,
-    complexity_warning: str | None = None,
-) -> FileEntry:
-    return FileEntry(
+    git_untracked: bool = False,
+    git_conflicted: bool = False,
+    git_renamed: bool = False,
+    renamed_from: str | None = None,
+) -> GitSnapshotEntry:
+    return GitSnapshotEntry(
         path=path,
         rel_path=rel_path,
+        git_xy=git_xy,
+        git_index_status=git_xy[0],
+        git_worktree_status=git_xy[1],
         git_status=git_status,
-        session_added=session_added,
-        session_removed=session_removed,
         git_staged=git_staged,
-        last_write=last_write if last_write is not None else time.monotonic(),
-        complexity_warning=complexity_warning,
+        git_untracked=git_untracked,
+        git_conflicted=git_conflicted,
+        git_renamed=git_renamed,
+        renamed_from=renamed_from,
     )
 
 
-# ---------------------------------------------------------------------------
-# 18  Default visibility
-# ---------------------------------------------------------------------------
+def _snapshot(
+    entries: list[GitSnapshotEntry],
+    *,
+    branch: str = "main",
+    is_git_repo: bool = True,
+) -> GitSnapshot:
+    return GitSnapshot(
+        branch=branch,
+        dirty_count=len(entries),
+        entries=entries,
+        staged_count=sum(1 for e in entries if e.git_staged),
+        untracked_count=sum(1 for e in entries if e.git_untracked),
+        modified_count=sum(1 for e in entries if e.git_status == "M"),
+        deleted_count=sum(1 for e in entries if e.git_status == "D"),
+        renamed_count=sum(1 for e in entries if e.git_renamed),
+        conflicted_count=sum(1 for e in entries if e.git_conflicted),
+        is_git_repo=is_git_repo,
+    )
+
 
 @pytest.mark.asyncio
 async def test_workspace_overlay_hidden_by_default():
     app = _make_app()
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
-        ov = app.query_one(WorkspaceOverlay)
-        assert not ov.has_class("--visible")
+        assert not app.query_one(WorkspaceOverlay).has_class("--visible")
 
-
-# ---------------------------------------------------------------------------
-# 19  /workspace command
-# ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_workspace_slash_command_shows_overlay():
@@ -105,217 +103,173 @@ async def test_workspace_slash_command_shows_overlay():
         await pilot.pause()
         await _submit(pilot, app, "/workspace")
         await pilot.pause()
-        ov = app.query_one(WorkspaceOverlay)
-        assert ov.has_class("--visible")
+        assert app.query_one(WorkspaceOverlay).has_class("--visible")
 
-
-# ---------------------------------------------------------------------------
-# 20  w key when input not focused
-# ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_w_key_shows_overlay_when_input_not_focused():
     app = _make_app()
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
-        from hermes_cli.tui.input_widget import HermesInput
-        inp = app.query_one(HermesInput)
-        # Blur the input by focusing the app root
         app.set_focus(None)
         await pilot.pause()
         await pilot.press("w")
         await pilot.pause()
-        ov = app.query_one(WorkspaceOverlay)
-        assert ov.has_class("--visible")
+        assert app.query_one(WorkspaceOverlay).has_class("--visible")
 
-
-# ---------------------------------------------------------------------------
-# 21  w key when input IS focused — overlay stays hidden
-# ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_w_key_does_not_open_overlay_when_input_focused():
     app = _make_app()
     async with app.run_test(size=(80, 30)) as pilot:
-        await pilot.pause()
         from hermes_cli.tui.input_widget import HermesInput
+
+        await pilot.pause()
         inp = app.query_one(HermesInput)
         inp.focus()
         await pilot.pause()
-        assert inp.has_focus
         await pilot.press("w")
-        await pilot.pause()
-        ov = app.query_one(WorkspaceOverlay)
-        assert not ov.has_class("--visible")
-
-
-# ---------------------------------------------------------------------------
-# 22  Esc hides overlay, restores input focus
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_esc_hides_workspace_overlay():
-    app = _make_app()
-    async with app.run_test(size=(80, 30)) as pilot:
-        await pilot.pause()
-        await _submit(pilot, app, "/workspace")
-        await pilot.pause()
-        assert app.query_one(WorkspaceOverlay).has_class("--visible")
-        await pilot.press("escape")
         await pilot.pause()
         assert not app.query_one(WorkspaceOverlay).has_class("--visible")
 
 
 @pytest.mark.asyncio
-async def test_esc_restores_input_focus():
+async def test_esc_hides_workspace_overlay_and_restores_input_focus():
     app = _make_app()
     async with app.run_test(size=(80, 30)) as pilot:
         from hermes_cli.tui.input_widget import HermesInput
+
         await pilot.pause()
         await _submit(pilot, app, "/workspace")
         await pilot.pause()
         await pilot.press("escape")
         await pilot.pause()
-        inp = app.query_one(HermesInput)
-        assert inp.has_focus
+        assert not app.query_one(WorkspaceOverlay).has_class("--visible")
+        assert app.query_one(HermesInput).has_focus
 
-
-# ---------------------------------------------------------------------------
-# 23  refresh_data updates file rows
-# ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_refresh_data_updates_file_rows():
+async def test_refresh_data_renders_git_header_summary_and_file_rows():
     app = _make_app()
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
+        tracker = _make_tracker()
+        snap = _snapshot(
+            [
+                _snap_entry(path="/repo/foo.py", rel_path="foo.py", git_xy=" M", git_status="M"),
+                _snap_entry(
+                    path="/repo/new.txt",
+                    rel_path="new.txt",
+                    git_xy="??",
+                    git_status="?",
+                    git_untracked=True,
+                ),
+            ]
+        )
+        tracker.apply_snapshot(snap)
         ov = app.query_one(WorkspaceOverlay)
-        tracker = _make_tracker([_entry(path="/repo/foo.py", rel_path="foo.py")])
-        ov.refresh_data(tracker, None)
+        ov.refresh_data(tracker, snap)
         await pilot.pause()
-        files = ov.query_one("#ws-files")
-        children = list(files.children)
-        assert len(children) == 1
 
+        header = str(ov.query_one("#ws-header", Static).render())
+        summary = str(ov.query_one("#ws-summary", Static).render())
+        rows = list(ov.query_one("#ws-files").children)
 
-# ---------------------------------------------------------------------------
-# 24  M status char shown
-# ---------------------------------------------------------------------------
+        assert "Workspace" in header
+        assert "main" in header
+        assert "2 dirty" in header
+        assert "1 modified" in summary
+        assert "1 untracked" in summary
+        assert len(rows) == 2
+        rendered_rows = [str(child.render()) for child in rows]
+        assert any("foo.py" in row and "M" in row for row in rendered_rows)
+        assert any("new.txt" in row and "untracked" in row for row in rendered_rows)
+
 
 @pytest.mark.asyncio
-async def test_modified_file_shows_m_status():
+async def test_refresh_data_renders_hermes_annotations_and_complexity():
     app = _make_app()
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
+        tracker = _make_tracker()
+        tracker.record_write("/repo/foo.py", 42, 7)
+        tracker.set_complexity("/repo/foo.py", "1,847 lines · class HermesApp 1,203L")
+        snap = _snapshot([_snap_entry(path="/repo/foo.py", rel_path="foo.py")])
+        tracker.apply_snapshot(snap)
+
         ov = app.query_one(WorkspaceOverlay)
-        tracker = _make_tracker([_entry(git_status="M")])
-        ov.refresh_data(tracker, None)
+        ov.refresh_data(tracker, snap)
         await pilot.pause()
-        files = ov.query_one("#ws-files")
-        child = list(files.children)[0]
-        rendered = child.render()
-        assert "M" in str(rendered)
 
+        row = str(list(ov.query_one("#ws-files").children)[0].render())
+        complexity_rows = [str(child.render()) for child in ov.query_one("#ws-complexity").children]
 
-# ---------------------------------------------------------------------------
-# 25  A status char shown
-# ---------------------------------------------------------------------------
+        assert "Hermes" in row
+        assert "+42" in row
+        assert "-7" in row
+        assert any("HermesApp" in child for child in complexity_rows)
+
 
 @pytest.mark.asyncio
-async def test_added_file_shows_a_status():
+async def test_refresh_data_shows_rename_microcopy():
     app = _make_app()
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
+        tracker = _make_tracker()
+        snap = _snapshot(
+            [
+                _snap_entry(
+                    path="/repo/new_name.py",
+                    rel_path="new_name.py",
+                    git_xy="R ",
+                    git_status="R",
+                    git_staged=True,
+                    git_renamed=True,
+                    renamed_from="old_name.py",
+                )
+            ]
+        )
+        tracker.apply_snapshot(snap)
         ov = app.query_one(WorkspaceOverlay)
-        tracker = _make_tracker([_entry(git_status="A")])
-        ov.refresh_data(tracker, None)
+        ov.refresh_data(tracker, snap)
         await pilot.pause()
-        files = ov.query_one("#ws-files")
-        child = list(files.children)[0]
-        rendered = str(child.render())
-        assert "A" in rendered
 
+        row = str(list(ov.query_one("#ws-files").children)[0].render())
+        assert "new_name.py" in row
+        assert "old_name.py" in row
+        assert "staged" in row
 
-# ---------------------------------------------------------------------------
-# 26  +N -N counts rendered
-# ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_file_row_shows_line_counts():
+async def test_refresh_data_none_snapshot_shows_loading_state():
     app = _make_app()
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
+        tracker = _make_tracker()
         ov = app.query_one(WorkspaceOverlay)
-        tracker = _make_tracker([_entry(session_added=42, session_removed=7)])
         ov.refresh_data(tracker, None)
         await pilot.pause()
-        files = ov.query_one("#ws-files")
-        child = list(files.children)[0]
-        rendered = str(child.render())
-        assert "42" in rendered
-        assert "7" in rendered
 
+        header = str(ov.query_one("#ws-header", Static).render())
+        summary = str(ov.query_one("#ws-summary", Static).render())
+        assert "Workspace" in header
+        assert "Loading git status" in summary
 
-# ---------------------------------------------------------------------------
-# 27  Dirty indicator ●
-# ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_dirty_indicator_shown():
+async def test_refresh_data_non_git_repo_shows_empty_state():
     app = _make_app()
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
+        tracker = _make_tracker(is_git_repo=False)
         ov = app.query_one(WorkspaceOverlay)
-        tracker = _make_tracker([_entry(git_status="M", git_staged=False)])
         ov.refresh_data(tracker, None)
         await pilot.pause()
-        files = ov.query_one("#ws-files")
-        child = list(files.children)[0]
-        rendered = str(child.render())
-        assert "●" in rendered
 
+        summary = str(ov.query_one("#ws-summary", Static).render())
+        assert "requires a Git repository" in summary
+        assert len(list(ov.query_one("#ws-files").children)) == 0
 
-# ---------------------------------------------------------------------------
-# 28  Complexity warning row appears
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_complexity_warning_row_appears():
-    app = _make_app()
-    async with app.run_test(size=(80, 30)) as pilot:
-        await pilot.pause()
-        ov = app.query_one(WorkspaceOverlay)
-        tracker = _make_tracker([
-            _entry(complexity_warning="1,847 lines · class HermesApp 1,203L")
-        ])
-        ov.refresh_data(tracker, None)
-        await pilot.pause()
-        complexity = ov.query_one("#ws-complexity")
-        children = list(complexity.children)
-        # blank separator + 1 warning row
-        assert len(children) >= 2
-
-
-# ---------------------------------------------------------------------------
-# 29  Complexity section hidden when no warnings
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_complexity_section_empty_when_no_warnings():
-    app = _make_app()
-    async with app.run_test(size=(80, 30)) as pilot:
-        await pilot.pause()
-        ov = app.query_one(WorkspaceOverlay)
-        tracker = _make_tracker([_entry(complexity_warning=None)])
-        ov.refresh_data(tracker, None)
-        await pilot.pause()
-        complexity = ov.query_one("#ws-complexity")
-        assert len(list(complexity.children)) == 0
-
-
-# ---------------------------------------------------------------------------
-# 30  _dismiss_all_info_overlays hides WorkspaceOverlay
-# ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_dismiss_all_hides_workspace_overlay():
@@ -330,10 +284,6 @@ async def test_dismiss_all_hides_workspace_overlay():
         assert not ov.has_class("--visible")
 
 
-# ---------------------------------------------------------------------------
-# 31  watch_agent_running(True) dismisses WorkspaceOverlay
-# ---------------------------------------------------------------------------
-
 @pytest.mark.asyncio
 async def test_agent_start_dismisses_workspace_overlay():
     app = _make_app()
@@ -347,57 +297,54 @@ async def test_agent_start_dismisses_workspace_overlay():
         assert not ov.has_class("--visible")
 
 
-# ---------------------------------------------------------------------------
-# 32  Flash hint shown once on first write (not twice)
-# ---------------------------------------------------------------------------
-
 @pytest.mark.asyncio
-async def test_flash_hint_shown_once():
+async def test_flash_hint_shown_once_for_first_non_empty_workspace_update():
     app = _make_app()
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
         flash_calls: list[str] = []
-        original_flash = app._flash_hint
         app._flash_hint = lambda msg, dur: flash_calls.append(msg)
 
-        snapshot = GitSnapshot(branch="main", dirty_count=1, status_lines=["M  foo.py"])
-        # Set up tracker with one entry
-        tracker = WorkspaceTracker("/repo")
+        tracker = _make_tracker()
         tracker.record_write("/repo/foo.py", 5, 0)
         app._workspace_tracker = tracker
 
-        # First workspace update
-        from hermes_cli.tui.workspace_tracker import WorkspaceUpdated
-        app.post_message(WorkspaceUpdated(snapshot))
+        snap = _snapshot([_snap_entry(path="/repo/foo.py", rel_path="foo.py")])
+        app.post_message(WorkspaceUpdated(snap))
         await pilot.pause()
         await pilot.pause()
 
-        # Second workspace update — hint should NOT fire again
-        app.post_message(WorkspaceUpdated(snapshot))
+        app.post_message(WorkspaceUpdated(snap))
         await pilot.pause()
         await pilot.pause()
 
-        # Restore
-        app._flash_hint = original_flash
-        workspace_hints = [c for c in flash_calls if "workspace" in c]
+        workspace_hints = [msg for msg in flash_calls if "workspace" in msg]
         assert len(workspace_hints) == 1
 
 
-# ---------------------------------------------------------------------------
-# 33  refresh_data(snapshot=None) renders header without branch/dirty chip
-# ---------------------------------------------------------------------------
-
 @pytest.mark.asyncio
-async def test_refresh_data_none_snapshot_shows_plain_header():
+async def test_hermes_touched_files_sort_ahead_of_other_dirty_files():
     app = _make_app()
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
-        ov = app.query_one(WorkspaceOverlay)
         tracker = _make_tracker()
-        ov.refresh_data(tracker, None)
+        tracker.record_write("/repo/z.py", 1, 0)
+        time.sleep(0.01)
+        tracker.record_write("/repo/m.py", 1, 0)
+        snap = _snapshot(
+            [
+                _snap_entry(path="/repo/a.py", rel_path="a.py"),
+                _snap_entry(path="/repo/m.py", rel_path="m.py"),
+                _snap_entry(path="/repo/z.py", rel_path="z.py"),
+            ]
+        )
+        tracker.apply_snapshot(snap)
+
+        ov = app.query_one(WorkspaceOverlay)
+        ov.refresh_data(tracker, snap)
         await pilot.pause()
-        header = ov.query_one("#ws-header", Static)
-        rendered = str(header.render())
-        # Should contain "Workspace" but no branch or dirty chip
-        assert "Workspace" in rendered
-        assert "dirty" not in rendered
+
+        rendered_rows = [str(child.render()) for child in ov.query_one("#ws-files").children]
+        assert "m.py" in rendered_rows[0]
+        assert "z.py" in rendered_rows[1]
+        assert "a.py" in rendered_rows[2]

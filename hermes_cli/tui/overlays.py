@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import ScrollableContainer, Vertical
@@ -325,7 +326,7 @@ class ModelOverlay(Widget):
 
 
 class WorkspaceOverlay(Widget):
-    """Live session file-change summary. Shown by w / /workspace; dismissed with Esc/q."""
+    """Live working-tree summary. Shown by w / /workspace; dismissed with Esc/q."""
 
     DEFAULT_CSS = """
     WorkspaceOverlay {
@@ -369,17 +370,17 @@ class WorkspaceOverlay(Widget):
     def action_dismiss(self) -> None:
         self.remove_class("--visible")
         try:
+            self.app._sync_workspace_polling_state()
+        except Exception:
+            pass
+        try:
             from hermes_cli.tui.input_widget import HermesInput
             self.app.query_one(HermesInput).focus()
         except (NoMatches, ImportError):
             pass
 
     def refresh_data(self, tracker: object, snapshot: object | None) -> None:
-        """Rebuild header, summary, and file list from tracker + optional snapshot.
-
-        tracker: WorkspaceTracker instance
-        snapshot: GitSnapshot | None — None before first git poll completes
-        """
+        """Rebuild header, summary, and file list from tracker + optional snapshot."""
         from hermes_cli.tui.workspace_tracker import GitSnapshot
 
         try:
@@ -390,58 +391,271 @@ class WorkspaceOverlay(Widget):
         except NoMatches:
             return
 
-        # Header
+        files_widget.remove_children()
+        complexity_widget.remove_children()
+
+        if not getattr(tracker, "is_git_repo", True):
+            header_widget.update("[bold]Workspace[/bold]")
+            summary_widget.update("[dim]Workspace view requires a Git repository[/dim]")
+            return
+
         if snapshot is not None and isinstance(snapshot, GitSnapshot):
             dirty_chip = f" ● {snapshot.dirty_count} dirty" if snapshot.dirty_count else ""
-            header_widget.update(
-                f"[bold]Workspace[/bold]  [dim]{snapshot.branch}[/dim]{dirty_chip}"
+            branch = f"  [dim]{snapshot.branch}[/dim]" if snapshot.branch else ""
+            header_widget.update(f"[bold]Workspace[/bold]{branch}{dirty_chip}")
+            summary_widget.update(
+                f"Git  {snapshot.modified_count} modified"
+                f"  ·  {snapshot.deleted_count} deleted"
+                f"  ·  {snapshot.staged_count} staged"
+                f"  ·  {snapshot.untracked_count} untracked"
             )
         else:
             header_widget.update("[bold]Workspace[/bold]")
+            summary_widget.update("[dim]Loading git status...[/dim]")
 
-        # Summary row
-        added, removed = tracker.session_totals()
-        counts = tracker.counts_by_status()
-        modified = counts.get("M", 0)
-        new_files = counts.get("A", 0) + counts.get("?", 0)
-        deleted = counts.get("D", 0)
-        summary_widget.update(
-            f"Session  [green]+{added}[/green] [red]-{removed}[/red]"
-            f"  ·  {modified} modified  ·  {new_files} new  ·  {deleted} deleted"
-        )
-
-        # File rows
         entries = tracker.entries()
-        files_widget.remove_children()
         file_children: list[Static] = []
         for e in entries:
+            tags: list[str] = []
             if e.git_staged:
-                indicator = "○"
-            elif e.git_status not in (" ", ""):
-                indicator = "●"
-            else:
-                indicator = " "
-            staged_note = " staged" if e.git_staged else ""
-            css_class = "ws-file-dirty" if indicator == "●" else "ws-file"
-            line = (
-                f"[bold]{e.git_status or ' '}[/bold]  {e.rel_path or e.path}"
-                f"  [green]+{e.session_added}[/green] [red]-{e.session_removed}[/red]"
-                f"   {indicator}{staged_note}"
-            )
+                tags.append("staged")
+            if e.git_untracked:
+                tags.append("untracked")
+            if e.hermes_touched:
+                tags.append("Hermes")
+            if e.git_conflicted:
+                tags.append("conflict")
+            tag_text = f"  [dim]{' · '.join(tags)}[/dim]" if tags else ""
+            rename_text = f"  [dim]← {e.git_renamed_from}[/dim]" if e.git_renamed_from else ""
+            delta_text = ""
+            if e.hermes_touched or e.session_added or e.session_removed:
+                delta_text = (
+                    f"  [green]+{e.session_added}[/green] [red]-{e.session_removed}[/red]"
+                )
+            css_class = "ws-file-dirty" if e.git_status not in (" ", "") else "ws-file"
+            line = f"[bold]{e.git_xy or e.git_status or ' '}[/bold]  {e.rel_path or e.path}{rename_text}{delta_text}{tag_text}"
             file_children.append(Static(line, classes=css_class))
         if file_children:
             files_widget.mount(*file_children)
 
-        # Complexity rows
-        complexity_widget.remove_children()
-        warnings = [
-            (e.rel_path or e.path, e.complexity_warning)
-            for e in entries if e.complexity_warning
-        ]
+        warnings = [(e.rel_path or e.path, e.complexity_warning) for e in entries if e.complexity_warning]
         if warnings:
-            complexity_widget.mount(Static(""))  # blank separator
+            complexity_widget.mount(Static(""))
             for rel, warn in warnings:
-                complexity_widget.mount(Static(f"⚠  {rel}  ·  {warn}", classes="ws-complexity"))
+                complexity_widget.mount(
+                    Static(f"⚠  {rel}  ·  {warn}", classes="ws-complexity")
+                )
+
+
+class _SessionResumedBanner(Widget):
+    """Single-line banner displayed after /resume clears OutputPanel."""
+
+    DEFAULT_CSS = """
+    _SessionResumedBanner {
+        height: 1;
+        width: 1fr;
+        padding: 0 1;
+        color: $text-muted;
+    }
+    """
+
+    def __init__(self, session_title: str, turn_count: int) -> None:
+        super().__init__()
+        self._session_title = session_title
+        self._turn_count = turn_count
+
+    def render(self) -> str:
+        label = self._session_title or ""
+        turns = self._turn_count
+        turn_word = "turn" if turns == 1 else "turns"
+        return f"╌╌  resumed: {label}  ·  {turns} previous {turn_word}  ╌╌"
+
+
+class SessionOverlay(Widget):
+    """Session browser overlay. Open with /sessions or Ctrl+Shift+H."""
+
+    DEFAULT_CSS = """
+    SessionOverlay {
+        display: none;
+        layer: overlay;
+        dock: top;
+        height: auto;
+        max-height: 60%;
+        min-height: 10;
+        width: 1fr;
+        max-width: 80;
+        margin: 1 2;
+        padding: 0 1;
+        background: $surface;
+        border: tall $primary 15%;
+    }
+    SessionOverlay.--visible { display: block; }
+    SessionOverlay #sess-scroll { height: auto; max-height: 50%; overflow-y: auto; }
+    SessionOverlay ._SessionRow { height: 1; padding: 0 1; }
+    SessionOverlay ._SessionRow.--selected { background: $accent 20%; }
+    SessionOverlay ._SessionRow:hover { background: $accent 10%; }
+    SessionOverlay ._SessionRow.--current { color: $accent; }
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss", priority=True),
+        Binding("up",     "move_up",   priority=True),
+        Binding("down",   "move_down", priority=True),
+        Binding("ctrl+p", "move_up",   priority=True),
+        Binding("ctrl+n", "move_down", priority=True),
+        Binding("enter",  "select",    priority=True),
+        Binding("n",      "new_session", priority=True),
+    ]
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._sessions: list[dict] = []
+        self._selected_idx: int = 0
+
+    def compose(self) -> "ComposeResult":
+        yield Static("", id="sess-header")
+        yield ScrollableContainer(id="sess-scroll")
+        yield Static("[dim]↑↓ navigate  Enter resume  N new session  Esc close[/dim]", id="sess-footer")
+
+    def open_sessions(self) -> None:
+        """Show overlay and load sessions in background worker."""
+        self.add_class("--visible")
+        self._selected_idx = 0
+        try:
+            self.query_one("#sess-scroll", ScrollableContainer).remove_children()
+            self.query_one("#sess-scroll", ScrollableContainer).mount(Static("[dim]Loading…[/dim]", id="sess-loading"))
+        except NoMatches:
+            pass
+        self._load_sessions()
+
+    @work(thread=True)
+    def _load_sessions(self) -> None:
+        """Fetch session list from DB in worker thread."""
+        try:
+            db = getattr(self.app.cli, "_session_db", None) if hasattr(self, "app") else None
+            if db is None:
+                sessions: list[dict] = []
+            else:
+                sessions = db.list_sessions_rich(limit=20)
+        except Exception:
+            sessions = []
+        self.call_from_thread(self._render_rows, sessions)
+
+    def _render_rows(self, sessions: list[dict]) -> None:
+        """Render session rows after worker completes (event-loop only)."""
+        self._sessions = sessions
+        try:
+            scroll = self.query_one("#sess-scroll", ScrollableContainer)
+        except NoMatches:
+            return
+        scroll.remove_children()
+        current_id = getattr(getattr(self.app, "cli", None), "session_id", None)
+        rows: list["_SessionRow"] = []
+        for i, s in enumerate(sessions):
+            is_current = (s.get("id") == current_id)
+            row = _SessionRow(s, is_current=is_current, idx=i)
+            rows.append(row)
+        if rows:
+            scroll.mount(*rows)
+        else:
+            scroll.mount(Static("[dim]No sessions found[/dim]"))
+        # Update header
+        current_label = ""
+        for s in sessions:
+            if s.get("id") == current_id:
+                current_label = s.get("title") or (s.get("id", "")[-8:] if s.get("id") else "")
+                break
+        try:
+            self.query_one("#sess-header", Static).update(
+                f"[bold]Sessions[/bold]  [dim]Current: {current_label}[/dim]"
+            )
+        except NoMatches:
+            pass
+        self._selected_idx = 0
+        self._update_selection()
+
+    def _update_selection(self) -> None:
+        try:
+            rows = list(self.query(_SessionRow))
+        except Exception:
+            return
+        for i, row in enumerate(rows):
+            row.set_class(i == self._selected_idx, "--selected")
+
+    def action_move_up(self) -> None:
+        self._selected_idx = max(0, self._selected_idx - 1)
+        self._update_selection()
+
+    def action_move_down(self) -> None:
+        count = len(self._sessions)
+        self._selected_idx = min(max(count - 1, 0), self._selected_idx + 1)
+        self._update_selection()
+
+    def action_select(self) -> None:
+        if not self._sessions:
+            self.action_dismiss()
+            return
+        idx = max(0, min(self._selected_idx, len(self._sessions) - 1))
+        session = self._sessions[idx]
+        current_id = getattr(getattr(self.app, "cli", None), "session_id", None)
+        sid = session.get("id", "")
+        self.action_dismiss()
+        if sid == current_id:
+            return
+        try:
+            self.app.action_resume_session(sid)
+        except Exception:
+            pass
+
+    def action_new_session(self) -> None:
+        self.action_dismiss()
+        try:
+            self.app._handle_tui_command("/new")
+        except Exception:
+            pass
+
+    def action_dismiss(self) -> None:
+        self.remove_class("--visible")
+        try:
+            from hermes_cli.tui.input_widget import HermesInput
+            self.app.query_one(HermesInput).focus()
+        except (NoMatches, ImportError):
+            pass
+
+
+class _SessionRow(Static):
+    """Single row in SessionOverlay."""
+
+    def __init__(self, session_meta: dict, is_current: bool, idx: int, **kwargs: object) -> None:
+        self._meta = session_meta
+        self._is_current = is_current
+        self._idx = idx
+        super().__init__(self._build_label(), **kwargs)
+        if is_current:
+            self.add_class("--current")
+
+    def _build_label(self) -> str:
+        import time as _time
+        meta = self._meta
+        title = meta.get("title") or ""
+        sid = meta.get("id") or ""
+        label = title if title else f"[dim]untitled[/dim]"
+        bullet = "●" if self._is_current else " "
+        last_active = meta.get("last_active") or meta.get("started_at") or 0
+        turn_count = meta.get("message_count") or 0
+        # Relative time
+        now = _time.time()
+        diff = now - float(last_active) if last_active else 0
+        if diff < 3600:
+            rel = f"{int(diff/60)}m ago" if diff >= 60 else "just now"
+        elif diff < 86400:
+            rel = f"{int(diff/3600)}h ago"
+        elif diff < 604800:
+            rel = f"{int(diff/86400)}d ago"
+        else:
+            rel = f"{int(diff/604800)}w ago"
+        turn_word = "turn" if turn_count == 1 else "turns"
+        return f"{bullet} {label:<32}  {rel:<10}  {turn_count} {turn_word}"
 
 
 class ToolPanelHelpOverlay(Widget):

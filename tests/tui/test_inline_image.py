@@ -60,7 +60,7 @@ def test_halfblock_strips_initialized():
 def test_none_image_no_crash():
     w = _make_widget()
     w.watch_image(None)
-    assert w._tgp_seq == ""
+    assert w._tgp_transmitted is False
 
 
 def test_watch_none_clears_seq(tmp_png, monkeypatch):
@@ -68,9 +68,9 @@ def test_watch_none_clears_seq(tmp_png, monkeypatch):
     from hermes_cli.tui.kitty_graphics import _reset_caps
     _reset_caps()
     w = _make_widget()
-    w._tgp_seq = "something"
+    w._tgp_transmitted = True
     w.watch_image(None)
-    assert w._tgp_seq == ""
+    assert w._tgp_transmitted is False
 
 
 def test_invalid_path_shows_placeholder(monkeypatch):
@@ -80,8 +80,8 @@ def test_invalid_path_shows_placeholder(monkeypatch):
     w = _make_widget()
     w._src_path = "/tmp/nonexistent_hermes_test.png"
     w.watch_image("/tmp/nonexistent_hermes_test.png")
-    # PIL unavailable path OR load failure → tgp_seq stays empty
-    assert w._tgp_seq == ""
+    # PIL unavailable path OR load failure → no TGP transmission state
+    assert w._tgp_transmitted is False
 
 
 def test_none_image_rendered_rows():
@@ -116,20 +116,22 @@ def test_placeholder_nonzero_row_blank(monkeypatch):
     assert isinstance(strip, Strip)
 
 
-def test_tgp_line0_contains_seq_when_seq_set(monkeypatch):
+def test_tgp_line0_uses_placeholder_strip_when_set(monkeypatch):
+    from rich.segment import Segment
     w = _make_widget()
-    w._tgp_seq = "\x1b_Ga=T,f=100,s=10,v=10,c=1,r=1,i=1,m=0,q=2;AAAA\x1b\\"
+    w._tgp_placeholder_strips = [Strip([Segment("PPP")])]
     strip = w._render_tgp_line(0)
     text = "".join(seg.text for seg in strip._segments)
-    assert "\x1b_G" in text
+    assert text == "PPP"
 
 
 def test_tgp_line_nonzero_blank(monkeypatch):
+    from rich.segment import Segment
     w = _make_widget()
-    w._tgp_seq = "\x1b_Ga=T;AAAA\x1b\\"
+    w._tgp_placeholder_strips = [Strip([Segment("PPP")])]
     strip = w._render_tgp_line(1)
     text = "".join(seg.text for seg in strip._segments)
-    assert "\x1b_G" not in text
+    assert text.strip() == ""
 
 
 def test_halfblock_render_line_returns_strip(monkeypatch):

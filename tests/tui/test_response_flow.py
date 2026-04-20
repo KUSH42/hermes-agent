@@ -14,6 +14,7 @@ import asyncio
 from unittest.mock import MagicMock, patch
 
 import pytest
+from rich.text import Text
 
 from hermes_cli.tui.app import HermesApp
 from hermes_cli.tui.widgets import (
@@ -148,6 +149,22 @@ def test_markdown_disabled(monkeypatch):
 
     import asyncio as _asyncio
     _asyncio.get_event_loop().run_until_complete(_inner())
+
+
+def test_make_rule_uses_log_width():
+    """Horizontal rules use the log width resolution path, not terminal Rule width."""
+    from hermes_cli.tui.response_flow import _make_rule
+
+    class _Stub:
+        def __init__(self) -> None:
+            self.scrollable_content_region = MagicMock(width=37)
+            self.size = MagicMock(width=80)
+            self.app = MagicMock()
+            self.app.size.width = 120
+
+    rule = _make_rule(_Stub())
+    assert isinstance(rule, Text)
+    assert rule.plain == "─" * 37
 
 
 # ---------------------------------------------------------------------------
@@ -440,6 +457,26 @@ async def test_streaming_bold_visible_in_log():
         assert msg is not None
         assert "**" not in msg.response_log._plain_lines[0]
         assert "bold" in msg.response_log._plain_lines[0]
+
+
+@pytest.mark.asyncio
+async def test_raw_response_text_preserves_unprocessed_tail():
+    """Turn-end raw capture keeps the original unprocessed text, including no-newline tails."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.agent_running = True
+        await pilot.pause()
+        app.write_output("**bold** tail")
+        await asyncio.sleep(0.05)
+        await pilot.pause()
+        app.agent_running = False
+        await pilot.pause()
+
+        msg = app.query_one(OutputPanel).current_message
+        assert msg is not None
+        assert msg.raw_response_text() == "**bold** tail"
+        assert "bold tail" in msg.all_prose_text()
 
 
 @pytest.mark.asyncio

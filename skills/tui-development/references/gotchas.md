@@ -412,6 +412,33 @@ For full failure detail: read the log path printed by rtk on failure.
 - After each adjacent mount, the anchor advances to the newly mounted panel (stacking multiple search sub-calls in order)
 - Anchor is implicitly reset per MessagePanel (fresh instance each turn)
 
+## First-response-line disappears ("W" missing from "Wake up Neo")
+
+Race between agent streaming and `watch_agent_running(True)` firing on the
+event loop can cause the first response line to be buffered in the OLD
+(startup/previous-turn) panel's `_block_buf._pending` and never flushed.
+
+Root cause chain:
+1. Banner postamble (or previous response trailing blank) leaves `_pending = ""`
+   on the current panel via `process_line("")`.
+2. Agent starts streaming before `watch_agent_running(True)` fires; first
+   response line arrives in `_commit_lines()` which uses `current_message`
+   (still the old panel) → `process_line("Wake up Neo")` on old panel →
+   `_handle_line` returns `""` (old empty pending), holds "Wake up Neo".
+3. `watch_agent_running(True)` fires → `new_message()` → old panel never
+   flushed again → "Wake up Neo" lost.
+
+Fix (2026-04-20):
+- `watch_agent_running(True)` steals `_block_buf._pending` from old engine,
+  clears it, stores as `new_msg._carry_pending`.
+- `MessagePanel.on_mount` processes `_carry_pending` through the new engine
+  once it's ready (`_response_engine` is None in `__init__`, set in `on_mount`).
+- Clears empty-string sentinel too — prevents poisoning the next turn.
+
+**Do NOT call `engine.process_line()` on a freshly created MessagePanel from
+`watch_agent_running()` directly** — the engine isn't mounted yet. Always
+route deferred engine calls through `_carry_pending` / `on_mount`.
+
 ## When to expand this file
 
 Add an entry only if it is:

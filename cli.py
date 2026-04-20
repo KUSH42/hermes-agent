@@ -4670,6 +4670,19 @@ class HermesCLI:
             if hasattr(self.agent, "_invalidate_system_prompt"):
                 self.agent._invalidate_system_prompt()
 
+        # Notify TUI if running
+        import sys as _sys
+        _cli_mod = _sys.modules.get(__name__) or _sys.modules.get("cli")
+        _tui_app = getattr(_cli_mod, "_hermes_app", None) if _cli_mod is not None else _hermes_app
+        if _tui_app is None:
+            _tui_app = _hermes_app
+        if _tui_app is not None:
+            _title = session_meta.get("title") or ""
+            _turn_count = session_meta.get("message_count", 0)
+            _tui_app.call_from_thread(
+                _tui_app.handle_session_resume, target_id, _title, _turn_count
+            )
+
         title_part = f" \"{session_meta['title']}\"" if session_meta.get("title") else ""
         msg_count = len([m for m in self.conversation_history if m.get("role") == "user"])
         if self.conversation_history:
@@ -10659,6 +10672,7 @@ class HermesCLI:
 
         try:
             if _tui_app is not None:
+                _install_tui_file_log()
                 # Textual path — _hermes_app is already set above; Textual owns the loop
                 _tui_app.run()
             else:
@@ -10724,6 +10738,53 @@ class HermesCLI:
                     pass
             _run_cleanup()
             self._print_exit_summary()
+
+
+# ============================================================================
+# Textual file logging
+# ============================================================================
+
+_TUI_LOG_PATH = Path.home() / ".hermes" / "logs" / "hermes-tui.log"
+_TUI_LOG_MAX_BYTES = 1 * 1024 * 1024  # 1 MB
+_tui_log_installed: bool = False
+
+
+def _install_tui_file_log() -> None:
+    """Route all textual log() calls to a capped file.
+
+    Overwrites on every restart; auto-truncates when the file exceeds 1 MB.
+    Safe to call multiple times (no-op after first call).
+    """
+    global _tui_log_installed
+    if _tui_log_installed:
+        return
+    _tui_log_installed = True
+
+    try:
+        _TUI_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _TUI_LOG_PATH.write_text("")  # overwrite on restart
+    except Exception:
+        return
+
+    try:
+        import textual.constants as _tc
+        from textual import Logger as _Logger
+
+        _tc.LOG_FILE = str(_TUI_LOG_PATH)  # enable Textual's file-write path
+
+        _orig_call = _Logger.__call__
+
+        def _capped_call(self, *args, **kwargs):  # type: ignore[override]
+            try:
+                if _TUI_LOG_PATH.stat().st_size >= _TUI_LOG_MAX_BYTES:
+                    _TUI_LOG_PATH.write_text("")  # truncate at limit
+            except Exception:
+                pass
+            _orig_call(self, *args, **kwargs)
+
+        _Logger.__call__ = _capped_call  # type: ignore[method-assign]
+    except Exception:
+        pass
 
 
 # ============================================================================

@@ -11,6 +11,7 @@ from hermes_cli.tui.perf import (
     EventLoopLatencyProbe,
     FrameRateProbe,
     PerfResult,
+    SuspicionDetector,
     WorkerWatcher,
     measure,
 )
@@ -168,6 +169,63 @@ class TestEventLoopLatencyProbe:
         mock_log.warning.assert_called_once()
         msg = mock_log.warning.call_args[0][0]
         assert "[LOOP]" in msg
+
+
+# ---------------------------------------------------------------------------
+# SuspicionDetector
+# ---------------------------------------------------------------------------
+
+class TestSuspicionDetector:
+    def test_single_minor_breach_does_not_log(self) -> None:
+        clock = [100.0]
+        detector = SuspicionDetector("test", budget_ms=10.0, now_fn=lambda: clock[0])
+        with patch("hermes_cli.tui.perf.log") as mock_log:
+            detector.observe(11.0)
+        mock_log.warning.assert_not_called()
+        mock_log.error.assert_not_called()
+
+    def test_consecutive_breaches_log_warning(self) -> None:
+        clock = [100.0]
+        detector = SuspicionDetector("test", budget_ms=10.0, now_fn=lambda: clock[0])
+        with patch("hermes_cli.tui.perf.log") as mock_log:
+            detector.observe(12.0)
+            clock[0] += 1.0
+            detector.observe(12.0)
+        mock_log.warning.assert_called_once()
+        msg = mock_log.warning.call_args[0][0]
+        assert "[PERF-ALARM]" in msg
+        assert "consecutive" in msg
+
+    def test_severe_breach_logs_error_immediately(self) -> None:
+        clock = [100.0]
+        detector = SuspicionDetector(
+            "test",
+            budget_ms=10.0,
+            severe_ms=30.0,
+            now_fn=lambda: clock[0],
+        )
+        with patch("hermes_cli.tui.perf.log") as mock_log:
+            detector.observe(35.0)
+        mock_log.error.assert_called_once()
+        msg = mock_log.error.call_args[0][0]
+        assert "[PERF-ALARM]" in msg
+        assert "severe spike" in msg
+
+    def test_cooldown_suppresses_repeat_warning(self) -> None:
+        clock = [100.0]
+        detector = SuspicionDetector(
+            "test",
+            budget_ms=10.0,
+            cooldown_s=10.0,
+            now_fn=lambda: clock[0],
+        )
+        with patch("hermes_cli.tui.perf.log") as mock_log:
+            detector.observe(12.0)
+            clock[0] += 1.0
+            detector.observe(12.0)
+            clock[0] += 1.0
+            detector.observe(12.0)
+        mock_log.warning.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

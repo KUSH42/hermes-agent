@@ -470,6 +470,7 @@ DEFAULT_CONFIG = {
         "context_pct": True,           # context-window % meter in StatusBar
         "context_pct_mode": "overflow",  # "compaction" = % toward compaction trigger; "overflow" = % of full ctx window
         "desktop_notify": False,       # desktop notification when long turn completes (opt-in)
+        "history_search_max_results": 50,  # max results shown in history search overlay
         "notify_min_seconds": 10.0,    # minimum turn duration (s) before notify fires
         "notify_sound": False,         # play a sound alongside the notification
         "notify_sound_name": "Glass",  # macOS sound name (ignored on Linux)

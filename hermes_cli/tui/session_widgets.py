@@ -70,7 +70,6 @@ class SessionBar(Widget):
             inner = self.query_one("#session-bar-inner", Horizontal)
         except Exception:
             return
-        inner.remove_children()
         records = self._sessions_data
         widgets = []
         for i, rec in enumerate(records):
@@ -93,8 +92,12 @@ class SessionBar(Widget):
         add_label = " [dim]+[/dim] " if at_max else " + "
         add_css = "--add-btn-disabled" if at_max else "--add-btn"
         widgets.append(Button(add_label, id="sess-add-btn", classes=add_css))
+        # Remove existing children individually to avoid async-removal vs sync-mount race.
+        for child in list(inner.children):
+            child.remove()
         if widgets:
-            inner.mount(*widgets)
+            _w = widgets
+            inner.call_after_refresh(lambda: inner.mount(*_w))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         btn_id = event.button.id or ""
@@ -413,7 +416,7 @@ class MergeConfirmOverlay(Widget):
             self.action_dismiss()
         elif btn_id in ("mg-merge", "mg-squash", "mg-rebase"):
             event.stop()
-            self._strategy = btn_id[3:]  # "merge" | "squash" | "rebase"
+            self._strategy = btn_id[len("mg-"):]  # "merge" | "squash" | "rebase"
         elif btn_id == "mg-confirm":
             event.stop()
             try:
@@ -438,6 +441,7 @@ class _SessionNotification(Horizontal):
 
     DEFAULT_CSS = """
     _SessionNotification {
+        layer: overlay;
         dock: bottom;
         height: 1;
         width: 1fr;

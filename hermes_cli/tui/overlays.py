@@ -46,7 +46,9 @@ class HelpOverlay(Widget):
 
     BINDINGS = [
         Binding("escape", "dismiss", priority=True),
-        Binding("q", "dismiss", priority=True),
+        # priority=False: when #help-search Input has focus, q inserts normally.
+        # When the overlay itself has focus, q fires dismiss.
+        Binding("q", "dismiss", priority=False),
     ]
 
     def compose(self) -> ComposeResult:
@@ -54,9 +56,13 @@ class HelpOverlay(Widget):
         yield Vertical(id="help-content")
 
     def on_mount(self) -> None:
+        self._refresh_commands_cache()
+
+    def _refresh_commands_cache(self) -> None:
+        """Rebuild command cache from current COMMANDS_BY_CATEGORY and repopulate."""
         from hermes_cli.commands import COMMANDS_BY_CATEGORY
         self._commands_cache: list[tuple[str, str, str]] = [
-            (cat, f"/{cmd}", desc)
+            (cat, cmd, desc)
             for cat, cmds in COMMANDS_BY_CATEGORY.items()
             for cmd, desc in cmds.items()
         ]
@@ -126,7 +132,9 @@ class UsageOverlay(Widget):
 
     BINDINGS = [
         Binding("escape", "dismiss", priority=True),
-        Binding("q", "dismiss", priority=True),
+        # q removed: UsageOverlay does not capture focus (HermesInput retains it).
+        # With priority=True, q would insert into HermesInput instead of dismissing.
+        # Dismiss via Escape (handled by on_key Priority -2 in HermesApp).
     ]
 
     def compose(self) -> ComposeResult:
@@ -235,19 +243,20 @@ class CommandsOverlay(Widget):
 
     BINDINGS = [
         Binding("escape", "dismiss", priority=True),
-        Binding("q", "dismiss", priority=True),
+        # q removed: CommandsOverlay does not capture focus (HermesInput retains it).
+        # Dismiss via Escape (handled by on_key Priority -2 in HermesApp).
     ]
 
     def compose(self) -> ComposeResult:
-        yield Static("[bold]Commands[/bold]  (Esc / q to dismiss)", id="commands-title")
+        yield Static("[bold]Commands[/bold]  (Esc to dismiss)", id="commands-title")
         yield Vertical(id="commands-content")
 
     def on_mount(self) -> None:
         self._refresh_content()
 
     def _refresh_content(self) -> None:
-        from hermes_cli.commands import gateway_help_lines
-        lines = gateway_help_lines()
+        from hermes_cli.commands import tui_help_lines
+        lines = tui_help_lines()
         try:
             container = self.query_one("#commands-content", Vertical)
         except NoMatches:
@@ -266,7 +275,7 @@ class CommandsOverlay(Widget):
 
 
 class ModelOverlay(Widget):
-    """Current model info display. Shown by /model (no args); dismissed with Esc/q."""
+    """Current model info display. Shown by /model (no args); dismissed with Esc."""
 
     DEFAULT_CSS = """
     ModelOverlay {
@@ -287,7 +296,8 @@ class ModelOverlay(Widget):
 
     BINDINGS = [
         Binding("escape", "dismiss", priority=True),
-        Binding("q", "dismiss", priority=True),
+        # q removed: ModelOverlay does not capture focus (HermesInput retains it).
+        # Dismiss via Escape (handled by on_key Priority -2 in HermesApp).
     ]
 
     def compose(self) -> ComposeResult:
@@ -353,7 +363,8 @@ class WorkspaceOverlay(Widget):
 
     BINDINGS = [
         Binding("escape", "dismiss", priority=True),
-        Binding("q", "dismiss", priority=True),
+        # q removed: WorkspaceOverlay does not capture focus (HermesInput retains it).
+        # Dismiss via Escape or press w (action_toggle_workspace in HermesApp).
     ]
 
     def compose(self) -> ComposeResult:

@@ -55,7 +55,13 @@ class SlashDescPanel(RichLog):
     def _on_candidate(self, c: object) -> None:
         if isinstance(c, SlashCandidate):
             self.clear()
-            self.write(f"[bold]{c.command}[/bold]\n\n{c.description or '(no description)'}")
+            # Build title line: "/command [args_hint]"
+            args = f" [dim]{c.args_hint}[/dim]" if c.args_hint else ""
+            title = f"[bold]{c.command}[/bold]{args}"
+            desc = c.description or "(no description)"
+            # Keybind hint on same line as description (right-aligned dim)
+            keybind = f"  [dim]{c.keybind_hint}[/dim]" if c.keybind_hint else ""
+            self.write(f"{title}\n\n{desc}{keybind}")
         else:
             self.clear()
 

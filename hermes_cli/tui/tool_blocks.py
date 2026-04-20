@@ -23,7 +23,7 @@ from textual.events import Click
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from hermes_cli.tui.animation import PulseMixin, lerp_color
 from hermes_cli.tui.widgets import (
@@ -320,6 +320,8 @@ class ToolHeader(PulseMixin, Widget):
         # ≤ threshold: always open, no affordances shown
         self._has_affordances = line_count > COLLAPSE_THRESHOLD
         self._copy_flash = False
+        self._flash_msg: str | None = None
+        self._flash_expires: float = 0.0
         # Streaming state — set by StreamingToolBlock
         self._spinner_char: str | None = None   # non-None while streaming
         self._duration: str = ""                # set on completion
@@ -455,8 +457,13 @@ class ToolHeader(PulseMixin, Widget):
             # Promoted chips (MCP source, exit code not already in hero, etc.)
             for chip_text, chip_style in (self._header_chips or []):
                 tail.append(f"  {chip_text}", style=chip_style)
-            if self._has_affordances and self._panel is None:
-                tail.append("  ▾" if not self.collapsed else "  ▸", style="dim")
+            if self._has_affordances:
+                is_collapsed = self._panel.collapsed if self._panel is not None else self.collapsed
+                tail.append("  ▸" if is_collapsed else "  ▾", style="dim")
+            # Flash confirmation message (copy/open actions)
+            now = time.monotonic()
+            if self._flash_msg and now < self._flash_expires:
+                tail.append(f"  ✓ {self._flash_msg}", style="dim green")
             if self._duration:   # already v4-formatted by _tick_duration / complete()
                 tail.append(f"  {self._duration}", style="dim")
 
@@ -465,11 +472,17 @@ class ToolHeader(PulseMixin, Widget):
         tail_w = tail.cell_len
         FIXED_PREFIX_W = gutter_w + icon_cell_w + space_after_icon + shell_prompt_w
         available = max(8, term_w - FIXED_PREFIX_W - tail_w - 2) if term_w > 0 else 50
-        label_text = header_label_v4(
-            spec, self._header_args or {}, self._label,
-            self._full_path, available,
-            accent_color=getattr(self, "_focused_gutter_color", ""),
-        )
+        if self._label_rich is not None:
+            label_text = self._label_rich
+            if label_text.cell_len > available:
+                label_text = label_text.divide([available])[0]
+                label_text.append("…", style="dim")
+        else:
+            label_text = header_label_v4(
+                spec, self._header_args or {}, self._label,
+                self._full_path, available,
+                accent_color=getattr(self, "_focused_gutter_color", ""),
+            )
         t.append_text(label_text)
         if term_w > 0:
             label_used = label_text.cell_len
@@ -705,6 +718,17 @@ class ToolBlock(Widget):
         except Exception:
             return None
 
+    def _diff_bg_colors(self) -> tuple[str, str]:
+        """Return (add_bg, del_bg) from skin component vars, falling back to defaults."""
+        try:
+            tm = getattr(self.app, "_theme_manager", None)
+            if tm is not None:
+                cvars: dict[str, str] = getattr(tm, "_component_vars", {})
+                return cvars.get("diff-add-bg", "#1a3a1a"), cvars.get("diff-del-bg", "#3a1a1a")
+        except Exception:
+            pass
+        return "#1a3a1a", "#3a1a1a"
+
     def _render_body(self) -> None:
         try:
             rl = self._body.query_one(CopyableRichLog)
@@ -732,13 +756,14 @@ class ToolBlock(Widget):
 
             # Diff rendering with word-diff on adjacent -/+ lines
             if self._label == "diff":
+                add_bg, del_bg = self._diff_bg_colors()
                 pending_removed: str | None = None
                 for styled, plain in zip(self._lines, self._plain_lines):
                     rich_line = self._render_diff_line(plain)
                     if rich_line is not None:
                         if pending_removed is not None:
                             t = Text("-", style="red")
-                            t.append(pending_removed, style="on #3a1a1a")
+                            t.append(pending_removed, style=f"on {del_bg}")
                             rl.write(t)
                             pending_removed = None
                         rl.write(rich_line)
@@ -747,7 +772,7 @@ class ToolBlock(Widget):
                     if stripped.startswith("-") and not stripped.startswith("---"):
                         if pending_removed is not None:
                             t = Text("-", style="red")
-                            t.append(pending_removed, style="on #3a1a1a")
+                            t.append(pending_removed, style=f"on {del_bg}")
                             rl.write(t)
                         pending_removed = stripped[1:]
                     elif stripped.startswith("+") and not stripped.startswith("+++"):
@@ -763,18 +788,18 @@ class ToolBlock(Widget):
                             pending_removed = None
                         else:
                             t = Text("+", style="green")
-                            t.append(content, style="on #1a3a1a")
+                            t.append(content, style=f"on {add_bg}")
                             rl.write(t)
                     else:
                         if pending_removed is not None:
                             t = Text("-", style="red")
-                            t.append(pending_removed, style="on #3a1a1a")
+                            t.append(pending_removed, style=f"on {del_bg}")
                             rl.write(t)
                             pending_removed = None
                         rl.write_with_source(Text.from_ansi(styled), plain)
                 if pending_removed is not None:
                     t = Text("-", style="red")
-                    t.append(pending_removed, style="on #3a1a1a")
+                    t.append(pending_removed, style=f"on {del_bg}")
                     rl.write(t)
                 if self._header_stats and self._header_stats.has_diff_counts and self._lines:
                     rl.write(Text(""))
@@ -870,10 +895,13 @@ class ToolTail(Static):
 # ---------------------------------------------------------------------------
 
 class OmissionBar(Widget):
-    """Interactive bar that replaces the static cap marker in StreamingToolBlock.
+    """Dual-position omission bar for StreamingToolBlock.
 
-    Shows ``… N lines omitted  [--] [-] [+] [++]`` and lets the user reveal
-    or hide lines beyond the _VISIBLE_CAP threshold.
+    position="top"    → shows lines above visible window; [↑all] [↑+50]
+    position="bottom" → shows lines below visible window; [↑cap] [↑] [↓] [↓all]
+
+    Both bars are always in the DOM from STB.on_mount(); display toggled by
+    _refresh_omission_bars() as visible_start / visible_end change.
     """
 
     DEFAULT_CSS = """
@@ -884,88 +912,87 @@ class OmissionBar(Widget):
     }
     """
 
-    def __init__(self, parent_block: "StreamingToolBlock", **kwargs: Any) -> None:
+    def __init__(
+        self,
+        parent_block: "StreamingToolBlock",
+        position: str = "bottom",
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self._parent_block = parent_block
-        self._visible_end: int = _VISIBLE_CAP
+        self.position = position
+        self._visible_start: int = 0
+        self._visible_end: int = 0
         self._total: int = 0
+        self._label: Static | None = None
 
     def compose(self) -> ComposeResult:
-        yield Static("", id="omission-label", classes="omission-label")
-        yield Static("[--]", id="btn-collapse-all", classes="omission-btn -disabled")
-        yield Static("[-]",  id="btn-collapse-one", classes="omission-btn -disabled")
-        yield Static("[+]",  id="btn-expand-one",   classes="omission-btn")
-        yield Static("[++]", id="btn-expand-all",   classes="omission-btn")
+        label = Static("", classes="--ob-label")
+        self._label = label
+        yield label
+        if self.position == "top":
+            yield Button("[↑all]", classes="--ob-up-all")
+            yield Button("[↑+50]", classes="--ob-up-page")
+        else:
+            yield Button("\\[reset]", classes="--ob-cap")
+            yield Button("[↑]",    classes="--ob-up")
+            yield Button("[↓]",    classes="--ob-down")
+            yield Button("[↓all]", classes="--ob-down-all")
 
-    def on_click(self, event: Click) -> None:
-        clicked = event.widget
-        if clicked is self:
-            return
-        clicked_id = getattr(clicked, "id", None)
-        if clicked_id is None:
-            return
-        if clicked.has_class("-disabled"):
-            return
-        event.stop()
-        if clicked_id == "btn-collapse-all":
-            self._do_collapse_all()
-        elif clicked_id == "btn-collapse-one":
-            self._do_collapse_one()
-        elif clicked_id == "btn-expand-one":
-            self._do_expand_one()
-        elif clicked_id == "btn-expand-all":
-            self._do_expand_all()
-
-    def update(self, total: int, visible_end: int) -> None:
-        """Refresh label text and button disabled states."""
-        self._total = total
+    def set_counts(
+        self,
+        visible_start: int,
+        visible_end: int,
+        total: int,
+        above: int | None = None,
+        below: int | None = None,
+    ) -> None:
+        """Cache counts and update label + disabled states."""
+        self._visible_start = visible_start
         self._visible_end = visible_end
-        omitted = max(0, total - visible_end)
+        self._total = total
+        if self._label is None:
+            return
         try:
-            self.query_one("#omission-label", Static).update(
-                f"  … {omitted} lines omitted  "
+            if self.position == "top":
+                self._label.update(f"  ▲ {above} lines above  ")
+                at_top = visible_start == 0
+                self.query_one(".--ob-up-all", Button).disabled = at_top
+                self.query_one(".--ob-up-page", Button).disabled = at_top
+            else:
+                self._label.update(f"  ▼ {below} lines below  ")
+                at_default = (
+                    visible_start == 0
+                    and (visible_end - visible_start) <= _VISIBLE_CAP
+                )
+                at_end = visible_end >= total
+                self.query_one(".--ob-cap",      Button).disabled = at_default
+                self.query_one(".--ob-up",       Button).disabled = at_default
+                self.query_one(".--ob-down",     Button).disabled = at_end
+                self.query_one(".--ob-down-all", Button).disabled = at_end
+        except NoMatches:
+            pass
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        pb = self._parent_block
+        vs, ve, tot = self._visible_start, self._visible_end, self._total
+        classes = event.button.classes
+        if "--ob-up-all" in classes:
+            pb.rerender_window(0, ve)
+        elif "--ob-up-page" in classes:
+            pb.rerender_window(max(0, vs - _PAGE_SIZE), ve)
+        elif "--ob-cap" in classes:
+            pb.rerender_window(0, _VISIBLE_CAP)
+        elif "--ob-up" in classes:
+            pb.rerender_window(
+                max(0, vs - _PAGE_SIZE),
+                max(_VISIBLE_CAP, ve - _PAGE_SIZE),
             )
-        except NoMatches:
-            pass
-        self._refresh_buttons()
-
-    def _refresh_buttons(self) -> None:
-        at_cap = self._visible_end <= _VISIBLE_CAP
-        at_end = self._visible_end >= self._total
-        try:
-            self.query_one("#btn-collapse-all", Static).set_class(at_cap, "-disabled")
-            self.query_one("#btn-collapse-one", Static).set_class(at_cap, "-disabled")
-            self.query_one("#btn-expand-one",   Static).set_class(at_end, "-disabled")
-            self.query_one("#btn-expand-all",   Static).set_class(at_end, "-disabled")
-        except NoMatches:
-            pass
-
-    def _do_expand_one(self) -> None:
-        new_end = min(self._total, self._visible_end + _PAGE_SIZE)
-        self._parent_block.reveal_lines(self._visible_end, new_end)
-        self._visible_end = new_end
-        self.update(self._total, self._visible_end)
-
-    def _do_expand_all(self) -> None:
-        new_end = self._total
-        self._parent_block.reveal_lines(self._visible_end, new_end)
-        self._visible_end = new_end
-        self.update(self._total, self._visible_end)
-
-    def _do_collapse_one(self) -> None:
-        new_end = max(_VISIBLE_CAP, self._visible_end - _PAGE_SIZE)
-        if new_end == self._visible_end:
-            return
-        self._parent_block.collapse_to(new_end)
-        self._visible_end = new_end
-        self.update(self._total, self._visible_end)
-
-    def _do_collapse_all(self) -> None:
-        if self._visible_end == _VISIBLE_CAP:
-            return
-        self._parent_block.collapse_to(_VISIBLE_CAP)
-        self._visible_end = _VISIBLE_CAP
-        self.update(self._total, self._visible_end)
+        elif "--ob-down" in classes:
+            pb.rerender_window(vs, min(tot, ve + _PAGE_SIZE))
+        elif "--ob-down-all" in classes:
+            pb.rerender_window(vs, tot)
+        event.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -1004,10 +1031,15 @@ class StreamingToolBlock(ToolBlock):
         self._pending: list[tuple[str, str]] = []  # (raw_ansi, plain)
         # All plain-text lines for clipboard (no display cap)
         self._all_plain: list[str] = []
+        # Parallel ANSI-rich lines for windowed rerender (preserves color)
+        self._all_rich: list[Text] = []
+        self._visible_start: int = 0
         self._visible_count: int = 0
         self._total_received: int = 0
-        self._omission_bar: OmissionBar | None = None
-        self._omission_bar_mounted: bool = False
+        self._omission_bar_top: OmissionBar | None = None
+        self._omission_bar_bottom: OmissionBar | None = None
+        self._omission_bar_top_mounted: bool = False
+        self._omission_bar_bottom_mounted: bool = False
         self._spinner_frame: int = 0
         self._completed: bool = False
         self._tail = ToolTail()
@@ -1037,6 +1069,25 @@ class StreamingToolBlock(ToolBlock):
             self._microcopy_widget = self._body.query_one(".--microcopy", Static)
         except Exception:
             self._microcopy_widget = None
+        # Mount dual omission bars — always in DOM; display toggled dynamically.
+        # Guard: ExecuteCodeBlock.compose() yields ExecuteCodeBody (not ToolBodyContainer),
+        # so self._body may not be mounted here. Skip bar mount for those subclasses.
+        if self._body.is_mounted:
+            self._omission_bar_top = OmissionBar(
+                parent_block=self, position="top", classes="--omission-bar-top"
+            )
+            self._omission_bar_bottom = OmissionBar(
+                parent_block=self, position="bottom", classes="--omission-bar-bottom"
+            )
+            if self._microcopy_widget is not None:
+                self._body.mount(self._omission_bar_top, before=self._microcopy_widget)
+            else:
+                self._body.mount(self._omission_bar_top)
+            self._body.mount(self._omission_bar_bottom)
+            self._omission_bar_top.display = False
+            self._omission_bar_bottom.display = False
+            self._omission_bar_top_mounted = True
+            self._omission_bar_bottom_mounted = True
         # Start icon pulse
         self._header._pulse_start()
 
@@ -1058,6 +1109,7 @@ class StreamingToolBlock(ToolBlock):
         self._last_line_time = time.monotonic()
         self._pending.append((raw, plain))
         self._all_plain.append(plain)
+        self._all_rich.append(Text.from_ansi(raw))
         # Restore 60Hz if we had dropped to slow rate (v4 §3.4)
         if self._flush_slow:
             self._flush_slow = False
@@ -1134,13 +1186,6 @@ class StreamingToolBlock(ToolBlock):
         mc = self._microcopy_widget
         if mc is None:
             return
-        try:
-            from hermes_cli.tui.tool_category import spec_for, ToolCategory
-            spec = spec_for(self._tool_name or "")
-            if spec.category == ToolCategory.MCP:
-                return  # MCP provenance line persists
-        except Exception:
-            pass
         mc.remove_class("--active")
         mc.update("")
 
@@ -1273,16 +1318,10 @@ class StreamingToolBlock(ToolBlock):
                 log.write_with_source(Text.from_ansi(raw), plain)
                 self._visible_count += 1
                 lines_written += 1
-            elif not self._omission_bar_mounted:
-                bar = OmissionBar(parent_block=self)
-                self._omission_bar = bar
-                self._omission_bar_mounted = True
-                self._body.mount(bar)
             # Lines beyond cap are still in _all_plain (appended in append_line)
 
-        if self._omission_bar is not None:
-            self._omission_bar.update(self._total_received,
-                                      self._omission_bar._visible_end)
+        if self._omission_bar_bottom_mounted or self._omission_bar_top_mounted:
+            self._refresh_omission_bars()
 
         if lines_written:
             try:
@@ -1305,24 +1344,72 @@ class StreamingToolBlock(ToolBlock):
     # OmissionBar callbacks — expand/collapse the visible line window
     # ------------------------------------------------------------------
 
-    def reveal_lines(self, start: int, end: int) -> None:
-        """Append _all_plain[start:end] to the RichLog (expand path)."""
-        try:
-            log = self._body.query_one(CopyableRichLog)
-        except NoMatches:
-            return
-        for plain in self._all_plain[start:end]:
-            log.write_with_source(Text(plain), plain)
-
-    def collapse_to(self, new_end: int) -> None:
-        """Clear the RichLog and rewrite _all_plain[:new_end] (collapse path)."""
+    def rerender_window(self, start: int, end: int) -> None:
+        """Clear log and re-render _all_rich[start:end] (canonical scroll primitive)."""
         try:
             log = self._body.query_one(CopyableRichLog)
         except NoMatches:
             return
         log.clear()
-        for plain in self._all_plain[:new_end]:
-            log.write_with_source(Text(plain), plain)
+        for rich_line, plain in zip(self._all_rich[start:end], self._all_plain[start:end]):
+            log.write_with_source(rich_line, plain)
+        self._visible_start = start
+        self._visible_count = end - start
+        self._refresh_omission_bars()
+
+    def reveal_lines(self, start: int, end: int) -> None:
+        """Append _all_rich[start:end] to the RichLog (expand path)."""
+        try:
+            log = self._body.query_one(CopyableRichLog)
+        except NoMatches:
+            return
+        for rich_line, plain in zip(self._all_rich[start:end], self._all_plain[start:end]):
+            log.write_with_source(rich_line, plain)
+        self._visible_count += end - start
+        self._refresh_omission_bars()
+
+    def collapse_to(self, new_end: int) -> None:
+        """Clear the RichLog and rewrite _all_rich[:new_end] (collapse path)."""
+        try:
+            log = self._body.query_one(CopyableRichLog)
+        except NoMatches:
+            return
+        log.clear()
+        for rich_line, plain in zip(self._all_rich[:new_end], self._all_plain[:new_end]):
+            log.write_with_source(rich_line, plain)
+        self._visible_start = 0
+        self._visible_count = new_end
+        self._refresh_omission_bars()
+
+    def _refresh_omission_bars(self) -> None:
+        """Update both omission bars' visibility and counts."""
+        total = len(self._all_plain)
+        visible_start = self._visible_start
+        visible_end = visible_start + self._visible_count
+
+        if self._omission_bar_top_mounted and self._omission_bar_top is not None:
+            show_top = visible_start > 0
+            if self._omission_bar_top.display != show_top:
+                self._omission_bar_top.display = show_top
+            if show_top:
+                self._omission_bar_top.set_counts(
+                    visible_start=visible_start,
+                    visible_end=visible_end,
+                    total=total,
+                    above=visible_start,
+                )
+
+        if self._omission_bar_bottom_mounted and self._omission_bar_bottom is not None:
+            show_bottom = visible_end < total
+            if self._omission_bar_bottom.display != show_bottom:
+                self._omission_bar_bottom.display = show_bottom
+            if show_bottom:
+                self._omission_bar_bottom.set_counts(
+                    visible_start=visible_start,
+                    visible_end=visible_end,
+                    total=total,
+                    below=total - visible_end,
+                )
 
     # ------------------------------------------------------------------
     # Override copy_content to return all plain lines, not just visible

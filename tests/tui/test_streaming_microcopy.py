@@ -70,20 +70,23 @@ class TestMicrocopyFile:
         s = _state(lines_received=10, bytes_received=1024,
                    total_lines=100, total_bytes=10240)
         result = microcopy_line(spec, s)
-        assert result == "▸ 10/100 lines · 1.0kB/10.0kB"
+        # Denominators removed (total_lines/total_bytes never populated in practice)
+        assert "10 lines" in result
+        assert "1.0kB" in result
+        assert "?" not in result
 
     def test_file_read_without_totals(self):
         spec = _spec(ToolCategory.FILE, primary_result="lines")
         s = _state(lines_received=5, bytes_received=512)
         result = microcopy_line(spec, s)
-        assert "5/?" in result
-        assert "?" in result
+        assert "5 lines" in result
+        assert "?" not in result
 
     def test_file_read_lines_primary_result(self):
         spec = _spec(ToolCategory.FILE, primary_result="lines")
         s = _state(lines_received=3, bytes_received=100)
         assert "lines" in microcopy_line(spec, s)
-        assert "/" in microcopy_line(spec, s)  # read format
+        assert "3 lines" in microcopy_line(spec, s)
 
     def test_file_write_format(self):
         spec = _spec(ToolCategory.FILE, primary_result="done")
@@ -155,13 +158,20 @@ class TestMicrocopyCode:
 
 class TestMicrocopyAgent:
     def test_agent_shows_thinking(self):
+        from rich.text import Text
         spec = _spec(ToolCategory.AGENT)
-        assert microcopy_line(spec, _state()) == "▸ thinking…"
+        result = microcopy_line(spec, _state())
+        # AGENT returns animated shimmer Text object
+        assert isinstance(result, Text)
+        assert "Thinking" in result.plain
 
     def test_agent_static_regardless_of_state(self):
+        from rich.text import Text
         spec = _spec(ToolCategory.AGENT)
         s = _state(lines_received=99, bytes_received=9999)
-        assert microcopy_line(spec, s) == "▸ thinking…"
+        result = microcopy_line(spec, s)
+        assert isinstance(result, Text)
+        assert "Thinking" in result.plain
 
 
 class TestMicrocopyUnknown:
@@ -317,13 +327,11 @@ async def test_adaptive_flush_active_by_default():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_mcp_microcopy_persists_after_complete(monkeypatch):
-    """MCP provenance line stays after complete() (§3.3)."""
+async def test_mcp_microcopy_cleared_after_complete(monkeypatch):
+    """MCP microcopy is cleared on complete() like all other tools (§7 UX pass 3)."""
     from textual.app import App, ComposeResult
     from hermes_cli.tui.tool_blocks import StreamingToolBlock
-    from textual.widgets import Static
-    import hermes_cli.tui.tool_blocks as tb
-    from hermes_cli.tui.tool_category import register_tool, ToolSpec, ToolCategory, TOOL_REGISTRY
+    from hermes_cli.tui.tool_category import ToolSpec, ToolCategory, TOOL_REGISTRY
 
     mcp_name = "mcp__test-p3__my_tool"
     spec = ToolSpec(
@@ -343,15 +351,12 @@ async def test_mcp_microcopy_persists_after_complete(monkeypatch):
             stb = pilot.app.query_one(StreamingToolBlock)
             mc = stb._microcopy_widget
             assert mc is not None
-            # Manually activate microcopy
             mc.update("▸ mcp · test-p3 server")
             mc.add_class("--active")
-            # complete the block
             stb.complete("1.0s")
             await pilot.pause(0.1)
-            # MCP line should still be active
-            assert mc.has_class("--active")
-            assert "mcp" in mc.renderable if hasattr(mc, "renderable") else True
+            # MCP microcopy now clears on complete (no longer persists)
+            assert not mc.has_class("--active")
     finally:
         TOOL_REGISTRY.pop(mcp_name, None)
 

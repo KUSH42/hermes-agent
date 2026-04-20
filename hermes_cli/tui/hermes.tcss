@@ -306,10 +306,6 @@ ToolHeader:hover {
     background: $accent 8%;
 }
 
-/* ToolHeader — brief green flash on streaming completion (#2) */
-ToolHeader.--flash-complete {
-    background: $success 18%;
-}
 ToolHeader.--flash-success {
     background: $success 35%;
     transition: background 400ms out_cubic;
@@ -496,25 +492,34 @@ AnimConfigPanel {
     color: $text;
 }
 
-/* ── OmissionBar — expand/collapse controls for line cap ─────────────── */
+/* ── OmissionBar — dual top/bottom scroll controls for line cap ───────── */
 
-OmissionBar .omission-label {
+OmissionBar .--ob-label {
     width: 1fr;
     color: $text-muted;
 }
 
-OmissionBar .omission-btn {
+OmissionBar Button {
+    height: 1;
+    min-height: 1;
     width: auto;
     padding: 0 1;
+    background: transparent;
+    border: none;
     color: $primary;
 }
 
-OmissionBar .omission-btn:hover {
-    background: $primary 20%;
+OmissionBar Button:hover { background: $primary 20%; }
+OmissionBar Button:disabled { color: $text-disabled; }
+
+.--omission-bar-top {
+    margin-bottom: 0;
+    border-bottom: dashed $accent 20%;
 }
 
-OmissionBar .omission-btn.-disabled {
-    color: $text-disabled;
+.--omission-bar-bottom {
+    margin-top: 0;
+    border-top: dashed $accent 20%;
 }
 
 /* --- Tool Panel v2 (tui-tool-panel-v2-spec.md §10) ---
@@ -534,6 +539,7 @@ ToolPanel.category-code.tool-panel--accent   { border-left: vkey $primary 80%; }
 ToolPanel.category-search.tool-panel--accent { border-left: vkey $primary 60%; }
 ToolPanel.category-web.tool-panel--accent    { border-left: vkey $success 80%; }
 ToolPanel.category-agent.tool-panel--accent  { border-left: vkey $accent 40%; }
+ToolPanel.category-mcp.tool-panel--accent    { border-left: vkey #9b59b6 80%; }
 ToolPanel.tool-panel--error                  { border-left: vkey $error 80%; }
 ToolPanel:focus                              { background: $accent 10%; }
 
@@ -572,7 +578,7 @@ ToolGroup.--collapsed GroupBody {
 }
 
 ToolGroup.--narrow GroupBody {
-    display: none;
+    padding-left: 0;
 }
 
 GroupHeader {

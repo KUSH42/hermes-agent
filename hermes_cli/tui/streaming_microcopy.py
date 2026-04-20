@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Union
+
+from rich.text import Text
 
 if TYPE_CHECKING:
     from hermes_cli.tui.tool_category import ToolSpec
@@ -26,8 +28,26 @@ def _kb(b: int) -> str:
     return f"{b / 1024:.1f}kB"
 
 
-def microcopy_line(spec: "ToolSpec", state: StreamingState) -> str:
-    """Return microcopy string for current streaming state, or '' for no line."""
+def _thinking_shimmer(elapsed_s: float) -> Text:
+    """Animated shimmer for AGENT category microcopy."""
+    from hermes_cli.tui.animation import lerp_color
+    label = "Thinking…"
+    phase = (elapsed_s * 0.5) % 2.0
+    t = phase if phase <= 1.0 else 2.0 - phase
+    ACCENT = "#00ff99"
+    DIM = "#446644"
+    result = Text("▸ ", style="dim")
+    for i, ch in enumerate(label):
+        char_t = (t + i / len(label)) % 1.0
+        color = lerp_color(DIM, ACCENT, char_t)
+        result.append(ch, style=f"bold {color}")
+    elapsed_str = f"  {int(elapsed_s)}s" if elapsed_s >= 1.0 else ""
+    result.append(elapsed_str, style="dim")
+    return result
+
+
+def microcopy_line(spec: "ToolSpec", state: StreamingState) -> "Union[str, Text]":
+    """Return microcopy for current streaming state, or '' for no line."""
     from hermes_cli.tui.tool_category import ToolCategory
 
     cat = spec.category
@@ -37,12 +57,7 @@ def microcopy_line(spec: "ToolSpec", state: StreamingState) -> str:
 
     if cat == ToolCategory.FILE:
         if spec.primary_result in ("lines", "bytes"):
-            total_str = str(state.total_lines) if state.total_lines is not None else "?"
-            total_kb = _kb(state.total_bytes) if state.total_bytes is not None else "?"
-            return (
-                f"▸ {state.lines_received}/{total_str} lines"
-                f" · {_kb(state.bytes_received)}/{total_kb}"
-            )
+            return f"▸ {state.lines_received} lines · {_kb(state.bytes_received)}"
         return f"▸ {state.lines_received} lines written"
 
     if cat == ToolCategory.SEARCH:
@@ -66,7 +81,7 @@ def microcopy_line(spec: "ToolSpec", state: StreamingState) -> str:
         return f"▸ {state.lines_received} lines · {_kb(state.bytes_received)}"
 
     if cat == ToolCategory.AGENT:
-        return "▸ thinking…"
+        return _thinking_shimmer(state.elapsed_s)
 
     if cat == ToolCategory.UNKNOWN:
         return f"▸ {state.lines_received} lines"

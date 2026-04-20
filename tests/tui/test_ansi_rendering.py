@@ -279,8 +279,8 @@ async def test_visible_cap_omission_bar_mounted_once():
         await _flush_block(block, pilot)
         await pilot.pause()
 
-        assert block._omission_bar_mounted is True, "_omission_bar_mounted should be True"
-        assert block._omission_bar is not None, "_omission_bar ref must be set"
+        assert block._omission_bar_bottom_mounted is True, "_omission_bar_bottom_mounted should be True"
+        assert block._omission_bar_bottom is not None, "_omission_bar_bottom ref must be set"
 
         log = block._body.query_one(CopyableRichLog)
         all_texts = ["".join(seg.text for seg in strip) for strip in log.lines]
@@ -308,15 +308,15 @@ async def test_visible_cap_omission_bar_shows_correct_omitted_count():
         assert block._total_received == total, (
             f"expected _total_received={total}, got {block._total_received}"
         )
-        assert block._omission_bar is not None, "_omission_bar must be set"
-        assert block._omission_bar._total == total, (
-            f"OmissionBar._total should be {total}, got {block._omission_bar._total}"
+        assert block._omission_bar_bottom is not None, "_omission_bar_bottom must be set"
+        assert block._omission_bar_bottom._total == total, (
+            f"OmissionBar._total should be {total}, got {block._omission_bar_bottom._total}"
         )
         omitted = total - _VISIBLE_CAP
-        assert block._omission_bar._visible_end == _VISIBLE_CAP, (
+        assert block._omission_bar_bottom._visible_end == _VISIBLE_CAP, (
             "OmissionBar._visible_end should start at _VISIBLE_CAP"
         )
-        assert block._omission_bar._total - block._omission_bar._visible_end == omitted, (
+        assert block._omission_bar_bottom._total - block._omission_bar_bottom._visible_end == omitted, (
             f"Expected {omitted} omitted lines in bar state"
         )
 

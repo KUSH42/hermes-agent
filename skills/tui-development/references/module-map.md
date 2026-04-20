@@ -127,15 +127,17 @@ High-signal flow:
 
 - **`hermes_cli/tui/streaming_microcopy.py`**
   `StreamingState` dataclass, `microcopy_line(spec, state) -> str`.
-  Category routing: SHELL→ `▸ N lines · NkB`, FILE read→ `▸ N lines · NkB`, FILE write→ `▸ writing…`,
-  SEARCH→ `▸ N matches`, WEB→ `▸ fetching…`, MCP→ `▸ mcp · {server} server` (persists after complete),
+  Category routing: SHELL→ `▸ N lines · NkB`, FILE read→ `▸ N lines · NkB` (no denominators),
+  FILE write→ `▸ writing…`, SEARCH→ `▸ N matches`, WEB→ `▸ fetching…`,
+  MCP→ `▸ mcp · {server} server` (clears on complete like all tools — §7 UX pass 3),
   CODE→ `▸ N lines · NkB`, AGENT→ `▸ thinking…`, UNKNOWN→ `▸ N lines`.
 
 - **`hermes_cli/tui/body_renderer.py`**
   `BodyRenderer` ABC — `kind`, `supports_streaming`, `build()`, `build_widget()`, `refresh_incremental()`.
   Subclasses: `ShellRenderer`, `CodeRenderer`, `FileRenderer`, `SearchRenderer`, `WebRenderer`,
-  `AgentRenderer`, `TextRenderer`. `BodyRenderer.for_category(category)` factory.
+  `AgentRenderer`, `TextRenderer`, `MCPBodyRenderer`. `BodyRenderer.for_category(category)` factory.
   `FileRenderer.render_diff_line(plain)` — styled Rich Text for diff lines.
+  `MCPBodyRenderer`: ANSI passthrough stream; `finalize()` extracts `content[].text` from JSON.
   NOTE: this is `body_renderer.py` (singular) — the `body_renderers/` package was never shipped.
 
 - **`hermes_cli/tui/response_flow.py`**

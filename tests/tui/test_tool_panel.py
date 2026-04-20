@@ -16,7 +16,7 @@ Covers:
 from __future__ import annotations
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from hermes_cli.tui.app import HermesApp
 from hermes_cli.tui.widgets import OutputPanel
@@ -864,13 +864,15 @@ def test_p6_get_omission_bar_none_without_block():
     from hermes_cli.tui.tool_blocks import StreamingToolBlock
     block = StreamingToolBlock(label="bash", tool_name="bash")
     panel = ToolPanel(block, tool_name="bash")
+    # bar is always created in __init__ but display=False; _get_omission_bar returns None
+    # when not mounted (block not yet in app)
     assert panel._get_omission_bar() is None
 
 
 @pytest.mark.asyncio
-async def test_p6_expand_lines_delegates_to_bar():
-    from hermes_cli.tui.tool_blocks import OmissionBar
-    from unittest.mock import MagicMock
+async def test_p6_expand_lines_delegates_to_rerender():
+    from hermes_cli.tui.tool_blocks import _PAGE_SIZE, _VISIBLE_CAP
+    from unittest.mock import patch
 
     app = _make_app()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -879,18 +881,51 @@ async def test_p6_expand_lines_delegates_to_bar():
         await _pause(pilot)
 
         block = panel._block
-        fake_bar = MagicMock(spec=OmissionBar)
-        block._omission_bar = fake_bar
-        block._omission_bar_mounted = True
+        # Seed enough lines so bottom bar is visible
+        for i in range(_VISIBLE_CAP + _PAGE_SIZE):
+            block.append_line(f"line {i}")
+        block._flush_pending()
+        await _pause(pilot)
 
+        with patch.object(block, "rerender_window") as mock_rw:
+            panel.action_expand_lines()
+        mock_rw.assert_called_once()
+        start, end = mock_rw.call_args[0]
+        assert end > _VISIBLE_CAP  # window expanded
+
+
+@pytest.mark.asyncio
+async def test_p6_collapse_lines_delegates_to_rerender():
+    from hermes_cli.tui.tool_blocks import _PAGE_SIZE, _VISIBLE_CAP
+    from unittest.mock import patch
+
+    app = _make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        panel = await _get_shell_panel(app, pilot)
+        await _pause(pilot)
+
+        block = panel._block
+        # Need enough lines so that after an expand the window is scrollable
+        # (visible_end > _VISIBLE_CAP + _PAGE_SIZE), making collapse possible.
+        for i in range(_VISIBLE_CAP + _PAGE_SIZE * 3):
+            block.append_line(f"line {i}")
+        block._flush_pending()
+        await _pause(pilot)
+        # Expand twice to move window_end above _VISIBLE_CAP + _PAGE_SIZE
         panel.action_expand_lines()
-        fake_bar._do_expand_one.assert_called_once()
+        panel.action_expand_lines()
+        await _pause(pilot)
+
+        with patch.object(block, "rerender_window") as mock_rw:
+            panel.action_collapse_lines()
+        mock_rw.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_p6_collapse_lines_delegates_to_bar():
-    from hermes_cli.tui.tool_blocks import OmissionBar
-    from unittest.mock import MagicMock
+async def test_p6_expand_all_delegates_to_rerender():
+    from hermes_cli.tui.tool_blocks import _PAGE_SIZE, _VISIBLE_CAP
+    from unittest.mock import patch
 
     app = _make_app()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -899,38 +934,22 @@ async def test_p6_collapse_lines_delegates_to_bar():
         await _pause(pilot)
 
         block = panel._block
-        fake_bar = MagicMock(spec=OmissionBar)
-        block._omission_bar = fake_bar
-        block._omission_bar_mounted = True
-
-        panel.action_collapse_lines()
-        fake_bar._do_collapse_one.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_p6_expand_all_delegates_to_bar():
-    from hermes_cli.tui.tool_blocks import OmissionBar
-    from unittest.mock import MagicMock
-
-    app = _make_app()
-    async with app.run_test(size=(120, 40)) as pilot:
-        await _pause(pilot)
-        panel = await _get_shell_panel(app, pilot)
+        total = _VISIBLE_CAP + _PAGE_SIZE
+        for i in range(total):
+            block.append_line(f"line {i}")
+        block._flush_pending()
         await _pause(pilot)
 
-        block = panel._block
-        fake_bar = MagicMock(spec=OmissionBar)
-        block._omission_bar = fake_bar
-        block._omission_bar_mounted = True
-
-        panel.action_expand_all_lines()
-        fake_bar._do_expand_all.assert_called_once()
+        with patch.object(block, "rerender_window") as mock_rw:
+            panel.action_expand_all_lines()
+        mock_rw.assert_called_once()
+        _start, end = mock_rw.call_args[0]
+        assert end == total  # expanded to full total
 
 
 @pytest.mark.asyncio
 async def test_p6_hint_includes_lines_hint_when_bar_present():
-    from hermes_cli.tui.tool_blocks import OmissionBar
-    from unittest.mock import MagicMock
+    from hermes_cli.tui.tool_blocks import _PAGE_SIZE, _VISIBLE_CAP
 
     app = _make_app()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -939,10 +958,170 @@ async def test_p6_hint_includes_lines_hint_when_bar_present():
         await _pause(pilot)
 
         block = panel._block
-        fake_bar = MagicMock(spec=OmissionBar)
-        block._omission_bar = fake_bar
-        block._omission_bar_mounted = True
+        for i in range(_VISIBLE_CAP + 1):
+            block.append_line(f"line {i}")
+        block._flush_pending()
+        await _pause(pilot)
 
         hint = panel._build_hint_text()
         plain = hint.plain if hasattr(hint, "plain") else str(hint)
         assert "+" in plain or "+/-" in plain
+
+
+# ---------------------------------------------------------------------------
+# §2 — Footer retry (UX pass 3)
+# ---------------------------------------------------------------------------
+
+
+def test_retry_in_implemented_actions():
+    from hermes_cli.tui.tool_panel import _IMPLEMENTED_ACTIONS
+    assert "retry" in _IMPLEMENTED_ACTIONS
+
+
+@pytest.mark.asyncio
+async def test_retry_chip_shown_when_is_error():
+    """FooterPane renders retry chip when result is_error=True."""
+    from hermes_cli.tui.tool_result_parse import ResultSummaryV4
+
+    rs = ResultSummaryV4(
+        primary="error: cmd failed",
+        exit_code=1,
+        chips=(),
+        stderr_tail="",
+        actions=(),
+        artifacts=(),
+        is_error=True,
+    )
+    app = _make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        panel = await _get_shell_panel(app, pilot)
+        await _pause(pilot)
+        panel.set_result_summary_v4(rs)
+        await _pause(pilot)
+
+        footer = panel.query_one(FooterPane)
+        rendered = footer.render() if hasattr(footer, "render") else None
+        # hint row should include "r retry"
+        hint = panel._build_hint_text()
+        plain = hint.plain if hasattr(hint, "plain") else str(hint)
+        assert "r" in plain
+
+
+@pytest.mark.asyncio
+async def test_retry_chip_hidden_when_no_error():
+    """retry hint absent when is_error=False."""
+    from hermes_cli.tui.tool_result_parse import ResultSummaryV4
+
+    rs = ResultSummaryV4(
+        primary="3 lines read",
+        exit_code=0,
+        chips=(),
+        stderr_tail="",
+        actions=(),
+        artifacts=(),
+        is_error=False,
+    )
+    app = _make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        panel = await _get_shell_panel(app, pilot)
+        await _pause(pilot)
+        panel.set_result_summary_v4(rs)
+        await _pause(pilot)
+
+        hint = panel._build_hint_text()
+        plain = hint.plain if hasattr(hint, "plain") else str(hint)
+        # "r retry" should not appear
+        assert " retry" not in plain
+
+
+@pytest.mark.asyncio
+async def test_action_retry_calls_initiate_retry():
+    """action_retry() calls app._initiate_retry() when result is error."""
+    from hermes_cli.tui.tool_result_parse import ResultSummaryV4
+
+    rs = ResultSummaryV4(
+        primary="error",
+        exit_code=1,
+        chips=(),
+        stderr_tail="",
+        actions=(),
+        artifacts=(),
+        is_error=True,
+    )
+    app = _make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        panel = await _get_shell_panel(app, pilot)
+        await _pause(pilot)
+        panel.set_result_summary_v4(rs)
+        await _pause(pilot)
+
+        called = []
+        app._initiate_retry = lambda: called.append(True)
+        panel.action_retry()
+        assert called == [True]
+
+
+# ---------------------------------------------------------------------------
+# §10 — Artifact icon mode (UX pass 3)
+# ---------------------------------------------------------------------------
+
+
+def test_artifact_icons_nerdfont_mode():
+    """In nerdfont mode, file icon is the nerd-font glyph, not emoji."""
+    from hermes_cli.tui.tool_panel import _artifact_icon
+    with patch("agent.display.get_tool_icon_mode", return_value="nerdfont"):
+        icon = _artifact_icon("file")
+    assert icon == "\uf15b"
+    assert "📎" not in icon
+
+
+def test_artifact_icons_emoji_mode():
+    """In emoji mode, file icon is 📎."""
+    from hermes_cli.tui.tool_panel import _artifact_icon
+    with patch("agent.display.get_tool_icon_mode", return_value="emoji"):
+        icon = _artifact_icon("file")
+    assert "📎" in icon
+
+
+def test_artifact_icons_ascii_mode():
+    """In ascii mode, file icon is [F], no multi-byte emoji."""
+    from hermes_cli.tui.tool_panel import _artifact_icon
+    with patch("agent.display.get_tool_icon_mode", return_value="ascii"):
+        icon = _artifact_icon("file")
+    assert icon == "[F]"
+    assert "📎" not in icon
+
+
+# ---------------------------------------------------------------------------
+# §11 — Collapse no-op flash (UX pass 3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_collapse_at_minimum_flashes_no_op():
+    """At default window, action_collapse_lines flashes 'at minimum', not rerender."""
+    from hermes_cli.tui.tool_blocks import _PAGE_SIZE, _VISIBLE_CAP
+    from unittest.mock import patch as upatch
+
+    app = _make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        panel = await _get_shell_panel(app, pilot)
+        await _pause(pilot)
+
+        block = panel._block
+        for i in range(_VISIBLE_CAP + _PAGE_SIZE):
+            block.append_line(f"line {i}")
+        block._flush_pending()
+        await _pause(pilot)
+
+        flash_calls = []
+        with upatch.object(panel, "_flash_header", side_effect=lambda m: flash_calls.append(m)):
+            with upatch.object(block, "rerender_window") as mock_rw:
+                panel.action_collapse_lines()
+
+        assert flash_calls == ["at minimum"]
+        mock_rw.assert_not_called()

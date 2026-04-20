@@ -352,6 +352,19 @@ Textual 8.x — confirmed in `_get_dispatch_methods` source (breaks loop when
 the flag is set). `event.prevent_default()` sets `_prevent_default`, which
 is a different flag used for different purposes.
 
+## Rich markup in Button (and Static) labels
+
+`Button("[reset]")` renders an **empty** label — `[reset]` is a Rich markup
+style-reset tag. The same happens with any `[word]` that is a valid Rich tag.
+
+**Fix:** Escape with a backslash: `Button("\\[reset]")` (Python string `"\\[reset]"` →
+string literal `\[reset]` → Rich renders as `[reset]`).
+
+Applies to `Button`, `Static`, `Label`, any widget whose constructor accepts
+markup strings. Always escape brackets in labels unless you intend markup.
+
+To verify: `str(button.label)` returns empty string if the tag was consumed.
+
 ## When to expand this file
 
 Add an entry only if it is:

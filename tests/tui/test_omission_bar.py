@@ -1,4 +1,7 @@
-"""Tests for OmissionBar — interactive expand/collapse controls for the line cap.
+"""Tests for OmissionBar — dual-position expand/scroll controls for the line cap.
+
+Phase D redesign: both bars always in DOM from on_mount(); display toggled by
+_refresh_omission_bars(). Interaction routes through block.rerender_window(start, end).
 
 Run with:
     pytest -o "addopts=" tests/tui/test_omission_bar.py -v
@@ -6,7 +9,6 @@ Run with:
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import MagicMock
 
 import pytest
@@ -38,12 +40,10 @@ async def _new_block(pilot, label: str = "test cmd") -> StreamingToolBlock:
 
 
 def _flush(block: StreamingToolBlock) -> None:
-    """Synchronous flush — drains pending lines immediately."""
     block._flush_pending()
 
 
 def _drain_log(log: CopyableRichLog) -> None:
-    """In headless tests, drain deferred renders so log.lines is populated."""
     if not log._size_known:
         log._size_known = True
         while log._deferred_renders:
@@ -51,12 +51,12 @@ def _drain_log(log: CopyableRichLog) -> None:
 
 
 # ---------------------------------------------------------------------------
-# T1: Bar not present before cap
+# T1: Both bars always mounted from on_mount; hidden below cap
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_bar_not_present_before_cap():
-    """OmissionBar is not mounted when line count is below _VISIBLE_CAP."""
+async def test_bars_always_mounted_hidden_below_cap():
+    """Both omission bars are in DOM but display=False when below cap."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -66,18 +66,21 @@ async def test_bar_not_present_before_cap():
             block.append_line(f"line {i}")
         _flush(block)
 
-        assert block._omission_bar_mounted is False
-        assert block._omission_bar is None
-        assert len(block._body.query(OmissionBar)) == 0
+        assert block._omission_bar_bottom_mounted is True
+        assert block._omission_bar_top_mounted is True
+        assert block._omission_bar_bottom is not None
+        assert block._omission_bar_top is not None
+        assert block._omission_bar_bottom.display is False
+        assert block._omission_bar_top.display is False
 
 
 # ---------------------------------------------------------------------------
-# T2: Bar mounted at cap
+# T2: Bottom bar becomes visible when cap exceeded
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_bar_mounted_at_cap():
-    """OmissionBar is mounted when exactly _VISIBLE_CAP + 1 lines arrive."""
+async def test_bottom_bar_visible_at_cap():
+    """Bottom bar display=True when total lines > _VISIBLE_CAP."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -88,39 +91,42 @@ async def test_bar_mounted_at_cap():
         _flush(block)
         await pilot.pause()
 
-        assert block._omission_bar_mounted is True
-        assert block._omission_bar is not None
+        assert block._omission_bar_bottom.display is True
+        assert block._omission_bar_top.display is False
 
 
 # ---------------------------------------------------------------------------
-# T3: _omission_bar_mounted flag set
+# T3: _omission_bar_bottom_mounted always True after on_mount
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_omission_bar_mounted_flag():
-    """_omission_bar_mounted transitions to True on cap hit."""
+async def test_omission_bar_mounted_flag_always_true():
+    """_omission_bar_bottom_mounted and _top_mounted are True from on_mount."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         block = await _new_block(pilot)
 
-        assert block._omission_bar_mounted is False
+        # Flags True immediately — no lines needed
+        assert block._omission_bar_bottom_mounted is True
+        assert block._omission_bar_top_mounted is True
 
         for i in range(_VISIBLE_CAP + 5):
             block.append_line(f"line {i}")
         _flush(block)
         await pilot.pause()
 
-        assert block._omission_bar_mounted is True
+        assert block._omission_bar_bottom_mounted is True
+        assert block._omission_bar_top_mounted is True
 
 
 # ---------------------------------------------------------------------------
-# T4: Label text format
+# T4: set_counts caches correct totals
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_omission_bar_label_text():
-    """OmissionBar label shows correct omitted count after flush."""
+async def test_omission_bar_set_counts():
+    """Bottom bar _total and _visible_end reflect flush state."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -132,21 +138,20 @@ async def test_omission_bar_label_text():
         _flush(block)
         await pilot.pause()
 
-        bar = block._omission_bar
-        assert bar is not None
+        bar = block._omission_bar_bottom
         assert bar._total == total
         assert bar._visible_end == _VISIBLE_CAP
-        omitted = total - _VISIBLE_CAP
-        assert bar._total - bar._visible_end == omitted
+        assert bar._visible_start == 0
+        assert bar._total - bar._visible_end == 50
 
 
 # ---------------------------------------------------------------------------
-# T5: [+] increments _visible_end by _PAGE_SIZE
+# T5: [↓] (--ob-down) expands window forward by _PAGE_SIZE
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_expand_one_page():
-    """[+] reveals _PAGE_SIZE more lines."""
+async def test_down_button_expands_window():
+    """rerender_window called with (vs, ve+_PAGE_SIZE) shifts bottom of window."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -158,21 +163,21 @@ async def test_expand_one_page():
         _flush(block)
         await pilot.pause()
 
-        bar = block._omission_bar
-        assert bar is not None
-        initial_end = bar._visible_end
-        bar._do_expand_one()
+        bar = block._omission_bar_bottom
+        initial_end = bar._visible_end  # == _VISIBLE_CAP
+        block.rerender_window(bar._visible_start, min(bar._total, bar._visible_end + _PAGE_SIZE))
 
-        assert bar._visible_end == initial_end + _PAGE_SIZE
+        bar2 = block._omission_bar_bottom
+        assert bar2._visible_end == initial_end + _PAGE_SIZE
 
 
 # ---------------------------------------------------------------------------
-# T6: [++] sets _visible_end to _total
+# T6: [↓all] (--ob-down-all) expands window to total
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_expand_all():
-    """[++] reveals all remaining lines."""
+async def test_down_all_button_expands_to_end():
+    """rerender_window(vs, total) makes bottom bar hidden (all lines visible)."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -184,133 +189,114 @@ async def test_expand_all():
         _flush(block)
         await pilot.pause()
 
-        bar = block._omission_bar
-        assert bar is not None
-        bar._do_expand_all()
+        bar = block._omission_bar_bottom
+        block.rerender_window(bar._visible_start, bar._total)
+        await pilot.pause()
 
-        assert bar._visible_end == total
+        # set_counts only fires when bar is visible; when hidden, check via block state
+        assert block._omission_bar_bottom.display is False
+        assert block._visible_start + block._visible_count == total
 
 
 # ---------------------------------------------------------------------------
-# T7: [-] decrements, floors at _VISIBLE_CAP
+# T7: [↑cap] (--ob-cap) resets window to 0.._VISIBLE_CAP
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_collapse_one_page_floors_at_cap():
-    """[-] collapses by _PAGE_SIZE, never below _VISIBLE_CAP."""
+async def test_cap_button_resets_to_beginning():
+    """[↑cap] collapses window back to 0.._VISIBLE_CAP."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         block = await _new_block(pilot)
 
-        total = _VISIBLE_CAP + 10  # only 10 lines beyond cap
+        total = _VISIBLE_CAP + _PAGE_SIZE + 20
         for i in range(total):
             block.append_line(f"line {i}")
         _flush(block)
         await pilot.pause()
 
-        bar = block._omission_bar
-        assert bar is not None
-        # Expand to show all first
-        bar._do_expand_all()
-        assert bar._visible_end == total
+        # First expand to show more
+        block.rerender_window(0, total)
+        await pilot.pause()
 
-        # One page collapse: 10 < _PAGE_SIZE, should floor at _VISIBLE_CAP
-        bar._do_collapse_one()
+        # Now cap: reset to 0.._VISIBLE_CAP
+        block.rerender_window(0, _VISIBLE_CAP)
+        await pilot.pause()
+
+        bar = block._omission_bar_bottom
+        assert bar._visible_start == 0
         assert bar._visible_end == _VISIBLE_CAP
+        assert bar.display is True
 
 
 # ---------------------------------------------------------------------------
-# T8: [--] resets to _VISIBLE_CAP
+# T8: Top bar visible after window start shifts above zero
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_collapse_all_resets_to_cap():
-    """[--] collapses visible window back to _VISIBLE_CAP."""
+async def test_top_bar_visible_after_window_scrolled():
+    """Top bar becomes visible when _visible_start > 0."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         block = await _new_block(pilot)
 
-        total = _VISIBLE_CAP + 100
+        total = _VISIBLE_CAP + _PAGE_SIZE * 2
         for i in range(total):
             block.append_line(f"line {i}")
         _flush(block)
         await pilot.pause()
 
-        bar = block._omission_bar
-        assert bar is not None
-        bar._do_expand_all()
-        assert bar._visible_end == total
+        assert block._omission_bar_top.display is False
 
-        bar._do_collapse_all()
-        assert bar._visible_end == _VISIBLE_CAP
+        # Scroll window forward — creates lines above
+        block.rerender_window(_PAGE_SIZE, _PAGE_SIZE + _VISIBLE_CAP)
+        await pilot.pause()
+
+        assert block._omission_bar_top.display is True
+        assert block._omission_bar_top._visible_start == _PAGE_SIZE
 
 
 # ---------------------------------------------------------------------------
-# T9: Collapse buttons disabled at cap
+# T9: [↑all] (top bar) brings visible_start to 0
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_collapse_buttons_disabled_at_cap():
-    """[--] and [-] buttons have -disabled class when at cap."""
+async def test_up_all_button_resets_top():
+    """[↑all] scrolls window back to start (visible_start=0)."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         block = await _new_block(pilot)
 
-        total = _VISIBLE_CAP + 20
+        total = _VISIBLE_CAP + _PAGE_SIZE * 2
         for i in range(total):
             block.append_line(f"line {i}")
         _flush(block)
         await pilot.pause()
 
-        bar = block._omission_bar
-        assert bar is not None
-        # At cap initially — collapse buttons should be disabled
-        bar._refresh_buttons()
-        assert bar.query_one("#btn-collapse-all").has_class("-disabled")
-        assert bar.query_one("#btn-collapse-one").has_class("-disabled")
-        assert not bar.query_one("#btn-expand-one").has_class("-disabled")
-        assert not bar.query_one("#btn-expand-all").has_class("-disabled")
-
-
-# ---------------------------------------------------------------------------
-# T10: Expand buttons disabled when all shown
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_expand_buttons_disabled_when_all_shown():
-    """[+] and [++] buttons have -disabled class when all lines are visible."""
-    app = HermesApp(cli=MagicMock())
-    async with app.run_test(size=(80, 24)) as pilot:
+        # Shift window so top bar is visible
+        block.rerender_window(_PAGE_SIZE, _PAGE_SIZE + _VISIBLE_CAP)
         await pilot.pause()
-        block = await _new_block(pilot)
+        assert block._omission_bar_top.display is True
 
-        total = _VISIBLE_CAP + 20
-        for i in range(total):
-            block.append_line(f"line {i}")
-        _flush(block)
+        # [↑all]: rerender_window(0, ve) — brings start back to 0
+        ve = block._omission_bar_top._visible_end
+        block.rerender_window(0, ve)
         await pilot.pause()
 
-        bar = block._omission_bar
-        assert bar is not None
-        bar._do_expand_all()
-
-        bar._refresh_buttons()
-        assert bar.query_one("#btn-expand-one").has_class("-disabled")
-        assert bar.query_one("#btn-expand-all").has_class("-disabled")
-        assert not bar.query_one("#btn-collapse-all").has_class("-disabled")
-        assert not bar.query_one("#btn-collapse-one").has_class("-disabled")
+        assert block._omission_bar_top.display is False
+        assert block._omission_bar_bottom._visible_start == 0
 
 
 # ---------------------------------------------------------------------------
-# T11: copy_content returns all lines regardless of _visible_end
+# T10: copy_content returns all lines regardless of window
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_copy_content_unaffected_by_omission_bar():
-    """copy_content() returns all lines regardless of OmissionBar state."""
+    """copy_content() returns all lines regardless of OmissionBar window state."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -327,12 +313,12 @@ async def test_copy_content_unaffected_by_omission_bar():
 
 
 # ---------------------------------------------------------------------------
-# T12: Multiple [+] presses accumulate correctly
+# T11: Multiple [↓] presses accumulate correctly
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_multiple_expand_one_presses():
-    """Multiple [+] presses stack _visible_end correctly."""
+async def test_multiple_down_presses_stack():
+    """Two [↓] presses shift window end by 2 * _PAGE_SIZE."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -344,21 +330,27 @@ async def test_multiple_expand_one_presses():
         _flush(block)
         await pilot.pause()
 
-        bar = block._omission_bar
-        assert bar is not None
-        bar._do_expand_one()
-        bar._do_expand_one()
+        # First [↓]
+        bar = block._omission_bar_bottom
+        ve1 = bar._visible_end
+        block.rerender_window(bar._visible_start, min(bar._total, ve1 + _PAGE_SIZE))
+        bar2 = block._omission_bar_bottom
+        ve2 = bar2._visible_end
 
-        assert bar._visible_end == _VISIBLE_CAP + _PAGE_SIZE * 2
+        # Second [↓]
+        block.rerender_window(bar2._visible_start, min(bar2._total, ve2 + _PAGE_SIZE))
+        bar3 = block._omission_bar_bottom
+
+        assert bar3._visible_end == _VISIBLE_CAP + _PAGE_SIZE * 2
 
 
 # ---------------------------------------------------------------------------
-# T13: [++] then [--] round-trip
+# T12: [↓all] then [↑cap] round-trip
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_expand_all_then_collapse_all_roundtrip():
-    """[++] then [--] returns _visible_end to _VISIBLE_CAP."""
+async def test_down_all_then_cap_roundtrip():
+    """Expand to end then reset to cap returns to initial state."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -370,21 +362,23 @@ async def test_expand_all_then_collapse_all_roundtrip():
         _flush(block)
         await pilot.pause()
 
-        bar = block._omission_bar
-        assert bar is not None
-        bar._do_expand_all()
-        assert bar._visible_end == total
-        bar._do_collapse_all()
+        block.rerender_window(0, total)
+        # bar hidden when all visible — check block._visible_count instead
+        assert block._visible_start + block._visible_count == total
+
+        block.rerender_window(0, _VISIBLE_CAP)
+        bar = block._omission_bar_bottom
+        assert bar._visible_start == 0
         assert bar._visible_end == _VISIBLE_CAP
 
 
 # ---------------------------------------------------------------------------
-# T14: Bar label updates after each button action
+# T13: Label updates after rerender_window
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_label_updates_after_expand():
-    """OmissionBar._total and _visible_end reflect state after button action."""
+    """Bottom bar counts reflect new window after rerender_window."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -396,82 +390,57 @@ async def test_label_updates_after_expand():
         _flush(block)
         await pilot.pause()
 
-        bar = block._omission_bar
-        assert bar is not None
+        bar = block._omission_bar_bottom
         assert bar._total - bar._visible_end == _PAGE_SIZE + 5
 
-        bar._do_expand_one()
-        # 5 lines still omitted
-        assert bar._total - bar._visible_end == 5
+        block.rerender_window(0, _VISIBLE_CAP + _PAGE_SIZE)
+        bar2 = block._omission_bar_bottom
+        assert bar2._total - bar2._visible_end == 5
 
 
 # ---------------------------------------------------------------------------
-# T17: Bar survives complete()
+# T14: Bottom bar buttons have correct CSS classes
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_bar_survives_complete():
-    """OmissionBar remains mounted and visible after StreamingToolBlock.complete()."""
+async def test_bottom_bar_button_classes():
+    """Bottom OmissionBar has buttons with --ob-cap, --ob-up, --ob-down, --ob-down-all."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         block = await _new_block(pilot)
 
-        total = _VISIBLE_CAP + 10
-        for i in range(total):
-            block.append_line(f"line {i}")
-        _flush(block)
-        await pilot.pause()
-
-        bar = block._omission_bar
-        assert bar is not None
-
-        block.complete("1.5s")
-        await pilot.pause()
-
-        assert block._omission_bar_mounted is True
-        assert block._omission_bar is bar
+        bar = block._omission_bar_bottom
+        assert bar.query(".--ob-cap")
+        assert bar.query(".--ob-up")
+        assert bar.query(".--ob-down")
+        assert bar.query(".--ob-down-all")
 
 
 # ---------------------------------------------------------------------------
-# T18: Bar label updates during streaming (via flush ticks)
+# T15: Top bar buttons have correct CSS classes
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_bar_label_updates_during_streaming():
-    """OmissionBar._total reflects new lines after each flush."""
+async def test_top_bar_button_classes():
+    """Top OmissionBar has buttons with --ob-up-all and --ob-up-page."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         block = await _new_block(pilot)
 
-        # First batch: trigger cap
-        for i in range(_VISIBLE_CAP + 1):
-            block.append_line(f"line {i}")
-        _flush(block)
-        await pilot.pause()
-
-        bar = block._omission_bar
-        assert bar is not None
-        first_total = bar._total
-
-        # Second batch: more lines after cap
-        for i in range(20):
-            block.append_line(f"extra {i}")
-        _flush(block)
-        await pilot.pause()
-
-        assert bar._total > first_total
-        assert bar._total == _VISIBLE_CAP + 1 + 20
+        bar = block._omission_bar_top
+        assert bar.query(".--ob-up-all")
+        assert bar.query(".--ob-up-page")
 
 
 # ---------------------------------------------------------------------------
-# T19: Disabled button click is no-op
+# T16: Bottom bar buttons disabled when window at default state
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_disabled_button_click_noop():
-    """Clicking a -disabled button does not change _visible_end."""
+async def test_bottom_bar_cap_up_disabled_at_default():
+    """[↑cap] and [↑] disabled when window is at start with default size."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -483,25 +452,104 @@ async def test_disabled_button_click_noop():
         _flush(block)
         await pilot.pause()
 
-        bar = block._omission_bar
-        assert bar is not None
-        # Collapse buttons disabled at cap
-        assert bar.query_one("#btn-collapse-all").has_class("-disabled")
-        initial_end = bar._visible_end
-
-        # Simulate click on disabled button
-        btn = bar.query_one("#btn-collapse-all")
-        bar._do_collapse_all()  # should be no-op since _visible_end == _VISIBLE_CAP
-        assert bar._visible_end == initial_end
+        bar = block._omission_bar_bottom
+        cap_btn = bar.query_one(".--ob-cap")
+        up_btn = bar.query_one(".--ob-up")
+        # At default: start=0, window=_VISIBLE_CAP — cap/up disabled
+        assert cap_btn.disabled is True
+        assert up_btn.disabled is True
+        # Down still enabled
+        assert bar.query_one(".--ob-down").disabled is False
 
 
 # ---------------------------------------------------------------------------
-# T20: _PAGE_SIZE constant used in [+]
+# T17: Bottom bar buttons disabled when all lines shown
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_bottom_bar_hidden_when_all_shown():
+    """Bottom bar hides (display=False) when visible window covers all lines."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        block = await _new_block(pilot)
+
+        total = _VISIBLE_CAP + 20
+        for i in range(total):
+            block.append_line(f"line {i}")
+        _flush(block)
+        await pilot.pause()
+
+        assert block._omission_bar_bottom.display is True
+
+        # Show all lines: bar should hide
+        block.rerender_window(0, total)
+        await pilot.pause()
+
+        assert block._omission_bar_bottom.display is False
+
+
+# ---------------------------------------------------------------------------
+# T18: Bars survive complete()
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_bars_survive_complete():
+    """Both bars remain mounted after StreamingToolBlock.complete()."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        block = await _new_block(pilot)
+
+        total = _VISIBLE_CAP + 10
+        for i in range(total):
+            block.append_line(f"line {i}")
+        _flush(block)
+        await pilot.pause()
+
+        block.complete("1.5s")
+        await pilot.pause()
+
+        assert block._omission_bar_bottom_mounted is True
+        assert block._omission_bar_top_mounted is True
+        assert block._omission_bar_bottom.display is True
+
+
+# ---------------------------------------------------------------------------
+# T19: Bottom bar total updates during streaming
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_bar_total_updates_during_streaming():
+    """Bottom bar _total reflects new lines after each flush."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        block = await _new_block(pilot)
+
+        for i in range(_VISIBLE_CAP + 1):
+            block.append_line(f"line {i}")
+        _flush(block)
+        await pilot.pause()
+
+        first_total = block._omission_bar_bottom._total
+
+        for i in range(20):
+            block.append_line(f"extra {i}")
+        _flush(block)
+        await pilot.pause()
+
+        assert block._omission_bar_bottom._total == _VISIBLE_CAP + 1 + 20
+        assert block._omission_bar_bottom._total > first_total
+
+
+# ---------------------------------------------------------------------------
+# T20: _PAGE_SIZE constant used in [↓]
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_page_size_constant_used():
-    """[+] expand delta equals _PAGE_SIZE."""
+    """[↓] expand delta equals _PAGE_SIZE."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -513,11 +561,11 @@ async def test_page_size_constant_used():
         _flush(block)
         await pilot.pause()
 
-        bar = block._omission_bar
-        assert bar is not None
+        bar = block._omission_bar_bottom
         before = bar._visible_end
-        bar._do_expand_one()
-        assert bar._visible_end - before == _PAGE_SIZE
+        block.rerender_window(bar._visible_start, min(bar._total, bar._visible_end + _PAGE_SIZE))
+
+        assert block._omission_bar_bottom._visible_end - before == _PAGE_SIZE
 
 
 # ---------------------------------------------------------------------------
@@ -526,7 +574,7 @@ async def test_page_size_constant_used():
 
 @pytest.mark.asyncio
 async def test_total_equals_cap_plus_one():
-    """OmissionBar shows 1 omitted line when total is _VISIBLE_CAP + 1."""
+    """Bar shows 1 omitted line when total is _VISIBLE_CAP + 1."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -537,19 +585,18 @@ async def test_total_equals_cap_plus_one():
         _flush(block)
         await pilot.pause()
 
-        bar = block._omission_bar
-        assert bar is not None
+        bar = block._omission_bar_bottom
         assert bar._total == _VISIBLE_CAP + 1
         assert bar._total - bar._visible_end == 1
 
 
 # ---------------------------------------------------------------------------
-# T22: Rapid [+] clamps to _total
+# T22: Rapid [↓] clamps at total
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_rapid_expand_clamps_to_total():
-    """Pressing [+] more times than there are pages clamps _visible_end at _total."""
+    """rerender_window with end > total is clamped at total."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -561,44 +608,24 @@ async def test_rapid_expand_clamps_to_total():
         _flush(block)
         await pilot.pause()
 
-        bar = block._omission_bar
-        assert bar is not None
+        bar = block._omission_bar_bottom
+        # One [↓]: 10 < _PAGE_SIZE, clamps at total → bar hides (all shown)
+        block.rerender_window(bar._visible_start, min(bar._total, bar._visible_end + _PAGE_SIZE))
+        assert block._visible_start + block._visible_count == total
+        assert block._omission_bar_bottom.display is False
 
-        bar._do_expand_one()
-        assert bar._visible_end == total  # clamped, not total + _PAGE_SIZE
-
-        bar._do_expand_one()
-        assert bar._visible_end == total  # second press: no-op (already at end)
-
-
-# ---------------------------------------------------------------------------
-# T23: _omission_bar is None before cap
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_omission_bar_none_before_cap():
-    """_omission_bar is None when line count has not reached _VISIBLE_CAP."""
-    app = HermesApp(cli=MagicMock())
-    async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause()
-        block = await _new_block(pilot)
-
-        assert block._omission_bar is None
-
-        for i in range(_VISIBLE_CAP // 2):
-            block.append_line(f"line {i}")
-        _flush(block)
-
-        assert block._omission_bar is None
+        # Second [↓]: already at end, no change
+        block.rerender_window(0, min(total, _VISIBLE_CAP + _PAGE_SIZE))
+        assert block._visible_start + block._visible_count == total
 
 
 # ---------------------------------------------------------------------------
-# T24: collapse_to clears and rewrites log
+# T23: rerender_window clears and rewrites log
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_collapse_to_rewrites_log():
-    """collapse_to(n) clears the log and rewrites exactly n lines."""
+async def test_rerender_window_rewrites_log():
+    """rerender_window(start, end) clears log and writes exactly (end-start) lines."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -610,28 +637,25 @@ async def test_collapse_to_rewrites_log():
         _flush(block)
         await pilot.pause()
 
-        bar = block._omission_bar
-        assert bar is not None
-        # Expand one page
-        bar._do_expand_one()
-        assert bar._visible_end == _VISIBLE_CAP + _PAGE_SIZE
+        # Expand window to show all
+        block.rerender_window(0, total)
+        log = block._body.query_one(CopyableRichLog)
+        _drain_log(log)
+        assert len(log.lines) == total
 
         # Collapse back to cap
-        bar._do_collapse_all()
-        assert bar._visible_end == _VISIBLE_CAP
-
-        log = block._body.query_one(CopyableRichLog)
+        block.rerender_window(0, _VISIBLE_CAP)
         _drain_log(log)
         assert len(log.lines) == _VISIBLE_CAP
 
 
 # ---------------------------------------------------------------------------
-# T25: reveal_lines appends without clearing existing lines
+# T24: reveal_lines appends without clearing
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_reveal_lines_appends():
-    """reveal_lines(start, end) adds lines without clearing the log."""
+    """reveal_lines(start, end) appends lines without clearing the log."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -647,8 +671,57 @@ async def test_reveal_lines_appends():
         _drain_log(log)
         before_count = len(log.lines)
 
-        # Directly call reveal_lines
         block.reveal_lines(_VISIBLE_CAP, total)
 
         _drain_log(log)
         assert len(log.lines) == before_count + 10
+
+
+# ---------------------------------------------------------------------------
+# T25: visible_start tracked after rerender_window
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_visible_start_tracked_after_rerender():
+    """block._visible_start updates correctly via rerender_window."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        block = await _new_block(pilot)
+
+        total = _VISIBLE_CAP + _PAGE_SIZE * 3
+        for i in range(total):
+            block.append_line(f"line {i}")
+        _flush(block)
+        await pilot.pause()
+
+        assert block._visible_start == 0
+
+        block.rerender_window(_PAGE_SIZE, _PAGE_SIZE + _VISIBLE_CAP)
+        assert block._visible_start == _PAGE_SIZE
+
+        block.rerender_window(0, _VISIBLE_CAP)
+        assert block._visible_start == 0
+
+
+# ---------------------------------------------------------------------------
+# §8 — [reset] button label (UX pass 3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_omission_bar_bottom_has_reset_button():
+    """Bottom OmissionBar has '[reset]' button, not '[↑cap]'."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        block = await _new_block(pilot)
+        await pilot.pause()
+
+        bar = block._omission_bar_bottom
+        assert bar is not None
+
+        from textual.widgets import Button
+        labels = [str(b.label) for b in bar.query(Button)]
+        assert "[reset]" in labels
+        assert "[↑cap]" not in labels

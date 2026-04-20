@@ -87,7 +87,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
     DEFAULT_CSS = "ExecuteCodeBlock { height: auto; }"
     _content_type: str = "tool"
 
-    def __init__(self, initial_label: str = "exec", **kwargs: Any) -> None:
+    def __init__(self, initial_label: str = "python", **kwargs: Any) -> None:
         super().__init__(label=initial_label, tool_name="execute_code", **kwargs)
         self._code_state = _STATE_STREAMING
         self._line_scratch = ""
@@ -161,6 +161,28 @@ class ExecuteCodeBlock(StreamingToolBlock):
         self._header._has_affordances = True
         self._header.collapsed = False
         self._header._compact_tail = True  # natural flow, non-dim duration
+
+        # Pre-mount both omission bars on OutputSection so they exist in DOM
+        # immediately; _refresh_omission_bars() hides them until cap is reached.
+        try:
+            output_section = self.query_one(OutputSection)
+            rl = output_section.query_one(CopyableRichLog)
+        except NoMatches:
+            return
+        top_bar = OmissionBar(
+            parent_block=self, position="top",
+            classes="--omission-bar-top",
+        )
+        bottom_bar = OmissionBar(
+            parent_block=self, position="bottom",
+            classes="--omission-bar-bottom",
+        )
+        self._omission_bar_top = top_bar
+        self._omission_bar_top_mounted = True
+        self._omission_bar_bottom = bottom_bar
+        self._omission_bar_bottom_mounted = True
+        output_section.mount(top_bar, before=rl)
+        output_section.mount(bottom_bar)
 
     def _start_cursor(self) -> None:
         try:
@@ -326,8 +348,8 @@ class ExecuteCodeBlock(StreamingToolBlock):
         self._pending = []
 
         try:
-            from hermes_cli.tui.widgets import _strip_ansi
-            output_log = self.query_one(OutputSection).query_one(CopyableRichLog)
+            output_section = self.query_one(OutputSection)
+            output_log = output_section.query_one(CopyableRichLog)
         except NoMatches:
             return
 
@@ -337,15 +359,9 @@ class ExecuteCodeBlock(StreamingToolBlock):
                 output_log.write_with_source(Text.from_ansi(raw), plain)
                 self._visible_count += 1
                 lines_written += 1
-            elif not self._omission_bar_mounted:
-                bar = OmissionBar(parent_block=self)
-                self._omission_bar = bar
-                self._omission_bar_mounted = True
-                output_section.mount(bar)
 
-        if self._omission_bar is not None:
-            self._omission_bar.update(self._total_received,
-                                      self._omission_bar._visible_end)
+        if self._omission_bar_bottom_mounted:
+            self._refresh_omission_bars()
 
         if lines_written:
             try:

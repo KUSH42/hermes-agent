@@ -96,6 +96,10 @@ Then load only the focused reference you need:
 - `hermes_cli/tui/tool_blocks.py` with `tests/tui/test_tool_blocks.py`,
   `tests/tui/test_streaming_tool_block.py`, `tests/tui/test_omission_bar.py`,
   `tests/tui/test_path_context_menu.py`, `tests/tui/test_browse_nav_markers.py`, and scroll tests
+- `hermes_cli/tui/execute_code_block.py` with `tests/tui/test_execute_code_block.py`;
+  also touches `hermes_cli/tui/partial_json.py`, `hermes_cli/tui/character_pacer.py`,
+  `hermes_cli/tui/body_renderer.py`, `cli.py §_on_tool_gen_start/_on_tool_start`,
+  `tests/agent/test_tool_gen_args_delta.py`, `tests/test_partial_json_extractor.py`
 - `hermes_cli/tui/write_file_block.py` with `tests/tui/test_write_file_block.py`
 - `hermes_cli/tui/math_renderer.py` with `tests/tui/test_math_renderer.py`; also touches `response_flow.py`, `widgets.py`, `config.py`, `cli.py`
 - `hermes_cli/tui/response_flow.py` with `tests/tui/test_response_flow.py`, `tests/tui/test_math_renderer.py`
@@ -106,9 +110,114 @@ Then load only the focused reference you need:
 
 ## Validation
 
-Last revalidated: **2026-04-19. 1958 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
+Last revalidated: **2026-04-20. ~1786+ total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility). Exact count pending broad suite run; targeted suite (tool_blocks + omission_bar + tool_panel + body_renderer) = 168 passing.
 
 Recent changes (details → reference files):
+- **Tool UX Pass 3** (2026-04-20): 11 fixes across P0/P1/P2 categories + ~27 new tests.
+  - **§1 MCPBodyRenderer**: New class in `body_renderer.py`; registered for `ToolCategory.MCP`.
+    `render_stream_line` = ANSI passthrough. `finalize` extracts `content[].text` from JSON.
+    Tests: `tests/tui/test_body_renderer.py` (6 tests, new file).
+  - **§2 Footer retry**: `"retry"` added to `_IMPLEMENTED_ACTIONS`. `action_retry()` calls
+    `app._initiate_retry()` when `rs.is_error`. `Binding("r","retry")` added. `_build_hint_text()`
+    shows "r retry" hint on error results. `_artifact_icon(kind)` helper extracted from inline code
+    in `FooterPane` — testable, used by FooterPane too.
+  - **§3 `_label_rich` in ToolHeader**: `_render_v4()` now reads `_label_rich` (set by ECB with
+    syntax-highlighted label) before falling back to `header_label_v4()`. Truncated via
+    `label_text.divide([available])[0]` + `"…"` append.
+  - **§4 ANSI preservation**: `StreamingToolBlock` gains `_all_rich: list[Text]`.
+    `append_line()` populates both `_all_plain` and `_all_rich`. `rerender_window()`,
+    `reveal_lines()`, `collapse_to()` all zip `_all_rich` with `_all_plain` — color preserved on scroll.
+  - **§5 ECB top OmissionBar**: `_apply_execute_mount_overrides()` now mounts both bars eagerly
+    on `OutputSection` (top bar `before=rl`). Removed lazy bottom-bar mount from `_flush_pending()`.
+  - **§6 FILE microcopy denominators**: Removed `total_str`/`total_kb` from FILE template.
+    Now `▸ N lines · XkB` (no `?`).
+  - **§7 MCP microcopy clear**: Removed `if spec.category == ToolCategory.MCP: return` guard
+    from `_clear_microcopy_on_complete()`. All tools clear microcopy on complete.
+  - **§8 `[reset]` button**: OmissionBar bottom `"[↑cap]"` → `"\\[reset]"` (backslash-escaped
+    to prevent Rich markup `[reset]` tag swallowing the text — renders as `[reset]`).
+  - **§9 Dead CSS**: `--flash-complete` rule removed from `hermes.tcss`.
+  - **§10 Artifact icons**: `_artifact_icon(kind)` helper in `tool_panel.py` respects
+    `get_tool_icon_mode()`: nerdfont/auto → `\uf15b`/`\uf0c1`/`\uf03e`; emoji → 📎/🔗/🖼; ascii → [F]/[L]/[I].
+  - **§11 Collapse no-op flash**: `action_collapse_lines()` guards with no-op check + `_flash_header("at minimum")`.
+  Key gotcha: **Rich markup in Button labels** — `"[reset]"` is a Rich markup reset tag → renders empty.
+  Must escape as `"\\[reset]"`. Same issue would affect any `[word]` label — always escape or use `Text.from_markup`.
+  → `hermes_cli/tui/body_renderer.py §MCPBodyRenderer`,
+    `hermes_cli/tui/tool_panel.py §_IMPLEMENTED_ACTIONS/_artifact_icon/action_retry/_build_hint_text/action_collapse_lines`,
+    `hermes_cli/tui/tool_blocks.py §StreamingToolBlock._all_rich/append_line/rerender_window/reveal_lines/collapse_to/OmissionBar.compose`,
+    `hermes_cli/tui/execute_code_block.py §_apply_execute_mount_overrides/_flush_pending`,
+    `hermes_cli/tui/streaming_microcopy.py §microcopy_line FILE branch`,
+    `hermes_cli/tui/hermes.tcss §--flash-complete removed`,
+    `tests/tui/test_body_renderer.py` (new, 6 tests),
+    `tests/tui/test_tool_panel.py` (8 new tests),
+    `tests/tui/test_tool_blocks.py` (12 new tests),
+    `tests/tui/test_omission_bar.py` (1 new test)
+- **ExecuteCodeBlock spec review complete** (2026-04-20): 4-pass review loop; spec accuracy 4/10 → 10/10.
+  Key implementation facts surfaced and now documented in spec:
+  - **`call_from_thread` race**: `_open_execute_code_block` is async; `_gen_blocks_by_idx` is never
+    actually populated on the gen_start path (`result[0]` still None when checked). All ECBs are
+    created via the tool_start fallback path in practice.
+  - **Fallback ECBs lack ToolPanel**: the `_create_ecb_fallback` closure mounts the bare
+    `ExecuteCodeBlock` without a `ToolPanel` wrapper — these blocks have no J/K navigation or
+    browse anchor registration.
+  - **Highlight/finalize path**: ECB does NOT call `StreamingCodeBlock._highlight_line` or
+    `_finalize_syntax` — it uses `BodyRenderer.for_category(ToolCategory.CODE).highlight_line()`
+    and `BodyRenderer.finalize_code(code, theme, bg)`. `finalize_code` internally slices to
+    `lines[1:]` and returns `None` for single-line code (body stays empty for short scripts).
+  - **Flash CSS vars**: `$success 35%` and `$error 35%` (not `$addition-marker-fg`/`$deletion-marker-fg`).
+  - **`CharacterPacer.__init__`** takes three params: `(cps, on_reveal, app=None)` — `app` required for `set_interval`.
+  - **`PartialJSONCodeExtractor`** has 6 states: `seek | after_colon | before_open_quote | in_string | unicode_escape | done`.
+    Seek uses `buf.find(needle)` (simple substring, not string-literal-aware).
+  - **`ExecuteCodeBody` composes**: `CodeSection + OutputSeparator + OutputSection` (OutputSeparator
+    shows dim "─── output" separator; display toggled with OutputSection at tool_start).
+  - **`on_mount` deferred override**: ECB uses `call_after_refresh(_apply_execute_mount_overrides)`
+    because parent `on_mount` runs after child in Textual MRO, overwriting `_has_affordances = True`.
+  - **`#code-live-cursor` Static**: cursor mount wrapped in `try/except` — silently skipped on failure.
+  - **`flush()` stops timer**: `CharacterPacer.flush()` already stops drain timer internally; subsequent
+    `stop()` call in `finalize_code` is a belt-and-suspenders no-op.
+  → `execute-code-block-spec.md` (spec now accurate)
+- **ExecuteCodeBlock bug fixes** (2026-04-20): Three cli.py races fixed:
+  1. `_on_tool_gen_start` race: closures for `_open_execute` and `_open_write` now
+     set `gen_blocks[idx] = b` directly from the event-loop callback (not via a
+     `result[0]` closure that's always None when checked on the agent thread).
+  2. Fallback ECBs now wrapped in `ToolPanel` (bare mount broke J/K nav + anchors).
+  3. Fallback `finalize_code` race: moved inside `_create_ecb_fallback` closure,
+     scheduled via `call_after_refresh` so mount completes first.
+  Also added test_T48 (other tools label normal color) + test_T49 (right-align
+  preserves affordances) to `tests/tui/test_tool_blocks.py`. 42 ECB-related tests pass.
+  → `cli.py §_on_tool_gen_start/_create_ecb_fallback`, `tests/tui/test_tool_blocks.py`
+- **Tool UX Pass 2 — Phases A–E** (2026-04-20): 5-phase UX upgrade to tool call display.
+  **Phase A (footer actions)**: Real `action_copy_body`, `action_open_first`, `action_copy_err`,
+  `action_copy_paths` in `FooterPane` with c/o/e/p bindings. `_IMPLEMENTED_ACTIONS` frozenset gates
+  render. `_flash_header()` posts flash via `ToolHeader._flash_msg`/`_flash_expires`. `_render_stderr(tail)`
+  method (multi-line, height auto; max 4). `_result_paths_for_action()` extracts paths for open/copy.
+  Clipboard via `_copy_text_with_hint()` (OSC52 + xclip). `promoted_chip_texts` param in `update_summary_v4`.
+  **Phase B (chevron + auto-collapse thresholds)**: Chevron always rendered in `_render_v4()` when
+  `_has_affordances`, uses `self._panel.collapsed if self._panel is not None`. Thresholds updated:
+  FILE→10, SHELL→8, CODE→5, AGENT→15, UNKNOWN→6.
+  **Phase C (microcopy + stderr + chips)**: `_thinking_shimmer(elapsed_s)` returns `Text` (not `str`)
+  for AGENT — animated lerp_color wave on `"Thinking…"`. `_last_n_chars_v4(text, n=300)` replaces
+  `_last_line_v4` for stderr_tail — preserves newlines, 300 char cap. `_make_copy_err` hotkey "c"→"e".
+  `promoted_chip_texts: frozenset[str]` for chip dedup in `set_result_summary_v4`.
+  **Phase D (OmissionBar dual-bar redesign)**: Both bars always in DOM from `on_mount()` (guarded by
+  `self._body.is_mounted` so `ExecuteCodeBlock` subclass doesn't crash). Display toggled by
+  `_refresh_omission_bars()`. Top bar (`--omission-bar-top`): `[↑all](.--ob-up-all)` + `[↑+50](.--ob-up-page)`.
+  Bottom bar (`--omission-bar-bottom`): `[↑cap](.--ob-cap)` + `[↑](.--ob-up)` + `[↓](.--ob-down)` +
+  `[↓all](.--ob-down-all)`. All button actions route through `block.rerender_window(start, end)` — the
+  canonical scroll primitive. `rerender_window` clears log, writes `_all_plain[start:end]`, updates
+  `_visible_start`/`_visible_count`, calls `_refresh_omission_bars()`. `set_counts(visible_start,
+  visible_end, total)` updates label + disabled states; only called when bar is visible.
+  `ToolPanel.action_expand/collapse/expand_all_lines` updated to call `rerender_window` (old `_do_*` gone).
+  API: `_omission_bar_bottom`, `_omission_bar_top`, `_omission_bar_bottom_mounted`, `_omission_bar_top_mounted`.
+  **Phase E (MCP accent, diff CSS, narrow fix, Gantt scale)**: `ToolPanel.category-mcp` border in
+  hermes.tcss. `_diff_bg_colors(self)` widget method reads `app._theme_manager._component_vars`.
+  `COMPONENT_VAR_DEFAULTS`: added `tool-mcp-accent`, `diff-add-bg`, `diff-del-bg`. Narrow GroupBody
+  `display:none` → `padding-left:0`. `_gantt_scale_text(turn_total_s, gantt_w, label_w)` + `#gantt-scale`
+  Static in ToolsOverlay. Tests: `test_omission_bar.py` fully rewritten (25 tests, new API);
+  `test_streaming_microcopy.py` AGENT tests check `isinstance(result, Text)`.
+  → `hermes_cli/tui/tool_blocks.py`, `hermes_cli/tui/tool_panel.py`, `hermes_cli/tui/tool_category.py`,
+    `hermes_cli/tui/tool_result_parse.py`, `hermes_cli/tui/streaming_microcopy.py`,
+    `hermes_cli/tui/tools_overlay.py`, `hermes_cli/tui/theme_manager.py`, `hermes_cli/tui/hermes.tcss`,
+    `tests/tui/test_omission_bar.py` (rewritten), `tests/tui/test_tool_panel.py`, `tests/tui/test_streaming_microcopy.py`
 - **Binary collapse** (2026-04-19): `detail_level: reactive[int]` (L0–L3) **replaced** with
   `collapsed: reactive[bool]` on `ToolPanel`. `ArgsPane` class deleted. `tool_args_format.py` deleted.
   `CategoryDefaults`: removed `args_formatter` + `default_detail` fields. `ToolPanel.BINDINGS`: removed

@@ -429,6 +429,29 @@ class TextRenderer(BodyRenderer):
         return Text("\n".join(tail), style="dim")
 
 
+class MCPBodyRenderer(BodyRenderer):
+    """MCP tool body — ANSI passthrough while streaming; finalize extracts text content."""
+
+    def render_stream_line(self, raw: str, plain: str) -> "ConsoleRenderable":
+        return Text.from_ansi(raw)
+
+    def finalize(self, all_plain: list[str], **kwargs: object) -> "ConsoleRenderable | None":
+        import json
+        joined = "\n".join(all_plain)
+        try:
+            obj = json.loads(joined)
+            items = obj.get("content", []) if isinstance(obj, dict) else []
+            texts = [
+                i["text"] for i in items
+                if isinstance(i, dict) and i.get("type") == "text" and "text" in i
+            ]
+            if texts:
+                return Text("\n\n".join(texts))
+        except (json.JSONDecodeError, TypeError, KeyError):
+            pass
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Registry (must come after all concrete classes)
 # ---------------------------------------------------------------------------
@@ -443,6 +466,7 @@ def _build_renderers() -> "dict[ToolCategory, type[BodyRenderer]]":
         ToolCategory.SEARCH:  SearchRenderer,
         ToolCategory.WEB:     WebRenderer,
         ToolCategory.AGENT:   AgentRenderer,
+        ToolCategory.MCP:     MCPBodyRenderer,
         ToolCategory.UNKNOWN: TextRenderer,
     }
 

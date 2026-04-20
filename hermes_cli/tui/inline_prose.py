@@ -122,7 +122,11 @@ class InlineImageCache:
         mode: _RenderMode,
         widget_id: int = 0,
     ) -> list[Strip]:
-        """Return one Strip per cell_height row, each normalised to span.cell_width."""
+        """Return one Strip per cell_height row, each normalised to span.cell_width.
+
+        May call _render() on cache miss — do NOT call from render_line.
+        Use get_strips_or_alt() in render paths.
+        """
         key = self._make_key(span, mode)
         if key in self._entries:
             self._entries.move_to_end(key)
@@ -140,6 +144,26 @@ class InlineImageCache:
         self._entries[key] = entry
         self._evict_if_needed()
         return strips
+
+    def get_strips_or_alt(
+        self,
+        span: ImageSpan,
+        mode: _RenderMode,
+        widget_id: int = 0,
+    ) -> list[Strip]:
+        """Return cached strips, or alt strips on cache miss. NEVER calls _render().
+
+        Safe to call from render_line — no PIL operations, no terminal writes.
+        On a cache miss the caller shows alt_text; a separate pre-render step
+        (InlineProseLog._prerender_line_images) populates the cache and refreshes.
+        """
+        key = self._make_key(span, mode)
+        if key in self._entries:
+            self._entries.move_to_end(key)
+            entry = self._entries[key]
+            entry.widget_ids.add(widget_id)
+            return entry.strips
+        return self._alt_strips(span)
 
     def invalidate_for_resize(self) -> None:
         """Flush entries whose stored cell_px dims differ from current."""

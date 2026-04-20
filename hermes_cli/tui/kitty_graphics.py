@@ -339,7 +339,7 @@ def cell_height_px() -> int:
 
 
 def _reset_cell_px_cache() -> None:
-    """Test-only: clear cell dimension cache."""
+    """Clear cell dimension cache. Called on terminal resize to pick up new dimensions."""
     global _cell_px_cache
     _cell_px_cache = None
 

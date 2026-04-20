@@ -10936,6 +10936,27 @@ def main(
     except Exception:
         pass
 
+    # Inline image / code-generated chart hint
+    # Tell the model to prefer execute_code for charts and data visualisation so
+    # that the resulting image is rendered inline via the MEDIA: line mechanism,
+    # rather than resorting to web screenshots or external services.
+    try:
+        from hermes_cli.tui.kitty_graphics import get_inline_images_mode as _gim
+        if _gim() != "off":
+            _chart_hint = (
+                "\n\n[System note: This terminal renders images inline. "
+                "When the user asks for charts, graphs, plots, or any visual output, "
+                "ALWAYS generate them with execute_code (e.g. matplotlib, seaborn, plotly) "
+                "rather than fetching screenshots from the web or external services. "
+                "After saving an image to disk, print a line in the exact format "
+                "`MEDIA: /absolute/path/to/file.png` — the terminal will render it inline "
+                "automatically. Never use browser tools just to take a screenshot of a chart "
+                "you could generate with code.]"
+            )
+            cli.system_prompt = (cli.system_prompt or "") + _chart_hint
+    except Exception:
+        pass
+
     # Load custom emoji registry and inject system prompt block
     if getattr(cli, "_custom_emojis_enabled", True):
         try:

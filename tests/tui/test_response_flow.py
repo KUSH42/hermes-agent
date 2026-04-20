@@ -983,6 +983,68 @@ async def test_code_block_copy_content_strips_ansi_sequences():
         assert block.copy_content() == "print('hello')\nvalue = 42"
 
 
+# ---------------------------------------------------------------------------
+# _normalize_ansi_for_render — multi-param CSI regression
+# ---------------------------------------------------------------------------
+
+def test_normalize_ansi_preserves_multi_param_csi():
+    """_normalize_ansi_for_render must not strip ';37m' from '\x1b[1;37m'.
+
+    Regression: the old _ORPHAN_RE used (?<!\x1b) which only checked for the
+    ESC byte.  A multi-param sequence like \x1b[1;37m has ';37m' preceded by
+    '1' (not \x1b), so the orphan pattern incorrectly stripped it, leaving
+    \x1b[1.  Rich's ANSI parser then interpreted \x1b[1M as CSI "scroll up"
+    (consuming the 'M'), causing the first character of heading content to
+    disappear from the rendered output.
+    """
+    from hermes_cli.tui.response_flow import _normalize_ansi_for_render, _strip_ansi
+    from rich.text import Text
+    from agent.rich_output import apply_block_line, apply_inline_markdown
+
+    for heading in [
+        "## Markdown Features Showcase",
+        "## Footnotes",
+        "## Inline Source Citations",
+        "## LaTeX Math",
+        "# Top Level Heading",
+    ]:
+        block_ansi = apply_block_line(heading)
+        inline_ansi = apply_inline_markdown(block_ansi)
+        normalized = _normalize_ansi_for_render(inline_ansi)
+        plain = _strip_ansi(inline_ansi)
+        rich_plain = Text.from_ansi(normalized).plain
+        assert rich_plain == plain, (
+            f"First char dropped from heading {heading!r}: "
+            f"expected {plain!r}, got {rich_plain!r}"
+        )
+
+
+def test_normalize_ansi_strips_true_orphan_fragments():
+    """_normalize_ansi_for_render should still strip truly orphaned CSI fragments."""
+    from hermes_cli.tui.response_flow import _normalize_ansi_for_render
+
+    # A truly orphaned [0m (no preceding \x1b or digit) should be stripped
+    result = _normalize_ansi_for_render("hello[0mworld")
+    assert "[0m" not in result
+    assert "hello" in result
+    assert "world" in result
+
+
+def test_normalize_ansi_preserves_rgb_color():
+    """24-bit color sequences (\x1b[38;2;R;G;Bm) must not be corrupted."""
+    from hermes_cli.tui.response_flow import _normalize_ansi_for_render, _strip_ansi
+    from rich.text import Text
+
+    # RGB + bold: \x1b[1;38;2;88;166;255m
+    ansi = "\x1b[1;38;2;88;166;255mHello World\x1b[0m"
+    normalized = _normalize_ansi_for_render(ansi)
+    plain = _strip_ansi(ansi)
+    rich_plain = Text.from_ansi(normalized).plain
+    assert rich_plain == plain, (
+        f"RGB color heading dropped char: expected {plain!r}, got {rich_plain!r}"
+    )
+
+
 def test_detect_lang_prefers_java_for_short_hello_world_snippet():
     """Short Java snippets should not fall back to plain text."""
     from hermes_cli.tui.response_flow import _detect_lang

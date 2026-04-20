@@ -231,7 +231,12 @@ def _normalize_ansi_for_render(text: str) -> str:
         return ""
     if "\x9b" in text:
         text = text.replace("\x9b", "\x1b[")
-    _ORPHAN_RE = _re.compile(r"(?<!\x1b)(?:;[0-9;]+[A-Za-z]|\[[0-9;]*m)")
+    # (?<![\x1b0-9;]) prevents matching `;37m` inside `\x1b[1;37m` — the `;`
+    # there is preceded by a digit, not a true orphan.  Plain (?<!\x1b) was too
+    # narrow: it only checked for the ESC byte, so `;37m` in a multi-param
+    # sequence (CSI param1;param2m) was incorrectly stripped, leaving `\x1b[1`
+    # which Rich parses as CSI+digit and consumes the next content character.
+    _ORPHAN_RE = _re.compile(r"(?<![\x1b0-9;])(?:;[0-9;]+[A-Za-z]|\[[0-9;]*m)")
     return _ORPHAN_RE.sub("", text)
 
 

@@ -1323,6 +1323,7 @@ class MessagePanel(Widget):
         self._user_text: str = user_text
         self._raw_response_text: str = ""
         self._response_engine: "Any | None" = None   # ResponseFlowEngine, set in on_mount
+        self._carry_pending: "str | None" = None   # setext line migrated from prev panel
         self._last_file_tool_block: "Any | None" = None   # tracks most-recent file-tool STB for diff connector
         # adjacent-mount anchors: tool_name → most-recently-opened panel to mount siblings after
         self._adj_anchors: "dict[str, Widget]" = {}
@@ -1389,6 +1390,12 @@ class MessagePanel(Widget):
             def _prose_cb(line: str) -> None:
                 _app._last_assistant_text = line
             self._response_engine._prose_callback = _prose_cb
+            if self._carry_pending is not None:
+                try:
+                    self._response_engine.process_line(self._carry_pending)
+                except Exception:
+                    pass
+                self._carry_pending = None
 
     @property
     def response_log(self) -> CopyableRichLog:
@@ -3204,6 +3211,7 @@ class StatusBar(PulseMixin, Widget):
             "status_active_file",
             "context_pct",
             "yolo_mode",
+            "session_label",
         ):
             self.watch(app, attr, self._on_status_change)
         # agent_running: dedicated callback to start/stop pulse + refresh
@@ -3302,6 +3310,7 @@ class StatusBar(PulseMixin, Widget):
 
         _vars    = getattr(app, "get_css_variables", lambda: {})()
         model    = str(getattr(app, "status_model", ""))
+        _session_label = str(getattr(app, "session_label", ""))
         ctx_tokens = getattr(app, "status_context_tokens", 0)
         ctx_max    = getattr(app, "status_context_max", 0)
         progress = getattr(app, "status_compaction_progress", 0.0)
@@ -3331,6 +3340,11 @@ class StatusBar(PulseMixin, Widget):
         yolo = getattr(app, "yolo_mode", False)
 
         t = Text()
+        # Session label chip (dim prefix) — shown when non-empty
+        if _session_label:
+            _sl_truncated = (_session_label[:28] + "…") if len(_session_label) > 28 else _session_label
+            t.append(_sl_truncated, style="dim")
+            t.append(" · ", style="dim")
         # Startup state: show "connecting…" when model is not yet loaded
         if not model:
             t.append("connecting…", style=f"dim")
@@ -4106,38 +4120,56 @@ class _SearchResult:
     first_match_offset: int
 
 
+@dataclass
+class _CrossSessionResult:
+    """Result from cross-session FTS5 search."""
+    session_id: str
+    session_title: str       # empty string if NULL
+    role: str
+    content_preview: str     # first 80 chars, newlines collapsed
+    timestamp: float
+    is_current_session: bool # True when session_id == current session_id
+
+
 def _substring_search(
     query: str,
     entries: list[_TurnEntry],
-    limit: int = 20,
+    limit: int = 50,
 ) -> list[_SearchResult]:
-    """Casefolded contiguous substring search with span tracking.
+    """Token-AND casefolded substring search with span tracking.
 
-    Searches combined user+assistant text.  Returns results sorted by:
-    1. Match count × 10 + word-boundary bonus (5) + char-0 bonus (2)
+    All tokens in the query must appear in the combined user+assistant text
+    (AND semantics).  Single-token queries behave as before.  Whitespace-only
+    queries return empty (fall through to browse-all path).
+
+    Returns results sorted by:
+    1. Match count × 10 + word-boundary bonus (5)
     2. Recency (newer wins on tie)
     """
-    needle = query.casefold()
+    tokens = query.casefold().split()
+    if not tokens:
+        return []
     results: list[tuple[_TurnEntry, list[tuple[int, int]], int]] = []
     for entry in entries:
         haystack = entry.search_text.casefold()
+        if not all(t in haystack for t in tokens):
+            continue
+        # Collect all spans for every token
         spans: list[tuple[int, int]] = []
-        offset = 0
-        while True:
-            pos = haystack.find(needle, offset)
-            if pos == -1:
-                break
-            spans.append((pos, pos + len(needle)))
-            offset = pos + len(needle)  # no overlap
+        for token in tokens:
+            offset = 0
+            while (pos := haystack.find(token, offset)) != -1:
+                spans.append((pos, pos + len(token)))
+                offset = pos + len(token)
+        score = len(spans) * 10
         if spans:
-            score = len(spans) * 10
             first = spans[0][0]
             if first == 0 or entry.search_text[first - 1] in " \n\t/._-":
                 score += 5
-            results.append((entry, spans, score))
+        results.append((entry, spans, score))
     results.sort(key=lambda r: (-r[2], -r[0].index))
     return [
-        _SearchResult(entry=e, match_spans=tuple(s), first_match_offset=s[0][0])
+        _SearchResult(entry=e, match_spans=tuple(s), first_match_offset=s[0][0] if s else 0)
         for e, s, _ in results[:limit]
     ]
 
@@ -4215,6 +4247,32 @@ def _build_result_label(result: "_SearchResult | None") -> str:
     return f"{header}\n  {snippet}"
 
 
+def _build_cross_session_label(result: "_CrossSessionResult") -> str:
+    """Build row label for a cross-session search result."""
+    title = result.session_title or result.session_id[-8:]
+    preview = result.content_preview
+    return f"[dim]\\[{_escape_markup(title)}][/dim]  {_escape_markup(preview)}"
+
+
+class _ModeBar(Static):
+    """Renders [Current] All or Current [All] based on overlay mode."""
+
+    DEFAULT_CSS = """
+    _ModeBar { height: 1; padding: 0 1; }
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__("", **kwargs)
+        self._mode = "current"
+
+    def set_mode(self, mode: str) -> None:
+        self._mode = mode
+        if mode == "current":
+            self.update("[bold]\\[Current][/bold] All")
+        else:
+            self.update("Current [bold]\\[All][/bold]")
+
+
 class TurnResultItem(Static):
     """Single row in the history search result list — multi-line with match context."""
 
@@ -4224,40 +4282,45 @@ class TurnResultItem(Static):
     TurnResultItem:hover { background: $accent 10%; }
     """
 
-    def __init__(self, result: "_SearchResult | None", **kwargs: Any) -> None:
+    def __init__(self, result: "_SearchResult | _CrossSessionResult | None", **kwargs: Any) -> None:
         self._result = result
-        self._entry = result.entry if result else None
-        super().__init__(_build_result_label(result), **kwargs)
+        self._cross_result: "_CrossSessionResult | None" = None
+        if isinstance(result, _SearchResult):
+            self._entry = result.entry
+            label = _build_result_label(result)
+        elif isinstance(result, _CrossSessionResult):
+            self._entry = None
+            self._cross_result = result
+            label = _build_cross_session_label(result)
+        else:
+            self._entry = None
+            label = ""
+        super().__init__(label, **kwargs)
 
-    def update_from(self, result: "_SearchResult | None") -> None:
+    def update_from(self, result: "_SearchResult | _CrossSessionResult | None") -> None:
         """Update in-place without DOM add/remove."""
         self._result = result
-        self._entry = result.entry if result else None
-        self.update(_build_result_label(result))
+        if isinstance(result, _SearchResult):
+            self._entry = result.entry
+            self.update(_build_result_label(result))
+        elif isinstance(result, _CrossSessionResult):
+            self._entry = None
+            self._cross_result = result
+            label = _build_cross_session_label(result)
+            self.update(label)
+        else:
+            self._entry = None
+            self.update("")
 
     def on_click(self, event: Any) -> None:
-        """Left-click jumps to turn; Shift+left-click range-selects without jumping."""
+        """Left-click jumps directly to the turn."""
         if getattr(event, "button", 1) != 1:
             return
         try:
             overlay = self.app.query_one(HistorySearchOverlay)
         except NoMatches:
             return
-        items = list(overlay.query(TurnResultItem))
-        try:
-            my_idx = items.index(self)
-        except ValueError:
-            return
-        if getattr(event, "shift", False) and overlay._last_click_idx is not None:
-            lo = min(overlay._last_click_idx, my_idx)
-            hi = max(overlay._last_click_idx, my_idx)
-            overlay._shift_selected = set(range(lo, hi + 1))
-            for i, item in enumerate(items):
-                item.set_class(lo <= i <= hi, "--selected")
-        else:
-            overlay._last_click_idx = my_idx
-            overlay._shift_selected = set()
-            overlay.action_jump_to(self._entry, self._result)
+        overlay.action_jump_to(self._entry, self._result)
 
 
 class KeymapOverlay(Widget):
@@ -4397,17 +4460,24 @@ class HistorySearchOverlay(Widget):
     }
     """
 
+    class TurnCompleted(Message):
+        """Posted by watch_agent_running(False) to refresh the index."""
+
     BINDINGS = [
-        Binding("escape", "dismiss", priority=True),
-        Binding("ctrl+f", "dismiss", priority=True),
-        Binding("ctrl+g", "dismiss", priority=True),
-        Binding("ctrl+c", "dismiss", priority=True),
-        Binding("up", "move_up", priority=True),
-        Binding("down", "move_down", priority=True),
-        Binding("ctrl+p", "move_up", priority=True),
-        Binding("ctrl+n", "move_down", priority=True),
-        Binding("enter", "jump", priority=True),
+        Binding("escape",    "dismiss",   priority=True),
+        Binding("ctrl+f",    "dismiss",   priority=True),
+        Binding("ctrl+c",    "dismiss",   priority=True),
+        Binding("ctrl+g",    "find_next", priority=True),
+        Binding("up",        "move_up",   priority=True),
+        Binding("down",      "move_down", priority=True),
+        Binding("ctrl+p",    "move_up",   priority=True),
+        Binding("ctrl+n",    "move_down", priority=True),
+        Binding("enter",     "jump",      priority=True),
+        Binding("ctrl+up",   "prev_query", priority=True),
+        Binding("ctrl+down", "next_query", priority=True),
     ]
+
+    _mode: reactive[str] = reactive("current")
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -4416,27 +4486,42 @@ class HistorySearchOverlay(Widget):
         self._selected_idx: int = 0
         self._saved_hint: str = ""
         self._debounce_handle: Any = None  # Timer | None; cancelled on each new keystroke
-        self._last_click_idx: int | None = None  # anchor for shift+click range select
-        self._shift_selected: set[int] = set()    # indices highlighted by shift+click
+        self._query_history: list[str] = []
+        self._query_history_idx: int = -1
+        self._cross_session_results: list[_CrossSessionResult] = []
+        self._max_results: int = 50
 
     def compose(self) -> ComposeResult:
-        yield Input(placeholder="Search history  ↑↓ navigate · Enter jump · Esc close", id="history-search-input")
+        yield _ModeBar(id="history-mode-bar")
+        yield Input(placeholder="Search history  Tab: toggle mode  ↑↓ navigate  Esc close", id="history-search-input")
         yield VerticalScroll(id="history-result-list")
         yield Static("", id="history-status")
 
     def open_search(self) -> None:
         """Build frozen snapshot index, show overlay, focus search input."""
+        # Read configurable result cap
+        try:
+            cfg = self.app.cli._cfg if hasattr(self.app, "cli") else {}
+            self._max_results = int(cfg.get("display", {}).get("history_search_max_results", 50))
+        except Exception:
+            self._max_results = 50
         self._build_index()
         self._selected_idx = 0
+        self._query_history_idx = -1
+        # Sync mode bar
+        try:
+            self.query_one(_ModeBar).set_mode(self._mode)
+        except NoMatches:
+            pass
         # Save and update HintBar hint
         try:
             hint_bar = self.app.query_one(HintBar)
             self._saved_hint = hint_bar.hint
-            hint_bar.hint = "↑↓ navigate  Enter jump  Esc close"
+            hint_bar.hint = "↑↓ navigate  Tab mode  Ctrl+G next  Esc close"
         except NoMatches:
             self._saved_hint = ""
-        self._render_results("")
         self.add_class("--visible")
+        self._render_results("")
         try:
             self.query_one("#history-search-input", Input).focus()
         except NoMatches:
@@ -4444,13 +4529,21 @@ class HistorySearchOverlay(Widget):
 
     def action_dismiss(self) -> None:
         """Hide overlay, restore hint, return focus to HermesInput."""
+        # Save search query to history before hiding
+        try:
+            query = self.query_one("#history-search-input", Input).value.strip()
+            if query and (not self._query_history or self._query_history[-1] != query):
+                self._query_history.append(query)
+                if len(self._query_history) > 10:
+                    self._query_history = self._query_history[-10:]
+        except NoMatches:
+            pass
         # Cancel any pending debounce so _render_results() doesn't run
         # against a hidden overlay, removing and re-mounting DOM children.
         if self._debounce_handle is not None:
             self._debounce_handle.stop()
             self._debounce_handle = None
-        self._shift_selected = set()
-        self._last_click_idx = None
+        self._query_history_idx = -1
         self.remove_class("--visible")
         try:
             self.app.query_one(HintBar).hint = self._saved_hint
@@ -4513,52 +4606,75 @@ class HistorySearchOverlay(Widget):
         widgets when the count changes, cutting DOM churn on stable queries.
         """
         self._debounce_handle = None
-        # Scored search with span tracking; cap at 20 results.
-        if query:
-            search_results = _substring_search(query, self._index, limit=20)
+
+        if self._mode == "all":
+            # Cross-session results — populated via async worker; render what we have
+            display_results: list[_SearchResult | _CrossSessionResult] = list(self._cross_session_results[:self._max_results])
+            total_matched = len(self._cross_session_results)
         else:
-            # No query: show all entries newest-first, no match spans
-            search_results = [
-                _SearchResult(entry=e, match_spans=(), first_match_offset=0)
-                for e in self._index[:20]
-            ]
-        self._current_results = search_results
+            # Current session results
+            if query:
+                all_results = _substring_search(query, self._index, limit=len(self._index))
+                search_results = all_results[:self._max_results]
+                total_matched = len(all_results)
+            else:
+                # No query: show all entries newest-first, no match spans
+                all_results_list = [
+                    _SearchResult(entry=e, match_spans=(), first_match_offset=0)
+                    for e in self._index
+                ]
+                search_results = all_results_list[:self._max_results]
+                total_matched = len(all_results_list)
+            display_results = search_results
+            self._current_results = search_results  # type: ignore[assignment]
+
         try:
             result_list = self.query_one("#history-result-list", VerticalScroll)
         except NoMatches:
             return
 
         existing = list(result_list.query(TurnResultItem))
-        new_count = len(search_results)
+        new_count = len(display_results)
         old_count = len(existing)
 
         if new_count == old_count:
-            for widget, result in zip(existing, search_results):
+            for widget, result in zip(existing, display_results):
                 widget.update_from(result)
         elif new_count < old_count:
-            for widget, result in zip(existing[:new_count], search_results):
+            for widget, result in zip(existing[:new_count], display_results):
                 widget.update_from(result)
             for widget in existing[new_count:]:
                 widget.remove()
         else:
-            for widget, result in zip(existing, search_results[:old_count]):
+            for widget, result in zip(existing, display_results[:old_count]):
                 widget.update_from(result)
-            new_items = [TurnResultItem(r) for r in search_results[old_count:]]
+            new_items = [TurnResultItem(r) for r in display_results[old_count:]]
             result_list.mount_all(new_items)
 
         self._selected_idx = max(0, min(self._selected_idx, new_count - 1))
         self.call_after_refresh(self._update_selection)
 
         # Status line
-        total = len(self._index)
+        total_indexed = len(self._index)
+        shown = len(display_results)
         try:
-            if search_results or total == 0:
-                shown = len(search_results)
-                sel = min(self._selected_idx + 1, shown) if shown else 0
+            if self._mode == "all":
                 status_text = (
-                    f"[dim]{sel}/{shown} shown · "
-                    f"{total} turn{'s' if total != 1 else ''} indexed[/dim]"
+                    f"[dim]{shown}/{total_matched} shown · cross-session[/dim]"
+                    if shown else "[dim]no matches across sessions[/dim]"
                 )
+            elif display_results or total_indexed == 0:
+                sel = min(self._selected_idx + 1, shown) if shown else 0
+                if total_matched > self._max_results:
+                    status_text = (
+                        f"[dim]{shown}/{total_matched} shown · "
+                        f"{total_indexed} turn{'s' if total_indexed != 1 else ''} indexed[/dim]"
+                    )
+                else:
+                    status_text = (
+                        f"[dim]{sel}/{shown} shown · "
+                        f"{total_indexed} turn{'s' if total_indexed != 1 else ''} indexed[/dim]"
+                    )
             else:
                 status_text = (
                     "[dim]no matches — try fewer words or a partial phrase[/dim]"
@@ -4586,32 +4702,176 @@ class HistorySearchOverlay(Widget):
         self._update_selection()
 
     def action_jump(self) -> None:
-        """Jump to the selected turn (or first shift-selected) and dismiss."""
+        """Jump to the selected turn and dismiss."""
         items = list(self.query(TurnResultItem))
         if not items:
             self.action_dismiss()
             return
-        if self._shift_selected:
-            first = min(self._shift_selected)
-            first = max(0, min(first, len(items) - 1))
-            result = items[first]._result
-            entry = items[first]._entry
-        else:
-            idx = max(0, min(self._selected_idx, len(items) - 1))
-            result = items[idx]._result
-            entry = items[idx]._entry
+        idx = max(0, min(self._selected_idx, len(items) - 1))
+        item = items[idx]
+        result = item._result
+        entry = item._entry
+        cross = getattr(item, "_cross_result", None)
         self.action_dismiss()
         if entry is None:
+            # Cross-session jump — show hint
+            if cross is not None:
+                self._handle_cross_session_jump(cross)
             return
-        self._scroll_to_match(entry, result)
+        if isinstance(result, _SearchResult):
+            self._scroll_to_match(entry, result)
+
+    def action_find_next(self) -> None:
+        """Cycle to the next result (Ctrl+G inside overlay)."""
+        count = len(list(self.query(TurnResultItem)))
+        if count == 0:
+            return
+        self._selected_idx = (self._selected_idx + 1) % count
+        self._update_selection()
+
+    def action_toggle_mode(self) -> None:
+        """Toggle between current-session and all-sessions mode."""
+        self._mode = "all" if self._mode == "current" else "current"
+        try:
+            self.query_one(_ModeBar).set_mode(self._mode)
+        except NoMatches:
+            pass
+        try:
+            query = self.query_one("#history-search-input", Input).value
+        except NoMatches:
+            query = ""
+        if self._mode == "all" and query:
+            self._search_cross_session(query)
+        else:
+            self._render_results(query)
+
+    def watch__mode(self, mode: str) -> None:
+        """Re-render when mode changes."""
+        try:
+            self.query_one(_ModeBar).set_mode(mode)
+        except NoMatches:
+            pass
+
+    def action_prev_query(self) -> None:
+        """Navigate to previous search query (Ctrl+Up)."""
+        if not self._query_history:
+            return
+        if self._query_history_idx == -1:
+            self._query_history_idx = len(self._query_history) - 1
+        elif self._query_history_idx > 0:
+            self._query_history_idx -= 1
+        try:
+            inp = self.query_one("#history-search-input", Input)
+            inp.value = self._query_history[self._query_history_idx]
+            inp.cursor_position = len(inp.value)
+        except NoMatches:
+            pass
+
+    def action_next_query(self) -> None:
+        """Navigate to next search query (Ctrl+Down)."""
+        if not self._query_history or self._query_history_idx == -1:
+            return
+        if self._query_history_idx < len(self._query_history) - 1:
+            self._query_history_idx += 1
+            try:
+                inp = self.query_one("#history-search-input", Input)
+                inp.value = self._query_history[self._query_history_idx]
+                inp.cursor_position = len(inp.value)
+            except NoMatches:
+                pass
+        else:
+            self._query_history_idx = -1
+            try:
+                inp = self.query_one("#history-search-input", Input)
+                inp.value = ""
+            except NoMatches:
+                pass
+
+    def on_key(self, event: Any) -> None:
+        """Intercept Tab to toggle mode."""
+        key = getattr(event, "key", None)
+        if key == "tab":
+            self.action_toggle_mode()
+            getattr(event, "prevent_default", lambda: None)()
+            getattr(event, "stop", lambda: None)()
+
+    def on_turn_completed(self, _: "HistorySearchOverlay.TurnCompleted") -> None:
+        """Refresh index when a new turn completes while overlay is open."""
+        if not self.has_class("--visible"):
+            return
+        self._build_index()
+        try:
+            query = self.query_one("#history-search-input", Input).value
+        except NoMatches:
+            query = ""
+        self._render_results(query)
+
+    @work(thread=True)
+    def _search_cross_session(self, query: str) -> None:
+        """Run FTS5 cross-session search in a worker thread."""
+        results: list[_CrossSessionResult] = []
+        try:
+            db = getattr(getattr(self, "app", None), "_session_db", None)
+            if db is None:
+                cli = getattr(getattr(self, "app", None), "cli", None)
+                db = getattr(cli, "_session_db", None)
+            current_session_id = getattr(getattr(getattr(self, "app", None), "cli", None), "session_id", None)
+            if db is not None and query:
+                raw = db.search_messages(
+                    query,
+                    role_filter=["user", "assistant"],
+                    limit=40,
+                )
+                for row in raw:
+                    sid = row.get("session_id", "")
+                    preview_raw = row.get("snippet") or row.get("content") or ""
+                    preview = " ".join(str(preview_raw).replace("\n", " ").split())[:80]
+                    results.append(_CrossSessionResult(
+                        session_id=sid,
+                        session_title=row.get("model") or "",  # sessions table has no title col in search_messages
+                        role=row.get("role", ""),
+                        content_preview=preview,
+                        timestamp=float(row.get("timestamp") or row.get("session_started") or 0),
+                        is_current_session=(sid == current_session_id),
+                    ))
+        except Exception:
+            pass
+        self.call_from_thread(self._apply_cross_session_results, results)
+
+    def _apply_cross_session_results(self, results: list[_CrossSessionResult]) -> None:
+        """Apply cross-session results on the event loop."""
+        self._cross_session_results = results
+        try:
+            query = self.query_one("#history-search-input", Input).value
+        except NoMatches:
+            query = ""
+        self._render_results(query)
+
+    def _handle_cross_session_jump(self, result: _CrossSessionResult) -> None:
+        """For a different-session result, show a timed status hint."""
+        if result.is_current_session:
+            return  # no-op for same session with no matched panel
+        title = result.session_title or result.session_id[-8:]
+        hint_text = f'Found in session "{title}" — /resume {result.session_id[:8]} to switch'
+        try:
+            app = self.app
+            hint_bar = app.query_one(HintBar)
+            saved = hint_bar.hint
+            hint_bar.hint = hint_text
+            app.set_timer(3.0, lambda: setattr(hint_bar, "hint", saved))
+        except Exception:
+            pass
 
     def action_jump_to(
         self,
         entry: "_TurnEntry | None",
-        result: "_SearchResult | None" = None,
+        result: "_SearchResult | _CrossSessionResult | None" = None,
     ) -> None:
         """Jump directly to a specific entry (used by TurnResultItem click)."""
         self.action_dismiss()
+        if isinstance(result, _CrossSessionResult):
+            self._handle_cross_session_jump(result)
+            return
         if entry is None:
             return
         self._scroll_to_match(entry, result)
@@ -4631,7 +4891,7 @@ class HistorySearchOverlay(Widget):
             try:
                 log = panel.query_one(CopyableRichLog)
                 lines_before = entry.search_text[:result.first_match_offset].count("\n")
-                if lines_before > 5:
+                if lines_before > 2:
                     log.scroll_to(0, lines_before - 2, animate=True)
             except NoMatches:
                 pass

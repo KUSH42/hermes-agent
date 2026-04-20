@@ -102,8 +102,10 @@ from hermes_cli.tui.overlays import (
     CommandsOverlay,
     HelpOverlay,
     ModelOverlay,
+    SessionOverlay,
     UsageOverlay,
     WorkspaceOverlay,
+    _SessionResumedBanner,
 )
 from hermes_cli.tui.workspace_tracker import (
     GitPoller,
@@ -323,13 +325,13 @@ class HermesApp(App):
 
     BINDINGS = [
         Binding("ctrl+f", "open_history_search", "History search", show=False, priority=True),
-        Binding("ctrl+g", "open_history_search", "History search", show=False, priority=True),
         Binding("f1", "show_help", "Keyboard shortcuts", show=False),
         Binding("f8", "toggle_fps_hud", "FPS HUD", show=False),
-        Binding("alt+up", "prev_turn", "Previous turn", show=False),
-        Binding("alt+down", "next_turn", "Next turn", show=False),
+        Binding("alt+up",   "jump_turn_prev", "Previous turn", show=False),
+        Binding("alt+down", "jump_turn_next", "Next turn",     show=False),
         Binding("ctrl+shift+a", "open_anim_config", "Animation config", show=False, priority=True),
         Binding("ctrl+b", "open_anim_config", show=False, priority=True),
+        Binding("ctrl+shift+h", "open_sessions", show=False),
     ]
 
     _CHEVRON_PHASE_CLASSES: frozenset[str] = frozenset({
@@ -399,6 +401,9 @@ class HermesApp(App):
 
     # Yolo mode — mirrors HERMES_YOLO_MODE env var; toggled at runtime via /yolo
     yolo_mode: reactive[bool] = reactive(False, repaint=False)
+
+    # Current session label — shown in StatusBar chip
+    session_label: reactive[str] = reactive("")
 
     # hint_text is NOT on HermesApp — HintBar.hint is the single source of truth.
 
@@ -499,6 +504,10 @@ class HermesApp(App):
         self._inline_image_bar_enabled: bool = True
         # Active media player count — enforces max_concurrent limit (event-loop only)
         self._active_media_count: int = 0
+        # Auto-title: fire once per session on first turn completion
+        self._auto_title_done: bool = False
+        # Session DB reference (wired from cli.py if available)
+        self._session_db: object = None
         # Workspace overlay state
         self._last_git_snapshot: GitSnapshot | None = None
         self._git_poll_h: object | None = None  # textual.timer.Timer
@@ -542,6 +551,7 @@ class HermesApp(App):
             yield CommandsOverlay(id="commands-overlay")
             yield ModelOverlay(id="model-overlay")
             yield WorkspaceOverlay(id="workspace-overlay")
+            yield SessionOverlay(id="session-overlay")
             with Horizontal(id="input-row"):
                 yield Static("❯ ", id="input-chevron")
                 yield _HI(id="input-area")
@@ -1607,6 +1617,16 @@ class HermesApp(App):
             self._osc_progress_update(False)
             # Desktop notification
             self._maybe_notify()
+            # Auto-title: derive session title from first user message (once per session)
+            if not self._auto_title_done:
+                self._try_auto_title()
+            # Live-refresh history search index if overlay is open
+            try:
+                hs = self.query_one(HistorySearchOverlay)
+                if hs.has_class("--visible"):
+                    hs.post_message(HistorySearchOverlay.TurnCompleted())
+            except NoMatches:
+                pass
 
         # --- undo safety guard ---
         if value and self.undo_state is not None:
@@ -1642,9 +1662,42 @@ class HermesApp(App):
         # New turn starting — create a new MessagePanel with the last user input
         if value:
             try:
-                self.query_one(OutputPanel).new_message(
-                    user_text=self._last_user_input
-                )
+                output = self.query_one(OutputPanel)
+                # Migrate any setext/table lookahead content buffered in the
+                # previous panel's engine to the new panel.
+                #
+                # Race: the agent starts streaming before watch_agent_running(True)
+                # fires on the event loop.  The first response line (e.g. "Wake up
+                # Neo") may arrive via _commit_lines() while current_message is
+                # still the old (startup/previous-turn) panel, causing it to be
+                # held in that panel's _block_buf._pending.  When new_message()
+                # creates the new panel, the old panel is never flushed again →
+                # content disappears.
+                #
+                # Fix: steal _pending from the old engine and re-process it
+                # through the new engine after new_message(), so the content
+                # lands in the correct panel rather than being flushed to the
+                # wrong one or lost.
+                prev_msg = output.current_message
+                stolen_pending: str | None = None
+                if prev_msg is not None:
+                    prev_engine = getattr(prev_msg, "_response_engine", None)
+                    if prev_engine is not None:
+                        try:
+                            p = prev_engine._block_buf._pending
+                            if p:  # non-None and non-empty string
+                                prev_engine._block_buf._pending = None
+                                stolen_pending = p
+                            elif p is not None:
+                                # empty string sentinel — just clear it
+                                prev_engine._block_buf._pending = None
+                        except Exception:
+                            pass
+                new_msg = output.new_message(user_text=self._last_user_input)
+                # Engine isn't ready yet (on_mount fires next cycle); use
+                # _carry_pending so on_mount processes it once engine exists.
+                if stolen_pending and new_msg is not None:
+                    new_msg._carry_pending = stolen_pending
             except NoMatches:
                 pass
         # Recompute hint phase when agent stops
@@ -1836,39 +1889,17 @@ class HermesApp(App):
         except NoMatches:
             pass
 
-    def action_prev_turn(self) -> None:
-        """Scroll to the previous assistant MessagePanel."""
-        try:
-            output = self.query_one(OutputPanel)
-            panels = list(self.query(MessagePanel))
-            if not panels:
-                return
-            scroll_y = output.scroll_y
-            # Walk in reverse — find first panel whose virtual top is above current scroll
-            for panel in reversed(panels):
-                panel_top = panel.virtual_region.y
-                if panel_top < scroll_y - 1:
-                    panel.scroll_visible(animate=True)
-                    return
-            panels[0].scroll_visible(animate=True)
-        except NoMatches:
-            pass
+    def action_jump_turn_prev(self) -> None:
+        """Jump to the previous TURN_START anchor. No-op while agent is running."""
+        if self.agent_running:
+            return
+        self._jump_anchor(-1, BrowseAnchorType.TURN_START)
 
-    def action_next_turn(self) -> None:
-        """Scroll to the next assistant MessagePanel."""
-        try:
-            output = self.query_one(OutputPanel)
-            panels = list(self.query(MessagePanel))
-            if not panels:
-                return
-            scroll_y = output.scroll_y
-            for panel in panels:
-                panel_top = panel.virtual_region.y
-                if panel_top > scroll_y + 1:
-                    panel.scroll_visible(animate=True)
-                    return
-        except NoMatches:
-            pass
+    def action_jump_turn_next(self) -> None:
+        """Jump to the next TURN_START anchor. No-op while agent is running."""
+        if self.agent_running:
+            return
+        self._jump_anchor(+1, BrowseAnchorType.TURN_START)
 
     def action_toggle_density(self) -> None:
         """Toggle compact / normal density mode."""
@@ -1895,6 +1926,54 @@ class HermesApp(App):
             ko = self.query_one(KeymapOverlay)
             if ko.has_class("--visible"):
                 ko.remove_class("--visible")
+        except NoMatches:
+            pass
+
+    def handle_session_resume(self, session_id: str, session_title: str, turn_count: int) -> None:
+        """Clear OutputPanel and show resumed-session banner. Event-loop only."""
+        try:
+            panel = self.query_one(OutputPanel)
+        except NoMatches:
+            return
+        panel.remove_children()
+        banner = _SessionResumedBanner(session_title or session_id[-8:], turn_count)
+        panel.mount(banner)
+        self.session_label = session_title or session_id[-8:]
+        self._auto_title_done = False
+        try:
+            from hermes_cli.tui.input_widget import HermesInput
+            self.query_one(HermesInput).focus()
+        except (NoMatches, ImportError):
+            pass
+
+    @work(thread=True)
+    def action_resume_session(self, session_id: str) -> None:
+        """Resume a session by ID (runs in worker thread)."""
+        cli = self.cli
+        try:
+            if hasattr(cli, "_handle_resume_command"):
+                cli._handle_resume_command(f"/resume {session_id}")
+                db = getattr(cli, "_session_db", None)
+                session_meta: dict = {}
+                if db is not None:
+                    try:
+                        session_meta = db.get_session(session_id) or {}
+                    except Exception:
+                        pass
+                title = session_meta.get("title") or ""
+                msgs = getattr(cli, "conversation_history", []) or []
+                turn_count = len([m for m in msgs if m.get("role") in ("user", "assistant")])
+                self.call_from_thread(
+                    self.handle_session_resume, session_id, title, turn_count
+                )
+        except Exception:
+            pass
+
+    def action_open_sessions(self) -> None:
+        """Open the session browser overlay."""
+        self._dismiss_all_info_overlays()
+        try:
+            self.query_one(SessionOverlay).open_sessions()
         except NoMatches:
             pass
 
@@ -3434,7 +3513,7 @@ class HermesApp(App):
         Called before showing a new overlay (ensures only one visible at a time)
         and from watch_agent_running(True) (stale info must not block output view).
         """
-        for cls in (HelpOverlay, UsageOverlay, CommandsOverlay, ModelOverlay, WorkspaceOverlay):
+        for cls in (HelpOverlay, UsageOverlay, CommandsOverlay, ModelOverlay, WorkspaceOverlay, SessionOverlay):
             try:
                 self.query_one(cls).remove_class("--visible")
             except NoMatches:
@@ -3466,6 +3545,10 @@ class HermesApp(App):
 
         if stripped == "/workspace":
             self.action_toggle_workspace()
+            return True
+
+        if stripped == "/sessions":
+            self.action_open_sessions()
             return True
 
         if stripped == "/tools":
@@ -3590,6 +3673,45 @@ class HermesApp(App):
                 panel.open()
         except NoMatches:
             pass
+
+    def _try_auto_title(self) -> None:
+        """Derive a session title from the first user message and save it (once per session)."""
+        db = getattr(self, "_session_db", None) or getattr(getattr(self, "cli", None), "_session_db", None)
+        session_id = getattr(getattr(self, "cli", None), "session_id", None)
+        if not db or not session_id:
+            return
+        history = getattr(getattr(self, "cli", None), "conversation_history", None) or []
+        if not history:
+            return
+        first_user = next((m for m in history if m.get("role") == "user"), None)
+        if not first_user:
+            return
+        content = (first_user.get("content") or "")
+        if isinstance(content, list):
+            # Multipart content: join text parts
+            content = " ".join(
+                part.get("text", "") for part in content if isinstance(part, dict) and part.get("type") == "text"
+            )
+        first_line = (content or "").split("\n", 1)[0]
+        # Strip markdown heading markers
+        first_line = first_line.lstrip("# ").strip()
+        if not first_line:
+            return
+        if len(first_line) > 48:
+            title = first_line[:48] + "…"
+        else:
+            title = first_line
+        # Save via worker so DB write doesn't block event loop
+        @work(thread=True)
+        def _save_title(self=self, db=db, session_id=session_id, title=title) -> None:
+            try:
+                updated = db.set_title_if_unset(session_id, title)
+                if updated:
+                    self.call_from_thread(setattr, self, "session_label", title)
+            except Exception:
+                pass
+        _save_title()
+        self._auto_title_done = True
 
     def _toggle_drawille_overlay(self) -> None:
         """Ctrl+Shift+A: dismiss overlay if visible, else show it."""

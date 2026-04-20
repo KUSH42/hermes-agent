@@ -677,3 +677,131 @@ async def test_streaming_blocks_dict_cleared_on_interrupt():
         app.close_streaming_tool_block("tool-reused", "0.1s")
         app.agent_running = False
         await pilot.pause()
+
+
+# ---------------------------------------------------------------------------
+# Regression: first-character of first agent reply must not be swallowed
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_first_response_character_not_swallowed():
+    """Regression: "W" in "Wake up Neo" was lost on the first agent reply.
+
+    Root cause: the startup banner postamble sends a trailing newline which
+    leaves _block_buf._pending="" in the startup panel's engine.  When the
+    first agent token arrives before watch_agent_running(True) fires, it is
+    routed to the old panel, buffered via setext lookahead, and then lost when
+    the new MessagePanel takes over as current_message.
+
+    Fix: watch_agent_running(True) flushes the previous panel's _block_buf
+    before calling new_message(), so any buffered content is emitted to the
+    startup panel rather than disappearing.
+    """
+    from hermes_cli.tui.response_flow import ResponseFlowEngine
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+
+        output = app.query_one(OutputPanel)
+
+        # Simulate banner postamble: explicitly create a startup MessagePanel
+        # (mimics the panel that exists when banner output is written before
+        # the first agent turn), then write an empty line to its engine to
+        # leave _block_buf._pending = "" (the banner-trailing-newline state).
+        startup_msg = output.new_message(user_text="", show_header=False)
+        await pilot.pause()
+
+        engine: ResponseFlowEngine | None = getattr(startup_msg, "_response_engine", None)
+        if engine is not None:
+            # Push an empty line — mimics the blank line after the ASCII art banner
+            engine.process_line("")
+            # _pending should now be "" (empty string), not None
+            assert engine._block_buf._pending is not None, (
+                "banner trailing newline should leave _pending non-None"
+            )
+
+        # Start agent turn — watch_agent_running(True) must flush before creating new panel
+        app.agent_running = True
+        await pilot.pause()
+
+        # After agent_running = True, a new MessagePanel should be current
+        new_msg = output.current_message
+        assert new_msg is not startup_msg, "new MessagePanel should be current after turn starts"
+
+        # The startup panel's _block_buf should be cleared (pending migrated or dropped)
+        if engine is not None:
+            assert engine._block_buf._pending is None, (
+                "startup panel _block_buf._pending must be cleared before new panel; "
+                "non-None means content could be flushed to wrong (old) panel"
+            )
+
+        app.agent_running = False
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_pending_prose_migrated_to_new_panel():
+    """Regression: content buffered in old panel's setext lookahead must land in
+    the new panel, not the old one.
+
+    Scenario: a full response line ("Wake up Neo") arrives via _commit_lines()
+    while current_message is still the startup panel (timing race).  The line
+    enters setext lookahead: _pending = "Wake up Neo".  Then watch_agent_running
+    fires and creates a new panel.  Without the migration fix, "Wake up Neo" is
+    either lost (if old panel is never flushed) or lands in the wrong (old)
+    panel's prose log (if old panel is eagerly flushed).
+
+    Fix: the pending content is stolen from the old engine and re-processed
+    through the new engine so it appears under the correct turn.
+    """
+    from hermes_cli.tui.response_flow import ResponseFlowEngine
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+
+        output = app.query_one(OutputPanel)
+
+        # Simulate the race: startup panel exists, banner blank line sets _pending="",
+        # then first response line arrives (via _commit_lines) BEFORE panel switch.
+        startup_msg = output.new_message(user_text="", show_header=False)
+        await pilot.pause()
+
+        engine: ResponseFlowEngine | None = getattr(startup_msg, "_response_engine", None)
+        if engine is None:
+            app.agent_running = False
+            await pilot.pause()
+            return  # markdown disabled — skip
+
+        # Banner blank → _pending = ""
+        engine.process_line("")
+        assert engine._block_buf._pending == ""
+
+        # First response line "Wake up Neo" arrives on old panel BEFORE panel switch.
+        # setext lookahead: returns "" (old pending), holds "Wake up Neo" in _pending.
+        engine.process_line("Wake up Neo")
+        assert engine._block_buf._pending == "Wake up Neo", (
+            "_pending should hold 'Wake up Neo' after banner-blank race"
+        )
+
+        # Now watch_agent_running(True) fires — must migrate "Wake up Neo" to new panel
+        app.agent_running = True
+        await pilot.pause()
+
+        new_msg = output.current_message
+        assert new_msg is not startup_msg
+
+        # Old panel pending cleared
+        assert engine._block_buf._pending is None, "old panel _pending must be cleared"
+
+        # New panel's engine should have received "Wake up Neo" via process_line
+        new_engine: ResponseFlowEngine | None = getattr(new_msg, "_response_engine", None)
+        assert new_engine is not None
+        # "Wake up Neo" is buffered in new panel's setext lookahead (pending for next line)
+        assert new_engine._block_buf._pending == "Wake up Neo", (
+            "migrated content must be in new panel's setext lookahead"
+        )
+
+        app.agent_running = False
+        await pilot.pause()

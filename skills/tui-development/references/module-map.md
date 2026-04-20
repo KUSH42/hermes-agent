@@ -56,7 +56,8 @@ High-signal flow:
 - **`hermes_cli/tui/app.py`**
   `HermesApp` composition, reactives, queue consumer, watchers, overlay orchestration,
   theme application, startup TTE hooks, browse mode (`BrowseAnchorType`, `_rebuild_browse_anchors`,
-  `_jump_anchor`, `[`/`]`/`{`/`}`/`Alt+↑↓` keys), hint-phase control, workspace tracker wiring.
+  `_jump_anchor`, `[`/`]`/`{`/`}`/`Alt+↑↓` keys), hint-phase control, workspace tracker wiring,
+  workspace polling ownership (`_sync_workspace_polling_state()`), and low-noise perf alarms.
   Key APIs: `open_streaming_tool_block(tool_call_id, label, tool_name)`,
   `append_streaming_line(id, line)`,
   `close_streaming_tool_block(id, duration, is_error, summary)`,
@@ -210,7 +211,14 @@ High-signal flow:
 - **`hermes_cli/tui/skin_loader.py`** — semantic color fan-out from skin files into CSS vars.
 - **`hermes_cli/tui/animation.py`** — `PulseMixin`, `lerp_color`, `shimmer_text`, `AnimationClock`.
 - **`hermes_cli/tui/perf.py`** — `PerfRegistry` singleton, `measure_v3()`, `TOOL_PANEL_V3_COUNTERS`,
-  `WorkerWatcher`, `EventLoopProbe`.
+  `measure()`, `measure_perf()`, `SuspicionDetector`, `WorkerWatcher`,
+  `EventLoopLatencyProbe`, `FrameRateProbe`.
+
+- **`hermes_cli/tui/workspace_tracker.py`**
+  `WorkspaceTracker` — visible overlay rows come from current Git snapshot, Hermes writes are annotation only.
+  `GitSnapshotEntry` preserves `git_xy`, staged/worktree split, untracked/conflict/rename metadata.
+  `GitPoller.poll()` runs blocking Git subprocesses and returns a parsed `GitSnapshot`.
+  `WorkspaceUpdated(snapshot, poll_elapsed_ms)` — app-thread handoff message from worker to app.
 - **`hermes_cli/tui/drawille_overlay.py`** (~2300 lines)
   `DrawilleOverlay` (braille-canvas loading animation, 20 engines), `AnimConfigPanel` (`/anim` config UI),
   `DrawilleOverlayCfg`, `AnimParams`, `TrailCanvas`, `CompositeEngine`, `CrossfadeEngine`.

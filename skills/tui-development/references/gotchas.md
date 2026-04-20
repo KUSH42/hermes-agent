@@ -68,6 +68,15 @@ processing: call `rp = msg.reasoning` (triggers lazy mount), then
   teardown pain. Prefer instance state plus async/event-loop dispatch.
 - `post_message(...)` is usually safer than `call_from_thread(...)` for worker
   results that belong to the same widget.
+- **Workspace polling must not have two timer owners.** Use one app-level
+  helper (`_sync_workspace_polling_state()`) and let it decide based on overlay
+  visibility / `agent_running`. Scattered `set_interval` start-stop logic drifts.
+- **Workspace overlay rows come from Git snapshot, not Hermes writes.**
+  `record_write()` only annotates rows; inclusion comes from the latest
+  `GitSnapshot`. If you expect a file to show up without Git reporting it,
+  you are debugging the wrong layer.
+- **Single-sample perf warnings are usually noise.** Use `SuspicionDetector`
+  for "hunch" logging so one scheduler blip does not spam the Textual log.
 - **`ResponseFlowEngine` is NOT a Widget.** `@work` is unavailable on it. For
   async off-loop work (e.g., `_flush_math_block`), use
   `self._panel.app.run_worker(fn, thread=True)` + `call_from_thread`.
@@ -147,6 +156,11 @@ fall through to the `set_interval` branch automatically.
 - Debounced overlay callbacks must be cancelled in dismiss/teardown paths.
 - Hidden `display: none` parents can suppress worker delivery in tests. Check
   visibility lifecycle before debugging a "worker never returned" failure.
+- **Workspace overlay has a real non-Git state now.** Outside a Git repo it
+  should stay mountable but render the empty-state copy, with no polling.
+- **Opening / dismissing workspace overlay affects polling state.** If a test
+  flips `--visible` directly, it may also need to call the app sync helper or
+  go through the action path.
 
 ## Theme and CSS
 

@@ -44,6 +44,12 @@ Then load only the focused reference you need:
   Textual event loop.
 - Only mutate DOM/reactives on the app thread. From worker or agent threads,
   use `app.call_from_thread(...)`, queue handoff, or `post_message(...)`.
+- Workspace overlay is Git-scoped, not Hermes-session-scoped. Inside a repo,
+  build the full snapshot off-thread, then swap tracker state on the app
+  thread in one shot.
+- Workspace polling is owned by one helper in `HermesApp`: desired when either
+  the overlay is visible or `agent_running` is true, with one in-flight poll
+  and coalesced retrigger.
 - Keep exactly one vertical scroll owner in the output path. Inner
   `RichLog`/`ScrollView` widgets must not keep independent scrolling.
 - In the output stack, dynamic content mounts before
@@ -51,6 +57,8 @@ Then load only the focused reference you need:
   remain last.
 - `watch_agent_running(False)` owns end-of-turn cleanup. Do not build new logic
   around dead sentinel or fallback cleanup paths.
+- Perf alarms should use the existing `hermes_cli.tui.perf` primitives. Prefer
+  low-noise suspicion/escalation over logging on every single slight breach.
 - When skill text and live code disagree, trust live code and update the skill.
 
 ## Fast workflow
@@ -84,6 +92,9 @@ Then load only the focused reference you need:
   `gotchas.md` theme entries.
 - Perf hitch or repaint bug:
   `patterns.md` perf triage section, then `gotchas.md` timer/threading entries.
+- Workspace overlay / repo-status bug:
+  `module-map.md` app + tracker ownership, then `patterns.md` worker/polling
+  rules, then `gotchas.md` overlay/threading entries.
 
 ## Files that usually move together
 
@@ -105,6 +116,8 @@ Then load only the focused reference you need:
 - `hermes_cli/tui/response_flow.py` with `tests/tui/test_response_flow.py`, `tests/tui/test_math_renderer.py`
 - `hermes_cli/tui/drawille_overlay.py` with `tests/tui/test_drawille_overlay.py`,
   `tests/tui/test_drawille_toggle.py`, `tests/tui/test_drawille_v2.py`
+- `hermes_cli/tui/workspace_tracker.py` with `tests/tui/test_workspace_tracker.py`
+  and `tests/tui/test_workspace_overlay.py`
 - `cli.py` TUI bridge code with `tests/cli/test_reasoning_tui_bridge.py` or
   other bridge tests
 
@@ -113,6 +126,23 @@ Then load only the focused reference you need:
 Last revalidated: **2026-04-20. ~2362 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
 
 Recent changes (details → reference files):
+- **Workspace overlay = full Git working tree + low-noise perf alarms** (2026-04-20):
+  Workspace view now matches Git working-tree state instead of only Hermes-touched files.
+  `workspace_tracker.py` was rebuilt around parsed `GitSnapshotEntry` rows plus Hermes-only
+  annotations (`session_added/session_removed`, touched badge, complexity warning). `GitPoller`
+  parses `git status --porcelain=v1 -z --untracked-files=all`, preserving XY status, untracked,
+  conflict, and rename metadata. `WorkspaceOverlay` renders branch + dirty count from snapshot,
+  row tags (`staged`, `untracked`, `Hermes`, `conflict`), rename microcopy, and a non-Git
+  empty-state message. Polling is now controlled by `HermesApp._sync_workspace_polling_state()`:
+  active when overlay visible OR `agent_running`, one timer only, one in-flight worker only,
+  coalesced retrigger when a poll request lands mid-flight.
+  Perf instrumentation gained `SuspicionDetector` in `perf.py` — logs `[PERF-ALARM]` only on
+  repeated over-budget samples or severe spikes. Wired into `EventLoopLatencyProbe`, spinner and
+  duration ticks, and workspace git-poll/apply paths.
+  → `hermes_cli/tui/workspace_tracker.py`, `hermes_cli/tui/overlays.py`,
+    `hermes_cli/tui/app.py`, `hermes_cli/tui/perf.py`,
+    `tests/tui/test_workspace_tracker.py`, `tests/tui/test_workspace_overlay.py`,
+    `tests/tui/test_perf_instrumentation.py`
 - **Crush easy-wins features A/B/C/D** (2026-04-20): 50 tests in `tests/tui/test_crush_easy_wins.py`.
   **A — context_pct meter**: `HermesApp.context_pct: reactive[float]` + `context_pct` added to
   `StatusBar.on_mount` watch list. `StatusBar.render()` appends ` ▕ XX%` segment (dim, color by threshold:

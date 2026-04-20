@@ -98,6 +98,17 @@ async def _load_preview(self, path: str) -> None:
   Use `self._panel.app.run_worker(fn, thread=True)` + `call_from_thread` for
   async off-loop work (e.g., `_flush_math_block`).
 
+## Polling and snapshot patterns
+
+- For repo-status / workspace polling, build the full snapshot off-thread, then
+  hand one immutable-ish result object back to the app thread and swap state once.
+- Prefer one polling owner helper on `HermesApp` (for example
+  `_sync_workspace_polling_state()`) over scattered timer start/stop logic.
+- Keep at most one in-flight poll per feature. If a new trigger arrives during
+  an active poll, set a retrigger bit and run exactly one follow-up poll.
+- Inside a Git repo, ask Git for working-tree state. Do not reimplement
+  repo-wide file watching or `.gitignore` semantics with manual filesystem walks.
+
 ## Layout rules
 
 - Use fractional widths (`1fr`) for columns that should share available space.
@@ -159,6 +170,15 @@ Devtools checks to run after hot-path changes:
   more than once per event.
 - `show_layout=True` in `run_test()` — confirms no unexpected reflow on
   scroll or streaming.
+
+For runtime logging that should "start screaming" on performance regressions:
+
+- Prefer `SuspicionDetector` over ad hoc per-sample warnings.
+- Tune for repeated breaches or one severe spike, not a single tiny hiccup.
+- Put the detector at the ownership boundary for the work: event-loop jitter,
+  timer callbacks, snapshot polling, snapshot apply/render.
+- Include high-signal detail in the log (`entries=N`, `workers=N`,
+  `overlay_visible=True`) so a single warning line is actionable.
 
 Stress-test scenarios:
 

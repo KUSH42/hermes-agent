@@ -386,3 +386,40 @@ def test_slash_typing_single_slash_no_flicker():
         f"got {len(slash_calls)} calls with fragments: {slash_calls}. "
         "The equality guard in _update_autocomplete is not preventing re-entry."
     )
+
+
+def test_typing_slash_does_not_trigger_file_drop_detection():
+    """Bare '/' must NOT trigger the fallback DnD file-drop detection.
+
+    Root cause: ``on_text_area_changed`` called ``detect_file_drop_text("/")``
+    which returned a match for the root directory (Path("/").exists() is True).
+    This cleared the input and re-inserted "/" via FilesDropped → infinite loop.
+
+    Fix: added ``len(stripped) > 1`` guard before calling detect_file_drop_text.
+    """
+    from unittest.mock import MagicMock, patch, PropertyMock
+    from hermes_cli.tui.input_widget import HermesInput
+
+    inp = object.__new__(HermesInput)
+    inp._handling_file_drop = False
+    inp._sanitizing = False
+
+    posted: list = []
+
+    def fake_post_message(msg):
+        posted.append(msg)
+
+    def fake_load_text(text):
+        inp._loaded = text
+
+    with patch.object(inp, "post_message", side_effect=fake_post_message), \
+         patch.object(inp, "load_text", side_effect=fake_load_text), \
+         patch.object(inp, "_update_autocomplete"), \
+         patch.object(type(inp), "text", new_callable=PropertyMock, return_value="/"):
+        event = MagicMock()
+        inp.on_text_area_changed(event)
+
+    assert not posted, (
+        "Typing '/' must not post FilesDropped — bare slash is a slash command "
+        f"prefix, not a file drop.  Got messages: {posted}"
+    )

@@ -580,7 +580,7 @@ class HermesInput(TextArea, can_focus=True):
                 stripped = raw_text
                 if stripped and stripped[0] in ('"', "'") and len(stripped) >= 3:
                     stripped = stripped[1:-1]  # strip surrounding quotes
-                if stripped.startswith(("/", "~", "file://")):
+                if len(stripped) > 1 and stripped.startswith(("/", "~", "file://")):
                     match = detect_file_drop_text(raw_text)
                     if match is not None:
                         self._handling_file_drop = True

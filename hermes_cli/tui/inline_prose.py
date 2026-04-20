@@ -231,8 +231,12 @@ class InlineImageCache:
                 renderer = _get_renderer()
                 image_id = renderer._alloc_id()
                 seq = transmit_only_sequence(image_id, img_resized, span.cell_width, span.cell_height)
-                sys.stdout.write(seq)
-                sys.stdout.flush()
+                # sys.__stdout__ bypasses Textual's redirect_stdout(_PrintCapture) wrapper,
+                # which would otherwise swallow the TGP sequence into app._print() instead
+                # of writing it to the Kitty terminal.
+                out = sys.__stdout__ if sys.__stdout__ is not None else sys.stdout
+                out.write(seq)
+                out.flush()
                 raw = build_tgp_placeholder_strips(image_id, span.cell_width, span.cell_height)
                 result = [s.adjust_cell_length(span.cell_width) for s in raw[:span.cell_height]]
                 while len(result) < span.cell_height:

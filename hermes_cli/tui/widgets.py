@@ -5396,8 +5396,9 @@ class InlineImage(Widget):
 
     def _emit_raw(self, seq: str) -> None:
         try:
-            sys.stdout.write(seq)
-            sys.stdout.flush()
+            out = sys.__stdout__ if sys.__stdout__ is not None else sys.stdout
+            out.write(seq)
+            out.flush()
         except Exception:
             pass
 

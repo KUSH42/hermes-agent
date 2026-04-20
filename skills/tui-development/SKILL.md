@@ -131,9 +131,19 @@ Then load only the focused reference you need:
 
 ## Validation
 
-Last revalidated: **2026-04-21. ~2807 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
+Last revalidated: **2026-04-21. ~2810 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
 
 Recent changes (details → reference files):
+- **AnimGalleryOverlay z-order fix** (2026-04-21): `AnimGalleryOverlay` lacked `layer: overlay` and `position: absolute`
+  in both `DEFAULT_CSS` and `hermes.tcss`. When the animation gallery was opened (`/anim gallery` or keybinding),
+  the widget rendered in normal base-layer layout flow as a direct Screen child after `StatusBar` — appearing below
+  the input bar and disrupting the vertical layout. Fix: added `AnimGalleryOverlay { layer: overlay; position: absolute; }`
+  to `hermes.tcss`, matching the pattern already used for `DrawilleOverlay` and `AnimConfigPanel`.
+  Key invariant: ALL overlay-type widgets that float above the UI (not in flow) need BOTH rules in `hermes.tcss`
+  (NOT `DEFAULT_CSS` — see gotcha: `layer: overlay` in `DEFAULT_CSS` corrupts CSS compilation).
+  3 new tests in `tests/tui/test_drawille_overlay.py §test_anim_gallery_overlay_not_in_default_css/
+  test_hermes_tcss_has_layer_overlay_for_anim_gallery`.
+  → `hermes_cli/tui/hermes.tcss §AnimGalleryOverlay`, `tests/tui/test_drawille_overlay.py`
 - **Parallel worktree sessions** (2026-04-21): Full feature behind `sessions.enabled` config (default `false`). 7 new files/modules:
   `session_manager.py` (stdlib-only data layer: `SessionRecord`, `SessionIndex` with `fcntl.flock` exclusive writes,
   `SessionManager` lifecycle, `_NotifyListener` daemon UNIX socket thread, `send_notification()` helper).
@@ -225,6 +235,8 @@ Recent changes (details → reference files):
   **Phase E:** `AnimConfigPanel` gains engine desc line (E1), `[CAT]` prefix in animation label (E2), `_GalleryPreview` in panel header (E3). `_do_save()` calls `app._persist_anim_config()` primary + direct YAML fallback. `HermesApp._persist_anim_config()` writes `config["display"]["drawille_overlay"]` to YAML. Test isolation fix: `type(panel).app` class mutations in tests now save/restore the property in `finally` to prevent cross-test contamination.
   Key gotchas: `_ENGINE_META` uses actual short `_ENGINES` keys (`"dna"` not `"dna_helix"`); `_resolve_color` stays module-level (NOT instance method); `type(X).app = property(...)` in tests MUST be restored in `finally` — leaks permanently into subsequent tests in same process.
   → `hermes_cli/tui/drawille_overlay.py §_BaseEngine/_ENGINE_META/_GalleryPreview/AnimGalleryOverlay/DrawilleOverlay.signal/fade-out/contextual_text/carousel`, `hermes_cli/tui/app.py §signal-calls/_anim_force/_active_tool_name/_anim_hint/_persist_anim_config/on_key-escape`, `hermes_cli/config.py §display.drawille_overlay defaults`, `tests/tui/test_anim_overlay.py` (new, 57 tests)
+- **TGP stdout redirect fix — custom emojis blank in Kitty** (2026-04-21): Root cause: Textual's `App._process_messages()` wraps the event loop with `redirect_stdout(_PrintCapture)`, replacing `sys.stdout` with an object that routes `write()` to `app._print()`. `InlineImageCache._render()` called `sys.stdout.write(seq)` to upload TGP image data → sequence went to internal capture buffer, never Kitty. Kitty rendered placeholder chars as blank (unknown image ID). Fix: use `out = sys.__stdout__ if sys.__stdout__ is not None else sys.stdout` — `sys.__stdout__` bypasses the redirect. 2 sites: `inline_prose.py §InlineImageCache._render()` + `widgets.py §InlineImage._emit_raw()`. 2 new tests in Group 12 (`test_inline_prose.py`). See `gotchas.md §TGP / Kitty Graphics stdout redirect`.
+  → `hermes_cli/tui/inline_prose.py §_render`, `hermes_cli/tui/widgets.py §InlineImage._emit_raw`, `tests/tui/test_inline_prose.py §Group 12`
 - **Emoji render-safety fix** (2026-04-20): `InlineImageCache._render()` was being called from `InlineProseLog.render_line()` on cache miss, causing: (1) TGP path writing raw kitty escape sequences to `sys.stdout` INSIDE Textual's render phase → screen corruption; (2) PIL resize blocking event loop. Fix: `render_line` now calls `get_strips_or_alt()` (never calls `_render`; returns alt_text on miss). `write_inline()` triggers `_prerender_line_images()` which emits TGP on event loop synchronously and offloads halfblock PIL to `@work(thread=True) _prerender_halfblock()`. Also: `_current_render_mode()` now caches `_RenderMode` (prevents ioctl per render_line); `on_resize()` invalidates cache + calls `_reset_cell_px_cache()`. 6 new tests in `tests/tui/test_inline_prose.py`.
   Key gotcha: `_prerender_halfblock` needs app context; guard with `try/except` (unit tests have no app → skip worker silently). See `gotchas.md §InlineProseLog / emoji render-safety`.
   → `hermes_cli/tui/inline_prose.py §get_strips_or_alt`, `hermes_cli/tui/widgets.py §InlineProseLog._prerender_line_images/_prerender_halfblock/_current_render_mode/on_resize/write_inline/_render_inline_line`, `hermes_cli/tui/kitty_graphics.py §_reset_cell_px_cache`, `tests/tui/test_inline_prose.py §Group 11`

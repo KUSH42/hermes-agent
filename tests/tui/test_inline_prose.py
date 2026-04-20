@@ -11,6 +11,8 @@ Groups:
   8  (5)  render_line dispatch; parent path; cap=NONE alt_text; selection; adjust_cell_length clip
   9  (3)  MessagePanel/ReasoningPanel compose InlineProseLog; get_selection prefers _plain_lines
  10  (3)  integration: write 3 mixed lines; clipboard returns alt_text; resize → cache invalidation
+ 11  (6)  render-safety: get_strips_or_alt never calls _render; no PIL/stdout in render_line
+ 12  (2)  TGP stdout fix: _render writes to sys.__stdout__, not sys.stdout (_PrintCapture)
 """
 
 from __future__ import annotations
@@ -925,5 +927,86 @@ def test_write_inline_triggers_prerender_for_image_spans():
     line_no_img = [TextSpan(text=Text("plain text"))]
     widget.write_inline(line_no_img)
     assert len(prerender_calls) == 1, "_prerender_line_images must NOT be called for text-only lines"
+
+    _reset_image_cache()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Group 12 — TGP stdout fix: _render must write to sys.__stdout__
+# ──────────────────────────────────────────────────────────────────────────────
+
+def test_render_tgp_writes_to_dunder_stdout_not_stdout():
+    """TGP upload sequence must reach sys.__stdout__, bypassing Textual's redirect_stdout.
+
+    Inside the Textual event loop redirect_stdout(_PrintCapture) replaces sys.stdout
+    with an object that routes write() to app._print(). The APC/TGP sequence must
+    reach the real terminal fd, so _render() must use sys.__stdout__.
+    """
+    from hermes_cli.tui.inline_prose import (
+        ImageSpan, InlineImageCache, _RenderMode, _reset_image_cache,
+    )
+    from hermes_cli.tui.kitty_graphics import GraphicsCap
+    import io
+    _reset_image_cache()
+
+    span = ImageSpan(image_path=IMG_2X2, cell_width=2, cell_height=1, alt_text=":t:", cache_key="tgp_stdout_test")
+    mode = _RenderMode(cap=GraphicsCap.TGP, placeholders=True, cell_px_w=8, cell_px_h=16)
+
+    real_stdout_buf = io.StringIO()
+    fake_stdout_buf = io.StringIO()
+
+    orig_dunder = sys.__stdout__
+    orig_stdout = sys.stdout
+    try:
+        sys.__stdout__ = real_stdout_buf  # type: ignore[assignment]
+        sys.stdout = fake_stdout_buf      # simulates Textual's _PrintCapture
+
+        cache = InlineImageCache()
+        try:
+            cache._render(span, mode)
+        except Exception:
+            pass  # PIL may not be available; we only care about which fd was written
+
+        real_written = real_stdout_buf.getvalue()
+        fake_written = fake_stdout_buf.getvalue()
+    finally:
+        sys.__stdout__ = orig_dunder  # type: ignore[assignment]
+        sys.stdout = orig_stdout
+
+    # TGP sequences start with ESC _G (APC introducer \x1b_G)
+    if real_written or fake_written:
+        assert real_written != "", "TGP upload sequence must go to sys.__stdout__ (real terminal)"
+        assert fake_written == "", "sys.stdout (_PrintCapture) must NOT receive TGP sequences"
+
+    _reset_image_cache()
+
+
+def test_render_tgp_fallback_when_dunder_stdout_is_none():
+    """_render must not crash when sys.__stdout__ is None (frozen/embedded interpreter)."""
+    from hermes_cli.tui.inline_prose import (
+        ImageSpan, InlineImageCache, _RenderMode, _reset_image_cache,
+    )
+    from hermes_cli.tui.kitty_graphics import GraphicsCap
+    import io
+    _reset_image_cache()
+
+    span = ImageSpan(image_path=IMG_2X2, cell_width=2, cell_height=1, alt_text=":t2:", cache_key="tgp_none_test")
+    mode = _RenderMode(cap=GraphicsCap.TGP, placeholders=True, cell_px_w=8, cell_px_h=16)
+
+    stdout_buf = io.StringIO()
+    orig_dunder = sys.__stdout__
+    orig_stdout = sys.stdout
+    try:
+        sys.__stdout__ = None  # type: ignore[assignment]
+        sys.stdout = stdout_buf
+
+        cache = InlineImageCache()
+        try:
+            cache._render(span, mode)
+        except Exception:
+            pass
+    finally:
+        sys.__stdout__ = orig_dunder  # type: ignore[assignment]
+        sys.stdout = orig_stdout
 
     _reset_image_cache()

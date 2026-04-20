@@ -496,3 +496,102 @@ async def test_single_block_per_idx():
         assert gen_blocks[0] is block1
         # Re-querying returns same block
         assert gen_blocks.get(0) is block1
+
+
+# ---------------------------------------------------------------------------
+# Test 28a: large catch-up delta (replay scenario)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delta_before_gen_start_replayed():
+    """A single large 'replay' delta (all args at once) is correctly extracted.
+
+    Simulates the OpenAI path where arg chunks arrive before the tool name is
+    known.  After gen_start fires the bridge replays accumulated args as one
+    catch-up delta.  feed_delta must handle this without losing any chars.
+    """
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        panel = app.query_one(OutputPanel)
+        panel.new_message()
+        block = await _mount_execute_block(pilot, app)
+
+        # Entire args payload arrives as one replay delta
+        full_args = '{"code":"import yaml\\nhome = Path.home()\\nprint(home)\\n"}'
+        block.feed_delta(full_args)
+        await _pause(pilot, n=8)
+
+        # Header label should be first line
+        assert "import yaml" in block._header._label
+        # Multiple code lines decoded
+        assert len(block._code_lines) >= 2
+
+
+# ---------------------------------------------------------------------------
+# Test 28b: extractor done before tool_start, pacer still draining
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_extractor_done_before_tool_start():
+    """If code fits in one chunk, extractor hits done before finalize_code.
+
+    When finalize_code() then arrives, the pacer is flushed and the canonical
+    Syntax replaces any partial per-line output — extractor.done state must not
+    prevent finalize_code from doing its job.
+    """
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        panel = app.query_one(OutputPanel)
+        panel.new_message()
+        block = await _mount_execute_block(pilot, app)
+
+        # Short code — extractor hits done in one chunk
+        block.feed_delta('{"code":"x = 1\\n"}')
+        await _pause(pilot, n=4)
+        assert block._extractor._state == "done"
+
+        # finalize_code with canonical code supersedes per-line streamed output
+        canonical = "x = 1\ny = 2"
+        block.finalize_code(canonical)
+        await _pause(pilot)
+
+        assert block._code_state == "finalized"
+        assert block._code_lines == canonical.splitlines()
+
+        # CodeSection should have canonical content (>1 line → Syntax written)
+        from hermes_cli.tui.execute_code_block import CodeSection
+        from hermes_cli.tui.widgets import CopyableRichLog
+        code_log = block.query_one(CodeSection).query_one(CopyableRichLog)
+        assert len(code_log.lines) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Test 31: narrow terminal header render
+# ---------------------------------------------------------------------------
+
+
+def test_right_align_narrow_terminal():
+    """At width=40 the header renders without crash; tail never overlaps label."""
+    from hermes_cli.tui.tool_blocks import ToolHeader
+    from unittest.mock import patch, PropertyMock
+    from textual.geometry import Size
+
+    header = ToolHeader(label="import yaml and do stuff with paths", line_count=2)
+    header._duration = "1.5s"
+    header._has_affordances = True
+    header._spinner_char = None
+
+    with patch.object(type(header), "size", new_callable=PropertyMock, return_value=Size(40, 1)):
+        from rich.text import Text
+        result = header.render()
+        # Must not raise; must return Text
+        assert isinstance(result, Text)
+        rendered = result.plain
+        # Duration must appear (right side)
+        assert "1.5s" in rendered
+        # Rendered width must not exceed terminal width significantly
+        assert len(rendered) <= 44  # small slack for multi-byte

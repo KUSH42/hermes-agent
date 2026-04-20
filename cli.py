@@ -6960,22 +6960,25 @@ class HermesCLI:
             return  # PT mode: no visual widget
 
         if tool_name == "execute_code":
-            # Create an ExecuteCodeBlock and track it in _gen_blocks_by_idx
-            result = [None]
+            # Event-loop callback sets _gen_blocks_by_idx directly — avoids
+            # the call_from_thread async race where result[0] would still be
+            # None when checked immediately on the agent thread.
+            gen_blocks = self._gen_blocks_by_idx
+            _idx_cap = idx
             def _open_execute():
-                result[0] = tui._open_execute_code_block(idx)
+                b = tui._open_execute_code_block(_idx_cap)
+                if b is not None:
+                    gen_blocks[_idx_cap] = b
             tui.call_from_thread(_open_execute)
-            if result[0] is not None:
-                self._gen_blocks_by_idx[idx] = result[0]
         elif tool_name in ("write_file", "create_file"):
-            # Create a WriteFileBlock — path unknown until tool_start
-            result = [None]
+            # Same pattern: event-loop sets the dict entry directly.
+            gen_blocks = self._gen_blocks_by_idx
             _idx_cap = idx
             def _open_write():
-                result[0] = tui._open_write_file_block(_idx_cap, "")
+                b = tui._open_write_file_block(_idx_cap, "")
+                if b is not None:
+                    gen_blocks[_idx_cap] = b
             tui.call_from_thread(_open_write)
-            if result[0] is not None:
-                self._gen_blocks_by_idx[idx] = result[0]
         elif tool_name in self._SKILL_NAME_TOOLS:
             # Skill tools: defer block creation to tool_start so we have the skill name.
             # Gen block would open with display name "skill" (orphan risk) — skip it.
@@ -7100,30 +7103,34 @@ class HermesCLI:
                     code = ""
                 tui.call_from_thread(block.finalize_code, code)
             else:
-                # Fallback: gen_start didn't fire — create ExecuteCodeBlock directly
+                # Fallback: gen_start didn't register a block — create ECB inline.
+                # Wrap in ToolPanel (same as _open_execute_code_block) so J/K
+                # navigation and browse anchors work. finalize_code is scheduled
+                # inside the closure to avoid the ecb_ref async race.
                 from hermes_cli.tui.execute_code_block import ExecuteCodeBlock as _ECB
                 label = self._build_tool_label(function_name, function_args)
                 code = function_args.get("code", "") if isinstance(function_args, dict) else ""
                 if not isinstance(code, str):
                     code = ""
-                ecb_ref = [None]
                 def _create_ecb_fallback(_label=label, _code=code):
                     try:
                         from hermes_cli.tui.widgets import OutputPanel
+                        from hermes_cli.tui.tool_panel import ToolPanel as _TP
                         output = tui.query_one(OutputPanel)
                         msg = output.current_message or output.new_message()
                         b = _ECB(initial_label=_label)
-                        msg._mount_nonprose_block(b)
+                        panel = _TP(b, tool_name="execute_code")
+                        msg._mount_nonprose_block(panel)
                         tui._active_streaming_blocks[tool_call_id] = b
-                        ecb_ref[0] = b
                         tui._browse_total += 1
                         if not output._user_scrolled_up:
                             tui.call_after_refresh(output.scroll_end, animate=False)
+                        # Defer finalize_code until after mount completes.
+                        _b, _c = b, _code
+                        tui.call_after_refresh(lambda: _b.finalize_code(_c))
                     except Exception as _e:
                         logger.warning("execute_code fallback ECB creation failed: %s", _e)
                 tui.call_from_thread(_create_ecb_fallback)
-                if ecb_ref[0] is not None:
-                    tui.call_from_thread(ecb_ref[0].finalize_code, code)
 
             # Track tool + register streaming callback (shared code below)
         elif function_name in ("write_file", "create_file"):
@@ -10819,6 +10826,15 @@ def main(
             )
         _math_hint = "\n\n[System note: " + " ".join(_hints) + "]"
         cli.system_prompt = (cli.system_prompt or "") + _math_hint
+
+    # Footnote rendering hint — Phase A always active; no config gate
+    _footnote_hint = (
+        "\n\n[System note: This terminal renders Pandoc-style footnotes natively. "
+        "Use [^1] inline and [^1]: definition at the end of a section for "
+        "references, citations, or asides — they appear as superscripts with a "
+        "collapsible footnote section below the response.]"
+    )
+    cli.system_prompt = (cli.system_prompt or "") + _footnote_hint
 
     # Inline media system prompt hint
     try:

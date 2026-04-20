@@ -394,7 +394,16 @@ class ShimmerEffect(StreamEffectRenderer):
 
     def render_tui(self, buf: str, accent_hex: str, text_hex: str) -> "Text":
         from rich.text import Text
-        return Text.from_ansi(buf)
+        t = Text()
+        window = max(self._window, 1)
+        for i, ch in enumerate(buf):
+            dist = abs(i - self._pos)
+            frac = max(0.0, 1.0 - dist / window)
+            if frac > 0.001:
+                t.append(ch, style=f"bold {_lerp_color(text_hex, accent_hex, frac)}")
+            else:
+                t.append(ch, style=text_hex)
+        return t
 
 
 # ---------------------------------------------------------------------------
@@ -431,8 +440,12 @@ class BreatheEffect(StreamEffectRenderer):
         pass
 
     def render_tui(self, buf: str, accent_hex: str, text_hex: str) -> "Text":
+        import time
         from rich.text import Text
-        return Text.from_ansi(buf)
+        elapsed = time.monotonic() - self._t0
+        frac = (math.sin(2 * math.pi * elapsed / self._period) + 1) / 2
+        frac = 0.15 + frac * 0.85
+        return Text(buf, style=_lerp_color(text_hex, accent_hex, frac))
 
 
 # ---------------------------------------------------------------------------

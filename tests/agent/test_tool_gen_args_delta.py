@@ -51,3 +51,50 @@ def test_idx_stable_for_parallel_tools():
     coder._fire_tool_gen_args_delta(1, "execute_code", "b", "b")
     assert received[0][0] == 0
     assert received[1][0] == 1
+
+
+def test_anthropic_fires_per_input_json_delta():
+    """Anthropic-style partial_json delta → callback receives (idx, name, delta, accumulated)."""
+    received = []
+    coder = _make_coder()
+    coder.tool_gen_args_delta_callback = lambda *args: received.append(args)
+
+    # Anthropic sends incremental partial_json; accumulated grows per chunk
+    partial1 = '{"code":"import'
+    partial2 = ' yaml\\n"}'
+    accumulated1 = partial1
+    accumulated2 = partial1 + partial2
+
+    coder._fire_tool_gen_args_delta(0, "execute_code", partial1, accumulated1)
+    coder._fire_tool_gen_args_delta(0, "execute_code", partial2, accumulated2)
+
+    assert len(received) == 2
+    assert received[0] == (0, "execute_code", partial1, accumulated1)
+    assert received[1] == (0, "execute_code", partial2, accumulated2)
+    # delta ≠ accumulated for second chunk (Anthropic pattern)
+    assert received[1][2] != received[1][3]
+
+
+def test_args_before_name_replayed():
+    """Catch-up replay: accumulated args sent as single delta right after gen_start.
+
+    OpenAI scenario: arg chunks arrive before name completes.  After gen_start
+    fires, the bridge replays all accumulated args as one catch-up delta with
+    delta == accumulated.
+    """
+    received_gen = []
+    received_delta = []
+    coder = _make_coder()
+    coder.tool_gen_callback = lambda *args: received_gen.append(args)
+    coder.tool_gen_args_delta_callback = lambda *args: received_delta.append(args)
+
+    # Simulate: name completes, gen_start fires, then immediate replay
+    coder._fire_tool_gen_started(0, "execute_code")
+    # Replay: delta == accumulated (full args so far)
+    catch_up = '{"code":"import yaml\\n"}'
+    coder._fire_tool_gen_args_delta(0, "execute_code", catch_up, catch_up)
+
+    assert received_gen == [(0, "execute_code")]
+    assert len(received_delta) == 1
+    # delta == accumulated in replay
+    assert received_delta[0][2] == received_delta[0][3] == catch_up

@@ -51,6 +51,23 @@ def _split_flex(flex: int) -> tuple[int, int]:
     return label_w, gantt_w
 
 
+def _gantt_scale_text(turn_total_s: float, gantt_w: int, label_w: int) -> "Text":
+    """Build a 3-marker axis label row aligned with the Gantt column."""
+    from rich.text import Text
+    half_s = turn_total_s / 2
+    result = Text(" " * label_w)
+    result.append("0s", style="dim")
+    half_label = f"{half_s:.1f}s"
+    total_label = f"{turn_total_s:.1f}s"
+    mid_pad = max(0, (gantt_w // 2) - 2)
+    result.append(" " * mid_pad)
+    result.append(half_label, style="dim")
+    right_pad = max(0, gantt_w - (gantt_w // 2) - len(half_label) - len(total_label))
+    result.append(" " * right_pad)
+    result.append(total_label, style="dim")
+    return result
+
+
 def _compute_turn_total_s(snapshot: list[dict]) -> float:
     """Max end time across all completed calls; floor at 0.001 to avoid div-by-zero."""
     end_times = [
@@ -259,6 +276,7 @@ ToolsScreen > #tools-footer {
 
     def compose(self) -> ComposeResult:
         yield Static("", id="tools-header")
+        yield Static("", id="gantt-scale")
         yield ListView(id="tools-list")
         yield Horizontal(
             Static("", id="filter-pills"),
@@ -312,6 +330,14 @@ ToolsScreen > #tools-footer {
     async def _rebuild(self) -> None:
         listview = self.query_one("#tools-list", ListView)
         await listview.clear()
+        # Update Gantt scale header
+        try:
+            flex = self._term_w - 26
+            label_w, gantt_w = _split_flex(flex)
+            scale = _gantt_scale_text(max(self._turn_total_s, 0.001), gantt_w, label_w)
+            self.query_one("#gantt-scale", Static).update(scale)
+        except Exception:
+            pass
         if not self._filtered:
             await listview.append(ListItem(Static(Text("  no matching tool calls", style="dim"))))
             return

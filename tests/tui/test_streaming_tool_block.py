@@ -224,8 +224,8 @@ async def test_visible_cap():
         assert len(block._all_plain) == total
         # Visible count capped; OmissionBar mounted instead of plain-text marker
         assert block._visible_count == _VISIBLE_CAP
-        assert block._omission_bar_mounted is True
-        assert block._omission_bar is not None
+        assert block._omission_bar_bottom_mounted is True
+        assert block._omission_bar_bottom is not None
 
         log = block._body.query_one(CopyableRichLog)
         # In headless tests RichLog._size_known is False, so writes go to

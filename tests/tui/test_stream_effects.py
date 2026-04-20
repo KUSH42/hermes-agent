@@ -275,6 +275,50 @@ def test_f2_glow_on_turn_end_clears_state():
 # Group G — _stream_effect_cfg() config reader (2 tests)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Group F2 — ShimmerEffect / BreatheEffect render_tui (4 tests)
+# ---------------------------------------------------------------------------
+
+def test_f3_shimmer_render_tui_returns_text_no_ansi():
+    from hermes_cli.stream_effects import ShimmerEffect
+    fx = ShimmerEffect({})
+    fx._pos = 3.0
+    t = fx.render_tui("hello", "#FFDD00", "#FFFFFF")
+    assert t.plain == "hello"
+    assert "\x1b" not in t.plain
+
+
+def test_f4_shimmer_render_tui_center_char_has_accent():
+    from hermes_cli.stream_effects import ShimmerEffect
+    fx = ShimmerEffect({})
+    fx._pos = 2.0  # center on index 2 ('l')
+    t = fx.render_tui("hello", "#FFDD00", "#AABBCC")
+    spans = list(t._spans)
+    center_spans = [s for s in spans if s.start <= 2 < s.end or (s.start == 2 and s.end == 3)]
+    assert any("FFDD00" in str(s.style).upper() for s in center_spans)
+
+
+def test_f5_breathe_render_tui_returns_text_no_ansi():
+    from hermes_cli.stream_effects import BreatheEffect
+    fx = BreatheEffect({})
+    t = fx.render_tui("hello world", "#FFDD00", "#FFFFFF")
+    assert t.plain == "hello world"
+    assert "\x1b" not in t.plain
+
+
+def test_f6_breathe_render_tui_single_span_whole_buf():
+    from hermes_cli.stream_effects import BreatheEffect
+    fx = BreatheEffect({})
+    t = fx.render_tui("abc", "#FFDD00", "#FFFFFF")
+    # BreatheEffect applies uniform color → single style covers entire text
+    assert t.plain == "abc"
+    assert len(list(t._spans)) <= 1
+
+
+# ---------------------------------------------------------------------------
+# Group G — _stream_effect_cfg() config reader (2 tests)
+# ---------------------------------------------------------------------------
+
 def test_g1_stream_effect_cfg_defaults():
     from hermes_cli.tui.widgets import _stream_effect_cfg
     with patch("hermes_cli.config.read_raw_config", return_value={}):

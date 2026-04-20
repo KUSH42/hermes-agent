@@ -117,6 +117,11 @@ Then load only the focused reference you need:
 - `hermes_cli/tui/drawille_overlay.py` with `tests/tui/test_drawille_overlay.py`,
   `tests/tui/test_drawille_toggle.py`, `tests/tui/test_drawille_v2.py`
 - `hermes_cli/tui/tooltip.py` with any widget gaining `TooltipMixin`; touches `hermes.tcss §Screen layers`
+- `hermes_cli/tui/input_widget.py` + `completion_overlay.py` + `completion_list.py` + `preview_panel.py` + `path_search.py`
+  with `tests/tui/test_input_completion_ux.py` and `tests/tui/test_completion_p0.py`
+- `hermes_cli/commands.py` with `tests/hermes_cli/test_commands.py`; slash-cmd changes also touch
+  `hermes_cli/tui/completion_context.py`, `hermes_cli/tui/input_widget.py`, `hermes_cli/tui/overlays.py`,
+  `hermes_cli/tui/completion_overlay.py`, `hermes_cli/tui/app.py`, and `tests/tui/test_slash_command_overlays.py`
 - `hermes_cli/tui/workspace_tracker.py` with `tests/tui/test_workspace_tracker.py`
   and `tests/tui/test_workspace_overlay.py`
 - `hermes_cli/tui/widgets.py §AssistantNameplate` with `tests/tui/test_nameplate.py`;
@@ -126,9 +131,12 @@ Then load only the focused reference you need:
 
 ## Validation
 
-Last revalidated: **2026-04-20. ~2519+ total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
+Last revalidated: **2026-04-20. ~2662 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
 
 Recent changes (details → reference files):
+- **Emoji render-safety fix** (2026-04-20): `InlineImageCache._render()` was being called from `InlineProseLog.render_line()` on cache miss, causing: (1) TGP path writing raw kitty escape sequences to `sys.stdout` INSIDE Textual's render phase → screen corruption; (2) PIL resize blocking event loop. Fix: `render_line` now calls `get_strips_or_alt()` (never calls `_render`; returns alt_text on miss). `write_inline()` triggers `_prerender_line_images()` which emits TGP on event loop synchronously and offloads halfblock PIL to `@work(thread=True) _prerender_halfblock()`. Also: `_current_render_mode()` now caches `_RenderMode` (prevents ioctl per render_line); `on_resize()` invalidates cache + calls `_reset_cell_px_cache()`. 6 new tests in `tests/tui/test_inline_prose.py`.
+  Key gotcha: `_prerender_halfblock` needs app context; guard with `try/except` (unit tests have no app → skip worker silently). See `gotchas.md §InlineProseLog / emoji render-safety`.
+  → `hermes_cli/tui/inline_prose.py §get_strips_or_alt`, `hermes_cli/tui/widgets.py §InlineProseLog._prerender_line_images/_prerender_halfblock/_current_render_mode/on_resize/write_inline/_render_inline_line`, `hermes_cli/tui/kitty_graphics.py §_reset_cell_px_cache`, `tests/tui/test_inline_prose.py §Group 11`
 - **Slash command TUI overhaul — Phases 1–3** (2026-04-20): Full rework of slash command registry, completion, and overlay system. 52 new tests.
   **Phase 1 — Registry & escape fix:** `CommandDef` gains `tui_only: bool = False` + `keybind_hint: str = ""` fields. `/compact` + `/sessions` registered as `tui_only=True`. `/anim` + `/workspace` marked `tui_only=True`. `_is_gateway_available()` excludes `tui_only` commands from all gateway surfaces. `tui_help_lines()` helper returns all non-gateway-only commands (incl. `tui_only` + `cli_only`). Escape handler in `on_key` now includes `SessionOverlay` in dismiss loop. Unknown-command flash: `_handle_tui_command` shows "Unknown command — try /help" for unrecognised bare `/word`.
   **Phase 2 — Subcommand completion:** `SLASH_SUBCOMMAND = 6` added to `CompletionContext` enum. `CompletionTrigger` gains `parent_command: str = ""`. `_SLASH_SUBCMD_RE` checked before `_SLASH_RE` in `detect_context`. `SlashCandidate` gains `args_hint`, `category`, `keybind_hint` fields. `HermesInput` gains `_slash_subcommands`, `_slash_args_hints`, `_slash_keybind_hints` dicts + setters. `_show_subcommand_completions(parent_cmd, fragment)` added. `action_accept_autocomplete` splices only the fragment (preserves parent prefix). `_populate_slash_commands` excludes `gateway_only` commands.

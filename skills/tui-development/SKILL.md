@@ -131,9 +131,37 @@ Then load only the focused reference you need:
 
 ## Validation
 
-Last revalidated: **2026-04-21. ~2752 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
+Last revalidated: **2026-04-21. ~2807 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
 
 Recent changes (details → reference files):
+- **Parallel worktree sessions** (2026-04-21): Full feature behind `sessions.enabled` config (default `false`). 7 new files/modules:
+  `session_manager.py` (stdlib-only data layer: `SessionRecord`, `SessionIndex` with `fcntl.flock` exclusive writes,
+  `SessionManager` lifecycle, `_NotifyListener` daemon UNIX socket thread, `send_notification()` helper).
+  `headless_session.py` (background agent driver — NO Textual import; `OutputJSONLWriter` ring-buffered JSONL, ANSI+Rich
+  stripped; `HeadlessSession.run()` registers PID in `state.json`, fires completion notification via `send_notification`).
+  `session_widgets.py`: `SessionBar` (1-line dock strip; `●`/`○`/`[●]` markers; `Alt+N` switch, `+` button → `NewSessionOverlay`),
+  `_SessionsTab` + `_WorktreeSessionRow` (Sessions tab in WorkspaceOverlay; orphan ⚠/[reopen]/[delete]; idle/running/kill/merge),
+  `NewSessionOverlay` (branch name + base selector + git error surface), `MergeConfirmOverlay` (merge/squash/rebase + close-on-success),
+  `_SessionNotification` (5s toast with [switch] button; queued for multiple events; independent of `_flash_hint_expires`),
+  `HistoryPanel` (read-only `RichLog` replay of `output.jsonl`, plain text).
+  `config.py` sessions block: `session_dir=/tmp/hermes-sessions`, `max_sessions=8`, `output_buffer_lines=2000`,
+  `auto_prune_orphans`, `default_merge_strategy=squash`.
+  `cli.py`: `--headless` + `--worktree-session-id` args; routes to `HeadlessSession` when both set.
+  `overlays.py` `WorkspaceOverlay` extended with `ContentSwitcher` tab strip (Git Status | Sessions).
+  `app.py`: `SessionBar` + `_SessionNotification` in `compose()`; `Ctrl+W N` binding; `Alt+1–9` session switch;
+  session action methods (`_switch_to_session` → `os.execvp`, `_create_new_session` → worker + Popen, `_kill_session_prompt`,
+  `_open_merge_overlay`, `_run_merge`, etc.).
+  Key design: `SessionBar` hidden by default (`display: none`); enabled by `--sessions-enabled` CSS class.
+  Orphan detection: `os.kill(pid, 0)` + cmdline check (`/proc/<pid>/cmdline` Linux, `ps -p` macOS) guards PID reuse.
+  Socket path validation rejects paths > 104 (macOS) / 108 (Linux) chars.
+  `_SessionNotification` does NOT use `_flash_hint_expires` — it has its own `set_timer(5.0)`.
+  `HistoryPanel` only renders plain text — Rich/ANSI/tool formatting not preserved in headless path (known limitation).
+  55 new tests: `tests/tui/test_session_manager.py` (20), `tests/tui/test_headless_session.py` (15), `tests/tui/test_session_widgets.py` (20).
+  → `hermes_cli/tui/session_manager.py` (new), `hermes_cli/tui/headless_session.py` (new),
+    `hermes_cli/tui/session_widgets.py` (new), `hermes_cli/tui/overlays.py §WorkspaceOverlay`,
+    `hermes_cli/tui/app.py §compose/on_key/session_methods`, `hermes_cli/config.py §sessions`,
+    `cli.py §main/--headless/--worktree-session-id`, `tests/tui/test_session_manager.py`,
+    `tests/tui/test_headless_session.py`, `tests/tui/test_session_widgets.py`
 - **Slash command dispatch fix** (2026-04-21): `/slash-commands` shown in completion overlay were flashing
   "Unknown command" when entered, because `_handle_tui_command` had a hardcoded whitelist (~16 commands)
   and fired the flash for any `/word` not in the list. Fix: the guard now calls `resolve_command()` against

@@ -4251,9 +4251,10 @@ def _substring_search(
 ) -> list[_SearchResult]:
     """Token-AND casefolded substring search with span tracking.
 
-    All tokens in the query must appear in the combined user+assistant text
-    (AND semantics).  Single-token queries behave as before.  Whitespace-only
-    queries return empty (fall through to browse-all path).
+    All tokens must appear within the SAME section (user OR assistant text).
+    Cross-section matches (tokens split across the user/assistant boundary) are
+    rejected.  Single-token queries behave as before.  Whitespace-only queries
+    return empty (fall through to browse-all path).
 
     Returns results sorted by:
     1. Match count × 10 + word-boundary bonus (5)
@@ -4265,7 +4266,11 @@ def _substring_search(
     results: list[tuple[_TurnEntry, list[tuple[int, int]], int]] = []
     for entry in entries:
         haystack = entry.search_text.casefold()
-        if not all(t in haystack for t in tokens):
+        # Require all tokens to appear within the SAME section (user or assistant).
+        # Tokens must not be matched by combining text across the boundary.
+        user_hay = entry.user_text.casefold()
+        asst_hay = entry.assistant_text.casefold()
+        if not (all(t in user_hay for t in tokens) or all(t in asst_hay for t in tokens)):
             continue
         # Collect all spans for every token
         spans: list[tuple[int, int]] = []

@@ -7,7 +7,7 @@ Keybinding model:
 """
 
 import asyncio
-from unittest.mock import MagicMock, PropertyMock
+from unittest.mock import MagicMock, PropertyMock, patch
 import queue
 
 import pytest
@@ -251,3 +251,85 @@ async def test_ctrl_c_input_selection_handled_by_input():
         await pilot.pause()
         # No interrupt — copy was handled at input level
         cli.agent.interrupt.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# P0-2: flush_live called immediately after interrupt (before watcher fires)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_interrupt_flush_live_called_immediately():
+    """ctrl+shift+c calls OutputPanel.flush_live() on the event loop thread right after interrupt()."""
+    app, cli = _app_with_agent()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.agent_running = True
+        await pilot.pause()
+        output = app.query_one(OutputPanel)
+        with patch.object(output, "flush_live") as mock_flush:
+            await pilot.press("ctrl+shift+c")
+            await pilot.pause()
+            mock_flush.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_escape_interrupt_flush_live_called_immediately():
+    """Escape calls OutputPanel.flush_live() on the event loop thread right after interrupt()."""
+    app, cli = _app_with_agent()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.agent_running = True
+        await pilot.pause()
+        output = app.query_one(OutputPanel)
+        with patch.object(output, "flush_live") as mock_flush:
+            await pilot.press("escape")
+            await pilot.pause()
+            mock_flush.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# P0-3: feedback error handling
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_interrupt_no_exception_when_output_panel_removed():
+    """ctrl+shift+c does not propagate exceptions if OutputPanel is absent."""
+    app, cli = _app_with_agent()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.agent_running = True
+        await pilot.pause()
+        for panel in app.query(OutputPanel):
+            await panel.remove()
+        await pilot.pause()
+        # Must not raise — bare NoMatches is now caught and logged
+        await pilot.press("ctrl+shift+c")
+        await pilot.pause()
+        cli.agent.interrupt.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_ctrl_shift_c_feedback_no_crash_without_active_turn():
+    """Interrupt feedback silently skips write when current_message is None (no active turn)."""
+    app, cli = _app_with_agent()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.agent_running = True
+        await pilot.pause()
+        # No MessagePanel → current_message is None → write is skipped, no crash
+        await pilot.press("ctrl+shift+c")
+        await pilot.pause()
+        cli.agent.interrupt.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_escape_interrupt_feedback_no_crash_without_active_turn():
+    """Escape interrupt feedback silently skips write when current_message is None."""
+    app, cli = _app_with_agent()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.agent_running = True
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        cli.agent.interrupt.assert_called_once()

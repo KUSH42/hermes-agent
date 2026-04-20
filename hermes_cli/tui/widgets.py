@@ -1541,6 +1541,11 @@ class StreamingCodeBlock(Widget):
     }
     """
     _content_type: str = "code"
+    _browse_badge: reactive[str] = reactive("")
+
+    def watch__browse_badge(self, badge: str) -> None:
+        """Set border_title when badge is non-empty, clear it when empty."""
+        self.border_title = badge if badge else ""
 
     def __init__(
         self,
@@ -1630,6 +1635,22 @@ class StreamingCodeBlock(Widget):
         self._pygments_theme = skin_vars.get("preview-syntax-theme", self._pygments_theme)
         self.add_class("--complete")
         self.call_after_refresh(self._finalize_syntax, dict(skin_vars))
+        # Browse mode streaming→ready flash
+        try:
+            _mounted = self.is_mounted
+        except Exception:
+            _mounted = False
+        if (
+            _mounted
+            and getattr(self.app, "browse_mode", False)
+            and getattr(self.app, "_browse_markers_enabled", True)
+            and getattr(self.app, "_browse_streaming_flash", True)
+        ):
+            self.add_class("--browse-newly-anchored")
+            try:
+                self.set_timer(0.6, lambda: self.remove_class("--browse-newly-anchored"))
+            except Exception:
+                pass
 
     def _render_syntax(self, skin_vars: dict[str, str] | None = None) -> None:
         """Render code as rich.Syntax with line numbers. Shared by COMPLETE and FLUSHED."""

@@ -161,6 +161,12 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     # Citation chip colors — used by SourcesBar
     "cite-chip-bg": "#1a2030",
     "cite-chip-fg": "#8899bb",
+    # Browse mode visual markers — pip/badge colors per anchor type
+    "browse-turn":  "#d4a017",
+    "browse-code":  "#4caf50",
+    "browse-tool":  "#2196f3",
+    "browse-diff":  "#e040fb",
+    "browse-media": "#00bcd4",
 }
 
 

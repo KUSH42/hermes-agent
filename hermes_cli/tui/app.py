@@ -269,6 +269,27 @@ class BrowseAnchorType(enum.Enum):
     MEDIA      = "media"        # InlineMediaWidget
 
 
+# Status-bar glyph per anchor type (single-width Unicode)
+_BROWSE_TYPE_GLYPH: dict[str, str] = {
+    "turn_start": "\u25b8",     # ▸
+    "code_block": "\u2039\u203a",  # ‹›
+    "tool_block": "\u25a3",     # ▣
+    "media":      "\u25b6",     # ▶
+}
+
+
+def _is_in_reasoning(widget: object) -> bool:
+    """Return True if widget is a descendant of a ReasoningPanel."""
+    try:
+        from hermes_cli.tui.widgets import ReasoningPanel as _RP
+        for ancestor in widget.ancestors_with_self:  # type: ignore[union-attr]
+            if isinstance(ancestor, _RP):
+                return True
+    except Exception:
+        pass
+    return False
+
+
 @dataclasses.dataclass
 class BrowseAnchor:
     anchor_type: BrowseAnchorType
@@ -417,6 +438,15 @@ class HermesApp(App):
         # Unified anchor list for []/{}/ Alt+↑↓ navigation
         self._browse_anchors: list[BrowseAnchor] = []
         self._browse_cursor: int = 0
+        # Browse mode visual markers config (wired from cli.py)
+        self._browse_markers_enabled: bool = True
+        self._browse_reasoning_markers: bool = True
+        self._browse_minimap_default: bool = False
+        self._browse_streaming_flash: bool = True
+        self._browse_turn_boundary_always: bool = True
+        self._browse_minimap: bool = False
+        # Widgets that have a _browse_badge set — tracked for cleanup
+        self._browse_badge_widgets: list = []
 
         # Active StreamingToolBlocks keyed by tool_call_id
         self._active_streaming_blocks: dict[str, Any] = {}
@@ -565,6 +595,9 @@ class HermesApp(App):
             pass
         # Initialize workspace tracker in background thread (subprocess call)
         self._init_workspace_tracker()
+        # Apply --no-turn-boundary class if config disables turn boundary rule
+        if not self._browse_turn_boundary_always:
+            self.add_class("--no-turn-boundary")
 
     def on_unmount(self) -> None:
         """Stop background helpers tied to app lifetime."""
@@ -2280,10 +2313,16 @@ class HermesApp(App):
             self._browse_uses += 1
             # Reset cursor then rebuild unified anchor list
             self._browse_cursor = 0
+            self.add_class("--browse-active")
             self._rebuild_browse_anchors()
+            self._apply_browse_pips()
+            if self._browse_minimap_default and not self._browse_minimap:
+                self.call_after_refresh(self._mount_minimap_default)
         else:
             self._browse_hint = ""
             self._clear_browse_highlight()
+            self.remove_class("--browse-active")
+            self._clear_browse_pips()
         # Disable/re-enable input so printable keys bubble to on_key in browse mode
         try:
             inp = self.query_one("#input-area")
@@ -2295,6 +2334,33 @@ class HermesApp(App):
             pass
         self._apply_browse_focus()
         self._set_hint_phase("browse" if value else self._compute_hint_phase())
+
+    def _mount_minimap_default(self) -> None:
+        """Auto-mount minimap on browse enter when minimap_default=True."""
+        try:
+            from hermes_cli.tui.browse_minimap import BrowseMinimap as _BM
+            output = self.query_one(OutputPanel)
+            self.call_later(output.mount, _BM())
+            self._browse_minimap = True
+        except Exception:
+            pass
+
+    async def action_toggle_minimap(self) -> None:
+        """Toggle the BrowseMinimap widget inside OutputPanel."""
+        from hermes_cli.tui.browse_minimap import BrowseMinimap as _BM
+        if not self.browse_mode or not self._browse_markers_enabled:
+            return
+        try:
+            existing = self.query_one(_BM)
+            await existing.remove()
+            self._browse_minimap = False
+        except NoMatches:
+            try:
+                output = self.query_one(OutputPanel)
+                await output.mount(_BM())
+                self._browse_minimap = True
+            except Exception:
+                pass
 
     def watch_browse_index(self, _value: int) -> None:
         self._apply_browse_focus()
@@ -2391,6 +2457,9 @@ class HermesApp(App):
             self._browse_cursor = min(self._browse_cursor, len(anchors) - 1)
         else:
             self._browse_cursor = 0
+        # Re-apply pip chrome whenever anchors are rebuilt in browse mode
+        if self.browse_mode:
+            self._apply_browse_pips()
 
     def _jump_anchor(
         self,
@@ -2446,13 +2515,94 @@ class HermesApp(App):
         for w in self.query(".--browse-focused"):
             w.remove_class("--browse-focused")
 
+    def _clear_browse_pips(self) -> None:
+        """Remove all pip CSS classes and clear badge attrs from tracked widgets."""
+        for w in self.query(".--has-pip"):
+            try:
+                w.remove_class(
+                    "--has-pip",
+                    "--anchor-pip-turn",
+                    "--anchor-pip-code",
+                    "--anchor-pip-tool",
+                    "--anchor-pip-diff",
+                    "--anchor-pip-media",
+                )
+            except Exception:
+                pass
+        for w in self._browse_badge_widgets:
+            try:
+                w._browse_badge = ""
+            except Exception:
+                pass
+        self._browse_badge_widgets = []
+
+    def _apply_browse_pips(self) -> None:
+        """Apply pip CSS classes and badge attrs to all anchored widgets."""
+        if not self._browse_markers_enabled:
+            return
+        self._clear_browse_pips()
+        code_anchors = [a for a in self._browse_anchors if a.anchor_type == BrowseAnchorType.CODE_BLOCK]
+        total_code = len(code_anchors)
+        code_seq: dict[int, int] = {id(a.widget): i + 1 for i, a in enumerate(code_anchors)}
+        for anchor in self._browse_anchors:
+            w = anchor.widget
+            try:
+                if not w.is_mounted:
+                    continue
+            except Exception:
+                continue
+            in_reasoning = _is_in_reasoning(w)
+            if in_reasoning and not self._browse_reasoning_markers:
+                continue
+            # Determine pip class
+            if anchor.anchor_type == BrowseAnchorType.TURN_START:
+                pip_cls = "--anchor-pip-turn"
+            elif anchor.anchor_type == BrowseAnchorType.CODE_BLOCK:
+                pip_cls = "--anchor-pip-code"
+            elif anchor.anchor_type == BrowseAnchorType.TOOL_BLOCK:
+                try:
+                    pip_cls = "--anchor-pip-diff" if w.has_class("--diff-header") else "--anchor-pip-tool"
+                except Exception:
+                    pip_cls = "--anchor-pip-tool"
+            elif anchor.anchor_type == BrowseAnchorType.MEDIA:
+                pip_cls = "--anchor-pip-media"
+            else:
+                continue
+            try:
+                w.add_class("--has-pip", pip_cls)
+            except Exception:
+                continue
+            # Badge for code blocks
+            if anchor.anchor_type == BrowseAnchorType.CODE_BLOCK and len(self._browse_badge_widgets) < 200:
+                seq = code_seq.get(id(w), 0)
+                lang = getattr(w, "_lang", "") or "text"
+                badge = f"{lang} \u00b7 {seq}/{total_code}"
+                try:
+                    w._browse_badge = badge
+                    self._browse_badge_widgets.append(w)
+                except Exception:
+                    pass
+            # Badge for diff tool headers
+            elif pip_cls == "--anchor-pip-diff" and len(self._browse_badge_widgets) < 200:
+                try:
+                    w._browse_badge = "\u00b1 diff"
+                    self._browse_badge_widgets.append(w)
+                    w.refresh()
+                except Exception:
+                    pass
+
     def _update_browse_status(self, anchor: "BrowseAnchor") -> None:
         """Update _browse_hint reactive with current anchor context."""
         anchors = self._browse_anchors
         typed = [a for a in anchors if a.anchor_type == anchor.anchor_type]
         pos = next((i + 1 for i, a in enumerate(typed) if a is anchor), 1)
         total = len(typed)
-        self._browse_hint = f"{anchor.label} {pos}/{total} · Turn {anchor.turn_id}"
+        glyph = _BROWSE_TYPE_GLYPH.get(anchor.anchor_type.value, "")
+        prefix = f"{glyph} " if glyph else ""
+        hint = f"{prefix}{anchor.label} {pos}/{total} \u00b7 Turn {anchor.turn_id}"
+        if self._browse_markers_enabled:
+            hint += "  \\ map"
+        self._browse_hint = hint
 
     # --- ToolPanel J/K navigation ---
 
@@ -3585,6 +3735,10 @@ class HermesApp(App):
                 return
             elif key == "M":
                 self._jump_anchor(-1, BrowseAnchorType.MEDIA)
+                event.prevent_default()
+                return
+            elif key == "backslash":
+                self.call_later(self.action_toggle_minimap)
                 event.prevent_default()
                 return
             elif key == "T":

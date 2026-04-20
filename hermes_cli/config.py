@@ -491,6 +491,13 @@ DEFAULT_CONFIG = {
             "color": "#00ff66",
             "total_duration_s": 3.0,
         },
+        "browse_markers": {
+            "enabled": True,              # gutter pips + corner badges
+            "reasoning": True,            # apply pips/badges inside ReasoningPanel
+            "turn_boundary_always": True, # subtle rule above UserMessagePanel even outside browse mode
+            "minimap_default": False,     # \ toggles; this controls initial state
+            "streaming_flash": True,      # CSS class flash on STREAMING -> ready transition
+        },
     },
 
     # Privacy settings

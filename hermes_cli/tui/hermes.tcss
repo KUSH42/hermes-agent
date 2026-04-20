@@ -28,6 +28,12 @@ $cite-chip-bg: #1a2030;
 $cite-chip-fg: #8899bb;
 $tool-glyph-mcp: "󰡨";
 $error-timeout: #f59e0b;
+/* Browse mode visual marker colors */
+$browse-turn: #d4a017;
+$browse-code: #4caf50;
+$browse-tool: #2196f3;
+$browse-diff: #e040fb;
+$browse-media: #00bcd4;
 $error-critical: #ef4444;
 $error-auth: #eab308;
 $error-network: #f97316;
@@ -340,6 +346,49 @@ StreamingCodeBlock.--browse-focused {
 UserMessagePanel.--browse-focused {
     border: tall $warning 40%;
     background: $warning 8%;
+}
+
+/* Browse mode — turn boundary rule (always-on, subtle) */
+UserMessagePanel {
+    border-top: hkey $surface-darken-2;
+}
+/* Browse-mode promotion */
+HermesApp.--browse-active UserMessagePanel {
+    border-top: hkey $browse-turn;
+}
+/* Config: turn_boundary_always=False — suppress both rules */
+HermesApp.--no-turn-boundary UserMessagePanel {
+    border-top: none;
+}
+HermesApp.--no-turn-boundary.--browse-active UserMessagePanel {
+    border-top: none;
+}
+
+/* Browse mode — anchor gutter pips (border-left = 1-cell pip) */
+.--anchor-pip-turn {
+    border-left: outer $browse-turn;
+}
+.--anchor-pip-code {
+    border-left: outer $browse-code;
+}
+StreamingCodeBlock.--anchor-pip-code {
+    border-left: outer $browse-code;
+    border-top: tall $browse-code 25%;
+}
+.--anchor-pip-tool {
+    border-left: outer $browse-tool;
+}
+.--anchor-pip-diff {
+    border-left: outer $browse-diff;
+}
+.--anchor-pip-media {
+    border-left: outer $browse-media;
+}
+
+/* Browse mode — streaming→ready flash */
+StreamingCodeBlock.--browse-newly-anchored {
+    border: tall $browse-code 60%;
+    background: $browse-code 15%;
 }
 
 /* ToolBodyContainer inside ToolPanel is always visible — ToolPanel's

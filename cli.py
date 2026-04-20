@@ -1639,6 +1639,13 @@ class HermesCLI:
         # Citations and reasoning rich prose config
         self._citations_enabled: bool = CLI_CONFIG["display"].get("citations", True)
         self._reasoning_rich_prose: bool = CLI_CONFIG["display"].get("reasoning_rich_prose", True)
+        # Browse mode visual markers config
+        _bm_cfg = CLI_CONFIG["display"].get("browse_markers", {})
+        self._browse_markers_enabled: bool = bool(_bm_cfg.get("enabled", True))
+        self._browse_reasoning_markers: bool = bool(_bm_cfg.get("reasoning", True))
+        self._browse_minimap_default: bool = bool(_bm_cfg.get("minimap_default", False))
+        self._browse_streaming_flash: bool = bool(_bm_cfg.get("streaming_flash", True))
+        self._browse_turn_boundary_always: bool = bool(_bm_cfg.get("turn_boundary_always", True))
 
         # Streaming display state
         self._stream_buf = ""        # Partial line buffer for line-buffered rendering
@@ -10564,6 +10571,11 @@ class HermesCLI:
             _tui_app._math_max_rows = self._math_max_rows
             _tui_app._citations_enabled = self._citations_enabled
             _tui_app._reasoning_rich_prose = self._reasoning_rich_prose
+            _tui_app._browse_markers_enabled = self._browse_markers_enabled
+            _tui_app._browse_reasoning_markers = self._browse_reasoning_markers
+            _tui_app._browse_minimap_default = self._browse_minimap_default
+            _tui_app._browse_streaming_flash = self._browse_streaming_flash
+            _tui_app._browse_turn_boundary_always = self._browse_turn_boundary_always
             _tui_app._spinner_frames = _COMMAND_SPINNER_FRAMES
             _hermes_app = _tui_app
             # Apply skin to TUI at startup — component_vars + ui_accent

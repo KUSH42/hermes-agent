@@ -458,6 +458,8 @@ class ToolHeader(PulseMixin, Widget):
         self._header_chips: list[tuple[str, str]] = []  # [(text, style)] promoted chips
         # v4 A1 — error kind for distinct icon/color
         self._error_kind: str | None = None
+        # Browse mode badge (e.g. "± diff") — plain attr, render() reads it
+        self._browse_badge: str = ""
 
     def on_mount(self) -> None:
         self._refresh_gutter_color()
@@ -651,11 +653,15 @@ class ToolHeader(PulseMixin, Widget):
     def render(self) -> RenderResult:
         result = self._render_v4()
         if result is not None:
+            if self._browse_badge:
+                result.append(f"  {self._browse_badge}", style="dim")
             return result
         # A3: degraded fallback — imports or render failed
         self.add_class("--header-degraded")
         t = Text()
         t.append(f"[tool] {self._label}")
+        if self._browse_badge:
+            t.append(f"  {self._browse_badge}", style="dim")
         return t
 
     def set_error(self, is_error: bool) -> None:

@@ -110,7 +110,7 @@ Then load only the focused reference you need:
 
 ## Validation
 
-Last revalidated: **2026-04-20. ~2102 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility; 1 flaky perf jitter test in `test_streaming_perf.py` occasionally fails under load — pre-existing, not related to recent changes).
+Last revalidated: **2026-04-20. ~2133 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility; 1 flaky perf jitter test in `test_streaming_perf.py` occasionally fails under load — pre-existing, not related to recent changes).
 
 Recent changes (details → reference files):
 - **Browse Mode Visual Markers** (2026-04-20): 31 tests across `tests/tui/test_browse_markers.py` + `tests/tui/test_browse_minimap.py`. New file: `hermes_cli/tui/browse_minimap.py`. Spec at `/home/xush/.hermes/tui-browse-mode-markers-spec.md` (v2, reviewed).

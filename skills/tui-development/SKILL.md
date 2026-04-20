@@ -131,9 +131,18 @@ Then load only the focused reference you need:
 
 ## Validation
 
-Last revalidated: **2026-04-21. ~2846 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
+Last revalidated: **2026-04-21. ~2853 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
 
 Recent changes (details → reference files):
+- **Header tok/s fix** (2026-04-21): `_pause_stream_state` was reading `agent._last_turn_output_tokens` — total API
+  output tokens including tool_use blocks, not just text. Also race-prone at tool-call boundaries (field may not yet
+  reflect current segment). Fix: `_emit_stream_text` in `cli.py` now accumulates `estimate_tokens_rough(text)` into
+  `_message_stream_output_tokens` directly — same estimator as the live rolling window, text-only, race-free.
+  `_pause_stream_state` no longer touches `_message_stream_output_tokens`.
+  Key invariant: live tok/s (rolling window in `app.py`) and final tok/s (accumulated in `cli.py`) now use the same
+  `estimate_tokens_rough` estimator — consistent across streaming and finalized display.
+  7 new tests in `tests/cli/test_tok_s_metrics.py`.
+  → `cli.py §_emit_stream_text/_pause_stream_state`, `tests/cli/test_tok_s_metrics.py` (new)
 - **Config picker overlays** (2026-04-21): 5 new interactive overlays for `/model`, `/reasoning`, `/skin`, `/yolo`, `/verbose`.
   All in `hermes_cli/tui/overlays.py`. Wired into `app.py §_handle_tui_command` (bare `/cmd` opens overlay; `/cmd <arg>` falls through to CLI), `compose()`, and `_dismiss_all_info_overlays()`.
   Module-level config helpers `_cfg_read_raw_config`, `_cfg_save_config`, `_cfg_set_nested`, `_cfg_get_hermes_home` imported at top of `overlays.py` (not lazily) so tests can patch them without `AttributeError`.

@@ -1481,6 +1481,15 @@ class MessagePanel(Widget):
                 except Exception:
                     pass
                 self._carry_partial = None
+        # Signal cli.py that the engine is ready — streaming may now start.
+        # Cleared by cli.py after wait() returns so later panels don't fire it.
+        try:
+            ev = getattr(self.app, "_panel_ready_event", None)
+            if ev is not None:
+                self.app._panel_ready_event = None
+                ev.set()
+        except Exception:
+            pass
 
     @property
     def response_log(self) -> CopyableRichLog:

@@ -10493,10 +10493,22 @@ class HermesCLI:
                             )
                         except Exception:
                             pass
+                        _panel_ready = None
                         try:
+                            import threading as _thr
+                            _panel_ready = _thr.Event()
+                            # Inject the event BEFORE setting agent_running so
+                            # watch_agent_running(True) finds it when it fires.
+                            # MessagePanel.on_mount() calls _panel_ready.set() once
+                            # the engine is fully initialised, then streaming can start.
+                            _tui_app.call_from_thread(
+                                setattr, _tui_app, "_panel_ready_event", _panel_ready
+                            )
                             _tui_app.call_from_thread(setattr, _tui_app, "agent_running", True)
                         except Exception:
-                            pass
+                            _panel_ready = None
+                        if _panel_ready is not None:
+                            _panel_ready.wait(timeout=1.0)
                     else:
                         app.invalidate()  # Refresh PT status line
 

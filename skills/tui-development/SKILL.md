@@ -254,6 +254,22 @@ Recent changes (details → reference files):
   3 regression tests in `tests/tui/test_turn_lifecycle.py` (2 existing + `test_partial_chunk_migrated_to_new_panel`).
   → `hermes_cli/tui/app.py §watch_agent_running`, `hermes_cli/tui/widgets.py §MessagePanel.__init__/on_mount`,
     `tests/tui/test_turn_lifecycle.py §test_partial_chunk_migrated_to_new_panel`
+- **Panel-ready gate — streaming start gated behind engine mount** (2026-04-21): multi-line first
+  chunks (e.g. `"Line 1\nLine 2\n"`) processed entirely in one `_commit_lines()` call before
+  `await asyncio.sleep(0)` yields to the event loop. `_block_buf` processes both lines: Line 1 is
+  returned (written to OLD panel's log, lost), Line 2 stays in `_pending` (stolen). The steal-only
+  fix missed any lines that were EMITTED by `_block_buf` before the panel switch.
+  Worst case: event loop busy with queued TTE frame callbacks → `agent_running=True` delayed further.
+  Fix: cli.py injects `_panel_ready_event: threading.Event` onto the app BEFORE calling
+  `call_from_thread(agent_running=True)`. `MessagePanel.on_mount` signals it after engine init and
+  carry-pending/partial replay, then clears `app._panel_ready_event = None`. cli.py waits
+  `_panel_ready_event.wait(timeout=1.0)` before calling `chat()`. Streaming can now only start after
+  the new panel's engine is fully ready — race window eliminated entirely.
+  `HermesApp.__init__` gains `_panel_ready_event: threading.Event | None = None`.
+  4th regression test: `test_panel_ready_event_set_on_mount`.
+  → `hermes_cli/tui/app.py §__init__`, `hermes_cli/tui/widgets.py §MessagePanel.on_mount`,
+    `cli.py §process_loop (agent_running=True block)`,
+    `tests/tui/test_turn_lifecycle.py §test_panel_ready_event_set_on_mount`
 - **Mouse UX — tooltip system, ctrl+click, scroll config, double-click, shift-select** (2026-04-20):
   `tooltip.py` (NEW) — `Tooltip(Widget)` + `TooltipMixin`; mounted on `screen.tooltip` layer;
   positioned via `styles.offset`; 500ms delay timer; dismissed on `on_mouse_leave`.

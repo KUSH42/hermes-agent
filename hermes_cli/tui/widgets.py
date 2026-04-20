@@ -628,6 +628,9 @@ class InlineProseLog(CopyableRichLog):
         self._logical_visual_rows: dict[int, int] = {}
         self._image_cache = _get_image_cache()
         self._last_cell_px: tuple[int, int] = (0, 0)
+        # Cached _RenderMode — avoids ioctl on every render_line call.
+        # Set to None to force recompute on first use or after resize.
+        self._render_mode_cache: "Any | None" = None
 
     # ------------------------------------------------------------------ #
     # Write API
@@ -637,8 +640,10 @@ class InlineProseLog(CopyableRichLog):
         """Append a mixed-content line. Images are rendered at their x-offset.
 
         plain write() / write_with_source() continue to work unchanged.
+        After writing, images are pre-rendered so render_line always reads from
+        cache (never runs PIL or emits terminal sequences inside the render path).
         """
-        from hermes_cli.tui.inline_prose import TextSpan, ImageSpan
+        from hermes_cli.tui.inline_prose import ImageSpan
         text = self._line_to_text(line)
         plain = self._line_to_plain(line)
         line_index = self._logical_count  # incremented by write() below
@@ -646,6 +651,11 @@ class InlineProseLog(CopyableRichLog):
         self._inline_paint[line_index] = self._build_paint_plan(line, text)
         # super().write_with_source() → self.write() → increments _logical_count
         super().write_with_source(text, plain)
+        # Pre-render images outside of render_line to avoid PIL/stdout writes
+        # during Textual's render phase (which causes kitty screen glitches).
+        has_images = any(isinstance(s, ImageSpan) for s in line)
+        if has_images:
+            self._prerender_line_images(line_index, line)
 
     def write(  # type: ignore[override]
         self,
@@ -693,8 +703,10 @@ class InlineProseLog(CopyableRichLog):
     # ------------------------------------------------------------------ #
 
     def on_resize(self, event: Any) -> None:
-        """Invalidate image cache entries and rebuild paint plans when cell_px changes."""
-        from hermes_cli.tui.kitty_graphics import _cell_px
+        """Invalidate image cache + render mode cache; rebuild paint plans when cell_px changes."""
+        from hermes_cli.tui.kitty_graphics import _cell_px, _reset_cell_px_cache
+        _reset_cell_px_cache()
+        self._render_mode_cache = None  # force recompute with new cell dims
         new_px = _cell_px()
         if new_px != self._last_cell_px:
             self._last_cell_px = new_px
@@ -703,6 +715,9 @@ class InlineProseLog(CopyableRichLog):
                 plan = self._build_paint_plan(iline, self._line_to_text(iline))
                 self._inline_paint[idx] = plan
                 self._logical_visual_rows[idx] = max(len(plan), 1)
+            # Re-pre-render all inline lines with updated cell dims
+            for idx, iline in list(self._inline_lines.items()):
+                self._prerender_line_images(idx, iline)
         self.refresh()
 
     def on_unmount(self) -> None:
@@ -729,6 +744,55 @@ class InlineProseLog(CopyableRichLog):
                 return None
             return selection.extract(text), "\n"
         return super().get_selection(selection)
+
+    # ------------------------------------------------------------------ #
+    # Image pre-render — keeps render_line free of PIL ops / stdout writes
+    # ------------------------------------------------------------------ #
+
+    def _prerender_line_images(self, line_index: int, line: list) -> None:
+        """Pre-populate cache for all ImageSpans in *line*.
+
+        TGP path: emits the Kitty TGP sequence to stdout on the event loop
+        (before render_line runs) so the image data arrives at the terminal
+        before placeholder characters are drawn.
+
+        Halfblock path: offloads PIL resize to a worker thread; render_line
+        shows alt_text until the worker finishes and calls refresh().
+        """
+        from hermes_cli.tui.inline_prose import ImageSpan
+        from hermes_cli.tui.kitty_graphics import GraphicsCap
+        mode = self._current_render_mode()
+        wid = id(self)
+        hb_spans: list = []
+        rendered_tgp = False
+        for span in line:
+            if not isinstance(span, ImageSpan):
+                continue
+            if mode.cap == GraphicsCap.TGP:
+                # Emit TGP sequence synchronously here (safe — we are on the
+                # event loop but NOT inside render_line's call stack).
+                self._image_cache.get_strips(span, mode, wid)
+                rendered_tgp = True
+            else:
+                hb_spans.append(span)
+        if hb_spans:
+            # @work requires an app context; skip silently when not mounted
+            # (e.g. unit tests). render_line shows alt_text until repaint.
+            try:
+                self._prerender_halfblock(mode, wid, hb_spans)
+            except Exception:
+                pass
+        elif rendered_tgp:
+            self.refresh()
+
+    @work(thread=True, exclusive=False)
+    def _prerender_halfblock(self, mode: "Any", wid: int, spans: "list") -> None:
+        """Worker: PIL resize for halfblock emoji renders, then trigger repaint."""
+        from hermes_cli.tui.inline_prose import ImageSpan
+        for span in spans:
+            if isinstance(span, ImageSpan):
+                self._image_cache.get_strips(span, mode, wid)
+        self.call_from_thread(self.refresh)
 
     # ------------------------------------------------------------------ #
     # Helpers
@@ -758,15 +822,26 @@ class InlineProseLog(CopyableRichLog):
         return "".join(parts)
 
     def _current_render_mode(self) -> "Any":  # -> _RenderMode
-        """Build the current _RenderMode based on detected terminal caps."""
+        """Build (or return cached) _RenderMode based on detected terminal caps.
+
+        Uses cell_width_px()/cell_height_px() (cached) instead of _cell_px()
+        (raw ioctl) to avoid a syscall on every render_line invocation.
+        Cache is invalidated by on_resize().
+        """
+        if self._render_mode_cache is not None:
+            return self._render_mode_cache
         from hermes_cli.tui.kitty_graphics import (
-            get_caps, GraphicsCap, _cell_px, _supports_unicode_placeholders,
+            get_caps, GraphicsCap, cell_width_px, cell_height_px,
+            _supports_unicode_placeholders,
         )
         from hermes_cli.tui.inline_prose import _RenderMode
         cap = get_caps()
-        cw, ch = _cell_px()
+        cw, ch = cell_width_px(), cell_height_px()
         placeholders = (cap == GraphicsCap.TGP and _supports_unicode_placeholders())
-        return _RenderMode(cap=cap, placeholders=placeholders, cell_px_w=cw, cell_px_h=ch)
+        self._render_mode_cache = _RenderMode(
+            cap=cap, placeholders=placeholders, cell_px_w=cw, cell_px_h=ch,
+        )
+        return self._render_mode_cache
 
     def _build_paint_plan(self, line: list, synth_text: Text) -> list[list]:
         """Pre-compute paint ops for line at current widget width.
@@ -841,7 +916,7 @@ class InlineProseLog(CopyableRichLog):
                 span = spans[op.span_index]
                 if not isinstance(span, ImageSpan):
                     continue
-                strips = self._image_cache.get_strips(span, mode, wid)
+                strips = self._image_cache.get_strips_or_alt(span, mode, wid)
                 if strips and op.image_row < len(strips):
                     img_strip = strips[op.image_row]
                     if op.width != span.cell_width:

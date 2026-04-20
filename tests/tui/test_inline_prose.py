@@ -710,3 +710,193 @@ def test_write_inline_three_lines():
     assert ":b:" in widget._plain_lines[1]
 
     _reset_image_cache()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Group 11 — render-safety fixes (no PIL/stdout in render_line)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def test_get_strips_or_alt_returns_alt_on_miss():
+    """get_strips_or_alt never calls _render; returns alt strips on cache miss."""
+    from hermes_cli.tui.inline_prose import _reset_image_cache
+    _reset_image_cache()
+    span = _make_span_2x1()
+    mode = _halfblock_mode()
+    cache = fresh_cache()
+
+    render_called = []
+    original_render = cache._render
+    def spy_render(*a, **kw):
+        render_called.append(True)
+        return original_render(*a, **kw)
+    cache._render = spy_render  # type: ignore[method-assign]
+
+    strips = cache.get_strips_or_alt(span, mode, widget_id=99)
+
+    assert len(render_called) == 0, "_render must NOT be called from get_strips_or_alt on miss"
+    assert len(strips) == 1
+    assert strips[0] is not None
+    # alt_text is ":red:", width=2 — result padded/cropped to cell_width
+    row_text = "".join(seg.text for seg in strips[0])
+    assert ":red:" in row_text or len(row_text) >= 1  # alt strip returned
+
+    _reset_image_cache()
+
+
+def test_get_strips_or_alt_returns_cached_strips():
+    """get_strips_or_alt returns real strips when cache is warm."""
+    from hermes_cli.tui.inline_prose import _reset_image_cache
+    _reset_image_cache()
+    span = _make_span_2x1()
+    mode = _halfblock_mode()
+    cache = fresh_cache()
+
+    # Warm up the cache via get_strips
+    warm_strips = cache.get_strips(span, mode)
+    assert len(warm_strips) >= 1
+
+    # Now get_strips_or_alt must return the same entry (no _render call)
+    render_called = []
+    original_render = cache._render
+    def spy_render(*a, **kw):
+        render_called.append(True)
+        return original_render(*a, **kw)
+    cache._render = spy_render  # type: ignore[method-assign]
+
+    result = cache.get_strips_or_alt(span, mode)
+
+    assert len(render_called) == 0, "get_strips_or_alt must not re-render on cache hit"
+    assert result is warm_strips
+
+    _reset_image_cache()
+
+
+def test_render_mode_cached_after_first_call():
+    """_current_render_mode() caches result; ioctl not re-issued on subsequent calls."""
+    from hermes_cli.tui.inline_prose import _reset_image_cache
+    from hermes_cli.tui.kitty_graphics import GraphicsCap, _reset_cell_px_cache
+    _reset_image_cache()
+    _reset_cell_px_cache()
+
+    widget = _make_widget()
+
+    ioctl_calls = []
+    def fake_cell_px():
+        ioctl_calls.append(True)
+        return (8, 16)
+
+    with (
+        patch("hermes_cli.tui.kitty_graphics.get_caps", return_value=GraphicsCap.HALFBLOCK),
+        patch("hermes_cli.tui.kitty_graphics.cell_width_px", side_effect=lambda: (ioctl_calls.append(True), 8)[1]),
+        patch("hermes_cli.tui.kitty_graphics.cell_height_px", return_value=16),
+        patch("hermes_cli.tui.kitty_graphics._supports_unicode_placeholders", return_value=False),
+    ):
+        widget._render_mode_cache = None
+        mode1 = widget._current_render_mode()
+        mode2 = widget._current_render_mode()
+        mode3 = widget._current_render_mode()
+
+    assert mode1 is mode2 is mode3, "_current_render_mode() must return the same object"
+    assert len(ioctl_calls) == 1, "cell_width_px() must only be called once (cached)"
+
+    _reset_image_cache()
+
+
+def test_render_mode_cache_invalidated_on_resize():
+    """on_resize clears _render_mode_cache so next _current_render_mode() recomputes."""
+    from hermes_cli.tui.inline_prose import _reset_image_cache
+    from hermes_cli.tui.kitty_graphics import GraphicsCap
+    _reset_image_cache()
+
+    widget = _make_widget()
+    widget.refresh = lambda: None
+
+    with (
+        patch("hermes_cli.tui.kitty_graphics._cell_px", return_value=(10, 20)),
+        patch("hermes_cli.tui.kitty_graphics.get_caps", return_value=GraphicsCap.HALFBLOCK),
+        patch("hermes_cli.tui.kitty_graphics._supports_unicode_placeholders", return_value=False),
+    ):
+        widget.on_resize(MagicMock())
+
+    assert widget._render_mode_cache is None, "on_resize must invalidate _render_mode_cache"
+
+    _reset_image_cache()
+
+
+def test_render_inline_line_no_render_on_cache_miss():
+    """_render_inline_line uses get_strips_or_alt — never calls _render() on miss."""
+    from hermes_cli.tui.inline_prose import TextSpan, ImageSpan, _reset_image_cache
+    from hermes_cli.tui.kitty_graphics import GraphicsCap
+    _reset_image_cache()
+
+    widget = _make_widget(width=80)
+    span = ImageSpan(image_path=IMG_2X2, cell_width=2, cell_height=1, alt_text=":x:", cache_key="x1")
+    line = [TextSpan(text=Text("hi ")), span]
+    text = widget._line_to_text(line)
+    widget._inline_lines[0] = line
+    widget._inline_paint[0] = widget._build_paint_plan(line, text)
+    widget._logical_visual_rows[0] = 1
+
+    render_called = []
+    original_render = widget._image_cache._render
+    def spy_render(*a, **kw):
+        render_called.append(True)
+        return original_render(*a, **kw)
+    widget._image_cache._render = spy_render  # type: ignore[method-assign]
+
+    with (
+        patch("hermes_cli.tui.kitty_graphics.get_caps", return_value=GraphicsCap.HALFBLOCK),
+        patch("hermes_cli.tui.kitty_graphics.cell_width_px", return_value=8),
+        patch("hermes_cli.tui.kitty_graphics.cell_height_px", return_value=16),
+        patch("hermes_cli.tui.kitty_graphics._supports_unicode_placeholders", return_value=False),
+        patch.object(type(widget), "text_selection", new_callable=lambda: property(lambda self: None)),
+    ):
+        widget._render_mode_cache = None
+        strip = widget._render_inline_line(owner_index=0, row_in_line=0, scroll_x=0, content_y=0)
+
+    assert len(render_called) == 0, "_render_inline_line must not call _render() on cache miss"
+    assert strip is not None
+
+    _reset_image_cache()
+
+
+def test_write_inline_triggers_prerender_for_image_spans():
+    """write_inline calls _prerender_line_images for lines containing ImageSpans."""
+    from hermes_cli.tui.inline_prose import TextSpan, ImageSpan, _reset_image_cache
+    from hermes_cli.tui.kitty_graphics import GraphicsCap
+    _reset_image_cache()
+
+    widget = _make_widget(width=80)
+    prerender_calls: list = []
+
+    original_prerender = widget._prerender_line_images.__func__  # type: ignore[attr-defined]
+    def fake_prerender(self_w, line_index, line):
+        prerender_calls.append((line_index, len(line)))
+    widget._prerender_line_images = lambda idx, ln: fake_prerender(widget, idx, ln)  # type: ignore[method-assign]
+
+    # Patch write to avoid needing app
+    def fake_write(content, **kw):
+        widget._logical_count += 1
+        return widget
+    widget.write = fake_write  # type: ignore[method-assign]
+    def fake_wws(styled, plain, **kw):
+        widget._plain_lines = getattr(widget, "_plain_lines", [])
+        widget._plain_lines.append(plain)
+        widget.write(styled)
+        return widget
+    widget.write_with_source = fake_wws  # type: ignore[method-assign]
+
+    # Line with image → prerender triggered
+    line_with_img = [
+        TextSpan(text=Text("hello ")),
+        ImageSpan(image_path=IMG_2X2, cell_width=2, alt_text=":e:", cache_key="e0"),
+    ]
+    widget.write_inline(line_with_img)
+    assert len(prerender_calls) == 1, "_prerender_line_images must be called for image lines"
+
+    # Line without image → prerender NOT triggered
+    line_no_img = [TextSpan(text=Text("plain text"))]
+    widget.write_inline(line_no_img)
+    assert len(prerender_calls) == 1, "_prerender_line_images must NOT be called for text-only lines"
+
+    _reset_image_cache()

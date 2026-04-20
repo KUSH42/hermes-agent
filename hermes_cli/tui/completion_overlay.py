@@ -42,6 +42,7 @@ class SlashDescPanel(RichLog):
         min-width: 20;
         height: auto;
         max-height: 12;
+        display: none;
     }
     """
 
@@ -95,9 +96,6 @@ class CompletionOverlay(Vertical):
     }
     CompletionOverlay.--visible {
         display: block;
-    }
-    CompletionOverlay:not(.--slash-only) SlashDescPanel {
-        display: none;
     }
     CompletionOverlay.--slash-only _ContentRow > PreviewPanel {
         display: none;

@@ -744,6 +744,8 @@ class HermesApp(App):
 
     def _apply_min_size_overlay(self, w: int, h: int) -> None:
         """Mount or dismiss the MinSizeBackdrop based on current terminal dimensions."""
+        if not self.screen_stack:
+            return
         from hermes_cli.tui.min_size_overlay import MinSizeBackdrop
         from hermes_cli.tui.resize_utils import THRESHOLD_ULTRA_NARROW, THRESHOLD_MIN_HEIGHT
         too_small = w < THRESHOLD_ULTRA_NARROW or h < THRESHOLD_MIN_HEIGHT

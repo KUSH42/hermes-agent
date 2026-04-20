@@ -315,9 +315,8 @@ DEFAULT_CONFIG = {
     },
 
     # Parallel worktree sessions — run multiple agent branches simultaneously.
-    # Feature-gated: disabled by default.  Set enabled=True to activate.
     "sessions": {
-        "enabled": False,
+        "enabled": True,
         "session_dir": "/tmp/hermes-sessions",
         "max_sessions": 8,
         "output_buffer_lines": 2000,

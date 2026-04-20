@@ -599,6 +599,22 @@ class HermesApp(App):
         if not self._browse_turn_boundary_always:
             self.add_class("--no-turn-boundary")
 
+    def on_resize(self, event: "events.Resize") -> None:
+        """Re-normalize emoji images when the terminal cell pixel size changes."""
+        registry = getattr(self, "_emoji_registry", None)
+        if registry is None or registry.is_empty():
+            return
+        try:
+            from hermes_cli.tui.emoji_registry import _cell_px
+            cpw, cph = _cell_px()
+        except Exception:
+            return
+        cur = getattr(self, "_emoji_cell_px", None)
+        if cur == (cpw, cph):
+            return
+        self._emoji_cell_px = (cpw, cph)
+        self.run_worker(lambda: registry.reload_normalized(cpw, cph), thread=True)
+
     def on_unmount(self) -> None:
         """Stop background helpers tied to app lifetime."""
         self._theme_manager.stop_hot_reload()
@@ -1223,7 +1239,9 @@ class HermesApp(App):
         """
         try:
             panel = self.query_one(OutputPanel)
-            panel.mount(UserMessagePanel(text, images=images), before=panel.query_one(ThinkingWidget))
+            ump = UserMessagePanel(text, images=images)
+            panel.mount(ump, before=panel.query_one(ThinkingWidget))
+            self._resolve_user_emoji(text, ump)
             # Always scroll to show the user's own message regardless of scroll
             # position — the user just submitted, they expect to see the exchange.
             # Re-engage auto-scroll for the upcoming assistant response.
@@ -1231,6 +1249,40 @@ class HermesApp(App):
             self.call_after_refresh(panel.scroll_end, animate=False)
         except NoMatches:
             pass
+
+    def _resolve_user_emoji(self, text: str, panel: "UserMessagePanel") -> None:
+        """Mount custom emoji images for :name: tokens found in the user's message.
+
+        Runs on the event-loop thread (called directly from echo_user_message).
+        """
+        from hermes_cli.tui.response_flow import _EMOJI_RE
+        from hermes_cli.tui.kitty_graphics import get_caps, GraphicsCap
+        registry = getattr(self, "_emoji_registry", None)
+        if registry is None or not getattr(self, "_emoji_images_enabled", True):
+            return
+        cap = get_caps()
+        use_images = cap in (GraphicsCap.TGP, GraphicsCap.SIXEL)
+        seen: set[str] = set()
+        for m in _EMOJI_RE.finditer(text):
+            name = m.group(1).lower()
+            if name in seen:
+                continue
+            entry = registry.get(name)
+            if entry is None:
+                continue
+            seen.add(name)
+            try:
+                if entry.n_frames > 1 and use_images and entry.pil_image is not None:
+                    from hermes_cli.tui.emoji_registry import get_animated_emoji_widget_class
+                    cls = get_animated_emoji_widget_class()
+                    panel.mount(cls(entry))
+                elif use_images and entry.pil_image is not None:
+                    from hermes_cli.tui.widgets import InlineImage
+                    img = InlineImage(max_rows=entry.cell_height)
+                    img.image = entry.pil_image
+                    panel.mount(img)
+            except Exception:
+                pass
 
     # --- Reactive watchers ---
 

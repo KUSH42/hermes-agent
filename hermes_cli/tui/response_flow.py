@@ -104,6 +104,9 @@ _INLINE_MATH_RE = re.compile(
     r"(?<!\s)\$"          # close $, not preceded by whitespace
 )
 
+# Custom emoji substitution — matches :name: tokens known to the registry
+_EMOJI_RE = re.compile(r":([a-zA-Z0-9_-]+):")
+
 # Lazy singleton — loaded on first use (avoids import cost at module load)
 _math_renderer: "MathRenderer | None" = None
 
@@ -346,6 +349,10 @@ class ResponseFlowEngine:
         # Media URL detection
         self._mount_media_callback: "Callable[[str, str], None] | None" = None
         self._emitted_media_urls: set[str] = set()
+        # Custom emoji substitution
+        self._emoji_registry = getattr(_app, "_emoji_registry", None)
+        self._emoji_images_enabled: bool = getattr(_app, "_emoji_images_enabled", True)
+        self._emitted_emoji_anchors: set[int] = set()  # id() of mounted positions
 
     def _sync_prose_log(self) -> None:
         """Refresh the active prose destination from the owning message panel."""
@@ -607,6 +614,10 @@ class ResponseFlowEngine:
         self._prose_log.write_with_source(Text.from_ansi(inline_ansi), plain)
         self._pending_code_intro = intro_candidate or _is_code_intro_label(plain)
 
+        # Phase 6: Mount custom emoji images for any :name: tokens in the line
+        for _ename in self._extract_emoji_refs(plain):
+            self._mount_emoji(_ename)
+
     def _scan_media_urls(self, line: str) -> None:
         """Scan a NORMAL-state line for media URLs and invoke _mount_media_callback."""
         from hermes_cli.tui.media_player import (
@@ -632,6 +643,59 @@ class ResponseFlowEngine:
                     self._emitted_media_urls.add(url)
                     if self._mount_media_callback:
                         self._mount_media_callback("audio", url)
+
+    def _has_image_support(self) -> bool:
+        from hermes_cli.tui.kitty_graphics import get_caps, GraphicsCap
+        cap = get_caps()
+        return cap in (GraphicsCap.TGP, GraphicsCap.SIXEL)
+
+    def _extract_emoji_refs(self, text: str) -> "list[str]":
+        """Return distinct emoji names found in text that exist in the registry."""
+        if self._emoji_registry is None or not self._emoji_images_enabled:
+            return []
+        seen: set[str] = set()
+        out: list[str] = []
+        for m in _EMOJI_RE.finditer(text):
+            name = m.group(1).lower()
+            if name not in seen and self._emoji_registry.get(name) is not None:
+                seen.add(name)
+                out.append(name)
+        return out
+
+    def _mount_emoji(self, name: str) -> None:
+        """Mount an emoji image widget into the prose log container. Must run on the event loop."""
+        registry = self._emoji_registry
+        if registry is None:
+            return
+        entry = registry.get(name)
+        if entry is None:
+            return
+        panel = self._panel
+        app = getattr(panel, "app", None)
+        if app is None:
+            return
+        use_images = self._has_image_support() and entry.pil_image is not None
+
+        def _do_mount() -> None:
+            try:
+                if entry.n_frames > 1 and use_images:
+                    from hermes_cli.tui.emoji_registry import get_animated_emoji_widget_class
+                    cls = get_animated_emoji_widget_class()
+                    widget = cls(entry)
+                    panel.mount(widget)
+                elif use_images:
+                    from hermes_cli.tui.widgets import InlineImage
+                    img = InlineImage(max_rows=entry.cell_height)
+                    img.image = entry.pil_image
+                    panel.mount(img)
+                else:
+                    # Text fallback: write the :name: token as prose
+                    self._sync_prose_log()
+                    self._prose_log.write_with_source(Text(f":{name}:"), f":{name}:")
+            except Exception:
+                pass
+
+        app.call_from_thread(_do_mount)
 
     def flush(self) -> None:
         """Turn ended — close any open code block; flush StreamingBlockBuffer pending state."""
@@ -906,6 +970,12 @@ class ReasoningFlowEngine(ResponseFlowEngine):
         # Media URL detection — disabled in reasoning output
         self._mount_media_callback: "Callable[[str, str], None] | None" = None
         self._emitted_media_urls: set[str] = set()
+        # Custom emoji — gated on _emoji_reasoning
+        _rp_emoji = getattr(panel.app, "_emoji_reasoning", True)
+        _app = getattr(panel, "app", None)
+        self._emoji_registry = getattr(_app, "_emoji_registry", None) if _rp_emoji else None
+        self._emoji_images_enabled: bool = getattr(_app, "_emoji_images_enabled", True) and _rp_emoji
+        self._emitted_emoji_anchors: set[int] = set()
 
     def process_line(self, raw: str) -> None:
         """Override: flush block buffer immediately after every line.

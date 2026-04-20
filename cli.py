@@ -1639,6 +1639,15 @@ class HermesCLI:
         # Citations and reasoning rich prose config
         self._citations_enabled: bool = CLI_CONFIG["display"].get("citations", True)
         self._reasoning_rich_prose: bool = CLI_CONFIG["display"].get("reasoning_rich_prose", True)
+        # Custom emoji config
+        _emoji_cfg = CLI_CONFIG["display"].get("emoji", {})
+        self._custom_emojis_enabled: bool = (
+            CLI_CONFIG["display"].get("custom_emojis", "auto") != "off"
+        )
+        self._emoji_max_cell_width: int = int(_emoji_cfg.get("max_cell_width", 4))
+        self._emoji_disk_cache: bool = bool(_emoji_cfg.get("disk_cache", True))
+        self._emoji_reasoning: bool = bool(_emoji_cfg.get("reasoning", True))
+        self._emoji_registry: "object | None" = None  # set after registry load in main()
         # Browse mode visual markers config
         _bm_cfg = CLI_CONFIG["display"].get("browse_markers", {})
         self._browse_markers_enabled: bool = bool(_bm_cfg.get("enabled", True))
@@ -10576,6 +10585,9 @@ class HermesCLI:
             _tui_app._browse_minimap_default = self._browse_minimap_default
             _tui_app._browse_streaming_flash = self._browse_streaming_flash
             _tui_app._browse_turn_boundary_always = self._browse_turn_boundary_always
+            _tui_app._emoji_registry = getattr(self, "_emoji_registry", None)
+            _tui_app._emoji_reasoning = getattr(self, "_emoji_reasoning", True)
+            _tui_app._emoji_images_enabled = getattr(self, "_custom_emojis_enabled", True)
             _tui_app._spinner_frames = _COMMAND_SPINNER_FRAMES
             _hermes_app = _tui_app
             # Apply skin to TUI at startup — component_vars + ui_accent
@@ -10891,6 +10903,25 @@ def main(
                 )
     except Exception:
         pass
+
+    # Load custom emoji registry and inject system prompt block
+    if getattr(cli, "_custom_emojis_enabled", True):
+        try:
+            from hermes_cli.tui.emoji_registry import EmojiRegistry as _EmojiRegistry
+            _emojis_dir = _hermes_home / "emojis"
+            _emojis_md = _emojis_dir / "emojis.md"
+            _emoji_cfg_block = {
+                "max_cell_width": getattr(cli, "_emoji_max_cell_width", 4),
+                "disk_cache": getattr(cli, "_emoji_disk_cache", True),
+            }
+            _registry = _EmojiRegistry(_emojis_dir, _emojis_md if _emojis_md.exists() else None, _emoji_cfg_block)
+            _registry.load()
+            cli._emoji_registry = _registry
+            _emoji_sp = _registry.system_prompt_block()
+            if _emoji_sp:
+                cli.system_prompt = (cli.system_prompt or "") + "\n\n" + _emoji_sp
+        except Exception:
+            pass
 
     # Handle list commands (don't init agent for these)
     if list_tools:

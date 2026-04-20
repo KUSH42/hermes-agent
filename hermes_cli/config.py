@@ -432,6 +432,12 @@ DEFAULT_CONFIG = {
         "math_max_rows": 12,      # max height in terminal rows for math images
         "citations": True,             # Show clickable source chips from [CITE:N ...] tags
         "reasoning_rich_prose": True,  # Enable footnotes + citations inside the reasoning panel
+        "custom_emojis": "auto",       # auto|on|off — load custom emoji images from $HERMES_HOME/emojis/
+        "emoji": {
+            "max_cell_width": 4,       # max terminal cell columns per emoji image
+            "disk_cache": True,        # cache normalized PNGs to emojis/.cache/
+            "reasoning": True,         # resolve :name: inside the reasoning panel
+        },
         "skin": "default",
         "tool_icon_mode": "auto",  # auto|nerdfont|emoji|ascii
         "tool_gutter": True,       # Show ┊/┃ gutter symbols on tool call blocks

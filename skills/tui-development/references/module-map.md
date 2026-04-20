@@ -220,8 +220,17 @@ High-signal flow:
   Adaptive `on_signal` protocol — detected via `hasattr` (no Protocol class).
 - **`hermes_cli/tui/tte_runner.py`** — TerminalTextEffects frame generation helpers.
 - **`hermes_cli/tui/sdf_morph.py`** / **`hermes_cli/tui/sdf_splash.py`** — SDF baking and splash.
-- **`hermes_cli/stream_effects.py`** — `StreamEffectRenderer` base + 7 effect classes.
-  `make_stream_effect(cfg, lock=None)`, `VALID_EFFECTS`. `LiveLineWidget` wired in `widgets.py`.
+- **`hermes_cli/stream_effects.py`** — `StreamEffectRenderer` base + 12 effect classes.
+  `make_stream_effect(cfg, lock=None)`, `VALID_EFFECTS`.
+  Effects: `none`, `flash`, `gradient_tail`, `glow_settle`, `decrypt`, `shimmer`, `breathe`,
+  `glitch_morph` (symbol ladder), `cascade` (index-delayed wave), `nier` (Katakana scramble),
+  `zalgo` (decaying combining diacritics), `cosmic` (ghost-glyph fade-in).
+  `LiveLineWidget` wired in `widgets.py` via `_stream_effect_cfg()`.
+  **Skin override**: active skin YAML can set top-level `stream_effect: <name>` (string) or
+  `stream_effect: {enabled: ..., cascade_ticks: ..., morph_steps: ..., zalgo_marks: ...,
+  fade_frames: ...}` (dict). Skin value takes precedence over `config.yaml`.
+  `_stream_effect_cfg()` reads skin raw YAML via `yaml.safe_load` — runs on first `on_mount`,
+  not hot-reloaded mid-session.
 
 ## Overlays and state
 

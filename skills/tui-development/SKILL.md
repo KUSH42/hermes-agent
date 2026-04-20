@@ -110,9 +110,45 @@ Then load only the focused reference you need:
 
 ## Validation
 
-Last revalidated: **2026-04-20. ~2133 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility; 1 flaky perf jitter test in `test_streaming_perf.py` occasionally fails under load — pre-existing, not related to recent changes).
+Last revalidated: **2026-04-20. ~2275 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility; 2 pre-existing failures in `test_streaming_microcopy.py`).
 
 Recent changes (details → reference files):
+- **Custom Emoji** (2026-04-20): `hermes_cli/tui/emoji_registry.py` (NEW) — `EmojiEntry` dataclass
+  (`name, path, description, pil_image, cell_width=2, cell_height=1, n_frames=1`), `normalize_emoji()`
+  (cell_height always 1; LANCZOS resize into cell budget), `_cell_px()` helper delegating to
+  `kitty_graphics._cell_px()`, `EmojiRegistry` (load/get/all_entries/is_empty/system_prompt_block +
+  disk cache at `emojis/.cache/` + orphan cleanup + `reload_normalized` for cell_px changes).
+  `AnimatedEmojiWidget` via deferred factory `_build_animated_emoji_widget()` + cached
+  `get_animated_emoji_widget_class()` — `@work(thread=True)` on_mount extracts GIF frames;
+  `set_timer` (one-shot, recursive) honors per-frame `duration`; falls back to static for
+  `HALFBLOCK`/`NONE` caps. Config: `display.custom_emojis: "auto"` + `emoji: {max_cell_width,
+  disk_cache, reasoning}`. System prompt block injected in `main()` from `_registry.system_prompt_block()`.
+  `_EMOJI_RE = re.compile(r":([a-zA-Z0-9_-]+):")` in `response_flow.py`. `_extract_emoji_refs()`
+  + `_mount_emoji()` in `ResponseFlowEngine`; wired in Phase 6 after prose write. `ReasoningFlowEngine`
+  gets `_emoji_registry`/`_emoji_images_enabled` gated on `_emoji_reasoning` config. `HermesApp.
+  _resolve_user_emoji()` resolves `:name:` in user messages (on event-loop thread);
+  wired in `echo_user_message`. `on_resize()` triggers `reload_normalized` via `run_worker(thread=True)`
+  when cell_px changes. Image fallback: HALFBLOCK/NONE caps → write `:name:` as prose.
+  50 tests in `tests/tui/test_emoji_registry.py`.
+  → `hermes_cli/tui/emoji_registry.py` (new), `hermes_cli/tui/response_flow.py §_EMOJI_RE/
+    _extract_emoji_refs/_mount_emoji/_has_image_support/ResponseFlowEngine.__init__/
+    ReasoningFlowEngine.__init__`, `hermes_cli/tui/app.py §_resolve_user_emoji/echo_user_message/
+    on_resize`, `hermes_cli/config.py §custom_emojis/emoji`, `cli.py §_custom_emojis_enabled/
+    _emoji_registry/main emoji injection`, `tests/tui/test_emoji_registry.py`
+- **Stream Effects v2 + skin override** (2026-04-20): 5 new `StreamEffectRenderer` subclasses in
+  `hermes_cli/stream_effects.py` — `GlitchMorphEffect` (`glitch_morph`), `CascadeRevealEffect`
+  (`cascade`), `NierEffect` (`nier`), `ZalgoEffect` (`zalgo`), `CosmicFadeEffect` (`cosmic`).
+  All `needs_clock=True`, TUI-mode only (terminal falls back to base). 59 tests total in
+  `tests/tui/test_stream_effects.py` (+31 new: 25 effect + 4 skin override).
+  `_stream_effect_cfg()` extended: reads active skin raw YAML for top-level `stream_effect` key;
+  string shorthand or dict with `enabled` + per-effect tuning keys. Skin value overrides
+  `config.yaml`. `skins/matrix.yaml` activates `cascade` (`cascade_ticks: 3`).
+  `docs/skins/example-skin.yaml` documents all 12 effects with full config schema.
+  → `hermes_cli/stream_effects.py §GlitchMorphEffect/CascadeRevealEffect/NierEffect/ZalgoEffect/
+    CosmicFadeEffect/_NEO_SYMBOLS/_NIER_CHARS/_ZALGO_MARKS/_COSMIC_GHOSTS`,
+    `hermes_cli/tui/widgets.py §_stream_effect_cfg (skin override path)`,
+    `skins/matrix.yaml §stream_effect`, `docs/skins/example-skin.yaml §stream_effect`,
+    `tests/tui/test_stream_effects.py §H/I/J/K/L/G3/G4`
 - **Browse Mode Visual Markers** (2026-04-20): 31 tests across `tests/tui/test_browse_markers.py` + `tests/tui/test_browse_minimap.py`. New file: `hermes_cli/tui/browse_minimap.py`. Spec at `/home/xush/.hermes/tui-browse-mode-markers-spec.md` (v2, reviewed).
   Key arch invariants:
   - **`M` / `m` are taken** — MEDIA anchor nav in browse `on_key` Priority -2 block (app.py). Minimap toggle uses `\` (backslash).

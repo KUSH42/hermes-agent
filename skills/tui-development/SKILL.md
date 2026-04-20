@@ -110,9 +110,24 @@ Then load only the focused reference you need:
 
 ## Validation
 
-Last revalidated: **2026-04-20. ~2058 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility; 1 flaky perf jitter test in `test_streaming_perf.py` occasionally fails under load — pre-existing, not related to recent changes).
+Last revalidated: **2026-04-20. ~2077 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility; 1 flaky perf jitter test in `test_streaming_perf.py` occasionally fails under load — pre-existing, not related to recent changes).
 
 Recent changes (details → reference files):
+- **Tool Call UX Pass 4 — Phase 3** (2026-04-20): 19 tests in `tests/tui/test_ux_phase4_p3.py`. Covers B4/C2/C3/D3/D4/F1/G1/G2/G3.
+  - **B4**: Flash timer aligned to `_flash_expires` TTL — both 1.2s (was 1.3s timer).
+  - **C2**: `StreamingToolBlock._follow_tail: bool = False`; `append_line()` calls `rerender_window()` every 5 lines when set; `complete()` resets. `ToolPanel` gains `Binding("f", "toggle_tail_follow")` + `action_toggle_tail_follow()`.
+  - **C3**: `ShellRenderer.finalize()` detects JSON (`{`/`[`) or YAML (`---`) and returns `rich.Syntax`; plain text returns None.
+  - **D3**: All chip remediation hints joined with `"  ·  "` separator (was first-only).
+  - **D4**: `_build_hint_text()` now shows `C/H color/html`, `I invocation`, `u urls` (when URL artifacts present).
+  - **F1**: `set_result_summary_v4()` schedules `set_timer(10.0, _show_age)` → `block.set_age_microcopy(f"completed {elapsed}s ago")`. `set_age_microcopy()` no-ops when `_completed=False`.
+  - **G1**: `ToolPanel > .--focus-hint` gets `border-top: solid $boost` in `hermes.tcss`.
+  - **G2**: `ToolBodyContainer.clear_microcopy()` no longer restores `_secondary_text` post-completion.
+  - **G3**: `_TONE_STYLES: dict[str, str]` module constant extracted; both inline `tone_style = {...}` dicts replaced.
+  → `hermes_cli/tui/tool_panel.py §_TONE_STYLES/toggle_tail_follow/D3 hints/D4 hint text/F1 timer`,
+    `hermes_cli/tui/tool_blocks.py §_follow_tail/set_age_microcopy/clear_microcopy`,
+    `hermes_cli/tui/body_renderer.py §ShellRenderer.finalize`,
+    `hermes_cli/tui/hermes.tcss §--focus-hint`,
+    `tests/tui/test_ux_phase4_p3.py` (new, 19 tests)
 - **Tool Call UX Pass 4 — Phase 2** (2026-04-20): 22 tests in `tests/tui/test_ux_phase4_p2.py`. Covers B1/B2/B3/C1/D2/E1/H1.
   - **B1 — Error-kind icon override**: `tool_blocks.py` `_render_v4()` — after `icon_str = self._tool_icon or ""`, if `_tool_icon_error and _error_kind`, override icon with `_ERROR_ICON[_error_kind]` map.
   - **B2 — Suppress `{N}L` when hero set**: `elif self._line_count and not self._primary_hero:` — line count chip only shown when no hero chip set.

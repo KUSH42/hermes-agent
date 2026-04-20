@@ -23,12 +23,40 @@ CompletionOverlay (Vertical)
 
 from __future__ import annotations
 
+from textual import events
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Static
+from textual.widgets import RichLog, Static
 
 from .completion_list import VirtualCompletionList
+from .path_search import SlashCandidate
 from .preview_panel import PreviewPanel
+
+
+class SlashDescPanel(RichLog):
+    """Shows the description for the currently highlighted slash command."""
+
+    DEFAULT_CSS = """
+    SlashDescPanel {
+        width: 1fr;
+        min-width: 20;
+        height: auto;
+        max-height: 12;
+    }
+    """
+
+    def __init__(self) -> None:
+        super().__init__(markup=True, wrap=True, auto_scroll=False)
+
+    def on_mount(self) -> None:
+        self.watch(self.app, "highlighted_candidate", self._on_candidate)
+
+    def _on_candidate(self, c: object) -> None:
+        if isinstance(c, SlashCandidate):
+            self.clear()
+            self.write(f"[bold]{c.command}[/bold]\n\n{c.description or '(no description)'}")
+        else:
+            self.clear()
 
 
 class _ContentRow(Horizontal):
@@ -68,10 +96,29 @@ class CompletionOverlay(Vertical):
     CompletionOverlay.--visible {
         display: block;
     }
+    CompletionOverlay:not(.--slash-only) SlashDescPanel {
+        display: none;
+    }
     CompletionOverlay.--slash-only _ContentRow > PreviewPanel {
         display: none;
     }
     CompletionOverlay.--slash-only _ContentRow > VirtualCompletionList {
+        width: 40%;
+    }
+    CompletionOverlay.--slash-only SlashDescPanel {
+        display: block;
+        width: 60%;
+    }
+    CompletionOverlay.--narrow.--slash-only SlashDescPanel {
+        display: none;
+    }
+    CompletionOverlay.--narrow _ContentRow > PreviewPanel {
+        display: none;
+    }
+    CompletionOverlay.--narrow _ContentRow > VirtualCompletionList {
+        width: 100%;
+    }
+    CompletionOverlay.--narrow.--slash-only _ContentRow > VirtualCompletionList {
         width: 100%;
     }
     #overflow-badge {
@@ -84,7 +131,11 @@ class CompletionOverlay(Vertical):
         with _ContentRow():
             yield VirtualCompletionList()
             yield PreviewPanel()
+            yield SlashDescPanel()
         yield Static("", id="overflow-badge")
+
+    def on_resize(self, event: events.Resize) -> None:
+        self.set_class(event.size.width < 100, "--narrow")
 
     def on_virtual_completion_list_auto_dismiss(
         self, _message: VirtualCompletionList.AutoDismiss,

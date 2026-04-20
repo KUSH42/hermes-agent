@@ -48,6 +48,7 @@ class PathCandidate(Candidate):
 @dataclass(frozen=True, slots=True)
 class SlashCandidate(Candidate):
     command: str = ""                               # canonical command name, e.g. "/help"
+    description: str = ""                          # short description shown in SlashDescPanel
 
 
 # ---------------------------------------------------------------------------
@@ -94,9 +95,10 @@ class PathSearchProvider(Widget):
         *,
         match_query: str | None = None,
         insert_prefix: str = "",
+        ignore: "frozenset[str] | None" = None,
     ) -> None:
         """Start a new walk; cancels any prior ``"path-search"`` worker."""
-        self._walk(query, root, match_query or query, insert_prefix)
+        self._walk(query, root, match_query or query, insert_prefix, ignore)
 
     @work(thread=True, exclusive=True, group="path-search")
     def _walk(
@@ -105,6 +107,7 @@ class PathSearchProvider(Widget):
         root: Path,
         match_query: str,
         insert_prefix: str,
+        ignore: "frozenset[str] | None" = None,
     ) -> None:
         # --------------- perf instrumentation --------------------------------
         # Target: first batch in <50 ms so the overlay populates before the
@@ -118,13 +121,15 @@ class PathSearchProvider(Widget):
         total_files = 0
 
         BATCH = 512
-        IGNORE = {".git", "node_modules", "__pycache__", ".venv", "dist", "build"}
+        _ignore = ignore if ignore is not None else frozenset({
+            ".git", "node_modules", "__pycache__", ".venv", "dist", "build"
+        })
         buf: list[PathCandidate] = []
         q_lower = match_query.lower()
         root_str = str(root)
         worker = get_current_worker()  # correct API; WorkerManager has no .current
 
-        for dirpath, _dirnames, filenames in self._iwalk(root, IGNORE):
+        for dirpath, _dirnames, filenames in self._iwalk(root, _ignore):
             # Cooperative cancellation at directory granularity.
             # Per-file checks cost more than the walk itself on warm caches.
             if worker.is_cancelled:

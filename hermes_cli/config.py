@@ -288,6 +288,8 @@ DEFAULT_CONFIG = {
         },
         # Lines scrolled per mouse wheel tick (valid range 1–20; default 3).
         "scroll_lines": 3,
+        # Directories to skip during path completion (@file / ./path triggers).
+        "path_search_ignore": [".git", "node_modules", "__pycache__", ".venv", "dist", "build"],
     },
     
     "browser": {

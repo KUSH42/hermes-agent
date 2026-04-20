@@ -34,6 +34,18 @@ _MAX_PREVIEW_BYTES = 128 * 1024
 _BINARY_SNIFF_BYTES = 4096
 
 
+def _hex_luminance(hex_color: str) -> float:
+    """WCAG relative luminance from a #rrggbb string.  Returns 0–255 scale."""
+    h = hex_color.lstrip("#")
+    if len(h) == 6:
+        try:
+            r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b
+        except ValueError:
+            pass
+    return 0.0  # fallback → treat as dark
+
+
 def _looks_binary(head_bytes: bytes) -> bool:
     """Null-byte heuristic.  Matches git's is_binary check: any NUL in the
     first 4 KiB → binary.  Cheap and good enough for preview skip/fallback."""
@@ -101,14 +113,15 @@ class PreviewPanel(RichLog):
         return current is not None and current.abs_path == abs_path
 
     def _render_syntax(self, abs_path: str, head: str) -> None:
-        theme = "monokai"
-        background = "#1e1e1e"
         try:
             css = self.app.get_css_variables()
-            theme = css.get("preview-syntax-theme", theme)
-            background = css.get("app-bg", background)
+            theme = css.get("preview-syntax-theme", "")
+            background = css.get("app-bg", "#1e1e1e")
+            if not theme:
+                theme = "monokai" if _hex_luminance(background) < 128 else "default"
         except Exception:
-            pass
+            theme = "monokai"
+            background = "#1e1e1e"
         syntax = Syntax(
             head,
             Syntax.guess_lexer(abs_path, head),
@@ -138,6 +151,21 @@ class PreviewPanel(RichLog):
             return
         try:
             path = Path(abs_path)
+            if path.is_dir():
+                try:
+                    all_entries = sorted(path.iterdir(), key=lambda e: (not e.is_dir(), e.name))
+                    lines = []
+                    for entry in all_entries[:40]:
+                        prefix = "d " if entry.is_dir() else "  "
+                        lines.append(f"{prefix}{entry.name}")
+                    if len(all_entries) > 40:
+                        lines.append(f"  … ({len(all_entries)} total)")
+                    text = "\n".join(lines) if lines else "(empty directory)"
+                except OSError as e:
+                    text = f"(cannot read directory: {e})"
+                if not worker.is_cancelled:
+                    self.post_message(self.PlainReady(abs_path, text))
+                return
             size = path.stat().st_size
             if size > _MAX_PREVIEW_BYTES:
                 if not worker.is_cancelled:

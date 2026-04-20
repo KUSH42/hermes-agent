@@ -135,13 +135,28 @@ class HermesInput(TextArea, can_focus=True):
             id=id,
             classes=classes,
         )
+        # A1: idle placeholder — shown when input is empty
+        self._idle_placeholder: str = (
+            placeholder
+            if placeholder
+            else "Type a message… · / commands · @file · Shift+Enter for newlines"
+        )
+        self.placeholder = self._idle_placeholder
+
         self._history: list[str] = []
         self._history_idx: int = -1
         self._history_draft: str = ""
         self._slash_commands: list[str] = []
+        self._slash_descriptions: dict[str, str] = {}
         self._suppress_autocomplete_once: bool = False
         self._sanitizing: bool = False
         self._handling_file_drop: bool = False
+
+        # B2: debounce slash "did you mean" flash — only fire when fragment changes
+        self._last_slash_hint_fragment: str = ""
+
+        # A4: input height override (ctrl+shift+up/down)
+        self._input_height_override: int = 3
 
         # Reverse-search mode (Ctrl+R)
         self._rev_mode: bool = False
@@ -289,9 +304,23 @@ class HermesInput(TextArea, can_focus=True):
         except OSError:
             pass
 
+    def _history_load(self, text: str) -> None:
+        """A5: load history entry via replace() to preserve undo ring."""
+        doc = self.document
+        last_row = doc.line_count - 1
+        last_col = len(doc.get_line(last_row))
+        self.replace(text, (0, 0), (last_row, last_col))
+        new_last_row = text.count("\n")
+        new_last_col = len(text.rsplit("\n", 1)[-1])
+        self.move_cursor((new_last_row, new_last_col))
+
     def set_slash_commands(self, commands: list[str]) -> None:
         """Set the available slash commands for autocomplete."""
         self._slash_commands = sorted(commands)
+
+    def set_slash_descriptions(self, descs: dict[str, str]) -> None:
+        """Set description strings for slash commands (shown in SlashDescPanel)."""
+        self._slash_descriptions = descs
 
     # --- Key handling ---
 
@@ -397,6 +426,18 @@ class HermesInput(TextArea, can_focus=True):
                 self.app.on_key(event)
             except Exception:
                 pass
+            return
+
+        # A4: expand/shrink input height
+        if key == "ctrl+shift+up":
+            event.prevent_default()
+            self._input_height_override = min(10, self._input_height_override + 1)
+            self.styles.max_height = self._input_height_override
+            return
+        if key == "ctrl+shift+down":
+            event.prevent_default()
+            self._input_height_override = max(3, self._input_height_override - 1)
+            self.styles.max_height = self._input_height_override
             return
 
         # PageUp/Down: route to completion overlay when visible
@@ -552,19 +593,27 @@ class HermesInput(TextArea, can_focus=True):
     def update_suggestion(self) -> None:
         """Set ghost text from history. Called by TextArea after every edit."""
         current = self.text
-        # Ghost text only for single-line non-empty text with cursor at end.
-        # Mid-text cursor guard: suggestion must never appear when cursor is
-        # mid-text, or action_cursor_right would corrupt the text on accept.
-        if not current or "\n" in current:
+        if not current:
+            self.suggestion = ""
+            return
+        # A2: support multiline — match against last line
+        last_line = current.rsplit("\n", 1)[-1]
+        # No ghost text when last line is empty — would match any multiline entry
+        if not last_line:
             self.suggestion = ""
             return
         row, col = self.cursor_location
-        if row != 0 or col != len(current):
+        total_rows = current.count("\n")
+        if row != total_rows or col != len(last_line):
             self.suggestion = ""
             return
+        # Search history for entries whose last line starts with last_line
+        # Single-line history entries can match multiline input's last line;
+        # this is acceptable UX — completing the current line from any history entry.
         for entry in reversed(self._history):
-            if entry.startswith(current) and entry != current:
-                self.suggestion = entry[len(current):]
+            entry_last = entry.rsplit("\n", 1)[-1]
+            if entry_last.startswith(last_line) and entry_last != last_line:
+                self.suggestion = entry_last[len(last_line):]
                 return
         self.suggestion = ""
 
@@ -582,6 +631,11 @@ class HermesInput(TextArea, can_focus=True):
         self.load_text("")
         self._history_idx = -1
         self._suppress_autocomplete_once = False
+        # A4: reset input height on submit
+        self._input_height_override = 3
+        self.styles.max_height = 3
+        # B2: reset slash hint debounce on submit
+        self._last_slash_hint_fragment = ""
 
     def action_history_prev(self) -> None:
         if self._completion_overlay_slash_only():
@@ -599,8 +653,7 @@ class HermesInput(TextArea, can_focus=True):
             self._history_idx -= 1
         else:
             return
-        self.value = self._history[self._history_idx]
-        self.cursor_position = len(self.value)
+        self._history_load(self._history[self._history_idx])
 
     def action_history_next(self) -> None:
         if self._completion_overlay_slash_only():
@@ -613,11 +666,10 @@ class HermesInput(TextArea, can_focus=True):
             return
         if self._history_idx < len(self._history) - 1:
             self._history_idx += 1
-            self.value = self._history[self._history_idx]
+            self._history_load(self._history[self._history_idx])
         else:
             self._history_idx = -1
-            self.value = self._history_draft
-        self.cursor_position = len(self.value)
+            self._history_load(self._history_draft)
 
     def action_completion_page_up(self) -> None:
         """PageUp: jump one page up in the completion list."""
@@ -676,8 +728,7 @@ class HermesInput(TextArea, can_focus=True):
             if 0 <= i < len(self._history):
                 if not needle or needle in self._history[i].casefold():
                     self._rev_match_idx = i
-                    self.value = self._history[i]
-                    self.cursor_position = len(self.value)
+                    self._history_load(self._history[i])
                     self._update_rev_hint()
                     return
         # No match
@@ -756,7 +807,11 @@ class HermesInput(TextArea, can_focus=True):
             self._hide_completion_overlay()
             return
         items = [
-            SlashCandidate(display=c, command=c)
+            SlashCandidate(
+                display=c,
+                command=c,
+                description=self._slash_descriptions.get(c, ""),
+            )
             for c in self._slash_commands
             if c.startswith("/" + fragment)
         ]
@@ -777,7 +832,9 @@ class HermesInput(TextArea, can_focus=True):
             elif fragment:
                 hint = f"Unknown command: /{fragment}"
                 duration = 1.5
-            if hint:
+            # B2: debounce — only flash when fragment changes
+            if hint and fragment != self._last_slash_hint_fragment:
+                self._last_slash_hint_fragment = fragment
                 try:
                     self.app._flash_hint(hint, duration)
                 except Exception:
@@ -815,11 +872,13 @@ class HermesInput(TextArea, can_focus=True):
         except NoMatches:
             return
         request = self._resolve_path_search_request()
+        ignore = getattr(self.app, "_path_search_ignore", None)
         provider.search(
             request.batch_key,
             request.root,
             match_query=request.match_query,
             insert_prefix=request.insert_prefix,
+            ignore=ignore,
         )
 
     def _working_directory(self) -> Path:
@@ -896,6 +955,13 @@ class HermesInput(TextArea, can_focus=True):
         except NoMatches:
             return
         overlay.add_class("--visible")
+        # A3: clear ghost text while overlay is open
+        self.suggestion = ""
+        # A3: show status hint
+        try:
+            self.app._completion_hint = "Tab accept · ↑↓ navigate · Esc dismiss"
+        except Exception:
+            pass
 
     def _hide_completion_overlay(self) -> None:
         if self._path_debounce_timer is not None:
@@ -908,6 +974,13 @@ class HermesInput(TextArea, can_focus=True):
             return
         overlay.remove_class("--visible")
         overlay.remove_class("--slash-only")
+        # A3: restore ghost text suggestion
+        self.update_suggestion()
+        # A3: clear status hint
+        try:
+            self.app._completion_hint = ""
+        except Exception:
+            pass
 
     def _completion_overlay_visible(self) -> bool:
         try:
@@ -929,7 +1002,8 @@ class HermesInput(TextArea, can_focus=True):
             return
         if not clist.items:
             return
-        clist.highlighted = (clist.highlighted + delta) % len(clist.items)
+        # C3: clamp at bounds instead of wrapping
+        clist.highlighted = max(0, min(len(clist.items) - 1, clist.highlighted + delta))
 
     # --- Batch handler ---
 

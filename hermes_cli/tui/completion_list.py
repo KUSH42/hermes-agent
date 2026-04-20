@@ -226,12 +226,12 @@ class VirtualCompletionList(ScrollView, can_focus=True):
             self._auto_close_timer = None
 
     def _maybe_schedule_auto_close(self) -> None:
-        """Schedule auto-dismiss if: walk done, no items, query ≥ 4 chars (P0-B)."""
+        """Schedule auto-dismiss if walk done and no items."""
         self._cancel_auto_close()
         if self.items or self.searching:
             return
-        if len(self.current_query) >= 4:
-            self._auto_close_timer = self.set_timer(1.5, self._fire_auto_dismiss)
+        # no threshold — any empty result schedules close
+        self._auto_close_timer = self.set_timer(1.5, self._fire_auto_dismiss)
 
     def _fire_auto_dismiss(self) -> None:
         self._auto_close_timer = None
@@ -251,11 +251,15 @@ class VirtualCompletionList(ScrollView, can_focus=True):
         except NoMatches:
             return
         n = len(self.items)
-        if n > 13:
-            badge.update(f"[dim]  ↓ {n - 13} more matches[/dim]")
+        visible = self.size.height if self.size.height > 0 else 13
+        if n > visible:
+            badge.update(f"[dim]  ↓ {n - visible} more matches[/dim]")
             badge.display = True
         else:
             badge.display = False
+
+    def on_resize(self, _event: object) -> None:
+        self._update_overflow_badge()
 
     # -------------------------------------------------------------------------
     # Watchers
@@ -349,6 +353,7 @@ class VirtualCompletionList(ScrollView, can_focus=True):
         return strip
 
     def _styled_candidate(self, c: "Candidate", selected: bool) -> Text:
+        from .path_search import PathCandidate
         base_style = Style() if selected else Style(dim=True)
         t = Text(overflow="ellipsis", no_wrap=True)
         last = 0
@@ -359,4 +364,12 @@ class VirtualCompletionList(ScrollView, can_focus=True):
             last = end
         if last < len(c.display):
             t.append(c.display[last:], style=base_style)
+        # C5: show insert_text suffix when it differs from display (not on selected row)
+        if (
+            not selected
+            and isinstance(c, PathCandidate)
+            and c.insert_text
+            and c.insert_text != c.display
+        ):
+            t.append(f"  →  {c.insert_text}", style=Style(dim=True, color="#888888"))
         return t

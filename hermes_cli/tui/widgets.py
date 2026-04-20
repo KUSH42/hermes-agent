@@ -405,11 +405,18 @@ class CopyableRichLog(RichLog, can_focus=False):
     }
     """
 
+    class LinkClicked(Message):
+        """Posted when the user clicks a linkified URL or path in the log."""
+        def __init__(self, url: str) -> None:
+            super().__init__()
+            self.url = url
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         _boost_layout_caches(self)
         self._plain_lines: list[str] = []
         self._all_rich: list[Text] = []  # C5: parallel rich Text objects for ANSI/HTML export
+        self._line_links: list[str | None] = []  # per-line fallback link (for truncated spans)
 
     def render_line(self, y: int) -> Strip:
         """Override to add offset metadata and selection highlighting.
@@ -487,10 +494,11 @@ class CopyableRichLog(RichLog, can_focus=False):
             animate=animate,
         )
 
-    def write_with_source(self, styled: Text, plain: str, **kwargs: Any) -> "CopyableRichLog":
+    def write_with_source(self, styled: Text, plain: str, link: "str | None" = None, **kwargs: Any) -> "CopyableRichLog":
         """Write styled text to display, store plain text for copy."""
         self._plain_lines.append(plain)
         self._all_rich.append(styled)  # C5: parallel rich list for ANSI/HTML export
+        self._line_links.append(link)
         try:
             from hermes_cli.tui.osc8 import inject_osc8, _osc8_supported
             if _osc8_supported():
@@ -527,8 +535,36 @@ class CopyableRichLog(RichLog, can_focus=False):
         """Plain text for clipboard — no ANSI, no markup."""
         return "\n".join(self._plain_lines)
 
+    def on_click(self, event: "Any") -> None:
+        """Open linkified URL/path on left-click (button 1)."""
+        if getattr(event, "button", 1) != 1:
+            return
+        scroll_y = self.scroll_offset.y
+        content_y = scroll_y + event.y
+        # Try Rich meta first (exact span hit)
+        if content_y < len(self.lines):
+            x = event.x + self.scroll_offset.x
+            col = 0
+            for seg in self.lines[content_y]:
+                seg_len = len(seg.text)
+                if col <= x < col + seg_len:
+                    meta = seg.style.meta if seg.style else {}
+                    url = meta.get("_link_url")
+                    if url:
+                        self.post_message(CopyableRichLog.LinkClicked(url))
+                        event.stop()
+                        return
+                col += seg_len
+        # Fallback: per-line link (covers truncated spans)
+        if content_y < len(self._line_links):
+            url = self._line_links[content_y]
+            if url:
+                self.post_message(CopyableRichLog.LinkClicked(url))
+                event.stop()
+
     def clear(self) -> "CopyableRichLog":
         self._plain_lines.clear()
+        self._line_links.clear()
         return super().clear()
 
 

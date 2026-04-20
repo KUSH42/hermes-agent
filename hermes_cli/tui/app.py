@@ -3085,6 +3085,19 @@ class HermesApp(App):
         if header is not None:
             header.flash_success()
 
+    def _open_external_url(self, url: str) -> None:
+        """Open a URL or file:// path in the system browser/file manager."""
+        _ALLOWED = ("http://", "https://", "file://")
+        if not any(url.startswith(s) for s in _ALLOWED):
+            return
+        import threading, subprocess, sys
+        opener = "open" if sys.platform == "darwin" else "xdg-open"
+        threading.Thread(target=lambda: subprocess.run([opener, url], check=False), daemon=True).start()
+
+    def on_copyable_rich_log_link_clicked(self, event: "Any") -> None:
+        """Handle link clicks bubbled from CopyableRichLog widgets."""
+        self._open_external_url(event.url)
+
     def _open_path_action(self, header: Any, path: str, opener: str, folder: bool) -> None:
         """Open file/URL or containing folder in a worker thread."""
         import threading

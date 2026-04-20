@@ -110,9 +110,41 @@ Then load only the focused reference you need:
 
 ## Validation
 
-Last revalidated: **2026-04-20. ~2275 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility; 2 pre-existing failures in `test_streaming_microcopy.py`).
+Last revalidated: **2026-04-20. ~2312 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
 
 Recent changes (details → reference files):
+- **Tool Block Click + Path/URL Linkification** (2026-04-20): 3 sub-features. 35 new tests in
+  `tests/tui/test_tool_block_click_links.py`. Spec at `/home/xush/.hermes/tui-tool-block-click-links-spec.md`.
+  **Feature 1 (always-clickable toggle)**: `ToolHeader.on_click` now delegates to `panel.action_toggle_collapse()`
+  BEFORE the `_has_affordances` guard — all completed blocks toggle on click regardless of line count.
+  **Feature 2 (args row)**: `ToolBodyContainer` gains `--args-row` Static (composed before CopyableRichLog);
+  `set_args_row(text)` shows/hides it. `_build_args_row_text(spec, tool_input)` module helper formats
+  non-primary args. `STB.complete()` calls `set_args_row` via spec lookup.
+  **Feature 3 (linkification)**: `_linkify_text(plain, rich_text)` + `_first_link(plain)` helpers in
+  `tool_blocks.py`. Apply underline + `meta={"_link_url": url}` to URLs and file paths.
+  `STB.append_line()` changed: `_pending` now stores `(Text, str)` (pre-linkified Rich Text) instead
+  of `(str, str)`. `_flush_pending`/`rerender_window`/`reveal_lines`/`collapse_to` all pass
+  `link=_first_link(plain)` to `write_with_source`. `CopyableRichLog.write_with_source(link=None)` stores
+  link in `_line_links`; `on_click` hits Rich meta first, falls back to `_line_links[content_y]`;
+  posts `CopyableRichLog.LinkClicked(url)`. `HermesApp.on_copyable_rich_log_link_clicked` + 
+  `_open_external_url(url)` (scheme whitelist: http/https/file). `osc8.py` extended with `_URL_RE`/`_URL_TRAIL_RE`
+  + URL branch in `inject_osc8`; URL sub applied BEFORE path sub to prevent double-match.
+  `_LINK_PATH_RE` / `_PATH_RE` both use `(?<![=:\w/])` negative lookbehind to skip paths inside URLs.
+  `execute_code_block.py._flush_pending` updated to handle `Text` in batch (isinstance check).
+  **Fixes**: `test_click_calls_toggle_exactly_once` updated to patch `panel.action_toggle_collapse`
+  (ToolBlock is now always wrapped in ToolPanel via `mount_tool_block`). Category header font: bold,
+  non-italic, unquoted (was `"query"` italic). MCP microcopy `" server"` suffix added.
+  Web search/extract result body: `close_streaming_tool_block` gains `result_lines` param; split in
+  `cli.py` for SEARCH/WEB tools; fed into STB before `complete()`.
+  → `hermes_cli/tui/tool_blocks.py §on_click/ToolBodyContainer/set_args_row/_build_args_row_text/
+    _linkify_text/_first_link/_LINK_PATH_RE/append_line/_flush_pending/rerender_window/reveal_lines/collapse_to`,
+    `hermes_cli/tui/widgets.py §CopyableRichLog.write_with_source/on_click/clear/_line_links/LinkClicked`,
+    `hermes_cli/tui/osc8.py §_URL_RE/_URL_TRAIL_RE/inject_osc8`,
+    `hermes_cli/tui/app.py §on_copyable_rich_log_link_clicked/_open_external_url`,
+    `hermes_cli/tui/execute_code_block.py §_flush_pending`,
+    `tests/tui/test_tool_block_click_links.py` (new, 35 tests),
+    `tests/tui/test_tool_blocks.py §test_click_calls_toggle_exactly_once` (updated),
+    `tests/tui/test_tool_header_v4.py §test_query_bold_not_quoted` (updated)
 - **Custom Emoji** (2026-04-20): `hermes_cli/tui/emoji_registry.py` (NEW) — `EmojiEntry` dataclass
   (`name, path, description, pil_image, cell_width=2, cell_height=1, n_frames=1`), `normalize_emoji()`
   (cell_height always 1; LANCZOS resize into cell budget), `_cell_px()` helper delegating to

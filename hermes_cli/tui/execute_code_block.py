@@ -28,6 +28,7 @@ from hermes_cli.tui.tool_blocks import (
     ToolTail,
     _SPINNER_FRAMES,
     _VISIBLE_CAP,
+    _first_link,
 )
 from hermes_cli.tui.widgets import CopyableRichLog
 
@@ -354,9 +355,13 @@ class ExecuteCodeBlock(StreamingToolBlock):
             return
 
         lines_written = 0
-        for raw, plain in batch:
+        for rich_or_raw, plain in batch:
             if self._visible_count < _VISIBLE_CAP:
-                output_log.write_with_source(Text.from_ansi(raw), plain)
+                if isinstance(rich_or_raw, Text):
+                    styled = rich_or_raw
+                else:
+                    styled = Text.from_ansi(rich_or_raw)
+                output_log.write_with_source(styled, plain, link=_first_link(plain))
                 self._visible_count += 1
                 lines_written += 1
 

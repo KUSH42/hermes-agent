@@ -1003,8 +1003,9 @@ async def test_right_click_does_not_toggle():
 
 @pytest.mark.asyncio
 async def test_click_calls_toggle_exactly_once():
-    """Left-click on ToolHeader calls parent.toggle() exactly once."""
+    """Left-click on ToolHeader toggles collapse via ToolPanel.action_toggle_collapse."""
     from unittest.mock import patch as _patch
+    from hermes_cli.tui.tool_panel import ToolPanel
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         lines = [f"L{i}" for i in range(COLLAPSE_THRESHOLD + 1)]
@@ -1012,15 +1013,16 @@ async def test_click_calls_toggle_exactly_once():
         app.mount_tool_block("diff", lines, plain)
         await pilot.pause()
 
-        block = app.query_one(ToolBlock)
+        panel = app.query_one(ToolPanel)
         toggle_calls = []
-        original_toggle = block.toggle
+        original_toggle = panel.action_toggle_collapse
 
         def mock_toggle():
             toggle_calls.append(1)
             original_toggle()
 
-        with _patch.object(block, "toggle", side_effect=mock_toggle):
+        block = app.query_one(ToolBlock)
+        with _patch.object(panel, "action_toggle_collapse", side_effect=mock_toggle):
             await pilot.click(block._header)
             await pilot.pause()
 

@@ -119,12 +119,14 @@ class TestHeaderLabelCommand:
 
 
 class TestHeaderLabelQuery:
-    def test_query_bold_italic_quoted(self):
+    def test_query_bold_not_quoted(self):
+        """Query label is bold but not quoted (no italics, no surrounding quotes)."""
         spec = _make_spec("query", category=ToolCategory.SEARCH)
         t = header_label_v4(spec, {}, "foo bar", None, 60)
-        assert '"foo bar"' in t.plain
-        bi_spans = [s for s in t._spans if "bold" in str(s.style) and "italic" in str(s.style)]
-        assert bi_spans
+        assert "foo bar" in t.plain
+        assert '"foo bar"' not in t.plain
+        bold_spans = [s for s in t._spans if "bold" in str(s.style)]
+        assert bold_spans
 
     def test_query_truncates(self):
         spec = _make_spec("query")

@@ -36,6 +36,86 @@ from hermes_cli.tui.widgets import (
 
 COLLAPSE_THRESHOLD = 3  # >N lines → collapsed by default
 
+# ---------------------------------------------------------------------------
+# Link detection helpers (used by _linkify_text / _first_link)
+# ---------------------------------------------------------------------------
+
+_LINK_URL_RE = re.compile(r'https?://[^\s<>"\']+')
+_LINK_PATH_RE = re.compile(
+    r"(?<![=:\w/])(/[\w./\-_]+|\.{1,2}/[\w./\-_]+)(?![\w])"
+)
+_LINK_TRAIL_RE = re.compile(r'[.,;:!?)\]>]+$')
+
+
+def _linkify_text(plain: str, rich_text: "Text") -> "Text":
+    """Apply underline + click meta to URL and file-path spans.
+
+    Operates on *plain* for regex matching so ANSI codes don't shift offsets,
+    then stylizes the corresponding span on *rich_text* (which was built from
+    the same content).  Underline only — no color override so existing ANSI
+    colors are preserved.
+    """
+    import os as _os
+    from rich.style import Style as _Style
+
+    # Collect URL spans first so path matches inside URLs are skipped
+    url_ranges: list[tuple[int, int]] = []
+    for m in _LINK_URL_RE.finditer(plain):
+        url_ranges.append((m.start(), m.end()))
+
+    def _in_url(start: int, end: int) -> bool:
+        return any(us <= start and end <= ue for us, ue in url_ranges)
+
+    for m in _LINK_URL_RE.finditer(plain):
+        raw_target = m.group(0)
+        target = _LINK_TRAIL_RE.sub("", raw_target)
+        start, end = m.start(), m.start() + len(target)
+        rich_text.stylize(_Style(underline=True, meta={"_link_url": target}), start, end)
+
+    for m in _LINK_PATH_RE.finditer(plain):
+        raw_target = m.group(0)
+        target = _LINK_TRAIL_RE.sub("", raw_target)
+        start, end = m.start(), m.start() + len(target)
+        if _in_url(start, end):
+            continue
+        abs_path = _os.path.abspath(target)
+        url = f"file://{abs_path}"
+        rich_text.stylize(_Style(underline=True, meta={"_link_url": url}), start, end)
+
+    return rich_text
+
+
+def _first_link(plain: str) -> "str | None":
+    """Return the first URL or file:// path found in *plain*, or None."""
+    import os as _os
+    m = _LINK_URL_RE.search(plain)
+    if m:
+        return _LINK_TRAIL_RE.sub("", m.group(0))
+    m = _LINK_PATH_RE.search(plain)
+    if m:
+        target = _LINK_TRAIL_RE.sub("", m.group(0))
+        return f"file://{_os.path.abspath(target)}"
+    return None
+
+
+def _build_args_row_text(spec: "object", tool_input: "dict | None") -> "str | None":
+    """Format non-primary tool args as a dim 'key: value' row string.
+
+    Returns None when there is nothing to show (no secondary args).
+    """
+    if not tool_input:
+        return None
+    primary_key = getattr(spec, "primary_arg", None)
+    parts: list[str] = []
+    for k, v in tool_input.items():
+        if k == primary_key:
+            continue
+        v_str = str(v)
+        if len(v_str) > 60:
+            v_str = v_str[:59] + "…"
+        parts.append(f"{k}: {v_str}")
+    return "  ".join(parts) if parts else None
+
 # StreamingToolBlock constants
 _VISIBLE_CAP = 200          # max lines shown in the RichLog
 _LINE_BYTE_CAP = 2000       # truncate single lines beyond this many chars
@@ -752,8 +832,15 @@ class ToolHeader(PulseMixin, Widget):
             except Exception:
                 pass
             return
+        # Always allow toggle when wrapped in a ToolPanel — bypasses _has_affordances
+        # guard so small-result blocks (≤3 lines) are still collapsible.
+        panel = getattr(self, "_panel", None)
+        if panel is not None:
+            event.prevent_default()
+            panel.action_toggle_collapse()
+            return
         if not self._has_affordances:
-            return                          # always-expanded block: nothing to toggle
+            return                          # always-expanded legacy block: nothing to toggle
         event.prevent_default()
         parent = self.parent
         if parent is not None:
@@ -832,6 +919,8 @@ class ToolBodyContainer(Widget):
     ToolBodyContainer.expanded { display: block; }
     ToolBodyContainer .--microcopy { height: 1; display: none; color: $text-muted; padding: 0 2; }
     ToolBodyContainer .--microcopy.--active { display: block; }
+    ToolBodyContainer .--args-row { height: auto; max-height: 2; padding: 0 2; display: none; color: $text-muted; }
+    ToolBodyContainer .--args-row.--active { display: block; }
     """
 
     def __init__(self, **kwargs: Any) -> None:
@@ -840,11 +929,26 @@ class ToolBodyContainer(Widget):
         self._microcopy_active: bool = False
 
     def compose(self) -> ComposeResult:
+        # Args row — populated at completion with non-primary tool args
+        yield Static("", classes="--args-row")
         # Microcopy row (v4 §3.3) — always present, shown when v4 active + elapsed≥0.5s
         yield Static("", classes="--microcopy")
         # No explicit ID — query by type inside ToolBodyContainer to avoid
         # duplicate IDs when multiple ToolBlocks exist per MessagePanel.
         yield CopyableRichLog(markup=False, highlight=False, wrap=False)
+
+    def set_args_row(self, text: "str | None") -> None:
+        """Show or hide the secondary-args row above body output."""
+        try:
+            w = self.query_one(".--args-row", Static)
+        except Exception:
+            return
+        if text:
+            w.update(text)
+            w.add_class("--active")
+        else:
+            w.remove_class("--active")
+            w.update("")
 
     def _mc_widget(self) -> "Static | None":
         try:
@@ -1319,8 +1423,8 @@ class StreamingToolBlock(ToolBlock):
         super().__init__(label=label, lines=[], plain_lines=[], tool_name=tool_name, **kwargs)
         self._stream_label = label
         self._tool_input = tool_input
-        # Lines buffered between 60fps flush ticks
-        self._pending: list[tuple[str, str]] = []  # (raw_ansi, plain)
+        # Lines buffered between 60fps flush ticks — stores linkified (Text, plain)
+        self._pending: list[tuple[Text, str]] = []
         # All plain-text lines for clipboard (no display cap)
         self._all_plain: list[str] = []
         # Parallel ANSI-rich lines for windowed rerender (preserves color)
@@ -1427,9 +1531,10 @@ class StreamingToolBlock(ToolBlock):
         self._bytes_received += len(raw)
         now = time.monotonic()
         self._last_line_time = now
-        self._pending.append((raw, plain))
+        rich = _linkify_text(plain, Text.from_ansi(raw))
+        self._pending.append((rich, plain))
         self._all_plain.append(plain)
-        self._all_rich.append(Text.from_ansi(raw))
+        self._all_rich.append(rich)
         # C2: tail-follow — re-render to latest window every 5 lines
         total = len(self._all_plain)
         if self._follow_tail and total % 5 == 0:
@@ -1513,6 +1618,15 @@ class StreamingToolBlock(ToolBlock):
         self._header.flash_complete()
         # If output contains a MEDIA: path, replace body with an inline image
         self._try_mount_media()
+        # Populate secondary args row above body output
+        try:
+            from hermes_cli.tui.tool_category import spec_for as _spec_for
+            _spec = _spec_for(self._tool_name or "")
+            _args_text = _build_args_row_text(_spec, self._tool_input)
+            if _args_text:
+                self._body.set_args_row(_args_text)
+        except Exception:
+            pass
 
     def _clear_microcopy_on_complete(self) -> None:
         """Clear microcopy on completion; restore secondary args if set (B1)."""
@@ -1651,9 +1765,9 @@ class StreamingToolBlock(ToolBlock):
 
         lines_written = 0
         visible_cap = getattr(self, "_visible_cap", _VISIBLE_CAP)  # B4
-        for raw, plain in batch:
+        for rich, plain in batch:
             if self._visible_count < visible_cap:
-                log.write_with_source(Text.from_ansi(raw), plain)
+                log.write_with_source(rich, plain, link=_first_link(plain))
                 self._visible_count += 1
                 lines_written += 1
             # Lines beyond cap are still in _all_plain (appended in append_line)
@@ -1690,7 +1804,7 @@ class StreamingToolBlock(ToolBlock):
             return
         log.clear()
         for rich_line, plain in zip(self._all_rich[start:end], self._all_plain[start:end]):
-            log.write_with_source(rich_line, plain)
+            log.write_with_source(rich_line, plain, link=_first_link(plain))
         self._visible_start = start
         self._visible_count = end - start
         self._refresh_omission_bars()
@@ -1702,7 +1816,7 @@ class StreamingToolBlock(ToolBlock):
         except NoMatches:
             return
         for rich_line, plain in zip(self._all_rich[start:end], self._all_plain[start:end]):
-            log.write_with_source(rich_line, plain)
+            log.write_with_source(rich_line, plain, link=_first_link(plain))
         self._visible_count += end - start
         self._refresh_omission_bars()
 
@@ -1714,7 +1828,7 @@ class StreamingToolBlock(ToolBlock):
             return
         log.clear()
         for rich_line, plain in zip(self._all_rich[:new_end], self._all_plain[:new_end]):
-            log.write_with_source(rich_line, plain)
+            log.write_with_source(rich_line, plain, link=_first_link(plain))
         self._visible_start = 0
         self._visible_count = new_end
         self._refresh_omission_bars()

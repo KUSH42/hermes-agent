@@ -4789,9 +4789,10 @@ class HermesApp(App):
             # Priority -2: dismiss info overlays (help/usage/commands/model).
             # These have no Input focus when shown (except HelpOverlay), so their
             # Binding(escape) doesn't fire — handle here instead.
-            from hermes_cli.tui.drawille_overlay import AnimGalleryOverlay as _AGA
             from hermes_cli.tui.overlays import ToolPanelHelpOverlay as _TPHO
-            for _cls in (HelpOverlay, UsageOverlay, CommandsOverlay, ModelOverlay, WorkspaceOverlay, SessionOverlay, _AGA, _TPHO):
+            # AnimGalleryOverlay and AnimConfigPanel are ModalScreens; they handle
+            # their own Escape binding via action_close → self.dismiss().
+            for _cls in (HelpOverlay, UsageOverlay, CommandsOverlay, ModelOverlay, WorkspaceOverlay, SessionOverlay, _TPHO):
                 try:
                     _ov = self.query_one(_cls)
                     if _ov.has_class("--visible"):

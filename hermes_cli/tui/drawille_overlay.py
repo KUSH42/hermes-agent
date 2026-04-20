@@ -15,9 +15,11 @@ from rich.style import Style
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.containers import Vertical
 from textual.css.query import NoMatches
 from textual.events import Resize
 from textual.reactive import reactive
+from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Input, Static
@@ -2384,12 +2386,11 @@ class _PanelField:
     step: float = 0.05      # used by "float" kind; ignored for other kinds
 
 
-class AnimConfigPanel(Widget):
-    """Inline config overlay for the drawille animation.
+class AnimConfigPanel(ModalScreen):
+    """Modal config screen for the drawille animation.
 
-    Opened by ``/anim`` slash command or ``ctrl+shift+a``.
-    Does not disable input — users can still type while it's open.
-    Dismissed by ``Escape`` or next message send.
+    Opened by ``/anim config`` slash command or ``ctrl+shift+a``.
+    Dismissed by ``Escape``.
     """
 
     COMPONENT_CLASSES = {
@@ -2400,15 +2401,15 @@ class AnimConfigPanel(Widget):
 
     DEFAULT_CSS = """
     AnimConfigPanel {
-        height: auto;
-        max-height: 10;
-        width: auto;
-        min-width: 60;
-        padding: 0 1;
-        display: none;
+        align: center middle;
     }
-    AnimConfigPanel.-open {
-        display: block;
+    AnimConfigPanel > * {
+        background: $surface;
+        border: round $accent;
+        padding: 1 2;
+        width: 70;
+        height: auto;
+        max-height: 15;
     }
     """
 
@@ -2433,7 +2434,6 @@ class AnimConfigPanel(Widget):
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self._fields: list[_PanelField] = []
-        self._overlay: DrawilleOverlay | None = None
         self._build_fields()
 
     def _build_fields(self) -> None:
@@ -2476,32 +2476,21 @@ class AnimConfigPanel(Widget):
         ]
         self._focus_idx = 0
 
-    def open(self) -> None:
-        """Show the panel and focus it."""
-        self._build_fields()
-        self.add_class("-open")
+    def compose(self) -> ComposeResult:
+        yield Static(self._build_text(), id="anim-config-body")
+
+    def on_mount(self) -> None:
         self.focus()
 
-    def close(self) -> None:
-        """Hide the panel without reverting runtime changes."""
-        self.remove_class("-open")
-        try:
-            self.app.query_one("#input-area").focus()
-        except (NoMatches, Exception):
-            pass
-
     def _get_overlay(self) -> "DrawilleOverlay | None":
-        if self._overlay is not None:
-            return self._overlay
         try:
-            self._overlay = self.app.query_one(DrawilleOverlay)
+            return self.app.query_one(DrawilleOverlay)
         except (NoMatches, Exception):
-            pass
-        return self._overlay
+            return None
 
     # ── rendering ──────────────────────────────────────────────────────────
 
-    def render(self) -> Text:
+    def _build_text(self) -> Text:
         lines: list[str] = []
         lines.append("─ Animation Config ─")
         row: list[str] = []
@@ -2531,6 +2520,13 @@ class AnimConfigPanel(Widget):
         lines.append("  [P] Preview  [S] Save  [R] Reset  Esc close")
         return Text("\n".join(lines))
 
+    def _refresh_body(self) -> None:
+        """Update the Static child with current field state."""
+        try:
+            self.query_one("#anim-config-body", Static).update(self._build_text())
+        except (NoMatches, Exception):
+            pass
+
     def _format_field_value(self, f: _PanelField) -> str:
         if f.kind == "cycle":
             if f.name == "animation":
@@ -2551,15 +2547,15 @@ class AnimConfigPanel(Widget):
     # ── key actions ────────────────────────────────────────────────────────
 
     def action_close(self) -> None:
-        self.close()
+        self.dismiss()
 
     def action_next_field(self) -> None:
         self._focus_idx = (self._focus_idx + 1) % len(self._fields)
-        self.refresh()
+        self._refresh_body()
 
     def action_prev_field(self) -> None:
         self._focus_idx = (self._focus_idx - 1) % len(self._fields)
-        self.refresh()
+        self._refresh_body()
 
     def action_cycle_right(self) -> None:
         self._cycle(+1)
@@ -2572,36 +2568,36 @@ class AnimConfigPanel(Widget):
         if f.kind == "int":
             f.value = min(int(f.max_val), int(f.value) + 1)  # type: ignore[assignment]
             self._push_to_overlay(f)
-            self.refresh()
+            self._refresh_body()
         elif f.kind == "float":
             f.value = round(max(float(f.min_val), min(float(f.max_val), float(f.value) + f.step)), 6)  # type: ignore[assignment]
             self._push_to_overlay(f)
-            self.refresh()
+            self._refresh_body()
 
     def action_dec_value(self) -> None:
         f = self._fields[self._focus_idx]
         if f.kind == "int":
             f.value = max(int(f.min_val), int(f.value) - 1)  # type: ignore[assignment]
             self._push_to_overlay(f)
-            self.refresh()
+            self._refresh_body()
         elif f.kind == "float":
             f.value = round(max(float(f.min_val), min(float(f.max_val), float(f.value) - f.step)), 6)  # type: ignore[assignment]
             self._push_to_overlay(f)
-            self.refresh()
+            self._refresh_body()
 
     def action_toggle_value(self) -> None:
         f = self._fields[self._focus_idx]
         if f.kind == "toggle":
             f.value = not f.value
             self._push_to_overlay(f)
-            self.refresh()
+            self._refresh_body()
 
     def action_activate(self) -> None:
         f = self._fields[self._focus_idx]
         if f.kind == "toggle":
             f.value = not f.value
             self._push_to_overlay(f)
-            self.refresh()
+            self._refresh_body()
         elif f.kind == "cycle":
             self._cycle(+1)
 
@@ -2622,14 +2618,14 @@ class AnimConfigPanel(Widget):
             delta = f.step * direction
             f.value = round(max(float(f.min_val), min(float(f.max_val), float(f.value) + delta)), 6)  # type: ignore[assignment]
             self._push_to_overlay(f)
-            self.refresh()
+            self._refresh_body()
             return
         if f.kind != "cycle" or not f.choices:
             return
         idx = (f.choices.index(str(f.value)) + direction) % len(f.choices)
         f.value = f.choices[idx]
         self._push_to_overlay(f)
-        self.refresh()
+        self._refresh_body()
 
     def _push_to_overlay(self, f: _PanelField) -> None:
         """Apply field change to DrawilleOverlay reactive immediately."""
@@ -2723,7 +2719,7 @@ class AnimConfigPanel(Widget):
         if ov is not None:
             ov.animation = d.get("animation", "dna")
             ov.color = d.get("color", "$accent")
-        self.refresh()
+        self._refresh_body()
 
 
 # ── _GalleryPreview ───────────────────────────────────────────────────────────
@@ -2779,21 +2775,19 @@ class _GalleryPreview(Widget):
 
 # ── AnimGalleryOverlay ────────────────────────────────────────────────────────
 
-class AnimGalleryOverlay(Widget):
-    """Gallery overlay for browsing and selecting animation engines (B2)."""
+class AnimGalleryOverlay(ModalScreen):
+    """Gallery modal screen for browsing and selecting animation engines (B2)."""
 
     DEFAULT_CSS = """
     AnimGalleryOverlay {
-        display: none;
+        align: center middle;
+    }
+    AnimGalleryOverlay > Vertical {
         width: 70;
         height: 20;
         border: round $accent;
         background: $surface;
         padding: 0 1;
-        offset: 5 2;
-    }
-    AnimGalleryOverlay.--visible {
-        display: block;
     }
     """
 
@@ -2817,10 +2811,12 @@ class AnimGalleryOverlay(Widget):
         self._focus_idx = 0
 
     def compose(self) -> "ComposeResult":
-        yield Static("", id="gallery-list")
-        yield _GalleryPreview(id="gallery-preview")
+        with Vertical():
+            yield Static("", id="gallery-list")
+            yield _GalleryPreview(id="gallery-preview")
 
     def on_mount(self) -> None:
+        self.focus()
         self._refresh_list()
         self._update_preview()
 
@@ -2873,18 +2869,10 @@ class AnimGalleryOverlay(Widget):
                 pass
         except IndexError:
             pass
-        self.remove_class("--visible")
-        try:
-            self.app.query_one("#input-area").focus()
-        except (NoMatches, Exception):
-            pass
+        self.dismiss()
 
     def action_close(self) -> None:
-        self.remove_class("--visible")
-        try:
-            self.app.query_one("#input-area").focus()
-        except (NoMatches, Exception):
-            pass
+        self.dismiss()
 
     def action_preview(self) -> None:
         """Force-show overlay with selected engine for 5s."""
@@ -2901,12 +2889,7 @@ class AnimGalleryOverlay(Widget):
             pass
 
     def action_open_config(self) -> None:
-        self.remove_class("--visible")
-        try:
-            panel = self.app.query_one(AnimConfigPanel)
-            panel.open()
-        except (NoMatches, Exception):
-            pass
+        self.app.push_screen(AnimConfigPanel())
 
 
 def _current_panel_cfg(fields: list[_PanelField]) -> DrawilleOverlayCfg:

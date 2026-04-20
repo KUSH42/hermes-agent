@@ -539,9 +539,8 @@ def test_preview_forces_overlay_visible():
         panel = AnimConfigPanel()
 
     fake_overlay = MagicMock(spec=DrawilleOverlay)
-    panel._overlay = fake_overlay
+    panel._get_overlay = MagicMock(return_value=fake_overlay)
     panel.set_timer = MagicMock()
-    panel.refresh = MagicMock()
 
     panel._do_preview()
     fake_overlay.show.assert_called_once()
@@ -557,7 +556,7 @@ def test_preview_end_noop_when_agent_running():
         panel = AnimConfigPanel()
 
     fake_overlay = MagicMock(spec=DrawilleOverlay)
-    panel._overlay = fake_overlay
+    panel._get_overlay = MagicMock(return_value=fake_overlay)
     fake_app = MagicMock()
     fake_app.agent_running = True
     panel._app = fake_app
@@ -598,54 +597,28 @@ def test_save_calls_config_helpers():
             AnimConfigPanel.app = _orig_app
 
 
-def test_open_adds_open_class():
-    """open() adds -open class."""
+def test_anim_config_is_modal_screen():
+    """AnimConfigPanel must be a ModalScreen subclass."""
+    from textual.screen import ModalScreen
+    from hermes_cli.tui.drawille_overlay import AnimConfigPanel
+    assert issubclass(AnimConfigPanel, ModalScreen)
+
+
+def test_anim_gallery_is_modal_screen():
+    """AnimGalleryOverlay must be a ModalScreen subclass."""
+    from textual.screen import ModalScreen
+    from hermes_cli.tui.drawille_overlay import AnimGalleryOverlay
+    assert issubclass(AnimGalleryOverlay, ModalScreen)
+
+
+def test_anim_config_dismiss_pops_screen():
+    """action_close() calls self.dismiss()."""
     with patch("hermes_cli.tui.drawille_overlay._overlay_config",
                return_value=DrawilleOverlayCfg(enabled=True)):
         panel = AnimConfigPanel()
-    panel.focus = MagicMock()
-    panel.open()
-    assert panel.has_class("-open")
-
-
-def test_close_removes_open_class():
-    """close() removes -open class."""
-    with patch("hermes_cli.tui.drawille_overlay._overlay_config",
-               return_value=DrawilleOverlayCfg(enabled=True)):
-        panel = AnimConfigPanel()
-    panel.focus = MagicMock()
-    panel.open()
-    fake_app = MagicMock()
-    fake_app.query_one.side_effect = Exception("no widget")
-    panel._app = fake_app
-    panel.close()
-    assert not panel.has_class("-open")
-
-
-def test_toggle_opens_when_closed():
-    """Toggling a closed panel opens it."""
-    with patch("hermes_cli.tui.drawille_overlay._overlay_config",
-               return_value=DrawilleOverlayCfg(enabled=True)):
-        panel = AnimConfigPanel()
-    panel.focus = MagicMock()
-    assert not panel.has_class("-open")
-    panel.open()
-    assert panel.has_class("-open")
-
-
-def test_toggle_closes_when_open():
-    """Toggling an open panel closes it."""
-    with patch("hermes_cli.tui.drawille_overlay._overlay_config",
-               return_value=DrawilleOverlayCfg(enabled=True)):
-        panel = AnimConfigPanel()
-    panel.focus = MagicMock()
-    panel.open()
-    assert panel.has_class("-open")
-    fake_app = MagicMock()
-    fake_app.query_one.side_effect = Exception("no widget")
-    panel._app = fake_app
-    panel.close()
-    assert not panel.has_class("-open")
+    panel.dismiss = MagicMock()
+    panel.action_close()
+    panel.dismiss.assert_called_once()
 
 
 # ── Multi-color strand rendering ──────────────────────────────────────────────
@@ -935,31 +908,24 @@ def test_hermes_tcss_has_layer_overlay_for_drawille():
 
 
 def test_anim_gallery_overlay_not_in_default_css():
-    """AnimGalleryOverlay must NOT declare layer/position in DEFAULT_CSS.
+    """AnimGalleryOverlay (ModalScreen) must NOT declare layer/position in DEFAULT_CSS.
 
-    These must live in hermes.tcss to avoid parse-time CSS corruption when
-    drawille_overlay.py is imported before HermesApp CSS loads.
+    ModalScreen handles its own screen-layer visibility; layer/position rules are
+    no longer needed and must not appear in DEFAULT_CSS.
     """
     from hermes_cli.tui.drawille_overlay import AnimGalleryOverlay
     assert "layer: overlay" not in AnimGalleryOverlay.DEFAULT_CSS
     assert "position: absolute" not in AnimGalleryOverlay.DEFAULT_CSS
 
 
-def test_hermes_tcss_has_layer_overlay_for_anim_gallery():
-    """hermes.tcss must declare layer:overlay and position:absolute for AnimGalleryOverlay.
+def test_hermes_tcss_has_no_anim_gallery_block():
+    """hermes.tcss must NOT have a legacy AnimGalleryOverlay CSS block.
 
-    Without these, the gallery renders in normal layout flow after StatusBar,
-    disrupting the layout and appearing below the input bar when opened.
+    AnimGalleryOverlay is now a ModalScreen and manages its own CSS.
     """
     import os
     tcss_path = os.path.join(
         os.path.dirname(__file__), "../../hermes_cli/tui/hermes.tcss"
     )
     content = open(os.path.normpath(tcss_path)).read()
-    # Extract the AnimGalleryOverlay block to verify rules are scoped correctly
-    assert "AnimGalleryOverlay" in content
-    # Find the block and check both rules are present after the selector
-    idx = content.index("AnimGalleryOverlay {")
-    block = content[idx: content.index("}", idx) + 1]
-    assert "layer: overlay" in block
-    assert "position: absolute" in block
+    assert "AnimGalleryOverlay {" not in content

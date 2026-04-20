@@ -55,6 +55,7 @@ processing: call `rp = msg.reasoning` (triggers lazy mount), then
 
 ## Threading and timers
 
+- **`Timer.stop()` not `.cancel()`** — Textual 8.x timer handles expose `.stop()`. There is no `.cancel()` method. Calling `.cancel()` raises `AttributeError`. Debounce pattern: `self._timer.stop(); self._timer = self.set_timer(delay, callback)`.
 - `set_interval(...)` callbacks should be plain `def` callbacks.
 - **`call_from_thread` crashes when called from the event-loop thread** with
   `RuntimeError: The call_from_thread method must run in a different thread`.
@@ -284,6 +285,9 @@ fall through to the `set_interval` branch automatically.
 - `ToolsScreen._apply_filter` is async — always `await` it
 
 ## CSS and layer system traps
+
+**Gotcha: MinSizeBackdrop must be queried via `self.screen.query()`, not `self.query()`**
+`MinSizeBackdrop` mounts on the Screen (via `self.screen.mount(...)`), not on the App. `self.query("MinSizeBackdrop")` searches the App's DOM subtree and returns empty. Use `self.screen.query("MinSizeBackdrop")` in `_apply_min_size_overlay`.
 
 **Gotcha: `layer: overlay` in DEFAULT_CSS silently kills HermesApp.on_mount**
 If any widget class is defined (imported) with `layer: overlay` in its `DEFAULT_CSS` BEFORE `app.py` completes its import chain, Textual's CSS compilation is corrupted and `on_mount` never fires. The symptom is `AttributeError: 'HermesApp' object has no attribute '_anim_clock_h'` in `on_unmount`.

@@ -391,6 +391,7 @@ High-signal flow:
 - `cli.py` + `tests/cli/test_reasoning_tui_bridge.py`
 - `emoji_registry.py` + `response_flow.py §_EMOJI_RE/_extract_emoji_refs/_mount_emoji` + `app.py §_resolve_user_emoji/on_resize` + `cli.py §_emoji_registry` + `test_emoji_registry.py`
 - `stream_effects.py` + `widgets.py §LiveLineWidget` + `test_stream_effects.py`
+- `resize_utils.py` + `min_size_overlay.py` + `app.py §on_resize/_flush_resize/_apply_min_size_overlay` + `tool_group.py §on_resize` + `tool_panel.py §FooterPane.on_resize` + `completion_overlay.py §on_resize` + `drawille_overlay.py §on_resize` + `tool_blocks.py §OmissionBar.on_resize` + `widgets.py §OutputPanel.on_resize/InlineMediaWidget.on_resize/AssistantNameplate.on_resize` + `test_resize_spec.py` + `test_resize_widgets.py` + `test_resize_integration.py`
 - `write_file_block.py` + `test_write_file_block.py`
 - `math_renderer.py` + `response_flow.py` + `widgets.py` + `config.py` + `cli.py` + `test_math_renderer.py`
 

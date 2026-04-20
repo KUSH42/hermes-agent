@@ -1496,7 +1496,9 @@ def _parse_align(cell: str) -> str:
         return "centre"
     if c.endswith(":"):
         return "right"
-    return "left"
+    if c.startswith(":"):
+        return "left"
+    return "default"  # no colons → unspecified; header gets centre, data gets left
 
 
 _MD_OL_START_RE = re.compile(r"^\s*\d+[.)]")
@@ -1551,7 +1553,10 @@ def _render_table(rows: list[list[str]], sep_idx: Optional[int], align: list[str
         max((_visual_len(row[i]) for row in data_rows if i < len(row)), default=0)
         for i in range(cols)
     ]
-    align = list(align) + ["left"] * (cols - len(align))
+    align = list(align) + ["default"] * (cols - len(align))
+    # "default" = unspecified alignment: header row → centre, data rows → left
+    header_align = ["centre" if a == "default" else a for a in align]
+    data_align   = ["left"   if a == "default" else a for a in align]
 
     def _padded(cell: str, w: int, a: str) -> str:
         raw = _ANSI_ESC_RE.sub("", cell).strip()
@@ -1569,9 +1574,10 @@ def _render_table(rows: list[list[str]], sep_idx: Optional[int], align: list[str
 
         content = [(i, r) for i, r in enumerate(rendered_rows) if i != sep_idx]
         out = [_hline("┌", "┬", "┐")]
-        for idx, (_, row) in enumerate(content):
+        for idx, (orig_idx, row) in enumerate(content):
+            row_align = header_align if orig_idx == 0 else data_align
             cells_str = "│".join(
-                f" {_padded(row[i] if i < len(row) else '', widths[i], align[i])} "
+                f" {_padded(row[i] if i < len(row) else '', widths[i], row_align[i])} "
                 for i in range(cols)
             )
             out.append(f"│{cells_str}│")
@@ -1585,8 +1591,9 @@ def _render_table(rows: list[list[str]], sep_idx: Optional[int], align: list[str
             if r_idx == sep_idx:
                 out.append(" " + "  ".join("─" * w for w in widths))
                 continue
+            row_align = header_align if r_idx == 0 else data_align
             out.append(" " + "  ".join(
-                _padded(row[i] if i < len(row) else "", widths[i], align[i])
+                _padded(row[i] if i < len(row) else "", widths[i], row_align[i])
                 for i in range(cols)
             ))
         return "\n".join(out)
@@ -1642,7 +1649,7 @@ def render_stateful_blocks(text: str) -> str:
         if _sep_idx is None and cells and all(_SEP_CELL_RE.match(c) for c in cells):
             _sep_idx = len(_table_rows)
             _align = [_parse_align(c) for c in cells]
-            _align += ["left"] * (header_cols - len(_align))
+            _align += ["default"] * (header_cols - len(_align))
         _table_rows.append(raw)
 
     def _flush_table_to_out() -> None:

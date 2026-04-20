@@ -124,7 +124,7 @@ Then load only the focused reference you need:
 
 ## Validation
 
-Last revalidated: **2026-04-20. ~2427 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
+Last revalidated: **2026-04-20. ~2428+ total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility). Added `test_partial_chunk_migrated_to_new_panel`; fixed `:not()` CSS crash in `completion_overlay.py`.
 
 Recent changes (details → reference files):
 - **TGP unicode placeholder detection fix** (2026-04-20): `_supports_unicode_placeholders()` was too

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 import random
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -89,6 +90,8 @@ class DrawilleOverlayCfg:
     # sdf crossfade warmup
     sdf_warmup_engine: str = "neural_pulse"
     sdf_crossfade_speed: float = 0.03
+    # sdf baker timeout
+    sdf_bake_timeout_s: float = 5.0
 
     def __post_init__(self) -> None:
         if self.multi_color is None:
@@ -153,27 +156,52 @@ def _overlay_config() -> DrawilleOverlayCfg:
         carousel_interval_s=float(d.get("carousel_interval_s", 8.0)),
         sdf_warmup_engine=str(d.get("sdf_warmup_engine", "neural_pulse")),
         sdf_crossfade_speed=float(d.get("sdf_crossfade_speed", 0.03)),
+        sdf_bake_timeout_s=float(d.get("sdf_bake_timeout_s", 5.0)),
     )
 
 
 # ── Color resolution ──────────────────────────────────────────────────────────
 
-def _resolve_color(value: str, app: object) -> str:
-    """Resolve TCSS var ref, named color, or hex → '#rrggbb' string."""
+def _hex_to_rgb(h: str) -> tuple[int, int, int]:
+    """'#rrggbb' → (r, g, b) integers."""
+    h = h.lstrip("#")
+    if len(h) == 3:
+        h = h[0]*2 + h[1]*2 + h[2]*2
+    r = int(h[0:2], 16)
+    g = int(h[2:4], 16)
+    b = int(h[4:6], 16)
+    return r, g, b
+
+
+def _resolve_color(value: str, app: object, dim: float = 1.0) -> str:
+    """Resolve TCSS var ref, named color, or hex → '#rrggbb' string.
+
+    'auto' maps to '$accent' (resolved via CSS vars).
+    dim ∈ [0,1] multiplies each RGB channel — used for fade-out.
+    """
+    if value == "auto":
+        value = "$accent"
     if value.startswith("$"):
         var_name = value[1:]
         try:
             css_vars: dict[str, str] = app.get_css_variables()  # type: ignore[attr-defined]
             raw = css_vars.get(var_name, "")
             if raw and raw.startswith("#") and len(raw) in (4, 7):
-                return raw if len(raw) == 7 else _expand_short_hex(raw)
-            # Try to parse whatever the var holds
-            if raw:
-                return _rich_to_hex(raw)
+                resolved_hex = raw if len(raw) == 7 else _expand_short_hex(raw)
+            elif raw:
+                resolved_hex = _rich_to_hex(raw)
+            else:
+                resolved_hex = "#00d7ff"
         except Exception:
-            pass
-        return "#00d7ff"
-    return _rich_to_hex(value)
+            resolved_hex = "#00d7ff"
+    else:
+        resolved_hex = _rich_to_hex(value)
+
+    if dim < 1.0:
+        r, g, b = _hex_to_rgb(resolved_hex)
+        r, g, b = int(r * dim), int(g * dim), int(b * dim)
+        return f"#{r:02x}{g:02x}{b:02x}"
+    return resolved_hex
 
 
 def _expand_short_hex(h: str) -> str:
@@ -341,6 +369,7 @@ def _layer_frames(frame_a: str, frame_b: str, mode: str, heat: float = 0.0) -> s
     n_rows = max(len(lines_a), len(lines_b))
     result_rows: list[str] = []
 
+    t_int = int(time.monotonic() * 4)
     for r in range(n_rows):
         row_a = lines_a[r] if r < len(lines_a) else ""
         row_b = lines_b[r] if r < len(lines_b) else ""
@@ -361,9 +390,10 @@ def _layer_frames(frame_a: str, frame_b: str, mode: str, heat: float = 0.0) -> s
             elif mode == "xor":
                 bits = ba ^ bb
             elif mode == "dissolve":
-                # heat=0 → 50/50; heat=1 → b wins
+                # Deterministic spatial dither — crawls slowly, no per-frame flicker (D4)
                 weight_b = 0.5 + heat * 0.5
-                bits = bb if random.random() < weight_b else ba
+                dither = (abs((c * 2654435761 ^ r * 2246822519 ^ t_int) & 0xFFFF) / 65535.0)
+                bits = bb if dither < weight_b else ba
             else:  # overlay: upper (b) wins when non-zero
                 bits = bb if bb != 0 else ba
             merged.append(chr(0x2800 | bits))
@@ -390,10 +420,18 @@ def _easing(t: float, kind: str) -> float:
         return t
 
 
+# ── Base engine mixin ─────────────────────────────────────────────────────────
+
+class _BaseEngine:
+    """Mixin for all animation engines. Provides no-op on_signal."""
+    def on_signal(self, signal: str, value: float = 1.0) -> None:
+        pass
+
+
 # ── Animation engines ─────────────────────────────────────────────────────────
 
 
-class DnaHelixEngine:
+class DnaHelixEngine(_BaseEngine):
     """DNA double helix with connecting rungs (default)."""
 
     def next_frame(self, params: AnimParams) -> str:
@@ -425,7 +463,7 @@ class DnaHelixEngine:
         return canvas.frame()
 
 
-class RotatingHelixEngine:
+class RotatingHelixEngine(_BaseEngine):
     """3D helix projected orthographically and rotated."""
 
     def next_frame(self, params: AnimParams) -> str:
@@ -443,7 +481,7 @@ class RotatingHelixEngine:
         return canvas.frame()
 
 
-class ClassicHelixEngine:
+class ClassicHelixEngine(_BaseEngine):
     """Three sine waves scrolling horizontally."""
 
     def next_frame(self, params: AnimParams) -> str:
@@ -457,7 +495,7 @@ class ClassicHelixEngine:
         return canvas.frame()
 
 
-class MorphHelixEngine:
+class MorphHelixEngine(_BaseEngine):
     """Helix with breathing amplitude modulation."""
 
     def next_frame(self, params: AnimParams) -> str:
@@ -476,7 +514,7 @@ class MorphHelixEngine:
         return canvas.frame()
 
 
-class VortexEngine:
+class VortexEngine(_BaseEngine):
     """Zooming inward spiral vortex."""
 
     def next_frame(self, params: AnimParams) -> str:
@@ -494,7 +532,7 @@ class VortexEngine:
         return canvas.frame()
 
 
-class WaveInterferenceEngine:
+class WaveInterferenceEngine(_BaseEngine):
     """Two-source sine interference / Moiré pattern."""
 
     def next_frame(self, params: AnimParams) -> str:
@@ -514,7 +552,7 @@ class WaveInterferenceEngine:
         return canvas.frame()
 
 
-class ThickHelixEngine:
+class ThickHelixEngine(_BaseEngine):
     """Pulsing thick helix strand."""
 
     def next_frame(self, params: AnimParams) -> str:
@@ -532,7 +570,7 @@ class ThickHelixEngine:
         return canvas.frame()
 
 
-class KaleidoscopeEngine:
+class KaleidoscopeEngine(_BaseEngine):
     """Radial triple spiral with kaleidoscope symmetry."""
 
     def next_frame(self, params: AnimParams) -> str:
@@ -558,7 +596,7 @@ class KaleidoscopeEngine:
 
 # ── New v2 stateful engines ───────────────────────────────────────────────────
 
-class NeuralPulseEngine:
+class NeuralPulseEngine(_BaseEngine):
     """Directed graph of nodes; charge propagates and fires in cascades."""
 
     def __init__(self) -> None:
@@ -568,6 +606,7 @@ class NeuralPulseEngine:
         self._fire_queue: list[int] = []
         self._init_done = False
         self._extra_fires = 0  # set by on_signal
+        self._slow_decay_ticks: int = 0  # for "complete" slow-decay
 
     def _init(self, w: int, h: int, n: int) -> None:
         import random as _r
@@ -584,11 +623,18 @@ class NeuralPulseEngine:
         self._charge = [0.0] * n
         self._init_done = True
 
-    def on_signal(self, signal: str, value: float = 0.0) -> None:
+    def on_signal(self, signal: str, value: float = 1.0) -> None:
         if signal == "thinking":
             self._extra_fires = int(value * 3)
+        elif signal == "tool":
+            # Boost charge in random 5 nodes immediately
+            if self._nodes:
+                for _ in range(min(5, len(self._nodes))):
+                    idx = random.randrange(len(self._nodes))
+                    self._fire_queue.append(idx)
         elif signal == "complete":
-            # Full cascade
+            # Halve charge decay rate for 20 ticks (slow settle)
+            self._slow_decay_ticks = 20
             self._fire_queue = list(range(len(self._nodes)))
 
     def next_frame(self, params: AnimParams) -> str:
@@ -619,12 +665,15 @@ class NeuralPulseEngine:
                 self._charge[nb] += 0.4
         self._fire_queue = []
 
+        decay_rate = 0.4 if self._slow_decay_ticks > 0 else 0.8
+        if self._slow_decay_ticks > 0:
+            self._slow_decay_ticks -= 1
         for i, c in enumerate(self._charge):
             if c > 1.0:
                 new_queue.append(i)
                 self._charge[i] = 0.0
             else:
-                self._charge[i] *= 0.8
+                self._charge[i] *= decay_rate
         self._fire_queue = new_queue
 
         # Draw edges
@@ -643,7 +692,7 @@ class NeuralPulseEngine:
         return canvas.frame() if hasattr(canvas, "frame") else ""
 
 
-class FlockSwarmEngine:
+class FlockSwarmEngine(_BaseEngine):
     """Reynolds boids with toroidal wrap and wandering attractor."""
 
     def __init__(self) -> None:
@@ -652,6 +701,9 @@ class FlockSwarmEngine:
         self._attr_vel = [0.5, 0.3]
         self._init_done = False
         self._scatter = False
+        self._w: int = 0
+        self._h: int = 0
+        self._speed_modifier: float = 1.0
 
     def _init(self, w: int, h: int, n: int) -> None:
         self._boids = [
@@ -660,11 +712,31 @@ class FlockSwarmEngine:
             for _ in range(n)
         ]
         self._attractor = [w / 2, h / 2]
+        self._w = w
+        self._h = h
         self._init_done = True
 
-    def on_signal(self, signal: str, value: float = 0.0) -> None:
-        if signal == "complete":
+    def on_signal(self, signal: str, value: float = 1.0) -> None:
+        if signal == "thinking":
+            # Move attractor to center, reduce speed 30%
+            if self._w > 0 and self._h > 0:
+                self._attractor = [self._w / 2, self._h / 2]
+            self._speed_modifier = 0.7
+        elif signal == "tool":
+            # Move attractor to random corner, boost speed 50%
+            if self._w > 0 and self._h > 0:
+                corner = random.randint(0, 3)
+                corners = [
+                    [0.0, 0.0],
+                    [float(self._w), 0.0],
+                    [0.0, float(self._h)],
+                    [float(self._w), float(self._h)],
+                ]
+                self._attractor = corners[corner]
+            self._speed_modifier = 1.5
+        elif signal == "complete":
             self._scatter = True
+            self._speed_modifier = 1.0
 
     def next_frame(self, params: AnimParams) -> str:
         w, h = params.width, params.height
@@ -674,7 +746,9 @@ class FlockSwarmEngine:
 
         canvas = _make_trail_canvas(0.7) if params.trail_decay <= 0 else _make_trail_canvas(params.trail_decay)
 
-        max_speed = 1.5 + params.heat * 3.0
+        max_speed = (1.5 + params.heat * 3.0) * self._speed_modifier
+        self._w = w
+        self._h = h
 
         # Move attractor
         self._attractor[0] += self._attr_vel[0]
@@ -747,7 +821,7 @@ class FlockSwarmEngine:
         return canvas.frame() if hasattr(canvas, "frame") else ""
 
 
-class ConwayLifeEngine:
+class ConwayLifeEngine(_BaseEngine):
     """Conway's Game of Life in braille pixel space, set-based."""
 
     _GOSPER_GUN = [
@@ -790,8 +864,8 @@ class ConwayLifeEngine:
                 for _ in range(w * h // 8)
             }
 
-    def on_signal(self, signal: str, value: float = 0.0) -> None:
-        if signal == "idle":
+    def on_signal(self, signal: str, value: float = 1.0) -> None:
+        if signal == "complete":
             self._gens_per_tick = max(1, self._ticks % 3)
         elif signal == "tool":
             self._gens_per_tick = 2
@@ -821,6 +895,17 @@ class ConwayLifeEngine:
         for _ in range(self._gens_per_tick):
             self._step(w, h)
 
+        # Dead board reseed (D5)
+        if len(self._alive) == 0 and self._ticks % 60 == 0:
+            cx, cy = w // 2, h // 2
+            self._alive = {
+                (cx - 1, cy),
+                (cx,     cy - 1),
+                (cx,     cy),
+                (cx,     cy + 1),
+                (cx + 1, cy + 1),
+            }
+
         # Anti-stagnation
         alive_count = len(self._alive)
         if alive_count > self._peak:
@@ -842,7 +927,7 @@ class ConwayLifeEngine:
         return canvas.frame()
 
 
-class StrangeAttractorEngine:
+class StrangeAttractorEngine(_BaseEngine):
     """Lorenz/Rössler/Thomas attractor traced with RK4, TrailCanvas decay=0.97."""
 
     def __init__(self) -> None:
@@ -854,9 +939,15 @@ class StrangeAttractorEngine:
         self._xs: list[float] = []
         self._ys: list[float] = []
         self._heat_sigma = 0.0
+        self._slow_dt_ticks: int = 0  # for "complete" slow settle
+        self._dt_default: float = 0.01
 
-    def on_signal(self, signal: str, value: float = 0.0) -> None:
-        self._heat_sigma = value * 2.0
+    def on_signal(self, signal: str, value: float = 1.0) -> None:
+        if signal == "complete":
+            # Halve dt for 40 ticks, creating slow settle
+            self._slow_dt_ticks = 40
+        else:
+            self._heat_sigma = value * 2.0
 
     def _lorenz(self, x: float, y: float, z: float, sigma: float) -> tuple[float, float, float]:
         rho = 28.0
@@ -913,9 +1004,14 @@ class StrangeAttractorEngine:
         canvas = _make_trail_canvas(0.97)
         w, h = params.width, params.height
 
+        dt = self._dt_default
+        if self._slow_dt_ticks > 0:
+            dt = self._dt_default * 0.5
+            self._slow_dt_ticks -= 1
+
         for _ in range(5):
             self._x, self._y, self._z = self._rk4_step(
-                self._x, self._y, self._z, 0.01, atype, sigma)
+                self._x, self._y, self._z, dt, atype, sigma)
             if self._bounds:
                 xmin = self._bounds.get("xmin", -25)
                 xmax = self._bounds.get("xmax", 25)
@@ -935,21 +1031,25 @@ class StrangeAttractorEngine:
         return canvas.frame()
 
 
-class HyperspaceEngine:
+class HyperspaceEngine(_BaseEngine):
     """Star field perspective projection with Z-depth and streak trails."""
 
     def __init__(self) -> None:
         self._stars: list[list[float]] = []  # [x, y, z, px, py]
         self._init_done = False
         self._warp = False
+        self._speed_boost_ticks: int = 0
 
-    def on_signal(self, signal: str, value: float = 0.0) -> None:
+    def on_signal(self, signal: str, value: float = 1.0) -> None:
         if signal == "complete":
             self._warp = True
+        elif signal == "tool":
+            # Triple Z-speed for 30 ticks
+            self._speed_boost_ticks = 30
 
     def _init(self, w: int, h: int, n: int) -> None:
         self._stars = [
-            [random.uniform(-1, 1), random.uniform(-1, 1), random.random(), 0.0, 0.0]
+            [random.uniform(-1, 1), random.uniform(-1, 1), random.uniform(0.7, 1.0), 0.0, 0.0]
             for _ in range(n)
         ]
         self._init_done = True
@@ -969,6 +1069,9 @@ class HyperspaceEngine:
         if self._warp:
             speed = 0.1
             self._warp = False
+        if self._speed_boost_ticks > 0:
+            speed *= 3.0
+            self._speed_boost_ticks -= 1
 
         for star in self._stars:
             sx, sy, sz = star[0], star[1], star[2]
@@ -978,7 +1081,7 @@ class HyperspaceEngine:
             if sz < 0.01:
                 star[0] = random.uniform(-1, 1)
                 star[1] = random.uniform(-1, 1)
-                star[2] = 1.0
+                star[2] = random.uniform(0.7, 1.0)  # spawn at distance (D5)
                 star[3] = cx
                 star[4] = cy
                 continue
@@ -1011,13 +1114,35 @@ class HyperspaceEngine:
         return canvas.frame() if hasattr(canvas, "frame") else ""
 
 
-class PerlinFlowEngine:
+class PerlinFlowEngine(_BaseEngine):
     """Dense flow field using layered-sine curl noise with TrailCanvas."""
+
+    def __init__(self) -> None:
+        self._noise_scale_boost: float = 0.0
+        self._noise_restore_ticks: int = 0
+        self._noise_default: float = 1.0
+
+    def on_signal(self, signal: str, value: float = 1.0) -> None:
+        if signal == "tool":
+            # Multiply noise_scale by 2.0 for 60 ticks
+            self._noise_scale_boost = 2.0
+            self._noise_restore_ticks = 60
+        elif signal == "complete":
+            # Smoothly restore noise_scale to default
+            self._noise_restore_ticks = max(0, self._noise_restore_ticks - 30)
+            if self._noise_restore_ticks == 0:
+                self._noise_scale_boost = 0.0
 
     def next_frame(self, params: AnimParams) -> str:
         w, h = params.width, params.height
         t = params.t
         ns = params.noise_scale
+        # Apply boost multiplier if active
+        if self._noise_restore_ticks > 0:
+            ns = ns * self._noise_scale_boost
+            self._noise_restore_ticks -= 1
+            if self._noise_restore_ticks == 0:
+                self._noise_scale_boost = 0.0
         threshold = 0.4 + 0.3 * math.sin(t * (0.5 + params.heat * 2.0))
 
         canvas = _make_trail_canvas(0.9) if params.trail_decay <= 0 else _make_trail_canvas(params.trail_decay)
@@ -1044,7 +1169,7 @@ class PerlinFlowEngine:
 
 # ── New v2 mathematical engines ───────────────────────────────────────────────
 
-class FluidFieldEngine:
+class FluidFieldEngine(_BaseEngine):
     """Particles following curl-noise velocity field with TrailCanvas."""
 
     def __init__(self) -> None:
@@ -1101,7 +1226,7 @@ class FluidFieldEngine:
         return canvas.frame() if hasattr(canvas, "frame") else ""
 
 
-class LissajousWeaveEngine:
+class LissajousWeaveEngine(_BaseEngine):
     """Multiple Lissajous curves with drifting a/b ratios."""
 
     def __init__(self) -> None:
@@ -1140,13 +1265,21 @@ class LissajousWeaveEngine:
         return canvas.frame()
 
 
-class AuroraRibbonEngine:
+class AuroraRibbonEngine(_BaseEngine):
     """Horizontal ribbons with multi-octave sine stack and soft edges."""
+
+    def __init__(self) -> None:
+        self._bands: int = 6
+        self._bands_width: int = 0
 
     def next_frame(self, params: AnimParams) -> str:
         w, h = params.width, params.height
         t = params.t
-        n_ribbons = max(2, min(6, params.symmetry))
+        # D5: dynamic bands based on terminal width
+        if not self._bands_width or self._bands_width != w:
+            self._bands = max(6, w // 20)
+            self._bands_width = w
+        n_ribbons = max(2, min(self._bands, params.symmetry))
         canvas = _make_trail_canvas(params.trail_decay) if params.trail_decay > 0 else _make_canvas()
 
         ribbon_ys = [h * (i + 1) / (n_ribbons + 1) for i in range(n_ribbons)]
@@ -1182,7 +1315,7 @@ class AuroraRibbonEngine:
         return canvas.frame() if hasattr(canvas, "frame") else ""
 
 
-class MandalaBloomEngine:
+class MandalaBloomEngine(_BaseEngine):
     """N-fold radial symmetry using rhodonea rose curve."""
 
     def __init__(self) -> None:
@@ -1245,7 +1378,7 @@ class MandalaBloomEngine:
         return canvas.frame()
 
 
-class RopeBraidEngine:
+class RopeBraidEngine(_BaseEngine):
     """3 strands braiding in 3D with depth sorting and occlusion."""
 
     def __init__(self) -> None:
@@ -1295,19 +1428,20 @@ class RopeBraidEngine:
         return canvas.frame()
 
 
-class WaveFunctionEngine:
+class WaveFunctionEngine(_BaseEngine):
     """Quantum wave packets with interference and collapse event."""
 
     def __init__(self) -> None:
         self._collapse = False
         self._collapse_t = 0.0
         self._packets = [
-            {"x0": 0.3, "k0": 5.0, "sigma": 0.08, "omega": 3.0},
-            {"x0": 0.5, "k0": 7.0, "sigma": 0.06, "omega": 4.5},
-            {"x0": 0.7, "k0": 6.0, "sigma": 0.07, "omega": 3.8},
+            {"x0": 0.3, "k0": 5.0, "sigma": 0.08, "omega": 3.0, "vx": 0.01, "vy": 0.005},
+            {"x0": 0.5, "k0": 7.0, "sigma": 0.06, "omega": 4.5, "vx": -0.008, "vy": 0.007},
+            {"x0": 0.7, "k0": 6.0, "sigma": 0.07, "omega": 3.8, "vx": 0.006, "vy": -0.009},
         ]
+        self._pkt_px: list[float] = [0.3, 0.5, 0.7]  # pixel-space positions
 
-    def on_signal(self, signal: str, value: float = 0.0) -> None:
+    def on_signal(self, signal: str, value: float = 1.0) -> None:
         if signal == "complete":
             self._collapse = True
             self._collapse_t = 0.0
@@ -1320,14 +1454,32 @@ class WaveFunctionEngine:
         if self._collapse:
             self._collapse_t += params.dt
 
+        # Update packet positions with reflection (D5)
+        for i, pkt in enumerate(self._packets):
+            px = self._pkt_px[i] * w * 2
+            py = h * 2  # midpoint in pixel space
+            px += pkt["vx"] * w * 2
+            py += pkt["vy"] * h * 4
+            # Reflect at braille pixel boundaries
+            if px < 0:
+                px = 0
+                pkt["vx"] = abs(pkt["vx"])
+            if px >= w * 2:
+                px = w * 2 - 1
+                pkt["vx"] = -abs(pkt["vx"])
+            if py < 0:
+                py = 0
+                pkt["vy"] = abs(pkt["vy"])
+            if py >= h * 4:
+                py = h * 4 - 1
+                pkt["vy"] = -abs(pkt["vy"])
+            self._pkt_px[i] = px / max(w * 2, 1)
+
         for xi in range(w):
             x = xi / max(w - 1, 1)
             psi_total = 0.0
             for i, pkt in enumerate(self._packets):
-                x0 = pkt["x0"]
-                # Drift x0 slightly
-                x0 = (x0 + params.dt * 0.01 * (i + 1)) % 1.0
-                pkt["x0"] = x0
+                x0 = self._pkt_px[i]
                 sigma = pkt["sigma"]
                 k0 = pkt["k0"]
                 omega = pkt["omega"]
@@ -1426,6 +1578,31 @@ _ENGINES: dict[str, type] = {
     "wave_function":     WaveFunctionEngine,
 }
 
+# ── Contextual SDF tool label map (C1) ────────────────────────────────────────
+
+_TOOL_SDF_LABELS: dict[str, str] = {
+    "Read":          "reading",
+    "Write":         "writing",
+    "Edit":          "editing",
+    "Bash":          "running",
+    "Glob":          "scanning",
+    "Grep":          "scanning",
+    "WebSearch":     "searching",
+    "WebFetch":      "fetching",
+    "Agent":         "delegating",
+    # snake_case variants (API may use either)
+    "read_file":     "reading",
+    "write_file":    "writing",
+    "edit_file":     "editing",
+    "bash":          "running",
+    "glob":          "scanning",
+    "grep":          "scanning",
+    "web_search":    "searching",
+    "web_fetch":     "fetching",
+    "":              "thinking",
+}
+
+
 ANIMATION_KEYS: list[str] = list(_ENGINES.keys()) + ["sdf_morph"]
 ANIMATION_LABELS: dict[str, str] = {
     "dna":               "DNA Double Helix",
@@ -1450,6 +1627,36 @@ ANIMATION_LABELS: dict[str, str] = {
     "hyperspace":        "Hyperspace",
     "wave_function":     "Wave Function",
     "strange_attractor": "Strange Attractor",
+}
+
+# ── Engine metadata (B2 / E1) ─────────────────────────────────────────────────
+
+_ENGINE_META: dict[str, dict] = {
+    # Classic
+    "dna":               {"category": "Classic",      "desc": "DNA double helix with phosphate rungs"},
+    "rotating":          {"category": "Classic",      "desc": "3D helix projection, continuously rotating"},
+    "classic":           {"category": "Classic",      "desc": "Three sine waves scrolling horizontally"},
+    "morph":             {"category": "Classic",      "desc": "Helix with breathing amplitude modulation"},
+    "vortex":            {"category": "Classic",      "desc": "Zooming inward spiral vortex"},
+    "wave":              {"category": "Classic",      "desc": "Two-source sine interference pattern"},
+    "thick":             {"category": "Classic",      "desc": "Pulsing thick helix strand"},
+    "kaleidoscope":      {"category": "Classic",      "desc": "Radial triple spiral, kaleidoscope symmetry"},
+    # Organic
+    "neural_pulse":      {"category": "Organic",      "desc": "Directed graph with charge cascades"},
+    "flock_swarm":       {"category": "Organic",      "desc": "Reynolds boids with wandering attractor"},
+    "conway_life":       {"category": "Organic",      "desc": "Conway's Game of Life in braille space"},
+    "strange_attractor": {"category": "Organic",      "desc": "Lorenz/Rössler attractor with RK4 integration"},
+    "hyperspace":        {"category": "Organic",      "desc": "Star field perspective projection"},
+    "perlin_flow":       {"category": "Organic",      "desc": "Particles following curl-noise velocity field"},
+    # Mathematical
+    "fluid_field":       {"category": "Mathematical", "desc": "Particles in curl-noise velocity field"},
+    "lissajous_weave":   {"category": "Mathematical", "desc": "Multiple Lissajous curves with drifting ratios"},
+    "aurora_ribbon":     {"category": "Mathematical", "desc": "Horizontal ribbons with multi-octave sine"},
+    "mandala_bloom":     {"category": "Mathematical", "desc": "N-fold radial rhodonea rose symmetry"},
+    "rope_braid":        {"category": "Mathematical", "desc": "Three strands braiding in 3D with depth sort"},
+    "wave_function":     {"category": "Mathematical", "desc": "Quantum wave packets with interference"},
+    # Premium (sdf_morph handled via _get_sdf_engine)
+    "sdf_morph":         {"category": "Premium",      "desc": "Typographic SDF letter morphing \u2726"},
 }
 
 
@@ -1515,12 +1722,16 @@ class DrawilleOverlay(Static):
     _resolved_multi_colors: list = []   # pre-resolved hex strings; set by watch_multi_color
     _resolved_multi_color_rgbs: list | None = None  # pre-parsed RGB tuples — avoids per-frame _parse_rgb lookups
     _fade_step: int = 0
+    _fade_state: str = "stable"   # "in" | "out" | "stable"
+    _fade_alpha: float = 1.0      # current fade-out alpha [0..1]
     _auto_hide_handle: "Timer | None" = None
     _sdf_engine: object | None = None  # lazily created SDF morph engine
     # sdf crossfade warmup state
     _sdf_warmup_instance: object | None = None
     _sdf_crossfade: object | None = None   # CrossfadeEngine during warmup→SDF transition
     _sdf_baker_was_ready: bool = False
+    _sdf_permanently_failed: bool = False
+    _cfg: "DrawilleOverlayCfg | None" = None  # last cfg passed to show()
     # v2 engine instance cache
     _current_engine_instance: object | None = None
     _current_engine_key: str = ""
@@ -1531,6 +1742,12 @@ class DrawilleOverlay(Static):
     # v2 carousel
     _carousel_elapsed: float = 0.0
     _carousel_engine_idx: int = 0
+    _carousel_engines: list = []
+    _carousel_idx: int = 0
+    _carousel_last_switch: float = 0.0
+    _carousel_crossfade: "CrossfadeEngine | None" = None
+    # external trail for stateless engines
+    _external_trail: "TrailCanvas | None" = None
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -1663,6 +1880,12 @@ class DrawilleOverlay(Static):
         """Make overlay visible and start animation.  Idempotent."""
         if not cfg.enabled:
             return
+        self._cfg = cfg
+        # If a fade-out is in progress, cancel it
+        if self._fade_state == "out":
+            self._fade_state = "in"
+            self._fade_step = cfg.fade_in_frames
+            return  # already visible, just interrupt fade-out
         # Sync reactives from config — triggers watchers for live updates.
         self.size_name = cfg.size
         self.vertical = cfg.vertical
@@ -1672,7 +1895,9 @@ class DrawilleOverlay(Static):
         self.hue_shift_speed = cfg.hue_shift_speed
         self.fps = cfg.fps
         self._apply_layout()
+        self._fade_state = "in"
         self._fade_step = cfg.fade_in_frames
+        self._fade_alpha = 1.0
         if self._anim_params is not None:
             self._anim_params.vertical = cfg.vertical
             # Update SDF params from config
@@ -1695,6 +1920,20 @@ class DrawilleOverlay(Static):
         # Clear SDF engine so it gets recreated with new params
         if cfg.animation != "sdf_morph":
             self._sdf_engine = None
+        # Carousel setup
+        if cfg.carousel:
+            self._carousel_engines = [
+                k for k in _ENGINES
+                if _ENGINE_META.get(k, {}).get("category") not in {"Premium", "System"}
+            ]
+            if len(self._carousel_engines) < 2:
+                self._carousel_engines = []
+            self._carousel_idx = 0
+            self._carousel_last_switch = time.monotonic()
+            self._carousel_crossfade = None
+        else:
+            self._carousel_engines = []
+            self._carousel_crossfade = None
         self.add_class("-visible")
         self._start_anim()
         if cfg.auto_hide_delay > 0:
@@ -1705,22 +1944,114 @@ class DrawilleOverlay(Static):
             )
 
     def hide(self, cfg: DrawilleOverlayCfg) -> None:
-        """Hide overlay and stop animation."""
+        """Hide overlay, optionally with fade-out."""
+        if not self.has_class("-visible"):
+            return  # already hidden — no-op
         if self._auto_hide_handle is not None:
             self._auto_hide_handle.stop()
             self._auto_hide_handle = None
+        fade_frames = cfg.fade_out_frames if cfg is not None else 0
+        if fade_frames > 0:
+            self._fade_state = "out"
+            self._fade_step = fade_frames
+            self._cfg = cfg
+            # Don't stop anim yet — _tick() will handle fade and final hide
+            return
+        # Immediate hide (no fade)
+        self._do_hide()
+
+    def _do_hide(self) -> None:
+        """Internal: immediately hide overlay and reset state."""
         self.remove_class("-visible")
         self._stop_anim()
+        self._fade_state = "stable"
+        self._fade_alpha = 1.0
         self._sdf_engine = None
         self._sdf_warmup_instance = None
         self._sdf_crossfade = None
         self._sdf_baker_was_ready = False
+        self._sdf_permanently_failed = False
         self._current_engine_instance = None
         self._current_engine_key = ""
+        self._external_trail = None
+        self._carousel_crossfade = None
 
     def _auto_hide(self) -> None:
         self._auto_hide_handle = None
         self.hide(_overlay_config())
+
+    def signal(self, event: str, value: float = 1.0) -> None:
+        """Signal a heat event to the overlay and active engine.
+
+        Vocabulary: "thinking", "token", "tool", "complete".
+        """
+        if event == "thinking":
+            self._heat_target = 0.5
+        elif event == "token":
+            self._heat_target = min(1.0, self._heat_target + 0.25)
+        elif event == "tool":
+            self._heat_target = 1.0
+        elif event == "complete":
+            self._heat_target = 0.0
+        # Forward to engine if it supports on_signal
+        engine = self._current_engine_instance
+        if engine is not None and hasattr(engine, "on_signal"):
+            try:
+                engine.on_signal(event, value)
+            except Exception:
+                pass
+
+    # ── contextual SDF text (C1) ───────────────────────────────────────────
+
+    @property
+    def contextual_text(self) -> str:
+        """Return SDF display text: explicit cfg override or tool-derived label."""
+        if self._cfg and self._cfg.sdf_text:
+            return self._cfg.sdf_text
+        try:
+            tool = self.app._active_tool_name  # type: ignore[attr-defined]
+        except AttributeError:
+            return "thinking"
+        return _TOOL_SDF_LABELS.get(tool, "thinking")
+
+    # ── carousel (D2) ─────────────────────────────────────────────────────
+
+    def _get_carousel_engine(self) -> object:
+        """Return the engine for the current carousel position, handling crossfade."""
+        # If crossfade active and not done, return it
+        if self._carousel_crossfade is not None:
+            if self._carousel_crossfade.progress < 1.0:
+                return self._carousel_crossfade
+            else:
+                # Crossfade done — commit new engine key
+                self._current_engine_key = self._carousel_engines[self._carousel_idx]
+                self._carousel_crossfade = None
+
+        # Check if time to advance
+        now = time.monotonic()
+        cfg = self._cfg
+        interval = cfg.carousel_interval_s if cfg else 12.0
+        if (now - self._carousel_last_switch) > interval:
+            current_key = self._carousel_engines[self._carousel_idx]
+            self._carousel_idx = (self._carousel_idx + 1) % len(self._carousel_engines)
+            next_key = self._carousel_engines[self._carousel_idx]
+            # Build fresh engine instances for crossfade
+            engine_a = self._current_engine_instance
+            if engine_a is None:
+                engine_a = _ENGINES.get(current_key, _ENGINES["dna"])()
+            engine_b = _ENGINES.get(next_key, _ENGINES["dna"])()
+            speed = cfg.crossfade_speed if cfg else 0.04
+            self._carousel_crossfade = CrossfadeEngine(engine_a, engine_b, speed=speed)
+            self._carousel_last_switch = now
+            # Current instance will be replaced when crossfade completes
+            return self._carousel_crossfade
+
+        # Normal: return current cached engine
+        if self._current_engine_instance is None or self._current_engine_key != self._carousel_engines[self._carousel_idx]:
+            key = self._carousel_engines[self._carousel_idx]
+            self._current_engine_key = key
+            self._current_engine_instance = _ENGINES.get(key, _ENGINES["dna"])()
+        return self._current_engine_instance
 
     # ── clock subscription ─────────────────────────────────────────────────
 
@@ -1749,6 +2080,10 @@ class DrawilleOverlay(Static):
 
     def _get_engine(self) -> object:
         """Return cached engine instance, rebuilding if key changed."""
+        # Carousel path checked first (D2)
+        if self._cfg and self._cfg.carousel and len(self._carousel_engines) >= 2:
+            return self._get_carousel_engine()
+
         key = self.animation
 
         # Reset warmup state when switching away from sdf_morph
@@ -1756,6 +2091,11 @@ class DrawilleOverlay(Static):
             self._sdf_warmup_instance = None
             self._sdf_crossfade = None
             self._sdf_baker_was_ready = False
+            # Also reset external trail when engine changes
+            self._external_trail = None
+
+        if key != self._current_engine_key and self._external_trail is not None:
+            self._external_trail = None
 
         if key != "sdf_morph":
             if self._current_engine_instance is None or self._current_engine_key != key:
@@ -1804,7 +2144,35 @@ class DrawilleOverlay(Static):
         return sdf
 
     def _get_sdf_engine(self, params: AnimParams) -> object:
-        """Lazily create SDF morph engine. Calls on_mount on first creation."""
+        """Lazily create SDF morph engine. Calls on_mount on first creation.
+
+        C2: check baker.failed BEFORE baker.ready (fail-fast).
+        """
+        import logging as _logging
+        _LOG = _logging.getLogger(__name__)
+
+        # Check if permanently failed (C2)
+        if self._sdf_permanently_failed:
+            fallback = (self._cfg.sdf_warmup_engine if self._cfg else None) or "neural_pulse"
+            if fallback not in _ENGINES:
+                fallback = "neural_pulse"
+            return _ENGINES[fallback]()
+
+        if self._sdf_engine is not None:
+            # Check baker.failed BEFORE baker.ready (C2)
+            baker = getattr(self._sdf_engine, "_baker", None)
+            if baker is not None and hasattr(baker, "failed") and baker.failed.is_set():
+                if not self._sdf_permanently_failed:
+                    _LOG.warning("SDF baker failed — falling back to warmup engine")
+                    self._sdf_permanently_failed = True
+                self._sdf_engine = None
+                self._sdf_warmup_instance = None
+                self._sdf_baker_was_ready = False
+                fallback = (self._cfg.sdf_warmup_engine if self._cfg else None) or "neural_pulse"
+                if fallback not in _ENGINES:
+                    fallback = "neural_pulse"
+                return _ENGINES[fallback]()
+
         if self._sdf_engine is None:
             from hermes_cli.tui.sdf_morph import SDFMorphEngine
             self._sdf_engine = SDFMorphEngine(
@@ -1827,7 +2195,9 @@ class DrawilleOverlay(Static):
 
     def _tick(self) -> None:
         if not self.has_class("-visible"):
-            return
+            # Still running during fade-out — only skip if fully hidden (not fading)
+            if self._fade_state != "out":
+                return
         params = self._anim_params
         if params is None:
             return
@@ -1839,20 +2209,56 @@ class DrawilleOverlay(Static):
         # Get engine (cached instance)
         engine = self._get_engine()
 
-        # Send adaptive signal to engines that support on_signal
-        if engine is not None and hasattr(engine, "on_signal"):
-            try:
-                app_running = getattr(self.app, "agent_running", False)
-            except Exception:
-                app_running = False
-            if app_running:
-                engine.on_signal("thinking", self._heat)
-            else:
-                engine.on_signal("idle", 0.0)
-
         with measure("drawille_frame"):
             frame_str = engine.next_frame(params)
         params.t += params.dt
+
+        # External trail for stateless engines (D3)
+        if (self._cfg is not None and self._cfg.trail_decay > 0
+                and not hasattr(engine, "_trail")):
+            w = params.width
+            h = params.height
+            if (self._external_trail is None
+                    or getattr(self._external_trail, "_w", None) != w
+                    or getattr(self._external_trail, "_h", None) != h):
+                self._external_trail = TrailCanvas(decay=self._cfg.trail_decay)
+                self._external_trail._w = w  # type: ignore[attr-defined]
+                self._external_trail._h = h  # type: ignore[attr-defined]
+            et = self._external_trail
+            # Map braille characters to pixel coords
+            for row_idx, row in enumerate(frame_str.split("\n")):
+                for col_idx, ch in enumerate(row):
+                    if 0x2800 <= ord(ch) <= 0x28FF:
+                        bits = ord(ch) - 0x2800
+                        for dy in range(4):
+                            for dx in range(2):
+                                bit_idx = dy * 2 + dx
+                                if bits & (1 << bit_idx):
+                                    px = col_idx * 2 + dx
+                                    py = row_idx * 4 + dy
+                                    et.set(px, py, 1.0)
+            et.decay_all()
+            frame_str = et.to_canvas().frame()
+
+        # Determine render color (may be dimmed during fade-out)
+        cfg = self._cfg
+        if self._fade_state == "out" and cfg is not None:
+            self._fade_step -= 1
+            if self._fade_step <= 0:
+                self._do_hide()
+                return
+            self._fade_alpha = self._fade_step / max(cfg.fade_out_frames, 1)
+            render_color = _resolve_color(cfg.color, self.app, dim=self._fade_alpha)
+        elif self._fade_state == "in" and self._fade_step > 0:
+            fade_in_frames = cfg.fade_in_frames if cfg is not None else 3
+            alpha = 1.0 - self._fade_step / max(fade_in_frames, 1)
+            render_color = lerp_color("#000000", self._resolved_color, alpha)
+            self._fade_step -= 1
+            if self._fade_step <= 0:
+                self._fade_state = "stable"
+        else:
+            self._fade_state = "stable"
+            render_color = self._resolved_color
 
         if self._resolved_multi_colors:
             self.update(self._render_multi_color(frame_str, params.t))
@@ -1865,14 +2271,7 @@ class DrawilleOverlay(Static):
                 pieces.append((row + "\n", Style(color=hex_c)))
             self.update(Text.assemble(*pieces))
         else:
-            if self._fade_step > 0:
-                cfg = _overlay_config()
-                alpha = 1.0 - self._fade_step / max(cfg.fade_in_frames, 1)
-                hex_c = lerp_color("#000000", self._resolved_color, alpha)
-                style = Style(color=hex_c)
-                self._fade_step -= 1
-            else:
-                style = Style(color=self._resolved_color)
+            style = Style(color=render_color)
             self.update(Text(frame_str, style=style))
 
     def _render_multi_color(self, frame_str: str, t: float) -> Text:
@@ -2109,7 +2508,7 @@ class AnimConfigPanel(Widget):
         for i, f in enumerate(self._fields):
             focused = i == self._focus_idx
             val_str = self._format_field_value(f)
-            bracket_l = "[" if not focused else "["
+            bracket_l = "["
             bracket_r = "]"
             cell = f"  {f.label} {bracket_l}{val_str}{bracket_r}"
             if focused:
@@ -2119,6 +2518,13 @@ class AnimConfigPanel(Widget):
             if len(row) == 2:
                 lines.append("  ".join(row))
                 row = []
+            # E1: show engine description below animation field
+            if f.name == "animation" and focused:
+                desc = _ENGINE_META.get(str(f.value), {}).get("desc", "")
+                if desc:
+                    lines.append("")  # flush the current row first
+                    row = []
+                    lines.append(f"     \x1b[2m{desc}\x1b[0m")
         if row:
             lines.append(row[0])
         lines.append("")
@@ -2127,8 +2533,12 @@ class AnimConfigPanel(Widget):
 
     def _format_field_value(self, f: _PanelField) -> str:
         if f.kind == "cycle":
-            label = ANIMATION_LABELS.get(str(f.value), str(f.value)) if f.name == "animation" else str(f.value)
-            return label[:16]
+            if f.name == "animation":
+                key = str(f.value)
+                cat = _ENGINE_META.get(key, {}).get("category", "")
+                badge = f"[{cat[:3].upper()}] " if cat else ""
+                return (badge + key)[:18]
+            return str(f.value)[:16]
         elif f.kind == "int":
             return str(f.value)
         elif f.kind == "float":
@@ -2276,12 +2686,17 @@ class AnimConfigPanel(Widget):
             pass
 
     def _do_save(self) -> None:
+        self._push_to_overlay_all()
         try:
-            from hermes_cli.config import read_raw_config, save_config, _set_nested
-            cfg = read_raw_config()
             vals = _fields_to_dict(self._fields)
-            _set_nested(cfg, "display.drawille_overlay", vals)
-            save_config(cfg)
+            try:
+                self.app._persist_anim_config(vals)  # type: ignore[attr-defined]
+            except Exception:
+                # Fallback: direct write
+                from hermes_cli.config import read_raw_config, save_config, _set_nested
+                cfg = read_raw_config()
+                _set_nested(cfg, "display.drawille_overlay", vals)
+                save_config(cfg)
             try:
                 from hermes_cli.tui.widgets import HintBar
                 self.app.query_one(HintBar).hint = "✓ Saved to config"  # type: ignore[attr-defined]
@@ -2294,6 +2709,11 @@ class AnimConfigPanel(Widget):
             except Exception:
                 pass
 
+    def _push_to_overlay_all(self) -> None:
+        """Apply all field changes to DrawilleOverlay."""
+        for f in self._fields:
+            self._push_to_overlay(f)
+
     def _do_reset(self) -> None:
         from hermes_cli.config import DEFAULT_CONFIG
         d = DEFAULT_CONFIG["display"]["drawille_overlay"]  # type: ignore[index]
@@ -2304,6 +2724,189 @@ class AnimConfigPanel(Widget):
             ov.animation = d.get("animation", "dna")
             ov.color = d.get("color", "$accent")
         self.refresh()
+
+
+# ── _GalleryPreview ───────────────────────────────────────────────────────────
+
+class _GalleryPreview(Widget):
+    """Live engine preview widget for AnimGalleryOverlay and AnimConfigPanel."""
+
+    DEFAULT_CSS = """
+    _GalleryPreview {
+        width: 20;
+        height: 6;
+    }
+    """
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._engine_key: str = ""
+        self._engine: object | None = None
+        self._preview_timer: "Timer | None" = None
+
+    def set_engine(self, key: str) -> None:
+        """Switch to a new engine. Creates a fresh instance."""
+        self._engine_key = key
+        if key == "sdf_morph":
+            # SDF requires baking — use neural_pulse as stand-in
+            self._engine = _ENGINES["neural_pulse"]()
+        elif key in _ENGINES:
+            self._engine = _ENGINES[key]()
+            if hasattr(self._engine, "on_mount"):
+                try:
+                    self._engine.on_mount(self)  # type: ignore[arg-type]
+                except Exception:
+                    pass
+        else:
+            self._engine = None
+        self.refresh()
+
+    def _preview_tick(self) -> None:
+        if self._engine is None:
+            return
+        try:
+            params = AnimParams(width=40, height=24, heat=0.5)
+            frame = self._engine.next_frame(params)
+            params.t += params.dt
+            self.update(frame)
+        except Exception:
+            pass
+
+    def on_mount(self) -> None:
+        self._engine = None
+        self._preview_timer = self.set_interval(0.5, self._preview_tick)
+
+
+# ── AnimGalleryOverlay ────────────────────────────────────────────────────────
+
+class AnimGalleryOverlay(Widget):
+    """Gallery overlay for browsing and selecting animation engines (B2)."""
+
+    DEFAULT_CSS = """
+    AnimGalleryOverlay {
+        display: none;
+        width: 70;
+        height: 20;
+        border: round $accent;
+        background: $surface;
+        padding: 0 1;
+        offset: 5 2;
+    }
+    AnimGalleryOverlay.--visible {
+        display: block;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "close", "Close", show=False),
+        Binding("enter",  "select", "Select", show=False),
+        Binding("space",  "select", "Select", show=False),
+        Binding("up",     "prev_item", "Prev", show=False),
+        Binding("down",   "next_item", "Next", show=False),
+        Binding("p",      "preview", "Preview", show=False),
+        Binding("s",      "open_config", "Config", show=False),
+    ]
+
+    can_focus = True
+
+    _focus_idx: int = 0
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._engine_list: list[str] = list(_ENGINES.keys()) + ["sdf_morph"]
+        self._focus_idx = 0
+
+    def compose(self) -> "ComposeResult":
+        yield Static("", id="gallery-list")
+        yield _GalleryPreview(id="gallery-preview")
+
+    def on_mount(self) -> None:
+        self._refresh_list()
+        self._update_preview()
+
+    def _refresh_list(self) -> None:
+        lines: list[str] = []
+        lines.append("─ Animation Gallery ─")
+        for i, key in enumerate(self._engine_list):
+            meta = _ENGINE_META.get(key, {})
+            cat = meta.get("category", "")
+            badge = f"[{cat[:3].upper()}]" if cat else "   "
+            marker = ">" if i == self._focus_idx else " "
+            lines.append(f"  {marker} {key:<22} {badge}")
+        lines.append("")
+        lines.append("  ↑↓ navigate · Enter select · P preview · Esc close")
+        try:
+            self.query_one("#gallery-list", Static).update("\n".join(lines))
+        except (NoMatches, Exception):
+            pass
+
+    def _update_preview(self) -> None:
+        try:
+            key = self._engine_list[self._focus_idx]
+            self.query_one(_GalleryPreview).set_engine(key)
+        except (NoMatches, IndexError, Exception):
+            pass
+
+    def action_prev_item(self) -> None:
+        self._focus_idx = (self._focus_idx - 1) % len(self._engine_list)
+        self._refresh_list()
+        self._update_preview()
+
+    def action_next_item(self) -> None:
+        self._focus_idx = (self._focus_idx + 1) % len(self._engine_list)
+        self._refresh_list()
+        self._update_preview()
+
+    def action_select(self) -> None:
+        try:
+            key = self._engine_list[self._focus_idx]
+            try:
+                ov = self.app.query_one(DrawilleOverlay)
+                ov.animation = key
+            except (NoMatches, Exception):
+                pass
+            # Update app animation key
+            try:
+                cfg = _overlay_config()
+                cfg.animation = key
+            except Exception:
+                pass
+        except IndexError:
+            pass
+        self.remove_class("--visible")
+        try:
+            self.app.query_one("#input-area").focus()
+        except (NoMatches, Exception):
+            pass
+
+    def action_close(self) -> None:
+        self.remove_class("--visible")
+        try:
+            self.app.query_one("#input-area").focus()
+        except (NoMatches, Exception):
+            pass
+
+    def action_preview(self) -> None:
+        """Force-show overlay with selected engine for 5s."""
+        try:
+            key = self._engine_list[self._focus_idx]
+            ov = self.app.query_one(DrawilleOverlay)
+            cfg = _overlay_config()
+            cfg.enabled = True
+            cfg.animation = key
+            ov.animation = key
+            ov.show(cfg)
+            self.app.set_timer(5.0, lambda: None)  # type: ignore[attr-defined]
+        except (NoMatches, Exception):
+            pass
+
+    def action_open_config(self) -> None:
+        self.remove_class("--visible")
+        try:
+            panel = self.app.query_one(AnimConfigPanel)
+            panel.open()
+        except (NoMatches, Exception):
+            pass
 
 
 def _current_panel_cfg(fields: list[_PanelField]) -> DrawilleOverlayCfg:

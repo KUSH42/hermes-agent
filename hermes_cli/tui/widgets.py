@@ -3306,7 +3306,7 @@ class StatusBar(PulseMixin, Widget):
             "status_compaction_progress", "status_compaction_enabled",
             "command_running",
             "browse_mode", "browse_index", "_browse_total", "_browse_hint",
-            "_completion_hint",
+            "_completion_hint", "_anim_hint",
             "status_output_dropped",
             "status_active_file",
             "context_pct",
@@ -3523,10 +3523,16 @@ class StatusBar(PulseMixin, Widget):
             state_t = Text(f" ⚠ {_status_err}", style=f"bold {_err_color}")
         else:
             _completion_hint = getattr(app, "_completion_hint", "")
+            _anim_hint = getattr(app, "_anim_hint", "")
             if _completion_hint:
                 state_t = Text()
                 state_t.append(" ")
                 state_t.append_text(Text.from_markup(_completion_hint))
+                if _anim_hint:
+                    state_t.append(f"  \u27e8{_anim_hint}\u27e9", style="dim")
+            elif _anim_hint:
+                state_t = Text()
+                state_t.append(f" \u27e8{_anim_hint}\u27e9", style="dim")
             else:
                 tips = self._get_idle_tips()
                 hint_idx = getattr(self, "_hint_idx", 0)

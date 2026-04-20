@@ -376,6 +376,16 @@ class HermesApp(App):
     # Completion overlay hint shown in StatusBar while overlay is visible (A3/C1)
     _completion_hint: reactive[str] = reactive("")
 
+    # Animation force state — overrides trigger-based show/hide logic
+    # None = normal; "on" = always show; "off" = always hide
+    _anim_force: "str | None" = None
+
+    # Animation hint for StatusBar (C3)
+    _anim_hint: reactive[str] = reactive("")
+
+    # Active tool name — set/cleared by _on_tool_start/_on_tool_complete (C1)
+    _active_tool_name: str = ""
+
     # Output dropped flag — set when queue is full; shown in StatusBar until next successful write
     status_output_dropped: reactive[bool] = reactive(False)
 
@@ -582,9 +592,12 @@ class HermesApp(App):
         yield VoiceStatusBar(id="voice-status")
         yield StatusBar(id="status-bar")
         # Drawille animation overlay — before FPSCounter so FPS HUD stays above.
-        from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO, AnimConfigPanel as _ACP
+        from hermes_cli.tui.drawille_overlay import (
+            DrawilleOverlay as _DO, AnimConfigPanel as _ACP, AnimGalleryOverlay as _AGA
+        )
         yield _DO(id="drawille-overlay")
         yield _ACP(id="anim-config-panel")
+        yield _AGA(id="anim-gallery-overlay")
         # FPS HUD — overlay layer, docked top; display:none by default.
         # Must be before ContextMenu so ContextMenu stays topmost in overlay layer.
         yield FPSCounter(id="fps-counter")
@@ -1545,11 +1558,19 @@ class HermesApp(App):
             pass
 
     def _drawille_show_hide(self, running: bool) -> None:
-        """Show or hide the drawille overlay based on agent state."""
+        """Show or hide the drawille overlay based on agent state + _anim_force."""
         try:
             from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO, _overlay_config
             overlay = self.query_one(_DO)
             cfg = _overlay_config()
+            # _anim_force overrides normal trigger logic
+            if self._anim_force == "on":
+                cfg.enabled = True
+                overlay.show(cfg)
+                return
+            if self._anim_force == "off":
+                overlay.hide(cfg)
+                return
             if running and cfg.trigger in ("agent_running", "always"):
                 overlay.show(cfg)
                 if cfg.dim_background:
@@ -1582,6 +1603,13 @@ class HermesApp(App):
     def watch_agent_running(self, value: bool) -> None:
         self._drawille_show_hide(value)
         if value:
+            # Signal thinking when agent starts
+            try:
+                from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO
+                self.query_one(_DO).signal("thinking")
+            except Exception:
+                pass
+            self._update_anim_hint()
             self._dismiss_all_info_overlays()
             self._response_metrics_active = False
             self._response_wall_start_time = None
@@ -1603,6 +1631,13 @@ class HermesApp(App):
             # OSC progress bar
             self._osc_progress_update(True)
         else:
+            # Signal complete when agent stops
+            try:
+                from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO
+                self.query_one(_DO).signal("complete")
+            except Exception:
+                pass
+            self._update_anim_hint()
             self._sync_workspace_polling_state()
             try:
                 chevron = self.query_one("#input-chevron", Static)
@@ -1654,14 +1689,11 @@ class HermesApp(App):
                     except Exception:
                         pass
                 pending.clear()
-            # v2 heat injection: signal turn complete to adaptive engines
+            # v2 heat injection: signal turn complete
             try:
                 from hermes_cli.tui.drawille_overlay import DrawilleOverlay
                 ov = self.query_one(DrawilleOverlay)
-                eng = ov._current_engine_instance
-                if eng is not None and hasattr(eng, "on_signal"):
-                    eng.on_signal("complete", 1.0)
-                ov._heat_target = 0.0
+                ov.signal("complete")
             except Exception:
                 pass
             # Rebuild unified browse anchor list now that all blocks are mounted
@@ -1870,7 +1902,7 @@ class HermesApp(App):
         try:
             from hermes_cli.tui.drawille_overlay import DrawilleOverlay
             ov = self.query_one(DrawilleOverlay)
-            ov._heat_target = min(1.0, ov._heat_target * 0.9 + 0.3)
+            ov.signal("token")
         except Exception:
             pass
         self._refresh_live_response_metrics()
@@ -2558,6 +2590,15 @@ class HermesApp(App):
                 panel_id = base_panel_id
             block = msg.open_streaming_tool_block(label=label, tool_name=tool_name, panel_id=panel_id)
             self._active_streaming_blocks[tool_call_id] = block
+            # C1: track active tool name for contextual SDF text
+            self._active_tool_name = tool_name or ""
+            # Signal tool start to overlay
+            try:
+                from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO
+                self.query_one(_DO).signal("tool")
+            except Exception:
+                pass
+            self._update_anim_hint()
             # P7: record tool call for /tools overlay
             now = _time.monotonic()
             if self._turn_start_monotonic is None:
@@ -2628,6 +2669,9 @@ class HermesApp(App):
             panel = getattr(block, "_tool_panel", None)
             if panel is not None:
                 panel.set_result_summary_v4(summary)
+        # C1: clear active tool name when tool completes
+        self._active_tool_name = ""
+        self._update_anim_hint()
         # P7: update dur_ms + is_error on the matching turn entry
         for entry in self._turn_tool_calls:
             if entry["tool_call_id"] == tool_call_id:
@@ -2648,12 +2692,11 @@ class HermesApp(App):
                 self.call_after_refresh(panel.scroll_end, animate=False)
         except NoMatches:
             pass
-        # v2 heat injection: bump heat on tool complete
+        # v2 heat injection: tool complete → demote to "thinking" level
         try:
             from hermes_cli.tui.drawille_overlay import DrawilleOverlay
             ov = self.query_one(DrawilleOverlay)
-            ov._heat_target = 1.0
-            self.set_timer(1.0, lambda: setattr(ov, "_heat_target", 0.3))
+            ov.signal("thinking")
         except Exception:
             pass
 
@@ -3628,7 +3671,8 @@ class HermesApp(App):
         Called before showing a new overlay (ensures only one visible at a time)
         and from watch_agent_running(True) (stale info must not block output view).
         """
-        for cls in (HelpOverlay, UsageOverlay, CommandsOverlay, ModelOverlay, WorkspaceOverlay, SessionOverlay):
+        from hermes_cli.tui.drawille_overlay import AnimGalleryOverlay as _AGA
+        for cls in (HelpOverlay, UsageOverlay, CommandsOverlay, ModelOverlay, WorkspaceOverlay, SessionOverlay, _AGA):
             try:
                 self.query_one(cls).remove_class("--visible")
             except NoMatches:
@@ -3654,8 +3698,8 @@ class HermesApp(App):
         if stripped == "/compact":
             self.action_toggle_density()
             return True
-        if stripped == "/anim":
-            self._open_anim_config()
+        if stripped.startswith("/anim"):
+            self._handle_anim_command(stripped)
             return True
 
         if stripped == "/workspace":
@@ -3803,6 +3847,149 @@ class HermesApp(App):
             else:
                 panel.open()
         except NoMatches:
+            pass
+
+    def _persist_anim_config(self, cfg_dict: dict) -> None:
+        """Persist animation config dict to YAML config file (E5)."""
+        try:
+            from hermes_cli.config import read_raw_config, save_config, _set_nested, get_config_path
+            config_path = get_config_path()
+            if not config_path.exists():
+                import logging as _logging
+                _logging.getLogger(__name__).warning("Config path does not exist: %s", config_path)
+                return
+            cfg = read_raw_config()
+            _set_nested(cfg, "display.drawille_overlay", cfg_dict)
+            save_config(cfg)
+        except Exception as exc:
+            import logging as _logging
+            _logging.getLogger(__name__).warning("Failed to persist anim config: %s", exc)
+
+    def _update_anim_hint(self) -> None:
+        """Update _anim_hint reactive based on overlay visibility (C3)."""
+        try:
+            from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO
+            ov = self.query_one(_DO)
+            cfg = ov._cfg
+            if ov.has_class("-visible") and cfg is not None and cfg.animation == "sdf_morph":
+                self._anim_hint = f"sdf: {ov.contextual_text}"
+            else:
+                self._anim_hint = ""
+        except Exception:
+            self._anim_hint = ""
+
+    def _handle_anim_command(self, stripped: str) -> None:
+        """Handle /anim subcommands (B1)."""
+        from hermes_cli.tui.drawille_overlay import (
+            DrawilleOverlay as _DO, AnimConfigPanel as _ACP,
+            _ENGINES, _overlay_config, AnimGalleryOverlay as _AGA,
+        )
+        # Parse args after "/anim"
+        rest = stripped[len("/anim"):].strip()
+        args = rest.split() if rest else []
+
+        if not args:
+            # /anim → open gallery overlay (B2)
+            try:
+                gallery = self.query_one(_AGA)
+                gallery.add_class("--visible")
+            except NoMatches:
+                pass
+            return
+
+        sub = args[0].lower()
+
+        if sub == "config":
+            self._open_anim_config()
+            return
+
+        if sub == "on":
+            self._anim_force = "on"
+            try:
+                ov = self.query_one(_DO)
+                cfg = _overlay_config()
+                cfg.enabled = True
+                ov.show(cfg)
+            except Exception:
+                pass
+            return
+
+        if sub == "off":
+            self._anim_force = "off"
+            try:
+                ov = self.query_one(_DO)
+                cfg = _overlay_config()
+                ov.hide(cfg)
+            except Exception:
+                pass
+            return
+
+        if sub == "toggle":
+            if self._anim_force is None:
+                self._anim_force = "on"
+            elif self._anim_force == "on":
+                self._anim_force = "off"
+            else:
+                self._anim_force = None
+            self._drawille_show_hide(getattr(self, "agent_running", False))
+            return
+
+        if sub == "list":
+            keys = list(_ENGINES.keys()) + ["sdf_morph"]
+            try:
+                from hermes_cli.tui.widgets import OutputPanel
+                panel = self.query_one(OutputPanel)
+                msg = panel.current_message or panel.new_message()
+                from rich.text import Text as _Text
+                msg._log.write(_Text("Animations: " + ", ".join(keys)))
+            except Exception:
+                self._flash_hint(", ".join(keys), 5.0)
+            return
+
+        if sub == "sdf":
+            sdf_text = " ".join(args[1:]) if len(args) > 1 else ""
+            try:
+                ov = self.query_one(_DO)
+                cfg = _overlay_config()
+                cfg.enabled = True
+                cfg.animation = "sdf_morph"
+                if sdf_text:
+                    cfg.sdf_text = sdf_text
+                ov.animation = "sdf_morph"
+                ov.show(cfg)
+                # Force-show for 10s then revert
+                def _revert_sdf():
+                    ov.animation = _overlay_config().animation
+                    self._drawille_show_hide(getattr(self, "agent_running", False))
+                self.set_timer(10.0, _revert_sdf)
+            except Exception:
+                pass
+            return
+
+        # Fuzzy match engine name
+        all_keys = list(_ENGINES.keys())
+        clean = "".join(c for c in sub if c.isalpha()).lower()
+        matched = None
+        for k in all_keys:
+            if clean in k.replace("_", ""):
+                matched = k
+                break
+        if matched is None:
+            self._flash_hint(f"⚠  Unknown animation: {sub}", 2.0)
+            return
+
+        try:
+            ov = self.query_one(_DO)
+            ov.animation = matched
+            cfg = _overlay_config()
+            cfg.enabled = True
+            cfg.animation = matched
+            ov.show(cfg)
+            # Force-show for 4s then revert
+            def _revert_engine():
+                self._drawille_show_hide(getattr(self, "agent_running", False))
+            self.set_timer(4.0, _revert_engine)
+        except Exception:
             pass
 
     def _try_auto_title(self) -> None:
@@ -4100,11 +4287,12 @@ class HermesApp(App):
             # Priority -2: dismiss info overlays (help/usage/commands/model).
             # These have no Input focus when shown (except HelpOverlay), so their
             # Binding(escape) doesn't fire — handle here instead.
-            for _cls in (HelpOverlay, UsageOverlay, CommandsOverlay, ModelOverlay, WorkspaceOverlay, SessionOverlay):
+            from hermes_cli.tui.drawille_overlay import AnimGalleryOverlay as _AGA
+            for _cls in (HelpOverlay, UsageOverlay, CommandsOverlay, ModelOverlay, WorkspaceOverlay, SessionOverlay, _AGA):
                 try:
                     _ov = self.query_one(_cls)
                     if _ov.has_class("--visible"):
-                        _ov.action_dismiss()
+                        _ov.action_dismiss() if hasattr(_ov, "action_dismiss") else _ov.remove_class("--visible")
                         event.prevent_default()
                         return
                 except NoMatches:

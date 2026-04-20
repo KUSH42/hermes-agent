@@ -6,6 +6,7 @@ Three render modes: filled, outline, dissolve. No scipy dependency required.
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -70,18 +71,30 @@ def _dead_reckon_sdf(mask: np.ndarray) -> np.ndarray:
 class SDFBaker:
     """Bakes character glyphs to normalized SDF arrays. Thread-safe via Event."""
 
-    def __init__(self, resolution: int = 128, font_size: int = 96) -> None:
+    def __init__(self, resolution: int = 128, font_size: int = 96,
+                 timeout_s: float = 5.0) -> None:
         self._resolution = resolution
         self._font_size = font_size
+        self._timeout_s = timeout_s
         self._cache: dict[str, np.ndarray] = {}
         self.ready = threading.Event()
+        self.failed = threading.Event()
+        self._start_time: float = 0.0
 
     def bake(self, chars: str) -> None:
         """Blocking. Call from worker thread only."""
-        for ch in set(chars):
-            if ch not in self._cache:
-                self._cache[ch] = self._bake_char(ch)
-        self.ready.set()
+        self._start_time = time.monotonic()
+        try:
+            for ch in set(chars):
+                if ch not in self._cache:
+                    # Check timeout between glyph renders
+                    if time.monotonic() - self._start_time > self._timeout_s:
+                        self.failed.set()
+                        return
+                    self._cache[ch] = self._bake_char(ch)
+            self.ready.set()
+        except Exception:
+            self.failed.set()
 
     def get(self, ch: str) -> np.ndarray:
         return self._cache[ch]
@@ -220,7 +233,7 @@ class SDFMorphEngine:
         self._color = color
         self._color_b = color_b
 
-        self._baker = SDFBaker(resolution=128, font_size=font_size)
+        self._baker = SDFBaker(resolution=128, font_size=font_size, timeout_s=5.0)
         self._state = MorphState(
             char_a=text[0],
             char_b=text[1],

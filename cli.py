@@ -2645,6 +2645,13 @@ class HermesCLI:
         if tui is not None and hasattr(tui, "mark_response_stream_delta"):
             tui.call_from_thread(tui.mark_response_stream_delta, text)
 
+        # Accumulate token estimate for final tok/s header calculation.
+        # Mirror the same estimator used by mark_response_stream_delta so the
+        # live rate and the final header value are consistent.  Doing it here
+        # (on visible text only) avoids counting reasoning/tool-use tokens.
+        from agent.model_metadata import estimate_tokens_rough as _etr
+        self._message_stream_output_tokens += _etr(text)
+
         # Open the response box header on the very first visible text
         if not self._stream_box_opened:
             # Strip leading whitespace/newlines before first visible content
@@ -2855,10 +2862,8 @@ class HermesCLI:
         import time as _time_mod
         if self._stream_started and getattr(self, "_stream_start_time", None) is not None:
             self._message_stream_active_s += max(0.0, _time_mod.monotonic() - self._stream_start_time)
-            agent = getattr(self, "agent", None)
-            self._message_stream_output_tokens += max(
-                0, int(getattr(agent, "_last_turn_output_tokens", 0) or 0)
-            )
+            # Token count is now accumulated live in _emit_stream_text via
+            # estimate_tokens_rough — no stale _last_turn_output_tokens read here.
             tui = _hermes_app
             if intermediate and tui is not None and hasattr(tui, "pause_response_stream"):
                 tui.call_from_thread(tui.pause_response_stream)

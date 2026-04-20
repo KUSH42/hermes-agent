@@ -63,6 +63,7 @@ def _make_emit_cli(stream_buf="", stream_text_ansi=""):
     cli._deferred_content = ""
     cli._stream_block_buf = MagicMock()
     cli._stream_code_hl = MagicMock()
+    cli._message_stream_output_tokens = 0
     return cli
 
 

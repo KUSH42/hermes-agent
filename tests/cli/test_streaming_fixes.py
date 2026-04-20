@@ -34,6 +34,7 @@ def _make_emit_cli(stream_buf="", show_reasoning=False):
     cli._stream_code_hl = MagicMock()
     cli._stream_code_hl._in_block = False  # must be False so word-boundary flush is not suppressed
     cli._stream_code_hl.process_line = MagicMock(side_effect=lambda x: x)
+    cli._message_stream_output_tokens = 0
     return cli
 
 
@@ -79,6 +80,9 @@ def _make_stream_delta_cli(show_reasoning=True):
     cli._stream_code_hl = MagicMock()
     cli._stream_code_hl.process_line = MagicMock(side_effect=lambda x: x)
     cli._stream_code_hl.flush = MagicMock(return_value=None)
+    cli._message_stream_output_tokens = 0
+    cli._message_wall_start_time = None
+    cli._stream_start_time = None
     return cli
 
 

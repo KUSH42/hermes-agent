@@ -110,9 +110,31 @@ Then load only the focused reference you need:
 
 ## Validation
 
-Last revalidated: **2026-04-20. 2024 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility; 1 flaky perf jitter test in `test_streaming_perf.py` occasionally fails under load — pre-existing, not related to recent changes).
+Last revalidated: **2026-04-20. ~2058 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility; 1 flaky perf jitter test in `test_streaming_perf.py` occasionally fails under load — pre-existing, not related to recent changes).
 
 Recent changes (details → reference files):
+- **Tool Call UX Pass 4 — Phase 2** (2026-04-20): 22 tests in `tests/tui/test_ux_phase4_p2.py`. Covers B1/B2/B3/C1/D2/E1/H1.
+  - **B1 — Error-kind icon override**: `tool_blocks.py` `_render_v4()` — after `icon_str = self._tool_icon or ""`, if `_tool_icon_error and _error_kind`, override icon with `_ERROR_ICON[_error_kind]` map.
+  - **B2 — Suppress `{N}L` when hero set**: `elif self._line_count and not self._primary_hero:` — line count chip only shown when no hero chip set.
+  - **B3 — MCP streaming microcopy fallback**: `streaming_microcopy.py` MCP branch — `server = prov[4:] if prov.startswith("mcp:") else ""`, then `__`-split fallback (last segment), then bare name. Removed `" server"` suffix.
+  - **C1 — J/K page scroll + `<`/`>` top/bottom**: `tool_panel.py` BINDINGS — `Binding("J", "scroll_body_page_down")`, `Binding("K", "scroll_body_page_up")`, `Binding("less_than_sign", "scroll_body_top")`, `Binding("greater_than_sign", "scroll_body_bottom")`. Actions implemented on `ToolPanel`.
+  - **D2 — Artifact chips as Buttons**: `tool_panel.py` `FooterPane` — `_artifact_row: Horizontal` in compose; `_rebuild_artifact_buttons()` mounts `Button(label, id=f"artifact-{i}")` per artifact. `on_button_pressed` dispatches to `action_open_primary` or `action_open_url`.
+  - **E1 — `ToolPanelHelpOverlay`**: `overlays.py` — static binding table, `show_overlay()` / `hide_overlay()` / `on_key()` dismiss. `tool_panel.py` `action_show_help()` calls `self.app.mount(ToolPanelHelpOverlay())`. `Binding("question_mark", "show_help")` added.
+  - **H1 — MCP remediation hints**: `tool_result_parse.py` `_MCP_REMEDIATIONS = {"timeout": ..., "parse": ..., "signal": ...}`. `mcp_result_v4()` error branch sets `remediation = _MCP_REMEDIATIONS.get(error_kind or "", None)` on the `Chip`.
+  → `hermes_cli/tui/tool_blocks.py §_render_v4 error icon / line count guard`,
+    `hermes_cli/tui/streaming_microcopy.py §MCP server fragment fallback`,
+    `hermes_cli/tui/tool_panel.py §C1 page bindings/D2 artifact buttons/E1 show_help`,
+    `hermes_cli/tui/overlays.py §ToolPanelHelpOverlay`,
+    `hermes_cli/tui/tool_result_parse.py §_MCP_REMEDIATIONS/mcp_result_v4`,
+    `tests/tui/test_ux_phase4_p2.py` (new, 22 tests)
+- **Tool Call UX Pass 4 — Phase 1** (2026-04-20): 12 tests in `tests/tui/test_ux_phase4_p1.py`. Covers A1/A2/D1/E2.
+  - **A1 — `edit_cmd` action**: `"edit_cmd"` added to `_IMPLEMENTED_ACTIONS`. `action_edit_cmd()` finds `edit_cmd` action in `_result_summary_v4.actions`, calls `app.query_one(HermesInput)`, sets `.value` + `.focus()`. `Binding("E", "edit_cmd")`. `HermesInput` imported from `hermes_cli.tui.input_widget` (NOT `widgets`).
+  - **A2 — `open_url` action**: `"open_url"` added to `_IMPLEMENTED_ACTIONS`. `action_open_url()` finds first `kind="url"` artifact, calls `subprocess.Popen([opener, url])`. `Binding("O", "open_url")`.
+  - **D1 — Error always expands**: `set_result_summary_v4()` — `if summary.is_error: self.collapsed = False` runs unconditionally (no longer guarded by `not _user_collapse_override`). Dead error-expand code in `_apply_complete_auto_collapse()` removed.
+  - **E2 — `action_open_first` removed**: deleted as standalone method; `action_open_primary` covers both file + url artifacts.
+  - **`action_open_primary` URL fallback**: when `header._path_clickable` is False, falls back to first `kind="url"` artifact via `subprocess.Popen`.
+  → `hermes_cli/tui/tool_panel.py §_IMPLEMENTED_ACTIONS/action_edit_cmd/action_open_url/action_open_primary/D1 collapse fix`,
+    `tests/tui/test_ux_phase4_p1.py` (new, 12 tests)
 - **Tool Call UX Phase 2+3** (2026-04-20): 66 tests in `tests/tui/test_ux_phase2_3.py`. Covers A2/B2/B3/B4/C3/C4/C5/D1/D2/D3/E1/E2/E3/F2/G1/G2 from the UX review spec.
   - **A2 — Chip remediation hints**: `Chip.remediation: str | None = None` field in `tool_result_parse.py`. MCP `disconnected` chip → `"restart or check server logs"`; `auth` chip → `"re-authenticate with /mcp auth"`. `FooterPane._remediation_row()` renders dim italic hint row below chips when any chip has remediation.
   - **B2 — Streaming rate display**: `StreamingState.rate_bps: float | None = None` field. `StreamingToolBlock.__init__` gains `_rate_samples: deque[tuple[float, int], maxlen=20]`. `append_line()` appends `(time.time(), len(line))`. `_bytes_per_second() -> float | None`: filters last 2s, None if <2 samples. `_update_microcopy()` passes `rate_bps=self._bytes_per_second()`. `microcopy_line()` shows `· 12.3 kB/s` suffix when rate known.

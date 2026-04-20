@@ -777,10 +777,11 @@ def mcp_result_v4(ctx: ParseContext) -> ResultSummaryV4:
 
     if error_kind == "timeout" or is_error:
         err_label = f"mcp · {error_kind}" if error_kind else "mcp · error"
+        remediation = _MCP_REMEDIATIONS.get(error_kind or "", None)
         return ResultSummaryV4(
             primary=f"✗ {err_label} · {server}",
             exit_code=None,
-            chips=(source_chip, Chip(err_label, "mcp-error", "error")),
+            chips=(source_chip, Chip(err_label, "mcp-error", "error", remediation=remediation)),
             stderr_tail="",
             actions=(
                 _make_copy_err("", raw),
@@ -912,6 +913,12 @@ _ERROR_DISPLAY: dict[str, tuple[str, str, str, str]] = {
     "parse":    ("\U000f02fd", "❓",   "[?]",  "error-network"),
 }
 _MODE_IDX: dict[str, int] = {"nerdfont": 0, "emoji": 1, "ascii": 2}
+
+_MCP_REMEDIATIONS: dict[str, str] = {
+    "timeout": "increase timeout or check server load",
+    "parse":   "check server output — invalid JSON response",
+    "signal":  "server may have crashed — check logs",
+}
 
 
 def _error_kind_display(kind: str, detail: str, icon_mode: str) -> tuple[str, str, str]:

@@ -442,3 +442,62 @@ class WorkspaceOverlay(Widget):
             complexity_widget.mount(Static(""))  # blank separator
             for rel, warn in warnings:
                 complexity_widget.mount(Static(f"⚠  {rel}  ·  {warn}", classes="ws-complexity"))
+
+
+class ToolPanelHelpOverlay(Widget):
+    """Binding reference for focused ToolPanel. Shown by '?', dismissed by Esc/'?'."""
+
+    DEFAULT_CSS = """
+    ToolPanelHelpOverlay {
+        layer: overlay;
+        display: none;
+        height: auto;
+        max-height: 24;
+        width: 50;
+        margin: 2 4;
+        padding: 1 2;
+        background: $surface;
+        border: tall $primary 20%;
+        dock: right;
+    }
+    ToolPanelHelpOverlay.--visible { display: block; }
+    ToolPanelHelpOverlay > Static { height: auto; }
+    """
+
+    _BINDINGS_TABLE = """\
+[bold]ToolPanel key reference[/bold]
+
+[bold]Enter[/bold]   toggle collapse
+[bold]j / k[/bold]   scroll 1 line
+[bold]J / K[/bold]   scroll page
+[bold]< / >[/bold]   scroll top / end
+[bold]c[/bold]       copy plain text
+[bold]C[/bold]       copy ANSI colors
+[bold]H[/bold]       copy HTML
+[bold]I[/bold]       copy invocation
+[bold]u[/bold]       copy URLs
+[bold]o[/bold]       open file/URL
+[bold]p[/bold]       copy file paths
+[bold]e[/bold]       copy stderr
+[bold]E[/bold]       edit command
+[bold]O[/bold]       open URL
+[bold]r[/bold]       retry on error
+[bold]+/-/*[/bold]   expand/collapse/all lines
+[bold]?[/bold]       this help
+"""
+
+    def compose(self) -> ComposeResult:
+        yield Static(self._BINDINGS_TABLE, markup=True)
+
+    def show_overlay(self) -> None:
+        self.add_class("--visible")
+
+    def hide_overlay(self) -> None:
+        self.remove_class("--visible")
+        self.remove()
+
+    def on_key(self, event: "object") -> None:
+        key = getattr(event, "key", None)
+        if key in ("escape", "question_mark"):
+            self.hide_overlay()
+            getattr(event, "stop", lambda: None)()

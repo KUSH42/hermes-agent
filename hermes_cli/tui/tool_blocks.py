@@ -543,6 +543,16 @@ class ToolHeader(PulseMixin, Widget):
 
         # Icon (shared with v2)
         icon_str = self._tool_icon or ""
+        # B1: use error-kind icon in icon slot on failure
+        if self._tool_icon_error and self._error_kind:
+            try:
+                from hermes_cli.tui.tool_result_parse import _error_kind_display
+                from agent.display import get_tool_icon_mode
+                _ek_icon, _, _ = _error_kind_display(self._error_kind, "", get_tool_icon_mode())
+                if _ek_icon:
+                    icon_str = _ek_icon
+            except Exception:
+                pass
         icon_cell_w = _safe_cell_width(icon_str) if icon_str else 0
         if icon_str:
             if self._spinner_char is not None:
@@ -582,7 +592,7 @@ class ToolHeader(PulseMixin, Widget):
                     tail.append(f"  +{self._stats.additions}", style=f"bold {add_color}")
                 if self._stats.deletions:
                     tail.append(f"  -{self._stats.deletions}", style=f"bold {del_color}")
-            elif self._line_count:
+            elif self._line_count and not self._primary_hero:
                 tail.append(f"  {self._line_count}L", style="dim")
             # Hero chip: primary result summary (v4 §4.1)
             if self._primary_hero:

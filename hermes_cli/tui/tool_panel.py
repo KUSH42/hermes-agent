@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.containers import Horizontal
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
@@ -116,6 +117,19 @@ class FooterPane(Widget):
     }
     FooterPane.has-stderr > .footer-stderr { display: block; }
     FooterPane.compact > .footer-stderr { display: none; }
+    FooterPane > .artifact-row {
+        height: auto;
+        layout: horizontal;
+        display: none;
+    }
+    FooterPane.has-artifacts > .artifact-row { display: block; }
+    FooterPane > .artifact-row > .--artifact-chip {
+        height: 1;
+        border: none;
+        background: transparent;
+        min-width: 0;
+        color: $accent-muted;
+    }
     """
 
     COMPONENT_CLASSES = {"footer--exit-chip", "footer--badge", "footer--retry-hint"}
@@ -130,9 +144,11 @@ class FooterPane(Widget):
         self._content = Static("", classes="footer-main")
         self._stderr_row = Static("", classes="footer-stderr")
         self._remediation_row = Static("", classes="footer-remediation")
+        self._artifact_row = Horizontal(classes="artifact-row")
         yield self._content
         yield self._stderr_row
         yield self._remediation_row
+        yield self._artifact_row
 
     def _render_stderr(self, tail: str) -> "Any":
         from rich.text import Text
@@ -185,40 +201,10 @@ class FooterPane(Widget):
                 parts.append(f"[{action.hotkey}]", style="dim bold")
                 parts.append(f" {action.label}  ", style="dim")
 
-        # Artifact chips (file/url labels) — B3: cap at _ARTIFACT_DISPLAY_CAP
-        from hermes_cli.tui.tool_result_parse import _ARTIFACT_DISPLAY_CAP
-        if summary.artifacts:
-            artifacts_to_show = (
-                summary.artifacts
-                if self._show_all_artifacts
-                else summary.artifacts[:_ARTIFACT_DISPLAY_CAP]
-            )
-            for artifact in artifacts_to_show:
-                icon = _artifact_icon(artifact.kind)
-                parts.append(f" {icon} {artifact.label} ", style="dim cyan")
-            # Overflow button — rendered in chips row as inline text hint
-            if (
-                not self._show_all_artifacts
-                and getattr(summary, "artifacts_truncated", False)
-            ):
-                n_hidden = len(summary.artifacts) - _ARTIFACT_DISPLAY_CAP
-                parts.append(f" +{n_hidden} more", style="bold cyan")
-
         self._content.update(parts)
 
-        # B3: overflow button as a proper Button widget — mount/remove dynamically
-        # We use a simple class-tagged approach: remove old overflow button first
-        try:
-            old_btn = self.query_one(".--artifact-overflow", Button)
-            old_btn.remove()
-        except Exception:
-            pass
-        if (
-            not self._show_all_artifacts
-            and getattr(summary, "artifacts_truncated", False)
-        ):
-            n_hidden = len(summary.artifacts) - _ARTIFACT_DISPLAY_CAP
-            self.mount(Button(f"+{n_hidden} more", classes="--artifact-overflow"))
+        # D2: rebuild artifact row with clickable buttons
+        self._rebuild_artifact_buttons(summary)
 
         # Stderr split row — multi-line, last 300 chars
         if summary.stderr_tail:
@@ -246,11 +232,67 @@ class FooterPane(Widget):
         if self._last_summary is not None:
             self._render_footer(self._last_summary, self._last_promoted)
 
+    def _rebuild_artifact_buttons(self, summary: "ResultSummaryV4") -> None:
+        """D2: rebuild artifact row with clickable Button per artifact."""
+        from hermes_cli.tui.tool_result_parse import _ARTIFACT_DISPLAY_CAP
+        # Remove old artifact chip buttons
+        try:
+            for btn in list(self._artifact_row.query(".--artifact-chip")):
+                btn.remove()
+        except Exception:
+            pass
+        # Also remove old overflow buttons inside artifact_row
+        try:
+            for btn in list(self._artifact_row.query(".--artifact-overflow")):
+                btn.remove()
+        except Exception:
+            pass
+
+        if not summary.artifacts:
+            self.remove_class("has-artifacts")
+            return
+
+        artifacts_to_show = (
+            summary.artifacts
+            if self._show_all_artifacts
+            else summary.artifacts[:_ARTIFACT_DISPLAY_CAP]
+        )
+        buttons = []
+        for artifact in artifacts_to_show:
+            icon = _artifact_icon(artifact.kind)
+            label = f"{icon} {artifact.label}"
+            btn = Button(label, classes="--artifact-chip")
+            btn._artifact_path = artifact.path_or_url  # type: ignore[attr-defined]
+            btn._artifact_kind = artifact.kind          # type: ignore[attr-defined]
+            buttons.append(btn)
+
+        if (
+            not self._show_all_artifacts
+            and getattr(summary, "artifacts_truncated", False)
+        ):
+            n_hidden = len(summary.artifacts) - _ARTIFACT_DISPLAY_CAP
+            buttons.append(Button(f"+{n_hidden} more", classes="--artifact-overflow"))
+
+        if buttons:
+            self._artifact_row.mount(*buttons)
+        self.add_class("has-artifacts")
+
     def on_button_pressed(self, event: "Button.Pressed") -> None:
-        """B3: artifact overflow button shows all artifacts."""
+        """B3: artifact overflow; D2: artifact chip click."""
         if "--artifact-overflow" in event.button.classes:
             self._show_all_artifacts = True
             self._rebuild_chips()
+            event.stop()
+            return
+        if "--artifact-chip" in event.button.classes:
+            path = getattr(event.button, "_artifact_path", None)
+            if path:
+                import sys as _sys
+                open_cmd = "open" if _sys.platform == "darwin" else "xdg-open"
+                try:
+                    subprocess.Popen([open_cmd, path])
+                except Exception:
+                    pass
             event.stop()
 
     def on_resize(self, event: object) -> None:
@@ -314,8 +356,13 @@ class ToolPanel(Widget):
         Binding("r",     "retry",            "Retry",            show=False),
         Binding("E",     "edit_cmd",         "Edit cmd",         show=False),
         Binding("O",     "open_url",         "Open URL",         show=False),
-        Binding("j",     "scroll_body_down", "↓",                show=False),
-        Binding("k",     "scroll_body_up",   "↑",                show=False),
+        Binding("j",     "scroll_body_down",      "↓",    show=False),
+        Binding("k",     "scroll_body_up",        "↑",    show=False),
+        Binding("J",     "scroll_body_page_down", "↓↓",   show=False),
+        Binding("K",     "scroll_body_page_up",   "↑↑",   show=False),
+        Binding("<",     "scroll_body_top",        "Top",  show=False),
+        Binding(">",     "scroll_body_bottom",     "End",  show=False),
+        Binding("question_mark", "show_help",      "Keys", show=False),
     ]
 
     # Always start expanded; auto-collapse at completion based on threshold.
@@ -772,6 +819,65 @@ class ToolPanel(Widget):
             log.scroll_up(animate=False)
         except Exception:
             pass
+
+    def action_scroll_body_page_down(self) -> None:
+        """Scroll tool body down by a page (J)."""
+        if self.collapsed:
+            return
+        try:
+            from hermes_cli.tui.widgets import CopyableRichLog
+            log = self._block._body.query_one(CopyableRichLog)
+            page = max(5, (self.size.height or 20) // 2)
+            for _ in range(page):
+                log.scroll_down(animate=False)
+        except Exception:
+            pass
+
+    def action_scroll_body_page_up(self) -> None:
+        """Scroll tool body up by a page (K)."""
+        if self.collapsed:
+            return
+        try:
+            from hermes_cli.tui.widgets import CopyableRichLog
+            log = self._block._body.query_one(CopyableRichLog)
+            page = max(5, (self.size.height or 20) // 2)
+            for _ in range(page):
+                log.scroll_up(animate=False)
+        except Exception:
+            pass
+
+    def action_scroll_body_top(self) -> None:
+        """Scroll tool body to top (<)."""
+        if self.collapsed:
+            return
+        try:
+            from hermes_cli.tui.widgets import CopyableRichLog
+            log = self._block._body.query_one(CopyableRichLog)
+            log.scroll_home(animate=False)
+        except Exception:
+            pass
+
+    def action_scroll_body_bottom(self) -> None:
+        """Scroll tool body to bottom (>)."""
+        if self.collapsed:
+            return
+        try:
+            from hermes_cli.tui.widgets import CopyableRichLog
+            log = self._block._body.query_one(CopyableRichLog)
+            log.scroll_end(animate=False)
+        except Exception:
+            pass
+
+    def action_show_help(self) -> None:
+        """E1: show/hide ToolPanel key reference overlay."""
+        from hermes_cli.tui.overlays import ToolPanelHelpOverlay
+        try:
+            existing = self.app.query_one(ToolPanelHelpOverlay)
+            existing.hide_overlay()
+        except Exception:
+            overlay = ToolPanelHelpOverlay()
+            self.app.mount(overlay)
+            overlay.show_overlay()
 
     # Focus styling done via CSS :focus pseudo-class in hermes.tcss.
     # on_focus/on_blur avoided: they trigger layout refreshes that interfere

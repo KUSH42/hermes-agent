@@ -66,6 +66,10 @@ High-signal flow:
   `mount_tool_block(label, lines, plain_lines, tool_name, rerender_fn, header_stats)`,
   `write_output(chunk)`.
   Browse mode `a`/`A` keys query **ToolPanel** (not ToolBlock) — check `panel.collapsed`.
+  Resize: `on_resize` debounces via `_resize_timer.stop()` + `set_timer(_RESIZE_DEBOUNCE_S, _flush_resize)`.
+  `_flush_resize()` calls `_maybe_reload_emoji()` + `_apply_min_size_overlay(w, h)`.
+  `_apply_min_size_overlay`: mounts `MinSizeBackdrop` when `w < 40 or h < 8`; updates if already shown; removes when adequate.
+  Key attrs: `_pending_resize`, `_resize_timer`, `_RESIZE_DEBOUNCE_S = 0.06`.
 
 - **`hermes_cli/tui/widgets.py`**
   All shared widgets, output panel, rules, bars, overlays, CountdownMixin, startup banner,
@@ -99,6 +103,7 @@ High-signal flow:
   `action_toggle_collapse()` — sets `_user_collapse_override=True`, flips collapsed.
   BINDINGS: `enter` (toggle), `+/-/*` (OmissionBar lines).
   ToolPanel.Completed posted after `set_result_summary_v4`.
+  `FooterPane.on_resize` — hysteresis via `crosses_threshold`; sets `compact` class below `THRESHOLD_NARROW=60`; tracks `_last_resize_w`.
 
 - **`hermes_cli/tui/tool_category.py`**
   `ToolCategory` enum: `FILE / SHELL / CODE / SEARCH / WEB / AGENT / MCP / UNKNOWN`.
@@ -119,6 +124,19 @@ High-signal flow:
   `on_tool_panel_completed` — stops event, calls `recompute_aggregate()`.
   CSS grouping path (Rule 1-4 class-only): `_schedule_group_widget` / `_group_reparent_worker` in app.py.
   `group_semantic_label(members)`, `group_path_hint(members)` in tool_group.py.
+  `on_resize` — hysteresis guard via `crosses_threshold`; sets `--narrow` class; tracks `_last_resize_w`.
+
+- **`hermes_cli/tui/resize_utils.py`** (NEW)
+  Shared resize constants: `THRESHOLD_ULTRA_NARROW=40`, `THRESHOLD_NARROW=60`, `THRESHOLD_TOOL_NARROW=80`,
+  `THRESHOLD_COMP_NARROW=100`, `THRESHOLD_MIN_HEIGHT=8`, `THRESHOLD_BAR_HIDE=12`, `HYSTERESIS=2`.
+  `crosses_threshold(old, new, threshold, hyst=HYSTERESIS) -> bool` — fires only on clean crossing through
+  dead-band `[threshold-hyst, threshold+hyst)`. Returns True when `old=0` and `new` is above hi (initial-state).
+
+- **`hermes_cli/tui/min_size_overlay.py`** (NEW)
+  `MinSizeBox(Widget)` — inner warning box; `update_size(w, h)` refreshes the message.
+  `MinSizeBackdrop(Widget)` — full-screen `layer: overlay` shown when terminal < 40×8.
+  `can_focus=False`, `ALLOW_MAXIMIZE=False`. Mounted/removed by `HermesApp._apply_min_size_overlay()`.
+  CSS in `hermes.tcss` only (not DEFAULT_CSS — see CSS/layer gotcha).
 
 - **`hermes_cli/tui/tool_result_parse.py`**
   `ResultSummaryV4` — frozen dataclass: primary, exit_code, chips, stderr_tail, actions, artifacts, is_error, error_kind.
@@ -211,7 +229,8 @@ High-signal flow:
   `_maybe_schedule_auto_close` has no length guard; `_update_overflow_badge` uses `self.size.height`.
 - **`hermes_cli/tui/completion_overlay.py`** — overlay container, preview/list layout, visibility lifecycle.
   `SlashDescPanel(RichLog)` watches `app.highlighted_candidate`; shown only in `--slash-only` mode.
-  `on_resize` applies `--narrow` class below 100 cols; hides preview, expands list to full width.
+  `on_resize` applies `--narrow` class below 100 cols via `crosses_threshold`; hides preview, expands list to full width.
+  Tracks `_last_applied_w` (init in `on_mount`); only fires on clean threshold crossing.
 - **`hermes_cli/tui/preview_panel.py`** — file preview worker path, syntax highlighting, binary guards.
   `_load_preview` checks `path.is_dir()` first — sorted listing, 40-entry cap, `PlainReady` message.
   `_hex_luminance(hex)` inline helper for light/dark theme detection — do NOT import from animation.py.
@@ -341,6 +360,9 @@ High-signal flow:
 | `test_drawille_overlay.py` / `test_drawille_v2.py` | DrawilleOverlay, engines, compositing |
 | `test_hermes_input.py` | HermesInput TextArea, file drop, ghost text |
 | `test_p2_gaps.py` | resize, overlay simultaneity, browse+context |
+| `test_resize_spec.py` | crosses_threshold R01-R20: MinSizeBackdrop, hysteresis, debounce, scroll anchor, OmissionBar, SeekBar, StatusBar |
+| `test_resize_widgets.py` | W01-W12: ToolGroup/FooterPane hysteresis, DrawilleOverlay dims, CompletionOverlay, AssistantNameplate, InlineMediaWidget, ToolsScreen dismiss |
+| `test_resize_integration.py` | I01-I08: resize during reasoning/stream/completion/drawille/media, floor cycle, debounce, initial-state zero crossing |
 | `test_tools_overlay.py` | ToolsScreen timeline, render_tool_row |
 | `test_workspace_tracker.py` / `test_workspace_overlay.py` | workspace tracker + overlay |
 | `test_omission_bar.py` | OmissionBar expand/collapse/+/-/* keys |

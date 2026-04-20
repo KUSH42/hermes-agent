@@ -108,6 +108,12 @@ from hermes_cli.tui.overlays import (
     WorkspaceOverlay,
     _SessionResumedBanner,
 )
+from hermes_cli.tui.session_widgets import (
+    MergeConfirmOverlay,
+    NewSessionOverlay,
+    SessionBar,
+    _SessionNotification,
+)
 from hermes_cli.tui.workspace_tracker import (
     GitPoller,
     GitSnapshot,
@@ -333,6 +339,7 @@ class HermesApp(App):
         Binding("ctrl+shift+a", "open_anim_config", "Animation config", show=False, priority=True),
         Binding("ctrl+b", "open_anim_config", show=False, priority=True),
         Binding("ctrl+shift+h", "open_sessions", show=False),
+        Binding("ctrl+w+n", "new_worktree_session", show=False),
     ]
 
     _CHEVRON_PHASE_CLASSES: frozenset[str] = frozenset({
@@ -560,6 +567,8 @@ class HermesApp(App):
             glitch_enabled=getattr(self, "_nameplate_glitch", True),
         )
         yield HintBar(id="hint-bar")
+        yield SessionBar(id="session-bar")
+        yield _SessionNotification(id="session-notification")
         yield InlineImageBar(id="inline-image-bar")
         yield ImageBar(id="image-bar")
         yield TitledRule(id="input-rule", show_state=True)
@@ -579,6 +588,8 @@ class HermesApp(App):
             yield ModelOverlay(id="model-overlay")
             yield WorkspaceOverlay(id="workspace-overlay")
             yield SessionOverlay(id="session-overlay")
+            yield NewSessionOverlay(id="new-session-overlay")
+            yield MergeConfirmOverlay(id="merge-confirm-overlay")
             with Horizontal(id="input-row"):
                 yield Static("❯ ", id="input-chevron")
                 yield _HI(id="input-area")
@@ -4183,6 +4194,14 @@ class HermesApp(App):
                 pass
             event.prevent_default()
             return
+
+        # --- Alt+1–9 → switch parallel session by index ---
+        if key.startswith("alt+") and key[4:].isdigit() and len(key) == 5:
+            n = int(key[4:]) - 1
+            if n >= 0 and self._sessions_enabled:
+                self._switch_to_session_by_index(n)
+                event.prevent_default()
+                return
 
         # --- undo overlay key dispatch ---
         if self.undo_state is not None:

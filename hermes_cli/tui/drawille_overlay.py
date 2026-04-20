@@ -1578,6 +1578,7 @@ class DrawilleOverlay(Static):
         if self._anim_params is not None:
             self._anim_params.width = event.size.width * 2
             self._anim_params.height = event.size.height * 4
+            self.refresh()
 
     # ── watchers ───────────────────────────────────────────────────────────
 

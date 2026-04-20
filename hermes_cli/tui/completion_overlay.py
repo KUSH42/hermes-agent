@@ -31,6 +31,7 @@ from textual.widgets import RichLog, Static
 from .completion_list import VirtualCompletionList
 from .path_search import SlashCandidate
 from .preview_panel import PreviewPanel
+from .resize_utils import THRESHOLD_COMP_NARROW, crosses_threshold
 
 
 class SlashDescPanel(RichLog):
@@ -138,8 +139,14 @@ class CompletionOverlay(Vertical):
             yield SlashDescPanel()
         yield Static("", id="overflow-badge")
 
+    def on_mount(self) -> None:
+        self._last_applied_w: int = 0
+
     def on_resize(self, event: events.Resize) -> None:
-        self.set_class(event.size.width < 100, "--narrow")
+        w = event.size.width
+        if crosses_threshold(self._last_applied_w, w, THRESHOLD_COMP_NARROW):
+            self.set_class(w < THRESHOLD_COMP_NARROW, "--narrow")
+        self._last_applied_w = w
 
     def on_virtual_completion_list_auto_dismiss(
         self, _message: VirtualCompletionList.AutoDismiss,

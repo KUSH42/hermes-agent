@@ -38,6 +38,11 @@ VALID_EFFECTS: list[str] = [
     "decrypt",
     "shimmer",
     "breathe",
+    "glitch_morph",
+    "cascade",
+    "nier",
+    "zalgo",
+    "cosmic",
 ]
 
 
@@ -449,6 +454,287 @@ class BreatheEffect(StreamEffectRenderer):
 
 
 # ---------------------------------------------------------------------------
+# GlitchMorphEffect
+# ---------------------------------------------------------------------------
+
+_NEO_SYMBOLS = "!<>-_\\/[]{}—=+*^?#"
+
+
+class GlitchMorphEffect(StreamEffectRenderer):
+    """Each char descends through a symbol ladder before revealing itself (neo preset)."""
+
+    active = True
+    needs_clock = True
+
+    def __init__(self, cfg: dict, lock: threading.Lock | None = None) -> None:
+        super().__init__(cfg, lock)
+        self._morph_steps: int = cfg.get("stream_effect_morph_steps", 10)
+        self._chars: list[list] = []  # [real_char, steps_left]
+
+    def register_token_tui(self, token: str) -> None:
+        for ch in token:
+            self._chars.append([ch, self._morph_steps])
+
+    def tick_tui(self) -> bool:
+        changed = False
+        for entry in self._chars:
+            if entry[1] > 0:
+                entry[1] -= 1
+                changed = True
+        return changed
+
+    def render_tui(self, buf: str, accent_hex: str, text_hex: str) -> "Text":
+        from rich.text import Text
+        t = Text()
+        dim_accent = _lerp_color(text_hex, accent_hex, 0.3)
+        mid_accent = _lerp_color(text_hex, accent_hex, 0.7)
+        n = min(len(buf), len(self._chars))
+        for i in range(n):
+            real_char, steps = self._chars[i]
+            if steps == 0:
+                t.append(real_char, style=text_hex)
+            elif steps > 7:
+                t.append("_", style=dim_accent)
+            elif steps > 4:
+                t.append(random.choice(_NEO_SYMBOLS), style=accent_hex)
+            elif steps > 1:
+                t.append("\\", style=mid_accent)
+            else:  # steps == 1
+                t.append("#", style=f"bold {accent_hex}")
+        return t
+
+    def clear_tui(self) -> None:
+        self._chars.clear()
+
+    def on_turn_end(self) -> None:
+        self.clear_tui()
+
+
+# ---------------------------------------------------------------------------
+# CascadeRevealEffect
+# ---------------------------------------------------------------------------
+
+class CascadeRevealEffect(StreamEffectRenderer):
+    """Left-to-right wave reveal: each char's start is delayed by its index."""
+
+    active = True
+    needs_clock = True
+
+    def __init__(self, cfg: dict, lock: threading.Lock | None = None) -> None:
+        super().__init__(cfg, lock)
+        self._cascade_ticks: int = cfg.get("stream_effect_cascade_ticks", 2)
+        self._global_tick: int = 0
+        self._chars: list[tuple[str, int]] = []  # (real_char, char_index)
+        self._char_counter: int = 0
+
+    def register_token_tui(self, token: str) -> None:
+        for ch in token:
+            self._chars.append((ch, self._char_counter))
+            self._char_counter += 1
+
+    def tick_tui(self) -> bool:
+        self._global_tick += 1
+        if not self._chars:
+            return False
+        last_idx = self._chars[-1][1]
+        return self._global_tick <= last_idx * self._cascade_ticks + 8
+
+    def render_tui(self, buf: str, accent_hex: str, text_hex: str) -> "Text":
+        from rich.text import Text
+        t = Text()
+        dim = _lerp_color(text_hex, accent_hex, 0.25)
+        mid = _lerp_color(text_hex, accent_hex, 0.6)
+        n = min(len(buf), len(self._chars))
+        for i in range(n):
+            real_char, idx = self._chars[i]
+            delay = idx * self._cascade_ticks
+            effective_age = max(0, self._global_tick - delay)
+            if effective_age >= 8:
+                t.append(real_char, style=text_hex)
+            elif effective_age < 2:
+                t.append("_", style=dim)
+            elif effective_age < 5:
+                t.append("\\", style=mid)
+            else:
+                t.append("#", style=f"bold {accent_hex}")
+        return t
+
+    def clear_tui(self) -> None:
+        self._chars.clear()
+        self._char_counter = 0
+        self._global_tick = 0
+
+    def on_turn_end(self) -> None:
+        self.clear_tui()
+
+
+# ---------------------------------------------------------------------------
+# NierEffect
+# ---------------------------------------------------------------------------
+
+_NIER_CHARS = [chr(c) for c in range(0x30A0, 0x3100)]
+
+
+class NierEffect(StreamEffectRenderer):
+    """Chars scramble through Katakana before revealing (NieR:Automata style)."""
+
+    active = True
+    needs_clock = True
+
+    def __init__(self, cfg: dict, lock: threading.Lock | None = None) -> None:
+        super().__init__(cfg, lock)
+        self._scramble_frames: int = cfg.get("stream_effect_scramble_frames", 12)
+        self._chars: list[list] = []  # [real_char, age]
+
+    def register_token_tui(self, token: str) -> None:
+        for ch in token:
+            age = self._scramble_frames if ch.isspace() else 0
+            self._chars.append([ch, age])
+
+    def tick_tui(self) -> bool:
+        changed = False
+        for entry in self._chars:
+            if entry[1] < self._scramble_frames:
+                entry[1] += 1
+                changed = True
+        return changed
+
+    def render_tui(self, buf: str, accent_hex: str, text_hex: str) -> "Text":
+        from rich.text import Text
+        t = Text()
+        n = min(len(buf), len(self._chars))
+        for i in range(n):
+            real_char, age = self._chars[i]
+            if age >= self._scramble_frames:
+                t.append(real_char, style=text_hex)
+            else:
+                glyph = random.choice(_NIER_CHARS) if real_char.isalpha() else real_char
+                frac = 1.0 - age / self._scramble_frames
+                color = _lerp_color(text_hex, accent_hex, frac * 0.8)
+                t.append(glyph, style=color)
+        return t
+
+    def clear_tui(self) -> None:
+        self._chars.clear()
+
+    def on_turn_end(self) -> None:
+        self.clear_tui()
+
+
+# ---------------------------------------------------------------------------
+# ZalgoEffect
+# ---------------------------------------------------------------------------
+
+_ZALGO_MARKS = [chr(c) for c in range(0x0300, 0x0370)]
+
+
+class ZalgoEffect(StreamEffectRenderer):
+    """Chars accumulate stacked combining diacritics that decay each tick."""
+
+    active = True
+    needs_clock = True
+
+    def __init__(self, cfg: dict, lock: threading.Lock | None = None) -> None:
+        super().__init__(cfg, lock)
+        self._max_marks: int = cfg.get("stream_effect_zalgo_marks", 5)
+        self._chars: list[list] = []  # [real_char, marks_count]
+
+    def register_token_tui(self, token: str) -> None:
+        for ch in token:
+            marks = 0 if ch.isspace() else self._max_marks
+            self._chars.append([ch, marks])
+
+    def tick_tui(self) -> bool:
+        changed = False
+        for entry in self._chars:
+            if entry[1] > 0:
+                entry[1] -= 1
+                changed = True
+        return changed
+
+    def render_tui(self, buf: str, accent_hex: str, text_hex: str) -> "Text":
+        from rich.text import Text
+        t = Text()
+        n = min(len(buf), len(self._chars))
+        for i in range(n):
+            real_char, marks_count = self._chars[i]
+            combining = "".join(random.choice(_ZALGO_MARKS) for _ in range(marks_count))
+            glyph = real_char + combining
+            if marks_count > 0:
+                frac = marks_count / max(self._max_marks, 1)
+                color = _lerp_color(text_hex, accent_hex, frac)
+            else:
+                color = text_hex
+            t.append(glyph, style=color)
+        return t
+
+    def clear_tui(self) -> None:
+        self._chars.clear()
+
+    def on_turn_end(self) -> None:
+        self.clear_tui()
+
+
+# ---------------------------------------------------------------------------
+# CosmicFadeEffect
+# ---------------------------------------------------------------------------
+
+_COSMIC_GHOSTS = "·•✦✧⋆∗○◌◦∘"
+
+
+class CosmicFadeEffect(StreamEffectRenderer):
+    """Chars materialise from dim cosmic glyphs to real text."""
+
+    active = True
+    needs_clock = True
+
+    def __init__(self, cfg: dict, lock: threading.Lock | None = None) -> None:
+        super().__init__(cfg, lock)
+        self._fade_frames: int = cfg.get("stream_effect_fade_frames", 8)
+        self._chars: list[list] = []  # [real_char, age]
+
+    def register_token_tui(self, token: str) -> None:
+        for ch in token:
+            self._chars.append([ch, 0])
+
+    def tick_tui(self) -> bool:
+        changed = False
+        for entry in self._chars:
+            if entry[1] < self._fade_frames:
+                entry[1] += 1
+                changed = True
+        return changed
+
+    def render_tui(self, buf: str, accent_hex: str, text_hex: str) -> "Text":
+        from rich.text import Text
+        t = Text()
+        n = min(len(buf), len(self._chars))
+        frames = max(self._fade_frames, 1)
+        for i in range(n):
+            real_char, age = self._chars[i]
+            if real_char.isspace():
+                t.append(real_char, style=text_hex)
+                continue
+            frac = age / frames
+            if frac >= 1.0:
+                t.append(real_char, style=text_hex)
+            elif frac < 0.3:
+                glyph = random.choice(_COSMIC_GHOSTS)
+                color = _lerp_color("#111111", accent_hex, frac / 0.3)
+                t.append(glyph, style=color)
+            else:
+                color = _lerp_color(accent_hex, text_hex, (frac - 0.3) / 0.7)
+                t.append(real_char, style=color)
+        return t
+
+    def clear_tui(self) -> None:
+        self._chars.clear()
+
+    def on_turn_end(self) -> None:
+        self.clear_tui()
+
+
+# ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
 
@@ -460,6 +746,11 @@ _EFFECT_MAP: dict[str, type[StreamEffectRenderer]] = {
     "decrypt": DecryptEffect,
     "shimmer": ShimmerEffect,
     "breathe": BreatheEffect,
+    "glitch_morph": GlitchMorphEffect,
+    "cascade": CascadeRevealEffect,
+    "nier": NierEffect,
+    "zalgo": ZalgoEffect,
+    "cosmic": CosmicFadeEffect,
 }
 
 

@@ -336,3 +336,283 @@ def test_g2_stream_effect_cfg_custom_length():
         cfg = _stream_effect_cfg()
     assert cfg["stream_effect"] == "flash"
     assert cfg["stream_effect_length"] == 32
+
+
+def test_g3_skin_stream_effect_string_override():
+    """Skin stream_effect string shorthand overrides config.yaml value."""
+    import tempfile, os, yaml
+    from hermes_cli.tui.widgets import _stream_effect_cfg
+    skin = {"name": "test", "stream_effect": "nier"}
+    with tempfile.NamedTemporaryFile(suffix=".yaml", mode="w", delete=False) as f:
+        yaml.dump(skin, f)
+        skin_path = f.name
+    try:
+        raw = {"display": {"skin": skin_path}, "terminal": {"stream_effect": {"enabled": "flash"}}}
+        with patch("hermes_cli.config.read_raw_config", return_value=raw):
+            cfg = _stream_effect_cfg()
+        assert cfg["stream_effect"] == "nier"
+    finally:
+        os.unlink(skin_path)
+
+
+def test_g4_skin_stream_effect_dict_override_with_cascade_ticks():
+    """Skin stream_effect dict sets enabled + effect-specific keys."""
+    import tempfile, os, yaml
+    from hermes_cli.tui.widgets import _stream_effect_cfg
+    skin = {"name": "test", "stream_effect": {"enabled": "cascade", "cascade_ticks": 5}}
+    with tempfile.NamedTemporaryFile(suffix=".yaml", mode="w", delete=False) as f:
+        yaml.dump(skin, f)
+        skin_path = f.name
+    try:
+        raw = {"display": {"skin": skin_path}}
+        with patch("hermes_cli.config.read_raw_config", return_value=raw):
+            cfg = _stream_effect_cfg()
+        assert cfg["stream_effect"] == "cascade"
+        assert cfg["stream_effect_cascade_ticks"] == 5
+    finally:
+        os.unlink(skin_path)
+
+
+# ---------------------------------------------------------------------------
+# Group H — GlitchMorphEffect (5 tests)
+# ---------------------------------------------------------------------------
+
+def test_h1_glitch_morph_factory():
+    from hermes_cli.stream_effects import GlitchMorphEffect
+    fx = make_stream_effect({"stream_effect": "glitch_morph"})
+    assert isinstance(fx, GlitchMorphEffect)
+    assert fx.needs_clock is True
+
+
+def test_h2_glitch_morph_initial_render_not_real_char():
+    from hermes_cli.stream_effects import GlitchMorphEffect
+    fx = GlitchMorphEffect({"stream_effect_morph_steps": 10})
+    fx.register_token_tui("a")
+    t = fx.render_tui("a", "#FFDD00", "#FFFFFF")
+    # steps=10 > 7 → should render "_", not "a"
+    assert t.plain == "_"
+
+
+def test_h3_glitch_morph_settles_after_ticks():
+    from hermes_cli.stream_effects import GlitchMorphEffect
+    fx = GlitchMorphEffect({"stream_effect_morph_steps": 5})
+    fx.register_token_tui("x")
+    for _ in range(5):
+        fx.tick_tui()
+    t = fx.render_tui("x", "#FFDD00", "#FFFFFF")
+    assert t.plain == "x"
+
+
+def test_h4_glitch_morph_clear_resets():
+    from hermes_cli.stream_effects import GlitchMorphEffect
+    fx = GlitchMorphEffect({})
+    fx.register_token_tui("hello")
+    fx.clear_tui()
+    assert fx._chars == []
+    t = fx.render_tui("", "#FFDD00", "#FFFFFF")
+    assert t.plain == ""
+
+
+def test_h5_glitch_morph_steps_one_renders_hash():
+    from hermes_cli.stream_effects import GlitchMorphEffect
+    fx = GlitchMorphEffect({})
+    fx._chars = [["z", 1]]
+    t = fx.render_tui("z", "#FFDD00", "#FFFFFF")
+    assert t.plain == "#"
+
+
+# ---------------------------------------------------------------------------
+# Group I — CascadeRevealEffect (5 tests)
+# ---------------------------------------------------------------------------
+
+def test_i1_cascade_factory():
+    from hermes_cli.stream_effects import CascadeRevealEffect
+    fx = make_stream_effect({"stream_effect": "cascade"})
+    assert isinstance(fx, CascadeRevealEffect)
+    assert fx.needs_clock is True
+
+
+def test_i2_cascade_initial_render_not_real_char():
+    from hermes_cli.stream_effects import CascadeRevealEffect
+    fx = CascadeRevealEffect({"stream_effect_cascade_ticks": 3})
+    fx.register_token_tui("ab")
+    t = fx.render_tui("ab", "#FFDD00", "#FFFFFF")
+    # global_tick=0, both chars have effective_age < 8 → glyph chars, not real
+    assert t.plain not in ("ab", "a", "b")
+
+
+def test_i3_cascade_settles_after_ticks():
+    from hermes_cli.stream_effects import CascadeRevealEffect
+    fx = CascadeRevealEffect({"stream_effect_cascade_ticks": 1})
+    fx.register_token_tui("a")
+    for _ in range(9):
+        fx.tick_tui()
+    t = fx.render_tui("a", "#FFDD00", "#FFFFFF")
+    assert t.plain == "a"
+
+
+def test_i4_cascade_clear_resets_state():
+    from hermes_cli.stream_effects import CascadeRevealEffect
+    fx = CascadeRevealEffect({})
+    fx.register_token_tui("hello")
+    fx.clear_tui()
+    assert fx._chars == []
+    assert fx._char_counter == 0
+    assert fx._global_tick == 0
+
+
+def test_i5_cascade_later_char_still_morphing_when_first_settled():
+    from hermes_cli.stream_effects import CascadeRevealEffect
+    # cascade_ticks=4: char 0 delay=0, char 3 delay=12
+    fx = CascadeRevealEffect({"stream_effect_cascade_ticks": 4})
+    fx.register_token_tui("abcd")
+    # tick 9 times: char 0 effective_age=9 (>=8 → settled), char 3 effective_age=max(0,9-12)=0
+    for _ in range(9):
+        fx.tick_tui()
+    t = fx.render_tui("abcd", "#FFDD00", "#FFFFFF")
+    plain = t.plain
+    # char 0 should be real "a", char 3 should be a glyph ("_")
+    assert plain[0] == "a"
+    assert plain[3] != "d"
+
+
+# ---------------------------------------------------------------------------
+# Group J — NierEffect (5 tests)
+# ---------------------------------------------------------------------------
+
+def test_j1_nier_factory():
+    from hermes_cli.stream_effects import NierEffect
+    fx = make_stream_effect({"stream_effect": "nier"})
+    assert isinstance(fx, NierEffect)
+    assert fx.needs_clock is True
+
+
+def test_j2_nier_initial_render_not_real_char():
+    from hermes_cli.stream_effects import NierEffect
+    fx = NierEffect({"stream_effect_scramble_frames": 12})
+    fx.register_token_tui("x")
+    t = fx.render_tui("x", "#FFDD00", "#FFFFFF")
+    # age=0, char is alpha → Katakana glyph shown
+    assert t.plain != "x"
+
+
+def test_j3_nier_settles_after_ticks():
+    from hermes_cli.stream_effects import NierEffect
+    fx = NierEffect({"stream_effect_scramble_frames": 4})
+    fx.register_token_tui("x")
+    for _ in range(4):
+        fx.tick_tui()
+    t = fx.render_tui("x", "#FFDD00", "#FFFFFF")
+    assert t.plain == "x"
+
+
+def test_j4_nier_whitespace_settles_immediately():
+    from hermes_cli.stream_effects import NierEffect
+    fx = NierEffect({"stream_effect_scramble_frames": 12})
+    fx.register_token_tui(" ")
+    t = fx.render_tui(" ", "#FFDD00", "#FFFFFF")
+    # whitespace: age == scramble_frames at registration → shows real char
+    assert t.plain == " "
+
+
+def test_j5_nier_clear_resets():
+    from hermes_cli.stream_effects import NierEffect
+    fx = NierEffect({})
+    fx.register_token_tui("hello")
+    fx.clear_tui()
+    assert fx._chars == []
+
+
+# ---------------------------------------------------------------------------
+# Group K — ZalgoEffect (5 tests)
+# ---------------------------------------------------------------------------
+
+def test_k1_zalgo_factory():
+    from hermes_cli.stream_effects import ZalgoEffect
+    fx = make_stream_effect({"stream_effect": "zalgo"})
+    assert isinstance(fx, ZalgoEffect)
+    assert fx.needs_clock is True
+
+
+def test_k2_zalgo_initial_render_has_combining_chars():
+    from hermes_cli.stream_effects import ZalgoEffect
+    fx = ZalgoEffect({"stream_effect_zalgo_marks": 3})
+    fx.register_token_tui("a")
+    t = fx.render_tui("a", "#FFDD00", "#FFFFFF")
+    # base char "a" + 3 combining chars → rendered string longer than "a"
+    assert len(t.plain) > 1
+
+
+def test_k3_zalgo_settles_after_ticks():
+    from hermes_cli.stream_effects import ZalgoEffect
+    fx = ZalgoEffect({"stream_effect_zalgo_marks": 3})
+    fx.register_token_tui("a")
+    for _ in range(3):
+        fx.tick_tui()
+    t = fx.render_tui("a", "#FFDD00", "#FFFFFF")
+    # marks_count == 0 → only real char
+    assert t.plain == "a"
+
+
+def test_k4_zalgo_clear_resets():
+    from hermes_cli.stream_effects import ZalgoEffect
+    fx = ZalgoEffect({})
+    fx.register_token_tui("hi")
+    fx.clear_tui()
+    assert fx._chars == []
+
+
+def test_k5_zalgo_tick_decrements_marks_count():
+    from hermes_cli.stream_effects import ZalgoEffect
+    fx = ZalgoEffect({"stream_effect_zalgo_marks": 5})
+    fx.register_token_tui("z")
+    assert fx._chars[0][1] == 5
+    changed = fx.tick_tui()
+    assert changed is True
+    assert fx._chars[0][1] == 4
+
+
+# ---------------------------------------------------------------------------
+# Group L — CosmicFadeEffect (5 tests)
+# ---------------------------------------------------------------------------
+
+def test_l1_cosmic_factory():
+    from hermes_cli.stream_effects import CosmicFadeEffect
+    fx = make_stream_effect({"stream_effect": "cosmic"})
+    assert isinstance(fx, CosmicFadeEffect)
+    assert fx.needs_clock is True
+
+
+def test_l2_cosmic_initial_render_shows_ghost():
+    from hermes_cli.stream_effects import CosmicFadeEffect, _COSMIC_GHOSTS
+    fx = CosmicFadeEffect({"stream_effect_fade_frames": 8})
+    fx.register_token_tui("a")
+    t = fx.render_tui("a", "#FFDD00", "#FFFFFF")
+    # age=0 → frac=0.0 < 0.3 → ghost glyph from _COSMIC_GHOSTS
+    assert t.plain in _COSMIC_GHOSTS
+
+
+def test_l3_cosmic_settles_after_ticks():
+    from hermes_cli.stream_effects import CosmicFadeEffect
+    fx = CosmicFadeEffect({"stream_effect_fade_frames": 4})
+    fx.register_token_tui("q")
+    for _ in range(4):
+        fx.tick_tui()
+    t = fx.render_tui("q", "#FFDD00", "#FFFFFF")
+    assert t.plain == "q"
+
+
+def test_l4_cosmic_clear_resets():
+    from hermes_cli.stream_effects import CosmicFadeEffect
+    fx = CosmicFadeEffect({})
+    fx.register_token_tui("test")
+    fx.clear_tui()
+    assert fx._chars == []
+
+
+def test_l5_cosmic_whitespace_always_real_char():
+    from hermes_cli.stream_effects import CosmicFadeEffect
+    fx = CosmicFadeEffect({"stream_effect_fade_frames": 8})
+    fx.register_token_tui(" ")
+    t = fx.render_tui(" ", "#FFDD00", "#FFFFFF")
+    assert t.plain == " "

@@ -302,8 +302,9 @@ def _stream_effect_name() -> str:
 def _stream_effect_cfg() -> dict:
     try:
         from hermes_cli.config import read_raw_config
-        sub = read_raw_config().get("terminal", {}).get("stream_effect", {})
-        return {
+        raw = read_raw_config()
+        sub = raw.get("terminal", {}).get("stream_effect", {})
+        cfg = {
             "stream_effect": sub.get("enabled", "none"),
             "stream_effect_color": sub.get("color", ""),
             "stream_effect_length": sub.get("length", 16),
@@ -312,6 +313,36 @@ def _stream_effect_cfg() -> dict:
             "stream_effect_scramble_frames": sub.get("scramble_frames", 14),
             "stream_effect_period": sub.get("period", 0.75),
         }
+        # Skin-level stream_effect overrides config values.
+        # Skin can set a string shorthand ("cascade") or a full dict.
+        skin_path = raw.get("display", {}).get("skin")
+        if skin_path:
+            try:
+                from pathlib import Path
+                import yaml as _yaml
+                skin_raw = _yaml.safe_load(Path(skin_path).read_text(encoding="utf-8"))
+                skin_fx = skin_raw.get("stream_effect") if isinstance(skin_raw, dict) else None
+                if isinstance(skin_fx, str):
+                    cfg["stream_effect"] = skin_fx
+                elif isinstance(skin_fx, dict):
+                    if "enabled" in skin_fx:
+                        cfg["stream_effect"] = skin_fx["enabled"]
+                    for k, ck in (
+                        ("length", "stream_effect_length"),
+                        ("settle_frames", "stream_effect_settle_frames"),
+                        ("scramble_frames", "stream_effect_scramble_frames"),
+                        ("period", "stream_effect_period"),
+                        ("speed", "stream_effect_speed"),
+                        ("cascade_ticks", "stream_effect_cascade_ticks"),
+                        ("morph_steps", "stream_effect_morph_steps"),
+                        ("zalgo_marks", "stream_effect_zalgo_marks"),
+                        ("fade_frames", "stream_effect_fade_frames"),
+                    ):
+                        if k in skin_fx:
+                            cfg[ck] = skin_fx[k]
+            except Exception:
+                pass
+        return cfg
     except Exception:
         return {"stream_effect": "none"}
 

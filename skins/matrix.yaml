@@ -124,6 +124,9 @@ syntax:
   number: '#aaffc8'
   operator: '#00ff9f'
   string: '#00d849'
+stream_effect:
+  enabled: cascade
+  cascade_ticks: 3
 syntax_scheme: monokai
 tool_icons:
   search_files: ⌕

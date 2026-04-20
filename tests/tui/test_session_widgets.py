@@ -632,3 +632,455 @@ async def test_merge_overlay_strategy_buttons():
         await pilot.click(rebase_btn)
         await pilot.pause()
         assert overlay._strategy == "rebase"
+
+
+# ===========================================================================
+# Phase D — Create/switch/kill flow tests (29-50)
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# 29. NewSessionOverlay.show_overlay() focuses branch input
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_new_session_overlay_show_overlay():
+    app = _make_app()
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.pause()
+        overlay = app.query_one(NewSessionOverlay)
+        overlay.show_overlay()
+        await pilot.pause()
+        assert overlay.has_class("--visible")
+
+
+# ---------------------------------------------------------------------------
+# 30. NewSessionOverlay.action_dismiss() hides overlay
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_new_session_overlay_dismiss():
+    app = _make_app()
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.pause()
+        overlay = app.query_one(NewSessionOverlay)
+        overlay.show_overlay()
+        await pilot.pause()
+        overlay.action_dismiss()
+        await pilot.pause()
+        assert not overlay.has_class("--visible")
+
+
+# ---------------------------------------------------------------------------
+# 31. NewSessionOverlay._do_create() shows error if branch empty
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_new_session_overlay_empty_branch_error():
+    app = _make_app()
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.pause()
+        overlay = app.query_one(NewSessionOverlay)
+        overlay.show_overlay()
+        await pilot.pause()
+
+        from textual.widgets import Input
+        inp = overlay.query_one("#ns-branch-input", Input)
+        inp.value = ""  # empty branch
+        overlay._do_create()
+        await pilot.pause()
+
+        from textual.widgets import Static
+        err = overlay.query_one("#ns-error", Static)
+        err_text = str(err.render()); assert len(err_text) > 0
+
+
+# ---------------------------------------------------------------------------
+# 32. NewSessionOverlay._do_create() calls app._create_new_session on valid input
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_new_session_overlay_create_calls_app():
+    app = _make_app()
+    create_calls = []
+    app._create_new_session = lambda branch, base, overlay: create_calls.append((branch, base))
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.pause()
+        overlay = app.query_one(NewSessionOverlay)
+        overlay.show_overlay()
+        await pilot.pause()
+
+        from textual.widgets import Input
+        inp = overlay.query_one("#ns-branch-input", Input)
+        inp.value = "feat/new-feature"
+        overlay._do_create()
+        await pilot.pause()
+
+    assert len(create_calls) == 1
+    assert create_calls[0][0] == "feat/new-feature"
+
+
+# ---------------------------------------------------------------------------
+# 33. _switch_to_session with same ID is no-op
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_switch_to_same_session_noop():
+    app = _make_app()
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        app._sessions_enabled = True
+        app._session_active_id = "current00"
+        exited = []
+        app.exit = lambda **kw: exited.append(True)
+        app._switch_to_session("current00")
+        await pilot.pause()
+    assert len(exited) == 0
+
+
+# ---------------------------------------------------------------------------
+# 34. _switch_to_session with sessions disabled is no-op
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_switch_to_session_disabled_noop():
+    app = _make_app()
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        app._sessions_enabled = False
+        exited = []
+        app.exit = lambda **kw: exited.append(True)
+        app._switch_to_session("other-session")
+        await pilot.pause()
+    assert len(exited) == 0
+
+
+# ---------------------------------------------------------------------------
+# 35. _switch_to_session_by_index with empty cache does nothing
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_switch_by_index_empty_noop():
+    app = _make_app()
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        app._sessions_enabled = True
+        app._session_records_cache = []
+        switched = []
+        app._switch_to_session = lambda sid: switched.append(sid)
+        app._switch_to_session_by_index(0)
+        await pilot.pause()
+    assert len(switched) == 0
+
+
+# ---------------------------------------------------------------------------
+# 36. _switch_to_session_by_index switches to correct session
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_switch_by_index_correct_id():
+    app = _make_app()
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        app._sessions_enabled = True
+        rec = _make_record(id="sess0001")
+        app._session_records_cache = [rec]
+        app._session_active_id = "other000"
+        switched = []
+        app._switch_to_session = lambda sid: switched.append(sid)
+        app._switch_to_session_by_index(0)
+        await pilot.pause()
+    assert "sess0001" in switched
+
+
+# ---------------------------------------------------------------------------
+# 37. _flash_sessions_max triggers _flash_hint with max message
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_flash_sessions_max_message():
+    app = _make_app()
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        flashed = []
+        app._flash_hint = lambda msg, duration=1.5: flashed.append(msg)
+        app._flash_sessions_max()
+    assert any("Max" in m for m in flashed)
+
+
+# ---------------------------------------------------------------------------
+# 38. action_new_worktree_session opens overlay when sessions enabled and space
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_new_worktree_session_action_opens_overlay():
+    app = _make_app()
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        app._sessions_enabled = True
+        app._session_records_cache = []
+        opened = []
+        app._open_new_session_overlay = lambda: opened.append(True)
+        app.action_new_worktree_session()
+        await pilot.pause()
+    assert len(opened) == 1
+
+
+# ---------------------------------------------------------------------------
+# 39. action_new_worktree_session at max sessions flashes max message
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_new_worktree_session_at_max_flashes():
+    app = _make_app()
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        app._sessions_enabled = True
+        # Fill to max
+        app._session_records_cache = [_make_record(id=f"s{i:04d}") for i in range(8)]
+
+        class FakeMgr:
+            _max_sessions = 8
+        app._session_mgr = FakeMgr()
+
+        flashed = []
+        app._flash_sessions_max = lambda: flashed.append(True)
+        opened = []
+        app._open_new_session_overlay = lambda: opened.append(True)
+        app.action_new_worktree_session()
+        await pilot.pause()
+    assert len(flashed) == 1
+    assert len(opened) == 0
+
+
+# ---------------------------------------------------------------------------
+# 40. _get_session_records returns copy of cache
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_get_session_records_returns_copy():
+    app = _make_app()
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        rec = _make_record()
+        app._session_records_cache = [rec]
+        result = app._get_session_records()
+        assert result is not app._session_records_cache
+        assert len(result) == 1
+
+
+# ---------------------------------------------------------------------------
+# 41. MergeConfirmOverlay show_for renders session_id and diff_stat
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_merge_overlay_show_for():
+    app = _make_app()
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.pause()
+        overlay = app.query_one(MergeConfirmOverlay)
+        overlay.show_for("mysession", "5 files changed")
+        await pilot.pause()
+        assert overlay.has_class("--visible")
+        assert overlay._session_id == "mysession"
+
+
+# ---------------------------------------------------------------------------
+# 42. MergeConfirmOverlay dismiss hides overlay
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_merge_overlay_dismiss():
+    app = _make_app()
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.pause()
+        overlay = app.query_one(MergeConfirmOverlay)
+        overlay.show_for("sess", "diff")
+        await pilot.pause()
+        overlay.action_dismiss()
+        await pilot.pause()
+        assert not overlay.has_class("--visible")
+
+
+# ===========================================================================
+# Phase F — Cross-process notification tests (43-50)
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# 43. _NotifyListener delivers event to callback
+# ---------------------------------------------------------------------------
+
+def test_notify_listener_delivers_to_callback():
+    import time
+    from pathlib import Path
+    import tempfile
+    from hermes_cli.tui.session_manager import _NotifyListener, send_notification
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        sock_path = str(Path(tmpdir) / "test.sock")
+        received = []
+        listener = _NotifyListener(sock_path, received.append)
+        listener.start()
+        time.sleep(0.15)
+        send_notification(sock_path, {"type": "test", "val": 42})
+        time.sleep(0.2)
+        listener.stop()
+        assert len(received) == 1
+        assert received[0]["val"] == 42
+
+
+# ---------------------------------------------------------------------------
+# 44. _NotifyListener handles corrupt JSON without crashing
+# ---------------------------------------------------------------------------
+
+def test_notify_listener_handles_corrupt_json():
+    import socket
+    import time
+    from pathlib import Path
+    import tempfile
+    from hermes_cli.tui.session_manager import _NotifyListener
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        sock_path = str(Path(tmpdir) / "corrupt.sock")
+        errors = []
+        listener = _NotifyListener(sock_path, lambda e: None)
+        listener.start()
+        time.sleep(0.15)
+        # Send corrupt data
+        try:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.connect(sock_path)
+            s.sendall(b"not json at all\n")
+            s.close()
+        except OSError:
+            pass
+        time.sleep(0.1)
+        listener.stop()
+        # No crash = test passes
+
+
+# ---------------------------------------------------------------------------
+# 45. _handle_session_event pushes to _SessionNotification
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_handle_session_event_pushes_notification():
+    app = _make_app()
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        notif = app.query_one(_SessionNotification)
+        event = {"type": "agent_complete", "session_id": "abc", "message": "done"}
+        app._handle_session_event(event)
+        await pilot.pause()
+        assert notif.has_class("--visible")
+
+
+# ---------------------------------------------------------------------------
+# 46. _handle_session_event refreshes session records
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_handle_session_event_refreshes_records():
+    app = _make_app()
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        refreshed = []
+        app._refresh_session_records_from_index = lambda: refreshed.append(True)
+        event = {"type": "agent_complete", "session_id": "abc", "message": "done"}
+        app._handle_session_event(event)
+        await pilot.pause()
+    assert len(refreshed) == 1
+
+
+# ---------------------------------------------------------------------------
+# 47. _SessionNotification switch button calls _switch_to_session
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_session_notification_switch_button():
+    app = _make_app()
+    switched = []
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        app._switch_to_session = lambda sid: switched.append(sid)
+        notif = app.query_one(_SessionNotification)
+        notif.push({"type": "agent_complete", "session_id": "target00", "message": "done"})
+        await pilot.pause()
+
+        from textual.widgets import Button
+        sw_btn = notif.query_one("#sn-switch", Button)
+        await pilot.click(sw_btn)
+        await pilot.pause()
+
+    assert "target00" in switched
+
+
+# ---------------------------------------------------------------------------
+# 48. Multiple notifications queue and show sequentially
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_session_notification_multiple_queue():
+    app = _make_app()
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        notif = app.query_one(_SessionNotification)
+        notif.push({"type": "agent_complete", "session_id": "a", "message": "first"})
+        await pilot.pause()
+        notif.push({"type": "agent_complete", "session_id": "b", "message": "second"})
+        notif.push({"type": "agent_complete", "session_id": "c", "message": "third"})
+        await pilot.pause()
+        assert len(notif._queue) == 2  # second and third queued
+
+
+# ---------------------------------------------------------------------------
+# 49. _poll_session_index refreshes cache when changed
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_poll_session_index_refreshes_on_change():
+    app = _make_app()
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        app._sessions_enabled = True
+        rec = _make_record()
+
+        class FakeIndex:
+            def get_sessions(self):
+                return [rec]
+            def get_active_id(self):
+                return "abc123def456"
+
+        class FakeMgr:
+            index = FakeIndex()
+            _max_sessions = 8
+
+        app._session_mgr = FakeMgr()
+        app._session_records_cache = []
+        app._session_active_id = ""
+        refreshed = []
+        original_refresh = app._refresh_session_bar
+        app._refresh_session_bar = lambda: refreshed.append(True)
+
+        app._poll_session_index()
+        await pilot.pause()
+
+    assert len(refreshed) == 1
+    assert len(app._session_records_cache) == 1
+
+
+# ---------------------------------------------------------------------------
+# 50. _poll_session_index does nothing when no manager
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_poll_session_index_no_manager():
+    app = _make_app()
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        app._sessions_enabled = True
+        app._session_mgr = None
+        refreshed = []
+        app._refresh_session_bar = lambda: refreshed.append(True)
+        app._poll_session_index()
+        await pilot.pause()
+    assert len(refreshed) == 0

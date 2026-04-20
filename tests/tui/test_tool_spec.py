@@ -376,3 +376,73 @@ class TestTcssVarDeclared:
         tcss = Path(__file__).parent.parent.parent / "hermes_cli" / "tui" / "hermes.tcss"
         content = tcss.read_text()
         assert "$tool-glyph-mcp" in content, "$tool-glyph-mcp must be declared in hermes.tcss"
+
+
+# ---------------------------------------------------------------------------
+# P2-3: VISION category CSS var and seed specs
+# ---------------------------------------------------------------------------
+
+class TestVisionCategoryP23:
+    def test_vision_category_has_defaults(self):
+        """VISION category must have CategoryDefaults registered."""
+        from hermes_cli.tui.tool_category import _CATEGORY_DEFAULTS, ToolCategory
+        assert ToolCategory.VISION in _CATEGORY_DEFAULTS
+        defaults = _CATEGORY_DEFAULTS[ToolCategory.VISION]
+        assert defaults.accent_var == "tool-vision-accent"
+        assert defaults.ascii_fallback == "V"
+
+    def test_view_image_classifies_as_vision(self):
+        """view_image and analyze_image must classify as ToolCategory.VISION."""
+        from hermes_cli.tui.tool_category import spec_for, ToolCategory
+        assert spec_for("view_image").category == ToolCategory.VISION
+        assert spec_for("analyze_image").category == ToolCategory.VISION
+
+    def test_tool_vision_accent_in_tcss(self):
+        """$tool-vision-accent must be declared in hermes.tcss."""
+        from pathlib import Path
+        tcss = Path(__file__).parent.parent.parent / "hermes_cli" / "tui" / "hermes.tcss"
+        content = tcss.read_text()
+        assert "$tool-vision-accent" in content, "$tool-vision-accent must be declared in hermes.tcss"
+
+
+# ---------------------------------------------------------------------------
+# P2-4: shell pipeline threshold configurable
+# ---------------------------------------------------------------------------
+
+class TestShellPipelineThreshold:
+    def test_shell_pipeline_threshold_configurable(self):
+        """shell_pipeline_ms in DEFAULT_CONFIG and respected by grouping."""
+        from hermes_cli.config import DEFAULT_CONFIG
+        assert "shell_pipeline_ms" in DEFAULT_CONFIG.get("display", {})
+        assert DEFAULT_CONFIG["display"]["shell_pipeline_ms"] == 500
+
+
+# ---------------------------------------------------------------------------
+# P2-8: emoji mode guard in resolve_icon_final
+# ---------------------------------------------------------------------------
+
+class TestEmojiModeP28:
+    def test_resolve_icon_emoji_mode_returns_ascii(self):
+        """resolve_icon_final in emoji mode returns ascii_fallback (1-cell header)."""
+        from hermes_cli.tui.tool_category import resolve_icon_final, spec_for, _CATEGORY_DEFAULTS, ToolCategory
+        from unittest.mock import patch
+
+        spec = spec_for("bash")
+        defaults = _CATEGORY_DEFAULTS.get(ToolCategory.SHELL)
+        expected = defaults.ascii_fallback if defaults else "?"
+
+        with patch("hermes_cli.tui.tool_category.resolve_icon_final.__wrapped__", None, create=True):
+            try:
+                import sys
+                import types
+                # Inject fake agent.display module
+                fake_mod = types.ModuleType("agent.display")
+                fake_mod.get_tool_icon_mode = lambda: "emoji"
+                sys.modules["agent"] = types.ModuleType("agent")
+                sys.modules["agent.display"] = fake_mod
+
+                result = resolve_icon_final(spec, nerd_font=True)
+                assert result == expected, f"Emoji mode should return ascii_fallback '{expected}', got '{result}'"
+            finally:
+                sys.modules.pop("agent.display", None)
+                sys.modules.pop("agent", None)

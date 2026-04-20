@@ -1723,3 +1723,52 @@ def test_flash_complete_class_not_in_tcss():
     with open(tcss_path) as f:
         content = f.read()
     assert "--flash-complete" not in content
+
+
+# ---------------------------------------------------------------------------
+# P0-5: Diff path regex — require git a/ b/ prefix
+# ---------------------------------------------------------------------------
+
+def test_diff_path_ignores_yaml_separator():
+    """Bare '---' YAML separator must NOT be captured as diff old-file path."""
+    from hermes_cli.tui.tool_blocks import _DIFF_OLD_RE, _DIFF_NEW_RE
+
+    yaml_sep = "---"
+    assert _DIFF_OLD_RE.match(yaml_sep) is None, "bare '---' should NOT match _DIFF_OLD_RE"
+
+    yaml_with_text = "--- some_yaml_key: value"
+    assert _DIFF_OLD_RE.match(yaml_with_text) is None, "yaml '--- key:' should NOT match"
+
+
+def test_diff_path_git_format_parsed():
+    """'--- a/foo/bar.py' → path 'foo/bar.py'; '+++ b/foo/bar.py' → 'foo/bar.py'."""
+    from hermes_cli.tui.tool_blocks import _DIFF_OLD_RE, _DIFF_NEW_RE
+
+    m_old = _DIFF_OLD_RE.match("--- a/foo/bar.py")
+    assert m_old is not None
+    assert (m_old.group(2) or None) == "foo/bar.py"
+
+    m_new = _DIFF_NEW_RE.match("+++ b/foo/bar.py")
+    assert m_new is not None
+    assert (m_new.group(2) or None) == "foo/bar.py"
+
+    # /dev/null → group(2) is None
+    m_null = _DIFF_OLD_RE.match("--- /dev/null")
+    assert m_null is not None
+    assert (m_null.group(2) if m_null else "x") is None
+
+
+# ---------------------------------------------------------------------------
+# P1-10: rate deque maxlen is 60
+# ---------------------------------------------------------------------------
+
+def test_rate_deque_maxlen_is_60():
+    """StreamingToolBlock._rate_samples uses deque(maxlen=60) for accurate 2s window."""
+    from hermes_cli.tui.tool_blocks import StreamingToolBlock
+    from collections import deque
+    stb = StreamingToolBlock.__new__(StreamingToolBlock)
+    stb._rate_samples = deque(maxlen=60)
+    assert stb._rate_samples.maxlen == 60
+    # Verify class default
+    stb2 = StreamingToolBlock(label="bash", tool_name="bash")
+    assert stb2._rate_samples.maxlen == 60

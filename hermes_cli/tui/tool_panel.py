@@ -79,6 +79,7 @@ class BodyPane(Widget):
     ) -> None:
         super().__init__(**kwargs)
         self._block = block
+        self._renderer_degraded: bool = False
         if category is not None:
             try:
                 from hermes_cli.tui.body_renderer import BodyRenderer
@@ -90,8 +91,13 @@ class BodyPane(Widget):
                 )
                 from hermes_cli.tui.body_renderer import PlainBodyRenderer
                 self._renderer = PlainBodyRenderer()
+                self._renderer_degraded = True
         else:
             self._renderer = None
+
+    def on_mount(self) -> None:
+        if self._renderer_degraded:
+            self.add_class("--body-degraded")
 
     def compose(self) -> ComposeResult:
         if self._block is not None:
@@ -197,6 +203,10 @@ class FooterPane(Widget):
             tone_style = _TONE_STYLES.get(chip.tone, "dim")
             parts.append(f" {chip.text} ", style=tone_style)
 
+        # Payload-truncated warning chip
+        if any(getattr(a, "payload_truncated", False) for a in summary.actions):
+            parts.append(" truncated ", style=_TONE_STYLES["warning"])
+
         # Action row — only implemented actions
         if summary.actions:
             parts.append("  ")
@@ -276,7 +286,14 @@ class FooterPane(Widget):
             and getattr(summary, "artifacts_truncated", False)
         ):
             n_hidden = len(summary.artifacts) - _ARTIFACT_DISPLAY_CAP
-            buttons.append(Button(f"+{n_hidden} more", classes="--artifact-overflow"))
+            overflow_artifacts = summary.artifacts[_ARTIFACT_DISPLAY_CAP:]
+            if any(a.kind == "url" for a in overflow_artifacts):
+                overflow_tooltip = "press u to copy all URLs"
+            else:
+                overflow_tooltip = "press p to copy paths"
+            overflow_btn = Button(f"+{n_hidden} more", classes="--artifact-overflow")
+            overflow_btn._overflow_remediation = overflow_tooltip  # type: ignore[attr-defined]
+            buttons.append(overflow_btn)
 
         if buttons:
             self._artifact_row.mount(*buttons)
@@ -332,6 +349,12 @@ class ToolPanel(Widget):
 
     class Completed(Message):
         """Posted when the panel receives a result summary."""
+
+    class PathFocused(Message):
+        """Posted on first focus when block has a clickable path (OSC 8 hint)."""
+        def __init__(self, panel: "ToolPanel") -> None:
+            super().__init__()
+            self.panel = panel
 
     DEFAULT_CSS = "ToolPanel { height: auto; layout: vertical; }"
     _content_type: str = "tool"
@@ -651,6 +674,13 @@ class ToolPanel(Widget):
         try:
             from hermes_cli.tui.input_widget import HermesInput
             inp = self.app.query_one(HermesInput)
+            # Save existing input to history before overwriting
+            existing = inp.text.strip() if hasattr(inp, "text") else ""
+            if existing:
+                try:
+                    inp._save_to_history(existing)
+                except Exception:
+                    pass
             inp.value = payload
             inp.focus()
             self._flash_header("edit cmd")
@@ -898,43 +928,59 @@ class ToolPanel(Widget):
             return
         if value:
             self._hint_row.update(self._build_hint_text())
+            # P1-7: emit once so app can show "o to open" hint in non-OSC-8 terminals
+            try:
+                block = self._block
+                if block is not None and getattr(block._header, "_path_clickable", False):
+                    self.post_message(ToolPanel.PathFocused(self))
+            except Exception:
+                pass
         else:
             self._hint_row.update("")
 
     def _build_hint_text(self) -> "Any":
         from rich.text import Text
-        t = Text()
-        t.append("  Enter", style="bold"); t.append(" toggle  ", style="dim")
-        bar = self._get_omission_bar()
-        if bar is not None:
-            t.append("+/-", style="bold"); t.append(" lines  ", style="dim")
-            t.append("*", style="bold"); t.append(" all  ", style="dim")
-        if not self.collapsed:
-            t.append("j/k", style="bold"); t.append(" scroll  ", style="dim")
-        t.append("c", style="bold"); t.append(" copy  ", style="dim")
-        t.append("C/H", style="bold"); t.append(" color/html  ", style="dim")
-        t.append("I", style="bold"); t.append(" invocation  ", style="dim")
+        width = (self.size.width or 80) if self.is_mounted else 80
+        narrow = width < 50
+
         rs = self._result_summary_v4
-        if rs is not None:
-            if rs.is_error:
-                t.append("r", style="bold"); t.append(" retry  ", style="dim")
-                # A1: show edit cmd hint when cmd payload present
-                has_edit = any(
-                    a.kind == "edit_cmd" and a.payload
-                    for a in (rs.actions or ())
-                )
-                if has_edit:
-                    t.append("E", style="bold"); t.append(" edit cmd  ", style="dim")
-            if rs.stderr_tail:
-                t.append("e", style="bold"); t.append(" stderr  ", style="dim")
-            if self._result_paths_for_action():
-                t.append("o", style="bold"); t.append(" open  ", style="dim")
-                t.append("p", style="bold"); t.append(" paths", style="dim")
-            # A2: show open URL hint when URL artifacts present
-            has_urls = any(a.kind == "url" for a in (rs.artifacts or ()))
-            if has_urls:
-                t.append("  O", style="bold"); t.append(" url  ", style="dim")
-                t.append("u", style="bold"); t.append(" copy urls", style="dim")
+        hints: list[tuple[str, str, str, str]] = []  # (key, sep, label, priority)
+
+        if rs is not None and rs.is_error:
+            hints.append(("r", " ", "retry  ", "error"))
+            has_edit = any(a.kind == "edit_cmd" and a.payload for a in (rs.actions or ()))
+            if has_edit:
+                hints.append(("E", " ", "edit cmd  ", "error"))
+
+        hints.append(("?", " ", "help  ", "help"))
+        hints.append(("c", " ", "copy  ", "copy"))
+
+        if not narrow:
+            hints.append(("  Enter", " ", "toggle  ", "normal"))
+            bar = self._get_omission_bar()
+            if bar is not None:
+                hints.append(("+/-", " ", "lines  ", "normal"))
+                hints.append(("*", " ", "all  ", "normal"))
+            if not self.collapsed:
+                hints.append(("j/k", " ", "scroll  ", "normal"))
+            hints.append(("C/H", " ", "color/html  ", "normal"))
+            hints.append(("I", " ", "invocation  ", "normal"))
+            if rs is not None:
+                if rs.stderr_tail:
+                    hints.append(("e", " ", "stderr  ", "normal"))
+                if self._result_paths_for_action():
+                    hints.append(("o", " ", "open  ", "normal"))
+                    hints.append(("p", " ", "paths", "normal"))
+                has_urls = any(a.kind == "url" for a in (rs.artifacts or ()))
+                if has_urls:
+                    hints.append(("  O", " ", "url  ", "normal"))
+                    hints.append(("u", " ", "copy urls", "normal"))
+
+        t = Text()
+        max_hints = 3 if narrow else len(hints)
+        for key, sep, label, _ in hints[:max_hints]:
+            t.append(key, style="bold")
+            t.append(sep + label, style="dim")
         return t
 
     def _get_omission_bar(self) -> "Any | None":

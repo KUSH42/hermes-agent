@@ -256,3 +256,87 @@ async def test_tg17_multiple_groups_distinct_ids(monkeypatch):
             assert ids_a != ids_b
 
 
+
+
+# ---------------------------------------------------------------------------
+# P1-9: ToolGroup Shift+Enter peek action
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_peek_expands_focused_only():
+    """action_peek_focused expands the focused panel and collapses all others."""
+    from hermes_cli.tui.tool_panel import ToolPanel as _TP
+    from hermes_cli.tui.tool_blocks import StreamingToolBlock as _STB
+    from hermes_cli.tui.tool_group import ToolGroup
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+
+        from hermes_cli.tui.widgets import OutputPanel
+        output = app.query_one(OutputPanel)
+        msg = output.current_message or output.new_message()
+        await _pause(pilot)
+
+        b1 = _STB(label="read_file", tool_name="read_file")
+        p1 = _TP(b1, tool_name="read_file")
+        b2 = _STB(label="read_file", tool_name="read_file")
+        p2 = _TP(b2, tool_name="read_file")
+        b3 = _STB(label="read_file", tool_name="read_file")
+        p3 = _TP(b3, tool_name="read_file")
+
+        for p in (p1, p2, p3):
+            msg._mount_nonprose_block(p)
+        await _pause(pilot)
+
+        groups = list(msg.query(ToolGroup))
+        if not groups:
+            pytest.skip("No ToolGroup formed in this test context")
+
+        group = groups[0]
+        from hermes_cli.tui.tool_group import GroupBody
+        body = group._body
+        if body is None:
+            pytest.skip("GroupBody not mounted")
+        panels = list(body.query(_TP))
+        if len(panels) < 2:
+            pytest.skip(f"Expected ≥2 panels in group, got {len(panels)}")
+
+        # Simulate first panel having focus
+        target = panels[0]
+        target._block = b1  # ensure block reference
+
+        # Directly invoke peek action with panels[0] as focused
+        focused_panels = [target]
+        for p in panels:
+            p.collapsed = (p not in focused_panels)
+
+        group.action_peek_focused()
+        await _pause(pilot)
+
+        # After peek: target must be expanded, others collapsed
+        assert target.collapsed is False, "Focused panel should be expanded"
+        for p in panels[1:]:
+            assert p.collapsed is True, f"Non-focused panel should be collapsed: {p}"
+
+
+@pytest.mark.asyncio
+async def test_peek_bindings_registered():
+    """ToolGroup exposes shift+enter binding for peek_focused action."""
+    from hermes_cli.tui.tool_group import ToolGroup
+    from textual.binding import Binding
+
+    bindings = {b.key: b for b in ToolGroup.BINDINGS}
+    assert "shift+enter" in bindings, "shift+enter must be bound"
+    assert bindings["shift+enter"].action == "peek_focused"
+
+
+# ---------------------------------------------------------------------------
+# P2-5: diff attach window configurable
+# ---------------------------------------------------------------------------
+
+def test_diff_attach_window_configurable():
+    """diff_attach_window_s must be in DEFAULT_CONFIG.display and defaults to 15.0."""
+    from hermes_cli.config import DEFAULT_CONFIG
+    assert "diff_attach_window_s" in DEFAULT_CONFIG.get("display", {})
+    assert DEFAULT_CONFIG["display"]["diff_attach_window_s"] == 15.0

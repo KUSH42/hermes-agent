@@ -727,3 +727,40 @@ async def test_omission_bar_bottom_has_reset_button():
         has_reset = any("reset" in lbl for lbl in labels)
         assert has_reset, f"Expected reset button, got {labels}"
         assert "[↑cap]" not in labels
+
+
+# ---------------------------------------------------------------------------
+# P1-3: omission bar counts updated while bar hidden
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_counts_updated_while_bar_hidden():
+    """set_counts() is called even when the bar's display is False (hidden)."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        block = await _new_block(pilot)
+        await pilot.pause()
+
+        bar = block._omission_bar_top
+        assert bar is not None
+
+        # Force bar hidden
+        bar.display = False
+
+        # Simulate counts update while hidden
+        counts_received = []
+        original_set_counts = bar.set_counts
+        def _spy_set_counts(**kw):
+            counts_received.append(kw)
+            original_set_counts(**kw)
+        bar.set_counts = _spy_set_counts
+
+        # Trigger refresh
+        block._visible_start = 5
+        block._visible_count = 10
+        block._all_plain = [f"line {i}" for i in range(20)]
+        block._refresh_omission_bars()
+
+        # set_counts must have been called even though bar was hidden
+        assert len(counts_received) > 0, "set_counts should be called regardless of display state"

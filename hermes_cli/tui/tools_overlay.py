@@ -136,7 +136,7 @@ def render_tool_row(
     display_name = entry.get("name", "?")
     if mcp_server:
         tool_short = display_name.split("__")[-1] if "__" in display_name else display_name
-        display_name = f"{mcp_server}.{tool_short}"
+        display_name = f"{mcp_server}::{tool_short}()"
     primary_arg = _primary_arg_str(entry)
     preview_budget = max(0, label_w - len(display_name) - 2)
     primary_arg = primary_arg[:min(preview_budget, 30)]
@@ -276,6 +276,7 @@ ToolsScreen > #tools-footer {
         self._last_resize_w: int = 0
         self._snapshot_ts: float = time.monotonic()
         self._stale_timer: object | None = None
+        self._refresh_timer: object | None = None
 
     def compose(self) -> ComposeResult:
         yield Static("", id="tools-header")
@@ -297,10 +298,16 @@ ToolsScreen > #tools-footer {
         self.query_one("#filter-input", Input).display = False
         self._stale_timer = self.set_interval(1.0, self._update_staleness_pip)
         await self._rebuild()
+        # Start auto-refresh if any tool is still in-progress
+        if any(e.get("dur_ms") is None for e in self._snapshot):
+            self._refresh_timer = self.set_interval(2.0, self._auto_refresh)
 
     def on_unmount(self) -> None:
         if self._stale_timer is not None:
             self._stale_timer.stop()
+        if self._refresh_timer is not None:
+            self._refresh_timer.stop()
+            self._refresh_timer = None
 
     def on_resize(self) -> None:
         w = self.app.size.width
@@ -331,6 +338,25 @@ ToolsScreen > #tools-footer {
             self.query_one("#tools-header", Static).update(header_text)
         except Exception:
             pass
+
+    async def _auto_refresh(self) -> None:
+        """Refresh snapshot from app state while in-progress tools exist."""
+        try:
+            new_snapshot = self.app.current_turn_tool_calls()
+        except Exception:
+            return
+        self._snapshot = new_snapshot
+        self._filtered = list(new_snapshot)
+        self._snapshot_ts = time.monotonic()
+        self._turn_total_s = _compute_turn_total_s(new_snapshot)
+        await self._apply_filter()
+        await self._rebuild()
+        # Stop auto-refresh when no more in-progress entries
+        if self._refresh_timer is not None and not any(
+            e.get("dur_ms") is None for e in self._snapshot
+        ):
+            self._refresh_timer.stop()
+            self._refresh_timer = None
 
     async def _rebuild(self) -> None:
         listview = self.query_one("#tools-list", ListView)

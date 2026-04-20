@@ -71,6 +71,10 @@ def _osc8_supported() -> bool:
     return False
 
 
+#: Public alias for terminal capability check
+is_supported = _osc8_supported
+
+
 def inject_osc8(text: str, *, _enabled: bool | None = None) -> str:
     """Inject OSC 8 hyperlink sequences around file paths and URLs in *text*.
 

@@ -37,11 +37,11 @@ def _human_size(b: int) -> str:
     return f"{b / 1_048_576:.1f}MB"
 
 
-def _thinking_shimmer(elapsed_s: float) -> Text:
+def _thinking_shimmer(shimmer_phase: float, elapsed_s: float = 0.0) -> Text:
     """Animated shimmer for AGENT category microcopy."""
     from hermes_cli.tui.animation import lerp_color
     label = "Thinking…"
-    phase = (elapsed_s * 0.5) % 2.0
+    phase = shimmer_phase % 2.0
     t = phase if phase <= 1.0 else 2.0 - phase
     ACCENT = "#00ff99"
     DIM = "#446644"
@@ -59,6 +59,7 @@ def microcopy_line(
     spec: "ToolSpec",
     state: StreamingState,
     reduced_motion: bool = False,
+    shimmer_phase: float = 0.0,
 ) -> "Union[str, Text]":
     """Return microcopy for current streaming state, or '' for no line.
 
@@ -118,7 +119,7 @@ def microcopy_line(
         # D2: static text when reduced_motion
         if reduced_motion:
             return Text("▸ thinking…")
-        return _thinking_shimmer(state.elapsed_s)
+        return _thinking_shimmer(shimmer_phase, state.elapsed_s)
 
     if cat == ToolCategory.UNKNOWN:
         return f"▸ {state.lines_received} lines" + _elapsed_suffix()

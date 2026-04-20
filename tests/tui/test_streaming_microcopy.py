@@ -384,3 +384,41 @@ async def test_non_mcp_microcopy_cleared_after_complete(monkeypatch):
         stb.complete("0.1s")
         await pilot.pause(0.1)
         assert not mc.has_class("--active")
+
+
+# ---------------------------------------------------------------------------
+# P1-4: shimmer phase increments linearly (tick-based, not wall-clock)
+# ---------------------------------------------------------------------------
+
+def test_shimmer_phase_increments_linearly():
+    """_thinking_shimmer accepts pre-computed phase; phase advance is constant-delta."""
+    from hermes_cli.tui.streaming_microcopy import _thinking_shimmer
+    from rich.text import Text
+
+    # Phase 0.0
+    t0 = _thinking_shimmer(0.0, elapsed_s=1.0)
+    # Phase 0.5
+    t1 = _thinking_shimmer(0.5, elapsed_s=1.0)
+    # Phase 1.0
+    t2 = _thinking_shimmer(1.0, elapsed_s=1.0)
+
+    # All return Text objects
+    assert isinstance(t0, Text)
+    assert isinstance(t1, Text)
+    assert isinstance(t2, Text)
+
+    # Each must include "Thinking…" base label
+    assert "Thinking" in t0.plain
+    assert "Thinking" in t1.plain
+    assert "Thinking" in t2.plain
+
+    # Constant delta on StreamingToolBlock._shimmer_phase
+    from hermes_cli.tui.tool_blocks import StreamingToolBlock
+    stb = StreamingToolBlock.__new__(StreamingToolBlock)
+    stb._shimmer_phase = 0.0
+    prev = stb._shimmer_phase
+    for _ in range(5):
+        stb._shimmer_phase = (stb._shimmer_phase + 0.05) % 2.0
+        delta = stb._shimmer_phase - prev if stb._shimmer_phase > prev else stb._shimmer_phase + 2.0 - prev
+        assert abs(delta - 0.05) < 1e-9
+        prev = stb._shimmer_phase

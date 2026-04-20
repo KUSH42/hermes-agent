@@ -21,6 +21,8 @@ from hermes_cli.tui.tool_blocks import (
     StreamingToolBlock,
     _SPINNER_FRAMES,
 )
+from textual.widgets import Static
+
 from hermes_cli.tui.widgets import CopyableRichLog
 
 _LANG_MAP: dict[str, str] = {
@@ -58,6 +60,7 @@ class WriteFileBlock(StreamingToolBlock):
         self._content_lines: list[str] = []
         self._pacer = None
         self._extractor = None
+        self._writing_hint: Static | None = None
         if path:
             self._header.set_path(path)
 
@@ -91,6 +94,10 @@ class WriteFileBlock(StreamingToolBlock):
             on_reveal=self.append_content_chars,
             app=self.app,
         )
+
+        if cps == 0:
+            self._writing_hint = Static("writing…", classes="--wfb-writing-hint")
+            self._body.mount(self._writing_hint)
 
     def _apply_write_mount_overrides(self) -> None:
         """Run after all MRO on_mount handlers. Re-apply write_file-specific state."""
@@ -167,6 +174,11 @@ class WriteFileBlock(StreamingToolBlock):
         if self._line_scratch:
             self._emit_content_line(self._line_scratch)
             self._line_scratch = ""
+
+        # Clear writing hint if shown (CPS=0 path)
+        if self._writing_hint is not None:
+            self._writing_hint.remove()
+            self._writing_hint = None
 
         # Re-highlight full body with rich.Syntax
         self._rehighlight_body()

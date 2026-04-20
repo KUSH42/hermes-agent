@@ -1125,3 +1125,280 @@ async def test_collapse_at_minimum_flashes_no_op():
 
         assert flash_calls == ["at minimum"]
         mock_rw.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# P0-3: payload_truncated chip in footer
+# ---------------------------------------------------------------------------
+
+def test_payload_truncated_chip_shown():
+    """FooterPane shows 'truncated' warning when any action has payload_truncated=True."""
+    from hermes_cli.tui.tool_result_parse import ResultSummaryV4, Action, Chip
+    from rich.text import Text
+
+    footer = FooterPane()
+    # Inject compose result manually (no app needed)
+    footer._content = MagicMock()
+    footer._stderr_row = MagicMock()
+    footer._remediation_row = MagicMock()
+    footer._artifact_row = MagicMock()
+    footer._artifact_row.query.return_value = []
+    footer._show_all_artifacts = False
+    footer._last_resize_w = 80
+
+    summary = ResultSummaryV4(
+        primary="done",
+        exit_code=0,
+        chips=(),
+        stderr_tail="",
+        actions=(Action("copy body", "c", "copy_body", "x" * 1000, payload_truncated=True),),
+        artifacts=(),
+        is_error=False,
+    )
+
+    updates = []
+    footer._content.update = lambda t: updates.append(str(t) if not isinstance(t, str) else t)
+
+    footer._render_footer(summary, frozenset())
+
+    # The update call's content must include "truncated"
+    joined = " ".join(updates)
+    assert "truncated" in joined.lower()
+
+
+# ---------------------------------------------------------------------------
+# P0-4: ToolPanelHelpOverlay dismissed by escape via _dismiss_all_info_overlays
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_help_overlay_dismissed_by_escape():
+    """ToolPanelHelpOverlay is dismissed when _dismiss_all_info_overlays is called."""
+    from hermes_cli.tui.overlays import ToolPanelHelpOverlay
+
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        overlay = ToolPanelHelpOverlay()
+        app.mount(overlay)
+        await _pause(pilot)
+        overlay.add_class("--visible")
+        await _pause(pilot)
+        assert overlay.has_class("--visible")
+
+        app._dismiss_all_info_overlays()
+        await _pause(pilot)
+
+        assert not overlay.has_class("--visible")
+
+
+# ---------------------------------------------------------------------------
+# P1-2: edit_cmd saves existing input to history
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_edit_cmd_saves_existing_input_to_history():
+    """action_edit_cmd saves current input text to history before overwriting."""
+    from hermes_cli.tui.tool_result_parse import ResultSummaryV4, Action
+
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _pause(pilot)
+        panel = await _get_shell_panel(app, pilot)
+        await _pause(pilot)
+
+        # Give the panel an edit_cmd action
+        summary = ResultSummaryV4(
+            primary="done",
+            exit_code=1,
+            chips=(),
+            stderr_tail="",
+            actions=(Action("edit cmd", "E", "edit_cmd", "git commit -m 'wip'"),),
+            artifacts=(),
+            is_error=True,
+        )
+        panel.set_result_summary_v4(summary)
+        await _pause(pilot)
+
+        # Pre-fill input with existing text
+        from hermes_cli.tui.input_widget import HermesInput
+        inp = app.query_one(HermesInput)
+        history_before = list(inp._history)
+
+        inp.load_text("my important message")
+        await _pause(pilot)
+
+        history_calls = []
+        original = inp._save_to_history
+        def _spy_save(text):
+            history_calls.append(text)
+            original(text)
+        inp._save_to_history = _spy_save
+
+        panel.action_edit_cmd()
+        await _pause(pilot)
+
+        assert "my important message" in history_calls, "Existing input should be saved to history"
+
+
+# ---------------------------------------------------------------------------
+# P1-6: secondary args persist independently of microcopy
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_secondary_args_visible_during_streaming():
+    """Secondary args show in --args-row slot, separate from microcopy."""
+    from hermes_cli.tui.tool_blocks import ToolBodyContainer
+
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _pause(pilot)
+        panel = await _get_shell_panel(app, pilot)
+        await _pause(pilot)
+
+        block = panel._block
+        assert block is not None
+
+        block._body.update_secondary_args("cwd: /project  env: DEBUG=1")
+        await _pause(pilot)
+
+        # Secondary args must be in --args-row, not --microcopy
+        from textual.widgets import Static
+        try:
+            args_row = block._body.query_one(".--args-row", Static)
+            assert block._body._secondary_text == "cwd: /project  env: DEBUG=1"
+        except Exception as e:
+            pytest.fail(f"--args-row not found: {e}")
+
+
+@pytest.mark.asyncio
+async def test_secondary_args_persists_after_microcopy_set():
+    """Secondary args remain visible when set_microcopy() overwrites the microcopy slot."""
+    from hermes_cli.tui.tool_blocks import ToolBodyContainer
+
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _pause(pilot)
+        panel = await _get_shell_panel(app, pilot)
+        await _pause(pilot)
+
+        block = panel._block
+        assert block is not None
+
+        block._body.update_secondary_args("cwd: /project")
+        await _pause(pilot)
+
+        # Activate streaming microcopy
+        block._body.set_microcopy("▸ 5 lines · 1kB")
+        await _pause(pilot)
+
+        # Secondary args text must not be lost
+        assert block._body._secondary_text == "cwd: /project"
+
+
+# ---------------------------------------------------------------------------
+# P1-7: path-open hint shown on first focus without OSC 8
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_open_hint_shown_on_first_path_tool_focus_without_osc8():
+    """_flash_hint is called with path-open message on first focus when OSC 8 unavailable."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _pause(pilot)
+
+        hint_calls: list[str] = []
+        app._path_open_hint_shown = False
+        app._flash_hint = lambda text, duration=1.5: hint_calls.append(text)
+
+        # Patch osc8.is_supported to return False (no OSC 8)
+        import hermes_cli.tui.osc8 as _osc8
+        with patch.object(_osc8, "is_supported", return_value=False):
+            import unittest.mock as _um
+            event = _um.MagicMock()
+            app.on_tool_panel_path_focused(event)
+
+        assert app._path_open_hint_shown is True
+        assert any("open" in h.lower() for h in hint_calls), f"Expected open-file hint, got {hint_calls}"
+
+
+# ---------------------------------------------------------------------------
+# P2-2: --body-degraded class on renderer exception
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_body_degraded_class_on_renderer_exception():
+    """BodyPane gets --body-degraded class when renderer init raises."""
+    from hermes_cli.tui.tool_panel import BodyPane
+    from unittest.mock import patch
+
+    with patch("hermes_cli.tui.body_renderer.BodyRenderer") as mock_renderer_cls:
+        mock_renderer_cls.for_category.side_effect = RuntimeError("renderer broken")
+        pane = BodyPane(category="FAKE")
+        assert pane._renderer_degraded is True, "--body-degraded flag must be set"
+
+
+# ---------------------------------------------------------------------------
+# P2-6: narrow screen hint truncation
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_hint_row_truncated_on_narrow_screen():
+    """On <50 char width, _build_hint_text returns at most 3 hints."""
+    app = _make_app()
+    async with app.run_test(size=(40, 24)) as pilot:
+        await _pause(pilot)
+        panel = await _get_shell_panel(app, pilot)
+        await _pause(pilot)
+
+        # Force narrow width
+        from unittest.mock import PropertyMock
+        with patch.object(type(panel), "size", new_callable=PropertyMock,
+                          return_value=type("S", (), {"width": 40, "height": 24})()) as _:
+            hint = panel._build_hint_text()
+
+        from rich.text import Text
+        assert isinstance(hint, Text)
+        # Count hint segments (bold key spans)
+        bold_spans = [s for s in hint._spans if "bold" in str(s.style)]
+        assert len(bold_spans) <= 3, f"Narrow screen should show ≤3 hints, got {len(bold_spans)}"
+
+
+# ---------------------------------------------------------------------------
+# P2-7: artifact overflow chip has URL remediation
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_artifact_overflow_chip_has_url_remediation():
+    """[+N more] overflow chip has _overflow_remediation=url hint when URLs truncated."""
+    from hermes_cli.tui.tool_result_parse import ResultSummaryV4, Artifact
+    from hermes_cli.tui.tool_panel import ToolPanel
+    from hermes_cli.tui.tool_result_parse import _ARTIFACT_DISPLAY_CAP
+
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _pause(pilot)
+        panel = await _get_shell_panel(app, pilot)
+        await _pause(pilot)
+
+        # Create artifacts exceeding the cap with URL in overflow
+        artifacts = [Artifact(label=f"f{i}.txt", kind="file", path_or_url=f"/f{i}.txt") for i in range(_ARTIFACT_DISPLAY_CAP)]
+        artifacts.append(Artifact(label="https://example.com", kind="url", path_or_url="https://example.com"))
+
+        summary = ResultSummaryV4(
+            primary="done",
+            exit_code=0,
+            chips=(),
+            stderr_tail="",
+            actions=(),
+            artifacts=tuple(artifacts),
+            artifacts_truncated=True,
+            is_error=False,
+        )
+        panel.set_result_summary_v4(summary)
+        await _pause(pilot)
+
+        from textual.widgets import Button
+        overflow_btns = list(panel.query(".--artifact-overflow"))
+        assert len(overflow_btns) > 0, "Expected overflow chip"
+        btn = overflow_btns[0]
+        remediation = getattr(btn, "_overflow_remediation", None)
+        assert remediation is not None and "url" in remediation.lower(), f"Expected URL remediation, got {remediation}"

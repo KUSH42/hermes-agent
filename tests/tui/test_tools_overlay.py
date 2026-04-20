@@ -128,7 +128,8 @@ def test_render_row_cursor():
 def test_render_row_mcp():
     e = _entry(name="mcp__github__search_repos", mcp_server="github", category="mcp")
     row = render_tool_row(e, cursor=False, turn_total_s=1.0, term_w=120)
-    assert "github.search_repos" in row.plain
+    # P1-5: MCP names use server::method() format matching ToolHeader
+    assert "github::search_repos()" in row.plain
 
 
 def test_render_row_long_label_truncation():
@@ -482,3 +483,112 @@ async def test_watch_agent_running_resets_turn_calls():
         await _pause(pilot)
         # After agent_running → True, turn calls reset
         assert app._turn_tool_calls == []
+
+
+# ---------------------------------------------------------------------------
+# P1-1: auto-refresh starts when in-progress tools exist
+# P1-5: MCP label uses server::method() format
+# ---------------------------------------------------------------------------
+
+def test_mcp_tool_label_uses_header_label_v4():
+    """MCP tool in Gantt row shows server::method() format (consistent with ToolHeader)."""
+    e = _entry(name="mcp__github__create_issue", mcp_server="github", category="mcp")
+    row = render_tool_row(e, cursor=False, turn_total_s=2.0, term_w=120)
+    assert "github::create_issue()" in row.plain
+    # Must not use the old dot format
+    assert "github.create_issue" not in row.plain
+
+
+@pytest.mark.asyncio
+async def test_auto_refresh_starts_when_tool_in_progress():
+    """ToolsScreen starts _refresh_timer when snapshot has an in-progress (dur_ms=None) entry."""
+    from hermes_cli.tui.tools_overlay import ToolsScreen
+    from hermes_cli.tui.app import HermesApp
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        snapshot = [_entry(name="bash", dur_ms=None)]  # in-progress
+        screen = ToolsScreen(snapshot)
+        app.push_screen(screen)
+        await _pause(pilot)
+        assert screen._refresh_timer is not None, "_refresh_timer must start for in-progress tools"
+        app.pop_screen()
+        await _pause(pilot)
+
+
+@pytest.mark.asyncio
+async def test_auto_refresh_stops_when_no_in_progress_tools():
+    """ToolsScreen does not start _refresh_timer when all tools are completed."""
+    from hermes_cli.tui.tools_overlay import ToolsScreen
+    from hermes_cli.tui.app import HermesApp
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        snapshot = [_entry(name="bash", dur_ms=500)]  # completed
+        screen = ToolsScreen(snapshot)
+        app.push_screen(screen)
+        await _pause(pilot)
+        assert screen._refresh_timer is None, "_refresh_timer must NOT start when all tools done"
+        app.pop_screen()
+        await _pause(pilot)
+
+
+# ---------------------------------------------------------------------------
+# P1-8: export_json creates file + flashes success hint
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_export_json_creates_file_and_flashes_success(tmp_path):
+    """action_export_json writes JSON file and calls _flash_hint with ✓ prefix."""
+    from hermes_cli.tui.tools_overlay import ToolsScreen
+    from hermes_cli.tui.app import HermesApp
+    import os
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        snapshot = [_entry(name="bash", dur_ms=300)]
+        screen = ToolsScreen(snapshot)
+        app.push_screen(screen)
+        await _pause(pilot)
+
+        hint_calls: list[str] = []
+        app._flash_hint = lambda t, d=1.5: hint_calls.append(t)
+
+        with patch("hermes_cli.tui.tools_overlay.Path.cwd", return_value=tmp_path):
+            # Create .hermes dir so hermes_root resolves
+            (tmp_path / ".hermes").mkdir()
+            screen.action_export_json()
+
+        assert any(h.startswith("✓") for h in hint_calls), f"Expected ✓ hint, got {hint_calls}"
+        exports = list((tmp_path / ".hermes").glob("tools_*.json"))
+        assert len(exports) == 1, "Expected 1 exported JSON file"
+
+        import json
+        data = json.loads(exports[0].read_text())
+        assert "calls" in data
+
+
+@pytest.mark.asyncio
+async def test_export_json_flashes_error_on_permission_denied(tmp_path):
+    """action_export_json flashes ✗ error hint on PermissionError."""
+    from hermes_cli.tui.tools_overlay import ToolsScreen
+    from hermes_cli.tui.app import HermesApp
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        snapshot = [_entry(name="bash", dur_ms=300)]
+        screen = ToolsScreen(snapshot)
+        app.push_screen(screen)
+        await _pause(pilot)
+
+        hint_calls: list[str] = []
+        app._flash_hint = lambda t, d=1.5: hint_calls.append(t)
+
+        with patch("hermes_cli.tui.tools_overlay.Path.write_text", side_effect=PermissionError("denied")):
+            with patch("hermes_cli.tui.tools_overlay.Path.cwd", return_value=tmp_path):
+                (tmp_path / ".hermes").mkdir(exist_ok=True)
+                screen.action_export_json()
+
+        assert any(h.startswith("✗") for h in hint_calls), f"Expected ✗ hint, got {hint_calls}"

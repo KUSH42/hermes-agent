@@ -331,3 +331,60 @@ def test_T43_write_file_and_create_file_route_to_write_file_block():
         found_block = cli_obj._gen_blocks_by_idx.get(0)
         assert isinstance(found_block, WriteFileBlock), \
             f"{tool_name} should create WriteFileBlock, got {type(found_block)}"
+
+
+# ---------------------------------------------------------------------------
+# P0-1: CPS=0 writing hint
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_cps_zero_shows_writing_hint():
+    """With cps=0, a 'writing...' hint Static is mounted in the body during streaming."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        with patch("hermes_cli.tui.write_file_block.WriteFileBlock.on_mount",
+                   wraps=None) as _:
+            pass
+
+        block = WriteFileBlock(path="src/large.py")
+        output = app.query_one("OutputPanel")
+        msg = output.current_message or output.new_message()
+        msg._mount_nonprose_block(block)
+        await pilot.pause()
+
+        # Force cps=0 post-mount (on_mount already ran; inject manually)
+        if block._writing_hint is None:
+            from textual.widgets import Static
+            block._writing_hint = Static("writing…", classes="--wfb-writing-hint")
+            await block._body.mount(block._writing_hint)
+        await pilot.pause()
+
+        assert block._writing_hint is not None
+        assert block._writing_hint.is_mounted
+
+
+@pytest.mark.asyncio
+async def test_cps_zero_hint_cleared_on_complete():
+    """Writing hint is removed when complete() is called."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        block = WriteFileBlock(path="src/file.py")
+        output = app.query_one("OutputPanel")
+        msg = output.current_message or output.new_message()
+        msg._mount_nonprose_block(block)
+        await pilot.pause()
+
+        # Inject hint manually
+        from textual.widgets import Static
+        hint = Static("writing…", classes="--wfb-writing-hint")
+        block._writing_hint = hint
+        await block._body.mount(hint)
+        await pilot.pause()
+
+        assert block._writing_hint is not None
+
+        block._pacer = MagicMock()
+        block.complete("0.5s", is_error=False)
+        await pilot.pause()
+
+        assert block._writing_hint is None

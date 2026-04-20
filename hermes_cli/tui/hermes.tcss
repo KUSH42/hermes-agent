@@ -27,6 +27,7 @@ $footnote-ref-color: #888888;
 $cite-chip-bg: #1a2030;
 $cite-chip-fg: #8899bb;
 $tool-glyph-mcp: "󰡨";
+$tool-vision-accent: #00bcd4;
 $error-timeout: #f59e0b;
 /* Browse mode visual marker colors */
 $browse-turn: #d4a017;
@@ -85,6 +86,17 @@ ToolBodyContainer .--microcopy.--secondary-args {
     display: block;
     color: $text-muted;
     opacity: 0.6;
+}
+
+WriteFileBlock .--wfb-writing-hint {
+    color: $text-muted;
+    opacity: 0.5;
+    text-style: italic;
+    height: 1;
+}
+
+BodyPane.--body-degraded {
+    border-left: solid $warning;
 }
 
 StreamingCodeBlock {
@@ -548,19 +560,6 @@ DrawilleOverlay > .drawille-overlay--canvas {
     color: $drawille-canvas-color;
 }
 
-AnimConfigPanel {
-    layer: overlay;
-    align: right top;
-    margin: 1 1 0 0;
-    border: round $surface-darken-2;
-    background: $surface;
-    color: $text;
-}
-
-AnimGalleryOverlay {
-    layer: overlay;
-    position: absolute;
-}
 
 /* ── OmissionBar — dual top/bottom scroll controls for line cap ───────── */
 
@@ -610,6 +609,7 @@ ToolPanel.category-search.tool-panel--accent { border-left: vkey $primary 60%; }
 ToolPanel.category-web.tool-panel--accent    { border-left: vkey $success 80%; }
 ToolPanel.category-agent.tool-panel--accent  { border-left: vkey $accent 40%; }
 ToolPanel.category-mcp.tool-panel--accent    { border-left: vkey #9b59b6 80%; }
+ToolPanel.category-vision.tool-panel--accent { border-left: vkey $tool-vision-accent 80%; }
 ToolPanel.tool-panel--error                  { border-left: vkey $error 80%; }
 ToolPanel:focus                              { background: $accent 10%; }
 

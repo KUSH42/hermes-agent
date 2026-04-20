@@ -131,9 +131,33 @@ Then load only the focused reference you need:
 
 ## Validation
 
-Last revalidated: **2026-04-21. ~2853 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
+Last revalidated: **2026-04-21. ~2865+ total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
 
 Recent changes (details → reference files):
+- **Tool call UX audit pass 4** (2026-04-21): 25 issues (5 P0, 10 P1, 10 P2); spec at `/home/xush/.hermes/tui-tool-call-ux-audit-spec.md`. ~30 new tests across 3 phases.
+  **P0 fixes:** diff path regex narrowed (`--- a/` / `+++ b/` prefix required — stops bare `---` YAML separators matching); rate deque expanded to 60 samples; shimmer phase is tick-incremented `+= 0.05` constant delta (not wall-clock) so busy-loop doesn't skip animation; omission bar `set_counts()` always called regardless of `display` state; secondary-args `update_secondary_args()` uses `--args-row` Static slot (separate from `--microcopy`) so secondary args persist across microcopy updates.
+  **P1 fixes:** `action_edit_cmd()` saves existing input to history before overwriting; `ToolPanel.PathFocused(Message)` inner class posted when path-tool gains focus; `on_tool_panel_path_focused` in app flashes one-shot hint (guarded by `_path_open_hint_shown`); `osc8.is_supported` alias exported; `ToolGroup.BINDINGS` adds `shift+enter → action_peek_focused` (expand focused panel, collapse others); `ToolsScreen._refresh_timer` auto-starts when in-progress tools present; MCP label in Gantt uses `server::method()` format; `action_export_json` uses `mkdir(parents=True, exist_ok=True)`; `WriteFileBlock` shows `Static("writing…")` hint when `cps=0`, cleared on complete; `ExecuteCodeBlock` cursor hidden on complete (not on code finalize).
+  **P2 fixes:** copy flash unified to 1.2s (`_copy_text_with_hint`); `BodyPane` gets `--body-degraded` CSS class + left warning border when renderer init raises; `$tool-vision-accent` declared in `hermes.tcss` + `COMPONENT_VAR_DEFAULTS`; `view_image`/`analyze_image` seed specs added; `shell_pipeline_ms` and `diff_attach_window_s` moved to `DEFAULT_CONFIG.display` (read at call time — not module level); `_build_hint_text()` limits to 3 hints when width < 50; `[+N more]` overflow chip gets `_overflow_remediation` with URL/path hint; `resolve_icon_final()` degrades to `ascii_fallback` in emoji mode (1-cell header constraint); `payload_truncated` chip shown inline in footer when any `Action.payload_truncated` is True.
+  Key invariants: `payload_truncated` lives on `Action` (NOT `ResultSummaryV4`); `osc8.is_supported` is a public alias for `_osc8_supported`; `BodyPane._renderer_degraded` flag set in `__init__`, class applied in `on_mount`; `_ARTIFACT_DISPLAY_CAP` lives in `tool_result_parse.py` not `tool_panel.py`; `_build_hint_text` uses Rich Text spans for bold keys (not plain chars); shimmer phase `+= 0.05` per microcopy tick (never wall-clock delta).
+  → `hermes_cli/tui/tool_blocks.py`, `hermes_cli/tui/tool_panel.py`, `hermes_cli/tui/tools_overlay.py`, `hermes_cli/tui/tool_group.py`, `hermes_cli/tui/tool_category.py`, `hermes_cli/tui/streaming_microcopy.py`, `hermes_cli/tui/write_file_block.py`, `hermes_cli/tui/execute_code_block.py`, `hermes_cli/tui/app.py §on_tool_panel_path_focused/_path_open_hint_shown`, `hermes_cli/tui/osc8.py §is_supported`, `hermes_cli/tui/hermes.tcss §BodyPane/tool-vision-accent`, `hermes_cli/tui/theme_manager.py §COMPONENT_VAR_DEFAULTS`, `hermes_cli/config.py §display.shell_pipeline_ms/diff_attach_window_s`, `tests/tui/test_tool_blocks.py`, `tests/tui/test_tool_panel.py`, `tests/tui/test_tools_overlay.py`, `tests/tui/test_tool_group.py`, `tests/tui/test_tool_spec.py`, `tests/tui/test_write_file_block.py`, `tests/tui/test_execute_code_block.py`, `tests/tui/test_streaming_microcopy.py`, `tests/tui/test_omission_bar.py`
+- **Input history pollution — 3 bugs fixed** (2026-04-21): Slash commands, file-level dedup failure, and CLI/TUI entry merge all caused
+  "unrelated trash" at the top of up-arrow history.
+  **Bug 1 — Slash commands in history**: `_save_to_history` had no filter; `/clear`, `/anim`, `/model`, etc. were saved as prompts.
+  Fix: early return when `text.lstrip().startswith("/")`.
+  **Bug 2 — File-level dedup failure**: in-memory `list.remove` deduped the session, but never rewrote the file. Repeated slash cmds
+  accumulated as duplicates; all copies reloaded on next TUI start. Fix: `_load_history` deduplicates the loaded slice after `lines[-_MAX_HISTORY:]`
+  (reversed pass, last-occurrence wins, order preserved) — repairs existing polluted history files automatically.
+  **Bug 3 — CLI/TUI entry merge**: `prompt_toolkit`'s `FileHistory` writes `\n# timestamp\n+cmd\n` with no trailing blank after the last
+  entry. The TUI's old append (`+cmd\n\n`) ran straight into it, causing the parser to merge two commands into one multiline entry
+  (`"cli_cmd\ntui_cmd"`). Fix: `_save_to_history` now writes a leading `\n` before the `+` lines (`\n+line\n…\n`).
+  6 new tests in `TestHistoryTrash` in `tests/tui/test_input_completion_ux.py`.
+  Key invariants: `_save_to_history` skips slash commands entirely; always writes `\n+…\n` (leading + trailing blank);
+  `_load_history` deduplicates so file-level dupes don't survive a restart.
+  → `hermes_cli/tui/input_widget.py §_load_history/_save_to_history`, `tests/tui/test_input_completion_ux.py §TestHistoryTrash`
+- **_push_tui_status thread-safety** (2026-04-21): `_push_tui_status` used `call_from_thread` unconditionally.
+  `_handle_clear_tui` is `thread=False` (event-loop worker), so calling `call_from_thread` from it raised `RuntimeError`.
+  Fix: check `threading.get_ident() == tui._thread_id`; direct reactive assignment on app thread, `call_from_thread` from bg threads.
+  → `cli.py §_push_tui_status`, `gotchas.md §call_from_thread`
 - **Header tok/s fix** (2026-04-21): `_pause_stream_state` was reading `agent._last_turn_output_tokens` — total API
   output tokens including tool_use blocks, not just text. Also race-prone at tool-call boundaries (field may not yet
   reflect current segment). Fix: `_emit_stream_text` in `cli.py` now accumulates `estimate_tokens_rough(text)` into

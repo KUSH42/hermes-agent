@@ -279,7 +279,8 @@ class ExecuteCodeBlock(StreamingToolBlock):
             return
         self._code_state = _STATE_FINALIZED
 
-        # Stop cursor
+        # Stop cursor blinking but leave cursor visible — tool hasn't executed yet.
+        # Cursor is hidden in complete() when execution result arrives.
         if self._cursor_timer is not None:
             try:
                 self._cursor_timer.stop()
@@ -291,13 +292,6 @@ class ExecuteCodeBlock(StreamingToolBlock):
         if self._pacer is not None:
             self._pacer.flush()
             self._pacer.stop()
-
-        # Hide cursor widget
-        try:
-            cursor_w = self.query_one("#code-live-cursor", Static)
-            cursor_w.display = False
-        except NoMatches:
-            pass
 
         # Record canonical code lines for collapse threshold
         if code:
@@ -403,6 +397,13 @@ class ExecuteCodeBlock(StreamingToolBlock):
 
         self._header._pulse_stop()
         self._header.set_error(is_error)
+
+        # Hide cursor — execution complete
+        try:
+            cursor_w = self.query_one("#code-live-cursor", Static)
+            cursor_w.display = False
+        except NoMatches:
+            pass
 
         # Final stdout flush
         self._flush_pending()

@@ -477,6 +477,10 @@ DEFAULT_CONFIG = {
         },
         "mcp_microcopy": True,   # show "▸ mcp · <server>" provenance line
         "tools_overlay": True,   # /tools timeline overlay + T browse key
+        # P2-4: configurable shell pipeline grouping window (ms)
+        "shell_pipeline_ms": 500,
+        # P2-5: configurable diff-to-file-write attachment window (seconds)
+        "diff_attach_window_s": 15.0,
         # Crush easy-wins features
         "osc_progress": True,          # OSC 9;4 indeterminate progress bar in terminal tab/dock
         "context_pct": True,           # context-window % meter in StatusBar

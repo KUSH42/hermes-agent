@@ -544,6 +544,8 @@ class HermesApp(App):
         self._session_records_cache: list = []
         self._session_active_id: str = ""
         # _sessions_enabled is a @property — no instance attr needed
+        # P1-7: one-shot "press o to open file" hint when path is clickable
+        self._path_open_hint_shown: bool = False
         # Workspace overlay state
         self._last_git_snapshot: GitSnapshot | None = None
         self._git_poll_h: object | None = None  # textual.timer.Timer
@@ -626,12 +628,8 @@ class HermesApp(App):
         yield VoiceStatusBar(id="voice-status")
         yield StatusBar(id="status-bar")
         # Drawille animation overlay — before FPSCounter so FPS HUD stays above.
-        from hermes_cli.tui.drawille_overlay import (
-            DrawilleOverlay as _DO, AnimConfigPanel as _ACP, AnimGalleryOverlay as _AGA
-        )
+        from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO
         yield _DO(id="drawille-overlay")
-        yield _ACP(id="anim-config-panel")
-        yield _AGA(id="anim-gallery-overlay")
         # FPS HUD — overlay layer, docked top; display:none by default.
         # Must be before ContextMenu so ContextMenu stays topmost in overlay layer.
         yield FPSCounter(id="fps-counter")
@@ -3735,14 +3733,14 @@ class HermesApp(App):
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                     )
-                    self._flash_hint(f"⎘  {len(text)} chars copied", 1.5)
+                    self._flash_hint(f"⎘  {len(text)} chars copied", 1.2)
                 except Exception:
                     self.set_status_error("copy failed", auto_clear_s=10.0)
             else:
                 self.set_status_error("no clipboard — install xclip or xsel", auto_clear_s=0)
             return
         self.copy_to_clipboard(text)
-        self._flash_hint(f"⎘  {len(text)} chars copied", 1.5)
+        self._flash_hint(f"⎘  {len(text)} chars copied", 1.2)
 
     # --- Right-click context menu ---
 
@@ -4086,6 +4084,21 @@ class HermesApp(App):
         except NoMatches:
             pass
 
+    # --- ToolPanel events ---
+
+    def on_tool_panel_path_focused(self, event: "Any") -> None:
+        """P1-7: flash one-shot 'press o to open file' hint when OSC 8 not available."""
+        if self._path_open_hint_shown:
+            return
+        try:
+            from hermes_cli.tui.osc8 import is_supported as _osc8_supported
+            if _osc8_supported():
+                return  # path is self-evidently clickable; no hint needed
+        except Exception:
+            pass
+        self._path_open_hint_shown = True
+        self._flash_hint("press o to open file", 3.0)
+
     # --- Undo / Retry / Rollback (SPEC-C) ---
 
     def _dismiss_all_info_overlays(self) -> None:
@@ -4093,13 +4106,15 @@ class HermesApp(App):
 
         Called before showing a new overlay (ensures only one visible at a time)
         and from watch_agent_running(True) (stale info must not block output view).
+        AnimConfigPanel and AnimGalleryOverlay are ModalScreens; they dismiss
+        themselves via self.dismiss() and are not DOM nodes.
         """
-        from hermes_cli.tui.drawille_overlay import AnimGalleryOverlay as _AGA
+        from hermes_cli.tui.overlays import ToolPanelHelpOverlay as _TPHO
         for cls in (
             HelpOverlay, UsageOverlay, CommandsOverlay, ModelOverlay, WorkspaceOverlay,
-            SessionOverlay, _AGA,
+            SessionOverlay,
             ModelPickerOverlay, ReasoningPickerOverlay, SkinPickerOverlay,
-            YoloConfirmOverlay, VerbosePickerOverlay,
+            YoloConfirmOverlay, VerbosePickerOverlay, _TPHO,
         ):
             try:
                 self.query_one(cls).remove_class("--visible")
@@ -4321,16 +4336,9 @@ class HermesApp(App):
         self.push_screen(ToolsScreen(snapshot))
 
     def _open_anim_config(self) -> None:
-        """Toggle the AnimConfigPanel overlay."""
-        try:
-            from hermes_cli.tui.drawille_overlay import AnimConfigPanel as _ACP
-            panel = self.query_one(_ACP)
-            if panel.has_class("-open"):
-                panel.close()
-            else:
-                panel.open()
-        except NoMatches:
-            pass
+        """Push the AnimConfigPanel modal screen."""
+        from hermes_cli.tui.drawille_overlay import AnimConfigPanel as _ACP
+        self.push_screen(_ACP())
 
     def _persist_anim_config(self, cfg_dict: dict) -> None:
         """Persist animation config dict to YAML config file (E5)."""
@@ -4372,12 +4380,8 @@ class HermesApp(App):
         args = rest.split() if rest else []
 
         if not args:
-            # /anim → open gallery overlay (B2)
-            try:
-                gallery = self.query_one(_AGA)
-                gallery.add_class("--visible")
-            except NoMatches:
-                pass
+            # /anim → open gallery modal screen (B2)
+            self.push_screen(_AGA())
             return
 
         sub = args[0].lower()
@@ -4786,7 +4790,8 @@ class HermesApp(App):
             # These have no Input focus when shown (except HelpOverlay), so their
             # Binding(escape) doesn't fire — handle here instead.
             from hermes_cli.tui.drawille_overlay import AnimGalleryOverlay as _AGA
-            for _cls in (HelpOverlay, UsageOverlay, CommandsOverlay, ModelOverlay, WorkspaceOverlay, SessionOverlay, _AGA):
+            from hermes_cli.tui.overlays import ToolPanelHelpOverlay as _TPHO
+            for _cls in (HelpOverlay, UsageOverlay, CommandsOverlay, ModelOverlay, WorkspaceOverlay, SessionOverlay, _AGA, _TPHO):
                 try:
                     _ov = self.query_one(_cls)
                     if _ov.has_class("--visible"):

@@ -155,6 +155,8 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     "footnote-ref-color": "#888888",
     # MCP tool accent — purple; reserved for future _refresh_gutter_color wiring
     "tool-mcp-accent": "#9b59b6",
+    # Vision tool accent — teal
+    "tool-vision-accent": "#00bcd4",
     # Diff background colors — used by ToolBlock._diff_bg_colors()
     "diff-add-bg": "#1a3a1a",
     "diff-del-bg": "#3a1a1a",

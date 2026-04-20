@@ -135,6 +135,9 @@ _FILE_TOOL_NAMES: frozenset[str] = frozenset({
 })
 _URL_SCHEMES: tuple[str, ...] = ("http://", "https://", "ftp://", "file://")
 _DIFF_PATH_RE = re.compile(r"^(?:---|\+\+\+)\s+(?:[ab]/)?(.+)$")
+# Stricter git-format matchers: require a/ b/ prefix to avoid matching bare "---"
+_DIFF_OLD_RE = re.compile(r"^--- (a/(.+)|/dev/null)")
+_DIFF_NEW_RE = re.compile(r"^\+\+\+ (b/(.+)|/dev/null)")
 _DIFF_HEADER_RE = re.compile(r"^((?:---|\+\+\+)\s+)(?:[ab]/)?(.+)$")
 # Rendered diff file-header line: "a/src/foo.py → b/src/foo.py" (after ANSI strip)
 _DIFF_ARROW_RE = re.compile(r"^(.+?)\s+→\s+(.+)$")
@@ -971,16 +974,13 @@ class ToolBodyContainer(Widget):
             return None
 
     def update_secondary_args(self, text: str) -> None:
-        """Store secondary args text; show dim if microcopy not active (B1)."""
+        """Store secondary args text in the dedicated --args-row slot (P1-6).
+
+        Uses the --args-row widget (above microcopy) so secondary args persist
+        independently of microcopy state — set_microcopy() no longer overwrites them.
+        """
         self._secondary_text = text
-        if self._microcopy_active or not text:
-            return
-        mc = self._mc_widget()
-        if mc is None:
-            return
-        mc.update(text)
-        mc.add_class("--secondary-args")
-        mc.remove_class("--active")
+        self.set_args_row(text if text else None)
 
     def set_microcopy(self, text: "str | object") -> None:
         """Show streaming microcopy — takes precedence over secondary args (B1)."""
@@ -1068,17 +1068,19 @@ class ToolBlock(Widget):
             _fallback: str | None = None
             for line in self._plain_lines:
                 stripped = line.strip()
-                # Raw ---/+++ format
-                m = _DIFF_PATH_RE.match(stripped)
-                if m:
-                    candidate = m.group(1).strip()
-                    if "/dev/null" in candidate:
-                        continue
-                    if stripped.startswith("+++"):
-                        self._diff_file_path = candidate
+                # Strict git diff format: require "--- a/" or "+++ b/" prefix
+                m_new = _DIFF_NEW_RE.match(stripped)
+                if m_new:
+                    new_path = m_new.group(2) or None  # None when /dev/null
+                    if new_path:
+                        self._diff_file_path = new_path
                         break
-                    if _fallback is None:
-                        _fallback = candidate
+                    continue
+                m_old = _DIFF_OLD_RE.match(stripped)
+                if m_old:
+                    old_path = m_old.group(2) or None  # None when /dev/null
+                    if old_path and _fallback is None:
+                        _fallback = old_path
                     continue
                 # Rendered "old_path → new_path" format (from render_captured_diff_preview)
                 m2 = _DIFF_ARROW_RE.match(stripped)
@@ -1469,12 +1471,14 @@ class StreamingToolBlock(ToolBlock):
         self._last_line_time: float = 0.0
         self._flush_slow: bool = False       # True when idle≥2s, running at 10Hz
         self._microcopy_widget: "Static | None" = None
-        # B2: rate tracking — (monotonic_time, byte_count) samples, last 20
-        self._rate_samples: deque[tuple[float, int]] = deque(maxlen=20)
+        # B2: rate tracking — (monotonic_time, byte_count) samples
+        self._rate_samples: deque[tuple[float, int]] = deque(maxlen=60)
         # B2: last HTTP status line seen in WEB streams
         self._last_http_status: str | None = None
         # C2: tail-follow mode — when True, re-render window to latest lines every 5 appends
         self._follow_tail: bool = False
+        # P1-4: tick-based shimmer phase for AGENT category (prevents teleport on busy loop)
+        self._shimmer_phase: float = 0.0
 
     def compose(self) -> ComposeResult:
         yield self._header
@@ -1763,7 +1767,14 @@ class StreamingToolBlock(ToolBlock):
             rate_bps=self._bytes_per_second(),    # B2: transfer rate
         )
         reduced_motion = getattr(getattr(self, "app", None), "_reduced_motion", False)  # D2
-        text = microcopy_line(spec, state, reduced_motion=reduced_motion)
+        # Advance shimmer phase by constant delta (avoids wall-clock jump on busy loop)
+        try:
+            from hermes_cli.tui.tool_category import ToolCategory as _TC
+            if spec.category == _TC.AGENT:
+                self._shimmer_phase = (self._shimmer_phase + 0.05) % 2.0
+        except Exception:
+            pass
+        text = microcopy_line(spec, state, reduced_motion=reduced_motion, shimmer_phase=self._shimmer_phase)
         if text:
             self._body.set_microcopy(text)
 
@@ -1868,25 +1879,25 @@ class StreamingToolBlock(ToolBlock):
             show_top = visible_start > 0
             if self._omission_bar_top.display != show_top:
                 self._omission_bar_top.display = show_top
-            if show_top:
-                self._omission_bar_top.set_counts(
-                    visible_start=visible_start,
-                    visible_end=visible_end,
-                    total=total,
-                    above=visible_start,
-                )
+            # Always update counts (not just when visible) so labels are current
+            # when bar becomes visible again after being hidden.
+            self._omission_bar_top.set_counts(
+                visible_start=visible_start,
+                visible_end=visible_end,
+                total=total,
+                above=visible_start,
+            )
 
         if self._omission_bar_bottom_mounted and self._omission_bar_bottom is not None:
             show_bottom = visible_end < total
             if self._omission_bar_bottom.display != show_bottom:
                 self._omission_bar_bottom.display = show_bottom
-            if show_bottom:
-                self._omission_bar_bottom.set_counts(
-                    visible_start=visible_start,
-                    visible_end=visible_end,
-                    total=total,
-                    below=total - visible_end,
-                )
+            self._omission_bar_bottom.set_counts(
+                visible_start=visible_start,
+                visible_end=visible_end,
+                total=total,
+                below=total - visible_end,
+            )
 
     # ------------------------------------------------------------------
     # Override copy_content to return all plain lines, not just visible

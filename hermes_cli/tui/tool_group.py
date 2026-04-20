@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING
 
 from rich.text import Text
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Static
@@ -200,6 +201,10 @@ class ToolGroup(Widget):
 
     collapsed: reactive[bool] = reactive(False, layout=True)
 
+    BINDINGS = [
+        Binding("shift+enter", "peek_focused", "peek focused", show=False),
+    ]
+
     def __init__(
         self,
         group_id: str,
@@ -276,6 +281,26 @@ class ToolGroup(Widget):
             children = list(self._body.children)
             if children:
                 children[-1].focus()
+
+    def action_peek_focused(self) -> None:
+        """Expand only the focused child panel; collapse all others."""
+        from hermes_cli.tui.tool_panel import ToolPanel as _TP
+        if self._body is None:
+            return
+        panels = [c for c in self._body.children if isinstance(c, _TP)]
+        if not panels:
+            return
+        # Expand group if collapsed
+        if self.collapsed:
+            self.collapsed = False
+        focused = [
+            p for p in panels
+            if p.has_focus or any(c.has_focus for c in p.walk_children())
+        ]
+        if not focused:
+            focused = panels[:1]  # fallback: expand first
+        for p in panels:
+            p.collapsed = (p not in focused)
 
     def recompute_aggregate(self) -> None:
         """Recompute header from children's result data (v4 §4.3)."""
@@ -405,11 +430,16 @@ def _share_dir_prefix(path_a: str, path_b: str, depth: int = 2) -> bool:
 def _find_diff_target(siblings: list[Widget]) -> Widget | None:
     diff_tools = {"patch", "write_file", "create_file"}
     now = time.monotonic()
+    try:
+        from hermes_cli.config import read_raw_config
+        attach_window = float(read_raw_config().get("display", {}).get("diff_attach_window_s", 15.0))
+    except Exception:
+        attach_window = 15.0
     for panel in reversed(siblings):
         tool_name = getattr(panel, "_tool_name", "")
         if tool_name in diff_tools:
             completed = getattr(panel, "_completed_at", None)
-            if completed is None or (now - completed) < 10.0:
+            if completed is None or (now - completed) < attach_window:
                 return panel
     return None
 
@@ -547,12 +577,17 @@ def _find_rule_match(
         chained = any(m in prev_cmd for m in ("&&", "||", ";", "|"))
         prev_start = getattr(prev, "_start_time", None)
         new_start = getattr(new_panel, "_start_time", None)
-        within_250ms = (
+        try:
+            from hermes_cli.config import read_raw_config
+            pipeline_ms = int(read_raw_config().get("display", {}).get("shell_pipeline_ms", 500))
+        except Exception:
+            pipeline_ms = 500
+        within_window = (
             prev_start is not None
             and new_start is not None
-            and abs(new_start - prev_start) < 0.250
+            and abs(new_start - prev_start) < pipeline_ms / 1000.0
         )
-        if within_250ms or chained:
+        if within_window or chained:
             return prev, RULE_SHELL_PIPE
 
     # Rule 3b: Search batch

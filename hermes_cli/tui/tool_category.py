@@ -317,6 +317,14 @@ def _resolve_icon(spec: ToolSpec, nerd_font: bool) -> str:
 
 def resolve_icon_final(spec: ToolSpec, nerd_font: bool) -> str:
     """Canonical public entry point for all icon resolution (v4 §6.1, §9)."""
+    # P2-8: emoji mode degrades to ascii_fallback (header slot is 1 cell wide)
+    try:
+        from agent.display import get_tool_icon_mode  # type: ignore[import]
+        if get_tool_icon_mode() == "emoji":
+            defaults = _CATEGORY_DEFAULTS.get(spec.category)
+            return defaults.ascii_fallback if defaults else "?"
+    except Exception:
+        pass
     if spec.provenance and spec.provenance.startswith("mcp:"):
         if not (nerd_font and spec.icon_nf) and not (not nerd_font and spec.icon_ascii):
             server = spec.provenance.split(":", 1)[1]
@@ -464,6 +472,8 @@ _SEED_SPECS: list[ToolSpec] = [
     ToolSpec(name="delegate",           category=_AGENT,  primary_arg="task",        primary_result="done",    streaming=False),
     ToolSpec(name="vision",             category=_VISION, primary_arg="image_path",  primary_result="lines",   streaming=False),
     ToolSpec(name="vision_analyze",     category=_VISION, primary_arg="image_path",  primary_result="lines",   streaming=False),
+    ToolSpec(name="view_image",         category=_VISION, primary_arg="image_path",  primary_result="lines",   streaming=False),
+    ToolSpec(name="analyze_image",      category=_VISION, primary_arg="image_path",  primary_result="lines",   streaming=False),
 ]
 
 

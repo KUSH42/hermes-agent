@@ -452,6 +452,7 @@ class TestSDFCrossfadeWarmup:
         cfg = DrawilleOverlayCfg(enabled=True)
         ov._stop_anim = MagicMock()
         ov.remove_class = MagicMock()
+        ov.add_class("-visible")   # must be visible for hide() to act
         ov.hide(cfg)
         assert ov._sdf_warmup_instance is None
         assert ov._sdf_crossfade is None

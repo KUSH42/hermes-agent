@@ -459,6 +459,7 @@ def test_fade_in_decrements_fade_step():
     ov.gradient = False
     ov._resolved_color = "#ff6600"
     ov._fade_step = 3
+    ov._fade_state = "in"
     ov.add_class("-visible")
     ov.update = MagicMock()
 
@@ -566,23 +567,35 @@ def test_preview_end_noop_when_agent_running():
 
 
 def test_save_calls_config_helpers():
-    """[Save] calls read_raw_config and save_config."""
+    """[Save] fallback path calls read_raw_config and save_config when _persist_anim_config unavailable."""
     with patch("hermes_cli.tui.drawille_overlay._overlay_config",
                return_value=DrawilleOverlayCfg(enabled=True)):
         panel = AnimConfigPanel()
 
+    # Force fallback by making app._persist_anim_config raise
     fake_app = MagicMock()
-    panel._app = fake_app
+    fake_app._persist_anim_config.side_effect = AttributeError("no persist")
+    _orig_app = AnimConfigPanel.__dict__.get("app", None)
+    type(panel).app = property(lambda self: fake_app)
 
-    with patch("hermes_cli.tui.drawille_overlay._overlay_config",
-               return_value=DrawilleOverlayCfg(enabled=True)), \
-         patch("hermes_cli.config.read_raw_config", return_value={}) as mock_read, \
-         patch("hermes_cli.config.save_config") as mock_save, \
-         patch("hermes_cli.config._set_nested") as mock_nested:
-        panel._do_save()
-    mock_read.assert_called_once()
-    mock_nested.assert_called_once()
-    mock_save.assert_called_once()
+    try:
+        with patch("hermes_cli.tui.drawille_overlay._overlay_config",
+                   return_value=DrawilleOverlayCfg(enabled=True)), \
+             patch("hermes_cli.config.read_raw_config", return_value={}) as mock_read, \
+             patch("hermes_cli.config.save_config") as mock_save, \
+             patch("hermes_cli.config._set_nested") as mock_nested:
+            panel._do_save()
+        mock_read.assert_called_once()
+        mock_nested.assert_called_once()
+        mock_save.assert_called_once()
+    finally:
+        if _orig_app is None:
+            try:
+                del AnimConfigPanel.app
+            except AttributeError:
+                pass
+        else:
+            AnimConfigPanel.app = _orig_app
 
 
 def test_open_adds_open_class():

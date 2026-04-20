@@ -126,9 +126,20 @@ Then load only the focused reference you need:
 
 ## Validation
 
-Last revalidated: **2026-04-20. ~2467+ total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
+Last revalidated: **2026-04-20. ~2519+ total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
 
 Recent changes (details → reference files):
+- **Slash command TUI overhaul — Phases 1–3** (2026-04-20): Full rework of slash command registry, completion, and overlay system. 52 new tests.
+  **Phase 1 — Registry & escape fix:** `CommandDef` gains `tui_only: bool = False` + `keybind_hint: str = ""` fields. `/compact` + `/sessions` registered as `tui_only=True`. `/anim` + `/workspace` marked `tui_only=True`. `_is_gateway_available()` excludes `tui_only` commands from all gateway surfaces. `tui_help_lines()` helper returns all non-gateway-only commands (incl. `tui_only` + `cli_only`). Escape handler in `on_key` now includes `SessionOverlay` in dismiss loop. Unknown-command flash: `_handle_tui_command` shows "Unknown command — try /help" for unrecognised bare `/word`.
+  **Phase 2 — Subcommand completion:** `SLASH_SUBCOMMAND = 6` added to `CompletionContext` enum. `CompletionTrigger` gains `parent_command: str = ""`. `_SLASH_SUBCMD_RE` checked before `_SLASH_RE` in `detect_context`. `SlashCandidate` gains `args_hint`, `category`, `keybind_hint` fields. `HermesInput` gains `_slash_subcommands`, `_slash_args_hints`, `_slash_keybind_hints` dicts + setters. `_show_subcommand_completions(parent_cmd, fragment)` added. `action_accept_autocomplete` splices only the fragment (preserves parent prefix). `_populate_slash_commands` excludes `gateway_only` commands.
+  **Phase 3 — Display & overlay polish:** `CommandsOverlay._refresh_content` calls `tui_help_lines()` (not `gateway_help_lines()`); refresh called on every open. `q` binding: `HelpOverlay` demoted to `priority=False`; `UsageOverlay`/`CommandsOverlay`/`ModelOverlay`/`WorkspaceOverlay` remove `q` entirely (Escape via `on_key` Priority -2 handles dismiss). `SlashDescPanel._on_candidate` renders `/command [args_hint]` + description + dim `keybind_hint`. `HelpOverlay._refresh_commands_cache()` called after plugin registration via `HermesApp.refresh_slash_commands`.
+  Key gotchas: `CompletionTrigger` is `frozen=True, slots=True` — new fields need defaults. `_SLASH_SUBCMD_RE` must be checked BEFORE `_SLASH_RE` (longer match wins). `tui_only` and `gateway_only` are mutually exclusive — a command is either TUI-only or gateway-only, never both.
+  → `hermes_cli/commands.py §CommandDef/tui_help_lines`, `hermes_cli/tui/completion_context.py §SLASH_SUBCOMMAND`,
+    `hermes_cli/tui/input_widget.py §_show_subcommand_completions/action_accept_autocomplete`,
+    `hermes_cli/tui/path_search.py §SlashCandidate`, `hermes_cli/tui/overlays.py §HelpOverlay/CommandsOverlay`,
+    `hermes_cli/tui/completion_overlay.py §SlashDescPanel`, `hermes_cli/tui/app.py §_handle_tui_command/on_key`,
+    `tests/tui/test_slash_subcommand_completion.py` (new), `tests/tui/test_slash_command_overlays.py`,
+    `tests/hermes_cli/test_commands.py`
 - **AssistantNameplate** (2026-04-20): `AssistantNameplate(Widget)` + `_NPChar` dataclass + `_NPState` enum appended to `widgets.py`.
   State machine: `STARTUP→IDLE→MORPH_TO_ACTIVE→ACTIVE_IDLE→GLITCH→MORPH_TO_IDLE→ERROR_FLASH`.
   Decrypt reveal: per-char `lock_at = 2 + i*2 + randint(-1,1)` ticks at 20fps (~0.6s for "Hermes").
@@ -154,11 +165,26 @@ Recent changes (details → reference files):
     `hermes_cli/config.py §display.nameplate_*`,
     `cli.py §_nameplate_*/app._nameplate_*`,
     `tests/tui/test_nameplate.py` (new, 39 tests)
-- **Input/Completion UX** (2026-04-20): slash descriptions, dir preview, placeholder, responsive overlay.
+- **Input/Completion UX** (2026-04-20): 16 issues (A1–D4) fully implemented. Key invariants:
+  - A1: `HermesInput._idle_placeholder` stores default text; `app.py` restores via `getattr(w, "_idle_placeholder", "")` not `""`.
+  - A2: ghost text works in multiline mode — matches last line of input via `rsplit("\n",1)[-1]`.
+  - A3: `HermesApp._completion_hint: reactive[str]` watched by StatusBar; `_show_completion_overlay` sets it, `_hide_completion_overlay` clears it; ghost text cleared on show and restored on hide.
+  - A4: `ctrl+shift+up/down` changes `_input_height_override` (3–10); resets on submit.
+  - A5: `_history_load(text)` uses `self.replace()` not `load_text()` to preserve undo ring.
+  - B1: `SlashDescPanel(RichLog)` in `completion_overlay.py` watches `app.highlighted_candidate`; `SlashCandidate.description` field; `set_slash_descriptions(dict)` on HermesInput.
+  - B2: `_last_slash_hint_fragment` debounces flash — only resets on `action_submit()`, NOT on `_hide_completion_overlay()`.
+  - C2: `_maybe_schedule_auto_close()` has no length guard (removed `len >= 4` threshold).
+  - C3: `_move_highlight` uses `max(0, min(n-1, h+delta))` clamp, not `%` wrap.
+  - C4: `HermesApp._path_search_ignore: frozenset|None = None`. `_walk` uses `ignore if ignore is not None else {defaults}` — do NOT use `ignore or {defaults}` (empty frozenset is falsy). Config key: `terminal.path_search_ignore`.
+  - C5: `_styled_candidate` appends `→ insert_text` dim suffix when `insert_text != display` and `not selected`.
+  - D1: `_load_preview` checks `path.is_dir()` first; shows sorted listing (dirs-first) with `d `/`  ` ASCII prefix, 40-entry cap, `PlainReady` message.
+  - D3: `_hex_luminance(hex)` helper in `preview_panel.py` — do NOT import from `animation.py`.
+  - D4: `_update_overflow_badge` uses `self.size.height` (with `or 13` fallback); `on_resize` calls it.
   → `hermes_cli/tui/input_widget.py`, `hermes_cli/tui/completion_list.py`,
-    `hermes_cli/tui/preview_panel.py`, `hermes_cli/tui/app.py`, `hermes_cli/tui/widgets.py`,
+    `hermes_cli/tui/completion_overlay.py`, `hermes_cli/tui/preview_panel.py`,
+    `hermes_cli/tui/path_search.py`, `hermes_cli/tui/app.py`, `hermes_cli/tui/widgets.py`,
     `hermes_cli/config.py`, `cli.py`, `tests/tui/test_completion_p0.py`,
-    `tests/tui/test_input_completion_ux.py`
+    `tests/tui/test_input_completion_ux.py` (69 tests)
 - **TGP unicode placeholder detection fix** (2026-04-20): `_supports_unicode_placeholders()` was too
   strict — only accepted `TERM=xterm-kitty`, missing the `TERM_PROGRAM=kitty` path used by many Kitty
   installs. Result: `get_caps()` → `TGP` (via `TERM_PROGRAM=kitty`) but placeholder check → `False`

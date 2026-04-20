@@ -456,3 +456,64 @@ def test_show_recent_sessions_uses_cprint_not_print():
     import cli as _cli_module
     src = inspect.getsource(_cli_module.HermesCLI._show_recent_sessions)
     assert "print(" not in src.replace("_cprint(", "")
+
+
+# ---------------------------------------------------------------------------
+# Phase 1: SessionOverlay escape fix (Tests 6–9)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_session_overlay_escape_closes():
+    """Test 6: SessionOverlay visible → Escape → not visible."""
+    app = _make_app()
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        from hermes_cli.tui.overlays import SessionOverlay
+        session_overlay = app.query_one(SessionOverlay)
+        session_overlay.add_class("--visible")
+        await pilot.pause()
+        assert session_overlay.has_class("--visible")
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not session_overlay.has_class("--visible")
+
+
+@pytest.mark.asyncio
+async def test_session_overlay_escape_restores_focus():
+    """Test 7: After close via Escape, HermesInput has focus."""
+    app = _make_app()
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        from hermes_cli.tui.overlays import SessionOverlay
+        from hermes_cli.tui.input_widget import HermesInput
+        session_overlay = app.query_one(SessionOverlay)
+        session_overlay.add_class("--visible")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        assert inp.has_focus
+
+
+@pytest.mark.asyncio
+async def test_compact_command_triggers_density_toggle():
+    """Test 8: /compact submit calls action_toggle_density()."""
+    app = _make_app()
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        with patch.object(app, "action_toggle_density") as mock_toggle:
+            result = app._handle_tui_command("/compact")
+        assert result is True
+        mock_toggle.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_sessions_command_opens_overlay():
+    """Test 9: /sessions submit calls action_open_sessions()."""
+    app = _make_app()
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        with patch.object(app, "action_open_sessions") as mock_open:
+            result = app._handle_tui_command("/sessions")
+        assert result is True
+        mock_open.assert_called_once()

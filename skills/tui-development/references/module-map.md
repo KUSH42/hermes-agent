@@ -35,6 +35,7 @@ HermesApp
 ├── CompletionOverlay → VirtualCompletionList + PreviewPanel
 ├── ImageBar                             (user-attached file thumbnails)
 ├── InlineImageBar                       (model inline image thumbnails)
+├── AssistantNameplate              (animated name between OutputPanel and HintBar)
 ├── HistorySearchOverlay
 ├── HelpOverlay / UsageOverlay / CommandsOverlay / ModelOverlay / WorkspaceOverlay
 ├── KeymapOverlay
@@ -74,7 +75,7 @@ High-signal flow:
   `ImageBar`, `ClarifyWidget`, `ApprovalWidget`, `SudoWidget`, `SecretWidget`,
   `UndoConfirmOverlay`, `TurnCandidate`, `TurnResultItem`, `KeymapOverlay`, `HistorySearchOverlay`,
   `FPSCounter`, `TTEWidget`, `InlineImage`, `MathBlockWidget`, `InlineThumbnail`, `InlineImageBar`,
-  `StartupBannerWidget`, `SeekBar`, `InlineMediaWidget`.
+  `StartupBannerWidget`, `SeekBar`, `InlineMediaWidget`, `SourcesBar`, `AssistantNameplate`.
 
 - **`hermes_cli/tui/tool_blocks.py`**
   `ToolHeader`, `ToolBodyContainer`, `ToolBlock`, `OmissionBar`, `ToolTail`, `StreamingToolBlock`.

@@ -119,14 +119,46 @@ Then load only the focused reference you need:
 - `hermes_cli/tui/tooltip.py` with any widget gaining `TooltipMixin`; touches `hermes.tcss §Screen layers`
 - `hermes_cli/tui/workspace_tracker.py` with `tests/tui/test_workspace_tracker.py`
   and `tests/tui/test_workspace_overlay.py`
+- `hermes_cli/tui/widgets.py §AssistantNameplate` with `tests/tui/test_nameplate.py`;
+  also touches `app.py`, `hermes.tcss`, `theme_manager.py`, `config.py`, `cli.py`
 - `cli.py` TUI bridge code with `tests/cli/test_reasoning_tui_bridge.py` or
   other bridge tests
 
 ## Validation
 
-Last revalidated: **2026-04-20. ~2428+ total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility). Added `test_partial_chunk_migrated_to_new_panel`; fixed `:not()` CSS crash in `completion_overlay.py`.
+Last revalidated: **2026-04-20. ~2467+ total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
 
 Recent changes (details → reference files):
+- **AssistantNameplate** (2026-04-20): `AssistantNameplate(Widget)` + `_NPChar` dataclass + `_NPState` enum appended to `widgets.py`.
+  State machine: `STARTUP→IDLE→MORPH_TO_ACTIVE→ACTIVE_IDLE→GLITCH→MORPH_TO_IDLE→ERROR_FLASH`.
+  Decrypt reveal: per-char `lock_at = 2 + i*2 + randint(-1,1)` ticks at 20fps (~0.6s for "Hermes").
+  Idle: delegates to `StreamEffectRenderer.render_tui(name, accent_hex, text_hex)` via
+  `make_stream_effect({"stream_effect": name})` — key is `"stream_effect"` NOT `"name"`.
+  Morph: `_init_morph(src, dst)` cross-dissolves via `_morph_dissolve` countdown list; `done` flag
+  set only after decrement (NOT before — common bug: `done=False` before decrement misses locks).
+  ACTIVE_IDLE stops timer (`_stop_timer()`); glitch/morph restart it.
+  Error flash: 2 frames in `_NPState.ERROR_FLASH`; transitions via direct state assign (not
+  `transition_to_idle()` — avoids re-entrant error check and spurious `_set_timer_rate` call).
+  Timer: 20fps for STARTUP/MORPH/GLITCH/ERROR_FLASH; 6fps for IDLE; stopped during ACTIVE_IDLE.
+  App wiring: `compose()` yields `AssistantNameplate` between OutputPanel and HintBar using
+  `getattr(self, "_nameplate_*", default)` pattern; `watch_agent_running` and existing
+  `watch_spinner_label` (line ~1852) extended with `try/except NoMatches`. Config wired via
+  `app._nameplate_*` plain attrs set in `cli.py` before `compose()` (same pattern as `_math_enabled`).
+  TCSS: `$nameplate-idle-color`, `$nameplate-active-color`, `$nameplate-decrypt-color` declared as
+  literal colours (NOT `$var: $other_var` — Textual TCSS does not support variable-in-variable).
+  `COMPONENT_VAR_DEFAULTS` in `theme_manager.py` updated. 39 tests in `tests/tui/test_nameplate.py`.
+  → `hermes_cli/tui/widgets.py §AssistantNameplate/_NPChar/_NPState`,
+    `hermes_cli/tui/app.py §compose/watch_agent_running/watch_spinner_label`,
+    `hermes_cli/tui/hermes.tcss §$nameplate-*/AssistantNameplate`,
+    `hermes_cli/tui/theme_manager.py §COMPONENT_VAR_DEFAULTS`,
+    `hermes_cli/config.py §display.nameplate_*`,
+    `cli.py §_nameplate_*/app._nameplate_*`,
+    `tests/tui/test_nameplate.py` (new, 39 tests)
+- **Input/Completion UX** (2026-04-20): slash descriptions, dir preview, placeholder, responsive overlay.
+  → `hermes_cli/tui/input_widget.py`, `hermes_cli/tui/completion_list.py`,
+    `hermes_cli/tui/preview_panel.py`, `hermes_cli/tui/app.py`, `hermes_cli/tui/widgets.py`,
+    `hermes_cli/config.py`, `cli.py`, `tests/tui/test_completion_p0.py`,
+    `tests/tui/test_input_completion_ux.py`
 - **TGP unicode placeholder detection fix** (2026-04-20): `_supports_unicode_placeholders()` was too
   strict — only accepted `TERM=xterm-kitty`, missing the `TERM_PROGRAM=kitty` path used by many Kitty
   installs. Result: `get_caps()` → `TGP` (via `TERM_PROGRAM=kitty`) but placeholder check → `False`

@@ -709,3 +709,14 @@ ToolsScreen > #tools-footer {
 SourcesBar {
     margin-top: 1;
 }
+
+$nameplate-idle-color: #888888;
+$nameplate-active-color: #7b68ee;
+$nameplate-decrypt-color: #00ff41;
+
+AssistantNameplate {
+    height: 1;
+    width: 1fr;
+    padding: 0 1;
+    background: transparent;
+}

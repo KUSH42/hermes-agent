@@ -167,6 +167,10 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     "browse-tool":  "#2196f3",
     "browse-diff":  "#e040fb",
     "browse-media": "#00bcd4",
+    # AssistantNameplate animation colors
+    "nameplate-idle-color":    "#888888",
+    "nameplate-active-color":  "#7b68ee",
+    "nameplate-decrypt-color": "#00ff41",
 }
 
 

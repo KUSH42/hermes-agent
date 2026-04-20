@@ -5703,3 +5703,328 @@ class SourcesBar(Widget):
             import subprocess
             opener = "open" if sys.platform == "darwin" else "xdg-open"
             subprocess.Popen([opener, url])
+
+
+# ---------------------------------------------------------------------------
+# AssistantNameplate
+# ---------------------------------------------------------------------------
+
+import enum
+import math
+import random as _random
+from dataclasses import field as _dc_field
+
+from hermes_cli.stream_effects import (
+    VALID_EFFECTS,
+    StreamEffectRenderer,
+    make_stream_effect,
+)
+
+
+@dataclass
+class _NPChar:
+    target: str
+    current: str
+    locked: bool
+    lock_at: int
+    style: Style
+
+
+class _NPState(enum.Enum):
+    STARTUP = "startup"
+    IDLE = "idle"
+    MORPH_TO_ACTIVE = "morph_to_active"
+    ACTIVE_IDLE = "active_idle"
+    GLITCH = "glitch"
+    MORPH_TO_IDLE = "morph_to_idle"
+    ERROR_FLASH = "error_flash"
+
+
+_NP_POOL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*"
+_NP_DECRYPT_COLOR = Style.parse("bold #00ff41")
+_NP_IDLE_COLOR = Style.parse("#888888")
+_NP_ACTIVE_COLOR = Style.parse("bold #7b68ee")
+_NP_ERROR_COLOR = Style.parse("bold red")
+_NP_DIM_COLOR = Style.parse("dim #888888")
+
+
+class AssistantNameplate(Widget):
+    """Animated assistant name above the input bar."""
+
+    DEFAULT_CSS = """
+    AssistantNameplate {
+        height: 1;
+        width: 1fr;
+        padding: 0 1;
+        background: transparent;
+    }
+    """
+
+    def __init__(
+        self,
+        name: str = "Hermes",
+        effects_enabled: bool = True,
+        idle_effect: str = "shimmer",
+        morph_speed: float = 1.0,
+        glitch_enabled: bool = True,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._target_name = name
+        self._active_label = "● thinking"
+        self._state = _NPState.STARTUP
+        self._frame: list[_NPChar] = []
+        self._tick = 0
+        self._timer = None
+        self._effects_enabled = effects_enabled
+        self._idle_effect_name = idle_effect
+        self._morph_speed = morph_speed
+        self._glitch_enabled = glitch_enabled
+        self._idle_fx: StreamEffectRenderer | None = None
+        self._glitch_frame = 0
+        self._error_frame = 0
+        self._last_was_error = False
+        self._accent_hex = "#7b68ee"
+        self._text_hex = "#cccccc"
+        # morph state
+        self._morph_src = ""
+        self._morph_dst = ""
+        self._morph_dissolve: list[int] = []  # ticks remaining per position
+
+    def on_mount(self) -> None:
+        try:
+            css_vars = self.app.get_css_variables()
+            self._accent_hex = css_vars.get("nameplate-active-color", "#7b68ee")
+            self._text_hex = css_vars.get("foreground", "#cccccc")
+        except Exception:
+            pass
+        if not self._effects_enabled:
+            return
+        idle_name = self._idle_effect_name
+        if idle_name not in VALID_EFFECTS:
+            _LOG.warning(
+                "nameplate_idle_effect %r not in VALID_EFFECTS; falling back to shimmer",
+                idle_name,
+            )
+            idle_name = "shimmer"
+        if idle_name != "none":
+            self._idle_fx = make_stream_effect({"stream_effect": idle_name})
+        self._init_decrypt()
+        self._timer = self.set_interval(1 / 20, self._advance)
+
+    def on_unmount(self) -> None:
+        if self._timer:
+            self._timer.stop()
+            self._timer = None
+
+    # --- public API ---
+
+    def transition_to_active(self, label: str = "● thinking") -> None:
+        self._active_label = label
+        if self._state == _NPState.MORPH_TO_IDLE:
+            self._snap_to_idle()
+        self._state = _NPState.MORPH_TO_ACTIVE
+        self._init_morph(self._target_name, self._active_label)
+        self._set_timer_rate(20)
+
+    def transition_to_idle(self) -> None:
+        if self._last_was_error:
+            self._last_was_error = False
+            self._state = _NPState.ERROR_FLASH
+            self._error_frame = 0
+            self._set_timer_rate(20)
+            return
+        if self._state == _NPState.MORPH_TO_ACTIVE:
+            self._snap_to_active()
+        self._state = _NPState.MORPH_TO_IDLE
+        self._init_morph(self._active_label, self._target_name)
+        self._set_timer_rate(20)
+
+    def glitch(self) -> None:
+        if self._state != _NPState.ACTIVE_IDLE or not self._glitch_enabled:
+            return
+        self._state = _NPState.GLITCH
+        self._glitch_frame = 0
+        self._set_timer_rate(20)
+
+    def set_active_label(self, label: str) -> None:
+        self._active_label = label
+        if self._state == _NPState.ACTIVE_IDLE:
+            self._init_frame_for(label, active_style=True)
+
+    def mark_error(self) -> None:
+        self._last_was_error = True
+
+    # --- render ---
+
+    def render(self) -> Text:
+        if not self._effects_enabled:
+            return Text(self._target_name)
+        if self._state == _NPState.IDLE:
+            if self._idle_fx is not None:
+                try:
+                    return self._idle_fx.render_tui(
+                        self._target_name, self._accent_hex, self._text_hex
+                    )
+                except Exception:
+                    pass
+            return Text(self._target_name, style=_NP_IDLE_COLOR)
+        if self._state == _NPState.ERROR_FLASH:
+            return Text(self._target_name, style=_NP_ERROR_COLOR)
+        t = Text()
+        for ch in self._frame:
+            t.append(ch.current, style=ch.style)
+        return t
+
+    # --- advance ---
+
+    def _advance(self) -> None:
+        self._tick += 1
+        if self._state == _NPState.STARTUP:
+            self._tick_startup()
+        elif self._state == _NPState.IDLE:
+            self._tick_idle()
+        elif self._state in (_NPState.MORPH_TO_ACTIVE, _NPState.MORPH_TO_IDLE):
+            self._tick_morph()
+        elif self._state == _NPState.GLITCH:
+            self._tick_glitch()
+        elif self._state == _NPState.ERROR_FLASH:
+            self._tick_error_flash()
+        # ACTIVE_IDLE: timer is stopped; this branch unreachable
+        self.refresh()
+
+    def _tick_startup(self) -> None:
+        all_locked = True
+        for ch in self._frame:
+            if ch.locked:
+                continue
+            if self._tick >= ch.lock_at:
+                ch.current = ch.target
+                ch.locked = True
+                ch.style = _NP_IDLE_COLOR
+            else:
+                ch.current = _random.choice(_NP_POOL)
+                ch.style = _NP_DECRYPT_COLOR
+                all_locked = False
+        if all_locked and self._frame:
+            self._state = _NPState.IDLE
+            self._set_timer_rate(6)
+
+    def _tick_idle(self) -> None:
+        if self._idle_fx is not None:
+            try:
+                self._idle_fx.tick_tui()
+            except Exception:
+                pass
+
+    def _tick_morph(self) -> None:
+        dst_style = _NP_ACTIVE_COLOR if self._state == _NPState.MORPH_TO_ACTIVE else _NP_IDLE_COLOR
+        done = True
+        for i, ch in enumerate(self._frame):
+            if ch.locked:
+                continue
+            self._morph_dissolve[i] -= 1
+            if self._morph_dissolve[i] <= 0:
+                ch.current = ch.target
+                ch.locked = True
+                ch.style = dst_style
+            else:
+                ch.current = _random.choice(_NP_POOL)
+                ch.style = _NP_DIM_COLOR
+                done = False
+        if done:
+            if self._state == _NPState.MORPH_TO_ACTIVE:
+                self._state = _NPState.ACTIVE_IDLE
+                self._stop_timer()
+            else:
+                self._state = _NPState.IDLE
+                self._set_timer_rate(6)
+
+    def _tick_glitch(self) -> None:
+        self._glitch_frame += 1
+        if self._glitch_frame <= 2:
+            # corrupt 1-3 random positions
+            for _ in range(_random.randint(1, min(3, len(self._frame)))):
+                idx = _random.randrange(len(self._frame))
+                self._frame[idx].current = _random.choice(_NP_POOL)
+                self._frame[idx].style = _NP_DECRYPT_COLOR
+        elif self._glitch_frame == 3:
+            # partial restore
+            for ch in self._frame:
+                ch.current = ch.target
+                ch.style = _NP_ACTIVE_COLOR
+        else:
+            # fully clean; stop timer
+            for ch in self._frame:
+                ch.current = ch.target
+                ch.style = _NP_ACTIVE_COLOR
+            self._state = _NPState.ACTIVE_IDLE
+            self._stop_timer()
+
+    def _tick_error_flash(self) -> None:
+        self._error_frame += 1
+        if self._error_frame >= 3:
+            # transition directly to MORPH_TO_IDLE without re-entering transition_to_idle
+            self._state = _NPState.MORPH_TO_IDLE
+            self._init_morph(self._active_label, self._target_name)
+            # timer stays at 20fps
+
+    # --- helpers ---
+
+    def _init_decrypt(self) -> None:
+        self._frame = []
+        for i, ch in enumerate(self._target_name):
+            lock_at = 2 + i * 2 + _random.randint(-1, 1)
+            self._frame.append(_NPChar(
+                target=ch,
+                current=_random.choice(_NP_POOL),
+                locked=False,
+                lock_at=max(1, lock_at),
+                style=_NP_DECRYPT_COLOR,
+            ))
+        self._tick = 0
+
+    def _init_morph(self, src: str, dst: str) -> None:
+        self._morph_src = src
+        self._morph_dst = dst
+        length = max(len(src), len(dst))
+        ticks_base = max(1, int(round(8 * self._morph_speed)))
+        self._frame = []
+        self._morph_dissolve = []
+        for i in range(length):
+            s_ch = src[i] if i < len(src) else " "
+            d_ch = dst[i] if i < len(dst) else " "
+            ticks = ticks_base + _random.randint(-2, 2)
+            ticks = max(1, ticks)
+            self._frame.append(_NPChar(
+                target=d_ch,
+                current=s_ch,
+                locked=(s_ch == d_ch),
+                lock_at=ticks,
+                style=_NP_ACTIVE_COLOR if self._state == _NPState.MORPH_TO_ACTIVE else _NP_IDLE_COLOR,
+            ))
+            self._morph_dissolve.append(ticks)
+
+    def _snap_to_idle(self) -> None:
+        self._init_frame_for(self._target_name, active_style=False)
+
+    def _snap_to_active(self) -> None:
+        self._init_frame_for(self._active_label, active_style=True)
+
+    def _init_frame_for(self, text: str, *, active_style: bool = False) -> None:
+        style = _NP_ACTIVE_COLOR if active_style else _NP_IDLE_COLOR
+        self._frame = [
+            _NPChar(target=ch, current=ch, locked=True, lock_at=0, style=style)
+            for ch in text
+        ]
+        self._morph_dissolve = [0] * len(self._frame)
+
+    def _set_timer_rate(self, fps: int) -> None:
+        if self._timer:
+            self._timer.stop()
+        self._timer = self.set_interval(1 / fps, self._advance)
+
+    def _stop_timer(self) -> None:
+        if self._timer:
+            self._timer.stop()
+            self._timer = None

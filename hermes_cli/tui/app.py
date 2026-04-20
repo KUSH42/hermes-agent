@@ -94,6 +94,7 @@ from hermes_cli.tui.widgets import (
     UndoConfirmOverlay,
     UserMessagePanel,
     VoiceStatusBar,
+    AssistantNameplate,
     _fps_hud_enabled,
     _safe_widget_call,
 )
@@ -532,6 +533,14 @@ class HermesApp(App):
             yield SudoWidget(id="sudo")
             yield SecretWidget(id="secret")
             yield UndoConfirmOverlay(id="undo-confirm")
+        yield AssistantNameplate(
+            id="nameplate",
+            name=getattr(self, "_nameplate_name", "Hermes"),
+            effects_enabled=getattr(self, "_nameplate_effects", True),
+            idle_effect=getattr(self, "_nameplate_idle_effect", "shimmer"),
+            morph_speed=getattr(self, "_nameplate_morph_speed", 1.0),
+            glitch_enabled=getattr(self, "_nameplate_glitch", True),
+        )
         yield HintBar(id="hint-bar")
         yield InlineImageBar(id="inline-image-bar")
         yield ImageBar(id="image-bar")
@@ -1628,6 +1637,16 @@ class HermesApp(App):
             except NoMatches:
                 pass
 
+        # --- nameplate ---
+        try:
+            np = self.query_one("#nameplate", AssistantNameplate)
+            if value:
+                np.transition_to_active(label=self.spinner_label or "● thinking")
+            else:
+                np.transition_to_idle()
+        except NoMatches:
+            pass
+
         # --- undo safety guard ---
         if value and self.undo_state is not None:
             # Agent started while undo overlay was open — auto-cancel for safety
@@ -1854,6 +1873,14 @@ class HermesApp(App):
             self.status_active_file = ""
             if self.agent_running:
                 self._set_chevron_phase("--phase-stream")
+        # nameplate: glitch + label update on non-empty spinner_label
+        if value:
+            try:
+                np = self.query_one("#nameplate", AssistantNameplate)
+                np.glitch()
+                np.set_active_label(f"▸ {value[:16]}")
+            except NoMatches:
+                pass
 
     @property
     def choice_overlay_active(self) -> bool:

@@ -511,6 +511,11 @@ DEFAULT_CONFIG = {
             "color": "#00ff66",
             "total_duration_s": 3.0,
         },
+        "nameplate_effects": True,           # master switch for AssistantNameplate animations
+        "nameplate_idle_effect": "shimmer",  # idle animation: any VALID_EFFECTS value
+        "nameplate_morph_speed": 1.0,        # morph transition speed multiplier
+        "nameplate_glitch": True,            # glitch spike on tool-call transitions
+        "nameplate_name": "Hermes",          # display name
         "browse_markers": {
             "enabled": True,              # gutter pips + corner badges
             "reasoning": True,            # apply pips/badges inside ReasoningPanel

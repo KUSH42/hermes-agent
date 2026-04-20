@@ -1655,6 +1655,12 @@ class HermesCLI:
         self._browse_minimap_default: bool = bool(_bm_cfg.get("minimap_default", False))
         self._browse_streaming_flash: bool = bool(_bm_cfg.get("streaming_flash", True))
         self._browse_turn_boundary_always: bool = bool(_bm_cfg.get("turn_boundary_always", True))
+        # AssistantNameplate config
+        self._nameplate_effects: bool = bool(CLI_CONFIG["display"].get("nameplate_effects", True))
+        self._nameplate_idle_effect: str = str(CLI_CONFIG["display"].get("nameplate_idle_effect", "shimmer"))
+        self._nameplate_morph_speed: float = float(CLI_CONFIG["display"].get("nameplate_morph_speed", 1.0))
+        self._nameplate_glitch: bool = bool(CLI_CONFIG["display"].get("nameplate_glitch", True))
+        self._nameplate_name: str = str(CLI_CONFIG["display"].get("nameplate_name", "Hermes"))
 
         # Streaming display state
         self._stream_buf = ""        # Partial line buffer for line-buffered rendering
@@ -10645,6 +10651,11 @@ class HermesCLI:
             _tui_app._browse_minimap_default = self._browse_minimap_default
             _tui_app._browse_streaming_flash = self._browse_streaming_flash
             _tui_app._browse_turn_boundary_always = self._browse_turn_boundary_always
+            _tui_app._nameplate_effects = self._nameplate_effects
+            _tui_app._nameplate_idle_effect = self._nameplate_idle_effect
+            _tui_app._nameplate_morph_speed = self._nameplate_morph_speed
+            _tui_app._nameplate_glitch = self._nameplate_glitch
+            _tui_app._nameplate_name = self._nameplate_name
             _tui_app._emoji_registry = getattr(self, "_emoji_registry", None)
             _tui_app._emoji_reasoning = getattr(self, "_emoji_reasoning", True)
             _tui_app._emoji_images_enabled = getattr(self, "_custom_emojis_enabled", True)

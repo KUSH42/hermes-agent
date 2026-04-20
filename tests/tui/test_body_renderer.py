@@ -81,3 +81,79 @@ def test_mcp_render_stream_line_passthrough():
     plain = "green"
     result = renderer.render_stream_line(raw, plain)
     assert isinstance(result, Text)
+
+
+# ---------------------------------------------------------------------------
+# SearchRenderer — web_search JSON formatting
+# ---------------------------------------------------------------------------
+
+
+def test_search_renderer_web_search_json_renders_title():
+    """web_search JSON with data.web → Text containing result titles."""
+    import json
+    from hermes_cli.tui.body_renderer import SearchRenderer
+
+    renderer = SearchRenderer()
+    payload = json.dumps({
+        "success": True,
+        "data": {
+            "web": [
+                {"url": "https://example.com", "title": "Example Site", "description": "An example"},
+                {"url": "https://test.org", "title": "Test Org", "description": "Testing"},
+            ]
+        }
+    })
+    result = renderer.finalize([payload])
+    assert result is not None
+    assert "Example Site" in result.plain
+    assert "Test Org" in result.plain
+
+
+def test_search_renderer_web_search_json_renders_url():
+    """web_search JSON result includes URLs."""
+    import json
+    from hermes_cli.tui.body_renderer import SearchRenderer
+
+    renderer = SearchRenderer()
+    payload = json.dumps({
+        "success": True,
+        "data": {"web": [{"url": "https://example.com", "title": "Ex", "description": ""}]}
+    })
+    result = renderer.finalize([payload])
+    assert result is not None
+    assert "https://example.com" in result.plain
+
+
+def test_search_renderer_web_search_json_truncates_long_description():
+    """Descriptions > 120 chars are truncated with ellipsis."""
+    import json
+    from hermes_cli.tui.body_renderer import SearchRenderer
+
+    renderer = SearchRenderer()
+    long_desc = "x" * 200
+    payload = json.dumps({
+        "success": True,
+        "data": {"web": [{"url": "https://a.com", "title": "T", "description": long_desc}]}
+    })
+    result = renderer.finalize([payload])
+    assert result is not None
+    assert "…" in result.plain
+
+
+def test_search_renderer_non_json_falls_back():
+    """Plain grep output (non-JSON) → fallback text rendering."""
+    from hermes_cli.tui.body_renderer import SearchRenderer
+
+    renderer = SearchRenderer()
+    result = renderer.finalize(["src/a.py:10: match", "src/b.py:20: match"])
+    assert result is not None
+    assert "src/a.py" in result.plain
+
+
+def test_search_renderer_empty_returns_none():
+    """Empty input → None."""
+    from hermes_cli.tui.body_renderer import SearchRenderer
+
+    renderer = SearchRenderer()
+    result = renderer.finalize([])
+    assert result is None

@@ -374,6 +374,30 @@ markup strings. Always escape brackets in labels unless you intend markup.
 
 To verify: `str(button.label)` returns empty string if the tag was consumed.
 
+## Pytest under rtk-ai/rtk
+
+`rtk-ai/rtk` intercepts all pytest CLI output and replaces it with compressed summaries. Symptoms:
+- `--collect-only` shows "No tests collected" even when tests exist
+- Normal runs show "Pytest: N passed" instead of full output
+- Failure details are in `~/.local/share/rtk/tee/<timestamp>_pytest.log`
+
+**Fix:** always run with `--override-ini="addopts="`:
+```
+python -m pytest <path> -q --override-ini="addopts="
+```
+For full failure detail: read the log path printed by rtk on failure.
+
+**In pilot tests:** `call_from_thread(...)` raises `RuntimeError` when called from the event-loop thread (which is what pilot tests run in). Use direct method calls instead: `app.open_streaming_tool_block(...)` not `app.call_from_thread(app.open_streaming_tool_block, ...)`.
+
+## web_search adjacent-mount (`_web_search_adj_anchor`)
+
+`MessagePanel` tracks `_web_search_adj_anchor: Widget | None` to ensure `search` sub-tool blocks appear directly after `web_search`, not after subsequent reasoning text.
+
+- Set to the `web_search` ToolPanel immediately before `_mount_nonprose_block` is called
+- Subsequent SEARCH-category tools (tool_name != "web_search") check this anchor; if set and still in `self.children`, they mount directly after it (before any reasoning text that arrived between)
+- After each adjacent mount, the anchor advances to the newly mounted panel (stacking multiple search sub-calls in order)
+- Anchor is implicitly reset per MessagePanel (fresh instance each turn)
+
 ## When to expand this file
 
 Add an entry only if it is:

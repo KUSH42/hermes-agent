@@ -1287,6 +1287,8 @@ class MessagePanel(Widget):
         self._user_text: str = user_text
         self._response_engine: "Any | None" = None   # ResponseFlowEngine, set in on_mount
         self._last_file_tool_block: "Any | None" = None   # tracks most-recent file-tool STB for diff connector
+        # adjacent-mount anchors: tool_name → most-recently-opened panel to mount siblings after
+        self._adj_anchors: "dict[str, Widget]" = {}
         super().__init__(**kwargs)
         _boost_layout_caches(self, box_model_maxsize=256, arrangement_maxsize=32)
 
@@ -1514,6 +1516,7 @@ class MessagePanel(Widget):
         tool_name: str | None = None,
         rerender_fn=None,
         header_stats=None,
+        parent_id: str | None = None,
     ) -> Widget | None:
         if not lines:
             return None
@@ -1533,7 +1536,34 @@ class MessagePanel(Widget):
         panel = _ToolPanel(block, tool_name=tool_name)
         if label == "diff":
             panel.add_class("tool-panel--child-diff")
-        self._mount_nonprose_block(panel)
+
+        # Adjacent-mount: result blocks mount directly after their parent streaming block.
+        # Prefer parent_id lookup (exact tool_call_id) over tool-name fallback.
+        _mounted_adj = False
+        if tool_name == "execute_code" or label in ("code", "output"):
+            try:
+                anchor = (
+                    self._adj_anchors.get(parent_id)
+                    if parent_id
+                    else self._adj_anchors.get("execute_code")
+                )
+                if anchor is not None and anchor.parent is self:
+                    children = list(self.children)
+                    idx = children.index(anchor) + 1
+                    if idx < len(children):
+                        self.mount(panel, before=children[idx])
+                    else:
+                        self.mount(panel)
+                    # Advance anchor under the same key so a second result mounts after the first
+                    _anchor_key = parent_id if parent_id else "execute_code"
+                    self._adj_anchors[_anchor_key] = panel
+                    _mounted_adj = True
+                    self._schedule_group_widget(panel)
+            except Exception:
+                pass
+
+        if not _mounted_adj:
+            self._mount_nonprose_block(panel)
         return block
 
     def open_streaming_tool_block(self, label: str, tool_name: str | None = None, panel_id: str | None = None) -> Widget:
@@ -1542,7 +1572,43 @@ class MessagePanel(Widget):
         block = _STB(label=label, tool_name=tool_name)
         panel = _ToolPanel(block, tool_name=tool_name, id=panel_id)
         block._tool_panel = panel  # back-ref for result wiring
-        self._mount_nonprose_block(panel)
+
+        # Adjacent-mount: some tools should always appear directly after a parent block.
+        # _adj_anchors maps anchor_key → panel; key is panel_id for ID-tracked tools,
+        # or a stable string key (e.g. "web_search") for category-based grouping.
+        _mounted_adjacent = False
+        if tool_name:
+            try:
+                from hermes_cli.tui.tool_category import classify_tool, ToolCategory
+                _cat = classify_tool(tool_name)
+                # SEARCH sub-tools attach after the most-recent web_search anchor
+                _anchor_key = None
+                if _cat == ToolCategory.SEARCH and tool_name != "web_search":
+                    _anchor_key = "web_search"
+                anchor = self._adj_anchors.get(_anchor_key) if _anchor_key else None
+                if anchor is not None and anchor.parent is self:
+                    children = list(self.children)
+                    idx = children.index(anchor) + 1
+                    if idx < len(children):
+                        self.mount(panel, before=children[idx])
+                    else:
+                        self.mount(panel)
+                    self._adj_anchors[_anchor_key] = panel
+                    _mounted_adjacent = True
+                    self._schedule_group_widget(panel)
+            except Exception:
+                pass
+
+        # Register anchors: web_search by stable key (one at a time), execute_code by
+        # panel_id so concurrent calls don't clobber each other's anchor.
+        if tool_name == "web_search":
+            self._adj_anchors["web_search"] = panel
+        elif tool_name == "execute_code" and panel_id:
+            self._adj_anchors[panel_id] = panel
+
+        if not _mounted_adjacent:
+            self._mount_nonprose_block(panel)
+
         if tool_name in _FILE_TOOL_NAMES:
             self._last_file_tool_block = block
         # Bash syntax highlight on header label for shell-category tools

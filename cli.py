@@ -7248,6 +7248,7 @@ class HermesCLI:
             if path and self._pending_patch_paths.get(path) == tool_call_id:
                 del self._pending_patch_paths[path]
         _stream_duration = ""
+        _had_output_stream_cb = tool_call_id in self._stream_callback_tokens
         if tui is not None and _was_streaming:
             # Reset the ContextVar callback (only if registered — streaming tools only)
             try:
@@ -7405,8 +7406,13 @@ class HermesCLI:
                                     render_execute_code_preview(_code, print_fn=rerendered.append, prefix=_TOOL_PREFIX)
                                     return rerendered, _plain_lines(rerendered)
 
+                                _ec_panel_id = f"tool-{tool_call_id}"
                                 tui.call_from_thread(
-                                    tui.mount_tool_block, "code", display_lines, plain, _rerender_execute_code_preview, None, function_name
+                                    lambda *_a, _pid=_ec_panel_id: tui.mount_tool_block(
+                                        "code", display_lines, plain,
+                                        _rerender_execute_code_preview, None,
+                                        function_name, parent_id=_pid,
+                                    )
                                 )
                     elif function_name == "read_file":
                         # Skip static preview when a StreamingToolBlock was used
@@ -7484,7 +7490,12 @@ class HermesCLI:
                             _exec_data = _json.loads(function_result)
                             _output = (_exec_data.get("output") or "").rstrip()
                             _error = (_exec_data.get("error") or _exec_data.get("stderr") or "").rstrip()
-                            _combined = _output + ("\n" + _error if _error else "")
+                            # Streaming callback already fed stdout live — only append
+                            # stderr/error that wasn't streamed to avoid duplicating output.
+                            if _had_output_stream_cb:
+                                _combined = _error
+                            else:
+                                _combined = _output + ("\n" + _error if _error else "")
                             if _combined.strip():
                                 _result_lines = _combined.splitlines()
                         except Exception:

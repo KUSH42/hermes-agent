@@ -550,7 +550,14 @@ def search_result_v4(ctx: ParseContext) -> ResultSummaryV4:
         )
 
     lines = [l for l in raw.splitlines() if l.strip()]
-    match_count = len(lines)
+    # For web_search JSON responses, count actual result objects not raw lines
+    try:
+        import json as _json
+        _parsed = _json.loads(raw)
+        _web = _parsed.get("data", {}).get("web", [])
+        match_count = len(_web) if isinstance(_web, list) else len(lines)
+    except Exception:
+        match_count = len(lines)
     artifacts = _extract_search_artifacts(raw)
     artifacts_truncated = len(artifacts) > _ARTIFACT_DISPLAY_CAP  # B3
     file_count = _count_distinct_files(artifacts)

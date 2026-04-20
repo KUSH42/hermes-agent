@@ -2137,6 +2137,7 @@ class HermesApp(App):
         rerender_fn=None,
         header_stats=None,
         tool_name: str | None = None,
+        parent_id: str | None = None,
     ) -> None:
         """Mount a ToolBlock into OutputPanel before the live-output duo.
 
@@ -2158,6 +2159,7 @@ class HermesApp(App):
                 tool_name=tool_name,
                 rerender_fn=rerender_fn,
                 header_stats=header_stats,
+                parent_id=parent_id,
             )
             msg.refresh(layout=True)
             # Increment memoized header count to avoid O(n) query in StatusBar

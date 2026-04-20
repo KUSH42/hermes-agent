@@ -418,7 +418,12 @@ class ExecuteCodeBlock(StreamingToolBlock):
         self._header._line_count = 0  # don't show line count in execute_code header
 
         if not self._user_toggled:
-            if total > _EXECUTE_COLLAPSE_THRESHOLD:
+            if is_error:
+                # Always auto-collapse failed runs — noise reduction
+                self._header._has_affordances = total > 0
+                self._header.collapsed = True
+                self._body.remove_class("expanded")
+            elif total > _EXECUTE_COLLAPSE_THRESHOLD:
                 self._header._has_affordances = True
                 self._header.collapsed = True
                 self._body.remove_class("expanded")
@@ -439,6 +444,11 @@ class ExecuteCodeBlock(StreamingToolBlock):
             self._header.flash_error()
         else:
             self._header.flash_success()
+            # Mount inline images from MEDIA: lines (e.g. matplotlib charts)
+            try:
+                self._try_mount_media()
+            except Exception:
+                pass
 
         self._code_state = _STATE_COMPLETED
 

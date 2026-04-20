@@ -33,6 +33,9 @@ edge-tts
 # Optional: For cron expression parsing (cronjob scheduling)
 croniter
 
+# Plotting / visualization
+matplotlib
+
 # Optional: For messaging platform integrations (gateway)
 python-telegram-bot[webhooks]>=22.6
 discord.py>=2.0

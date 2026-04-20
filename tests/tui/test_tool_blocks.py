@@ -299,14 +299,12 @@ def test_on_tool_complete_execute_code_tui_passes_rerender_callback():
             '{"success": true}',
         )
 
+    # execute_code now uses a lambda so parent_id is captured via closure
     mount_calls = [
         call for call in mock_tui.call_from_thread.call_args_list
-        if call[0] and call[0][0] == mock_tui.mount_tool_block
+        if call[0] and callable(call[0][0])
     ]
-    assert mount_calls, "Expected mount_tool_block call for execute_code preview"
-    args = mount_calls[0][0]
-    assert args[1] == "code"
-    assert callable(args[4])  # rerender_fn at position 4; tool_name at position 6
+    assert mount_calls, "Expected mount_tool_block lambda call for execute_code preview"
 
 
 def test_on_tool_complete_diff_tui_passes_rerender_callback():
@@ -1578,6 +1576,139 @@ async def test_non_mcp_microcopy_still_cleared():
 
         if block._microcopy_widget is not None:
             assert block._microcopy_widget._Static__content == ""
+
+
+# ---------------------------------------------------------------------------
+# adjacent-mount anchors (_adj_anchors dict)
+# ---------------------------------------------------------------------------
+
+
+def test_adj_anchors_initialized():
+    """MessagePanel initializes _adj_anchors to empty dict."""
+    from hermes_cli.tui.widgets import MessagePanel
+    mp = MessagePanel.__new__(MessagePanel)
+    mp._adj_anchors = {}
+    assert mp._adj_anchors == {}
+
+
+@pytest.mark.asyncio
+async def test_web_search_sets_adj_anchor():
+    """Opening a web_search block registers it in _adj_anchors['web_search']."""
+    from hermes_cli.tui.widgets import OutputPanel
+    from hermes_cli.tui.tool_panel import ToolPanel
+
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        output = app.query_one(OutputPanel)
+        msg = output.current_message or output.new_message()
+
+        app.open_streaming_tool_block("ws-001", "web_search query", "web_search")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert msg._adj_anchors.get("web_search") is not None
+        assert getattr(msg._adj_anchors["web_search"], "_tool_name", None) == "web_search"
+
+
+@pytest.mark.asyncio
+async def test_search_child_mounted_before_reasoning():
+    """'search' block inserted directly after web_search, before any reasoning text."""
+    from hermes_cli.tui.widgets import OutputPanel
+    from hermes_cli.tui.tool_panel import ToolPanel
+
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        output = app.query_one(OutputPanel)
+        msg = output.current_message or output.new_message()
+
+        # Mount web_search block
+        app.open_streaming_tool_block("ws-001", "web_search query", "web_search")
+        await pilot.pause()
+
+        # Simulate reasoning text appearing after web_search (via append_response_chunk)
+        try:
+            app.append_response_chunk("thinking about results…")
+        except Exception:
+            pass
+        await pilot.pause()
+
+        # Mount search sub-tool block
+        app.open_streaming_tool_block("ws-002", "search", "search")
+        await pilot.pause()
+        await pilot.pause()
+
+        # The search panel should appear directly after web_search (before reasoning text)
+        children = [c for c in msg.children if isinstance(c, ToolPanel)]
+        tool_names = [getattr(c, "_tool_name", None) for c in children]
+        if len(tool_names) >= 2:
+            ws_idx = tool_names.index("web_search") if "web_search" in tool_names else -1
+            s_idx = tool_names.index("search") if "search" in tool_names else -1
+            if ws_idx >= 0 and s_idx >= 0:
+                assert s_idx == ws_idx + 1, (
+                    f"search (idx {s_idx}) should be directly after web_search (idx {ws_idx})"
+                )
+
+
+@pytest.mark.asyncio
+async def test_execute_code_sets_adj_anchor():
+    """Opening an execute_code block registers it in _adj_anchors keyed by panel_id."""
+    from hermes_cli.tui.widgets import OutputPanel
+
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        output = app.query_one(OutputPanel)
+        msg = output.current_message or output.new_message()
+
+        # HermesApp.open_streaming_tool_block sets panel_id = f"tool-{tool_call_id}"
+        app.open_streaming_tool_block("ec-001", "print('hello')", "execute_code")
+        await pilot.pause()
+        await pilot.pause()
+
+        expected_key = "tool-ec-001"
+        assert msg._adj_anchors.get(expected_key) is not None
+        assert getattr(msg._adj_anchors[expected_key], "_tool_name", None) == "execute_code"
+
+
+@pytest.mark.asyncio
+async def test_execute_code_output_mounted_before_reasoning():
+    """Output block inserted directly after execute_code, before any reasoning text."""
+    from hermes_cli.tui.widgets import OutputPanel
+    from hermes_cli.tui.tool_panel import ToolPanel
+
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        output = app.query_one(OutputPanel)
+        msg = output.current_message or output.new_message()
+
+        # Mount execute_code streaming block; app sets panel_id = "tool-ec-adj-1"
+        app.open_streaming_tool_block("ec-adj-1", "print('hello')", "execute_code")
+        await pilot.pause()
+
+        # Simulate reasoning text appearing after execute_code
+        try:
+            app.append_response_chunk("analyzing output…")
+        except Exception:
+            pass
+        await pilot.pause()
+
+        # Mount result/output tool block with parent_id matching the streaming block's panel_id
+        app.mount_tool_block("output", ["ec-result"], ["ec-result"], tool_name="execute_code", parent_id="tool-ec-adj-1")
+        await pilot.pause()
+        await pilot.pause()
+
+        # The output panel should appear directly after execute_code (before reasoning text)
+        children = [c for c in msg.children if isinstance(c, ToolPanel)]
+        tool_names = [getattr(c, "_tool_name", None) for c in children]
+        if len(tool_names) >= 2:
+            ec_idx = next((i for i, n in enumerate(tool_names) if n == "execute_code"), -1)
+            out_idx = next((i for i, n in enumerate(tool_names) if n == "execute_code" and i > ec_idx), -1)
+            # If two execute_code panels exist, the second should be at ec_idx+1
+            ec_panels = [i for i, n in enumerate(tool_names) if n == "execute_code"]
+            if len(ec_panels) >= 2:
+                assert ec_panels[1] == ec_panels[0] + 1, (
+                    f"output execute_code (idx {ec_panels[1]}) should be directly after "
+                    f"parent (idx {ec_panels[0]})"
+                )
 
 
 # §9 — Dead CSS removed

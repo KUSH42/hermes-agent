@@ -336,6 +336,29 @@ class FileRenderer(BodyRenderer):
 # ---------------------------------------------------------------------------
 
 
+def _render_web_search_results(items: list) -> "ConsoleRenderable":
+    """Render web_search JSON result list as a formatted Text block."""
+    t = Text()
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        url = str(item.get("url") or "").strip()
+        desc = str(item.get("description") or "").strip()
+        if title:
+            t.append(f"{title}\n", style="bold")
+        if url:
+            t.append(f"  {url}\n", style="cyan link " + url if url.startswith("http") else "cyan")
+        if desc:
+            # Truncate long descriptions
+            if len(desc) > 120:
+                desc = desc[:117] + "…"
+            t.append(f"  {desc}\n", style="dim")
+        if i < len(items) - 1:
+            t.append("\n")
+    return t
+
+
 class SearchRenderer(BodyRenderer):
     """Search results: plain stream, structured finalize, sidecar path extraction."""
 
@@ -345,6 +368,17 @@ class SearchRenderer(BodyRenderer):
     def finalize(self, all_plain: list[str], **kwargs: object) -> "ConsoleRenderable | None":
         if not all_plain:
             return None
+        joined = "\n".join(all_plain).strip()
+        # Detect web_search JSON: {"success": true, "data": {"web": [...]}}
+        if joined.startswith("{"):
+            try:
+                import json as _json
+                parsed = _json.loads(joined)
+                web_items = parsed.get("data", {}).get("web", [])
+                if isinstance(web_items, list) and web_items:
+                    return _render_web_search_results(web_items)
+            except Exception:
+                pass
         result = Text()
         for line in all_plain:
             result.append(line + "\n")

@@ -861,3 +861,56 @@ plain `_label` string. Supports syntax-highlighted labels.
 `dur_style = ""` (normal). Duration appended after toggle affordance.
 
 **Config:** `display.execute_code_typewriter_cps: 0` (0 = pass-through).
+
+**Auto-collapse on error:** `complete(is_error=True)` always collapses the block
+when `_user_toggled` is False. Never depends on line count.
+
+**Chart display:** `complete(is_error=False)` calls `_try_mount_media()` to render
+`MEDIA: /path` lines as inline kitty images (e.g., matplotlib charts).
+
+**Duplicate output prevention:** `cli.py._on_tool_complete` captures
+`_had_output_stream_cb = tool_call_id in self._stream_callback_tokens` BEFORE
+popping the token. When True, only `_error` is fed (not `_output`) to avoid
+re-feeding lines that the streaming callback already delivered live.
+
+## Adjacent-mount pattern
+
+When block B must appear directly after block A regardless of prose/reasoning
+widgets appearing between them, use the adjacent-mount anchor pattern.
+
+**`MessagePanel._adj_anchors: dict[str, Widget]`** — keyed by an anchor key.
+Use `panel_id` (= `f"tool-{tool_call_id}"`) for tools that can be concurrent
+so each invocation gets its own slot. Use a stable string key (e.g. `"web_search"`)
+for tools that are always sequential.
+
+Adding a new case requires only:
+1. Register anchor: `self._adj_anchors[key] = panel` when opening A
+2. Look up anchor: `anchor = self._adj_anchors.get(key)` when mounting B
+3. Mount adjacent + advance: `self._adj_anchors[key] = panel`
+4. Pass `parent_id` from caller (cli.py) so the right key is used for lookup
+
+**Pattern:**
+```python
+# In open_streaming_tool_block / mount_tool_block:
+anchor = self._adj_anchors.get("parent_tool_name")
+if anchor is not None and anchor.parent is self:
+    children = list(self.children)
+    idx = children.index(anchor) + 1
+    if idx < len(children):
+        self.mount(panel, before=children[idx])
+    else:
+        self.mount(panel)
+    self._adj_anchors["parent_tool_name"] = panel  # advance for next sibling
+    self._schedule_group_widget(panel)
+    _mounted_adj = True
+```
+
+**Registered keys:**
+- `"web_search"` — stable key; set when `tool_name == "web_search"`; consumed by
+  SEARCH-category tools (e.g. `search`). Sequential → stable key is safe.
+- `f"tool-{tool_call_id}"` — per-invocation key for `execute_code`; set in
+  `open_streaming_tool_block` using `panel_id`; consumed by `mount_tool_block` via
+  `parent_id=f"tool-{tool_call_id}"` passed from `cli.py`. Concurrent-safe.
+
+**Pitfall:** always call `_schedule_group_widget(panel)` after adjacent mount so
+ToolGroup grouping sees the panel. Without it, the panel is silently skipped.

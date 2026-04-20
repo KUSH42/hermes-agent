@@ -207,6 +207,27 @@ class TestInlineMath:
         assert len(captured) == 1
         assert r"\alpha" in captured[0]  # raw line passed through, not substituted
 
+    def test_d5b_inline_double_dollar_simple(self) -> None:
+        """$$F = ma$$ embedded in prose line renders as unicode, not raw LaTeX."""
+        engine = _make_engine()
+        result = engine._apply_inline_math("Newton's Law: $$F = ma$$")
+        assert "$$" not in result
+
+    def test_d5c_inline_double_dollar_with_frac(self) -> None:
+        """$$\\frac{1}{2}mv^2$$ inline renders unicode and strips delimiters."""
+        engine = _make_engine()
+        result = engine._apply_inline_math(r"KE: $$\frac{1}{2}mv^2$$")
+        assert "$$" not in result
+        assert r"\frac" not in result  # rendered, not raw
+
+    def test_d5d_inline_double_dollar_mid_sentence(self) -> None:
+        """Text before and after $$...$$ is preserved."""
+        engine = _make_engine()
+        result = engine._apply_inline_math("where $$E = mc^2$$ is mass-energy")
+        assert "where" in result
+        assert "mass-energy" in result
+        assert "$$" not in result
+
     def test_d6_guard_disabled_when_math_off(self) -> None:
         engine = _make_engine(math_enabled=False)
         # process_line skips inline math when _math_enabled is False

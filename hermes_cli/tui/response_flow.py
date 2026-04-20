@@ -97,6 +97,9 @@ _BLOCK_MATH_CLOSE_RE = re.compile(
 # Single-line: $$expr$$ on one line (no newline inside)
 _BLOCK_MATH_ONELINE_RE = re.compile(r"^\$\$(.+)\$\$\s*$")
 
+# Inline $$expr$$ embedded within a prose line (text before/after $$)
+_INLINE_DOUBLE_MATH_RE = re.compile(r"\$\$([^$\n]+)\$\$")
+
 # Inline math: $expr$ in prose — conservative, requires math indicators
 _INLINE_MATH_RE = re.compile(
     r"(?<!\$)\$"          # open $, not preceded by $
@@ -808,7 +811,16 @@ class ResponseFlowEngine:
     # ------------------------------------------------------------------
 
     def _apply_inline_math(self, line: str) -> str:
-        """Replace $...$ spans in a prose line with unicode approximations."""
+        """Replace $...$ and $$...$$ spans in a prose line with unicode approximations."""
+        if "$" not in line:
+            return line
+
+        # $$...$$ inline (within a line, not the full line) — always treat as math
+        def replace_double_math(m: re.Match) -> str:  # type: ignore[type-arg]
+            return _get_math_renderer().render_unicode(m.group(1))
+
+        line = _INLINE_DOUBLE_MATH_RE.sub(replace_double_math, line)
+
         if "$" not in line:
             return line
 

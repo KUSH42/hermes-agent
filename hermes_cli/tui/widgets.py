@@ -4431,14 +4431,36 @@ class TurnResultItem(Static):
             self.update("")
 
     def on_click(self, event: Any) -> None:
-        """Left-click jumps directly to the turn."""
+        """Left-click jumps directly to the turn; shift+click selects a range."""
         if getattr(event, "button", 1) != 1:
             return
         try:
             overlay = self.app.query_one(HistorySearchOverlay)
         except NoMatches:
             return
-        overlay.action_jump_to(self._entry, self._result)
+
+        items = list(overlay.query(TurnResultItem))
+        try:
+            idx = items.index(self)
+        except ValueError:
+            overlay.action_jump_to(self._entry, self._result)
+            return
+
+        shift = bool(getattr(event, "shift", False))
+        last_idx = getattr(overlay, "_last_click_idx", None)
+
+        if shift and last_idx is not None:
+            lo, hi = min(last_idx, idx), max(last_idx, idx)
+            selected = set(range(lo, hi + 1))
+            overlay._shift_selected = selected
+            for i, item in enumerate(items):
+                item.set_class(i in selected, "--selected")
+        else:
+            overlay._last_click_idx = idx
+            overlay._shift_selected = set()
+            for item in items:
+                item.set_class(False, "--selected")
+            overlay.action_jump_to(self._entry, self._result)
 
 
 class KeymapOverlay(Widget):
@@ -4608,6 +4630,8 @@ class HistorySearchOverlay(Widget):
         self._query_history_idx: int = -1
         self._cross_session_results: list[_CrossSessionResult] = []
         self._max_results: int = 50
+        self._last_click_idx: int | None = None
+        self._shift_selected: set[int] = set()
 
     def compose(self) -> ComposeResult:
         yield _ModeBar(id="history-mode-bar")
@@ -4625,6 +4649,10 @@ class HistorySearchOverlay(Widget):
             self._max_results = 50
         self._build_index()
         self._selected_idx = 0
+        self._last_click_idx = None
+        self._shift_selected = set()
+        for item in self.query(TurnResultItem):
+            item.set_class(False, "--selected")
         self._query_history_idx = -1
         # Sync mode bar
         try:
@@ -4824,6 +4852,10 @@ class HistorySearchOverlay(Widget):
         items = list(self.query(TurnResultItem))
         if not items:
             self.action_dismiss()
+            return
+        if self._shift_selected:
+            idx = max(0, min(min(self._shift_selected), len(items) - 1))
+            self.action_jump_to(items[idx]._entry, items[idx]._result)
             return
         idx = max(0, min(self._selected_idx, len(items) - 1))
         item = items[idx]

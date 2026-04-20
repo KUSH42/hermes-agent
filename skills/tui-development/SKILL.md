@@ -110,9 +110,23 @@ Then load only the focused reference you need:
 
 ## Validation
 
-Last revalidated: **2026-04-20. ~2077 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility; 1 flaky perf jitter test in `test_streaming_perf.py` occasionally fails under load — pre-existing, not related to recent changes).
+Last revalidated: **2026-04-20. ~2102 total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility; 1 flaky perf jitter test in `test_streaming_perf.py` occasionally fails under load — pre-existing, not related to recent changes).
 
 Recent changes (details → reference files):
+- **Citations & SourcesBar** (2026-04-20): 25 tests in `tests/tui/test_citations.py`. `[CITE:N Title \u2014 URL]` tags suppressed from prose, collected, `SourcesBar` mounted at `flush()`.
+  - `_CITE_RE = re.compile(r'^\[CITE:(\d{1,4})\s+(.+?)\s+\u2014\s+(https?://\S+)\]$')` at module level in `response_flow.py`.
+  - `ResponseFlowEngine`: `_cite_entries: dict[int, tuple[str,str]]`, `_cite_order: list[int]`, `_citations_enabled: bool`. Cite detection in `process_line()` NORMAL state after footnote check. `_mount_sources_bar()` uses `panel.call_after_refresh` (NOT `call_from_thread` — flush is on event loop).
+  - `ReasoningFlowEngine`: mirrors all three attrs; `_citations_enabled` gated by `_citations_enabled and _reasoning_rich_prose`. `_render_footnote_section()` override respects `_reasoning_rich_prose` — delegates to `super()` when `True`, no-op when `False`. Use `self._panel.app` not bare `panel.app`.
+  - `SourcesBar(Widget)` in `widgets.py` — `_urls` dict built in `__init__` (not `compose()`). Chips open URLs via `subprocess.Popen([opener, url])`. `_extract_domain()` + `_truncate()` helpers at module level.
+  - Config: `display.citations=True`, `display.reasoning_rich_prose=True`. Both default `True` — active for prose and reasoning by default.
+  - CSS vars `$cite-chip-bg`/`$cite-chip-fg` in `hermes.tcss`; `COMPONENT_VAR_DEFAULTS` in `theme_manager.py`.
+  - System prompt hint injected when `_citations_enabled` and TUI mode active.
+  → `hermes_cli/tui/response_flow.py §_CITE_RE/cite attrs/process_line/flush/_mount_sources_bar/ReasoningFlowEngine`,
+    `hermes_cli/tui/widgets.py §SourcesBar/_extract_domain/_truncate`,
+    `hermes_cli/config.py §display.citations/reasoning_rich_prose`,
+    `cli.py §_citations_enabled/_reasoning_rich_prose/system prompt hint`,
+    `hermes_cli/tui/hermes.tcss §cite vars`, `hermes_cli/tui/theme_manager.py §cite vars`,
+    `tests/tui/test_citations.py` (new, 25 tests)
 - **Tool Call UX Pass 4 — Phase 3** (2026-04-20): 19 tests in `tests/tui/test_ux_phase4_p3.py`. Covers B4/C2/C3/D3/D4/F1/G1/G2/G3.
   - **B4**: Flash timer aligned to `_flash_expires` TTL — both 1.2s (was 1.3s timer).
   - **C2**: `StreamingToolBlock._follow_tail: bool = False`; `append_line()` calls `rerender_window()` every 5 lines when set; `complete()` resets. `ToolPanel` gains `Binding("f", "toggle_tail_follow")` + `action_toggle_tail_follow()`.

@@ -723,5 +723,7 @@ async def test_omission_bar_bottom_has_reset_button():
 
         from textual.widgets import Button
         labels = [str(b.label) for b in bar.query(Button)]
-        assert "[reset]" in labels
+        # Accept any icon-mode variant of the reset button label
+        has_reset = any("reset" in lbl for lbl in labels)
+        assert has_reset, f"Expected reset button, got {labels}"
         assert "[↑cap]" not in labels

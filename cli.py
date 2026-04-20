@@ -7467,6 +7467,17 @@ class HermesCLI:
                     _cat = _classify(function_name)
                     if _cat in (_TC.SEARCH, _TC.WEB) and isinstance(function_result, str):
                         _result_lines = function_result.splitlines()
+                    elif function_name == "execute_code" and isinstance(function_result, str):
+                        try:
+                            import json as _json
+                            _exec_data = _json.loads(function_result)
+                            _output = (_exec_data.get("output") or "").rstrip()
+                            _error = (_exec_data.get("error") or _exec_data.get("stderr") or "").rstrip()
+                            _combined = _output + ("\n" + _error if _error else "")
+                            if _combined.strip():
+                                _result_lines = _combined.splitlines()
+                        except Exception:
+                            pass
                 except Exception:
                     pass
                 tui.call_from_thread(tui.close_streaming_tool_block, tool_call_id, _stream_duration, _is_tool_error, _summary, _result_lines)

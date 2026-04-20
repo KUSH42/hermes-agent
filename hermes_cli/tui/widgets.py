@@ -2141,13 +2141,16 @@ class OutputPanel(ScrollableContainer):
 # ---------------------------------------------------------------------------
 
 class _EchoBullet(PulseMixin, Widget):
-    """Single-line user message display with a pulsing ● bullet.
+    """User message display with a pulsing ● bullet and auto-wrapping text.
 
     Pulses from mount until the FIRST agent turn that follows this message
     completes.  Subsequent turns leave the bullet static (one-shot guard).
     """
 
-    DEFAULT_CSS = "_EchoBullet { height: 1; }"
+    DEFAULT_CSS = """
+    _EchoBullet { height: auto; }
+    _EchoBullet > Static { height: auto; }
+    """
 
     def __init__(self, message: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -2157,6 +2160,37 @@ class _EchoBullet(PulseMixin, Widget):
         self._turn_started: bool = False
         self._turn_complete: bool = False
         self._watcher_registered: bool = False
+        self._inner: "Static | None" = None
+
+    def compose(self) -> ComposeResult:
+        self._inner = Static("", id="echo-bullet-inner")
+        yield self._inner
+
+    def _build_text(self) -> Text:
+        color = (
+            lerp_color(self._bullet_dim, self._bullet_peak, self._pulse_t)
+            if self._pulse_timer is not None
+            else self._bullet_peak
+        )
+        t = Text(overflow="fold")
+        t.append("● ", style=f"bold {color}")
+        msg = self._message
+        if "\n" in msg:
+            first_line = msg.split("\n")[0]
+            line_count = msg.count("\n") + 1
+            t.append(first_line, style="bold")
+            t.append(f" (+{line_count - 1} lines)", style="dim")
+        else:
+            t.append(msg, style="bold")
+        return t
+
+    def _push(self) -> None:
+        """Update the inner Static with current pulse state."""
+        try:
+            inner = self._inner or self.query_one("#echo-bullet-inner", Static)
+            inner.update(self._build_text())
+        except Exception:
+            pass
 
     def on_mount(self) -> None:
         try:
@@ -2167,10 +2201,9 @@ class _EchoBullet(PulseMixin, Widget):
             self._bullet_dim = v.get("running-indicator-dim-color", "#6e6e6e")
         except Exception:
             pass
+        self._push()
         self.watch(self.app, "agent_running", self._on_agent_running, init=False)
         self._watcher_registered = True
-        # Check current state explicitly — avoids init=True timing issues
-        # where the watcher fires before _turn_started is meaningful.
         try:
             if getattr(self.app, "agent_running", False):
                 self._turn_started = True
@@ -2195,22 +2228,21 @@ class _EchoBullet(PulseMixin, Widget):
             self._pulse_stop()
             self._turn_complete = True
 
-    def render(self) -> RenderResult:
+    def _pulse_step(self) -> None:
+        """Override: update Static child directly (compose-based, no render())."""
+        import math as _math
+        from hermes_cli.tui.animation import pulse_phase
+        self._pulse_tick += 1
+        self._pulse_t = pulse_phase(self._pulse_tick, period=30)
+        self._push()
+
+    def _pulse_stop(self) -> None:
+        """Override: reset pulse state and repush to static."""
         if self._pulse_timer is not None:
-            color = lerp_color(self._bullet_dim, self._bullet_peak, self._pulse_t)
-        else:
-            color = self._bullet_peak
-        t = Text()
-        t.append("● ", style=f"bold {color}")
-        msg = self._message
-        if "\n" in msg:
-            first_line = msg.split("\n")[0]
-            line_count = msg.count("\n") + 1
-            t.append(first_line, style="bold")
-            t.append(f" (+{line_count - 1} lines)", style="dim")
-        else:
-            t.append(msg, style="bold")
-        return t
+            self._pulse_timer.stop()
+            self._pulse_timer = None
+        self._pulse_t = 0.0
+        self._push()
 
 
 class UserMessagePanel(Widget):

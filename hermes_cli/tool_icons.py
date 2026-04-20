@@ -62,7 +62,7 @@ TOOL_ICONS: dict[str, Icon] = {
 
 # Short display names for tool headers (avoids clutter like "search_files").
 DISPLAY_NAMES: dict[str, str] = {
-    "execute_code":       "exec",
+    "execute_code":       "python",
     "search_files":       "grep",
     "session_search":     "search",
     "read_file":          "read",

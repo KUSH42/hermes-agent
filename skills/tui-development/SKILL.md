@@ -156,7 +156,13 @@ Recent changes (details → reference files):
   Socket path validation rejects paths > 104 (macOS) / 108 (Linux) chars.
   `_SessionNotification` does NOT use `_flash_hint_expires` — it has its own `set_timer(5.0)`.
   `HistoryPanel` only renders plain text — Rich/ANSI/tool formatting not preserved in headless path (known limitation).
-  55 new tests: `tests/tui/test_session_manager.py` (20), `tests/tui/test_headless_session.py` (15), `tests/tui/test_session_widgets.py` (20).
+  90 new tests: `tests/tui/test_session_manager.py` (23), `tests/tui/test_headless_session.py` (17), `tests/tui/test_session_widgets.py` (50).
+  Key bugs found and fixed in WIP code: `_verify_cmdline` checked `--session-id` not `--worktree-session-id`;
+  `OutputJSONLWriter` Rich regex only stripped simple `[tag]` not `[bold red]`/`[link=x]`; `_get_branch()` used
+  process cwd not worktree cwd; `MergeConfirmOverlay` strategy parse `btn_id[3:]` yielded `"erge"` not `"merge"`;
+  `SessionBar._rebuild()` DuplicateIds: `remove_children()` async → IDs still present at `mount()` time
+  (fix: per-child `.remove()` + `call_after_refresh(lambda: inner.mount(*w))`);
+  `_SessionNotification` needed `layer: overlay` to avoid bottom-dock-stack conflict with `HintBar`/`SessionBar`.
   → `hermes_cli/tui/session_manager.py` (new), `hermes_cli/tui/headless_session.py` (new),
     `hermes_cli/tui/session_widgets.py` (new), `hermes_cli/tui/overlays.py §WorkspaceOverlay`,
     `hermes_cli/tui/app.py §compose/on_key/session_methods`, `hermes_cli/config.py §sessions`,

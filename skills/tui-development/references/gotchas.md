@@ -56,6 +56,11 @@ processing: call `rp = msg.reasoning` (triggers lazy mount), then
 ## Threading and timers
 
 - `set_interval(...)` callbacks should be plain `def` callbacks.
+- **`call_from_thread` crashes when called from the event-loop thread** with
+  `RuntimeError: The call_from_thread method must run in a different thread`.
+  `_consume_output` is an `@work` async coroutine — it runs ON the event loop,
+  not in a thread. Any helper called from `process_line` / `_commit_lines`
+  must guard: `if threading.get_ident() == getattr(app, "_thread_id", None): fn() else: app.call_from_thread(fn)`.
 - Do not call `call_from_thread(...)` from the app thread.
 - Keep polling, file reads, parsing, and hot-reload detection off the event
   loop.

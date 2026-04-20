@@ -663,7 +663,7 @@ class ResponseFlowEngine:
         return out
 
     def _mount_emoji(self, name: str) -> None:
-        """Mount an emoji image widget into the prose log container. Must run on the event loop."""
+        """Mount an emoji image widget. Safe to call from either event-loop or worker thread."""
         registry = self._emoji_registry
         if registry is None:
             return
@@ -695,7 +695,12 @@ class ResponseFlowEngine:
             except Exception:
                 pass
 
-        app.call_from_thread(_do_mount)
+        import threading
+        if threading.get_ident() == getattr(app, "_thread_id", None):
+            # Already on the event-loop thread (async worker path) — call directly.
+            _do_mount()
+        else:
+            app.call_from_thread(_do_mount)
 
     def flush(self) -> None:
         """Turn ended — close any open code block; flush StreamingBlockBuffer pending state."""

@@ -2329,7 +2329,7 @@ class HermesApp(App):
             dropped = classify_dropped_file(path, cwd)
             if dropped.kind == "image":
                 image_paths.append(path)
-            elif dropped.kind == "linkable_text":
+            elif dropped.kind in ("linkable_text", "directory"):
                 link_tokens.append(format_link_token(path, cwd))
             elif dropped.kind == "unsupported_binary":
                 rejected.append(dropped.reason or "unsupported file type")

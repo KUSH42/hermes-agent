@@ -41,21 +41,15 @@ class SessionBar(Widget):
     SessionBar .--add-btn-disabled { color: $text-disabled; }
     """
 
+    _sessions_data: reactive[list] = reactive([], layout=True)
+
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self._active_id: str = ""
         self._max_sessions: int = 8
-        self._sessions_data: list = []
 
     def compose(self) -> ComposeResult:
-        # Render all session content as a single Static — avoids dynamic
-        # child mount/remove cycles that cause DuplicateIds errors in tests.
-        yield Static("", id="session-bar-content")
-        # Hidden sentinel buttons for each slot (pre-allocated up to max_sessions).
-        # Visible content is driven by Static markup; clicks are handled via
-        # on_click overriding coordinates when needed.
-        # For simplicity: keep a single "+" add button with a fixed ID.
-        yield Button(" + ", id="sess-add-btn", classes="--add-btn")
+        yield Horizontal(id="session-bar-inner")
 
     def on_mount(self) -> None:
         self._rebuild()
@@ -73,35 +67,37 @@ class SessionBar(Widget):
 
     def _rebuild(self) -> None:
         try:
-            content = self.query_one("#session-bar-content", Static)
+            inner = self.query_one("#session-bar-inner", Horizontal)
         except Exception:
             return
-        records = list(self._sessions_data)
-        parts = []
-        for rec in records:
+        records = self._sessions_data
+        widgets = []
+        for i, rec in enumerate(records):
             is_active = (getattr(rec, "id", None) == self._active_id)
             running = getattr(rec, "agent_running", False)
             branch = getattr(rec, "branch", "") or getattr(rec, "id", "?")
             if is_active:
-                parts.append(f"[bold]● {branch}[/bold]")
+                marker = "●"
+                suffix = ""
+                css = "--active-session"
             else:
+                marker = "○"
                 suffix = " [●]" if running else ""
-                parts.append(f"○ {branch}{suffix}")
-        content.update("  ".join(parts) if parts else "")
-        # Update add button
-        try:
-            add_btn = self.query_one("#sess-add-btn", Button)
-            at_max = len(records) >= self._max_sessions
-            if at_max:
-                add_btn.add_class("--add-btn-disabled")
-                add_btn.remove_class("--add-btn")
-                add_btn.label = " [dim]+[/dim] "
-            else:
-                add_btn.add_class("--add-btn")
-                add_btn.remove_class("--add-btn-disabled")
-                add_btn.label = " + "
-        except Exception:
-            pass
+                css = "--bg-running" if running else ""
+            label = f" {marker} {branch}{suffix} "
+            btn = Button(label, id=f"sess-btn-{i}", classes=css)
+            widgets.append(btn)
+        # Add "+" button
+        at_max = len(records) >= self._max_sessions
+        add_label = " [dim]+[/dim] " if at_max else " + "
+        add_css = "--add-btn-disabled" if at_max else "--add-btn"
+        widgets.append(Button(add_label, id="sess-add-btn", classes=add_css))
+        # Remove existing children individually to avoid async-removal vs sync-mount race.
+        for child in list(inner.children):
+            child.remove()
+        if widgets:
+            _w = widgets
+            inner.call_after_refresh(lambda: inner.mount(*_w))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         btn_id = event.button.id or ""
@@ -117,6 +113,18 @@ class SessionBar(Widget):
                     self.app._flash_sessions_max()
                 except Exception:
                     pass
+            return
+        if btn_id.startswith("sess-btn-"):
+            idx = int(btn_id.split("-")[-1])
+            if 0 <= idx < len(self._sessions_data):
+                rec = self._sessions_data[idx]
+                target_id = getattr(rec, "id", None)
+                if target_id and target_id != self._active_id:
+                    try:
+                        self.app._switch_to_session(target_id)
+                    except Exception:
+                        pass
+            event.stop()
 
 
 class _WorktreeSessionRow(Horizontal):
@@ -408,7 +416,7 @@ class MergeConfirmOverlay(Widget):
             self.action_dismiss()
         elif btn_id in ("mg-merge", "mg-squash", "mg-rebase"):
             event.stop()
-            self._strategy = btn_id[3:]  # "merge" | "squash" | "rebase"
+            self._strategy = btn_id[len("mg-"):]  # "merge" | "squash" | "rebase"
         elif btn_id == "mg-confirm":
             event.stop()
             try:
@@ -433,6 +441,7 @@ class _SessionNotification(Horizontal):
 
     DEFAULT_CSS = """
     _SessionNotification {
+        layer: overlay;
         dock: bottom;
         height: 1;
         width: 1fr;

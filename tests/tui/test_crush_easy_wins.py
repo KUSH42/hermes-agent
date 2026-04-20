@@ -27,7 +27,7 @@ def _make_app():
     cli = MagicMock()
     cli.agent = None
     cli._cfg = {"display": {"osc_progress": True, "context_pct": True,
-                             "context_pct_mode": "compaction",
+                             "context_pct_mode": "overflow",
                              "desktop_notify": False, "notify_min_seconds": 10.0,
                              "notify_sound": False, "notify_sound_name": "Glass"}}
     return HermesApp(cli=cli)

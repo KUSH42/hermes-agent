@@ -466,7 +466,7 @@ DEFAULT_CONFIG = {
         # Crush easy-wins features
         "osc_progress": True,          # OSC 9;4 indeterminate progress bar in terminal tab/dock
         "context_pct": True,           # context-window % meter in StatusBar
-        "context_pct_mode": "compaction",  # "compaction" = % toward compaction trigger; "overflow" = % of full ctx window
+        "context_pct_mode": "overflow",  # "compaction" = % toward compaction trigger; "overflow" = % of full ctx window
         "desktop_notify": False,       # desktop notification when long turn completes (opt-in)
         "notify_min_seconds": 10.0,    # minimum turn duration (s) before notify fires
         "notify_sound": False,         # play a sound alongside the notification

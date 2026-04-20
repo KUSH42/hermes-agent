@@ -259,6 +259,22 @@ fall through to the `set_interval` branch automatically.
 **`_refresh_live_response_metrics` called from both `_tick_spinner` (10Hz) and `_tick_duration` (1Hz):**
 - Has early return when `_response_metrics_active` is False — safe during idle. But during streaming, 10Hz of `query_one(OutputPanel)` + `msg.set_response_metrics()` is redundant. Acceptable for now since total path is ~1ms.
 
+## InlineProseLog / emoji render-safety (fixed 2026-04-20)
+
+**NEVER call `_render()` or `get_strips()` from inside `render_line`.** `InlineImageCache._render()` does PIL image resizing and (for TGP) emits raw Kitty Graphics Protocol escape sequences via `sys.stdout.write`. Calling either from `render_line` causes:
+- TGP path: raw escape bytes interleaved with Textual's output buffer → screen corruption/glitch on kitty.
+- Halfblock path: PIL `img.resize()` blocks the event loop inside the render phase → freeze.
+
+**Correct pattern:** Use `get_strips_or_alt()` in `render_line` — returns alt_text strips on cache miss, never calls `_render()`. Pre-populate the cache from `write_inline()` via `_prerender_line_images()`:
+- TGP spans: emit `sys.stdout.write(tgp_seq)` synchronously in `_prerender_line_images()` (event loop, but NOT inside render_line's call stack).
+- Halfblock spans: offload PIL work to `@work(thread=True) _prerender_halfblock()`; call `self.refresh()` from worker thread when done.
+
+**`_current_render_mode()` ioctl trap:** Calling `_cell_px()` (raw `fcntl.ioctl`) on every `render_line` invocation adds a syscall per frame per visible inline-image line. Fix: use `cell_width_px()` / `cell_height_px()` (both cached) instead. Cache the full `_RenderMode` object on the widget; invalidate in `on_resize()` which must also call `_reset_cell_px_cache()` to pick up the new terminal dimensions.
+
+**`_prerender_halfblock` needs app context** — the `@work(thread=True)` decorator raises `LookupError` when called outside a mounted widget (e.g., unit tests). Guard with `try/except` in `_prerender_line_images`; render_line shows alt_text until the worker finishes.
+
+**`text_selection` property needs screen** — in unit tests for `render_line` overrides, patch with `patch.object(type(widget), "text_selection", new_callable=lambda: property(lambda self: None))`.
+
 ## Small but expensive traps
 
 - `len(log.lines)`, not `log.line_count`
@@ -438,6 +454,25 @@ Fix (2026-04-20):
 **Do NOT call `engine.process_line()` on a freshly created MessagePanel from
 `watch_agent_running()` directly** — the engine isn't mounted yet. Always
 route deferred engine calls through `_carry_pending` / `on_mount`.
+
+## Completion system gotchas
+
+**`frozenset()` default is falsy — use `None` as sentinel for "unset".**
+`HermesApp._path_search_ignore` defaults to `None`, not `frozenset()`.
+`_walk()` checks `ignore if ignore is not None else {defaults}`.
+Do NOT use `ignore or {defaults}` — an empty `frozenset()` (meaning "ignore nothing")
+is falsy and would silently fall through to the hardcoded default set.
+General rule: when `None` means "unset" and `frozenset()` is a valid user value, always
+use explicit `is not None` checks, never truthiness.
+
+**`_last_slash_hint_fragment` debounce: reset on submit only, NOT on hide.**
+`_show_slash_completions` calls `_hide_completion_overlay` on the no-match path.
+If `_hide_completion_overlay` reset the fragment, the debounce would clear itself
+immediately each time — making the guard useless. Only `action_submit()` resets it.
+
+**`SlashDescPanel` import: no cycle exists between `completion_overlay.py` and `path_search.py`.**
+`from .path_search import SlashCandidate` at module level is safe.
+No need for deferred inside-method import.
 
 ## When to expand this file
 

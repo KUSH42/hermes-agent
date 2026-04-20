@@ -184,11 +184,37 @@ High-signal flow:
   `HermesInput(TextArea)` — history, submission, masking, trigger dispatch, file-drop handling.
   Key: `_on_key` (async), `on_text_area_changed` replaces watch_value/watch_cursor_position,
   ghost text via `self.suggestion`, `_push_undo_snapshot()` removed (TextArea manages undo).
+  `_idle_placeholder` stores default hint text; `set_slash_descriptions(dict)` wires command descriptions.
+  `_history_load(text)` uses `TextArea.replace()` to preserve undo ring (not `load_text()`).
+  `_last_slash_hint_fragment` debounces "did you mean" flash — resets only on `action_submit`, NOT on hide.
+  `ctrl+shift+up/down` adjusts `_input_height_override` (3–10); resets on submit.
+  Subcommand completion: `_slash_subcommands`, `_slash_args_hints`, `_slash_keybind_hints` dicts;
+  `set_slash_subcommands()` / `set_slash_args_hints()` / `set_slash_keybind_hints()` methods;
+  `_show_subcommand_completions(parent_cmd, fragment)` dispatched when `SLASH_SUBCOMMAND` context detected.
+  Accept splices only the fragment (preserves `/parent ` prefix).
 - **`hermes_cli/tui/completion_context.py`** — trigger detection for slash, `@`, path contexts.
+  `SLASH_SUBCOMMAND = 6` context — `/cmd fragment` after a space.
+  `CompletionTrigger.parent_command: str` field carries the parent command name.
+  `_SLASH_SUBCMD_RE` checked before `_SLASH_RE` in `detect_context`.
 - **`hermes_cli/tui/path_search.py`** — threaded path walker and candidate production.
+  `SlashCandidate`: `description`, `args_hint`, `category`, `keybind_hint` fields.
+  `search(ignore=)` + `_walk(ignore=)` params.
+  `_walk` uses `ignore if ignore is not None else {defaults}` — do NOT use `ignore or {defaults}`
+  (empty `frozenset()` is falsy, would silently bypass explicit empty config).
+- **`hermes_cli/commands.py`** — `CommandDef` registry.
+  `tui_only: bool = False` and `keybind_hint: str = ""` fields on `CommandDef`.
+  `tui_help_lines()` — shows all non-gateway-only commands (including `tui_only` and `cli_only`).
+  `_is_gateway_available()` and `GATEWAY_KNOWN_COMMANDS` exclude `tui_only` commands.
+  `_populate_slash_commands` excludes `gateway_only` commands, populates args/keybind hints.
 - **`hermes_cli/tui/completion_list.py`** — `VirtualCompletionList`, viewport rendering, highlight.
+  `_move_highlight` clamps with `max(0, min(n-1, h+delta))` — no modulo wrap.
+  `_maybe_schedule_auto_close` has no length guard; `_update_overflow_badge` uses `self.size.height`.
 - **`hermes_cli/tui/completion_overlay.py`** — overlay container, preview/list layout, visibility lifecycle.
+  `SlashDescPanel(RichLog)` watches `app.highlighted_candidate`; shown only in `--slash-only` mode.
+  `on_resize` applies `--narrow` class below 100 cols; hides preview, expands list to full width.
 - **`hermes_cli/tui/preview_panel.py`** — file preview worker path, syntax highlighting, binary guards.
+  `_load_preview` checks `path.is_dir()` first — sorted listing, 40-entry cap, `PlainReady` message.
+  `_hex_luminance(hex)` inline helper for light/dark theme detection — do NOT import from animation.py.
 - **`hermes_cli/tui/history_suggester.py`** — inline ghost-text suggestion path.
 - **`hermes_cli/tui/fuzzy.py`** — matching and ranking helpers.
 - **`hermes_cli/tui/partial_json.py`** — `PartialJSONCodeExtractor` — incremental JSON string field extractor.
@@ -204,6 +230,12 @@ High-signal flow:
   `_prepare_tgp` dispatches to `@work(thread=True)` when `w*h*4 > LARGE_IMAGE_BYTES (2_000_000)`.
 - **`hermes_cli/tui/inline_prose.py`**
   `InlineImageCache`, `InlineProseLog` — prose + inline image compositor widget.
+  `get_strips_or_alt()` — render-safe path; never calls `_render()`; returns alt strips on miss.
+  `get_strips()` — pre-render path only; may call `_render()` (PIL + TGP stdout write); NOT safe in `render_line`.
+  `InlineProseLog._prerender_line_images(idx, line)` — called from `write_inline()`; emits TGP on event loop,
+  offloads halfblock PIL to `@work(thread=True) _prerender_halfblock()`.
+  `_current_render_mode()` caches `_RenderMode`; uses `cell_width_px()`/`cell_height_px()` (not raw ioctl).
+  Cache invalidated by `on_resize()` which also calls `_reset_cell_px_cache()`.
 
 ## Theme and animation
 

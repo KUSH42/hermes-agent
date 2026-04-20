@@ -866,8 +866,10 @@ def load_soul_md() -> Optional[str]:
         if _PERSONA_SEP in content:
             base, _, overlay = content.partition(_PERSONA_SEP)
             try:
-                from hermes_cli.config import CLI_CONFIG
-                _active_persona = CLI_CONFIG.get("agent", {}).get("persona", "default")
+                import yaml as _yaml
+                _cfg_path = get_hermes_home() / "config.yaml"
+                _raw = _yaml.safe_load(_cfg_path.read_text(encoding="utf-8")) or {}
+                _active_persona = str(_raw.get("agent", {}).get("persona", "default"))
             except Exception:
                 _active_persona = "default"
             if _active_persona and _active_persona.lower() != "default":

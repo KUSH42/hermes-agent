@@ -2192,6 +2192,10 @@ class _EchoBullet(PulseMixin, Widget):
         except Exception:
             pass
 
+    def get_text(self) -> Text:
+        """Return current rendered Text (for testing / clipboard)."""
+        return self._build_text()
+
     def on_mount(self) -> None:
         try:
             v = self.app.get_css_variables()

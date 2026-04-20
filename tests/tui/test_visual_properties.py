@@ -342,7 +342,7 @@ async def test_user_echo_single_line_shows_message():
         await pilot.pause()
 
         bullet: _EchoBullet = panel.query_one("#echo-text")  # type: ignore[assignment]
-        content = bullet.render()
+        content = bullet.get_text()
         plain = content.plain if hasattr(content, "plain") else str(content)
         assert "hello world" in plain, (
             f"User message should appear in echo panel, plain: {plain!r}"
@@ -359,7 +359,7 @@ async def test_user_echo_has_bullet_prefix():
         await pilot.pause()
 
         bullet: _EchoBullet = panel.query_one("#echo-text")  # type: ignore[assignment]
-        content = bullet.render()
+        content = bullet.get_text()
         plain = content.plain if hasattr(content, "plain") else str(content)
         assert "●" in plain, (
             f"User echo should have ● bullet prefix, plain: {plain!r}"
@@ -399,7 +399,7 @@ async def test_user_echo_multiline_shows_first_line_and_count():
         await pilot.pause()
 
         bullet: _EchoBullet = panel.query_one("#echo-text")  # type: ignore[assignment]
-        content = bullet.render()
+        content = bullet.get_text()
         plain = content.plain if hasattr(content, "plain") else str(content)
         assert "line one" in plain, f"First line should appear: {plain!r}"
         assert "(+" in plain and "lines" in plain, (
@@ -420,7 +420,7 @@ async def test_user_echo_multiline_correct_count():
         await pilot.pause()
 
         bullet: _EchoBullet = panel.query_one("#echo-text")  # type: ignore[assignment]
-        content = bullet.render()
+        content = bullet.get_text()
         plain = content.plain if hasattr(content, "plain") else str(content)
         # 4 total lines → 3 additional
         assert "+3" in plain, (

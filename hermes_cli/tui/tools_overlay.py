@@ -20,6 +20,8 @@ from textual.widgets import Input, ListView, ListItem, Static
 from textual.containers import Horizontal
 from rich.text import Text
 
+from hermes_cli.tui.resize_utils import THRESHOLD_NARROW, crosses_threshold
+
 if TYPE_CHECKING:
     pass
 
@@ -271,6 +273,7 @@ ToolsScreen > #tools-footer {
         self._errors_only: bool = False
         self._turn_total_s: float = _compute_turn_total_s(snapshot)
         self._term_w: int = 80
+        self._last_resize_w: int = 0
         self._snapshot_ts: float = time.monotonic()
         self._stale_timer: object | None = None
 
@@ -300,10 +303,12 @@ ToolsScreen > #tools-footer {
             self._stale_timer.stop()
 
     def on_resize(self) -> None:
-        self._term_w = self.app.size.width
-        if self._term_w < 60:
+        w = self.app.size.width
+        self._term_w = w
+        if crosses_threshold(self._last_resize_w, w, THRESHOLD_NARROW) and w < THRESHOLD_NARROW:
             self.app._flash_hint("⚠  terminal too narrow for /tools overlay", 2.0)
             self.app.pop_screen()
+        self._last_resize_w = w
 
     def _update_staleness_pip(self) -> None:
         elapsed = time.monotonic() - self._snapshot_ts

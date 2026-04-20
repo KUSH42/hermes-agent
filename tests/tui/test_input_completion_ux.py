@@ -984,3 +984,95 @@ class TestOverflowBadgeViewport:
                 assert not badge.display
             except NoMatches:
                 pass
+
+
+# ===========================================================================
+# TestHistoryTrash — fixes for slash-cmd pollution, file dedup, and merge bug
+# ===========================================================================
+
+class TestHistoryTrash:
+    """Tests for three history bugs: slash-cmd pollution, file dedup, CLI/TUI merge."""
+
+    def test_slash_command_not_saved(self, tmp_path, monkeypatch):
+        """/clear and other slash commands are NOT saved to history."""
+        hist_file = tmp_path / ".hermes_history"
+        monkeypatch.setattr("hermes_cli.tui.input_widget._HISTORY_FILE", hist_file)
+        inp = HermesInput.__new__(HermesInput)
+        inp._history = []
+        inp._save_to_history("/clear")
+        inp._save_to_history("/anim")
+        inp._save_to_history("/model claude-3-5-sonnet")
+        assert inp._history == []
+        assert not hist_file.exists() or hist_file.read_text() == ""
+
+    def test_real_prompt_saved(self, tmp_path, monkeypatch):
+        """Real prompts (no leading slash) ARE saved to history."""
+        hist_file = tmp_path / ".hermes_history"
+        monkeypatch.setattr("hermes_cli.tui.input_widget._HISTORY_FILE", hist_file)
+        inp = HermesInput.__new__(HermesInput)
+        inp._history = []
+        inp._save_to_history("write a unit test for my parser")
+        assert inp._history == ["write a unit test for my parser"]
+
+    def test_load_deduplicates_file_dupes(self, tmp_path, monkeypatch):
+        """_load_history deduplicates entries; last occurrence of each entry wins."""
+        hist_file = tmp_path / ".hermes_history"
+        # Simulate file with duplicate /anim entries (as accumulated without file dedup)
+        hist_file.write_text(
+            "+hello\n\n"
+            "+world\n\n"
+            "+hello\n\n"  # duplicate of first entry
+            "+world\n\n"  # duplicate of second entry
+        )
+        monkeypatch.setattr("hermes_cli.tui.input_widget._HISTORY_FILE", hist_file)
+        inp = HermesInput.__new__(HermesInput)
+        inp._history = []
+        inp._load_history()
+        # After dedup: each unique entry appears exactly once, in file order (last wins)
+        assert inp._history.count("hello") == 1
+        assert inp._history.count("world") == 1
+        assert len(inp._history) == 2
+        # Last occurrence wins → both end up at the end in original relative order
+        assert inp._history == ["hello", "world"]
+
+    def test_load_separator_prevents_cli_tui_merge(self, tmp_path, monkeypatch):
+        """Leading newline in _save_to_history prevents merging with prompt_toolkit entries."""
+        hist_file = tmp_path / ".hermes_history"
+        # Simulate prompt_toolkit's FileHistory format (no trailing blank line on last entry)
+        hist_file.write_text("\n# 2024-01-01\n+cli command\n")
+        monkeypatch.setattr("hermes_cli.tui.input_widget._HISTORY_FILE", hist_file)
+        inp = HermesInput.__new__(HermesInput)
+        inp._history = []
+        # Save a TUI entry — it should NOT merge with "cli command"
+        inp._save_to_history("tui prompt")
+        inp._history = []  # reset in-memory
+        inp._load_history()
+        assert "cli command" in inp._history
+        assert "tui prompt" in inp._history
+        # The merged entry must NOT exist
+        assert "cli command\ntui prompt" not in inp._history
+
+    def test_file_written_with_leading_newline(self, tmp_path, monkeypatch):
+        """_save_to_history writes a leading newline before the + lines."""
+        hist_file = tmp_path / ".hermes_history"
+        monkeypatch.setattr("hermes_cli.tui.input_widget._HISTORY_FILE", hist_file)
+        inp = HermesInput.__new__(HermesInput)
+        inp._history = []
+        inp._save_to_history("my prompt")
+        content = hist_file.read_text()
+        assert content.startswith("\n+")
+
+    def test_dedup_preserves_order_last_wins(self, tmp_path, monkeypatch):
+        """Dedup keeps last occurrence; earlier dupes discarded; relative order preserved."""
+        hist_file = tmp_path / ".hermes_history"
+        hist_file.write_text(
+            "+alpha\n\n"
+            "+beta\n\n"
+            "+gamma\n\n"
+            "+alpha\n\n"  # alpha repeated — last occurrence is position 3
+        )
+        monkeypatch.setattr("hermes_cli.tui.input_widget._HISTORY_FILE", hist_file)
+        inp = HermesInput.__new__(HermesInput)
+        inp._history = []
+        inp._load_history()
+        assert inp._history == ["beta", "gamma", "alpha"]

@@ -266,6 +266,8 @@ class HermesInput(TextArea, can_focus=True):
         """Load history from the hermes history file (same format as FileHistory).
 
         Loads last _MAX_HISTORY entries to avoid test-remnant bloat.
+        Deduplicates on load (last occurrence wins) to repair file-level dupes
+        accumulated from previous sessions.
         """
         try:
             if _HISTORY_FILE.exists():
@@ -279,18 +281,29 @@ class HermesInput(TextArea, can_focus=True):
                         current_entry = []
                 if current_entry:
                     lines.append("\n".join(current_entry))
-                # Keep only last N entries — older history is noise
-                self._history = lines[-_MAX_HISTORY:]
+                # Keep only last N entries
+                recent = lines[-_MAX_HISTORY:]
+                # Deduplicate preserving order; last occurrence of each entry wins.
+                seen: set[str] = set()
+                deduped: list[str] = []
+                for entry in reversed(recent):
+                    if entry not in seen:
+                        seen.add(entry)
+                        deduped.append(entry)
+                self._history = list(reversed(deduped))
         except OSError:
             self._history = []
 
     def _save_to_history(self, text: str) -> None:
         """Append an entry to the history file and in-memory list.
 
+        Slash commands (TUI control commands) are excluded — they are not
+        prompts and would pollute up-arrow recall.
+
         Global dedup: if the entry already exists anywhere in history, remove it
         first (promote-to-end / erasedups semantics).
         """
-        if not text.strip():
+        if not text.strip() or text.lstrip().startswith("/"):
             return
         # Global dedup: remove prior identical entry before appending (promote-to-end)
         try:
@@ -301,6 +314,9 @@ class HermesInput(TextArea, can_focus=True):
         try:
             _HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
             with open(_HISTORY_FILE, "a", encoding="utf-8") as f:
+                # Leading newline ensures separation from any prior entry that
+                # lacks a trailing blank line (e.g. prompt_toolkit FileHistory format).
+                f.write("\n")
                 for line in text.split("\n"):
                     f.write(f"+{line}\n")
                 f.write("\n")

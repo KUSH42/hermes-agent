@@ -1594,9 +1594,10 @@ class HermesApp(App):
             self._response_wall_start_time = None
             self._response_segment_start_time = None
             self._response_token_window.clear()
-            # Clear any blocks left open from an interrupted turn (agent stopped
-            # without calling close_streaming_tool_block).  Leaked refs prevent GC
-            # of the widget objects and cause stale entries on the next turn.
+            # Clear the tracking dict for blocks left open from an interrupted turn
+            # (agent stopped without calling close_streaming_tool_block).
+            # Leaked refs prevent GC; stale entries corrupt the next turn's diff
+            # connector logic.  DOM nodes stay visible so users see partial output.
             self._active_streaming_blocks.clear()
             # Clear file-tool block ref so next turn's diff won't inherit connector
             try:
@@ -4039,6 +4040,11 @@ class HermesApp(App):
                     return
                 self._last_interrupt_time = now
                 self.cli.agent.interrupt()
+                try:
+                    _out = self.query_one(OutputPanel)
+                    _out.flush_live()
+                except NoMatches:
+                    pass
                 # Show feedback
                 try:
                     panel = self.query_one(OutputPanel)
@@ -4051,7 +4057,9 @@ class HermesApp(App):
                         if rl._deferred_renders:
                             self.call_after_refresh(msg.refresh, layout=True)
                 except NoMatches:
-                    pass
+                    self.log.warning("interrupt feedback: OutputPanel not available")
+                except Exception as exc:
+                    self.log.warning(f"interrupt feedback failed: {exc}")
                 event.prevent_default()
                 return
 
@@ -4120,6 +4128,11 @@ class HermesApp(App):
             if self.agent_running and hasattr(self.cli, "agent") and self.cli.agent:
                 self.cli.agent.interrupt()
                 try:
+                    _out = self.query_one(OutputPanel)
+                    _out.flush_live()
+                except NoMatches:
+                    pass
+                try:
                     panel = self.query_one(OutputPanel)
                     msg = panel.current_message
                     if msg is not None:
@@ -4130,7 +4143,9 @@ class HermesApp(App):
                         if rl._deferred_renders:
                             self.call_after_refresh(msg.refresh, layout=True)
                 except NoMatches:
-                    pass
+                    self.log.warning("interrupt feedback: OutputPanel not available")
+                except Exception as exc:
+                    self.log.warning(f"interrupt feedback failed: {exc}")
                 event.prevent_default()
                 return
 

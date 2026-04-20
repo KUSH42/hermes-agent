@@ -45,7 +45,9 @@ from textual.widgets import Input, Static
 # ---------------------------------------------------------------------------
 
 def _make_app() -> HermesApp:
-    return HermesApp(cli=MagicMock())
+    cli = MagicMock()
+    cli._cfg = {}  # prevent int(MagicMock()) = 1 from collapsing _max_results to 1
+    return HermesApp(cli=cli)
 
 
 def _ensure_startup_turn(app: HermesApp) -> None:
@@ -982,7 +984,7 @@ async def test_result_cap_respected():
         await pilot.pause()
 
         overlay = app.query_one(HistorySearchOverlay)
-        overlay._max_results = 5
+        app.cli._cfg = {"display": {"history_search_max_results": 5}}
         overlay.open_search()
         await pilot.pause()
 

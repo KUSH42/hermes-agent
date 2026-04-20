@@ -137,17 +137,20 @@ Recent changes (details → reference files):
   `_reset_unicode_placeholders_cache()` in tests that monkeypatch `TERM`/`TERM_PROGRAM`/`KITTY_WINDOW_ID`.
   → `hermes_cli/tui/kitty_graphics.py §_supports_unicode_placeholders`,
     `hermes_cli/tui/widgets.py §InlineImage.watch_image`, `tests/tui/test_kitty_graphics.py`
-- **First-response-line race fix** (2026-04-20): "W" missing from first agent reply ("Wake up Neo").
-  Race: agent streams before `watch_agent_running(True)` fires → first response line buffered in OLD
-  panel's `_block_buf._pending` (setext lookahead) → panel switch → old panel never flushed → lost.
-  Fix: `watch_agent_running(True)` steals `_pending` from old engine, clears it, stores on
-  `new_msg._carry_pending`; `MessagePanel.on_mount` re-processes it through the new engine once ready.
-  Also clears the empty-string sentinel left by banner trailing newlines.
-  Key invariant: `_response_engine` is `None` in `__init__` — only set in `on_mount`. Never call
-  `engine.process_line()` on a freshly created MessagePanel from `watch_agent_running` context.
-  Use `_carry_pending` instead.  2 regression tests in `tests/tui/test_turn_lifecycle.py`.
-  → `hermes_cli/tui/app.py §watch_agent_running`, `hermes_cli/tui/widgets.py §MessagePanel`,
-    `tests/tui/test_turn_lifecycle.py §test_first_response_character_not_swallowed/test_pending_prose_migrated_to_new_panel`
+- **First-response-line race fix — extended** (2026-04-20): "W" missing from first reply in Kitty.
+  Two separate buffers can hold pre-panel-switch content:
+  1. `_block_buf._pending` (setext lookahead — a full line held for context)
+  2. `engine._partial` (partial chunk with no `\n` yet — Kitty delivers smaller chunks)
+  Previous fix only stole `_block_buf._pending`; `_partial` was silently dropped.
+  Fix: `watch_agent_running(True)` steals BOTH. `_partial` stored as `new_msg._carry_partial`;
+  `MessagePanel.on_mount` re-feeds it via `engine.feed(carry_partial)` after `process_line(carry_pending)`.
+  `MessagePanel.__init__` gains `_carry_partial: str | None = None`.
+  Key invariant: **engine doesn't exist until `on_mount` fires** — route deferred calls through
+  `_carry_pending` (for complete lines) and `_carry_partial` (for partial chunks). Never call
+  `engine.process_line()` or `engine.feed()` on a freshly created MessagePanel from `watch_agent_running`.
+  3 regression tests in `tests/tui/test_turn_lifecycle.py` (2 existing + `test_partial_chunk_migrated_to_new_panel`).
+  → `hermes_cli/tui/app.py §watch_agent_running`, `hermes_cli/tui/widgets.py §MessagePanel.__init__/on_mount`,
+    `tests/tui/test_turn_lifecycle.py §test_partial_chunk_migrated_to_new_panel`
 - **Mouse UX — tooltip system, ctrl+click, scroll config, double-click, shift-select** (2026-04-20):
   `tooltip.py` (NEW) — `Tooltip(Widget)` + `TooltipMixin`; mounted on `screen.tooltip` layer;
   positioned via `styles.offset`; 500ms delay timer; dismissed on `on_mouse_leave`.

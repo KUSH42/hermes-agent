@@ -235,6 +235,9 @@ DEFAULT_CONFIG = {
         # threshold before escalating to a full timeout.  The warning fires
         # once per run and does not interrupt the agent.  0 = disable warning.
         "gateway_timeout_warning": 900,
+        # Soul persona overlay — appended to SOUL.md identity when active.
+        # "default" = base identity only; "brainrot" = zoomer persona overlay.
+        "persona": "default",
     },
     
     "terminal": {

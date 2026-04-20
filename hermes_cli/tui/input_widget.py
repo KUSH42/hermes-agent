@@ -828,6 +828,8 @@ class HermesInput(TextArea, can_focus=True):
                 display=c,
                 command=c,
                 description=self._slash_descriptions.get(c, ""),
+                args_hint=self._slash_args_hints.get(c, ""),
+                keybind_hint=self._slash_keybind_hints.get(c, ""),
             )
             for c in self._slash_commands
             if c.startswith("/" + fragment)

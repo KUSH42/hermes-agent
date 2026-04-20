@@ -1987,31 +1987,32 @@ class HermesCLI:
 
     def _push_tui_status(self) -> None:
         """Push status bar data to the TUI app if running."""
+        import threading as _threading
         tui = _hermes_app
         if tui is None:
             return
 
         snapshot = self._get_status_bar_snapshot()
 
-        # Model
-        tui.call_from_thread(setattr, tui, "status_model", snapshot["model_short"])
-
-        # Current context usage
-        tui.call_from_thread(setattr, tui, "status_context_tokens", snapshot["context_tokens"])
-        tui.call_from_thread(setattr, tui, "status_context_max", snapshot["context_length"] or 0)
-
-        # Compaction progress
         agent = getattr(self, "agent", None)
         compressor = getattr(agent, "context_compressor", None) if agent else None
         if compressor and getattr(compressor, "threshold_tokens", 0) > 0:
             progress = min(1.0, (getattr(compressor, "last_prompt_tokens", 0) or 0) / compressor.threshold_tokens)
         else:
             progress = 0.0
-        tui.call_from_thread(setattr, tui, "status_compaction_progress", progress)
-        tui.call_from_thread(
-            setattr, tui, "status_compaction_enabled",
-            getattr(self, "compression_enabled", True) if agent else True,
-        )
+        compaction_enabled = getattr(self, "compression_enabled", True) if agent else True
+
+        def _apply() -> None:
+            tui.status_model = snapshot["model_short"]
+            tui.status_context_tokens = snapshot["context_tokens"]
+            tui.status_context_max = snapshot["context_length"] or 0
+            tui.status_compaction_progress = progress
+            tui.status_compaction_enabled = compaction_enabled
+
+        if _threading.get_ident() == tui._thread_id:
+            _apply()
+        else:
+            tui.call_from_thread(_apply)
 
     @staticmethod
     def _status_bar_display_width(text: str) -> int:

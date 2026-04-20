@@ -40,7 +40,7 @@ LINKABLE_TEXT_FILENAMES = frozenset({
 @dataclass(frozen=True)
 class DroppedFile:
     path: Path
-    kind: Literal["image", "linkable_text", "unsupported_binary", "invalid"]
+    kind: Literal["image", "linkable_text", "unsupported_binary", "directory", "invalid"]
     reason: str = ""
 
 
@@ -97,7 +97,7 @@ def classify_dropped_file(path: Path, cwd: Path) -> DroppedFile:
     if not path.exists():
         return DroppedFile(path=path, kind="invalid", reason="file no longer exists")
     if not path.is_file():
-        return DroppedFile(path=path, kind="invalid", reason="directories not supported")
+        return DroppedFile(path=path, kind="directory", reason="")
 
     suffix = path.suffix.lower()
     mime, _ = mimetypes.guess_type(str(path))
@@ -232,12 +232,14 @@ def detect_file_drop_text(user_input: str) -> FileDropMatch | None:
         if end > 0:
             candidate = raw[1:end]
             path = _path_from_text(candidate)
-            if path.exists() and path.is_file():
+            if path.exists():
                 remainder = raw[end + 1:].strip()
                 return FileDropMatch(
                     path=path,
-                    is_image=path.suffix.lower() in IMAGE_EXTENSIONS
-                    or (mimetypes.guess_type(str(path))[0] or "").startswith("image/"),
+                    is_image=path.is_file() and (
+                        path.suffix.lower() in IMAGE_EXTENSIONS
+                        or (mimetypes.guess_type(str(path))[0] or "").startswith("image/")
+                    ),
                     remainder=remainder,
                 )
 
@@ -256,12 +258,15 @@ def detect_file_drop_text(user_input: str) -> FileDropMatch | None:
 
     first_token = raw[:pos]
     path = _path_from_text(first_token)
-    if not path.exists() or not path.is_file():
+    if not path.exists():
         return None
 
     remainder = raw[pos:].strip()
     return FileDropMatch(
         path=path,
-        is_image=path.suffix.lower() in IMAGE_EXTENSIONS or (mimetypes.guess_type(str(path))[0] or "").startswith("image/"),
+        is_image=path.is_file() and (
+            path.suffix.lower() in IMAGE_EXTENSIONS
+            or (mimetypes.guess_type(str(path))[0] or "").startswith("image/")
+        ),
         remainder=remainder,
     )

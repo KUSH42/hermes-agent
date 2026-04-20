@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import queue
 from unittest.mock import MagicMock
+from pathlib import Path
 
 import pytest
 from textual import events
 
+from hermes_cli.file_drop import classify_dropped_file
 from hermes_cli.tui.app import HermesApp
 from hermes_cli.tui.input_widget import HermesInput
 
@@ -169,3 +171,54 @@ async def test_input_paste_intercepts_dragged_file_path(tmp_path, monkeypatch) -
         await pilot.pause()
 
         assert inp.value == "main.py"
+
+
+# --- Directory drop tests ---
+
+
+def test_classify_dropped_file_directory(tmp_path: Path) -> None:
+    """classify_dropped_file returns kind='directory' for a real directory."""
+    subdir = tmp_path / "myproject"
+    subdir.mkdir()
+    result = classify_dropped_file(subdir, tmp_path)
+    assert result.kind == "directory"
+    assert result.path == subdir
+
+
+@pytest.mark.asyncio
+async def test_handle_file_drop_directory_inserts_path(tmp_path, monkeypatch) -> None:
+    """Dropping a directory path inserts it as text instead of flashing 'unsupported'."""
+    app = HermesApp(cli=_make_cli())
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("TERMINAL_CWD", raising=False)
+    subdir = tmp_path / "hermes-agent"
+    subdir.mkdir()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.handle_file_drop([subdir])
+        await pilot.pause()
+
+        inp = app.query_one(HermesInput)
+        assert inp.value == "hermes-agent"
+        hint = app.query_one("#hint-bar").hint
+        assert "unsupported" not in hint
+        assert "linked" in hint
+
+
+@pytest.mark.asyncio
+async def test_input_paste_intercepts_dragged_directory_path(tmp_path, monkeypatch) -> None:
+    """Pasting a directory path from terminal drag-and-drop inserts it as text."""
+    app = HermesApp(cli=_make_cli())
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("TERMINAL_CWD", raising=False)
+    subdir = tmp_path / "hermes-agent"
+    subdir.mkdir()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        await inp._on_paste(events.Paste(str(subdir)))
+        await pilot.pause()
+
+        assert inp.value == "hermes-agent"

@@ -256,3 +256,133 @@ async def test_previously_truncated_commands_present():
         assert not missing, (
             f"Commands still missing from completions (limit cap too small?): {missing}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Regression: / flicker loop — equality guard on _update_autocomplete
+# ---------------------------------------------------------------------------
+
+def _make_inp_harness():
+    """Build a minimal HermesInput harness without a running Textual app.
+
+    Returns (inp, iw_mod, _NoOpMeasure) so callers can patch measure and
+    restore it in a finally block.
+    """
+    import hermes_cli.tui.input_widget as iw_mod
+    from hermes_cli.tui.input_widget import HermesInput
+    from hermes_cli.tui.completion_context import CompletionContext, CompletionTrigger
+
+    inp = HermesInput.__new__(HermesInput)
+    inp._suppress_autocomplete_once = False
+    inp._current_trigger = CompletionTrigger(CompletionContext.NONE, "", 0)
+    inp._raw_candidates = []
+    inp._last_slash_hint_fragment = ""
+    inp._slash_commands = ["/help", "/compact", "/sessions", "/workspace"]
+    inp._slash_descriptions = {}
+    inp._slash_args_hints = {}
+    inp._slash_keybind_hints = {}
+    inp._slash_subcommands = {}
+    inp._path_debounce_timer = None
+
+    class _NoOpMeasure:
+        def __init__(self, *a, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+
+    return inp, iw_mod, _NoOpMeasure
+
+
+def test_slash_update_autocomplete_no_reentry_on_same_trigger():
+    """Calling _update_autocomplete twice with the same trigger pushes items once.
+
+    Regression for the flicker loop: without the equality guard, every call to
+    _update_autocomplete would reassign _current_trigger and call _push_to_list,
+    causing watch_items → refresh → watch_value → _update_autocomplete re-entry.
+
+    With the guard, the second call sees new_trigger == self._current_trigger
+    and returns early, so _show_slash_completions is called exactly once.
+    """
+    from hermes_cli.tui.completion_context import CompletionContext, CompletionTrigger
+
+    inp, iw_mod, _NoOpMeasure = _make_inp_harness()
+
+    slash_call_count = 0
+
+    def _fake_show_slash(fragment):
+        nonlocal slash_call_count
+        slash_call_count += 1
+
+    original_measure = iw_mod.measure
+    iw_mod.measure = _NoOpMeasure
+
+    fake_app = MagicMock()
+    fake_app.choice_overlay_active = False
+
+    try:
+        with patch.object(inp, "_show_slash_completions", side_effect=_fake_show_slash), \
+             patch.object(inp, "_hide_completion_overlay"), \
+             patch.object(type(inp), "value", new_callable=lambda: property(lambda self: "/")), \
+             patch.object(type(inp), "cursor_position", new_callable=lambda: property(lambda self: 1)), \
+             patch.object(type(inp), "app", new_callable=lambda: property(lambda self: fake_app)):
+            # First call — trigger is NONE, so it computes and calls _show_slash_completions.
+            inp._update_autocomplete()
+            assert slash_call_count == 1, (
+                f"Expected 1 _show_slash_completions call after first invocation, got {slash_call_count}"
+            )
+
+            # Second call with same value "/" — new_trigger == _current_trigger, early return.
+            inp._update_autocomplete()
+            assert slash_call_count == 1, (
+                f"Expected still 1 call after second invocation with same trigger, "
+                f"got {slash_call_count}. Equality guard is missing or broken."
+            )
+    finally:
+        iw_mod.measure = original_measure
+
+
+def test_slash_typing_single_slash_no_flicker():
+    """Simulate typing '/' and verify _show_slash_completions is called exactly once.
+
+    This is a unit-level guard for the flicker loop: the _update_autocomplete
+    equality guard must prevent any re-entrant call after the first computation.
+
+    The loop signature is: _show_slash_completions → _push_to_list → watch_items
+    → refresh → watch_value fires → _update_autocomplete → _show_slash_completions
+    again → repeat.  The guard breaks this by returning early when the trigger
+    is unchanged.
+
+    The test simulates the re-entrant call by having _show_slash_completions
+    call _update_autocomplete again — exactly what happens via Textual reactives.
+    """
+    from hermes_cli.tui.completion_context import CompletionContext, CompletionTrigger
+
+    inp, iw_mod, _NoOpMeasure = _make_inp_harness()
+
+    slash_calls: list[str] = []
+
+    def _reentrant_show_slash(fragment):
+        slash_calls.append(fragment)
+        # Simulate watch_items firing _update_autocomplete re-entrantly.
+        inp._update_autocomplete()
+
+    original_measure = iw_mod.measure
+    iw_mod.measure = _NoOpMeasure
+
+    fake_app = MagicMock()
+    fake_app.choice_overlay_active = False
+
+    try:
+        with patch.object(inp, "_show_slash_completions", side_effect=_reentrant_show_slash), \
+             patch.object(inp, "_hide_completion_overlay"), \
+             patch.object(type(inp), "value", new_callable=lambda: property(lambda self: "/")), \
+             patch.object(type(inp), "cursor_position", new_callable=lambda: property(lambda self: 1)), \
+             patch.object(type(inp), "app", new_callable=lambda: property(lambda self: fake_app)):
+            inp._update_autocomplete()
+    finally:
+        iw_mod.measure = original_measure
+
+    assert len(slash_calls) == 1, (
+        f"Expected exactly 1 _show_slash_completions call (no flicker loop), "
+        f"got {len(slash_calls)} calls with fragments: {slash_calls}. "
+        "The equality guard in _update_autocomplete is not preventing re-entry."
+    )

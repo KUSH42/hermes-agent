@@ -795,14 +795,22 @@ class HermesInput(TextArea, can_focus=True):
                 and _SLASH_FULL_RE.match(self.value)
             ):
                 fragment = self.value[1:]
-                self._current_trigger = CompletionTrigger(
+                new_trigger = CompletionTrigger(
                     CompletionContext.SLASH_COMMAND, fragment, 1,
                 )
+                # Guard: skip re-computation when trigger hasn't changed.
+                # Prevents watch_items → refresh → watch_value → re-entry loop.
+                if new_trigger == self._current_trigger:
+                    return
+                self._current_trigger = new_trigger
                 self._raw_candidates = []
                 self._show_slash_completions(fragment)
                 return
 
             trigger = detect_context(self.value, self.cursor_position)
+            # Guard: skip re-computation when trigger hasn't changed.
+            if trigger == self._current_trigger:
+                return
             self._current_trigger = trigger
             self._raw_candidates = []
 
@@ -1081,8 +1089,13 @@ class HermesInput(TextArea, can_focus=True):
         except NoMatches:
             return
         request = self._resolve_path_search_request()
-        clist.current_query = request.match_query or self._current_trigger.fragment
-        clist.items = tuple(candidates)
+        new_query = request.match_query or self._current_trigger.fragment
+        new_items = tuple(candidates)
+        # Guard: avoid triggering watch_items when nothing changed.
+        if new_items == clist.items and new_query == clist.current_query:
+            return
+        clist.current_query = new_query
+        clist.items = new_items
 
     # --- Accept / dismiss ---
 

@@ -37,6 +37,8 @@ class CommandDef:
     cli_only: bool = False             # only available in CLI
     gateway_only: bool = False         # only available in gateway/messaging
     gateway_config_gate: str | None = None  # config dotpath; when truthy, overrides cli_only for gateway
+    tui_only: bool = False             # only meaningful in the Textual TUI (implies cli_only for gateway)
+    keybind_hint: str = ""             # keyboard shortcut shown in SlashDescPanel, e.g. "Ctrl+Shift+H"
 
 
 # ---------------------------------------------------------------------------
@@ -104,9 +106,13 @@ COMMAND_REGISTRY: list[CommandDef] = [
     CommandDef("skin", "Show or change the display skin/theme", "Configuration",
                cli_only=True, args_hint="[name]"),
     CommandDef("anim", "Open the animation overlay config panel", "Configuration",
-               cli_only=True),
+               cli_only=True, tui_only=True),
     CommandDef("workspace", "Toggle the workspace overlay", "Configuration",
-               cli_only=True),
+               cli_only=True, tui_only=True),
+    CommandDef("compact", "Toggle compact density layout", "Configuration",
+               tui_only=True),
+    CommandDef("sessions", "Browse and resume recent sessions", "Session",
+               tui_only=True, keybind_hint="Ctrl+Shift+H"),
     CommandDef("effects", "Play a terminal text animation (TerminalTextEffects)", "Configuration",
                cli_only=True, aliases=("easteregg",),
                args_hint="[effect] [text] | list",
@@ -230,7 +236,7 @@ def rebuild_lookups() -> None:
     GATEWAY_KNOWN_COMMANDS = frozenset(
         name
         for cmd in COMMAND_REGISTRY
-        if not cmd.cli_only or cmd.gateway_config_gate
+        if (not cmd.cli_only or cmd.gateway_config_gate) and not cmd.tui_only
         for name in (cmd.name, *cmd.aliases)
     )
 
@@ -290,7 +296,7 @@ for _cmd in COMMAND_REGISTRY:
 GATEWAY_KNOWN_COMMANDS: frozenset[str] = frozenset(
     name
     for cmd in COMMAND_REGISTRY
-    if not cmd.cli_only or cmd.gateway_config_gate
+    if (not cmd.cli_only or cmd.gateway_config_gate) and not cmd.tui_only
     for name in (cmd.name, *cmd.aliases)
 )
 
@@ -331,7 +337,11 @@ def _is_gateway_available(cmd: CommandDef, config_overrides: set[str] | None = N
     is True but ``gateway_config_gate`` is set, the command is available only
     when the config value is truthy.  Pass *config_overrides* (from
     ``_resolve_config_gates()``) to avoid re-reading config for every command.
+
+    ``tui_only=True`` commands are never available on gateway surfaces.
     """
+    if cmd.tui_only:
+        return False
     if not cmd.cli_only:
         return True
     if cmd.gateway_config_gate:
@@ -346,6 +356,30 @@ def gateway_help_lines() -> list[str]:
     lines: list[str] = []
     for cmd in COMMAND_REGISTRY:
         if not _is_gateway_available(cmd, overrides):
+            continue
+        args = f" {cmd.args_hint}" if cmd.args_hint else ""
+        alias_parts: list[str] = []
+        for a in cmd.aliases:
+            # Skip internal aliases like reload_mcp (underscore variant)
+            if a.replace("-", "_") == cmd.name.replace("-", "_") and a != cmd.name:
+                continue
+            alias_parts.append(f"`/{a}`")
+        alias_note = f" (alias: {', '.join(alias_parts)})" if alias_parts else ""
+        lines.append(f"`/{cmd.name}{args}` -- {cmd.description}{alias_note}")
+    return lines
+
+
+def tui_help_lines() -> list[str]:
+    """Generate TUI help text lines from the registry.
+
+    Unlike ``gateway_help_lines()``, this includes all non-gateway-only
+    commands: CLI-only, TUI-only, and shared commands are all shown.
+    Gateway-only commands (Telegram/Discord-specific) are excluded since
+    they are not actionable in the TUI.
+    """
+    lines: list[str] = []
+    for cmd in COMMAND_REGISTRY:
+        if cmd.gateway_only:
             continue
         args = f" {cmd.args_hint}" if cmd.args_hint else ""
         alias_parts: list[str] = []

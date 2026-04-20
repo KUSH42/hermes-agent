@@ -49,6 +49,9 @@ class PathCandidate(Candidate):
 class SlashCandidate(Candidate):
     command: str = ""                               # canonical command name, e.g. "/help"
     description: str = ""                          # short description shown in SlashDescPanel
+    args_hint: str = ""                             # usage syntax e.g. "[number]"
+    category: str = ""                              # from CommandDef.category
+    keybind_hint: str = ""                          # shortcut hint e.g. "Ctrl+Shift+H"
 
 
 # ---------------------------------------------------------------------------

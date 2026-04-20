@@ -148,6 +148,9 @@ class HermesInput(TextArea, can_focus=True):
         self._history_draft: str = ""
         self._slash_commands: list[str] = []
         self._slash_descriptions: dict[str, str] = {}
+        self._slash_args_hints: dict[str, str] = {}
+        self._slash_keybind_hints: dict[str, str] = {}
+        self._slash_subcommands: dict[str, list[str]] = {}
         self._suppress_autocomplete_once: bool = False
         self._sanitizing: bool = False
         self._handling_file_drop: bool = False
@@ -321,6 +324,18 @@ class HermesInput(TextArea, can_focus=True):
     def set_slash_descriptions(self, descs: dict[str, str]) -> None:
         """Set description strings for slash commands (shown in SlashDescPanel)."""
         self._slash_descriptions = descs
+
+    def set_slash_args_hints(self, hints: dict[str, str]) -> None:
+        """Set args_hint strings for slash commands (usage syntax shown in SlashDescPanel)."""
+        self._slash_args_hints = hints
+
+    def set_slash_keybind_hints(self, hints: dict[str, str]) -> None:
+        """Set keybind_hint strings for slash commands (shortcut shown in SlashDescPanel)."""
+        self._slash_keybind_hints = hints
+
+    def set_slash_subcommands(self, subs: dict[str, list[str]]) -> None:
+        """Set subcommand lists for slash commands (e.g. {"/reasoning": ["low", "high", ...]})."""
+        self._slash_subcommands = subs
 
     # --- Key handling ---
 
@@ -793,6 +808,8 @@ class HermesInput(TextArea, can_focus=True):
 
             if trigger.context is CompletionContext.SLASH_COMMAND:
                 self._show_slash_completions(trigger.fragment)
+            elif trigger.context is CompletionContext.SLASH_SUBCOMMAND:
+                self._show_subcommand_completions(trigger.parent_command, trigger.fragment)
             elif trigger.context in (
                 CompletionContext.PATH_REF,
                 CompletionContext.PLAIN_PATH_REF,
@@ -811,6 +828,8 @@ class HermesInput(TextArea, can_focus=True):
                 display=c,
                 command=c,
                 description=self._slash_descriptions.get(c, ""),
+                args_hint=self._slash_args_hints.get(c, ""),
+                keybind_hint=self._slash_keybind_hints.get(c, ""),
             )
             for c in self._slash_commands
             if c.startswith("/" + fragment)
@@ -843,6 +862,30 @@ class HermesInput(TextArea, can_focus=True):
             return
         self._set_overlay_mode(slash_only=True)
         self._push_to_list(ranked)
+        self._show_completion_overlay()
+
+    def _show_subcommand_completions(self, parent_cmd: str, fragment: str) -> None:
+        """Show subcommand completion candidates for a command that has been fully typed."""
+        cmd_key = f"/{parent_cmd}"
+        subcommands = self._slash_subcommands.get(cmd_key)
+        if not subcommands:
+            self._hide_completion_overlay()
+            return
+        # Filter by fragment prefix
+        items = [
+            SlashCandidate(
+                display=sub,
+                command=f"{cmd_key} {sub}",
+                description=self._slash_descriptions.get(cmd_key, ""),
+            )
+            for sub in subcommands
+            if sub.startswith(fragment)
+        ]
+        if not items:
+            self._hide_completion_overlay()
+            return
+        self._set_overlay_mode(slash_only=True)
+        self._push_to_list(items)
         self._show_completion_overlay()
 
     def _show_path_completions(self, fragment: str) -> None:
@@ -1068,8 +1111,19 @@ class HermesInput(TextArea, can_focus=True):
         trig = self._current_trigger
 
         if isinstance(c, SlashCandidate):
-            new_value = c.command + " "
-            new_cursor = len(new_value)
+            if trig.context is CompletionContext.SLASH_SUBCOMMAND:
+                # Splice only the subcommand fragment, preserving the parent command prefix.
+                # trig.start is the position of the fragment in the input (after "/cmd ").
+                before = self.value[:trig.start]   # e.g. "/reasoning "
+                after = self.value[self.cursor_position:]
+                subcommand = c.display              # the subcommand word (e.g. "high")
+                tail = " " if not after else ""
+                new_value = f"{before}{subcommand}{tail}{after}".rstrip()
+                new_value = new_value + " " if not after else new_value
+                new_cursor = len(before) + len(subcommand) + 1
+            else:
+                new_value = c.command + " "
+                new_cursor = len(new_value)
         elif isinstance(c, PathCandidate):
             insert_text = c.insert_text or c.display
             if trig.context in (

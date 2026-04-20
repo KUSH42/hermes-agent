@@ -3113,6 +3113,12 @@ class HermesApp(App):
                 inp.set_slash_commands(combined)
             except (NoMatches, Exception):
                 pass
+        # SC-08: notify HelpOverlay to refresh its cache after plugin registration
+        try:
+            from hermes_cli.tui.overlays import HelpOverlay as _HO
+            self.query_one(_HO)._refresh_commands_cache()
+        except (NoMatches, Exception):
+            pass
 
     # --- Clipboard / selection helpers ---
 
@@ -3131,27 +3137,44 @@ class HermesApp(App):
 
         Called once on mount.  Safe to call again after plugin commands are added.
         Includes built-in commands, their aliases, and any registered skill commands.
+        Excludes gateway_only commands (not actionable in TUI).
         """
         try:
             from hermes_cli.tui.input_widget import HermesInput as _HI
-            from hermes_cli.commands import COMMAND_REGISTRY
+            from hermes_cli.commands import COMMAND_REGISTRY, SUBCOMMANDS
             # Build full slash-name list: /name + /alias for each command
+            # SC-10: exclude gateway_only commands (not actionable in TUI)
             names: list[str] = []
             for cmd in COMMAND_REGISTRY:
+                if cmd.gateway_only:
+                    continue
                 names.append(f"/{cmd.name}")
                 for alias in getattr(cmd, "aliases", []):
                     names.append(f"/{alias}")
             # B1: build descriptions dict for SlashDescPanel
             descs: dict[str, str] = {}
+            args_hints: dict[str, str] = {}
+            keybind_hints: dict[str, str] = {}
             for cmd in COMMAND_REGISTRY:
+                if cmd.gateway_only:
+                    continue
                 cmd_desc = getattr(cmd, "description", "") or ""
+                cmd_args = getattr(cmd, "args_hint", "") or ""
+                cmd_keybind = getattr(cmd, "keybind_hint", "") or ""
                 descs[f"/{cmd.name}"] = cmd_desc
+                args_hints[f"/{cmd.name}"] = cmd_args
+                keybind_hints[f"/{cmd.name}"] = cmd_keybind
                 for alias in getattr(cmd, "aliases", []):
                     descs[f"/{alias}"] = cmd_desc
+                    args_hints[f"/{alias}"] = cmd_args
+                    keybind_hints[f"/{alias}"] = cmd_keybind
             try:
                 inp = self.query_one(_HI)
                 inp.set_slash_commands(names)
                 inp.set_slash_descriptions(descs)
+                inp.set_slash_args_hints(args_hints)
+                inp.set_slash_keybind_hints(keybind_hints)
+                inp.set_slash_subcommands(dict(SUBCOMMANDS))
             except NoMatches:
                 pass
         except Exception:
@@ -3603,6 +3626,11 @@ class HermesApp(App):
             self.action_open_sessions()
             return True
 
+        # SC-11: Disambiguation — bare "/tools" (no args) opens the TUI ToolsScreen overlay.
+        # "/tools list", "/tools enable <name>", etc. have arguments and fall through to CLI,
+        # which handles all /tools subcommands. The condition `stripped == "/tools"` ensures
+        # we only intercept the no-arg form; any "/tools <subcmd>" form passes the equality
+        # check false and falls through to the `return False` at the bottom.
         if stripped == "/tools":
             self._open_tools_overlay()
             return True
@@ -3634,7 +3662,9 @@ class HermesApp(App):
         if stripped == "/commands":
             self._dismiss_all_info_overlays()
             try:
-                self.query_one(CommandsOverlay).add_class("--visible")
+                overlay = self.query_one(CommandsOverlay)
+                overlay._refresh_content()  # SC-38: always refresh on open for fresh data
+                overlay.add_class("--visible")
             except NoMatches:
                 pass
             return True
@@ -3674,6 +3704,15 @@ class HermesApp(App):
         if cmd_parts and cmd_parts[0] == "/stop":
             self._flash_hint("⏹  Stopping processes…", 1.5)
             return False  # forward to CLI for actual stop
+
+        # SC-12: Flash hint for bare unknown slash commands before forwarding to CLI.
+        # Only fires for /word with no arguments (known CLI-handled commands have
+        # already returned False above, so any bare /word reaching here is unrecognized).
+        # Double-flash guard: the typing-time "Unknown command: /fragment" flash fires
+        # while typing (from _show_slash_completions); this submit-time flash is
+        # temporally disjoint (fires on Enter after the typing flash has expired).
+        if re.match(r"^/[\w-]+$", stripped):
+            self._flash_hint("⚠  Unknown command — try /help for all commands", 2.0)
 
         return False
 
@@ -4021,7 +4060,7 @@ class HermesApp(App):
             # Priority -2: dismiss info overlays (help/usage/commands/model).
             # These have no Input focus when shown (except HelpOverlay), so their
             # Binding(escape) doesn't fire — handle here instead.
-            for _cls in (HelpOverlay, UsageOverlay, CommandsOverlay, ModelOverlay, WorkspaceOverlay):
+            for _cls in (HelpOverlay, UsageOverlay, CommandsOverlay, ModelOverlay, WorkspaceOverlay, SessionOverlay):
                 try:
                     _ov = self.query_one(_cls)
                     if _ov.has_class("--visible"):

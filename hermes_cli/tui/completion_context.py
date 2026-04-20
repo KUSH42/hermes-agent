@@ -32,6 +32,7 @@ class CompletionContext(Enum):
     NATURAL = 3
     PLAIN_PATH_REF = 4 # triggered by ./fragment, ../fragment, ~/fragment
     ABSOLUTE_PATH_REF = 5 # triggered by /abs/path after whitespace
+    SLASH_SUBCOMMAND = 6  # triggered by "/cmd fragment" — arg completion
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,11 +40,15 @@ class CompletionTrigger:
     context: CompletionContext
     fragment: str   # the typed portion after the trigger character
     start: int      # index of the first char of the fragment in value
+    parent_command: str = ""  # populated only for SLASH_SUBCOMMAND context
 
 
 # ``[\w-]`` so commands like /review-pr, /commit-msg, /skill-scan match.
 # The character class explicitly includes hyphen, which ``\w`` does not.
 _SLASH_RE = re.compile(r"^/([\w-]*)$")
+# Subcommand context: exactly one space after command, then optional fragment.
+# Must be checked before _SLASH_RE since it is a strict superset when space is present.
+_SLASH_SUBCMD_RE = re.compile(r"^/([\w-]+)\s+([\w-]*)$")
 _PATH_RE = re.compile(r"(?:^|\s)@([\w./\-]*)$")     # anchored to cursor head
 _PLAIN_PATH_RE = re.compile(r"(?:^|\s)((?:\.\.?|~)(?:/[\w./\-]*)?)$")  # ./x, ../x, ~/x, ., ..
 _ABS_PATH_RE = re.compile(r"(?:^|\s)(/[\w.\-]+(?:/[\w./\-]*)?)$")
@@ -59,6 +64,18 @@ def detect_context(value: str, cursor: int) -> CompletionTrigger:
     picks up the ``@s`` fragment even though more text follows).
     """
     head = value[:cursor]
+
+    # SLASH_SUBCOMMAND must be checked before SLASH_COMMAND so that
+    # "/cmd fragment" takes priority over the bare "/cmd" pattern.
+    m = _SLASH_SUBCMD_RE.match(head)
+    if m:
+        parent_cmd = m.group(1)
+        fragment = m.group(2)
+        start = m.start(2)
+        return CompletionTrigger(
+            CompletionContext.SLASH_SUBCOMMAND, fragment, start,
+            parent_command=parent_cmd,
+        )
 
     m = _SLASH_RE.match(head)
     if m:

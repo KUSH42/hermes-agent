@@ -1489,13 +1489,52 @@ def _split_row(raw: str) -> list[str]:
 
     Handles both strict GFM (``| A | B |``) and loose GFM (``A | B | C``)
     formats — leading and trailing ``|`` are stripped when present.
+
+    Pipes inside backtick spans are treated as literal content (GFM spec §4.9).
+    ``\\|`` escape sequences are also treated as literal ``|``.
     """
     s = raw.strip()
     if s.startswith("|"):
         s = s[1:]
     if s.endswith("|"):
         s = s[:-1]
-    return s.split("|")
+    # Fast path: no backticks or backslash-pipes → plain split
+    if "`" not in s and "\\|" not in s:
+        return s.split("|")
+    # Scan respecting backtick spans and \| escapes
+    cells: list[str] = []
+    buf: list[str] = []
+    i = 0
+    n = len(s)
+    while i < n:
+        ch = s[i]
+        if ch == "\\" and i + 1 < n and s[i + 1] == "|":
+            buf.append("|")
+            i += 2
+        elif ch == "`":
+            # Consume backtick fence (count opening ticks, find matching close)
+            j = i + 1
+            while j < n and s[j] == "`":
+                j += 1
+            fence_len = j - i
+            close_pat = "`" * fence_len
+            end = s.find(close_pat, j)
+            if end == -1:
+                # Unclosed span — treat remaining string as literal
+                buf.append(s[i:])
+                i = n
+            else:
+                buf.append(s[i : end + fence_len])
+                i = end + fence_len
+        elif ch == "|":
+            cells.append("".join(buf))
+            buf = []
+            i += 1
+        else:
+            buf.append(ch)
+            i += 1
+    cells.append("".join(buf))
+    return cells
 
 
 def _parse_align(cell: str) -> str:

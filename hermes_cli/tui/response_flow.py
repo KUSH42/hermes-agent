@@ -98,6 +98,8 @@ _BLOCK_MATH_CLOSE_RE = re.compile(
 )
 # Single-line: $$expr$$ on one line (no newline inside)
 _BLOCK_MATH_ONELINE_RE = re.compile(r"^\$\$(.+)\$\$\s*$")
+# Single-line: \[expr\] on one line
+_BLOCK_MATH_ONELINE_BRACKET_RE = re.compile(r"^\\\[(.+)\\\]\s*$")
 
 # Inline $$expr$$ embedded within a prose line (text before/after $$)
 _INLINE_DOUBLE_MATH_RE = re.compile(r"\$\$([^$\n]+)\$\$")
@@ -595,6 +597,8 @@ class ResponseFlowEngine:
             # Block math — checked BEFORE fence detection ($$ would match _FENCE_OPEN_RE)
             if self._math_enabled:
                 oneline_m = _BLOCK_MATH_ONELINE_RE.match(stripped)
+                if not oneline_m:
+                    oneline_m = _BLOCK_MATH_ONELINE_BRACKET_RE.match(stripped)
                 if oneline_m:
                     self._flush_block_buf()
                     self._flush_math_block(oneline_m.group(1))

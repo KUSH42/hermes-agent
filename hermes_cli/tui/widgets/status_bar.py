@@ -1,11 +1,12 @@
 """Status/bottom-bar classes for the Hermes TUI.
 
 Contains: HintBar, StatusBar, AnimatedCounter, VoiceStatusBar, ImageBar,
-plus their helper functions and cache variables.
+SourcesBar, plus their helper functions and cache variables.
 """
 
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING, Any
 
 from rich.style import Style
@@ -14,7 +15,7 @@ from textual.app import ComposeResult, RenderResult
 from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.widget import Widget
-from textual.widgets import Static
+from textual.widgets import Button, Label, Static
 
 from hermes_cli.tui.animation import AnimationClock, PulseMixin, lerp_color, shimmer_text
 from .utils import (
@@ -685,3 +686,71 @@ class ImageBar(Widget):
             self._shimmer_stop()
             self._static_content = Text()
             self.refresh()
+
+
+# ---------------------------------------------------------------------------
+# Citations / SourcesBar
+# ---------------------------------------------------------------------------
+
+def _extract_domain(url: str) -> str:
+    """'https://www.example.com/path' → 'example.com'"""
+    from urllib.parse import urlparse
+    try:
+        host = urlparse(url).netloc
+        return host.removeprefix("www.") if host else url[:30]
+    except Exception:
+        return url[:30]
+
+
+def _truncate(text: str, max_len: int) -> str:
+    return text if len(text) <= max_len else text[:max_len - 1] + "…"
+
+
+class SourcesBar(Widget):
+    """Clickable source chips mounted below a MessagePanel at turn end."""
+
+    DEFAULT_CSS = """
+    SourcesBar {
+        height: auto;
+        padding: 0 1;
+        border-top: solid $panel-border;
+    }
+    SourcesBar .--cite-label {
+        color: $cite-chip-fg;
+        padding: 0 1 0 0;
+    }
+    SourcesBar .--cite-chip {
+        background: $cite-chip-bg;
+        color: $cite-chip-fg;
+        padding: 0 1;
+        margin-right: 1;
+    }
+    SourcesBar .--cite-chip:hover {
+        background: $accent;
+        color: $background;
+    }
+    """
+
+    def __init__(self, entries: list[tuple[int, str, str]]) -> None:
+        """entries: list of (N, title, url) in display order."""
+        super().__init__()
+        self._entries = entries
+        # Build URL lookup in __init__ — available before compose() runs
+        self._urls: dict[str, str] = {f"cite-{n}": url for n, _, url in entries}
+
+    def compose(self) -> ComposeResult:
+        yield Label("Sources:", classes="--cite-label")
+        for n, title, url in self._entries:
+            domain = _extract_domain(url)
+            label_text = f"[{n}] {domain}"
+            if title:
+                label_text += f" — {_truncate(title, 40)}"
+            yield Button(label_text, classes="--cite-chip", id=f"cite-{n}")
+
+    def on_button_pressed(self, event: "Any") -> None:
+        event.stop()
+        url = self._urls.get(event.button.id or "", "")
+        if url:
+            import subprocess
+            opener = "open" if sys.platform == "darwin" else "xdg-open"
+            subprocess.Popen([opener, url])

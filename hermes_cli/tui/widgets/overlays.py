@@ -1096,3 +1096,48 @@ class HistorySearchOverlay(Widget):
             except NoMatches:
                 query = ""
             self._render_results(query)
+
+
+# ---------------------------------------------------------------------------
+# _CrossSessionResult — cross-session FTS5 search result
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _CrossSessionResult:
+    """Result from cross-session FTS5 search."""
+    session_id: str
+    session_title: str       # empty string if NULL
+    role: str
+    content_preview: str     # first 80 chars, newlines collapsed
+    timestamp: float
+    is_current_session: bool # True when session_id == current session_id
+
+
+def _build_cross_session_label(result: "_CrossSessionResult") -> str:
+    """Build row label for a cross-session search result."""
+    title = result.session_title or result.session_id[-8:]
+    preview = result.content_preview
+    return f"[dim]\\[{_escape_markup(title)}][/dim]  {_escape_markup(preview)}"
+
+
+# ---------------------------------------------------------------------------
+# _ModeBar — current/all session toggle display
+# ---------------------------------------------------------------------------
+
+class _ModeBar(Static):
+    """Renders [Current] All or Current [All] based on overlay mode."""
+
+    DEFAULT_CSS = """
+    _ModeBar { height: 1; padding: 0 1; }
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__("", **kwargs)
+        self._mode = "current"
+
+    def set_mode(self, mode: str) -> None:
+        self._mode = mode
+        if mode == "current":
+            self.update("[bold]\\[Current][/bold] All")
+        else:
+            self.update("Current [bold]\\[All][/bold]")

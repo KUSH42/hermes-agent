@@ -176,7 +176,7 @@ class _ToolRenderingMixin:
             _is_first = (_turn_count == 1)
             block = msg.open_streaming_tool_block(
                 label=label, tool_name=tool_name, panel_id=panel_id,
-                is_first_in_turn=_is_first,
+                is_first_in_turn=_is_first, tool_call_id=tool_call_id,
             )
             self._active_streaming_blocks[tool_call_id] = block  # type: ignore[attr-defined]
             self._streaming_tool_count = len(self._active_streaming_blocks)  # type: ignore[attr-defined]

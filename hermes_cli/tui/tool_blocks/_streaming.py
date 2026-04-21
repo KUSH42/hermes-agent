@@ -14,6 +14,8 @@ from textual.widgets import Button, Static
 
 from hermes_cli.tui.widgets import CopyableRichLog, _strip_ansi
 
+from hermes_cli.tui.animation import make_spinner_identity, SpinnerIdentity
+
 from ._shared import (
     _VISIBLE_CAP,
     _LINE_BYTE_CAP,
@@ -99,11 +101,15 @@ class StreamingToolBlock(ToolBlock):
     DEFAULT_CSS = "StreamingToolBlock { height: auto; }"
 
     def __init__(self, label: str, tool_name: str | None = None, tool_input: "dict | None" = None,
-                 is_first_in_turn: bool = False, **kwargs: Any) -> None:
+                 is_first_in_turn: bool = False, tool_call_id: str | None = None,
+                 **kwargs: Any) -> None:
         super().__init__(label=label, lines=[], plain_lines=[], tool_name=tool_name, **kwargs)
         self._stream_label = label
         self._tool_input = tool_input
         self._is_first_in_turn: bool = is_first_in_turn
+        self._spinner_identity: "SpinnerIdentity | None" = (
+            make_spinner_identity(tool_call_id) if tool_call_id else None
+        )
         self._pending: list[tuple[Text, str]] = []
         self._all_plain: list[str] = []
         self._all_rich: list[Text] = []
@@ -142,7 +148,9 @@ class StreamingToolBlock(ToolBlock):
 
     def on_mount(self) -> None:
         self._header._has_affordances = False
-        self._header._spinner_char = _SPINNER_FRAMES[0]
+        self._header._spinner_identity = self._spinner_identity
+        frames = self._spinner_identity.frames if self._spinner_identity else _SPINNER_FRAMES
+        self._header._spinner_char = frames[0]
         self._stream_started_at = time.monotonic()
         self._last_line_time = self._stream_started_at
         self._header._duration = "0.0s"
@@ -381,8 +389,9 @@ class StreamingToolBlock(ToolBlock):
     def _tick_spinner(self) -> None:
         if self._completed:
             return
-        self._spinner_frame = (self._spinner_frame + 1) % len(_SPINNER_FRAMES)
-        self._header._spinner_char = _SPINNER_FRAMES[self._spinner_frame]
+        frames = self._spinner_identity.frames if self._spinner_identity is not None else _SPINNER_FRAMES
+        self._spinner_frame = (self._spinner_frame + 1) % len(frames)
+        self._header._spinner_char = frames[self._spinner_frame]
         self._header.refresh()
 
     def _tick_duration(self) -> None:

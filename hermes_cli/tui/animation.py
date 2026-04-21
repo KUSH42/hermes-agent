@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from rich.style import Style
 from rich.text import Text
@@ -42,6 +43,85 @@ def pulse_phase(tick: int, period: int = 30) -> float:
     At 15fps with period=30: one full breath = 2 seconds.
     """
     return (math.sin(2.0 * math.pi * tick / period) + 1.0) / 2.0
+
+
+def pulse_phase_offset(tick: int, offset: float, period: int = 30) -> float:
+    """Sine phase with a fractional-cycle offset applied before the trig call.
+
+    Unlike adding offset to the already-computed pulse_phase() output and
+    taking modulo — which creates a hard discontinuity at the wrap point —
+    this shifts the entire sine wave cleanly so adjacent ticks always differ
+    by at most 2π/period.
+
+    offset ∈ [0, 1): 0.0 = no shift, 0.5 = half-cycle ahead.
+    At 15fps / period=30: full cycle = 2 s.
+    """
+    return (math.sin(2.0 * math.pi * (tick / period + offset)) + 1.0) / 2.0
+
+
+# ---------------------------------------------------------------------------
+# Per-tool spinner identity
+# ---------------------------------------------------------------------------
+
+def _fnv1a_32(s: str) -> int:
+    """FNV-1a 32-bit hash. Stable cross-process (unlike Python hash())."""
+    h = 2166136261  # FNV offset basis
+    for c in s.encode():
+        h ^= c
+        h = (h * 16777619) & 0xFFFFFFFF  # FNV prime, masked to 32 bits
+    return h
+
+
+_SPINNER_FRAME_SETS: tuple[tuple[str, ...], ...] = (
+    # 0 — standard CCW sweep (current default, used as accessibility fallback)
+    ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"),
+    # 1 — CW arc with intentional bounce-back at apex (⠾⠿⠾)
+    ("⠈", "⠘", "⠸", "⠼", "⠾", "⠿", "⠾", "⠼", "⠸", "⠘"),
+    # 2 — heavy bounce (fills then empties)
+    ("⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷", "⣿", "⣶"),
+    # 3 — diagonal sweep
+    ("⠁", "⠃", "⠇", "⠧", "⠷", "⠿", "⠾", "⠼", "⠸", "⠰"),
+)
+
+_SPINNER_COLOR_PAIRS: tuple[tuple[str, str], ...] = (
+    # (dim_end, bright_peak) — lerp_color(a, b, t) at t=0 gives dim_end
+    ("#1565c0", "#00bcd4"),  # 0 deep-blue → cyan
+    ("#00695c", "#43a047"),  # 1 teal → green
+    ("#e65100", "#f9a825"),  # 2 deep-orange → amber
+    ("#6a1b9a", "#e91e63"),  # 3 purple → pink
+    ("#283593", "#7e57c2"),  # 4 indigo → violet
+    ("#b71c1c", "#f06292"),  # 5 deep-red → light-pink
+    ("#006064", "#26c6da"),  # 6 dark-cyan → aqua
+    ("#f57f17", "#ffd54f"),  # 7 gold → yellow
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SpinnerIdentity:
+    """Deterministic per-block spinner appearance seeded from tool_call_id."""
+    frames: tuple[str, ...]
+    color_a: str   # gradient dim end (t=0)
+    color_b: str   # gradient bright peak (t=1)
+    phase_offset: float  # ∈ [0, 1) — shifts sine phase so concurrent blocks cycle out of sync
+
+
+def make_spinner_identity(tool_call_id: str) -> SpinnerIdentity:
+    """Hash tool_call_id to a deterministic SpinnerIdentity.
+
+    Bit ranges are non-overlapping so each selector is independent:
+      bits 0–1  → frame set index  (4 sets)
+      bits 4–6  → color pair index (8 pairs)
+      bits 8–15 → phase offset     (256 values ∈ [0, 0.996))
+    """
+    from hermes_cli.tui.constants import accessibility_mode
+    n = _fnv1a_32(tool_call_id)
+    frames_idx = n % len(_SPINNER_FRAME_SETS)           # bits 0–1
+    color_idx = (n >> 4) % len(_SPINNER_COLOR_PAIRS)    # bits 4–6
+    phase_offset = ((n >> 8) & 0xFF) / 256.0            # bits 8–15
+    if accessibility_mode():
+        frames_idx = 0  # always CCW Braille in accessible environments
+    color_a, color_b = _SPINNER_COLOR_PAIRS[color_idx]
+    return SpinnerIdentity(_SPINNER_FRAME_SETS[frames_idx], color_a, color_b, phase_offset)
 
 
 # Precomputed sine tables for common animation periods.

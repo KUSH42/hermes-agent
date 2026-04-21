@@ -6478,10 +6478,15 @@ class HermesCLI:
         current = bool(os.environ.get("HERMES_YOLO_MODE"))
         if current:
             os.environ.pop("HERMES_YOLO_MODE", None)
+            new_value = False
             _cprint("  ⚠ YOLO mode \033[1;31mOFF\033[0m — dangerous commands will require approval.")
         else:
             os.environ["HERMES_YOLO_MODE"] = "1"
+            new_value = True
             _cprint("  ⚡ YOLO mode \033[1;32mON\033[0m — all commands auto-approved. Use with caution.")
+        tui = getattr(self, "_tui", None)
+        if tui is not None:
+            tui.call_from_thread(setattr, tui, "yolo_mode", new_value)
 
     def _handle_reasoning_command(self, cmd: str):
         """Handle /reasoning — manage effort level and display toggle.

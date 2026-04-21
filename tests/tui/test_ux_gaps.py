@@ -490,9 +490,9 @@ async def test_did_you_mean_shown_for_near_match():
             inp = app.query_one(HermesInput)
         except Exception:
             return
-        inp.set_slash_commands(["/undo", "/retry", "/compact", "/rollback"])
+        inp.set_slash_commands(["/undo", "/retry", "/density", "/rollback"])
         # "undo" is close to "undo" but "uundo" is a near-typo
-        inp._slash_commands = ["/undo", "/retry", "/compact"]
+        inp._slash_commands = ["/undo", "/retry", "/density"]
         hint_flashed: list[str] = []
         with patch.object(app, "_flash_hint", side_effect=lambda t, d=1.5: hint_flashed.append(t)):
             inp._show_slash_completions("undoo")
@@ -534,12 +534,12 @@ def test_show_slash_completions_no_hint_on_empty_fragment():
             pass  # expected — no app context
 
 
-def test_handle_tui_command_compact():
-    """_handle_tui_command('/compact') returns True and calls action_toggle_density."""
+def test_handle_tui_command_density():
+    """_handle_tui_command('/density') returns True and calls action_toggle_density."""
     app = _make_app()
     called: list[bool] = []
     with patch.object(app, "action_toggle_density", side_effect=lambda: called.append(True)):
-        result = app._handle_tui_command("/compact")
+        result = app._handle_tui_command("/density")
     assert result is True
     assert called
 
@@ -613,10 +613,15 @@ def test_action_toggle_density_adds_class():
 
 
 def test_action_toggle_density_removes_class():
-    """action_toggle_density removes density-compact class when present."""
+    """action_toggle_density removes density-compact class when compact=True."""
+    from unittest.mock import PropertyMock
+    from textual.geometry import Size
     app = _make_app()
+    app._compact_manual = True
+    app.compact = True
     app.add_class("density-compact")
-    with patch.object(app, "_flash_hint"):
+    with patch.object(app, "_flash_hint"), \
+         patch.object(type(app), "size", new_callable=PropertyMock, return_value=Size(160, 50)):
         app.action_toggle_density()
     assert not app.has_class("density-compact")
 
@@ -643,19 +648,19 @@ async def test_hermes_density_env_sets_class(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_hermes_density_env_unset_no_class(monkeypatch):
-    """HERMES_DENSITY unset does not set density-compact class."""
+    """HERMES_DENSITY unset does not set density-compact class at large terminal size."""
     monkeypatch.delenv("HERMES_DENSITY", raising=False)
     app = _make_app()
-    async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause()
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause(delay=0.15)
         assert not app.has_class("density-compact")
 
 
-def test_compact_command_handled():
-    """_handle_tui_command('/compact') returns True."""
+def test_density_command_handled():
+    """_handle_tui_command('/density') returns True."""
     app = _make_app()
     with patch.object(app, "action_toggle_density"):
-        result = app._handle_tui_command("/compact")
+        result = app._handle_tui_command("/density")
     assert result is True
 
 

@@ -111,7 +111,7 @@ COMMAND_REGISTRY: list[CommandDef] = [
                             "minimal", "balanced", "immersive", "hacker", "zen", "sdf")),
     CommandDef("workspace", "Toggle the workspace overlay", "Configuration",
                cli_only=True, tui_only=True),
-    CommandDef("compact", "Toggle compact density layout", "Configuration",
+    CommandDef("density", "Toggle compact density layout", "Configuration",
                tui_only=True),
     CommandDef("sessions", "Browse and resume recent sessions", "Session",
                tui_only=True, keybind_hint="Ctrl+Shift+H"),

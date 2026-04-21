@@ -6,7 +6,7 @@ dropped from the slash completion overlay when the user typed '/'.
 Root cause: ``_show_slash_completions`` called ``fuzzy_rank(fragment, items,
 limit=50)``.  The registry held exactly 50 non-gateway names+aliases before
 Phase 1.  Phase 1 (commit c48b4adb) added two ``tui_only`` commands
-(``/compact`` and ``/sessions``) and their aliases, pushing the sorted list to
+(``/density`` and ``/sessions``) and their aliases, pushing the sorted list to
 55 entries.  With ``limit=50``, the alphabetically-last five commands were
 silently truncated on every call.
 
@@ -37,7 +37,7 @@ def test_non_gateway_command_count_exceeds_50():
     """Registry must have more than 50 non-gateway-only names (canonical + aliases).
 
     If this fails, the limit=50 cap would silently drop commands again.
-    The count exceeded 50 in Phase 1 when /compact and /sessions were added.
+    The count exceeded 50 in Phase 1 when /density and /sessions were added.
     """
     names: list[str] = []
     for cmd in COMMAND_REGISTRY:
@@ -73,7 +73,7 @@ def test_tui_only_commands_included_in_registry_names():
             tui_only_names.append(f"/{cmd.name}")
 
     assert tui_only_names, (
-        "No tui_only commands found in registry.  At minimum /compact and "
+        "No tui_only commands found in registry.  At minimum /density and "
         "/sessions should be tui_only.  Check CommandDef.tui_only field."
     )
 
@@ -276,7 +276,7 @@ def _make_inp_harness():
     inp._current_trigger = CompletionTrigger(CompletionContext.NONE, "", 0)
     inp._raw_candidates = []
     inp._last_slash_hint_fragment = ""
-    inp._slash_commands = ["/help", "/compact", "/sessions", "/workspace"]
+    inp._slash_commands = ["/help", "/density", "/sessions", "/workspace"]
     inp._slash_descriptions = {}
     inp._slash_args_hints = {}
     inp._slash_keybind_hints = {}

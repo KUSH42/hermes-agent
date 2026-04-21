@@ -497,13 +497,13 @@ async def test_session_overlay_escape_restores_focus():
 
 
 @pytest.mark.asyncio
-async def test_compact_command_triggers_density_toggle():
-    """Test 8: /compact submit calls action_toggle_density()."""
+async def test_density_command_triggers_density_toggle():
+    """Test 8: /density submit calls action_toggle_density()."""
     app = _make_app()
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
         with patch.object(app, "action_toggle_density") as mock_toggle:
-            result = app._handle_tui_command("/compact")
+            result = app._handle_tui_command("/density")
         assert result is True
         mock_toggle.assert_called_once()
 

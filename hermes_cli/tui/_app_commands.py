@@ -35,7 +35,7 @@ class _CommandsMixin:
         if re.match(r"^/rollback(?:\s+\d+)?$", stripped):
             self._initiate_rollback(stripped)
             return True
-        if stripped == "/compact":
+        if stripped == "/density":
             self.action_toggle_density()  # type: ignore[attr-defined]
             return True
         if stripped.startswith("/anim"):

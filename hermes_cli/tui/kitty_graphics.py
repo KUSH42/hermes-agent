@@ -512,7 +512,16 @@ def render_halfblock(
     dark_threshold: luminance < this → treat pixel as dark (default: module _dark_threshold).
     """
     dt = _dark_threshold if dark_threshold is None else dark_threshold
-    img = image.convert("RGB")
+    # PIL's RGBA→RGB uses white composite by default; transparent-bg images
+    # (e.g. rendered math equations) appear as solid white boxes in dark TUIs.
+    # Composite against a dark background so transparent areas become dark cells.
+    if "A" in image.mode:
+        rgba = image.convert("RGBA")
+        bg = PILImage.new("RGB", rgba.size, (13, 13, 13))
+        bg.paste(rgba, mask=rgba.split()[3])
+        img = bg
+    else:
+        img = image.convert("RGB")
     img = img.resize((max_cols, max_rows * 2), PILImage.LANCZOS)
     w, h = img.size
     px = img.load()

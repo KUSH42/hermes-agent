@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import logging
+import time as _time
+from dataclasses import dataclass, field as _field
 from typing import Any
 
 from textual.css.query import NoMatches
@@ -9,6 +11,22 @@ from textual.css.query import NoMatches
 from hermes_cli.tool_icons import get_display_name
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _ToolCallRecord:
+    tool_call_id: str
+    parent_tool_call_id: str | None
+    label: str
+    tool_name: str | None
+    category: str
+    depth: int
+    start_s: float
+    dur_ms: int | None
+    is_error: bool
+    error_kind: str | None
+    mcp_server: str | None
+    children: list = _field(default_factory=list)
 
 
 class _ToolRenderingMixin:
@@ -159,7 +177,6 @@ class _ToolRenderingMixin:
 
     def open_streaming_tool_block(self, tool_call_id: str, label: str, tool_name: "str | None" = None) -> None:
         """Mount a StreamingToolBlock into OutputPanel before the live-output duo."""
-        import time as _time
         output = self._get_output_panel()
         if output is None:
             return
@@ -174,9 +191,69 @@ class _ToolRenderingMixin:
             _turn_count = getattr(self, "_current_turn_tool_count", 0) + 1
             self._current_turn_tool_count = _turn_count  # type: ignore[attr-defined]
             _is_first = (_turn_count == 1)
+
+            # Stack inference — assign parent
+            parent_tool_call_id: "str | None" = getattr(self, '_explicit_parent_map', {}).pop(tool_call_id, None)
+            if parent_tool_call_id is None and self._agent_stack:  # type: ignore[attr-defined]
+                parent_tool_call_id = self._agent_stack[-1]  # type: ignore[attr-defined]
+
+            # Depth computation
+            from hermes_cli.tui.tool_category import classify_tool, ToolCategory
+            try:
+                cat_enum = classify_tool(tool_name or "")
+                cat = cat_enum.value
+            except Exception:
+                cat_enum = None
+                cat = "unknown"
+
+            parent_rec = self._turn_tool_calls.get(parent_tool_call_id) if parent_tool_call_id else None  # type: ignore[attr-defined]
+            computed_depth = (parent_rec.depth + 1) if parent_rec else 0
+            depth = min(computed_depth, 3)
+
+            # Push AFTER parent assignment so tool is not its own parent
+            if cat_enum is ToolCategory.AGENT:
+                self._agent_stack.append(tool_call_id)  # type: ignore[attr-defined]
+
+            # Update parent's children list
+            if parent_rec is not None:
+                parent_rec.children.append(tool_call_id)
+
+            now = _time.monotonic()
+            if self._turn_start_monotonic is None:  # type: ignore[attr-defined]
+                self._turn_start_monotonic = now  # type: ignore[attr-defined]
+            rec = _ToolCallRecord(
+                tool_call_id=tool_call_id,
+                parent_tool_call_id=parent_tool_call_id,
+                label=label,
+                tool_name=tool_name,
+                category=cat,
+                depth=depth,
+                start_s=round(now - self._turn_start_monotonic, 4),  # type: ignore[attr-defined]
+                dur_ms=None,
+                is_error=False,
+                error_kind=None,
+                mcp_server=None,
+            )
+            self._turn_tool_calls[tool_call_id] = rec  # type: ignore[attr-defined]
+
+            # Depth warning if capped
+            if computed_depth > 3 and parent_tool_call_id is not None:
+                ancestor_panel = getattr(msg, '_subagent_panels', {}).get(parent_tool_call_id)
+                if ancestor_panel is not None:
+                    try:
+                        from textual.widgets import Static as _Static
+                        ancestor_panel._body.mount(
+                            _Static("… further nesting suppressed (depth limit reached)", classes="--depth-warning")
+                        )
+                    except Exception:
+                        pass
+
             block = msg.open_streaming_tool_block(
                 label=label, tool_name=tool_name, panel_id=panel_id,
-                is_first_in_turn=_is_first, tool_call_id=tool_call_id,
+                is_first_in_turn=_is_first,
+                parent_tool_call_id=parent_tool_call_id,
+                depth=depth,
+                tool_call_id=tool_call_id,
             )
             self._active_streaming_blocks[tool_call_id] = block  # type: ignore[attr-defined]
             self._streaming_tool_count = len(self._active_streaming_blocks)  # type: ignore[attr-defined]
@@ -187,26 +264,6 @@ class _ToolRenderingMixin:
             except Exception:
                 pass
             self._update_anim_hint()  # type: ignore[attr-defined]
-            now = _time.monotonic()
-            if self._turn_start_monotonic is None:  # type: ignore[attr-defined]
-                self._turn_start_monotonic = now  # type: ignore[attr-defined]
-            try:
-                from hermes_cli.tui.tool_category import classify_tool
-                cat = classify_tool(tool_name or "").value
-            except Exception:
-                cat = "unknown"
-            self._turn_tool_calls.append({  # type: ignore[attr-defined]
-                "tool_call_id": tool_call_id,
-                "name": tool_name or label,
-                "category": cat,
-                "start_s": round(now - self._turn_start_monotonic, 4),  # type: ignore[attr-defined]
-                "dur_ms": None,
-                "is_error": False,
-                "error_kind": None,
-                "args": {},
-                "primary_result": "",
-                "mcp_server": None,
-            })
             msg.refresh(layout=True)
             self._browse_total += 1  # type: ignore[attr-defined]
             if not output._user_scrolled_up:
@@ -246,20 +303,21 @@ class _ToolRenderingMixin:
             panel = getattr(block, "_tool_panel", None)
             if panel is not None:
                 panel.set_result_summary_v4(summary)
+        if tool_call_id in self._agent_stack:  # type: ignore[attr-defined]
+            self._agent_stack.remove(tool_call_id)  # type: ignore[attr-defined]
         self._active_tool_name = ""  # type: ignore[attr-defined]
         self._update_anim_hint()  # type: ignore[attr-defined]
-        for entry in self._turn_tool_calls:  # type: ignore[attr-defined]
-            if entry["tool_call_id"] == tool_call_id:
-                try:
-                    ds = str(duration)
-                    if ds.endswith("ms"):
-                        entry["dur_ms"] = int(float(ds[:-2]))
-                    elif ds.endswith("s"):
-                        entry["dur_ms"] = int(float(ds[:-1]) * 1000)
-                except Exception:
-                    pass
-                entry["is_error"] = is_error
-                break
+        rec = self._turn_tool_calls.get(tool_call_id)  # type: ignore[attr-defined]
+        if rec is not None:
+            try:
+                ds = str(duration)
+                if ds.endswith("ms"):
+                    rec.dur_ms = int(float(ds[:-2]))
+                elif ds.endswith("s"):
+                    rec.dur_ms = int(float(ds[:-1]) * 1000)
+            except Exception:
+                pass
+            rec.is_error = is_error
         panel = self._get_output_panel()
         if panel is not None and not panel._user_scrolled_up:
             self.call_after_refresh(panel.scroll_end, animate=False)  # type: ignore[attr-defined]
@@ -290,18 +348,19 @@ class _ToolRenderingMixin:
             panel = getattr(block, "_tool_panel", None)
             if panel is not None:
                 panel.set_result_summary_v4(summary)
-        for entry in self._turn_tool_calls:  # type: ignore[attr-defined]
-            if entry["tool_call_id"] == tool_call_id:
-                try:
-                    ds = str(duration)
-                    if ds.endswith("ms"):
-                        entry["dur_ms"] = int(float(ds[:-2]))
-                    elif ds.endswith("s"):
-                        entry["dur_ms"] = int(float(ds[:-1]) * 1000)
-                except Exception:
-                    pass
-                entry["is_error"] = is_error
-                break
+        if tool_call_id in self._agent_stack:  # type: ignore[attr-defined]
+            self._agent_stack.remove(tool_call_id)  # type: ignore[attr-defined]
+        rec = self._turn_tool_calls.get(tool_call_id)  # type: ignore[attr-defined]
+        if rec is not None:
+            try:
+                ds = str(duration)
+                if ds.endswith("ms"):
+                    rec.dur_ms = int(float(ds[:-2]))
+                elif ds.endswith("s"):
+                    rec.dur_ms = int(float(ds[:-1]) * 1000)
+            except Exception:
+                pass
+            rec.is_error = is_error
         panel = self._get_output_panel()
         if panel is not None and not panel._user_scrolled_up:
             self.call_after_refresh(panel.scroll_end, animate=False)  # type: ignore[attr-defined]
@@ -330,9 +389,23 @@ class _ToolRenderingMixin:
             pass
 
     def current_turn_tool_calls(self) -> list[dict]:
-        """Return a shallow copy of per-turn tool call records (P7 /tools overlay).
+        """Return a list of per-turn tool call records (P7 /tools overlay).
 
-        Thread-safe: returns list(self._turn_tool_calls) — a shallow copy.
-        Dicts inside are fresh snapshots; caller must not mutate them.
+        Thread-safe: builds a fresh list of dicts from _ToolCallRecord values.
         """
-        return list(self._turn_tool_calls)  # type: ignore[attr-defined]
+        return [
+            {
+                "tool_call_id": r.tool_call_id,
+                "parent_tool_call_id": r.parent_tool_call_id,
+                "name": r.tool_name or r.label,
+                "category": r.category,
+                "depth": r.depth,
+                "children": list(r.children),
+                "start_s": r.start_s,
+                "dur_ms": r.dur_ms,
+                "is_error": r.is_error,
+                "error_kind": r.error_kind,
+                "mcp_server": r.mcp_server,
+            }
+            for r in self._turn_tool_calls.values()  # type: ignore[attr-defined]
+        ]

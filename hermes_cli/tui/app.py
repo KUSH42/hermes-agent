@@ -298,6 +298,8 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
         Binding("ctrl+w+n", "new_worktree_session", show=False),
         Binding("o", "focus_output", "Output", show=False),
         Binding("i", "focus_input_from_output", "Input", show=False),
+        Binding("ctrl+alt+up",   "jump_subagent_prev", "Prev agent", show=False),
+        Binding("ctrl+alt+down", "jump_subagent_next", "Next agent", show=False),
     ]
 
     _CHEVRON_PHASE_CLASSES: frozenset[str] = frozenset({
@@ -464,7 +466,8 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
         # Active StreamingToolBlocks keyed by tool_call_id
         self._active_streaming_blocks: dict[str, Any] = {}
         # P7 — per-turn tool call tracking for /tools overlay
-        self._turn_tool_calls: list[dict] = []
+        self._turn_tool_calls: dict[str, Any] = {}
+        self._agent_stack: list[str] = []
         self._turn_start_monotonic: float | None = None
         self._response_metrics_active: bool = False
         self._response_wall_start_time: float | None = None
@@ -1148,7 +1151,8 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
             self._set_chevron_phase("--phase-stream")
             self._set_hint_phase("stream")
             # P7: reset per-turn tool call list for fresh turn
-            self._turn_tool_calls = []
+            self._turn_tool_calls = {}
+            self._agent_stack = []
             self._turn_start_monotonic = None
             self._current_turn_tool_count = 0  # A6: reset first-in-turn counter
             # Track turn start for desktop notify

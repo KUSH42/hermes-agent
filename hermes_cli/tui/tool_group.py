@@ -763,3 +763,27 @@ async def _do_append_to_group(
 # ---------------------------------------------------------------------------
 
 
+def _maybe_start_group(message_panel: Widget, new_panel: Widget) -> None:
+    """Sync entry point: evaluate grouping rules and schedule async reparent if matched."""
+    if not _grouping_enabled():
+        return
+    match = _find_rule_match(message_panel, new_panel)
+    if match is None:
+        return
+    existing_panel, rule = match
+    existing_group = _get_tool_group(existing_panel)
+    if existing_group is not None:
+        message_panel.app.call_after_refresh(
+            lambda: message_panel.run_worker(
+                _do_append_to_group(existing_group, new_panel, message_panel),
+                exclusive=False,
+            )
+        )
+    else:
+        message_panel.app.call_after_refresh(
+            lambda: message_panel.run_worker(
+                _do_apply_group_widget(message_panel, existing_panel, new_panel, rule),
+                exclusive=False,
+            )
+        )
+

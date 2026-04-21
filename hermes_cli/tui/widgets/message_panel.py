@@ -365,6 +365,9 @@ class MessagePanel(Widget):
         self._carry_partial: "str | None" = None    # partial chunk (no \n) migrated from prev engine
         self._last_file_tool_block: "Any | None" = None   # tracks most-recent file-tool STB for diff connector
         self._adj_anchors: dict = {}
+        self._subagent_panels: dict[str, Any] = {}
+        self._child_buffer: dict[str, list] = {}
+        self._flush_scheduled: set[str] = set()
         self._raw_text: str = ""
         super().__init__(**kwargs)
         _boost_layout_caches(self, box_model_maxsize=256, arrangement_maxsize=32)
@@ -470,19 +473,25 @@ class MessagePanel(Widget):
         spacer.styles.min_height = 1
         self.mount(spacer)
 
-    def _mount_nonprose_block(self, block: Widget) -> None:
+    def _mount_nonprose_block(self, block: Widget, parent_tool_call_id: "str | None" = None) -> None:
         """Mount a non-prose block in timeline order.
 
-        Before the first prose line appears, keep the bootstrap response block
-        at the end so reasoning/tool/code blocks can appear above it and prose
-        can still flow into the existing response block later.
-
-        Phase 3: evaluate virtual grouping rules before mount so a GroupHeader
-        can be inserted as a sibling without affecting the streaming block.
+        If parent_tool_call_id is set, mount as a child of the corresponding SubAgentPanel.
         """
         if not self.is_attached:
             return
-        # Phase 3: evaluate grouping rules before mount (no reparenting)
+        if parent_tool_call_id is not None:
+            parent = self._subagent_panels.get(parent_tool_call_id)
+            if parent is not None:
+                parent.add_child_panel(block)
+                return
+            # Race: child arrives before parent — buffer
+            self._child_buffer.setdefault(parent_tool_call_id, []).append(block)
+            if parent_tool_call_id not in self._flush_scheduled:
+                self._flush_scheduled.add(parent_tool_call_id)
+                self.call_after_refresh(self._flush_child_buffer, parent_tool_call_id)
+            return
+        # Top-level path
         try:
             from hermes_cli.tui.tool_group import _maybe_start_group
             _maybe_start_group(self, block)
@@ -507,6 +516,17 @@ class MessagePanel(Widget):
         else:
             self._maybe_insert_type_gap(block)
             self.mount(block)
+
+    def _flush_child_buffer(self, parent_tool_call_id: str) -> None:
+        self._flush_scheduled.discard(parent_tool_call_id)
+        children = self._child_buffer.pop(parent_tool_call_id, [])
+        parent = self._subagent_panels.get(parent_tool_call_id)
+        if parent is None:
+            for child in children:
+                self._mount_nonprose_block(child, parent_tool_call_id=None)
+            return
+        for child in children:
+            parent.add_child_panel(child)
 
     def ensure_prose_block(self) -> CopyableBlock:
         """Return the current prose destination, creating a trailing block if needed."""
@@ -595,13 +615,48 @@ class MessagePanel(Widget):
         self._mount_nonprose_block(panel)
         return block
 
-    def open_streaming_tool_block(self, label: str, tool_name: str | None = None, panel_id: str | None = None, is_first_in_turn: bool = False, tool_call_id: str | None = None) -> Widget:
+    def open_streaming_tool_block(
+        self,
+        label: str,
+        tool_name: "str | None" = None,
+        panel_id: "str | None" = None,
+        is_first_in_turn: bool = False,
+        parent_tool_call_id: "str | None" = None,
+        depth: int = 0,
+        tool_call_id: "str | None" = None,
+    ) -> Widget:
         from hermes_cli.tui.tool_blocks import StreamingToolBlock as _STB, _FILE_TOOL_NAMES
         from hermes_cli.tui.tool_panel import ToolPanel as _ToolPanel
-        block = _STB(label=label, tool_name=tool_name, tool_call_id=tool_call_id)
-        panel = _ToolPanel(block, tool_name=tool_name)
-        block._tool_panel = panel
-        self._mount_nonprose_block(panel)
+        from hermes_cli.tui.tool_category import classify_tool, ToolCategory
+
+        block = _STB(label=label, tool_name=tool_name)
+
+        cat_enum = classify_tool(tool_name or "")
+
+        if cat_enum == ToolCategory.AGENT:
+            from hermes_cli.tui.sub_agent_panel import SubAgentPanel
+            panel = SubAgentPanel(depth=depth)
+            block._tool_panel = panel
+            if tool_call_id:
+                self._subagent_panels[tool_call_id] = panel
+            self._mount_nonprose_block(panel, parent_tool_call_id=parent_tool_call_id)
+        elif parent_tool_call_id is not None:
+            from hermes_cli.tui.child_panel import ChildPanel
+            parent_sap = self._subagent_panels.get(parent_tool_call_id)
+            panel = ChildPanel(
+                block,
+                tool_name=tool_name,
+                depth=depth,
+                parent_subagent=parent_sap,
+            )
+            block._tool_panel = panel
+            self._mount_nonprose_block(panel, parent_tool_call_id=parent_tool_call_id)
+        else:
+            panel = _ToolPanel(block, tool_name=tool_name)
+            block._tool_panel = panel
+            self._mount_nonprose_block(panel)
+
+
         if tool_name in _FILE_TOOL_NAMES:
             self._last_file_tool_block = block
         # Register adj anchor for adjacent-mount tracking
@@ -612,8 +667,7 @@ class MessagePanel(Widget):
         # Bash syntax highlight on header label for shell-category tools
         if label:
             try:
-                from hermes_cli.tui.tool_category import classify_tool, ToolCategory
-                if classify_tool(tool_name or "") == ToolCategory.SHELL:
+                if cat_enum == ToolCategory.SHELL:
                     from pygments import highlight as _hl
                     from pygments.lexers import BashLexer
                     from pygments.formatters import TerminalTrueColorFormatter

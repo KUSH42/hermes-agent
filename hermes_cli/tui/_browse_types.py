@@ -10,18 +10,20 @@ import enum
 
 
 class BrowseAnchorType(enum.Enum):
-    TURN_START = "turn_start"   # UserMessagePanel
-    CODE_BLOCK = "code_block"   # StreamingCodeBlock (completed)
-    TOOL_BLOCK = "tool_block"   # ToolHeader
-    MEDIA      = "media"        # InlineMediaWidget
+    TURN_START   = "turn_start"    # UserMessagePanel
+    CODE_BLOCK   = "code_block"    # StreamingCodeBlock (completed)
+    TOOL_BLOCK   = "tool_block"    # ToolHeader
+    MEDIA        = "media"         # InlineMediaWidget
+    SUBAGENT_ROOT = "subagent_root"  # SubAgentPanel (depth 0)
 
 
 # Status-bar glyph per anchor type (single-width Unicode)
 _BROWSE_TYPE_GLYPH: dict[str, str] = {
-    "turn_start": "▸",        # ▸
-    "code_block": "‹›",  # ‹›
-    "tool_block": "▣",        # ▣
-    "media":      "▶",        # ▶
+    "turn_start":    "▸",        # ▸
+    "code_block":    "‹›",       # ‹›
+    "tool_block":    "▣",        # ▣
+    "media":         "▶",        # ▶
+    "subagent_root": "🤖",       # robot face
 }
 
 

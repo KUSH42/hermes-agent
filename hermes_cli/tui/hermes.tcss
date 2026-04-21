@@ -868,3 +868,46 @@ SectionDivider { height: 1; color: $text-muted; }
 AgentThought { height: auto; }
 ToolSequence { height: auto; }
 AgentFinalResponse { height: auto; }
+
+/* === Nested Agent Tool Tree === */
+
+SubAgentPanel { margin-bottom: 1; height: auto; }
+
+SubAgentPanel.--depth-1 { padding-left: 2; }
+SubAgentPanel.--depth-2 { padding-left: 4; }
+SubAgentPanel.--depth-3 { padding-left: 6; }
+
+/* NOTE: the following two rules have equal specificity (0,1,1).
+   CSS ordering is load-bearing: --collapsed MUST appear AFTER --has-children. */
+SubAgentBody {
+    border-left: vkey #666666 60%;
+    margin-left: 2;
+    padding-left: 1;
+    display: none;
+}
+SubAgentPanel.--has-children SubAgentBody { display: block; }
+SubAgentPanel.--collapsed SubAgentBody    { display: none; }
+
+/* Child compact: hide body */
+ChildPanel.--compact ToolBodyContainer { display: none; }
+
+/* Accessibility: replace border with padding */
+SubAgentBody.-accessible {
+    border-left: none;
+    padding-left: 2;
+}
+
+/* Badges hidden until first child */
+SubAgentHeader .--badges { display: none; }
+SubAgentPanel.--has-children SubAgentHeader .--badges { display: block; }
+
+/* Error/done badge coloring */
+SubAgentHeader .--badges.--has-errors { color: $error; }
+SubAgentPanel.--has-children SubAgentHeader .--badges.--done { color: $success; }
+
+/* Depth warning */
+.--depth-warning { color: $text-muted; padding-left: 4; }
+
+/* Focus styling */
+SubAgentPanel:focus SubAgentHeader { background: $boost; }
+

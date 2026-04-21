@@ -65,11 +65,12 @@ def test_toggle_tail_follow_flips_flag():
     panel._body_pane = None
     panel._footer_pane = None
     panel.notify = MagicMock()
+    panel._flash_header = MagicMock()
 
     panel.action_toggle_tail_follow()
 
     assert stb._follow_tail is True
-    panel.notify.assert_called_once()
+    panel._flash_header.assert_called_once()
 
 
 def test_follow_tail_resets_on_complete():
@@ -89,6 +90,7 @@ def test_follow_tail_resets_on_complete():
     stb._rate_samples = []
     stb._last_http_status = None
     stb._flush_slow = False
+    stb._secondary_args_snapshot = ""
     stb._tail = MagicMock()
     stb._header = MagicMock()
     stb._body = MagicMock()

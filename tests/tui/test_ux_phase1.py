@@ -379,7 +379,7 @@ async def test_accessible_mode_error_prefix():
 
 @pytest.mark.asyncio
 async def test_accessible_mode_complete_prefix():
-    """In accessible mode, complete state shows [+] prefix."""
+    """In accessible mode, complete state shows [✓] prefix."""
     from textual.app import App, ComposeResult
     from hermes_cli.tui.tool_blocks import ToolHeader
     from rich.text import Text
@@ -395,7 +395,7 @@ async def test_accessible_mode_complete_prefix():
             header._tool_icon_error = False
             result = header.render()
             assert isinstance(result, Text)
-            assert "[+]" in result.plain
+            assert "[✓]" in result.plain
 
 
 @pytest.mark.asyncio
@@ -418,5 +418,5 @@ async def test_normal_mode_no_accessible_prefix():
             with patch.object(header, "_accessible_mode", return_value=False):
                 result = header.render()
             assert isinstance(result, Text)
-            assert "[+]" not in result.plain
+            assert "[✓]" not in result.plain
             assert "[!]" not in result.plain

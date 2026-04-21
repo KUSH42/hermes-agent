@@ -611,7 +611,17 @@ ToolPanel.category-agent.tool-panel--accent  { border-left: vkey $accent 40%; }
 ToolPanel.category-mcp.tool-panel--accent    { border-left: vkey #9b59b6 80%; }
 ToolPanel.category-vision.tool-panel--accent { border-left: vkey $tool-vision-accent 80%; }
 ToolPanel.tool-panel--error                  { border-left: vkey $error 80%; }
-ToolPanel:focus                              { background: $accent 10%; }
+/* D2: more visible focus indicator */
+ToolPanel:focus                              { background: $accent 10%; border-left: vkey $accent 60%; }
+/* A6: first-in-turn correlation badge */
+ToolPanel.first-in-turn                      { border-top: solid $accent 30%; }
+/* A2: empty result header color */
+ToolHeader.result-empty                      { color: $text-muted; }
+/* A5: error banner between header and body */
+StreamingToolBlock .error-banner             { color: $error; padding: 0 1; height: 1; }
+/* B3: cap label hidden by default, shown when --visible class added */
+OmissionBar .--cap-label                     { color: $warning; display: none; }
+OmissionBar .--cap-label.--visible           { display: block; }
 
 /* --- Tool grouping (virtual — no DOM container) --- */
 ToolPanel.tool-panel--grouped    { padding-left: 2; }

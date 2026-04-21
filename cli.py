@@ -7048,6 +7048,23 @@ class HermesCLI:
         if tui is None:
             return
         tui.call_from_thread(block.feed_delta, delta)
+        # B4: update write_file streaming progress from accumulated bytes
+        if tool_name in ("write_file", "create_file", "str_replace_editor"):
+            try:
+                _written = len(accumulated.encode("utf-8", errors="replace"))
+                # Try to parse total_size from accumulated JSON if available
+                _total = 0
+                try:
+                    import json as _json
+                    _parsed = _json.loads(accumulated)
+                    if isinstance(_parsed, dict):
+                        _total = int(_parsed.get("total_size") or _parsed.get("bytes_written") or 0)
+                except Exception:
+                    pass
+                if hasattr(block, "update_progress"):
+                    tui.call_from_thread(block.update_progress, _written, _total)
+            except Exception:
+                pass
 
     # ====================================================================
     # Tool progress callback (audio cues for voice mode)

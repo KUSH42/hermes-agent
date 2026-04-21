@@ -257,7 +257,7 @@ class FooterPane(Widget):
             self._render_footer(self._last_summary, self._last_promoted)
 
     def _rebuild_artifact_buttons(self, summary: "ResultSummaryV4") -> None:
-        """D2: rebuild artifact row with clickable Button per artifact."""
+        """D2/D4: rebuild artifact row with clickable Button per artifact."""
         from hermes_cli.tui.tool_result_parse import _ARTIFACT_DISPLAY_CAP
         # Remove old artifact chip buttons
         try:
@@ -268,6 +268,12 @@ class FooterPane(Widget):
         # Also remove old overflow buttons inside artifact_row
         try:
             for btn in list(self._artifact_row.query(".--artifact-overflow")):
+                btn.remove()
+        except Exception:
+            pass
+        # D4: also remove old collapse buttons
+        try:
+            for btn in list(self._artifact_row.query(".--artifact-collapse")):
                 btn.remove()
         except Exception:
             pass
@@ -304,14 +310,25 @@ class FooterPane(Widget):
             overflow_btn._overflow_remediation = overflow_tooltip  # type: ignore[attr-defined]
             buttons.append(overflow_btn)
 
+        # D4: collapse button when showing all
+        if self._show_all_artifacts:
+            collapse_btn = Button("↑ fewer", classes="--artifact-collapse")
+            buttons.append(collapse_btn)
+
         if buttons:
             self._artifact_row.mount(*buttons)
         self.add_class("has-artifacts")
 
     def on_button_pressed(self, event: "Button.Pressed") -> None:
-        """B3: artifact overflow; D2: artifact chip click."""
+        """B3: artifact overflow; D2: artifact chip click; D4: collapse."""
         if "--artifact-overflow" in event.button.classes:
             self._show_all_artifacts = True
+            self._rebuild_chips()
+            event.stop()
+            return
+        # D4: collapse back to truncated view
+        if "--artifact-collapse" in event.button.classes:
+            self._show_all_artifacts = False
             self._rebuild_chips()
             event.stop()
             return
@@ -400,6 +417,9 @@ class ToolPanel(Widget):
         Binding("<",     "scroll_body_top",        "Top",  show=False),
         Binding(">",     "scroll_body_bottom",     "End",  show=False),
         Binding("question_mark", "show_help",      "Keys", show=False),
+        Binding("P",     "copy_full_path",   "Copy full path",   show=False),  # A7
+        Binding("x",     "dismiss_error_banner", "Dismiss",      show=False),  # A5
+        Binding("question_mark", "show_context_menu", "Menu",    show=False),  # D1
     ]
 
     # Always start expanded; auto-collapse at completion based on threshold.
@@ -420,6 +440,7 @@ class ToolPanel(Widget):
         self._completed_at: float | None = None
         self._result_paths: list[str] = []
         self._last_resize_w: int = 0
+        self._saved_visible_start: int | None = None  # B6: preserve scroll position
 
         # Pane refs (set in compose)
         self._body_pane: BodyPane | None = None
@@ -457,6 +478,26 @@ class ToolPanel(Widget):
     # ------------------------------------------------------------------
 
     def watch_collapsed(self, old: bool, new: bool) -> None:
+        # B6: save/restore visible window position across collapse/expand
+        if new:
+            # Collapsing — save visible_start
+            if hasattr(self._block, "_visible_start"):
+                self._saved_visible_start = self._block._visible_start
+        else:
+            # Expanding — restore visible window if we have a saved position
+            if (self._saved_visible_start is not None and
+                    hasattr(self._block, "_visible_start") and
+                    hasattr(self._block, "_all_plain")):
+                saved = self._saved_visible_start
+                total = len(self._block._all_plain)
+                visible_cap = getattr(self._block, "_visible_cap", 200)
+                end = min(total, saved + visible_cap)
+                if saved > 0:
+                    try:
+                        self._block.rerender_window(saved, end)
+                    except Exception:
+                        pass
+
         # Hide block._body (ToolBodyContainer) only — ToolHeader stays visible
         # so click-to-expand works on a collapsed block.
         body_container = getattr(self._block, "_body", None)
@@ -551,6 +592,48 @@ class ToolPanel(Widget):
         if self._footer_pane is not None:
             self._footer_pane.update_summary_v4(summary, promoted_chip_texts=promoted_texts)
 
+        # A1: sub-500ms closure flash — if microcopy never shown, flash "done" on header
+        if not summary.is_error:
+            block_microcopy_shown = getattr(self._block, "_microcopy_shown", True)
+            if not block_microcopy_shown and header is not None:
+                header._flash_msg = "done"
+                header._flash_expires = time.monotonic() + 0.5
+
+        # A5: error banner — mount between header and body
+        if header is not None:
+            # Remove any existing error banner first
+            try:
+                for existing in list(self._block.query(".error-banner")):
+                    existing.remove()
+            except Exception:
+                pass
+            if summary.is_error and summary.error_kind is not None:
+                try:
+                    _ICON_MAP = {
+                        "timeout": "⏱",
+                        "signal": "💀",
+                        "auth": "🔒",
+                        "exit": "✗",
+                        "network": "🌐",
+                    }
+                    from hermes_cli.tui.tool_result_parse import _SHELL_REMEDIATIONS
+                    icon = _ICON_MAP.get(summary.error_kind, "✗")
+                    kind_label = summary.error_kind.replace("_", " ").title()
+                    # Find remediation from chips
+                    remediation = next(
+                        (c.remediation for c in (summary.chips or ()) if c.remediation),
+                        None
+                    )
+                    if remediation:
+                        banner_text = f"  {icon}  {kind_label}  ·  {remediation}"
+                    else:
+                        banner_text = f"  {icon}  {kind_label}"
+                    from textual.widgets import Static as _Static
+                    banner = _Static(banner_text, classes="error-banner")
+                    self._block.mount(banner, after=header)
+                except Exception:
+                    pass
+
         # Auto-collapse / error promotion
         # D1: errors always expand regardless of user collapse override
         if summary.is_error:
@@ -629,11 +712,13 @@ class ToolPanel(Widget):
             paths = list(self._result_paths)
         return paths
 
-    def _flash_header(self, msg: str) -> None:
+    def _flash_header(self, msg: str, tone: str = "success") -> None:
+        """C5: flash msg on header with tone-aware color."""
         header = getattr(self._block, "_header", None)
         if header is None:
             return
         header._flash_msg = msg
+        header._flash_tone = tone  # C5: tone for color selection
         header._flash_expires = time.monotonic() + 1.2
         header.refresh()
         self.set_timer(1.2, lambda: setattr(header, "_flash_msg", None) or header.refresh())
@@ -643,7 +728,7 @@ class ToolPanel(Widget):
         if not text:
             return
         self.app._copy_text_with_hint(text)
-        self._flash_header("copied")
+        self._flash_header("copied text")
 
     def action_open_url(self) -> None:
         """A2: open first URL artifact or open_url action payload."""
@@ -708,7 +793,7 @@ class ToolPanel(Widget):
         if not paths:
             return
         self.app._copy_text_with_hint("\n".join(paths))
-        self._flash_header(f"copied {len(paths)} path(s)")
+        self._flash_header(f"copied paths ({len(paths)})")
 
     def action_retry(self) -> None:
         rs = self._result_summary_v4
@@ -754,7 +839,7 @@ class ToolPanel(Widget):
         body = self.copy_content()
         text = "\n".join([header_line, separator, body])
         self.app._copy_text_with_hint(text)
-        self._flash_header("copied invocation")
+        self._flash_header("copied invocation")  # C5: format label
 
     def action_copy_ansi(self) -> None:
         """C5: copy with ANSI color codes."""
@@ -784,7 +869,7 @@ class ToolPanel(Widget):
             console.print(t, highlight=False)
         ansi_text = buf.getvalue()
         self.app._copy_text_with_hint(ansi_text)
-        self._flash_header("copied ansi")
+        self._flash_header("copied ANSI")
 
     def action_copy_html(self) -> None:
         """C5: copy as HTML with inline styles."""
@@ -820,9 +905,9 @@ class ToolPanel(Widget):
         try:
             with open(tmp_path, "w") as f:
                 f.write(html)
-            self._flash_header(f"html copied  (saved {tmp_path})")
+            self._flash_header(f"copied HTML  (saved {tmp_path})")
         except Exception:
-            self._flash_header("html copied")
+            self._flash_header("copied HTML")
 
     def action_copy_urls(self) -> None:
         """G2: copy newline-joined URL artifacts."""
@@ -833,7 +918,36 @@ class ToolPanel(Widget):
         if not urls:
             return
         self.app._copy_text_with_hint("\n".join(urls))
-        self._flash_header(f"copied {len(urls)} url(s)")
+        self._flash_header(f"copied URLs ({len(urls)})")
+
+    def action_copy_full_path(self) -> None:
+        """A7: copy full untruncated path from header."""
+        header = getattr(self._block, "_header", None)
+        if header is None:
+            return
+        path = getattr(header, "_full_path", None)
+        if not path:
+            return
+        self.app._copy_text_with_hint(path)
+        self._flash_header("copied path")
+
+    def action_dismiss_error_banner(self) -> None:
+        """A5: dismiss the error banner (x key)."""
+        try:
+            for banner in list(self._block.query(".error-banner")):
+                banner.remove()
+        except Exception:
+            pass
+
+    def action_show_context_menu(self) -> None:
+        """D1: show context menu at header center (keyboard-accessible path)."""
+        header = getattr(self._block, "_header", None)
+        if header is None:
+            return
+        try:
+            header._show_context_menu_at_center()
+        except Exception:
+            pass
 
     def action_scroll_body_down(self) -> None:
         """Scroll tool body down (j) (C2)."""
@@ -941,19 +1055,22 @@ class ToolPanel(Widget):
 
     def _build_hint_text(self) -> "Any":
         from rich.text import Text
-        width = (self.size.width or 80) if self.is_mounted else 80
+        _mounted = getattr(self, "is_mounted", True)
+        _size = getattr(self, "size", None)
+        width = ((_size.width if _size is not None else 0) or 80) if _mounted else 80
         narrow = width < 50
 
         rs = self._result_summary_v4
         hints: list[tuple[str, str, str]] = []  # (key, sep, label)
 
+        # D3: state-aware hints
         if rs is not None and rs.is_error:
             hints.append(("r", " ", "retry  "))
             has_edit = any(a.kind == "edit_cmd" and a.payload for a in (rs.actions or ()))
             if has_edit:
                 hints.append(("E", " ", "edit cmd  "))
 
-        hints.append(("?", " ", "help  "))
+        hints.append(("?", " ", "menu  "))  # D1: always show menu hint
         hints.append(("c", " ", "copy  "))
 
         if not narrow:
@@ -962,13 +1079,21 @@ class ToolPanel(Widget):
             if bar is not None:
                 hints.append(("+/-", " ", "lines  "))
                 hints.append(("*", " ", "all  "))
+            # D3: j/k scroll only when expanded
             if not self.collapsed:
                 hints.append(("j/k", " ", "scroll  "))
             hints.append(("C/H", " ", "color/html  "))
             hints.append(("I", " ", "invocation  "))
             if rs is not None:
+                # D3: stderr hint only when there is stderr
                 if rs.stderr_tail:
                     hints.append(("e", " ", "stderr  "))
+                # D3: error banner dismiss
+                try:
+                    if list(self.query(".error-banner")):
+                        hints.append(("x", " ", "dismiss  "))
+                except Exception:
+                    pass
                 if self._result_paths_for_action():
                     hints.append(("o", " ", "open  "))
                     hints.append(("p", " ", "paths"))
@@ -976,6 +1101,13 @@ class ToolPanel(Widget):
                 if has_urls:
                     hints.append(("  O", " ", "url  "))
                     hints.append(("u", " ", "copy urls"))
+                # D3: O open only when path-clickable
+                try:
+                    if getattr(self._block._header, "_path_clickable", False):
+                        if not any(h[0] == "o" for h in hints):
+                            hints.append(("O", " ", "open  "))
+                except Exception:
+                    pass
 
         t = Text()
         max_hints = 3 if narrow else len(hints)

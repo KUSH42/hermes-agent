@@ -286,6 +286,7 @@ ToolsScreen > #tools-footer {
         Binding("down", "cursor_down", show=False),
         Binding("enter", "jump_to_panel", "Jump", show=False),
         Binding("r", "refresh", "Refresh snapshot", show=False),
+        Binding("s", "cycle_sort", "Sort", show=True),  # D5
     ]
 
     # Gantt spinner frames for in-progress tool rows
@@ -299,6 +300,7 @@ ToolsScreen > #tools-footer {
         self._filter_text: str = ""
         self._active_categories: set[str] = set()
         self._errors_only: bool = False
+        self._sort_mode: int = 0  # D5: 0=chrono, 1=duration desc, 2=category asc
         self._turn_total_s: float = _compute_turn_total_s(snapshot)
         self._term_w: int = 80
         self._last_resize_w: int = 0
@@ -359,9 +361,12 @@ ToolsScreen > #tools-footer {
         else:
             pip = "○ stale — press r"
             pip_style = "yellow dim"
+        _SORT_LABELS = {0: "chrono", 1: "duration", 2: "category"}
+        sort_label = _SORT_LABELS.get(self._sort_mode, "chrono")
         header_text = Text()
         header_text.append(f" Tools in this turn ", style="bold")
         header_text.append(f"  {n} calls · {total_s:.1f}s  ", style="dim")
+        header_text.append(f"[sorted by {sort_label}]  ", style="dim")
         header_text.append(pip, style=pip_style)
         try:
             self.query_one("#tools-header", Static).update(header_text)
@@ -599,14 +604,50 @@ ToolsScreen > #tools-footer {
                 self._cursor = 0
         await self._rebuild()
 
+    async def action_cycle_sort(self) -> None:
+        """D5: cycle through chronological / duration / category sort modes."""
+        self._sort_mode = (self._sort_mode + 1) % 3
+        await self._apply_filter()
+
     async def _apply_filter(self) -> None:
         text = self._filter_text.lower()
         cat_filter = self._active_categories
+
+        # D5: detect and strip prefix filters from text
+        _KNOWN_PREFIXES = ("file:", "shell:", "mcp:", "code:", "web:", "search:", "agent:", "error:")
+        category_prefix: str | None = None
+        errors_prefix: bool = False
+        remaining_text = text
+        for prefix in _KNOWN_PREFIXES:
+            if text.startswith(prefix):
+                if prefix == "error:":
+                    errors_prefix = True
+                else:
+                    category_prefix = prefix[:-1]  # strip colon
+                remaining_text = text[len(prefix):].strip()
+                break
+
         self._filtered = [
             e for e in self._snapshot
-            if (not text or text in e.get("name", "").lower() or text in _primary_arg_str(e).lower())
+            if (
+                not remaining_text
+                or remaining_text in e.get("name", "").lower()
+                or remaining_text in _primary_arg_str(e).lower()
+            )
             and (not cat_filter or e.get("category", "unknown") in cat_filter)
-            and (not self._errors_only or e.get("is_error", False))
+            and (not category_prefix or e.get("category", "").lower() == category_prefix)
+            and (not (self._errors_only or errors_prefix) or e.get("is_error", False))
         ]
+
+        # D5: apply sort
+        if self._sort_mode == 1:
+            # Sort by elapsed_s descending (slowest first); in-progress (dur_ms=None) last
+            self._filtered.sort(
+                key=lambda e: (e.get("dur_ms") is None, -(e.get("dur_ms") or 0))
+            )
+        elif self._sort_mode == 2:
+            # Sort by category ascending
+            self._filtered.sort(key=lambda e: e.get("category", ""))
+
         self._cursor = max(0, min(self._cursor, len(self._filtered) - 1))
         await self._rebuild()

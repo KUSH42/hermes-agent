@@ -391,6 +391,15 @@ def _count_nonempty_lines(text: str) -> int:
     return sum(1 for line in text.splitlines() if line.strip())
 
 
+# C2: shell remediation hints
+_SHELL_REMEDIATIONS: dict[str, str | None] = {
+    "timeout": "increase timeout_sec parameter",
+    "signal":  "process was killed — check memory or resource limits",
+    "auth":    "check file permissions or run with sudo",
+    "exit":    None,  # generic — no hint
+}
+
+
 def shell_result_v4(ctx: ParseContext) -> ResultSummaryV4:
     raw = _raw_str(ctx.complete.raw_result)
     exit_code = ctx.complete.exit_code
@@ -399,10 +408,27 @@ def shell_result_v4(ctx: ParseContext) -> ResultSummaryV4:
     cmd = str(ctx.start.args.get("command") or ctx.start.args.get("cmd") or "")
     stderr_tail = _last_n_chars_v4(raw) if is_error else ""
 
+    # C1: detect timeout/signal error kinds from exit code and output content
+    if is_error and error_kind is None:
+        raw_lower = raw.lower()
+        if exit_code == 124 or "timed out" in raw_lower or "timeout expired" in raw_lower:
+            error_kind = "timeout"
+        elif exit_code in (137, 143) or any(s in raw_lower for s in ("killed", "sigkill", "sigterm")):
+            error_kind = "signal"
+
+    # C2: determine remediation hint
+    remediation: str | None = None
+    if is_error:
+        if exit_code == 127:
+            remediation = "command not found — check PATH"
+        elif error_kind in _SHELL_REMEDIATIONS:
+            remediation = _SHELL_REMEDIATIONS[error_kind]
+
     if error_kind == "timeout":
+        chips = (Chip("timeout", "exit", "error", remediation=remediation),)
         return ResultSummaryV4(
             primary="✗ timeout", exit_code=exit_code,
-            chips=(Chip("timeout", "exit", "error"),),
+            chips=chips,
             stderr_tail=stderr_tail,
             actions=(
                 _make_copy_err(stderr_tail, raw),
@@ -414,9 +440,10 @@ def shell_result_v4(ctx: ParseContext) -> ResultSummaryV4:
 
     if is_error:
         code_str = str(exit_code) if exit_code is not None else "?"
+        chips = (Chip(f"exit {code_str}", "exit", "error", remediation=remediation),)
         return ResultSummaryV4(
             primary=f"✗ exit {code_str}", exit_code=exit_code,
-            chips=(Chip(f"exit {code_str}", "exit", "error"),),
+            chips=chips,
             stderr_tail=stderr_tail,
             actions=(
                 _make_copy_err(stderr_tail, raw),
@@ -455,6 +482,13 @@ def _extract_media_artifacts(raw: str) -> tuple[Artifact, ...]:
     return tuple(arts)
 
 
+# C2: code remediation hints
+_CODE_REMEDIATIONS: dict[str, str | None] = {
+    "timeout": "increase execution timeout in config",
+    "signal":  "script was killed — check for infinite loops or memory use",
+}
+
+
 def code_result_v4(ctx: ParseContext) -> ResultSummaryV4:
     raw = _raw_str(ctx.complete.raw_result)
     exit_code = ctx.complete.exit_code
@@ -465,12 +499,28 @@ def code_result_v4(ctx: ParseContext) -> ResultSummaryV4:
     artifacts = _extract_media_artifacts(raw)
     artifacts_truncated = len(artifacts) > _ARTIFACT_DISPLAY_CAP  # B3
 
+    # C1: detect timeout/signal error kinds from exit code and output content
+    if is_error and error_kind is None:
+        raw_lower = raw.lower()
+        if exit_code == 124 or "timed out" in raw_lower or "timeout expired" in raw_lower:
+            error_kind = "timeout"
+        elif exit_code in (137, 143) or any(s in raw_lower for s in ("killed", "sigkill", "sigterm")):
+            error_kind = "signal"
+
+    # C2: determine remediation hint
+    code_remediation: str | None = None
+    if is_error:
+        if "ModuleNotFoundError" in raw or "ImportError" in raw:
+            code_remediation = "install missing package via pip"
+        elif error_kind in _CODE_REMEDIATIONS:
+            code_remediation = _CODE_REMEDIATIONS[error_kind]
+
     if error_kind == "timeout" or is_error:
         code_str = str(exit_code) if exit_code is not None else "?"
         primary = "✗ timeout" if error_kind == "timeout" else f"✗ exit {code_str}"
         return ResultSummaryV4(
             primary=primary, exit_code=exit_code,
-            chips=(Chip(primary[2:], "exit", "error"),),
+            chips=(Chip(primary[2:], "exit", "error", remediation=code_remediation),),
             stderr_tail=stderr_tail,
             actions=(
                 _make_copy_err(stderr_tail, raw),

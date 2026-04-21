@@ -28,6 +28,7 @@ from textual.widgets import Button, Static
 
 from hermes_cli.tui.animation import PulseMixin, lerp_color
 from hermes_cli.tui.resize_utils import THRESHOLD_NARROW, crosses_threshold
+from hermes_cli.tui.tool_category import spec_for, ToolCategory  # noqa: E402
 from hermes_cli.tui.tooltip import TooltipMixin
 from hermes_cli.tui.widgets import (
     CopyableRichLog,
@@ -50,12 +51,12 @@ _LINK_TRAIL_RE = re.compile(r'[.,;:!?)\]>]+$')
 
 
 def _linkify_text(plain: str, rich_text: "Text") -> "Text":
-    """Apply underline + click meta to URL and file-path spans.
+    """Apply underline+bold + click meta to URL and file-path spans (E3).
 
     Operates on *plain* for regex matching so ANSI codes don't shift offsets,
     then stylizes the corresponding span on *rich_text* (which was built from
-    the same content).  Underline only — no color override so existing ANSI
-    colors are preserved.
+    the same content).  Bold+underline — dual visual cue for color-blind users.
+    No char inserts — would corrupt offset-based span system.
     """
     import os as _os
     from rich.style import Style as _Style
@@ -72,7 +73,7 @@ def _linkify_text(plain: str, rich_text: "Text") -> "Text":
         raw_target = m.group(0)
         target = _LINK_TRAIL_RE.sub("", raw_target)
         start, end = m.start(), m.start() + len(target)
-        rich_text.stylize(_Style(underline=True, meta={"_link_url": target}), start, end)
+        rich_text.stylize(_Style(underline=True, bold=True, meta={"_link_url": target}), start, end)
 
     for m in _LINK_PATH_RE.finditer(plain):
         raw_target = m.group(0)
@@ -82,7 +83,7 @@ def _linkify_text(plain: str, rich_text: "Text") -> "Text":
             continue
         abs_path = _os.path.abspath(target)
         url = f"file://{abs_path}"
-        rich_text.stylize(_Style(underline=True, meta={"_link_url": url}), start, end)
+        rich_text.stylize(_Style(underline=True, bold=True, meta={"_link_url": url}), start, end)
 
     return rich_text
 
@@ -292,12 +293,22 @@ def _secondary_args_text(category: "Any", tool_input: "dict | None") -> str:
 # ---------------------------------------------------------------------------
 
 def _format_duration_v4(elapsed_ms: float) -> str:
-    """<50 ms → omit; 50 ms–5 s → NNNms; >5 s → N.Ns."""
+    """E4: extended duration formatter covering ms → hours."""
     if elapsed_ms < 50:
         return ""
     if elapsed_ms < 5000:
         return f"{int(elapsed_ms)}ms"
-    return f"{elapsed_ms / 1000:.1f}s"
+    if elapsed_ms < 60_000:
+        return f"{elapsed_ms / 1000:.1f}s"
+    if elapsed_ms < 600_000:
+        return f"{int(elapsed_ms / 1000)}s"
+    if elapsed_ms < 3_600_000:
+        mins = int(elapsed_ms / 60_000)
+        secs = int((elapsed_ms % 60_000) / 1000)
+        return f"{mins}m{secs}s"
+    hours = int(elapsed_ms / 3_600_000)
+    mins = int((elapsed_ms % 3_600_000) / 60_000)
+    return f"{hours}h{mins}m"
 
 
 # ---------------------------------------------------------------------------
@@ -331,8 +342,15 @@ def header_label_v4(
             name = getattr(spec, "name", "") or ""
             method = name.split("__", 2)[-1] if "__" in name else name
             label_str = f"{server}::{method}()"
-            if _safe_cell_width(label_str) > available:
-                label_str = label_str[:max(1, available - 1)] + "…"
+            avail = available
+            if _safe_cell_width(label_str) > avail:
+                # A8: middle-truncation — show start + end, preserving method name
+                if avail < 8:
+                    label_str = "[MCP]"
+                else:
+                    head_len = max(4, avail // 2 - 1)
+                    tail_len = avail - head_len - 1
+                    label_str = label_str[:head_len] + "…" + label_str[-tail_len:] if tail_len > 0 else label_str[:head_len] + "…"
             t = Text()
             t.append(f" {label_str}", style="bold")
             return t
@@ -544,6 +562,8 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         self._header_chips: list[tuple[str, str]] = []  # [(text, style)] promoted chips
         # v4 A1 — error kind for distinct icon/color
         self._error_kind: str | None = None
+        # C5: flash tone for copy/action feedback
+        self._flash_tone: str = "success"
         # Browse mode badge (e.g. "± diff") — plain attr, render() reads it
         self._browse_badge: str = ""
 
@@ -607,14 +627,14 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         focused = self.has_class("focused")
         t = Text()
 
-        # F1: accessible mode state prefix
+        # E1/F1: accessible mode state prefix
         if self._accessible_mode():
             if self._spinner_char is not None:
                 t.append("[>] ", style="bold")
             elif self._tool_icon_error:
                 t.append("[!] ", style="bold red")
             elif self._is_complete:
-                t.append("[+] ", style="bold green")
+                t.append("[✓] ", style="bold green")
 
         # Gutter
         if self._is_child_diff:
@@ -666,23 +686,14 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             t.append(" $", style=f"bold {accent}")
             shell_prompt_w = 2
 
-        # Tail: duration uses v4 rule
+        # Tail: A3 — hero chip first, then promoted chips, then stat badges, then duration
         tail = Text()
         if self._spinner_char is not None:
             tail.append(f"  {self._spinner_char}", style="dim")
             if self._duration:
                 tail.append(f"  {self._duration}", style="dim")
         else:
-            if self._stats and self._stats.has_diff_counts:
-                add_color = getattr(self, "_diff_add_color", _DIFF_ADD_FALLBACK)
-                del_color = getattr(self, "_diff_del_color", _DIFF_DEL_FALLBACK)
-                if self._stats.additions:
-                    tail.append(f"  +{self._stats.additions}", style=f"bold {add_color}")
-                if self._stats.deletions:
-                    tail.append(f"  -{self._stats.deletions}", style=f"bold {del_color}")
-            elif self._line_count and not self._primary_hero:
-                tail.append(f"  {self._line_count}L", style="dim")
-            # Hero chip: primary result summary (v4 §4.1)
+            # A3: Hero chip first (primary result summary v4 §4.1)
             if self._primary_hero:
                 if self._tool_icon_error and self._error_kind:
                     try:
@@ -699,16 +710,42 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                     tail.append(f"  {self._primary_hero}", style="bold red")
                 else:
                     tail.append(f"  {self._primary_hero}", style="dim green")
-            # Promoted chips (MCP source, exit code not already in hero, etc.)
+            # A2: empty result dim dash when completed with empty result
+            elif self._is_complete and not self._tool_icon_error and not self._line_count:
+                tail.append("  —", style="dim")
+            # A3: Promoted chips (MCP source, exit code not already in hero, etc.)
             for chip_text, chip_style in (self._header_chips or []):
                 tail.append(f"  {chip_text}", style=chip_style)
+            # A3: Stat badges trail (diff +/- or line count)
+            if self._stats and self._stats.has_diff_counts:
+                add_color = getattr(self, "_diff_add_color", _DIFF_ADD_FALLBACK)
+                del_color = getattr(self, "_diff_del_color", _DIFF_DEL_FALLBACK)
+                if self._stats.additions:
+                    tail.append(f"  +{self._stats.additions}", style=f"bold {add_color}")
+                if self._stats.deletions:
+                    tail.append(f"  -{self._stats.deletions}", style=f"bold {del_color}")
+                # C3: append "(partial)" when body is windowed
+                try:
+                    if (self._panel is not None and
+                            hasattr(self._panel._block, "_visible_count") and
+                            self._panel._block._visible_count < len(self._panel._block._all_plain)):
+                        tail.append(" (partial)", style="dim")
+                except Exception:
+                    pass
+            elif self._line_count and not self._primary_hero:
+                tail.append(f"  {self._line_count}L", style="dim")
             if self._has_affordances:
                 is_collapsed = self._panel.collapsed if self._panel is not None else self.collapsed
                 tail.append("  ▸" if is_collapsed else "  ▾", style="dim")
-            # Flash confirmation message (copy/open actions)
+            # C5: tone-aware flash confirmation message
             now = time.monotonic()
             if self._flash_msg and now < self._flash_expires:
-                tail.append(f"  ✓ {self._flash_msg}", style="dim green")
+                _flash_style = {
+                    "success": "dim green",
+                    "warning": "dim yellow",
+                    "error": "dim red",
+                }.get(self._flash_tone, "dim green")
+                tail.append(f"  ✓ {self._flash_msg}", style=_flash_style)
             if self._duration:   # already v4-formatted by _tick_duration / complete()
                 tail.append(f"  {self._duration}", style="dim")
 
@@ -728,6 +765,11 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 self._full_path, available,
                 accent_color=getattr(self, "_focused_gutter_color", ""),
             )
+        # A7: update tooltip when path is truncated (full path accessible on hover)
+        if self._path_clickable and self._full_path and self._full_path != self._label:
+            displayed_plain = label_text.plain.strip()
+            if displayed_plain != self._full_path:
+                self._tooltip_text = self._full_path
         t.append_text(label_text)
         if term_w > 0:
             label_used = label_text.cell_len
@@ -863,6 +905,71 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         parent = self.parent
         if parent is not None:
             parent.toggle()
+
+    def _show_context_menu_at_center(self) -> None:
+        """D1: show context menu at header center (keyboard-triggered path)."""
+        try:
+            region = self.content_region
+            cx = region.x + region.width // 2
+            cy = region.y + region.height // 2
+            items = self._build_context_menu_items()
+            if not items:
+                return
+            try:
+                from hermes_cli.tui.context_menu import ContextMenu
+                menu = self.app.query_one(ContextMenu)
+                import asyncio
+                asyncio.ensure_future(menu.show(items, cx, cy))
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _build_context_menu_items(self) -> list:
+        """Build context menu items list (shared between click and keyboard paths)."""
+        import sys
+        from pathlib import Path
+        from hermes_cli.tui.context_menu import MenuItem
+        items = []
+        opener = "open" if sys.platform == "darwin" else "xdg-open"
+        is_shell = False
+        try:
+            from hermes_cli.tui.tool_category import spec_for, ToolCategory
+            _spec = spec_for(self._tool_name or "")
+            is_shell = _spec.category == ToolCategory.SHELL
+        except Exception:
+            pass
+        if self._path_clickable and self._full_path:
+            _path = self._full_path
+            items.append(MenuItem(
+                label="Open file",
+                shortcut="",
+                action=lambda p=_path: self.app._open_path_action(self, p, opener, False),
+            ))
+        has_path = self._path_clickable or getattr(self, "_diff_file_path", None) is not None
+        if has_path:
+            _copy_path = self._full_path or getattr(self, "_diff_file_path", None)
+            if _copy_path:
+                items.append(MenuItem(
+                    label="Copy path",
+                    shortcut="",
+                    action=lambda cp=_copy_path: self.app._copy_text_with_hint(cp),
+                ))
+        if is_shell:
+            _cmd = str(self._header_args.get("command") or self._header_args.get("cmd") or self._label)
+            items.append(MenuItem(
+                label="Copy full command",
+                shortcut="",
+                action=lambda c=_cmd: self.app._copy_text_with_hint(c),
+            ))
+        if self._path_clickable and self._full_path:
+            _parent = str(Path(self._full_path).parent)
+            items.append(MenuItem(
+                label="Reveal in file manager",
+                shortcut="",
+                action=lambda p=_parent: self.app._open_path_action(self, p, opener, False),
+            ))
+        return items
 
     def _show_context_menu(self, event: Click) -> None:
         """C3: mount context menu on right-click."""
@@ -1337,12 +1444,16 @@ class OmissionBar(TooltipMixin, Widget):
         self._visible_end: int = 0
         self._total: int = 0
         self._label: Static | None = None
+        self._cap_label: Static | None = None  # B3: capacity/truncation warning
         self._last_resize_w: int = 0
 
     def compose(self) -> ComposeResult:
         label = Static("", classes="--ob-label")
         self._label = label
+        cap_label = Static("", classes="--cap-label")
+        self._cap_label = cap_label
         yield label
+        yield cap_label
         if self.position == "top":
             yield Button("[↑all]", classes="--ob-up-all")
             yield Button("[↑+50]", classes="--ob-up-page")
@@ -1359,30 +1470,60 @@ class OmissionBar(TooltipMixin, Widget):
         total: int,
         above: int | None = None,
         below: int | None = None,
+        cap_msg: str | None = None,
     ) -> None:
-        """Cache counts and update label + disabled states."""
+        """Cache counts and update label + disabled states (B1/B2/B3)."""
         self._visible_start = visible_start
         self._visible_end = visible_end
         self._total = total
         if self._label is None:
             return
         try:
-            if self.position == "top":
-                self._label.update(f"  ▲ {above} lines above  ")
-                at_top = visible_start == 0
-                self.query_one(".--ob-up-all", Button).disabled = at_top
-                self.query_one(".--ob-up-page", Button).disabled = at_top
+            # B1: positional label — "N–M of Total" or empty when all showing
+            all_showing = (visible_end - visible_start) == total
+            if all_showing:
+                self._label.update("")
             else:
-                self._label.update(f"  ▼ {below} lines below  ")
+                self._label.update(f"  {visible_start + 1}–{visible_end} of {total}  ")
+
+            if self.position == "top":
+                step_above = min(_PAGE_SIZE, visible_start)
+                at_top = visible_start == 0
+                try:
+                    up_all_btn = self.query_one(".--ob-up-all", Button)
+                    up_all_btn.disabled = at_top
+                    up_page_btn = self.query_one(".--ob-up-page", Button)
+                    # B2: show actual step size
+                    up_page_btn.label = f"[↑+{step_above}]" if step_above > 0 else "[↑+0]"
+                    up_page_btn.disabled = step_above == 0
+                except NoMatches:
+                    pass
+            else:
+                step_below = min(_PAGE_SIZE, total - visible_end)
                 at_default = (
                     visible_start == 0
                     and (visible_end - visible_start) <= _VISIBLE_CAP
                 )
                 at_end = visible_end >= total
-                self.query_one(".--ob-cap",      Button).disabled = at_default
-                self.query_one(".--ob-up",       Button).disabled = at_default
-                self.query_one(".--ob-down",     Button).disabled = at_end
-                self.query_one(".--ob-down-all", Button).disabled = at_end
+                try:
+                    self.query_one(".--ob-cap",      Button).disabled = at_default
+                    self.query_one(".--ob-up",       Button).disabled = at_default
+                    down_btn = self.query_one(".--ob-down", Button)
+                    # B2: show actual step size
+                    down_btn.label = f"[↓+{step_below}]" if step_below > 0 else "[↓+0]"
+                    down_btn.disabled = at_end
+                    self.query_one(".--ob-down-all", Button).disabled = at_end
+                except NoMatches:
+                    pass
+
+            # B3: cap label
+            if self._cap_label is not None:
+                if cap_msg:
+                    self._cap_label.update(cap_msg)
+                    self._cap_label.add_class("--visible")
+                else:
+                    self._cap_label.update("")
+                    self._cap_label.remove_class("--visible")
         except NoMatches:
             pass
 
@@ -1444,11 +1585,14 @@ class StreamingToolBlock(ToolBlock):
 
     DEFAULT_CSS = "StreamingToolBlock { height: auto; }"
 
-    def __init__(self, label: str, tool_name: str | None = None, tool_input: "dict | None" = None, **kwargs: Any) -> None:
+    def __init__(self, label: str, tool_name: str | None = None, tool_input: "dict | None" = None,
+                 is_first_in_turn: bool = False, **kwargs: Any) -> None:
         # Initialise parent with empty lines — content arrives via append_line()
         super().__init__(label=label, lines=[], plain_lines=[], tool_name=tool_name, **kwargs)
         self._stream_label = label
         self._tool_input = tool_input
+        # A6: first-in-turn correlation badge
+        self._is_first_in_turn: bool = is_first_in_turn
         # Lines buffered between 60fps flush ticks — stores linkified (Text, plain)
         self._pending: list[tuple[Text, str]] = []
         # All plain-text lines for clipboard (no display cap)
@@ -1478,6 +1622,14 @@ class StreamingToolBlock(ToolBlock):
         self._follow_tail: bool = False
         # P1-4: tick-based shimmer phase for AGENT category (prevents teleport on busy loop)
         self._shimmer_phase: float = 0.0
+        # A1: track whether microcopy has been shown (for sub-500ms flash)
+        self._microcopy_shown: bool = False
+        # A4: snapshot of secondary args for restoration after completion
+        self._secondary_args_snapshot: str = ""
+        # B5: memory cap tracking
+        self._history_capped: bool = False
+        # E2: truncated line count disclosure
+        self._truncated_line_count: int = 0
 
     def compose(self) -> ComposeResult:
         yield self._header
@@ -1528,15 +1680,24 @@ class StreamingToolBlock(ToolBlock):
             self._omission_bar_bottom_mounted = True
         # Start icon pulse
         self._header._pulse_start()
-        # B1: extract and show secondary args before streaming starts
+        # B1/A4: extract and show secondary args before streaming starts
         try:
             from hermes_cli.tui.tool_category import spec_for as _spec_for
             _spec = _spec_for(self._tool_name or "")
             _sec = _secondary_args_text(_spec.category, self._tool_input)
             if _sec:
                 self._body.update_secondary_args(_sec)
+                self._secondary_args_snapshot = _sec  # A4: snapshot for restoration
         except Exception:
             pass
+        # A6: mark first-in-turn on enclosing ToolPanel
+        if self._is_first_in_turn:
+            try:
+                panel = self.parent.parent  # STB → BodyPane → ToolPanel
+                if panel is not None:
+                    panel.add_class("first-in-turn")
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Streaming API (called from event loop via call_from_thread)
@@ -1544,6 +1705,10 @@ class StreamingToolBlock(ToolBlock):
 
     # B2: HTTP status line pattern for WEB streams
     _HTTP_STATUS_LINE_RE = re.compile(r'^HTTP/\S+\s+(\d+\s+.+)$')
+
+    # B5: memory cap constants
+    _MAX_HISTORY_LINES: int = 10_000
+    _EVICT_CHUNK: int = 500
 
     def append_line(self, raw: str) -> None:
         """Buffer a raw ANSI line for rendering on the next 60fps tick."""
@@ -1554,6 +1719,7 @@ class StreamingToolBlock(ToolBlock):
         if len(raw) > line_byte_cap:
             over = len(raw) - line_byte_cap
             raw = raw[:line_byte_cap] + f"… (+{over} chars)"
+            self._truncated_line_count += 1  # E2: disclose truncation
         plain = _strip_ansi(raw)
         self._total_received += 1
         self._bytes_received += len(raw)
@@ -1563,6 +1729,12 @@ class StreamingToolBlock(ToolBlock):
         self._pending.append((rich, plain))
         self._all_plain.append(plain)
         self._all_rich.append(rich)
+        # B5: memory cap — evict oldest chunk when list reaches max
+        if len(self._all_plain) >= self._MAX_HISTORY_LINES:
+            del self._all_plain[:self._EVICT_CHUNK]
+            del self._all_rich[:self._EVICT_CHUNK]
+            self._visible_start = max(0, self._visible_start - self._EVICT_CHUNK)
+            self._history_capped = True
         # C2: tail-follow — re-render to latest window every 5 lines
         total = len(self._all_plain)
         if self._follow_tail and total % 5 == 0:
@@ -1642,6 +1814,12 @@ class StreamingToolBlock(ToolBlock):
         self._header.refresh()
         # v4 §3.3: clear microcopy on completion (keep MCP provenance line)
         self._clear_microcopy_on_complete()
+        # A4: restore secondary args snapshot after clear_microcopy
+        if self._secondary_args_snapshot:
+            self._body.update_secondary_args(self._secondary_args_snapshot)
+        # A2: empty result visual distinction
+        if not is_error and self._total_received == 0:
+            self._header.add_class("result-empty")
         # Brief success flash to signal completion
         self._header.flash_success()
         # If output contains a MEDIA: path, replace body with an inline image
@@ -1776,6 +1954,7 @@ class StreamingToolBlock(ToolBlock):
         text = microcopy_line(spec, state, reduced_motion=reduced_motion, shimmer_phase=self._shimmer_phase)
         if text:
             self._body.set_microcopy(text)
+            self._microcopy_shown = True  # A1: mark microcopy as shown
 
     def _flush_pending(self) -> None:
         """Drain pending lines into the RichLog (called at 60fps)."""
@@ -1869,10 +2048,29 @@ class StreamingToolBlock(ToolBlock):
         self._refresh_omission_bars()
 
     def _refresh_omission_bars(self) -> None:
-        """Update both omission bars' visibility and counts."""
+        """Update both omission bars' visibility and counts (B2/B3/E2)."""
         total = len(self._all_plain)
         visible_start = self._visible_start
         visible_end = visible_start + self._visible_count
+        visible_cap = getattr(self, "_visible_cap", _VISIBLE_CAP)
+
+        # B3/E2: build cap message
+        cap_msg: str | None = None
+        if self._history_capped:
+            cap_msg = "⚠ history capped at 10k lines"
+            if self._truncated_line_count > 0:
+                cap_msg += f" · {self._truncated_line_count} truncated"
+        elif total > visible_cap:
+            cap_msg = f"⚠ {total} total · cap {visible_cap}"
+            if self._truncated_line_count > 0:
+                cap_msg += f" · {self._truncated_line_count} truncated"
+        elif self._truncated_line_count > 0:
+            try:
+                from hermes_cli.tui.streaming_microcopy import _human_size
+                line_cap_str = _human_size(getattr(self, "_line_byte_cap", _LINE_BYTE_CAP))
+            except Exception:
+                line_cap_str = f"{getattr(self, '_line_byte_cap', _LINE_BYTE_CAP)}b"
+            cap_msg = f"⚠ {self._truncated_line_count} lines truncated ({line_cap_str} cap)"
 
         if self._omission_bar_top_mounted and self._omission_bar_top is not None:
             show_top = visible_start > 0
@@ -1885,6 +2083,7 @@ class StreamingToolBlock(ToolBlock):
                 visible_end=visible_end,
                 total=total,
                 above=visible_start,
+                cap_msg=cap_msg,
             )
 
         if self._omission_bar_bottom_mounted and self._omission_bar_bottom is not None:
@@ -1896,6 +2095,7 @@ class StreamingToolBlock(ToolBlock):
                 visible_end=visible_end,
                 total=total,
                 below=total - visible_end,
+                cap_msg=cap_msg,
             )
 
     # ------------------------------------------------------------------

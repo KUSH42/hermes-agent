@@ -100,6 +100,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
         self._cursor_visible = True
         self._cursor_timer = None
         self._label_set = False
+        self._code_line_count: int = 0  # E5: line count for header chip
 
         # Initialized post-mount with app reference
         self._pacer = None
@@ -414,6 +415,17 @@ class ExecuteCodeBlock(StreamingToolBlock):
         # Update header
         self._header._spinner_char = None
         self._header._duration = duration
+
+        # E5: compute and append line count chip to header label
+        self._code_line_count = len(self._code_lines)
+        if self._code_line_count > 1 and self._header._label:
+            if not self._header._label_rich:
+                from rich.text import Text as _RText
+                base = _RText(self._header._label)
+                base.append(f" (+{self._code_line_count - 1} lines)", style="dim")
+                self._header._label_rich = base
+            else:
+                self._header._label_rich.append(f" (+{self._code_line_count - 1} lines)", style="dim")
 
         # Collapse based on code lines + output lines; suppress "NL" display
         total = len(self._code_lines) + self._total_received

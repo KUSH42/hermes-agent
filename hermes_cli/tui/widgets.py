@@ -1713,10 +1713,10 @@ class MessagePanel(Widget):
             self._mount_nonprose_block(panel)
         return block
 
-    def open_streaming_tool_block(self, label: str, tool_name: str | None = None, panel_id: str | None = None) -> Widget:
+    def open_streaming_tool_block(self, label: str, tool_name: str | None = None, panel_id: str | None = None, is_first_in_turn: bool = False) -> Widget:
         from hermes_cli.tui.tool_blocks import StreamingToolBlock as _STB, _FILE_TOOL_NAMES
         from hermes_cli.tui.tool_panel import ToolPanel as _ToolPanel
-        block = _STB(label=label, tool_name=tool_name)
+        block = _STB(label=label, tool_name=tool_name, is_first_in_turn=is_first_in_turn)
         panel = _ToolPanel(block, tool_name=tool_name, id=panel_id)
         block._tool_panel = panel  # back-ref for result wiring
 

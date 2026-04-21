@@ -1660,6 +1660,7 @@ class HermesApp(App):
             # P7: reset per-turn tool call list for fresh turn
             self._turn_tool_calls = []
             self._turn_start_monotonic = None
+            self._current_turn_tool_count = 0  # A6: reset first-in-turn counter
             # Track turn start for desktop notify
             import time as _time
             self._turn_start_time = _time.monotonic()
@@ -3032,7 +3033,14 @@ class HermesApp(App):
                 panel_id: str | None = None  # already taken; skip ID to avoid DuplicateIds
             except Exception:
                 panel_id = base_panel_id
-            block = msg.open_streaming_tool_block(label=label, tool_name=tool_name, panel_id=panel_id)
+            # A6: increment turn tool count before opening block
+            _turn_count = getattr(self, "_current_turn_tool_count", 0) + 1
+            self._current_turn_tool_count = _turn_count
+            _is_first = (_turn_count == 1)
+            block = msg.open_streaming_tool_block(
+                label=label, tool_name=tool_name, panel_id=panel_id,
+                is_first_in_turn=_is_first,
+            )
             self._active_streaming_blocks[tool_call_id] = block
             # C1: track active tool name for contextual SDF text
             self._active_tool_name = tool_name or ""

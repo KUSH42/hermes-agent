@@ -55,7 +55,8 @@ class TestFormatDurationV4:
         assert _format_duration_v4(10500) == "10.5s"
 
     def test_large_value(self):
-        assert _format_duration_v4(120000) == "120.0s"
+        # 120s falls in the 60s-600s range → plain integer seconds (E4 extended formatter)
+        assert _format_duration_v4(120000) == "120s"
 
 
 # ---------------------------------------------------------------------------

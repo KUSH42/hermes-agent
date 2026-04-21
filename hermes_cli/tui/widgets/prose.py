@@ -213,7 +213,7 @@ class InlineProseLog(CopyableRichLog):
         for span in spans:
             if isinstance(span, ImageSpan):
                 self._image_cache.get_strips(span, mode, wid)
-        self.call_from_thread(self.refresh)
+        self.app.call_from_thread(self.refresh)
 
     # ------------------------------------------------------------------ #
     # Helpers

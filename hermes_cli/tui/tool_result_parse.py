@@ -976,9 +976,8 @@ def generic_result_v4(ctx: ParseContext) -> ResultSummaryV4:
             actions=(_make_copy_err("", raw),),
             artifacts=(), is_error=True, error_kind=ctx.complete.error_kind,
         )
-    # C2: more informative primary — show line count instead of bare "✓"
     n = _count_nonempty_lines(raw)
-    primary = f"✓ {n} lines" if n > 0 else "✓ done"
+    primary = f"✓ {n} lines" if n > 1 else "✓"
     return ResultSummaryV4(
         primary=primary, exit_code=None, chips=(),
         stderr_tail="", actions=(_make_copy_body(raw),),

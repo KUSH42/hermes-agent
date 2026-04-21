@@ -639,6 +639,13 @@ class ToolPanel(Widget):
         """Call from app at tool completion to populate v4 footer + header hero chip."""
         self._result_summary_v4 = summary
         self._completed_at = time.monotonic()
+        # Set header hero chip and promoted chips
+        header = getattr(self._block, "_header", None)
+        if header is not None:
+            if summary.primary is not None:
+                header._primary_hero = summary.primary
+            header._error_kind = getattr(summary, "error_kind", None)
+            header.refresh()
         # D1: errors always expand regardless of user collapse override
         if summary.is_error:
             self.collapsed = False

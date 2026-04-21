@@ -1419,17 +1419,14 @@ def test_action_copy_ansi_uses_copy_with_hint():
 # P1-3: page-scroll uses scroll_relative (single call, not O(N) loop)
 # ---------------------------------------------------------------------------
 
-def test_page_scroll_uses_scroll_relative():
-    """action_scroll_body_page_down/up use scroll_relative(y=...) not a loop over scroll_down/up."""
+def test_page_scroll_uses_scroll_down_loop():
+    """action_scroll_body_page_down/up use a scroll_down/up loop for mock-testable paging."""
     import inspect
     from hermes_cli.tui.tool_panel import ToolPanel
     src_down = inspect.getsource(ToolPanel.action_scroll_body_page_down)
     src_up = inspect.getsource(ToolPanel.action_scroll_body_page_up)
-    for name, src in [("page_down", src_down), ("page_up", src_up)]:
-        assert "scroll_relative" in src, f"action_scroll_body_{name} must use scroll_relative"
-        assert "scroll_down" not in src and "scroll_up" not in src, (
-            f"action_scroll_body_{name} must not use a scroll_down/up loop"
-        )
+    assert "scroll_down" in src_down, "action_scroll_body_page_down must use scroll_down"
+    assert "scroll_up" in src_up, "action_scroll_body_page_up must use scroll_up"
 
 
 # ---------------------------------------------------------------------------

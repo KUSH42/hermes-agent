@@ -3362,20 +3362,16 @@ class HermesCLI:
                             log = msg.current_prose_log()
                             width = int(getattr(log.scrollable_content_region, "width", 0) or 0)
                             if width > 0:
-                                result["width"] = max(1, width - 1)
+                                result["width"] = width
                                 return
 
                         panel_width = int(getattr(panel.scrollable_content_region, "width", 0) or 0)
                         if panel_width > 0:
-                            result["width"] = max(1, panel_width - 1)
+                            result["width"] = panel_width
                             return
 
                     app_width = int(getattr(getattr(app, "size", None), "width", 0) or 0)
                     if app_width > 0:
-                        # Reserve one cell for the vertical scrollbar even
-                        # before overflow has occurred, otherwise startup
-                        # content is rendered one column too wide and shifts
-                        # when the welcome text makes the pane scrollable.
                         result["width"] = max(1, app_width - 1)
                 finally:
                     done.set()

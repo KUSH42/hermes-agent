@@ -60,11 +60,8 @@ HermesApp {
     scrollbar-corner-color: $app-bg;
 }
 
-/* OutputPanel: scrollbar hidden — scroll via mouse wheel or keyboard.
-   A visible but non-functional scrollbar track (liar element) was worse
-   than no scrollbar, since the CopyableRichLog inner log owns the actual
-   scroll state and does not wire to the parent track. */
 OutputPanel {
+    scrollbar-size-vertical: 1;
     scrollbar-color: $scrollbar 60%;
 }
 
@@ -515,6 +512,16 @@ MessagePanel.--highlighted {
 ClarifyWidget:focus,
 ApprovalWidget:focus {
     outline: tall $accent 50%;
+}
+
+/* --- Write-approval diff panel (M3) --- */
+
+ApprovalWidget > CopyableRichLog#approval-diff {
+    display: none;
+    max-height: 20;
+    overflow-y: auto;
+    border: hkey $panel-lighten-1 20%;
+    margin: 0 2;
 }
 
 /* --- Reduced motion (HERMES_REDUCED_MOTION=1) --- */

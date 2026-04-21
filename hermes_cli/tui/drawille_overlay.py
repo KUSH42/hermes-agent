@@ -92,6 +92,22 @@ class DrawilleOverlayCfg:
     sdf_crossfade_speed: float = 0.03
     # sdf baker timeout
     sdf_bake_timeout_s: float = 5.0
+    # Phase A — signal enrichment
+    error_hold_frames: int = 8
+    # Phase B — phase-aware carousel
+    phase_aware_carousel: bool = True
+    phase_crossfade_speed: float = 0.08
+    # Phase C — completion ceremony
+    completion_burst_frames: int = 4
+    # Phase D — ambient idle
+    ambient_enabled: bool = False
+    ambient_heat: float = 0.12
+    ambient_alpha: float = 0.35
+    ambient_engine: str = "perlin_flow"
+    # Phase E — positioning
+    position_margin: int = 2
+    rail_width: int = 12
+    rail_output_margin: bool = False
 
     def __post_init__(self) -> None:
         if self.multi_color is None:
@@ -157,6 +173,22 @@ def _overlay_config() -> DrawilleOverlayCfg:
         sdf_warmup_engine=str(d.get("sdf_warmup_engine", "neural_pulse")),
         sdf_crossfade_speed=float(d.get("sdf_crossfade_speed", 0.03)),
         sdf_bake_timeout_s=float(d.get("sdf_bake_timeout_s", 5.0)),
+        # Phase A
+        error_hold_frames=int(d.get("error_hold_frames", 8)),
+        # Phase B
+        phase_aware_carousel=bool(d.get("phase_aware_carousel", True)),
+        phase_crossfade_speed=float(d.get("phase_crossfade_speed", 0.08)),
+        # Phase C
+        completion_burst_frames=int(d.get("completion_burst_frames", 4)),
+        # Phase D
+        ambient_enabled=bool(d.get("ambient_enabled", False)),
+        ambient_heat=float(d.get("ambient_heat", 0.12)),
+        ambient_alpha=float(d.get("ambient_alpha", 0.35)),
+        ambient_engine=str(d.get("ambient_engine", "perlin_flow")),
+        # Phase E
+        position_margin=int(d.get("position_margin", 2)),
+        rail_width=int(d.get("rail_width", 12)),
+        rail_output_margin=bool(d.get("rail_output_margin", False)),
     )
 
 
@@ -626,6 +658,8 @@ class NeuralPulseEngine(_BaseEngine):
     def on_signal(self, signal: str, value: float = 1.0) -> None:
         if signal == "thinking":
             self._extra_fires = int(value * 3)
+        elif signal == "reasoning":
+            self._extra_fires = 1
         elif signal == "tool":
             # Boost charge in random 5 nodes immediately
             if self._nodes:
@@ -636,6 +670,10 @@ class NeuralPulseEngine(_BaseEngine):
             # Halve charge decay rate for 20 ticks (slow settle)
             self._slow_decay_ticks = 20
             self._fire_queue = list(range(len(self._nodes)))
+        elif signal == "error":
+            # Discharge all nodes → silence
+            self._charge = [0.0] * len(self._charge)
+            self._fire_queue = []
 
     def next_frame(self, params: AnimParams) -> str:
         w, h = params.width, params.height
@@ -722,6 +760,10 @@ class FlockSwarmEngine(_BaseEngine):
             if self._w > 0 and self._h > 0:
                 self._attractor = [self._w / 2, self._h / 2]
             self._speed_modifier = 0.7
+        elif signal == "reasoning":
+            # Move attractor to top-center
+            if self._w > 0 and self._h > 0:
+                self._attractor = [self._w / 2, self._h / 4]
         elif signal == "tool":
             # Move attractor to random corner, boost speed 50%
             if self._w > 0 and self._h > 0:
@@ -737,6 +779,10 @@ class FlockSwarmEngine(_BaseEngine):
         elif signal == "complete":
             self._scatter = True
             self._speed_modifier = 1.0
+        elif signal == "error":
+            # Scatter mode; double speed for 10 ticks
+            self._scatter = True
+            self._speed_modifier *= 2
 
     def next_frame(self, params: AnimParams) -> str:
         w, h = params.width, params.height
@@ -869,6 +915,11 @@ class ConwayLifeEngine(_BaseEngine):
             self._gens_per_tick = max(1, self._ticks % 3)
         elif signal == "tool":
             self._gens_per_tick = 2
+        elif signal == "error":
+            # Re-seed with R-pentomino
+            if self._w > 0 and self._h > 0:
+                cx, cy = self._w // 2, self._h // 2
+                self._alive = {((cx + x) % self._w, (cy + y) % self._h) for x, y in self._R_PENTOMINO}
 
     def _step(self, w: int, h: int) -> None:
         neighbor_counts: dict[tuple[int, int], int] = {}
@@ -940,12 +991,16 @@ class StrangeAttractorEngine(_BaseEngine):
         self._ys: list[float] = []
         self._heat_sigma = 0.0
         self._slow_dt_ticks: int = 0  # for "complete" slow settle
+        self._dt_boost_ticks: int = 0  # for "reasoning" speed-boost
         self._dt_default: float = 0.01
 
     def on_signal(self, signal: str, value: float = 1.0) -> None:
         if signal == "complete":
             # Halve dt for 40 ticks, creating slow settle
             self._slow_dt_ticks = 40
+        elif signal == "reasoning":
+            # Boost dt by 30% for 30 ticks
+            self._dt_boost_ticks = 30
         else:
             self._heat_sigma = value * 2.0
 
@@ -1008,6 +1063,9 @@ class StrangeAttractorEngine(_BaseEngine):
         if self._slow_dt_ticks > 0:
             dt = self._dt_default * 0.5
             self._slow_dt_ticks -= 1
+        elif self._dt_boost_ticks > 0:
+            dt = self._dt_default * 1.3
+            self._dt_boost_ticks -= 1
 
         for _ in range(5):
             self._x, self._y, self._z = self._rk4_step(
@@ -1660,6 +1718,108 @@ _ENGINE_META: dict[str, dict] = {
 }
 
 
+# ── Phase B: phase-aware carousel ────────────────────────────────────────────
+
+_PHASE_UPDATE_SIGNALS: frozenset = frozenset({
+    "thinking", "reasoning", "tool", "complete", "error", "waiting"
+})
+
+_PHASE_CATEGORIES: dict[str, list[str]] = {
+    "thinking":  ["Organic"],
+    "reasoning": ["Organic", "Mathematical"],
+    "tool":      ["Mathematical"],
+    "waiting":   ["Organic"],
+    "error":     ["Classic"],
+    "complete":  [],   # don't switch engine during fade-out
+}
+
+
+# ── Phase F: named presets ────────────────────────────────────────────────────
+
+_PRESETS: dict[str, dict] = {
+    "minimal": {
+        "animation": "perlin_flow",
+        "carousel": False,
+        "phase_aware_carousel": False,
+        "size": "small",
+        "color": "$primary",
+        "ambient_enabled": False,
+        "completion_burst_frames": 0,
+        "fade_out_frames": 4,
+        "fps": 12,
+        "dim_background": False,
+    },
+    "balanced": {
+        "animation": "neural_pulse",
+        "carousel": False,
+        "phase_aware_carousel": False,
+        "size": "small",
+        "color": "auto",
+        "completion_burst_frames": 4,
+        "fade_out_frames": 8,
+        "fps": 20,
+        "ambient_enabled": False,
+    },
+    "immersive": {
+        "position": "rail-right",
+        "rail_width": 14,
+        "rail_output_margin": True,
+        "size": "medium",
+        "color": "auto",
+        "carousel": True,
+        "carousel_interval_s": 6.0,
+        "phase_aware_carousel": True,
+        "dim_background": True,
+        "ambient_enabled": True,
+        "ambient_alpha": 0.25,
+        "completion_burst_frames": 6,
+        "fade_out_frames": 12,
+        "fps": 24,
+    },
+    "hacker": {
+        "color": "#00ff41",
+        "animation": "dna",
+        "carousel": True,
+        "carousel_interval_s": 4.0,
+        "phase_aware_carousel": False,
+        "size": "small",
+        "position": "top-right",
+        "dim_background": False,
+        "fps": 24,
+    },
+    "zen": {
+        "animation": "aurora_ribbon",
+        "carousel": True,
+        "carousel_interval_s": 12.0,
+        "phase_aware_carousel": True,
+        "phase_crossfade_speed": 0.03,
+        "color": "$primary",
+        "size": "medium",
+        "position": "mid-right",
+        "ambient_enabled": True,
+        "ambient_heat": 0.08,
+        "ambient_alpha": 0.2,
+        "ambient_engine": "aurora_ribbon",
+        "completion_burst_frames": 2,
+        "fade_out_frames": 16,
+        "fps": 15,
+    },
+    "sdf": {
+        "animation": "sdf_morph",
+        "carousel": False,
+        "phase_aware_carousel": False,
+        "size": "medium",
+        "position": "top-center",
+        "color": "auto",
+        "completion_burst_frames": 4,
+        "fade_out_frames": 10,
+        "fps": 20,
+        "sdf_hold_ms": 700,
+        "sdf_morph_ms": 350,
+    },
+}
+
+
 # ── DrawilleOverlay ───────────────────────────────────────────────────────────
 
 class DrawilleOverlay(Static):
@@ -1748,6 +1908,18 @@ class DrawilleOverlay(Static):
     _carousel_crossfade: "CrossfadeEngine | None" = None
     # external trail for stateless engines
     _external_trail: "TrailCanvas | None" = None
+    # Phase A — signal enrichment
+    _error_hold_frames: int = 0
+    _waiting: bool = False
+    # Phase B — phase-aware carousel
+    _current_phase: str = "thinking"
+    _carousel_key: str = ""   # tracks carousel engine key (NOT _current_engine_key)
+    # Phase C — multi-tool burst + completion ceremony
+    _burst_counter: int = 0
+    _burst_decay_ticks: int = 0
+    _completion_burst_frames: int = 0
+    # Phase D — ambient idle
+    _visibility_state: str = "hidden"   # "hidden" | "active" | "ambient"
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -1931,9 +2103,14 @@ class DrawilleOverlay(Static):
             self._carousel_idx = 0
             self._carousel_last_switch = time.monotonic()
             self._carousel_crossfade = None
+            # Initialize _carousel_key to first engine
+            if self._carousel_engines:
+                self._carousel_key = self._carousel_engines[0]
         else:
             self._carousel_engines = []
             self._carousel_crossfade = None
+        # Phase D: set visibility state
+        self._visibility_state = "active"
         self.add_class("-visible")
         self._start_anim()
         if cfg.auto_hide_delay > 0:
@@ -1975,6 +2152,8 @@ class DrawilleOverlay(Static):
         self._current_engine_key = ""
         self._external_trail = None
         self._carousel_crossfade = None
+        # Phase D: reset visibility state
+        self._visibility_state = "hidden"
 
     def _auto_hide(self) -> None:
         self._auto_hide_handle = None
@@ -1983,16 +2162,62 @@ class DrawilleOverlay(Static):
     def signal(self, event: str, value: float = 1.0) -> None:
         """Signal a heat event to the overlay and active engine.
 
-        Vocabulary: "thinking", "token", "tool", "complete".
+        Vocabulary: "thinking", "token", "tool", "complete",
+                    "reasoning", "error", "waiting".
         """
+        cfg = self._cfg
+        # Phase A: reset error_hold on any non-error signal
+        if event != "error":
+            self._error_hold_frames = 0
+
         if event == "thinking":
             self._heat_target = 0.5
+            self._waiting = False   # Phase A3: clear waiting flag
+        elif event == "reasoning":
+            self._heat_target = 0.65
         elif event == "token":
             self._heat_target = min(1.0, self._heat_target + 0.25)
         elif event == "tool":
-            self._heat_target = 1.0
+            # Phase C: burst accumulator
+            self._burst_counter = min(self._burst_counter + 1, 5)
+            self._burst_decay_ticks = 0
+            self._heat_target = min(1.0 + self._burst_counter * 0.1, 1.5)
         elif event == "complete":
             self._heat_target = 0.0
+            self._waiting = False   # Phase A3: clear waiting flag
+            # Phase C2: completion burst — direct heat assignment
+            if cfg is not None and cfg.completion_burst_frames > 0:
+                self._heat = min(self._heat + 0.2, 1.2)
+                self._completion_burst_frames = cfg.completion_burst_frames
+        elif event == "error":
+            self._heat_target = 1.0
+            error_hold = cfg.error_hold_frames if cfg is not None else 8
+            self._error_hold_frames = error_hold
+            self._waiting = False
+        elif event == "waiting":
+            self._heat_target = 0.2
+            self._waiting = True
+
+        # Phase B: update current phase and trigger crossfade
+        if event in _PHASE_UPDATE_SIGNALS:
+            old_phase = self._current_phase
+            self._current_phase = event
+            if cfg is not None and cfg.carousel and self._carousel_engines and event != "token":
+                next_key = self._pick_carousel_candidate(event)
+                if next_key and next_key != self._carousel_key:
+                    eng_a = (self._current_engine_instance
+                             or (_ENGINES.get(self._carousel_key) or _ENGINES["dna"])())
+                    eng_b = _ENGINES[next_key]()
+                    self._carousel_crossfade = CrossfadeEngine(
+                        eng_a, eng_b, speed=cfg.phase_crossfade_speed
+                    )
+                    self._carousel_key = next_key
+                    self._carousel_last_switch = time.monotonic()
+
+        # Phase D: ambient → active transition on "thinking"
+        if event == "thinking" and self._visibility_state == "ambient":
+            self._transition_to_active()
+
         # Forward to engine if it supports on_signal
         engine = self._current_engine_instance
         if engine is not None and hasattr(engine, "on_signal"):
@@ -2014,17 +2239,96 @@ class DrawilleOverlay(Static):
             return "thinking"
         return _TOOL_SDF_LABELS.get(tool, "thinking")
 
-    # ── carousel (D2) ─────────────────────────────────────────────────────
+    # ── Phase B helpers ────────────────────────────────────────────────────
+
+    def _pick_carousel_candidate(self, phase: str) -> str | None:
+        """Return a random engine key filtered by phase category, excluding current."""
+        cfg = self._cfg
+        if cfg is None or not self._carousel_engines:
+            return None
+        if cfg.phase_aware_carousel:
+            allowed = _PHASE_CATEGORIES.get(phase, [])
+            if allowed:
+                candidates = [
+                    k for k in self._carousel_engines
+                    if _ENGINE_META.get(k, {}).get("category") in allowed
+                    and k != self._carousel_key
+                ]
+            else:
+                candidates = []
+        else:
+            candidates = [k for k in self._carousel_engines if k != self._carousel_key]
+        if not candidates:
+            # Fallback: any engine including current
+            candidates = self._carousel_engines
+        return random.choice(candidates) if candidates else None
+
+    # ── Phase D helpers ────────────────────────────────────────────────────
+
+    def _transition_to_active(self) -> None:
+        """Ambient → active light transition (no full show())."""
+        cfg = self._cfg
+        if cfg is None:
+            return
+        self._visibility_state = "active"
+        self._heat_target = 0.5
+        next_key = self._pick_carousel_candidate("thinking")
+        if next_key:
+            eng_a = self._current_engine_instance or (
+                _ENGINES.get(self._carousel_key) or _ENGINES["dna"]
+            )()
+            eng_b = _ENGINES[next_key]()
+            self._carousel_crossfade = CrossfadeEngine(
+                eng_a, eng_b, speed=cfg.phase_crossfade_speed
+            )
+            self._carousel_key = next_key
+
+    def _transition_to_ambient(self) -> None:
+        """Active → ambient transition after completion burst."""
+        cfg = self._cfg
+        if cfg is None:
+            return
+        self._visibility_state = "ambient"
+        self._heat_target = 0.0
+        ambient_key = cfg.ambient_engine
+        if ambient_key in _ENGINES:
+            self._current_engine_instance = _ENGINES[ambient_key]()
+            self._carousel_key = ambient_key
+
+    # ── Phase E helpers ────────────────────────────────────────────────────
+
+    def _has_nameplate(self) -> bool:
+        """Return True if AssistantNameplate is present in the DOM."""
+        try:
+            return len(self.app.query("AssistantNameplate")) > 0
+        except Exception:
+            return False
+
+    # ── carousel ───────────────────────────────────────────────────────────
 
     def _get_carousel_engine(self) -> object:
         """Return the engine for the current carousel position, handling crossfade."""
+        # Phase D: ambient guard — freeze carousel during ambient state
+        if self._visibility_state == "ambient":
+            if self._current_engine_instance is None:
+                cfg = self._cfg
+                ambient_key = (cfg.ambient_engine if cfg else "perlin_flow") or "perlin_flow"
+                if ambient_key not in _ENGINES:
+                    ambient_key = "perlin_flow"
+                self._current_engine_instance = _ENGINES[ambient_key]()
+                self._carousel_key = ambient_key
+            return self._current_engine_instance
+
         # If crossfade active and not done, return it
         if self._carousel_crossfade is not None:
             if self._carousel_crossfade.progress < 1.0:
                 return self._carousel_crossfade
             else:
                 # Crossfade done — commit new engine key
-                self._current_engine_key = self._carousel_engines[self._carousel_idx]
+                if self._carousel_engines:
+                    self._carousel_idx %= len(self._carousel_engines)
+                    self._current_engine_key = self._carousel_engines[self._carousel_idx]
+                    self._carousel_key = self._current_engine_key
                 self._carousel_crossfade = None
 
         # Check if time to advance
@@ -2032,24 +2336,51 @@ class DrawilleOverlay(Static):
         cfg = self._cfg
         interval = cfg.carousel_interval_s if cfg else 12.0
         if (now - self._carousel_last_switch) > interval:
-            current_key = self._carousel_engines[self._carousel_idx]
-            self._carousel_idx = (self._carousel_idx + 1) % len(self._carousel_engines)
-            next_key = self._carousel_engines[self._carousel_idx]
-            # Build fresh engine instances for crossfade
-            engine_a = self._current_engine_instance
-            if engine_a is None:
-                engine_a = _ENGINES.get(current_key, _ENGINES["dna"])()
-            engine_b = _ENGINES.get(next_key, _ENGINES["dna"])()
-            speed = cfg.crossfade_speed if cfg else 0.04
-            self._carousel_crossfade = CrossfadeEngine(engine_a, engine_b, speed=speed)
-            self._carousel_last_switch = now
-            # Current instance will be replaced when crossfade completes
-            return self._carousel_crossfade
+            # Phase B: build filtered candidate list
+            if cfg is not None and cfg.phase_aware_carousel:
+                allowed = _PHASE_CATEGORIES.get(self._current_phase, [])
+                if allowed:
+                    candidates = [
+                        k for k in self._carousel_engines
+                        if _ENGINE_META.get(k, {}).get("category") in allowed
+                    ]
+                else:
+                    candidates = []
+            else:
+                candidates = self._carousel_engines
+
+            if not candidates:
+                candidates = self._carousel_engines  # fallback — never freeze
+
+            if len(candidates) < 1:
+                # No candidates at all — just return current
+                pass
+            else:
+                # Pick next from filtered pool, excluding current
+                others = [k for k in candidates if k != self._carousel_key] or candidates
+                next_key = random.choice(others)
+                self._carousel_key = next_key
+                # Advance global idx to match (find in global list or just append)
+                if next_key in self._carousel_engines:
+                    self._carousel_idx = self._carousel_engines.index(next_key)
+                # Build crossfade
+                engine_a = self._current_engine_instance
+                if engine_a is None:
+                    cur = self._carousel_key or (self._carousel_engines[0] if self._carousel_engines else "dna")
+                    engine_a = _ENGINES.get(cur, _ENGINES["dna"])()
+                engine_b = _ENGINES.get(next_key, _ENGINES["dna"])()
+                speed = cfg.crossfade_speed if cfg else 0.04
+                self._carousel_crossfade = CrossfadeEngine(engine_a, engine_b, speed=speed)
+                self._carousel_last_switch = now
+                return self._carousel_crossfade
 
         # Normal: return current cached engine
+        if self._carousel_engines:
+            self._carousel_idx %= len(self._carousel_engines)
         if self._current_engine_instance is None or self._current_engine_key != self._carousel_engines[self._carousel_idx]:
             key = self._carousel_engines[self._carousel_idx]
             self._current_engine_key = key
+            self._carousel_key = key
             self._current_engine_instance = _ENGINES.get(key, _ENGINES["dna"])()
         return self._current_engine_instance
 
@@ -2201,10 +2532,48 @@ class DrawilleOverlay(Static):
         params = self._anim_params
         if params is None:
             return
+        cfg = self._cfg
 
-        # Smooth heat toward target (exponential approach)
-        self._heat += (self._heat_target - self._heat) * 0.15
-        params.heat = self._heat
+        # Phase A: error hold countdown
+        if self._error_hold_frames > 0:
+            self._error_hold_frames -= 1
+            if self._error_hold_frames == 0:
+                self._heat_target = 0.5
+
+        # Phase C: burst counter decay
+        if self._burst_counter > 0:
+            self._burst_decay_ticks += 1
+            if self._burst_decay_ticks >= 30:
+                self._burst_counter = max(0, self._burst_counter - 1)
+                self._burst_decay_ticks = 0
+
+        # Phase C2: completion burst — gate heat interpolation
+        if self._completion_burst_frames > 0:
+            self._completion_burst_frames -= 1
+            if self._completion_burst_frames == 0:
+                # Burst just ended — set target and trigger fade/ambient
+                self._heat_target = 0.0
+                if cfg is not None and cfg.ambient_enabled:
+                    self._transition_to_ambient()
+                elif cfg is not None and cfg.fade_out_frames > 0:
+                    self._fade_state = "out"
+                    self._fade_step = cfg.fade_out_frames
+                else:
+                    self._do_hide()
+                    return
+            # No heat interpolation during burst — fall through to render
+        elif self._visibility_state == "ambient":
+            # Phase D: ambient branch — override heat
+            params.heat = cfg.ambient_heat if cfg is not None else 0.12
+        elif not self._waiting or self._heat_target > 0:
+            # Normal heat interpolation (skip only when _waiting and heat would go to 0)
+            self._heat += (self._heat_target - self._heat) * 0.15
+        else:
+            self._heat += (self._heat_target - self._heat) * 0.15
+
+        # Phase C: authoritative heat clamp [0, 1.5]
+        if self._visibility_state != "ambient":
+            params.heat = max(0.0, min(1.5, self._heat))
 
         # Get engine (cached instance)
         engine = self._get_engine()
@@ -2241,7 +2610,10 @@ class DrawilleOverlay(Static):
             frame_str = et.to_canvas().frame()
 
         # Determine render color (may be dimmed during fade-out)
-        cfg = self._cfg
+        # Phase A3: skip fade-out while _waiting is True
+        if self._waiting and self._fade_state == "out":
+            self._fade_state = "stable"
+
         if self._fade_state == "out" and cfg is not None:
             self._fade_step -= 1
             if self._fade_step <= 0:
@@ -2256,6 +2628,10 @@ class DrawilleOverlay(Static):
             self._fade_step -= 1
             if self._fade_step <= 0:
                 self._fade_state = "stable"
+        elif self._visibility_state == "ambient" and cfg is not None:
+            # Phase D: ambient color-channel dimming
+            self._fade_state = "stable"
+            render_color = _resolve_color(cfg.color, self.app, dim=cfg.ambient_alpha)
         else:
             self._fade_state = "stable"
             render_color = self._resolved_color
@@ -2334,6 +2710,9 @@ class DrawilleOverlay(Static):
 
     def _apply_layout(self) -> None:
         """Apply size + position from current reactives.  Safe to call any time."""
+        cfg = self._cfg
+        margin = cfg.position_margin if cfg is not None else 2
+
         if self.size_name == "fill":
             self.styles.width = "1fr"
             self.styles.height = "1fr"
@@ -2352,21 +2731,60 @@ class DrawilleOverlay(Static):
                 "large":  (70, 20),
             }
         w, h = sizes.get(self.size_name, sizes["medium"])
-        self.styles.width = w
-        self.styles.height = h
         try:
             tw = self.app.size.width
             th = self.app.size.height
         except Exception:
             tw, th = 80, 24
+
+        top_safe = 1 if self._has_nameplate() else 0
+        bottom_safe = 2
+
+        pos = self.position
+
+        # Phase E: rail modes (offset-based, not dock)
+        if pos in ("rail-right", "rail-left"):
+            rail_width = cfg.rail_width if cfg is not None else 12
+            self.styles.width = rail_width
+            self.styles.height = th - top_safe - bottom_safe
+            if pos == "rail-right":
+                ox, oy = tw - rail_width, top_safe
+            else:
+                ox, oy = 0, top_safe
+            self.styles.offset = (max(0, ox), max(0, oy))
+            # Optional: adjust OutputPanel padding
+            if cfg is not None and cfg.rail_output_margin:
+                try:
+                    from hermes_cli.tui.widgets import OutputPanel
+                    panel = self.app.query_one(OutputPanel)
+                    if pos == "rail-right":
+                        panel.styles.padding_right = rail_width
+                    else:
+                        panel.styles.padding_left = rail_width
+                except Exception:
+                    pass
+            return
+
+        self.styles.width = w
+        self.styles.height = h
+
+        # Phase E: 9 named anchors
         positions = {
-            "center":       ((tw - w) // 2,  (th - h) // 2),
-            "top-right":    (tw - w - 2,     1),
-            "bottom-right": (tw - w - 2,     th - h - 2),
-            "bottom-left":  (2,              th - h - 2),
-            "top-left":     (2,              1),
+            "center":        ((tw - w) // 2,        (th - h) // 2),
+            "top-right":     (tw - w - margin,       top_safe + margin),
+            "bottom-right":  (tw - w - margin,       th - h - bottom_safe),
+            "bottom-left":   (margin,                th - h - bottom_safe),
+            "top-left":      (margin,                top_safe + margin),
+            "top-center":    ((tw - w) // 2,         top_safe + margin),
+            "bottom-center": ((tw - w) // 2,         th - h - bottom_safe),
+            "mid-right":     (tw - w - margin,       (th - h) // 2),
+            "mid-left":      (margin,                (th - h) // 2),
         }
-        ox, oy = positions.get(self.position, positions["center"])
+        ox, oy = positions.get(pos, positions["center"])
+
+        # Safe area clamping
+        ox = max(margin, min(ox, tw - w - margin))
+        oy = max(top_safe, min(oy, th - h - bottom_safe))
         self.styles.offset = (max(0, ox), max(0, oy))
 
 
@@ -2447,7 +2865,9 @@ class AnimConfigPanel(Widget):
             _PanelField("size_name",  "Size",      "cycle",  cfg.size,
                         choices=["small", "medium", "large", "fill"]),
             _PanelField("position",   "Position",  "cycle",  cfg.position,
-                        choices=["center", "top-right", "bottom-right", "bottom-left", "top-left"]),
+                        choices=["center", "top-right", "bottom-right", "bottom-left", "top-left",
+                                 "top-center", "bottom-center", "mid-right", "mid-left",
+                                 "rail-right", "rail-left"]),
             _PanelField("color",      "Color",     "color",  cfg.color),
             _PanelField("gradient",   "Gradient",  "toggle", cfg.gradient),
             _PanelField("color_b",    "Color B",   "color",  cfg.color_secondary),

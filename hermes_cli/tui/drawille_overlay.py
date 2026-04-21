@@ -3312,6 +3312,189 @@ class AnimGalleryOverlay(ModalScreen):
         self.app.push_screen(AnimConfigPanel())
 
 
+# ── _GalleryPreview ───────────────────────────────────────────────────────────
+
+class _GalleryPreview(Widget):
+    """Live engine preview widget for AnimGalleryOverlay and AnimConfigPanel."""
+
+    DEFAULT_CSS = """
+    _GalleryPreview {
+        width: 20;
+        height: 6;
+    }
+    """
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._engine_key: str = ""
+        self._engine: object | None = None
+        self._preview_timer: "Timer | None" = None
+
+    def set_engine(self, key: str) -> None:
+        """Switch to a new engine. Creates a fresh instance."""
+        self._engine_key = key
+        if key == "sdf_morph":
+            # SDF requires baking — use neural_pulse as stand-in
+            self._engine = _ENGINES["neural_pulse"]()
+        elif key in _ENGINES:
+            self._engine = _ENGINES[key]()
+            if hasattr(self._engine, "on_mount"):
+                try:
+                    self._engine.on_mount(self)  # type: ignore[arg-type]
+                except Exception:
+                    pass
+        else:
+            self._engine = None
+        self.refresh()
+
+    def _preview_tick(self) -> None:
+        if self._engine is None:
+            return
+        try:
+            params = AnimParams(width=40, height=24, heat=0.5)
+            frame = self._engine.next_frame(params)
+            params.t += params.dt
+            self.update(frame)
+        except Exception:
+            pass
+
+    def on_mount(self) -> None:
+        self._engine = None
+        self._preview_timer = self.set_interval(0.5, self._preview_tick)
+
+
+# ── AnimGalleryOverlay ────────────────────────────────────────────────────────
+
+class AnimGalleryOverlay(Widget):
+    """Gallery overlay for browsing and selecting animation engines (B2)."""
+
+    DEFAULT_CSS = """
+    AnimGalleryOverlay {
+        display: none;
+        width: 70;
+        height: 20;
+        border: round $accent;
+        background: $surface;
+        padding: 0 1;
+        offset: 5 2;
+    }
+    AnimGalleryOverlay.--visible {
+        display: block;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "close", "Close", show=False),
+        Binding("enter",  "select", "Select", show=False),
+        Binding("space",  "select", "Select", show=False),
+        Binding("up",     "prev_item", "Prev", show=False),
+        Binding("down",   "next_item", "Next", show=False),
+        Binding("p",      "preview", "Preview", show=False),
+        Binding("s",      "open_config", "Config", show=False),
+    ]
+
+    can_focus = True
+
+    _focus_idx: int = 0
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._engine_list: list[str] = list(_ENGINES.keys()) + ["sdf_morph"]
+        self._focus_idx = 0
+
+    def compose(self) -> "ComposeResult":
+        yield Static("", id="gallery-list")
+        yield _GalleryPreview(id="gallery-preview")
+
+    def on_mount(self) -> None:
+        self._refresh_list()
+        self._update_preview()
+
+    def _refresh_list(self) -> None:
+        lines: list[str] = []
+        lines.append("─ Animation Gallery ─")
+        for i, key in enumerate(self._engine_list):
+            meta = _ENGINE_META.get(key, {})
+            cat = meta.get("category", "")
+            badge = f"[{cat[:3].upper()}]" if cat else "   "
+            marker = ">" if i == self._focus_idx else " "
+            lines.append(f"  {marker} {key:<22} {badge}")
+        lines.append("")
+        lines.append("  ↑↓ navigate · Enter select · P preview · Esc close")
+        try:
+            self.query_one("#gallery-list", Static).update("\n".join(lines))
+        except (NoMatches, Exception):
+            pass
+
+    def _update_preview(self) -> None:
+        try:
+            key = self._engine_list[self._focus_idx]
+            self.query_one(_GalleryPreview).set_engine(key)
+        except (NoMatches, IndexError, Exception):
+            pass
+
+    def action_prev_item(self) -> None:
+        self._focus_idx = (self._focus_idx - 1) % len(self._engine_list)
+        self._refresh_list()
+        self._update_preview()
+
+    def action_next_item(self) -> None:
+        self._focus_idx = (self._focus_idx + 1) % len(self._engine_list)
+        self._refresh_list()
+        self._update_preview()
+
+    def action_select(self) -> None:
+        try:
+            key = self._engine_list[self._focus_idx]
+            try:
+                ov = self.app.query_one(DrawilleOverlay)
+                ov.animation = key
+            except (NoMatches, Exception):
+                pass
+            # Update app animation key
+            try:
+                cfg = _overlay_config()
+                cfg.animation = key
+            except Exception:
+                pass
+        except IndexError:
+            pass
+        self.remove_class("--visible")
+        try:
+            self.app.query_one("#input-area").focus()
+        except (NoMatches, Exception):
+            pass
+
+    def action_close(self) -> None:
+        self.remove_class("--visible")
+        try:
+            self.app.query_one("#input-area").focus()
+        except (NoMatches, Exception):
+            pass
+
+    def action_preview(self) -> None:
+        """Force-show overlay with selected engine for 5s."""
+        try:
+            key = self._engine_list[self._focus_idx]
+            ov = self.app.query_one(DrawilleOverlay)
+            cfg = _overlay_config()
+            cfg.enabled = True
+            cfg.animation = key
+            ov.animation = key
+            ov.show(cfg)
+            self.app.set_timer(5.0, lambda: None)  # type: ignore[attr-defined]
+        except (NoMatches, Exception):
+            pass
+
+    def action_open_config(self) -> None:
+        self.remove_class("--visible")
+        try:
+            panel = self.app.query_one(AnimConfigPanel)
+            panel.open()
+        except (NoMatches, Exception):
+            pass
+
+
 def _current_panel_cfg(fields: list[_PanelField]) -> DrawilleOverlayCfg:
     """Build a DrawilleOverlayCfg from current panel field values."""
     fmap = {f.name: f.value for f in fields}

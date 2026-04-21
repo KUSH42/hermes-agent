@@ -4759,6 +4759,149 @@ class HermesApp(App):
         except Exception:
             pass
 
+    def _persist_anim_config(self, cfg_dict: dict) -> None:
+        """Persist animation config dict to YAML config file (E5)."""
+        try:
+            from hermes_cli.config import read_raw_config, save_config, _set_nested, get_config_path
+            config_path = get_config_path()
+            if not config_path.exists():
+                import logging as _logging
+                _logging.getLogger(__name__).warning("Config path does not exist: %s", config_path)
+                return
+            cfg = read_raw_config()
+            _set_nested(cfg, "display.drawille_overlay", cfg_dict)
+            save_config(cfg)
+        except Exception as exc:
+            import logging as _logging
+            _logging.getLogger(__name__).warning("Failed to persist anim config: %s", exc)
+
+    def _update_anim_hint(self) -> None:
+        """Update _anim_hint reactive based on overlay visibility (C3)."""
+        try:
+            from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO
+            ov = self.query_one(_DO)
+            cfg = ov._cfg
+            if ov.has_class("-visible") and cfg is not None and cfg.animation == "sdf_morph":
+                self._anim_hint = f"sdf: {ov.contextual_text}"
+            else:
+                self._anim_hint = ""
+        except Exception:
+            self._anim_hint = ""
+
+    def _handle_anim_command(self, stripped: str) -> None:
+        """Handle /anim subcommands (B1)."""
+        from hermes_cli.tui.drawille_overlay import (
+            DrawilleOverlay as _DO, AnimConfigPanel as _ACP,
+            _ENGINES, _overlay_config, AnimGalleryOverlay as _AGA,
+        )
+        # Parse args after "/anim"
+        rest = stripped[len("/anim"):].strip()
+        args = rest.split() if rest else []
+
+        if not args:
+            # /anim → open gallery overlay (B2)
+            try:
+                gallery = self.query_one(_AGA)
+                gallery.add_class("--visible")
+            except NoMatches:
+                pass
+            return
+
+        sub = args[0].lower()
+
+        if sub == "config":
+            self._open_anim_config()
+            return
+
+        if sub == "on":
+            self._anim_force = "on"
+            try:
+                ov = self.query_one(_DO)
+                cfg = _overlay_config()
+                cfg.enabled = True
+                ov.show(cfg)
+            except Exception:
+                pass
+            return
+
+        if sub == "off":
+            self._anim_force = "off"
+            try:
+                ov = self.query_one(_DO)
+                cfg = _overlay_config()
+                ov.hide(cfg)
+            except Exception:
+                pass
+            return
+
+        if sub == "toggle":
+            if self._anim_force is None:
+                self._anim_force = "on"
+            elif self._anim_force == "on":
+                self._anim_force = "off"
+            else:
+                self._anim_force = None
+            self._drawille_show_hide(getattr(self, "agent_running", False))
+            return
+
+        if sub == "list":
+            keys = list(_ENGINES.keys()) + ["sdf_morph"]
+            try:
+                from hermes_cli.tui.widgets import OutputPanel
+                panel = self.query_one(OutputPanel)
+                msg = panel.current_message or panel.new_message()
+                from rich.text import Text as _Text
+                msg._log.write(_Text("Animations: " + ", ".join(keys)))
+            except Exception:
+                self._flash_hint(", ".join(keys), 5.0)
+            return
+
+        if sub == "sdf":
+            sdf_text = " ".join(args[1:]) if len(args) > 1 else ""
+            try:
+                ov = self.query_one(_DO)
+                cfg = _overlay_config()
+                cfg.enabled = True
+                cfg.animation = "sdf_morph"
+                if sdf_text:
+                    cfg.sdf_text = sdf_text
+                ov.animation = "sdf_morph"
+                ov.show(cfg)
+                # Force-show for 10s then revert
+                def _revert_sdf():
+                    ov.animation = _overlay_config().animation
+                    self._drawille_show_hide(getattr(self, "agent_running", False))
+                self.set_timer(10.0, _revert_sdf)
+            except Exception:
+                pass
+            return
+
+        # Fuzzy match engine name
+        all_keys = list(_ENGINES.keys())
+        clean = "".join(c for c in sub if c.isalpha()).lower()
+        matched = None
+        for k in all_keys:
+            if clean in k.replace("_", ""):
+                matched = k
+                break
+        if matched is None:
+            self._flash_hint(f"⚠  Unknown animation: {sub}", 2.0)
+            return
+
+        try:
+            ov = self.query_one(_DO)
+            ov.animation = matched
+            cfg = _overlay_config()
+            cfg.enabled = True
+            cfg.animation = matched
+            ov.show(cfg)
+            # Force-show for 4s then revert
+            def _revert_engine():
+                self._drawille_show_hide(getattr(self, "agent_running", False))
+            self.set_timer(4.0, _revert_engine)
+        except Exception:
+            pass
+
     def _try_auto_title(self) -> None:
         """Derive a session title from the first user message and save it (once per session)."""
         db = getattr(self, "_session_db", None) or getattr(getattr(self, "cli", None), "_session_db", None)

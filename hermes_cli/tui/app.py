@@ -765,6 +765,8 @@ class HermesApp(App):
 
     _RESIZE_DEBOUNCE_S: float = 0.06  # 60 ms
 
+    _RESIZE_DEBOUNCE_S: float = 0.06  # 60 ms
+
     def on_resize(self, event: "events.Resize") -> None:
         """Debounce rapid resize events; flush once idle for 60 ms."""
         self._pending_resize = event

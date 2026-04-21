@@ -39,6 +39,8 @@ from hermes_cli.tui.tool_accent import ToolAccent
 
 from hermes_cli.tui.resize_utils import THRESHOLD_TOOL_NARROW, crosses_threshold
 
+from hermes_cli.tui.resize_utils import THRESHOLD_TOOL_NARROW, crosses_threshold
+
 if TYPE_CHECKING:
     pass
 

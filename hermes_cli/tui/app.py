@@ -4876,6 +4876,33 @@ class HermesApp(App):
                 pass
             return
 
+        if sub == "preset":
+            from hermes_cli.tui.drawille_overlay import (
+                DrawilleOverlay, _overlay_config as _oc, _PRESETS,
+            )
+            import dataclasses as _dc
+            preset_name = args[1].lower() if len(args) > 1 else ""
+            if not preset_name:
+                self._flash_hint(f"Presets: {', '.join(list(_PRESETS) + ['off'])}", 4.0)
+                return
+            if preset_name == "off":
+                self._persist_anim_config({"enabled": False})
+                return
+            preset_dict = _PRESETS.get(preset_name)
+            if preset_dict is None:
+                self._flash_hint(f"Unknown preset — try: {', '.join(_PRESETS)}", 2.5)
+                return
+            current_cfg = _oc()
+            merged = {**_dc.asdict(current_cfg), **preset_dict}
+            self._persist_anim_config(merged)
+            try:
+                ov = self.query_one(DrawilleOverlay)
+                ov._do_hide()
+                ov.show(_oc())
+            except NoMatches:
+                pass
+            return
+
         # Fuzzy match engine name
         all_keys = list(_ENGINES.keys())
         clean = "".join(c for c in sub if c.isalpha()).lower()

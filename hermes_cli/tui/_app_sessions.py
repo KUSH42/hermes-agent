@@ -6,6 +6,8 @@ from typing import Any
 from textual import work
 from textual.css.query import NoMatches
 
+from hermes_cli.tui.overlays import SessionOverlay
+
 
 class _SessionsMixin:
     """Parallel worktree session management methods.
@@ -417,3 +419,34 @@ class _SessionsMixin:
         except Exception:
             pass
         self.call_from_thread(self._refresh_session_records_from_index)  # type: ignore[attr-defined]
+
+    @work(thread=True)
+    def action_resume_session(self, session_id: str) -> None:
+        """Resume a session by ID (runs in worker thread)."""
+        cli = self.cli  # type: ignore[attr-defined]
+        try:
+            if hasattr(cli, "_handle_resume_command"):
+                cli._handle_resume_command(f"/resume {session_id}")
+                db = getattr(cli, "_session_db", None)
+                session_meta: dict = {}
+                if db is not None:
+                    try:
+                        session_meta = db.get_session(session_id) or {}
+                    except Exception:
+                        pass
+                title = session_meta.get("title") or ""
+                msgs = getattr(cli, "conversation_history", []) or []
+                turn_count = len([m for m in msgs if m.get("role") in ("user", "assistant")])
+                self.call_from_thread(  # type: ignore[attr-defined]
+                    self.handle_session_resume, session_id, title, turn_count
+                )
+        except Exception:
+            pass
+
+    def action_open_sessions(self) -> None:
+        """Open the session browser overlay."""
+        self._dismiss_all_info_overlays()  # type: ignore[attr-defined]
+        try:
+            self.query_one(SessionOverlay).open_sessions()  # type: ignore[attr-defined]
+        except NoMatches:
+            pass

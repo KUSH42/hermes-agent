@@ -178,7 +178,6 @@ from hermes_cli.tui._app_context_menu import _ContextMenuMixin
 from hermes_cli.tui._app_sessions import _SessionsMixin
 from hermes_cli.tui._app_theme import _ThemeMixin
 from hermes_cli.tui._app_commands import _CommandsMixin
-from hermes_cli.tui._app_overlay_watchers import _OverlayWatchersMixin
 from hermes_cli.tui._app_watchers import _WatchersMixin
 from hermes_cli.tui._app_key_handler import _KeyHandlerMixin
 from hermes_cli.tui._browse_types import (
@@ -268,7 +267,7 @@ class MCPServerDisconnected(_TxtMessage):
 # moved to _browse_types.py — imported above
 
 
-class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _ContextMenuMixin, _SessionsMixin, _ThemeMixin, _CommandsMixin, _OverlayWatchersMixin, _WatchersMixin, _KeyHandlerMixin, App):
+class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _ContextMenuMixin, _SessionsMixin, _ThemeMixin, _CommandsMixin, _WatchersMixin, _KeyHandlerMixin, App):
     """Main Textual application for the Hermes Agent TUI.
 
     Holds all reactive state that drives widget updates. The agent thread
@@ -1638,41 +1637,6 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
             self.query_one(HermesInput).focus()
         except (NoMatches, ImportError):
             pass
-
-    @work(thread=True)
-    def action_resume_session(self, session_id: str) -> None:
-        """Resume a session by ID (runs in worker thread)."""
-        cli = self.cli
-        try:
-            if hasattr(cli, "_handle_resume_command"):
-                cli._handle_resume_command(f"/resume {session_id}")
-                db = getattr(cli, "_session_db", None)
-                session_meta: dict = {}
-                if db is not None:
-                    try:
-                        session_meta = db.get_session(session_id) or {}
-                    except Exception:
-                        pass
-                title = session_meta.get("title") or ""
-                msgs = getattr(cli, "conversation_history", []) or []
-                turn_count = len([m for m in msgs if m.get("role") in ("user", "assistant")])
-                self.call_from_thread(
-                    self.handle_session_resume, session_id, title, turn_count
-                )
-        except Exception:
-            pass
-
-    def action_open_sessions(self) -> None:
-        """Open the session browser overlay."""
-        self._dismiss_all_info_overlays()
-        try:
-            self.query_one(SessionOverlay).open_sessions()
-        except NoMatches:
-            pass
-
-    # --- Sessions: in _app_sessions.py ---
-
-    # --- Overlay watchers: in _app_overlay_watchers.py ---
 
         # --- Input/size/compaction/voice/image/file-drop watchers: in _app_watchers.py ---
 

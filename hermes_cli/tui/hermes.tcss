@@ -529,6 +529,7 @@ ToolPanelMini { height: 1; layout: horizontal; }
 ToolPanelMini:focus { background: $accent 10%; }
 
 /* --- Tool grouping (virtual — no DOM container) --- */
+<<<<<<< HEAD
 ToolPanel.tool-panel--grouped { padding-left: 2; }
 ToolPanel.group-hidden         { display: none; }
 
@@ -563,3 +564,8 @@ SectionDivider { height: 1; color: $text-muted; }
 AgentThought { height: auto; }
 ToolSequence { height: auto; }
 AgentFinalResponse { height: auto; }
+=======
+ToolPanel.tool-panel--grouped    { padding-left: 2; }
+ToolPanel.group-hidden           { display: none; }
+ToolPanel.tool-panel--child-diff { margin-left: 2; }
+>>>>>>> 88114c39 (feat(tui): tool header polish — shell prompt, bash highlighting, path links, grep icon, group cleanup)

@@ -95,6 +95,7 @@ from hermes_cli.tui.widgets import (
     _safe_widget_call,
 )
 
+from hermes_cli.tool_icons import get_display_name
 from hermes_cli.tui.constants import ICON_COPY
 from hermes_cli.tui.animation import AnimationClock, shimmer_text
 from hermes_cli.tui.perf import EventLoopLatencyProbe, FrameRateProbe, WorkerWatcher
@@ -1710,7 +1711,7 @@ class HermesApp(App):
         try:
             output = self.query_one(OutputPanel)
             msg = output.current_message or output.new_message()
-            block = msg.open_streaming_tool_block(label=tool_name, tool_name=tool_name)
+            block = msg.open_streaming_tool_block(label=get_display_name(tool_name), tool_name=tool_name)
             self._browse_total += 1
             if not output._user_scrolled_up:
                 self.call_after_refresh(output.scroll_end, animate=False)
@@ -1886,11 +1887,10 @@ class HermesApp(App):
     # --- ToolPanel J/K navigation ---
 
     def _focus_tool_panel(self, direction: int) -> None:
-        """Focus the next (direction=+1) or prev (direction=-1) ToolPanel/GroupHeader."""
+        """Focus the next (direction=+1) or prev (direction=-1) ToolPanel."""
         from hermes_cli.tui.tool_panel import ToolPanel as _TP
-        from hermes_cli.tui.tool_group import GroupHeader as _GH
         try:
-            navigable = [w for w in self.query((_TP, _GH)) if w.is_attached]
+            navigable = [w for w in self.query(_TP) if w.is_attached]
         except Exception:
             return
         if not navigable:

@@ -1032,9 +1032,10 @@ class MessagePanel(Widget):
         )
         if label == "diff":
             block._header._compact_tail = True  # stats/toggle/timer inline after label
-        if label == "diff" and self._last_file_tool_block is not None:
             block._header._is_child_diff = True
         panel = _ToolPanel(block, tool_name=tool_name)
+        if label == "diff":
+            panel.add_class("tool-panel--child-diff")
         self._mount_nonprose_block(panel)
         return block
 

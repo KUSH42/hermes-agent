@@ -1,38 +1,28 @@
-"""GroupHeader widget and _maybe_start_group heuristic.
+"""_maybe_start_group heuristic — virtual tool grouping.
 
 Architecture: tui-tool-panel-v2-spec.md §7.
 v3 Phase B: semantic group labels (group_semantic_label, group_path_hint).
 
 Virtual grouping — no DOM containers, no reparenting.
-A "group" is:
-  - A GroupHeader widget mounted as a sibling before the first member.
-  - All member ToolPanels tagged with class `group-id-<hex>` + `tool-panel--grouped`.
+A "group" is all member ToolPanels tagged with class `group-id-<hex>` + `tool-panel--grouped`.
 
 No widget is ever removed or remounted. Grouping is achieved via:
-  1. mount(GroupHeader, before=anchor_panel)
-  2. anchor_panel.add_class("group-id-<hex>")  # no lifecycle hook
+  anchor_panel.add_class("group-id-<hex>")  # no lifecycle hook
 """
 
 from __future__ import annotations
 
 import os
-import re
 import time
 import uuid
 from typing import TYPE_CHECKING
 
-from rich.text import Text
-from textual.app import ComposeResult
 from textual.widget import Widget
-from textual.widgets import Static
 
 from hermes_cli.tui.tool_accent import ToolAccent
 
 if TYPE_CHECKING:
     pass
-
-_BADGE_ADD_RE = re.compile(r"^\+(\d+)$")
-_BADGE_DEL_RE = re.compile(r"^-(\d+)$")
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +83,7 @@ def _grouping_enabled() -> bool:
 
 
 # ---------------------------------------------------------------------------
+<<<<<<< HEAD
 # GroupHeader widget
 # ---------------------------------------------------------------------------
 
@@ -275,6 +266,8 @@ class GroupHeader(Widget):
 
 
 # ---------------------------------------------------------------------------
+=======
+>>>>>>> 88114c39 (feat(tui): tool header polish — shell prompt, bash highlighting, path links, grep icon, group cleanup)
 # Group helpers
 # ---------------------------------------------------------------------------
 
@@ -284,13 +277,6 @@ def _get_group_id(panel: Widget) -> str | None:
     for cls in panel.classes:
         if cls.startswith("group-id-"):
             return cls[9:]
-    return None
-
-
-def _find_group_header(message_panel: Widget, group_id: str) -> GroupHeader | None:
-    for child in message_panel.children:
-        if isinstance(child, GroupHeader) and child._group_id == group_id:
-            return child
     return None
 
 
@@ -361,12 +347,13 @@ def _maybe_start_group(message_panel: Widget, new_panel: Widget) -> None:
 
     Called from MessagePanel._mount_nonprose_block BEFORE new_panel is mounted,
     so new_panel is not yet in message_panel.children.
-    Mutates: may call message_panel.mount(GroupHeader) and add CSS classes.
+    Mutates: may add CSS classes to panels.
 
     Rules (§7.1, first match wins):
       1. Diff attachment — patch/write_file/create_file ← diff
       2. Search + open  — search tool ← file tool whose path ∈ result_paths
       3. Shell pipeline — two consecutive shell tools (within 250ms or chained)
+      3b. Search batch  — consecutive SEARCH tools (search_files, grep, web_search)
       4. Same-path chain — consecutive file tools sharing dir prefix depth≥2
     """
     if not _grouping_enabled():
@@ -426,6 +413,14 @@ def _maybe_start_group(message_panel: Widget, new_panel: Widget) -> None:
             _apply_group(message_panel, prev, new_panel)
             return
 
+    # --- Rule 3b: Search batch — consecutive SEARCH tools ---
+    if (
+        _is_category(new_panel, ToolCategory.SEARCH)
+        and _is_category(prev, ToolCategory.SEARCH)
+    ):
+        _apply_group(message_panel, prev, new_panel)
+        return
+
     # --- Rule 4: Same-path chain ---
     if (
         _is_category(new_panel, ToolCategory.FILE)
@@ -441,26 +436,12 @@ def _apply_group(
     existing_panel: Widget,
     new_panel: Widget,
 ) -> None:
-    """Mint or reuse a group_id; tag both panels; mount GroupHeader if new."""
+    """Mint or reuse a group_id; tag both panels with grouping CSS classes."""
     group_id = _get_group_id(existing_panel)
     if group_id is None:
         group_id = uuid.uuid4().hex[:8]
-        header = GroupHeader(group_id=group_id)
-        message_panel.mount(header, before=existing_panel)
         existing_panel.add_class(f"group-id-{group_id}")
         existing_panel.add_class("tool-panel--grouped")
 
     new_panel.add_class(f"group-id-{group_id}")
     new_panel.add_class("tool-panel--grouped")
-
-    # Update GroupHeader member count and stats
-    gh = _find_group_header(message_panel, group_id)
-    if gh is not None:
-        # new_panel not yet in message_panel.children (mounts after this returns),
-        # so add +1 to get the correct member count.
-        count = sum(
-            1 for c in message_panel.children
-            if c.has_class(f"group-id-{group_id}")
-        ) + 1
-        gh.update_count(count)
-        gh.refresh_stats()

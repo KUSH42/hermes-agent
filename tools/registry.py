@@ -18,7 +18,7 @@ import json
 import logging
 from typing import Callable, Dict, List, Optional, Set
 
-from hermes_cli.tool_icons import get_default_tool_icon
+from hermes_cli.tool_icons import get_ascii_tool_icon, get_default_tool_icon
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +28,12 @@ class ToolEntry:
 
     __slots__ = (
         "name", "toolset", "schema", "handler", "check_fn",
-        "requires_env", "is_async", "description", "icon", "emoji",
+        "requires_env", "is_async", "description", "icon", "ascii_icon",
         "max_result_size_chars",
     )
 
     def __init__(self, name, toolset, schema, handler, check_fn,
-                 requires_env, is_async, description, icon, emoji,
+                 requires_env, is_async, description, icon, ascii_icon,
                  max_result_size_chars=None):
         self.name = name
         self.toolset = toolset
@@ -44,7 +44,7 @@ class ToolEntry:
         self.is_async = is_async
         self.description = description
         self.icon = icon
-        self.emoji = emoji
+        self.ascii_icon = ascii_icon
         self.max_result_size_chars = max_result_size_chars
 
 
@@ -70,7 +70,7 @@ class ToolRegistry:
         is_async: bool = False,
         description: str = "",
         icon: str = "",
-        emoji: str = "",
+        emoji: str = "",          # accepted but ignored (legacy)
         max_result_size_chars: int | float | None = None,
     ):
         """Register a tool.  Called at module-import time by each tool file."""
@@ -91,7 +91,7 @@ class ToolRegistry:
             is_async=is_async,
             description=description or schema.get("description", ""),
             icon=icon or get_default_tool_icon(name, default=""),
-            emoji=emoji,
+            ascii_icon=get_ascii_tool_icon(name, default="*"),
             max_result_size_chars=max_result_size_chars,
         )
         if check_fn and toolset not in self._toolset_checks:
@@ -207,10 +207,10 @@ class ToolRegistry:
         entry = self._tools.get(name)
         return (entry.icon if entry and entry.icon else default)
 
-    def get_emoji(self, name: str, default: str = "⚡") -> str:
-        """Return the emoji for a tool, or *default* if unset."""
+    def get_ascii_icon(self, name: str, default: str = "*") -> str:
+        """Return the ASCII-safe icon for a tool, or *default*."""
         entry = self._tools.get(name)
-        return (entry.emoji if entry and entry.emoji else default)
+        return (entry.ascii_icon if entry else default)
 
     def get_tool_to_toolset_map(self) -> Dict[str, str]:
         """Return ``{tool_name: toolset_name}`` for every registered tool."""

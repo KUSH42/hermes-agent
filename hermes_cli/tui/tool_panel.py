@@ -706,6 +706,7 @@ class ToolPanel(Widget):
         if self._footer_pane is not None:
             show = self._should_show_footer(self.detail_level)
             self._footer_pane.styles.display = "block" if show else "none"
+<<<<<<< HEAD
         # Activate mini-mode for qualifying SHELL calls
         self._maybe_activate_mini(summary)
         # Notify enclosing GroupHeader so it can refresh dot color + stats
@@ -732,6 +733,8 @@ class ToolPanel(Widget):
         except Exception:
             pass
 
+=======
+>>>>>>> 88114c39 (feat(tui): tool header polish — shell prompt, bash highlighting, path links, grep icon, group cleanup)
     def copy_content(self) -> str:
         """Return full plain-text output regardless of detail level."""
         if self._block is None:

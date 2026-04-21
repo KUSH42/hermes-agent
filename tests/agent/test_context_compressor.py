@@ -64,6 +64,28 @@ class TestUpdateFromResponse:
         compressor.update_from_response({})
         assert compressor.last_prompt_tokens == 0
 
+    def test_on_usage_update_callback_fires(self, compressor):
+        """on_usage_update callback fires after each update_from_response."""
+        calls = []
+        compressor.on_usage_update = lambda: calls.append(True)
+        compressor.update_from_response({"prompt_tokens": 100})
+        assert len(calls) == 1
+
+    def test_on_usage_update_callback_survives_exception(self, compressor):
+        """Callback exception is swallowed — never breaks agent loop."""
+        def _boom():
+            raise RuntimeError("boom")
+        compressor.on_usage_update = _boom
+        # Should not raise
+        compressor.update_from_response({"prompt_tokens": 100})
+        assert compressor.last_prompt_tokens == 100
+
+    def test_on_usage_update_none_by_default(self, compressor):
+        """Default on_usage_update is None — no callback wired."""
+        assert compressor.on_usage_update is None
+        # Should not raise
+        compressor.update_from_response({"prompt_tokens": 100})
+
 
 class TestGetStatus:
     def test_returns_expected_keys(self, compressor):

@@ -10,6 +10,24 @@ from unittest.mock import patch
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _reset_message_panel_counter():
+    """Reset MessagePanel._msg_counter between tests.
+
+    MessagePanel uses a class-level counter to generate unique widget IDs.
+    Without reset, the counter grows across the test suite (600+ tests →
+    counter reaches 100+). High counter values cause cross-test contamination
+    where layout/timer behavior differs from isolation runs.  Reset to 0
+    before each test to guarantee consistent widget IDs.
+    """
+    try:
+        from hermes_cli.tui.widgets import MessagePanel
+        MessagePanel._msg_counter = 0
+    except ImportError:
+        pass
+    yield
+
 # Ensure project root is importable
 PROJECT_ROOT = Path(__file__).parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -85,12 +103,17 @@ def _ensure_current_event_loop(request):
         yield
         return
 
+    # get_running_loop() raises RuntimeError cleanly when no loop is running
+    # (unlike get_event_loop() which emits DeprecationWarning on Python 3.10+
+    # when there is no current loop set).  Sync test fixtures are never inside
+    # a running loop, so this always results in created=True — that's correct.
     try:
-        loop = asyncio.get_event_loop_policy().get_event_loop()
+        loop = asyncio.get_running_loop()
+        created = loop.is_closed()
     except RuntimeError:
         loop = None
+        created = True
 
-    created = loop is None or loop.is_closed()
     if created:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)

@@ -8,8 +8,11 @@ python-dotenv
 fire
 httpx
 rich
+drawille>=0.2.0,<1
 tenacity
 prompt_toolkit
+textual>=1.0.0,<9
+wcwidth
 pyyaml
 requests
 jinja2
@@ -29,6 +32,9 @@ edge-tts
 
 # Optional: For cron expression parsing (cronjob scheduling)
 croniter
+
+# Plotting / visualization
+matplotlib
 
 # Optional: For messaging platform integrations (gateway)
 python-telegram-bot[webhooks]>=22.6

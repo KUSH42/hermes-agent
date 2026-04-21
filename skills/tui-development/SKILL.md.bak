@@ -1,0 +1,99 @@
+---
+name: tui-development
+description: >
+  Architecture, patterns, and API gotchas for the hermes-agent Textual TUI
+  (`hermes_cli/tui/`). Covers widget development, thread→app communication,
+  overlay state protocol, testing with Pilot, CSS theming, and high-frequency
+  Textual pitfalls.
+  TRIGGER when: writing or modifying TUI widgets, adding new overlays or
+  status bars, debugging Textual rendering, writing tests in `tests/tui/`,
+  touching `_cprint` or `_hermes_app`, or working with `hermes_cli/tui/*`.
+  DO NOT TRIGGER when: modifying agent logic, tools, config, or non-TUI CLI
+  commands (`hermes_cli/commands.py`, `hermes_cli/config.py`, etc.).
+compatibility: "Python 3.11+, Textual >=1.0,<9 (pinned), Rich >=14"
+metadata:
+  author: xush
+  version: "3.0"
+  target: code_agent
+---
+
+## Use this skill for TUI work
+
+This skill is for `hermes_cli/tui/`, TUI-facing bridges in `cli.py`, and
+`tests/tui/`. Treat it as an execution guide, not as a replacement for reading
+live code.
+
+## First read
+
+Read these files before you edit anything:
+
+1. `hermes_cli/tui/app.py`
+2. `hermes_cli/tui/widgets.py`
+3. The specific module you will touch under `hermes_cli/tui/`
+4. The matching tests under `tests/tui/`
+
+Then load only the focused reference you need:
+
+- `references/module-map.md` for ownership and routing
+- `references/patterns.md` for implementation rules and test workflow
+- `references/gotchas.md` for known Textual and hermes-specific traps
+
+## High-signal invariants
+
+- Keep blocking I/O, file polling, YAML parsing, and subprocess waits off the
+  Textual event loop.
+- Only mutate DOM/reactives on the app thread. From worker or agent threads,
+  use `app.call_from_thread(...)`, queue handoff, or `post_message(...)`.
+- Keep exactly one vertical scroll owner in the output path. Inner
+  `RichLog`/`ScrollView` widgets must not keep independent scrolling.
+- In the output stack, dynamic content mounts before
+  `output.query_one(ThinkingWidget)`. `[ThinkingWidget, LiveLineWidget]`
+  remain last.
+- `watch_agent_running(False)` owns end-of-turn cleanup. Do not build new logic
+  around dead sentinel or fallback cleanup paths.
+- When skill text and live code disagree, trust live code and update the skill.
+
+## Fast workflow
+
+1. Find the owning module and tests from `references/module-map.md`.
+2. Read the narrow pattern section you need in `references/patterns.md`.
+3. Check `references/gotchas.md` before changing timers, overlays, scrolling,
+   threading, theming, or completion UI.
+4. Implement the change in code and tests together.
+5. Run targeted tests first, then broader `tests/tui/` coverage if the change
+   crosses module boundaries.
+6. If behavior changed materially, update this skill or one reference doc in
+   the same patch.
+
+## Common task routing
+
+- New widget or status chrome:
+  `module-map.md` widget ownership, then `patterns.md` widget section.
+- Streaming/output bug:
+  `module-map.md` output stack, then `patterns.md` output API, then relevant
+  entries in `gotchas.md`.
+- Overlay/input bug:
+  `patterns.md` overlay protocol and testing sections, then `gotchas.md`
+  overlay/input entries.
+- Theme or skin bug:
+  `patterns.md` CSS theming section, then `gotchas.md` theme entries.
+- Perf hitch or repaint bug:
+  `patterns.md` perf triage section, then `gotchas.md` timer/threading entries.
+
+## Files that usually move together
+
+- `hermes_cli/tui/app.py` with `tests/tui/test_integration.py`,
+  `tests/tui/test_turn_lifecycle.py`, or a focused module test
+- `hermes_cli/tui/widgets.py` with overlay/status/output tests
+- `hermes_cli/tui/tool_blocks.py` with `tests/tui/test_tool_blocks.py`,
+  `tests/tui/test_streaming_tool_block.py`, and scroll tests
+- `hermes_cli/tui/response_flow.py` with `tests/tui/test_response_flow.py`
+- `cli.py` TUI bridge code with `tests/cli/test_reasoning_tui_bridge.py` or
+  other bridge tests
+
+## Validation
+
+- Last revalidated against live code on April 16, 2026.
+- If you touch `response_flow.py`, streaming tool blocks, overlay lifecycle, or
+  theme manager behavior, update the relevant reference doc here in the same
+  patch.

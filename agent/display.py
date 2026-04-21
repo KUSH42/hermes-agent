@@ -7,12 +7,19 @@ Used by AIAgent._execute_tool_calls for CLI feedback.
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
 from dataclasses import dataclass, field
 from difflib import unified_diff
 from pathlib import Path
+
+from hermes_cli.tool_icons import (
+    GENERIC_ASCII_TOOL_ICON,
+    GENERIC_NERD_FONT_TOOL_ICON,
+    get_ascii_tool_icon,
+)
 
 # ANSI escape codes for coloring tool failure indicators
 _RED = "\033[31m"
@@ -21,13 +28,100 @@ _RESET = "\033[0m"
 logger = logging.getLogger(__name__)
 
 _ANSI_RESET = "\033[0m"
-_ANSI_DIM = "\033[38;2;150;150;150m"
-_ANSI_FILE = "\033[38;2;180;160;255m"
-_ANSI_HUNK = "\033[38;2;120;120;140m"
-_ANSI_MINUS = "\033[38;2;255;255;255;48;2;120;20;20m"
-_ANSI_PLUS = "\033[38;2;255;255;255;48;2;20;90;20m"
+
+
+# ---------------------------------------------------------------------------
+# Hex → ANSI truecolor helpers (used by diff color accessors below)
+# ---------------------------------------------------------------------------
+
+def _hex_to_ansi_fg(hex_color: str) -> str:
+    """Convert #RRGGBB to ANSI truecolor foreground escape. Returns "" on error."""
+    try:
+        h = hex_color.lstrip("#")
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        return f"\033[38;2;{r};{g};{b}m"
+    except Exception:
+        return ""
+
+
+def _hex_to_ansi_bg(hex_color: str) -> str:
+    """Convert #RRGGBB to ANSI truecolor background escape. Returns "" on error."""
+    try:
+        h = hex_color.lstrip("#")
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        return f"\033[48;2;{r};{g};{b}m"
+    except Exception:
+        return ""
+
+
+def _d(key: str) -> str:
+    """Lazy diff color accessor. Returns hex string from active skin, or ""."""
+    try:
+        from hermes_cli.skin_engine import get_active_skin
+        return get_active_skin().get_diff(key, "")
+    except Exception:
+        return ""
+
+
+def _ansi_dim() -> str:
+    return _hex_to_ansi_fg(_d("context_fg"))
+
+
+def _ansi_file() -> str:
+    return _hex_to_ansi_fg(_d("file_path_fg"))
+
+
+def _ansi_hunk() -> str:
+    return _hex_to_ansi_fg(_d("hunk_fg"))
+
+
+def _ansi_minus() -> str:
+    return _hex_to_ansi_fg(_d("deletion_fg")) + _hex_to_ansi_bg(_d("deletion_bg"))
+
+
+def _ansi_plus() -> str:
+    return _hex_to_ansi_fg(_d("addition_fg")) + _hex_to_ansi_bg(_d("addition_bg"))
 _MAX_INLINE_DIFF_FILES = 6
 _MAX_INLINE_DIFF_LINES = 80
+
+# Set to True by the CLI when code-highlight mode is active.  Consumed by
+# get_cute_tool_message to suppress the inline code snippet (the highlighted
+# block will show the full code immediately after).
+_code_highlight_active: bool = False
+
+
+def set_code_highlight_active(active: bool) -> None:
+    global _code_highlight_active
+    _code_highlight_active = active
+
+
+def set_diff_limits(max_lines: int, max_files: int) -> None:
+    global _MAX_INLINE_DIFF_LINES, _MAX_INLINE_DIFF_FILES
+    _MAX_INLINE_DIFF_LINES = max_lines
+    _MAX_INLINE_DIFF_FILES = max_files
+
+
+# Rich-based rendering (syntax highlighting + enhanced diffs)
+try:
+    from agent.rich_output import DiffRenderer as _RichDiffRenderer
+    from agent.rich_output import LanguageDetector as _RichLanguageDetector
+    from agent.rich_output import SyntaxHighlighter as _RichSyntaxHighlighter
+    from agent.rich_output import clean_command_output
+    _rich_diff = _RichDiffRenderer()
+    _rich_syntax = _RichSyntaxHighlighter()
+    _rich_detector = _RichLanguageDetector()
+    _RICH_OUTPUT = True
+    # Register invalidation callbacks for skin-switch.
+    # skin_engine never imports display or rich_output, so callers self-register.
+    try:
+        from agent import rich_output as _rich_output
+        from hermes_cli import skin_engine as _skin_engine
+        _skin_engine.register_skin_callback(_rich_syntax.refresh)
+        _skin_engine.register_skin_callback(_rich_output._rebuild_md_cache)
+    except Exception:
+        pass
+except ImportError:
+    _RICH_OUTPUT = False
 
 
 @dataclass
@@ -41,6 +135,7 @@ class LocalEditSnapshot:
 # Set once at startup by CLI or gateway from display.tool_preview_length config.
 # =========================================================================
 _tool_preview_max_len: int = 0  # 0 = unlimited
+_tool_icon_mode: str = "auto"
 
 
 def set_tool_preview_max_len(n: int) -> None:
@@ -52,6 +147,24 @@ def set_tool_preview_max_len(n: int) -> None:
 def get_tool_preview_max_len() -> int:
     """Return the configured max preview length (0 = unlimited)."""
     return _tool_preview_max_len
+
+
+def set_tool_icon_mode(mode: str | None) -> None:
+    """Set global tool icon rendering mode.
+
+    Valid values: ``auto``, ``nerdfont``, ``emoji``, ``ascii``.
+    Invalid values fall back to ``auto``.
+    """
+    global _tool_icon_mode
+    normalized = str(mode or "auto").strip().lower()
+    if normalized not in {"auto", "nerdfont", "emoji", "ascii"}:
+        normalized = "auto"
+    _tool_icon_mode = normalized
+
+
+def get_tool_icon_mode() -> str:
+    """Return the current global tool icon rendering mode."""
+    return _tool_icon_mode
 
 
 # =========================================================================
@@ -96,29 +209,42 @@ def get_skin_tool_prefix() -> str:
 
 
 def get_tool_emoji(tool_name: str, default: str = "⚡") -> str:
-    """Get the display emoji for a tool.
+    """Get the display glyph for a tool.  (Legacy alias — delegates to get_tool_icon.)"""
+    return get_tool_icon(tool_name, default=default)
 
-    Resolution order:
-    1. Active skin's ``tool_emojis`` overrides (if a skin is loaded)
-    2. Tool registry's per-tool ``emoji`` field
-    3. *default* fallback
+
+def get_tool_icon(tool_name: str, default: str = GENERIC_NERD_FONT_TOOL_ICON, mode: str | None = None) -> str:
+    """Resolve display glyph for a tool.
+
+    Resolution chain (simplified — no emoji layer):
+
+    - ``auto`` / ``nerdfont``: skin tool_icons → registry icon → ASCII fallback
+    - ``ascii``: ASCII fallback
     """
-    # 1. Skin override
+    resolved_mode = str(mode or _tool_icon_mode or "auto").strip().lower()
+    if resolved_mode not in {"auto", "nerdfont", "ascii"}:
+        resolved_mode = "auto"
+    # legacy "emoji" mode → treat as auto
+    if resolved_mode == "emoji":
+        resolved_mode = "auto"
+
     skin = _get_skin()
-    if skin and skin.tool_emojis:
-        override = skin.tool_emojis.get(tool_name)
-        if override:
-            return override
-    # 2. Registry default
-    try:
-        from tools.registry import registry
-        emoji = registry.get_emoji(tool_name, default="")
-        if emoji:
-            return emoji
-    except Exception:
-        pass
-    # 3. Hardcoded fallback
-    return default
+
+    if resolved_mode in {"auto", "nerdfont"}:
+        skin_icons = getattr(skin, "tool_icons", None)
+        if skin_icons:
+            override = skin_icons.get(tool_name)
+            if override:
+                return override
+        try:
+            from tools.registry import registry
+            icon = registry.get_icon(tool_name, default="")
+            if icon:
+                return icon
+        except Exception:
+            pass
+
+    return get_ascii_tool_icon(tool_name, default=GENERIC_ASCII_TOOL_ICON)
 
 
 # =========================================================================
@@ -306,7 +432,27 @@ def _resolve_local_edit_paths(tool_name: str, function_args: dict | None) -> lis
 
     if tool_name == "patch":
         path = function_args.get("path")
-        return [_resolved_path(path)] if path else []
+        if path:
+            return [_resolved_path(path)]
+
+        patch_content = function_args.get("patch")
+        if isinstance(patch_content, str) and patch_content:
+            matches = [
+                _resolved_path(match.group(1).strip())
+                for match in re.finditer(
+                    r"^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s*(.+)$",
+                    patch_content,
+                    re.MULTILINE,
+                )
+            ]
+            seen: set[Path] = set()
+            unique_paths: list[Path] = []
+            for candidate in matches:
+                if candidate in seen:
+                    continue
+                seen.add(candidate)
+                unique_paths.append(candidate)
+            return unique_paths
 
     if tool_name == "skill_manage":
         return _resolve_skill_manage_paths(function_args)
@@ -397,21 +543,37 @@ def extract_edit_diff(
     return _diff_from_snapshot(snapshot)
 
 
-def _emit_inline_diff(diff_text: str, print_fn) -> bool:
-    """Emit rendered diff text through the CLI's prompt_toolkit-safe printer."""
+def _emit_inline_diff(diff_text: str, print_fn, prefix: str = "") -> bool:
+    """Emit rendered diff text through the CLI's prompt_toolkit-safe printer.
+
+    The header ``  ┊ review diff`` always uses the fixed ``  ┊ `` alignment.
+    Content lines are prefixed with *prefix* (e.g. ``"  ┊ "`` for indented
+    tool blocks).
+    """
     if print_fn is None or not diff_text:
         return False
     try:
         print_fn("  ┊ review diff")
         for line in diff_text.rstrip("\n").splitlines():
-            print_fn(line)
+            print_fn(f"{prefix}{line}")
         return True
     except Exception:
         return False
 
 
 def _render_inline_unified_diff(diff: str) -> list[str]:
-    """Render unified diff lines in Hermes' inline transcript style."""
+    """Render unified diff lines with line numbers and coloured backgrounds.
+
+    Uses rich_output.DiffRenderer when available (line numbers, green/red
+    background highlights).  Falls back to the original ANSI-string path.
+    """
+    if _RICH_OUTPUT:
+        try:
+            return _rich_diff.to_lines(diff, max_lines=0)
+        except Exception as exc:
+            logger.debug("Rich diff render failed, using ANSI fallback: %s", exc)
+
+    # Original ANSI fallback — unchanged from upstream
     rendered: list[str] = []
     from_file = None
     to_file = None
@@ -423,24 +585,42 @@ def _render_inline_unified_diff(diff: str) -> list[str]:
         if raw_line.startswith("+++ "):
             to_file = raw_line[4:].strip()
             if from_file or to_file:
-                rendered.append(f"{_ANSI_FILE}{from_file or 'a/?'} → {to_file or 'b/?'}{_ANSI_RESET}")
+                rendered.append(f"{_ansi_file()}{from_file or 'a/?'} → {to_file or 'b/?'}{_ANSI_RESET}")
             continue
         if raw_line.startswith("@@"):
-            rendered.append(f"{_ANSI_HUNK}{raw_line}{_ANSI_RESET}")
+            rendered.append(f"{_ansi_hunk()}{raw_line}{_ANSI_RESET}")
             continue
         if raw_line.startswith("-"):
-            rendered.append(f"{_ANSI_MINUS}{raw_line}{_ANSI_RESET}")
+            rendered.append(f"{_ansi_minus()}{raw_line}{_ANSI_RESET}")
             continue
         if raw_line.startswith("+"):
-            rendered.append(f"{_ANSI_PLUS}{raw_line}{_ANSI_RESET}")
+            rendered.append(f"{_ansi_plus()}{raw_line}{_ANSI_RESET}")
             continue
         if raw_line.startswith(" "):
-            rendered.append(f"{_ANSI_DIM}{raw_line}{_ANSI_RESET}")
+            rendered.append(f"{_ansi_dim()}{raw_line}{_ANSI_RESET}")
             continue
         if raw_line:
             rendered.append(raw_line)
 
     return rendered
+
+
+def highlight_code(
+    code: str,
+    language: str | None = None,
+    filename: str | None = None,
+) -> str:
+    """Return an ANSI-highlighted version of *code* for terminal display.
+
+    When rich_output is unavailable the original string is returned unchanged.
+    """
+    if not _RICH_OUTPUT:
+        return code
+    try:
+        return _rich_syntax.to_ansi(code, language=language, filename=filename)
+    except Exception as exc:
+        logger.debug("highlight_code failed: %s", exc)
+        return code
 
 
 def _split_unified_diff_sections(diff: str) -> list[str]:
@@ -492,7 +672,7 @@ def _summarize_rendered_diff_sections(
 
         rendered.extend(section_lines[:remaining_budget])
         omitted_lines += len(section_lines) - remaining_budget
-        omitted_files += 1 + max(0, len(sections) - idx - 1)
+        omitted_files += max(0, len(sections) - idx - 1)
         for leftover in sections[idx + 1:]:
             omitted_lines += len(_render_inline_unified_diff(leftover))
         break
@@ -501,7 +681,7 @@ def _summarize_rendered_diff_sections(
         summary = f"… omitted {omitted_lines} diff line(s)"
         if omitted_files:
             summary += f" across {omitted_files} additional file(s)/section(s)"
-        rendered.append(f"{_ANSI_HUNK}{summary}{_ANSI_RESET}")
+        rendered.append(f"{_ansi_hunk()}{summary}{_ANSI_RESET}")
 
     return rendered
 
@@ -513,6 +693,7 @@ def render_edit_diff_with_delta(
     function_args: dict | None = None,
     snapshot: LocalEditSnapshot | None = None,
     print_fn=None,
+    prefix: str = "",
 ) -> bool:
     """Render an edit diff inline without taking over the terminal UI."""
     diff = extract_edit_diff(
@@ -521,6 +702,16 @@ def render_edit_diff_with_delta(
         function_args=function_args,
         snapshot=snapshot,
     )
+    return render_captured_diff_preview(diff, print_fn=print_fn, prefix=prefix)
+
+
+def render_captured_diff_preview(
+    diff: str | None,
+    *,
+    print_fn=None,
+    prefix: str = "",
+) -> bool:
+    """Render an already captured unified diff with current skin colors."""
     if not diff:
         return False
     try:
@@ -528,7 +719,192 @@ def render_edit_diff_with_delta(
     except Exception as exc:
         logger.debug("Could not render inline diff: %s", exc)
         return False
-    return _emit_inline_diff("\n".join(rendered_lines), print_fn)
+    return _emit_inline_diff("\n".join(rendered_lines), print_fn, prefix=prefix)
+
+
+# =========================================================================
+# execute_code / read_file / terminal syntax highlight previews
+# =========================================================================
+
+_PREVIEW_MAX_LINES = 40
+
+
+def set_preview_max_lines(n: int) -> None:
+    global _PREVIEW_MAX_LINES
+    _PREVIEW_MAX_LINES = n
+
+
+def _emit_highlighted_lines(block: str, print_fn, prefix: str = "") -> bool:
+    lines = block.rstrip("\n").splitlines()
+    if not lines:
+        return False
+    if len(lines) > _PREVIEW_MAX_LINES:
+        omitted = len(lines) - _PREVIEW_MAX_LINES
+        lines = lines[:_PREVIEW_MAX_LINES] + [
+            f"\033[2m╌╌ {omitted} more line{'s' if omitted != 1 else ''} omitted ╌╌\033[0m"
+        ]
+    for line in lines:
+        print_fn(f"{prefix}  {line}")
+    return True
+
+def _highlight_block(header: str, content: str, language: str, print_fn, prefix: str = "") -> bool:
+    """Print a labelled syntax-highlighted block aligned with the ┊ tool log.
+
+    Format::
+
+        \033[2m  ┊ <header>\033[0m
+        <content lines with prefix>
+
+    *prefix* is prepended to every content line (e.g. ``"  ┊ "`` for indented
+    tool blocks). The header line always uses ``  ┊ `` regardless of prefix so
+    it aligns with the cute message above it.
+    """
+    _print = print_fn or print
+    _print(f"\033[2m  ┊ {header}\033[0m")
+    if not _RICH_OUTPUT:
+        return _emit_highlighted_lines(content, _print, prefix=prefix)
+    try:
+        highlighted = _rich_syntax.to_ansi(content, language=language).rstrip("\n")
+        return _emit_highlighted_lines(highlighted, _print, prefix=prefix)
+    except Exception as exc:
+        logger.debug("highlight_block failed for %s: %s", header, exc)
+        return False
+
+
+def render_execute_code_preview(code: str, print_fn=None, prefix: str = "") -> bool:
+    """Print *code* with Python syntax highlighting.
+
+    The cute_msg line already labels the tool; this function prints only the
+    highlighted code (no header) so the output stays compact.
+    Returns True if anything was printed.
+    """
+    if not code or not code.strip():
+        return False
+    _print = print_fn or print
+    if not _RICH_OUTPUT:
+        return _emit_highlighted_lines(code, _print, prefix=prefix)
+    try:
+        highlighted = _rich_syntax.to_ansi(code, language="python").rstrip("\n")
+        return _emit_highlighted_lines(highlighted, _print, prefix=prefix)
+    except Exception as exc:
+        logger.debug("execute_code highlight failed: %s", exc)
+        return False
+
+
+def render_read_file_preview(path: str, result_json: str, print_fn=None, prefix: str = "") -> bool:
+    """Print the content of a read_file result with syntax highlighting.
+
+    Language is detected from *path*'s extension.  Returns False (no output)
+    when the file type is unknown — we don't highlight plain text or binary.
+    """
+    if not path or not result_json:
+        return False
+    try:
+        import json as _json
+        result = _json.loads(result_json)
+        content = result.get("content", "")
+    except Exception:
+        return False
+    if not content or not content.strip():
+        return False
+
+    from pathlib import Path as _Path
+    if _RICH_OUTPUT:
+        lang = _rich_detector.detect_from_filename(_Path(path).name)
+    else:
+        lang = None
+    if not lang:
+        return False  # unknown type — skip, don't guess
+
+    header = f"📄 {_Path(path).name}"
+    return _highlight_block(header, content, lang, print_fn, prefix=prefix)
+
+
+_FILE_READ_COMMANDS = frozenset({
+    "cat", "head", "tail", "less", "more", "bat",
+    "sed", "awk", "grep", "cut", "sort", "uniq",
+    "nl", "od", "xxd", "hexdump",
+})
+
+# Commands that *execute* a file rather than reading it — the terminal output
+# will be runtime stdout, not source code.  Never highlight for these.
+_FILE_EXEC_COMMANDS = frozenset({
+    "python", "python3", "python2",
+    "node", "nodejs", "deno", "bun",
+    "ruby", "perl", "php", "lua",
+    "bash", "sh", "zsh", "fish", "dash",
+    "Rscript", "julia",
+})
+
+
+def _extract_file_language_from_command(command: str):
+    """Return (filename, language) if *command* is clearly reading a known source file.
+
+    Only fires when the leading verb is a known file-reader (cat, head, sed …).
+    Commands that *execute* files (node, python, bash …) are explicitly excluded
+    — their stdout is runtime output, not source code.
+
+    Parses tokens in reverse (file arg is typically last) and returns the first
+    token whose extension maps to a known language.  Returns (None, None) if no
+    match — we never fall back to content-based detection for shell output.
+    """
+    if not command:
+        return None, None
+    try:
+        import shlex as _shlex
+        tokens = _shlex.split(command)
+    except ValueError:
+        tokens = command.split()
+
+    if not tokens:
+        return None, None
+
+    # Check the leading verb (strip path prefix, e.g. /usr/bin/cat → cat)
+    from pathlib import Path as _Path
+    verb = _Path(tokens[0]).name
+    if verb in _FILE_EXEC_COMMANDS:
+        return None, None
+    if verb not in _FILE_READ_COMMANDS:
+        return None, None
+
+    if not _RICH_OUTPUT:
+        return None, None
+
+    for tok in reversed(tokens):
+        if tok.startswith("-"):
+            continue
+        # Only consider tokens that look like a file path (contain a dot or slash)
+        if "." not in _Path(tok).name:
+            continue
+        lang = _rich_detector.detect_from_filename(_Path(tok).name)
+        if lang:
+            return _Path(tok).name, lang
+    return None, None
+
+
+def render_terminal_preview(command: str, result_json: str, print_fn=None, prefix: str = "") -> bool:
+    """Print terminal output with syntax highlighting when the command reads a source file.
+
+    Highlighting is only applied when a known-extension filename can be extracted
+    from *command* (e.g. ``cat foo.py``, ``sed -n '1,50p' app.ts``).
+    Returns False without printing anything if the language cannot be determined.
+    """
+    if not command or not result_json:
+        return False
+    filename, lang = _extract_file_language_from_command(command)
+    if not lang:
+        return False
+    try:
+        import json as _json
+        result = _json.loads(result_json)
+        output = result.get("output", "")
+    except Exception:
+        return False
+    if not output or not output.strip():
+        return False
+
+    header = f"💻 {filename}"
+    return _highlight_block(header, output, lang, print_fn, prefix=prefix)
 
 
 # =========================================================================
@@ -804,140 +1180,229 @@ def _detect_tool_failure(tool_name: str, result: str | None) -> tuple[bool, str]
     return False, ""
 
 
+# ---------------------------------------------------------------------------
+# Tool display tier classification
+# ---------------------------------------------------------------------------
+
+_TOOL_TIERS: dict[str, str] = {
+    # Verbose: always show cute message + inline diff/preview
+    "write_file": "verbose",
+    "patch": "verbose",
+    "terminal": "verbose",
+    "execute_code": "verbose",
+    "browser_navigate": "verbose",
+    "browser_click": "verbose",
+    "browser_type": "verbose",
+    "browser_fill": "verbose",
+    "browser_snapshot": "verbose",
+    "browser_extract": "verbose",
+    "browser_run_js": "verbose",
+    "browser_wait": "verbose",
+    # Compact: cute message one-liner, no preview
+    "read_file": "compact",
+    "search_files": "compact",
+    "web_search": "compact",
+    "web_extract": "compact",
+    "web_crawl": "compact",
+    "process": "compact",
+    "delegate_task": "compact",
+    # Silent: no output unless failure
+    "todo": "silent",
+    "memory": "silent",
+    "session_search": "silent",
+    "clarify": "silent",
+    "skills_list": "silent",
+    "skill_view": "silent",
+    "skill_manage": "silent",
+}
+
+# Runtime overrides loaded from profile YAML (tool_display.tiers)
+_tool_tier_overrides: dict[str, str] = {}
+
+
+def set_tool_tier_overrides(overrides: dict[str, str]) -> None:
+    """Load tool_display.tiers from the profile YAML."""
+    global _tool_tier_overrides
+    _tool_tier_overrides = {k: v for k, v in overrides.items()
+                            if v in ("verbose", "compact", "silent")}
+
+
+def get_tool_display_tier(tool_name: str) -> str:
+    """Return the display tier for *tool_name*: 'verbose', 'compact', or 'silent'.
+
+    Unknown tools default to 'compact' so dynamically registered MCP/skill
+    tools always get a cute message one-liner.
+    """
+    if tool_name in _tool_tier_overrides:
+        return _tool_tier_overrides[tool_name]
+    return _TOOL_TIERS.get(tool_name, "compact")
+
+
 def get_cute_tool_message(
     tool_name: str, args: dict, duration: float, result: str | None = None,
+    width: int | None = None,
 ) -> str:
     """Generate a formatted tool completion line for CLI quiet mode.
 
-    Format: ``| {emoji} {verb:9} {detail}  {duration}``
+    Format: ``┊ {icon} {verb:9} {detail}  {duration}``
+
+    Duration is right-aligned to a fixed column (*width* - 4, or 60 by default).
+    Uses wcswidth() for display-width-aware padding so icon-heavy lines align
+    correctly. Falls back to len() if wcwidth is unavailable.
 
     When *result* is provided the line is checked for failure indicators.
-    Failed tool calls get a red prefix and an informational suffix.
+    Failed tool calls get an informational suffix appended after the duration.
+
+    *width* is the available widget width (TUI: pass self.size.width; PT mode:
+    pass shutil.get_terminal_size().columns). When None, defaults to 64.
     """
     dur = f"{duration:.1f}s"
     is_failure, failure_suffix = _detect_tool_failure(tool_name, result)
     skin_prefix = get_skin_tool_prefix()
 
+    # Target column for the duration string (measured from the ┊ char, which
+    # is the first char of the string returned by this function).
+    # Callers prepend "  " (2 spaces) so the on-screen column is _TARGET + 2.
+    _TARGET = max(40, (width - 4) if width is not None else 60)
+
+    try:
+        from wcwidth import wcswidth as _wcswidth
+        def _display_width(s: str) -> int:
+            w = _wcswidth(s)
+            return len(s) if w < 0 else w
+    except ImportError:
+        def _display_width(s: str) -> int:  # type: ignore[misc]
+            return len(s)
+
     def _trunc(s, n=40):
         s = str(s)
         if _tool_preview_max_len == 0:
             return s  # no limit
-        return (s[:n-3] + "...") if len(s) > n else s
+        return (s[:n-3] + "...") if _display_width(s) > n else s
 
     def _path(p, n=35):
         p = str(p)
         if _tool_preview_max_len == 0:
             return p  # no limit
-        return ("..." + p[-(n-3):]) if len(p) > n else p
+        return ("..." + p[-(n-3):]) if _display_width(p) > n else p
 
-    def _wrap(line: str) -> str:
-        """Apply skin tool prefix and failure suffix."""
+    def _pad_dur(body: str) -> str:
+        """Append duration right-aligned to _TARGET from the start of *body*."""
+        bw = _display_width(body)
+        pad = max(2, _TARGET - bw - len(dur))
+        return f"{body}{' ' * pad}{dur}"
+
+    def _wrap(body: str) -> str:
+        """Pad duration, apply skin prefix, and append failure suffix."""
+        line = _pad_dur(body)
         if skin_prefix != "┊":
             line = line.replace("┊", skin_prefix, 1)
         if not is_failure:
             return line
         return f"{line}{failure_suffix}"
 
+    icon = get_tool_icon(tool_name)
+
     if tool_name == "web_search":
-        return _wrap(f"┊ 🔍 search    {_trunc(args.get('query', ''), 42)}  {dur}")
+        return _wrap(f"┊ {icon} search    {_trunc(args.get('query', ''), 42)}")
     if tool_name == "web_extract":
         urls = args.get("urls", [])
         if urls:
             url = urls[0] if isinstance(urls, list) else str(urls)
             domain = url.replace("https://", "").replace("http://", "").split("/")[0]
             extra = f" +{len(urls)-1}" if len(urls) > 1 else ""
-            return _wrap(f"┊ 📄 fetch     {_trunc(domain, 35)}{extra}  {dur}")
-        return _wrap(f"┊ 📄 fetch     pages  {dur}")
+            return _wrap(f"┊ {icon} fetch     {_trunc(domain, 35)}{extra}")
+        return _wrap(f"┊ {icon} fetch     pages")
     if tool_name == "web_crawl":
         url = args.get("url", "")
         domain = url.replace("https://", "").replace("http://", "").split("/")[0]
-        return _wrap(f"┊ 🕸️  crawl     {_trunc(domain, 35)}  {dur}")
+        return _wrap(f"┊ {icon} crawl     {_trunc(domain, 35)}")
     if tool_name == "terminal":
-        return _wrap(f"┊ 💻 $         {_trunc(args.get('command', ''), 42)}  {dur}")
+        return _wrap(f"┊ {icon} $         {_trunc(args.get('command', ''), 42)}")
     if tool_name == "process":
         action = args.get("action", "?")
         sid = args.get("session_id", "")[:12]
         labels = {"list": "ls processes", "poll": f"poll {sid}", "log": f"log {sid}",
                   "wait": f"wait {sid}", "kill": f"kill {sid}", "write": f"write {sid}", "submit": f"submit {sid}"}
-        return _wrap(f"┊ ⚙️  proc      {labels.get(action, f'{action} {sid}')}  {dur}")
+        return _wrap(f"┊ {icon} proc      {labels.get(action, f'{action} {sid}')}")
     if tool_name == "read_file":
-        return _wrap(f"┊ 📖 read      {_path(args.get('path', ''))}  {dur}")
+        return _wrap(f"┊ {icon} read      {_path(args.get('path', ''))}")
     if tool_name == "write_file":
-        return _wrap(f"┊ ✍️  write     {_path(args.get('path', ''))}  {dur}")
+        return _wrap(f"┊ {icon} write     {_path(args.get('path', ''))}")
     if tool_name == "patch":
-        return _wrap(f"┊ 🔧 patch     {_path(args.get('path', ''))}  {dur}")
+        return _wrap(f"┊ {icon} patch     {_path(args.get('path', ''))}")
     if tool_name == "search_files":
         pattern = _trunc(args.get("pattern", ""), 35)
         target = args.get("target", "content")
         verb = "find" if target == "files" else "grep"
-        return _wrap(f"┊ 🔎 {verb:9} {pattern}  {dur}")
+        return _wrap(f"┊ {icon} {verb:9} {pattern}")
     if tool_name == "browser_navigate":
         url = args.get("url", "")
         domain = url.replace("https://", "").replace("http://", "").split("/")[0]
-        return _wrap(f"┊ 🌐 navigate  {_trunc(domain, 35)}  {dur}")
+        return _wrap(f"┊ {icon} navigate  {_trunc(domain, 35)}")
     if tool_name == "browser_snapshot":
         mode = "full" if args.get("full") else "compact"
-        return _wrap(f"┊ 📸 snapshot  {mode}  {dur}")
+        return _wrap(f"┊ {icon} snapshot  {mode}")
     if tool_name == "browser_click":
-        return _wrap(f"┊ 👆 click     {args.get('ref', '?')}  {dur}")
+        return _wrap(f"┊ {icon} click     {args.get('ref', '?')}")
     if tool_name == "browser_type":
-        return _wrap(f"┊ ⌨️  type      \"{_trunc(args.get('text', ''), 30)}\"  {dur}")
+        return _wrap(f"┊ {icon} type      \"{_trunc(args.get('text', ''), 30)}\"")
     if tool_name == "browser_scroll":
         d = args.get("direction", "down")
         arrow = {"down": "↓", "up": "↑", "right": "→", "left": "←"}.get(d, "↓")
-        return _wrap(f"┊ {arrow}  scroll    {d}  {dur}")
+        return _wrap(f"┊ {icon} {arrow:1} scroll    {d}")
     if tool_name == "browser_back":
-        return _wrap(f"┊ ◀️  back      {dur}")
+        return _wrap(f"┊ {icon} back      ")
     if tool_name == "browser_press":
-        return _wrap(f"┊ ⌨️  press     {args.get('key', '?')}  {dur}")
+        return _wrap(f"┊ {icon} press     {args.get('key', '?')}")
     if tool_name == "browser_get_images":
-        return _wrap(f"┊ 🖼️  images    extracting  {dur}")
+        return _wrap(f"┊ {icon} images    extracting")
     if tool_name == "browser_vision":
-        return _wrap(f"┊ 👁️  vision    analyzing page  {dur}")
+        return _wrap(f"┊ {icon} vision    analyzing page")
     if tool_name == "todo":
         todos_arg = args.get("todos")
         merge = args.get("merge", False)
         if todos_arg is None:
-            return _wrap(f"┊ 📋 plan      reading tasks  {dur}")
+            return _wrap(f"┊ 📋 plan      reading tasks")
         elif merge:
-            return _wrap(f"┊ 📋 plan      update {len(todos_arg)} task(s)  {dur}")
+            return _wrap(f"┊ 📋 plan      update {len(todos_arg)} task(s)")
         else:
-            return _wrap(f"┊ 📋 plan      {len(todos_arg)} task(s)  {dur}")
+            return _wrap(f"┊ 📋 plan      {len(todos_arg)} task(s)")
     if tool_name == "session_search":
-        return _wrap(f"┊ 🔍 recall    \"{_trunc(args.get('query', ''), 35)}\"  {dur}")
+        return _wrap(f"┊ 🔍 recall    \"{_trunc(args.get('query', ''), 35)}\"")
     if tool_name == "memory":
         action = args.get("action", "?")
         target = args.get("target", "")
         if action == "add":
-            return _wrap(f"┊ 🧠 memory    +{target}: \"{_trunc(args.get('content', ''), 30)}\"  {dur}")
+            return _wrap(f"┊ 🧠 memory    +{target}: \"{_trunc(args.get('content', ''), 30)}\"")
         elif action == "replace":
-            return _wrap(f"┊ 🧠 memory    ~{target}: \"{_trunc(args.get('old_text', ''), 20)}\"  {dur}")
+            return _wrap(f"┊ 🧠 memory    ~{target}: \"{_trunc(args.get('old_text', ''), 20)}\"")
         elif action == "remove":
-            return _wrap(f"┊ 🧠 memory    -{target}: \"{_trunc(args.get('old_text', ''), 20)}\"  {dur}")
-        return _wrap(f"┊ 🧠 memory    {action}  {dur}")
+            return _wrap(f"┊ 🧠 memory    -{target}: \"{_trunc(args.get('old_text', ''), 20)}\"")
+        return _wrap(f"┊ 🧠 memory    {action}")
     if tool_name == "skills_list":
-        return _wrap(f"┊ 📚 skills    list {args.get('category', 'all')}  {dur}")
+        return _wrap(f"┊ 📚 skills    list {args.get('category', 'all')}")
     if tool_name == "skill_view":
-        return _wrap(f"┊ 📚 skill     {_trunc(args.get('name', ''), 30)}  {dur}")
+        return _wrap(f"┊ 📚 skill     {_trunc(args.get('name', ''), 30)}")
     if tool_name == "image_generate":
-        return _wrap(f"┊ 🎨 create    {_trunc(args.get('prompt', ''), 35)}  {dur}")
+        return _wrap(f"┊ 🎨 create    {_trunc(args.get('prompt', ''), 35)}")
     if tool_name == "text_to_speech":
-        return _wrap(f"┊ 🔊 speak     {_trunc(args.get('text', ''), 30)}  {dur}")
+        return _wrap(f"┊ 🔊 speak     {_trunc(args.get('text', ''), 30)}")
     if tool_name == "vision_analyze":
-        return _wrap(f"┊ 👁️  vision    {_trunc(args.get('question', ''), 30)}  {dur}")
+        return _wrap(f"┊ 👁️  vision    {_trunc(args.get('question', ''), 30)}")
     if tool_name == "mixture_of_agents":
-        return _wrap(f"┊ 🧠 reason    {_trunc(args.get('user_prompt', ''), 30)}  {dur}")
+        return _wrap(f"┊ 🧠 reason    {_trunc(args.get('user_prompt', ''), 30)}")
     if tool_name == "send_message":
-        return _wrap(f"┊ 📨 send      {args.get('target', '?')}: \"{_trunc(args.get('message', ''), 25)}\"  {dur}")
+        return _wrap(f"┊ 📨 send      {args.get('target', '?')}: \"{_trunc(args.get('message', ''), 25)}\"")
     if tool_name == "cronjob":
         action = args.get("action", "?")
         if action == "create":
             skills = args.get("skills") or ([] if not args.get("skill") else [args.get("skill")])
             label = args.get("name") or (skills[0] if skills else None) or args.get("prompt", "task")
-            return _wrap(f"┊ ⏰ cron      create {_trunc(label, 24)}  {dur}")
+            return _wrap(f"┊ ⏰ cron      create {_trunc(label, 24)}")
         if action == "list":
-            return _wrap(f"┊ ⏰ cron      listing  {dur}")
-        return _wrap(f"┊ ⏰ cron      {action} {args.get('job_id', '')}  {dur}")
+            return _wrap(f"┊ ⏰ cron      listing")
+        return _wrap(f"┊ ⏰ cron      {action} {args.get('job_id', '')}")
     if tool_name.startswith("rl_"):
         rl = {
             "rl_list_environments": "list envs", "rl_select_environment": f"select {args.get('name', '')}",
@@ -946,19 +1411,21 @@ def get_cute_tool_message(
             "rl_stop_training": f"stop {args.get('run_id', '?')[:12]}", "rl_get_results": f"results {args.get('run_id', '?')[:12]}",
             "rl_list_runs": "list runs", "rl_test_inference": "test inference",
         }
-        return _wrap(f"┊ 🧪 rl        {rl.get(tool_name, tool_name.replace('rl_', ''))}  {dur}")
+        return _wrap(f"┊ 🧪 rl        {rl.get(tool_name, tool_name.replace('rl_', ''))}")
     if tool_name == "execute_code":
+        if _code_highlight_active:
+            return _wrap(f"┊ 🐍 exec      ")
         code = args.get("code", "")
         first_line = code.strip().split("\n")[0] if code.strip() else ""
-        return _wrap(f"┊ 🐍 exec      {_trunc(first_line, 35)}  {dur}")
+        return _wrap(f"┊ 🐍 exec      {_trunc(first_line, 35)}")
     if tool_name == "delegate_task":
         tasks = args.get("tasks")
         if tasks and isinstance(tasks, list):
-            return _wrap(f"┊ 🔀 delegate  {len(tasks)} parallel tasks  {dur}")
-        return _wrap(f"┊ 🔀 delegate  {_trunc(args.get('goal', ''), 35)}  {dur}")
+            return _wrap(f"┊ 🔀 delegate  {len(tasks)} parallel tasks")
+        return _wrap(f"┊ 🔀 delegate  {_trunc(args.get('goal', ''), 35)}")
 
     preview = build_tool_preview(tool_name, args) or ""
-    return _wrap(f"┊ ⚡ {tool_name[:9]:9} {_trunc(preview, 35)}  {dur}")
+    return _wrap(f"┊ ⚡ {tool_name[:9]:9} {_trunc(preview, 35)}")
 
 
 # =========================================================================
@@ -990,9 +1457,6 @@ def _osc8_link(url: str, text: str) -> str:
 # Context pressure display (CLI user-facing warnings)
 # =========================================================================
 
-# ANSI color codes for context pressure tiers
-_CYAN = "\033[36m"
-_YELLOW = "\033[33m"
 _BOLD = "\033[1m"
 _DIM_ANSI = "\033[2m"
 
@@ -1000,6 +1464,29 @@ _DIM_ANSI = "\033[2m"
 _BAR_FILLED = "▰"
 _BAR_EMPTY = "▱"
 _BAR_WIDTH = 20
+
+
+def _hex_to_ansi_fg(hex_color: str) -> str:
+    """Convert #RRGGBB to ANSI truecolor foreground escape. Returns "" on error."""
+    try:
+        h = hex_color.lstrip("#")
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        return f"\033[38;2;{r};{g};{b}m"
+    except Exception:
+        return ""
+
+
+def _ctx_color(pct: float) -> str:
+    """Return ANSI foreground color for context bar based on threshold percentage."""
+    skin = _get_skin()
+    if skin is None:
+        # Fallback: yellow for all levels
+        return f"{_BOLD}\033[33m"
+    if pct >= 0.95:
+        return f"{_BOLD}{_hex_to_ansi_fg(skin.get_ui_ext('context_bar_crit', '#ef5350'))}"
+    if pct >= 0.80:
+        return f"{_BOLD}{_hex_to_ansi_fg(skin.get_ui_ext('context_bar_warn', '#ffa726'))}"
+    return f"{_BOLD}{_hex_to_ansi_fg(skin.get_ui_ext('context_bar_normal', '#5f87d7'))}"
 
 
 def format_context_pressure(
@@ -1026,7 +1513,7 @@ def format_context_pressure(
     threshold_k = f"{threshold_tokens // 1000}k" if threshold_tokens >= 1000 else str(threshold_tokens)
     threshold_pct_int = int(threshold_percent * 100)
 
-    color = f"{_BOLD}{_YELLOW}"
+    color = _ctx_color(compaction_progress)
     icon = "⚠"
     if compression_enabled:
         hint = "compaction approaching"

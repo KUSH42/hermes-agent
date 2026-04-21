@@ -6324,7 +6324,9 @@ class GatewayRunner:
 
         # Apply tool preview length config (0 = no limit)
         try:
-            from agent.display import set_tool_preview_max_len
+            from agent.display import set_tool_icon_mode, set_tool_preview_max_len
+            _tim = user_config.get("display", {}).get("tool_icon_mode", "auto")
+            set_tool_icon_mode(_tim)
             _tpl = user_config.get("display", {}).get("tool_preview_length", 0)
             set_tool_preview_max_len(int(_tpl) if _tpl else 0)
         except Exception:

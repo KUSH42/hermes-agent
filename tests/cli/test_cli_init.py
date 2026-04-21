@@ -7,6 +7,20 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+# Stub optional packages absent from the test environment.
+for _mod in [
+    "prompt_toolkit", "prompt_toolkit.history", "prompt_toolkit.styles",
+    "prompt_toolkit.patch_stdout", "prompt_toolkit.application",
+    "prompt_toolkit.layout", "prompt_toolkit.layout.processors",
+    "prompt_toolkit.filters", "prompt_toolkit.layout.dimension",
+    "prompt_toolkit.layout.menus", "prompt_toolkit.widgets",
+    "prompt_toolkit.key_binding", "prompt_toolkit.completion",
+    "prompt_toolkit.formatted_text", "prompt_toolkit.auto_suggest",
+    "fire",
+]:
+    if _mod not in sys.modules:
+        sys.modules[_mod] = MagicMock()
+
 
 def _make_cli(env_overrides=None, config_overrides=None, **kwargs):
     """Create a HermesCLI instance with minimal mocking."""
@@ -94,6 +108,18 @@ class TestVerboseAndToolProgress:
         cli = _make_cli()
         assert isinstance(cli.tool_progress_mode, str)
         assert cli.tool_progress_mode in ("off", "new", "all", "verbose")
+
+
+class TestStartupTextEffectConfig:
+    def test_default_startup_text_effect_shape_present(self):
+        import importlib
+        import cli as _cli_mod
+
+        _cli_mod = importlib.reload(_cli_mod)
+        effect_cfg = _cli_mod.load_cli_config()["display"]["startup_text_effect"]
+        assert effect_cfg["enabled"] is False
+        assert effect_cfg["effect"] == "matrix"
+        assert effect_cfg["params"] == {}
 
 
 class TestBusyInputMode:
@@ -345,3 +371,59 @@ class TestProviderResolution:
         cli = _make_cli()
         assert isinstance(cli.model, str)
         assert isinstance(cli.model, str) and '/' in cli.model
+
+
+class TestSpinnerConfig:
+    """Spinner style config wiring and _SPINNER_STYLES registry."""
+
+    def test_all_documented_styles_in_registry(self):
+        import cli
+        expected = {"dots", "bounce", "grow", "arrows", "star", "moon", "pulse", "clock", "none"}
+        assert expected <= set(cli._SPINNER_STYLES.keys())
+
+    def test_default_style_is_dots(self):
+        import cli
+        assert cli._SPINNER_STYLES["dots"] == ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+
+    def test_none_style_is_empty_frame(self):
+        import cli
+        frames = cli._SPINNER_STYLES["none"]
+        assert frames == ("",) or all(f == "" for f in frames)
+
+    def test_unknown_style_falls_back_to_dots(self):
+        """_SPINNER_STYLES.get(unknown, dots) mirrors CLI init fallback logic."""
+        import cli as cli_mod
+        unknown = cli_mod._SPINNER_STYLES.get("nonexistent_style_xyz", cli_mod._SPINNER_STYLES["dots"])
+        assert unknown == cli_mod._SPINNER_STYLES["dots"]
+
+    def test_known_style_lookup(self):
+        """Every documented style name resolves to a non-empty frame tuple."""
+        import cli as cli_mod
+        for name, frames in cli_mod._SPINNER_STYLES.items():
+            assert isinstance(frames, tuple) and len(frames) >= 1, f"style {name!r} has empty frames"
+
+    def test_title_config_defaults(self):
+        cli = _make_cli()
+        assert cli._title_spinner is True
+        assert isinstance(cli._title_base, str) and len(cli._title_base) > 0
+
+    def test_title_config_overrides(self):
+        cli = _make_cli(config_overrides={"display": {
+            "compact": False, "tool_progress": "all",
+            "title_spinner": False, "title_base": "MyApp",
+        }})
+        assert cli._title_spinner is False
+        assert cli._title_base == "MyApp"
+
+    def test_title_safe_styles_all_exist_in_registry(self):
+        """Every name in _TITLE_SAFE_STYLES must have an entry in _SPINNER_STYLES."""
+        import cli as cli_mod
+        unknown = cli_mod._TITLE_SAFE_STYLES - set(cli_mod._SPINNER_STYLES.keys())
+        assert not unknown, f"_TITLE_SAFE_STYLES references unknown styles: {unknown}"
+
+    def test_prompt_only_styles_excluded_from_title_safe(self):
+        """Styles with mixed or variable EAW must not appear in _TITLE_SAFE_STYLES."""
+        import cli as cli_mod
+        prompt_only = {"halves", "keycap", "pulse", "arrows", "star"}
+        leaking = prompt_only & cli_mod._TITLE_SAFE_STYLES
+        assert not leaking, f"prompt-only styles in _TITLE_SAFE_STYLES: {leaking}"

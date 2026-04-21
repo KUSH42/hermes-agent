@@ -156,7 +156,8 @@ class TestGatewayKnownCommands:
 
     def test_includes_gateway_commands(self):
         for cmd in COMMAND_REGISTRY:
-            if not cmd.cli_only:
+            # tui_only commands are excluded from gateway even if cli_only=False
+            if not cmd.cli_only and not cmd.tui_only:
                 assert cmd.name in GATEWAY_KNOWN_COMMANDS
                 for alias in cmd.aliases:
                     assert alias in GATEWAY_KNOWN_COMMANDS
@@ -989,3 +990,208 @@ class TestDiscordSkillCommands:
             assert len(name) <= _CMD_NAME_LIMIT, (
                 f"Name '{name}' is {len(name)} chars (limit {_CMD_NAME_LIMIT})"
             )
+
+
+# ---------------------------------------------------------------------------
+# /effects command registration
+# ---------------------------------------------------------------------------
+
+_EXPECTED_EFFECT_NAMES = {
+    "beams", "binarypath", "blackhole", "decrypt", "highlight",
+    "laseretch", "matrix", "overflow", "print", "rain",
+    "slide", "sweep", "synthgrid", "waves", "wipe",
+}
+
+
+class TestEffectsCommandRegistration:
+    def test_effects_in_registry(self):
+        """/effects canonical entry must be present."""
+        cmd = resolve_command("effects")
+        assert cmd is not None
+        assert cmd.name == "effects"
+
+    def test_easteregg_is_alias_not_separate_entry(self):
+        """/easteregg should be an alias for /effects, not its own entry."""
+        # Must resolve to the effects CommandDef
+        cmd = resolve_command("easteregg")
+        assert cmd is not None
+        assert cmd.name == "effects", (
+            f"easteregg resolved to '{cmd.name}' instead of 'effects'"
+        )
+        # Must NOT be a separate canonical entry
+        canonical_names = [c.name for c in COMMAND_REGISTRY]
+        assert "easteregg" not in canonical_names
+
+    def test_effects_has_16_subcommands(self):
+        """15 effect names + 'list' = 16 subcommands."""
+        cmd = resolve_command("effects")
+        assert cmd is not None
+        assert len(cmd.subcommands) == 16, (
+            f"Expected 16 subcommands, got {len(cmd.subcommands)}: {cmd.subcommands}"
+        )
+
+    def test_effects_subcommands_include_list(self):
+        cmd = resolve_command("effects")
+        assert "list" in cmd.subcommands
+
+    def test_effects_subcommands_include_all_15_effects(self):
+        cmd = resolve_command("effects")
+        assert cmd is not None
+        for name in _EXPECTED_EFFECT_NAMES:
+            assert name in cmd.subcommands, f"Effect '{name}' missing from subcommands"
+
+    def test_effects_in_subcommands_dict(self):
+        """/effects must appear in the SUBCOMMANDS lookup dict."""
+        assert "/effects" in SUBCOMMANDS
+        for name in _EXPECTED_EFFECT_NAMES:
+            assert name in SUBCOMMANDS["/effects"], (
+                f"Effect '{name}' missing from SUBCOMMANDS['/effects']"
+            )
+        assert "list" in SUBCOMMANDS["/effects"]
+
+    def test_effects_is_cli_only(self):
+        cmd = resolve_command("effects")
+        assert cmd is not None
+        assert cmd.cli_only is True
+
+    def test_easteregg_alias_in_commands_dict(self):
+        """/easteregg should appear in the flat COMMANDS dict as an alias."""
+        assert "/easteregg" in COMMANDS
+        assert "alias" in COMMANDS["/easteregg"].lower() or "effects" in COMMANDS["/easteregg"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Phase 1: tui_only / keybind_hint / gateway filtering
+# ---------------------------------------------------------------------------
+
+class TestTuiOnlyField:
+    """Tests 1–5, 10–12 of Phase 1 spec."""
+
+    def test_compact_in_registry(self):
+        """Test 1: /compact present in COMMAND_REGISTRY."""
+        cmd = resolve_command("compact")
+        assert cmd is not None, "/compact must be in COMMAND_REGISTRY"
+        assert cmd.name == "compact"
+
+    def test_sessions_in_registry(self):
+        """Test 2: /sessions present in COMMAND_REGISTRY."""
+        cmd = resolve_command("sessions")
+        assert cmd is not None, "/sessions must be in COMMAND_REGISTRY"
+        assert cmd.name == "sessions"
+
+    def test_tui_only_excluded_from_gateway_help(self):
+        """Test 3: gateway_help_lines() excludes tui_only commands."""
+        from hermes_cli.commands import gateway_help_lines
+        lines = gateway_help_lines()
+        joined = "\n".join(lines)
+        # All tui_only commands should be excluded
+        for cmd in COMMAND_REGISTRY:
+            if cmd.tui_only:
+                assert f"/{cmd.name}" not in joined, \
+                    f"tui_only command /{cmd.name} should not appear in gateway_help_lines()"
+
+    def test_tui_only_in_commands_by_category(self):
+        """Test 4: COMMANDS_BY_CATEGORY includes tui_only entries (for TUI consumers)."""
+        # /compact and /sessions should be present
+        compact = resolve_command("compact")
+        sessions = resolve_command("sessions")
+        assert compact is not None
+        assert sessions is not None
+        # They appear in COMMANDS (not gateway_only-filtered)
+        assert "/compact" in COMMANDS
+        assert "/sessions" in COMMANDS
+
+    def test_tui_only_excluded_from_telegram_menu(self):
+        """Test 5: telegram_bot_commands() excludes tui_only entries."""
+        from hermes_cli.commands import telegram_bot_commands
+        tg_commands = telegram_bot_commands()
+        tg_names = {name for name, _ in tg_commands}
+        for cmd in COMMAND_REGISTRY:
+            if cmd.tui_only:
+                assert cmd.name not in tg_names, \
+                    f"tui_only command '{cmd.name}' should not be in telegram_bot_commands()"
+
+    def test_compact_appears_in_slash_completions(self):
+        """Test 10: /compact appears in COMMANDS (available for TUI completion)."""
+        assert "/compact" in COMMANDS
+
+    def test_sessions_appears_in_slash_completions(self):
+        """Test 11: /sessions appears in COMMANDS (available for TUI completion)."""
+        assert "/sessions" in COMMANDS
+
+    def test_tui_only_and_gateway_only_mutual_exclusion(self):
+        """Test 12: No command can be both tui_only and gateway_only."""
+        for cmd in COMMAND_REGISTRY:
+            assert not (cmd.tui_only and cmd.gateway_only), \
+                f"{cmd.name} cannot be both tui_only and gateway_only"
+
+    def test_keybind_hint_field_exists(self):
+        """CommandDef has a keybind_hint field."""
+        cmd = resolve_command("sessions")
+        assert cmd is not None
+        assert hasattr(cmd, "keybind_hint")
+        assert cmd.keybind_hint == "Ctrl+Shift+H"
+
+    def test_compact_has_tui_only_true(self):
+        cmd = resolve_command("compact")
+        assert cmd is not None
+        assert cmd.tui_only is True
+
+    def test_sessions_has_tui_only_true(self):
+        cmd = resolve_command("sessions")
+        assert cmd is not None
+        assert cmd.tui_only is True
+
+    def test_anim_has_tui_only_true(self):
+        cmd = resolve_command("anim")
+        assert cmd is not None
+        assert cmd.tui_only is True
+
+    def test_tui_only_excluded_from_gateway_known_commands(self):
+        """tui_only commands are not in GATEWAY_KNOWN_COMMANDS."""
+        for cmd in COMMAND_REGISTRY:
+            if cmd.tui_only:
+                assert cmd.name not in GATEWAY_KNOWN_COMMANDS, \
+                    f"tui_only '{cmd.name}' must not be in GATEWAY_KNOWN_COMMANDS"
+
+
+class TestTuiHelpLines:
+    """Tests for Phase 3's tui_help_lines() function."""
+
+    def test_tui_help_lines_exists(self):
+        from hermes_cli.commands import tui_help_lines
+        lines = tui_help_lines()
+        assert isinstance(lines, list)
+        assert len(lines) > 0
+
+    def test_tui_help_lines_includes_cli_only_commands(self):
+        """Test 29: tui_help_lines() returns /config, /history, /skin etc."""
+        from hermes_cli.commands import tui_help_lines
+        lines = tui_help_lines()
+        joined = "\n".join(lines)
+        # cli_only commands that should appear in TUI
+        assert "/config" in joined
+        assert "/history" in joined
+        assert "/skin" in joined
+
+    def test_tui_help_lines_excludes_gateway_only(self):
+        """tui_help_lines() excludes gateway-only commands."""
+        from hermes_cli.commands import tui_help_lines
+        lines = tui_help_lines()
+        # Check by searching each line's command prefix (e.g. "`/status`")
+        line_commands = set()
+        import re as _re
+        for line in lines:
+            m = _re.match(r'`(/[\w-]+)', line)
+            if m:
+                line_commands.add(m.group(1))
+        for cmd in COMMAND_REGISTRY:
+            if cmd.gateway_only:
+                assert f"/{cmd.name}" not in line_commands, \
+                    f"gateway_only /{cmd.name} should not appear in tui_help_lines()"
+
+    def test_compact_tui_only_not_in_gateway_help_lines(self):
+        """Test 48: gateway_help_lines() does not contain /compact."""
+        lines = gateway_help_lines()
+        joined = "\n".join(lines)
+        assert "/compact" not in joined

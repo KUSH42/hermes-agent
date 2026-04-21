@@ -628,14 +628,29 @@ class TestHasAnyProviderConfigured:
     def test_claude_code_creds_ignored_on_fresh_install(self, monkeypatch, tmp_path):
         """Claude Code credentials should NOT skip the wizard when Hermes is unconfigured."""
         from hermes_cli import config as config_module
+        from hermes_cli.auth import PROVIDER_REGISTRY
         hermes_home = tmp_path / ".hermes"
         hermes_home.mkdir()
         monkeypatch.setattr(config_module, "get_env_path", lambda: hermes_home / ".env")
         monkeypatch.setattr(config_module, "get_hermes_home", lambda: hermes_home)
-        # Clear all provider env vars so earlier checks don't short-circuit
-        for var in ("OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
-                     "ANTHROPIC_TOKEN", "OPENAI_BASE_URL"):
+        # Clear ALL provider env vars (standard + registry extras) so no key
+        # set on the test machine leaks into this isolation test.
+        standard_vars = {"OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
+                         "ANTHROPIC_TOKEN", "OPENAI_BASE_URL"}
+        registry_vars: set[str] = set()
+        for pconfig in PROVIDER_REGISTRY.values():
+            if pconfig.auth_type == "api_key":
+                registry_vars.update(pconfig.api_key_env_vars)
+        for var in standard_vars | registry_vars:
             monkeypatch.delenv(var, raising=False)
+        # Patch get_auth_status so live machine credentials (e.g. gh/Copilot)
+        # don't short-circuit the check before we reach the Claude Code gate.
+        # main.py imports get_auth_status lazily from hermes_cli.auth, so
+        # patching the canonical source is sufficient.
+        monkeypatch.setattr(
+            "hermes_cli.auth.get_auth_status",
+            lambda provider_id: {"logged_in": False},
+        )
         # Simulate valid Claude Code credentials
         monkeypatch.setattr(
             "agent.anthropic_adapter.read_claude_code_credentials",
@@ -710,6 +725,7 @@ class TestHasAnyProviderConfigured:
         """config.yaml model dict with empty default and no creds stays false."""
         import yaml
         from hermes_cli import config as config_module
+        from hermes_cli.auth import PROVIDER_REGISTRY
         hermes_home = tmp_path / ".hermes"
         hermes_home.mkdir()
         config_file = hermes_home / "config.yaml"
@@ -719,9 +735,18 @@ class TestHasAnyProviderConfigured:
         monkeypatch.setattr(config_module, "get_env_path", lambda: hermes_home / ".env")
         monkeypatch.setattr(config_module, "get_hermes_home", lambda: hermes_home)
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
-        for var in ("OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
-                     "ANTHROPIC_TOKEN", "OPENAI_BASE_URL"):
+        standard_vars = {"OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
+                         "ANTHROPIC_TOKEN", "OPENAI_BASE_URL"}
+        registry_vars: set[str] = set()
+        for pconfig in PROVIDER_REGISTRY.values():
+            if pconfig.auth_type == "api_key":
+                registry_vars.update(pconfig.api_key_env_vars)
+        for var in standard_vars | registry_vars:
             monkeypatch.delenv(var, raising=False)
+        monkeypatch.setattr(
+            "hermes_cli.auth.get_auth_status",
+            lambda provider_id: {"logged_in": False},
+        )
         from hermes_cli.main import _has_any_provider_configured
         assert _has_any_provider_configured() is False
 

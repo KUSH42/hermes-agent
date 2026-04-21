@@ -58,3 +58,18 @@ mini-swe-agent/
 # Nix
 .direnv/
 result
+
+# Wrong-language files (this is a Python project)
+*.java
+*.cpp
+
+# Scratch state / snapshot files
+.codex
+.skills_prompt_snapshot.json
+
+# Orphaned submodule / plugin checkout dirs
+caveman/
+
+# Specific large dump files committed by mistake
+/os
+/textual

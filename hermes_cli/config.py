@@ -235,6 +235,9 @@ DEFAULT_CONFIG = {
         # threshold before escalating to a full timeout.  The warning fires
         # once per run and does not interrupt the agent.  0 = disable warning.
         "gateway_timeout_warning": 900,
+        # Soul persona overlay — appended to SOUL.md identity when active.
+        # "default" = base identity only; "brainrot" = zoomer persona overlay.
+        "persona": "default",
     },
     
     "terminal": {
@@ -274,6 +277,19 @@ DEFAULT_CONFIG = {
         # Enabled by default for non-local backends (SSH); local is always opt-in
         # via TERMINAL_LOCAL_PERSISTENT env var.
         "persistent_shell": True,
+        "stream_effect": {
+            "enabled": "none",       # none | flash | gradient_tail | glow_settle | decrypt
+            "color": "",             # accent override hex (empty = use skin accent)
+            "length": 16,            # gradient_tail: tail length in chars
+            "speed": 1.0,            # terminal mode delay multiplier
+            "settle_frames": 6,      # glow_settle: frames to fade to text color
+            "scramble_frames": 14,   # decrypt: frames before word resolves
+            "period": 0.75,          # breathe: oscillation period in seconds
+        },
+        # Lines scrolled per mouse wheel tick (valid range 1–20; default 3).
+        "scroll_lines": 3,
+        # Directories to skip during path completion (@file / ./path triggers).
+        "path_search_ignore": [".git", "node_modules", "__pycache__", ".venv", "dist", "build"],
     },
     
     "browser": {
@@ -296,6 +312,16 @@ DEFAULT_CONFIG = {
     "checkpoints": {
         "enabled": True,
         "max_snapshots": 50,  # Max checkpoints to keep per directory
+    },
+
+    # Parallel worktree sessions — run multiple agent branches simultaneously.
+    "sessions": {
+        "enabled": True,
+        "session_dir": "/tmp/hermes-sessions",
+        "max_sessions": 8,
+        "output_buffer_lines": 2000,
+        "auto_prune_orphans": False,
+        "default_merge_strategy": "squash",
     },
 
     # Maximum characters returned by a single read_file call.  Reads that
@@ -392,13 +418,129 @@ DEFAULT_CONFIG = {
         "busy_input_mode": "interrupt",
         "bell_on_complete": False,
         "show_reasoning": False,
-        "streaming": False,
+        "rich_reasoning": True,
+        "streaming": True,
         "inline_diffs": True,     # Show inline diff previews for write actions (write_file, patch, skill_manage)
+        "diff_max_lines": 80,     # Max rendered lines shown per inline diff (excess → "… omitted N lines" summary)
+        "diff_max_files": 6,      # Max file sections shown per inline diff (excess files omitted)
+        "preview_max_lines": 40,  # Max lines shown in read_file / execute_code / terminal previews
+        "code_highlight": True,   # Highlight source-like tool output previews and fenced code blocks
+        "syntax_bold": True,      # Keep bold emphasis on syntax-highlighted token styles
+        "spinner_style": "",      # TUI spinner animation: dots|bounce|grow|arrows|star|moon|pulse|clock|none (empty = skin default)
         "show_cost": False,       # Show $ cost in the status bar (off by default)
+        "inline_media": {
+            "enabled": False,
+            "audio": True,
+            "video_thumbs": True,
+            "show_timeline": True,
+            "timeline_auto_s": 30,
+            "player": "mpv",
+            "player_extra_args": [],
+            "youtube": True,
+            "max_concurrent": 2,
+        },
+        "inline_images": "auto",  # auto | on | off — inline image rendering in TUI
+        "halfblock_dark_threshold": 0.1,   # WCAG luminance < this → dark cell in halfblock art
+        "image_bar": True,        # Show InlineImageBar thumbnail strip for inline images
+        "math": "auto",           # auto|on|off — render LaTeX block math as images
+        "math_renderer": "auto",  # auto|image|unicode — image uses matplotlib; unicode always uses symbol table
+        "mermaid": "auto",        # auto|on|off — render mermaid fences via mmdc if available
+        "math_dpi": 150,          # DPI for math PNG rendering
+        "math_max_rows": 12,      # max height in terminal rows for math images
+        "citations": True,             # Show clickable source chips from [CITE:N ...] tags
+        "reasoning_rich_prose": True,  # Enable footnotes + citations inside the reasoning panel
+        "custom_emojis": "auto",       # auto|on|off — load custom emoji images from $HERMES_HOME/emojis/
+        "emoji": {
+            "max_cell_width": 4,       # max terminal cell columns per emoji image
+            "disk_cache": True,        # cache normalized PNGs to emojis/.cache/
+            "reasoning": True,         # resolve :name: inside the reasoning panel
+        },
         "skin": "default",
+        "tool_icon_mode": "auto",  # auto|nerdfont|emoji|ascii
+        "tool_gutter": True,       # Show ┊/┃ gutter symbols on tool call blocks
+        "startup_text_effect": {
+            "enabled": False,
+            "effect": "matrix",
+            "params": {},
+        },
         "tool_progress_command": False,  # Enable /verbose command in messaging gateway
         "tool_progress_overrides": {},  # Per-platform overrides: {"signal": "off", "telegram": "all"}
         "tool_preview_length": 0,  # Max chars for tool call previews (0 = no limit, show full paths/commands)
+        # B4: configurable tool body display limits
+        "tool_visible_cap": 200,           # max lines shown in tool RichLog
+        "tool_line_byte_cap": 2000,        # max bytes per line before truncation
+        "tool_page_size": 50,              # lines per OmissionBar page step
+        "tool_collapse_thresholds": {      # per-tier auto-collapse line counts
+            "verbose": 15,
+            "normal": 10,
+            "compact": 6,
+        },
+        "mcp_microcopy": True,   # show "▸ mcp · <server>" provenance line
+        "tools_overlay": True,   # /tools timeline overlay + T browse key
+        # P2-4: configurable shell pipeline grouping window (ms)
+        "shell_pipeline_ms": 500,
+        # P2-5: configurable diff-to-file-write attachment window (seconds)
+        "diff_attach_window_s": 15.0,
+        # Crush easy-wins features
+        "osc_progress": True,          # OSC 9;4 indeterminate progress bar in terminal tab/dock
+        "context_pct": True,           # context-window % meter in StatusBar
+        "context_pct_mode": "overflow",  # "compaction" = % toward compaction trigger; "overflow" = % of full ctx window
+        "desktop_notify": False,       # desktop notification when long turn completes (opt-in)
+        "history_search_max_results": 50,  # max results shown in history search overlay
+        "notify_min_seconds": 10.0,    # minimum turn duration (s) before notify fires
+        "notify_sound": False,         # play a sound alongside the notification
+        "notify_sound_name": "Glass",  # macOS sound name (ignored on Linux)
+        "drawille_overlay": {
+            "enabled": True,
+            "animation": "neural_pulse",
+            "trigger": "agent_running",
+            "fps": 20,
+            "position": "top-right",
+            "size": "small",
+            "color": "auto",
+            "gradient": False,
+            "color_secondary": "$primary",
+            "dim_background": False,
+            "show_border": False,
+            "border_style": "round",
+            "border_color": "$accent",
+            "auto_hide_delay": 0,
+            "fade_in_frames": 3,
+            "fade_out_frames": 8,
+            "multi_color": [],
+            "hue_shift_speed": 0.3,
+            # SDF morph engine settings
+            "sdf_text": "",
+            "sdf_hold_ms": 900,
+            "sdf_morph_ms": 400,
+            "sdf_render_mode": "dissolve",
+            "sdf_outline_width": 0.08,
+            "sdf_dissolve_spread": 0.15,
+            "sdf_font_size": 96,
+            "sdf_crossfade_speed": 0.045,
+            "sdf_bake_timeout_s": 5.0,
+        },
+        "startup_sdf_splash": {
+            "enabled": False,
+            "text": "HERMES",
+            "morph_ms": 600,
+            "hold_ms": 400,
+            "render_mode": "dissolve",
+            "color": "#00ff66",
+            "total_duration_s": 3.0,
+        },
+        "nameplate_effects": True,           # master switch for AssistantNameplate animations
+        "nameplate_idle_effect": "shimmer",  # idle animation: any VALID_EFFECTS value
+        "nameplate_morph_speed": 1.0,        # morph transition speed multiplier
+        "nameplate_glitch": True,            # glitch spike on tool-call transitions
+        "nameplate_name": "Hermes",          # display name
+        "browse_markers": {
+            "enabled": True,              # gutter pips + corner badges
+            "reasoning": True,            # apply pips/badges inside ReasoningPanel
+            "turn_boundary_always": True, # subtle rule above UserMessagePanel even outside browse mode
+            "minimap_default": False,     # \ toggles; this controls initial state
+            "streaming_flash": True,      # CSS class flash on STREAMING -> ready transition
+        },
     },
 
     # Privacy settings
@@ -569,7 +711,7 @@ DEFAULT_CONFIG = {
     },
 
     # Config schema version - bump this when adding new required fields
-    "_config_version": 13,
+    "_config_version": 15,
 }
 
 # =============================================================================
@@ -1410,6 +1552,18 @@ _CUSTOM_PROVIDER_LIKE_FIELDS = {"base_url", "api_key", "rate_limit_delay", "api_
 
 
 @dataclass
+class SdfSplashConfig:
+    """Configuration for the startup SDF splash animation."""
+    enabled: bool = False
+    text: str = "HERMES"
+    morph_ms: int = 600
+    hold_ms: int = 400
+    render_mode: str = "dissolve"
+    color: str = "#00ff66"
+    total_duration_s: float = 3.0
+
+
+@dataclass
 class ConfigIssue:
     """A detected config structure problem."""
 
@@ -1953,6 +2107,32 @@ def _normalize_max_turns_config(config: Dict[str, Any]) -> Dict[str, Any]:
     config.pop("max_turns", None)
     return config
 
+
+
+_MODEL_CONTEXT_WINDOW: dict[str, int] = {
+    "claude-opus-4":     200_000,
+    "claude-sonnet-4":   200_000,
+    "claude-haiku-4":    200_000,
+    "claude-3-5-sonnet": 200_000,
+    "claude-3-5-haiku":  200_000,
+    "claude-3-opus":     200_000,
+    "claude-3-sonnet":   200_000,
+    "claude-3-haiku":    200_000,
+}
+
+
+def model_context_window(model: str) -> int:
+    """Return context window size for a model name.
+
+    Returns 200_000 for unknown claude-* models, 0 for non-claude models.
+    """
+    m = (model or "").lower()
+    for prefix, size in _MODEL_CONTEXT_WINDOW.items():
+        if m.startswith(prefix):
+            return size
+    if "claude" in m:
+        return 200_000
+    return 0
 
 
 def read_raw_config() -> Dict[str, Any]:

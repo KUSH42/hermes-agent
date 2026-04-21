@@ -15,7 +15,7 @@ Improvements over v1:
 
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from agent.auxiliary_client import call_llm
 from agent.model_metadata import (
@@ -122,11 +122,21 @@ class ContextCompressor:
         self._previous_summary: Optional[str] = None
         self._summary_failure_cooldown_until: float = 0.0
 
+        # Optional callback fired after each usage update (for TUI status push)
+        self.on_usage_update: Optional[Callable[[], None]] = None
+
     def update_from_response(self, usage: Dict[str, Any]):
         """Update tracked token usage from API response."""
         self.last_prompt_tokens = usage.get("prompt_tokens", 0)
         self.last_completion_tokens = usage.get("completion_tokens", 0)
         self.last_total_tokens = usage.get("total_tokens", 0)
+
+        # Fire callback so TUI can refresh status bar immediately
+        if self.on_usage_update is not None:
+            try:
+                self.on_usage_update()
+            except Exception:
+                pass  # Never let UI callback break the agent loop
 
     def should_compress(self, prompt_tokens: int = None) -> bool:
         """Check if context exceeds the compression threshold."""

@@ -308,6 +308,14 @@ CompletionOverlay {
     border-top: hkey $accent 60%;
 }
 
+/* E1: Hide preview and expand list when nothing is highlighted */
+CompletionOverlay.--no-preview PreviewPanel {
+    display: none;
+}
+CompletionOverlay.--no-preview VirtualCompletionList {
+    width: 1fr;
+}
+
 VirtualCompletionList {
     background: $surface-lighten-1;
     color: $text;
@@ -540,10 +548,10 @@ HermesApp.density-compact MessagePanel          { margin: 0; }
 HermesApp.density-compact ReasoningPanel        { margin: 0; }
 HermesApp.density-compact CopyableBlock         { margin: 0; }
 HermesApp.density-compact UserMessagePanel         { margin: 0; padding: 0 1; }
-HermesApp.density-compact StatusBar             { padding: 0; }
-HermesApp.density-compact HintBar               { padding: 0; }
-HermesApp.density-compact ImageBar              { padding: 0; }
-HermesApp.density-compact VoiceStatusBar        { padding: 0; }
+HermesApp.density-compact StatusBar             { padding: 0 1; }
+HermesApp.density-compact HintBar               { padding: 0 1; }
+HermesApp.density-compact ImageBar              { padding: 0 1; }
+HermesApp.density-compact VoiceStatusBar        { padding: 0 1; }
 HermesApp.density-compact #input-row            { padding: 0; }
 /* Overlays: trim extra padding to match standard 0 1 in compact mode */
 HermesApp.density-compact ClarifyWidget,
@@ -602,15 +610,17 @@ OmissionBar Button:disabled { color: $text-disabled; }
     border-top: dashed $accent 20%;
 }
 
-/* --- Tool Panel v2 (tui-tool-panel-v2-spec.md §10) ---
- * Accent bar rules apply when a panel carries tool-panel--accent class
- * (set when display.tool_panel_v2: true in config). */
+/* --- Tool Panel v3 Phase A (tui-tool-panel-v3-spec.md §5.1) ---
+ * ToolAccent widget replaces v2 border-left AND inline ┊ from ToolHeader.
+ * Only Textual built-in design tokens — component vars fail silently for
+ * background: at TCSS parse time. */
 
-/* --- Tool Panel v2 (tui-tool-panel-v2-spec.md §10) ---
- * Accent bar rules apply when a panel carries tool-panel--accent class
- * (set when display.tool_panel_v2: true in config).
- * Only Textual built-in design tokens used here — component vars ($text-muted
- * etc.) are not resolved at TCSS parse time for border-left. */
+ToolAccent              { background: $primary 15%; }
+ToolAccent.-streaming   { background: $accent; }
+ToolAccent.-ok          { background: $success; }
+ToolAccent.-error       { background: $error; }
+ToolAccent.-warning     { background: $warning; }
+ToolAccent.-muted       { background: $primary 8%; }
 
 ToolPanel.tool-panel--accent                 { border-left: vkey $accent 30%; }
 ToolPanel.category-file.tool-panel--accent   { border-left: vkey $accent 80%; }
@@ -624,6 +634,7 @@ ToolPanel.category-vision.tool-panel--accent { border-left: vkey $tool-vision-ac
 ToolPanel.tool-panel--error                  { border-left: vkey $error 80%; }
 /* D2: more visible focus indicator */
 ToolPanel:focus                              { background: $accent 10%; border-left: vkey $accent 60%; }
+ToolPanel:hover                              { background: $accent 5%; }
 /* A6: first-in-turn correlation badge */
 ToolPanel.first-in-turn                      { border-top: solid $accent 30%; }
 /* A2: empty result header color */
@@ -633,6 +644,25 @@ StreamingToolBlock .error-banner             { color: $error; padding: 0 1; heig
 /* B3: cap label hidden by default, shown when --visible class added */
 OmissionBar .--cap-label                     { color: $warning; display: none; }
 OmissionBar .--cap-label.--visible           { display: block; }
+
+/* --- Tool Panel v3 Phase B (tui-tool-panel-v3-spec.md §5.2) ---
+ * ToolHeaderBar chips and layout. */
+
+ToolHeaderBar {
+    layout: horizontal;
+    height: 1;
+    padding: 0 1 0 0;
+}
+ToolHeaderBar > .tool-header-bar--label      { min-width: 6; max-width: 14; text-style: bold; }
+ToolHeaderBar > .tool-header-bar--arg-summary { width: 1fr; color: $text-muted; }
+ToolHeaderBar > .tool-header-bar--pill        { width: auto; margin: 0 1; }
+ToolHeaderBar > .tool-header-bar--line-count  { width: 5; text-align: right; color: $text-muted; }
+ToolHeaderBar > .tool-header-bar--chevron     { width: 2; text-align: center; color: $text-muted; }
+ToolHeaderBar > .tool-header-bar--duration    { width: 6; text-align: right; color: $text-muted; }
+
+/* ToolPanelMini — single-row compact shell variant */
+ToolPanelMini { height: 1; layout: horizontal; }
+ToolPanelMini:focus { background: $accent 10%; }
 
 /* --- Tool grouping (virtual — no DOM container) --- */
 ToolPanel.tool-panel--grouped    { padding-left: 2; }
@@ -676,11 +706,14 @@ GroupHeader {
     height: 1;
     color: $text-muted;
     background: $surface;
+    padding: 0 1 0 0;
 }
 
 GroupHeader:hover {
     background: $boost;
 }
+
+GroupHeader:focus { background: $accent 10%; }
 
 /* E4: group header with one or more child errors */
 GroupHeader.--group-has-error {
@@ -784,3 +817,27 @@ MinSizeBackdrop .min-size-warning {
 MinSizeBackdrop .min-size-hint {
     color: $text-muted;
 }
+
+/* --- v3-C: body renderers --- */
+.empty-state { color: $text-muted; padding: 0 2; height: 1; }
+InlineCodeFence { padding: 0 0 0 2; border-left: vkey $primary 30%; margin: 0 0 1 0; height: auto; }
+VirtualSearchList { height: auto; }
+
+/* --- v3-D: detail level tint --- */
+ToolPanel.-l3 { background: $accent 8%; }
+/* ToolPanel:focus background already declared above.
+   A border: tall rule here would add 2 rows of structural height and break
+   sibling click hit-testing in async pilot tests. */
+
+/* --- v3-D: InputSection --- */
+InputSection { height: auto; padding: 0 0 0 2; margin-bottom: 1; display: none; }
+InputSection.-has-input { display: block; }
+InputSection > #input-content { padding: 0 0 0 1; color: $text-muted; }
+
+/* --- v3-D: SectionDivider --- */
+SectionDivider { height: 1; color: $text-muted; }
+
+/* --- v3-D: TurnPhase containers --- */
+AgentThought { height: auto; }
+ToolSequence { height: auto; }
+AgentFinalResponse { height: auto; }

@@ -3,8 +3,7 @@
 Architecture: tui-tool-panel-spec-binary-collapse.md
 
 collapsed = False  →  header + body + conditional footer  (always at mount)
-collapsed = True   →  header only  (auto at completion when body > threshold)
-"""
+collapsed = True   →  header only  (auto at completion when body > threshold)"""
 
 from __future__ import annotations
 
@@ -32,9 +31,16 @@ from textual.widgets import Button, Static
 from hermes_cli.tui.resize_utils import THRESHOLD_NARROW, crosses_threshold
 from hermes_cli.tui.tooltip import TooltipMixin
 
+from hermes_cli.tui.tool_accent import ToolAccent
+from hermes_cli.tui.diff_affordance import DiffAffordance
+from hermes_cli.tui.tool_header_bar import ToolHeaderBar
+
 if TYPE_CHECKING:
     from hermes_cli.tui.tool_result_parse import ResultSummary, ResultSummaryV4
     from hermes_cli.tui.tool_category import ToolCategory
+    from hermes_cli.tui.tool_payload import ClassificationResult, ToolPayload
+    from hermes_cli.tui.tool_payload import ResultKind
+    from hermes_cli.tui.input_section import InputSection as _InputSectionT
 
 
 # Footer action kinds that have real BINDINGS wired — deferred kinds are
@@ -48,7 +54,6 @@ _IMPLEMENTED_ACTIONS: frozenset[str] = frozenset({
 
 class _ArtifactButton(TooltipMixin, Button):
     """B2: Artifact chip button with tooltip support for full path/URL."""
-
 
 def _artifact_icon(kind: str) -> str:
     """Return the icon character for an artifact kind, respecting tool_icon_mode."""
@@ -157,8 +162,7 @@ class FooterPane(Widget):
         background: transparent;
         min-width: 0;
         color: $accent-muted;
-    }
-    """
+    }    """
 
     COMPONENT_CLASSES = {"footer--exit-chip", "footer--badge", "footer--retry-hint"}
 
@@ -178,7 +182,6 @@ class FooterPane(Widget):
         yield self._stderr_row
         yield self._remediation_row
         yield self._artifact_row
-
     def _render_stderr(self, tail: str) -> "Any":
         from rich.text import Text
         lines = tail.strip().splitlines()
@@ -206,6 +209,12 @@ class FooterPane(Widget):
     ) -> None:
         """Internal render — called from update_summary_v4 and _rebuild_chips."""
         from rich.text import Text
+        self._diff_kind = getattr(summary, "kind", "") or ""
+        # Update narrow diff glyph visibility
+        if self._diff_kind in ("diff", "patch"):
+            self._narrow_diff_glyph.add_class("-has-diff")
+        else:
+            self._narrow_diff_glyph.remove_class("-has-diff")
 
         parts = Text()
 
@@ -377,7 +386,6 @@ class ToolPanel(Widget):
         ├── BodyPane      (hosts the streaming/static block)
         ├── FooterPane    (shown when result has content and not collapsed)
         └── _hint_row     (focus hint, height=auto, empty when unfocused)
-
     collapsed reactive:
         False (default) → body + conditional footer visible
         True            → header only (body + footer hidden)
@@ -430,7 +438,19 @@ class ToolPanel(Widget):
         Binding("P",     "copy_full_path",   "Copy full path",   show=False),  # A7
         Binding("x",     "dismiss_error_banner", "Dismiss",      show=False),  # A5
         Binding("question_mark", "show_context_menu", "Menu",    show=False),  # D1
-    ]
+        Binding("d", "cycle_detail_forward", "Detail+", show=False),
+        Binding("D", "cycle_detail_reverse", "Detail-", show=False),
+        Binding("0", "set_level_0", "L0", show=False),
+        Binding("1", "set_level_1", "L1", show=False),
+        Binding("2", "set_level_2", "L2", show=False),
+        Binding("3", "set_level_3", "L3", show=False),
+        Binding("enter", "toggle_l1_l2", "Toggle", show=False),
+        Binding("space", "toggle_l0_restore", "Collapse", show=False),
+        Binding("y", "copy_output", "Copy output", show=False),
+        Binding("Y", "copy_input", "Copy input", show=False),
+        Binding("r", "rerun", "Rerun", show=False),
+        Binding("j", "omission_expand", "Expand output", show=False),
+        Binding("k", "omission_collapse", "Collapse output", show=False),    ]
 
     # Always start expanded; auto-collapse at completion based on threshold.
     # layout=False: watch_collapsed sets styles.display which already forces a
@@ -455,10 +475,19 @@ class ToolPanel(Widget):
         # C4: one-shot "Enter to toggle" hint on first focus
         self._toggle_hint_shown: bool = False
 
+        # Phase D state
+        self._pre_collapse_level: int = 2
+        self._forced_renderer_kind: "ResultKind | None" = None
+
         # Pane refs (set in compose)
         self._body_pane: BodyPane | None = None
         self._footer_pane: FooterPane | None = None
         self._hint_row: Static | None = None
+
+        # CWD stripping — enable on SHELL category blocks
+        from hermes_cli.tui.tool_category import ToolCategory
+        if self._category == ToolCategory.SHELL and hasattr(block, "_should_strip_cwd"):
+            block._should_strip_cwd = True
 
     def compose(self) -> ComposeResult:
         self._body_pane = BodyPane(self._block, category=self._category)
@@ -467,7 +496,6 @@ class ToolPanel(Widget):
         yield self._body_pane
         yield self._footer_pane
         yield self._hint_row
-
     def on_mount(self) -> None:
         from hermes_cli.tui.tool_category import _CATEGORY_DEFAULTS
 
@@ -518,8 +546,7 @@ class ToolPanel(Widget):
             body_container.styles.display = "none" if new else "block"
 
         fp = self._footer_pane
-        if fp is None:
-            return
+        if fp is None:            return
 
         # B3: reset artifact expand state on collapse
         if new and fp._show_all_artifacts:
@@ -529,6 +556,17 @@ class ToolPanel(Widget):
         want_fp = (not new) and self._has_footer_content()
         if fp.display != want_fp:
             fp.styles.display = "block" if want_fp else "none"
+        if ip is not None and ip.display != want_is:
+            ip.styles.display = "block" if want_is else "none"
+
+        # CSS level class — remove old, add new (avoid removing all 4 each time)
+        if old != new:
+            self.remove_class(f"-l{old}")
+            self.add_class(f"-l{new}")
+
+        # Sync ToolHeaderBar chevron
+        if self._header_bar is not None:
+            self._header_bar.set_chevron(new)
 
     def _has_footer_content(self) -> bool:
         rs = self._result_summary_v4
@@ -582,7 +620,160 @@ class ToolPanel(Widget):
         """Call from app at tool completion to populate v4 footer + header hero chip."""
         self._result_summary_v4 = summary
         self._completed_at = time.monotonic()
+    def set_tool_args(self, args: dict | None) -> None:
+        """Call from app after tool_start to supply parsed args."""
+        self._tool_args = args
+        if self._header_bar is not None:
+            self._header_bar.set_arg_summary(self._format_arg_summary())
+        if self.detail_level == 3 and self._args_pane is not None:
+            self._args_pane.refresh_rows(args, self._category)
+        if self._input_section is not None:
+            self._input_section.refresh_content(args)
 
+    # ------------------------------------------------------------------
+    # ToolHeaderBar helpers (Phase B)
+    # ------------------------------------------------------------------
+
+    def _format_arg_summary(self) -> str:
+        """Build a short arg summary string for the header bar."""
+        args = self._tool_args or {}
+        if not args:
+            return ""
+        # Prefer common high-signal keys
+        for key in ("command", "cmd", "shell_command", "path", "pattern", "query", "url"):
+            val = args.get(key)
+            if val is not None:
+                return str(val)
+        # Fallback: first value
+        first = next(iter(args.values()), None)
+        return str(first) if first is not None else ""
+
+    def _update_kind_from_classifier(self, line_count: int) -> None:
+        """Run content classifier and update ResultPill kind.
+
+        Phase C: also triggers _swap_renderer for non-TEXT/SHELL classified output.
+        """
+        if self._header_bar is None:
+            return
+        try:
+            from hermes_cli.tui.content_classifier import classify_content
+            from hermes_cli.tui.tool_payload import ToolPayload
+            output_raw = ""
+            block = self._block
+            if block is not None:
+                for attr in ("_all_plain", "_content_lines", "_plain_lines"):
+                    lines = getattr(block, attr, None)
+                    if isinstance(lines, list):
+                        output_raw = "\n".join(lines)
+                        break
+            payload = ToolPayload(
+                tool_name=self._tool_name,
+                category=self._category,
+                args=self._tool_args or {},
+                input_display=None,
+                output_raw=output_raw,
+                line_count=line_count,
+            )
+            result = classify_content(payload)
+            self._header_bar.set_kind(result.kind)
+            # Phase C: swap renderer for specialized kinds
+            self._maybe_swap_renderer(result, payload)
+        except Exception:
+            pass
+
+    def _swap_renderer(
+        self,
+        new_renderer_cls: type,
+        payload: "ToolPayload",
+        cls_result: "ClassificationResult",
+    ) -> None:
+        """Replace BodyPane content with a new renderer widget."""
+        if self._body_pane is None:
+            return
+        try:
+            from hermes_cli.tui.body_renderers.base import BodyRenderer as _BR
+            renderer = new_renderer_cls(payload, cls_result)
+            new_widget = renderer.build_widget()
+            # Remove old block, mount new widget
+            old_block = self._block
+            self._body_pane.mount(new_widget)
+            if old_block is not None and old_block.is_attached:
+                old_block.remove()
+            self._block = new_widget
+            self._body_pane._block = new_widget
+        except Exception:
+            pass  # keep old renderer on failure
+
+    def _maybe_swap_renderer(
+        self,
+        result: "ClassificationResult",
+        payload: "ToolPayload",
+    ) -> None:
+        """Conditionally swap body renderer based on classification result."""
+        try:
+            from hermes_cli.tui.tool_payload import ResultKind
+            from hermes_cli.tui.tool_category import ToolCategory
+            from hermes_cli.tui.body_renderers import pick_renderer, FallbackRenderer
+
+            if result.kind in (ResultKind.TEXT, ResultKind.EMPTY):
+                return
+            if self._category == ToolCategory.SHELL:
+                return  # SHELL always keeps its renderer
+            renderer_cls = pick_renderer(result, payload)
+            if renderer_cls is FallbackRenderer:
+                return  # don't swap to fallback unnecessarily
+            self._swap_renderer(renderer_cls, payload, result)
+        except Exception:
+            pass
+
+    def _maybe_activate_mini(self, summary: "ResultSummary") -> None:
+        """Activate mini-mode if SHELL+exit0+≤3L+no-stderr criteria met."""
+        from hermes_cli.tui.tool_panel_mini import meets_mini_criteria
+        exit_code = getattr(summary, "exit_code", None)
+        stderr_raw = getattr(summary, "stderr_tail", None) or ""
+        line_count = self._body_line_count()
+        if not meets_mini_criteria(self._category, exit_code, line_count, stderr_raw):
+            return
+        if not self.is_attached or self.parent is None:
+            return
+        try:
+            from hermes_cli.tui.tool_panel_mini import ToolPanelMini
+            cmd = self._format_arg_summary() or self._tool_name
+            dur = 0.0
+            if self._completed_at is not None:
+                dur = self._completed_at - self._start_time
+            mini = ToolPanelMini(source_panel=self, command=cmd, duration_s=dur)
+            self.parent.mount(mini, after=self)
+            self.display = False
+        except Exception:
+            pass
+
+    def set_result_summary(self, summary: "ResultSummary") -> None:
+        """Call from app at tool completion to populate footer."""
+        self._result_summary = summary
+        self._completed_at = time.monotonic()
+        if self._footer_pane is not None:
+            self._footer_pane.update_summary(summary)
+        # Update accent + header bar state
+        final_state = "error" if summary.is_error else "ok"
+        if self._accent is not None:
+            self._accent.state = final_state
+        if self._header_bar is not None:
+            self._header_bar.set_state(final_state)
+            self._header_bar.set_finished(self._completed_at)
+            line_count = self._body_line_count()
+            self._header_bar.set_line_count(line_count)
+            # Classify content and update pill
+            self._update_kind_from_classifier(line_count)
+        self._apply_complete_auto_level()
+        # Refresh footer visibility
+        if self._footer_pane is not None:
+            show = self._should_show_footer(self.detail_level)
+            self._footer_pane.styles.display = "block" if show else "none"
+        # Activate mini-mode for qualifying SHELL calls
+        self._maybe_activate_mini(summary)
+        # Notify enclosing GroupHeader so it can refresh dot color + stats
+        self._notify_group_header()
         # F1: schedule "completed Xs ago" age microcopy at 10s post-completion
         _completed_at_snap = self._completed_at
         def _show_age() -> None:
@@ -1261,3 +1452,97 @@ class ToolPanel(Widget):
         block._follow_tail = not block._follow_tail
         state = "on" if block._follow_tail else "off"
         self._flash_header(f"tail: {state}")
+    def action_toggle_l0_restore(self) -> None:
+        """space: toggle between L0 (collapsed) and previous level."""
+        self._mark_user_override()
+        if self.detail_level == 0:
+            self.detail_level = self._pre_collapse_level
+        else:
+            self._pre_collapse_level = self.detail_level
+            self.detail_level = 0
+
+    def action_copy_output(self) -> None:
+        """y: copy tool output to clipboard."""
+        text = self.copy_content()
+        if text:
+            try:
+                import pyperclip
+                pyperclip.copy(text)
+                self.app.notify("Copied output", timeout=1.5)
+            except Exception:
+                self.app.notify("Copy failed — use mouse select", timeout=3)
+
+    def action_copy_input(self) -> None:
+        """Y: copy tool input summary to clipboard."""
+        if self._input_section is not None:
+            text = self._input_section._build_text()
+            if text:
+                try:
+                    import pyperclip
+                    pyperclip.copy(text)
+                    self.app.notify("Copied input", timeout=1.5)
+                except Exception:
+                    self.app.notify("Copy failed", timeout=3)
+
+    def action_rerun(self) -> None:
+        """r: emit ToolRerunRequested message."""
+        try:
+            from hermes_cli.tui.messages import ToolRerunRequested
+            self.post_message(ToolRerunRequested(panel=self))
+            if self._header_bar is not None:
+                self._header_bar.flash_rerun()
+        except Exception:
+            self.app.notify("Rerun not available", timeout=2)
+
+    def action_omission_expand(self) -> None:
+        """j: expand OmissionBar by one page if present."""
+        try:
+            from hermes_cli.tui.tool_blocks import OmissionBar
+            bar = next(iter(self.query(OmissionBar)), None)
+            if bar is not None:
+                bar._do_expand_one()
+        except Exception:
+            pass
+
+    def action_omission_collapse(self) -> None:
+        """k: collapse OmissionBar by one page if present."""
+        try:
+            from hermes_cli.tui.tool_blocks import OmissionBar
+            bar = next(iter(self.query(OmissionBar)), None)
+            if bar is not None:
+                bar._do_collapse_one()
+        except Exception:
+            pass
+
+    def force_renderer(self, kind: "ResultKind") -> None:
+        """Override classifier and swap to given kind's renderer."""
+        self._forced_renderer_kind = kind
+        try:
+            from hermes_cli.tui.body_renderers import pick_renderer
+            from hermes_cli.tui.tool_payload import ToolPayload, ClassificationResult
+
+            output_raw = self.copy_content()
+            payload = ToolPayload(
+                tool_name=self._tool_name,
+                category=self._category,
+                args=self._tool_args or {},
+                input_display=None,
+                output_raw=output_raw,
+                line_count=self._body_line_count(),
+            )
+            cls_result = ClassificationResult(kind=kind, confidence=1.0)
+            renderer_cls = pick_renderer(cls_result, payload)
+            self._swap_renderer(renderer_cls, payload, cls_result)
+            if self._header_bar is not None:
+                self._header_bar.set_kind(kind)
+        except Exception:
+            pass
+
+    def on_tool_header_bar_clicked(self, event: ToolHeaderBar.Clicked) -> None:
+        """ToolHeaderBar click → cycle detail level."""
+        event.stop()
+        self.action_toggle_l1_l2()
+
+    # Focus styling is done via CSS :focus pseudo-class in hermes.tcss.
+    # No on_focus/on_blur handlers — they trigger layout refreshes that
+    # can interfere with click event hit-testing on child widgets.

@@ -1,0 +1,87 @@
+"""Body renderer registry — Phase C.
+
+pick_renderer() selects the most appropriate BodyRenderer subclass
+based on ClassificationResult and ToolPayload.
+
+Registry order (most to least specific):
+  SearchRenderer, DiffRenderer, JsonRenderer, TableRenderer, CodeRenderer,
+  LogRenderer, ShellOutputRenderer, EmptyStateRenderer, FallbackRenderer
+"""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from hermes_cli.tui.body_renderers.base import BodyRenderer
+from hermes_cli.tui.body_renderers.search import SearchRenderer
+from hermes_cli.tui.body_renderers.diff import DiffRenderer
+from hermes_cli.tui.body_renderers.json import JsonRenderer
+from hermes_cli.tui.body_renderers.table import TableRenderer
+from hermes_cli.tui.body_renderers.code import CodeRenderer
+from hermes_cli.tui.body_renderers.log import LogRenderer
+from hermes_cli.tui.body_renderers.shell import ShellOutputRenderer
+from hermes_cli.tui.body_renderers.empty import EmptyStateRenderer
+from hermes_cli.tui.body_renderers.fallback import FallbackRenderer
+
+if TYPE_CHECKING:
+    from hermes_cli.tui.tool_payload import ClassificationResult, ToolPayload
+
+REGISTRY: list[type[BodyRenderer]] = [
+    SearchRenderer,
+    DiffRenderer,
+    JsonRenderer,
+    TableRenderer,
+    CodeRenderer,
+    LogRenderer,
+    ShellOutputRenderer,
+    EmptyStateRenderer,
+    FallbackRenderer,
+]
+
+
+def pick_renderer(
+    cls_result: "ClassificationResult",
+    payload: "ToolPayload",
+) -> type[BodyRenderer]:
+    """Select best renderer for cls_result + payload.
+
+    Rules (in order):
+    1. SHELL category ALWAYS uses ShellOutputRenderer unless EMPTY kind.
+    2. Swap to specialized only when confidence > 0.7 AND kind not TEXT/EMPTY.
+    3. TEXT or low-confidence → FallbackRenderer.
+    4. EMPTY → EmptyStateRenderer.
+    """
+    from hermes_cli.tui.tool_category import ToolCategory
+    from hermes_cli.tui.tool_payload import ResultKind
+
+    # Rule 1: SHELL always uses ShellOutputRenderer (unless EMPTY)
+    if payload.category == ToolCategory.SHELL and cls_result.kind != ResultKind.EMPTY:
+        return ShellOutputRenderer
+
+    # Rule 4: EMPTY → EmptyStateRenderer
+    if cls_result.kind == ResultKind.EMPTY:
+        return EmptyStateRenderer
+
+    # Rule 2: high-confidence specialized renderer
+    if cls_result.confidence > 0.7 and cls_result.kind not in (ResultKind.TEXT, ResultKind.EMPTY):
+        for r in REGISTRY:
+            if r.can_render(cls_result, payload):
+                return r
+
+    # Rule 3: TEXT or low-confidence → FallbackRenderer
+    return FallbackRenderer
+
+
+__all__ = [
+    "BodyRenderer",
+    "SearchRenderer",
+    "DiffRenderer",
+    "JsonRenderer",
+    "TableRenderer",
+    "CodeRenderer",
+    "LogRenderer",
+    "ShellOutputRenderer",
+    "EmptyStateRenderer",
+    "FallbackRenderer",
+    "REGISTRY",
+    "pick_renderer",
+]

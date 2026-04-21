@@ -929,7 +929,7 @@ async def test_paste_file_drop_still_works() -> None:
         # Simulate paste with dragged file path text
         fake_path_text = "/tmp/example.txt"
         with patch(
-            "hermes_cli.tui.input_widget.parse_dragged_file_paste",
+            "hermes_cli.tui.input.widget.parse_dragged_file_paste",
             return_value=[Path(fake_path_text)],
         ):
             paste_event = _events.Paste(fake_path_text)

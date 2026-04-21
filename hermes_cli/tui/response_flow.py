@@ -31,6 +31,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from rich.text import Text
+from textual.widget import Widget
+from textual.app import ComposeResult
 
 if TYPE_CHECKING:
     from hermes_cli.tui.widgets import CopyableBlock, CopyableRichLog, MathBlockWidget, MessagePanel, ReasoningPanel, StreamingCodeBlock
@@ -121,6 +123,55 @@ def _get_math_renderer() -> "MathRenderer":
         _math_renderer = MathRenderer()
     return _math_renderer
 
+# ---------------------------------------------------------------------------
+# §5.11.1 ANSI literal replacement
+# ---------------------------------------------------------------------------
+
+_LITERAL_ANSI_RE = re.compile(r"\\x1b\[[0-9;?]*[a-zA-Z]")
+
+
+def _replace_ansi_literals(text: str) -> str:
+    """Replace literal \\x1b[...X strings with dim bracket notation [?...X]."""
+    def _replace(m: re.Match) -> str:
+        seq = m.group(0)[4:]  # strip leading "\\x1b" — remaining is [...]X
+        return f"[?{seq}]"
+    return _LITERAL_ANSI_RE.sub(_replace, text)
+
+
+# ---------------------------------------------------------------------------
+# §5.11.2 InlineCodeFence — numbered-line code widget
+# ---------------------------------------------------------------------------
+
+_NUMBERED_LINE_RE = re.compile(r"^\s*\d{1,3}\s*\|\s+\S")
+
+
+class InlineCodeFence(Widget):
+    """Inline code fence widget for numbered-line code in prose.
+
+    Detected when ≥ 2 consecutive lines match `^\\s*\\d{1,3}\\s*|\\s+\\S`.
+    Rendered as a dim left-bordered block.
+    """
+
+    DEFAULT_CSS = """
+    InlineCodeFence {
+        padding: 0 0 0 2;
+        margin: 0 0 1 0;
+        height: auto;
+    }
+    """
+    # Note: border-left is in hermes.tcss (uses $text-muted CSS var which
+    # cannot be referenced in DEFAULT_CSS at parse time — TCSS variable gotcha)
+
+    def __init__(self, lines: list[str], **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._lines = lines
+
+    def compose(self) -> ComposeResult:
+        from textual.widgets import Static
+        t = Text()
+        for ln in self._lines:
+            t.append(ln + "\n", style="dim")
+        yield Static(t)
 
 # ---------------------------------------------------------------------------
 # Module-level helpers
@@ -424,7 +475,7 @@ class ResponseFlowEngine:
                 self._prose_callback(plain)
             except Exception:
                 pass
-
+        self._code_fence_buffer: list[str] = []  # §5.11.2 InlineCodeFence buffer
     def _sync_prose_log(self) -> None:
         """Refresh the active prose destination from the owning message panel."""
         getter = getattr(type(self._panel), "current_prose_log", None)
@@ -991,7 +1042,8 @@ class ResponseFlowEngine:
             self._panel._mount_nonprose_block(widget)
         except Exception:
             pass
-
+        # Flush any pending InlineCodeFence buffer
+        self._flush_code_fence_buffer()
     def refresh_skin(self, css_vars: dict[str, str]) -> None:
         """Called from HermesApp.apply_skin() after hot-reload.
 
@@ -1005,6 +1057,47 @@ class ResponseFlowEngine:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _commit_prose_line(self, inline_ansi: str, plain: str) -> None:
+        """Write a prose line, buffering numbered-code lines for InlineCodeFence.
+
+        §5.11.2: lines matching ^\\s*\\d{1,3}\\s*|\\s+\\S are buffered.
+        When ≥ 2 buffered lines and the next line doesn't match (or paragraph
+        break), flush as InlineCodeFence widget. Lines that don't match go
+        to normal prose path.
+        """
+        if _NUMBERED_LINE_RE.match(plain):
+            self._code_fence_buffer.append(plain)
+        else:
+            # Flush buffer if ≥ 2 lines
+            self._flush_code_fence_buffer()
+            # Write current line normally
+            self._prose_log.write_with_source(Text.from_ansi(inline_ansi), plain)
+
+    def _flush_code_fence_buffer(self) -> None:
+        """Flush any buffered numbered-code lines.
+
+        If buffer has ≥ 2 lines → mount InlineCodeFence widget.
+        If buffer has < 2 → write to prose log normally.
+        """
+        buf = self._code_fence_buffer
+        if not buf:
+            return
+        self._code_fence_buffer = []
+        if len(buf) >= 2:
+            # Mount as InlineCodeFence widget
+            fence = InlineCodeFence(lines=buf)
+            try:
+                self._panel._mount_nonprose_block(fence)
+                self._sync_prose_log()
+            except Exception:
+                # Fallback: write as plain prose
+                for line in buf:
+                    self._prose_log.write_with_source(Text.from_ansi(line), line)
+        else:
+            # Single line — write as plain prose
+            for line in buf:
+                self._prose_log.write_with_source(Text.from_ansi(line), line)
 
     def _emit_rule(self) -> None:
         """Emit a width-bounded horizontal rule to the prose log."""
@@ -1128,7 +1221,7 @@ class ReasoningFlowEngine(ResponseFlowEngine):
         self._emoji_registry = getattr(_app, "_emoji_registry", None) if _rp_emoji else None
         self._emoji_images_enabled: bool = getattr(_app, "_emoji_images_enabled", True) and _rp_emoji
         self._emitted_emoji_anchors: set[int] = set()
-
+        self._code_fence_buffer: list[str] = []  # §5.11.2 InlineCodeFence buffer
     def process_line(self, raw: str) -> None:
         """Override: flush block buffer immediately after every line.
 

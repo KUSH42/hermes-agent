@@ -149,6 +149,13 @@ class AnimationClock:
 
     def subscribe(self, divisor: int, callback: Callable[[], None]) -> _ClockSubscription:
         """Register *callback* to fire every *divisor* ticks. Returns a stoppable handle."""
+        original = divisor
+        divisor = max(1, int(divisor))
+        if original != divisor:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "AnimationClock: divisor %r clamped to %d", original, divisor
+            )
         sub_id = self._next_id
         self._next_id += 1
         self._subscribers[sub_id] = (divisor, callback)
@@ -212,6 +219,20 @@ class PulseMixin:
             color = lerp_color("#888888", "#ffbf00", self._pulse_t)
             return Text("●", style=f"bold {color}")
     """
+
+    @classmethod
+    def __init_subclass__(cls, **kw: object) -> None:
+        super().__init_subclass__(**kw)
+        mro_names = [c.__name__ for c in cls.__mro__]
+        pm_pos = mro_names.index("PulseMixin") if "PulseMixin" in mro_names else -1
+        widget_pos = next((i for i, n in enumerate(mro_names) if n == "Widget"), -1)
+        if 0 <= widget_pos < pm_pos:
+            import warnings as _warnings
+            _warnings.warn(
+                f"{cls.__name__}: PulseMixin must appear before Widget in class bases. "
+                f"Use: class {cls.__name__}(PulseMixin, Widget, ...)",
+                stacklevel=2,
+            )
 
     _pulse_t: float = 0.0
     _pulse_tick: int = 0

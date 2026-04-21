@@ -34,7 +34,8 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.reactive import reactive
 from textual.widget import Widget
-from textual.widgets import Static
+
+from hermes_cli.tui.tool_accent import ToolAccent
 
 from hermes_cli.tui.resize_utils import THRESHOLD_TOOL_NARROW, crosses_threshold
 
@@ -48,6 +49,45 @@ RULE_DIFF_ATTACH = 1
 RULE_SEARCH_OPEN = 2
 RULE_SHELL_PIPE = 3
 RULE_SEARCH_BATCH = 31  # "3b" in spec
+
+
+# ---------------------------------------------------------------------------
+# Semantic label helpers (v3 Phase B — §5.7)
+# ---------------------------------------------------------------------------
+
+
+def group_semantic_label(members: list) -> str:
+    """Derive a semantic label from member tool names (dedup + count).
+
+    Examples:
+      patch × 2
+      patch+diff · input_widget.py
+      search+patch+write
+    """
+    labels = sorted({getattr(m, "_tool_name", "") for m in members if getattr(m, "_tool_name", "")})
+    if not labels:
+        return f"{len(members)} tools"
+    if len(labels) == 1:
+        count = len(members)
+        return f"{labels[0]} × {count}" if count > 1 else labels[0]
+    joined = "+".join(labels[:3])
+    return joined if len(labels) <= 3 else joined + "+…"
+
+
+def group_path_hint(members: list) -> str | None:
+    """Return a single common basename if all members share the same file path."""
+    paths: list[str] = []
+    for m in members:
+        args = getattr(m, "_tool_args", None) or {}
+        p = args.get("path") or args.get("file_path") or args.get("target")
+        if p:
+            paths.append(str(p))
+    if not paths:
+        return None
+    basenames = {os.path.basename(p) for p in paths}
+    if len(basenames) == 1:
+        return basenames.pop()
+    return None
 
 
 # ---------------------------------------------------------------------------

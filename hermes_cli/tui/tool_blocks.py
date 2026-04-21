@@ -165,7 +165,6 @@ def _extract_image_path(raw: str) -> "str | None":
     suffix = _Path(raw.strip()).suffix.lower()
     return raw.strip() if suffix in _IMAGE_EXTS else None
 
-
 _CODE_EXT_MAP: dict[str, str] = {
     ".py": "python", ".js": "javascript", ".ts": "typescript", ".tsx": "tsx",
     ".rs": "rust", ".go": "go", ".java": "java", ".c": "c", ".cpp": "cpp",
@@ -549,8 +548,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         self._full_path: str | None = None      # raw untruncated path or URL
         self._path_clickable: bool = False      # True for file-tool and URL headers
         self._is_url: bool = False              # True when path starts with http/https/etc.
-        # Display overrides (v2 flags — kept for parity when tool_panel_v4=False)
-        self._no_underline: bool = False         # suppress underline on clickable paths
+        # Display overrides (v2 flags — kept for parity when tool_panel_v4=False)        self._no_underline: bool = False         # suppress underline on clickable paths
         self._hide_duration: bool = False        # suppress timer display
         self._bold_label: bool = False           # bold label text (non-path)
         self._hidden: bool = False               # suppress header entirely
@@ -566,7 +564,6 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         self._flash_tone: str = "success"
         # Browse mode badge (e.g. "± diff") — plain attr, render() reads it
         self._browse_badge: str = ""
-
     def on_mount(self) -> None:
         self._refresh_gutter_color()
         self._refresh_tool_icon()
@@ -686,8 +683,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             t.append(" $", style=f"bold {accent}")
             shell_prompt_w = 2
 
-        # Tail: C2 — browse badge first (protected from truncation), then hero chip, etc.
-        tail = Text()
+        # Tail: C2 — browse badge first (protected from truncation), then hero chip, etc.        tail = Text()
         if self._browse_badge:
             tail.append(f" {self._browse_badge} ", style="bold dim")
         if self._spinner_char is not None:
@@ -762,7 +758,6 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 pass
             if self._duration:   # already v4-formatted by _tick_duration / complete()
                 tail.append(f"  {self._duration}", style="dim")
-
         # Label via primary-arg rules
         term_w = self.size.width
         tail_w = tail.cell_len
@@ -1660,7 +1655,9 @@ class StreamingToolBlock(ToolBlock):
         self._history_capped: bool = False
         # E2: truncated line count disclosure
         self._truncated_line_count: int = 0
-
+        # CWD stripping — set True by ToolPanel for SHELL category blocks
+        self._should_strip_cwd: bool = False
+        self._detected_cwd: str | None = None
     def compose(self) -> ComposeResult:
         yield self._header
         yield self._body
@@ -1750,7 +1747,20 @@ class StreamingToolBlock(ToolBlock):
             over = len(raw) - line_byte_cap
             raw = raw[:line_byte_cap] + f"… (+{over} chars)"
             self._truncated_line_count += 1  # E2: disclose truncation
-        plain = _strip_ansi(raw)
+        # CWD token stripping for SHELL category blocks
+        if self._should_strip_cwd:
+            from hermes_cli.tui.cwd_strip import strip_cwd
+            cleaned, cwd = strip_cwd(raw)
+            if cwd is not None:
+                self._detected_cwd = cwd
+            if not cleaned.strip():
+                return  # skip empty CWD-only lines
+            raw = cleaned
+        # Byte cap
+        if len(raw) > _LINE_BYTE_CAP:
+            over = len(raw) - _LINE_BYTE_CAP
+            raw = raw[:_LINE_BYTE_CAP] + f"… (+{over} chars)"
+            plain = _strip_ansi(raw)
         self._total_received += 1
         self._bytes_received += len(raw)
         now = time.monotonic()
@@ -1850,7 +1860,15 @@ class StreamingToolBlock(ToolBlock):
         # A2: empty result visual distinction
         if not is_error and self._total_received == 0:
             self._header.add_class("result-empty")
-        # Brief success flash to signal completion
+        # CWD footer dim line
+        if self._detected_cwd:
+            from rich.text import Text as _RichText
+            try:
+                from hermes_cli.tui.widgets import CopyableRichLog as _CRL
+                log = self._body.query_one(_CRL)
+                log.write(_RichText(f"  cwd: {self._detected_cwd}", style="dim"))
+            except Exception:
+                pass        # Brief success flash to signal completion
         self._header.flash_success()
         # If output contains a MEDIA: path, replace body with an inline image
         self._try_mount_media()

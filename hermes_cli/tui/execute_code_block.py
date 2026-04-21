@@ -91,7 +91,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
     DEFAULT_CSS = "ExecuteCodeBlock { height: auto; }"
     _content_type: str = "tool"
 
-    def __init__(self, initial_label: str = "python", **kwargs: Any) -> None:
+    def __init__(self, initial_label: str = "exec", **kwargs: Any) -> None:
         super().__init__(label=initial_label, tool_name="execute_code", **kwargs)
         self._code_state = _STATE_STREAMING
         self._line_scratch = ""

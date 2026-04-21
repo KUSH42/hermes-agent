@@ -532,6 +532,9 @@ class CodeBlockFooter(Widget):
     CodeBlockFooter > .action:hover {
         color: $accent;
     }
+    CodeBlockFooter > .--flash-copy {
+        color: $success;
+    }
     """
 
     def __init__(self, **kwargs: Any) -> None:
@@ -539,14 +542,32 @@ class CodeBlockFooter(Widget):
         self._copy = Static("", id="code-copy-action", classes="action")
         self._sep = Static("", classes="sep")
         self._toggle = Static("", id="code-toggle-action", classes="action")
+        self._copy_original: str = ""
+        self._copy_flash_timer: object | None = None
 
     def compose(self) -> ComposeResult:
         yield self._copy
         yield self._sep
         yield self._toggle
 
+    def flash_copy(self) -> None:
+        """Flash ✓ on the copy button for 500ms then restore."""
+        from hermes_cli.tui.constants import ICON_COPY_OK
+        if self._copy_flash_timer is not None:
+            self._copy_flash_timer.stop()
+        self._copy_original = str(self._copy.renderable)
+        self._copy.update(ICON_COPY_OK)
+        self._copy.add_class("--flash-copy")
+        self._copy_flash_timer = self.set_timer(0.5, self._restore_copy)
+
+    def _restore_copy(self) -> None:
+        self._copy.update(self._copy_original)
+        self._copy.remove_class("--flash-copy")
+        self._copy_flash_timer = None
+
     def set_actions(self, *, copy_label: str, toggle_label: str | None) -> None:
         self._copy.update(copy_label)
+        self._copy_original = copy_label
         if toggle_label:
             self._sep.update("  ·  ")
             self._toggle.update(toggle_label)
@@ -569,6 +590,7 @@ class CodeBlockFooter(Widget):
         if target_id == "code-copy-action":
             try:
                 self.app._copy_code_block(parent)  # type: ignore[attr-defined]
+                self.flash_copy()
             except Exception:
                 pass
             event.prevent_default()
@@ -2302,6 +2324,9 @@ class HintBar(Widget):
         if not getattr(self.app, "_animations_enabled", True):
             self.refresh()
             return
+        if getattr(self, "app", None) and self.app.has_class("reduced-motion"):
+            self.refresh()
+            return
         key_color = self._get_key_color()
         base_text, skip = _build_streaming_hint(key_color)
         self._shimmer_base = base_text
@@ -2435,6 +2460,9 @@ class StatusBar(PulseMixin, Widget):
             f"[bold {k}]@[/][dim]file[/dim]{sep}[bold {k}]/[/][dim]command[/dim]{sep}[bold {k}]⇥[/] [dim]accept[/dim]",
             f"[bold {k}]^L[/] [dim]clear[/dim]{sep}[bold {k}]^K[/] [dim]new session[/dim]",
             tip5,
+            f"[bold {k}]Alt+↑↓[/] [dim]browse panels[/dim]{sep}[bold {k}]0–3[/] [dim]detail level[/dim]",
+            f"[bold {k}]F8[/] [dim]FPS HUD[/dim]{sep}[bold {k}]^B[/] [dim]anim config[/dim]",
+            f"[bold {k}]/anim[/] [dim]animations[/dim]{sep}[bold {k}]/skin[/] [dim]themes[/dim]",
         ]
         self._idle_tips_cache = tips
         return tips
@@ -2448,7 +2476,7 @@ class StatusBar(PulseMixin, Widget):
             "status_model", "status_context_tokens", "status_context_max",
             "status_compaction_progress", "status_compaction_enabled",
             "command_running",
-            "browse_mode", "browse_index", "_browse_total",
+            "browse_mode", "browse_index", "_browse_total", "browse_detail_level",
             "status_output_dropped",
             "status_active_file",
         ):
@@ -2523,7 +2551,8 @@ class StatusBar(PulseMixin, Widget):
             browse_total = getattr(app, "_browse_total", 0)
 
             browse_uses = getattr(app, "_browse_uses", 0)
-            left = Text(f"BROWSE ▸{browse_idx + 1}/{browse_total}", style="bold")
+            browse_detail = getattr(app, "browse_detail_level", 0)
+            left = Text(f"BROWSE ▸{browse_idx + 1}/{browse_total} · L{browse_detail}", style="bold")
             if width >= 60:
                 if browse_uses <= 3:
                     left.append("  Tab · Enter · c copy · a expand-all · Esc exit", style="dim")
@@ -2851,11 +2880,13 @@ class CountdownMixin:
     # Initial total seconds — set from state.remaining in each widget's update().
     # Used to compute the ▓▒░ fill ratio.
     _countdown_total: int = 30
+    _countdown_start_time: float = 0.0
 
     def _start_countdown(self) -> None:
         """Call from on_mount(). Starts the 1-second tick timer."""
         if self._countdown_timer is not None:
             return  # already running
+        self._countdown_start_time = time.monotonic()
         self._countdown_timer = self.set_interval(1.0, self._tick_countdown)
 
     def on_unmount(self) -> None:
@@ -2899,20 +2930,30 @@ class CountdownMixin:
         Spec §2.3: ▓ = remaining time (left, colored); ░ = elapsed (right, dim).
         Color phases: >5s → $primary; 1-5s → lerp($primary→$warning); ≤1s → $error.
         """
-        # Bar color phase
-        if remaining > 5:
-            bar_color = "#5f87d7"  # $primary calm
-        elif remaining > 1:
-            t = (5.0 - remaining) / 4.0
-            bar_color = lerp_color("#5f87d7", "#FFA726", t)
+        # Bar color — smooth full-range lerp from primary (start) to error (expiry)
+        elapsed = time.monotonic() - self._countdown_start_time
+        t = min(1.0, elapsed / max(1, total))
+        bar_color = lerp_color("#5f87d7", "#ef5350", t)
+
+        # Urgency glyph prefix for low countdown (C2: accessibility)
+        _no_unicode = os.environ.get("HERMES_NO_UNICODE") or os.environ.get("HERMES_ACCESSIBLE")
+        if _no_unicode:
+            urgency_prefix = ""
+        elif remaining <= 1:
+            urgency_prefix = "⚠⚠ "
+        elif remaining <= 3:
+            urgency_prefix = "⚠ "
         else:
-            bar_color = "#ef5350"  # $error critical
+            urgency_prefix = ""
 
         label = f"{remaining:>2}s"
         label_width = len(label) + 1   # leading space + label
         bar_width = max(8, width - label_width)
 
         result = Text()
+        if urgency_prefix:
+            result.append(urgency_prefix, Style(color=bar_color, bold=True))
+            bar_width = max(4, bar_width - len(urgency_prefix))
         ratio = min(1.0, remaining / max(1, total))
         filled_cells = int(bar_width * ratio)
 
@@ -3517,6 +3558,20 @@ class KeymapOverlay(Widget):
         "[bold $text]System[/bold $text]\n"
         "  This help                       [dim]\\[F1][/dim]\n"
         "  Quit                            [dim]\\[Ctrl+Q][/dim]\n"
+        "\n"
+        "[bold $text]Tool Panel (when focused)[/bold $text]\n"
+        "  Cycle detail level              [dim]\\[d][/dim]  [dim]\\[D][/dim]\n"
+        "  Jump to level 0–3               [dim]\\[0][/dim]  [dim]\\[1][/dim]  [dim]\\[2][/dim]  [dim]\\[3][/dim]\n"
+        "  Toggle L1 / L2                  [dim]\\[Enter][/dim]\n"
+        "  Collapse / restore              [dim]\\[Space][/dim]\n"
+        "  Copy output / input             [dim]\\[y][/dim]  [dim]\\[Y][/dim]\n"
+        "  Rerun tool                      [dim]\\[r][/dim]\n"
+        "  Expand / collapse output        [dim]\\[j][/dim]  [dim]\\[k][/dim]\n"
+        "\n"
+        "[bold $text]Mouse & Right-click[/bold $text]\n"
+        "  Right-click tool                Context menu (copy · expand · rerun)\n"
+        "  Click path or URL               Open in editor / browser\n"
+        "  Drag file to input              Attach as @token\n"
     )
 
     _CONTENT_NARROW = (
@@ -3536,6 +3591,15 @@ class KeymapOverlay(Widget):
         "\n"
         "[bold $text]System[/bold $text]\n"
         "  Help  [dim]\\[F1][/dim]    Quit  [dim]\\[Ctrl+Q][/dim]\n"
+        "\n"
+        "[bold $text]Tool Panel[/bold $text]\n"
+        "  Detail level\n    [dim]\\[d][/dim]  [dim]\\[D][/dim]  [dim]\\[0–3][/dim]\n"
+        "  Copy / rerun\n    [dim]\\[y][/dim]  [dim]\\[Y][/dim]  [dim]\\[r][/dim]\n"
+        "  Expand/collapse\n    [dim]\\[j][/dim]  [dim]\\[k][/dim]\n"
+        "\n"
+        "[bold $text]Mouse[/bold $text]\n"
+        "  Right-click\n    Context menu\n"
+        "  Click path\n    Open in editor\n"
     )
 
     def compose(self) -> ComposeResult:

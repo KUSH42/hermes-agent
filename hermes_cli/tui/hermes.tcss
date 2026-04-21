@@ -259,6 +259,14 @@ CompletionOverlay {
     border-top: hkey $accent 60%;
 }
 
+/* E1: Hide preview and expand list when nothing is highlighted */
+CompletionOverlay.--no-preview PreviewPanel {
+    display: none;
+}
+CompletionOverlay.--no-preview VirtualCompletionList {
+    width: 1fr;
+}
+
 VirtualCompletionList {
     background: $surface-lighten-1;
     color: $text;
@@ -430,10 +438,10 @@ HermesApp.density-compact MessagePanel          { margin: 0; }
 HermesApp.density-compact ReasoningPanel        { margin: 0; }
 HermesApp.density-compact CopyableBlock         { margin: 0; }
 HermesApp.density-compact UserMessagePanel         { margin: 0; padding: 0 1; }
-HermesApp.density-compact StatusBar             { padding: 0; }
-HermesApp.density-compact HintBar               { padding: 0; }
-HermesApp.density-compact ImageBar              { padding: 0; }
-HermesApp.density-compact VoiceStatusBar        { padding: 0; }
+HermesApp.density-compact StatusBar             { padding: 0 1; }
+HermesApp.density-compact HintBar               { padding: 0 1; }
+HermesApp.density-compact ImageBar              { padding: 0 1; }
+HermesApp.density-compact VoiceStatusBar        { padding: 0 1; }
 HermesApp.density-compact #input-row            { padding: 0; }
 /* Overlays: trim extra padding to match standard 0 1 in compact mode */
 HermesApp.density-compact ClarifyWidget,
@@ -504,6 +512,7 @@ ToolAccent.-warning     { background: $warning; }
 ToolAccent.-muted       { background: $primary 8%; }
 
 ToolPanel:focus         { background: $accent 10%; }
+ToolPanel:hover         { background: $accent 5%; }
 
 /* --- Tool Panel v3 Phase B (tui-tool-panel-v3-spec.md §5.2) ---
  * ToolHeaderBar chips and layout.
@@ -529,9 +538,9 @@ ToolPanelMini { height: 1; layout: horizontal; }
 ToolPanelMini:focus { background: $accent 10%; }
 
 /* --- Tool grouping (virtual — no DOM container) --- */
-<<<<<<< HEAD
-ToolPanel.tool-panel--grouped { padding-left: 2; }
-ToolPanel.group-hidden         { display: none; }
+ToolPanel.tool-panel--grouped    { padding-left: 2; }
+ToolPanel.group-hidden           { display: none; }
+ToolPanel.tool-panel--child-diff { margin-left: 2; }
 
 GroupHeader {
     height: 1;
@@ -564,8 +573,3 @@ SectionDivider { height: 1; color: $text-muted; }
 AgentThought { height: auto; }
 ToolSequence { height: auto; }
 AgentFinalResponse { height: auto; }
-=======
-ToolPanel.tool-panel--grouped    { padding-left: 2; }
-ToolPanel.group-hidden           { display: none; }
-ToolPanel.tool-panel--child-diff { margin-left: 2; }
->>>>>>> 88114c39 (feat(tui): tool header polish — shell prompt, bash highlighting, path links, grep icon, group cleanup)

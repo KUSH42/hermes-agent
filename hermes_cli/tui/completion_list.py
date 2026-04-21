@@ -41,6 +41,12 @@ _SHIMMER_LEN   = len(_SHIMMER_CHARS)
 
 # Pre-built status rows for empty states (avoids allocation in hot render path)
 _NO_MATCH_PREFIX = "  no results"
+_EMPTY_REASON_TEXT: dict[str, str] = {
+    "": "  no results",
+    "path_not_found": "  path not found",
+    "no_slash_match": "  no matching command",
+    "too_short": "  keep typing…",
+}
 _SEARCHING_PLAIN = Text("  searching…", style="dim italic", overflow="ellipsis", no_wrap=True)
 
 
@@ -82,6 +88,7 @@ class VirtualCompletionList(ScrollView, can_focus=True):
     items: reactive[tuple["Candidate", ...]] = reactive(tuple, layout=True)
     highlighted: reactive[int] = reactive(-1)
     searching: reactive[bool] = reactive(False, repaint=True)
+    empty_reason: reactive[str] = reactive("", repaint=True)
 
     # Shimmer animation phase (P0-A): incremented at 8 Hz while searching.
     _shimmer_phase: reactive[int] = reactive(0, repaint=True)
@@ -149,6 +156,8 @@ class VirtualCompletionList(ScrollView, can_focus=True):
 
     def _start_shimmer(self) -> None:
         if self._shimmer_timer is not None:
+            return
+        if getattr(self, "app", None) and self.app.has_class("reduced-motion"):
             return
         animations_on = getattr(getattr(self, "app", None), "_animations_enabled", True)
         if animations_on and not self._no_color:
@@ -267,6 +276,8 @@ class VirtualCompletionList(ScrollView, can_focus=True):
         # on every item-batch update (critical for the 10k-item perf path).
         if new and not old:
             self._refresh_fuzzy_color()
+        if new:
+            self.empty_reason = ""  # Clear reason when results arrive
         width = max((len(c.display) for c in new), default=0) + 2
         # When searching with no results yet, keep virtual_size at least 1 row
         # so the shimmer/searching indicator is visible.  Without this,
@@ -318,7 +329,9 @@ class VirtualCompletionList(ScrollView, can_focus=True):
             # P0-B: empty-state row
             if y == 0:
                 query = self.current_query
-                label = (f'{_NO_MATCH_PREFIX} for \u201c{query}\u201d' if query else _NO_MATCH_PREFIX)
+                reason = self.empty_reason
+                base_label = _EMPTY_REASON_TEXT.get(reason, _NO_MATCH_PREFIX)
+                label = (f'{base_label} for \u201c{query}\u201d' if query and reason == "" else base_label)
                 t = Text(label, style="dim italic", overflow="ellipsis", no_wrap=True)
                 segs = _normalize_segments(list(t.render(self.app.console)))
                 strip = Strip(segs, t.cell_len)

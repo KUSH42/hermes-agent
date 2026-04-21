@@ -21,6 +21,13 @@ import queue
 import re
 import threading
 
+# Known TUI slash commands — unknown /cmd input shows a hint instead of routing to agent.
+_KNOWN_SLASH_COMMANDS: frozenset[str] = frozenset([
+    "/loop", "/schedule", "/anim", "/yolo", "/verbose",
+    "/model", "/reasoning", "/skin", "/fast", "/easteregg",
+    "/help", "/queue", "/btw", "/clear",
+])
+
 # File-touching tool names — used by watch_spinner_label to extract active file
 _FILE_TOOLS: frozenset[str] = frozenset({
     "read_file", "write_file", "edit_file", "create_file",
@@ -268,6 +275,8 @@ class HermesApp(App):
     browse_index: reactive[int] = reactive(0)
     # Memoized count of mounted ToolHeaders — avoids O(n) DOM query in StatusBar.render()
     _browse_total: reactive[int] = reactive(0)
+    # Detail level of currently focused ToolPanel in browse mode (for StatusBar badge)
+    browse_detail_level: reactive[int] = reactive(0)
 
     # Output dropped flag — set when queue is full; shown in StatusBar until next successful write
     status_output_dropped: reactive[bool] = reactive(False)
@@ -1345,6 +1354,16 @@ class HermesApp(App):
             panel.candidate = c if isinstance(c, _PC) else None
         except NoMatches:
             pass
+        # Toggle --no-preview class so CompletionOverlay hides preview when nothing highlighted
+        try:
+            from hermes_cli.tui.completion_overlay import CompletionOverlay as _CO
+            comp = self.query_one(_CO)
+            if c is None:
+                comp.add_class("--no-preview")
+            else:
+                comp.remove_class("--no-preview")
+        except NoMatches:
+            pass
 
     def watch_sudo_state(self, value: SecretOverlayState | None) -> None:
         try:
@@ -1854,10 +1873,17 @@ class HermesApp(App):
     def _apply_browse_focus(self) -> None:
         """Update .focused CSS class on all ToolHeaders based on browse state."""
         from hermes_cli.tui.tool_blocks import ToolHeader as _TH
+        from hermes_cli.tui.tool_panel import ToolPanel as _TP
         headers = list(self.query(_TH))
         for i, h in enumerate(headers):
             if self.browse_mode and i == self.browse_index:
                 h.add_class("focused")
+                # Update detail level badge: walk up to nearest ToolPanel parent
+                p = h.parent
+                while p is not None and not isinstance(p, _TP):
+                    p = p.parent
+                if isinstance(p, _TP):
+                    self.browse_detail_level = p.detail_level
             else:
                 h.remove_class("focused")
 
@@ -2868,6 +2894,13 @@ class HermesApp(App):
         # TUI-local commands are intercepted before agent routing
         if isinstance(text, str) and self._handle_tui_command(text):
             return
+
+        # Unknown slash commands: flash hint instead of routing to agent
+        if isinstance(text, str) and text.startswith("/"):
+            cmd = text.split()[0].lower()
+            if cmd not in _KNOWN_SLASH_COMMANDS:
+                self._flash_hint(f"Unknown command: {cmd}  (F1 for help)", 3.0)
+                return
 
         images = list(self.attached_images)
         if images:

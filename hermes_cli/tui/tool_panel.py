@@ -247,6 +247,8 @@ class FooterPane(Widget):
         layout: horizontal;
     }
     FooterPane.compact > .footer-stderr { display: none; }
+    FooterPane #narrow-diff-glyph { color: $warning; display: none; width: 2; }
+    FooterPane.compact #narrow-diff-glyph.-has-diff { display: block; }
     """
 
     COMPONENT_CLASSES = {"footer--exit-chip", "footer--badge", "footer--retry-hint"}
@@ -254,16 +256,26 @@ class FooterPane(Widget):
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self._diff_affordance: DiffAffordance | None = None
+        self._diff_kind: str = ""
+        self._narrow_diff_glyph: Static | None = None
 
     def compose(self) -> ComposeResult:
         self._content = Static("", id="footer-content")
         self._diff_affordance = DiffAffordance()
+        self._narrow_diff_glyph = Static("±", id="narrow-diff-glyph")
         yield self._content
         yield self._diff_affordance
+        yield self._narrow_diff_glyph
 
     def update_summary(self, summary: "ResultSummary") -> None:
         """Re-render footer from a ResultSummary."""
         from rich.text import Text
+        self._diff_kind = getattr(summary, "kind", "") or ""
+        # Update narrow diff glyph visibility
+        if self._diff_kind in ("diff", "patch"):
+            self._narrow_diff_glyph.add_class("-has-diff")
+        else:
+            self._narrow_diff_glyph.remove_class("-has-diff")
 
         parts = Text()
         if summary.exit_code is not None and summary.exit_code != 0:
@@ -338,6 +350,8 @@ class ToolPanel(Widget):
         Binding("y", "copy_output", "Copy output", show=False),
         Binding("Y", "copy_input", "Copy input", show=False),
         Binding("r", "rerun", "Rerun", show=False),
+        Binding("j", "omission_expand", "Expand output", show=False),
+        Binding("k", "omission_collapse", "Collapse output", show=False),
     ]
 
     # Compile-time default 1; overridden in on_mount based on category defaults.
@@ -706,7 +720,6 @@ class ToolPanel(Widget):
         if self._footer_pane is not None:
             show = self._should_show_footer(self.detail_level)
             self._footer_pane.styles.display = "block" if show else "none"
-<<<<<<< HEAD
         # Activate mini-mode for qualifying SHELL calls
         self._maybe_activate_mini(summary)
         # Notify enclosing GroupHeader so it can refresh dot color + stats
@@ -733,8 +746,7 @@ class ToolPanel(Widget):
         except Exception:
             pass
 
-=======
->>>>>>> 88114c39 (feat(tui): tool header polish — shell prompt, bash highlighting, path links, grep icon, group cleanup)
+
     def copy_content(self) -> str:
         """Return full plain-text output regardless of detail level."""
         if self._block is None:
@@ -839,8 +851,30 @@ class ToolPanel(Widget):
         try:
             from hermes_cli.tui.messages import ToolRerunRequested
             self.post_message(ToolRerunRequested(panel=self))
+            if self._header_bar is not None:
+                self._header_bar.flash_rerun()
         except Exception:
             self.app.notify("Rerun not available", timeout=2)
+
+    def action_omission_expand(self) -> None:
+        """j: expand OmissionBar by one page if present."""
+        try:
+            from hermes_cli.tui.tool_blocks import OmissionBar
+            bar = next(iter(self.query(OmissionBar)), None)
+            if bar is not None:
+                bar._do_expand_one()
+        except Exception:
+            pass
+
+    def action_omission_collapse(self) -> None:
+        """k: collapse OmissionBar by one page if present."""
+        try:
+            from hermes_cli.tui.tool_blocks import OmissionBar
+            bar = next(iter(self.query(OmissionBar)), None)
+            if bar is not None:
+                bar._do_collapse_one()
+        except Exception:
+            pass
 
     def force_renderer(self, kind: "ResultKind") -> None:
         """Override classifier and swap to given kind's renderer."""

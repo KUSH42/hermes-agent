@@ -203,6 +203,8 @@ class ToolHeaderBar(Widget):
         self._arg_summary: ArgSummary | None = None
         self._result_pill: object | None = None   # ResultPill; TYPE_CHECKING import only
         self._line_count: LineCountChip | None = None
+        self._last_state: str = "pending"
+        self._rerun_flash_timer: object | None = None
         self._chevron: Static | None = None
         self._duration: DurationChip | None = None
 
@@ -243,8 +245,24 @@ class ToolHeaderBar(Widget):
     # ------------------------------------------------------------------
 
     def set_state(self, state: str) -> None:
+        self._last_state = state
         if self._status_glyph is not None:
             self._status_glyph.set_state(state)
+
+    def flash_rerun(self) -> None:
+        """Flash ⟳ (streaming state) on StatusGlyph for 600ms to confirm rerun queued."""
+        if self._status_glyph is None:
+            return
+        if self._rerun_flash_timer is not None:
+            self._rerun_flash_timer.stop()
+        self._status_glyph.set_state("streaming")
+        self._rerun_flash_timer = self.set_timer(0.6, self._restore_after_rerun)
+
+    def _restore_after_rerun(self) -> None:
+        self._rerun_flash_timer = None
+        if self._status_glyph is None:
+            return
+        self._status_glyph.set_state(self._last_state)
 
     def set_chevron(self, level: int) -> None:
         if self._chevron is not None:

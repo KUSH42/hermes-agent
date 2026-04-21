@@ -345,8 +345,12 @@ class FooterPane(Widget):
                 open_cmd = "open" if _sys.platform == "darwin" else "xdg-open"
                 try:
                     subprocess.Popen([open_cmd, path])
-                except Exception:
-                    pass
+                except Exception as err:
+                    # B3: flash error via parent ToolPanel instead of silently swallowing
+                    try:
+                        self.parent._flash_header(f"open failed: {err}", tone="error")
+                    except Exception:
+                        pass
             event.stop()
 
     def on_resize(self, event: object) -> None:
@@ -422,7 +426,7 @@ class ToolPanel(Widget):
         Binding("K",     "scroll_body_page_up",   "↑↑",   show=False),
         Binding("<",     "scroll_body_top",        "Top",  show=False),
         Binding(">",     "scroll_body_bottom",     "End",  show=False),
-        Binding("question_mark", "show_help",      "Keys", show=False),
+        Binding("f1",    "show_help",        "Keys", show=False),  # A1: rebind to f1 (? now exclusively context menu)
         Binding("P",     "copy_full_path",   "Copy full path",   show=False),  # A7
         Binding("x",     "dismiss_error_banner", "Dismiss",      show=False),  # A5
         Binding("question_mark", "show_context_menu", "Menu",    show=False),  # D1
@@ -810,9 +814,18 @@ class ToolPanel(Widget):
 
     def action_copy_err(self) -> None:
         rs = self._result_summary_v4
-        if rs is None or not rs.stderr_tail:
+        if rs is None:
             return
-        self.app._copy_text_with_hint(rs.stderr_tail)
+        # A3: prefer stderr_tail; fall back to copy_err action payload
+        payload = rs.stderr_tail
+        if not payload:
+            for action in (rs.actions or ()):
+                if action.kind == "copy_err" and action.payload:
+                    payload = action.payload
+                    break
+        if not payload:
+            return
+        self.app._copy_text_with_hint(payload)
         self._flash_header("copied stderr")
 
     def action_copy_paths(self) -> None:
@@ -1053,15 +1066,16 @@ class ToolPanel(Widget):
             pass
 
     def action_show_help(self) -> None:
-        """E1: show/hide ToolPanel key reference overlay."""
+        """C1: show/hide ToolPanel key reference overlay (pre-mounted at screen level)."""
         from hermes_cli.tui.overlays import ToolPanelHelpOverlay
         try:
-            existing = self.app.query_one(ToolPanelHelpOverlay)
-            existing.hide_overlay()
+            overlay = self.app.query_one(ToolPanelHelpOverlay)
+            if overlay.has_class("--visible"):
+                overlay.hide_overlay()
+            else:
+                overlay.show_overlay()
         except Exception:
-            overlay = ToolPanelHelpOverlay()
-            self.app.mount(overlay)
-            overlay.show_overlay()
+            pass
 
     # Focus styling done via CSS :focus pseudo-class in hermes.tcss.
     # on_focus/on_blur avoided: they trigger layout refreshes that interfere
@@ -1071,13 +1085,16 @@ class ToolPanel(Widget):
         """C4: on first focus, flash one-shot '(Enter) toggle' hint."""
         if not self._toggle_hint_shown:
             self._toggle_hint_shown = True
-            self._flash_header("(Enter) toggle", tone="accent")
+            header = getattr(self._block, "_header", None)
+            if header is not None and getattr(header, "_has_affordances", False):
+                self._flash_header("(Enter) toggle", tone="accent")  # D4
 
     def watch_has_focus(self, value: bool) -> None:
         if self._hint_row is None:
             return
         if value:
             self._hint_row.update(self._build_hint_text())
+            self._hint_row.add_class("--has-hint")  # D1: gate border-top on focus+content
             # P1-7: emit once so app can show "o to open" hint in non-OSC-8 terminals
             try:
                 block = self._block
@@ -1087,6 +1104,7 @@ class ToolPanel(Widget):
                 pass
         else:
             self._hint_row.update("")
+            self._hint_row.remove_class("--has-hint")  # D1: remove border when unfocused
 
     def on_resize(self, event: object) -> None:
         width = getattr(getattr(event, "size", None), "width", 80)
@@ -1104,6 +1122,12 @@ class ToolPanel(Widget):
         rs = self._result_summary_v4
         hints: list[tuple[str, str, str]] = []  # (key, sep, label)
 
+        # A2: tail-follow hint when block is actively streaming
+        _block_streaming = (
+            hasattr(self._block, "_completed") and
+            not self._block._completed
+        )
+
         # D3: state-aware hints
         if rs is not None and rs.is_error:
             hints.append(("r", " ", "retry  "))
@@ -1115,6 +1139,9 @@ class ToolPanel(Widget):
         hints.append(("c", " ", "copy  "))
 
         if not narrow:
+            # A2: show tail-follow hint during active streaming
+            if _block_streaming:
+                hints.append(("f", " ", "tail  "))
             hints.append(("  Enter", " ", "toggle  "))
             bar = self._get_omission_bar()
             if bar is not None:
@@ -1125,9 +1152,13 @@ class ToolPanel(Widget):
                 hints.append(("j/k", " ", "scroll  "))
             hints.append(("C/H", " ", "color/html  "))
             hints.append(("I", " ", "invocation  "))
+            hints.append(("F1", " ", "help  "))  # A1: f1 key for help overlay
             if rs is not None:
-                # D3: stderr hint only when there is stderr
-                if rs.stderr_tail:
+                # A3: stderr hint when stderr_tail OR copy_err action has payload
+                has_copy_err = rs.stderr_tail or any(
+                    a.kind == "copy_err" and a.payload for a in (rs.actions or ())
+                )
+                if has_copy_err:
                     hints.append(("e", " ", "stderr  "))
                 # D3: error banner dismiss
                 try:

@@ -94,10 +94,14 @@ class HelpOverlay(Widget):
     def show_overlay(self) -> None:
         """Show overlay and focus the filter input."""
         self.add_class("--visible")
+        # C1: clear previous search query so the list always opens unfiltered
         try:
-            self.query_one("#help-search", Input).focus()
+            inp = self.query_one("#help-search", Input)
+            inp.value = ""
+            inp.focus()
         except NoMatches:
             pass
+        self._populate(self._commands_cache)
 
     def _populate(self, entries: list[tuple[str, str, str]]) -> None:
         """Rebuild content list with a single batched mount to avoid per-item repaint."""
@@ -456,6 +460,11 @@ class WorkspaceOverlay(Widget):
 
     def show_overlay(self) -> None:
         self.add_class("--visible")
+        # C4: focus first tab button so keyboard tab-through works from the start
+        try:
+            self.query_one("#ws-tab-git", Button).focus()
+        except NoMatches:
+            pass
 
     def action_dismiss(self) -> None:
         self.remove_class("--visible")
@@ -617,6 +626,8 @@ class SessionOverlay(Widget):
         except NoMatches:
             pass
         self._load_sessions()
+        # C3: take keyboard focus so ↑↓ navigation works immediately after opening.
+        self.focus()
 
     @work(thread=True)
     def _load_sessions(self) -> None:
@@ -671,6 +682,14 @@ class SessionOverlay(Widget):
             return
         for i, row in enumerate(rows):
             row.set_class(i == self._selected_idx, "--selected")
+        # C2: scroll to keep selected row visible
+        if 0 <= self._selected_idx < len(rows):
+            try:
+                self.query_one("#sess-scroll", ScrollableContainer).scroll_to_widget(
+                    rows[self._selected_idx], animate=False
+                )
+            except NoMatches:
+                pass
 
     def action_move_up(self) -> None:
         self._selected_idx = max(0, self._selected_idx - 1)
@@ -797,8 +816,8 @@ class ToolPanelHelpOverlay(Widget):
         self.add_class("--visible")
 
     def hide_overlay(self) -> None:
+        # C1: overlay is pre-mounted at app compose time; just hide it, don't remove.
         self.remove_class("--visible")
-        self.remove()
 
     def on_key(self, event: "object") -> None:
         key = getattr(event, "key", None)
@@ -864,12 +883,17 @@ class VerbosePickerOverlay(Widget):
         yield ol
 
     def refresh_data(self, cli: object) -> None:
-        """Pre-select the current tool_progress value."""
+        """Pre-select the current tool_progress value and add ● active marker."""
         cfg = _cfg_read_raw_config()
         current = cfg.get("display", {}).get("tool_progress", "all")
         try:
             ol = self.query_one("#vpo-list", OptionList)
+            ol.clear_options()
             keys = [k for k, _ in self._OPTIONS]
+            for key, label in self._OPTIONS:
+                # C4: prefix active option with ● so it's immediately visible
+                marker = "● " if key == current else "  "
+                ol.add_option(Option(f"{marker}{label}", id=f"vpo-opt-{key}"))
             idx = keys.index(current) if current in keys else 2  # default "all"
             ol.highlighted = idx
         except (NoMatches, ValueError):
@@ -1341,6 +1365,10 @@ class SkinPickerOverlay(Widget):
 
     def action_dismiss(self) -> None:
         """Revert to original skin on escape."""
+        # C2: apply_skin() → ThemeManager.load_dict() pops "component_vars" and treats
+        # all remaining keys as flat CSS variable overrides (_css_vars). The original
+        # skin data is saved as separate _css_vars + _component_vars dicts so we must
+        # merge them with the component_vars key preserved.
         combined = {**self._original_css_vars, "component_vars": self._original_component_vars}
         try:
             self.app.apply_skin(combined)

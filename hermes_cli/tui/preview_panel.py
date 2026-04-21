@@ -160,7 +160,10 @@ class PreviewPanel(RichLog):
                         lines.append(f"{prefix}{entry.name}")
                     if len(all_entries) > 40:
                         lines.append(f"  … ({len(all_entries)} total)")
-                    text = "\n".join(lines) if lines else "(empty directory)"
+                    # B4: prepend directory name + total count as header
+                    header = f"{path.name}/  ({len(all_entries)} items)"
+                    body = "\n".join(lines) if lines else "(empty)"
+                    text = f"{header}\n\n{body}"
                 except OSError as e:
                     text = f"(cannot read directory: {e})"
                 if not worker.is_cancelled:

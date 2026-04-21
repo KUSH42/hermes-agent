@@ -234,9 +234,21 @@ class CopyableBlock(Widget):
     def on_mouse_enter(self, _event: Any) -> None:
         """Lazily mount the copy button on first hover."""
         try:
+            from hermes_cli.tui.constants import accessibility_mode, ICON_COPY
+        except ImportError:
+            ICON_COPY = "⎘"
+            def accessibility_mode() -> bool:  # type: ignore[no-redef]
+                return False
+        if accessibility_mode():
+            try:
+                self.query_one("#copy-btn")
+            except NoMatches:
+                self.mount(Static("[Copy]", id="copy-btn"))
+            return
+        try:
             self.query_one("#copy-btn")
         except NoMatches:
-            self.mount(Static("⎘", id="copy-btn"))
+            self.mount(Static(ICON_COPY, id="copy-btn"))
 
 
 class CodeBlockFooter(Widget):

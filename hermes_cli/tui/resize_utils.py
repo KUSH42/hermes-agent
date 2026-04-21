@@ -6,7 +6,7 @@ from __future__ import annotations
 THRESHOLD_ULTRA_NARROW = 40   # below: show MinSizeOverlay, hide all decorations
 THRESHOLD_NARROW       = 60   # ToolPanel compact, ToolsScreen dismiss
 THRESHOLD_TOOL_NARROW  = 80   # ToolGroup --narrow
-THRESHOLD_COMP_NARROW  = 100  # CompletionOverlay --narrow
+THRESHOLD_COMP_NARROW  = 80   # CompletionOverlay --narrow (lowered from 100: 80-100 was cramped)
 
 # Row thresholds
 THRESHOLD_MIN_HEIGHT   = 8    # below: show MinSizeOverlay

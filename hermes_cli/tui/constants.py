@@ -5,6 +5,21 @@ All widgets should reference these symbols so a single edit changes
 the icon everywhere.
 """
 
+import os as _os
+
+
+def accessibility_mode() -> bool:
+    """Return True when the user has requested reduced-unicode / accessible output.
+
+    Checks both HERMES_NO_UNICODE and HERMES_ACCESSIBLE env vars so either
+    convention works.  Callers should guard NF icons and braille characters
+    behind this function.
+    """
+    for key in ("HERMES_NO_UNICODE", "HERMES_ACCESSIBLE"):
+        if _os.environ.get(key, "").strip().lower() in ("1", "true", "yes"):
+            return True
+    return False
+
 # Input prompt
 CHEVRON          = "❯"
 

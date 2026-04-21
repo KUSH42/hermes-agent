@@ -113,6 +113,7 @@ class GroupHeader(Widget):
         self._duration_ms = 0
         self._child_count = 0
         self._collapsed = False
+        self._error_count: int = 0  # B2: child error count for header chip
 
     def update(
         self,
@@ -122,6 +123,7 @@ class GroupHeader(Widget):
         duration_ms: int,
         child_count: int,
         collapsed: bool,
+        error_count: int = 0,  # B2: number of errored child panels
     ) -> None:
         self._summary_text = summary_text
         self._diff_add = diff_add
@@ -129,6 +131,7 @@ class GroupHeader(Widget):
         self._duration_ms = duration_ms
         self._child_count = child_count
         self._collapsed = collapsed
+        self._error_count = error_count  # B2
         self.refresh()
 
     def render(self) -> Text:
@@ -159,6 +162,10 @@ class GroupHeader(Widget):
                 t.append(f"  {int(ms)}ms", style="dim")
             else:
                 t.append(f"  {ms / 1000:.1f}s", style="dim")
+
+        # B2: error count chip — shown before op count for prominence
+        if self._error_count > 0:
+            t.append(f"  {self._error_count} err", style="bold red")
 
         # Op count (drop first if narrow)
         if self._child_count > 1 and term_w >= 60:
@@ -391,6 +398,7 @@ class ToolGroup(Widget):
             duration_ms=duration_ms,
             child_count=len(children),
             collapsed=self.collapsed,
+            error_count=error_count,  # B2: pass error count for chip rendering
         )
 
     def on_tool_panel_completed(self, event: object) -> None:

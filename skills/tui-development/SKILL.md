@@ -1093,3 +1093,29 @@ Recent changes (details → reference files):
 - **Diff merged into patch STB header** (2026-04-18): `inject_diff(diff_lines, header_stats)` on STB;
   `close_streaming_tool_block_with_diff` on app; cli.py `_on_tool_complete` restructured.
   → `tool_blocks.py`, `app.py`, `cli.py §_on_tool_complete`
+- **Tool UX Audit Pass 8** (2026-04-21): 20 fixes, 76 tests.
+  A1: `ToolPanel` duplicate `question_mark→show_help` binding removed; `f1` now binds `show_help`.
+  A2: `_build_hint_text` adds `("f"," ","tail  ")` hint when `_block._completed` is False.
+  A3: `action_copy_err` fallbacks to `copy_err` Action payload when `rs.stderr_tail` is empty; `_build_hint_text` checks both.
+  A4: `action_dismiss_overlay` on `ToolsScreen` clears filter input value and `_filter_text` before popping screen.
+  A5: `StreamingToolBlock.refresh_skin()` updates `OmissionBar` reset button label via `bar.query_one(".--ob-cap", Button)`.
+  B1: `microcopy_line` CODE branch adds `· {rate_bps/1024:.0f} kB/s` when `rate_bps > 0`.
+  B2: `GroupHeader.__init__` adds `_error_count=0`; `update()` gains `error_count` param; `render()` appends `N err` chip (bold red) when `_error_count > 0`; `ToolGroup.recompute_aggregate()` passes `error_count=` to `header.update()`.
+  B3: `FooterPane.on_button_pressed` artifact chip `except` block calls `self.parent._flash_header(f"open failed: {err}", tone="error")`.
+  B4: `ToolHeader._render_v4` flash style dict gains `"accent": "dim cyan"` and `"neutral": "dim"` entries.
+  B5: `ToolsScreen` compose footer Static updated to include `[C] clear` and `[s] sort`; `Binding("C","clear_all_filters",...)` added.
+  C1: `web_result_v4` code=None non-error path: primary=`f"✓ {size_str}"`, no status chip.
+  C2: `generic_result_v4` success primary: `f"✓ {n} lines"` if n>0 else `"✓ done"` (was bare `"✓"`).
+  C3: `agent_result_v4` success adds `_make_copy_body(raw)` to actions.
+  C4: `_parse_http_response` dict branch: when `code is None` and `raw.get("redirect_url") or raw.get("location")`, synthesize `code=302, reason="Found"`.
+  C5: `file_result_v4` fallback count chip: `(Chip(f"{n}","count","neutral"),) if n > 1 else ()`.
+  D1: `watch_has_focus` adds/removes `"--has-hint"` class on hint row; `hermes.tcss` moves `border-top: solid $boost` from `.--focus-hint` to `.--focus-hint.--has-hint`.
+  D2: `action_clear_all_filters()` resets `_filter_text=""`, `_active_categories=set()`, `_errors_only=False`, hides filter input, calls `_apply_filter()` + `_rebuild()`.
+  D3: `StreamingToolBlock._update_microcopy()` top guard: `if self._completed: return` — prevents microcopy reappearing after completion timer ticks.
+  D4: `ToolPanel.on_focus()` hint flash guarded: only fires when `getattr(header, "_has_affordances", False)` is True.
+  D5: `ToolBodyContainer.set_args_row()` except path resets `_args_row_mounted = False` before re-mount attempt, so stale flag doesn't silently skip re-mount.
+  Gotcha: `ToolsScreen.app` and `ToolsScreen.parent` are Textual properties — cannot be set on `__new__` instances; use `types.SimpleNamespace` for unit tests.
+  Gotcha: `GroupHeader.update()` positional args: `(summary_text, diff_add, diff_del, duration_ms, child_count, collapsed, error_count=0)`.
+  Gotcha: `_parse_http_response` returns `(code, reason, length)` — third element is NOT `is_error`.
+  76 tests in `tests/tui/test_tool_ux_pass8_{a,b,c,d}.py`.
+  → `tool_panel.py`, `tool_blocks.py`, `streaming_microcopy.py`, `tool_result_parse.py`, `tool_group.py`, `tools_overlay.py`, `hermes.tcss`

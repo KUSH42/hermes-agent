@@ -719,11 +719,18 @@ class KeymapOverlay(Widget):
         "  Accept autocomplete             [dim]\\[Tab][/dim]\n"
         "  Insert newline                  [dim]\\[Shift+Enter][/dim]\n"
         "  Previous / next history         [dim]\\[↑][/dim]  [dim]\\[↓][/dim]\n"
+        "  Path/file reference             [dim]\\[@file][/dim]  [dim]\\[Ctrl+P][/dim]\n"
         "\n"
         "[bold $text]Tools[/bold $text]\n"
         "  Expand / collapse tool block    [dim]\\[click header][/dim]\n"
         "  Expand all / collapse all       [dim]\\[a][/dim]  [dim]\\[A][/dim]  (browse mode)\n"
         "  Interrupt agent                 [dim]\\[Ctrl+C][/dim]  [dim]\\[Escape][/dim]\n"
+        "\n"
+        "[bold $text]Slash Commands[/bold $text]\n"
+        "  /help                           List all commands\n"
+        "  /model  /reasoning  /skin       Picker overlays\n"
+        "  /yolo   /verbose                Toggle modes\n"
+        "  /clear  /undo  /retry           Session control\n"
         "\n"
         "[bold $text]Panels[/bold $text]\n"
         "  Click reasoning                 Collapse / expand\n"
@@ -749,6 +756,9 @@ class KeymapOverlay(Widget):
         "[bold $text]Tools[/bold $text]\n"
         "  Expand/collapse\n    [dim]\\[click header][/dim]\n"
         "  Interrupt\n    [dim]\\[Ctrl+C][/dim]\n"
+        "\n"
+        "[bold $text]Commands[/bold $text]\n"
+        "  /model /skin /yolo /clear\n"
         "\n"
         "[bold $text]System[/bold $text]\n"
         "  Help  [dim]\\[F1][/dim]    Quit  [dim]\\[Ctrl+Q][/dim]\n"
@@ -836,6 +846,8 @@ class HistorySearchOverlay(Widget):
         self._selected_idx: int = 0
         self._saved_hint: str = ""
         self._debounce_handle: Any = None  # Timer | None; cancelled on each new keystroke
+        self._cross_session_loading: bool = False  # B4: worker in-flight flag
+        self._max_results: int = 50
 
     def compose(self) -> ComposeResult:
         yield Input(placeholder="Search history  ↑↓ navigate · Enter jump · Esc close", id="history-search-input")
@@ -854,6 +866,12 @@ class HistorySearchOverlay(Widget):
             hint_bar.hint = "↑↓ navigate  Enter jump  Esc close"
         except NoMatches:
             self._saved_hint = ""
+        # A1: clear previous search query so the list always opens unfiltered
+        try:
+            inp = self.query_one("#history-search-input", Input)
+            inp.value = ""
+        except NoMatches:
+            pass
         self._render_results("")
         self.add_class("--visible")
         try:
@@ -868,6 +886,11 @@ class HistorySearchOverlay(Widget):
         if self._debounce_handle is not None:
             self._debounce_handle.stop()
             self._debounce_handle = None
+        # A2: clear highlighted_candidate so ghost text is not left stale
+        try:
+            self.app.highlighted_candidate = None
+        except Exception:
+            pass
         self.remove_class("--visible")
         try:
             from .status_bar import HintBar
@@ -922,7 +945,23 @@ class HistorySearchOverlay(Widget):
             self._debounce_handle.stop()
             self._debounce_handle = None
         query = event.value
-        self._debounce_handle = self.set_timer(0.15, lambda: self._render_results(query))
+        if getattr(self, "_mode", "current") == "all":
+            # B4: in all-sessions mode, re-run cross-session search on new query
+            def _run_cross() -> None:
+                self._cross_session_loading = True
+                self._show_cross_session_loading()
+                if hasattr(self, "_search_cross_session"):
+                    self._search_cross_session(query)
+            self._debounce_handle = self.set_timer(0.25, _run_cross)
+        else:
+            self._debounce_handle = self.set_timer(0.15, lambda: self._render_results(query))
+
+    def _show_cross_session_loading(self) -> None:
+        """B4: display a 'Searching…' indicator in the status bar while the worker runs."""
+        try:
+            self.query_one("#history-status", Static).update("[dim]Searching all sessions…[/dim]")
+        except NoMatches:
+            pass
 
     def _render_results(self, query: str) -> None:
         """Search with match highlighting and update the result list.

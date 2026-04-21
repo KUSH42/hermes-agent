@@ -352,9 +352,11 @@ def file_result_v4(ctx: ParseContext) -> ResultSummaryV4:
                 )
             # Fallback: count written lines
             n = len([l for l in raw.splitlines() if l.strip()])
+            # C5: suppress count chip when n <= 1 (uninformative for short responses)
+            count_chips: tuple = (Chip(f"{n}", "count", "neutral"),) if n > 1 else ()
             return ResultSummaryV4(
                 primary=f"✓ wrote {n} lines", exit_code=None,
-                chips=(Chip(f"{n}", "count", "neutral"),),
+                chips=count_chips,
                 stderr_tail="", actions=(_make_action("open first", "o", "open_first"),),
                 artifacts=artifacts, is_error=False,
             )
@@ -654,6 +656,10 @@ def _parse_http_response(raw) -> tuple[int | None, str | None, int | None]:
         code = raw.get("status_code") or raw.get("status")
         reason = raw.get("reason", "")
         length = raw.get("content_length")
+        # C4: detect redirect from location/redirect_url fields when no status code
+        if code is None and (raw.get("redirect_url") or raw.get("location")):
+            code = 302
+            reason = "Found"
         return (int(code) if code else None, str(reason) if reason else None,
                 int(length) if length else None)
     text = str(raw)
@@ -733,13 +739,27 @@ def web_result_v4(ctx: ParseContext) -> ResultSummaryV4:
             artifacts=artifacts, is_error=True, error_kind=error_kind,
         )
 
-    display_code = f"{code}" if code else "?"
+    # C1: when code is None (no HTTP status detected), don't show misleading "?"
+    if code is None:
+        primary = f"✓ {size_str}"
+        return ResultSummaryV4(
+            primary=primary, exit_code=None,
+            chips=(Chip(size_str, "bytes", "neutral"),),
+            stderr_tail="",
+            actions=(
+                _make_action("open url", "o", "open_url"),
+                _make_copy_body(raw),
+            ),
+            artifacts=artifacts, is_error=False,
+        )
+
+    display_code = f"{code}"
     display_reason = f" {reason}" if reason else ""
     primary = f"✓ {display_code}{display_reason} · {size_str}"
     # B5: 3xx redirects use warning tone; 2xx use success; else neutral
-    if code and code < 300:
+    if code < 300:
         tone: ChipTone = "success"
-    elif code and code < 400:
+    elif code < 400:
         tone = "warning"  # B5: 3xx redirect
     else:
         tone = "neutral"
@@ -771,9 +791,10 @@ def agent_result_v4(ctx: ParseContext) -> ResultSummaryV4:
             actions=(_make_copy_err("", raw),),
             artifacts=(), is_error=True, error_kind=ctx.complete.error_kind,
         )
+    # C3: include copy_body action so [c] copy works in footer
     return ResultSummaryV4(
         primary="✓ done", exit_code=None, chips=(),
-        stderr_tail="", actions=(), artifacts=(), is_error=False,
+        stderr_tail="", actions=(_make_copy_body(raw),), artifacts=(), is_error=False,
     )
 
 
@@ -955,8 +976,11 @@ def generic_result_v4(ctx: ParseContext) -> ResultSummaryV4:
             actions=(_make_copy_err("", raw),),
             artifacts=(), is_error=True, error_kind=ctx.complete.error_kind,
         )
+    # C2: more informative primary — show line count instead of bare "✓"
+    n = _count_nonempty_lines(raw)
+    primary = f"✓ {n} lines" if n > 0 else "✓ done"
     return ResultSummaryV4(
-        primary="✓", exit_code=None, chips=(),
+        primary=primary, exit_code=None, chips=(),
         stderr_tail="", actions=(_make_copy_body(raw),),
         artifacts=(), is_error=False,
     )

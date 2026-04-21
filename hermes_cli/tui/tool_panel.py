@@ -1066,15 +1066,16 @@ class ToolPanel(Widget):
             pass
 
     def action_show_help(self) -> None:
-        """E1: show/hide ToolPanel key reference overlay."""
+        """C1: show/hide ToolPanel key reference overlay (pre-mounted at screen level)."""
         from hermes_cli.tui.overlays import ToolPanelHelpOverlay
         try:
-            existing = self.app.query_one(ToolPanelHelpOverlay)
-            existing.hide_overlay()
+            overlay = self.app.query_one(ToolPanelHelpOverlay)
+            if overlay.has_class("--visible"):
+                overlay.hide_overlay()
+            else:
+                overlay.show_overlay()
         except Exception:
-            overlay = ToolPanelHelpOverlay()
-            self.app.mount(overlay)
-            overlay.show_overlay()
+            pass
 
     # Focus styling done via CSS :focus pseudo-class in hermes.tcss.
     # on_focus/on_blur avoided: they trigger layout refreshes that interfere

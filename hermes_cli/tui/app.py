@@ -528,6 +528,10 @@ class HermesApp(App):
         # Timestamp until which _flash_hint has the hint bar reserved.
         # _tick_spinner must not overwrite before this expires.
         self._flash_hint_expires: float = 0.0
+        # D3: timer handle for the current flash so we can cancel it on re-entry.
+        self._flash_hint_timer: "object | None" = None
+        # The hint text that was active before the current flash started.
+        self._flash_hint_prior: str = ""
         # Compaction warning state — reset when progress returns to 0
         self._compaction_warned: bool = False
         # Clear animation guard — prevents re-entry while fade is running
@@ -621,6 +625,10 @@ class HermesApp(App):
             yield SkinPickerOverlay(id="skin-picker-overlay")
             yield YoloConfirmOverlay(id="yolo-confirm-overlay")
             yield VerbosePickerOverlay(id="verbose-picker-overlay")
+            # C1: pre-mount ToolPanelHelpOverlay at screen level so layer: overlay
+            # resolves against Screen (not a child ToolPanel).
+            from hermes_cli.tui.overlays import ToolPanelHelpOverlay as _TPHO
+            yield _TPHO(id="tool-panel-help-overlay")
             with Horizontal(id="input-row"):
                 yield Static("❯ ", id="input-chevron")
                 yield _HI(id="input-area")
@@ -1527,6 +1535,12 @@ class HermesApp(App):
         """
         try:
             panel = self.query_one(OutputPanel)
+            # D4: remove empty-state hint (if present from /clear) before mounting user message
+            for hint in panel.query(".--empty-state-hint"):
+                try:
+                    hint.remove()
+                except Exception:
+                    pass
             ump = UserMessagePanel(text, images=images)
             panel.mount(ump, before=panel.query_one(ThinkingWidget))
             # Always scroll to show the user's own message regardless of scroll
@@ -1729,6 +1743,9 @@ class HermesApp(App):
                 output.evict_old_turns()
             except NoMatches:
                 pass
+            # D1: clear output-dropped flag on agent stop so StatusBar backpressure
+            # indicator doesn't persist into the next idle period.
+            self.status_output_dropped = False
             # Clear stale spinner/file breadcrumb — cli.py resets _spinner_text
             # locally but never pushes spinner_label="" to the app, so the last
             # tool label persists into turn 2 and StatusBar shows a stale file path.
@@ -2795,6 +2812,8 @@ class HermesApp(App):
 
     def watch_status_compaction_progress(self, value: float) -> None:
         if value == 0.0:
+            # D2: reset context_pct so StatusBar doesn't show a stale % after compaction
+            self.context_pct = 0.0
             # E4: reset both thresholds on progress return to 0
             self._compaction_warned = False
             self._compaction_warn_99: bool = getattr(self, "_compaction_warn_99", False)
@@ -3836,12 +3855,36 @@ class HermesApp(App):
         """
         try:
             bar = self.query_one(HintBar)
-            prior = bar.hint
+            # D3: cancel the previous flash timer before starting a new one.
+            # Without this, rapid consecutive flashes each capture the *current*
+            # bar.hint as `prior` — the second call captures the first flash's
+            # text, so when the first timer fires it restores flash-1-text instead
+            # of the original idle hint.  Cancelling ensures only one restore
+            # callback is in flight and `prior` is captured once from idle state.
+            if self._flash_hint_timer is not None:
+                try:
+                    self._flash_hint_timer.stop()
+                except Exception:
+                    pass
+                self._flash_hint_timer = None
+                # Restore to the pre-flash prior we saved on the *first* entry
+                prior = self._flash_hint_prior
+            else:
+                # First flash: capture the real idle hint
+                prior = bar.hint
+                self._flash_hint_prior = prior
             bar.hint = text
             # Reserve the hint bar for the flash duration so _tick_spinner
             # does not overwrite the message before it expires.
             self._flash_hint_expires = _time.monotonic() + duration
-            self.set_timer(duration, lambda: setattr(bar, "hint", prior))
+            def _restore() -> None:
+                self._flash_hint_timer = None
+                self._flash_hint_prior = ""
+                try:
+                    setattr(bar, "hint", prior)
+                except Exception:
+                    pass
+            self._flash_hint_timer = self.set_timer(duration, _restore)
         except NoMatches:
             pass
 
@@ -4010,6 +4053,16 @@ class HermesApp(App):
                     if cb.can_toggle():
                         items.append(MenuItem("▸/▾  Expand/Collapse", "", lambda b=cb: b.toggle_collapsed()))
                     return items
+            except ImportError:
+                pass
+
+            # --- UserMessagePanel ---
+            try:
+                from hermes_cli.tui.widgets import UserMessagePanel as _UMP
+                if isinstance(node, _UMP):
+                    msg_text = getattr(node, "_message", "")
+                    if msg_text:
+                        return [MenuItem("⎘  Copy message", "", lambda t=msg_text: self._copy_text_with_hint(t))]
             except ImportError:
                 pass
 
@@ -4452,6 +4505,17 @@ class HermesApp(App):
             self.cli.new_session(silent=True)
             if hasattr(self.cli, "_push_tui_status"):
                 self.cli._push_tui_status()
+            # D4: after clearing, show an empty-state hint so the panel isn't blank.
+            try:
+                op = self.query_one(OutputPanel)
+                op.remove_children()
+                from textual.widgets import Static as _Static
+                op.mount(_Static(
+                    "[dim]New session started — type a message to begin[/dim]",
+                    classes="--empty-state-hint",
+                ))
+            except NoMatches:
+                pass
             self._flash_hint("✨  Fresh start!", 2.0)
         finally:
             self._clear_animation_in_progress = False

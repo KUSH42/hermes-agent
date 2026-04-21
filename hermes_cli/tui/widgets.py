@@ -998,10 +998,24 @@ class CopyableBlock(Widget):
 
     def on_mouse_enter(self, _event: Any) -> None:
         """Lazily mount the copy button on first hover."""
+        # B3: skip icon mount in accessibility / reduced-unicode mode — the
+        # ⎘ glyph may render as a box on screen-reader-compatible terminals.
+        try:
+            from hermes_cli.tui.constants import accessibility_mode, ICON_COPY
+        except ImportError:
+            ICON_COPY = "⎘"
+            def accessibility_mode() -> bool:  # type: ignore[no-redef]
+                return False
+        if accessibility_mode():
+            try:
+                self.query_one("#copy-btn")
+            except NoMatches:
+                self.mount(_CopyBtn("[Copy]", id="copy-btn"))
+            return
         try:
             self.query_one("#copy-btn")
         except NoMatches:
-            self.mount(_CopyBtn("⎘", id="copy-btn"))
+            self.mount(_CopyBtn(ICON_COPY, id="copy-btn"))
 
 
 class CodeBlockFooter(Widget):
@@ -4520,6 +4534,7 @@ class KeymapOverlay(Widget):
         "  Accept autocomplete             [dim]\\[Tab][/dim]\n"
         "  Insert newline                  [dim]\\[Shift+Enter][/dim]\n"
         "  Previous / next history         [dim]\\[↑][/dim]  [dim]\\[↓][/dim]\n"
+        "  Path/file reference             [dim]\\[@file][/dim]  [dim]\\[Ctrl+P][/dim]\n"
         "\n"
         "[bold $text]Tools[/bold $text]\n"
         "  Expand / collapse tool block    [dim]\\[click header][/dim]\n"
@@ -4530,6 +4545,12 @@ class KeymapOverlay(Widget):
         "  Click reasoning                 Collapse / expand\n"
         "  Undo last turn                  [dim]\\[Alt+Z][/dim]\n"
         "  Toggle FPS HUD                  [dim]\\[F8][/dim]\n"
+        "\n"
+        "[bold $text]Slash Commands[/bold $text]\n"
+        "  /help                           List all commands\n"
+        "  /model  /reasoning  /skin       Picker overlays\n"
+        "  /yolo   /verbose                Toggle modes\n"
+        "  /clear  /undo  /retry           Session control\n"
         "\n"
         "[bold $text]System[/bold $text]\n"
         "  This help                       [dim]\\[F1][/dim]\n"
@@ -4546,10 +4567,14 @@ class KeymapOverlay(Widget):
         "[bold $text]Input[/bold $text]\n"
         "  Submit\n    [dim]\\[Enter][/dim]\n"
         "  Autocomplete\n    [dim]\\[Tab][/dim]\n"
+        "  Path ref\n    [dim]\\[@file][/dim]  [dim]\\[Ctrl+P][/dim]\n"
         "\n"
         "[bold $text]Tools[/bold $text]\n"
         "  Expand/collapse\n    [dim]\\[click header][/dim]\n"
         "  Interrupt\n    [dim]\\[Ctrl+C][/dim]\n"
+        "\n"
+        "[bold $text]Commands[/bold $text]\n"
+        "  /model /skin /yolo /clear\n"
         "\n"
         "[bold $text]System[/bold $text]\n"
         "  Help  [dim]\\[F1][/dim]    Quit  [dim]\\[Ctrl+Q][/dim]\n"
@@ -4643,6 +4668,7 @@ class HistorySearchOverlay(Widget):
         self._query_history: list[str] = []
         self._query_history_idx: int = -1
         self._cross_session_results: list[_CrossSessionResult] = []
+        self._cross_session_loading: bool = False  # B4: worker in-flight flag
         self._max_results: int = 50
         self._last_click_idx: int | None = None
         self._shift_selected: set[int] = set()
@@ -4668,6 +4694,12 @@ class HistorySearchOverlay(Widget):
         for item in self.query(TurnResultItem):
             item.set_class(False, "--selected")
         self._query_history_idx = -1
+        # A1: clear previous search query so the list always opens unfiltered
+        try:
+            inp = self.query_one("#history-search-input", Input)
+            inp.value = ""
+        except NoMatches:
+            pass
         # Sync mode bar
         try:
             self.query_one(_ModeBar).set_mode(self._mode)
@@ -4705,6 +4737,11 @@ class HistorySearchOverlay(Widget):
             self._debounce_handle = None
         self._query_history_idx = -1
         self.remove_class("--visible")
+        # A2: clear highlighted_candidate so ghost text is not left stale
+        try:
+            self.app.highlighted_candidate = None
+        except Exception:
+            pass
         try:
             self.app.query_one(HintBar).hint = self._saved_hint
         except NoMatches:
@@ -4756,7 +4793,22 @@ class HistorySearchOverlay(Widget):
             self._debounce_handle.stop()
             self._debounce_handle = None
         query = event.value
-        self._debounce_handle = self.set_timer(0.15, lambda: self._render_results(query))
+        if self._mode == "all":
+            # B4: in all-sessions mode, re-run cross-session search on new query
+            def _run_cross() -> None:
+                self._cross_session_loading = True
+                self._show_cross_session_loading()
+                self._search_cross_session(query)
+            self._debounce_handle = self.set_timer(0.25, _run_cross)
+        else:
+            self._debounce_handle = self.set_timer(0.15, lambda: self._render_results(query))
+
+    def _show_cross_session_loading(self) -> None:
+        """B4: display a 'Searching…' indicator in the status bar while the worker runs."""
+        try:
+            self.query_one("#history-status", Static).update("[dim]Searching all sessions…[/dim]")
+        except NoMatches:
+            pass
 
     def _render_results(self, query: str) -> None:
         """Search with match highlighting and update the result list.
@@ -4905,6 +4957,9 @@ class HistorySearchOverlay(Widget):
         except NoMatches:
             query = ""
         if self._mode == "all" and query:
+            # B4: show loading indicator before worker starts
+            self._cross_session_loading = True
+            self._show_cross_session_loading()
             self._search_cross_session(query)
         else:
             self._render_results(query)
@@ -5018,6 +5073,7 @@ class HistorySearchOverlay(Widget):
 
     def _apply_cross_session_results(self, results: list[_CrossSessionResult]) -> None:
         """Apply cross-session results on the event loop."""
+        self._cross_session_loading = False  # B4: worker finished
         self._cross_session_results = results
         try:
             query = self.query_one("#history-search-input", Input).value
@@ -5862,7 +5918,18 @@ class SourcesBar(Widget):
         if url:
             import subprocess
             opener = "open" if sys.platform == "darwin" else "xdg-open"
-            subprocess.Popen([opener, url])
+            # E2: guard against missing xdg-open / broken URL so the app doesn't crash
+            try:
+                subprocess.Popen(
+                    [opener, url],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except (OSError, FileNotFoundError) as exc:
+                try:
+                    self.app._flash_hint(f"⚠ cannot open URL: {exc}", 2.5)
+                except Exception:
+                    pass
 
 
 # ---------------------------------------------------------------------------
@@ -5952,14 +6019,35 @@ class AssistantNameplate(Widget):
         self._morph_dissolve: list[int] = []  # ticks remaining per position
         self._canvas_width: int = 80
         self._last_nameplate_w: int = 0
+        # E1: instance-level style objects (resolved from CSS vars in on_mount)
+        self._np_idle_color = _NP_IDLE_COLOR
+        self._np_active_color = _NP_ACTIVE_COLOR
+        self._np_decrypt_color = _NP_DECRYPT_COLOR
+        self._np_error_color = _NP_ERROR_COLOR
+        self._np_dim_color = _NP_DIM_COLOR
 
     def on_mount(self) -> None:
         try:
             css_vars = self.app.get_css_variables()
             self._accent_hex = css_vars.get("nameplate-active-color", "#7b68ee")
             self._text_hex = css_vars.get("foreground", "#cccccc")
+            # E1: resolve nameplate colors from skin vars so they respond to hot-reload
+            # rather than using module-level Style.parse() which bakes in defaults at import.
+            idle_hex = css_vars.get("nameplate-idle-color", "#888888")
+            active_hex = css_vars.get("nameplate-active-color", "#7b68ee")
+            decrypt_hex = css_vars.get("nameplate-decrypt-color", "#00ff41")
+            self._np_idle_color = Style.parse(idle_hex)
+            self._np_active_color = Style.parse(f"bold {active_hex}")
+            self._np_decrypt_color = Style.parse(f"bold {decrypt_hex}")
+            self._np_error_color = Style.parse("bold red")
+            self._np_dim_color = Style.parse(f"dim {idle_hex}")
         except Exception:
-            pass
+            # Fallback to module-level constants on any error
+            self._np_idle_color = _NP_IDLE_COLOR
+            self._np_active_color = _NP_ACTIVE_COLOR
+            self._np_decrypt_color = _NP_DECRYPT_COLOR
+            self._np_error_color = _NP_ERROR_COLOR
+            self._np_dim_color = _NP_DIM_COLOR
         if not self._effects_enabled:
             return
         idle_name = self._idle_effect_name
@@ -6037,9 +6125,9 @@ class AssistantNameplate(Widget):
                     )
                 except Exception:
                     pass
-            return Text(self._target_name, style=_NP_IDLE_COLOR)
+            return Text(self._target_name, style=self._np_idle_color)
         if self._state == _NPState.ERROR_FLASH:
-            return Text(self._target_name, style=_NP_ERROR_COLOR)
+            return Text(self._target_name, style=self._np_error_color)
         t = Text()
         for ch in self._frame:
             t.append(ch.current, style=ch.style)
@@ -6070,10 +6158,10 @@ class AssistantNameplate(Widget):
             if self._tick >= ch.lock_at:
                 ch.current = ch.target
                 ch.locked = True
-                ch.style = _NP_IDLE_COLOR
+                ch.style = self._np_idle_color
             else:
                 ch.current = _random.choice(_NP_POOL)
-                ch.style = _NP_DECRYPT_COLOR
+                ch.style = self._np_decrypt_color
                 all_locked = False
         if all_locked and self._frame:
             self._state = _NPState.IDLE
@@ -6087,7 +6175,7 @@ class AssistantNameplate(Widget):
                 pass
 
     def _tick_morph(self) -> None:
-        dst_style = _NP_ACTIVE_COLOR if self._state == _NPState.MORPH_TO_ACTIVE else _NP_IDLE_COLOR
+        dst_style = self._np_active_color if self._state == _NPState.MORPH_TO_ACTIVE else self._np_idle_color
         done = True
         for i, ch in enumerate(self._frame):
             if ch.locked:
@@ -6099,7 +6187,7 @@ class AssistantNameplate(Widget):
                 ch.style = dst_style
             else:
                 ch.current = _random.choice(_NP_POOL)
-                ch.style = _NP_DIM_COLOR
+                ch.style = self._np_dim_color
                 done = False
         if done:
             if self._state == _NPState.MORPH_TO_ACTIVE:
@@ -6116,17 +6204,17 @@ class AssistantNameplate(Widget):
             for _ in range(_random.randint(1, min(3, len(self._frame)))):
                 idx = _random.randrange(len(self._frame))
                 self._frame[idx].current = _random.choice(_NP_POOL)
-                self._frame[idx].style = _NP_DECRYPT_COLOR
+                self._frame[idx].style = self._np_decrypt_color
         elif self._glitch_frame == 3:
             # partial restore
             for ch in self._frame:
                 ch.current = ch.target
-                ch.style = _NP_ACTIVE_COLOR
+                ch.style = self._np_active_color
         else:
             # fully clean; stop timer
             for ch in self._frame:
                 ch.current = ch.target
-                ch.style = _NP_ACTIVE_COLOR
+                ch.style = self._np_active_color
             self._state = _NPState.ACTIVE_IDLE
             self._stop_timer()
 
@@ -6149,7 +6237,7 @@ class AssistantNameplate(Widget):
                 current=_random.choice(_NP_POOL),
                 locked=False,
                 lock_at=max(1, lock_at),
-                style=_NP_DECRYPT_COLOR,
+                style=self._np_decrypt_color,
             ))
         self._tick = 0
 
@@ -6170,7 +6258,7 @@ class AssistantNameplate(Widget):
                 current=s_ch,
                 locked=(s_ch == d_ch),
                 lock_at=ticks,
-                style=_NP_ACTIVE_COLOR if self._state == _NPState.MORPH_TO_ACTIVE else _NP_IDLE_COLOR,
+                style=self._np_active_color if self._state == _NPState.MORPH_TO_ACTIVE else self._np_idle_color,
             ))
             self._morph_dissolve.append(ticks)
 
@@ -6181,7 +6269,7 @@ class AssistantNameplate(Widget):
         self._init_frame_for(self._active_label, active_style=True)
 
     def _init_frame_for(self, text: str, *, active_style: bool = False) -> None:
-        style = _NP_ACTIVE_COLOR if active_style else _NP_IDLE_COLOR
+        style = self._np_active_color if active_style else self._np_idle_color
         self._frame = [
             _NPChar(target=ch, current=ch, locked=True, lock_at=0, style=style)
             for ch in text

@@ -142,6 +142,14 @@ class CompletionOverlay(Vertical):
 
     def on_mount(self) -> None:
         self._last_applied_w: int = 0
+        # A3: apply initial --narrow class based on current app width so a
+        # terminal that starts narrow doesn't need a resize event to trigger it.
+        try:
+            w = self.app.size.width
+            self.set_class(w < THRESHOLD_COMP_NARROW, "--narrow")
+            self._last_applied_w = w
+        except Exception:
+            pass
 
     def on_resize(self, event: events.Resize) -> None:
         w = event.size.width

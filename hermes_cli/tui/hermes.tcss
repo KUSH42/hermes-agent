@@ -22,6 +22,7 @@
    Local declarations here block runtime skin overrides. */
 
 /* Component variable declarations — must be present for Textual to parse $var refs */
+$panel-border: #333333;
 $footnote-ref-color: #888888;
 /* Citation chip colors */
 $cite-chip-bg: #1a2030;

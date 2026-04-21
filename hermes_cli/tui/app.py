@@ -27,7 +27,7 @@ import threading
 _KNOWN_SLASH_COMMANDS: frozenset[str] = frozenset([
     "/loop", "/schedule", "/anim", "/yolo", "/verbose",
     "/model", "/reasoning", "/skin", "/fast", "/easteregg",
-    "/help", "/queue", "/btw", "/clear",
+    "/help", "/queue", "/btw", "/clear", "/compact",
 ])
 
 # File-touching tool names — used by watch_spinner_label to extract active file
@@ -350,6 +350,10 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
     # Animation force state — overrides trigger-based show/hide logic
     # None = normal; "on" = always show; "off" = always hide
     _anim_force: "str | None" = None
+
+    # Compact layout — True = density-compact CSS class active
+    compact: reactive[bool] = reactive(False)
+    _compact_manual: "bool | None" = None  # None = auto; True/False = user override
 
     # Animation hint for StatusBar (C3)
     _anim_hint: reactive[str] = reactive("")
@@ -685,7 +689,8 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
             threading.Thread(target=self._startup_fn, daemon=True).start()
         import os as _os
         if _os.environ.get("HERMES_DENSITY", "").lower() == "compact":
-            self.add_class("density-compact")
+            self._compact_manual = True
+            self.compact = True  # triggers watch_compact → adds "density-compact"
         if _os.environ.get("HERMES_REDUCED_MOTION", "").lower() in ("1", "true", "yes"):
             self.add_class("reduced-motion")
         # Wire slash commands from COMMAND_REGISTRY into the autocomplete engine
@@ -711,8 +716,6 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
         self._last_assistant_text: str = ""
         # Initialize parallel worktree sessions (feature-gated)
         self._init_sessions()
-
-    _RESIZE_DEBOUNCE_S: float = 0.06  # 60 ms
 
     _RESIZE_DEBOUNCE_S: float = 0.06  # 60 ms
 
@@ -753,6 +756,14 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
         except AttributeError:
             return
         self._apply_min_size_overlay(w, h)
+        # Auto compact-mode detection (debounced here, not in watch_size)
+        if self._compact_manual is None:
+            should = w <= 120 or h <= 30
+            if self.compact != should:
+                self.compact = should
+        # Hard floor: w < 30 forces compact regardless of manual override
+        if w < 30 and not self.compact:
+            self.compact = True
 
     def _apply_min_size_overlay(self, w: int, h: int) -> None:
         """Mount or dismiss the MinSizeBackdrop based on current terminal dimensions."""
@@ -1600,12 +1611,15 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
 
     def action_toggle_density(self) -> None:
         """Toggle compact / normal density mode."""
-        if self.has_class("density-compact"):
-            self.remove_class("density-compact")
-            self._flash_hint("Density: normal", 1.0)
+        if self._compact_manual is None or not self.compact:
+            self._compact_manual = True
+            self.compact = True
+            self._flash_hint("Compact ON  (/compact to toggle)", 1.5)
         else:
-            self.add_class("density-compact")
-            self._flash_hint("Density: compact", 1.0)
+            self._compact_manual = None  # restore auto
+            w, h = self.size.width, self.size.height
+            self.compact = w <= 120 or h <= 30
+            self._flash_hint("Compact auto", 1.5)
 
     def _dismiss_floating_panels(self) -> None:
         """Dismiss HistorySearchOverlay and KeymapOverlay (P0-B stacking).

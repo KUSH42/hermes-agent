@@ -49,6 +49,7 @@ class _SessionsMixin:
         )
         self._session_records_cache = self._session_mgr.index.get_sessions()  # type: ignore[attr-defined]
         self._session_active_id = self._session_mgr.index.get_active_id()  # type: ignore[attr-defined]
+        self._sync_compact_visibility()  # type: ignore[attr-defined]
         try:
             bar = self.query_one(SessionBar)  # type: ignore[attr-defined]
             bar.add_class("--sessions-enabled")
@@ -107,6 +108,7 @@ class _SessionsMixin:
                 self._session_records_cache = records  # type: ignore[attr-defined]
                 self._session_active_id = active_id  # type: ignore[attr-defined]
                 self._refresh_session_bar()
+                self._sync_compact_visibility()  # type: ignore[attr-defined]
         except Exception:
             pass
 

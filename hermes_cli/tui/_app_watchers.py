@@ -79,6 +79,52 @@ class _WatchersMixin:
         except NoMatches:
             pass
 
+    def watch_compact(self, value: bool) -> None:
+        from hermes_cli.tui.tool_header_bar import ToolHeaderBar
+        from hermes_cli.tui.tool_panel import ToolPanel
+        from textual.widgets import Static
+
+        # CSS class — requires _classes attr set by DOMNode.__init__
+        if hasattr(self, "_classes"):
+            if value:
+                self.add_class("density-compact")  # type: ignore[attr-defined]
+            else:
+                self.remove_class("density-compact")  # type: ignore[attr-defined]
+
+        # DOM operations require a running app
+        try:
+            chev = self.query_one("#input-chevron", Static)  # type: ignore[attr-defined]
+            chev.update("❯" if value else "❯ ")
+        except Exception:
+            pass
+
+        try:
+            for thb in self.query(ToolHeaderBar):  # type: ignore[attr-defined]
+                thb.set_class(value, "--compact")
+        except Exception:
+            pass
+
+        try:
+            for tp in self.query(ToolPanel):  # type: ignore[attr-defined]
+                tp.set_class(value, "--compact")
+        except Exception:
+            pass
+
+        try:
+            self._sync_compact_visibility()
+        except Exception:
+            pass
+
+    def _sync_compact_visibility(self) -> None:
+        from hermes_cli.tui.session_widgets import SessionBar
+        compact = self.compact  # type: ignore[attr-defined]
+        try:
+            sbar = self.query_one(SessionBar)  # type: ignore[attr-defined]
+            single = len(getattr(self, "_session_records_cache", [])) <= 1
+            sbar.display = not (compact and single)
+        except NoMatches:
+            pass
+
     def watch_status_compaction_progress(self, value: float) -> None:
         from hermes_cli.tui.widgets import TitledRule
         if value == 0.0:

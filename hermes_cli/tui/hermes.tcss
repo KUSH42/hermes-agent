@@ -560,6 +560,26 @@ HermesApp.density-compact SudoWidget,
 HermesApp.density-compact SecretWidget          { padding: 0 1; }
 HermesApp.density-compact UndoConfirmOverlay    { padding: 0 1; }
 
+/* Phase B1: hide non-critical chrome */
+HermesApp.density-compact AssistantNameplate   { display: none; }
+HermesApp.density-compact SourcesBar           { display: none; }
+HermesApp.density-compact BrowseMinimap        { display: none; }
+
+/* Phase B2: input area tightening */
+HermesApp.density-compact HermesInput          { max-height: 2; }
+HermesApp.density-compact #input-chevron       { width: 1; }
+
+/* Phase B3: tool panel / header tightening */
+HermesApp.density-compact .tool-header-bar--duration   { display: none; }
+HermesApp.density-compact .tool-header-bar--line-count { display: none; }
+HermesApp.density-compact ToolAccent                   { display: none; }
+HermesApp.density-compact ToolPanel FooterPane         { display: none; }
+HermesApp.density-compact ToolPanel:focus FooterPane   { display: block; }
+
+/* Phase C1: ToolHeaderBar compact label tightening */
+ToolHeaderBar.--compact .tool-header-bar--label        { max-width: 10; }
+ToolHeaderBar.--compact .tool-header-bar--arg-summary  { max-width: 20; }
+
 /* ── Drawille Overlay ──────────────────────────────────────── */
 /* layer: overlay lives here (not DEFAULT_CSS) to avoid CSS parse issues
    when drawille_overlay.py is imported before HermesApp CSS loads. */

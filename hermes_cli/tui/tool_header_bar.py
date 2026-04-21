@@ -225,6 +225,13 @@ class ToolHeaderBar(Widget):
         yield self._chevron
         yield self._duration
 
+    def on_mount(self) -> None:
+        try:
+            if self.app.compact:  # type: ignore[attr-defined]
+                self.add_class("--compact")
+        except Exception:
+            pass
+
     def on_click(self) -> None:
         self.post_message(self.Clicked())
 

@@ -1010,3 +1010,4 @@ def test_render_tgp_fallback_when_dunder_stdout_is_none():
         sys.stdout = orig_stdout
 
     _reset_image_cache()
+

@@ -411,6 +411,7 @@ class HermesApp(App):
     # Detail level of currently focused ToolPanel in browse mode (for StatusBar badge)
     browse_detail_level: reactive[int] = reactive(0)
 
+
     # Output dropped flag — set when queue is full; shown in StatusBar until next successful write
     status_output_dropped: reactive[bool] = reactive(False)
 

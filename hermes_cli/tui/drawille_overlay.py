@@ -6,6 +6,7 @@ Plugs into AnimationClock; zero overhead when disabled.
 from __future__ import annotations
 
 import math
+import random
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -30,6 +31,12 @@ from hermes_cli.tui.anim_engines import (
     AnimEngine,
     TrailCanvas,
     _BaseEngine,
+    _layer_frames,
+    _braille_density_set,
+    _depth_to_density,
+    _easing,
+    _make_canvas,
+    _make_trail_canvas,
     DnaHelixEngine,
     RotatingHelixEngine,
     ClassicHelixEngine,

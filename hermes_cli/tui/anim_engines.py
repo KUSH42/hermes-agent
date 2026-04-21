@@ -22,6 +22,8 @@ _TWO_PI_INV = _LUT_SIZE / (2.0 * _math.pi)
 _SIN_LUT: list[float] = [_math.sin(2.0 * _math.pi * i / _LUT_SIZE) for i in range(_LUT_SIZE)]
 _COS_LUT: list[float] = [_math.cos(2.0 * _math.pi * i / _LUT_SIZE) for i in range(_LUT_SIZE)]
 
+_BOID_CELL_SIZE: int = 20  # spatial grid cell size = max boid interaction radius
+
 
 def _lut_sin(angle: float) -> float:
     return _SIN_LUT[int(angle * _TWO_PI_INV) % _LUT_SIZE]
@@ -546,6 +548,7 @@ class FlockSwarmEngine(_BaseEngine):
         self._w: int = 0
         self._h: int = 0
         self._speed_modifier: float = 1.0
+        self._grid: dict[tuple[int, int], list[int]] = {}
 
     def _init(self, w: int, h: int, n: int) -> None:
         self._boids = [
@@ -608,6 +611,22 @@ class FlockSwarmEngine(_BaseEngine):
         if self._attractor[1] < 0 or self._attractor[1] > h:
             self._attr_vel[1] *= -1
 
+        # Build spatial grid O(n) — reuse dict to avoid per-frame allocation.
+        # Uses distinct loop variables (gi, boid) to avoid shadowing the outer
+        # steering loop variables (i, b).
+        self._grid.clear()
+        for gi, boid in enumerate(self._boids):
+            key = (int(boid[0] / _BOID_CELL_SIZE), int(boid[1] / _BOID_CELL_SIZE))
+            cell = self._grid.get(key)
+            if cell is None:
+                self._grid[key] = [gi]
+            else:
+                cell.append(gi)
+        # Max cell index for a pixel in [0, w-1] is (w-1)//cell_size; +1 gives count.
+        _n_cols = max(1, (w - 1) // _BOID_CELL_SIZE + 1)
+        _n_rows = max(1, (h - 1) // _BOID_CELL_SIZE + 1)
+        # _n_cols/_n_rows are used by the steering loop below; compute once per frame.
+
         for i, b in enumerate(self._boids):
             if self._scatter:
                 angle = random.random() * 2 * math.pi
@@ -620,24 +639,33 @@ class FlockSwarmEngine(_BaseEngine):
             coh_x = coh_y = 0.0
             sep_n = ali_n = coh_n = 0
 
-            for j, other in enumerate(self._boids):
-                if i == j:
-                    continue
-                dx = other[0] - b[0]
-                dy = other[1] - b[1]
-                dist = math.hypot(dx, dy)
-                if dist < 8:
-                    sep_x -= dx / max(dist, 0.1)
-                    sep_y -= dy / max(dist, 0.1)
-                    sep_n += 1
-                if dist < 16:
-                    ali_x += other[2]
-                    ali_y += other[3]
-                    ali_n += 1
-                if dist < 20:
-                    coh_x += other[0]
-                    coh_y += other[1]
-                    coh_n += 1
+            bx_cell = int(b[0] / _BOID_CELL_SIZE)
+            by_cell = int(b[1] / _BOID_CELL_SIZE)
+            for _dc in (-1, 0, 1):
+                for _dr in (-1, 0, 1):
+                    _nc = bx_cell + _dc
+                    _nr = by_cell + _dr
+                    if _nc < 0 or _nc >= _n_cols or _nr < 0 or _nr >= _n_rows:
+                        continue
+                    for j in self._grid.get((_nc, _nr), ()):
+                        if j == i:
+                            continue
+                        other = self._boids[j]
+                        dx = other[0] - b[0]
+                        dy = other[1] - b[1]
+                        dist = math.hypot(dx, dy)
+                        if dist < 8:
+                            sep_x -= dx / max(dist, 0.1)
+                            sep_y -= dy / max(dist, 0.1)
+                            sep_n += 1
+                        if dist < 16:
+                            ali_x += other[2]
+                            ali_y += other[3]
+                            ali_n += 1
+                        if dist < 20:
+                            coh_x += other[0]
+                            coh_y += other[1]
+                            coh_n += 1
 
             if sep_n > 0:
                 b[2] += sep_x / sep_n * 0.1

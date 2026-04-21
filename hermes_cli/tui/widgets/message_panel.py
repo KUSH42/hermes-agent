@@ -171,7 +171,8 @@ class ReasoningPanel(Widget):
     _content_type: str = "reasoning"
 
     def __init__(self, **kwargs: Any) -> None:
-        self._reasoning_log = CopyableRichLog(markup=False, highlight=False, wrap=True, id="reasoning-log")
+        from hermes_cli.tui.widgets.prose import InlineProseLog
+        self._reasoning_log = InlineProseLog(markup=False, highlight=False, wrap=True, id="reasoning-log")
         self._live_line = Static("", id="reasoning-live")
         self._collapsed_stub = Static("", id="reasoning-collapsed")
         super().__init__(**kwargs)

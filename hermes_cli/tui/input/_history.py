@@ -43,13 +43,16 @@ class _HistoryMixin:
         """Append an entry to the history file and in-memory list.
 
         Slash commands (starting with '/') are never saved.
+        Deduplicates globally — removes any prior identical entry then promotes to end.
         """
         if not text.strip():
             return
         if text.startswith("/"):
             return
-        if self._history and self._history[-1] == text:
-            return
+        try:
+            self._history.remove(text)
+        except ValueError:
+            pass
         self._history.append(text)
         try:
             _HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -82,11 +85,15 @@ class _HistoryMixin:
             self._rev_mode: bool = False
             self._rev_query: str = ""
             self._rev_idx: int = -1
+            self._rev_match_idx: int = -1
+            self._rev_saved_value: str = ""
         current = getattr(self, "text", "")  # type: ignore[attr-defined]
         if not self._rev_mode:
             self._rev_mode = True
+            self._rev_saved_value = current
             self._rev_query = current
             self._rev_idx = len(self._history)
+            self._rev_match_idx = len(self._history)
             # Update placeholder to signal rev-search mode
             query_display = self._rev_query or ""
             try:
@@ -99,28 +106,68 @@ class _HistoryMixin:
             if self._history[idx].startswith(query):
                 self._rev_idx = idx
                 try:
-                    self.clear()  # type: ignore[attr-defined]
-                    self.insert(self._history[idx])  # type: ignore[attr-defined]
+                    self.load_text(self._history[idx])  # type: ignore[attr-defined]
+                    self.move_cursor((0, len(self._history[idx])))  # type: ignore[attr-defined]
                 except Exception:
                     pass
                 return
             idx -= 1
 
     def _exit_rev_search(self) -> None:
+        self._exit_rev_mode(accept=True)
+
+    def _exit_rev_mode(self, accept: bool = True) -> None:
+        """Exit reverse-search mode. If accept=False, restore the pre-search value."""
+        saved = getattr(self, "_rev_saved_value", "")
         self._rev_mode = False
         self._rev_query = ""
         self._rev_idx = -1
+        self._rev_match_idx = -1
+        if not accept:
+            try:
+                self.load_text(saved)  # type: ignore[attr-defined]
+                self.move_cursor((0, len(saved)))  # type: ignore[attr-defined]
+            except Exception:
+                pass
         # Restore idle placeholder
         try:
             self.placeholder = self._idle_placeholder  # type: ignore[attr-defined]
         except Exception:
             pass
 
-    def _rev_search_find(self, query: str) -> str | None:
-        """Find the most recent history entry matching query."""
-        for entry in reversed(self._history):
-            if query in entry:
-                return entry
+    def _rev_search_find(self, query: str | None = None, direction: int = -1) -> str | None:
+        """Find history entry matching query, updating _rev_match_idx and widget value.
+
+        direction=-1 searches backward (older), direction=1 searches forward (newer).
+        query defaults to self._rev_query if omitted.
+        """
+        if query is None:
+            query = getattr(self, "_rev_query", "")
+        if not hasattr(self, "_rev_match_idx"):
+            self._rev_match_idx: int = len(self._history)
+        idx = self._rev_match_idx + direction
+        if direction < 0:
+            while idx >= 0:
+                if query in self._history[idx]:
+                    self._rev_match_idx = idx
+                    try:
+                        self.load_text(self._history[idx])  # type: ignore[attr-defined]
+                        self.move_cursor((0, len(self._history[idx])))  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                    return self._history[idx]
+                idx -= 1
+        else:
+            while idx < len(self._history):
+                if query in self._history[idx]:
+                    self._rev_match_idx = idx
+                    try:
+                        self.load_text(self._history[idx])  # type: ignore[attr-defined]
+                        self.move_cursor((0, len(self._history[idx])))  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                    return self._history[idx]
+                idx += 1
         return None
 
     def _history_load(self, text: str) -> None:

@@ -168,12 +168,14 @@ class SessionManager:
         try:
             os.kill(record.pid, signal.SIGTERM)
             deadline = time.monotonic() + timeout
+            sleep_t = 0.01
             while time.monotonic() < deadline:
                 try:
                     os.kill(record.pid, 0)
                 except ProcessLookupError:
                     break
-                time.sleep(0.1)
+                time.sleep(sleep_t)
+                sleep_t = min(sleep_t * 2, 0.1)
             else:
                 try:
                     os.kill(record.pid, signal.SIGKILL)
@@ -198,11 +200,13 @@ class SessionManager:
     def poll_state_until_pid(self, session_id: str, timeout: float = 3.0) -> Optional[SessionRecord]:
         """Poll state.json until PID is set (> 0) or timeout."""
         deadline = time.monotonic() + timeout
+        sleep_t = 0.01
         while time.monotonic() < deadline:
             rec = self.read_state(session_id)
             if rec and rec.pid > 0:
                 return rec
-            time.sleep(0.1)
+            time.sleep(sleep_t)
+            sleep_t = min(sleep_t * 2, 0.1)
         return None
 
 

@@ -105,6 +105,9 @@ class ExecuteCodeBlock(StreamingToolBlock):
         # Initialized post-mount with app reference
         self._pacer = None
         self._extractor = None
+        self._cached_code_log: "CopyableRichLog | None" = None
+        self._cached_output_log: "CopyableRichLog | None" = None
+        self._cached_cursor: "Static | None" = None
 
     def compose(self) -> ComposeResult:
         yield self._header
@@ -167,6 +170,16 @@ class ExecuteCodeBlock(StreamingToolBlock):
         self._header.collapsed = False
         self._header._compact_tail = True  # natural flow, non-dim duration
 
+        # Cache widget refs used on hot paths
+        try:
+            self._cached_code_log = self.query_one(CodeSection).query_one(CopyableRichLog)
+        except Exception:
+            pass
+        try:
+            self._cached_cursor = self.query_one("#code-live-cursor", Static)
+        except Exception:
+            pass
+
         # Pre-mount both omission bars on OutputSection so they exist in DOM
         # immediately; _refresh_omission_bars() hides them until cap is reached.
         try:
@@ -188,6 +201,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
         self._omission_bar_bottom_mounted = True
         output_section.mount(top_bar, before=rl)
         output_section.mount(bottom_bar)
+        self._cached_output_log = rl
 
     def _start_cursor(self) -> None:
         try:
@@ -205,15 +219,18 @@ class ExecuteCodeBlock(StreamingToolBlock):
         self._refresh_cursor()
 
     def _refresh_cursor(self) -> None:
-        try:
-            cursor_widget = self.query_one("#code-live-cursor", Static)
-            if self._code_state == _STATE_FINALIZED:
-                cursor_widget.display = False
+        cursor_widget = self._cached_cursor
+        if cursor_widget is None:
+            try:
+                cursor_widget = self.query_one("#code-live-cursor", Static)
+                self._cached_cursor = cursor_widget
+            except NoMatches:
                 return
-            cursor_char = "▏" if self._cursor_visible else " "
-            cursor_widget.update(f"{self._line_scratch}{cursor_char}")
-        except NoMatches:
-            pass
+        if self._code_state == _STATE_FINALIZED:
+            cursor_widget.display = False
+            return
+        cursor_char = "▏" if self._cursor_visible else " "
+        cursor_widget.update(f"{self._line_scratch}{cursor_char}")
 
     def feed_delta(self, delta: str) -> None:
         """Process a streaming JSON args chunk. Event-loop only."""
@@ -255,11 +272,14 @@ class ExecuteCodeBlock(StreamingToolBlock):
 
         # Lines 1+ go to CodeSection body
         highlighted = self._highlight_line(line)
-        try:
-            code_log = self.query_one(CodeSection).query_one(CopyableRichLog)
-            code_log.write_with_source(Text.from_ansi(highlighted), line)
-        except NoMatches:
-            pass
+        code_log = self._cached_code_log
+        if code_log is None:
+            try:
+                code_log = self.query_one(CodeSection).query_one(CopyableRichLog)
+                self._cached_code_log = code_log
+            except NoMatches:
+                return
+        code_log.write_with_source(Text.from_ansi(highlighted), line)
 
     def _highlight_line(self, line: str) -> str:
         """Per-line Pygments highlight for Python code. Delegates to CodeRenderer."""
@@ -308,8 +328,10 @@ class ExecuteCodeBlock(StreamingToolBlock):
 
         # Clear CodeSection and write Syntax renderable for lines 1+
         try:
-            code_section = self.query_one(CodeSection)
-            code_log = code_section.query_one(CopyableRichLog)
+            code_log = self._cached_code_log
+            if code_log is None:
+                code_log = self.query_one(CodeSection).query_one(CopyableRichLog)
+                self._cached_code_log = code_log
             code_log.clear()
 
             if code and len(self._code_lines) > 1:
@@ -335,8 +357,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
         except NoMatches:
             pass
         try:
-            output_section = self.query_one(OutputSection)
-            output_section.display = True
+            self.query_one(OutputSection).display = True
         except NoMatches:
             pass
 
@@ -347,11 +368,13 @@ class ExecuteCodeBlock(StreamingToolBlock):
         batch = self._pending
         self._pending = []
 
-        try:
-            output_section = self.query_one(OutputSection)
-            output_log = output_section.query_one(CopyableRichLog)
-        except NoMatches:
-            return
+        output_log = self._cached_output_log
+        if output_log is None:
+            try:
+                output_log = self.query_one(OutputSection).query_one(CopyableRichLog)
+                self._cached_output_log = output_log
+            except NoMatches:
+                return
 
         lines_written = 0
         for rich_or_raw, plain in batch:
@@ -401,11 +424,14 @@ class ExecuteCodeBlock(StreamingToolBlock):
         self._header.set_error(is_error)
 
         # Hide cursor — execution complete
-        try:
-            cursor_w = self.query_one("#code-live-cursor", Static)
+        cursor_w = self._cached_cursor
+        if cursor_w is None:
+            try:
+                cursor_w = self.query_one("#code-live-cursor", Static)
+            except NoMatches:
+                cursor_w = None
+        if cursor_w is not None:
             cursor_w.display = False
-        except NoMatches:
-            pass
 
         # Final stdout flush
         self._flush_pending()
@@ -477,7 +503,11 @@ class ExecuteCodeBlock(StreamingToolBlock):
                 pass
 
     def _get_output_log(self) -> CopyableRichLog:
-        return self.query_one(OutputSection).query_one(CopyableRichLog)
+        if self._cached_output_log is not None:
+            return self._cached_output_log
+        log = self.query_one(OutputSection).query_one(CopyableRichLog)
+        self._cached_output_log = log
+        return log
 
     def reveal_lines(self, start: int, end: int) -> None:
         """Append output _all_plain[start:end] to OutputSection's RichLog."""

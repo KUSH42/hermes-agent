@@ -124,6 +124,9 @@ class StreamingToolBlock(ToolBlock):
         self._rate_samples: deque[tuple[float, int]] = deque(maxlen=60)
         self._last_http_status: str | None = None
         self._follow_tail: bool = False
+        self._follow_tail_dirty: bool = False
+        self._cached_body_log: "CopyableRichLog | None" = None
+        self._microcopy_tick: int = 0
         self._shimmer_phase: float = 0.0
         self._microcopy_shown: bool = False
         self._secondary_args_snapshot: str = ""
@@ -157,6 +160,10 @@ class StreamingToolBlock(ToolBlock):
             self._microcopy_widget = self._body.query_one(".--microcopy", Static)
         except Exception:
             self._microcopy_widget = None
+        try:
+            self._cached_body_log = self._body.query_one(CopyableRichLog)
+        except Exception:
+            pass
         if self._body.is_mounted:
             self._omission_bar_top = OmissionBar(
                 parent_block=self, position="top", classes="--omission-bar-top"
@@ -231,9 +238,8 @@ class StreamingToolBlock(ToolBlock):
             self._visible_start = max(0, self._visible_start - self._EVICT_CHUNK)
             self._history_capped = True
         total = len(self._all_plain)
-        if self._follow_tail and total % 5 == 0:
-            visible_cap = getattr(self, "_visible_cap", _VISIBLE_CAP)
-            self.rerender_window(max(0, total - visible_cap), total)
+        if self._follow_tail and total > getattr(self, "_visible_cap", _VISIBLE_CAP):
+            self._follow_tail_dirty = True
         self._rate_samples.append((now, len(raw)))
         m = self._HTTP_STATUS_LINE_RE.match(plain.strip())
         if m:
@@ -320,20 +326,24 @@ class StreamingToolBlock(ToolBlock):
         self._body.clear_microcopy()
 
     def _try_mount_media(self) -> bool:
-        text = "\n".join(self._all_plain)
         mounted = False
 
-        matches = _MEDIA_LINE_RE.findall(text)
-        if matches:
-            path = _extract_image_path(matches[-1])
-            if path is not None:
-                try:
-                    from hermes_cli.tui.widgets import InlineImage
-                    self._body.mount(InlineImage(image=path, max_rows=24))
-                    self.post_message(ImageMounted(path))
-                    mounted = True
-                except Exception:
-                    pass
+        # Scan in reverse for last image match — avoids joining all_plain into one string
+        image_path: "str | None" = None
+        for line in reversed(self._all_plain):
+            m = _MEDIA_LINE_RE.search(line)
+            if m:
+                image_path = _extract_image_path(m.group(0))
+                if image_path:
+                    break
+        if image_path is not None:
+            try:
+                from hermes_cli.tui.widgets import InlineImage
+                self._body.mount(InlineImage(image=image_path, max_rows=24))
+                self.post_message(ImageMounted(image_path))
+                mounted = True
+            except Exception:
+                pass
 
         try:
             from hermes_cli.tui.media_player import (
@@ -343,21 +353,22 @@ class StreamingToolBlock(ToolBlock):
             cfg = _inline_media_config()
             if cfg.enabled:
                 seen: set[str] = set()
-                for url in _AUDIO_EXT_RE.findall(text):
-                    if url not in seen:
-                        seen.add(url)
-                        self.mount(InlineMediaWidget(url=url, kind="audio"))
-                        mounted = True
-                for url in _VIDEO_EXT_RE.findall(text):
-                    if url not in seen:
-                        seen.add(url)
-                        self.mount(InlineMediaWidget(url=url, kind="video"))
-                        mounted = True
-                for url in _YOUTUBE_RE.findall(text):
-                    if url not in seen:
-                        seen.add(url)
-                        self.mount(InlineMediaWidget(url=url, kind="youtube"))
-                        mounted = True
+                for line in self._all_plain:
+                    for url in _AUDIO_EXT_RE.findall(line):
+                        if url not in seen:
+                            seen.add(url)
+                            self.mount(InlineMediaWidget(url=url, kind="audio"))
+                            mounted = True
+                    for url in _VIDEO_EXT_RE.findall(line):
+                        if url not in seen:
+                            seen.add(url)
+                            self.mount(InlineMediaWidget(url=url, kind="video"))
+                            mounted = True
+                    for url in _YOUTUBE_RE.findall(line):
+                        if url not in seen:
+                            seen.add(url)
+                            self.mount(InlineMediaWidget(url=url, kind="youtube"))
+                            mounted = True
         except Exception:
             pass
 
@@ -440,16 +451,23 @@ class StreamingToolBlock(ToolBlock):
                 self._render_timer.stop()
                 self._render_timer = self.set_interval(1 / 10, self._flush_pending)
 
+        self._microcopy_tick = (self._microcopy_tick + 1) % 6
+        do_microcopy = self._microcopy_tick == 0
+
         if not self._pending:
-            self._update_microcopy()
+            if do_microcopy:
+                self._update_microcopy()
             return
         batch = self._pending
         self._pending = []
 
-        try:
-            log = self._body.query_one(CopyableRichLog)
-        except NoMatches:
-            return
+        log = self._cached_body_log
+        if log is None:
+            try:
+                log = self._body.query_one(CopyableRichLog)
+                self._cached_body_log = log
+            except NoMatches:
+                return
 
         lines_written = 0
         visible_cap = getattr(self, "_visible_cap", _VISIBLE_CAP)
@@ -474,17 +492,28 @@ class StreamingToolBlock(ToolBlock):
                 except Exception:
                     pass
 
-        self._update_microcopy()
+        if self._follow_tail_dirty:
+            self._follow_tail_dirty = False
+            total = len(self._all_plain)
+            visible_cap = getattr(self, "_visible_cap", _VISIBLE_CAP)
+            if total > visible_cap:
+                self.rerender_window(total - visible_cap, total)
+
+        if do_microcopy:
+            self._update_microcopy()
 
     # ------------------------------------------------------------------
     # OmissionBar callbacks
     # ------------------------------------------------------------------
 
     def rerender_window(self, start: int, end: int) -> None:
-        try:
-            log = self._body.query_one(CopyableRichLog)
-        except NoMatches:
-            return
+        log = self._cached_body_log
+        if log is None:
+            try:
+                log = self._body.query_one(CopyableRichLog)
+                self._cached_body_log = log
+            except NoMatches:
+                return
         log.clear()
         for rich_line, plain in zip(self._all_rich[start:end], self._all_plain[start:end]):
             log.write_with_source(rich_line, plain, link=_first_link(plain))

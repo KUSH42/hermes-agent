@@ -18,15 +18,27 @@ class _ToolRenderingMixin:
     instance at runtime — all attribute access on self is valid.
     """
 
+    def _get_output_panel(self) -> "Any | None":
+        """Return OutputPanel, cached after first successful lookup."""
+        cached = getattr(self, "_cached_output_panel", None)
+        if cached is not None and cached.is_mounted:
+            return cached
+        from hermes_cli.tui.widgets import OutputPanel
+        try:
+            panel = self.query_one(OutputPanel)  # type: ignore[attr-defined]
+            self._cached_output_panel = panel  # type: ignore[attr-defined]
+            return panel
+        except NoMatches:
+            return None
+
     # --- Reasoning ---
 
     def _current_message_panel(self) -> "Any | None":
         """Return the current MessagePanel, or None."""
-        from hermes_cli.tui.widgets import OutputPanel
-        try:
-            return self.query_one(OutputPanel).current_message  # type: ignore[attr-defined]
-        except NoMatches:
+        output = self._get_output_panel()
+        if output is None:
             return None
+        return output.current_message
 
     def open_reasoning(self, title: str = "Reasoning") -> None:
         """Open the reasoning panel. Safe to call from any thread via call_from_thread."""
@@ -70,51 +82,48 @@ class _ToolRenderingMixin:
         parent_id: "str | None" = None,
     ) -> None:
         """Mount a ToolBlock into OutputPanel before the live-output duo."""
-        from hermes_cli.tui.widgets import OutputPanel
         if not lines:
             return
-        try:
-            output = self.query_one(OutputPanel)  # type: ignore[attr-defined]
-            msg = output.current_message or output.new_message()
-            msg.mount_tool_block(
-                label,
-                lines,
-                plain_lines,
-                tool_name=tool_name,
-                rerender_fn=rerender_fn,
-                header_stats=header_stats,
-                parent_id=parent_id,
-            )
-            msg.refresh(layout=True)
-            self._browse_total += 1  # type: ignore[attr-defined]
-            if not output._user_scrolled_up:
-                self.call_after_refresh(output.scroll_end, animate=False)  # type: ignore[attr-defined]
-        except NoMatches:
-            pass
+        output = self._get_output_panel()
+        if output is None:
+            return
+        msg = output.current_message or output.new_message()
+        msg.mount_tool_block(
+            label,
+            lines,
+            plain_lines,
+            tool_name=tool_name,
+            rerender_fn=rerender_fn,
+            header_stats=header_stats,
+            parent_id=parent_id,
+        )
+        msg.refresh(layout=True)
+        self._browse_total += 1  # type: ignore[attr-defined]
+        if not output._user_scrolled_up:
+            self.call_after_refresh(output.scroll_end, animate=False)  # type: ignore[attr-defined]
 
     # --- StreamingToolBlock lifecycle ---
 
     def _open_gen_block(self, tool_name: str) -> "Any | None":
         """Open a StreamingToolBlock at gen_start time. Event-loop only."""
-        from hermes_cli.tui.widgets import OutputPanel
-        try:
-            output = self.query_one(OutputPanel)  # type: ignore[attr-defined]
-            msg = output.current_message or output.new_message()
-            block = msg.open_streaming_tool_block(label=get_display_name(tool_name), tool_name=tool_name)
-            self._browse_total += 1  # type: ignore[attr-defined]
-            if not output._user_scrolled_up:
-                self.call_after_refresh(output.scroll_end, animate=False)  # type: ignore[attr-defined]
-            return block
-        except NoMatches:
+        output = self._get_output_panel()
+        if output is None:
             return None
+        msg = output.current_message or output.new_message()
+        block = msg.open_streaming_tool_block(label=get_display_name(tool_name), tool_name=tool_name)
+        self._browse_total += 1  # type: ignore[attr-defined]
+        if not output._user_scrolled_up:
+            self.call_after_refresh(output.scroll_end, animate=False)  # type: ignore[attr-defined]
+        return block
 
     def _open_execute_code_block(self, idx: int) -> "Any | None":
         """Open an ExecuteCodeBlock at gen_start time. Event-loop only."""
-        from hermes_cli.tui.widgets import OutputPanel
+        output = self._get_output_panel()
+        if output is None:
+            return None
         try:
             from hermes_cli.tui.execute_code_block import ExecuteCodeBlock
             from hermes_cli.tui.tool_panel import ToolPanel as _ToolPanel
-            output = self.query_one(OutputPanel)  # type: ignore[attr-defined]
             msg = output.current_message or output.new_message()
             block = ExecuteCodeBlock(initial_label="python")
             panel = _ToolPanel(block, tool_name="execute_code")
@@ -129,11 +138,12 @@ class _ToolRenderingMixin:
 
     def _open_write_file_block(self, idx: int, path: str) -> "Any | None":
         """Open a WriteFileBlock at gen_start time. Event-loop only."""
-        from hermes_cli.tui.widgets import OutputPanel
+        output = self._get_output_panel()
+        if output is None:
+            return None
         try:
             from hermes_cli.tui.write_file_block import WriteFileBlock
             from hermes_cli.tui.tool_panel import ToolPanel as _ToolPanel
-            output = self.query_one(OutputPanel)  # type: ignore[attr-defined]
             msg = output.current_message or output.new_message()
             block = WriteFileBlock(path=path)
             panel = _ToolPanel(block, tool_name="write_file")
@@ -150,9 +160,10 @@ class _ToolRenderingMixin:
     def open_streaming_tool_block(self, tool_call_id: str, label: str, tool_name: "str | None" = None) -> None:
         """Mount a StreamingToolBlock into OutputPanel before the live-output duo."""
         import time as _time
-        from hermes_cli.tui.widgets import OutputPanel
+        output = self._get_output_panel()
+        if output is None:
+            return
         try:
-            output = self.query_one(OutputPanel)  # type: ignore[attr-defined]
             msg = output.current_message or output.new_message()
             base_panel_id = f"tool-{tool_call_id}"
             try:
@@ -205,17 +216,13 @@ class _ToolRenderingMixin:
 
     def append_streaming_line(self, tool_call_id: str, line: str) -> None:
         """Append a line to the named streaming block. Event-loop only."""
-        from hermes_cli.tui.widgets import OutputPanel
         block = self._active_streaming_blocks.get(tool_call_id)  # type: ignore[attr-defined]
         if block is None:
             return
         block.append_line(line)
-        try:
-            panel = self.query_one(OutputPanel)  # type: ignore[attr-defined]
-            if not panel._user_scrolled_up:
-                self.call_after_refresh(panel.scroll_end, animate=False)  # type: ignore[attr-defined]
-        except NoMatches:
-            pass
+        panel = self._get_output_panel()
+        if panel is not None and not panel._user_scrolled_up:
+            self.call_after_refresh(panel.scroll_end, animate=False)  # type: ignore[attr-defined]
 
     def close_streaming_tool_block(
         self,
@@ -253,12 +260,9 @@ class _ToolRenderingMixin:
                     pass
                 entry["is_error"] = is_error
                 break
-        try:
-            panel = self.query_one(OutputPanel)  # type: ignore[attr-defined]
-            if not panel._user_scrolled_up:
-                self.call_after_refresh(panel.scroll_end, animate=False)  # type: ignore[attr-defined]
-        except NoMatches:
-            pass
+        panel = self._get_output_panel()
+        if panel is not None and not panel._user_scrolled_up:
+            self.call_after_refresh(panel.scroll_end, animate=False)  # type: ignore[attr-defined]
         try:
             from hermes_cli.tui.drawille_overlay import DrawilleOverlay
             ov = self.query_one(DrawilleOverlay)  # type: ignore[attr-defined]
@@ -276,7 +280,6 @@ class _ToolRenderingMixin:
         summary: "Any | None" = None,
     ) -> None:
         """Inject diff into a streaming block's body then complete it. Event-loop only."""
-        from hermes_cli.tui.widgets import OutputPanel
         block = self._active_streaming_blocks.pop(tool_call_id, None)  # type: ignore[attr-defined]
         if block is None:
             return
@@ -299,12 +302,9 @@ class _ToolRenderingMixin:
                     pass
                 entry["is_error"] = is_error
                 break
-        try:
-            panel = self.query_one(OutputPanel)  # type: ignore[attr-defined]
-            if not panel._user_scrolled_up:
-                self.call_after_refresh(panel.scroll_end, animate=False)  # type: ignore[attr-defined]
-        except NoMatches:
-            pass
+        panel = self._get_output_panel()
+        if panel is not None and not panel._user_scrolled_up:
+            self.call_after_refresh(panel.scroll_end, animate=False)  # type: ignore[attr-defined]
         try:
             from hermes_cli.tui.drawille_overlay import DrawilleOverlay
             ov = self.query_one(DrawilleOverlay)  # type: ignore[attr-defined]

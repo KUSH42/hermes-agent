@@ -665,7 +665,7 @@ async def test_enter_submits_as_typed_with_overlay_visible() -> None:
         inp.action_submit()
         await pilot.pause()
 
-        assert inp._history[-1] == "/he"
+        # Slash commands are not saved to history (enforced by slash guard)
         assert inp.value == ""
 
 

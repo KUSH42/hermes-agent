@@ -259,7 +259,8 @@ class CopyableBlock(Widget):
         log_kwargs: dict[str, Any] = {"markup": False, "highlight": False, "wrap": True}
         if _log_id:
             log_kwargs["id"] = _log_id
-        self._log = CopyableRichLog(**log_kwargs)
+        from hermes_cli.tui.widgets.prose import InlineProseLog
+        self._log = InlineProseLog(**log_kwargs)
 
     def compose(self) -> ComposeResult:
         yield self._log

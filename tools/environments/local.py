@@ -312,7 +312,12 @@ class LocalEnvironment(BaseEnvironment):
         reader.start()
 
         deadline = time.monotonic() + effective_timeout
-        while proc.poll() is None:
+        while True:
+            try:
+                proc.wait(timeout=0.05)
+                break
+            except subprocess.TimeoutExpired:
+                pass
             if is_interrupted():
                 self._kill_process(proc)
                 reader.join(timeout=2)
@@ -333,9 +338,8 @@ class LocalEnvironment(BaseEnvironment):
                 }
                 self._update_cwd(result)
                 return result
-            time.sleep(0.05)
 
-        reader.join(timeout=5)
+        reader.join(timeout=2)
         try:
             proc.stdout.close()
         except Exception:

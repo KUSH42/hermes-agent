@@ -908,6 +908,13 @@ class HistorySearchOverlay(Widget):
 
     def open_search(self) -> None:
         """Build frozen snapshot index, show overlay, focus search input."""
+        # Read max_results from config if available
+        try:
+            cfg = self.app.cli._cfg or {}
+            max_r = cfg.get("display", {}).get("history_search_max_results", 50)
+            self._max_results = int(max_r)
+        except Exception:
+            pass
         self._build_index()
         self._selected_idx = 0
         # Save and update HintBar hint
@@ -933,6 +940,15 @@ class HistorySearchOverlay(Widget):
 
     def action_dismiss(self) -> None:
         """Hide overlay, restore hint, return focus to HermesInput."""
+        # Save current query to _query_history (non-empty, deduped)
+        try:
+            query = self.query_one("#history-search-input", Input).value.strip()
+            if query:
+                if query in self._query_history:
+                    self._query_history.remove(query)
+                self._query_history.append(query)
+        except Exception:
+            pass
         # Cancel any pending debounce so _render_results() doesn't run
         # against a hidden overlay, removing and re-mounting DOM children.
         if self._debounce_handle is not None:
@@ -1023,14 +1039,15 @@ class HistorySearchOverlay(Widget):
         widgets when the count changes, cutting DOM churn on stable queries.
         """
         self._debounce_handle = None
-        # Scored search with span tracking; cap at 20 results.
+        # Scored search with span tracking; cap at _max_results.
+        cap = self._max_results
         if query:
-            search_results = _substring_search(query, self._index, limit=20)
+            search_results = _substring_search(query, self._index, limit=cap)
         else:
             # No query: show all entries newest-first, no match spans
             search_results = [
                 _SearchResult(entry=e, match_spans=(), first_match_offset=0)
-                for e in self._index[:20]
+                for e in self._index[:cap]
             ]
         self._current_results = search_results
         try:
@@ -1094,6 +1111,56 @@ class HistorySearchOverlay(Widget):
         count = len(list(self.query(TurnResultItem)))
         self._selected_idx = min(max(count - 1, 0), self._selected_idx + 1)
         self._update_selection()
+
+    def action_prev_query(self) -> None:
+        """Ctrl+Up: restore most recent previous search query."""
+        if not self._query_history:
+            return
+        query = self._query_history[-1]
+        try:
+            inp = self.query_one("#history-search-input", Input)
+            inp.value = query
+        except Exception:
+            pass
+
+    def action_find_next(self) -> None:
+        """Ctrl+G inside overlay: advance selection to next result, wrapping."""
+        count = len(list(self.query(TurnResultItem)))
+        if count == 0:
+            return
+        self._selected_idx = (self._selected_idx + 1) % count
+        self._update_selection()
+
+    def action_toggle_mode(self) -> None:
+        """Tab: toggle between 'current' and 'all' session search modes."""
+        self._mode = "all" if self._mode == "current" else "current"
+        try:
+            mode_bar = self.query_one(_ModeBar)
+            mode_bar.set_mode(self._mode)
+        except Exception:
+            pass
+        try:
+            query = self.query_one("#history-search-input", Input).value
+        except Exception:
+            query = ""
+        if self._mode == "all" and hasattr(self, "_search_cross_session"):
+            self._cross_session_loading = True
+            self._show_cross_session_loading()
+            self._search_cross_session(query)
+        else:
+            self._render_results(query)
+
+    def _handle_cross_session_jump(self, result: "_CrossSessionResult") -> None:
+        """Handle a jump to a cross-session result (may be other session)."""
+        if result.is_current_session:
+            return
+        try:
+            from .status_bar import HintBar
+            hint_bar = self.app.query_one(HintBar)
+            title = result.session_title or result.session_id
+            hint_bar.hint = f"Switch to session: {title}"
+        except Exception:
+            pass
 
     def action_jump(self) -> None:
         """Jump to the selected turn and dismiss the overlay."""

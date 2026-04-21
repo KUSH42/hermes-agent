@@ -94,10 +94,14 @@ class HelpOverlay(Widget):
     def show_overlay(self) -> None:
         """Show overlay and focus the filter input."""
         self.add_class("--visible")
+        # C1: clear previous search query so the list always opens unfiltered
         try:
-            self.query_one("#help-search", Input).focus()
+            inp = self.query_one("#help-search", Input)
+            inp.value = ""
+            inp.focus()
         except NoMatches:
             pass
+        self._populate(self._commands_cache)
 
     def _populate(self, entries: list[tuple[str, str, str]]) -> None:
         """Rebuild content list with a single batched mount to avoid per-item repaint."""
@@ -456,6 +460,11 @@ class WorkspaceOverlay(Widget):
 
     def show_overlay(self) -> None:
         self.add_class("--visible")
+        # C4: focus first tab button so keyboard tab-through works from the start
+        try:
+            self.query_one("#ws-tab-git", Button).focus()
+        except NoMatches:
+            pass
 
     def action_dismiss(self) -> None:
         self.remove_class("--visible")
@@ -671,6 +680,14 @@ class SessionOverlay(Widget):
             return
         for i, row in enumerate(rows):
             row.set_class(i == self._selected_idx, "--selected")
+        # C2: scroll to keep selected row visible
+        if 0 <= self._selected_idx < len(rows):
+            try:
+                self.query_one("#sess-scroll", ScrollableContainer).scroll_to_widget(
+                    rows[self._selected_idx], animate=False
+                )
+            except NoMatches:
+                pass
 
     def action_move_up(self) -> None:
         self._selected_idx = max(0, self._selected_idx - 1)

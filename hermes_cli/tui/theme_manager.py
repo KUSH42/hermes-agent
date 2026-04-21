@@ -173,6 +173,9 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     "nameplate-idle-color":    "#888888",
     "nameplate-active-color":  "#7b68ee",
     "nameplate-decrypt-color": "#00ff41",
+    # Spinner shimmer colors — F1: skinnable so light-bg skins stay readable
+    "spinner-shimmer-dim":  "#555555",
+    "spinner-shimmer-peak": "#d8d8d8",
 }
 
 

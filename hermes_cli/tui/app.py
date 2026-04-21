@@ -338,6 +338,7 @@ class HermesApp(App):
     BINDINGS = [
         Binding("ctrl+f", "open_history_search", "History search", show=False, priority=True),
         Binding("f1", "show_help", "Keyboard shortcuts", show=False),
+        Binding("f2", "show_usage", "Usage stats", show=False),  # C5: usage overlay shortcut
         Binding("f8", "toggle_fps_hud", "FPS HUD", show=False),
         Binding("alt+up",   "jump_turn_prev", "Previous turn", show=False),
         Binding("alt+down", "jump_turn_next", "Next turn",     show=False),
@@ -565,6 +566,8 @@ class HermesApp(App):
         # mounted.  Eliminates the multi-line-chunk race where lines arrive on the
         # old panel before watch_agent_running(True) fires.
         self._panel_ready_event: "threading.Event | None" = None
+        # F4: track last keypress time for desktop notify active-user gate
+        self._last_keypress_time: float = 0.0
 
     # --- Compose ---
 
@@ -1326,11 +1329,19 @@ class HermesApp(App):
             if hasattr(inp, "placeholder"):
                 if padded and getattr(self, "_animations_enabled", True):
                     try:
+                        # F1: read shimmer colors from skin/theme vars so light-bg
+                        # skins remain readable (falls back to original defaults)
+                        _cvars = (
+                            self._theme_manager.css_variables
+                            if self._theme_manager else {}
+                        )
+                        _shimmer_dim = _cvars.get("spinner-shimmer-dim", "#555555")
+                        _shimmer_peak = _cvars.get("spinner-shimmer-peak", "#d8d8d8")
                         shimmer = shimmer_text(
                             padded,
                             tick=self._shimmer_tick,
-                            dim="#555555",
-                            peak="#d8d8d8",
+                            dim=_shimmer_dim,
+                            peak=_shimmer_peak,
                             period=60,
                         )
                         inp.placeholder = Content.from_rich_text(shimmer)
@@ -1654,6 +1665,9 @@ class HermesApp(App):
                 chevron.remove_class("--yolo-active")
         except Exception:
             pass
+        # E5: flash confirmation so the mode change is not silent
+        msg = "YOLO mode ON — auto-approving all tool calls" if value else "YOLO mode OFF"
+        self._flash_hint(msg, 2.0)
 
     def watch_agent_running(self, value: bool) -> None:
         self._drawille_show_hide(value)
@@ -1677,7 +1691,6 @@ class HermesApp(App):
             self._turn_start_monotonic = None
             self._current_turn_tool_count = 0  # A6: reset first-in-turn counter
             # Track turn start for desktop notify
-            import time as _time
             self._turn_start_time = _time.monotonic()
             try:
                 self.query_one(OutputPanel).reset_turn_capture()
@@ -1798,17 +1811,26 @@ class HermesApp(App):
                 # Restore input visibility (safety guard) and clear spinner placeholder
                 widget.display = True
                 if hasattr(widget, "placeholder"):
-                    # A1: restore idle placeholder, not blank string
-                    widget.placeholder = getattr(widget, "_idle_placeholder", "")
+                    # A1: restore idle placeholder, not blank string.
+                    # Show error hint in placeholder when status_error is set
+                    # so the error state is visible even at short terminal heights
+                    # where HintBar may be hidden.
+                    if self.status_error:
+                        err_snippet = self.status_error[:60]
+                        widget.placeholder = f"Error: {err_snippet}…  (Esc to clear)"
+                    else:
+                        widget.placeholder = getattr(widget, "_idle_placeholder", "")
                 try:
                     self.query_one("#spinner-overlay", Static).display = False
                 except NoMatches:
                     pass
-                # Clear the HintBar spinner when the agent stops
-                try:
-                    self.query_one(HintBar).hint = ""
-                except NoMatches:
-                    pass
+                # Clear the HintBar spinner when the agent stops.
+                # E3: respect _flash_hint_expires — don't clear a timed flash.
+                if _time.monotonic() >= self._flash_hint_expires:
+                    try:
+                        self.query_one(HintBar).hint = ""
+                    except NoMatches:
+                        pass
                 # GAP-17: restore focus so the user can type immediately without clicking
                 self.call_after_refresh(widget.focus)
         except NoMatches:
@@ -1893,6 +1915,11 @@ class HermesApp(App):
             elapsed = _time2.monotonic() - getattr(self, "_turn_start_time", 0.0)
             min_s = float(display.get("notify_min_seconds", 10.0))
             if elapsed < min_s:
+                return
+            # F4: skip notification when user is actively watching the TUI
+            # (last keypress < 5 s ago means they are present)
+            since_key = _time2.monotonic() - getattr(self, "_last_keypress_time", 0.0)
+            if since_key < 5.0:
                 return
             from hermes_cli.tui.desktop_notify import notify as _notify
             body = (getattr(self, "_last_assistant_text", "") or "").strip()
@@ -2062,15 +2089,37 @@ class HermesApp(App):
         except NoMatches:
             pass
 
+    def show_model_switch_result(self, new_model: str) -> None:
+        """C3: Flash confirmation when model switch completes. Call via call_from_thread."""
+        self._flash_hint(f"Model: {new_model}", 2.0)
+
+    def action_show_usage(self) -> None:
+        """C5: Show the usage/cost overlay (F2 key)."""
+        self._dismiss_all_info_overlays()
+        try:
+            ov = self.query_one(UsageOverlay)
+            agent = getattr(self.cli, "agent", None) if self.cli else None
+            if agent is None:
+                agent = self.cli
+            if agent is not None:
+                ov.refresh_data(agent)
+            ov.add_class("--visible")
+        except NoMatches:
+            pass
+
     def action_jump_turn_prev(self) -> None:
         """Jump to the previous TURN_START anchor. No-op while agent is running."""
         if self.agent_running:
+            # D2: inform user instead of silently doing nothing
+            self._flash_hint("Navigation paused while agent is running", 1.5)
             return
         self._jump_anchor(-1, BrowseAnchorType.TURN_START)
 
     def action_jump_turn_next(self) -> None:
         """Jump to the next TURN_START anchor. No-op while agent is running."""
         if self.agent_running:
+            # D2: inform user instead of silently doing nothing
+            self._flash_hint("Navigation paused while agent is running", 1.5)
             return
         self._jump_anchor(+1, BrowseAnchorType.TURN_START)
 
@@ -2113,6 +2162,10 @@ class HermesApp(App):
         panel.mount(banner)
         self.session_label = session_title or session_id[-8:]
         self._auto_title_done = False
+        # D3: reset browse anchor state so old indices do not point to removed widgets
+        self._browse_anchors = []
+        self._browse_cursor = 0
+        self._browse_total = 0
         try:
             from hermes_cli.tui.input_widget import HermesInput
             self.query_one(HermesInput).focus()
@@ -2617,6 +2670,24 @@ class HermesApp(App):
         except NoMatches:
             pass
         self._set_hint_phase(self._compute_hint_phase())
+        # E1: auto-clear error after 10 s so stale indicators don't linger
+        _timer = getattr(self, "_status_error_timer", None)
+        if _timer is not None:
+            try:
+                _timer.stop()
+            except Exception:
+                pass
+            self._status_error_timer = None
+        if value:
+            self._status_error_timer = self.set_timer(
+                10.0, lambda v=value: self._auto_clear_status_error(v)
+            )
+
+    def _auto_clear_status_error(self, expected: str) -> None:
+        """Clear status_error if it still matches *expected* (not replaced by newer error)."""
+        self._status_error_timer = None
+        if self.status_error == expected:
+            self.status_error = ""
 
     def watch_undo_state(self, value: UndoOverlayState | None) -> None:
         try:
@@ -2724,7 +2795,10 @@ class HermesApp(App):
 
     def watch_status_compaction_progress(self, value: float) -> None:
         if value == 0.0:
+            # E4: reset both thresholds on progress return to 0
             self._compaction_warned = False
+            self._compaction_warn_99: bool = getattr(self, "_compaction_warn_99", False)
+            self._compaction_warn_99 = False
         try:
             self.query_one("#input-rule", TitledRule).progress = value
         except NoMatches:
@@ -2732,6 +2806,10 @@ class HermesApp(App):
         if value >= 0.9 and not self._compaction_warned:
             self._compaction_warned = True
             self._flash_hint("⚠  Context window 90% full — compaction imminent", 3.0)
+        # E4: second escalated warning at 99%
+        if value >= 0.99 and not getattr(self, "_compaction_warn_99", False):
+            self._compaction_warn_99 = True
+            self._flash_hint("⚠  Context 99% — send /compact or clear conversation", 5.0)
 
     def watch_voice_mode(self, value: bool) -> None:
         try:
@@ -3412,6 +3490,9 @@ class HermesApp(App):
             self._browse_cursor = min(self._browse_cursor, len(anchors) - 1)
         else:
             self._browse_cursor = 0
+        # D4: inform user when browse mode has nothing to navigate
+        if self.browse_mode and not anchors:
+            self._flash_hint("No turns to browse — start a conversation first", 2.0)
         # Re-apply pip chrome whenever anchors are rebuilt in browse mode
         if self.browse_mode:
             self._apply_browse_pips()
@@ -4742,6 +4823,9 @@ class HermesApp(App):
         - ctrl+shift+c: dedicated agent interrupt (double-press = force exit)
         - escape: cancel overlay → interrupt agent
         """
+        # F4: track last keypress time so _maybe_notify can skip notifying
+        # when the user is actively watching the TUI.
+        self._last_keypress_time = _time.monotonic()
         key = event.key
 
         # --- ctrl+p → path/file picker (@-completion) ---
@@ -4975,14 +5059,22 @@ class HermesApp(App):
 
             # Priority 4: enter browse mode when idle (no overlay, agent not running).
             # No ToolHeader requirement — unified anchor list supports text-only turns.
+            # D1: guard — if input has content, '[' is a typed bracket not a browse activation.
             no_overlay = all(
                 getattr(self, a) is None
                 for a in ("approval_state", "clarify_state", "sudo_state", "secret_state")
             )
             if no_overlay and not self.agent_running:
-                self.browse_mode = True
-                event.prevent_default()
-                return
+                _inp_value = ""
+                try:
+                    _inp = self.query_one("#input-area")
+                    _inp_value = getattr(_inp, "value", "") or ""
+                except NoMatches:
+                    pass
+                if not _inp_value:
+                    self.browse_mode = True
+                    event.prevent_default()
+                    return
 
         # --- J/K: focus next/prev ToolPanel (Phase 3 panel nav) ---
         # Handle early — works in and out of browse mode so it doesn't fall through

@@ -96,7 +96,8 @@ class HermesInput(TextArea, can_focus=True):
     """
 
     BINDINGS = [
-        Binding("ctrl+a",       "select_all",   "Select all",  show=False),
+        # ctrl+shift+a: select all — avoids clobbering readline's "beginning of line" (Ctrl+A).
+        Binding("ctrl+shift+a", "select_all",   "Select all",  show=False),
         Binding("ctrl+shift+z", "redo",         "Redo",        show=False),
         Binding("ctrl+r",       "rev_search",   "Reverse search", show=False, priority=True),
         Binding("ctrl+s",       "rev_search_forward", "Forward search", show=False, priority=True),
@@ -464,11 +465,15 @@ class HermesInput(TextArea, can_focus=True):
             event.prevent_default()
             self._input_height_override = min(10, self._input_height_override + 1)
             self.styles.max_height = self._input_height_override
+            if hasattr(self.app, "_flash_hint"):
+                self.app._flash_hint(f"Input height: {self._input_height_override}", 1.0)
             return
         if key == "ctrl+shift+down":
             event.prevent_default()
             self._input_height_override = max(3, self._input_height_override - 1)
             self.styles.max_height = self._input_height_override
+            if hasattr(self.app, "_flash_hint"):
+                self.app._flash_hint(f"Input height: {self._input_height_override}", 1.0)
             return
 
         # PageUp/Down: route to completion overlay when visible
@@ -778,18 +783,25 @@ class HermesInput(TextArea, can_focus=True):
             hint_bar.hint = ""
         except Exception:
             pass
+        # Restore placeholder (updated during rev-search for narrow-terminal visibility)
+        self.placeholder = self._idle_placeholder
 
     def _update_rev_hint(self, *, no_match: bool = False) -> None:
-        """Update HintBar with current rev-search query."""
+        """Update HintBar and placeholder with current rev-search query.
+
+        The placeholder update ensures the mode indicator is visible even
+        when HintBar is hidden at short terminal heights (h < 9).
+        """
+        no_match_prefix = "(no matches) " if no_match else ""
+        hint_text = f"{no_match_prefix}reverse-i-search: {self._rev_query}_"
         try:
             from hermes_cli.tui.widgets import HintBar
             hint_bar = self.app.query_one(HintBar)
-            if no_match:
-                hint_bar.hint = f"(no matches) reverse-i-search: {self._rev_query}_"
-            else:
-                hint_bar.hint = f"reverse-i-search: {self._rev_query}_"
+            hint_bar.hint = hint_text
         except Exception:
             pass
+        # Also update placeholder for visibility when HintBar is hidden
+        self.placeholder = hint_text
 
     # --- Autocomplete ---
 

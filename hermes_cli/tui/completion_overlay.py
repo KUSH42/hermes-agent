@@ -98,6 +98,7 @@ class CompletionOverlay(Vertical):
         dock: bottom;
         margin-bottom: 4;
         height: auto;
+        min-height: 4;
         max-height: 14;
         display: none;
     }
@@ -144,9 +145,19 @@ class CompletionOverlay(Vertical):
 
     def on_resize(self, event: events.Resize) -> None:
         w = event.size.width
-        if crosses_threshold(self._last_applied_w, w, THRESHOLD_COMP_NARROW):
+        if self._last_applied_w == 0 or crosses_threshold(self._last_applied_w, w, THRESHOLD_COMP_NARROW):
             self.set_class(w < THRESHOLD_COMP_NARROW, "--narrow")
         self._last_applied_w = w
+        # B1: cap max-height dynamically so overlay does not clip at short terminal heights
+        avail = max(4, event.size.height - 8)
+        self.styles.max_height = avail
+
+    def _clear_highlighted_candidate(self) -> None:
+        """Reset app.highlighted_candidate so ghost text is cleared."""
+        try:
+            self.app.highlighted_candidate = None
+        except Exception:
+            pass
 
     def on_virtual_completion_list_auto_dismiss(
         self, _message: VirtualCompletionList.AutoDismiss,
@@ -154,3 +165,4 @@ class CompletionOverlay(Vertical):
         """Auto-close when the empty-state timer fires (P0-B)."""
         self.remove_class("--visible")
         self.remove_class("--slash-only")
+        self._clear_highlighted_candidate()

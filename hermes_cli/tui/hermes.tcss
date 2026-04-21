@@ -67,6 +67,16 @@ OutputPanel {
     scrollbar-color: $scrollbar 60%;
 }
 
+/* F2: restore slim scrollbars on overlay scroll areas so users can tell
+   they contain more content than is currently visible. */
+HelpOverlay > #help-content,
+SessionOverlay > #sess-scroll,
+WorkspaceOverlay > #ws-scroll,
+CommandsOverlay > #commands-content {
+    scrollbar-size-vertical: 1;
+    scrollbar-color: $text-muted 30%;
+}
+
 /* --- Message turns --- */
 
 MessagePanel {

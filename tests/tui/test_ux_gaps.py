@@ -62,14 +62,15 @@ def test_bindings_has_ctrl_f():
 
 
 def test_bindings_has_ctrl_g():
-    """HermesApp.BINDINGS includes ctrl+g → action_open_history_search (replaces ctrl+r)."""
+    """ctrl+g removed from app-level BINDINGS (spec B5 — now only in overlay for find-next)."""
     keys = {b.key for b in HermesApp.BINDINGS}
-    assert "ctrl+g" in keys
+    assert "ctrl+g" not in keys  # removed per spec B5
     assert "ctrl+r" not in keys  # ctrl+r was removed (M1 fix)
+    assert "ctrl+f" in keys  # ctrl+f remains as the app-level opener
 
 
 def test_bindings_action_name():
-    """Both ctrl+f and ctrl+g route to action_open_history_search."""
+    """ctrl+f routes to action_open_history_search."""
     actions = {b.action for b in HermesApp.BINDINGS if b.key in ("ctrl+f", "ctrl+g")}
     assert actions == {"open_history_search"}
 
@@ -82,12 +83,12 @@ def test_action_open_history_search_method_exists():
 
 @pytest.mark.asyncio
 async def test_ctrl_g_opens_history_search():
-    """Pressing ctrl+g opens the HistorySearchOverlay (replaces ctrl+r)."""
+    """Pressing ctrl+f opens the HistorySearchOverlay (ctrl+g removed per spec B5)."""
     from hermes_cli.tui.widgets import HistorySearchOverlay
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        await pilot.press("ctrl+g")
+        await pilot.press("ctrl+f")
         await pilot.pause()
         hs = app.query_one(HistorySearchOverlay)
         assert hs.has_class("--visible")

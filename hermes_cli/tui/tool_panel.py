@@ -133,6 +133,13 @@ class FooterPane(Widget):
     }
     FooterPane.has-stderr > .footer-stderr { display: block; }
     FooterPane.compact > .footer-stderr { display: none; }
+    FooterPane > .footer-remediation {
+        height: auto;
+        display: none;
+        color: $text-muted;
+        padding: 0;
+    }
+    FooterPane.has-remediation > .footer-remediation { display: block; }
     FooterPane > .artifact-row {
         height: auto;
         layout: horizontal;
@@ -239,8 +246,10 @@ class FooterPane(Widget):
             rem_text.append("  hint: ", style="dim")
             rem_text.append("  ·  ".join(remediation_hints), style="dim italic")
             self._remediation_row.update(rem_text)
+            self.add_class("has-remediation")
         else:
             self._remediation_row.update("")
+            self.remove_class("has-remediation")
 
     def _rebuild_chips(self) -> None:
         """B3: re-render after _show_all_artifacts changes."""
@@ -773,24 +782,7 @@ class ToolPanel(Widget):
         for t in all_rich:
             console.print(t, highlight=False)
         ansi_text = buf.getvalue()
-        # Try clipboard first; fallback to /tmp file
-        import subprocess, time as _time
-        copied = False
-        for cmd in (["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"]):
-            try:
-                proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
-                proc.communicate(input=ansi_text.encode())
-                if proc.returncode == 0:
-                    copied = True
-                    break
-            except FileNotFoundError:
-                continue
-        if not copied:
-            tmp_path = f"/tmp/hermes_ansi_{int(_time.time())}.txt"
-            with open(tmp_path, "w") as f:
-                f.write(ansi_text)
-            self._flash_header(f"ansi → {tmp_path}")
-            return
+        self.app._copy_text_with_hint(ansi_text)
         self._flash_header("copied ansi")
 
     def action_copy_html(self) -> None:
@@ -825,6 +817,7 @@ class ToolPanel(Widget):
         tmp_path = f"/tmp/hermes_copy_{int(_time.time())}.html"
         with open(tmp_path, "w") as f:
             f.write(html)
+        self.app._copy_text_with_hint(tmp_path)
         self._flash_header(f"html → {tmp_path}")
 
     def action_copy_urls(self) -> None:
@@ -868,8 +861,7 @@ class ToolPanel(Widget):
             from hermes_cli.tui.widgets import CopyableRichLog
             log = self._block._body.query_one(CopyableRichLog)
             page = max(5, (self.size.height or 20) // 2)
-            for _ in range(page):
-                log.scroll_down(animate=False)
+            log.scroll_relative(y=page, animate=False)
         except Exception:
             pass
 
@@ -881,8 +873,7 @@ class ToolPanel(Widget):
             from hermes_cli.tui.widgets import CopyableRichLog
             log = self._block._body.query_one(CopyableRichLog)
             page = max(5, (self.size.height or 20) // 2)
-            for _ in range(page):
-                log.scroll_up(animate=False)
+            log.scroll_relative(y=-page, animate=False)
         except Exception:
             pass
 
@@ -938,47 +929,53 @@ class ToolPanel(Widget):
         else:
             self._hint_row.update("")
 
+    def on_resize(self, event: object) -> None:
+        width = getattr(getattr(event, "size", None), "width", 80)
+        self._last_resize_w = width
+        if self.has_focus and self._hint_row is not None:
+            self._hint_row.update(self._build_hint_text())
+
     def _build_hint_text(self) -> "Any":
         from rich.text import Text
         width = (self.size.width or 80) if self.is_mounted else 80
         narrow = width < 50
 
         rs = self._result_summary_v4
-        hints: list[tuple[str, str, str, str]] = []  # (key, sep, label, priority)
+        hints: list[tuple[str, str, str]] = []  # (key, sep, label)
 
         if rs is not None and rs.is_error:
-            hints.append(("r", " ", "retry  ", "error"))
+            hints.append(("r", " ", "retry  "))
             has_edit = any(a.kind == "edit_cmd" and a.payload for a in (rs.actions or ()))
             if has_edit:
-                hints.append(("E", " ", "edit cmd  ", "error"))
+                hints.append(("E", " ", "edit cmd  "))
 
-        hints.append(("?", " ", "help  ", "help"))
-        hints.append(("c", " ", "copy  ", "copy"))
+        hints.append(("?", " ", "help  "))
+        hints.append(("c", " ", "copy  "))
 
         if not narrow:
-            hints.append(("  Enter", " ", "toggle  ", "normal"))
+            hints.append(("  Enter", " ", "toggle  "))
             bar = self._get_omission_bar()
             if bar is not None:
-                hints.append(("+/-", " ", "lines  ", "normal"))
-                hints.append(("*", " ", "all  ", "normal"))
+                hints.append(("+/-", " ", "lines  "))
+                hints.append(("*", " ", "all  "))
             if not self.collapsed:
-                hints.append(("j/k", " ", "scroll  ", "normal"))
-            hints.append(("C/H", " ", "color/html  ", "normal"))
-            hints.append(("I", " ", "invocation  ", "normal"))
+                hints.append(("j/k", " ", "scroll  "))
+            hints.append(("C/H", " ", "color/html  "))
+            hints.append(("I", " ", "invocation  "))
             if rs is not None:
                 if rs.stderr_tail:
-                    hints.append(("e", " ", "stderr  ", "normal"))
+                    hints.append(("e", " ", "stderr  "))
                 if self._result_paths_for_action():
-                    hints.append(("o", " ", "open  ", "normal"))
-                    hints.append(("p", " ", "paths", "normal"))
+                    hints.append(("o", " ", "open  "))
+                    hints.append(("p", " ", "paths"))
                 has_urls = any(a.kind == "url" for a in (rs.artifacts or ()))
                 if has_urls:
-                    hints.append(("  O", " ", "url  ", "normal"))
-                    hints.append(("u", " ", "copy urls", "normal"))
+                    hints.append(("  O", " ", "url  "))
+                    hints.append(("u", " ", "copy urls"))
 
         t = Text()
         max_hints = 3 if narrow else len(hints)
-        for key, sep, label, _ in hints[:max_hints]:
+        for key, sep, label in hints[:max_hints]:
             t.append(key, style="bold")
             t.append(sep + label, style="dim")
         return t
@@ -1029,4 +1026,4 @@ class ToolPanel(Widget):
             return
         block._follow_tail = not block._follow_tail
         state = "on" if block._follow_tail else "off"
-        self.notify(f"tail follow {state}", timeout=1.5)
+        self._flash_header(f"tail: {state}")

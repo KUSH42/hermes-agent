@@ -340,3 +340,18 @@ def test_diff_attach_window_configurable():
     from hermes_cli.config import DEFAULT_CONFIG
     assert "diff_attach_window_s" in DEFAULT_CONFIG.get("display", {})
     assert DEFAULT_CONFIG["display"]["diff_attach_window_s"] == 15.0
+
+
+# ---------------------------------------------------------------------------
+# P1-8: ToolGroup focus highlights GroupHeader via CSS
+# ---------------------------------------------------------------------------
+
+def test_tool_group_focus_highlights_header_via_css():
+    """ToolGroup DEFAULT_CSS includes :focus > GroupHeader { background: $boost } rule."""
+    from hermes_cli.tui.tool_group import ToolGroup
+    css = ToolGroup.DEFAULT_CSS
+    assert "ToolGroup:focus > GroupHeader" in css, (
+        "Missing 'ToolGroup:focus > GroupHeader' in DEFAULT_CSS — "
+        "keyboard-focused group won't visually highlight its header"
+    )
+    assert "$boost" in css, "Expected $boost color in ToolGroup focus rule"

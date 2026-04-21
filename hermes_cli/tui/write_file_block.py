@@ -196,7 +196,13 @@ class WriteFileBlock(StreamingToolBlock):
         self._flush_pending()  # no-op (we never use _pending)
         self._tail.dismiss()
         self._header._spinner_char = None
-        self._header._duration = duration
+        started = getattr(self, "_stream_started_at", None)
+        if started is not None:
+            elapsed_ms = (time.monotonic() - started) * 1000.0
+            from hermes_cli.tui.tool_blocks import _format_duration_v4
+            self._header._duration = _format_duration_v4(elapsed_ms)
+        else:
+            self._header._duration = duration
         self._header._line_count = self._content_line_count
 
         if self._content_line_count > COLLAPSE_THRESHOLD:

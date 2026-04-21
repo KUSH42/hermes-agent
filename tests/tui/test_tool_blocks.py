@@ -1772,3 +1772,36 @@ def test_rate_deque_maxlen_is_60():
     # Verify class default
     stb2 = StreamingToolBlock(label="bash", tool_name="bash")
     assert stb2._rate_samples.maxlen == 60
+
+
+# ---------------------------------------------------------------------------
+# P0-1: ToolHeader.on_click calls event.stop() in all left-click paths
+# ---------------------------------------------------------------------------
+
+def test_tool_header_on_click_stops_event_in_all_paths():
+    """All left-click branches in ToolHeader.on_click call event.stop() to prevent bubble."""
+    import inspect
+    from hermes_cli.tui.tool_blocks import ToolHeader
+    src = inspect.getsource(ToolHeader.on_click)
+    # Count event.stop() calls — must cover path-clickable, double-click, panel toggle, legacy toggle
+    stop_count = src.count("event.stop()")
+    assert stop_count >= 4, (
+        f"Expected ≥4 event.stop() calls in ToolHeader.on_click (one per left-click branch), "
+        f"found {stop_count}. Missing stop() causes click to bubble to ToolGroup and double-toggle."
+    )
+
+
+# ---------------------------------------------------------------------------
+# P1-6: context menu uses asyncio.ensure_future, not deprecated get_event_loop
+# ---------------------------------------------------------------------------
+
+def test_context_menu_uses_ensure_future_not_deprecated_event_loop():
+    """ToolHeader._show_context_menu uses asyncio.ensure_future, not deprecated get_event_loop().create_task()."""
+    import inspect
+    from hermes_cli.tui.tool_blocks import ToolHeader
+    src = inspect.getsource(ToolHeader._show_context_menu)
+    assert "ensure_future" in src, "Expected asyncio.ensure_future in _show_context_menu"
+    assert "get_event_loop" not in src, (
+        "Found deprecated get_event_loop in _show_context_menu — "
+        "raises DeprecationWarning in Python 3.10+ when no event loop is running"
+    )

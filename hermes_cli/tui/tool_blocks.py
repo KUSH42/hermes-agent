@@ -832,6 +832,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         # Path-clickable header: open the file directly
         if self._path_clickable and self._full_path:
             event.prevent_default()
+            event.stop()
             import sys
             opener = "open" if sys.platform == "darwin" else "xdg-open"
             try:
@@ -848,17 +849,20 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             except Exception:
                 pass
             event.prevent_default()
+            event.stop()
             return
         # Always allow toggle when wrapped in a ToolPanel — bypasses _has_affordances
         # guard so small-result blocks (≤3 lines) are still collapsible.
         panel = getattr(self, "_panel", None)
         if panel is not None:
             event.prevent_default()
+            event.stop()
             panel.action_toggle_collapse()
             return
         if not self._has_affordances:
             return                          # always-expanded legacy block: nothing to toggle
         event.prevent_default()
+        event.stop()
         parent = self.parent
         if parent is not None:
             parent.toggle()
@@ -921,9 +925,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         try:
             menu = self.app.query_one(ContextMenu)
             import asyncio
-            asyncio.get_event_loop().create_task(
-                menu.show(items, event.screen_x, event.screen_y)
-            )
+            asyncio.ensure_future(menu.show(items, event.screen_x, event.screen_y))
         except Exception:
             pass
 

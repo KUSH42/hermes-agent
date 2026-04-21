@@ -194,6 +194,9 @@ class ToolGroup(Widget):
     ToolGroup.--narrow GroupBody {
         display: none;
     }
+    ToolGroup:focus > GroupHeader {
+        background: $boost;
+    }
     """
 
     _content_type: str = "tool-group"

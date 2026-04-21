@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import Screen
-from textual.widgets import Input, ListView, ListItem, Static
+from textual.widgets import Button, Input, ListView, ListItem, Static
 from textual.containers import Horizontal
 from rich.text import Text
 
@@ -94,11 +94,15 @@ def _primary_arg_str(entry: dict) -> str:
     return ""
 
 
+_GANTT_SPINNER = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+
+
 def render_tool_row(
     entry: dict,
     cursor: bool,
     turn_total_s: float,
     term_w: int,
+    spinner_frame: int = 0,
 ) -> Text:
     """Compose one Rich Text timeline row.
 
@@ -158,7 +162,8 @@ def render_tool_row(
             offset_cells = 0
         else:
             offset_cells = min(round(start_s / turn_total_s * gantt_w), gantt_w - 1)
-        bar_str = " " * offset_cells + "━⠋" + " " * max(0, gantt_w - offset_cells - 2)
+        spin_char = _GANTT_SPINNER[spinner_frame % len(_GANTT_SPINNER)]
+        bar_str = " " * offset_cells + "━" + spin_char + " " * max(0, gantt_w - offset_cells - 2)
     else:
         dur_s = dur_ms / 1000.0
         bar_cells = max(1, round(dur_s / turn_total_s * gantt_w))
@@ -235,10 +240,30 @@ ToolsScreen > #tools-list {
     height: 1fr;
     scrollbar-size: 1 1;
 }
+ToolsScreen > #tools-list > ListItem.--highlight {
+    background: $boost;
+}
 ToolsScreen > #filter-row {
     height: 1;
     padding: 0 1;
     background: $surface-darken-1;
+}
+ToolsScreen > #filter-row > #filter-pills-row {
+    width: auto;
+    height: 1;
+    layout: horizontal;
+}
+ToolsScreen > #filter-row > #filter-pills-row > Button {
+    height: 1;
+    border: none;
+    background: transparent;
+    min-width: 0;
+    padding: 0 1;
+    color: $text-muted;
+}
+ToolsScreen > #filter-row > #filter-pills-row > Button.--active {
+    color: $text;
+    text-style: bold;
 }
 ToolsScreen > #filter-row > #filter-input {
     width: 1fr;
@@ -263,6 +288,9 @@ ToolsScreen > #tools-footer {
         Binding("r", "refresh", "Refresh snapshot", show=False),
     ]
 
+    # Gantt spinner frames for in-progress tool rows
+    _GANTT_SPINNER = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+
     def __init__(self, snapshot: list[dict]) -> None:
         super().__init__()
         self._snapshot: list[dict] = snapshot
@@ -277,13 +305,14 @@ ToolsScreen > #tools-footer {
         self._snapshot_ts: float = time.monotonic()
         self._stale_timer: object | None = None
         self._refresh_timer: object | None = None
+        self._spinner_frame: int = 0
 
     def compose(self) -> ComposeResult:
         yield Static("", id="tools-header")
         yield Static("", id="gantt-scale")
         yield ListView(id="tools-list")
         yield Horizontal(
-            Static("", id="filter-pills"),
+            Horizontal(id="filter-pills-row"),
             Input(id="filter-input", placeholder="filter…"),
             id="filter-row",
         )
@@ -338,6 +367,12 @@ ToolsScreen > #tools-footer {
             self.query_one("#tools-header", Static).update(header_text)
         except Exception:
             pass
+        # Advance spinner and rebuild rows when any tool is in-progress
+        has_in_progress = any(e.get("dur_ms") is None for e in self._filtered)
+        if has_in_progress:
+            self._spinner_frame = (self._spinner_frame + 1) % len(self._GANTT_SPINNER)
+            import asyncio
+            asyncio.ensure_future(self._rebuild())
 
     async def _auto_refresh(self) -> None:
         """Refresh snapshot from app state while in-progress tools exist."""
@@ -378,33 +413,55 @@ ToolsScreen > #tools-footer {
                 cursor=(i == self._cursor),
                 turn_total_s=self._turn_total_s,
                 term_w=self._term_w,
+                spinner_frame=self._spinner_frame,
             )
             await listview.append(ListItem(Static(row_text)))
         self._update_staleness_pip()
         self._update_pills()
 
     def _update_pills(self) -> None:
+        """Rebuild interactive pill buttons for category filtering."""
+        try:
+            pills_row = self.query_one("#filter-pills-row", Horizontal)
+        except Exception:
+            return
+        # Remove old buttons
+        for btn in list(pills_row.children):
+            btn.remove()
         cats = sorted({e.get("category", "unknown") for e in self._snapshot})
-        parts = []
+        buttons_to_mount = []
         # errors-only pill
-        err_style = "bold" if self._errors_only else "dim"
-        parts.append(Text("[errors]", style=err_style))
-        parts.append(Text(" ", style=""))
+        err_btn = Button("[errors]", id="pill-errors", classes="--active" if self._errors_only else "")
+        buttons_to_mount.append(err_btn)
         # category pills
-        for cat in ["file", "shell", "search", "web", "code", "agent", "mcp"] + [c for c in cats if c not in ("file", "shell", "search", "web", "code", "agent", "mcp")]:
+        ordered_cats = ["file", "shell", "search", "web", "code", "agent", "mcp"]
+        for cat in ordered_cats + [c for c in cats if c not in ordered_cats]:
             if cat not in cats:
                 continue
             active = cat in self._active_categories
-            style = "bold" if active else "dim"
-            parts.append(Text(f"[{cat}]", style=style))
-            parts.append(Text(" ", style=""))
-        combined = Text()
-        for p in parts:
-            combined.append_text(p)
-        try:
-            self.query_one("#filter-pills", Static).update(combined)
-        except Exception:
-            pass
+            btn = Button(f"[{cat}]", id=f"pill-{cat}", classes="--active" if active else "")
+            buttons_to_mount.append(btn)
+        if buttons_to_mount:
+            pills_row.mount(*buttons_to_mount)
+
+    def on_button_pressed(self, event: "Button.Pressed") -> None:
+        """Handle pill button clicks for category/error filtering."""
+        btn_id = event.button.id or ""
+        if btn_id == "pill-errors":
+            self._errors_only = not self._errors_only
+            import asyncio
+            asyncio.ensure_future(self._apply_filter())
+            event.stop()
+            return
+        if btn_id.startswith("pill-"):
+            cat = btn_id[5:]
+            if cat in self._active_categories:
+                self._active_categories.discard(cat)
+            else:
+                self._active_categories.add(cat)
+            import asyncio
+            asyncio.ensure_future(self._apply_filter())
+            event.stop()
 
     async def on_key(self, event) -> None:
         if event.key == "escape":
@@ -416,7 +473,7 @@ ToolsScreen > #tools-footer {
                 await self._apply_filter()
                 event.prevent_default()
                 return
-        # arrow key cursor sync with ListView.index
+        # arrow key cursor sync: update ListView.index only (no full rebuild)
         if event.key in ("up", "down"):
             if self._filtered:
                 if event.key == "up":
@@ -425,7 +482,6 @@ ToolsScreen > #tools-footer {
                     self._cursor = min(len(self._filtered) - 1, self._cursor + 1)
                 lv = self.query_one("#tools-list", ListView)
                 lv.index = self._cursor
-                await self._rebuild()
                 event.prevent_default()
 
     async def on_input_changed(self, event: Input.Changed) -> None:
@@ -557,7 +613,7 @@ ToolsScreen > #tools-footer {
         cat_filter = self._active_categories
         self._filtered = [
             e for e in self._snapshot
-            if (not text or text in e.get("name", "").lower() or _primary_arg_str(e).lower().startswith(text))
+            if (not text or text in e.get("name", "").lower() or text in _primary_arg_str(e).lower())
             and (not cat_filter or e.get("category", "unknown") in cat_filter)
             and (not self._errors_only or e.get("is_error", False))
         ]

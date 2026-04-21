@@ -1402,3 +1402,102 @@ async def test_artifact_overflow_chip_has_url_remediation():
         btn = overflow_btns[0]
         remediation = getattr(btn, "_overflow_remediation", None)
         assert remediation is not None and "url" in remediation.lower(), f"Expected URL remediation, got {remediation}"
+
+
+# ---------------------------------------------------------------------------
+# P1-2: action_copy_ansi delegates to _copy_text_with_hint (no raw clipboard dispatch)
+# ---------------------------------------------------------------------------
+
+def test_action_copy_ansi_uses_copy_with_hint():
+    """action_copy_ansi calls app._copy_text_with_hint, not a raw clipboard dispatch."""
+    import inspect
+    from hermes_cli.tui.tool_panel import ToolPanel
+    src = inspect.getsource(ToolPanel.action_copy_ansi)
+    assert "_copy_text_with_hint" in src, "action_copy_ansi must delegate to _copy_text_with_hint"
+    assert "_flash_header" in src, "action_copy_ansi must call _flash_header after copy"
+
+
+# ---------------------------------------------------------------------------
+# P1-3: page-scroll uses scroll_relative (single call, not O(N) loop)
+# ---------------------------------------------------------------------------
+
+def test_page_scroll_uses_scroll_relative():
+    """action_scroll_body_page_down/up use scroll_relative(y=...) not a loop over scroll_down/up."""
+    import inspect
+    from hermes_cli.tui.tool_panel import ToolPanel
+    src_down = inspect.getsource(ToolPanel.action_scroll_body_page_down)
+    src_up = inspect.getsource(ToolPanel.action_scroll_body_page_up)
+    for name, src in [("page_down", src_down), ("page_up", src_up)]:
+        assert "scroll_relative" in src, f"action_scroll_body_{name} must use scroll_relative"
+        assert "scroll_down" not in src and "scroll_up" not in src, (
+            f"action_scroll_body_{name} must not use a scroll_down/up loop"
+        )
+
+
+# ---------------------------------------------------------------------------
+# P1-4: toggle_tail_follow uses _flash_header, not notify
+# ---------------------------------------------------------------------------
+
+def test_toggle_tail_follow_uses_flash_header_not_notify():
+    """action_toggle_tail_follow reports state via _flash_header, not self.notify."""
+    import inspect
+    from hermes_cli.tui.tool_panel import ToolPanel
+    src = inspect.getsource(ToolPanel.action_toggle_tail_follow)
+    assert "_flash_header" in src, "action_toggle_tail_follow must use _flash_header"
+    assert "notify" not in src, "action_toggle_tail_follow must not call self.notify (goes to app toast, not header)"
+
+
+# ---------------------------------------------------------------------------
+# P1-5: FooterPane remediation row hidden when no hints
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_footer_remediation_hidden_when_no_hints():
+    """FooterPane does not have 'has-remediation' class when result has no remediation hints."""
+    from hermes_cli.tui.tool_panel import FooterPane
+    from hermes_cli.tui.tool_result_parse import ResultSummaryV4
+
+    app = _make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+
+        fp = FooterPane()
+        app.screen.mount(fp)
+        await _pause(pilot)
+
+        rs = ResultSummaryV4(
+            primary="done",
+            exit_code=0,
+            chips=(),
+            actions=(),
+            stderr_tail="",
+            artifacts=(),
+            is_error=False,
+        )
+        fp.update_summary_v4(rs)
+        await _pause(pilot)
+
+        assert not fp.has_class("has-remediation"), (
+            "FooterPane must not have 'has-remediation' class when no remediation hints present"
+        )
+        content_str = str(fp._remediation_row.render())
+        assert content_str in ("", "Content('')"), (
+            f"Remediation row content must be empty when no hints, got: {content_str!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# P2-1: hint tuple is 3-tuple (priority field removed)
+# ---------------------------------------------------------------------------
+
+def test_hint_tuple_is_three_tuple_not_four():
+    """_build_hint_text builds from 3-tuple (key, sep, label) — no dead 4th priority field."""
+    import inspect
+    from hermes_cli.tui.tool_panel import ToolPanel
+    src = inspect.getsource(ToolPanel._build_hint_text)
+    # The unpack should be 3-variable, not 4
+    assert "key, sep, label, _" not in src, (
+        "_build_hint_text still unpacks 4 fields (key, sep, label, _) — "
+        "dead priority field should be removed"
+    )
+    assert "key, sep, label" in src, "_build_hint_text must unpack 3-tuple (key, sep, label)"

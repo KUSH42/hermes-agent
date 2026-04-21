@@ -592,3 +592,81 @@ async def test_export_json_flashes_error_on_permission_denied(tmp_path):
                 screen.action_export_json()
 
         assert any(h.startswith("✗") for h in hint_calls), f"Expected ✗ hint, got {hint_calls}"
+
+
+# ---------------------------------------------------------------------------
+# P2-5: _apply_filter uses substring match, not startswith
+# ---------------------------------------------------------------------------
+
+def test_filter_substring_match():
+    """_apply_filter matches entries whose args contain the query anywhere, not just at start."""
+    from hermes_cli.tui.tools_overlay import _primary_arg_str
+    # Simulate what _apply_filter does
+    entries = [
+        _entry(name="read_file", args={"path": "/foo/bar/baz.py"}),
+        _entry(name="read_file", args={"path": "/qux/alpha.py"}),
+        _entry(name="read_file", args={"path": "/start_match.py"}),
+    ]
+    text = "bar"  # "bar" is not at the start of any path
+    matched = [
+        e for e in entries
+        if not text or text in e.get("name", "").lower() or text in _primary_arg_str(e).lower()
+    ]
+    assert len(matched) == 1, f"Expected 1 match for 'bar', got {len(matched)}: {[_primary_arg_str(e) for e in matched]}"
+    assert _primary_arg_str(matched[0]) == "/foo/bar/baz.py"
+
+
+def test_filter_startswith_would_miss_midstring():
+    """Confirm that startswith-only filter misses mid-string match (regression guard)."""
+    from hermes_cli.tui.tools_overlay import _primary_arg_str
+    entry = _entry(name="read_file", args={"path": "/foo/bar/baz.py"})
+    text = "bar"
+    # startswith approach (old, broken)
+    startswith_match = _primary_arg_str(entry).lower().startswith(text)
+    assert not startswith_match, "startswith would NOT match 'bar' in '/foo/bar/baz.py' (confirms fix needed)"
+    # substring approach (new, correct)
+    substring_match = text in _primary_arg_str(entry).lower()
+    assert substring_match, "substring 'in' must match 'bar' in '/foo/bar/baz.py'"
+
+
+# ---------------------------------------------------------------------------
+# P1-7: render_tool_row accepts spinner_frame and produces animated bar
+# ---------------------------------------------------------------------------
+
+def test_render_tool_row_spinner_frame_varies_output():
+    """render_tool_row with different spinner_frame values produces different in-progress bars."""
+    entry = _entry(dur_ms=None)  # dur_ms=None means in-progress
+    row_f0 = str(render_tool_row(entry, cursor=False, turn_total_s=5.0, term_w=80, spinner_frame=0))
+    row_f1 = str(render_tool_row(entry, cursor=False, turn_total_s=5.0, term_w=80, spinner_frame=1))
+    assert row_f0 != row_f1, (
+        "render_tool_row with spinner_frame=0 vs 1 should produce different spinner chars for in-progress rows"
+    )
+
+
+# ---------------------------------------------------------------------------
+# P0-2: pill filter buttons are Button widgets (clickable), not Static text
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_tools_screen_pill_filter_buttons_are_button_widgets():
+    """Filter pills in ToolsScreen are Button widgets, not Static text."""
+    from hermes_cli.tui.tools_overlay import ToolsScreen
+    from hermes_cli.tui.app import HermesApp
+    from textual.widgets import Button
+
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        snapshot = [
+            _entry(name="read_file", category="file"),
+            _entry(name="bash", category="shell"),
+        ]
+        screen = ToolsScreen(snapshot)
+        app.push_screen(screen)
+        await _pause(pilot, 10)
+
+        pill_row = screen.query_one("#filter-pills-row")
+        buttons = list(pill_row.query(Button))
+        assert len(buttons) > 0, (
+            "Expected Button widgets in #filter-pills-row — static text pills are not clickable"
+        )

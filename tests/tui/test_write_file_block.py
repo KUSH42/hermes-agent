@@ -388,3 +388,35 @@ async def test_cps_zero_hint_cleared_on_complete():
         await pilot.pause()
 
         assert block._writing_hint is None
+
+
+# ---------------------------------------------------------------------------
+# P2-4: WriteFileBlock.complete() formats duration from _stream_started_at
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_write_file_block_duration_uses_format_duration_v4():
+    """complete() computes duration from _stream_started_at using _format_duration_v4, not raw caller string."""
+    import time
+    from hermes_cli.tui.write_file_block import WriteFileBlock
+
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        block = WriteFileBlock(path="out.py")
+        await app.screen.mount(block)
+        await pilot.pause()
+
+        # Simulate a block that started 200ms ago (>50ms so _format_duration_v4 returns NNNms)
+        block._stream_started_at = time.monotonic() - 0.200
+
+        block.complete("raw-caller-string", is_error=False)
+        await pilot.pause()
+
+        dur = block._header._duration
+        # Should be formatted as NNNms (200ms range), NOT the raw caller string
+        assert dur != "raw-caller-string", (
+            f"WriteFileBlock.complete() must compute duration from _stream_started_at, "
+            f"not use caller's raw string. Got: {dur!r}"
+        )
+        assert dur.endswith("ms") or dur.endswith("s"), f"Expected formatted duration, got: {dur!r}"

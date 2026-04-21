@@ -60,6 +60,17 @@ Then load only the focused reference you need:
 - Perf alarms should use the existing `hermes_cli.tui.perf` primitives. Prefer
   low-noise suspicion/escalation over logging on every single slight breach.
 - When skill text and live code disagree, trust live code and update the skill.
+- `event.prevent_default()` stops the DOM default action but does NOT stop event bubbling.
+  Always call `event.stop()` separately in widget `on_click` when clicks must not propagate
+  to parent widgets (e.g., `ToolHeader` inside `ToolGroup` — without `event.stop()`, the
+  click bubbles through `ToolPanel → GroupBody → ToolGroup` causing double-toggle).
+- Never use `asyncio.get_event_loop().create_task()` in Textual code — raises DeprecationWarning
+  in Python 3.10+ when no event loop is running. Use `asyncio.ensure_future()` instead.
+- `Button` widgets in `tools_overlay.py` (pill filter row) require an explicit import:
+  `from textual.widgets import Button` — it is NOT included in the default `ListView`/`Static` import set.
+- `WriteFileBlock.complete()` must compute duration from `_stream_started_at` using
+  `_format_duration_v4`, not pass the caller's raw `duration` string — the raw string bypasses
+  the <50ms omit rule and NNNms/N.Ns formatting.
 
 ## Fast workflow
 
@@ -131,9 +142,17 @@ Then load only the focused reference you need:
 
 ## Validation
 
-Last revalidated: **2026-04-21. ~2865+ total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
+Last revalidated: **2026-04-21. ~2823+ total TUI tests passing** (9 bake-dependent SDF morph tests skip cleanly via `@requires_pil_bake` — PIL/Python 3.13 FreeType incompatibility).
 
 Recent changes (details → reference files):
+- **Tool call UX audit pass 5** (2026-04-21): 15 issues (2 P0, 8 P1, 5 P2); spec at `/home/xush/.hermes/tui-ux-audit-pass5-spec.md`. 13 new tests.
+  **P0 fixes:** `ToolHeader.on_click` now calls `event.stop()` in ALL four left-click branches (path-clickable, double-click-copy-path, panel-toggle, legacy-toggle) — without `event.stop()`, clicks bubble through `ToolPanel → GroupBody → ToolGroup` causing double-toggle. `ToolsScreen` filter pills changed from `Static` text (no mouse events) to `Button` widgets with `on_button_pressed` handler; `Button` import added to `tools_overlay.py`.
+  **P1 fixes:** `asyncio.get_event_loop().create_task()` in `ToolHeader._show_context_menu` replaced with `asyncio.ensure_future()` (Python 3.10+ deprecation); `ToolGroup.DEFAULT_CSS` adds `ToolGroup:focus > GroupHeader { background: $boost }` for keyboard-focus highlight; `action_copy_html` and `action_copy_ansi` delegate to `_copy_text_with_hint` (no raw clipboard dispatch); `action_scroll_body_page_down/up` use single `log.scroll_relative(y=page)` call instead of O(N) loop; `action_toggle_tail_follow` reports state via `_flash_header` not `self.notify`; `FooterPane` adds `has-remediation` CSS class pattern — remediation row hidden when no hints; `ToolsScreen` in-progress rows animate correctly — `render_tool_row` accepts `spinner_frame: int` param, `_update_staleness_pip` increments `_spinner_frame` and rebuilds on in-progress ticks. Arrow key navigation only sets `lv.index` (no full `_rebuild()`).
+  **P2 fixes:** hint tuple simplified from 4-tuple `(key, sep, label, priority)` to 3-tuple `(key, sep, label)` — dead priority field removed; `ToolPanel.on_resize` invalidates hint row on resize; `WriteFileBlock.complete()` computes duration from `_stream_started_at` via `_format_duration_v4` (bypasses caller's raw string); `ToolsScreen._apply_filter` changed from `.startswith(text)` to `text in arg_str.lower()` substring match.
+  Key invariants: `event.stop()` is required alongside `event.prevent_default()` to halt bubble — they are independent; `Button` not in default `tools_overlay` import set; `_format_duration_v4` <50ms → omit rule must not be bypassed by raw duration strings.
+  → `hermes_cli/tui/tool_blocks.py §ToolHeader.on_click/_show_context_menu`, `hermes_cli/tui/tool_group.py §ToolGroup.DEFAULT_CSS`, `hermes_cli/tui/tool_panel.py §action_copy_html/action_copy_ansi/action_scroll_body_page_*/action_toggle_tail_follow/FooterPane/hints`, `hermes_cli/tui/tools_overlay.py §_apply_filter/render_tool_row/pills`, `hermes_cli/tui/write_file_block.py §complete`, `tests/tui/test_tool_blocks.py`, `tests/tui/test_tool_group.py`, `tests/tui/test_tool_panel.py`, `tests/tui/test_tools_overlay.py`, `tests/tui/test_write_file_block.py`
+- **Dropped first character of heading lines** (2026-04-21): `_normalize_ansi_for_render` used `(?<!\x1b)` as the orphan-fragment lookbehind, which only excluded the ESC byte. Multi-param CSI sequences like `\x1b[1;37m` (bold+white heading style) have `;37m` preceded by `1` (not `\x1b`), so `_ORPHAN_RE` stripped `;37m`, leaving `\x1b[1`. Rich's ANSI parser then read `\x1b[1M` as CSI "scroll up" and consumed the first content character (`M`). All level-1 and level-2 headings were affected (first letter silently dropped). Fix: change lookbehind to `(?<![\x1b0-9;])` — skip stripping if preceded by ESC, a digit, or a semicolon (all legitimate positions inside a CSI parameter list). Key gotcha: `(?<!\x1b)` is insufficient for multi-param sequences; must also guard against preceding digits and semicolons. 3 new regression tests in `test_response_flow.py`.
+  → `hermes_cli/tui/response_flow.py §_normalize_ansi_for_render`, `tests/tui/test_response_flow.py §test_normalize_ansi_*`
 - **Tool call UX audit pass 4** (2026-04-21): 25 issues (5 P0, 10 P1, 10 P2); spec at `/home/xush/.hermes/tui-tool-call-ux-audit-spec.md`. ~30 new tests across 3 phases.
   **P0 fixes:** diff path regex narrowed (`--- a/` / `+++ b/` prefix required — stops bare `---` YAML separators matching); rate deque expanded to 60 samples; shimmer phase is tick-incremented `+= 0.05` constant delta (not wall-clock) so busy-loop doesn't skip animation; omission bar `set_counts()` always called regardless of `display` state; secondary-args `update_secondary_args()` uses `--args-row` Static slot (separate from `--microcopy`) so secondary args persist across microcopy updates.
   **P1 fixes:** `action_edit_cmd()` saves existing input to history before overwriting; `ToolPanel.PathFocused(Message)` inner class posted when path-tool gains focus; `on_tool_panel_path_focused` in app flashes one-shot hint (guarded by `_path_open_hint_shown`); `osc8.is_supported` alias exported; `ToolGroup.BINDINGS` adds `shift+enter → action_peek_focused` (expand focused panel, collapse others); `ToolsScreen._refresh_timer` auto-starts when in-progress tools present; MCP label in Gantt uses `server::method()` format; `action_export_json` uses `mkdir(parents=True, exist_ok=True)`; `WriteFileBlock` shows `Static("writing…")` hint when `cps=0`, cleared on complete; `ExecuteCodeBlock` cursor hidden on complete (not on code finalize).

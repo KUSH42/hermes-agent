@@ -10,6 +10,40 @@ High-value pitfalls worth checking before editing tricky TUI code.
 - **`get_strips_or_alt()` is the safe render-path variant** — never calls `_render()`, returns alt strips on cache miss. `get_strips()` may call `_render()` and must only be called from pre-render steps (off the render phase).
 - **Symptom**: custom emojis (`:name:`) show as ASCII alt-text or blank in Kitty even though TGP is detected and placeholder strips are returned by the cache. The image was never uploaded.
 
+## Input history pollution — three bugs in `_load_history` / `_save_to_history`
+
+Three separate bugs cause "unrelated trash" at the top of up-arrow history (fixed 2026-04-21):
+
+1. **Slash commands saved to history**: `/clear`, `/anim`, `/model`, etc. are UI control commands, not prompts. `_save_to_history` now early-returns when `text.lstrip().startswith("/")`.
+2. **No file-level dedup**: In-memory dedup (`list.remove`) never touched the file, so typing the same slash command 4× results in 4 entries in the file. On the next TUI start all 4 reload. Fix: `_load_history` deduplicates the loaded slice (last occurrence wins, order preserved).
+3. **CLI/TUI entry merge**: `prompt_toolkit`'s `FileHistory` writes `\n# timestamp\n+cmd\n` — no trailing blank after the last entry. When the TUI appended `+tui_cmd\n\n` directly after, the parser merged them into one multiline entry (`"cli_cmd\ntui_cmd"`). Fix: `_save_to_history` writes a leading `\n` before the `+` lines.
+
+Key invariant: `_save_to_history` writes `\n+line\n…\n` (leading blank + trailing blank). The TUI never writes `# timestamp` lines — `prompt_toolkit` comments in the file are parsed but ignored.
+
+## `_normalize_ansi_for_render` — multi-param CSI orphan stripping
+
+- **`(?<!\x1b)` is insufficient** as the orphan-fragment lookbehind in `_normalize_ansi_for_render`. A multi-param CSI sequence like `\x1b[1;37m` has `;37m` preceded by `1` (not `\x1b`), so the old pattern incorrectly stripped it, leaving `\x1b[1`. Rich's ANSI parser then reads `\x1b[1M` as CSI "scroll up" and silently consumes the content character `M`. Every level-1/2 heading (style = bold+white `\x1b[1;37m` or bold+bright-white `\x1b[1;97m`) lost its first letter.
+- **Fix**: use `(?<![\x1b0-9;])` — skip stripping if the `;` or `[` is preceded by ESC, a digit, or a semicolon; those are all valid inside a CSI parameter list.
+- **Does NOT affect `_strip_ansi`**: `_strip_ansi` first strips all complete `\x1b[..letter]` sequences with `_ANSI_RE`, so the `_ORPHAN_RE` only runs on plain text where digits would never precede a `;`. The fix is only needed in `_normalize_ansi_for_render` which preserves the full ANSI.
+- **Symptom**: heading lines lose their first letter in TUI output. `## Markdown Features Showcase` renders as `arkdown Features Showcase`. The bug is invisible without emoji (path goes through `write_with_source`, which re-parses the malformed ANSI) but present in every heading turn.
+- **Affected site**: `hermes_cli/tui/response_flow.py §_normalize_ansi_for_render` (fixed 2026-04-21).
+
+## `call_from_thread` must not be called from the app thread
+
+- **`call_from_thread` raises `RuntimeError` when called from the app's own event-loop thread.** Textual checks `self._thread_id == threading.get_ident()` and raises `"The call_from_thread method must run in a different thread from the app"`.
+- **Trigger**: any async worker with `thread=False` (the default) that calls a helper that uses `call_from_thread`. `_handle_clear_tui` triggered this via `cli._push_tui_status()`.
+- **Fix pattern**: detect the thread context and use direct reactive assignment when already on the app thread:
+  ```python
+  import threading as _threading
+  def _apply() -> None:
+      tui.some_reactive = value
+  if _threading.get_ident() == tui._thread_id:
+      _apply()
+  else:
+      tui.call_from_thread(_apply)
+  ```
+- **Applies to**: any method in `cli.py` that calls `tui.call_from_thread(...)` and may be invoked from both background threads AND async workers. `_push_tui_status()` is the canonical example (fixed 2026-04-21).
+
 ## Tool header / ToolHeader render
 
 - **`mount_tool_block` arg order**: signature is `(label, lines, plain_lines, tool_name=None, rerender_fn=None, header_stats=None)`. All `call_from_thread(tui.mount_tool_block, ...)` in cli.py pass `function_name` as arg 4 (tool_name), `_rerender_*` as arg 5 (rerender_fn), `header_stats` as arg 6. Tests check `args[5]` for callable, not `args[4]`.
@@ -156,6 +190,7 @@ fall through to the `set_interval` branch automatically.
 
 ## Overlay and input behavior
 
+- **Slash-menu overlays MUST be modal — focus must never return to the input bar while an overlay is visible.** If `HermesInput` (or any `Input` widget) regains focus while a slash overlay is open, printable keystrokes go to the input field rather than the overlay, breaking keyboard navigation entirely. Enforce this by: (1) calling `overlay.focus()` immediately after mount; (2) overriding `on_focus` on the input widget to re-delegate focus to any active overlay; (3) NOT calling `input.focus()` in dismiss paths — use `app.set_focus(None)` or let the overlay's `on_dismiss` restore focus explicitly.
 - If an overlay needs printable key handling, disable the input while it is
   active so input does not consume those keys first.
 - Hidden focused widgets can still swallow scroll or key events. Dismiss paths

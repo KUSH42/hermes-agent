@@ -8,10 +8,27 @@ All engine classes implement the AnimEngine protocol (next_frame(params) → str
 from __future__ import annotations
 
 import math
+import math as _math
 import random
 import time
 from dataclasses import dataclass, field  # noqa: F401 (field kept for potential engine use)
 from typing import Protocol, runtime_checkable
+
+# ── Sine/cosine lookup tables (B1) ───────────────────────────────────────────
+_LUT_SIZE = 1024
+_LUT_SIZE_F = float(_LUT_SIZE)
+_TWO_PI_INV = _LUT_SIZE / (2.0 * _math.pi)
+
+_SIN_LUT: list[float] = [_math.sin(2.0 * _math.pi * i / _LUT_SIZE) for i in range(_LUT_SIZE)]
+_COS_LUT: list[float] = [_math.cos(2.0 * _math.pi * i / _LUT_SIZE) for i in range(_LUT_SIZE)]
+
+
+def _lut_sin(angle: float) -> float:
+    return _SIN_LUT[int(angle * _TWO_PI_INV) % _LUT_SIZE]
+
+
+def _lut_cos(angle: float) -> float:
+    return _COS_LUT[int(angle * _TWO_PI_INV) % _LUT_SIZE]
 
 
 # ── AnimParams ────────────────────────────────────────────────────────────────
@@ -70,6 +87,11 @@ class TrailCanvas:
         self.decay = decay
         self.threshold = threshold
         self._heat: dict[tuple[int, int], float] = {}
+        import drawille as _drawille
+        self._canvas = _drawille.Canvas()
+        self._canvas_has_clear = hasattr(self._canvas, "clear")
+        if not self._canvas_has_clear:
+            self._prev_pixels: set[tuple[int, int]] = set()
 
     def set(self, x: int, y: int, intensity: float = 1.0) -> None:  # noqa: A003
         """Set or reinforce pixel at (x, y). Out-of-bounds silently ignored."""
@@ -90,14 +112,26 @@ class TrailCanvas:
 
     def to_canvas(self) -> object:
         """Apply threshold → drawille Canvas with pixels set above threshold."""
-        import drawille
-        c = drawille.Canvas()
-        for (x, y), intensity in self._heat.items():
-            if intensity >= self.threshold:
-                try:
+        c = self._canvas
+        if self._canvas_has_clear:
+            c.clear()
+            for (x, y), intensity in self._heat.items():
+                if intensity >= self.threshold:
                     c.set(x, y)
+        else:
+            # Unset previous pixels that are no longer hot; set new ones
+            current: set[tuple[int, int]] = set()
+            for (x, y), intensity in self._heat.items():
+                if intensity >= self.threshold:
+                    current.add((x, y))
+            for px in self._prev_pixels - current:
+                try:
+                    c.unset(px[0], px[1])
                 except Exception:
                     pass
+            for px in current - self._prev_pixels:
+                c.set(px[0], px[1])
+            self._prev_pixels = current
         return c
 
     def frame(self) -> str:
@@ -120,7 +154,7 @@ def _make_trail_canvas(decay: float) -> object:
     return _make_canvas()
 
 
-def _braille_density_set(canvas: object, x: int, y: int, intensity: float) -> None:
+def _braille_density_set(canvas: object, x: int, y: int, intensity: float, w: int, h: int) -> None:
     """Set braille pixels in a 2×2 block around (x,y) proportional to intensity.
 
     intensity=1.0 → all 4 pixels, 0.5 → 2 pixels, 0.25 → 1 pixel.
@@ -132,13 +166,11 @@ def _braille_density_set(canvas: object, x: int, y: int, intensity: float) -> No
     n = max(0, min(4, round(intensity * 4)))
     offsets = [(0, 0), (1, 0), (0, 1), (1, 1)]
     for ox, oy in offsets[:n]:
-        try:
+        if 0 <= x + ox < w and 0 <= y + oy < h:
             canvas.set(x + ox, y + oy)
-        except Exception:
-            pass
 
 
-def _depth_to_density(z: float, canvas: object, x: int, y: int) -> None:
+def _depth_to_density(z: float, canvas: object, x: int, y: int, w: int, h: int) -> None:
     """Set braille pixels at (x,y) proportional to z-depth.
 
     z in [-1, 1] where 1 = closest (full density), -1 = farthest (sparse).
@@ -148,7 +180,13 @@ def _depth_to_density(z: float, canvas: object, x: int, y: int) -> None:
     if x < 0 or y < 0:
         return
     density = 0.3 + (z + 1) / 2 * 0.7
-    _braille_density_set(canvas, x, y, density)
+    _braille_density_set(canvas, x, y, density, w, h)
+
+
+# Non-reentrant: mutated in-place per call. Safe because _layer_frames is only
+# called from the Textual event loop (single-threaded). Do not call from workers.
+_LAYER_ROW_BUF: list[str] = []
+_LAYER_RESULT_BUF: list[str] = []
 
 
 def _layer_frames(frame_a: str, frame_b: str, mode: str, heat: float = 0.0) -> str:
@@ -162,21 +200,21 @@ def _layer_frames(frame_a: str, frame_b: str, mode: str, heat: float = 0.0) -> s
     lines_a = frame_a.split("\n")
     lines_b = frame_b.split("\n")
     n_rows = max(len(lines_a), len(lines_b))
-    result_rows: list[str] = []
 
     t_int = int(time.monotonic() * 4)
+    _LAYER_RESULT_BUF.clear()
     for r in range(n_rows):
         row_a = lines_a[r] if r < len(lines_a) else ""
         row_b = lines_b[r] if r < len(lines_b) else ""
         n_cols = max(len(row_a), len(row_b))
-        merged = []
+        _LAYER_ROW_BUF.clear()
         for c in range(n_cols):
             ca = row_a[c] if c < len(row_a) else " "
             cb = row_b[c] if c < len(row_b) else " "
             ma = 0x2800 <= ord(ca) <= 0x28FF
             mb = 0x2800 <= ord(cb) <= 0x28FF
             if not ma and not mb:
-                merged.append(cb if cb != " " else ca)
+                _LAYER_ROW_BUF.append(cb if cb != " " else ca)
                 continue
             ba = (ord(ca) - 0x2800) if ma else 0
             bb = (ord(cb) - 0x2800) if mb else 0
@@ -191,10 +229,10 @@ def _layer_frames(frame_a: str, frame_b: str, mode: str, heat: float = 0.0) -> s
                 bits = bb if dither < weight_b else ba
             else:  # overlay: upper (b) wins when non-zero
                 bits = bb if bb != 0 else ba
-            merged.append(chr(0x2800 | bits))
-        result_rows.append("".join(merged))
+            _LAYER_ROW_BUF.append(chr(0x2800 | bits))
+        _LAYER_RESULT_BUF.append("".join(_LAYER_ROW_BUF))
 
-    return "\n".join(result_rows)
+    return "\n".join(_LAYER_RESULT_BUF)
 
 
 def _easing(t: float, kind: str) -> float:
@@ -341,7 +379,7 @@ class WaveInterferenceEngine(_BaseEngine):
             for x in range(0, w, 1):
                 da = math.sqrt((x - src_ax) ** 2 + (y - src_ay) ** 2)
                 db = math.sqrt((x - src_bx) ** 2 + (y - src_by) ** 2)
-                val = math.sin(da * 0.4 - t * 5) + math.sin(db * 0.4 - t * 5)
+                val = _lut_sin(da * 0.4 - t * 5) + _lut_sin(db * 0.4 - t * 5)
                 if val > threshold:
                     canvas.set(x, y)
         return canvas.frame()
@@ -399,6 +437,7 @@ class NeuralPulseEngine(_BaseEngine):
         self._edges: dict[int, list[int]] = {}
         self._charge: list[float] = []
         self._fire_queue: list[int] = []
+        self._edge_steps: dict[tuple[int, int], int] = {}
         self._init_done = False
         self._extra_fires = 0  # set by on_signal
         self._slow_decay_ticks: int = 0  # for "complete" slow-decay
@@ -416,6 +455,12 @@ class NeuralPulseEngine(_BaseEngine):
             dists.sort()
             self._edges[i] = [j for _, j in dists[:3]]
         self._charge = [0.0] * n
+        # Cache edge step lengths to avoid per-frame hypot recomputation
+        self._edge_steps = {}
+        for i, (ax, ay) in enumerate(self._nodes):
+            for j in self._edges[i]:
+                bx, by = self._nodes[j]
+                self._edge_steps[(i, j)] = max(int(math.hypot(bx - ax, by - ay)), 1)
         self._init_done = True
 
     def on_signal(self, signal: str, value: float = 1.0) -> None:
@@ -458,10 +503,8 @@ class NeuralPulseEngine(_BaseEngine):
             ix, iy = int(nx), int(ny)
             for dx in range(-2, 3):
                 for dy in range(-2, 3):
-                    try:
+                    if 0 <= ix + dx < w and 0 <= iy + dy < h:
                         canvas.set(ix + dx, iy + dy)
-                    except Exception:
-                        pass
             for nb in self._edges.get(node_i, []):
                 self._charge[nb] += 0.4
         self._fire_queue = []
@@ -481,14 +524,12 @@ class NeuralPulseEngine(_BaseEngine):
         for i, (ax, ay) in enumerate(self._nodes):
             for j in self._edges.get(i, []):
                 bx, by = self._nodes[j]
-                steps = max(int(math.hypot(bx - ax, by - ay)), 1)
+                steps = self._edge_steps.get((i, j), 1)
                 for s in range(0, steps, 2):
                     fx = ax + (bx - ax) * s / steps
                     fy = ay + (by - ay) * s / steps
-                    try:
+                    if 0 <= int(fx) < w and 0 <= int(fy) < h:
                         canvas.set(int(fx), int(fy))
-                    except Exception:
-                        pass
 
         return canvas.frame() if hasattr(canvas, "frame") else ""
 
@@ -622,10 +663,8 @@ class FlockSwarmEngine(_BaseEngine):
                 b[3] = b[3] / spd * max_speed
             b[0] = (b[0] + b[2]) % w
             b[1] = (b[1] + b[3]) % h
-            try:
+            if 0 <= int(b[0]) < w and 0 <= int(b[1]) < h:
                 canvas.set(int(b[0]), int(b[1]))
-            except Exception:
-                pass
 
         return canvas.frame() if hasattr(canvas, "frame") else ""
 
@@ -734,10 +773,8 @@ class ConwayLifeEngine(_BaseEngine):
         self._ticks += 1
         canvas = _make_canvas()
         for x, y in self._alive:
-            try:
+            if 0 <= x < w and 0 <= y < h:
                 canvas.set(x, y)
-            except Exception:
-                pass
         return canvas.frame()
 
 
@@ -915,12 +952,9 @@ class HyperspaceEngine(_BaseEngine):
                 ix, iy = int(screen_x), int(screen_y)
                 # Near stars = dense
                 if sz < 0.2:
-                    _braille_density_set(canvas, ix, iy, 1.0 - sz)
+                    _braille_density_set(canvas, ix, iy, 1.0 - sz, w, h)
                 else:
-                    try:
-                        canvas.set(ix, iy)
-                    except Exception:
-                        pass
+                    canvas.set(ix, iy)
                 # Streak trails at high heat
                 trail_len = int(params.heat * 12)
                 if trail_len > 0 and isinstance(canvas, TrailCanvas):
@@ -971,19 +1005,18 @@ class PerlinFlowEngine(_BaseEngine):
         freqs = [1.0 * ns, 2.0 * ns, 4.0 * ns]
         speeds = [0.5, 0.7, 1.1]
 
+        w_inv = 1.0 / max(w, 1)
+        h_inv = 1.0 / max(h, 1)
         for y in range(0, h, 2):
+            fy = y * h_inv
             for x in range(0, w, 1):
-                fx = x / max(w, 1)
-                fy = y / max(h, 1)
+                fx = x * w_inv
                 val = sum(
-                    math.sin(fx * fk * 6.28 + t * sk) * math.cos(fy * fk * 6.28 + t * sk * 0.7)
+                    _lut_sin(fx * fk * 6.28 + t * sk) * _lut_cos(fy * fk * 6.28 + t * sk * 0.7)
                     for fk, sk in zip(freqs, speeds)
                 ) / len(freqs)
                 if val > threshold:
-                    try:
-                        canvas.set(x, y)
-                    except Exception:
-                        pass
+                    canvas.set(x, y)
 
         return canvas.frame() if hasattr(canvas, "frame") else ""
 
@@ -1028,10 +1061,12 @@ class FluidFieldEngine(_BaseEngine):
 
         canvas = _make_trail_canvas(params.trail_decay) if params.trail_decay > 0 else _make_canvas()
         vel_mult = 1.0 + params.heat * 3.0
+        w_inv = 1.0 / max(w, 1)
+        h_inv = 1.0 / max(h, 1)
 
         for p in self._particles:
             px, py, age = p
-            cx, cy = self._curl(px / max(w, 1), py / max(h, 1), params.t, params.noise_scale)
+            cx, cy = self._curl(px * w_inv, py * h_inv, params.t, params.noise_scale)
             p[0] = (px + cx * vel_mult) % w
             p[1] = (py + cy * vel_mult) % h
             p[2] = age + 1
@@ -1039,10 +1074,8 @@ class FluidFieldEngine(_BaseEngine):
                 p[0] = random.random() * w
                 p[1] = random.random() * h
                 p[2] = 0
-            try:
+            if 0 <= int(p[0]) < w and 0 <= int(p[1]) < h:
                 canvas.set(int(p[0]), int(p[1]))
-            except Exception:
-                pass
 
         return canvas.frame() if hasattr(canvas, "frame") else ""
 
@@ -1074,13 +1107,10 @@ class LissajousWeaveEngine(_BaseEngine):
             steps = max(w * 4, 200)
             for i in range(steps):
                 s = i / steps * 2 * math.pi
-                x = cx + (w * 0.45) * math.sin(a * s + delta)
-                y = cy + (h * 0.45) * math.sin(b * s)
+                x = cx + (w * 0.45) * _lut_sin(a * s + delta)
+                y = cy + (h * 0.45) * _lut_sin(b * s)
                 if 0 <= x < w and 0 <= y < h:
-                    try:
-                        canvas.set(int(x), int(y))
-                    except Exception:
-                        pass
+                    canvas.set(int(x), int(y))
 
         self._phase_jump *= 0.9  # decay phase jump
         return canvas.frame()
@@ -1121,7 +1151,7 @@ class AuroraRibbonEngine(_BaseEngine):
             phase_offset = ri * 1.3
             for x in range(w):
                 y_off = sum(
-                    A * math.sin(freq * x / w * 2 * math.pi + spd * t + phase_offset)
+                    A * _lut_sin(freq * x / w * 2 * math.pi + spd * t + phase_offset)
                     for freq, spd, A in octaves
                 ) * (h / (n_ribbons + 1)) * 0.3
 
@@ -1131,7 +1161,7 @@ class AuroraRibbonEngine(_BaseEngine):
                     ry = int(cy) + dy
                     intensity = 1.0 - abs(dy) / (thickness + 1)
                     if 0 <= ry < h:
-                        _braille_density_set(canvas, x, ry, intensity)
+                        _braille_density_set(canvas, x, ry, intensity, w, h)
 
         return canvas.frame() if hasattr(canvas, "frame") else ""
 
@@ -1173,28 +1203,22 @@ class MandalaBloomEngine(_BaseEngine):
             for i in range(steps):
                 theta = i / steps * sector_angle
                 k = self._k
-                r = (A * math.cos(k * theta + t * 0.5) + B * math.sin(theta * 2.3 + t * 0.7))
+                r = (A * _lut_cos(k * theta + t * 0.5) + B * _lut_sin(theta * 2.3 + t * 0.7))
                 r = abs(r) * scale
                 total_angle = theta + fold_angle
-                x = cx + r * math.cos(total_angle)
-                y = cy + r * math.sin(total_angle) * 0.5
+                x = cx + r * _lut_cos(total_angle)
+                y = cy + r * _lut_sin(total_angle) * 0.5
                 if 0 <= x < w and 0 <= y < h:
-                    try:
-                        canvas.set(int(x), int(y))
-                    except Exception:
-                        pass
+                    canvas.set(int(x), int(y))
 
         # Center spiral
         for i in range(50):
             r = i * scale / 100
             angle = i * 0.5 + t
-            x = cx + r * math.cos(angle)
-            y = cy + r * math.sin(angle) * 0.5
+            x = cx + r * _lut_cos(angle)
+            y = cy + r * _lut_sin(angle) * 0.5
             if 0 <= x < w and 0 <= y < h:
-                try:
-                    canvas.set(int(x), int(y))
-                except Exception:
-                    pass
+                canvas.set(int(x), int(y))
 
         return canvas.frame()
 
@@ -1239,12 +1263,9 @@ class RopeBraidEngine(_BaseEngine):
             # Sort by z (back to front)
             for x, y, z in sorted(strand_pts, key=lambda p: p[2]):
                 if 0 <= y < h and params.depth_cues:
-                    _depth_to_density(z, canvas, int(x), int(y))
+                    _depth_to_density(z, canvas, int(x), int(y), w, h)
                 elif 0 <= y < h:
-                    try:
-                        canvas.set(int(x), int(y))
-                    except Exception:
-                        pass
+                    canvas.set(int(x), int(y))
 
         return canvas.frame()
 
@@ -1296,8 +1317,9 @@ class WaveFunctionEngine(_BaseEngine):
                 pkt["vy"] = -abs(pkt["vy"])
             self._pkt_px[i] = px / max(w * 2, 1)
 
+        w_m1_inv = 1.0 / max(w - 1, 1)
         for xi in range(w):
-            x = xi / max(w - 1, 1)
+            x = xi * w_m1_inv
             psi_total = 0.0
             for i, pkt in enumerate(self._packets):
                 x0 = self._pkt_px[i]
@@ -1324,10 +1346,7 @@ class WaveFunctionEngine(_BaseEngine):
             base_y = h - 1
             for yi in range(base_y - bar_h, base_y + 1):
                 if 0 <= yi < h:
-                    try:
-                        canvas.set(xi, yi)
-                    except Exception:
-                        pass
+                    canvas.set(xi, yi)
 
         if self._collapse and self._collapse_t > 0.5:
             self._collapse = False

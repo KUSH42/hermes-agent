@@ -603,6 +603,7 @@ class DrawilleOverlay(Static):
     # ── lifecycle ──────────────────────────────────────────────────────────
 
     def on_mount(self) -> None:
+        self._multi_color_row_buf: list[str] = []
         try:
             self._resolved_color = _resolve_color(self.color, self.app)
             self._resolved_color_b = _resolve_color(self.color_b, self.app)
@@ -1355,9 +1356,12 @@ class DrawilleOverlay(Static):
                 continue
 
             # Pre-compute color per position
-            row_colors: list[str] = []
+            row_inv = 1.0 / max(row_len - 1, 1)
+            if len(self._multi_color_row_buf) != row_len:
+                self._multi_color_row_buf = [""] * row_len
+            row_colors = self._multi_color_row_buf
             for char_idx in range(row_len):
-                pos = char_idx / max(row_len - 1, 1) + drift
+                pos = char_idx * row_inv + drift
                 pos = abs(pos % 2.0)
                 if pos > 1.0:
                     pos = 2.0 - pos
@@ -1369,7 +1373,7 @@ class DrawilleOverlay(Static):
                     seg_idx = min(int(segment), n_stops - 2)
                     seg_t = segment - seg_idx
                     hex_c = lerp_color_rgb(stop_rgbs[seg_idx], stop_rgbs[seg_idx + 1], seg_t)
-                row_colors.append(hex_c)
+                row_colors[char_idx] = hex_c
 
             # Batch consecutive same-color runs
             run_start = 0

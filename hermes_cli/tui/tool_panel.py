@@ -69,6 +69,26 @@ def _artifact_icon(kind: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# _PanelContent — wrapper for ToolHeaderBar + BodyPane
+# ---------------------------------------------------------------------------
+
+
+class _PanelContent(Widget):
+    """Vertical container holding ToolHeaderBar (row 0) and BodyPane (row 1)."""
+
+    DEFAULT_CSS = "_PanelContent { height: auto; layout: vertical; }"
+
+    def __init__(self, header_bar: "ToolHeaderBar", body_pane: "BodyPane", **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._header_bar = header_bar
+        self._body_pane = body_pane
+
+    def compose(self) -> ComposeResult:
+        yield self._header_bar
+        yield self._body_pane
+
+
+# ---------------------------------------------------------------------------
 # BodyPane
 # ---------------------------------------------------------------------------
 
@@ -513,11 +533,12 @@ class ToolPanel(Widget):
 
     def compose(self) -> ComposeResult:
         self._accent = ToolAccent()
+        self._header_bar = ToolHeaderBar(label=self._tool_name)
         self._body_pane = BodyPane(self._block, category=self._category)
         self._footer_pane = FooterPane()
         self._hint_row = Static("", classes="--focus-hint")
         yield self._accent
-        yield self._body_pane
+        yield _PanelContent(self._header_bar, self._body_pane)
         yield self._footer_pane
         yield self._hint_row
     def on_mount(self) -> None:
@@ -1337,12 +1358,16 @@ class ToolPanel(Widget):
     # with click hit-testing. watch_has_focus is content-only update.
 
     def on_focus(self) -> None:
-        """C4: on first focus, flash one-shot '(Enter) toggle' hint."""
-        if not self._toggle_hint_shown:
-            self._toggle_hint_shown = True
-            header = getattr(self._block, "_header", None)
-            if header is not None and getattr(header, "_has_affordances", False):
-                self._flash_header("(Enter) toggle", tone="accent")  # D4
+        """D4: on first focus, flash one-shot '(Enter) toggle' hint — only when affordances."""
+        if getattr(self, "_toggle_hint_shown", False):
+            return
+        block = getattr(self, "_block", None)
+        if block is not None:
+            header = getattr(block, "_header", None)
+            if not getattr(header, "_has_affordances", False):
+                return
+        self._toggle_hint_shown = True
+        self._flash_header("(Enter) toggle", tone="accent")
 
     def watch_has_focus(self, value: bool) -> None:
         if self._hint_row is None:
@@ -1599,7 +1624,7 @@ class ToolPanel(Widget):
     def on_tool_header_bar_clicked(self, event: ToolHeaderBar.Clicked) -> None:
         """ToolHeaderBar click → cycle detail level."""
         event.stop()
-        self.action_toggle_collapse()
+        self.action_cycle_detail_forward()
 
     # Focus styling is done via CSS :focus pseudo-class in hermes.tcss.
     # No on_focus/on_blur handlers — they trigger layout refreshes that

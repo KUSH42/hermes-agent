@@ -360,6 +360,8 @@ class MessagePanel(Widget):
         self._active_prose_block: CopyableBlock = self._response_block
         self._user_text: str = user_text
         self._response_engine: "Any | None" = None   # ResponseFlowEngine, set in on_mount
+        self._carry_pending: "str | None" = None    # setext line migrated from prev panel
+        self._carry_partial: "str | None" = None    # partial chunk (no \n) migrated from prev engine
         self._last_file_tool_block: "Any | None" = None   # tracks most-recent file-tool STB for diff connector
         self._adj_anchors: dict = {}
         super().__init__(**kwargs)
@@ -417,6 +419,27 @@ class MessagePanel(Widget):
         self._response_engine = (
             ResponseFlowEngine(panel=self) if MARKDOWN_ENABLED else None
         )
+        if self._response_engine is not None:
+            if self._carry_pending is not None:
+                try:
+                    self._response_engine.process_line(self._carry_pending)
+                except Exception:
+                    pass
+                self._carry_pending = None
+            if self._carry_partial is not None:
+                try:
+                    self._response_engine.feed(self._carry_partial)
+                except Exception:
+                    pass
+                self._carry_partial = None
+        # Signal cli.py that the engine is ready — streaming may now start.
+        try:
+            ev = getattr(self.app, "_panel_ready_event", None)
+            if ev is not None:
+                self.app._panel_ready_event = None
+                ev.set()
+        except Exception:
+            pass
 
     @property
     def response_log(self) -> CopyableRichLog:

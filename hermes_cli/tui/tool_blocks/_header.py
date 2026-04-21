@@ -376,7 +376,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             except Exception:
                 pass
             return
-        if event.chain == 2 and self._spinner_char is None and not self._path_clickable:
+        if getattr(event, "chain", 1) == 2 and self._spinner_char is None and not self._path_clickable:
             try:
                 parent = self.parent
                 summary = getattr(parent, "_result_summary", None) or self._label
@@ -543,31 +543,36 @@ class ToolBodyContainer(Widget):
         self._args_row_mounted: bool = False
 
     def compose(self) -> ComposeResult:
+        yield Static("", classes="--args-row")
         yield Static("", classes="--microcopy")
         yield CopyableRichLog(markup=False, highlight=False, wrap=False)
 
     def set_args_row(self, text: "str | None") -> None:
-        if not text:
-            try:
-                w = self.query_one(".--args-row", Static)
-                w.remove_class("--active")
-                w.update("")
-            except Exception:
-                pass
-            return
+        from textual.css.query import NoMatches
         try:
             w = self.query_one(".--args-row", Static)
-        except Exception:
-            self._args_row_mounted = False
-            try:
-                mc = self.query_one(".--microcopy", Static)
-                w = Static("", classes="--args-row")
-                self.mount(w, before=mc)
+        except (NoMatches, Exception):
+            if getattr(self, "_args_row_mounted", False):
+                # Stale flag — widget was removed; reset and re-mount
+                self._args_row_mounted = False
+                new_w = Static(text or "", classes="--args-row")
+                if text:
+                    new_w.add_class("--active")
+                self.mount(new_w)
                 self._args_row_mounted = True
-            except Exception:
-                return
-        w.update(text)
-        w.add_class("--active")
+            return
+        if not text:
+            try:
+                w.remove_class("--active")
+            except AttributeError:
+                pass
+            w.update("")
+        else:
+            w.update(text)
+            try:
+                w.add_class("--active")
+            except AttributeError:
+                pass
 
     def _mc_widget(self) -> "Static | None":
         try:

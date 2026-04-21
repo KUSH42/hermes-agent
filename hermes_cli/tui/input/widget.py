@@ -51,6 +51,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
     BINDINGS = [
         Binding("ctrl+shift+a", "select_all",  "Select all",  show=False),
         Binding("ctrl+shift+z", "redo",        "Redo",        show=False),
+        Binding("ctrl+r",       "rev_search",  "History",     show=False),
     ]
 
     # --- Messages ---
@@ -105,6 +106,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         self._suppress_autocomplete_once: bool = False
         self._sanitizing: bool = False
         self._handling_file_drop: bool = False
+        self._last_slash_hint_fragment: str = ""
 
         from hermes_cli.tui.completion_context import CompletionContext, CompletionTrigger
         self._current_trigger: CompletionTrigger = CompletionTrigger(
@@ -257,6 +259,9 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         if key == "escape":
             event.stop()
             event.prevent_default()
+            if getattr(self, "_rev_mode", False):
+                self._exit_rev_search()
+                return
             try:
                 from hermes_cli.tui.widgets import HistorySearchOverlay
                 hs = self.app.query_one(HistorySearchOverlay)
@@ -301,6 +306,26 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                 event.prevent_default()
                 self.action_history_prev()
                 return
+
+        if key == "ctrl+shift+up":
+            event.prevent_default()
+            self._input_height_override = min(10, self._input_height_override + 1)
+            self.styles.max_height = self._input_height_override
+            try:
+                self.app._flash_hint(f"Input height: {self._input_height_override}", 1.5)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            return
+
+        if key == "ctrl+shift+down":
+            event.prevent_default()
+            self._input_height_override = max(3, self._input_height_override - 1)
+            self.styles.max_height = self._input_height_override
+            try:
+                self.app._flash_hint(f"Input height: {self._input_height_override}", 1.5)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            return
 
         if key == "down":
             if self._completion_overlay_slash_only():
@@ -388,6 +413,10 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         self.load_text("")
         self._history_idx = -1
         self._suppress_autocomplete_once = False
+        if self._input_height_override != 3:
+            self._input_height_override = 3
+            self.styles.max_height = 3
+        self._last_slash_hint_fragment = ""
 
     def action_history_prev(self) -> None:
         if self._completion_overlay_slash_only():
@@ -405,8 +434,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             self._history_idx -= 1
         else:
             return
-        self.value = self._history[self._history_idx]
-        self.cursor_position = len(self.value)
+        self._history_load(self._history[self._history_idx])
 
     def action_history_next(self) -> None:
         if self._completion_overlay_slash_only():
@@ -419,11 +447,10 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             return
         if self._history_idx < len(self._history) - 1:
             self._history_idx += 1
-            self.value = self._history[self._history_idx]
+            self._history_load(self._history[self._history_idx])
         else:
             self._history_idx = -1
-            self.value = self._history_draft
-        self.cursor_position = len(self.value)
+            self._history_load(self._history_draft)
 
     # --- Convenience ---
 

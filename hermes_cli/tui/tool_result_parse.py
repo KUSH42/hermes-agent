@@ -832,7 +832,7 @@ def mcp_result_v4(ctx: ParseContext) -> ResultSummaryV4:
             chips=(
                 source_chip,
                 Chip("mcp · disconnected", "mcp-error", "error",
-                     remediation="restart or check server logs"),
+                     remediation=f"restart {server} or check server logs"),
             ),
             stderr_tail="",
             actions=(
@@ -849,7 +849,7 @@ def mcp_result_v4(ctx: ParseContext) -> ResultSummaryV4:
             chips=(
                 source_chip,
                 Chip("mcp · auth", "mcp-error", "error",
-                     remediation="re-authenticate with /mcp auth"),
+                     remediation=f"re-authenticate {server} with /mcp auth"),
             ),
             stderr_tail="",
             actions=(
@@ -977,7 +977,12 @@ def generic_result_v4(ctx: ParseContext) -> ResultSummaryV4:
             artifacts=(), is_error=True, error_kind=ctx.complete.error_kind,
         )
     n = _count_nonempty_lines(raw)
-    primary = f"✓ {n} lines" if n > 1 else "✓"
+    if n == 0:
+        primary = "✓ done"
+    elif n == 1:
+        primary = "✓ 1 line"
+    else:
+        primary = f"✓ {n} lines"
     return ResultSummaryV4(
         primary=primary, exit_code=None, chips=(),
         stderr_tail="", actions=(_make_copy_body(raw),),

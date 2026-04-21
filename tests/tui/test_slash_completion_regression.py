@@ -265,10 +265,9 @@ async def test_previously_truncated_commands_present():
 def _make_inp_harness():
     """Build a minimal HermesInput harness without a running Textual app.
 
-    Returns (inp, iw_mod, _NoOpMeasure) so callers can patch measure and
-    restore it in a finally block.
+    Returns (inp, _NoOpMeasure). Use patch('hermes_cli.tui.perf.measure', _NoOpMeasure)
+    to suppress the perf context manager — measure is now an inline import in _autocomplete.
     """
-    import hermes_cli.tui.input_widget as iw_mod
     from hermes_cli.tui.input_widget import HermesInput
     from hermes_cli.tui.completion_context import CompletionContext, CompletionTrigger
 
@@ -289,7 +288,7 @@ def _make_inp_harness():
         def __enter__(self): return self
         def __exit__(self, *a): pass
 
-    return inp, iw_mod, _NoOpMeasure
+    return inp, _NoOpMeasure
 
 
 def test_slash_update_autocomplete_no_reentry_on_same_trigger():
@@ -304,7 +303,7 @@ def test_slash_update_autocomplete_no_reentry_on_same_trigger():
     """
     from hermes_cli.tui.completion_context import CompletionContext, CompletionTrigger
 
-    inp, iw_mod, _NoOpMeasure = _make_inp_harness()
+    inp, _NoOpMeasure = _make_inp_harness()
 
     slash_call_count = 0
 
@@ -312,32 +311,27 @@ def test_slash_update_autocomplete_no_reentry_on_same_trigger():
         nonlocal slash_call_count
         slash_call_count += 1
 
-    original_measure = iw_mod.measure
-    iw_mod.measure = _NoOpMeasure
-
     fake_app = MagicMock()
     fake_app.choice_overlay_active = False
 
-    try:
-        with patch.object(inp, "_show_slash_completions", side_effect=_fake_show_slash), \
-             patch.object(inp, "_hide_completion_overlay"), \
-             patch.object(type(inp), "value", new_callable=lambda: property(lambda self: "/")), \
-             patch.object(type(inp), "cursor_position", new_callable=lambda: property(lambda self: 1)), \
-             patch.object(type(inp), "app", new_callable=lambda: property(lambda self: fake_app)):
-            # First call — trigger is NONE, so it computes and calls _show_slash_completions.
-            inp._update_autocomplete()
-            assert slash_call_count == 1, (
-                f"Expected 1 _show_slash_completions call after first invocation, got {slash_call_count}"
-            )
+    with patch("hermes_cli.tui.perf.measure", _NoOpMeasure), \
+         patch.object(inp, "_show_slash_completions", side_effect=_fake_show_slash), \
+         patch.object(inp, "_hide_completion_overlay"), \
+         patch.object(type(inp), "value", new_callable=lambda: property(lambda self: "/")), \
+         patch.object(type(inp), "cursor_position", new_callable=lambda: property(lambda self: 1)), \
+         patch.object(type(inp), "app", new_callable=lambda: property(lambda self: fake_app)):
+        # First call — trigger is NONE, so it computes and calls _show_slash_completions.
+        inp._update_autocomplete()
+        assert slash_call_count == 1, (
+            f"Expected 1 _show_slash_completions call after first invocation, got {slash_call_count}"
+        )
 
-            # Second call with same value "/" — new_trigger == _current_trigger, early return.
-            inp._update_autocomplete()
-            assert slash_call_count == 1, (
-                f"Expected still 1 call after second invocation with same trigger, "
-                f"got {slash_call_count}. Equality guard is missing or broken."
-            )
-    finally:
-        iw_mod.measure = original_measure
+        # Second call with same value "/" — new_trigger == _current_trigger, early return.
+        inp._update_autocomplete()
+        assert slash_call_count == 1, (
+            f"Expected still 1 call after second invocation with same trigger, "
+            f"got {slash_call_count}. Equality guard is missing or broken."
+        )
 
 
 def test_slash_typing_single_slash_no_flicker():
@@ -356,7 +350,7 @@ def test_slash_typing_single_slash_no_flicker():
     """
     from hermes_cli.tui.completion_context import CompletionContext, CompletionTrigger
 
-    inp, iw_mod, _NoOpMeasure = _make_inp_harness()
+    inp, _NoOpMeasure = _make_inp_harness()
 
     slash_calls: list[str] = []
 
@@ -365,21 +359,16 @@ def test_slash_typing_single_slash_no_flicker():
         # Simulate watch_items firing _update_autocomplete re-entrantly.
         inp._update_autocomplete()
 
-    original_measure = iw_mod.measure
-    iw_mod.measure = _NoOpMeasure
-
     fake_app = MagicMock()
     fake_app.choice_overlay_active = False
 
-    try:
-        with patch.object(inp, "_show_slash_completions", side_effect=_reentrant_show_slash), \
-             patch.object(inp, "_hide_completion_overlay"), \
-             patch.object(type(inp), "value", new_callable=lambda: property(lambda self: "/")), \
-             patch.object(type(inp), "cursor_position", new_callable=lambda: property(lambda self: 1)), \
-             patch.object(type(inp), "app", new_callable=lambda: property(lambda self: fake_app)):
-            inp._update_autocomplete()
-    finally:
-        iw_mod.measure = original_measure
+    with patch("hermes_cli.tui.perf.measure", _NoOpMeasure), \
+         patch.object(inp, "_show_slash_completions", side_effect=_reentrant_show_slash), \
+         patch.object(inp, "_hide_completion_overlay"), \
+         patch.object(type(inp), "value", new_callable=lambda: property(lambda self: "/")), \
+         patch.object(type(inp), "cursor_position", new_callable=lambda: property(lambda self: 1)), \
+         patch.object(type(inp), "app", new_callable=lambda: property(lambda self: fake_app)):
+        inp._update_autocomplete()
 
     assert len(slash_calls) == 1, (
         f"Expected exactly 1 _show_slash_completions call (no flicker loop), "

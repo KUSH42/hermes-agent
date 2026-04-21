@@ -15,27 +15,38 @@ class _HistoryMixin:
     def _load_history(self) -> None:
         """Load history from the hermes history file (same format as FileHistory).
 
-        Loads last _MAX_HISTORY entries to avoid test-remnant bloat.
+        Deduplicates entries — last occurrence wins, ordered by last occurrence position.
+        Loads last _MAX_HISTORY unique entries.
         """
         try:
             if _HISTORY_FILE.exists():
-                lines: list[str] = []
+                all_entries: list[str] = []
                 current_entry: list[str] = []
                 for raw_line in _HISTORY_FILE.read_text(errors="replace").splitlines():
                     if raw_line.startswith("+"):
                         current_entry.append(raw_line[1:])
                     elif current_entry:
-                        lines.append("\n".join(current_entry))
+                        all_entries.append("\n".join(current_entry))
                         current_entry = []
                 if current_entry:
-                    lines.append("\n".join(current_entry))
-                self._history = lines[-_MAX_HISTORY:]
+                    all_entries.append("\n".join(current_entry))
+                # Dedup: last occurrence wins, preserve relative order of last occurrences
+                seen: dict[str, int] = {}
+                for i, e in enumerate(all_entries):
+                    seen[e] = i  # last index wins
+                deduped = [e for i, e in enumerate(all_entries) if seen[e] == i]
+                self._history = deduped[-_MAX_HISTORY:]
         except OSError:
             self._history = []
 
     def _save_to_history(self, text: str) -> None:
-        """Append an entry to the history file and in-memory list."""
+        """Append an entry to the history file and in-memory list.
+
+        Slash commands (starting with '/') are never saved.
+        """
         if not text.strip():
+            return
+        if text.startswith("/"):
             return
         if self._history and self._history[-1] == text:
             return
@@ -43,9 +54,9 @@ class _HistoryMixin:
         try:
             _HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
             with open(_HISTORY_FILE, "a", encoding="utf-8") as f:
+                f.write("\n")
                 for line in text.split("\n"):
                     f.write(f"+{line}\n")
-                f.write("\n")
         except OSError:
             pass
 
@@ -76,6 +87,12 @@ class _HistoryMixin:
             self._rev_mode = True
             self._rev_query = current
             self._rev_idx = len(self._history)
+            # Update placeholder to signal rev-search mode
+            query_display = self._rev_query or ""
+            try:
+                self.placeholder = f"reverse-i-search: {query_display}_"  # type: ignore[attr-defined]
+            except Exception:
+                pass
         query = self._rev_query or current
         idx = self._rev_idx - 1
         while idx >= 0:
@@ -93,6 +110,11 @@ class _HistoryMixin:
         self._rev_mode = False
         self._rev_query = ""
         self._rev_idx = -1
+        # Restore idle placeholder
+        try:
+            self.placeholder = self._idle_placeholder  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
     def _rev_search_find(self, query: str) -> str | None:
         """Find the most recent history entry matching query."""
@@ -101,9 +123,10 @@ class _HistoryMixin:
                 return entry
         return None
 
-    def _history_load(self) -> None:
-        """Reload history from disk."""
-        self._load_history()
+    def _history_load(self, text: str) -> None:
+        """Load a history entry into the input field and position cursor at end."""
+        self.load_text(text)  # type: ignore[attr-defined]
+        self.move_cursor((0, len(text)))  # type: ignore[attr-defined]
 
     def _show_subcommand_completions(self, command: str, fragment: str) -> None:
         """Show subcommand completion overlay for a slash command."""
@@ -127,10 +150,26 @@ class _HistoryMixin:
     def update_suggestion(self) -> None:
         """Set ghost text from history. Called by TextArea after every edit."""
         current = self.text  # type: ignore[attr-defined]
-        if not current or "\n" in current:
+        row, col = self.cursor_location  # type: ignore[attr-defined]
+
+        if "\n" in current:
+            lines = current.split("\n")
+            last_row = len(lines) - 1
+            last_line = lines[-1]
+            if not last_line or row != last_row or col != len(last_line):
+                self.suggestion = ""  # type: ignore[attr-defined]
+                return
+            for entry in reversed(self._history):
+                entry_last = entry.split("\n")[-1] if "\n" in entry else entry
+                if entry_last.startswith(last_line) and entry_last != last_line:
+                    self.suggestion = entry_last[len(last_line):]  # type: ignore[attr-defined]
+                    return
             self.suggestion = ""  # type: ignore[attr-defined]
             return
-        row, col = self.cursor_location  # type: ignore[attr-defined]
+
+        if not current:
+            self.suggestion = ""  # type: ignore[attr-defined]
+            return
         if row != 0 or col != len(current):
             self.suggestion = ""  # type: ignore[attr-defined]
             return

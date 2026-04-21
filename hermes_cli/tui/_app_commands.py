@@ -53,7 +53,7 @@ class _CommandsMixin:
 
         # --- Overlay commands ---
         from hermes_cli.tui.overlays import (
-            CommandsOverlay, HelpOverlay, ModelPickerOverlay, ModelOverlay,
+            CommandsOverlay, HelpOverlay, ModelPickerOverlay,
             ReasoningPickerOverlay, SkinPickerOverlay, UsageOverlay,
             VerbosePickerOverlay, YoloConfirmOverlay,
         )

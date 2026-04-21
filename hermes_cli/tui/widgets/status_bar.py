@@ -319,6 +319,7 @@ class StatusBar(PulseMixin, Widget):
             "browse_mode", "browse_index", "_browse_total",
             "status_output_dropped",
             "status_active_file",
+            "context_pct", "yolo_mode",
         ):
             self.watch(app, attr, self._on_status_change)
         # agent_running: dedicated callback to start/stop pulse + refresh
@@ -428,6 +429,22 @@ class StatusBar(PulseMixin, Widget):
             f"{_format_compact_tokens(ctx_tokens)}/{_format_compact_tokens(ctx_max)}"
             if ctx_max > 0 else _format_compact_tokens(ctx_tokens)
         )
+        yolo_mode = getattr(app, "yolo_mode", False)
+
+        # context_pct override: in "overflow" mode show context_pct instead of compaction%
+        _cli = getattr(app, "cli", None)
+        _display_cfg: dict = {}
+        if _cli is not None:
+            _display_cfg = getattr(_cli, "_cfg", {}).get("display", {})
+        else:
+            # app may expose _cfg directly (test helpers)
+            _display_cfg = getattr(app, "_cfg", {}).get("display", {})
+        _pct_enabled = _display_cfg.get("context_pct", True)
+        _pct_mode = _display_cfg.get("context_pct_mode", "compaction")
+        if _pct_mode == "overflow" and _pct_enabled:
+            _raw_ctx_pct = getattr(app, "context_pct", 0.0)
+            progress = _raw_ctx_pct / 100.0
+            enabled = progress > 0.0
 
         t = Text()
         # Startup state: show "connecting…" when model is not yet loaded
@@ -435,6 +452,8 @@ class StatusBar(PulseMixin, Widget):
             t.append("connecting…", style=f"dim")
         else:
             t.append(model, style="dim")
+            if yolo_mode:
+                t.append(" ⚡YOLO", style="bold yellow")
             t.append(" · ", style="dim")
 
         if width < 40:

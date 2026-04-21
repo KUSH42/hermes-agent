@@ -118,11 +118,15 @@ async def test_tool_panel_compose_order():
         panel = output.query_one(ToolPanel)
         direct_types = [type(c) for c in panel.children]
 
-        assert BodyPane in direct_types, f"BodyPane must be direct child; got {direct_types}"
+        from hermes_cli.tui.tool_panel import _PanelContent
+        assert _PanelContent in direct_types, f"_PanelContent must be direct child; got {direct_types}"
         assert FooterPane in direct_types, f"FooterPane must be direct child; got {direct_types}"
-        body_idx = direct_types.index(BodyPane)
+        content_idx = direct_types.index(_PanelContent)
         footer_idx = direct_types.index(FooterPane)
-        assert body_idx < footer_idx, f"Expected BodyPane < FooterPane, got {body_idx}, {footer_idx}"
+        assert content_idx < footer_idx, f"Expected _PanelContent < FooterPane, got {content_idx}, {footer_idx}"
+        # BodyPane lives inside _PanelContent
+        pc = panel.query_one(_PanelContent)
+        assert BodyPane in [type(c) for c in pc.children], "BodyPane must be child of _PanelContent"
 
 
 @pytest.mark.asyncio

@@ -183,6 +183,7 @@ def _stream_effect_cfg() -> dict:
             skin_path = _active_skin_path()
         except Exception:
             pass
+    skin_se_cfg: dict = {}
     if skin_path:
         try:
             import yaml
@@ -192,14 +193,19 @@ def _stream_effect_cfg() -> dict:
                 effect_name = se_skin
             elif isinstance(se_skin, dict):
                 effect_name = se_skin.get("enabled", effect_name)
+                skin_se_cfg = {k: v for k, v in se_skin.items() if k != "enabled"}
         except Exception:
             pass
-    return {
+    merged_se_cfg = {**se_cfg, **skin_se_cfg} if isinstance(se_cfg, dict) else skin_se_cfg
+    result: dict = {
         "stream_effect": effect_name,
-        "stream_effect_length": int(se_cfg.get("length", 16)) if isinstance(se_cfg, dict) else 16,
-        "stream_effect_settle_frames": int(se_cfg.get("settle_frames", 6)) if isinstance(se_cfg, dict) else 6,
-        "stream_effect_scramble_frames": int(se_cfg.get("scramble_frames", 14)) if isinstance(se_cfg, dict) else 14,
+        "stream_effect_length": int(merged_se_cfg.get("length", 16)),
+        "stream_effect_settle_frames": int(merged_se_cfg.get("settle_frames", 6)),
+        "stream_effect_scramble_frames": int(merged_se_cfg.get("scramble_frames", 14)),
     }
+    if "cascade_ticks" in merged_se_cfg:
+        result["stream_effect_cascade_ticks"] = int(merged_se_cfg["cascade_ticks"])
+    return result
 
 
 if TYPE_CHECKING:
@@ -395,7 +401,7 @@ class OutputPanel(ScrollableContainer):
                 engine2.flush()  # closes open StreamingCodeBlock if mid-fence; flushes StreamingBlockBuffer
 
     def on_resize(self, event: Any) -> None:
-        """Propagate resize to child RichLogs so wrapping updates correctly."""
+        """Propagate resize to child RichLogs; anchor scroll position on resize."""
         try:
             new_w = getattr(getattr(event, "size", None), "width", 0)
             if new_w <= 0:
@@ -407,6 +413,17 @@ class OutputPanel(ScrollableContainer):
                     pass
         except Exception:
             pass
+        # R08/R09: scroll anchoring — preserve position after layout recalc
+        if not getattr(self, "_user_scrolled_up", False):
+            self.call_after_refresh(self.scroll_end, animate=False)
+        else:
+            vh = getattr(getattr(self, "virtual_size", None), "height", 0)
+            sy = getattr(self, "scroll_y", 0)
+            frac = (sy / vh) if vh > 0 else 0.0
+            def _restore_frac(panel: "OutputPanel" = self, f: float = frac) -> None:
+                new_vh = getattr(getattr(panel, "virtual_size", None), "height", 0)
+                panel.scroll_y = int(f * new_vh)
+            self.call_after_refresh(_restore_frac)
 
 
 # ---------------------------------------------------------------------------

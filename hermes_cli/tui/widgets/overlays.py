@@ -1104,13 +1104,13 @@ class HistorySearchOverlay(Widget):
         shift_sel = getattr(self, "_shift_selected", set())
         if shift_sel:
             target_idx = min(shift_sel)
-            for item in items:
-                if item._entry is not None and getattr(item._entry, "index", -1) == target_idx:
-                    entry, result = item._entry, item._result
-                    self.action_dismiss()
-                    if entry is not None:
-                        self._scroll_to_match(entry, result)
-                    return
+            if 0 <= target_idx < len(items):
+                item = items[target_idx]
+                entry, result = item._entry, item._result
+                self.action_dismiss()
+                if entry is not None:
+                    self._scroll_to_match(entry, result)
+                return
         idx = max(0, min(self._selected_idx, len(items) - 1))
         result = items[idx]._result
         entry = items[idx]._entry

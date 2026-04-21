@@ -35,7 +35,7 @@ class TestE1:
         """_render_v4 uses [✓] suffix in accessible mode on completion."""
         h = _bare_header(_has_affordances=True, _panel=MagicMock(collapsed=False))
 
-        with patch("hermes_cli.tui.tool_blocks.spec_for") as ms:
+        with patch("hermes_cli.tui.tool_category.spec_for") as ms:
             ms.return_value = MagicMock(render_header=True, primary_arg=None,
                                         category=MagicMock(value="shell"))
             with patch.object(h, "_accessible_mode", return_value=True):
@@ -49,7 +49,7 @@ class TestE1:
     def test_accessible_mode_running_shows_running_prefix(self):
         h = _bare_header(_spinner_char="⠋", _is_complete=False, _duration="0.1s")
 
-        with patch("hermes_cli.tui.tool_blocks.spec_for") as ms:
+        with patch("hermes_cli.tui.tool_category.spec_for") as ms:
             ms.return_value = MagicMock(render_header=True, primary_arg=None,
                                         category=MagicMock(value="shell"))
             with patch.object(h, "_accessible_mode", return_value=True):
@@ -66,7 +66,7 @@ class TestE1:
             _panel=MagicMock(collapsed=False),
         )
 
-        with patch("hermes_cli.tui.tool_blocks.spec_for") as ms:
+        with patch("hermes_cli.tui.tool_category.spec_for") as ms:
             ms.return_value = MagicMock(render_header=True, primary_arg=None,
                                         category=MagicMock(value="shell"))
             with patch.object(h, "_accessible_mode", return_value=True):

@@ -23,6 +23,7 @@ class ToolAccent(Widget):
     DEFAULT_CSS = """
     ToolAccent {
         width: 1;
+        dock: left;
         background: $primary 15%;
     }
     """

@@ -283,15 +283,15 @@ class TestIdlePlaceholder:
 class TestNarrowTerminalResponsive:
     @pytest.mark.asyncio
     async def test_narrow_class_set_below_100_cols(self):
-        """CompletionOverlay sets --narrow class when width < 100."""
+        """CompletionOverlay sets --narrow class when width crosses below THRESHOLD_COMP_NARROW."""
         app = _make_app()
-        async with app.run_test(size=(80, 24)) as pilot:
+        async with app.run_test(size=(120, 24)) as pilot:
             await pilot.pause()
             overlay = app.query_one(CompletionOverlay)
             from textual import events
             from textual.geometry import Size
-            # Simulate on_resize with narrow width
-            s = Size(80, 24)
+            # Start clearly above threshold+hyst (120 >= 82), resize to clearly below (60 < 78)
+            s = Size(60, 24)
             evt = events.Resize(size=s, virtual_size=s)
             overlay.on_resize(evt)
             await pilot.pause()
@@ -299,12 +299,15 @@ class TestNarrowTerminalResponsive:
 
     @pytest.mark.asyncio
     async def test_narrow_class_removed_above_100_cols(self):
-        """CompletionOverlay removes --narrow class when width >= 100."""
+        """CompletionOverlay removes --narrow class when width crosses above THRESHOLD_COMP_NARROW."""
         app = _make_app()
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
             overlay = app.query_one(CompletionOverlay)
-            overlay.add_class("--narrow")  # ensure it's set first
+            overlay.add_class("--narrow")
+            # Set _last_applied_w to a value clearly below threshold (60 < 78=threshold-hyst)
+            # so that crossing to 120 triggers the class update
+            overlay._last_applied_w = 60
             from textual import events
             from textual.geometry import Size
             s = Size(120, 30)
@@ -996,7 +999,7 @@ class TestHistoryTrash:
     def test_slash_command_not_saved(self, tmp_path, monkeypatch):
         """/clear and other slash commands are NOT saved to history."""
         hist_file = tmp_path / ".hermes_history"
-        monkeypatch.setattr("hermes_cli.tui.input_widget._HISTORY_FILE", hist_file)
+        monkeypatch.setattr("hermes_cli.tui.input._history._HISTORY_FILE", hist_file)
         inp = HermesInput.__new__(HermesInput)
         inp._history = []
         inp._save_to_history("/clear")
@@ -1008,7 +1011,7 @@ class TestHistoryTrash:
     def test_real_prompt_saved(self, tmp_path, monkeypatch):
         """Real prompts (no leading slash) ARE saved to history."""
         hist_file = tmp_path / ".hermes_history"
-        monkeypatch.setattr("hermes_cli.tui.input_widget._HISTORY_FILE", hist_file)
+        monkeypatch.setattr("hermes_cli.tui.input._history._HISTORY_FILE", hist_file)
         inp = HermesInput.__new__(HermesInput)
         inp._history = []
         inp._save_to_history("write a unit test for my parser")
@@ -1024,7 +1027,7 @@ class TestHistoryTrash:
             "+hello\n\n"  # duplicate of first entry
             "+world\n\n"  # duplicate of second entry
         )
-        monkeypatch.setattr("hermes_cli.tui.input_widget._HISTORY_FILE", hist_file)
+        monkeypatch.setattr("hermes_cli.tui.input._history._HISTORY_FILE", hist_file)
         inp = HermesInput.__new__(HermesInput)
         inp._history = []
         inp._load_history()
@@ -1040,7 +1043,7 @@ class TestHistoryTrash:
         hist_file = tmp_path / ".hermes_history"
         # Simulate prompt_toolkit's FileHistory format (no trailing blank line on last entry)
         hist_file.write_text("\n# 2024-01-01\n+cli command\n")
-        monkeypatch.setattr("hermes_cli.tui.input_widget._HISTORY_FILE", hist_file)
+        monkeypatch.setattr("hermes_cli.tui.input._history._HISTORY_FILE", hist_file)
         inp = HermesInput.__new__(HermesInput)
         inp._history = []
         # Save a TUI entry — it should NOT merge with "cli command"
@@ -1055,7 +1058,7 @@ class TestHistoryTrash:
     def test_file_written_with_leading_newline(self, tmp_path, monkeypatch):
         """_save_to_history writes a leading newline before the + lines."""
         hist_file = tmp_path / ".hermes_history"
-        monkeypatch.setattr("hermes_cli.tui.input_widget._HISTORY_FILE", hist_file)
+        monkeypatch.setattr("hermes_cli.tui.input._history._HISTORY_FILE", hist_file)
         inp = HermesInput.__new__(HermesInput)
         inp._history = []
         inp._save_to_history("my prompt")
@@ -1071,7 +1074,7 @@ class TestHistoryTrash:
             "+gamma\n\n"
             "+alpha\n\n"  # alpha repeated — last occurrence is position 3
         )
-        monkeypatch.setattr("hermes_cli.tui.input_widget._HISTORY_FILE", hist_file)
+        monkeypatch.setattr("hermes_cli.tui.input._history._HISTORY_FILE", hist_file)
         inp = HermesInput.__new__(HermesInput)
         inp._history = []
         inp._load_history()

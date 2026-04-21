@@ -51,6 +51,12 @@ class _PathCompletionMixin:
         except NoMatches:
             return
         overlay.add_class("--visible")
+        # Clear ghost text and set tab-hint so user knows how to accept
+        self.suggestion = ""  # type: ignore[attr-defined]
+        try:
+            self.app._completion_hint = "Tab accept  ·  ↑↓ navigate  ·  Esc dismiss"  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
     def _hide_completion_overlay(self) -> None:
         if self._path_debounce_timer is not None:
@@ -63,6 +69,10 @@ class _PathCompletionMixin:
             return
         overlay.remove_class("--visible")
         overlay.remove_class("--slash-only")
+        try:
+            self.app._completion_hint = ""  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
     def _completion_overlay_visible(self) -> bool:
         try:
@@ -84,7 +94,7 @@ class _PathCompletionMixin:
             return
         if not clist.items:
             return
-        clist.highlighted = (clist.highlighted + delta) % len(clist.items)
+        clist.highlighted = max(0, min(len(clist.items) - 1, clist.highlighted + delta))
 
     # --- Path resolution ---
 
@@ -211,5 +221,10 @@ class _PathCompletionMixin:
         except NoMatches:
             return
         request = self._resolve_path_search_request()
-        clist.current_query = request.match_query or self._current_trigger.fragment
-        clist.items = tuple(candidates)
+        new_query = request.match_query or self._current_trigger.fragment
+        new_items = tuple(candidates)
+        # Guard: avoid triggering watch_items when nothing changed.
+        if new_items == clist.items and new_query == clist.current_query:
+            return
+        clist.current_query = new_query
+        clist.items = new_items

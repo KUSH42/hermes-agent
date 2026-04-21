@@ -130,11 +130,17 @@ class TestC4FirstFocusHint:
     """ToolPanel.on_focus flashes '(Enter) toggle' hint on first focus."""
 
     def test_first_focus_flashes_hint(self):
-        """C4: on_focus fires flash on first call."""
+        """C4: on_focus fires flash on first call when affordances present."""
         from hermes_cli.tui.tool_panel import ToolPanel
         panel = ToolPanel.__new__(ToolPanel)
         panel._toggle_hint_shown = False
         panel._flash_header = MagicMock()
+        # D4: flash only fires when _has_affordances=True
+        header_mock = MagicMock()
+        header_mock._has_affordances = True
+        block_mock = MagicMock()
+        block_mock._header = header_mock
+        panel._block = block_mock
         panel.on_focus()
         panel._flash_header.assert_called_once()
         msg = panel._flash_header.call_args[0][0]
@@ -150,10 +156,15 @@ class TestC4FirstFocusHint:
         panel._flash_header.assert_not_called()
 
     def test_toggle_hint_shown_set_after_first_focus(self):
-        """C4: _toggle_hint_shown becomes True after first focus."""
+        """C4: _toggle_hint_shown becomes True after first focus (requires affordances)."""
         from hermes_cli.tui.tool_panel import ToolPanel
         panel = ToolPanel.__new__(ToolPanel)
         panel._toggle_hint_shown = False
         panel._flash_header = MagicMock()
+        header_mock = MagicMock()
+        header_mock._has_affordances = True
+        block_mock = MagicMock()
+        block_mock._header = header_mock
+        panel._block = block_mock
         panel.on_focus()
         assert panel._toggle_hint_shown is True

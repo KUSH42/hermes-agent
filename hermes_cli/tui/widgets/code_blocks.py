@@ -145,7 +145,7 @@ class StreamingCodeBlock(Widget):
     }
     """
     _content_type: str = "code"
-    _tooltip_text: str = "Double-click to copy code"
+    _tooltip_text: str = "Click to expand/collapse  ·  double-click to copy"
 
     def __init__(
         self,
@@ -206,6 +206,7 @@ class StreamingCodeBlock(Widget):
 
     def complete(self, skin_vars: dict[str, str]) -> None:
         """Fence closed — replace per-line content with full rich.Syntax block."""
+        self.clear_partial()
         if self._state != "STREAMING":
             return
         self._state = "COMPLETE"
@@ -216,6 +217,22 @@ class StreamingCodeBlock(Widget):
             self._try_render_mermaid_async()
         else:
             self.call_after_refresh(self._finalize_syntax, dict(skin_vars))
+        # Browse streaming→ready flash
+        try:
+            _mounted = self.is_mounted
+        except Exception:
+            _mounted = False
+        if (
+            _mounted
+            and getattr(app, "browse_mode", False)
+            and getattr(app, "_browse_markers_enabled", True)
+            and getattr(app, "_browse_streaming_flash", True)
+        ):
+            self.add_class("--browse-newly-anchored")
+            try:
+                self.set_timer(0.6, lambda: self.remove_class("--browse-newly-anchored"))
+            except Exception:
+                pass
 
     def _try_render_mermaid_async(self) -> None:
         """Trigger async mermaid diagram rendering (stub; patched in tests)."""
@@ -241,7 +258,7 @@ class StreamingCodeBlock(Widget):
         code = "\n".join(self._display_code_lines())
         lang = getattr(self, "_resolved_lang", None) or getattr(self, "_lang", "") or _detect_lang(code)
         self._resolved_lang = lang
-        self._pygments_theme = vars.get("preview-syntax-theme", self._pygments_theme)
+        self._pygments_theme = vars.get("preview-syntax-theme", getattr(self, "_pygments_theme", "monokai"))
         syntax = Syntax(
             code,
             lexer=lang,
@@ -334,8 +351,18 @@ class StreamingCodeBlock(Widget):
             self._controls_text_plain = ""
 
     def on_click(self, event: Any) -> None:
-        """Left click toggles expand/collapse on finalized blocks."""
+        """Left single-click toggles; double-click copies code."""
         if getattr(event, "button", 1) != 1:
+            return
+        if getattr(event, "chain", 1) == 2:
+            # E1: double-click copies code (only when finalized, not streaming)
+            if getattr(self, "_state", "STREAMING") != "STREAMING":
+                code = "\n".join(self._display_code_lines())
+                try:
+                    self.app._copy_text_with_hint(code)
+                except Exception:
+                    pass
+                event.prevent_default()
             return
         if self.can_toggle():
             self.toggle_collapsed()

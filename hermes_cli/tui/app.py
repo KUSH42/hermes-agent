@@ -777,7 +777,8 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
     def on_unmount(self) -> None:
         """Stop background helpers tied to app lifetime."""
         self._theme_manager.stop_hot_reload()
-        for _attr in ("_anim_clock_h", "_spinner_h", "_fps_h", "_duration_h"):
+        for _attr in ("_anim_clock_h", "_spinner_h", "_fps_h", "_duration_h",
+                      "_sessions_poll_timer", "_git_poll_h", "_resize_timer"):
             _h = getattr(self, _attr, None)
             if _h is not None:
                 try:
@@ -1110,7 +1111,7 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
 
     # Hint phase + drawille methods extracted → _app_spinner.py
 
-    def watch_yolo_mode(self, value: bool) -> None:
+    def watch_yolo_mode(self, old: bool, value: bool) -> None:
         """Update #input-chevron CSS class to reflect yolo state."""
         try:
             chevron = self.query_one("#input-chevron", Static)
@@ -1120,7 +1121,9 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
                 chevron.remove_class("--yolo-active")
         except Exception:
             pass
-        # E5: flash confirmation so the mode change is not silent
+        # E5: flash confirmation — skip initial reactive fire (old == value at init)
+        if old == value:
+            return
         msg = "YOLO mode ON — auto-approving all tool calls" if value else "YOLO mode OFF"
         self._flash_hint(msg, 2.0)
 

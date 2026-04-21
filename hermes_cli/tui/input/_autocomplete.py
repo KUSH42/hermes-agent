@@ -42,14 +42,21 @@ class _AutocompleteMixin:
                 and _SLASH_FULL_RE.match(self.value)  # type: ignore[attr-defined]
             ):
                 fragment = self.value[1:]  # type: ignore[attr-defined]
-                self._current_trigger = CompletionTrigger(
+                new_trigger = CompletionTrigger(
                     CompletionContext.SLASH_COMMAND, fragment, 1,
                 )
+                # Guard: prevents watch_items → refresh → watch_value re-entry loop.
+                if new_trigger == self._current_trigger:
+                    return
+                self._current_trigger = new_trigger
                 self._raw_candidates = []
                 self._show_slash_completions(fragment)
                 return
 
             trigger = detect_context(self.value, self.cursor_position)  # type: ignore[attr-defined]
+            # Guard: prevents re-entry loop on unchanged trigger.
+            if trigger == self._current_trigger:
+                return
             self._current_trigger = trigger
             self._raw_candidates = []
 
@@ -89,7 +96,8 @@ class _AutocompleteMixin:
             elif fragment:
                 hint = f"Unknown command: /{fragment}"
                 duration = 1.5
-            if hint:
+            if hint and getattr(self, "_last_slash_hint_fragment", None) != fragment:
+                self._last_slash_hint_fragment = fragment  # type: ignore[attr-defined]
                 try:
                     self.app._flash_hint(hint, duration)  # type: ignore[attr-defined]
                 except Exception:

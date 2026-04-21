@@ -9,9 +9,13 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+# Matches orphaned CSI tails (missing leading ESC): e.g. "[38;2;...m" or "[0m"
+_ORPHANED_CSI_RE = re.compile(r"\[[0-9;]+[A-Za-z]")
 
 from rich.segment import Segment
 from rich.style import Style
@@ -168,9 +172,19 @@ class CopyableRichLog(RichLog, can_focus=False):
             animate=animate,
         )
 
-    def write_with_source(self, styled: Text, plain: str, **kwargs: Any) -> "CopyableRichLog":
-        """Write styled text to display, store plain text for copy."""
+    def write_with_source(
+        self,
+        styled: Text,
+        plain: str,
+        link: "str | None" = None,
+        **kwargs: Any,
+    ) -> "CopyableRichLog":
+        """Write styled text to display, store plain text for copy.
+
+        link: optional URL stored in _line_links for click-to-open navigation.
+        """
         self._plain_lines.append(plain)
+        self._line_links.append(link)
         try:
             from hermes_cli.tui.osc8 import inject_osc8, _osc8_supported
             if _osc8_supported():
@@ -209,6 +223,7 @@ class CopyableRichLog(RichLog, can_focus=False):
 
     def clear(self) -> "CopyableRichLog":
         self._plain_lines.clear()
+        self._line_links.clear()
         return super().clear()
 
     def on_click(self, event: Any) -> None:
@@ -325,7 +340,8 @@ class LiveLineWidget(Widget):
     def render(self) -> RenderResult:
         if not self._buf and not self._animating:
             return Text("")
-        t = Text.from_ansi(self._buf) if self._buf else Text("")
+        buf = _ORPHANED_CSI_RE.sub("", self._buf) if self._buf else ""
+        t = Text.from_ansi(buf) if buf else Text("")
         # Typewriter cursor (existing path — typewriter on):
         if self._animating and getattr(self, "_tw_cursor", True):
             t.append("▌", style="blink")

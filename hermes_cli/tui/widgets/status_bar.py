@@ -320,6 +320,7 @@ class StatusBar(PulseMixin, Widget):
             "status_output_dropped",
             "status_active_file",
             "context_pct", "yolo_mode",
+            "session_label",
         ):
             self.watch(app, attr, self._on_status_change)
         # agent_running: dedicated callback to start/stop pulse + refresh
@@ -446,14 +447,22 @@ class StatusBar(PulseMixin, Widget):
             progress = _raw_ctx_pct / 100.0
             enabled = progress > 0.0
 
+        session_label = str(getattr(app, "session_label", "") or "")
+        if len(session_label) > 28:
+            session_label = session_label[:27] + "…"
+
         t = Text()
         # Startup state: show "connecting…" when model is not yet loaded
         if not model:
             t.append("connecting…", style=f"dim")
+            if session_label:
+                t.append(f" · {session_label}", style="dim")
         else:
             t.append(model, style="dim")
             if yolo_mode:
                 t.append(" ⚡YOLO", style="bold yellow")
+            if session_label:
+                t.append(f" · {session_label}", style="dim")
             t.append(" · ", style="dim")
 
         if width < 40:

@@ -220,10 +220,12 @@ class FooterPane(Widget):
         self._stderr_row = Static("", classes="footer-stderr")
         self._remediation_row = Static("", classes="footer-remediation")
         self._artifact_row = Horizontal(classes="artifact-row")
+        self._diff_affordance = DiffAffordance()
         yield self._content
         yield self._stderr_row
         yield self._remediation_row
         yield self._artifact_row
+        yield self._diff_affordance
     def _render_stderr(self, tail: str) -> "Any":
         from rich.text import Text
         lines = tail.strip().splitlines()
@@ -264,13 +266,12 @@ class FooterPane(Widget):
 
         # Chips row (skip chips already promoted to header)
         chips = [c for c in summary.chips if c.text not in promoted_chip_texts]
-        remediation_hints: list[str] = []
         for chip in chips:
             tone_style = _TONE_STYLES.get(chip.tone, "dim")
             parts.append(f" {chip.text} ", style=tone_style)
             remediation = getattr(chip, "remediation", None)
             if remediation:
-                remediation_hints.append(remediation)
+                parts.append(f" hint: {remediation} ", style="dim italic")
 
         # B1: Payload-truncated warning chip — bold with ⚠ prefix
         if any(getattr(a, "payload_truncated", False) for a in summary.actions):
@@ -298,19 +299,9 @@ class FooterPane(Widget):
             self._stderr_row.update("")
             self.remove_class("has-stderr")
 
-        # Remediation hints collected from chips — render in separate row
-        if remediation_hints:
-            from rich.text import Text as _T
-            rem_text = _T()
-            for i, hint in enumerate(remediation_hints):
-                if i > 0:
-                    rem_text.append(" · ", style="dim")
-                rem_text.append(hint, style="dim italic")
-            self._remediation_row.update(rem_text)
-            self.add_class("has-remediation")
-        else:
-            self._remediation_row.update("")
-            self.remove_class("has-remediation")
+        # Remediation hints are rendered inline in chip text; always clear separate row
+        self._remediation_row.update("")
+        self.remove_class("has-remediation")
 
     def _rebuild_chips(self) -> None:
         """B3: re-render after _show_all_artifacts changes."""
@@ -460,6 +451,9 @@ class ToolPanel(Widget):
 
     BINDINGS = [
         Binding("enter", "toggle_collapse",  "Toggle",           show=False),
+        Binding("space", "toggle_l0_restore", "Collapse",         show=False),
+        Binding("y",     "copy_body",         "Copy output",      show=False),
+        Binding("Y",     "copy_input",        "Copy input",       show=False),
         Binding("c",     "copy_body",        "Copy output",      show=False),
         Binding("C",     "copy_ansi",        "Copy +color",      show=False),
         Binding("H",     "copy_html",        "Copy HTML",        show=False),
@@ -923,7 +917,15 @@ class ToolPanel(Widget):
         self._user_collapse_override = True
 
     def action_toggle_l1_l2(self) -> None:
-        self.action_toggle_collapse()
+        level = self.detail_level
+        if level == 0:
+            self.detail_level = 1
+        elif level == 1:
+            self.detail_level = 2
+        elif level == 2:
+            self.detail_level = 1
+        else:  # level == 3
+            self.detail_level = 2
 
     def action_set_level_0(self) -> None:
         self.detail_level = 0
@@ -943,7 +945,9 @@ class ToolPanel(Widget):
 
     def action_cycle_detail_reverse(self) -> None:
         level = self.detail_level
-        if level <= 1:
+        if level == 0:
+            pass  # stay at L0
+        elif level == 1:
             self.detail_level = 3
         else:
             self.detail_level = level - 1
@@ -1542,8 +1546,12 @@ class ToolPanel(Widget):
         state = "on" if block._follow_tail else "off"
         self._flash_header(f"tail: {state}")
     def action_toggle_l0_restore(self) -> None:
-        """space: toggle collapsed."""
-        self.action_toggle_collapse()
+        """space: toggle L0 (collapsed) and restore prior level."""
+        if self.detail_level == 0:
+            self.detail_level = getattr(self, "_pre_collapse_level", 2)
+        else:
+            self._pre_collapse_level = self.detail_level
+            self.detail_level = 0
 
     def action_copy_output(self) -> None:
         """y: copy tool output to clipboard."""
@@ -1558,7 +1566,15 @@ class ToolPanel(Widget):
 
     def action_copy_input(self) -> None:
         """Y: copy tool invocation summary to clipboard."""
-        text = self._format_arg_summary()
+        text = ""
+        try:
+            inp = getattr(self, "_input_section", None)
+            if inp is not None:
+                text = getattr(inp, "_build_text", lambda: "")() or ""
+        except Exception:
+            pass
+        if not text:
+            text = self._format_arg_summary()
         if text:
             try:
                 import pyperclip

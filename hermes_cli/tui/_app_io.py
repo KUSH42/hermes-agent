@@ -77,6 +77,7 @@ class _AppIOMixin:
                 try:
                     msg = panel.current_message
                     if msg is not None:
+                        msg.record_raw(chunk)
                         engine = getattr(msg, "_response_engine", None)
                         if engine is not None:
                             engine.feed(chunk)

@@ -43,6 +43,7 @@ from hermes_cli.tui.overlays import (
     CommandsOverlay,
     HelpOverlay,
     ModelOverlay,
+    ModelPickerOverlay,
     UsageOverlay,
 )
 from textual.widgets import Input, Static
@@ -260,7 +261,7 @@ async def test_commands_overlay_shows_on_slash_commands():
 
 
 # ---------------------------------------------------------------------------
-# 14–16  ModelOverlay
+# 14–16  ModelPickerOverlay (replaces ModelOverlay for /model command)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -268,16 +269,16 @@ async def test_model_overlay_hidden_by_default():
     app = _make_app()
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
-        assert not app.query_one(ModelOverlay).has_class("--visible")
+        assert not app.query_one(ModelPickerOverlay).has_class("--visible")
 
 
 @pytest.mark.asyncio
 async def test_model_overlay_shows_on_slash_model_no_args():
-    app = _make_app()
+    app = _make_app_with_agent()
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
         await _submit(pilot, app, "/model")
-        assert app.query_one(ModelOverlay).has_class("--visible")
+        assert app.query_one(ModelPickerOverlay).has_class("--visible")
 
 
 @pytest.mark.asyncio
@@ -286,7 +287,7 @@ async def test_model_overlay_not_shown_with_args():
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
         await _submit(pilot, app, "/model claude-sonnet-4-6")
-        assert not app.query_one(ModelOverlay).has_class("--visible")
+        assert not app.query_one(ModelPickerOverlay).has_class("--visible")
 
 
 # ---------------------------------------------------------------------------

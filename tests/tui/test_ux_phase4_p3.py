@@ -213,7 +213,7 @@ def _make_footer_pane_mock() -> Any:
 
 
 def test_multiple_remediation_hints_joined():
-    """When 2+ chips have remediation, all hints are joined with '·' separator."""
+    """When 2+ chips have remediation, hints appear inline in chip row."""
     fp = _make_footer_pane_mock()
 
     chips = [
@@ -225,16 +225,15 @@ def test_multiple_remediation_hints_joined():
     with patch.object(type(fp), '_rebuild_artifact_buttons', lambda self, s: None):
         fp._render_footer(summary, frozenset())
 
-    assert fp._captured_text, "remediation_row.update was not called"
-    result = fp._captured_text[-1]
-    result_plain = result.plain if hasattr(result, "plain") else str(result)
+    # Remediation hints are now inline in _content, not in _remediation_row
+    content_update = fp._content.update.call_args[0][0]
+    result_plain = content_update.plain if hasattr(content_update, "plain") else str(content_update)
     assert "check your permissions" in result_plain
     assert "increase timeout" in result_plain
-    assert "·" in result_plain
 
 
 def test_single_remediation_hint_unchanged():
-    """Single chip remediation renders without separator."""
+    """Single chip remediation appears inline in chip row."""
     fp = _make_footer_pane_mock()
 
     chips = [_make_chip("exit:1", "error", "check your permissions")]
@@ -243,9 +242,8 @@ def test_single_remediation_hint_unchanged():
     with patch.object(type(fp), '_rebuild_artifact_buttons', lambda self, s: None):
         fp._render_footer(summary, frozenset())
 
-    assert fp._captured_text
-    result = fp._captured_text[-1]
-    result_plain = result.plain if hasattr(result, "plain") else str(result)
+    content_update = fp._content.update.call_args[0][0]
+    result_plain = content_update.plain if hasattr(content_update, "plain") else str(content_update)
     assert "check your permissions" in result_plain
 
 

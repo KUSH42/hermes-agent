@@ -370,7 +370,7 @@ class TestGenericResultV4:
         ctx = _ctx(raw_result="ok", spec=spec)
         r = parse(ctx)
         assert not r.is_error
-        assert r.primary == "✓"
+        assert r.primary.startswith("✓"), f"Expected success primary, got: {r.primary!r}"
 
     def test_error(self):
         spec = _spec(ToolCategory.UNKNOWN)

@@ -364,6 +364,7 @@ class MessagePanel(Widget):
         self._carry_partial: "str | None" = None    # partial chunk (no \n) migrated from prev engine
         self._last_file_tool_block: "Any | None" = None   # tracks most-recent file-tool STB for diff connector
         self._adj_anchors: dict = {}
+        self._raw_text: str = ""
         super().__init__(**kwargs)
         _boost_layout_caches(self, box_model_maxsize=256, arrangement_maxsize=32)
 
@@ -630,6 +631,15 @@ class MessagePanel(Widget):
             if text:
                 parts.append(text)
         return "\n".join(parts)
+
+    def record_raw(self, text: str) -> None:
+        """Accumulate raw streamed text for this message."""
+        if text:
+            self._raw_text += text
+
+    def raw_response_text(self) -> str:
+        """Return the raw unprocessed text captured during streaming."""
+        return self._raw_text
 
     def first_response_line(self) -> str:
         """First non-empty display line from any prose section — for history search preview."""

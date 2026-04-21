@@ -38,10 +38,12 @@ def _call_handle(app, text: str):
         flash_calls.append(msg)
 
     app._flash_hint = _capture_flash  # type: ignore[method-assign]
-    # Many TUI-handled branches query the DOM.  Patch query_one to avoid
+    # Many TUI-handled branches query the DOM.  Patch query_one and query to avoid
     # NoMatches / NotReady errors since we're not running the event loop.
     from unittest.mock import MagicMock
-    app.query_one = MagicMock(side_effect=Exception("no dom"))  # type: ignore[method-assign]
+    from textual.css.query import NoMatches
+    app.query_one = MagicMock(side_effect=NoMatches("no dom"))  # type: ignore[method-assign]
+    app.query = MagicMock(return_value=[])  # type: ignore[method-assign]
 
     result = app._handle_tui_command(text)
     return result, flash_calls
@@ -54,9 +56,11 @@ def _call_handle(app, text: str):
 def test_registry_command_no_unknown_flash():
     """Commands in COMMAND_REGISTRY that aren't TUI-handled must not flash."""
     app = _make_app()
-    # /verbose, /yolo, /profile, /skin, /config, /voice are all in the registry
-    # but have no special branch in _handle_tui_command — they fall through to CLI.
-    for cmd in ("/verbose", "/yolo", "/skin", "/voice", "/profile", "/config",
+    # /profile, /skin, /config, /voice, /effects, /reload-mcp, /browser, /plugins,
+    # /paste, /insights, /update, /quit are in the registry but have no special
+    # branch in _handle_tui_command — they fall through to CLI.
+    # (/verbose, /yolo, /skin, /reasoning are TUI-handled and return True; excluded here)
+    for cmd in ("/voice", "/profile", "/config",
                 "/effects", "/reload-mcp", "/browser", "/plugins", "/paste",
                 "/insights", "/update", "/quit"):
         result, flashes = _call_handle(app, cmd)

@@ -51,21 +51,11 @@ def _extract_title_from_try_auto_title(
     # Patch set_title_if_unset to capture the title call
     db_mock.set_title_if_unset.side_effect = lambda sid, title: captured_title.append(title) or True
 
-    # Patch work() so the local @work decorated inner function runs synchronously
-    from unittest.mock import patch
-    import hermes_cli.tui.app as app_module
+    # Patch run_worker so the background worker fires synchronously
+    def sync_run_worker(fn, *args, **kwargs):
+        fn()
 
-    original_work = getattr(app_module, "work", None)
-
-    def sync_work(*args, **kwargs):
-        """Replace @work so inner function executes immediately (synchronously)."""
-        def decorator(fn):
-            def wrapper(*a, **kw):
-                fn(*a, **kw)
-            return wrapper
-        return decorator
-
-    with patch.object(app_module, "work", sync_work):
+    with patch.object(app, "run_worker", sync_run_worker):
         app._auto_title_done = False
         app._try_auto_title()
 
@@ -152,16 +142,10 @@ async def test_auto_title_fires_once():
 
         db_mock = _setup_cli_mock(app, [{"role": "user", "content": "Hello world"}])
 
-        import hermes_cli.tui.app as app_module
+        def sync_run_worker(fn, *args, **kwargs):
+            fn()
 
-        def sync_work(*args, **kwargs):
-            def decorator(fn):
-                def wrapper(*a, **kw):
-                    fn(*a, **kw)
-                return wrapper
-            return decorator
-
-        with patch.object(app_module, "work", sync_work):
+        with patch.object(app, "run_worker", sync_run_worker):
             app._auto_title_done = False
             # Simulate watch_agent_running guard (two calls)
             if not app._auto_title_done:

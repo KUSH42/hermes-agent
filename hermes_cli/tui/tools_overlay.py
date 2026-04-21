@@ -309,6 +309,7 @@ ToolsScreen > #tools-footer {
         self._stale_timer: object | None = None
         self._refresh_timer: object | None = None
         self._spinner_frame: int = 0
+        self._rebuild_in_flight: bool = False
 
     def compose(self) -> ComposeResult:
         yield Static("", id="tools-header")
@@ -380,8 +381,10 @@ ToolsScreen > #tools-footer {
         has_in_progress = any(e.get("dur_ms") is None for e in self._filtered)
         if has_in_progress:
             self._spinner_frame = (self._spinner_frame + 1) % len(self._GANTT_SPINNER)
-            import asyncio
-            asyncio.ensure_future(self._rebuild())
+            if not self._rebuild_in_flight:
+                self._rebuild_in_flight = True
+                import asyncio
+                asyncio.ensure_future(self._rebuild())
 
     async def _auto_refresh(self) -> None:
         """Refresh snapshot from app state while in-progress tools exist."""
@@ -403,7 +406,11 @@ ToolsScreen > #tools-footer {
             self._refresh_timer = None
 
     async def _rebuild(self) -> None:
-        listview = self.query_one("#tools-list", ListView)
+        self._rebuild_in_flight = False
+        try:
+            listview = self.query_one("#tools-list", ListView)
+        except Exception:
+            return
         await listview.clear()
         # Update Gantt scale header
         try:
@@ -451,7 +458,12 @@ ToolsScreen > #tools-footer {
             btn = Button(f"[{cat}]", id=f"pill-{cat}", classes="--active" if active else "")
             buttons_to_mount.append(btn)
         if buttons_to_mount:
-            self.call_after_refresh(lambda btns=buttons_to_mount: pills_row.mount(*btns))
+            def _do_mount(pr=pills_row, btns=buttons_to_mount) -> None:
+                existing = {w.id for w in pr.children}
+                new_btns = [b for b in btns if b.id not in existing]
+                if new_btns:
+                    pr.mount(*new_btns)
+            self.call_after_refresh(_do_mount)
 
     def on_button_pressed(self, event: "Button.Pressed") -> None:
         """Handle pill button clicks for category/error filtering."""

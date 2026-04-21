@@ -155,6 +155,8 @@ from .media import (  # noqa: F401
 
 from .status_bar import SourcesBar, _extract_domain, _truncate  # noqa: F401
 
+from hermes_cli.stream_effects import make_stream_effect  # noqa: F401
+
 
 def _stream_effect_cfg() -> dict:
     """Read stream-effect config from hermes config.yaml + active skin."""

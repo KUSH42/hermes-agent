@@ -294,8 +294,8 @@ def test_sub_focus_esc_exits_l3():
 
 
 def test_j_k_nav_between_panels():
-    """ToolPanel bindings include d/D/0-3/enter/space/y/Y/r."""
+    """ToolPanel bindings include enter/space/y/Y/r."""
     binding_keys = {b.key for b in ToolPanel.BINDINGS}
-    expected = {"d", "D", "0", "1", "2", "3", "enter", "space", "y", "Y", "r"}
+    expected = {"enter", "space", "y", "Y", "r"}
     for key in expected:
         assert key in binding_keys, f"Missing binding: {key}"

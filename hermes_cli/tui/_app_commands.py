@@ -419,16 +419,21 @@ class _CommandsMixin:
             return
         title = (first_line[:48] + "…") if len(first_line) > 48 else first_line
 
-        @work(thread=True)
-        def _save_title(self=self, db=db, session_id=session_id, title=title) -> None:
+        _app = self
+        _db, _sid, _title = db, session_id, title
+
+        def _save_title_fn() -> None:
             try:
-                updated = db.set_title_if_unset(session_id, title)
+                updated = _db.set_title_if_unset(_sid, _title)
                 if updated:
-                    self.call_from_thread(setattr, self, "session_label", title)  # type: ignore[attr-defined]
+                    _app.call_from_thread(setattr, _app, "session_label", _title)  # type: ignore[attr-defined]
             except Exception:
                 pass
 
-        _save_title()
+        try:
+            self.run_worker(_save_title_fn, thread=True)  # type: ignore[attr-defined]
+        except Exception:
+            pass
         self._auto_title_done = True  # type: ignore[attr-defined]
 
     def _toggle_drawille_overlay(self) -> None:

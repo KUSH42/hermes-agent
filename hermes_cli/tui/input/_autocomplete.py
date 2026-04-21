@@ -80,7 +80,7 @@ class _AutocompleteMixin:
         from hermes_cli.tui.perf import measure
 
         with measure("slash_completions.fuzzy_rank", budget_ms=2.0, silent=True):
-            ranked = fuzzy_rank(fragment, items, limit=50)
+            ranked = fuzzy_rank(fragment, items, limit=len(items))
         if not ranked:
             hint = ""
             duration = 1.5

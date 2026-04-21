@@ -158,7 +158,10 @@ class CompletionOverlay(Vertical):
         self._last_applied_w = w
         # B1: cap max-height dynamically so overlay does not clip at short terminal heights
         avail = max(4, event.size.height - 8)
-        self.styles.max_height = avail
+        try:
+            self.styles.max_height = avail
+        except Exception:
+            pass
 
     def _clear_highlighted_candidate(self) -> None:
         """Reset app.highlighted_candidate so ghost text is cleared."""

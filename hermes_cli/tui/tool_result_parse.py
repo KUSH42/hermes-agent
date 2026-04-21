@@ -823,7 +823,7 @@ def mcp_result_v4(ctx: ParseContext) -> ResultSummaryV4:
     content, json_is_error = _parse_mcp_content(raw)
     is_error = is_error or json_is_error
 
-    source_chip = Chip(f"mcp:{server}", "mcp-source", "accent")
+    source_chip = Chip(f"mcp:{server}", "mcp-source", "accent", remediation=server)
 
     if error_kind == "disconnect":
         return ResultSummaryV4(
@@ -832,7 +832,7 @@ def mcp_result_v4(ctx: ParseContext) -> ResultSummaryV4:
             chips=(
                 source_chip,
                 Chip("mcp · disconnected", "mcp-error", "error",
-                     remediation=f"restart {server} or check server logs"),
+                     remediation="restart or check server logs"),
             ),
             stderr_tail="",
             actions=(
@@ -849,7 +849,7 @@ def mcp_result_v4(ctx: ParseContext) -> ResultSummaryV4:
             chips=(
                 source_chip,
                 Chip("mcp · auth", "mcp-error", "error",
-                     remediation=f"re-authenticate {server} with /mcp auth"),
+                     remediation="re-authenticate with /mcp auth"),
             ),
             stderr_tail="",
             actions=(

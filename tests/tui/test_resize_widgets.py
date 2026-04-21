@@ -206,14 +206,14 @@ class TestCompletionOverlayNarrow:
         assert "_last_applied_w" in src
 
     def test_narrow_class_set_on_crossing(self):
-        # W07: 120 → 80 crosses THRESHOLD_COMP_NARROW=100
+        # W07: 120 → 70 crosses THRESHOLD_COMP_NARROW=80 dead-band [78, 82)
         from hermes_cli.tui.completion_overlay import CompletionOverlay
 
         overlay = MagicMock(spec=CompletionOverlay)
         overlay._last_applied_w = 120
         overlay.set_class = MagicMock()
 
-        CompletionOverlay.on_resize(overlay, _size_event(80))
+        CompletionOverlay.on_resize(overlay, _size_event(70))
         overlay.set_class.assert_called_once_with(True, "--narrow")
 
     def test_no_set_class_in_band(self):

@@ -130,22 +130,25 @@ class _HistoryMixin:
 
     def _show_subcommand_completions(self, command: str, fragment: str) -> None:
         """Show subcommand completion overlay for a slash command."""
+        from hermes_cli.tui.path_search import SlashCandidate
         subcommands = getattr(self, "_slash_subcommands", {})
         key = f"/{command}"
         options = subcommands.get(key, [])
+        if not options:
+            self._hide_completion_overlay()  # type: ignore[attr-defined]
+            return
         if fragment:
-            options = [o for o in options if fragment.lower() in o.lower()]
-        try:
-            from hermes_cli.tui.autocomplete_overlay import AutocompleteOverlay
-            app = self.app  # type: ignore[attr-defined]
-            overlay = app.query_one(AutocompleteOverlay)
-            if not options:
-                overlay.styles.display = "none"
-                return
-            overlay.set_items(options)
-            overlay.styles.display = "block"
-        except Exception:
-            pass
+            options = [o for o in options if o.lower().startswith(fragment.lower())]
+        candidates = [
+            SlashCandidate(display=o, command=f"/{command} {o}")
+            for o in options
+        ]
+        if not candidates:
+            self._hide_completion_overlay()  # type: ignore[attr-defined]
+            return
+        self._set_overlay_mode(slash_only=True)  # type: ignore[attr-defined]
+        self._push_to_list(candidates)  # type: ignore[attr-defined]
+        self._show_completion_overlay()  # type: ignore[attr-defined]
 
     def update_suggestion(self) -> None:
         """Set ghost text from history. Called by TextArea after every edit."""

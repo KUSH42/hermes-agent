@@ -691,9 +691,13 @@ ToolPanel .--focus-hint {
 }
 
 ToolPanel > .--focus-hint {
-    border-top: solid $boost;
+    /* D1: no border-top unless --has-hint class present; avoids phantom line on unfocused panels */
     padding: 0 2;
     color: $text-muted;
+}
+
+ToolPanel > .--focus-hint.--has-hint {
+    border-top: solid $boost;
 }
 
 /* --- P7 /tools timeline overlay (ToolsScreen CSS also embedded in DEFAULT_CSS) --- */

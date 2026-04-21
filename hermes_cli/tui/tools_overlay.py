@@ -281,6 +281,7 @@ ToolsScreen > #tools-footer {
     BINDINGS = [
         Binding("escape", "dismiss_overlay", "Close", priority=True),
         Binding("slash", "open_filter", "Filter", show=False),
+        Binding("C", "clear_all_filters", "Clear filters", show=False),  # D2
         Binding("x", "export_json", "Export", show=False),
         Binding("up", "cursor_up", show=False),
         Binding("down", "cursor_down", show=False),
@@ -318,7 +319,10 @@ ToolsScreen > #tools-footer {
             Input(id="filter-input", placeholder="filter… (prefix: file: shell: error:)"),
             id="filter-row",
         )
-        yield Static("[Enter] jump  [Esc] close  [/] filter  [x] export  [r] refresh", id="tools-footer")
+        yield Static(
+            "[Enter] jump  [Esc] close  [/] filter  [C] clear  [s] sort  [x] export  [r] refresh",
+            id="tools-footer",
+        )  # B5/D2: include all active key bindings
 
     async def on_mount(self) -> None:
         self._term_w = self.app.size.width
@@ -490,12 +494,34 @@ ToolsScreen > #tools-footer {
             await self.action_jump_to_panel()
 
     async def action_dismiss_overlay(self) -> None:
+        # A4: clear filter input state before dismissal so re-opens start clean
+        try:
+            fi = self.query_one("#filter-input", Input)
+            fi.display = False
+            fi.value = ""
+            self._filter_text = ""
+        except Exception:
+            pass
         self.app.pop_screen()
 
     async def action_open_filter(self) -> None:
         fi = self.query_one("#filter-input", Input)
         fi.display = True
         fi.focus()
+
+    async def action_clear_all_filters(self) -> None:
+        """D2: clear all filter state (text, category pills, errors-only)."""
+        self._filter_text = ""
+        self._active_categories = set()
+        self._errors_only = False
+        try:
+            fi = self.query_one("#filter-input", Input)
+            fi.value = ""
+            fi.display = False
+        except Exception:
+            pass
+        await self._apply_filter()
+        await self._rebuild()
 
     async def action_cursor_up(self) -> None:
         if self._filtered:

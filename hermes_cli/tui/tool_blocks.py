@@ -746,6 +746,8 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                     "success": "dim green",
                     "warning": "dim yellow",
                     "error": "dim red",
+                    "accent": "dim cyan",   # B4: accent tone maps to cyan
+                    "neutral": "dim",       # B4: neutral tone maps to plain dim
                 }.get(self._flash_tone, "dim green")
                 tail.append(f"  ✓ {self._flash_msg}", style=_flash_style)
             # D4: collapsed error with stderr — show hint in tail so user can see it
@@ -1089,15 +1091,14 @@ class ToolBodyContainer(Widget):
             w = self.query_one(".--args-row", Static)
         except Exception:
             # D3: lazy-mount before the microcopy row
-            if not self._args_row_mounted:
-                try:
-                    mc = self.query_one(".--microcopy", Static)
-                    w = Static("", classes="--args-row")
-                    self.mount(w, before=mc)
-                    self._args_row_mounted = True
-                except Exception:
-                    return
-            else:
+            # D5: _args_row_mounted flag may be stale (widget removed); reset and re-mount
+            self._args_row_mounted = False
+            try:
+                mc = self.query_one(".--microcopy", Static)
+                w = Static("", classes="--args-row")
+                self.mount(w, before=mc)
+                self._args_row_mounted = True
+            except Exception:
                 return
         w.update(text)
         w.add_class("--active")
@@ -1953,6 +1954,8 @@ class StreamingToolBlock(ToolBlock):
 
     def _update_microcopy(self) -> None:
         """Update microcopy Static with current streaming state (v4 §3.3)."""
+        if self._completed:
+            return  # D3: don't re-show microcopy after completion timer ticks
         started = getattr(self, "_stream_started_at", None)
         if started is None:
             return
@@ -2156,6 +2159,14 @@ class StreamingToolBlock(ToolBlock):
         self._header._refresh_gutter_color()
         self._header._refresh_tool_icon()
         self._header.refresh()
+        # A5: refresh OmissionBar reset button label when icon mode changes on skin reload
+        for bar in (self._omission_bar_top, self._omission_bar_bottom):
+            if bar is not None and bar.is_mounted:
+                try:
+                    btn = bar.query_one(".--ob-cap", Button)
+                    btn.label = OmissionBar._reset_label()
+                except Exception:
+                    pass
 
     def set_age_microcopy(self, text: str) -> None:
         """F1: update the microcopy slot with age text (only when complete)."""

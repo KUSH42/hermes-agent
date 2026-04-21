@@ -119,7 +119,11 @@ def microcopy_line(
         return f"▸ mcp · {server} server" + _elapsed_suffix() + _stall_suffix()
 
     if cat == ToolCategory.CODE:
-        return f"▸ {state.lines_received} lines · {_human_size(state.bytes_received)}" + _elapsed_suffix() + _stall_suffix()
+        # B1: match SHELL/FILE rate display for consistency
+        base = f"▸ {state.lines_received} lines · {_human_size(state.bytes_received)}"
+        if state.rate_bps is not None and state.rate_bps > 0:
+            base += f" · {state.rate_bps / 1024:.0f} kB/s"
+        return base + _elapsed_suffix() + _stall_suffix()
 
     if cat == ToolCategory.AGENT:
         # D2: static text when reduced_motion

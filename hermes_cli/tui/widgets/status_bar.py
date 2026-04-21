@@ -431,6 +431,7 @@ class StatusBar(PulseMixin, Widget):
             if ctx_max > 0 else _format_compact_tokens(ctx_tokens)
         )
         yolo_mode = getattr(app, "yolo_mode", False)
+        compact = getattr(app, "compact", False)
 
         # context_pct override: in "overflow" mode show context_pct instead of compaction%
         _cli = getattr(app, "cli", None)
@@ -448,8 +449,15 @@ class StatusBar(PulseMixin, Widget):
             enabled = progress > 0.0
 
         session_label = str(getattr(app, "session_label", "") or "")
-        if len(session_label) > 28:
+        # Abbreviate session label only in compact+narrow (< 70 cols avoids 80-col terminals)
+        if compact and width < 70 and len(session_label) > 6:
+            session_label = session_label[:5] + "…"
+        elif len(session_label) > 28:
             session_label = session_label[:27] + "…"
+
+        # Abbreviate model name only in compact+narrow
+        if compact and width < 70:
+            model = model.removeprefix("claude-")
 
         t = Text()
         # Startup state: show "connecting…" when model is not yet loaded
@@ -465,12 +473,17 @@ class StatusBar(PulseMixin, Widget):
                 t.append(f" · {session_label}", style="dim")
             t.append(" · ", style="dim")
 
-        if width < 40:
-            # Minimal: model · ctx
+        if width < 40 or (compact and width < 70):
+            # Minimal / compact+narrow: model · ctx (no bar glyph)
+            if enabled and not (compact and width < 70):
+                pct_int = min(int(progress * 100), 100)
+                t.append(f"{pct_int}%", style=StatusBar._compaction_color(progress, _vars))
+                if ctx_label:
+                    t.append(" · ", style="dim")
             if ctx_label:
                 t.append(ctx_label, style="dim")
         elif width < 60:
-            # Compact: model · % · ctx (no bar)
+            # Narrow: model · % · ctx (no bar)
             if enabled:
                 pct_int = min(int(progress * 100), 100)
                 t.append(f"{pct_int}%", style=StatusBar._compaction_color(progress, _vars))

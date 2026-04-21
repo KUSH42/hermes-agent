@@ -22,6 +22,20 @@ from hermes_cli.tui.body_renderers.shell import ShellOutputRenderer
 from hermes_cli.tui.body_renderers.empty import EmptyStateRenderer
 from hermes_cli.tui.body_renderers.fallback import FallbackRenderer
 
+# Streaming (legacy per-line) renderers — first-class module in body_renderers/
+from hermes_cli.tui.body_renderers.streaming import (
+    StreamingBodyRenderer,
+    PlainBodyRenderer,
+    ShellRenderer,
+    CodeRenderer as _StreamingCodeRenderer,  # noqa: F401 — avoid shadowing ABC CodeRenderer
+    FileRenderer,
+    SearchRenderer as _LegacySearchRenderer,  # private — avoids two SearchRenderer exports
+    WebRenderer,
+    AgentRenderer,
+    TextRenderer,
+    MCPBodyRenderer,
+)
+
 if TYPE_CHECKING:
     from hermes_cli.tui.tool_payload import ClassificationResult, ToolPayload
 
@@ -72,6 +86,7 @@ def pick_renderer(
 
 
 __all__ = [
+    # ABC (new build API) renderers
     "BodyRenderer",
     "SearchRenderer",
     "DiffRenderer",
@@ -84,4 +99,14 @@ __all__ = [
     "FallbackRenderer",
     "REGISTRY",
     "pick_renderer",
+    # Streaming (legacy per-line) renderers
+    "StreamingBodyRenderer",
+    "PlainBodyRenderer",
+    "ShellRenderer",
+    "FileRenderer",
+    "WebRenderer",
+    "AgentRenderer",
+    "TextRenderer",
+    "MCPBodyRenderer",
+    # _LegacySearchRenderer is intentionally excluded from __all__
 ]

@@ -121,9 +121,9 @@ class ToolBlock(Widget):
 
     def _render_diff_line(self, plain: str) -> "Text | None":
         try:
-            from hermes_cli.tui.body_renderer import BodyRenderer
+            from hermes_cli.tui.body_renderers.streaming import StreamingBodyRenderer
             from hermes_cli.tui.tool_category import ToolCategory
-            return BodyRenderer.for_category(ToolCategory.FILE).render_diff_line(plain)
+            return StreamingBodyRenderer.for_category(ToolCategory.FILE).render_diff_line(plain)
         except Exception:
             return None
 

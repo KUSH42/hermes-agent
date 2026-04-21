@@ -123,7 +123,7 @@ def test_follow_tail_resets_on_complete():
 
 def test_shell_renderer_finalize_json():
     """ShellRenderer.finalize returns Syntax with language 'json' for JSON output."""
-    from hermes_cli.tui.body_renderer import ShellRenderer
+    from hermes_cli.tui.body_renderers.streaming import ShellRenderer
     from rich.syntax import Syntax
 
     renderer = ShellRenderer()
@@ -139,7 +139,7 @@ def test_shell_renderer_finalize_json():
 
 def test_shell_renderer_finalize_yaml():
     """ShellRenderer.finalize returns Syntax with language 'yaml' for YAML output."""
-    from hermes_cli.tui.body_renderer import ShellRenderer
+    from hermes_cli.tui.body_renderers.streaming import ShellRenderer
     from rich.syntax import Syntax
 
     renderer = ShellRenderer()
@@ -154,7 +154,7 @@ def test_shell_renderer_finalize_yaml():
 
 def test_shell_renderer_finalize_plain():
     """ShellRenderer.finalize returns None for plain text output."""
-    from hermes_cli.tui.body_renderer import ShellRenderer
+    from hermes_cli.tui.body_renderers.streaming import ShellRenderer
 
     renderer = ShellRenderer()
     result = renderer.finalize(["hello world"])

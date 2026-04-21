@@ -289,9 +289,9 @@ class ExecuteCodeBlock(StreamingToolBlock):
             theme = css_vars.get("preview-syntax-theme", theme)
         except Exception:
             pass
-        from hermes_cli.tui.body_renderer import BodyRenderer
+        from hermes_cli.tui.body_renderers.streaming import StreamingBodyRenderer
         from hermes_cli.tui.tool_category import ToolCategory
-        renderer = BodyRenderer.for_category(ToolCategory.CODE)
+        renderer = StreamingBodyRenderer.for_category(ToolCategory.CODE)
         return renderer.highlight_line(line, theme)
 
     def finalize_code(self, code: str) -> None:
@@ -342,9 +342,9 @@ class ExecuteCodeBlock(StreamingToolBlock):
                 except Exception:
                     theme = "monokai"
                     bg = None
-                from hermes_cli.tui.body_renderer import BodyRenderer
+                from hermes_cli.tui.body_renderers.streaming import StreamingBodyRenderer
                 from hermes_cli.tui.tool_category import ToolCategory
-                renderer = BodyRenderer.for_category(ToolCategory.CODE)
+                renderer = StreamingBodyRenderer.for_category(ToolCategory.CODE)
                 renderable = renderer.finalize_code(code, theme=theme, bg=bg)
                 if renderable is not None:
                     code_log.write(renderable)

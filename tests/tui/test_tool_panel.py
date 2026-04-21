@@ -1332,8 +1332,7 @@ async def test_body_degraded_class_on_renderer_exception():
     from hermes_cli.tui.tool_panel import BodyPane
     from unittest.mock import patch
 
-    with patch("hermes_cli.tui.body_renderer.BodyRenderer") as mock_renderer_cls:
-        mock_renderer_cls.for_category.side_effect = RuntimeError("renderer broken")
+    with patch("hermes_cli.tui.body_renderers.streaming.StreamingBodyRenderer.for_category", side_effect=RuntimeError("renderer broken")):
         pane = BodyPane(category="FAKE")
         assert pane._renderer_degraded is True, "--body-degraded flag must be set"
 

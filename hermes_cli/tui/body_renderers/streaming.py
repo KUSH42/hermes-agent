@@ -1,4 +1,4 @@
-"""BodyRenderer — per-category streaming and finalize rendering strategy.
+"""StreamingBodyRenderer — per-category streaming and finalize rendering strategy.
 
 Architecture: tui-tool-panel-v2-spec.md §5.
 
@@ -19,7 +19,7 @@ Seven concrete renderers (§5.3):
     AgentRenderer   — ANSI passthrough; no finalize
     TextRenderer    — ANSI passthrough fallback; no finalize
 
-Registry + factory live on BodyRenderer.for_category (§5.2).
+Registry + factory live on StreamingBodyRenderer.for_category (§5.2).
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-class BodyRenderer:
+class StreamingBodyRenderer:
     """Stateless base renderer. Concrete subclasses override 1–3 methods.
 
     Renderers are stateless singletons (§5.2) — per-panel state lives on
@@ -65,14 +65,14 @@ class BodyRenderer:
         Only SearchRenderer overrides this in Phase 2.
     """
 
-    _CACHE: dict["ToolCategory", "BodyRenderer"] = {}
+    _CACHE: dict["ToolCategory", "StreamingBodyRenderer"] = {}
 
     # ------------------------------------------------------------------
     # Factory
     # ------------------------------------------------------------------
 
     @classmethod
-    def for_category(cls, category: "ToolCategory") -> "BodyRenderer":
+    def for_category(cls, category: "ToolCategory") -> "StreamingBodyRenderer":
         """Return the stateless singleton renderer for *category*."""
         if category not in cls._CACHE:
             cls._CACHE[category] = _RENDERERS[category]()
@@ -101,7 +101,7 @@ class BodyRenderer:
 # ---------------------------------------------------------------------------
 
 
-class ShellRenderer(BodyRenderer):
+class ShellRenderer(StreamingBodyRenderer):
     """Shell stdout: Text.from_ansi; JSON/YAML finalize on completion."""
 
     def render_stream_line(self, raw: str, plain: str) -> "ConsoleRenderable":
@@ -133,7 +133,7 @@ class ShellRenderer(BodyRenderer):
 # ---------------------------------------------------------------------------
 
 
-class CodeRenderer(BodyRenderer):
+class CodeRenderer(StreamingBodyRenderer):
     """execute_code: per-line Pygments during streaming, rich.Syntax on finalize.
 
     Extends the base interface with three specialised methods (§5.3.1):
@@ -143,7 +143,7 @@ class CodeRenderer(BodyRenderer):
     """
 
     def render_stream_line(self, raw: str, plain: str) -> "ConsoleRenderable":
-        """Generic BodyRenderer contract: delegate stdout to render_output_line."""
+        """Generic StreamingBodyRenderer contract: delegate stdout to render_output_line."""
         return self.render_output_line(raw, plain)
 
     def finalize(self, all_plain: list[str], **kwargs: object) -> "ConsoleRenderable | None":
@@ -236,7 +236,7 @@ def _lang_for_path(path: str) -> str:
     return _LANG_MAP.get(suffix, "text")
 
 
-class FileRenderer(BodyRenderer):
+class FileRenderer(StreamingBodyRenderer):
     """read_file / write_file / patch / diff rendering.
 
     render_stream_line — per-line Syntax (write_file streaming path)
@@ -359,7 +359,7 @@ def _render_web_search_results(items: list) -> "ConsoleRenderable":
     return t
 
 
-class SearchRenderer(BodyRenderer):
+class SearchRenderer(StreamingBodyRenderer):
     """Search results: plain stream, structured finalize, sidecar path extraction."""
 
     def render_stream_line(self, raw: str, plain: str) -> "ConsoleRenderable":
@@ -412,7 +412,7 @@ class SearchRenderer(BodyRenderer):
 # ---------------------------------------------------------------------------
 
 
-class WebRenderer(BodyRenderer):
+class WebRenderer(StreamingBodyRenderer):
     """Web content: ANSI passthrough; JSON finalize when content looks like JSON."""
 
     def render_stream_line(self, raw: str, plain: str) -> "ConsoleRenderable":
@@ -444,7 +444,7 @@ class WebRenderer(BodyRenderer):
 # ---------------------------------------------------------------------------
 
 
-class AgentRenderer(BodyRenderer):
+class AgentRenderer(StreamingBodyRenderer):
     """Agent reasoning output: ANSI passthrough, no finalize."""
 
     def render_stream_line(self, raw: str, plain: str) -> "ConsoleRenderable":
@@ -464,7 +464,7 @@ class AgentRenderer(BodyRenderer):
 # ---------------------------------------------------------------------------
 
 
-class TextRenderer(BodyRenderer):
+class TextRenderer(StreamingBodyRenderer):
     """Generic fallback: ANSI passthrough, no finalize, no diff intercept."""
 
     def render_stream_line(self, raw: str, plain: str) -> "ConsoleRenderable":
@@ -477,7 +477,7 @@ class TextRenderer(BodyRenderer):
         return Text("\n".join(tail), style="dim")
 
 
-class MCPBodyRenderer(BodyRenderer):
+class MCPBodyRenderer(StreamingBodyRenderer):
     """MCP tool body — ANSI passthrough while streaming; finalize extracts text content."""
 
     def render_stream_line(self, raw: str, plain: str) -> "ConsoleRenderable":
@@ -505,7 +505,7 @@ class MCPBodyRenderer(BodyRenderer):
 # ---------------------------------------------------------------------------
 
 
-def _build_renderers() -> "dict[ToolCategory, type[BodyRenderer]]":
+def _build_renderers() -> "dict[ToolCategory, type[StreamingBodyRenderer]]":
     from hermes_cli.tui.tool_category import ToolCategory
     return {
         ToolCategory.FILE:    FileRenderer,
@@ -519,10 +519,10 @@ def _build_renderers() -> "dict[ToolCategory, type[BodyRenderer]]":
     }
 
 
-_RENDERERS: "dict[ToolCategory, type[BodyRenderer]]" = {}
+_RENDERERS: "dict[ToolCategory, type[StreamingBodyRenderer]]" = {}
 
 
-def _ensure_renderers() -> "dict[ToolCategory, type[BodyRenderer]]":
+def _ensure_renderers() -> "dict[ToolCategory, type[StreamingBodyRenderer]]":
     global _RENDERERS
     if not _RENDERERS:
         _RENDERERS = _build_renderers()
@@ -530,20 +530,20 @@ def _ensure_renderers() -> "dict[ToolCategory, type[BodyRenderer]]":
 
 
 # Patch for_category to use lazy registry (avoids circular import at module load)
-_orig_for_category = BodyRenderer.for_category.__func__  # type: ignore[attr-defined]
+_orig_for_category = StreamingBodyRenderer.for_category.__func__  # type: ignore[attr-defined]
 
 
 @classmethod  # type: ignore[misc]
-def _lazy_for_category(cls, category: "ToolCategory") -> "BodyRenderer":
+def _lazy_for_category(cls, category: "ToolCategory") -> "StreamingBodyRenderer":
     _ensure_renderers()
     if category not in cls._CACHE:
         cls._CACHE[category] = _RENDERERS[category]()
     return cls._CACHE[category]
 
 
-BodyRenderer.for_category = _lazy_for_category  # type: ignore[method-assign]
+StreamingBodyRenderer.for_category = _lazy_for_category  # type: ignore[method-assign]
 
 
-class PlainBodyRenderer(BodyRenderer):
+class PlainBodyRenderer(StreamingBodyRenderer):
     """Fallback renderer — passes lines through unstyled."""
     pass

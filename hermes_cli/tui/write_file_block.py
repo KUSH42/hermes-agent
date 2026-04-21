@@ -170,9 +170,9 @@ class WriteFileBlock(StreamingToolBlock):
         except NoMatches:
             return
         try:
-            from hermes_cli.tui.body_renderer import BodyRenderer
+            from hermes_cli.tui.body_renderers.streaming import StreamingBodyRenderer
             from hermes_cli.tui.tool_category import ToolCategory
-            renderer = BodyRenderer.for_category(ToolCategory.FILE)
+            renderer = StreamingBodyRenderer.for_category(ToolCategory.FILE)
             lang = _lang_for_path(self._path)
             renderable = renderer.render_stream_line(line, line, lang=lang)
             log.write_with_source(renderable, line)
@@ -251,9 +251,9 @@ class WriteFileBlock(StreamingToolBlock):
         try:
             log = self._body.query_one(CopyableRichLog)
             log.clear()
-            from hermes_cli.tui.body_renderer import BodyRenderer
+            from hermes_cli.tui.body_renderers.streaming import StreamingBodyRenderer
             from hermes_cli.tui.tool_category import ToolCategory
-            renderer = BodyRenderer.for_category(ToolCategory.FILE)
+            renderer = StreamingBodyRenderer.for_category(ToolCategory.FILE)
             lang = _lang_for_path(self._path)
             renderable = renderer.finalize(self._content_lines, lang=lang)
             if renderable is not None:

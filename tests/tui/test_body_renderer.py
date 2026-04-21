@@ -15,7 +15,7 @@ from hermes_cli.tui.tool_category import ToolCategory
 
 def test_mcp_body_renderer_registered():
     """BodyRenderer.for_category(ToolCategory.MCP) returns non-None without raising."""
-    from hermes_cli.tui.body_renderer import BodyRenderer
+    from hermes_cli.tui.body_renderers.streaming import StreamingBodyRenderer as BodyRenderer
 
     renderer = BodyRenderer.for_category(ToolCategory.MCP)
     assert renderer is not None
@@ -23,7 +23,7 @@ def test_mcp_body_renderer_registered():
 
 def test_mcp_finalize_extracts_text_content():
     """JSON with content=[{"type":"text","text":"hi"}] → Text("hi")."""
-    from hermes_cli.tui.body_renderer import MCPBodyRenderer
+    from hermes_cli.tui.body_renderers.streaming import MCPBodyRenderer
     import json
 
     renderer = MCPBodyRenderer()
@@ -35,7 +35,7 @@ def test_mcp_finalize_extracts_text_content():
 
 def test_mcp_finalize_multiple_text_items():
     """Multiple text items joined by double newline."""
-    from hermes_cli.tui.body_renderer import MCPBodyRenderer
+    from hermes_cli.tui.body_renderers.streaming import MCPBodyRenderer
     import json
 
     renderer = MCPBodyRenderer()
@@ -54,7 +54,7 @@ def test_mcp_finalize_multiple_text_items():
 
 def test_mcp_finalize_non_json_returns_none():
     """Plain non-JSON string → returns None."""
-    from hermes_cli.tui.body_renderer import MCPBodyRenderer
+    from hermes_cli.tui.body_renderers.streaming import MCPBodyRenderer
 
     renderer = MCPBodyRenderer()
     result = renderer.finalize(["plain text, not json"])
@@ -63,7 +63,7 @@ def test_mcp_finalize_non_json_returns_none():
 
 def test_mcp_finalize_json_no_content_key_returns_none():
     """JSON without 'content' key → returns None."""
-    from hermes_cli.tui.body_renderer import MCPBodyRenderer
+    from hermes_cli.tui.body_renderers.streaming import MCPBodyRenderer
     import json
 
     renderer = MCPBodyRenderer()
@@ -74,7 +74,7 @@ def test_mcp_finalize_json_no_content_key_returns_none():
 
 def test_mcp_render_stream_line_passthrough():
     """render_stream_line passes ANSI through as Text."""
-    from hermes_cli.tui.body_renderer import MCPBodyRenderer
+    from hermes_cli.tui.body_renderers.streaming import MCPBodyRenderer
 
     renderer = MCPBodyRenderer()
     raw = "\x1b[32mgreen\x1b[0m"
@@ -91,7 +91,7 @@ def test_mcp_render_stream_line_passthrough():
 def test_search_renderer_web_search_json_renders_title():
     """web_search JSON with data.web → Text containing result titles."""
     import json
-    from hermes_cli.tui.body_renderer import SearchRenderer
+    from hermes_cli.tui.body_renderers.streaming import SearchRenderer
 
     renderer = SearchRenderer()
     payload = json.dumps({
@@ -112,7 +112,7 @@ def test_search_renderer_web_search_json_renders_title():
 def test_search_renderer_web_search_json_renders_url():
     """web_search JSON result includes URLs."""
     import json
-    from hermes_cli.tui.body_renderer import SearchRenderer
+    from hermes_cli.tui.body_renderers.streaming import SearchRenderer
 
     renderer = SearchRenderer()
     payload = json.dumps({
@@ -127,7 +127,7 @@ def test_search_renderer_web_search_json_renders_url():
 def test_search_renderer_web_search_json_truncates_long_description():
     """Descriptions > 120 chars are truncated with ellipsis."""
     import json
-    from hermes_cli.tui.body_renderer import SearchRenderer
+    from hermes_cli.tui.body_renderers.streaming import SearchRenderer
 
     renderer = SearchRenderer()
     long_desc = "x" * 200
@@ -142,7 +142,7 @@ def test_search_renderer_web_search_json_truncates_long_description():
 
 def test_search_renderer_non_json_falls_back():
     """Plain grep output (non-JSON) → fallback text rendering."""
-    from hermes_cli.tui.body_renderer import SearchRenderer
+    from hermes_cli.tui.body_renderers.streaming import SearchRenderer
 
     renderer = SearchRenderer()
     result = renderer.finalize(["src/a.py:10: match", "src/b.py:20: match"])
@@ -152,7 +152,7 @@ def test_search_renderer_non_json_falls_back():
 
 def test_search_renderer_empty_returns_none():
     """Empty input → None."""
-    from hermes_cli.tui.body_renderer import SearchRenderer
+    from hermes_cli.tui.body_renderers.streaming import SearchRenderer
 
     renderer = SearchRenderer()
     result = renderer.finalize([])

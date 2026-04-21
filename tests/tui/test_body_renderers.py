@@ -17,8 +17,8 @@ import pytest
 from rich.text import Text
 from rich.syntax import Syntax
 
-from hermes_cli.tui.body_renderer import (
-    BodyRenderer,
+from hermes_cli.tui.body_renderers.streaming import (
+    StreamingBodyRenderer as BodyRenderer,
     ShellRenderer,
     CodeRenderer,
     FileRenderer,

@@ -112,14 +112,14 @@ class BodyPane(Widget):
         self._renderer_degraded: bool = False
         if category is not None:
             try:
-                from hermes_cli.tui.body_renderer import BodyRenderer
-                self._renderer = BodyRenderer.for_category(category)
+                from hermes_cli.tui.body_renderers.streaming import StreamingBodyRenderer
+                self._renderer = StreamingBodyRenderer.for_category(category)
             except Exception:
                 import logging
                 logging.getLogger(__name__).debug(
                     "BodyPane renderer init failed for %r", category, exc_info=True
                 )
-                from hermes_cli.tui.body_renderer import PlainBodyRenderer
+                from hermes_cli.tui.body_renderers.streaming import PlainBodyRenderer
                 self._renderer = PlainBodyRenderer()
                 self._renderer_degraded = True
         else:

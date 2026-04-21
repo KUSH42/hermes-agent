@@ -44,16 +44,11 @@ def _parse_search_output(text: str) -> list[tuple[str, list[tuple[int, str]]]]:
     return groups
 
 
-class VirtualSearchList:
-    """Placeholder for the VirtualSearchList widget — implemented as a proper Widget below."""
-    pass
-
-
 from textual.widget import Widget
 from textual.strip import Strip
 
 
-class VirtualSearchList(Widget):  # type: ignore[no-redef]
+class VirtualSearchList(Widget):
     """Virtual-scrolling search result list for large result sets (>100 hits).
 
     render_line(y) returns a Strip for the visible row at position y.

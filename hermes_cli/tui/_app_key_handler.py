@@ -10,12 +10,7 @@ from rich.text import Text
 from hermes_cli.tui.state import ChoiceOverlayState
 from hermes_cli.tui._browse_types import BrowseAnchorType
 
-# Mirror of the module-level frozenset in app.py — kept in sync manually.
-_KNOWN_SLASH_COMMANDS: frozenset[str] = frozenset([
-    "/loop", "/schedule", "/anim", "/yolo", "/verbose",
-    "/model", "/reasoning", "/skin", "/fast", "/easteregg",
-    "/help", "/queue", "/btw", "/clear",
-])
+from hermes_cli.tui._app_constants import KNOWN_SLASH_COMMANDS as _KNOWN_SLASH_COMMANDS
 
 
 class _KeyHandlerMixin:

@@ -23,12 +23,7 @@ import queue
 import re
 import threading
 
-# Known TUI slash commands — unknown /cmd input shows a hint instead of routing to agent.
-_KNOWN_SLASH_COMMANDS: frozenset[str] = frozenset([
-    "/loop", "/schedule", "/anim", "/yolo", "/verbose",
-    "/model", "/reasoning", "/skin", "/fast", "/easteregg",
-    "/help", "/queue", "/btw", "/clear",
-])
+from hermes_cli.tui._app_constants import KNOWN_SLASH_COMMANDS as _KNOWN_SLASH_COMMANDS
 
 # File-touching tool names — used by watch_spinner_label to extract active file
 _FILE_TOOLS: frozenset[str] = frozenset({
@@ -324,44 +319,44 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
     secret_state: reactive[SecretOverlayState | None] = reactive(None)
     undo_state: reactive[UndoOverlayState | None] = reactive(None)
 
-    # Status bar data
+    # Status bar data — display-only, read directly by StatusBar (no watcher needed)
     status_model: reactive[str] = reactive("")
     status_context_tokens: reactive[int] = reactive(0)
     status_context_max: reactive[int] = reactive(0)
 
-    # Compaction state
+    # Compaction state — display-only (status_compaction_progress has a watcher; enabled does not)
     status_compaction_progress: reactive[float] = reactive(0.0)  # 0.0–1.0
-    status_compaction_enabled: reactive[bool] = reactive(True)
+    status_compaction_enabled: reactive[bool] = reactive(True)  # display-only
 
-    # Tok/s throughput (last turn)
+    # Tok/s throughput (last turn) — display-only
     status_tok_s: reactive[float] = reactive(0.0)
 
     # Browse mode — keyboard-driven navigation through ToolBlock widgets
     browse_mode: reactive[bool] = reactive(False)
     browse_index: reactive[int] = reactive(0)
-    # Memoized count of mounted ToolHeaders — avoids O(n) DOM query in StatusBar.render()
+    # Memoized count of mounted ToolHeaders — display-only, read by StatusBar.render()
     _browse_total: reactive[int] = reactive(0)
-    # Unified anchor list hint shown in StatusBar during []/{}/ Alt+↑↓ navigation
+    # Unified anchor list hint shown in StatusBar during []/{}/ Alt+↑↓ navigation — display-only
     _browse_hint: reactive[str] = reactive("")
 
-    # Completion overlay hint shown in StatusBar while overlay is visible (A3/C1)
+    # Completion overlay hint shown in StatusBar while overlay is visible — display-only
     _completion_hint: reactive[str] = reactive("")
 
     # Animation force state — overrides trigger-based show/hide logic
     # None = normal; "on" = always show; "off" = always hide
     _anim_force: "str | None" = None
 
-    # Animation hint for StatusBar (C3)
+    # Animation hint for StatusBar — display-only
     _anim_hint: reactive[str] = reactive("")
 
     # Active tool name — set/cleared by _on_tool_start/_on_tool_complete (C1)
     _active_tool_name: str = ""
 
-    # Detail level of currently focused ToolPanel in browse mode (for StatusBar badge)
+    # Detail level of currently focused ToolPanel in browse mode — display-only
     browse_detail_level: reactive[int] = reactive(0)
 
 
-    # Output dropped flag — set when queue is full; shown in StatusBar until next successful write
+    # Output dropped flag — display-only; shown in StatusBar until next successful write
     status_output_dropped: reactive[bool] = reactive(False)
 
     # D5: count of currently-streaming tool blocks (shows badge in StatusBar)
@@ -373,8 +368,7 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
     # Spinner label — text shown beside the spinner frame (e.g. "Calling tool…")
     spinner_label: reactive[str] = reactive("")
 
-    # Active file path extracted from spinner_label when a file-touching tool runs.
-    # Drives the 📄 breadcrumb in StatusBar. Empty string when no file is active.
+    # Active file path — display-only; drives the 📄 breadcrumb in StatusBar
     status_active_file: reactive[str] = reactive("")
 
     # Persistent error message shown in StatusBar until cleared.
@@ -394,7 +388,7 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
     # Yolo mode — mirrors HERMES_YOLO_MODE env var; toggled at runtime via /yolo
     yolo_mode: reactive[bool] = reactive(False, repaint=False)
 
-    # Current session label — shown in StatusBar chip
+    # Current session label — display-only; shown in StatusBar chip
     session_label: reactive[str] = reactive("")
 
     # hint_text is NOT on HermesApp — HintBar.hint is the single source of truth.
@@ -711,8 +705,6 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
         self._last_assistant_text: str = ""
         # Initialize parallel worktree sessions (feature-gated)
         self._init_sessions()
-
-    _RESIZE_DEBOUNCE_S: float = 0.06  # 60 ms
 
     _RESIZE_DEBOUNCE_S: float = 0.06  # 60 ms
 

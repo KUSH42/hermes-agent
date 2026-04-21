@@ -1195,6 +1195,40 @@ def _normalize_ansi_c1(text: str) -> str:
 _hermes_app: "HermesApp | None" = None
 
 
+def _compute_write_diff(path: str, new_content: str) -> str:
+    """Return a unified diff string comparing the on-disk file to new_content.
+
+    For create_file / write to a new path: old content is empty (all additions).
+    For patch tool: pass the already-applied result as new_content; the old
+    content is read from disk (pre-patch state is preserved until the write).
+    """
+    import difflib
+    import os as _os
+    try:
+        with open(path, encoding="utf-8", errors="replace") as _f:
+            old_lines = _f.readlines()
+    except FileNotFoundError:
+        old_lines = []
+    new_lines = [ln if ln.endswith("\n") else ln + "\n"
+                 for ln in new_content.splitlines()]
+    diff = difflib.unified_diff(
+        old_lines, new_lines,
+        fromfile=f"a/{_os.path.basename(path)}",
+        tofile=f"b/{_os.path.basename(path)}",
+        lineterm="",
+    )
+    return "".join(diff)
+
+
+def _add_to_write_allowlist(abs_path: str) -> None:
+    """Persist abs_path to the config write_allowlist."""
+    from hermes_cli.config import save_config
+    allowlist = CLI_CONFIG.setdefault("write_allowlist", [])
+    if abs_path not in allowlist:
+        allowlist.append(abs_path)
+        save_config(CLI_CONFIG)
+
+
 def _cprint(text: str) -> None:
     """Route ANSI text to Textual output panel from any thread.
 
@@ -1869,6 +1903,7 @@ class HermesCLI:
         self._approval_state = None
         self._approval_deadline = 0
         self._approval_lock = threading.Lock()
+        self._write_session_allowlist: set = set()  # paths allowed for write this session
         self._secret_state = None
         self._secret_deadline = 0
         self._spinner_text: str = ""  # thinking spinner text for TUI
@@ -3362,12 +3397,12 @@ class HermesCLI:
                             log = msg.current_prose_log()
                             width = int(getattr(log.scrollable_content_region, "width", 0) or 0)
                             if width > 0:
-                                result["width"] = width
+                                result["width"] = max(1, width - 1)
                                 return
 
                         panel_width = int(getattr(panel.scrollable_content_region, "width", 0) or 0)
                         if panel_width > 0:
-                            result["width"] = panel_width
+                            result["width"] = max(1, panel_width - 1)
                             return
 
                     app_width = int(getattr(getattr(app, "size", None), "width", 0) or 0)
@@ -9238,6 +9273,7 @@ class HermesCLI:
         self._approval_state = None     # dict with command, description, choices, selected, response_queue
         self._approval_deadline = 0
         self._approval_lock = threading.Lock()  # serialize concurrent approval prompts (delegation race fix)
+        self._write_session_allowlist: set = set()  # paths allowed for write this session
 
         # Slash command loading state
         self._command_running = False

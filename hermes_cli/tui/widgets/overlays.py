@@ -248,6 +248,8 @@ class ApprovalWidget(CountdownMixin, Widget, can_focus=True):
 
     def compose(self) -> ComposeResult:
         yield Static("", id="approval-question")
+        yield CopyableRichLog(id="approval-diff", highlight=False,
+                              max_lines=40, wrap=False)
         yield Static("", id="approval-choices")
         yield Static("", id="approval-countdown")
 
@@ -262,6 +264,27 @@ class ApprovalWidget(CountdownMixin, Widget, can_focus=True):
             self.query_one("#approval-question", Static).update(
                 f"[dim]![/dim]  {state.question}"
             )
+            diff_log = self.query_one("#approval-diff", CopyableRichLog)
+            if state.diff_text:
+                diff_log.display = True
+                diff_log.clear()
+                from hermes_cli.tui.body_renderers.diff import DiffRenderer
+                from hermes_cli.tui.tool_payload import (
+                    ToolPayload, ClassificationResult, ResultKind,
+                )
+                payload = ToolPayload(
+                    tool_name="diff",
+                    category=None,
+                    args={},
+                    input_display=None,
+                    output_raw=state.diff_text,
+                )
+                cls_result = ClassificationResult(kind=ResultKind.DIFF, confidence=1.0)
+                renderable = DiffRenderer(payload, cls_result).build()
+                if renderable is not None:
+                    diff_log.write(renderable)
+            else:
+                diff_log.display = False
             choices_markup = "  ".join(
                 f"[bold #FFD700]\\[ {c} ←\\][/bold #FFD700]" if i == state.selected
                 else f"[dim]\\[ {c} \\][/dim]"

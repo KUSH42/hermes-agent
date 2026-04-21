@@ -675,6 +675,8 @@ DEFAULT_CONFIG = {
 
     # Permanently allowed dangerous command patterns (added via "always" approval)
     "command_allowlist": [],
+    # Abs paths permanently approved for write without prompt (added via "always" write approval)
+    "write_allowlist": [],
     # User-defined quick commands that bypass the agent loop (type: exec only)
     "quick_commands": {},
     # Custom personalities — add your own entries here

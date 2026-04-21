@@ -29,7 +29,7 @@ class _KeyHandlerMixin:
         - escape: cancel overlay → interrupt agent
         """
         from hermes_cli.tui.widgets import (
-            ApprovalWidget, ClarifyWidget, OutputPanel,
+            ApprovalWidget, ClarifyWidget, CopyableRichLog, OutputPanel,
             HistorySearchOverlay, HintBar, ThinkingWidget,
         )
         from hermes_cli.tui.overlays import (
@@ -410,6 +410,43 @@ class _KeyHandlerMixin:
         ]:
             state = getattr(self, state_attr)
             if state is not None:
+                # For approval overlays: diff log scroll takes priority over
+                # choice navigation when the diff log has focus.
+                if state_attr == "approval_state":
+                    try:
+                        approval_widget = self.query_one(ApprovalWidget)  # type: ignore[attr-defined]
+                        diff_log = approval_widget.query_one(
+                            "CopyableRichLog#approval-diff", CopyableRichLog
+                        )
+                        if diff_log.display and diff_log.has_focus:
+                            if key == "up":
+                                diff_log.scroll_up()
+                                event.stop()
+                                return
+                            if key == "down":
+                                diff_log.scroll_down()
+                                event.stop()
+                                return
+                    except NoMatches:
+                        pass
+
+                    # Tab: cycle focus between diff log and approval widget
+                    if key == "tab":
+                        try:
+                            approval_widget = self.query_one(ApprovalWidget)  # type: ignore[attr-defined]
+                            diff_log = approval_widget.query_one(
+                                "CopyableRichLog#approval-diff", CopyableRichLog
+                            )
+                            if diff_log.display:
+                                if diff_log.has_focus:
+                                    approval_widget.focus()
+                                else:
+                                    diff_log.focus()
+                                event.stop()
+                                return
+                        except NoMatches:
+                            pass
+
                 if key == "up" and state.selected > 0:
                     state.selected -= 1
                     try:

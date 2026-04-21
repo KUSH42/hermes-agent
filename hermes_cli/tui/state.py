@@ -47,6 +47,7 @@ class ChoiceOverlayState(OverlayState):
     question: str = ""
     choices: list[str] = field(default_factory=list)
     selected: int = 0
+    diff_text: str | None = None   # unified diff; shown in ApprovalWidget diff panel
 
 
 @dataclass

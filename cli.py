@@ -8321,6 +8321,95 @@ class HermesCLI:
             choices.append("view")
         return choices
 
+    def _write_approval_callback(self, path: str, new_content: str) -> str:
+        """Approval prompt for write_file / patch with inline diff.
+
+        Returns "allow" or "deny". "deny" means the caller must return a tool
+        error string so the agent can explain the refusal to the user.
+
+        Choices:
+          once    — allow this write only
+          session — allow all future writes to this path this session
+          always  — add path to config write_allowlist (permanent)
+          deny    — reject
+
+        The prompt is skipped (returns "allow") when:
+          - HERMES_YOLO_MODE env var is set
+          - path is in the per-session allowlist
+          - path is in CLI_CONFIG["write_allowlist"]
+          - no TUI is running (headless / PT mode)
+        """
+        import time as _time
+        import os as _os
+
+        tui = _hermes_app
+        if tui is None:
+            return "allow"  # headless: no TUI to show approval
+
+        if _os.getenv("HERMES_YOLO_MODE"):
+            return "allow"
+
+        norm = _os.path.abspath(path)
+
+        if norm in self._write_session_allowlist:
+            return "allow"
+
+        if any(norm == _os.path.abspath(p)
+               for p in CLI_CONFIG.get("write_allowlist", [])):
+            return "allow"
+
+        with self._approval_lock:
+            timeout = 60
+            response_queue = queue.Queue()
+
+            diff_text = _compute_write_diff(path, new_content)
+            question = f"Write to {_os.path.relpath(path)}"
+            if not diff_text.strip():
+                question += "  [no changes]"
+
+            from hermes_cli.tui.state import ChoiceOverlayState as _COS
+            state = _COS(
+                deadline=_time.monotonic() + timeout,
+                response_queue=response_queue,
+                question=question,
+                choices=["once", "session", "always", "deny"],
+                selected=0,
+                diff_text=diff_text or None,
+            )
+            try:
+                tui.call_from_thread(setattr, tui, "approval_state", state)
+            except Exception:
+                return "allow"
+
+            while True:
+                try:
+                    result = response_queue.get(timeout=1)
+                    try:
+                        tui.call_from_thread(setattr, tui, "approval_state", None)
+                    except Exception:
+                        pass
+                    if result == "session":
+                        self._write_session_allowlist.add(norm)
+                        return "allow"
+                    if result == "always":
+                        _add_to_write_allowlist(norm)
+                        return "allow"
+                    return "allow" if result == "once" else "deny"
+                except queue.Empty:
+                    remaining = state.deadline - _time.monotonic()
+                    if remaining <= 0:
+                        break
+                    try:
+                        tui.call_from_thread(tui.invalidate)
+                    except Exception:
+                        pass
+
+            try:
+                tui.call_from_thread(setattr, tui, "approval_state", None)
+            except Exception:
+                pass
+            return "deny"  # timeout → deny
+
     def _handle_approval_selection(self) -> None:
         """Process the currently selected dangerous-command approval choice."""
         state = self._approval_state
@@ -9302,6 +9391,11 @@ class HermesCLI:
         set_sudo_password_callback(self._sudo_password_callback)
         set_approval_callback(self._approval_callback)
         set_secret_capture_callback(self._secret_capture_callback)
+        try:
+            from tools.file_tools import set_write_approval_callback as _set_wac
+            _set_wac(self._write_approval_callback)
+        except ImportError:
+            pass
 
         # Ensure tirith security scanner is available (downloads if needed).
         # Warn the user if tirith is enabled in config but not available,
@@ -10796,6 +10890,11 @@ class HermesCLI:
             set_sudo_password_callback(None)
             set_approval_callback(None)
             set_secret_capture_callback(None)
+            try:
+                from tools.file_tools import set_write_approval_callback as _set_wac
+                _set_wac(None)
+            except ImportError:
+                pass
             # Close session in SQLite
             if hasattr(self, '_session_db') and self._session_db and self.agent:
                 try:

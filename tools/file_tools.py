@@ -17,6 +17,30 @@ logger = logging.getLogger(__name__)
 _EXPECTED_WRITE_ERRNOS = {errno.EACCES, errno.EPERM, errno.EROFS}
 
 # ---------------------------------------------------------------------------
+# Write approval callback — plain module global (same pattern as terminal_tool).
+# Set once at CLI startup; not context-scoped.
+# ---------------------------------------------------------------------------
+_write_approval_callback = None
+
+
+def set_write_approval_callback(cb) -> None:
+    """Register (or clear) the write-approval callback."""
+    global _write_approval_callback
+    _write_approval_callback = cb
+
+
+def _request_write_approval(path: str, new_content: str) -> str:
+    """Ask the registered callback whether to allow a write.
+
+    Returns "allow" or "deny". When no callback is registered (headless /
+    PT mode) the write is always allowed.
+    """
+    cb = _write_approval_callback
+    if cb is None:
+        return "allow"
+    return cb(path, new_content)
+
+# ---------------------------------------------------------------------------
 # Read-size guard: cap the character count returned to the model.
 # We're model-agnostic so we can't count tokens; characters are a safe proxy.
 # 100K chars ≈ 25–35K tokens across typical tokenisers.  Files larger than
@@ -573,6 +597,9 @@ def write_file_tool(path: str, content: str, task_id: str = "default") -> str:
     sensitive_err = _check_sensitive_path(path)
     if sensitive_err:
         return tool_error(sensitive_err)
+    approval = _request_write_approval(path, content)
+    if approval == "deny":
+        return tool_error(f"Write to {path!r} denied by user.")
     try:
         stale_warning = _check_file_staleness(path, task_id)
         file_ops = _get_file_ops(task_id)
@@ -608,6 +635,30 @@ def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
         sensitive_err = _check_sensitive_path(_p)
         if sensitive_err:
             return tool_error(sensitive_err)
+    # Request write approval before applying the patch.
+    # For replace mode, compute the post-patch content to show a meaningful diff.
+    # For V4A patch mode, pass the raw patch text as new_content.
+    if _write_approval_callback is not None:
+        if mode == "replace" and path and old_string is not None and new_string is not None:
+            try:
+                with open(path, encoding="utf-8", errors="replace") as _f:
+                    _old_full = _f.read()
+                if replace_all:
+                    _new_full = _old_full.replace(old_string, new_string)
+                else:
+                    _new_full = _old_full.replace(old_string, new_string, 1)
+            except FileNotFoundError:
+                _new_full = new_string
+            _approval = _request_write_approval(path, _new_full)
+        elif mode == "patch" and patch and _paths_to_check:
+            # V4A patch mode — use the raw patch text as new_content;
+            # the diff renderer will handle it.
+            _approval = _request_write_approval(_paths_to_check[0], patch)
+        else:
+            _approval = "allow"
+        if _approval == "deny":
+            _deny_path = path or (_paths_to_check[0] if _paths_to_check else "<unknown>")
+            return tool_error(f"Write to {_deny_path!r} denied by user.")
     try:
         # Check staleness for all files this patch will touch.
         stale_warnings = []

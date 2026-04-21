@@ -75,6 +75,8 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         id: str | None = None,
         classes: str | None = None,
     ) -> None:
+        _default_placeholder = "Type a message  @file  /  commands"
+        _effective_placeholder = placeholder if placeholder else _default_placeholder
         super().__init__(
             text="",
             soft_wrap=True,
@@ -83,6 +85,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             show_line_numbers=False,
             highlight_cursor_line=False,
             max_checkpoints=50,
+            placeholder=_effective_placeholder,
             id=id,
             classes=classes,
         )
@@ -90,6 +93,15 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         self._history_idx: int = -1
         self._history_draft: str = ""
         self._slash_commands: list[str] = []
+        self._slash_descriptions: dict[str, str] = {}
+        self._slash_args_hints: dict[str, str] = {}
+        self._slash_keybind_hints: dict[str, str] = {}
+        self._slash_subcommands: dict[str, list[str]] = {}
+        self._idle_placeholder: str = _effective_placeholder
+        self._rev_mode: bool = False
+        self._rev_query: str = ""
+        self._rev_idx: int = -1
+        self._input_height_override: int = 3
         self._suppress_autocomplete_once: bool = False
         self._sanitizing: bool = False
         self._handling_file_drop: bool = False
@@ -104,6 +116,28 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
 
     def on_mount(self) -> None:
         self._load_history()
+
+    def on_click(self, event: Any) -> None:
+        """Middle-click (button=2) pastes primary selection on Linux/X11."""
+        import sys
+        if getattr(event, "button", 1) != 2:
+            return
+        event.stop()
+        if sys.platform != "linux":
+            return
+        try:
+            import hermes_cli.tui.input_widget as _iw
+            _subprocess = getattr(_iw, "subprocess", None)
+            if _subprocess is None:
+                import subprocess as _subprocess
+            result = _subprocess.run(
+                ["xclip", "-selection", "primary", "-o"],
+                capture_output=True, text=True, timeout=1,
+            )
+            if result.returncode == 0 and result.stdout:
+                self.insert(result.stdout)
+        except Exception:
+            pass
 
     def on_unmount(self) -> None:
         if self._path_debounce_timer is not None:

@@ -361,6 +361,7 @@ class MessagePanel(Widget):
         self._user_text: str = user_text
         self._response_engine: "Any | None" = None   # ResponseFlowEngine, set in on_mount
         self._last_file_tool_block: "Any | None" = None   # tracks most-recent file-tool STB for diff connector
+        self._adj_anchors: dict = {}
         super().__init__(**kwargs)
         _boost_layout_caches(self, box_model_maxsize=256, arrangement_maxsize=32)
 
@@ -546,6 +547,7 @@ class MessagePanel(Widget):
         tool_name: str | None = None,
         rerender_fn=None,
         header_stats=None,
+        parent_id: str | None = None,
     ) -> Widget | None:
         if not lines:
             return None
@@ -568,14 +570,20 @@ class MessagePanel(Widget):
         self._mount_nonprose_block(panel)
         return block
 
-    def open_streaming_tool_block(self, label: str, tool_name: str | None = None) -> Widget:
+    def open_streaming_tool_block(self, label: str, tool_name: str | None = None, panel_id: str | None = None, is_first_in_turn: bool = False) -> Widget:
         from hermes_cli.tui.tool_blocks import StreamingToolBlock as _STB, _FILE_TOOL_NAMES
         from hermes_cli.tui.tool_panel import ToolPanel as _ToolPanel
         block = _STB(label=label, tool_name=tool_name)
         panel = _ToolPanel(block, tool_name=tool_name)
+        block._tool_panel = panel
         self._mount_nonprose_block(panel)
         if tool_name in _FILE_TOOL_NAMES:
             self._last_file_tool_block = block
+        # Register adj anchor for adjacent-mount tracking
+        if tool_name:
+            self._adj_anchors[tool_name] = panel
+        if panel_id:
+            self._adj_anchors[panel_id] = panel
         # Bash syntax highlight on header label for shell-category tools
         if label:
             try:
@@ -680,6 +688,9 @@ class _EchoBullet(PulseMixin, Widget):
         else:
             t.append(msg, style="bold")
         return t
+
+    def get_text(self) -> Text:
+        return self.render()  # type: ignore[return-value]
 
 
 class UserMessagePanel(Widget):

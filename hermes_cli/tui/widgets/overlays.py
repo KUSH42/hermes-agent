@@ -16,6 +16,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.css.query import NoMatches
+from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Input, Static
@@ -663,13 +664,31 @@ class TurnResultItem(Static):
         self.update(_build_result_label(result))
 
     def on_click(self, event: Any) -> None:
-        """Clicking a result row jumps to the turn."""
-        if event.button == 1:
-            try:
-                overlay = self.app.query_one(HistorySearchOverlay)
-                overlay.action_jump_to(self._entry, self._result)
-            except NoMatches:
-                pass
+        """Clicking a result row jumps to the turn; shift+click range-selects."""
+        if event.button != 1:
+            return
+        try:
+            overlay = self.app.query_one(HistorySearchOverlay)
+        except NoMatches:
+            return
+        idx = self._entry.index if self._entry is not None else None
+        if idx is None:
+            return
+        if getattr(event, "shift", False) and getattr(overlay, "_last_click_idx", None) is not None:
+            # Range select from last click to here
+            start = overlay._last_click_idx
+            lo, hi = sorted([start, idx])
+            shift_sel = set(range(lo, hi + 1))
+            overlay._shift_selected = shift_sel
+            for item in overlay.query(TurnResultItem):
+                item_idx = item._entry.index if item._entry is not None else -1
+                item.set_class(item_idx in shift_sel, "--selected")
+        else:
+            overlay._last_click_idx = idx
+            overlay._shift_selected = set()
+            for item in overlay.query(TurnResultItem):
+                item.set_class(False, "--selected")
+            overlay.action_jump_to(self._entry, self._result)
 
 
 # ---------------------------------------------------------------------------
@@ -839,6 +858,9 @@ class HistorySearchOverlay(Widget):
         Binding("enter", "jump", priority=True),
     ]
 
+    class TurnCompleted(Message):
+        """Posted when the agent finishes a turn — triggers index rebuild."""
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._index: list[_TurnEntry] = []
@@ -848,6 +870,10 @@ class HistorySearchOverlay(Widget):
         self._debounce_handle: Any = None  # Timer | None; cancelled on each new keystroke
         self._cross_session_loading: bool = False  # B4: worker in-flight flag
         self._max_results: int = 50
+        self._last_click_idx: int | None = None
+        self._shift_selected: set[int] = set()
+        self._mode: str = "current"
+        self._query_history: list[str] = []
 
     def compose(self) -> ComposeResult:
         yield Input(placeholder="Search history  ↑↓ navigate · Enter jump · Esc close", id="history-search-input")
@@ -1049,6 +1075,16 @@ class HistorySearchOverlay(Widget):
         if not items:
             self.action_dismiss()
             return
+        shift_sel = getattr(self, "_shift_selected", set())
+        if shift_sel:
+            target_idx = min(shift_sel)
+            for item in items:
+                if item._entry is not None and getattr(item._entry, "index", -1) == target_idx:
+                    entry, result = item._entry, item._result
+                    self.action_dismiss()
+                    if entry is not None:
+                        self._scroll_to_match(entry, result)
+                    return
         idx = max(0, min(self._selected_idx, len(items) - 1))
         result = items[idx]._result
         entry = items[idx]._entry

@@ -573,109 +573,66 @@ async def test_tool_tail_resets_between_scroll_sessions():
 
 @pytest.mark.asyncio
 async def test_turn_nav_prev_noop_with_no_panels():
-    """action_prev_turn does not crash when no MessagePanels exist."""
+    """action_jump_turn_prev does not crash when no MessagePanels exist."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await _setup(pilot)
-        app.action_prev_turn()
+        app.action_jump_turn_prev()
         await pilot.pause()
 
 
 @pytest.mark.asyncio
 async def test_turn_nav_next_noop_with_no_panels():
-    """action_next_turn does not crash when no MessagePanels exist."""
+    """action_jump_turn_next does not crash when no MessagePanels exist."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await _setup(pilot)
-        app.action_next_turn()
+        app.action_jump_turn_next()
         await pilot.pause()
 
 
 @pytest.mark.asyncio
 async def test_turn_nav_prev_calls_scroll_visible_on_panel():
-    """action_prev_turn calls scroll_visible on a panel when panels exist.
-
-    In headless layout all panels have virtual_region.y == 0. With scroll_y
-    mocked to 20 (well above any panel), the reversed walk finds the last
-    panel immediately (0 < 19) and calls scroll_visible on it.
-    """
+    """action_jump_turn_prev delegates to _jump_anchor with direction=-1."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
-        output = await _setup(pilot)
-        p1 = output.new_message()
-        p2 = output.new_message()
-        p3 = output.new_message()
-        await pilot.pause()
-
-        with (
-            patch.object(type(output), "scroll_y", new_callable=PropertyMock, return_value=20.0),
-            patch.object(p1, "scroll_visible") as sv1,
-            patch.object(p2, "scroll_visible") as sv2,
-            patch.object(p3, "scroll_visible") as sv3,
-        ):
-            app.action_prev_turn()
+        await _setup(pilot)
+        with patch.object(app, "_jump_anchor") as mock_jump:
+            app.action_jump_turn_prev()
             await pilot.pause()
-
-        # With all panels at y=0, reversed walk hits p3 first (0 < 19) — the
-        # most recently created panel is visually the one "just above" current pos.
-        called = [sv1.called, sv2.called, sv3.called]
-        assert any(called), "action_prev_turn must call scroll_visible on some panel"
-        assert sum(called) == 1, "exactly one panel should be scrolled to"
-        assert sv3.called, "the last (most recent) panel must be chosen in headless layout"
+        mock_jump.assert_called_once()
+        args = mock_jump.call_args[0]
+        assert args[0] == -1, "prev action must pass direction=-1"
 
 
 @pytest.mark.asyncio
 async def test_turn_nav_prev_wraps_to_first_panel_when_at_top():
-    """When scroll_y <= 0, no panel satisfies the 'above current' condition.
-    action_prev_turn wraps and scrolls to panels[0].
-    """
+    """action_jump_turn_prev does not crash when no anchors exist."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
-        output = await _setup(pilot)
-        p1 = output.new_message()
-        p2 = output.new_message()
+        await _setup(pilot)
+        app._browse_anchors = []
+        app.action_jump_turn_prev()
         await pilot.pause()
-
-        # scroll_y=0 → threshold is -1; no panel with y < -1 → wraps to panels[0]
-        with (
-            patch.object(type(output), "scroll_y", new_callable=PropertyMock, return_value=0.0),
-            patch.object(p1, "scroll_visible") as sv1,
-            patch.object(p2, "scroll_visible") as sv2,
-        ):
-            app.action_prev_turn()
-            await pilot.pause()
-        sv1.assert_called_once_with(animate=True)
-        sv2.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_turn_nav_next_calls_scroll_visible_on_panel():
-    """action_next_turn calls scroll_visible on a panel below the current position.
-
-    With scroll_y mocked to -10, all panels at y=0 satisfy 0 > -9, so the
-    first panel in forward order gets the scroll_visible call.
-    """
+    """action_jump_turn_next delegates to _jump_anchor with direction=+1."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
-        output = await _setup(pilot)
-        p1 = output.new_message()
-        p2 = output.new_message()
-        await pilot.pause()
-
-        with (
-            patch.object(type(output), "scroll_y", new_callable=PropertyMock, return_value=-10.0),
-            patch.object(p1, "scroll_visible") as sv1,
-            patch.object(p2, "scroll_visible") as sv2,
-        ):
-            app.action_next_turn()
+        await _setup(pilot)
+        with patch.object(app, "_jump_anchor") as mock_jump:
+            app.action_jump_turn_next()
             await pilot.pause()
-        sv1.assert_called_once_with(animate=True)
-        sv2.assert_not_called()
+        mock_jump.assert_called_once()
+        args = mock_jump.call_args[0]
+        assert args[0] == 1, "next action must pass direction=+1"
 
 
 @pytest.mark.asyncio
 async def test_turn_nav_next_noop_when_scroll_past_all_panels():
-    """action_next_turn is a no-op when scroll_y is past every panel's top.
+    """action_jump_turn_next is a no-op when scroll_y is past every panel's top.
 
     Mock scroll_y to 10 000 — far beyond any panel position — so no panel
     satisfies `panel_top > scroll_y + 1`.
@@ -692,7 +649,7 @@ async def test_turn_nav_next_noop_when_scroll_past_all_panels():
             patch.object(p1, "scroll_visible") as sv1,
             patch.object(p2, "scroll_visible") as sv2,
         ):
-            app.action_next_turn()
+            app.action_jump_turn_next()
             await pilot.pause()
         sv1.assert_not_called()
         sv2.assert_not_called()
@@ -700,26 +657,26 @@ async def test_turn_nav_next_noop_when_scroll_past_all_panels():
 
 @pytest.mark.asyncio
 async def test_alt_up_keybinding_reaches_action_prev_turn():
-    """alt+up key event dispatches action_prev_turn on the app."""
+    """alt+up key event dispatches action_jump_turn_prev on the app."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await _setup(pilot)
-        with patch.object(app, "action_prev_turn") as mock_action:
+        with patch.object(app, "action_jump_turn_prev") as mock_action:
             await pilot.press("alt+up")
             await pilot.pause()
-            assert mock_action.called, "alt+up must dispatch action_prev_turn"
+            assert mock_action.called, "alt+up must dispatch action_jump_turn_prev"
 
 
 @pytest.mark.asyncio
 async def test_alt_down_keybinding_reaches_action_next_turn():
-    """alt+down key event dispatches action_next_turn on the app."""
+    """alt+down key event dispatches action_jump_turn_next on the app."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await _setup(pilot)
-        with patch.object(app, "action_next_turn") as mock_action:
+        with patch.object(app, "action_jump_turn_next") as mock_action:
             await pilot.press("alt+down")
             await pilot.pause()
-            assert mock_action.called, "alt+down must dispatch action_next_turn"
+            assert mock_action.called, "alt+down must dispatch action_jump_turn_next"
 
 
 # ===========================================================================

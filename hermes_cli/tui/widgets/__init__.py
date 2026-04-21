@@ -87,6 +87,7 @@ from .renderers import (  # noqa: F401
     PlainRule,
     StreamingCodeBlock,
     TitledRule,
+    _CopyBtn,
     _fade_rule,
 )
 
@@ -143,7 +144,54 @@ from .media import (  # noqa: F401
     SeekBar,
 )
 
-from .status_bar import SourcesBar  # noqa: F401
+from .status_bar import SourcesBar, _extract_domain, _truncate  # noqa: F401
+
+
+def _stream_effect_cfg() -> dict:
+    """Read stream-effect config from hermes config.yaml + active skin."""
+    try:
+        from hermes_cli.config import read_raw_config
+        raw = read_raw_config()
+    except Exception:
+        raw = {}
+    terminal_cfg = raw.get("terminal", {}) if isinstance(raw, dict) else {}
+    se_cfg = terminal_cfg.get("stream_effect", {}) if isinstance(terminal_cfg, dict) else {}
+    if isinstance(se_cfg, str):
+        effect_name = se_cfg
+        se_cfg = {}
+    else:
+        effect_name = se_cfg.get("enabled", "none") if isinstance(se_cfg, dict) else "none"
+    # Skin overrides — read from display.skin path in config, then theme_manager
+    skin_path = None
+    try:
+        display_cfg = raw.get("display", {}) if isinstance(raw, dict) else {}
+        skin_path = display_cfg.get("skin") if isinstance(display_cfg, dict) else None
+    except Exception:
+        pass
+    if not skin_path:
+        try:
+            from hermes_cli.tui.theme_manager import _active_skin_path
+            skin_path = _active_skin_path()
+        except Exception:
+            pass
+    if skin_path:
+        try:
+            import yaml
+            skin = yaml.safe_load(open(skin_path)) or {}
+            se_skin = skin.get("stream_effect")
+            if isinstance(se_skin, str):
+                effect_name = se_skin
+            elif isinstance(se_skin, dict):
+                effect_name = se_skin.get("enabled", effect_name)
+        except Exception:
+            pass
+    return {
+        "stream_effect": effect_name,
+        "stream_effect_length": int(se_cfg.get("length", 16)) if isinstance(se_cfg, dict) else 16,
+        "stream_effect_settle_frames": int(se_cfg.get("settle_frames", 6)) if isinstance(se_cfg, dict) else 6,
+        "stream_effect_scramble_frames": int(se_cfg.get("scramble_frames", 14)) if isinstance(se_cfg, dict) else 14,
+    }
+
 
 if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
@@ -177,6 +225,16 @@ class OutputPanel(ScrollableContainer):
         super().__init__(**kwargs)
         _boost_layout_caches(self, box_model_maxsize=256, arrangement_maxsize=32)
         self._user_scrolled_up: bool = False
+        self._turn_raw_output: str = ""
+
+    def reset_turn_capture(self) -> None:
+        """Clear the raw assistant text capture for the next turn."""
+        self._turn_raw_output = ""
+
+    def record_raw_output(self, text: str) -> None:
+        """Append raw streamed assistant text for the current turn."""
+        if text:
+            self._turn_raw_output += text
 
     def watch_scroll_y(self, old_y: float, new_y: float) -> None:
         """Re-engage auto-scroll when the user scrolls back to the bottom.
@@ -207,15 +265,18 @@ class OutputPanel(ScrollableContainer):
         """Whether the user has manually scrolled away from the live edge."""
         return self._user_scrolled_up
 
+    def _get_scroll_lines(self) -> int:
+        return getattr(getattr(self, "app", None), "_scroll_lines", self._SCROLL_LINES)
+
     def on_mouse_scroll_up(self, event: Any) -> None:
-        """Scroll up 3 lines per wheel tick and suppress auto-scroll."""
+        """Scroll up N lines per wheel tick and suppress auto-scroll."""
         self._user_scrolled_up = True
-        self.scroll_relative(y=-self._SCROLL_LINES, animate=False, immediate=True)
+        self.scroll_relative(y=-self._get_scroll_lines(), animate=False, immediate=True)
         event.prevent_default()
 
     def on_mouse_scroll_down(self, event: Any) -> None:
-        """Scroll down 3 lines per wheel tick; re-engage auto-scroll at bottom."""
-        self.scroll_relative(y=self._SCROLL_LINES, animate=False, immediate=True)
+        """Scroll down N lines per wheel tick; re-engage auto-scroll at bottom."""
+        self.scroll_relative(y=self._get_scroll_lines(), animate=False, immediate=True)
         event.prevent_default()
         # watch_scroll_y handles re-engaging auto-scroll when near the bottom.
 
@@ -323,6 +384,20 @@ class OutputPanel(ScrollableContainer):
             engine2 = getattr(msg2, "_response_engine", None)
             if engine2 is not None:
                 engine2.flush()  # closes open StreamingCodeBlock if mid-fence; flushes StreamingBlockBuffer
+
+    def on_resize(self, event: Any) -> None:
+        """Propagate resize to child RichLogs so wrapping updates correctly."""
+        try:
+            new_w = getattr(getattr(event, "size", None), "width", 0)
+            if new_w <= 0:
+                return
+            for rl in self.query(CopyableRichLog):
+                try:
+                    rl.refresh()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------

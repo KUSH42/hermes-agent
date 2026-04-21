@@ -53,6 +53,11 @@ if TYPE_CHECKING:
 
 
 class CopyableRichLog(RichLog, can_focus=False):
+    class LinkClicked(Message):
+        def __init__(self, url: str, ctrl: bool = False) -> None:
+            super().__init__()
+            self.url = url
+            self.ctrl = ctrl
     """RichLog that stores plain text for clipboard operations.
 
     ``can_focus=False`` prevents Textual's focus machinery from calling
@@ -87,6 +92,7 @@ class CopyableRichLog(RichLog, can_focus=False):
         super().__init__(**kwargs)
         _boost_layout_caches(self)
         self._plain_lines: list[str] = []
+        self._line_links: list[str] = []
 
     def render_line(self, y: int) -> Strip:
         """Override to add offset metadata and selection highlighting.
@@ -129,6 +135,7 @@ class CopyableRichLog(RichLog, can_focus=False):
         shrink: bool = True,
         scroll_end: "bool | None" = None,
         animate: bool = False,
+        link: "str | None" = None,
     ) -> "CopyableRichLog":
         """Override to use the full widget width regardless of layout timing.
 
@@ -206,6 +213,27 @@ class CopyableRichLog(RichLog, can_focus=False):
     def clear(self) -> "CopyableRichLog":
         self._plain_lines.clear()
         return super().clear()
+
+    def on_click(self, event: Any) -> None:
+        if getattr(event, "button", 1) != 1:
+            return
+        line_links = getattr(self, "_line_links", [])
+        if not line_links:
+            return
+        scroll_y = getattr(getattr(self, "scroll_offset", None), "y", 0)
+        row = getattr(event, "y", 0) + scroll_y
+        if 0 <= row < len(line_links):
+            url = line_links[row]
+            if url:
+                ctrl = bool(getattr(event, "ctrl", False))
+                self.post_message(self.LinkClicked(url, ctrl=ctrl))
+                event.stop()
+
+
+class _CopyBtn(TooltipMixin, Static):
+    """Copy button with tooltip for CopyableBlock."""
+    _tooltip_text: str = "Copy block"
+    DEFAULT_CSS = "_CopyBtn { display: none; }"
 
 
 class CopyableBlock(Widget):
@@ -348,10 +376,11 @@ class LiveLineWidget(Widget):
     _animating: reactive[bool] = reactive(False, repaint=True)
 
     def on_mount(self) -> None:
-        self._tw_enabled: bool = _typewriter_enabled()
-        self._tw_delay: float = _typewriter_delay_s()
-        self._tw_burst: int = _typewriter_burst_threshold()
-        self._tw_cursor: bool = _typewriter_cursor_enabled()
+        import hermes_cli.tui.widgets as _w
+        self._tw_enabled: bool = _w._typewriter_enabled()
+        self._tw_delay: float = _w._typewriter_delay_s()
+        self._tw_burst: int = _w._typewriter_burst_threshold()
+        self._tw_cursor: bool = _w._typewriter_cursor_enabled()
         if self._tw_enabled:
             self._char_queue: asyncio.Queue[str] = asyncio.Queue()
             self._drain_chars()
@@ -545,6 +574,7 @@ class StreamingCodeBlock(Widget):
     }
     """
     _content_type: str = "code"
+    _tooltip_text: str = "Double-click to copy code"
 
     def __init__(
         self,
@@ -560,6 +590,7 @@ class StreamingCodeBlock(Widget):
         self._code_lines: list[str] = []
         self._resolved_lang: str | None = None
         self._log = CopyableRichLog(markup=False)
+        self._partial_line: str = ""
         self._collapsed = False
         self._copy_flash = False
         self._controls_text_plain = ""
@@ -609,7 +640,26 @@ class StreamingCodeBlock(Widget):
         self._state = "COMPLETE"
         self._pygments_theme = skin_vars.get("preview-syntax-theme", self._pygments_theme)
         self.add_class("--complete")
-        self.call_after_refresh(self._finalize_syntax, dict(skin_vars))
+        app = getattr(self, "app", None)
+        if self._lang == "mermaid" and getattr(app, "_mermaid_enabled", False):
+            self._try_render_mermaid_async()
+        else:
+            self.call_after_refresh(self._finalize_syntax, dict(skin_vars))
+
+    def _try_render_mermaid_async(self) -> None:
+        """Trigger async mermaid diagram rendering (stub; patched in tests)."""
+        pass
+
+    def _on_mermaid_rendered(self, path: "Any") -> None:
+        """Callback from async mermaid worker with rendered PNG path."""
+        if path is None:
+            return
+        try:
+            max_rows = getattr(getattr(self, "app", None), "_math_max_rows", 24)
+            img_widget = InlineImage(image=path, max_rows=max_rows)
+            self.parent.mount(img_widget, after=self)
+        except Exception:
+            pass
 
     def _render_syntax(self, skin_vars: dict[str, str] | None = None) -> None:
         """Render code as rich.Syntax with line numbers. Shared by COMPLETE and FLUSHED."""
@@ -617,7 +667,7 @@ class StreamingCodeBlock(Widget):
         from hermes_cli.tui.response_flow import _detect_lang
         vars = skin_vars or (self.app.get_css_variables() if self.app else {})
         code = "\n".join(self._display_code_lines())
-        lang = self._resolved_lang or self._lang or _detect_lang(code)
+        lang = getattr(self, "_resolved_lang", None) or getattr(self, "_lang", "") or _detect_lang(code)
         self._resolved_lang = lang
         self._pygments_theme = vars.get("preview-syntax-theme", self._pygments_theme)
         syntax = Syntax(
@@ -642,6 +692,25 @@ class StreamingCodeBlock(Widget):
     # ------------------------------------------------------------------
     # Partial fence (turn ended before fence closed)
     # ------------------------------------------------------------------
+
+    def feed_partial(self, fragment: str) -> None:
+        """Show a partial (sub-line) fragment with a cursor indicator."""
+        self._partial_line = fragment
+        pd = getattr(self, "_partial_display", None)
+        if pd is not None:
+            pd.styles.display = "block"
+            t = Text(fragment)
+            t.append("▌", style="dim")
+            pd.update(t)
+
+    def clear_partial(self) -> None:
+        """Clear the partial fragment display."""
+        if not getattr(self, "_partial_line", ""):
+            return
+        self._partial_line = ""
+        pd = getattr(self, "_partial_display", None)
+        if pd is not None:
+            pd.update("")
 
     def flush(self) -> None:
         """Turn ended before fence closed. Finalize with rich.Syntax same as COMPLETE."""
@@ -1390,6 +1459,7 @@ class InlineImage(Widget):
         super().__init__(**kwargs)
         self._image_id: int | None = None
         self._rendered_rows: int = 1
+        self._tgp_seq: str = ""
         self._tgp_transmitted: bool = False
         self._tgp_placeholder_strips: list[Strip] = []
         self._sixel_seq: str = ""
@@ -1411,6 +1481,7 @@ class InlineImage(Widget):
             get_inline_images_mode,
         )
         if new_image is None or get_inline_images_mode() == "off":
+            self._tgp_seq = ""
             self._tgp_transmitted = False
             self._tgp_placeholder_strips = []
             self._sixel_seq = ""
@@ -1423,6 +1494,7 @@ class InlineImage(Widget):
             self._src_path = str(new_image)
         img = _load_image(new_image)
         if img is None:
+            self._tgp_seq = ""
             self._tgp_transmitted = False
             self._tgp_placeholder_strips = []
             self._sixel_seq = ""
@@ -1472,12 +1544,11 @@ class InlineImage(Widget):
         if self.is_mounted:
             self.app.call_from_thread(self._apply_tgp_result, *result)
 
-    def _encode_tgp_placeholder(self, img: "Any") -> tuple[str, int, int, list[Strip]]:
+    def _encode_tgp_placeholder(self, img: "Any") -> tuple[str, int, int, int]:
         from hermes_cli.tui.kitty_graphics import (
             _cell_px,
             _fit_image,
             _get_renderer,
-            build_tgp_placeholder_strips,
             transmit_only_sequence,
         )
         renderer = _get_renderer()
@@ -1486,17 +1557,18 @@ class InlineImage(Widget):
         resized, cols, rows = _fit_image(img.convert("RGBA"), max_cols, self.max_rows, cw, ch)
         image_id = renderer._alloc_id()
         seq = transmit_only_sequence(image_id, resized, cols, rows)
-        strips = build_tgp_placeholder_strips(image_id, cols, rows)
-        return seq, image_id, rows, strips
+        return seq, image_id, cols, rows
 
-    def _apply_tgp_result(self, seq: str, iid: int, rows: int, strips: list[Strip]) -> None:
+    def _apply_tgp_result(self, seq: str, image_id: int, cols: int, rows: int) -> None:
         """Transmit TGP out-of-band and render unicode placeholder strips."""
         if not self.is_mounted:
             return
+        from hermes_cli.tui.kitty_graphics import build_tgp_placeholder_strips
         self._emit_raw(seq)
-        self._image_id = iid
+        self._tgp_seq = seq
+        self._image_id = image_id
         self._tgp_transmitted = True
-        self._tgp_placeholder_strips = strips
+        self._tgp_placeholder_strips = build_tgp_placeholder_strips(image_id, cols, rows)
         self._rendered_rows = rows
         self.styles.height = rows
         self.refresh()

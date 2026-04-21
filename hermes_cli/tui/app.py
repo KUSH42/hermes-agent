@@ -564,7 +564,7 @@ class HermesApp(App):
         self._sessions_poll_timer: "object | None" = None
         self._session_records_cache: list = []
         self._session_active_id: str = ""
-        # _sessions_enabled is a @property — no instance attr needed
+        self._sessions_enabled_override: bool | None = None  # set by tests
         # P1-7: one-shot "press o to open file" hint when path is clickable
         self._path_open_hint_shown: bool = False
         # Workspace overlay state
@@ -2142,18 +2142,18 @@ class HermesApp(App):
     def action_jump_turn_prev(self) -> None:
         """Jump to the previous TURN_START anchor. No-op while agent is running."""
         if self.agent_running:
-            # D2: inform user instead of silently doing nothing
             self._flash_hint("Navigation paused while agent is running", 1.5)
             return
         self._jump_anchor(-1, BrowseAnchorType.TURN_START)
 
+
     def action_jump_turn_next(self) -> None:
         """Jump to the next TURN_START anchor. No-op while agent is running."""
         if self.agent_running:
-            # D2: inform user instead of silently doing nothing
             self._flash_hint("Navigation paused while agent is running", 1.5)
             return
         self._jump_anchor(+1, BrowseAnchorType.TURN_START)
+
 
     def action_focus_output(self) -> None:
         """o: move focus to OutputPanel."""
@@ -4358,10 +4358,8 @@ class HermesApp(App):
             ModelPickerOverlay, ReasoningPickerOverlay, SkinPickerOverlay,
             YoloConfirmOverlay, VerbosePickerOverlay, _TPHO,
         ):
-            try:
-                self.query_one(cls).remove_class("--visible")
-            except NoMatches:
-                pass
+            for widget in self.query(cls):
+                widget.remove_class("--visible")
         self._sync_workspace_polling_state()
 
     def _handle_tui_command(self, text: str) -> bool:
@@ -5598,11 +5596,17 @@ class HermesApp(App):
     @property
     def _sessions_enabled(self) -> bool:
         """True when sessions.enabled is set in CLI config."""
+        if self._sessions_enabled_override is not None:
+            return self._sessions_enabled_override
         try:
             from hermes_cli.config import CLI_CONFIG
             return bool(CLI_CONFIG.get("sessions", {}).get("enabled", False))
         except Exception:
             return False
+
+    @_sessions_enabled.setter
+    def _sessions_enabled(self, value: bool) -> None:
+        self._sessions_enabled_override = value
 
     def _get_session_records(self) -> list:
         """Return list of SessionRecord from the active SessionIndex."""

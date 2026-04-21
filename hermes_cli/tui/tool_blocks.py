@@ -548,7 +548,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         self._full_path: str | None = None      # raw untruncated path or URL
         self._path_clickable: bool = False      # True for file-tool and URL headers
         self._is_url: bool = False              # True when path starts with http/https/etc.
-        # Display overrides (v2 flags — kept for parity when tool_panel_v4=False)        self._no_underline: bool = False         # suppress underline on clickable paths
+        self._no_underline: bool = False
         self._hide_duration: bool = False        # suppress timer display
         self._bold_label: bool = False           # bold label text (non-path)
         self._hidden: bool = False               # suppress header entirely
@@ -683,7 +683,8 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             t.append(" $", style=f"bold {accent}")
             shell_prompt_w = 2
 
-        # Tail: C2 — browse badge first (protected from truncation), then hero chip, etc.        tail = Text()
+        # Tail: C2 — browse badge first (protected from truncation), then hero chip, etc.
+        tail = Text()
         if self._browse_badge:
             tail.append(f" {self._browse_badge} ", style="bold dim")
         if self._spinner_char is not None:
@@ -1756,11 +1757,7 @@ class StreamingToolBlock(ToolBlock):
             if not cleaned.strip():
                 return  # skip empty CWD-only lines
             raw = cleaned
-        # Byte cap
-        if len(raw) > _LINE_BYTE_CAP:
-            over = len(raw) - _LINE_BYTE_CAP
-            raw = raw[:_LINE_BYTE_CAP] + f"… (+{over} chars)"
-            plain = _strip_ansi(raw)
+        plain = _strip_ansi(raw)
         self._total_received += 1
         self._bytes_received += len(raw)
         now = time.monotonic()

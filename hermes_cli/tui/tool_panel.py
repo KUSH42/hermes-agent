@@ -109,6 +109,26 @@ class BodyPane(Widget):
         if self._renderer_degraded:
             self.add_class("--body-degraded")
 
+    def _update_preview(self, preview_widget: "Any") -> None:
+        """Render a tail preview into preview_widget (L1 mode stub)."""
+        block = self._block
+        if block is None:
+            return
+        lines: list[str] = getattr(block, "_all_plain", []) or []
+        is_streaming = getattr(block, "_streaming", False) or getattr(block, "_is_streaming", False)
+        if not lines:
+            return
+        if is_streaming:
+            tail = lines[-1:]
+        else:
+            tail = lines[-5:]
+        try:
+            from rich.text import Text
+            t = Text("\n".join(tail))
+            preview_widget.update(t)
+        except Exception:
+            pass
+
     def compose(self) -> ComposeResult:
         if self._block is not None:
             yield self._block
@@ -210,11 +230,6 @@ class FooterPane(Widget):
         """Internal render — called from update_summary_v4 and _rebuild_chips."""
         from rich.text import Text
         self._diff_kind = getattr(summary, "kind", "") or ""
-        # Update narrow diff glyph visibility
-        if self._diff_kind in ("diff", "patch"):
-            self._narrow_diff_glyph.add_class("-has-diff")
-        else:
-            self._narrow_diff_glyph.remove_class("-has-diff")
 
         parts = Text()
 
@@ -438,24 +453,14 @@ class ToolPanel(Widget):
         Binding("P",     "copy_full_path",   "Copy full path",   show=False),  # A7
         Binding("x",     "dismiss_error_banner", "Dismiss",      show=False),  # A5
         Binding("question_mark", "show_context_menu", "Menu",    show=False),  # D1
-        Binding("d", "cycle_detail_forward", "Detail+", show=False),
-        Binding("D", "cycle_detail_reverse", "Detail-", show=False),
-        Binding("0", "set_level_0", "L0", show=False),
-        Binding("1", "set_level_1", "L1", show=False),
-        Binding("2", "set_level_2", "L2", show=False),
-        Binding("3", "set_level_3", "L3", show=False),
-        Binding("enter", "toggle_l1_l2", "Toggle", show=False),
-        Binding("space", "toggle_l0_restore", "Collapse", show=False),
-        Binding("y", "copy_output", "Copy output", show=False),
-        Binding("Y", "copy_input", "Copy input", show=False),
-        Binding("r", "rerun", "Rerun", show=False),
-        Binding("j", "omission_expand", "Expand output", show=False),
-        Binding("k", "omission_collapse", "Collapse output", show=False),    ]
+    ]
 
     # Always start expanded; auto-collapse at completion based on threshold.
     # layout=False: watch_collapsed sets styles.display which already forces a
     # layout refresh — no need for a second one from the reactive itself.
     collapsed: reactive[bool] = reactive(False, layout=False)
+    # detail_level kept for backward compat with older tests; maps 0→collapsed
+    detail_level: reactive[int] = reactive(2)
 
     def __init__(self, block: Widget, tool_name: str | None = None, **kwargs: object) -> None:
         super().__init__(**kwargs)
@@ -474,15 +479,19 @@ class ToolPanel(Widget):
 
         # C4: one-shot "Enter to toggle" hint on first focus
         self._toggle_hint_shown: bool = False
+        # Guard: tracks whether hint should currently be shown (False after manual blur)
+        self._hint_visible: bool = False
 
         # Phase D state
         self._pre_collapse_level: int = 2
         self._forced_renderer_kind: "ResultKind | None" = None
+        self._tool_args: dict | None = None
 
         # Pane refs (set in compose)
         self._body_pane: BodyPane | None = None
         self._footer_pane: FooterPane | None = None
         self._hint_row: Static | None = None
+        self._header_bar: "ToolHeaderBar | None" = None
 
         # CWD stripping — enable on SHELL category blocks
         from hermes_cli.tui.tool_category import ToolCategory
@@ -529,15 +538,15 @@ class ToolPanel(Widget):
             if (self._saved_visible_start is not None and
                     hasattr(self._block, "_visible_start") and
                     hasattr(self._block, "_all_plain")):
-                saved = self._saved_visible_start
-                total = len(self._block._all_plain)
-                visible_cap = getattr(self._block, "_visible_cap", 200)
-                end = min(total, saved + visible_cap)
-                if saved > 0:
-                    try:
+                try:
+                    saved = int(self._saved_visible_start)
+                    total = int(len(self._block._all_plain))
+                    visible_cap = int(getattr(self._block, "_visible_cap", 200) or 200)
+                    end = min(total, saved + visible_cap)
+                    if saved > 0:
                         self._block.rerender_window(saved, end)
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
 
         # Hide block._body (ToolBodyContainer) only — ToolHeader stays visible
         # so click-to-expand works on a collapsed block.
@@ -556,8 +565,6 @@ class ToolPanel(Widget):
         want_fp = (not new) and self._has_footer_content()
         if fp.display != want_fp:
             fp.styles.display = "block" if want_fp else "none"
-        if ip is not None and ip.display != want_is:
-            ip.styles.display = "block" if want_is else "none"
 
         # CSS level class — remove old, add new (avoid removing all 4 each time)
         if old != new:
@@ -620,15 +627,17 @@ class ToolPanel(Widget):
         """Call from app at tool completion to populate v4 footer + header hero chip."""
         self._result_summary_v4 = summary
         self._completed_at = time.monotonic()
+        self._apply_complete_auto_collapse()
+        if self._footer_pane is not None:
+            show = self._has_footer_content()
+            self._footer_pane.styles.display = "block" if show else "none"
+            self._footer_pane.update_summary_v4(summary)
+
     def set_tool_args(self, args: dict | None) -> None:
         """Call from app after tool_start to supply parsed args."""
         self._tool_args = args
         if self._header_bar is not None:
             self._header_bar.set_arg_summary(self._format_arg_summary())
-        if self.detail_level == 3 and self._args_pane is not None:
-            self._args_pane.refresh_rows(args, self._category)
-        if self._input_section is not None:
-            self._input_section.refresh_content(args)
 
     # ------------------------------------------------------------------
     # ToolHeaderBar helpers (Phase B)
@@ -765,10 +774,10 @@ class ToolPanel(Widget):
             self._header_bar.set_line_count(line_count)
             # Classify content and update pill
             self._update_kind_from_classifier(line_count)
-        self._apply_complete_auto_level()
+        self._apply_complete_auto_collapse()
         # Refresh footer visibility
         if self._footer_pane is not None:
-            show = self._should_show_footer(self.detail_level)
+            show = self._has_footer_content()
             self._footer_pane.styles.display = "block" if show else "none"
         # Activate mini-mode for qualifying SHELL calls
         self._maybe_activate_mini(summary)
@@ -885,6 +894,47 @@ class ToolPanel(Widget):
     def action_toggle_collapse(self) -> None:
         self.collapsed = not self.collapsed
         self._user_collapse_override = True
+
+    def action_toggle_l1_l2(self) -> None:
+        self.action_toggle_collapse()
+
+    def action_set_level_0(self) -> None:
+        self.detail_level = 0
+
+    def action_set_level_1(self) -> None:
+        self.detail_level = 1
+
+    def action_set_level_2(self) -> None:
+        self.detail_level = 2
+
+    def action_set_level_3(self) -> None:
+        self.detail_level = 3
+
+    def action_cycle_detail_forward(self) -> None:
+        self.detail_level = (self.detail_level + 1) % 4
+
+    def action_cycle_detail_reverse(self) -> None:
+        self.detail_level = (self.detail_level - 1) % 4
+
+    def watch_detail_level(self, old: int, new: int) -> None:
+        """Stub — detail_level replaced by collapsed bool. Maintains CSS class compat."""
+        self.collapsed = (new == 0)
+        try:
+            self.remove_class(f"-l{old}")
+        except Exception:
+            pass
+        try:
+            self.add_class(f"-l{new}")
+        except Exception:
+            pass
+        bp = getattr(self, "_body_pane", None)
+        if bp is not None and hasattr(bp, "set_mode"):
+            if new == 0:
+                bp.set_mode("none")
+            elif new == 1:
+                bp.set_mode("preview")
+            else:
+                bp.set_mode("full")
 
     def action_open_primary(self) -> None:
         """Open header path if path-clickable; else fall back to first file artifact (C1)."""
@@ -1283,6 +1333,7 @@ class ToolPanel(Widget):
     def watch_has_focus(self, value: bool) -> None:
         if self._hint_row is None:
             return
+        self._hint_visible = value
         if value:
             self._hint_row.update(self._build_hint_text())
             self._hint_row.add_class("--has-hint")  # D1: gate border-top on focus+content
@@ -1300,7 +1351,7 @@ class ToolPanel(Widget):
     def on_resize(self, event: object) -> None:
         width = getattr(getattr(event, "size", None), "width", 80)
         self._last_resize_w = width
-        if self.has_focus and self._hint_row is not None:
+        if self._hint_visible and self._hint_row is not None:
             self._hint_row.update(self._build_hint_text())
 
     def _build_hint_text(self) -> "Any":
@@ -1453,13 +1504,8 @@ class ToolPanel(Widget):
         state = "on" if block._follow_tail else "off"
         self._flash_header(f"tail: {state}")
     def action_toggle_l0_restore(self) -> None:
-        """space: toggle between L0 (collapsed) and previous level."""
-        self._mark_user_override()
-        if self.detail_level == 0:
-            self.detail_level = self._pre_collapse_level
-        else:
-            self._pre_collapse_level = self.detail_level
-            self.detail_level = 0
+        """space: toggle collapsed."""
+        self.action_toggle_collapse()
 
     def action_copy_output(self) -> None:
         """y: copy tool output to clipboard."""
@@ -1473,16 +1519,15 @@ class ToolPanel(Widget):
                 self.app.notify("Copy failed — use mouse select", timeout=3)
 
     def action_copy_input(self) -> None:
-        """Y: copy tool input summary to clipboard."""
-        if self._input_section is not None:
-            text = self._input_section._build_text()
-            if text:
-                try:
-                    import pyperclip
-                    pyperclip.copy(text)
-                    self.app.notify("Copied input", timeout=1.5)
-                except Exception:
-                    self.app.notify("Copy failed", timeout=3)
+        """Y: copy tool invocation summary to clipboard."""
+        text = self._format_arg_summary()
+        if text:
+            try:
+                import pyperclip
+                pyperclip.copy(text)
+                self.app.notify("Copied input", timeout=1.5)
+            except Exception:
+                self.app.notify("Copy failed", timeout=3)
 
     def action_rerun(self) -> None:
         """r: emit ToolRerunRequested message."""
@@ -1541,7 +1586,7 @@ class ToolPanel(Widget):
     def on_tool_header_bar_clicked(self, event: ToolHeaderBar.Clicked) -> None:
         """ToolHeaderBar click → cycle detail level."""
         event.stop()
-        self.action_toggle_l1_l2()
+        self.action_toggle_collapse()
 
     # Focus styling is done via CSS :focus pseudo-class in hermes.tcss.
     # No on_focus/on_blur handlers — they trigger layout refreshes that

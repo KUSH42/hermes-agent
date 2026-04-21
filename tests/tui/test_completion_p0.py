@@ -261,7 +261,7 @@ async def test_preview_worker_checks_is_cancelled() -> None:
         await pilot.pause()
 
         # Only BETA content should appear (last selection wins)
-        lines = [str(line) for line in panel.lines]
+        lines = panel.preview_lines
         combined = " ".join(lines)
         assert "CONTENT_BETA" in combined, "Preview should show final selection (beta)"
 

@@ -377,7 +377,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                 stripped = raw_text
                 if stripped and stripped[0] in ('"', "'") and len(stripped) >= 3:
                     stripped = stripped[1:-1]
-                if stripped.startswith(("/", "~", "file://")):
+                if len(stripped) > 1 and stripped.startswith(("/", "~", "file://")):
                     match = detect_file_drop_text(raw_text)
                     if match is not None:
                         self._handling_file_drop = True

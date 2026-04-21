@@ -61,11 +61,11 @@ async def test_preview_clears_on_none(tmp_path: Path) -> None:
         panel.candidate = PathCandidate(display="x.py", abs_path=str(py_file))
         await asyncio.sleep(0.5)
         await pilot.pause()
-        assert len(panel.lines) > 0  # sanity — file loaded
+        assert len(panel.preview_lines) > 0  # sanity — file loaded
         # Now clear by setting to None (reactive fires since value changed)
         panel.candidate = None
         await pilot.pause()
-        assert len(panel.lines) == 0
+        assert len(panel.preview_lines) == 0
 
 
 @pytest.mark.asyncio
@@ -85,7 +85,7 @@ async def test_preview_loads_text_file(tmp_path: Path) -> None:
         # Give the threaded worker time to read the file
         await asyncio.sleep(0.5)
         await pilot.pause()
-        assert len(panel.lines) > 0
+        assert len(panel.preview_lines) > 0
 
 
 @pytest.mark.asyncio
@@ -104,7 +104,7 @@ async def test_preview_bails_on_large_file(tmp_path: Path) -> None:
         )
         await asyncio.sleep(0.5)
         await pilot.pause()
-        text = "".join(str(line) for line in panel.lines)
+        text = "".join(str(line) for line in panel.preview_lines)
         assert "too large" in text
 
 
@@ -124,7 +124,7 @@ async def test_preview_detects_binary(tmp_path: Path) -> None:
         )
         await asyncio.sleep(0.5)
         await pilot.pause()
-        text = "".join(str(line) for line in panel.lines)
+        text = "".join(str(line) for line in panel.preview_lines)
         assert "binary file" in text
 
 
@@ -142,7 +142,7 @@ async def test_preview_handles_oserror() -> None:
         )
         await asyncio.sleep(0.5)
         await pilot.pause()
-        text = "".join(str(line) for line in panel.lines)
+        text = "".join(str(line) for line in panel.preview_lines)
         assert "cannot read" in text
 
 
@@ -170,5 +170,5 @@ async def test_preview_cancellation(tmp_path: Path) -> None:
         await pilot.pause()
 
         # The preview should show file_4 (last assigned)
-        text = "".join(str(line) for line in panel.lines)
+        text = "".join(str(line) for line in panel.preview_lines)
         assert "file 4" in text or "file_4" in text

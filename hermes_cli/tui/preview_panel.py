@@ -95,6 +95,12 @@ class PreviewPanel(RichLog):
         self._syntax_abs_path: str | None = None
         self._syntax_head: str | None = None
         self._plain_text: str | None = None
+        self._preview_lines: list[str] = []
+
+    @property
+    def preview_lines(self) -> list[str]:
+        """Logical preview lines — usable even when RichLog hasn't rendered yet."""
+        return self._preview_lines
 
     def watch_candidate(self, candidate: PathCandidate | None) -> None:
         if candidate is None:
@@ -107,6 +113,7 @@ class PreviewPanel(RichLog):
         self._syntax_abs_path = None
         self._syntax_head = None
         self._plain_text = None
+        self._preview_lines = []
 
     def _candidate_matches(self, abs_path: str) -> bool:
         current = self.candidate
@@ -136,6 +143,7 @@ class PreviewPanel(RichLog):
         self._syntax_abs_path = abs_path
         self._syntax_head = head
         self._plain_text = None
+        self._preview_lines = head.splitlines() or [""]
 
     def refresh_theme(self) -> None:
         """Rebuild current syntax preview from cached source on skin change."""
@@ -208,3 +216,4 @@ class PreviewPanel(RichLog):
         self._syntax_abs_path = None
         self._syntax_head = None
         self._plain_text = event.text
+        self._preview_lines = event.text.splitlines() or [""]

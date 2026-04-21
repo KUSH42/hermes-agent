@@ -3214,9 +3214,15 @@ class HermesCLI:
             # Store reference for atexit memory provider shutdown
             global _active_agent_ref
             _active_agent_ref = self.agent
-            # Route agent status output through prompt_toolkit so ANSI escape
-            # sequences aren't garbled by patch_stdout's StdoutProxy (#2262).
-            self.agent._print_fn = _cprint
+            # PT mode: route through prompt_toolkit so ANSI escapes aren't
+            # garbled by patch_stdout's StdoutProxy (#2262).
+            # TUI mode: suppress — all tool display is handled by ToolPanel
+            # widgets via callbacks; agent quiet-mode cute messages would
+            # appear as raw plain text in the output panel otherwise.
+            if _hermes_app is not None:
+                self.agent._print_fn = lambda *_a, **_kw: None
+            else:
+                self.agent._print_fn = _cprint
             # Wire TUI status push on every API response (live ctx/compaction)
             if _hermes_app is not None and hasattr(self.agent, "context_compressor"):
                 self.agent.context_compressor.on_usage_update = self._push_tui_status

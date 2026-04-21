@@ -347,7 +347,7 @@ async def test_artifact_buttons_mounted_after_summary():
             is_error=False,
         )
         with patch("agent.display.get_tool_icon_mode", return_value="ascii"):
-            panel.set_result_summary_v4(summary)
+            panel.set_result_summary(summary)
         await pilot.pause(0.1)
 
         footer = panel._footer_pane
@@ -389,7 +389,7 @@ async def test_artifact_overflow_button_shows_more():
             artifacts_truncated=True,
         )
         with patch("agent.display.get_tool_icon_mode", return_value="ascii"):
-            panel.set_result_summary_v4(summary)
+            panel.set_result_summary(summary)
         await pilot.pause(0.1)
 
         footer = panel._footer_pane
@@ -426,7 +426,7 @@ async def test_artifact_chip_click_opens_path():
             is_error=False,
         )
         with patch("agent.display.get_tool_icon_mode", return_value="ascii"):
-            panel.set_result_summary_v4(summary)
+            panel.set_result_summary(summary)
         await pilot.pause(0.1)
 
         footer = panel._footer_pane
@@ -452,7 +452,7 @@ async def test_artifact_chip_click_opens_path():
 
 @pytest.mark.asyncio
 async def test_action_show_help_mounts_overlay():
-    """E1: action_show_help() mounts ToolPanelHelpOverlay on app."""
+    """E1: action_show_help() shows ToolPanelHelpOverlay (pre-mounted, toggled via --visible)."""
     from textual.app import App, ComposeResult
     from hermes_cli.tui.tool_blocks import StreamingToolBlock
     from hermes_cli.tui.tool_panel import ToolPanel
@@ -460,6 +460,7 @@ async def test_action_show_help_mounts_overlay():
 
     class _App(App):
         def compose(self) -> ComposeResult:
+            yield ToolPanelHelpOverlay()
             yield ToolPanel(
                 block=StreamingToolBlock(label="bash", tool_name="bash"),
                 tool_name="bash",
@@ -472,14 +473,13 @@ async def test_action_show_help_mounts_overlay():
         panel.action_show_help()
         await pilot.pause(0.1)
 
-        overlays = list(pilot.app.query(ToolPanelHelpOverlay))
-        assert len(overlays) == 1
-        assert "--visible" in overlays[0].classes
+        overlay = pilot.app.query_one(ToolPanelHelpOverlay)
+        assert overlay.has_class("--visible")
 
 
 @pytest.mark.asyncio
 async def test_action_show_help_toggle_removes_existing():
-    """E1: calling action_show_help() twice removes the overlay on second call."""
+    """E1: calling action_show_help() twice hides the overlay on second call."""
     from textual.app import App, ComposeResult
     from hermes_cli.tui.tool_blocks import StreamingToolBlock
     from hermes_cli.tui.tool_panel import ToolPanel
@@ -487,6 +487,7 @@ async def test_action_show_help_toggle_removes_existing():
 
     class _App(App):
         def compose(self) -> ComposeResult:
+            yield ToolPanelHelpOverlay()
             yield ToolPanel(
                 block=StreamingToolBlock(label="bash", tool_name="bash"),
                 tool_name="bash",
@@ -496,16 +497,16 @@ async def test_action_show_help_toggle_removes_existing():
         panel = pilot.app.query_one(ToolPanel)
         await pilot.pause(0.05)
 
-        # First call: mount
+        # First call: show
         panel.action_show_help()
         await pilot.pause(0.1)
 
-        # Second call: should remove existing
+        # Second call: should hide
         panel.action_show_help()
         await pilot.pause(0.1)
 
-        overlays = list(pilot.app.query(ToolPanelHelpOverlay))
-        assert len(overlays) == 0
+        overlay = pilot.app.query_one(ToolPanelHelpOverlay)
+        assert not overlay.has_class("--visible")
 
 
 @pytest.mark.asyncio
@@ -518,6 +519,7 @@ async def test_help_overlay_dismissed_by_escape():
 
     class _App(App):
         def compose(self) -> ComposeResult:
+            yield ToolPanelHelpOverlay()
             yield ToolPanel(
                 block=StreamingToolBlock(label="bash", tool_name="bash"),
                 tool_name="bash",
@@ -530,10 +532,9 @@ async def test_help_overlay_dismissed_by_escape():
         panel.action_show_help()
         await pilot.pause(0.1)
 
-        overlays = list(pilot.app.query(ToolPanelHelpOverlay))
-        assert len(overlays) == 1
+        overlay = pilot.app.query_one(ToolPanelHelpOverlay)
+        assert overlay.has_class("--visible")
 
-        overlay = overlays[0]
         # Simulate key event on overlay
         key_event = MagicMock()
         key_event.key = "escape"
@@ -541,9 +542,8 @@ async def test_help_overlay_dismissed_by_escape():
         overlay.on_key(key_event)
         await pilot.pause(0.1)
 
-        # Overlay should be removed (hide_overlay calls self.remove())
-        overlays_after = list(pilot.app.query(ToolPanelHelpOverlay))
-        assert len(overlays_after) == 0
+        # Overlay stays in DOM but --visible removed
+        assert not overlay.has_class("--visible")
 
 
 # ---------------------------------------------------------------------------

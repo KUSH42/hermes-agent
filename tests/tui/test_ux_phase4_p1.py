@@ -54,7 +54,7 @@ async def test_action_edit_cmd_prepopulates_input():
             ),
             artifacts=(), is_error=True,
         )
-        panel.set_result_summary_v4(summary)
+        panel.set_result_summary(summary)
 
         class _FakeInput:
             value = ""
@@ -120,7 +120,7 @@ async def test_action_open_url_opens_artifact_url():
             artifacts=(Artifact(label="example.com", path_or_url="https://example.com/page", kind="url"),),
             is_error=False,
         )
-        panel.set_result_summary_v4(summary)
+        panel.set_result_summary(summary)
 
         opened = []
         with patch("subprocess.Popen", side_effect=lambda args, **kw: opened.append(args)):
@@ -174,7 +174,7 @@ async def test_action_open_primary_falls_back_to_url_artifact():
             actions=(), is_error=False,
             artifacts=(Artifact(label="example.com", path_or_url="https://example.com", kind="url"),),
         )
-        panel.set_result_summary_v4(summary)
+        panel.set_result_summary(summary)
 
         opened = []
         with patch("subprocess.Popen", side_effect=lambda args, **kw: opened.append(args)):
@@ -220,7 +220,7 @@ async def test_error_expands_despite_user_collapse_override():
             actions=(Action("retry", "r", "retry", None, False),),
             artifacts=(), is_error=True,
         )
-        panel.set_result_summary_v4(summary)
+        panel.set_result_summary(summary)
         await pilot.pause(0.05)
 
         assert panel.collapsed is False, "Error should force-expand even with user override"
@@ -252,7 +252,7 @@ async def test_non_error_respects_user_collapse_override():
             primary="✓ 5 lines", exit_code=0, chips=(), stderr_tail="",
             actions=(), artifacts=(), is_error=False,
         )
-        panel.set_result_summary_v4(summary)
+        panel.set_result_summary(summary)
         await pilot.pause(0.05)
 
         assert panel.collapsed is True, "Non-error should keep user-collapsed state"
@@ -292,7 +292,7 @@ async def test_open_primary_covers_file_artifact():
             actions=(), is_error=False,
             artifacts=(Artifact(label="out.txt", path_or_url="/tmp/out.txt", kind="file"),),
         )
-        panel.set_result_summary_v4(summary)
+        panel.set_result_summary(summary)
 
         opened = []
         with patch("subprocess.Popen", side_effect=lambda args, **kw: opened.append(args)):

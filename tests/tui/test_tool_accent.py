@@ -162,7 +162,7 @@ async def test_completed_block_accent_becomes_ok():
     from hermes_cli.tui.app import HermesApp
     from hermes_cli.tui.widgets import OutputPanel
     from hermes_cli.tui.tool_panel import ToolPanel
-    from hermes_cli.tui.tool_result_parse import ResultSummary
+    from hermes_cli.tui.tool_result_parse import ResultSummaryV4
 
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
@@ -176,7 +176,10 @@ async def test_completed_block_accent_becomes_ok():
             await pilot.pause()
 
         panel = app.query_one(OutputPanel).query_one(ToolPanel)
-        panel.set_result_summary(ResultSummary())
+        panel.set_result_summary(ResultSummaryV4(
+            primary=None, is_error=False, exit_code=0,
+            stderr_tail="", chips=(), actions=(), artifacts=(),
+        ))
         for _ in range(3):
             await pilot.pause()
 
@@ -190,7 +193,7 @@ async def test_error_block_accent_becomes_error():
     from hermes_cli.tui.app import HermesApp
     from hermes_cli.tui.widgets import OutputPanel
     from hermes_cli.tui.tool_panel import ToolPanel
-    from hermes_cli.tui.tool_result_parse import ResultSummary
+    from hermes_cli.tui.tool_result_parse import ResultSummaryV4
 
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
@@ -204,7 +207,10 @@ async def test_error_block_accent_becomes_error():
             await pilot.pause()
 
         panel = app.query_one(OutputPanel).query_one(ToolPanel)
-        panel.set_result_summary(ResultSummary(is_error=True, exit_code=1))
+        panel.set_result_summary(ResultSummaryV4(
+            primary=None, is_error=True, exit_code=1,
+            stderr_tail="", chips=(), actions=(), artifacts=(),
+        ))
         for _ in range(3):
             await pilot.pause()
 

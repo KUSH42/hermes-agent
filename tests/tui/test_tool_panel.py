@@ -8,7 +8,7 @@ Covers:
 - Initial state always expanded (§6)
 - OmissionBar no-op while collapsed (§7)
 - Back-ref wiring (§2.5 / §14.2)
-- Result wiring via set_result_summary_v4 (§14)
+- Result wiring via set_result_summary (§14)
 - Category classification + class applied
 - Copy contract, hint row, OmissionBar delegation
 """
@@ -406,7 +406,7 @@ async def test_enter_sets_user_override():
 
 @pytest.mark.asyncio
 async def test_auto_collapse_over_threshold():
-    """No override + >threshold lines → collapsed=True after set_result_summary_v4."""
+    """No override + >threshold lines → collapsed=True after set_result_summary."""
     from hermes_cli.tui.tool_result_parse import ResultSummaryV4
     from hermes_cli.tui.tool_blocks import StreamingToolBlock
 
@@ -424,7 +424,7 @@ async def test_auto_collapse_over_threshold():
             primary=None, exit_code=0, chips=(), stderr_tail="",
             actions=(), artifacts=(), is_error=False,
         )
-        panel.set_result_summary_v4(summary)
+        panel.set_result_summary(summary)
         await _pause(pilot)
 
         assert panel.collapsed is True
@@ -432,7 +432,7 @@ async def test_auto_collapse_over_threshold():
 
 @pytest.mark.asyncio
 async def test_auto_collapse_within_threshold_stays_expanded():
-    """No override + ≤threshold lines → collapsed=False after set_result_summary_v4."""
+    """No override + ≤threshold lines → collapsed=False after set_result_summary."""
     from hermes_cli.tui.tool_result_parse import ResultSummaryV4
     from hermes_cli.tui.tool_blocks import StreamingToolBlock
 
@@ -450,7 +450,7 @@ async def test_auto_collapse_within_threshold_stays_expanded():
             primary=None, exit_code=0, chips=(), stderr_tail="",
             actions=(), artifacts=(), is_error=False,
         )
-        panel.set_result_summary_v4(summary)
+        panel.set_result_summary(summary)
         await _pause(pilot)
 
         assert panel.collapsed is False
@@ -473,7 +473,7 @@ async def test_error_forces_expand():
             primary=None, exit_code=1, chips=(), stderr_tail="",
             actions=(), artifacts=(), is_error=True,
         )
-        panel.set_result_summary_v4(summary)
+        panel.set_result_summary(summary)
         await _pause(pilot)
 
         assert panel.collapsed is False
@@ -499,7 +499,7 @@ async def test_user_override_prevents_auto_collapse():
             primary=None, exit_code=0, chips=(), stderr_tail="",
             actions=(), artifacts=(), is_error=False,
         )
-        panel.set_result_summary_v4(summary)
+        panel.set_result_summary(summary)
         await _pause(pilot)
 
         # Override active: remains expanded (user chose to keep it open)
@@ -527,7 +527,7 @@ async def test_user_override_collapsed_non_error_stays_collapsed():
             primary=None, exit_code=0, chips=(), stderr_tail="",
             actions=(), artifacts=(), is_error=False,
         )
-        panel.set_result_summary_v4(summary)
+        panel.set_result_summary(summary)
         await _pause(pilot)
 
         assert panel.collapsed is True  # user override respected
@@ -535,7 +535,7 @@ async def test_user_override_collapsed_non_error_stays_collapsed():
 
 @pytest.mark.asyncio
 async def test_result_summary_v4_stored():
-    """set_result_summary_v4 stores summary to _result_summary_v4."""
+    """set_result_summary stores summary to _result_summary_v4."""
     from hermes_cli.tui.tool_result_parse import ResultSummaryV4
 
     app = _make_app()
@@ -548,7 +548,7 @@ async def test_result_summary_v4_stored():
             primary="✓ done", exit_code=0, chips=(), stderr_tail="",
             actions=(), artifacts=(), is_error=False,
         )
-        panel.set_result_summary_v4(summary)
+        panel.set_result_summary(summary)
         await _pause(pilot)
 
         assert panel._result_summary_v4 is summary
@@ -556,7 +556,7 @@ async def test_result_summary_v4_stored():
 
 @pytest.mark.asyncio
 async def test_result_summary_posts_completed():
-    """set_result_summary_v4 posts ToolPanel.Completed message."""
+    """set_result_summary posts ToolPanel.Completed message."""
     from hermes_cli.tui.tool_result_parse import ResultSummaryV4
 
     completed_msgs = []
@@ -571,7 +571,7 @@ async def test_result_summary_posts_completed():
             primary=None, exit_code=0, chips=(), stderr_tail="",
             actions=(), artifacts=(), is_error=False,
         )
-        panel.set_result_summary_v4(summary)
+        panel.set_result_summary(summary)
         await _pause(pilot)
 
         # Completed message should have been posted
@@ -732,7 +732,7 @@ async def test_footer_visible_when_expanded_with_content():
             primary=None, exit_code=1, chips=(), stderr_tail="",
             actions=(), artifacts=(), is_error=True,
         )
-        panel.set_result_summary_v4(summary)
+        panel.set_result_summary(summary)
         await _pause(pilot)
         panel.collapsed = False
         # Re-trigger watcher
@@ -757,7 +757,7 @@ async def test_footer_hidden_when_collapsed():
             primary=None, exit_code=1, chips=(), stderr_tail="",
             actions=(), artifacts=(), is_error=True,
         )
-        panel.set_result_summary_v4(summary)
+        panel.set_result_summary(summary)
         panel.collapsed = True
         panel.watch_collapsed(False, True)
         await _pause(pilot)
@@ -995,7 +995,7 @@ async def test_retry_chip_shown_when_is_error():
         await _pause(pilot)
         panel = await _get_shell_panel(app, pilot)
         await _pause(pilot)
-        panel.set_result_summary_v4(rs)
+        panel.set_result_summary(rs)
         await _pause(pilot)
 
         footer = panel.query_one(FooterPane)
@@ -1025,7 +1025,7 @@ async def test_retry_chip_hidden_when_no_error():
         await _pause(pilot)
         panel = await _get_shell_panel(app, pilot)
         await _pause(pilot)
-        panel.set_result_summary_v4(rs)
+        panel.set_result_summary(rs)
         await _pause(pilot)
 
         hint = panel._build_hint_text()
@@ -1053,7 +1053,7 @@ async def test_action_retry_calls_initiate_retry():
         await _pause(pilot)
         panel = await _get_shell_panel(app, pilot)
         await _pause(pilot)
-        panel.set_result_summary_v4(rs)
+        panel.set_result_summary(rs)
         await _pause(pilot)
 
         called = []
@@ -1213,7 +1213,7 @@ async def test_edit_cmd_saves_existing_input_to_history():
             artifacts=(),
             is_error=True,
         )
-        panel.set_result_summary_v4(summary)
+        panel.set_result_summary(summary)
         await _pause(pilot)
 
         # Pre-fill input with existing text
@@ -1391,7 +1391,7 @@ async def test_artifact_overflow_chip_has_url_remediation():
             artifacts_truncated=True,
             is_error=False,
         )
-        panel.set_result_summary_v4(summary)
+        panel.set_result_summary(summary)
         await _pause(pilot)
 
         from textual.widgets import Button

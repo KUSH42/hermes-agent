@@ -276,7 +276,7 @@ async def test_action_open_primary_falls_back_to_artifact():
             actions=(), is_error=False,
             artifacts=(Artifact(label="test.py", path_or_url="/tmp/test.py", kind="file"),),
         )
-        panel.set_result_summary_v4(summary)
+        panel.set_result_summary(summary)
         # No path on header — should fall back to artifact
         opened = []
         with patch("subprocess.Popen", side_effect=lambda args, **kw: opened.append(args)):

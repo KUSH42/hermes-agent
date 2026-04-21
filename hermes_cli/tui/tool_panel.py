@@ -405,7 +405,7 @@ class ToolPanel(Widget):
     """Unified tool-call display container — binary collapse.
 
     Completion event:
-    ToolPanel.Completed is posted on set_result_summary_v4 so ToolGroup can
+    ToolPanel.Completed is posted on set_result_summary so ToolGroup can
     re-aggregate without coupling.
 
     Compose tree:
@@ -500,6 +500,7 @@ class ToolPanel(Widget):
         self._tool_args: dict | None = None
 
         # Pane refs (set in compose)
+        self._accent: ToolAccent | None = None
         self._body_pane: BodyPane | None = None
         self._footer_pane: FooterPane | None = None
         self._hint_row: Static | None = None
@@ -511,9 +512,11 @@ class ToolPanel(Widget):
             block._should_strip_cwd = True
 
     def compose(self) -> ComposeResult:
+        self._accent = ToolAccent()
         self._body_pane = BodyPane(self._block, category=self._category)
         self._footer_pane = FooterPane()
         self._hint_row = Static("", classes="--focus-hint")
+        yield self._accent
         yield self._body_pane
         yield self._footer_pane
         yield self._hint_row
@@ -522,6 +525,8 @@ class ToolPanel(Widget):
 
         self.add_class(f"category-{self._category.value}")
         self.add_class("tool-panel--accent")
+        if self._accent is not None:
+            self._accent.state = "streaming" if self._result_summary_v4 is None else "ok"
 
         # Wire back-ref so ToolHeader can delegate toggle to panel
         header = getattr(self._block, "_header", None)
@@ -580,11 +585,14 @@ class ToolPanel(Widget):
 
         # CSS level class — remove old, add new (avoid removing all 4 each time)
         if old != new:
-            self.remove_class(f"-l{old}")
-            self.add_class(f"-l{new}")
+            try:
+                self.remove_class(f"-l{old}")
+                self.add_class(f"-l{new}")
+            except AttributeError:
+                pass
 
         # Sync ToolHeaderBar chevron
-        if self._header_bar is not None:
+        if getattr(self, '_header_bar', None) is not None:
             self._header_bar.set_chevron(new)
 
     def _has_footer_content(self) -> bool:
@@ -634,27 +642,6 @@ class ToolPanel(Widget):
         # A3: flash auto-collapse notification so user knows what happened
         if should_collapse:
             self._flash_header(f"▾ auto-collapsed ({total} lines)", tone="success")
-
-    def set_result_summary_v4(self, summary: "ResultSummaryV4") -> None:
-        """Call from app at tool completion to populate v4 footer + header hero chip."""
-        self._result_summary_v4 = summary
-        self._completed_at = time.monotonic()
-        # Set header hero chip and promoted chips
-        header = getattr(self._block, "_header", None)
-        if header is not None:
-            if summary.primary is not None:
-                header._primary_hero = summary.primary
-            header._error_kind = getattr(summary, "error_kind", None)
-            header.refresh()
-        # D1: errors always expand regardless of user collapse override
-        if summary.is_error:
-            self.collapsed = False
-        else:
-            self._apply_complete_auto_collapse()
-        if self._footer_pane is not None:
-            show = self._has_footer_content()
-            self._footer_pane.styles.display = "block" if show else "none"
-            self._footer_pane.update_summary_v4(summary)
 
     def set_tool_args(self, args: dict | None) -> None:
         """Call from app after tool_start to supply parsed args."""
@@ -758,13 +745,13 @@ class ToolPanel(Widget):
         except Exception:
             pass
 
-    def _maybe_activate_mini(self, summary: "ResultSummary") -> None:
+    def _maybe_activate_mini(self, summary: "ResultSummaryV4") -> None:
         """Activate mini-mode if SHELL+exit0+≤3L+no-stderr criteria met."""
         from hermes_cli.tui.tool_panel_mini import meets_mini_criteria
         exit_code = getattr(summary, "exit_code", None)
         stderr_raw = getattr(summary, "stderr_tail", None) or ""
         line_count = self._body_line_count()
-        if not meets_mini_criteria(self._category, exit_code, line_count, stderr_raw):
+        if not meets_mini_criteria(getattr(self, '_category', None), exit_code, line_count, stderr_raw):
             return
         if not self.is_attached or self.parent is None:
             return
@@ -780,17 +767,15 @@ class ToolPanel(Widget):
         except Exception:
             pass
 
-    def set_result_summary(self, summary: "ResultSummary") -> None:
-        """Call from app at tool completion to populate footer."""
-        self._result_summary = summary
+    def set_result_summary(self, summary: "ResultSummaryV4") -> None:
+        """Call from app at tool completion to populate footer and header."""
+        self._result_summary_v4 = summary
         self._completed_at = time.monotonic()
-        if self._footer_pane is not None:
-            self._footer_pane.update_summary(summary)
         # Update accent + header bar state
         final_state = "error" if summary.is_error else "ok"
-        if self._accent is not None:
+        if getattr(self, '_accent', None) is not None:
             self._accent.state = final_state
-        if self._header_bar is not None:
+        if getattr(self, '_header_bar', None) is not None:
             self._header_bar.set_state(final_state)
             self._header_bar.set_finished(self._completed_at)
             line_count = self._body_line_count()
@@ -799,13 +784,11 @@ class ToolPanel(Widget):
             self._update_kind_from_classifier(line_count)
         self._apply_complete_auto_collapse()
         # Refresh footer visibility
-        if self._footer_pane is not None:
+        if getattr(self, '_footer_pane', None) is not None:
             show = self._has_footer_content()
             self._footer_pane.styles.display = "block" if show else "none"
         # Activate mini-mode for qualifying SHELL calls
         self._maybe_activate_mini(summary)
-        # Notify enclosing GroupHeader so it can refresh dot color + stats
-        self._notify_group_header()
         # F1: schedule "completed Xs ago" age microcopy at 10s post-completion
         _completed_at_snap = self._completed_at
         def _show_age() -> None:
@@ -1337,17 +1320,16 @@ class ToolPanel(Widget):
             pass
 
     def action_show_help(self) -> None:
-        """C1: show/hide ToolPanel key reference overlay (dynamically mounted)."""
+        """C1: toggle ToolPanel key reference overlay (pre-mounted in app.compose)."""
         from hermes_cli.tui.overlays import ToolPanelHelpOverlay
         from textual.css.query import NoMatches
         try:
-            existing = self.app.query_one(ToolPanelHelpOverlay)
-            existing.remove()
-        except NoMatches:
-            overlay = ToolPanelHelpOverlay()
-            overlay.add_class("--visible")
-            self.app.mount(overlay)
-        except Exception:
+            overlay = self.app.query_one(ToolPanelHelpOverlay)
+            if overlay.has_class("--visible"):
+                overlay.remove_class("--visible")
+            else:
+                overlay.add_class("--visible")
+        except (NoMatches, Exception):
             pass
 
     # Focus styling done via CSS :focus pseudo-class in hermes.tcss.

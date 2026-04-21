@@ -119,7 +119,7 @@ class TestA2:
         stb._tool_input = None
 
         with patch.object(stb, "_try_mount_media"):
-            with patch("hermes_cli.tui.tool_blocks.spec_for", return_value=MagicMock()):
+            with patch("hermes_cli.tui.tool_category.spec_for", return_value=MagicMock()):
                 stb.complete("0.1s", is_error=False)
 
         stb._header.add_class.assert_any_call("result-empty")
@@ -155,7 +155,7 @@ class TestA2:
         stb._tool_input = None
 
         with patch.object(stb, "_try_mount_media"):
-            with patch("hermes_cli.tui.tool_blocks.spec_for", return_value=MagicMock()):
+            with patch("hermes_cli.tui.tool_category.spec_for", return_value=MagicMock()):
                 stb.complete("0.1s", is_error=True)
 
         calls = [str(c) for c in stb._header.add_class.call_args_list]
@@ -175,7 +175,7 @@ class TestA3:
             _duration="1.2s",
         )
 
-        with patch("hermes_cli.tui.tool_blocks.spec_for") as ms:
+        with patch("hermes_cli.tui.tool_category.spec_for") as ms:
             ms.return_value = MagicMock(render_header=True, primary_arg="command",
                                         category=MagicMock(value="shell"))
             with patch.object(h, "_accessible_mode", return_value=False):
@@ -212,7 +212,7 @@ class TestA4:
 
 class TestA5:
     def test_error_banner_mounted_on_error(self):
-        """set_result_summary_v4 mounts .error-banner when is_error + error_kind set."""
+        """set_result_summary mounts .error-banner when is_error + error_kind set."""
         from hermes_cli.tui.tool_panel import ToolPanel
         from hermes_cli.tui.tool_result_parse import ResultSummaryV4, Chip
 
@@ -261,7 +261,7 @@ class TestA5:
                         type(panel).collapsed = property(lambda self: False,
                                                          lambda self, v: None)
                         try:
-                            panel.set_result_summary_v4(summary)
+                            panel.set_result_summary(summary)
                         finally:
                             if _orig is not None:
                                 type(panel).collapsed = _orig
@@ -309,7 +309,7 @@ class TestA7:
             _panel=MagicMock(collapsed=False),
         )
 
-        with patch("hermes_cli.tui.tool_blocks.spec_for") as ms:
+        with patch("hermes_cli.tui.tool_category.spec_for") as ms:
             ms.return_value = MagicMock(render_header=True, primary_arg="path",
                                         category=MagicMock(value="file"))
             with patch.object(h, "_accessible_mode", return_value=False):

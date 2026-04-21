@@ -458,11 +458,11 @@ async def test_footer_pane_renders_error_chip():
 
 
 # ---------------------------------------------------------------------------
-# §12 ToolPanel.set_result_summary_v4
+# §12 ToolPanel.set_result_summary
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_tool_panel_set_result_summary_v4_sets_hero():
+async def test_tool_panel_set_result_summary_sets_hero():
     from textual.app import App, ComposeResult
     from textual.widgets import Static
     from hermes_cli.tui.tool_panel import ToolPanel
@@ -484,14 +484,14 @@ async def test_tool_panel_set_result_summary_v4_sets_hero():
             artifacts=(),
             is_error=False,
         )
-        tp.set_result_summary_v4(summary)
+        tp.set_result_summary(summary)
         await pilot.pause(0.05)
         stb = pilot.app.query_one(StreamingToolBlock)
         assert stb._header._primary_hero == "✓ 10 lines"
 
 
 @pytest.mark.asyncio
-async def test_tool_panel_set_result_summary_v4_error_promotes_level():
+async def test_tool_panel_set_result_summary_error_promotes_level():
     from textual.app import App, ComposeResult
     from hermes_cli.tui.tool_panel import ToolPanel
     from hermes_cli.tui.tool_blocks import StreamingToolBlock
@@ -514,7 +514,7 @@ async def test_tool_panel_set_result_summary_v4_error_promotes_level():
             artifacts=(),
             is_error=True,
         )
-        tp.set_result_summary_v4(summary)
+        tp.set_result_summary(summary)
         await pilot.pause(0.05)
         # Error → force expand (error promotion rule)
         assert tp.collapsed is False

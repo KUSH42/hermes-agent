@@ -196,7 +196,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             shell_prompt_w = 2
 
         tail = Text()
-        if self._browse_badge:
+        if getattr(self, '_browse_badge', ""):
             tail.append(f" {self._browse_badge} ", style="bold dim")
         if self._spinner_char is not None:
             tail.append(f"  {self._spinner_char}", style="dim")
@@ -298,7 +298,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         self.add_class("--header-degraded")
         t = Text()
         t.append(f"[tool] {self._label}")
-        if self._browse_badge:
+        if getattr(self, '_browse_badge', ""):
             t.append(f"  {self._browse_badge}", style="bold dim")
         return t
 

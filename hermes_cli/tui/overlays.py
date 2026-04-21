@@ -816,12 +816,20 @@ class ToolPanelHelpOverlay(Widget):
         self.add_class("--visible")
 
     def hide_overlay(self) -> None:
-        self.remove()
+        self.remove_class("--visible")
+
+    def action_dismiss(self) -> None:
+        self.remove_class("--visible")
+        try:
+            from hermes_cli.tui.input_widget import HermesInput
+            self.app.query_one(HermesInput).focus()
+        except Exception:
+            pass
 
     def on_key(self, event: "object") -> None:
         key = getattr(event, "key", None)
         if key in ("escape", "question_mark"):
-            self.remove()
+            self.remove_class("--visible")
             getattr(event, "stop", lambda: None)()
 
 

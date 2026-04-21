@@ -667,7 +667,7 @@ async def test_execute_code_block_error_header_not_collapsed():
 
         assert block._header.collapsed is False, (
             "ECB inner header must NOT be collapsed after error complete() — "
-            "ToolPanel.set_result_summary_v4 owns error expansion"
+            "ToolPanel.set_result_summary owns error expansion"
         )
 
 

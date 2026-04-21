@@ -116,13 +116,15 @@ async def test_tool_panel_mini_mounts_after_qualifying_complete():
         panel = app.query_one(OutputPanel).query_one(ToolPanel)
 
         # Simulate a qualifying completion: exit0, 2 lines, no stderr
-        from hermes_cli.tui.tool_result_parse import ResultSummary
-        summary = ResultSummary(
+        from hermes_cli.tui.tool_result_parse import ResultSummaryV4
+        summary = ResultSummaryV4(
+            primary=None,
             is_error=False,
             exit_code=0,
-            stat_badges=[],
-            stderr_tail=None,
-            retry_hint=None,
+            stderr_tail="",
+            chips=(),
+            actions=(),
+            artifacts=(),
         )
         # Add 2 lines to block so line_count = 2
         from hermes_cli.tui.tool_blocks import StreamingToolBlock

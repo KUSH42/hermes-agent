@@ -3277,7 +3277,7 @@ class HermesApp(App):
         if summary is not None:
             panel = getattr(block, "_tool_panel", None)
             if panel is not None:
-                panel.set_result_summary_v4(summary)
+                panel.set_result_summary(summary)
         # C1: clear active tool name when tool completes
         self._active_tool_name = ""
         self._update_anim_hint()
@@ -3329,7 +3329,7 @@ class HermesApp(App):
         if summary is not None:
             panel = getattr(block, "_tool_panel", None)
             if panel is not None:
-                panel.set_result_summary_v4(summary)
+                panel.set_result_summary(summary)
         # P7: update dur_ms + is_error on the matching turn entry
         for entry in self._turn_tool_calls:
             if entry["tool_call_id"] == tool_call_id:

@@ -192,7 +192,7 @@ class TestC3:
             _has_affordances=True,
         )
 
-        with patch("hermes_cli.tui.tool_blocks.spec_for") as ms:
+        with patch("hermes_cli.tui.tool_category.spec_for") as ms:
             ms.return_value = MagicMock(render_header=True, primary_arg=None,
                                         category=MagicMock(value="shell"))
             with patch.object(h, "_accessible_mode", return_value=False):
@@ -230,7 +230,7 @@ class TestC5:
             _duration="",
         )
 
-        with patch("hermes_cli.tui.tool_blocks.spec_for") as ms:
+        with patch("hermes_cli.tui.tool_category.spec_for") as ms:
             ms.return_value = MagicMock(render_header=True, primary_arg=None,
                                         category=MagicMock(value="file"))
             with patch.object(h, "_accessible_mode", return_value=False):

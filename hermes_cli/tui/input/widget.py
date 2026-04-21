@@ -345,6 +345,22 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                     self.action_history_next()
                     return
 
+        # Forward "c" to app.on_key when UsageOverlay is visible, so the
+        # app-level copy handler can intercept it before TextArea inserts the char.
+        # Call event.stop() to prevent the natural DOM bubble (which would call
+        # app.on_key a second time via Textual's event propagation).
+        if key == "c":
+            try:
+                from hermes_cli.tui.overlays import UsageOverlay as _UO
+                _uov = self.app.query_one(_UO)
+                if _uov.has_class("--visible"):
+                    self.app.on_key(event)
+                    event.stop()
+                    event.prevent_default()
+                    return
+            except Exception:
+                pass
+
         await super()._on_key(event)
 
     async def _on_paste(self, event: events.Paste) -> None:

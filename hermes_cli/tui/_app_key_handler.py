@@ -34,7 +34,7 @@ class _KeyHandlerMixin:
         )
         from hermes_cli.tui.overlays import (
             HelpOverlay, UsageOverlay, CommandsOverlay,
-            ModelOverlay, WorkspaceOverlay, SessionOverlay,
+            WorkspaceOverlay, SessionOverlay,
         )
 
         # F4: track last keypress time so _maybe_notify can skip notifying
@@ -177,7 +177,7 @@ class _KeyHandlerMixin:
         # --- escape: cancel overlay, interrupt agent, browse mode, or enter browse ---
         if key == "escape":
             from hermes_cli.tui.overlays import ToolPanelHelpOverlay as _TPHO
-            for _cls in (HelpOverlay, UsageOverlay, CommandsOverlay, ModelOverlay, WorkspaceOverlay, SessionOverlay, _TPHO):
+            for _cls in (HelpOverlay, UsageOverlay, CommandsOverlay, WorkspaceOverlay, SessionOverlay, _TPHO):
                 try:
                     _ov = self.query_one(_cls)  # type: ignore[attr-defined]
                     if _ov.has_class("--visible"):
@@ -266,6 +266,17 @@ class _KeyHandlerMixin:
                     self.browse_mode = True  # type: ignore[attr-defined]
                     event.prevent_default()
                     return
+
+        # --- c: copy usage stats when UsageOverlay is visible ---
+        if key == "c":
+            try:
+                _uov = self.query_one(UsageOverlay)  # type: ignore[attr-defined]
+                if _uov.has_class("--visible"):
+                    _uov._do_copy()
+                    event.prevent_default()
+                    return
+            except NoMatches:
+                pass
 
         # --- J/K: focus next/prev ToolPanel (Phase 3 panel nav) ---
         if key == "J":

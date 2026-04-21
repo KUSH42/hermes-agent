@@ -359,13 +359,13 @@ class _ContextMenuMixin:
     def _dismiss_all_info_overlays(self) -> None:
         """Remove --visible from all info overlays."""
         from hermes_cli.tui.overlays import (
-            CommandsOverlay, HelpOverlay, ModelOverlay, ModelPickerOverlay,
+            CommandsOverlay, HelpOverlay, ModelPickerOverlay,
             ReasoningPickerOverlay, SessionOverlay, SkinPickerOverlay,
             UsageOverlay, VerbosePickerOverlay, WorkspaceOverlay, YoloConfirmOverlay,
             ToolPanelHelpOverlay as _TPHO,
         )
         for cls in (
-            HelpOverlay, UsageOverlay, CommandsOverlay, ModelOverlay, WorkspaceOverlay,
+            HelpOverlay, UsageOverlay, CommandsOverlay, WorkspaceOverlay,
             SessionOverlay,
             ModelPickerOverlay, ReasoningPickerOverlay, SkinPickerOverlay,
             YoloConfirmOverlay, VerbosePickerOverlay, _TPHO,

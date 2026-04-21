@@ -104,7 +104,6 @@ from hermes_cli.tui.widgets import (
 from hermes_cli.tui.overlays import (
     CommandsOverlay,
     HelpOverlay,
-    ModelOverlay,
     ModelPickerOverlay,
     ReasoningPickerOverlay,
     SessionOverlay,
@@ -577,7 +576,6 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
             yield HelpOverlay(id="help-overlay")
             yield UsageOverlay(id="usage-overlay")
             yield CommandsOverlay(id="commands-overlay")
-            yield ModelOverlay(id="model-overlay")
             yield WorkspaceOverlay(id="workspace-overlay")
             yield SessionOverlay(id="session-overlay")
             yield NewSessionOverlay(id="new-session-overlay")

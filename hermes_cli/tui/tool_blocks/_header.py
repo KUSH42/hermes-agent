@@ -11,7 +11,7 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Static
 
-from hermes_cli.tui.animation import PulseMixin, lerp_color
+from hermes_cli.tui.animation import PulseMixin, SpinnerIdentity, lerp_color, pulse_phase_offset
 from hermes_cli.tui.tooltip import TooltipMixin
 from hermes_cli.tui.widgets import CopyableRichLog
 
@@ -42,6 +42,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
 
     _tooltip_text = "Left-click: open/collapse  Right-click: menu"
     collapsed: reactive[bool] = reactive(True, repaint=True)
+    _spinner_identity: "SpinnerIdentity | None" = None
 
     def __init__(
         self,
@@ -199,7 +200,16 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         if getattr(self, '_browse_badge', ""):
             tail.append(f" {self._browse_badge} ", style="bold dim")
         if self._spinner_char is not None:
-            tail.append(f"  {self._spinner_char}", style="dim")
+            if self._spinner_identity is not None:
+                _phase = pulse_phase_offset(self._pulse_tick, self._spinner_identity.phase_offset)
+                spin_color = lerp_color(
+                    self._spinner_identity.color_a,
+                    self._spinner_identity.color_b,
+                    _phase,
+                )
+                tail.append(f"  {self._spinner_char}", style=spin_color)
+            else:
+                tail.append(f"  {self._spinner_char}", style="dim")
             if self._duration:
                 tail.append(f"  {self._duration}", style="dim")
         else:

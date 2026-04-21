@@ -288,6 +288,7 @@ ToolsScreen > #tools-footer {
         Binding("enter", "jump_to_panel", "Jump", show=False),
         Binding("r", "refresh", "Refresh snapshot", show=False),
         Binding("s", "cycle_sort", "Sort", show=True),  # D5
+        Binding("t", "toggle_view", "Tree/Timeline", show=True),
     ]
 
     # Gantt spinner frames for in-progress tool rows
@@ -302,6 +303,7 @@ ToolsScreen > #tools-footer {
         self._active_categories: set[str] = set()
         self._errors_only: bool = False
         self._sort_mode: int = 0  # D5: 0=chrono, 1=duration desc, 2=category asc
+        self._tree_view: bool = True
         self._turn_total_s: float = _compute_turn_total_s(snapshot)
         self._term_w: int = 80
         self._last_resize_w: int = 0
@@ -321,7 +323,7 @@ ToolsScreen > #tools-footer {
             id="filter-row",
         )
         yield Static(
-            "[Enter] jump  [Esc] close  [/] filter  [C] clear  [s] sort  [x] export  [r] refresh",
+            "[Enter] jump  [Esc] close  [/] filter  [C] clear  [s] sort  [t] tree/timeline  [x] export  [r] refresh",
             id="tools-footer",
         )  # B5/D2: include all active key bindings
 
@@ -423,7 +425,8 @@ ToolsScreen > #tools-footer {
         if not self._filtered:
             await listview.append(ListItem(Static(Text("  no matching tool calls", style="dim"))))
             return
-        for i, entry in enumerate(self._filtered):
+        ordered = self._get_ordered_records(self._filtered)
+        for i, (entry, display_depth) in enumerate(ordered):
             row_text = render_tool_row(
                 entry,
                 cursor=(i == self._cursor),
@@ -431,6 +434,21 @@ ToolsScreen > #tools-footer {
                 term_w=self._term_w,
                 spinner_frame=self._spinner_frame,
             )
+            if display_depth > 0 and self._tree_view:
+                # Build tree indent prefix based on depth
+                indent = "  " * display_depth
+                # Determine if this is the last sibling for ├─ vs └─
+                parent_id = entry.get("parent_tool_call_id")
+                by_id = {r["tool_call_id"]: r for r in self._filtered}
+                parent_rec = by_id.get(parent_id) if parent_id else None
+                is_last = False
+                if parent_rec:
+                    siblings = parent_rec.get("children", [])
+                    is_last = siblings and siblings[-1] == entry["tool_call_id"]
+                connector = "└─ " if is_last else "├─ "
+                prefix_text = Text(indent + connector, style="dim")
+                prefix_text.append_text(row_text)
+                row_text = prefix_text
             await listview.append(ListItem(Static(row_text)))
         self._update_staleness_pip()
         self._update_pills()
@@ -655,6 +673,40 @@ ToolsScreen > #tools-footer {
             self.app._flash_hint(f"sort: {sort_label}", 1.5)
         except Exception:
             pass
+
+    def action_toggle_view(self) -> None:
+        """Toggle between tree and timeline (flat chronological) view."""
+        self._tree_view = not self._tree_view
+        self.call_after_refresh(self._rebuild)
+        label = "tree" if self._tree_view else "timeline"
+        try:
+            self.app._flash_hint(f"view: {label}", 1.5)
+        except Exception:
+            pass
+
+    def _get_ordered_records(self, records: list[dict]) -> list[tuple[dict, int]]:
+        """Return (record, display_depth) pairs in DFS tree order if tree_view, else flat."""
+        if not self._tree_view:
+            return [(r, 0) for r in records]
+        by_id = {r["tool_call_id"]: r for r in records}
+        roots = [r for r in records if r.get("parent_tool_call_id") is None]
+        result: list[tuple[dict, int]] = []
+
+        def dfs(rec: dict, display_depth: int) -> None:
+            result.append((rec, display_depth))
+            for child_id in rec.get("children", []):
+                child = by_id.get(child_id)
+                if child:
+                    dfs(child, display_depth + 1)
+
+        for root in roots:
+            dfs(root, 0)
+        # Append any orphaned records that were not reached via DFS (safety net)
+        seen = {r["tool_call_id"] for r, _ in result}
+        for r in records:
+            if r["tool_call_id"] not in seen:
+                result.append((r, 0))
+        return result
 
     async def _apply_filter(self) -> None:
         text = self._filter_text.lower()

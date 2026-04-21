@@ -165,6 +165,27 @@ class _BrowseMixin:
                 ))
             else:
                 try:
+                    from hermes_cli.tui.sub_agent_panel import SubAgentPanel as _SAP, CollapseState as _CS
+                    if isinstance(widget, _SAP) and widget._depth == 0:
+                        hdr_label = getattr(getattr(widget, "_header", None), "_label", None)
+                        hdr_text = ""
+                        if hdr_label is not None:
+                            try:
+                                hdr_text = str(hdr_label.renderable)
+                            except Exception:
+                                pass
+                        anchors.append(BrowseAnchor(
+                            anchor_type=BrowseAnchorType.SUBAGENT_ROOT,
+                            widget=widget,
+                            label=f"Agent · {hdr_text}" if hdr_text else "Agent",
+                            turn_id=turn_id,
+                        ))
+                        # Skip walking into body when collapsed
+                        if widget.collapse_state == _CS.COLLAPSED:
+                            continue
+                except Exception:
+                    pass
+                try:
                     from hermes_cli.tui.widgets import InlineMediaWidget as _IMW
                     from hermes_cli.tui.media_player import _short_url as _su
                     if isinstance(widget, _IMW):
@@ -326,6 +347,14 @@ class _BrowseMixin:
         if self._browse_markers_enabled:  # type: ignore[attr-defined]
             hint += "  \\ map"
         self._browse_hint = hint  # type: ignore[attr-defined]
+
+    # --- SubAgent browse navigation ---
+
+    def action_jump_subagent_prev(self) -> None:
+        self._jump_anchor(-1, BrowseAnchorType.SUBAGENT_ROOT)
+
+    def action_jump_subagent_next(self) -> None:
+        self._jump_anchor(+1, BrowseAnchorType.SUBAGENT_ROOT)
 
     # --- ToolPanel J/K navigation ---
 

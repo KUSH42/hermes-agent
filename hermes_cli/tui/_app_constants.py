@@ -3,6 +3,6 @@ from __future__ import annotations
 
 KNOWN_SLASH_COMMANDS: frozenset[str] = frozenset([
     "/loop", "/schedule", "/anim", "/yolo", "/verbose",
-    "/model", "/reasoning", "/skin", "/fast", "/easteregg",
+    "/model", "/reasoning", "/skin",
     "/help", "/queue", "/btw", "/clear", "/density",
 ])

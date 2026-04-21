@@ -83,9 +83,7 @@ class _CommandsMixin:
         if stripped == "/commands":
             self._dismiss_all_info_overlays()  # type: ignore[attr-defined]
             try:
-                overlay = self.query_one(CommandsOverlay)  # type: ignore[attr-defined]
-                overlay._refresh_content()
-                overlay.add_class("--visible")
+                self.query_one(CommandsOverlay).show_overlay()  # type: ignore[attr-defined]
             except NoMatches:
                 pass
             return True
@@ -152,6 +150,16 @@ class _CommandsMixin:
             return True
 
         cmd_parts = stripped.split()
+        if cmd_parts and cmd_parts[0] == "/schedule":
+            if len(cmd_parts) < 2:
+                self._flash_hint(
+                    "ℹ  Tell the agent what to schedule, e.g. /schedule check logs every hour",
+                    3.0,
+                )  # type: ignore[attr-defined]
+                return True          # consumed; do NOT forward empty command
+            self._flash_hint("📅  Scheduling request sent to agent…", 2.0)  # type: ignore[attr-defined]
+            return False             # forward full "/schedule <text>" to agent
+
         if cmd_parts and cmd_parts[0] == "/new":
             self._flash_hint("✨  New session started", 2.0)  # type: ignore[attr-defined]
             return False

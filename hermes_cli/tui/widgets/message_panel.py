@@ -706,7 +706,7 @@ class MessagePanel(Widget):
 
 
 class _EchoBullet(PulseMixin, Widget):
-    """Single-line user message display with a pulsing ● bullet.
+    """Single-line user message display with a pulsing ❯ chevron.
 
     Pulses from mount until the FIRST agent turn that follows this message
     completes.  Subsequent turns leave the bullet static (one-shot guard).
@@ -766,7 +766,7 @@ class _EchoBullet(PulseMixin, Widget):
         else:
             color = self._bullet_peak
         t = Text()
-        t.append("● ", style=f"bold {color}")
+        t.append("❯ ", style=f"bold {color}")
         msg = self._message
         if "\n" in msg:
             first_line = msg.split("\n")[0]

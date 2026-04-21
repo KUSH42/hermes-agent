@@ -1067,11 +1067,11 @@ class TestEffectsCommandRegistration:
 class TestTuiOnlyField:
     """Tests 1–5, 10–12 of Phase 1 spec."""
 
-    def test_compact_in_registry(self):
-        """Test 1: /compact present in COMMAND_REGISTRY."""
-        cmd = resolve_command("compact")
-        assert cmd is not None, "/compact must be in COMMAND_REGISTRY"
-        assert cmd.name == "compact"
+    def test_density_in_registry(self):
+        """Test 1: /density present in COMMAND_REGISTRY."""
+        cmd = resolve_command("density")
+        assert cmd is not None, "/density must be in COMMAND_REGISTRY"
+        assert cmd.name == "density"
 
     def test_sessions_in_registry(self):
         """Test 2: /sessions present in COMMAND_REGISTRY."""
@@ -1092,13 +1092,13 @@ class TestTuiOnlyField:
 
     def test_tui_only_in_commands_by_category(self):
         """Test 4: COMMANDS_BY_CATEGORY includes tui_only entries (for TUI consumers)."""
-        # /compact and /sessions should be present
-        compact = resolve_command("compact")
+        # /density and /sessions should be present
+        density = resolve_command("density")
         sessions = resolve_command("sessions")
-        assert compact is not None
+        assert density is not None
         assert sessions is not None
         # They appear in COMMANDS (not gateway_only-filtered)
-        assert "/compact" in COMMANDS
+        assert "/density" in COMMANDS
         assert "/sessions" in COMMANDS
 
     def test_tui_only_excluded_from_telegram_menu(self):
@@ -1111,9 +1111,9 @@ class TestTuiOnlyField:
                 assert cmd.name not in tg_names, \
                     f"tui_only command '{cmd.name}' should not be in telegram_bot_commands()"
 
-    def test_compact_appears_in_slash_completions(self):
-        """Test 10: /compact appears in COMMANDS (available for TUI completion)."""
-        assert "/compact" in COMMANDS
+    def test_density_appears_in_slash_completions(self):
+        """Test 10: /density appears in COMMANDS (available for TUI completion)."""
+        assert "/density" in COMMANDS
 
     def test_sessions_appears_in_slash_completions(self):
         """Test 11: /sessions appears in COMMANDS (available for TUI completion)."""
@@ -1132,8 +1132,8 @@ class TestTuiOnlyField:
         assert hasattr(cmd, "keybind_hint")
         assert cmd.keybind_hint == "Ctrl+Shift+H"
 
-    def test_compact_has_tui_only_true(self):
-        cmd = resolve_command("compact")
+    def test_density_has_tui_only_true(self):
+        cmd = resolve_command("density")
         assert cmd is not None
         assert cmd.tui_only is True
 
@@ -1190,8 +1190,8 @@ class TestTuiHelpLines:
                 assert f"/{cmd.name}" not in line_commands, \
                     f"gateway_only /{cmd.name} should not appear in tui_help_lines()"
 
-    def test_compact_tui_only_not_in_gateway_help_lines(self):
-        """Test 48: gateway_help_lines() does not contain /compact."""
+    def test_density_tui_only_not_in_gateway_help_lines(self):
+        """Test 48: gateway_help_lines() does not contain /density."""
         lines = gateway_help_lines()
         joined = "\n".join(lines)
-        assert "/compact" not in joined
+        assert "/density" not in joined

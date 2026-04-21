@@ -278,12 +278,12 @@ async def test_compact_off_restores_chevron() -> None:
 
 
 @pytest.mark.asyncio
-async def test_known_slash_commands_includes_compact() -> None:
+async def test_known_slash_commands_includes_density() -> None:
     from hermes_cli.tui.app import _KNOWN_SLASH_COMMANDS
-    assert "/compact" in _KNOWN_SLASH_COMMANDS
+    assert "/density" in _KNOWN_SLASH_COMMANDS
 
 
 @pytest.mark.asyncio
-async def test_known_slash_commands_key_handler_includes_compact() -> None:
+async def test_known_slash_commands_key_handler_includes_density() -> None:
     from hermes_cli.tui._app_key_handler import _KNOWN_SLASH_COMMANDS
-    assert "/compact" in _KNOWN_SLASH_COMMANDS
+    assert "/density" in _KNOWN_SLASH_COMMANDS

@@ -27,7 +27,7 @@ import threading
 _KNOWN_SLASH_COMMANDS: frozenset[str] = frozenset([
     "/loop", "/schedule", "/anim", "/yolo", "/verbose",
     "/model", "/reasoning", "/skin", "/fast", "/easteregg",
-    "/help", "/queue", "/btw", "/clear", "/compact",
+    "/help", "/queue", "/btw", "/clear", "/density",
 ])
 
 # File-touching tool names — used by watch_spinner_label to extract active file
@@ -1614,7 +1614,7 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
         if self._compact_manual is None or not self.compact:
             self._compact_manual = True
             self.compact = True
-            self._flash_hint("Compact ON  (/compact to toggle)", 1.5)
+            self._flash_hint("Compact ON  (/density to toggle)", 1.5)
         else:
             self._compact_manual = None  # restore auto
             w, h = self.size.width, self.size.height

@@ -14,7 +14,7 @@ from hermes_cli.tui._browse_types import BrowseAnchorType
 _KNOWN_SLASH_COMMANDS: frozenset[str] = frozenset([
     "/loop", "/schedule", "/anim", "/yolo", "/verbose",
     "/model", "/reasoning", "/skin", "/fast", "/easteregg",
-    "/help", "/queue", "/btw", "/clear", "/compact",
+    "/help", "/queue", "/btw", "/clear", "/density",
 ])
 
 

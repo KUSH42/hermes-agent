@@ -1,6 +1,6 @@
 """Info overlay widgets for slash command TUI integration.
 
-HelpOverlay, UsageOverlay, CommandsOverlay, ModelOverlay are all info overlays:
+HelpOverlay, UsageOverlay, CommandsOverlay are all info overlays:
 - layer: overlay; dock: top; display: none by default
 - shown by adding --visible class, hidden by removing it
 - dismiss with Esc/q; action_dismiss restores focus to HermesInput
@@ -146,7 +146,7 @@ class UsageOverlay(Widget):
         dock: top;
         display: none;
         height: auto;
-        max-height: 20;
+        max-height: 26;
         width: 1fr;
         max-width: 60;
         margin: 1 2;
@@ -162,55 +162,102 @@ class UsageOverlay(Widget):
         # q removed: UsageOverlay does not capture focus (HermesInput retains it).
         # With priority=True, q would insert into HermesInput instead of dismissing.
         # Dismiss via Escape (handled by on_key Priority -2 in HermesApp).
+        # c copy: handled in _app_key_handler.py on_key, gated on --visible — same
+        # pattern as Escape dismissal.  overlay-level on_key never fires while
+        # HermesInput holds focus.
     ]
+
+    _BAR_WIDTH: int = 30
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._last_plain_text: str = ""
 
     def compose(self) -> ComposeResult:
         yield Static(id="usage-content")
 
-    def refresh_data(self, agent: object) -> None:
-        """Pull current usage from agent, update the inner Static."""
-        from agent.usage_pricing import CanonicalUsage, estimate_usage_cost
+    # ------------------------------------------------------------------
+    # Chart / stats helpers
+    # ------------------------------------------------------------------
 
-        input_tokens = getattr(agent, "session_input_tokens", 0) or 0
-        output_tokens = getattr(agent, "session_output_tokens", 0) or 0
-        cache_read = getattr(agent, "session_cache_read_tokens", 0) or 0
-        cache_write = getattr(agent, "session_cache_write_tokens", 0) or 0
-        total = getattr(agent, "session_total_tokens", 0) or 0
-        calls = getattr(agent, "session_api_calls", 0) or 0
-        model = getattr(agent, "model", "unknown")
+    def _build_chart(self, inp: int, cr: int, cw: int, out: int) -> str:
+        """Return Rich-markup horizontal bar chart section, or no-data note."""
+        total = inp + cr + cw + out
+        if total == 0:
+            return "  (no token data yet)"
+        buckets = [
+            ("Input      ", inp),
+            ("Cache Read ", cr),
+            ("Cache Write", cw),
+            ("Output     ", out),
+        ]
+        header = "[dim]── Token Breakdown " + "─" * 35 + "[/dim]"
+        rows = [header]
+        for label, count in buckets:
+            if count == 0:
+                continue
+            pct = count / total * 100
+            filled = round(pct / 100 * self._BAR_WIDTH)
+            filled = max(0, min(self._BAR_WIDTH, filled))
+            bar = "█" * filled + " " * (self._BAR_WIDTH - filled)
+            rows.append(f"{label} {bar} {count:,} ({pct:.0f}%)")
+        return "\n".join(rows)
 
-        compressor = getattr(agent, "context_compressor", None)
+    def _build_sparkline(self, turn_log: list[int]) -> str:
+        """Return sparkline line or empty string if fewer than 1 entry."""
+        SPARKS = "▁▂▃▄▅▆▇█"
+        n = len(turn_log)
+        if n == 0:
+            return ""
+        window = turn_log[-40:]  # cap at 40 entries
+        wn = len(window)
+        if wn == 1:
+            return "Context growth: █ (1 call)"
+        lo, hi = min(window), max(window)
+
+        def _spark(v: int) -> str:
+            if hi == lo:
+                return "█"
+            idx = int((v - lo) / (hi - lo) * 7)
+            return SPARKS[min(7, idx)]
+
+        chars = "".join(_spark(v) for v in window)
+        return f"Context growth: {chars} ({n} calls)"
+
+    def _build_stats(
+        self,
+        inp: int,
+        cr: int,
+        cw: int,
+        out: int,
+        total: int,
+        calls: int,
+        cost_result: object,
+        compressor: object | None,
+        agent: object,
+    ) -> str:
+        """Return numeric stats block as a Rich-markup string."""
         last_prompt = getattr(compressor, "last_prompt_tokens", 0) if compressor else 0
         ctx_len = getattr(compressor, "context_length", 0) if compressor else 0
         pct = min(100, last_prompt / ctx_len * 100) if ctx_len else 0
         compressions = getattr(compressor, "compression_count", 0) if compressor else 0
-
-        cost_result = estimate_usage_cost(
-            model,
-            CanonicalUsage(
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                cache_read_tokens=cache_read,
-                cache_write_tokens=cache_write,
-            ),
-            provider=getattr(agent, "provider", None),
-            base_url=getattr(agent, "base_url", None),
-        )
+        model = getattr(agent, "model", "unknown")
 
         lines = [
             f"[bold]Model:[/bold] {model}",
-            f"Input:        {input_tokens:>12,}",
-            f"Cache read:   {cache_read:>12,}",
-            f"Cache write:  {cache_write:>12,}",
-            f"Output:       {output_tokens:>12,}",
+            "",
+            f"Input:        {inp:>12,}",
+            f"Cache read:   {cr:>12,}",
+            f"Cache write:  {cw:>12,}",
+            f"Output:       {out:>12,}",
             f"Total tokens: {total:>12,}",
             f"API calls:    {calls:>12,}",
         ]
 
-        if cost_result.amount_usd is not None:
-            prefix = "~" if cost_result.status == "estimated" else ""
+        if getattr(cost_result, "amount_usd", None) is not None:
+            prefix = "~" if getattr(cost_result, "status", "") == "estimated" else ""
             lines.append(f"Cost:     {prefix}${float(cost_result.amount_usd):>12.4f}")
-        elif cost_result.status == "included":
+        elif getattr(cost_result, "status", "") == "included":
             lines.append("Cost:         included")
 
         rl_state = None
@@ -229,11 +276,118 @@ class UsageOverlay(Widget):
             f"Context: {last_prompt:,} / {ctx_len:,} ({pct:.0f}%)",
             f"Compressions: {compressions}",
         ]
+        return "\n".join(lines)
+
+    def _build_plain_text(
+        self,
+        inp: int,
+        cr: int,
+        cw: int,
+        out: int,
+        total: int,
+        calls: int,
+        cost_result: object,
+        compressor: object | None,
+        agent: object,
+        turn_log: list[int],
+    ) -> str:
+        """Plain-text copy (no Rich markup, no bar chart rows)."""
+        last_prompt = getattr(compressor, "last_prompt_tokens", 0) if compressor else 0
+        ctx_len = getattr(compressor, "context_length", 0) if compressor else 0
+        pct = min(100, last_prompt / ctx_len * 100) if ctx_len else 0
+        compressions = getattr(compressor, "compression_count", 0) if compressor else 0
+        model = getattr(agent, "model", "unknown")
+
+        lines = [
+            f"Model: {model}",
+            f"Input:        {inp:>12,}",
+            f"Cache Read:   {cr:>12,}",
+            f"Cache Write:  {cw:>12,}",
+            f"Output:       {out:>12,}",
+            f"Total tokens: {total:>12,}",
+            f"API calls:    {calls:>12,}",
+        ]
+
+        if getattr(cost_result, "amount_usd", None) is not None:
+            prefix = "~" if getattr(cost_result, "status", "") == "estimated" else ""
+            lines.append(f"Cost:     {prefix}${float(cost_result.amount_usd):>12.4f}")
+        elif getattr(cost_result, "status", "") == "included":
+            lines.append("Cost:         included")
+
+        lines += [
+            f"Context:      {last_prompt:,} / {ctx_len:,} ({pct:.0f}%)",
+            f"Compressions: {compressions}",
+        ]
+
+        # Sparkline text IS included in plain-text copy (sparkline chars copy cleanly)
+        sparkline = self._build_sparkline(turn_log)
+        if sparkline:
+            lines.append(sparkline)
+
+        return "\n".join(lines)
+
+    def _do_copy(self) -> None:
+        """Copy last-rendered plain-text stats to clipboard via app helper."""
+        try:
+            self.app._copy_text_with_hint(self._last_plain_text)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Main refresh
+    # ------------------------------------------------------------------
+
+    def refresh_data(self, agent: object) -> None:
+        """Pull current usage from agent, rebuild chart + stats, update Static."""
+        from agent.usage_pricing import CanonicalUsage, estimate_usage_cost
+
+        input_tokens = getattr(agent, "session_input_tokens", 0) or 0
+        output_tokens = getattr(agent, "session_output_tokens", 0) or 0
+        cache_read = getattr(agent, "session_cache_read_tokens", 0) or 0
+        cache_write = getattr(agent, "session_cache_write_tokens", 0) or 0
+        total = getattr(agent, "session_total_tokens", 0) or 0
+        calls = getattr(agent, "session_api_calls", 0) or 0
+
+        # Defensive read of turn log — absent on old agents (graceful degradation)
+        turn_log: list[int] = list(getattr(agent, "session_turn_token_log", []))
+
+        compressor = getattr(agent, "context_compressor", None)
+
+        cost_result = estimate_usage_cost(
+            getattr(agent, "model", "unknown"),
+            CanonicalUsage(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cache_read_tokens=cache_read,
+                cache_write_tokens=cache_write,
+            ),
+            provider=getattr(agent, "provider", None),
+            base_url=getattr(agent, "base_url", None),
+        )
+
+        chart_section = self._build_chart(input_tokens, cache_read, cache_write, output_tokens)
+        stats_section = self._build_stats(
+            input_tokens, cache_read, cache_write, output_tokens,
+            total, calls, cost_result, compressor, agent,
+        )
+        sparkline = self._build_sparkline(turn_log)
+        hint_line = "[dim]c copy · Esc dismiss[/dim]"
+
+        parts = [chart_section, stats_section]
+        if sparkline:
+            parts.append(sparkline)
+        parts.append(hint_line)
+        content = "\n".join(s for s in parts if s)
 
         try:
-            self.query_one("#usage-content", Static).update("\n".join(lines))
+            self.query_one("#usage-content", Static).update(content)
         except NoMatches:
             pass
+
+        self._last_plain_text = self._build_plain_text(
+            input_tokens, cache_read, cache_write, output_tokens,
+            total, calls, cost_result, compressor, agent, turn_log,
+        )
 
     def action_dismiss(self) -> None:
         self.remove_class("--visible")
@@ -255,35 +409,46 @@ class CommandsOverlay(Widget):
         height: auto;
         max-height: 30;
         width: 1fr;
+        max-width: 80;
         margin: 1 2;
         padding: 1 2;
         background: $surface;
         border: tall $primary 15%;
     }
     CommandsOverlay.--visible { display: block; }
+    CommandsOverlay > #commands-search {
+        height: 1;
+        margin-bottom: 1;
+    }
     CommandsOverlay > #commands-content {
         height: auto;
-        max-height: 26;
+        max-height: 24;
         overflow-y: auto;
     }
     """
 
     BINDINGS = [
         Binding("escape", "dismiss", priority=True),
-        # q removed: CommandsOverlay does not capture focus (HermesInput retains it).
-        # Dismiss via Escape (handled by on_key Priority -2 in HermesApp).
+        # priority=False: when #commands-search Input has focus, q inserts normally.
+        # When the overlay itself has focus, q fires dismiss.
+        Binding("q", "dismiss", priority=False),
     ]
 
     def compose(self) -> ComposeResult:
-        yield Static("[bold]Commands[/bold]  (Esc to dismiss)", id="commands-title")
+        yield Input(placeholder="Filter commands...", id="commands-search")
         yield Vertical(id="commands-content")
 
     def on_mount(self) -> None:
+        self._lines_cache: list[str] = []
         self._refresh_content()
 
     def _refresh_content(self) -> None:
         from hermes_cli.commands import tui_help_lines
-        lines = tui_help_lines()
+        self._lines_cache = tui_help_lines()
+        self._populate(self._lines_cache)
+
+    def _populate(self, lines: list[str]) -> None:
+        """Rebuild content list with a single batched mount."""
         try:
             container = self.query_one("#commands-content", Vertical)
         except NoMatches:
@@ -292,66 +457,24 @@ class CommandsOverlay(Widget):
         children = [Static(line) for line in lines] if lines else [Static("(no commands available)")]
         container.mount(*children)
 
-    def action_dismiss(self) -> None:
-        self.remove_class("--visible")
+    def show_overlay(self) -> None:
+        """Show overlay and focus the filter input."""
+        self.add_class("--visible")
         try:
-            from hermes_cli.tui.input_widget import HermesInput
-            self.app.query_one(HermesInput).focus()
-        except (NoMatches, ImportError):
-            pass
-
-
-class ModelOverlay(Widget):
-    """Current model info display. Shown by /model (no args); dismissed with Esc."""
-
-    DEFAULT_CSS = """
-    ModelOverlay {
-        layer: overlay;
-        dock: top;
-        display: none;
-        height: auto;
-        max-height: 16;
-        width: 1fr;
-        max-width: 70;
-        margin: 1 2;
-        padding: 1 2;
-        background: $surface;
-        border: tall $primary 15%;
-    }
-    ModelOverlay.--visible { display: block; }
-    """
-
-    BINDINGS = [
-        Binding("escape", "dismiss", priority=True),
-        # q removed: ModelOverlay does not capture focus (HermesInput retains it).
-        # Dismiss via Escape (handled by on_key Priority -2 in HermesApp).
-    ]
-
-    def compose(self) -> ComposeResult:
-        yield Static(id="model-content")
-
-    def refresh_data(self, cli: object) -> None:
-        """Pull current model/provider info from CLI object."""
-        agent = getattr(cli, "agent", None)
-        model = getattr(agent, "model", None) or getattr(cli, "model", "unknown")
-        provider = getattr(agent, "provider", None) or getattr(cli, "provider", "unknown")
-        base_url = getattr(agent, "base_url", None) or ""
-
-        lines = [
-            f"[bold]Current model:[/bold] {model}",
-            f"Provider:      {provider}",
-        ]
-        if base_url:
-            lines.append(f"Base URL:      {base_url}")
-        lines += [
-            "",
-            "Use [bold]/model <name>[/bold] to switch.",
-        ]
-
-        try:
-            self.query_one("#model-content", Static).update("\n".join(lines))
+            inp = self.query_one("#commands-search", Input)
+            inp.value = ""
+            inp.focus()
         except NoMatches:
             pass
+        self._populate(self._lines_cache)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        query = event.value.lower().strip()
+        if not query:
+            self._populate(self._lines_cache)
+            return
+        filtered = [line for line in self._lines_cache if query in line.lower()]
+        self._populate(filtered)
 
     def action_dismiss(self) -> None:
         self.remove_class("--visible")
@@ -848,19 +971,52 @@ def _dismiss_overlay_and_focus_input(overlay: Widget) -> None:
         pass
 
 
-class VerbosePickerOverlay(Widget):
-    """Tool progress mode picker. Shown by /verbose; dismissed with Esc or selection.
+class PickerOverlay(Widget):
+    """Abstract base for single-selection config-picker overlays.
 
-    Config key: display.tool_progress — values: off | new | all | verbose
+    Subclasses must provide:
+      - title        : str                       — shown at top in accent colour
+      - choices      : list[tuple[str, str]]     — (value, display_label) pairs
+      - current_value: str                       — value pre-selected on open
+      - on_confirm(value: str) -> None           — called when user selects an item
+
+    Optionally override:
+      - on_highlight(value: str) -> None   — called on arrow-key nav (live preview)
+      - refresh_data(cli) -> None          — populate choices / sync from config before open
     """
 
+    # --- Subclass interface ---
+    title: str = ""
+    choices: list[tuple[str, str]] = []
+    current_value: str = ""
+
+    def on_confirm(self, value: str) -> None:
+        """Called when user presses Enter on an item. Must be overridden."""
+        raise NotImplementedError
+
+    def on_highlight(self, value: str) -> None:
+        """Called when arrow-key focus changes. No-op in base; override for live preview."""
+
+    def refresh_data(self, cli: object) -> None:
+        """Sync choices and current_value from config before the overlay opens.
+
+        Base implementation calls _render_options() to repaint the OptionList.
+        Subclasses must call super().refresh_data(cli) AFTER updating self.choices
+        and self.current_value to get the repaint.
+        """
+        self._render_options()
+
+    # --- Base implementation ---
+
+    _css_prefix: str = "picker"
+
     DEFAULT_CSS = """
-    VerbosePickerOverlay {
+    PickerOverlay {
         layer: overlay;
         dock: top;
         display: none;
         height: auto;
-        max-height: 12;
+        max-height: 14;
         width: 1fr;
         max-width: 80;
         margin: 1 2;
@@ -868,66 +1024,94 @@ class VerbosePickerOverlay(Widget):
         background: $surface;
         border: tall $primary 15%;
     }
-    VerbosePickerOverlay.--visible { display: block; }
-    VerbosePickerOverlay > #vpo-header { color: $accent; }
+    PickerOverlay.--visible { display: block; }
+    PickerOverlay > .picker-header { color: $accent; }
     """
 
     BINDINGS = [Binding("escape", "dismiss", priority=True)]
 
-    _OPTIONS: list[tuple[str, str]] = [
+    def compose(self) -> ComposeResult:
+        yield Static(f"  {self.title}", classes="picker-header",
+                     id=f"{self._css_prefix}-header")
+        yield OptionList(id=f"{self._css_prefix}-list")
+
+    def on_mount(self) -> None:
+        self._render_options()
+
+    def _render_options(self) -> None:
+        """Rebuild the OptionList from self.choices and self.current_value."""
+        try:
+            ol = self.query_one(f"#{self._css_prefix}-list", OptionList)
+        except NoMatches:
+            return
+        ol.clear_options()
+        for value, label in self.choices:
+            marker = "● " if value == self.current_value else "  "
+            ol.add_option(Option(f"{marker}{label}",
+                                 id=f"{self._css_prefix}-opt-{value}"))
+        # Pre-select highlighted row
+        values = [v for v, _ in self.choices]
+        if self.current_value in values:
+            ol.highlighted = values.index(self.current_value)
+
+    def on_option_list_option_highlighted(
+            self, event: OptionList.OptionHighlighted) -> None:
+        event.stop()
+        prefix = f"{self._css_prefix}-opt-"
+        opt_id = event.option_id or ""
+        if opt_id.startswith(prefix):
+            self.on_highlight(opt_id[len(prefix):])
+
+    def on_option_list_option_selected(
+            self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        prefix = f"{self._css_prefix}-opt-"
+        opt_id = event.option_id or ""
+        if opt_id.startswith(prefix):
+            self.on_confirm(opt_id[len(prefix):])
+
+    def action_dismiss(self) -> None:
+        _dismiss_overlay_and_focus_input(self)
+
+
+class VerbosePickerOverlay(PickerOverlay):
+    """Tool progress mode picker. Shown by /verbose; dismissed with Esc or selection.
+
+    Config key: display.tool_progress — values: off | new | all | verbose
+    """
+
+    DEFAULT_CSS = """
+    VerbosePickerOverlay {
+        max-height: 12;
+    }
+    VerbosePickerOverlay.--visible { display: block; }
+    """
+
+    _css_prefix = "vpo"
+    title = "Tool progress"
+    choices: list[tuple[str, str]] = [
         ("off",     "off      — no streaming tool output"),
         ("new",     "new      — stream output for new tools only"),
         ("all",     "all      — stream all tool output"),
         ("verbose", "verbose  — stream + expanded collapse thresholds"),
     ]
 
-    def compose(self) -> ComposeResult:
-        yield Static("  Tool progress", id="vpo-header")
-        ol = OptionList(
-            *[Option(label, id=f"vpo-opt-{key}") for key, label in self._OPTIONS],
-            id="vpo-list",
-        )
-        yield ol
-
     def refresh_data(self, cli: object) -> None:
-        """Pre-select the current tool_progress value and add ● active marker."""
         cfg = _cfg_read_raw_config()
-        current = cfg.get("display", {}).get("tool_progress", "all")
-        try:
-            ol = self.query_one("#vpo-list", OptionList)
-            ol.clear_options()
-            keys = [k for k, _ in self._OPTIONS]
-            for key, label in self._OPTIONS:
-                # C4: prefix active option with ● so it's immediately visible
-                marker = "● " if key == current else "  "
-                ol.add_option(Option(f"{marker}{label}", id=f"vpo-opt-{key}"))
-            idx = keys.index(current) if current in keys else 2  # default "all"
-            ol.highlighted = idx
-        except (NoMatches, ValueError):
-            pass
+        self.current_value = cfg.get("display", {}).get("tool_progress", "all")
+        super().refresh_data(cli)
 
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        """Apply the selected tool_progress mode and dismiss."""
-        event.stop()
-        opt_id = event.option_id or ""
-        if opt_id.startswith("vpo-opt-"):
-            mode = opt_id[len("vpo-opt-"):]
-            self._apply_and_dismiss(mode)
-
-    def _apply_and_dismiss(self, mode: str) -> None:
+    def on_confirm(self, value: str) -> None:
         try:
             cfg = _cfg_read_raw_config()
-            _cfg_set_nested(cfg, "display.tool_progress", mode)
+            _cfg_set_nested(cfg, "display.tool_progress", value)
             _cfg_save_config(cfg)
         except Exception:
             pass
         try:
-            self.app._flash_hint(f"  Tool progress → {mode}", 2.0)
+            self.app._flash_hint(f"  Tool progress → {value}", 2.0)
         except Exception:
             pass
-        _dismiss_overlay_and_focus_input(self)
-
-    def action_dismiss(self) -> None:
         _dismiss_overlay_and_focus_input(self)
 
 
@@ -1153,7 +1337,7 @@ class ReasoningPickerOverlay(Widget):
         _dismiss_overlay_and_focus_input(self)
 
 
-class ModelPickerOverlay(Widget):
+class ModelPickerOverlay(PickerOverlay):
     """Interactive model picker. Shown by /model (bare); /model <name> bypasses.
 
     On Enter, injects /model <name> back through HermesInput.action_submit()
@@ -1162,33 +1346,19 @@ class ModelPickerOverlay(Widget):
 
     DEFAULT_CSS = """
     ModelPickerOverlay {
-        layer: overlay;
-        dock: top;
-        display: none;
-        height: auto;
         max-height: 24;
-        width: 1fr;
-        max-width: 80;
-        margin: 1 2;
-        padding: 1 2;
-        background: $surface;
-        border: tall $primary 15%;
     }
     ModelPickerOverlay.--visible { display: block; }
-    ModelPickerOverlay > #mpo-header { color: $accent; }
     ModelPickerOverlay > #mpo-current { color: $text-muted; }
     ModelPickerOverlay > #mpo-list { height: auto; max-height: 18; }
     """
 
-    BINDINGS = [Binding("escape", "dismiss", priority=True)]
-
-    def __init__(self, **kwargs: object) -> None:
-        super().__init__(**kwargs)
-        self._models: list[str] = []
-        self._current_model: str = ""
+    _css_prefix = "mpo"
+    title = "Model"
 
     def compose(self) -> ComposeResult:
-        yield Static("  Model", id="mpo-header")
+        # Override fully — #mpo-current sits between header and list
+        yield Static(f"  {self.title}", classes="picker-header", id="mpo-header")
         yield Static("", id="mpo-current")
         yield OptionList(id="mpo-list")
 
@@ -1203,51 +1373,32 @@ class ModelPickerOverlay(Widget):
         )
         if current and current not in models:
             models.insert(0, current)
-        self._models = models
-        self._current_model = current
+        self.choices = [(m, m) for m in models]
+        self.current_value = current
 
         try:
             self.query_one("#mpo-current", Static).update(f"Current: {current}")
         except NoMatches:
             pass
 
-        try:
-            ol = self.query_one("#mpo-list", OptionList)
-            ol.clear_options()
-            for m in models:
-                ol.add_option(Option(m, id=f"mpo-opt-{m}"))
-            # Pre-select current
-            if current in models:
-                ol.highlighted = models.index(current)
-        except NoMatches:
-            pass
+        super().refresh_data(cli)   # calls _render_options()
 
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        event.stop()
-        opt_id = event.option_id or ""
-        if opt_id.startswith("mpo-opt-"):
-            name = opt_id[len("mpo-opt-"):]
-            self._select_model(name)
-
-    def _select_model(self, name: str) -> None:
+    def on_confirm(self, value: str) -> None:
         try:
             from hermes_cli.tui.input_widget import HermesInput
             inp = self.app.query_one(HermesInput)
-            inp.value = f"/model {name}"
+            inp.value = f"/model {value}"
             inp.action_submit()
         except (NoMatches, ImportError):
             pass
         try:
-            self.app._flash_hint(f"  Model → {name}", 2.0)
+            self.app._flash_hint(f"  Model → {value}", 2.0)
         except Exception:
             pass
         _dismiss_overlay_and_focus_input(self)
 
-    def action_dismiss(self) -> None:
-        _dismiss_overlay_and_focus_input(self)
 
-
-class SkinPickerOverlay(Widget):
+class SkinPickerOverlay(PickerOverlay):
     """Skin picker with live preview. Shown by /skin (bare); /skin <name> bypasses.
 
     Arrow navigation previews skins live. Escape reverts to original skin.
@@ -1256,35 +1407,25 @@ class SkinPickerOverlay(Widget):
 
     DEFAULT_CSS = """
     SkinPickerOverlay {
-        layer: overlay;
-        dock: top;
-        display: none;
-        height: auto;
         max-height: 24;
-        width: 1fr;
-        max-width: 80;
-        margin: 1 2;
-        padding: 1 2;
-        background: $surface;
-        border: tall $primary 15%;
     }
     SkinPickerOverlay.--visible { display: block; }
-    SkinPickerOverlay > #spo-header { color: $accent; }
     SkinPickerOverlay > #spo-current { color: $text-muted; }
     SkinPickerOverlay > #spo-list { height: auto; max-height: 18; }
     """
 
-    BINDINGS = [Binding("escape", "dismiss", priority=True)]
+    _css_prefix = "spo"
+    title = "Skin"
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
-        self._skins: list[str] = []
         self._original_skin: str = "default"
         self._original_css_vars: dict[str, str] = {}
         self._original_component_vars: dict[str, str] = {}
 
     def compose(self) -> ComposeResult:
-        yield Static("  Skin", id="spo-header")
+        # Override fully — #spo-current sits between header and list
+        yield Static(f"  {self.title}", classes="picker-header", id="spo-header")
         yield Static("", id="spo-current")
         yield OptionList(id="spo-list")
 
@@ -1293,6 +1434,7 @@ class SkinPickerOverlay(Widget):
         cfg = _cfg_read_raw_config()
         current = cfg.get("display", {}).get("skin", "default")
         self._original_skin = current
+        self.current_value = current
 
         # Snapshot current theme vars for escape-revert
         tm = getattr(self.app, "_theme_manager", None)
@@ -1310,37 +1452,21 @@ class SkinPickerOverlay(Widget):
             )
         if "default" not in names:
             names.insert(0, "default")
-        self._skins = names
+        self.choices = [(n, n) for n in names]
 
         try:
             self.query_one("#spo-current", Static).update(f"Current: {current}")
         except NoMatches:
             pass
 
-        try:
-            ol = self.query_one("#spo-list", OptionList)
-            ol.clear_options()
-            for name in names:
-                ol.add_option(Option(name, id=f"spo-opt-{name}"))
-            if current in names:
-                ol.highlighted = names.index(current)
-        except NoMatches:
-            pass
+        super().refresh_data(cli)   # calls _render_options()
 
-    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+    def on_highlight(self, value: str) -> None:
         """Live preview as user navigates with arrow keys."""
-        event.stop()
-        opt_id = event.option_id or ""
-        if opt_id.startswith("spo-opt-"):
-            name = opt_id[len("spo-opt-"):]
-            self._apply_skin_preview(name)
+        self._apply_skin_preview(value)
 
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        event.stop()
-        opt_id = event.option_id or ""
-        if opt_id.startswith("spo-opt-"):
-            name = opt_id[len("spo-opt-"):]
-            self._confirm_skin(name)
+    def on_confirm(self, value: str) -> None:
+        self._confirm_skin(value)
 
     def _apply_skin_preview(self, name: str) -> None:
         try:
@@ -1371,7 +1497,7 @@ class SkinPickerOverlay(Widget):
         _dismiss_overlay_and_focus_input(self)
 
     def action_dismiss(self) -> None:
-        """Revert to original skin on escape."""
+        """Revert to original skin on escape before base dismissal."""
         # C2: apply_skin() → ThemeManager.load_dict() pops "component_vars" and treats
         # all remaining keys as flat CSS variable overrides (_css_vars). The original
         # skin data is saved as separate _css_vars + _component_vars dicts so we must
@@ -1381,4 +1507,4 @@ class SkinPickerOverlay(Widget):
             self.app.apply_skin(combined)
         except Exception:
             pass
-        _dismiss_overlay_and_focus_input(self)
+        super().action_dismiss()   # calls _dismiss_overlay_and_focus_input

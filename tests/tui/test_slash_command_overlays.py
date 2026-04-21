@@ -42,10 +42,10 @@ from hermes_cli.tui.app import HermesApp
 from hermes_cli.tui.overlays import (
     CommandsOverlay,
     HelpOverlay,
-    ModelOverlay,
     ModelPickerOverlay,
     UsageOverlay,
 )
+from textual.containers import Vertical
 from textual.widgets import Input, Static
 
 
@@ -841,3 +841,217 @@ async def test_slash_only_cleared_on_natural_context():
         await pilot.pause()
         assert not co.has_class("--visible")
         assert not co.has_class("--slash-only")
+
+
+# ---------------------------------------------------------------------------
+# T1–T13  CommandsOverlay filter upgrade
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_commands_overlay_has_filter_input():
+    """T1: filter Input present after mount."""
+    app = _make_app()
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        ov = app.query_one(CommandsOverlay)
+        inp = ov.query_one("#commands-search", Input)
+        assert inp is not None
+
+
+@pytest.mark.asyncio
+async def test_commands_overlay_focuses_input_on_open():
+    """T2: filter Input focused after show_overlay()."""
+    app = _make_app()
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        ov = app.query_one(CommandsOverlay)
+        ov.show_overlay()
+        await pilot.pause()
+        inp = ov.query_one("#commands-search", Input)
+        assert app.focused is inp
+
+
+@pytest.mark.asyncio
+async def test_commands_overlay_empty_filter_shows_all():
+    """T3: empty filter shows all commands."""
+    app = _make_app()
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        ov = app.query_one(CommandsOverlay)
+        ov.show_overlay()
+        await pilot.pause()
+        content = ov.query_one("#commands-content", Vertical)
+        all_count = len(list(content.query(Static)))
+        assert all_count > 0
+
+
+@pytest.mark.asyncio
+async def test_commands_overlay_filter_narrows_results():
+    """T4: typing filter narrows results."""
+    app = _make_app()
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        ov = app.query_one(CommandsOverlay)
+        ov.show_overlay()
+        await pilot.pause()
+        content = ov.query_one("#commands-content", Vertical)
+        all_count = len(list(content.query(Static)))
+        # Type a query that matches only a subset of commands
+        inp = ov.query_one("#commands-search", Input)
+        inp.value = "help"
+        await pilot.pause()
+        filtered_count = len(list(content.query(Static)))
+        assert 0 < filtered_count <= all_count
+
+
+@pytest.mark.asyncio
+async def test_commands_overlay_filter_no_results_empty_state():
+    """T5: filter with no matches shows empty-state Static."""
+    app = _make_app()
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        ov = app.query_one(CommandsOverlay)
+        ov.show_overlay()
+        await pilot.pause()
+        inp = ov.query_one("#commands-search", Input)
+        inp.value = "xyzzy_no_match_12345"
+        await pilot.pause()
+        content = ov.query_one("#commands-content", Vertical)
+        children = list(content.query(Static))
+        assert len(children) == 1
+        assert "no commands available" in str(children[0].render()).lower()
+
+
+@pytest.mark.asyncio
+async def test_commands_overlay_clear_filter_restores_full_list():
+    """T6: clearing filter restores full list."""
+    app = _make_app()
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        ov = app.query_one(CommandsOverlay)
+        ov.show_overlay()
+        await pilot.pause()
+        content = ov.query_one("#commands-content", Vertical)
+        all_count = len(list(content.query(Static)))
+        inp = ov.query_one("#commands-search", Input)
+        inp.value = "help"
+        await pilot.pause()
+        inp.value = ""
+        await pilot.pause()
+        restored_count = len(list(content.query(Static)))
+        assert restored_count == all_count
+
+
+@pytest.mark.asyncio
+async def test_commands_overlay_esc_dismisses():
+    """T7: Esc dismisses overlay."""
+    app = _make_app()
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        ov = app.query_one(CommandsOverlay)
+        ov.show_overlay()
+        await pilot.pause()
+        assert ov.has_class("--visible")
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not ov.has_class("--visible")
+
+
+@pytest.mark.asyncio
+async def test_commands_overlay_dismiss_restores_hermes_input_focus():
+    """T8: dismiss returns focus to HermesInput."""
+    from hermes_cli.tui.input_widget import HermesInput
+    app = _make_app()
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        ov = app.query_one(CommandsOverlay)
+        ov.show_overlay()
+        await pilot.pause()
+        ov.action_dismiss()
+        await pilot.pause()
+        assert isinstance(app.focused, HermesInput)
+
+
+@pytest.mark.asyncio
+async def test_commands_overlay_reopen_clears_previous_query():
+    """T9: reopening clears previous query."""
+    app = _make_app()
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        ov = app.query_one(CommandsOverlay)
+        ov.show_overlay()
+        await pilot.pause()
+        inp = ov.query_one("#commands-search", Input)
+        inp.value = "help"
+        await pilot.pause()
+        ov.action_dismiss()
+        await pilot.pause()
+        ov.show_overlay()
+        await pilot.pause()
+        inp2 = ov.query_one("#commands-search", Input)
+        assert inp2.value == ""
+
+
+@pytest.mark.asyncio
+async def test_commands_overlay_reopen_shows_full_list():
+    """T10: full list shown after reopen (not filtered remnant)."""
+    app = _make_app()
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        ov = app.query_one(CommandsOverlay)
+        ov.show_overlay()
+        await pilot.pause()
+        content = ov.query_one("#commands-content", Vertical)
+        all_count = len(list(content.query(Static)))
+        # Filter to a subset, dismiss, reopen
+        inp = ov.query_one("#commands-search", Input)
+        inp.value = "help"
+        await pilot.pause()
+        ov.action_dismiss()
+        await pilot.pause()
+        ov.show_overlay()
+        await pilot.pause()
+        restored_count = len(list(content.query(Static)))
+        assert restored_count == all_count
+
+
+@pytest.mark.asyncio
+async def test_commands_slash_command_calls_show_overlay():
+    """T11: /commands slash command calls show_overlay()."""
+    from unittest.mock import patch
+    app = _make_app()
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        ov = app.query_one(CommandsOverlay)
+        with patch.object(ov, "show_overlay", wraps=ov.show_overlay) as mock_show:
+            await _submit(pilot, app, "/commands")
+            await pilot.pause()
+            mock_show.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_commands_overlay_filter_case_insensitive():
+    """T12: filter is case-insensitive."""
+    app = _make_app()
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        ov = app.query_one(CommandsOverlay)
+        ov.show_overlay()
+        await pilot.pause()
+        inp = ov.query_one("#commands-search", Input)
+        content = ov.query_one("#commands-content", Vertical)
+        inp.value = "HELP"
+        await pilot.pause()
+        count_upper = len(list(content.query(Static)))
+        inp.value = "help"
+        await pilot.pause()
+        count_lower = len(list(content.query(Static)))
+        assert count_upper == count_lower
+        assert count_upper > 0
+
+
+def test_commands_overlay_q_binding_present():
+    """T13: q binding present and non-priority."""
+    bindings = {b.key: b for b in CommandsOverlay.BINDINGS}
+    assert "q" in bindings
+    assert bindings["q"].priority is False

@@ -73,7 +73,8 @@ def test_frame_compute_all_engines_under_8ms():
     """Original 8 engines complete a frame in < 8ms on a standard 80×24 terminal canvas.
     New stateful engines are excluded (they may take longer on first frame due to init).
     """
-    _ORIGINAL_KEYS = {"dna", "rotating", "classic", "morph", "vortex", "wave", "thick", "kaleidoscope"}
+    # "wave" replaced by WaveInterferenceEngine (v2 heavier engine) — excluded
+    _ORIGINAL_KEYS = {"dna", "rotating", "classic", "morph", "vortex", "thick", "kaleidoscope"}
     params = _params(w=160, h=96)  # 80×24 terminal → 160×96 braille pixels
     for key, engine_cls in _ENGINES.items():
         if key not in _ORIGINAL_KEYS:
@@ -853,7 +854,7 @@ def test_position_top_right_y_offset_is_1():
     with patch.object(type(ov), "app", new_callable=PropertyMock, return_value=mock_app):
         ov._apply_layout()
     _, y_off = offsets_set[-1]
-    assert y_off == 1
+    assert y_off == 2  # top_safe(0, no nameplate) + position_margin(2 default)
 
 
 def test_show_propagates_vertical_to_anim_params():

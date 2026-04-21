@@ -782,8 +782,12 @@ class HermesApp(App):
             return
         from hermes_cli.tui.min_size_overlay import MinSizeBackdrop
         from hermes_cli.tui.resize_utils import THRESHOLD_ULTRA_NARROW, THRESHOLD_MIN_HEIGHT
+        from textual.app import ScreenStackError
         too_small = w < THRESHOLD_ULTRA_NARROW or h < THRESHOLD_MIN_HEIGHT
-        existing = self.screen.query("MinSizeBackdrop")
+        try:
+            existing = self.screen.query("MinSizeBackdrop")
+        except ScreenStackError:
+            return
         if too_small and not existing:
             self.screen.mount(MinSizeBackdrop(w, h))
         elif too_small and existing:
@@ -2534,6 +2538,12 @@ class HermesApp(App):
         self._set_hint_phase(self._compute_hint_phase())
 
     def watch_approval_state(self, value: ChoiceOverlayState | None) -> None:
+        # Phase A3: signal waiting/thinking to drawille overlay
+        try:
+            from hermes_cli.tui.drawille_overlay import DrawilleOverlay
+            self.query_one(DrawilleOverlay).signal("waiting" if value is not None else "thinking")
+        except Exception:
+            pass
         try:
             w = self.query_one(ApprovalWidget)
             w.display = value is not None
@@ -2862,6 +2872,12 @@ class HermesApp(App):
         msg = self._current_message_panel()
         if msg is not None:
             msg.open_thinking_block(title)
+        # Signal reasoning phase to overlay
+        try:
+            from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO
+            self.query_one(_DO).signal("reasoning")
+        except Exception:
+            pass
 
     def append_reasoning(self, delta: str) -> None:
         """Append reasoning delta. Safe to call from any thread via call_from_thread."""
@@ -2874,6 +2890,13 @@ class HermesApp(App):
         msg = self._current_message_panel()
         if msg is not None:
             msg.close_thinking_block()
+        # Re-signal thinking only if agent is still running
+        if self.agent_running:
+            try:
+                from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO
+                self.query_one(_DO).signal("thinking")
+            except Exception:
+                pass
 
     # --- ToolBlock mounting ---
 
@@ -3113,11 +3136,11 @@ class HermesApp(App):
                 self.call_after_refresh(panel.scroll_end, animate=False)
         except NoMatches:
             pass
-        # v2 heat injection: tool complete → demote to "thinking" level
+        # v2 heat injection: tool complete → "error" or demote to "thinking" level
         try:
             from hermes_cli.tui.drawille_overlay import DrawilleOverlay
             ov = self.query_one(DrawilleOverlay)
-            ov.signal("thinking")
+            ov.signal("error" if is_error else "thinking")
         except Exception:
             pass
 
@@ -3158,6 +3181,13 @@ class HermesApp(App):
             if not panel._user_scrolled_up:
                 self.call_after_refresh(panel.scroll_end, animate=False)
         except NoMatches:
+            pass
+        # v2 heat injection: tool complete → "error" or demote to "thinking" level
+        try:
+            from hermes_cli.tui.drawille_overlay import DrawilleOverlay
+            ov = self.query_one(DrawilleOverlay)
+            ov.signal("error" if is_error else "thinking")
+        except Exception:
             pass
 
     def remove_streaming_tool_block(self, tool_call_id: str) -> None:
@@ -4450,6 +4480,33 @@ class HermesApp(App):
                     self._drawille_show_hide(getattr(self, "agent_running", False))
                 self.set_timer(10.0, _revert_sdf)
             except Exception:
+                pass
+            return
+
+        if sub == "preset":
+            from hermes_cli.tui.drawille_overlay import (
+                DrawilleOverlay, _overlay_config as _oc, _PRESETS,
+            )
+            import dataclasses as _dc
+            preset_name = args[1].lower() if len(args) > 1 else ""
+            if not preset_name:
+                self._flash_hint(f"Presets: {', '.join(list(_PRESETS) + ['off'])}", 4.0)
+                return
+            if preset_name == "off":
+                self._persist_anim_config({"enabled": False})
+                return
+            preset_dict = _PRESETS.get(preset_name)
+            if preset_dict is None:
+                self._flash_hint(f"Unknown preset — try: {', '.join(_PRESETS)}", 2.5)
+                return
+            current_cfg = _oc()
+            merged = {**_dc.asdict(current_cfg), **preset_dict}
+            self._persist_anim_config(merged)
+            try:
+                ov = self.query_one(DrawilleOverlay)
+                ov._do_hide()
+                ov.show(_oc())
+            except NoMatches:
                 pass
             return
 

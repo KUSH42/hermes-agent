@@ -49,7 +49,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
     """
 
     BINDINGS = [
-        Binding("ctrl+a",       "select_all",  "Select all",  show=False),
+        Binding("ctrl+shift+a", "select_all",  "Select all",  show=False),
         Binding("ctrl+shift+z", "redo",        "Redo",        show=False),
     ]
 

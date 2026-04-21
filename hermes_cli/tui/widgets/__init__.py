@@ -75,20 +75,29 @@ from .utils import (  # noqa: F401
 )
 
 from .renderers import (  # noqa: F401
-    CodeBlockFooter,
     CopyableBlock,
     CopyableRichLog,
-    InlineImage,
-    InlineImageBar,
-    InlineProseLog,
-    InlineThumbnail,
     LiveLineWidget,
-    MathBlockWidget,
     PlainRule,
-    StreamingCodeBlock,
     TitledRule,
     _CopyBtn,
     _fade_rule,
+)
+
+from .code_blocks import (  # noqa: F401
+    CodeBlockFooter,
+    StreamingCodeBlock,
+)
+
+from .inline_media import (  # noqa: F401
+    InlineImage,
+    InlineImageBar,
+    InlineThumbnail,
+)
+
+from .prose import (  # noqa: F401
+    InlineProseLog,
+    MathBlockWidget,
 )
 
 from .message_panel import (  # noqa: F401

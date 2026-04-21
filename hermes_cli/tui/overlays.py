@@ -816,13 +816,12 @@ class ToolPanelHelpOverlay(Widget):
         self.add_class("--visible")
 
     def hide_overlay(self) -> None:
-        # C1: overlay is pre-mounted at app compose time; just hide it, don't remove.
-        self.remove_class("--visible")
+        self.remove()
 
     def on_key(self, event: "object") -> None:
         key = getattr(event, "key", None)
         if key in ("escape", "question_mark"):
-            self.hide_overlay()
+            self.remove()
             getattr(event, "stop", lambda: None)()
 
 

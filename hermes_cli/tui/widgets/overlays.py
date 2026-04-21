@@ -59,11 +59,15 @@ class CountdownMixin:
     # Initial total seconds — set from state.remaining in each widget's update().
     # Used to compute the ▓▒░ fill ratio.
     _countdown_total: int = 30
+    # Wall-clock start time for smooth lerp color (set when countdown begins).
+    _countdown_start_time: float = 0.0
 
     def _start_countdown(self) -> None:
         """Call from on_mount(). Starts the 1-second tick timer."""
         if self._countdown_timer is not None:
             return  # already running
+        import time as _time
+        self._countdown_start_time = _time.monotonic()
         self._countdown_timer = self.set_interval(1.0, self._tick_countdown)
 
     def on_unmount(self) -> None:
@@ -116,12 +120,21 @@ class CountdownMixin:
         else:
             bar_color = "#ef5350"  # $error critical
 
+        import os as _os
+        no_unicode = _os.environ.get("HERMES_NO_UNICODE", "")
         from rich.style import Style
         label = f"{remaining:>2}s"
         label_width = len(label) + 1   # leading space + label
         bar_width = max(8, width - label_width)
 
         result = Text()
+        # Urgency glyph prefix (skipped when unicode disabled)
+        if not no_unicode:
+            if remaining <= 1:
+                result.append("⚠⚠ ", Style(color="#ef5350", bold=True))
+            elif remaining <= 3:
+                result.append("⚠ ", Style(color="#FFA726", bold=True))
+
         ratio = min(1.0, remaining / max(1, total))
         filled_cells = int(bar_width * ratio)
 
@@ -755,6 +768,19 @@ class KeymapOverlay(Widget):
         "  Click reasoning                 Collapse / expand\n"
         "  Undo last turn                  [dim]\\[Alt+Z][/dim]\n"
         "  Toggle FPS HUD                  [dim]\\[F8][/dim]\n"
+        "\n"
+        "[bold $text]Tool Panel[/bold $text]\n"
+        "  Toggle collapse                 [dim]\\[Enter][/dim]  [dim]\\[Space][/dim]\n"
+        "  Scroll body                     [dim]\\[j][/dim]  [dim]\\[k][/dim]  [dim]\\[J][/dim]  [dim]\\[K][/dim]\n"
+        "  Rerun tool                      [dim]\\[r][/dim]\n"
+        "  Copy output                     [dim]\\[c][/dim]  [dim]\\[C][/dim]  [dim]\\[H][/dim]\n"
+        "  Help overlay                    [dim]\\[?][/dim]\n"
+        "\n"
+        "[bold $text]Mouse & Right-click[/bold $text]\n"
+        "  Right-click tool header         Context menu\n"
+        "  Ctrl+click                      Open file/URL\n"
+        "  Middle-click                    Paste primary selection\n"
+        "  Scroll wheel                    Scroll output\n"
         "\n"
         "[bold $text]System[/bold $text]\n"
         "  This help                       [dim]\\[F1][/dim]\n"

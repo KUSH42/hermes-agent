@@ -199,6 +199,8 @@ class HintBar(Widget):
         if not getattr(self.app, "_animations_enabled", True):
             self.refresh()
             return
+        if getattr(self.app, "has_class", lambda *a: False)("reduced-motion"):
+            return
         key_color = self._get_key_color()
         base_text, skip = _build_streaming_hint(key_color)
         self._shimmer_base = base_text
@@ -298,6 +300,9 @@ class StatusBar(PulseMixin, Widget):
             f"[bold {k}]@[/][dim]file[/dim]{sep}[bold {k}]/[/][dim]command[/dim]{sep}[bold {k}]⇥[/] [dim]accept[/dim]",
             f"[bold {k}]^L[/] [dim]clear[/dim]{sep}[bold {k}]^K[/] [dim]new session[/dim]",
             tip5,
+            f"[bold {k}]Alt+↑↓[/] [dim]browse turns[/dim]{sep}[bold {k}]b[/] [dim]browse mode[/dim]",
+            f"[bold {k}]F8[/] [dim]toggle FPS HUD[/dim]{sep}[bold {k}]^B[/] [dim]animation config[/dim]",
+            f"[bold {k}]/anim[/] [dim]animation engines[/dim]{sep}[bold {k}]?[/] [dim]tool panel help[/dim]",
         ]
         self._idle_tips_cache = tips
         return tips
@@ -386,7 +391,9 @@ class StatusBar(PulseMixin, Widget):
             browse_total = getattr(app, "_browse_total", 0)
 
             browse_uses = getattr(app, "_browse_uses", 0)
-            left = Text(f"BROWSE ▸{browse_idx + 1}/{browse_total}", style="bold")
+            browse_detail = getattr(app, "browse_detail_level", 0)
+            detail_badge = f" L{browse_detail}" if browse_detail else ""
+            left = Text(f"BROWSE{detail_badge} ▸{browse_idx + 1}/{browse_total}", style="bold")
             if width >= 60:
                 if browse_uses <= 3:
                     left.append("  Tab · Enter · c copy · a expand-all · Esc exit", style="dim")

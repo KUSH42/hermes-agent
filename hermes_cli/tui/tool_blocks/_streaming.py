@@ -297,7 +297,7 @@ class StreamingToolBlock(ToolBlock):
             self._body.update_secondary_args(self._secondary_args_snapshot)
         if not is_error and self._total_received == 0:
             self._header.add_class("result-empty")
-        if self._detected_cwd:
+        if getattr(self, '_detected_cwd', None):
             from rich.text import Text as _RichText
             try:
                 from hermes_cli.tui.widgets import CopyableRichLog as _CRL

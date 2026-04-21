@@ -832,7 +832,7 @@ def mcp_result_v4(ctx: ParseContext) -> ResultSummaryV4:
             chips=(
                 source_chip,
                 Chip("mcp · disconnected", "mcp-error", "error",
-                     remediation=f"restart or check server logs ({server})"),  # B4: include server name
+                     remediation="restart or check server logs"),
             ),
             stderr_tail="",
             actions=(
@@ -849,7 +849,7 @@ def mcp_result_v4(ctx: ParseContext) -> ResultSummaryV4:
             chips=(
                 source_chip,
                 Chip("mcp · auth", "mcp-error", "error",
-                     remediation=f"re-authenticate with /mcp auth {server}"),  # B4: include server name
+                     remediation="re-authenticate with /mcp auth"),
             ),
             stderr_tail="",
             actions=(

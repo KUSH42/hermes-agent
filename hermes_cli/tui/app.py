@@ -344,6 +344,7 @@ class HermesApp(App):
 
     BINDINGS = [
         Binding("ctrl+f", "open_history_search", "History search", show=False, priority=True),
+        Binding("ctrl+g", "open_history_search", "History search", show=False, priority=True),
         Binding("f1", "show_help", "Keyboard shortcuts", show=False),
         Binding("f2", "show_usage", "Usage stats", show=False),  # C5: usage overlay shortcut
         Binding("f8", "toggle_fps_hud", "FPS HUD", show=False),

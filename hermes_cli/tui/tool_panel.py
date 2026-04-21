@@ -192,6 +192,8 @@ class FooterPane(Widget):
         self._last_summary: "ResultSummaryV4 | None" = None
         self._last_promoted: "frozenset[str]" = frozenset()
         self._last_resize_w: int = 0
+        self._diff_kind: str = ""
+        self._narrow_diff_glyph: str = "±"
 
     def compose(self) -> ComposeResult:
         self._content = Static("", classes="footer-main")
@@ -242,13 +244,13 @@ class FooterPane(Widget):
 
         # Chips row (skip chips already promoted to header)
         chips = [c for c in summary.chips if c.text not in promoted_chip_texts]
+        remediation_hints: list[str] = []
         for chip in chips:
             tone_style = _TONE_STYLES.get(chip.tone, "dim")
             parts.append(f" {chip.text} ", style=tone_style)
-            # E1: inline remediation as dim suffix in chip
             remediation = getattr(chip, "remediation", None)
             if remediation:
-                parts.append(f" · hint: {remediation}", style="dim italic")
+                remediation_hints.append(remediation)
 
         # B1: Payload-truncated warning chip — bold with ⚠ prefix
         if any(getattr(a, "payload_truncated", False) for a in summary.actions):
@@ -276,9 +278,19 @@ class FooterPane(Widget):
             self._stderr_row.update("")
             self.remove_class("has-stderr")
 
-        # E1: remediation now rendered inline in chip — hide the separate remediation row
-        self._remediation_row.update("")
-        self.remove_class("has-remediation")
+        # Remediation hints collected from chips — render in separate row
+        if remediation_hints:
+            from rich.text import Text as _T
+            rem_text = _T()
+            for i, hint in enumerate(remediation_hints):
+                if i > 0:
+                    rem_text.append(" · ", style="dim")
+                rem_text.append(hint, style="dim italic")
+            self._remediation_row.update(rem_text)
+            self.add_class("has-remediation")
+        else:
+            self._remediation_row.update("")
+            self.remove_class("has-remediation")
 
     def _rebuild_chips(self) -> None:
         """B3: re-render after _show_all_artifacts changes."""
@@ -627,7 +639,11 @@ class ToolPanel(Widget):
         """Call from app at tool completion to populate v4 footer + header hero chip."""
         self._result_summary_v4 = summary
         self._completed_at = time.monotonic()
-        self._apply_complete_auto_collapse()
+        # D1: errors always expand regardless of user collapse override
+        if summary.is_error:
+            self.collapsed = False
+        else:
+            self._apply_complete_auto_collapse()
         if self._footer_pane is not None:
             show = self._has_footer_content()
             self._footer_pane.styles.display = "block" if show else "none"
@@ -911,10 +927,15 @@ class ToolPanel(Widget):
         self.detail_level = 3
 
     def action_cycle_detail_forward(self) -> None:
-        self.detail_level = (self.detail_level + 1) % 4
+        level = self.detail_level
+        self.detail_level = (level % 3) + 1 if level > 0 else 1
 
     def action_cycle_detail_reverse(self) -> None:
-        self.detail_level = (self.detail_level - 1) % 4
+        level = self.detail_level
+        if level <= 1:
+            self.detail_level = 3
+        else:
+            self.detail_level = level - 1
 
     def watch_detail_level(self, old: int, new: int) -> None:
         """Stub — detail_level replaced by collapsed bool. Maintains CSS class compat."""
@@ -1268,7 +1289,8 @@ class ToolPanel(Widget):
             from hermes_cli.tui.widgets import CopyableRichLog
             log = self._block._body.query_one(CopyableRichLog)
             page = max(5, (self.size.height or 20) // 2)
-            log.scroll_relative(y=page, animate=False)
+            for _ in range(page):
+                log.scroll_down(animate=False)
         except Exception:
             pass
 
@@ -1280,7 +1302,8 @@ class ToolPanel(Widget):
             from hermes_cli.tui.widgets import CopyableRichLog
             log = self._block._body.query_one(CopyableRichLog)
             page = max(5, (self.size.height or 20) // 2)
-            log.scroll_relative(y=-page, animate=False)
+            for _ in range(page):
+                log.scroll_up(animate=False)
         except Exception:
             pass
 
@@ -1307,14 +1330,16 @@ class ToolPanel(Widget):
             pass
 
     def action_show_help(self) -> None:
-        """C1: show/hide ToolPanel key reference overlay (pre-mounted at screen level)."""
+        """C1: show/hide ToolPanel key reference overlay (dynamically mounted)."""
         from hermes_cli.tui.overlays import ToolPanelHelpOverlay
+        from textual.css.query import NoMatches
         try:
-            overlay = self.app.query_one(ToolPanelHelpOverlay)
-            if overlay.has_class("--visible"):
-                overlay.hide_overlay()
-            else:
-                overlay.show_overlay()
+            existing = self.app.query_one(ToolPanelHelpOverlay)
+            existing.remove()
+        except NoMatches:
+            overlay = ToolPanelHelpOverlay()
+            overlay.add_class("--visible")
+            self.app.mount(overlay)
         except Exception:
             pass
 
@@ -1492,12 +1517,11 @@ class ToolPanel(Widget):
 
     def action_toggle_tail_follow(self) -> None:
         """C2: toggle tail-follow mode on the streaming block."""
-        from hermes_cli.tui.tool_blocks import StreamingToolBlock
         block = self._block
-        if not isinstance(block, StreamingToolBlock):
+        if not hasattr(block, '_follow_tail'):
             return
         # A2: if block is completed (not streaming), give feedback instead of silently no-op
-        if getattr(block, "_completed", True):
+        if getattr(block, "_completed", False) is True:
             self._flash_header("tail-follow N/A", tone="warning")
             return
         block._follow_tail = not block._follow_tail

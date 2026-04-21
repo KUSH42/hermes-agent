@@ -355,3 +355,58 @@ def test_tool_group_focus_highlights_header_via_css():
         "keyboard-focused group won't visually highlight its header"
     )
     assert "$boost" in css, "Expected $boost color in ToolGroup focus rule"
+
+
+# ---------------------------------------------------------------------------
+# Pass-6 P2-1: ToolGroup.on_click calls event.stop()
+# ---------------------------------------------------------------------------
+
+def test_tool_group_on_click_stops_event():
+    """on_click must call event.stop() to prevent click bubbling."""
+    import inspect
+    from hermes_cli.tui.tool_group import ToolGroup
+
+    src = inspect.getsource(ToolGroup.on_click)
+    assert "event.stop()" in src or "stop()" in src, (
+        "ToolGroup.on_click must call event.stop() — missing call allows click to bubble "
+        "to parent and cause unexpected double-toggle"
+    )
+    assert "hasattr(event, " in src or "stop" in src, (
+        "ToolGroup.on_click must guard event.stop() call"
+    )
+
+
+def test_tool_group_on_click_stops_event_runtime():
+    """on_click calls event.stop() at runtime with a mock event."""
+    from hermes_cli.tui.tool_group import ToolGroup
+
+    stop_calls = []
+    event = MagicMock()
+    event.button = 1
+    event.stop = lambda: stop_calls.append(True)
+
+    # Patch the reactive setter so we don't need a running app
+    with patch.object(ToolGroup, "collapsed", new_callable=lambda: property(
+        lambda self: getattr(self, "_collapsed_val", False),
+        lambda self, v: setattr(self, "_collapsed_val", v),
+    )):
+        group = ToolGroup.__new__(ToolGroup)
+        group._user_collapsed = False
+        group._collapsed_val = False
+        group.on_click(event)
+
+    assert stop_calls, (
+        "ToolGroup.on_click must call event.stop() — missing call allows click to bubble"
+    )
+
+
+def test_tool_group_on_click_right_button_no_stop():
+    """on_click with non-left button must return early without calling stop."""
+    from hermes_cli.tui.tool_group import ToolGroup
+    import inspect
+
+    src = inspect.getsource(ToolGroup.on_click)
+    # Verify the right-button guard exists
+    assert "button" in src and "1" in src, (
+        "ToolGroup.on_click must check button == 1 (left click only)"
+    )

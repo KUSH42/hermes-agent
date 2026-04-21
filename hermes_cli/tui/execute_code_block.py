@@ -242,10 +242,10 @@ class ExecuteCodeBlock(StreamingToolBlock):
 
         # Update header label on first non-empty line (once only)
         if not self._label_set and line.strip():
-            label = line.strip()[:60]
-            self._header._label = label
-            # Also build a syntax-highlighted Rich Text for the header
-            self._header._label_rich = Text.from_ansi(self._highlight_line(line.strip()[:60]))
+            self._header._label = line.strip()[:60]
+            # Highlight full line, then truncate the resulting Rich Text
+            full_rich = Text.from_ansi(self._highlight_line(line.strip()))
+            self._header._label_rich = full_rich[:60] if full_rich.cell_len > 60 else full_rich
             self._label_set = True
 
         if is_first_line:
@@ -299,10 +299,11 @@ class ExecuteCodeBlock(StreamingToolBlock):
 
         # Update header label + rich label from canonical first line
         if code:
-            first_line = self._code_lines[0].strip()[:60] if self._code_lines else ""
-            if first_line:
-                self._header._label = first_line
-                self._header._label_rich = Text.from_ansi(self._highlight_line(first_line))
+            first_line_full = self._code_lines[0].strip() if self._code_lines else ""
+            if first_line_full:
+                self._header._label = first_line_full[:60]
+                full_rich = Text.from_ansi(self._highlight_line(first_line_full))
+                self._header._label_rich = full_rich[:60] if full_rich.cell_len > 60 else full_rich
 
         # Clear CodeSection and write Syntax renderable for lines 1+
         try:
@@ -419,12 +420,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
         self._header._line_count = 0  # don't show line count in execute_code header
 
         if not self._user_toggled:
-            if is_error:
-                # Always auto-collapse failed runs — noise reduction
-                self._header._has_affordances = total > 0
-                self._header.collapsed = True
-                self._body.remove_class("expanded")
-            elif total > _EXECUTE_COLLAPSE_THRESHOLD:
+            if total > _EXECUTE_COLLAPSE_THRESHOLD:
                 self._header._has_affordances = True
                 self._header.collapsed = True
                 self._body.remove_class("expanded")

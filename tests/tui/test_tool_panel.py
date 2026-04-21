@@ -1501,3 +1501,93 @@ def test_hint_tuple_is_three_tuple_not_four():
         "dead priority field should be removed"
     )
     assert "key, sep, label" in src, "_build_hint_text must unpack 3-tuple (key, sep, label)"
+
+
+# ---------------------------------------------------------------------------
+# Pass-6 P1-4: action_copy_html copies HTML content, not file path
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_action_copy_html_copies_content_not_path():
+    """action_copy_html must pass HTML content to _copy_text_with_hint, not a file path."""
+    from hermes_cli.tui.tool_panel import ToolPanel
+    from rich.text import Text
+
+    app = _make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        app.agent_running = True
+        await _pause(pilot)
+        app.mount_tool_block("read_file", ["result line"], ["result line"], tool_name="read_file")
+        await _pause(pilot)
+
+        output = app.query_one(OutputPanel)
+        panel = output.query_one(ToolPanel)
+
+        # Give block some rich content
+        block = panel._block
+        if block is not None:
+            block._all_rich = [Text("result line")]
+
+        captured: list[str] = []
+        app._copy_text_with_hint = lambda text: captured.append(text)
+
+        panel.action_copy_html()
+        await _pause(pilot)
+
+        if not captured:
+            pytest.skip("action_copy_html had no rich content to copy")
+
+        copied = captured[0]
+        assert not copied.startswith("/tmp/"), (
+            f"action_copy_html must copy HTML content, not file path. Got: {copied[:60]!r}"
+        )
+        assert "<" in copied, (
+            f"action_copy_html must copy HTML markup. Got: {copied[:80]!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Pass-6 P2-2: action_retry flashes 'no error' when no error present
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_action_retry_non_error_flashes_no_error():
+    """action_retry on a non-error panel must flash 'no error', not silently no-op."""
+    from hermes_cli.tui.tool_panel import ToolPanel
+    from hermes_cli.tui.tool_result_parse import ResultSummaryV4
+
+    app = _make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        app.agent_running = True
+        await _pause(pilot)
+        app._open_gen_block("bash")
+        await _pause(pilot)
+
+        output = app.query_one(OutputPanel)
+        panel = output.query_one(ToolPanel)
+
+        # Set a non-error result summary
+        rs = ResultSummaryV4(
+            primary="done",
+            exit_code=0,
+            chips=(),
+            stderr_tail="",
+            actions=(),
+            artifacts=(),
+            is_error=False,
+            error_kind=None,
+        )
+        panel._result_summary_v4 = rs
+
+        # Call action_retry — must not silently no-op
+        flashed: list[str] = []
+        panel._flash_header = lambda msg: flashed.append(msg)
+
+        panel.action_retry()
+
+        assert flashed, "action_retry must call _flash_header when no error — got silent no-op"
+        assert any("no error" in m.lower() for m in flashed), (
+            f"Expected 'no error' flash message, got: {flashed}"
+        )

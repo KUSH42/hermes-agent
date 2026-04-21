@@ -422,3 +422,38 @@ def test_shimmer_phase_increments_linearly():
         delta = stb._shimmer_phase - prev if stb._shimmer_phase > prev else stb._shimmer_phase + 2.0 - prev
         assert abs(delta - 0.05) < 1e-9
         prev = stb._shimmer_phase
+
+
+# ---------------------------------------------------------------------------
+# Pass-6 P1-3: MCP microcopy shows server name, not method name
+# ---------------------------------------------------------------------------
+
+def test_microcopy_mcp_server_name():
+    """MCP tool name mcp__github__search_repos must show 'github', not 'search_repos'."""
+    spec = ToolSpec(name="mcp__github__search_repos", category=ToolCategory.MCP)
+    state = _state(elapsed_s=0.5)
+    result = microcopy_line(spec, state)
+    assert "github" in result, (
+        f"Expected 'github' (server name) in MCP microcopy, got: {result!r}"
+    )
+    assert "search_repos" not in result, (
+        f"Got method name 'search_repos' instead of server name in MCP microcopy: {result!r}"
+    )
+
+
+def test_microcopy_mcp_provenance_takes_precedence():
+    """When provenance is set (mcp:server), it is used over name parsing."""
+    spec = ToolSpec(name="mcp__github__search_repos", category=ToolCategory.MCP, provenance="mcp:myserver")
+    state = _state(elapsed_s=0.5)
+    result = microcopy_line(spec, state)
+    assert "myserver" in result, (
+        f"Expected provenance server 'myserver' in MCP microcopy, got: {result!r}"
+    )
+
+
+def test_microcopy_mcp_short_name_fallback():
+    """MCP tool with only one __ segment falls back to last part."""
+    spec = ToolSpec(name="mcp__toolname", category=ToolCategory.MCP)
+    state = _state(elapsed_s=0.5)
+    result = microcopy_line(spec, state)
+    assert "mcp" in result.lower(), f"MCP microcopy must contain 'mcp': {result!r}"

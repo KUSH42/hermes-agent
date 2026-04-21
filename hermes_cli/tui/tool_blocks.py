@@ -774,9 +774,6 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         self.add_class("--flash-error")
         self.set_timer(0.45, lambda: self.remove_class("--flash-error"))
 
-    def flash_complete(self) -> None:
-        """Deprecated: delegates to flash_success."""
-        self.flash_success()
 
     def set_path(self, path: str) -> None:
         """Store full path/URL for path-aware rendering and context menu actions."""
@@ -1646,7 +1643,7 @@ class StreamingToolBlock(ToolBlock):
         # v4 §3.3: clear microcopy on completion (keep MCP provenance line)
         self._clear_microcopy_on_complete()
         # Brief success flash to signal completion
-        self._header.flash_complete()
+        self._header.flash_success()
         # If output contains a MEDIA: path, replace body with an inline image
         self._try_mount_media()
         # Populate secondary args row above body output

@@ -713,6 +713,7 @@ class ToolPanel(Widget):
     def action_retry(self) -> None:
         rs = self._result_summary_v4
         if rs is None or not rs.is_error:
+            self._flash_header("no error")
             return
         try:
             self.app._initiate_retry()
@@ -815,10 +816,13 @@ class ToolPanel(Widget):
             bg_hex = "#1e1e2e"
         html = html.replace('<pre style="', f'<pre style="background:{bg_hex}; ', 1)
         tmp_path = f"/tmp/hermes_copy_{int(_time.time())}.html"
-        with open(tmp_path, "w") as f:
-            f.write(html)
-        self.app._copy_text_with_hint(tmp_path)
-        self._flash_header(f"html → {tmp_path}")
+        self.app._copy_text_with_hint(html)
+        try:
+            with open(tmp_path, "w") as f:
+                f.write(html)
+            self._flash_header(f"html copied  (saved {tmp_path})")
+        except Exception:
+            self._flash_header("html copied")
 
     def action_copy_urls(self) -> None:
         """G2: copy newline-joined URL artifacts."""

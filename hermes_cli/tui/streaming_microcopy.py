@@ -107,7 +107,8 @@ def microcopy_line(
         prov = spec.provenance or ""
         server = prov[4:] if prov.startswith("mcp:") else ""
         if not server and "__" in spec.name:
-            server = spec.name.split("__")[-1]
+            parts = spec.name.split("__")
+            server = parts[1] if len(parts) >= 3 else parts[-1]
         if not server:
             server = spec.name or "?"
         return f"▸ mcp · {server} server" + _elapsed_suffix()

@@ -1805,3 +1805,28 @@ def test_context_menu_uses_ensure_future_not_deprecated_event_loop():
         "Found deprecated get_event_loop in _show_context_menu — "
         "raises DeprecationWarning in Python 3.10+ when no event loop is running"
     )
+
+
+# ---------------------------------------------------------------------------
+# Pass-6 P2-3: flash_complete removed; StreamingToolBlock.complete uses flash_success
+# ---------------------------------------------------------------------------
+
+def test_tool_header_no_flash_complete_method():
+    """ToolHeader.flash_complete must be removed — it was a deprecated dead wrapper."""
+    from hermes_cli.tui.tool_blocks import ToolHeader
+    assert not hasattr(ToolHeader, "flash_complete"), (
+        "ToolHeader.flash_complete still exists — deprecated wrapper must be removed"
+    )
+
+
+def test_streaming_tool_block_complete_calls_flash_success_not_flash_complete():
+    """StreamingToolBlock.complete() must call flash_success(), not the removed flash_complete()."""
+    import inspect
+    from hermes_cli.tui.tool_blocks import StreamingToolBlock
+    src = inspect.getsource(StreamingToolBlock.complete)
+    assert "flash_success" in src, (
+        "StreamingToolBlock.complete must call flash_success() directly"
+    )
+    assert "flash_complete" not in src, (
+        "StreamingToolBlock.complete still references flash_complete() — must be updated to flash_success()"
+    )

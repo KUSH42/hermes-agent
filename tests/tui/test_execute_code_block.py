@@ -646,3 +646,58 @@ async def test_cursor_hidden_after_state_completed():
             assert cursor_w.display is False, "Cursor should be hidden after complete()"
         except Exception:
             pass  # cursor absence also acceptable — display=False means hidden
+
+
+# ---------------------------------------------------------------------------
+# Pass-6 P0-2: error complete does NOT auto-collapse inner header
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_execute_code_block_error_header_not_collapsed():
+    """complete(is_error=True) must NOT collapse the inner header — ToolPanel handles errors."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        block = await _mount_execute_block(pilot, app)
+
+        block.finalize_code("raise ValueError('oops')")
+        await _pause(pilot)
+
+        block.complete("0.1s", is_error=True)
+        await _pause(pilot)
+
+        assert block._header.collapsed is False, (
+            "ECB inner header must NOT be collapsed after error complete() — "
+            "ToolPanel.set_result_summary_v4 owns error expansion"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Pass-6 P2-4: label_rich truncates AFTER highlighting
+# ---------------------------------------------------------------------------
+
+def test_execute_code_block_label_rich_truncated_after_highlight():
+    """_emit_code_line highlights the full line then truncates the Rich Text."""
+    from hermes_cli.tui.execute_code_block import ExecuteCodeBlock
+    from rich.text import Text
+
+    block = ExecuteCodeBlock.__new__(ExecuteCodeBlock)
+    block._code_lines = []
+    block._label_set = False
+
+    # Mock the header
+    header = MagicMock()
+    header._label = None
+    header._label_rich = None
+    block._header = header
+    block._body = MagicMock()
+    block._body.query_one.side_effect = Exception("not mounted")
+
+    # Long line: a string literal that spans >60 chars
+    long_line = 'x = "' + "a" * 80 + '"'
+    block._emit_code_line(long_line)
+
+    assert header._label_rich is not None
+    assert isinstance(header._label_rich, Text), "Expected Rich Text, not plain string"
+    assert header._label_rich.cell_len <= 60, (
+        f"Rich Text must be truncated to ≤60 cells, got {header._label_rich.cell_len}"
+    )

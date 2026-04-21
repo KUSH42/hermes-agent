@@ -670,3 +670,121 @@ async def test_tools_screen_pill_filter_buttons_are_button_widgets():
         assert len(buttons) > 0, (
             "Expected Button widgets in #filter-pills-row — static text pills are not clickable"
         )
+
+
+# ---------------------------------------------------------------------------
+# Pass-6 P0-1: dur_col seconds formatting
+# ---------------------------------------------------------------------------
+
+def test_render_tool_row_long_duration_shows_seconds():
+    """dur_ms >= 1000 must render as N.Ns, not NNNNms."""
+    e = _entry(dur_ms=1234)
+    row = render_tool_row(e, cursor=False, turn_total_s=2.0, term_w=120)
+    plain = row.plain
+    assert "(1.2s)" in plain, f"Expected '(1.2s)' in dur_col, got: {plain!r}"
+    assert "1234ms" not in plain, f"Got raw milliseconds for long duration: {plain!r}"
+
+
+def test_render_tool_row_short_duration_shows_ms():
+    """dur_ms < 1000 must still render as NNNms."""
+    e = _entry(dur_ms=234)
+    row = render_tool_row(e, cursor=False, turn_total_s=2.0, term_w=120)
+    plain = row.plain
+    assert "(234ms)" in plain, f"Expected '(234ms)' in dur_col, got: {plain!r}"
+
+
+def test_render_tool_row_exactly_1000ms_shows_seconds():
+    """dur_ms == 1000 must render as (1.0s)."""
+    e = _entry(dur_ms=1000)
+    row = render_tool_row(e, cursor=False, turn_total_s=2.0, term_w=120)
+    plain = row.plain
+    assert "(1.0s)" in plain, f"Expected '(1.0s)' for 1000ms, got: {plain!r}"
+
+
+# ---------------------------------------------------------------------------
+# Pass-6 P1-1: arrow keys update lv.index without full rebuild
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_tools_screen_cursor_up_no_rebuild():
+    """action_cursor_up updates lv.index; does NOT call _rebuild."""
+    from hermes_cli.tui.tools_overlay import ToolsScreen
+    from hermes_cli.tui.app import HermesApp
+    from unittest.mock import AsyncMock, patch
+
+    app = HermesApp(cli=MagicMock())
+    snapshot = [_entry("t1"), _entry("t2"), _entry("t3")]
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        screen = ToolsScreen(snapshot)
+        app.push_screen(screen)
+        await _pause(pilot, 10)
+
+        screen._filtered = snapshot
+        screen._cursor = 2
+
+        with patch.object(screen, "_rebuild", new_callable=AsyncMock) as mock_rebuild:
+            await screen.action_cursor_up()
+            await _pause(pilot)
+            mock_rebuild.assert_not_called()
+
+        assert screen._cursor == 1
+
+
+@pytest.mark.asyncio
+async def test_tools_screen_cursor_down_no_rebuild():
+    """action_cursor_down updates lv.index; does NOT call _rebuild."""
+    from hermes_cli.tui.tools_overlay import ToolsScreen
+    from hermes_cli.tui.app import HermesApp
+    from unittest.mock import AsyncMock, patch
+
+    app = HermesApp(cli=MagicMock())
+    snapshot = [_entry("t1"), _entry("t2"), _entry("t3")]
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        screen = ToolsScreen(snapshot)
+        app.push_screen(screen)
+        await _pause(pilot, 10)
+
+        screen._filtered = snapshot
+        screen._cursor = 0
+
+        with patch.object(screen, "_rebuild", new_callable=AsyncMock) as mock_rebuild:
+            await screen.action_cursor_down()
+            await _pause(pilot)
+            mock_rebuild.assert_not_called()
+
+        assert screen._cursor == 1
+
+
+# ---------------------------------------------------------------------------
+# Pass-6 P1-2: pill rebuild no DuplicateId
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_tools_screen_pill_rebuild_no_duplicate_ids():
+    """Clicking a pill twice triggers two _update_pills calls; no DuplicateId exception."""
+    from hermes_cli.tui.tools_overlay import ToolsScreen
+    from hermes_cli.tui.app import HermesApp
+    from textual.widgets import Button
+
+    app = HermesApp(cli=MagicMock())
+    snapshot = [
+        _entry(name="read_file", category="file"),
+        _entry(name="bash", category="shell"),
+        _entry(name="grep", category="search"),
+    ]
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        screen = ToolsScreen(snapshot)
+        app.push_screen(screen)
+        await _pause(pilot, 10)
+
+        # Call _update_pills twice without error
+        try:
+            screen._update_pills()
+            await _pause(pilot, 5)
+            screen._update_pills()
+            await _pause(pilot, 5)
+        except Exception as exc:
+            pytest.fail(f"_update_pills raised on second call: {exc}")

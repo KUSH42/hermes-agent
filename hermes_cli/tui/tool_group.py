@@ -266,6 +266,8 @@ class ToolGroup(Widget):
             return
         self._user_collapsed = not self.collapsed
         self.collapsed = self._user_collapsed
+        if hasattr(event, "stop"):
+            event.stop()
 
     def on_resize(self, event: object) -> None:
         width = getattr(getattr(event, "size", None), "width", 80)

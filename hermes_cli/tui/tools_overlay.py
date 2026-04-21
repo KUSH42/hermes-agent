@@ -181,7 +181,7 @@ def render_tool_row(
     else:
         d = dur_ms or 0
         if d >= 1000:
-            dur_str = f"({d}ms)"
+            dur_str = f"({d / 1000:.1f}s)"
         else:
             dur_str = f"({d}ms)"
         dur_col = dur_str[:8].ljust(8) + " "
@@ -442,7 +442,7 @@ ToolsScreen > #tools-footer {
             btn = Button(f"[{cat}]", id=f"pill-{cat}", classes="--active" if active else "")
             buttons_to_mount.append(btn)
         if buttons_to_mount:
-            pills_row.mount(*buttons_to_mount)
+            self.call_after_refresh(lambda btns=buttons_to_mount: pills_row.mount(*btns))
 
     def on_button_pressed(self, event: "Button.Pressed") -> None:
         """Handle pill button clicks for category/error filtering."""
@@ -472,17 +472,6 @@ ToolsScreen > #tools-footer {
                 fi.value = ""
                 await self._apply_filter()
                 event.prevent_default()
-                return
-        # arrow key cursor sync: update ListView.index only (no full rebuild)
-        if event.key in ("up", "down"):
-            if self._filtered:
-                if event.key == "up":
-                    self._cursor = max(0, self._cursor - 1)
-                else:
-                    self._cursor = min(len(self._filtered) - 1, self._cursor + 1)
-                lv = self.query_one("#tools-list", ListView)
-                lv.index = self._cursor
-                event.prevent_default()
 
     async def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "filter-input":
@@ -506,12 +495,14 @@ ToolsScreen > #tools-footer {
     async def action_cursor_up(self) -> None:
         if self._filtered:
             self._cursor = max(0, self._cursor - 1)
-            await self._rebuild()
+            lv = self.query_one("#tools-list", ListView)
+            lv.index = self._cursor
 
     async def action_cursor_down(self) -> None:
         if self._filtered:
             self._cursor = min(len(self._filtered) - 1, self._cursor + 1)
-            await self._rebuild()
+            lv = self.query_one("#tools-list", ListView)
+            lv.index = self._cursor
 
     async def action_jump_to_panel(self) -> None:
         if not self._filtered:

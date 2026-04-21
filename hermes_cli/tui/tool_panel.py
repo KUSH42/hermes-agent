@@ -30,6 +30,7 @@ from textual.widget import Widget
 from textual.widgets import Button, Static
 
 from hermes_cli.tui.resize_utils import THRESHOLD_NARROW, crosses_threshold
+from hermes_cli.tui.tooltip import TooltipMixin
 
 if TYPE_CHECKING:
     from hermes_cli.tui.tool_result_parse import ResultSummary, ResultSummaryV4
@@ -43,6 +44,10 @@ _IMPLEMENTED_ACTIONS: frozenset[str] = frozenset({
     "copy_invocation", "copy_urls",  # G1, G2
     "edit_cmd", "open_url",          # A1, A2
 })
+
+
+class _ArtifactButton(TooltipMixin, Button):
+    """B2: Artifact chip button with tooltip support for full path/URL."""
 
 
 def _artifact_icon(kind: str) -> str:
@@ -204,18 +209,29 @@ class FooterPane(Widget):
 
         parts = Text()
 
+        # A1: check if the parent block is still streaming — suppress action row if so
+        _block = getattr(getattr(self, "parent", None), "_block", None)
+        _is_streaming = (
+            _block is not None and
+            getattr(_block, "_completed", True) is False
+        )
+
         # Chips row (skip chips already promoted to header)
         chips = [c for c in summary.chips if c.text not in promoted_chip_texts]
         for chip in chips:
             tone_style = _TONE_STYLES.get(chip.tone, "dim")
             parts.append(f" {chip.text} ", style=tone_style)
+            # E1: inline remediation as dim suffix in chip
+            remediation = getattr(chip, "remediation", None)
+            if remediation:
+                parts.append(f" · hint: {remediation}", style="dim italic")
 
-        # Payload-truncated warning chip
+        # B1: Payload-truncated warning chip — bold with ⚠ prefix
         if any(getattr(a, "payload_truncated", False) for a in summary.actions):
-            parts.append(" truncated ", style=_TONE_STYLES["warning"])
+            parts.append(" ⚠ payload truncated ", style="bold " + _TONE_STYLES["warning"])
 
-        # Action row — only implemented actions
-        if summary.actions:
+        # Action row — only implemented actions; A1: skip when streaming
+        if summary.actions and not _is_streaming:
             parts.append("  ")
             for action in summary.actions:
                 if action.kind not in _IMPLEMENTED_ACTIONS:
@@ -236,20 +252,9 @@ class FooterPane(Widget):
             self._stderr_row.update("")
             self.remove_class("has-stderr")
 
-        # A2: remediation hint — any chip with non-None remediation
-        remediation_hints = [
-            c.remediation for c in summary.chips if getattr(c, "remediation", None)
-        ]
-        if remediation_hints:
-            from rich.text import Text as _T
-            rem_text = _T()
-            rem_text.append("  hint: ", style="dim")
-            rem_text.append("  ·  ".join(remediation_hints), style="dim italic")
-            self._remediation_row.update(rem_text)
-            self.add_class("has-remediation")
-        else:
-            self._remediation_row.update("")
-            self.remove_class("has-remediation")
+        # E1: remediation now rendered inline in chip — hide the separate remediation row
+        self._remediation_row.update("")
+        self.remove_class("has-remediation")
 
     def _rebuild_chips(self) -> None:
         """B3: re-render after _show_all_artifacts changes."""
@@ -291,9 +296,10 @@ class FooterPane(Widget):
         for artifact in artifacts_to_show:
             icon = _artifact_icon(artifact.kind)
             label = f"{icon} {artifact.label}"
-            btn = Button(label, classes="--artifact-chip")
+            btn = _ArtifactButton(label, classes="--artifact-chip")  # B2: tooltip support
             btn._artifact_path = artifact.path_or_url  # type: ignore[attr-defined]
             btn._artifact_kind = artifact.kind          # type: ignore[attr-defined]
+            btn._tooltip_text = artifact.path_or_url   # B2: set full path/URL as tooltip
             buttons.append(btn)
 
         if (
@@ -442,6 +448,9 @@ class ToolPanel(Widget):
         self._last_resize_w: int = 0
         self._saved_visible_start: int | None = None  # B6: preserve scroll position
 
+        # C4: one-shot "Enter to toggle" hint on first focus
+        self._toggle_hint_shown: bool = False
+
         # Pane refs (set in compose)
         self._body_pane: BodyPane | None = None
         self._footer_pane: FooterPane | None = None
@@ -507,6 +516,12 @@ class ToolPanel(Widget):
         fp = self._footer_pane
         if fp is None:
             return
+
+        # B3: reset artifact expand state on collapse
+        if new and fp._show_all_artifacts:
+            fp._show_all_artifacts = False
+            fp._rebuild_chips()
+
         want_fp = (not new) and self._has_footer_content()
         if fp.display != want_fp:
             fp.styles.display = "block" if want_fp else "none"
@@ -553,7 +568,11 @@ class ToolPanel(Widget):
                     threshold = 20
             except Exception:
                 pass
-        self.collapsed = total > threshold
+        should_collapse = total > threshold
+        self.collapsed = should_collapse
+        # A3: flash auto-collapse notification so user knows what happened
+        if should_collapse:
+            self._flash_header(f"▾ auto-collapsed ({total} lines)", tone="success")
 
     def set_result_summary_v4(self, summary: "ResultSummaryV4") -> None:
         """Call from app at tool completion to populate v4 footer + header hero chip."""
@@ -690,12 +709,16 @@ class ToolPanel(Widget):
         if not paths:
             return
         editor = os.environ.get("EDITOR") or os.environ.get("VISUAL")
-        if editor:
-            subprocess.Popen([*shlex.split(editor), paths[0]])
-        else:
-            open_cmd = "open" if sys.platform == "darwin" else "xdg-open"
-            subprocess.Popen([open_cmd, paths[0]])
-        self._flash_header("opening…")
+        try:
+            if editor:
+                subprocess.Popen([*shlex.split(editor), paths[0]])
+            else:
+                open_cmd = "open" if sys.platform == "darwin" else "xdg-open"
+                subprocess.Popen([open_cmd, paths[0]])
+            self._flash_header("opening…")
+        except Exception as err:
+            # E2: flash error message instead of silently failing
+            self._flash_header(f"could not open: {err}", tone="error")
 
     # ------------------------------------------------------------------
     # Footer actions — Phase A
@@ -728,7 +751,11 @@ class ToolPanel(Widget):
         if not text:
             return
         self.app._copy_text_with_hint(text)
-        self._flash_header("copied text")
+        # A5: include byte size in flash for large payloads
+        from hermes_cli.tui.streaming_microcopy import _human_size
+        size = len(text.encode("utf-8"))
+        size_suffix = f" ({_human_size(size)})" if size >= 1024 else ""
+        self._flash_header(f"copied text{size_suffix}")
 
     def action_open_url(self) -> None:
         """A2: open first URL artifact or open_url action payload."""
@@ -869,7 +896,11 @@ class ToolPanel(Widget):
             console.print(t, highlight=False)
         ansi_text = buf.getvalue()
         self.app._copy_text_with_hint(ansi_text)
-        self._flash_header("copied ANSI")
+        # A5: include byte size in flash for large payloads
+        from hermes_cli.tui.streaming_microcopy import _human_size
+        size = len(ansi_text.encode("utf-8"))
+        size_suffix = f" ({_human_size(size)})" if size >= 1024 else ""
+        self._flash_header(f"copied ANSI{size_suffix}")
 
     def action_copy_html(self) -> None:
         """C5: copy as HTML with inline styles."""
@@ -902,12 +933,16 @@ class ToolPanel(Widget):
         html = html.replace('<pre style="', f'<pre style="background:{bg_hex}; ', 1)
         tmp_path = f"/tmp/hermes_copy_{int(_time.time())}.html"
         self.app._copy_text_with_hint(html)
+        # A5: include byte size in flash for large payloads
+        from hermes_cli.tui.streaming_microcopy import _human_size as _hs
+        _html_size = len(html.encode("utf-8"))
+        _size_suffix = f" ({_hs(_html_size)})" if _html_size >= 1024 else ""
         try:
             with open(tmp_path, "w") as f:
                 f.write(html)
-            self._flash_header(f"copied HTML  (saved {tmp_path})")
+            self._flash_header(f"copied HTML{_size_suffix}  (saved {tmp_path})")
         except Exception:
-            self._flash_header("copied HTML")
+            self._flash_header(f"copied HTML{_size_suffix}")
 
     def action_copy_urls(self) -> None:
         """G2: copy newline-joined URL artifacts."""
@@ -1032,6 +1067,12 @@ class ToolPanel(Widget):
     # on_focus/on_blur avoided: they trigger layout refreshes that interfere
     # with click hit-testing. watch_has_focus is content-only update.
 
+    def on_focus(self) -> None:
+        """C4: on first focus, flash one-shot '(Enter) toggle' hint."""
+        if not self._toggle_hint_shown:
+            self._toggle_hint_shown = True
+            self._flash_header("(Enter) toggle", tone="accent")
+
     def watch_has_focus(self, value: bool) -> None:
         if self._hint_row is None:
             return
@@ -1109,6 +1150,28 @@ class ToolPanel(Widget):
                 except Exception:
                     pass
 
+        # D1: show Shift+Enter peek hint when inside a ToolGroup
+        try:
+            from hermes_cli.tui.tool_group import _get_tool_group
+            if _get_tool_group(self) is not None:
+                hints.append(("⇧↵", " ", "peek"))
+        except Exception:
+            pass
+
+        # C3: sort hints by priority before applying narrow-mode cap
+        # Priority order: error (r, E, x), copy/open (c, o, p, e, u, O, C, H, I), navigation
+        _ERROR_KEYS = frozenset({"r", "E", "x"})
+        _COPY_OPEN_KEYS = frozenset({"c", "o", "p", "e", "u", "O", "C", "H", "I", "P"})
+        def _hint_priority(h: tuple) -> int:
+            k = h[0].strip()
+            if k in _ERROR_KEYS:
+                return 0
+            if k in _COPY_OPEN_KEYS:
+                return 1
+            return 2
+        if narrow:
+            hints.sort(key=_hint_priority)
+
         t = Text()
         max_hints = 3 if narrow else len(hints)
         for key, sep, label in hints[:max_hints]:
@@ -1159,6 +1222,10 @@ class ToolPanel(Widget):
         from hermes_cli.tui.tool_blocks import StreamingToolBlock
         block = self._block
         if not isinstance(block, StreamingToolBlock):
+            return
+        # A2: if block is completed (not streaming), give feedback instead of silently no-op
+        if getattr(block, "_completed", True):
+            self._flash_header("tail-follow N/A", tone="warning")
             return
         block._follow_tail = not block._follow_tail
         state = "on" if block._follow_tail else "off"

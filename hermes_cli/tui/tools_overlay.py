@@ -315,7 +315,7 @@ ToolsScreen > #tools-footer {
         yield ListView(id="tools-list")
         yield Horizontal(
             Horizontal(id="filter-pills-row"),
-            Input(id="filter-input", placeholder="filter…"),
+            Input(id="filter-input", placeholder="filter… (prefix: file: shell: error:)"),
             id="filter-row",
         )
         yield Static("[Enter] jump  [Esc] close  [/] filter  [x] export  [r] refresh", id="tools-footer")
@@ -608,6 +608,15 @@ ToolsScreen > #tools-footer {
         """D5: cycle through chronological / duration / category sort modes."""
         self._sort_mode = (self._sort_mode + 1) % 3
         await self._apply_filter()
+        # E3: immediately update header so sort mode is visible after keypress
+        self._update_staleness_pip()
+        # Show current sort mode as a flash hint
+        _SORT_LABELS = {0: "chrono", 1: "duration", 2: "category"}
+        sort_label = _SORT_LABELS.get(self._sort_mode, "chrono")
+        try:
+            self.app._flash_hint(f"sort: {sort_label}", 1.5)
+        except Exception:
+            pass
 
     async def _apply_filter(self) -> None:
         text = self._filter_text.lower()

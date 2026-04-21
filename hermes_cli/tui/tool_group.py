@@ -321,6 +321,7 @@ class ToolGroup(Widget):
 
         diff_add = 0
         diff_del = 0
+        error_count = 0  # E4: track child error count for group header styling
         earliest: float | None = None
         latest: float | None = None
 
@@ -339,10 +340,13 @@ class ToolGroup(Widget):
                             diff_del += int(badge[1:])
                         except ValueError:
                             pass
-            # v4 chips
+            # v4 chips + error count
             rs_v4 = getattr(panel, "_result_summary_v4", None)
             if rs_v4 is not None:
                 from hermes_cli.tui.tool_result_parse import Chip
+                # E4: accumulate error count
+                if getattr(rs_v4, "is_error", False):
+                    error_count += 1
                 for chip in getattr(rs_v4, "chips", ()):
                     if chip.kind == "diff+":
                         try:
@@ -373,6 +377,12 @@ class ToolGroup(Widget):
             duration_ms = 0
 
         summary_text = _build_summary_text(self._summary_rule, children)
+
+        # E4: toggle CSS class on group header to indicate child errors
+        try:
+            self._header.set_class(error_count > 0, "--group-has-error")
+        except Exception:
+            pass
 
         self._header.update(
             summary_text=summary_text,

@@ -358,7 +358,7 @@ def header_label_v4(
             # First 60 chars of task or thought arg; fall back to full_label with italic dim
             text = str(args.get("task") or args.get("thought") or "") or full_label
             if len(text) > 60:
-                text = text[:59] + "…"
+                text = text[:59] + "…"  # C1: always append "…" on truncation
             t = Text()
             t.append(f" {text}", style="italic dim")
             return t
@@ -686,8 +686,10 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             t.append(" $", style=f"bold {accent}")
             shell_prompt_w = 2
 
-        # Tail: A3 — hero chip first, then promoted chips, then stat badges, then duration
+        # Tail: C2 — browse badge first (protected from truncation), then hero chip, etc.
         tail = Text()
+        if self._browse_badge:
+            tail.append(f" {self._browse_badge} ", style="bold dim")
         if self._spinner_char is not None:
             tail.append(f"  {self._spinner_char}", style="dim")
             if self._duration:
@@ -746,6 +748,16 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                     "error": "dim red",
                 }.get(self._flash_tone, "dim green")
                 tail.append(f"  ✓ {self._flash_msg}", style=_flash_style)
+            # D4: collapsed error with stderr — show hint in tail so user can see it
+            try:
+                if (self._panel is not None and
+                        self._panel.collapsed and
+                        self._tool_icon_error):
+                    rs_v4 = getattr(self._panel, "_result_summary_v4", None)
+                    if rs_v4 is not None and getattr(rs_v4, "stderr_tail", ""):
+                        tail.append("  ⚠ stderr (e)", style="dim red")
+            except Exception:
+                pass
             if self._duration:   # already v4-formatted by _tick_duration / complete()
                 tail.append(f"  {self._duration}", style="dim")
 
@@ -781,15 +793,13 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
     def render(self) -> RenderResult:
         result = self._render_v4()
         if result is not None:
-            if self._browse_badge:
-                result.append(f"  {self._browse_badge}", style="dim")
             return result
         # A3: degraded fallback — imports or render failed
         self.add_class("--header-degraded")
         t = Text()
         t.append(f"[tool] {self._label}")
         if self._browse_badge:
-            t.append(f"  {self._browse_badge}", style="dim")
+            t.append(f"  {self._browse_badge}", style="bold dim")
         return t
 
     def set_error(self, is_error: bool) -> None:
@@ -1050,10 +1060,10 @@ class ToolBodyContainer(Widget):
         super().__init__(**kwargs)
         self._secondary_text: str = ""
         self._microcopy_active: bool = False
+        self._args_row_mounted: bool = False  # D3: lazy-mount guard
 
     def compose(self) -> ComposeResult:
-        # Args row — populated at completion with non-primary tool args
-        yield Static("", classes="--args-row")
+        # D3: --args-row removed from compose; lazy-mounted on first non-empty call
         # Microcopy row (v4 §3.3) — always present, shown when v4 active + elapsed≥0.5s
         yield Static("", classes="--microcopy")
         # No explicit ID — query by type inside ToolBodyContainer to avoid
@@ -1061,17 +1071,36 @@ class ToolBodyContainer(Widget):
         yield CopyableRichLog(markup=False, highlight=False, wrap=False)
 
     def set_args_row(self, text: "str | None") -> None:
-        """Show or hide the secondary-args row above body output."""
+        """Show or hide the secondary-args row above body output.
+
+        D3: row is lazy-mounted on first non-empty call; noop when empty and not mounted.
+        """
+        if not text:
+            # If the row was never mounted, nothing to do
+            try:
+                w = self.query_one(".--args-row", Static)
+                w.remove_class("--active")
+                w.update("")
+            except Exception:
+                pass
+            return
+        # text is non-empty — ensure row is mounted
         try:
             w = self.query_one(".--args-row", Static)
         except Exception:
-            return
-        if text:
-            w.update(text)
-            w.add_class("--active")
-        else:
-            w.remove_class("--active")
-            w.update("")
+            # D3: lazy-mount before the microcopy row
+            if not self._args_row_mounted:
+                try:
+                    mc = self.query_one(".--microcopy", Static)
+                    w = Static("", classes="--args-row")
+                    self.mount(w, before=mc)
+                    self._args_row_mounted = True
+                except Exception:
+                    return
+            else:
+                return
+        w.update(text)
+        w.add_class("--active")
 
     def _mc_widget(self) -> "Static | None":
         try:
@@ -1951,7 +1980,13 @@ class StreamingToolBlock(ToolBlock):
                 self._shimmer_phase = (self._shimmer_phase + 0.05) % 2.0
         except Exception:
             pass
-        text = microcopy_line(spec, state, reduced_motion=reduced_motion, shimmer_phase=self._shimmer_phase)
+        # A4: stall detection — flag when no new output for 5+ seconds
+        stalled = (
+            not self._completed
+            and self._last_line_time > 0.0
+            and (time.monotonic() - self._last_line_time) > 5.0
+        )
+        text = microcopy_line(spec, state, reduced_motion=reduced_motion, shimmer_phase=self._shimmer_phase, stalled=stalled)
         if text:
             self._body.set_microcopy(text)
             self._microcopy_shown = True  # A1: mark microcopy as shown

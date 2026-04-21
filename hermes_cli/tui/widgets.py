@@ -3322,6 +3322,7 @@ class StatusBar(PulseMixin, Widget):
             "context_pct",
             "yolo_mode",
             "session_label",
+            "_streaming_tool_count",  # D5: streaming tool count badge
         ):
             self.watch(app, attr, self._on_status_change)
         # agent_running: dedicated callback to start/stop pulse + refresh
@@ -3529,6 +3530,10 @@ class StatusBar(PulseMixin, Widget):
                 state_t.append_text(running_shimmer)
             else:
                 state_t.append("running", style=f"bold {_run_dim}")
+            # D5: show streaming tool count badge when multiple tools are running
+            _tool_count = getattr(app, "_streaming_tool_count", 0)
+            if _tool_count > 1:
+                state_t.append(f"  {_tool_count} tools", style="dim")
         elif _status_err:
             state_t = Text(f" ⚠ {_status_err}", style=f"bold {_err_color}")
         else:

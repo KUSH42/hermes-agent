@@ -736,7 +736,13 @@ def web_result_v4(ctx: ParseContext) -> ResultSummaryV4:
     display_code = f"{code}" if code else "?"
     display_reason = f" {reason}" if reason else ""
     primary = f"✓ {display_code}{display_reason} · {size_str}"
-    tone: ChipTone = "success" if (code and code < 300) else "neutral"
+    # B5: 3xx redirects use warning tone; 2xx use success; else neutral
+    if code and code < 300:
+        tone: ChipTone = "success"
+    elif code and code < 400:
+        tone = "warning"  # B5: 3xx redirect
+    else:
+        tone = "neutral"
     return ResultSummaryV4(
         primary=primary, exit_code=code,
         chips=(
@@ -805,7 +811,7 @@ def mcp_result_v4(ctx: ParseContext) -> ResultSummaryV4:
             chips=(
                 source_chip,
                 Chip("mcp · disconnected", "mcp-error", "error",
-                     remediation="restart or check server logs"),  # A2
+                     remediation=f"restart or check server logs ({server})"),  # B4: include server name
             ),
             stderr_tail="",
             actions=(
@@ -822,7 +828,7 @@ def mcp_result_v4(ctx: ParseContext) -> ResultSummaryV4:
             chips=(
                 source_chip,
                 Chip("mcp · auth", "mcp-error", "error",
-                     remediation="re-authenticate with /mcp auth"),  # A2
+                     remediation=f"re-authenticate with /mcp auth {server}"),  # B4: include server name
             ),
             stderr_tail="",
             actions=(

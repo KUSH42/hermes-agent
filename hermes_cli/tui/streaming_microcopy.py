@@ -60,6 +60,7 @@ def microcopy_line(
     state: StreamingState,
     reduced_motion: bool = False,
     shimmer_phase: float = 0.0,
+    stalled: bool = False,
 ) -> "Union[str, Text]":
     """Return microcopy for current streaming state, or '' for no line.
 
@@ -77,19 +78,23 @@ def microcopy_line(
             return f" · {elapsed_s:.1f}s"
         return ""
 
+    def _stall_suffix() -> str:
+        """A4: append stall indicator when no output for 5+ seconds."""
+        return " ⚠ stalled?" if stalled else ""
+
     if cat == ToolCategory.SHELL:
         base = f"▸ {state.lines_received} lines · {_human_size(state.bytes_received)}"
         if state.rate_bps is not None and state.rate_bps > 0:
             base += f" · {state.rate_bps / 1024:.0f} kB/s"
-        return base + _elapsed_suffix()
+        return base + _elapsed_suffix() + _stall_suffix()
 
     if cat == ToolCategory.FILE:
         if spec.primary_result in ("lines", "bytes"):
             base = f"▸ {state.lines_received} lines · {_human_size(state.bytes_received)}"
             if state.rate_bps is not None and state.rate_bps > 0:
                 base += f" · {state.rate_bps / 1024:.0f} kB/s"
-            return base + _elapsed_suffix()
-        return f"▸ {state.lines_received} lines written" + _elapsed_suffix()
+            return base + _elapsed_suffix() + _stall_suffix()
+        return f"▸ {state.lines_received} lines written" + _elapsed_suffix() + _stall_suffix()
 
     if cat == ToolCategory.SEARCH:
         count = (
@@ -97,11 +102,11 @@ def microcopy_line(
             if state.matches_so_far is not None
             else state.lines_received
         )
-        return f"▸ {count} matches so far…" + _elapsed_suffix()
+        return f"▸ {count} matches so far…" + _elapsed_suffix() + _stall_suffix()
 
     if cat == ToolCategory.WEB:
         status = state.last_status or "connecting"
-        return f"▸ {status} · {_human_size(state.bytes_received)}" + _elapsed_suffix()
+        return f"▸ {status} · {_human_size(state.bytes_received)}" + _elapsed_suffix() + _stall_suffix()
 
     if cat == ToolCategory.MCP:
         prov = spec.provenance or ""
@@ -111,18 +116,27 @@ def microcopy_line(
             server = parts[1] if len(parts) >= 3 else parts[-1]
         if not server:
             server = spec.name or "?"
-        return f"▸ mcp · {server} server" + _elapsed_suffix()
+        return f"▸ mcp · {server} server" + _elapsed_suffix() + _stall_suffix()
 
     if cat == ToolCategory.CODE:
-        return f"▸ {state.lines_received} lines · {_human_size(state.bytes_received)}" + _elapsed_suffix()
+        return f"▸ {state.lines_received} lines · {_human_size(state.bytes_received)}" + _elapsed_suffix() + _stall_suffix()
 
     if cat == ToolCategory.AGENT:
         # D2: static text when reduced_motion
         if reduced_motion:
-            return Text("▸ thinking…")
-        return _thinking_shimmer(shimmer_phase, state.elapsed_s)
+            result = Text("▸ thinking…")
+            if stalled:
+                result.append(" ⚠ stalled?", style="bold yellow")
+            return result
+        result = _thinking_shimmer(shimmer_phase, state.elapsed_s)
+        if stalled:
+            result.append(" ⚠ stalled?", style="bold yellow")
+        return result
 
     if cat == ToolCategory.UNKNOWN:
-        return f"▸ {state.lines_received} lines" + _elapsed_suffix()
+        base = f"▸ {state.lines_received} lines" + _elapsed_suffix()
+        if stalled:
+            return base + " ⚠ stalled?"
+        return base
 
     return ""

@@ -671,6 +671,12 @@ GroupHeader:hover {
     background: $boost;
 }
 
+/* E4: group header with one or more child errors */
+GroupHeader.--group-has-error {
+    color: $error;
+    background: $error 10%;
+}
+
 GroupBody {
     height: auto;
     padding-left: 2;

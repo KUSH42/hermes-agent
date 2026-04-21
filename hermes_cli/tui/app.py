@@ -401,6 +401,9 @@ class HermesApp(App):
     # Output dropped flag — set when queue is full; shown in StatusBar until next successful write
     status_output_dropped: reactive[bool] = reactive(False)
 
+    # D5: count of currently-streaming tool blocks (shows badge in StatusBar)
+    _streaming_tool_count: reactive[int] = reactive(0, repaint=False)
+
     # Image attachments — reactive(list) uses factory form to avoid shared mutable default
     attached_images: reactive[list] = reactive(list)
 
@@ -1007,6 +1010,18 @@ class HermesApp(App):
             ov.show_overlay()
             self._sync_workspace_polling_state()
             self._trigger_git_poll()
+
+    def action_dismiss_all_error_banners(self) -> None:
+        """E5: query all .error-banner widgets in the screen and remove each."""
+        try:
+            banners = list(self.screen.query(".error-banner"))
+            for banner in banners:
+                try:
+                    banner.remove()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     # --- InlineImageBar handlers ---
 
@@ -3042,6 +3057,8 @@ class HermesApp(App):
                 is_first_in_turn=_is_first,
             )
             self._active_streaming_blocks[tool_call_id] = block
+            # D5: increment streaming tool count for StatusBar badge
+            self._streaming_tool_count = len(self._active_streaming_blocks)
             # C1: track active tool name for contextual SDF text
             self._active_tool_name = tool_name or ""
             # Signal tool start to overlay
@@ -3113,6 +3130,8 @@ class HermesApp(App):
         block = self._active_streaming_blocks.pop(tool_call_id, None)
         if block is None:
             return
+        # D5: update streaming tool count
+        self._streaming_tool_count = len(self._active_streaming_blocks)
         if result_lines:
             for _line in result_lines:
                 block.append_line(_line)
@@ -3165,6 +3184,8 @@ class HermesApp(App):
         block = self._active_streaming_blocks.pop(tool_call_id, None)
         if block is None:
             return
+        # D5: update streaming tool count
+        self._streaming_tool_count = len(self._active_streaming_blocks)
         block.inject_diff(diff_lines, header_stats)
         block.complete(duration, is_error=is_error)
         if summary is not None:
@@ -3209,6 +3230,8 @@ class HermesApp(App):
         block = self._active_streaming_blocks.pop(tool_call_id, None)
         if block is None:
             return
+        # D5: update streaming tool count
+        self._streaming_tool_count = len(self._active_streaming_blocks)
         try:
             from hermes_cli.tui.tool_panel import ToolPanel as _TP
             body_pane = block.parent
@@ -4761,6 +4784,18 @@ class HermesApp(App):
                 self._pending_undo_panel = None
                 event.prevent_default()
                 return
+
+        # --- E5: Shift+X: dismiss all error banners (only when input not focused) ---
+        if key == "X":
+            try:
+                from hermes_cli.tui.input_widget import HermesInput as _HI
+                inp = self.query_one(_HI)
+                if not inp.has_focus:
+                    self.action_dismiss_all_error_banners()
+                    event.prevent_default()
+                    return
+            except Exception:
+                pass
 
         # --- w: toggle workspace overlay (only when input not focused) ---
         if key == "w":

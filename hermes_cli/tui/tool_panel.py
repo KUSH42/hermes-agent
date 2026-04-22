@@ -799,6 +799,11 @@ class ToolPanel(Widget):
         self._completed_at = time.monotonic()
         # Update accent + header bar state
         final_state = "error" if summary.is_error else "ok"
+        # D1: apply class so CSS can target errors specifically (e.g. compact mode exception)
+        if summary.is_error:
+            self.add_class("tool-panel--error")
+        else:
+            self.remove_class("tool-panel--error")
         if getattr(self, '_accent', None) is not None:
             self._accent.state = final_state
         if getattr(self, '_header_bar', None) is not None:

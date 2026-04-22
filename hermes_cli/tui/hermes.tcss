@@ -580,8 +580,9 @@ HermesApp.density-compact #input-chevron       { width: 1; }
 HermesApp.density-compact .tool-header-bar--duration   { display: none; }
 HermesApp.density-compact .tool-header-bar--line-count { display: none; }
 HermesApp.density-compact ToolAccent                   { display: none; }
-HermesApp.density-compact ToolPanel FooterPane         { display: none; }
-HermesApp.density-compact ToolPanel:focus FooterPane   { display: block; }
+HermesApp.density-compact ToolPanel FooterPane                   { display: none; }
+HermesApp.density-compact ToolPanel:focus FooterPane             { display: block; }
+HermesApp.density-compact ToolPanel.tool-panel--error FooterPane { display: block; }
 
 /* Phase C1: ToolHeaderBar compact label tightening */
 ToolHeaderBar.--compact .tool-header-bar--label        { max-width: 10; }

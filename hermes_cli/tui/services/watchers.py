@@ -147,10 +147,10 @@ class WatchersService(AppService):
             pass
         if value >= 0.9 and not self.app._compaction_warned:
             self.app._compaction_warned = True
-            self.app._svc_theme.flash_hint("⚠  Context window 90% full — compaction imminent", 3.0)
+            self.app._flash_hint("⚠  Context window 90% full — compaction imminent", 3.0)
         if value >= 0.99 and not getattr(self.app, "_compaction_warn_99", False):
             self.app._compaction_warn_99 = True
-            self.app._svc_theme.flash_hint("⚠  Context 99% — send /compact or clear conversation", 5.0)
+            self.app._flash_hint("⚠  Context 99% — send /compact or clear conversation", 5.0)
 
     # ------------------------------------------------------------------
     # Voice watchers
@@ -267,11 +267,11 @@ class WatchersService(AppService):
         try:
             self.handle_file_drop_inner(paths)
         except Exception:
-            self.app._svc_theme.flash_hint("file drop failed — see log for details", 2.0)
+            self.app._flash_hint("file drop failed — see log for details", 2.0)
 
     def handle_file_drop_inner(self, paths: list[Path]) -> None:
         if any(getattr(self.app, attr) is not None for attr in ("approval_state", "clarify_state", "sudo_state", "secret_state")):
-            self.app._svc_theme.flash_hint("file drop unavailable while prompt is open", 1.5)
+            self.app._flash_hint("file drop unavailable while prompt is open", 1.5)
             return
 
         cwd = self.app.get_working_directory()
@@ -307,7 +307,7 @@ class WatchersService(AppService):
             hint_parts.append(f"dropped {len(rejected)} unsupported {noun}")
 
         if hint_parts:
-            self.app._svc_theme.flash_hint(" · ".join(hint_parts), 1.2)
+            self.app._flash_hint(" · ".join(hint_parts), 1.2)
 
     # ------------------------------------------------------------------
     # Overlay state watchers

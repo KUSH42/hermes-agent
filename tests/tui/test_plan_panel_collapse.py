@@ -36,11 +36,11 @@ def test_plan_panel_has_collapsed_class_in_css():
     assert "PlanPanel.--collapsed" in PlanPanel.DEFAULT_CSS
 
 
-# T5: F9 key string matches plan_panel_collapsed toggle in _app_key_handler
+# T5: F9 key string matches plan_panel_collapsed toggle in KeyDispatchService
 def test_f9_toggle_in_key_handler():
     import inspect
-    from hermes_cli.tui._app_key_handler import _KeyHandlerMixin
-    src = inspect.getsource(_KeyHandlerMixin.on_key)
+    from hermes_cli.tui.services.keys import KeyDispatchService
+    src = inspect.getsource(KeyDispatchService.dispatch_key)
     assert "f9" in src
     assert "plan_panel_collapsed" in src
 

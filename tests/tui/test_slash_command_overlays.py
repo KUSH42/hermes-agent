@@ -760,7 +760,7 @@ async def test_tools_no_args_opens_overlay():
     app = _make_app()
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
-        with patch.object(app, "_open_tools_overlay") as mock_open:
+        with patch.object(app._svc_commands, "open_tools_overlay") as mock_open:
             result = app._handle_tui_command("/tools")
         assert result is True
         mock_open.assert_called_once()

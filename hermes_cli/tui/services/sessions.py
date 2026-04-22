@@ -140,7 +140,7 @@ class SessionsService(AppService):
 
     def flash_sessions_max(self) -> None:
         """Flash HintBar with max sessions message. Event-loop only."""
-        self.app._svc_theme.flash_hint("Max sessions reached", duration=2.0)
+        self.app._flash_hint("Max sessions reached", duration=2.0)
 
     def new_worktree_session(self) -> None:
         """Ctrl+W N — open new session overlay."""
@@ -279,7 +279,7 @@ class SessionsService(AppService):
         rec = next((r for r in records if getattr(r, "id", None) == session_id), None)
         if rec is None:
             self.app.call_from_thread(
-                self.app._svc_theme.flash_hint, "Session not found.", 2.0
+                self.app._flash_hint, "Session not found.", 2.0
             )
             return
         try:
@@ -305,7 +305,7 @@ class SessionsService(AppService):
                 mgr.index.remove_session(session_id)
                 break
         self.app.call_from_thread(
-            self.app._svc_theme.flash_hint, f"Session {session_id[:8]} killed", 1.5
+            self.app._flash_hint, f"Session {session_id[:8]} killed", 1.5
         )
 
     @work(thread=True)

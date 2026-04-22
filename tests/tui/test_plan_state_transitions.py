@@ -1,7 +1,6 @@
-"""tests/tui/test_plan_state_transitions.py — _ToolRenderingMixin plan mutation tests (Phase 1).
+"""tests/tui/test_plan_state_transitions.py — ToolRenderingService plan mutation tests (Phase 1).
 
-Tests use a lightweight mock app object to call the mixin methods directly
-on the event loop (via run_test pilot approach).
+Tests use a lightweight mock app object to call service methods directly.
 """
 from __future__ import annotations
 
@@ -14,35 +13,63 @@ from unittest.mock import MagicMock, patch
 # ---------------------------------------------------------------------------
 
 def _make_app_stub():
-    """Return a minimal stub that satisfies _ToolRenderingMixin self calls."""
-    from hermes_cli.tui._app_tool_rendering import _ToolRenderingMixin
-    from hermes_cli.tui.plan_types import PlanState
+    """Return a minimal ToolRenderingService with a mock app."""
+    from hermes_cli.tui.services.tools import ToolRenderingService
 
-    class _StubApp(_ToolRenderingMixin):
-        planned_calls = []
-        _turn_tool_calls = {}
-        _active_streaming_blocks = {}
-        _streaming_tool_count = 0
-        _agent_stack = []
-        _turn_start_monotonic = None
-        _browse_total = 0
-        _current_turn_tool_count = 0
-        _cached_output_panel = None
+    mock_app = MagicMock()
+    mock_app.planned_calls = []
+    mock_app._turn_tool_calls = {}
+    mock_app._active_streaming_blocks = {}
+    mock_app._streaming_tool_count = 0
+    mock_app._agent_stack = []
+    mock_app._turn_start_monotonic = None
+    mock_app._browse_total = 0
+    mock_app._current_turn_tool_count = 0
+    mock_app._cached_output_panel = None
+    mock_app.query_one = MagicMock(side_effect=Exception("NoMatches"))
+    mock_app.call_after_refresh = MagicMock()
 
-        def query_one(self, *a, **kw):
-            raise Exception("NoMatches")
+    svc = ToolRenderingService.__new__(ToolRenderingService)
+    svc.app = mock_app
+    svc._streaming_map = {}
+    svc._turn_tool_calls = {}
+    svc._agent_stack = []
+    svc._subagent_panels = {}
+    return svc
 
-        def call_after_refresh(self, *a, **kw):
-            pass
 
-    return _StubApp()
+class _SvcProxy:
+    """Proxy that routes app.planned_calls to svc.app.planned_calls."""
+    def __init__(self, svc):
+        self._svc = svc
+
+    @property
+    def planned_calls(self):
+        return self._svc.app.planned_calls
+
+    @planned_calls.setter
+    def planned_calls(self, v):
+        self._svc.app.planned_calls = v
+
+    def set_plan_batch(self, batch):
+        return self._svc.set_plan_batch(batch)
+
+    def mark_plan_running(self, tid):
+        return self._svc.mark_plan_running(tid)
+
+    def mark_plan_done(self, tid, is_error, dur_ms):
+        return self._svc.mark_plan_done(tid, is_error, dur_ms)
+
+
+def _make_stub():
+    return _SvcProxy(_make_app_stub())
 
 
 # ---------------------------------------------------------------------------
 # T1: set_plan_batch seeds PENDING entries
 # ---------------------------------------------------------------------------
 def test_set_plan_batch_seeds_pending():
-    app = _make_app_stub()
+    app = _make_stub()
     batch = [
         ("id1", "terminal", "ls", {"command": "ls"}),
         ("id2", "read_file", "README.md", {"path": "README.md"}),
@@ -61,7 +88,7 @@ def test_set_plan_batch_preserves_done_entries():
     from hermes_cli.tui.plan_types import PlannedCall, PlanState
     import time
 
-    app = _make_app_stub()
+    app = _make_stub()
     done_call = PlannedCall(
         tool_call_id="old-1",
         tool_name="terminal",
@@ -88,7 +115,7 @@ def test_set_plan_batch_preserves_done_entries():
 def test_set_plan_batch_drops_stale_pending():
     from hermes_cli.tui.plan_types import PlannedCall, PlanState
 
-    app = _make_app_stub()
+    app = _make_stub()
     stale = PlannedCall(
         tool_call_id="stale-1",
         tool_name="terminal",
@@ -115,7 +142,7 @@ def test_set_plan_batch_drops_stale_pending():
 def test_mark_plan_running():
     from hermes_cli.tui.plan_types import PlanState
 
-    app = _make_app_stub()
+    app = _make_stub()
     batch = [("id1", "terminal", "ls", {"command": "ls"})]
     app.set_plan_batch(batch)
     app.mark_plan_running("id1")
@@ -128,7 +155,7 @@ def test_mark_plan_running():
 # T5: mark_plan_running is a no-op for unknown id
 # ---------------------------------------------------------------------------
 def test_mark_plan_running_unknown_id():
-    app = _make_app_stub()
+    app = _make_stub()
     batch = [("id1", "terminal", "ls", {"command": "ls"})]
     app.set_plan_batch(batch)
     original = list(app.planned_calls)
@@ -144,7 +171,7 @@ def test_mark_plan_running_unknown_id():
 def test_mark_plan_done():
     from hermes_cli.tui.plan_types import PlanState
 
-    app = _make_app_stub()
+    app = _make_stub()
     batch = [("id1", "terminal", "ls", {"command": "ls"})]
     app.set_plan_batch(batch)
     app.mark_plan_running("id1")
@@ -160,7 +187,7 @@ def test_mark_plan_done():
 def test_mark_plan_done_error():
     from hermes_cli.tui.plan_types import PlanState
 
-    app = _make_app_stub()
+    app = _make_stub()
     batch = [("id1", "terminal", "bad_cmd", {"command": "bad_cmd"})]
     app.set_plan_batch(batch)
     app.mark_plan_running("id1")
@@ -173,7 +200,7 @@ def test_mark_plan_done_error():
 # T8: mutations produce new list objects (reactive watcher contract)
 # ---------------------------------------------------------------------------
 def test_mutations_produce_new_list_objects():
-    app = _make_app_stub()
+    app = _make_stub()
     original = app.planned_calls
     batch = [("id1", "terminal", "ls", {"command": "ls"})]
     app.set_plan_batch(batch)
@@ -190,7 +217,7 @@ def test_mutations_produce_new_list_objects():
 def test_multiple_calls_independent_transitions():
     from hermes_cli.tui.plan_types import PlanState
 
-    app = _make_app_stub()
+    app = _make_stub()
     batch = [
         ("id1", "terminal", "cmd1", {"command": "cmd1"}),
         ("id2", "read_file", "file.py", {"path": "file.py"}),
@@ -210,7 +237,7 @@ def test_multiple_calls_independent_transitions():
 # T10: args_preview truncated to 60 chars
 # ---------------------------------------------------------------------------
 def test_args_preview_truncated():
-    app = _make_app_stub()
+    app = _make_stub()
     long_arg = "x" * 200
     batch = [("id1", "terminal", "cmd", {"command": long_arg})]
     app.set_plan_batch(batch)

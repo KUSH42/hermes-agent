@@ -220,7 +220,7 @@ class BrowseService(AppService):
             self._browse_cursor = 0
         app._browse_cursor = self._browse_cursor
         if app.browse_mode and not anchors:
-            app._svc_theme.flash_hint("No turns to browse — start a conversation first", 2.0)
+            app._flash_hint("No turns to browse — start a conversation first", 2.0)
         if app.browse_mode:
             self.apply_browse_pips()
 

@@ -18,9 +18,9 @@ def test_budget_section_on_click_opens_usage_overlay():
     assert "UsageOverlay" in src
 
 
-# T3: _reset_turn_state is called from on_hermes_input_submitted
+# T3: _reset_turn_state is called from dispatch_input_submitted (KeyDispatchService)
 def test_reset_called_on_submit():
     import inspect
-    from hermes_cli.tui._app_key_handler import _KeyHandlerMixin
-    src = inspect.getsource(_KeyHandlerMixin.on_hermes_input_submitted)
+    from hermes_cli.tui.services.keys import KeyDispatchService
+    src = inspect.getsource(KeyDispatchService.dispatch_input_submitted)
     assert "_reset_turn_state" in src

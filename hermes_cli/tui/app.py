@@ -158,16 +158,6 @@ from hermes_cli.tui._app_utils import (
     _log_lag,
     _run_effect_sync,
 )
-from hermes_cli.tui._app_io import _AppIOMixin
-from hermes_cli.tui._app_spinner import _SpinnerMixin
-from hermes_cli.tui._app_tool_rendering import _ToolRenderingMixin
-from hermes_cli.tui._app_browse import _BrowseMixin
-from hermes_cli.tui._app_context_menu import _ContextMenuMixin
-from hermes_cli.tui._app_sessions import _SessionsMixin
-from hermes_cli.tui._app_theme import _ThemeMixin
-from hermes_cli.tui._app_commands import _CommandsMixin
-from hermes_cli.tui._app_watchers import _WatchersMixin
-from hermes_cli.tui._app_key_handler import _KeyHandlerMixin
 from hermes_cli.tui._browse_types import (
     BrowseAnchor,
     BrowseAnchorType,
@@ -255,7 +245,7 @@ class MCPServerDisconnected(_TxtMessage):
 # moved to _browse_types.py — imported above
 
 
-class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _ContextMenuMixin, _SessionsMixin, _ThemeMixin, _CommandsMixin, _WatchersMixin, _KeyHandlerMixin, App):
+class HermesApp(App):
     """Main Textual application for the Hermes Agent TUI.
 
     Holds all reactive state that drives widget updates. The agent thread
@@ -1853,3 +1843,596 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
             return
         self._pane_manager.toggle_center_split()
         self._pane_manager.apply_center_split(self)
+
+    # ── Adapter forwarders (R4 Phase 4 — mixin logic now in services/) ──────
+
+    # --- from _app_io.py ---
+
+    @work(exclusive=True)
+    async def _consume_output(self) -> None:
+        """Async worker — delegates body to IOService.consume_output."""
+        await self._svc_io.consume_output()
+
+    def write_output(self, text: str) -> None:
+        """Thread-safe: enqueue text for the output consumer."""
+        return self._svc_io.write_output(text)
+
+    def flush_output(self) -> None:
+        """Thread-safe: send flush sentinel to commit any trailing partial line."""
+        return self._svc_io.flush_output()
+
+    async def _play_effects_async(
+        self,
+        effect_name: str,
+        text: str,
+        params: "dict[str, object] | None" = None,
+    ) -> bool:
+        return await self._svc_io.play_effects_async(effect_name, text, params)
+
+    @work
+    async def _play_effects(
+        self,
+        effect_name: str,
+        text: str,
+        params: "dict[str, object] | None" = None,
+    ) -> None:
+        """Suspend Textual, run a TTE animation, then resume."""
+        await self._svc_io.play_effects_async(effect_name, text, params)
+
+    def play_effects_blocking(
+        self,
+        effect_name: str,
+        text: str,
+        params: "dict[str, object] | None" = None,
+    ) -> bool:
+        """Run a TTE animation and block caller until it completes."""
+        return self._svc_io.play_effects_blocking(effect_name, text, params)
+
+    def get_working_directory(self) -> Path:
+        """Return TUI workspace root used for path completion and file-drop links."""
+        return self._svc_io.get_working_directory()
+
+    def _play_tte_main(
+        self,
+        effect_name: str,
+        text: str,
+        params: "dict[str, object] | None" = None,
+        done_event: "threading.Event | None" = None,
+    ) -> bool:
+        return self._svc_io.play_tte_main(effect_name, text, params, done_event)
+
+    def play_tte(
+        self,
+        effect_name: str,
+        text: str,
+        params: "dict[str, object] | None" = None,
+        done_event: "threading.Event | None" = None,
+    ) -> bool:
+        """Play a TTE animation inline in TUI."""
+        return self._svc_io.play_tte(effect_name, text, params, done_event)
+
+    def play_tte_blocking(
+        self,
+        effect_name: str,
+        text: str,
+        params: "dict[str, object] | None" = None,
+        timeout_s: float = 15.0,
+    ) -> bool:
+        """Play a TTE animation inline and wait for completion."""
+        return self._svc_io.play_tte_blocking(effect_name, text, params, timeout_s)
+
+    def _stop_tte_main(self) -> None:
+        return self._svc_io.stop_tte_main()
+
+    def stop_tte(self) -> None:
+        """Stop any running inline TTE animation."""
+        return self._svc_io.stop_tte()
+
+    # --- from _app_spinner.py ---
+
+    def _tick_spinner(self) -> None:  # DEPRECATED
+        return self._svc_spinner.tick_spinner()
+
+    @staticmethod
+    def _cell_width(text: str) -> int:  # DEPRECATED
+        from wcwidth import wcswidth
+        return max(0, wcswidth(text))
+
+    def _input_bar_width(self, inp: Any) -> int:  # DEPRECATED
+        return self._svc_spinner.input_bar_width(inp)
+
+    def _next_spinner_frame(self, text_after_frame: str, elapsed: float, input_width: int) -> str:  # DEPRECATED
+        return self._svc_spinner.next_spinner_frame(text_after_frame, elapsed, input_width)
+
+    def _helix_width(self, text_after_frame: str, input_width: int) -> int:  # DEPRECATED
+        return self._svc_spinner.helix_width(text_after_frame, input_width)
+
+    def _helix_spinner_frame(self, elapsed: float, text_after_frame: str, input_width: int) -> Any:  # DEPRECATED
+        return self._svc_spinner.helix_spinner_frame(elapsed, text_after_frame, input_width)
+
+    def _build_helix_frames(self, width_cells: int) -> Any:  # DEPRECATED
+        return self._svc_spinner.build_helix_frames(width_cells)
+
+    def _build_hint_text(self) -> str:  # DEPRECATED
+        return self._svc_spinner.build_hint_text()
+
+    def _tick_duration(self) -> None:  # DEPRECATED
+        return self._svc_spinner.tick_duration()
+
+    def _tick_fps(self) -> None:  # DEPRECATED
+        return self._svc_spinner.tick_fps()
+
+    def watch_fps_hud_visible(self, value: bool) -> None:
+        self._svc_spinner.on_fps_hud_visible(value)
+
+    def action_toggle_fps_hud(self) -> None:
+        self.fps_hud_visible = not self.fps_hud_visible
+
+    def _compute_hint_phase(self) -> str:  # DEPRECATED
+        return self._svc_spinner.compute_hint_phase()
+
+    def _set_hint_phase(self, phase: str) -> None:  # DEPRECATED
+        return self._svc_spinner.set_hint_phase(phase)
+
+    def _set_chevron_phase(self, phase: str) -> None:  # DEPRECATED
+        return self._svc_spinner.set_chevron_phase(phase)
+
+    def _drawille_show_hide(self, running: bool) -> None:  # DEPRECATED
+        return self._svc_spinner.drawille_show_hide(running)
+
+    # --- from _app_tool_rendering.py ---
+
+    def _get_output_panel(self) -> "Any | None":
+        return self._svc_tools._get_output_panel()  # DEPRECATED
+
+    def _current_message_panel(self) -> "Any | None":
+        return self._svc_tools.current_message_panel()  # DEPRECATED
+
+    def open_reasoning(self, title: str = "Reasoning") -> None:
+        return self._svc_tools.open_reasoning(title)
+
+    def append_reasoning(self, delta: str) -> None:
+        return self._svc_tools.append_reasoning(delta)
+
+    def close_reasoning(self) -> None:
+        return self._svc_tools.close_reasoning()
+
+    def mount_tool_block(
+        self,
+        label: str,
+        lines: "list[str]",
+        plain_lines: "list[str]",
+        rerender_fn: Any = None,
+        header_stats: Any = None,
+        tool_name: "str | None" = None,
+        parent_id: "str | None" = None,
+    ) -> None:
+        return self._svc_tools.mount_tool_block(
+            label, lines, plain_lines,
+            rerender_fn=rerender_fn, header_stats=header_stats,
+            tool_name=tool_name, parent_id=parent_id,
+        )
+
+    def _open_gen_block(self, tool_name: str) -> "Any | None":
+        return self._svc_tools.open_gen_block(tool_name)  # DEPRECATED
+
+    def _open_execute_code_block(self, idx: int) -> "Any | None":
+        return self._svc_tools.open_execute_code_block(idx)  # DEPRECATED
+
+    def _open_write_file_block(self, idx: int, path: str) -> "Any | None":
+        return self._svc_tools.open_write_file_block(idx, path)  # DEPRECATED
+
+    def open_streaming_tool_block(self, tool_call_id: str, label: str, tool_name: "str | None" = None) -> None:
+        return self._svc_tools.open_streaming_tool_block(tool_call_id, label, tool_name=tool_name)
+
+    def append_streaming_line(self, tool_call_id: str, line: str) -> None:
+        return self._svc_tools.append_streaming_line(tool_call_id, line)
+
+    def close_streaming_tool_block(
+        self,
+        tool_call_id: str,
+        duration: str,
+        is_error: bool = False,
+        summary: "Any | None" = None,
+        result_lines: "list[str] | None" = None,
+    ) -> None:
+        return self._svc_tools.close_streaming_tool_block(
+            tool_call_id, duration, is_error=is_error, summary=summary, result_lines=result_lines
+        )
+
+    def close_streaming_tool_block_with_diff(
+        self,
+        tool_call_id: str,
+        duration: str,
+        is_error: bool,
+        diff_lines: "list[str]",
+        header_stats: object,
+        summary: "Any | None" = None,
+    ) -> None:
+        return self._svc_tools.close_streaming_tool_block_with_diff(
+            tool_call_id, duration, is_error, diff_lines, header_stats, summary=summary
+        )
+
+    def remove_streaming_tool_block(self, tool_call_id: str) -> None:
+        return self._svc_tools.remove_streaming_tool_block(tool_call_id)
+
+    def set_plan_batch(self, batch: "list[tuple[str, str, str, dict]]") -> None:
+        return self._svc_tools.set_plan_batch(batch)
+
+    def mark_plan_running(self, tool_call_id: str) -> None:
+        return self._svc_tools.mark_plan_running(tool_call_id)
+
+    def mark_plan_done(self, tool_call_id: str, is_error: bool, dur_ms: int) -> None:
+        return self._svc_tools.mark_plan_done(tool_call_id, is_error, dur_ms)
+
+    def current_turn_tool_calls(self) -> "list[dict]":
+        return self._svc_tools.current_turn_tool_calls()
+
+    # --- from _app_browse.py ---
+
+    def _apply_browse_focus(self) -> None:  # DEPRECATED
+        return self._svc_browse.apply_browse_focus()
+
+    def watch_browse_mode(self, value: bool) -> None:
+        self._svc_browse.on_browse_mode(value)
+
+    def _mount_minimap_default(self) -> None:  # DEPRECATED
+        return self._svc_browse.mount_minimap_default()
+
+    async def action_toggle_minimap(self) -> None:
+        await self._svc_browse.action_toggle_minimap()
+
+    def watch_browse_index(self, _value: int) -> None:
+        self._svc_browse.on_browse_index(_value)
+
+    def _rebuild_browse_anchors(self) -> None:  # DEPRECATED
+        return self._svc_browse.rebuild_browse_anchors()
+
+    def _jump_anchor(self, direction: int, filter_type: Any = None) -> None:  # DEPRECATED
+        return self._svc_browse.jump_anchor(direction, filter_type)
+
+    def _focus_anchor(self, idx: int, anchor: Any, *, _retry: bool = True) -> None:  # DEPRECATED
+        return self._svc_browse.focus_anchor(idx, anchor, _retry=_retry)
+
+    def _clear_browse_highlight(self) -> None:  # DEPRECATED
+        return self._svc_browse.clear_browse_highlight()
+
+    def _clear_browse_pips(self) -> None:  # DEPRECATED
+        return self._svc_browse.clear_browse_pips()
+
+    def _apply_browse_pips(self) -> None:  # DEPRECATED
+        return self._svc_browse.apply_browse_pips()
+
+    def _update_browse_status(self, anchor: Any) -> None:  # DEPRECATED
+        return self._svc_browse.update_browse_status(anchor)
+
+    def action_jump_subagent_prev(self) -> None:
+        self._svc_browse.action_jump_subagent_prev()
+
+    def action_jump_subagent_next(self) -> None:
+        self._svc_browse.action_jump_subagent_next()
+
+    def _focus_tool_panel(self, direction: int) -> None:  # DEPRECATED
+        return self._svc_browse.focus_tool_panel(direction)
+
+    # --- from _app_context_menu.py ---
+
+    async def on_click(self, event: Any) -> None:
+        return await self._svc_context.handle_click(event)
+
+    async def _show_context_menu_for_focused(self) -> None:
+        return await self._svc_context.show_context_menu_for_focused()
+
+    async def _show_context_menu_at(self, items: list, x: int, y: int) -> None:
+        return await self._svc_context.show_context_menu_at(items, x, y)
+
+    def on_path_search_provider_batch(self, message: Any) -> None:
+        return self._svc_context.on_path_search_provider_batch(message)
+
+    def _build_context_items(self, event: Any) -> list:
+        return self._svc_context.build_context_items(event)
+
+    def _copy_code_block(self, block: Any) -> None:
+        return self._svc_context.copy_code_block(block)
+
+    def _copy_tool_output(self, block: Any) -> None:
+        return self._svc_context.copy_tool_output(block)
+
+    def _build_tool_block_menu_items(self, block: Any) -> list:
+        return self._svc_context.build_tool_block_menu_items(block)
+
+    def _copy_path_action(self, header: Any, path: str) -> None:
+        return self._svc_context.copy_path_action(header, path)
+
+    def _open_external_url(self, url: str) -> None:
+        return self._svc_context.open_external_url(url)
+
+    def on_copyable_rich_log_link_clicked(self, event: Any) -> None:
+        return self._svc_context.on_copyable_rich_log_link_clicked(event)
+
+    def _open_path_action(self, header: Any, path: str, opener: str, folder: bool) -> None:
+        return self._svc_context.open_path_action(header, path, opener, folder)
+
+    def _copy_all_output(self) -> None:
+        return self._svc_context.copy_all_output()
+
+    def _copy_panel(self, panel: Any) -> None:
+        return self._svc_context.copy_panel(panel)
+
+    def _copy_text(self, text: str) -> None:
+        return self._svc_context.copy_text(text)
+
+    def _paste_into_input(self) -> None:
+        return self._svc_context.paste_into_input()
+
+    def _clear_input(self) -> None:
+        return self._svc_context.clear_input()
+
+    def on_tool_panel_path_focused(self, event: Any) -> None:
+        return self._svc_context.on_tool_panel_path_focused(event)
+
+    def _dismiss_all_info_overlays(self) -> None:
+        return self._svc_context.dismiss_all_info_overlays()
+
+    # --- from _app_sessions.py ---
+
+    @property
+    def _sessions_enabled(self) -> bool:
+        return self._svc_sessions._sessions_enabled
+
+    @_sessions_enabled.setter
+    def _sessions_enabled(self, value: bool) -> None:
+        self._svc_sessions._sessions_enabled = value
+
+    def _init_sessions(self) -> None:
+        return self._svc_sessions.init_sessions()  # DEPRECATED
+
+    def _get_session_records(self) -> list:
+        return self._svc_sessions.get_session_records()  # DEPRECATED
+
+    def _get_active_session_id(self) -> str:
+        return self._svc_sessions.get_active_session_id()  # DEPRECATED
+
+    def _refresh_session_bar(self) -> None:
+        return self._svc_sessions.refresh_session_bar()  # DEPRECATED
+
+    def _poll_session_index(self) -> None:
+        return self._svc_sessions.poll_session_index()  # DEPRECATED
+
+    def _refresh_session_records_from_index(self) -> None:
+        return self._svc_sessions.refresh_session_records_from_index()  # DEPRECATED
+
+    def _open_new_session_overlay(self) -> None:
+        return self._svc_sessions.open_new_session_overlay()  # DEPRECATED
+
+    def _flash_sessions_max(self) -> None:
+        return self._svc_sessions.flash_sessions_max()  # DEPRECATED
+
+    def action_new_worktree_session(self) -> None:
+        """Ctrl+W N — open new session overlay."""
+        return self._svc_sessions.new_worktree_session()
+
+    def _switch_to_session_by_index(self, n: int) -> None:
+        return self._svc_sessions.switch_to_session_by_index(n)  # DEPRECATED
+
+    def _switch_to_session(self, session_id: str) -> None:
+        return self._svc_sessions.switch_to_session(session_id)  # DEPRECATED
+
+    def _on_session_notify_event(self, event: dict) -> None:
+        return self._svc_sessions._on_session_notify_event(event)  # DEPRECATED
+
+    def _handle_session_event(self, event: dict) -> None:
+        return self._svc_sessions.handle_session_event(event)  # DEPRECATED
+
+    def _create_new_session(self, branch: str, base: str, overlay: object) -> None:
+        return self._svc_sessions.create_new_session(branch, base, overlay)  # DEPRECATED
+
+    def _on_session_created(self, new_id: str, overlay: object) -> None:
+        return self._svc_sessions.on_session_created(new_id, overlay)  # DEPRECATED
+
+    def _kill_session_prompt(self, session_id: str) -> None:
+        return self._svc_sessions.kill_session_prompt(session_id)  # DEPRECATED
+
+    def _do_kill_session(self, session_id: str) -> None:
+        return self._svc_sessions.do_kill_session(session_id)  # DEPRECATED
+
+    def _open_merge_overlay(self, session_id: str) -> None:
+        return self._svc_sessions.open_merge_overlay(session_id)  # DEPRECATED
+
+    def _show_merge_overlay(self, session_id: str, diff_stat: str) -> None:
+        return self._svc_sessions.show_merge_overlay(session_id, diff_stat)  # DEPRECATED
+
+    def _run_merge(self, session_id: str, strategy: str, close_on_success: bool, overlay: object) -> None:
+        return self._svc_sessions.run_merge(session_id, strategy, close_on_success, overlay)  # DEPRECATED
+
+    def _reopen_orphan_session(self, session_id: str) -> None:
+        return self._svc_sessions.reopen_orphan_session(session_id)  # DEPRECATED
+
+    def _delete_orphan_session(self, session_id: str) -> None:
+        return self._svc_sessions.delete_orphan_session(session_id)  # DEPRECATED
+
+    def action_resume_session(self, session_id: str) -> None:
+        """Resume a session by ID."""
+        return self._svc_sessions.resume_session(session_id)
+
+    def action_open_sessions(self) -> None:
+        """Open the session browser overlay."""
+        return self._svc_sessions.open_sessions()
+
+    # --- from _app_theme.py ---
+
+    def get_css_variables(self) -> "dict[str, str]":
+        """Merge ThemeManager overrides into Textual's CSS variable resolution."""
+        base = super().get_css_variables()
+        tm = getattr(self, "_theme_manager", None)
+        if tm is not None:
+            overrides = tm.css_variables
+        else:
+            from hermes_cli.tui.theme_manager import COMPONENT_VAR_DEFAULTS
+            overrides = COMPONENT_VAR_DEFAULTS
+        return {**base, **overrides}
+
+    def apply_skin(self, skin_vars: "dict[str, str] | Path") -> None:
+        return self._svc_theme.apply_skin(skin_vars)
+
+    def _apply_override_dict(self, overrides: dict) -> None:
+        return self._svc_theme._apply_override_dict(overrides)
+
+    def refresh_slash_commands(self, extra: "list[str] | None" = None) -> None:
+        return self._svc_theme.refresh_slash_commands(extra)
+
+    def _get_selected_text(self) -> "str | None":
+        return self._svc_theme.get_selected_text()
+
+    def _populate_slash_commands(self) -> None:
+        return self._svc_theme.populate_slash_commands()
+
+    def _flash_hint(self, text: str, duration: float = 1.5) -> None:
+        return self._svc_theme.flash_hint(text, duration)
+
+    def set_status_error(self, msg: str, auto_clear_s: float = 0.0) -> None:
+        return self._svc_theme.set_status_error(msg, auto_clear_s)
+
+    def _copy_text_with_hint(self, text: str) -> None:
+        return self._svc_theme.copy_text_with_hint(text)
+
+    # --- from _app_commands.py ---
+
+    def _handle_tui_command(self, text: str) -> bool:  # DEPRECATED
+        return self._svc_commands.handle_tui_command(text)
+
+    @work(thread=False, group="clear")
+    async def _handle_clear_tui(self) -> None:  # DEPRECATED
+        await self._svc_commands.handle_clear_tui()
+
+    def _has_rollback_checkpoint(self) -> bool:  # DEPRECATED
+        return self._svc_commands.has_rollback_checkpoint()
+
+    def _open_tools_overlay(self) -> None:  # DEPRECATED
+        return self._svc_commands.open_tools_overlay()
+
+    def _handle_layout_command(self, args: str) -> None:  # DEPRECATED
+        return self._svc_commands.handle_layout_command(args)
+
+    def _open_anim_config(self) -> None:  # DEPRECATED
+        return self._svc_commands.open_anim_config()
+
+    def _persist_anim_config(self, cfg_dict: dict) -> None:  # DEPRECATED
+        return self._svc_commands.persist_anim_config(cfg_dict)
+
+    def _update_anim_hint(self) -> None:  # DEPRECATED
+        return self._svc_commands.update_anim_hint()
+
+    def _handle_anim_command(self, stripped: str) -> None:  # DEPRECATED
+        return self._svc_commands.handle_anim_command(stripped)
+
+    def _try_auto_title(self) -> None:  # DEPRECATED
+        return self._svc_commands.try_auto_title()
+
+    def _toggle_drawille_overlay(self) -> None:  # DEPRECATED
+        return self._svc_commands.toggle_drawille_overlay()
+
+    def action_open_anim_config(self) -> None:
+        self._toggle_drawille_overlay()
+
+    def _initiate_undo(self) -> None:  # DEPRECATED
+        return self._svc_commands.initiate_undo()
+
+    @work(thread=False)
+    async def _run_undo_sequence(self, panel: Any) -> None:  # DEPRECATED
+        await self._svc_commands.run_undo_sequence(panel)
+
+    def _initiate_retry(self) -> None:  # DEPRECATED
+        return self._svc_commands.initiate_retry()
+
+    def _initiate_rollback(self, text: str) -> None:  # DEPRECATED
+        return self._svc_commands.initiate_rollback(text)
+
+    @work(thread=False)
+    async def _run_rollback_sequence(self, n: int) -> None:  # DEPRECATED
+        await self._svc_commands.run_rollback_sequence(n)
+
+    # --- from _app_watchers.py ---
+
+    def on_text_area_changed(self, event: Any) -> None:
+        self._svc_watchers.on_text_area_changed(event)
+
+    def on_input_changed(self, event: Any) -> None:
+        self._svc_watchers.on_input_changed(event)
+
+    def watch_size(self, size: Any) -> None:
+        self._svc_watchers.on_size(size)
+
+    def watch_compact(self, value: bool) -> None:
+        self._svc_watchers.on_compact(value)
+
+    def _sync_compact_visibility(self) -> None:  # DEPRECATED
+        self._svc_watchers.sync_compact_visibility()
+
+    def watch_status_compaction_progress(self, value: float) -> None:
+        self._svc_watchers.on_status_compaction_progress(value)
+
+    def watch_voice_mode(self, value: bool) -> None:
+        self._svc_watchers.on_voice_mode(value)
+
+    def watch_voice_recording(self, value: bool) -> None:
+        self._svc_watchers.on_voice_recording(value)
+
+    def watch_attached_images(self, value: list) -> None:
+        self._svc_watchers.on_attached_images(value)
+
+    def _append_attached_images(self, images: "list[Path]") -> None:  # DEPRECATED
+        self._svc_watchers.append_attached_images(images)
+
+    def _clear_attached_images(self) -> None:  # DEPRECATED
+        self._svc_watchers.clear_attached_images()
+
+    def _insert_link_tokens(self, tokens: "list[str]") -> None:  # DEPRECATED
+        self._svc_watchers.insert_link_tokens(tokens)
+
+    @staticmethod
+    def _drop_path_display(path: Path, cwd: Path) -> str:  # DEPRECATED
+        from hermes_cli.tui.services.watchers import WatchersService
+        return WatchersService.drop_path_display(path, cwd)
+
+    def handle_file_drop(self, paths: "list[Path]") -> None:
+        """Route terminal drag-and-drop pasted paths into input bar."""
+        self._svc_watchers.handle_file_drop(paths)
+
+    def _handle_file_drop_inner(self, paths: "list[Path]") -> None:  # DEPRECATED
+        self._svc_watchers.handle_file_drop_inner(paths)
+
+    def watch_clarify_state(self, value: Any) -> None:
+        self._svc_watchers.on_clarify_state(value)
+
+    def watch_approval_state(self, value: Any) -> None:
+        self._svc_watchers.on_approval_state(value)
+
+    def watch_highlighted_candidate(self, c: Any) -> None:
+        self._svc_watchers.on_highlighted_candidate(c)
+
+    def watch_sudo_state(self, value: Any) -> None:
+        self._svc_watchers.on_sudo_state(value)
+
+    def watch_secret_state(self, value: Any) -> None:
+        self._svc_watchers.on_secret_state(value)
+
+    def watch_status_error(self, value: str) -> None:
+        self._svc_watchers.on_status_error(value)
+
+    def _auto_clear_status_error(self, expected: str) -> None:  # DEPRECATED
+        self._svc_watchers.auto_clear_status_error(expected)
+
+    def watch_undo_state(self, value: Any) -> None:
+        self._svc_watchers.on_undo_state(value)
+
+    # --- from _app_key_handler.py ---
+
+    def on_key(self, event: Any) -> None:
+        self._svc_keys.dispatch_key(event)
+
+    def on_hermes_input_submitted(self, event: Any) -> None:
+        self._svc_keys.dispatch_input_submitted(event)
+
+    def on_hermes_input_files_dropped(self, event: Any) -> None:
+        self._svc_watchers.handle_file_drop(event.paths)

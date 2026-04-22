@@ -446,7 +446,8 @@ async def test_config_streaming_flash_false():
 async def test_config_reasoning_false_skips_pip_in_reasoning():
     """reasoning=False skips pips for widgets inside ReasoningPanel."""
     from hermes_cli.tui.app import BrowseAnchorType
-    from hermes_cli.tui import _app_browse as _browse_mod
+    from hermes_cli.tui import services as _browse_svc_pkg
+    from hermes_cli.tui.services import browse as _browse_mod
     app = _make_app(_browse_reasoning_markers=False)
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -456,7 +457,7 @@ async def test_config_reasoning_false_skips_pip_in_reasoning():
         w.add_class = MagicMock()
         anchor = _make_anchor(BrowseAnchorType.CODE_BLOCK, w)
         app._browse_anchors = [anchor]
-        # Patch _is_in_reasoning at the call site (_app_browse uses it directly)
+        # Patch _is_in_reasoning at the call site (browse service uses it directly)
         with patch.object(_browse_mod, "_is_in_reasoning", return_value=True):
             app._apply_browse_pips()
         w.add_class.assert_not_called()

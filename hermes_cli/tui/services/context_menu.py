@@ -225,7 +225,7 @@ class ContextMenuService(AppService):
             if hasattr(block, "flash_copy"):
                 block.flash_copy()
         except Exception:
-            self.app._svc_theme.flash_hint("⚠ copy failed", 1.5)
+            self.app._flash_hint("⚠ copy failed", 1.5)
 
     def copy_tool_output(self, block: Any) -> None:
         """Copy a ToolBlock's plain-text content to clipboard and flash hint."""
@@ -233,7 +233,7 @@ class ContextMenuService(AppService):
             content = block.copy_content()
             self.app._svc_theme.copy_text_with_hint(content)
         except Exception:
-            self.app._svc_theme.flash_hint("⚠ copy failed", 1.5)
+            self.app._flash_hint("⚠ copy failed", 1.5)
 
     def build_tool_block_menu_items(self, block: Any) -> list:
         """Build context menu items for a ToolBlock, including path actions."""
@@ -320,7 +320,7 @@ class ContextMenuService(AppService):
             content = "\n".join(p for p in parts if p)
             self.app._svc_theme.copy_text_with_hint(content)
         except Exception:
-            self.app._svc_theme.flash_hint("⚠ copy failed", 1.5)
+            self.app._flash_hint("⚠ copy failed", 1.5)
 
     def copy_panel(self, panel: Any) -> None:
         """Copy a MessagePanel's response log content to clipboard."""
@@ -334,7 +334,7 @@ class ContextMenuService(AppService):
                 return
             self.app._svc_theme.copy_text_with_hint(content)
         except Exception:
-            self.app._svc_theme.flash_hint("⚠ copy failed", 1.5)
+            self.app._flash_hint("⚠ copy failed", 1.5)
 
     def copy_text(self, text: str) -> None:
         """Copy arbitrary text to clipboard and flash hint."""
@@ -348,14 +348,14 @@ class ContextMenuService(AppService):
             text = app.clipboard
             if not text:
                 inp.focus()
-                app._svc_theme.flash_hint("clipboard empty", 1.5)
+                app._flash_hint("clipboard empty", 1.5)
                 return
             if hasattr(inp, "insert_text"):
                 inp.insert_text(text)
             elif hasattr(inp, "value"):
                 inp.value = f"{getattr(inp, 'value', '')}{text}"
             inp.focus()
-            app._svc_theme.flash_hint(f"⎘  {len(text)} chars pasted", 1.2)
+            app._flash_hint(f"⎘  {len(text)} chars pasted", 1.2)
         except NoMatches:
             pass
 
@@ -384,7 +384,7 @@ class ContextMenuService(AppService):
         except Exception:
             pass
         app._path_open_hint_shown = True
-        app._svc_theme.flash_hint("press o to open file", 3.0)
+        app._flash_hint("press o to open file", 3.0)
 
     # --- Overlay management ---
 

@@ -585,10 +585,12 @@ class StreamingToolBlock(ToolBlock):
                 total=total,
                 above=visible_start,
                 cap_msg=cap_msg,
+                visible_cap=visible_cap,  # H1
             )
 
         if self._omission_bar_bottom_mounted and self._omission_bar_bottom is not None:
-            show_bottom = visible_end < total
+            # D3: always show bottom bar when truncated lines exist (cap_msg present)
+            show_bottom = (visible_end < total) or bool(cap_msg)
             if self._omission_bar_bottom.display != show_bottom:
                 self._omission_bar_bottom.display = show_bottom
             self._omission_bar_bottom.set_counts(
@@ -597,6 +599,7 @@ class StreamingToolBlock(ToolBlock):
                 total=total,
                 below=total - visible_end,
                 cap_msg=cap_msg,
+                visible_cap=visible_cap,  # H1
             )
 
     # ------------------------------------------------------------------

@@ -141,6 +141,7 @@ class WatchersService(AppService):
             self.app.context_pct = 0.0
             self.app._compaction_warned = False
             self.app._compaction_warn_99 = False
+            self.app.hooks.fire("on_compact_complete")
         try:
             self.app.query_one("#input-rule", TitledRule).progress = value
         except NoMatches:
@@ -419,6 +420,10 @@ class WatchersService(AppService):
         except NoMatches:
             pass
         self.app._set_hint_phase(self.app._compute_hint_phase())
+        if value:
+            self.app.hooks.fire("on_error_set", error=value)
+        else:
+            self.app.hooks.fire("on_error_clear")
         _timer = getattr(self.app, "_status_error_timer", None)
         if _timer is not None:
             try:

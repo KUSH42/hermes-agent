@@ -561,6 +561,12 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
             lifecycle_aware=True,
         )
 
+        # RX4: AgentLifecycleHooks — priority-ordered transition callback registry.
+        from hermes_cli.tui.services.lifecycle_hooks import AgentLifecycleHooks
+        self.hooks: AgentLifecycleHooks = AgentLifecycleHooks(self)
+        # Interrupt source tag — set by interrupt handler before agent_running→False
+        self._interrupt_source: str | None = None
+
         # ── R4 services (plain objects; init order is load-bearing — see services/) ──
         from hermes_cli.tui.services import (
             ThemeService, SpinnerService, IOService, ToolRenderingService,
@@ -788,6 +794,9 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
                             self._pane_manager.apply_center_split(self)
         except Exception:
             pass
+        # RX4: register lifecycle hooks then drain any events queued before is_running
+        self._register_lifecycle_hooks()
+        self.hooks.drain_deferred()
 
     _RESIZE_DEBOUNCE_S: float = 0.06  # 60 ms
 
@@ -863,6 +872,7 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
 
     def on_unmount(self) -> None:
         """Stop background helpers tied to app lifetime."""
+        self.hooks.shutdown()
         self._theme_manager.stop_hot_reload()
         for _attr in ("_anim_clock_h", "_spinner_h", "_fps_h", "_duration_h",
                       "_sessions_poll_timer", "_git_poll_h", "_resize_timer"):
@@ -1263,6 +1273,8 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
             self._sync_workspace_polling_state()
             # OSC progress bar
             self._osc_progress_update(True)
+            # RX4: lifecycle hooks for turn start
+            self.hooks.fire("on_turn_start")
         else:
             # Signal complete when agent stops
             try:
@@ -1350,6 +1362,16 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
                     hs.post_message(HistorySearchOverlay.TurnCompleted())
             except NoMatches:
                 pass
+            # RX4: fire lifecycle hooks for turn end
+            self.hooks.fire("on_turn_end_any")
+            if getattr(self, "status_error", ""):
+                self.hooks.fire("on_turn_end_error")
+            else:
+                self.hooks.fire("on_turn_end_success")
+            _interrupt_src = getattr(self, "_interrupt_source", None)
+            if _interrupt_src is not None:
+                self.hooks.fire("on_interrupt", source=_interrupt_src)
+                self._interrupt_source = None
 
         # --- nameplate ---
         try:
@@ -1467,6 +1489,126 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
                     osc_progress_end()
         except Exception:
             pass
+
+    # ── RX4: lifecycle hook registry + callbacks ──────────────────────────────
+
+    def _register_lifecycle_hooks(self) -> None:
+        """Register cleanup callbacks on agent lifecycle transitions (RX4)."""
+        h = self.hooks
+        # ── on_turn_start ─────────────────────────────────────────────────
+        h.register("on_turn_start", self._lc_reset_turn_state, owner=self, priority=100, name="reset_turn_state")
+        h.register("on_turn_start", self._lc_osc_progress_start, owner=self, priority=10, name="osc_progress_start")
+        # ── on_turn_end_any ───────────────────────────────────────────────
+        h.register("on_turn_end_any", self._lc_osc_progress_end, owner=self, priority=10, name="osc_progress_end")
+        h.register("on_turn_end_any", self._lc_clear_output_dropped, owner=self, priority=100, name="clear_output_dropped_flag")
+        h.register("on_turn_end_any", self._lc_clear_spinner_label, owner=self, priority=100, name="clear_spinner_label")
+        h.register("on_turn_end_any", self._lc_clear_active_file, owner=self, priority=100, name="clear_active_file")
+        h.register("on_turn_end_any", self._lc_reset_response_metrics, owner=self, priority=100, name="reset_response_metrics")
+        h.register("on_turn_end_any", self._lc_clear_streaming_blocks, owner=self, priority=100, name="clear_streaming_blocks")
+        h.register("on_turn_end_any", self._lc_drain_gen_queue, owner=self, priority=100, name="drain_gen_queue")
+        h.register("on_turn_end_any", self._lc_desktop_notify, owner=self, priority=10, name="desktop_notify")
+        h.register("on_turn_end_any", self._lc_restore_input_placeholder, owner=self, priority=900, name="restore_input_placeholder")
+        # ── on_turn_end_success ───────────────────────────────────────────
+        h.register("on_turn_end_success", self._lc_chevron_done_pulse, owner=self, priority=500, name="chevron_done_pulse")
+        h.register("on_turn_end_success", self._lc_auto_title, owner=self, priority=100, name="auto_title_first_turn")
+        # ── on_interrupt ──────────────────────────────────────────────────
+        h.register("on_interrupt", self._lc_osc_progress_end, owner=self, priority=10, name="osc_progress_end_interrupt")
+        # ── on_compact_complete ───────────────────────────────────────────
+        h.register("on_compact_complete", self._lc_reset_compact_flags, owner=self, priority=100, name="reset_compaction_warn_flags")
+        # ── on_error_set / on_error_clear ─────────────────────────────────
+        h.register("on_error_set", self._lc_schedule_error_autoclear, owner=self, priority=100, name="schedule_status_error_autoclear")
+        h.register("on_error_clear", self._lc_cancel_error_timer, owner=self, priority=100, name="cancel_status_error_timer")
+
+    def _lc_reset_turn_state(self) -> None:
+        self._svc_tools._turn_tool_calls = {}
+        self._svc_tools._agent_stack = []
+        self._turn_start_monotonic = None
+        self._current_turn_tool_count = 0
+        self._turn_start_time = _time.monotonic()
+
+    def _lc_osc_progress_start(self) -> None:
+        self._osc_progress_update(True)
+
+    def _lc_osc_progress_end(self, **_: object) -> None:
+        self._osc_progress_update(False)
+
+    def _lc_clear_output_dropped(self, **_: object) -> None:
+        self.status_output_dropped = False
+
+    def _lc_clear_spinner_label(self, **_: object) -> None:
+        self.spinner_label = ""
+
+    def _lc_clear_active_file(self, **_: object) -> None:
+        self.status_active_file = ""
+
+    def _lc_reset_response_metrics(self, **_: object) -> None:
+        self._response_metrics_active = False
+        self._response_wall_start_time = None
+        self._response_segment_start_time = None
+        self._response_token_window.clear()
+
+    def _lc_clear_streaming_blocks(self, **_: object) -> None:
+        self._active_streaming_blocks.clear()
+        try:
+            msg = self.query_one(OutputPanel).current_message
+            if msg is not None:
+                msg._last_file_tool_block = None
+        except Exception:
+            pass
+
+    def _lc_drain_gen_queue(self, **_: object) -> None:
+        pending = getattr(self.cli, "_pending_gen_queue", None)
+        if pending:
+            for block in pending:
+                try:
+                    block.remove()
+                except Exception:
+                    pass
+            pending.clear()
+
+    def _lc_desktop_notify(self, **_: object) -> None:
+        self._maybe_notify()
+
+    def _lc_restore_input_placeholder(self, **_: object) -> None:
+        try:
+            widget = self.query_one("#input-area")
+            if hasattr(widget, "placeholder"):
+                if self.status_error:
+                    err_snippet = self.status_error[:60]
+                    widget.placeholder = f"Error: {err_snippet}…  (Esc to clear)"
+                else:
+                    widget.placeholder = getattr(widget, "_idle_placeholder", "")
+        except Exception:
+            pass
+
+    def _lc_chevron_done_pulse(self, **_: object) -> None:
+        try:
+            from textual.widgets import Static as _Static
+            chevron = self.query_one("#input-chevron", _Static)
+            if not chevron.has_class("--phase-error"):
+                self._set_chevron_phase("--phase-done")
+                self.set_timer(0.4, lambda: self._set_chevron_phase(""))
+        except Exception:
+            pass
+
+    def _lc_auto_title(self, **_: object) -> None:
+        if not self._auto_title_done:
+            self._try_auto_title()
+
+    def _lc_reset_compact_flags(self, **_: object) -> None:
+        self.context_pct = 0.0
+        self._compaction_warned = False
+        self._compaction_warn_99 = False
+
+    def _lc_schedule_error_autoclear(self, error: str = "", **_: object) -> None:
+        # Timer scheduling now handled by on_status_error inline; hook is for future migration
+        pass  # Phase b will move the timer here
+
+    def _lc_cancel_error_timer(self, **_: object) -> None:
+        # Timer cancellation now handled by on_status_error inline; hook is for future migration
+        pass  # Phase b will move the timer here
+
+    # ── End RX4 ───────────────────────────────────────────────────────────────
 
     def _maybe_notify(self) -> None:
         """Fire desktop notification when turn exceeds threshold."""

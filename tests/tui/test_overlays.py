@@ -1,7 +1,7 @@
 """Tests for modal overlay widgets — Step 4.
 
 Tests: ClarifyWidget, ApprovalWidget, SudoWidget, SecretWidget
-with CountdownMixin, typed state, and response queues.
+with typed state and response queues.
 """
 
 import queue

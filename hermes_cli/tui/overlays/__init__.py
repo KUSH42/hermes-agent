@@ -8,15 +8,13 @@ Aliased picker class names (ModelPickerOverlay, TabbedSkinOverlay, etc.)
 are re-exported from ._aliases and resolve via CSS-type registration +
 _AliasMeta. See 2026-04-22-tui-v2-R3-overlay-consolidation-spec.md §5.
 
-Legacy-only symbols (HelpOverlay, UsageOverlay, CommandsOverlay,
-WorkspaceOverlay, SessionOverlay, ToolPanelHelpOverlay, PickerOverlay
-base, session banner/row, config helpers, FIXTURE_CODE) are still
-re-exported from ._legacy during Phases A–C.
+Legacy-only symbols (SessionOverlay, ToolPanelHelpOverlay, session
+banner/row, config helpers, FIXTURE_CODE) are still re-exported from
+._legacy during Phases A–C.
 """
 
 from hermes_cli.tui.overlays._legacy import (
     FIXTURE_CODE,
-    PickerOverlay,
     SessionOverlay,
     ToolPanelHelpOverlay,
     _cfg_get_hermes_home,
@@ -84,7 +82,6 @@ __all__ = [
     "MergeConfirmOverlay",
     "ModelPickerOverlay",
     "NewSessionOverlay",
-    "PickerOverlay",
     "ReasoningPickerOverlay",
     "ReferenceModal",
     "SecretWidget",

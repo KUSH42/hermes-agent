@@ -6,20 +6,15 @@ now variant modes of ``InterruptOverlay`` in ``overlays/interrupt.py``.
 The original class names are re-exported as alias proxies from
 ``overlays._aliases`` for backward compatibility.
 
-Remaining: CountdownMixin (still used by non-interrupt surfaces? grepped —
-currently only the deleted interrupt widgets. Kept for now for external
-subclasses; safe to move fully into interrupt.py later),
-history-search types and helpers, TurnResultItem, KeymapOverlay,
+Remaining: history-search types and helpers, TurnResultItem, KeymapOverlay,
 HistorySearchOverlay.
 """
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import VerticalScroll
@@ -29,162 +24,10 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Input, Static
 
-from hermes_cli.tui.animation import lerp_color
 from .renderers import CopyableRichLog
-from hermes_cli.tui.state import (
-    ChoiceOverlayState,
-    OverlayState,
-    SecretOverlayState,
-    UndoOverlayState,
-)
 
 if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
-
-
-# ---------------------------------------------------------------------------
-# CountdownMixin
-# ---------------------------------------------------------------------------
-
-class CountdownMixin:
-    """Shared countdown logic for timed overlays.
-
-    Subclasses must define:
-      - ``_state_attr``: str — the HermesApp reactive attribute name
-      - ``_timeout_response``: value to put on response_queue on expiry
-      - ``_countdown_prefix``: str — used for countdown widget ID
-      - A ``Static`` with ``id="{prefix}-countdown"`` in compose()
-    """
-
-    _state_attr: str
-    _timeout_response: object = None
-    _countdown_prefix: str = ""
-    # Stored handle so we can stop/restart the timer for pause/resume.
-    _countdown_timer: "object | None" = None
-    # Pause/resume tracking (P0-B: multi-overlay stacking).
-    _was_paused: bool = False
-    _pause_start: float = 0.0
-    # Initial total seconds — set from state.remaining in each widget's update().
-    # Used to compute the ▓▒░ fill ratio.
-    _countdown_total: int = 30
-    # Wall-clock start time for smooth lerp color (set when countdown begins).
-    _countdown_start_time: float = 0.0
-
-    def _start_countdown(self) -> None:
-        """Call from on_mount(). Starts the 1-second tick timer."""
-        if self._countdown_timer is not None:
-            return  # already running
-        import time as _time
-        self._countdown_start_time = _time.monotonic()
-        self._countdown_timer = self.set_interval(1.0, self._tick_countdown)
-
-    def on_unmount(self) -> None:
-        """Safety net: cancel countdown timer on removal."""
-        if self._countdown_timer is not None:
-            self._countdown_timer.stop()
-            self._countdown_timer = None
-
-    def pause_countdown(self) -> None:
-        """Pause the countdown timer (P0-B: multi-overlay stacking).
-
-        Stops the tick without auto-resolving; call ``resume_countdown()`` to
-        restart and compensate the deadline for time spent paused.
-        """
-        if self._countdown_timer is not None:
-            self._countdown_timer.stop()
-            self._countdown_timer = None
-        self._was_paused = True
-        self._pause_start = time.monotonic()
-
-    def resume_countdown(self) -> None:
-        """Resume a previously paused countdown.
-
-        Extends the deadline by the time spent paused so the user is not
-        penalised for an interruption they did not initiate.
-        """
-        if not self._was_paused:
-            return
-        state: "OverlayState | None" = getattr(
-            getattr(self, "app", None), self._state_attr, None
-        )
-        if state is not None:
-            elapsed_paused = time.monotonic() - self._pause_start
-            state.deadline += elapsed_paused
-        self._was_paused = False
-        self._start_countdown()
-
-    def _build_countdown_strip(self, remaining: int, total: int, width: int) -> "Text":
-        """Build a ▓▒░ progress strip for the countdown display.
-
-        Spec §2.3: ▓ = remaining time (left, colored); ░ = elapsed (right, dim).
-        Color phases: >5s → $primary; 1-5s → lerp($primary→$warning); ≤1s → $error.
-        """
-        # Bar color phase
-        if remaining > 5:
-            bar_color = "#5f87d7"  # $primary calm
-        elif remaining > 1:
-            t = (5.0 - remaining) / 4.0
-            bar_color = lerp_color("#5f87d7", "#FFA726", t)
-        else:
-            bar_color = "#ef5350"  # $error critical
-
-        import os as _os
-        no_unicode = _os.environ.get("HERMES_NO_UNICODE", "")
-        from rich.style import Style
-        label = f"{remaining:>2}s"
-        label_width = len(label) + 1   # leading space + label
-        bar_width = max(8, width - label_width)
-
-        result = Text()
-        # Urgency glyph prefix (skipped when unicode disabled)
-        if not no_unicode:
-            if remaining <= 1:
-                result.append("⚠⚠ ", Style(color="#ef5350", bold=True))
-            elif remaining <= 3:
-                result.append("⚠ ", Style(color="#FFA726", bold=True))
-
-        ratio = min(1.0, remaining / max(1, total))
-        filled_cells = int(bar_width * ratio)
-
-        meniscus = min(3, filled_cells)
-        heavy = max(0, filled_cells - meniscus)
-        empty = max(0, bar_width - filled_cells)
-
-        if heavy > 0:
-            result.append("▓" * heavy, Style(color=bar_color))
-        if meniscus > 0:
-            result.append("▒" * meniscus, Style(color=bar_color))
-        if empty > 0:
-            result.append("░" * empty, Style(color="#6e6e6e"))
-        result.append(f" {label}", Style(color="#6e6e6e"))
-        return result
-
-    def _tick_countdown(self) -> None:
-        """Tick handler — update countdown display and auto-resolve on expiry.
-
-        Runs ON the event loop (set_interval callback), so direct mutation is
-        correct; call_from_thread would be wrong here.
-        """
-        state: "OverlayState | None" = getattr(self.app, self._state_attr)
-        if state is None:
-            return
-        remaining = state.remaining
-        countdown_id = f"#{self._countdown_prefix}-countdown"
-        try:
-            countdown_w = self.query_one(countdown_id, Static)
-            # content_size.width may be 0 if not yet laid out; use 40 as fallback.
-            bar_width = max(10, self.content_size.width)
-            strip = self._build_countdown_strip(remaining, self._countdown_total, bar_width)
-            countdown_w.update(strip)
-        except (NoMatches, AttributeError):
-            pass
-        if state.expired:
-            self._resolve_timeout(state)
-
-    def _resolve_timeout(self, state: "OverlayState") -> None:
-        """Put timeout response on queue and clear state. Runs on event loop."""
-        state.response_queue.put(self._timeout_response)
-        setattr(self.app, self._state_attr, None)
 
 
 # ---------------------------------------------------------------------------

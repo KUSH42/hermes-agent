@@ -17,9 +17,7 @@ This module is now a re-export shim: the actual implementations live in:
                         UserMessagePanel, ReasoningPanel
   - status_bar.py     — HintBar, StatusBar, AnimatedCounter,
                         VoiceStatusBar, ImageBar (+ hint helpers)
-  - overlays.py       — CountdownMixin, ClarifyWidget, ApprovalWidget,
-                        SudoWidget, SecretWidget, UndoConfirmOverlay,
-                        TurnCandidate, TurnResultItem, KeymapOverlay,
+  - overlays.py       — TurnCandidate, TurnResultItem, KeymapOverlay,
                         HistorySearchOverlay (+ search helpers)
 
 Remaining classes defined here: OutputPanel, FPSCounter, TTEWidget,
@@ -126,7 +124,6 @@ from .status_bar import (  # noqa: F401
 )
 
 from .overlays import (  # noqa: F401
-    CountdownMixin,
     HistorySearchOverlay,
     KeymapOverlay,
     TurnCandidate,

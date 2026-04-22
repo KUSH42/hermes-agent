@@ -25,7 +25,6 @@ from hermes_cli.tui.state import ChoiceOverlayState, SecretOverlayState, UndoOve
 from hermes_cli.tui.widgets import (
     ApprovalWidget,
     ClarifyWidget,
-    CountdownMixin,
     HistorySearchOverlay,
     KeymapOverlay,
     SecretWidget,
@@ -35,85 +34,12 @@ from hermes_cli.tui.widgets import (
 
 
 # ---------------------------------------------------------------------------
-# P0-D + P1-C  Countdown strip helpers (pure function tests — no app needed)
-# ---------------------------------------------------------------------------
-
-class _FakeWidget(CountdownMixin):
-    """Minimal stub satisfying CountdownMixin's duck-typed API for unit tests."""
-    _state_attr = "fake_state"
-    _timeout_response = None
-    _countdown_prefix = "fake"
-
-
-def test_countdown_strip_full():
-    """At remaining == total, the strip should be mostly ▓."""
-    fw = _FakeWidget()
-    strip = fw._build_countdown_strip(remaining=30, total=30, width=40)
-    plain = strip.plain
-    # The ▓/▒ characters should dominate
-    filled = plain.count("▓") + plain.count("▒")
-    empty = plain.count("░")
-    assert filled > empty, f"Expected mostly filled at full: {plain!r}"
-
-
-def test_countdown_strip_empty():
-    """At remaining == 0, the strip should be mostly ░."""
-    fw = _FakeWidget()
-    strip = fw._build_countdown_strip(remaining=0, total=30, width=40)
-    plain = strip.plain
-    filled = plain.count("▓") + plain.count("▒")
-    empty = plain.count("░")
-    assert empty > filled, f"Expected mostly empty at zero: {plain!r}"
-
-
-def test_countdown_strip_half():
-    """At remaining == total/2, filled ≈ empty (within ±3 chars)."""
-    fw = _FakeWidget()
-    strip = fw._build_countdown_strip(remaining=15, total=30, width=40)
-    plain = strip.plain
-    filled = plain.count("▓") + plain.count("▒")
-    empty = plain.count("░")
-    assert abs(filled - empty) <= 5, (
-        f"Expected roughly balanced at half: {plain!r} filled={filled} empty={empty}"
-    )
-
-
-def test_countdown_strip_has_label():
-    """Strip always ends with 'Ns' label."""
-    fw = _FakeWidget()
-    for remaining in (0, 1, 5, 15, 30):
-        strip = fw._build_countdown_strip(remaining=remaining, total=30, width=40)
-        assert f"{remaining}" in strip.plain, f"Label missing for remaining={remaining}"
-        assert "s" in strip.plain
-
-
-def test_countdown_strip_color_primary():
-    """Remaining > 5 → bar color is $primary (#5f87d7)."""
-    fw = _FakeWidget()
-    strip = fw._build_countdown_strip(remaining=10, total=30, width=20)
-    # Inspect spans; at least one span should have $primary-ish color
-    spans_with_color = [
-        s for s in strip._spans if s.style and getattr(s.style, "_color", None)
-    ]
-    assert len(spans_with_color) > 0
-
-
-def test_countdown_strip_color_error():
-    """Remaining ≤ 1 → bar color is $error (#ef5350)."""
-    from hermes_cli.tui.animation import lerp_color
-    fw = _FakeWidget()
-    strip = fw._build_countdown_strip(remaining=1, total=30, width=20)
-    # Verify no assertion error — the strip is constructed without crash
-    assert strip.plain  # non-empty
-
-
-# ---------------------------------------------------------------------------
 # P0-B  pause_countdown / resume_countdown
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_pause_stops_timer():
-    """InterruptOverlay is visible when approval state is set (R3: CountdownMixin removed)."""
+    """InterruptOverlay is visible when approval state is set ."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()

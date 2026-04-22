@@ -689,6 +689,7 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
         title=f"[bold {title_color}]{format_banner_version_label()}[/]",
         border_style=border_color,
         padding=(0, 2),
+        expand=True,
     )
 
     console.print()

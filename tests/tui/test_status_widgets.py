@@ -83,7 +83,7 @@ async def test_spinner_writes_to_input_bar_not_hint_bar():
 
 @pytest.mark.asyncio
 async def test_thinking_widget_shows_dots_animation():
-    """ThinkingWidget cycles through Thinking. / Thinking.. / Thinking... at 250ms."""
+    """ThinkingWidget v2: activate() enters STARTED substate with 'Thinking...' label."""
     from hermes_cli.tui.widgets import ThinkingWidget
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
@@ -91,13 +91,9 @@ async def test_thinking_widget_shows_dots_animation():
         tw = app.query_one(ThinkingWidget)
         tw.activate()
         await pilot.pause()
-        # Initial render should show "Thinking.  " on the text line
-        strip = tw.render_line(2 if tw._helix_frames else 0)
-        text_parts = "".join(seg.text for seg in strip)
-        assert "Thinking" in text_parts
-        # After one tick (250ms), phase should advance
-        tw._tick_shimmer()
-        assert tw._dot_phase == 1
+        # v2 API: after activate, substate is STARTED and _base_label is set
+        assert tw._substate == "STARTED"
+        assert "Thinking" in tw._base_label
 
 
 @pytest.mark.asyncio
@@ -694,3 +690,15 @@ async def test_animated_counter_render_shows_unit():
         rendered = str(counter.render())
         assert "42" in rendered
         assert "tok/s" in rendered
+
+
+# ---------------------------------------------------------------------------
+# V5 — HintBar separator density
+# ---------------------------------------------------------------------------
+
+def test_sep_is_single_space_each_side() -> None:
+    """_SEP must use one space on each side of the dot (not two)."""
+    from hermes_cli.tui.widgets.status_bar import _SEP
+    assert _SEP == " [dim]·[/dim] ", (
+        f"_SEP is {_SEP!r}, expected ' [dim]·[/dim] '"
+    )

@@ -388,6 +388,72 @@ class _ToolRenderingMixin:
         except Exception:
             pass
 
+    # --- PlanPanel (R1) mutations — event-loop only ---
+    # Callers in cli.py MUST use call_from_thread.  These methods touch
+    # app-level reactives directly, which is safe only on the event loop.
+
+    def set_plan_batch(self, batch: "list[tuple[str, str, str, dict]]") -> None:
+        """Seed planned_calls from a new tool batch (one call per assistant message).
+
+        Parameters
+        ----------
+        batch:
+            List of (tool_call_id, tool_name, label, args_dict) tuples.
+        """
+        from hermes_cli.tui.plan_types import PlannedCall, PlanState
+        # Keep DONE/ERROR entries from prior rounds in the same turn.
+        # Drop stale PENDING/RUNNING entries (defensive cleanup for multi-batch turns).
+        current: list = list(getattr(self, "planned_calls", []))  # type: ignore[attr-defined]
+        kept = [c for c in current if c.state in (PlanState.DONE, PlanState.ERROR, PlanState.CANCELLED, PlanState.SKIPPED)]
+        new_entries = []
+        for tool_call_id, tool_name, label, args in batch:
+            # Build args_preview (truncate to 60 chars)
+            try:
+                import json as _json
+                raw = _json.dumps(args, ensure_ascii=False)
+                preview = raw[:60] + ("…" if len(raw) > 60 else "")
+            except Exception:
+                preview = ""
+            # Determine category
+            try:
+                from hermes_cli.tui.tool_category import classify_tool
+                cat = classify_tool(tool_name).value
+            except Exception:
+                cat = "unknown"
+            new_entries.append(PlannedCall(
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                label=label,
+                category=cat,
+                args_preview=preview,
+                state=PlanState.PENDING,
+                started_at=None,
+                ended_at=None,
+                parent_tool_call_id=None,
+                depth=0,
+            ))
+        self.planned_calls = kept + new_entries  # type: ignore[attr-defined]
+
+    def mark_plan_running(self, tool_call_id: str) -> None:
+        """Transition a PENDING PlannedCall to RUNNING. Event-loop only."""
+        from hermes_cli.tui.plan_types import PlanState
+        items = list(getattr(self, "planned_calls", []))  # type: ignore[attr-defined]
+        for i, call in enumerate(items):
+            if call.tool_call_id == tool_call_id and call.state == PlanState.PENDING:
+                items[i] = call.as_running()
+                break
+        self.planned_calls = items  # type: ignore[attr-defined]
+
+    def mark_plan_done(self, tool_call_id: str, is_error: bool, dur_ms: int) -> None:
+        """Transition a RUNNING PlannedCall to DONE or ERROR. Event-loop only."""
+        from hermes_cli.tui.plan_types import PlanState
+        items = list(getattr(self, "planned_calls", []))  # type: ignore[attr-defined]
+        for i, call in enumerate(items):
+            if call.tool_call_id == tool_call_id and call.state == PlanState.RUNNING:
+                items[i] = call.as_done(is_error=is_error)
+                break
+        self.planned_calls = items  # type: ignore[attr-defined]
+
     def current_turn_tool_calls(self) -> list[dict]:
         """Return a list of per-turn tool call records (P7 /tools overlay).
 

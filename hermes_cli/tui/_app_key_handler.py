@@ -553,6 +553,12 @@ class _KeyHandlerMixin:
             self.query_one(ThinkingWidget).activate()  # type: ignore[attr-defined]
         except NoMatches:
             pass
+        # Reset per-turn plan/budget state before starting a new agent turn.
+        if hasattr(self, "cli") and self.cli is not None:  # type: ignore[attr-defined]
+            try:
+                self.cli._reset_turn_state()  # type: ignore[attr-defined]
+            except Exception:
+                pass
         if hasattr(self, "cli") and self.cli is not None:  # type: ignore[attr-defined]
             if hasattr(self.cli, "_pending_input"):  # type: ignore[attr-defined]
                 self.cli._pending_input.put(payload)  # type: ignore[attr-defined]

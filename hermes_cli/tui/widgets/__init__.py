@@ -103,10 +103,11 @@ from .prose import (  # noqa: F401
 from .message_panel import (  # noqa: F401
     MessagePanel,
     ReasoningPanel,
-    ThinkingWidget,
     UserMessagePanel,
     _EchoBullet,
 )
+
+from .thinking import ThinkingWidget  # noqa: F401
 
 from .status_bar import (  # noqa: F401
     AnimatedCounter,

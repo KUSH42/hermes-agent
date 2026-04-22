@@ -711,7 +711,7 @@ class UserMessagePanel(Widget):
     UserMessagePanel {
         height: auto;
         margin: 1 0 0 0;
-        padding: 0 1;
+        padding: 0 2;
     }
     """
 

@@ -1,4 +1,7 @@
-"""_ToolRenderingMixin — tool block mounting / streaming lifecycle for HermesApp."""
+"""_ToolRenderingMixin — tool block mounting / streaming lifecycle for HermesApp.
+
+Phase 2: all logic lives in ToolRenderingService; methods here are 1-line adapters.
+"""
 from __future__ import annotations
 
 import logging
@@ -34,58 +37,26 @@ class _ToolRenderingMixin:
 
     Extracted from HermesApp to reduce file size.  Self is always a HermesApp
     instance at runtime — all attribute access on self is valid.
+
+    Phase 2: all logic delegated to self._svc_tools (ToolRenderingService).
     """
 
     def _get_output_panel(self) -> "Any | None":
-        """Return OutputPanel, cached after first successful lookup."""
-        cached = getattr(self, "_cached_output_panel", None)
-        if cached is not None and cached.is_mounted:
-            return cached
-        from hermes_cli.tui.widgets import OutputPanel
-        try:
-            panel = self.query_one(OutputPanel)  # type: ignore[attr-defined]
-            self._cached_output_panel = panel  # type: ignore[attr-defined]
-            return panel
-        except NoMatches:
-            return None
+        return self._svc_tools._get_output_panel()  # type: ignore[attr-defined]  # DEPRECATED
 
     # --- Reasoning ---
 
     def _current_message_panel(self) -> "Any | None":
-        """Return the current MessagePanel, or None."""
-        output = self._get_output_panel()
-        if output is None:
-            return None
-        return output.current_message
+        return self._svc_tools.current_message_panel()  # type: ignore[attr-defined]  # DEPRECATED
 
     def open_reasoning(self, title: str = "Reasoning") -> None:
-        """Open the reasoning panel. Safe to call from any thread via call_from_thread."""
-        msg = self._current_message_panel()
-        if msg is not None:
-            msg.open_thinking_block(title)
-        try:
-            from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO
-            self.query_one(_DO).signal("reasoning")  # type: ignore[attr-defined]
-        except Exception:
-            pass
+        return self._svc_tools.open_reasoning(title)  # type: ignore[attr-defined]
 
     def append_reasoning(self, delta: str) -> None:
-        """Append reasoning delta. Safe to call from any thread via call_from_thread."""
-        msg = self._current_message_panel()
-        if msg is not None:
-            msg.append_thinking(delta)
+        return self._svc_tools.append_reasoning(delta)  # type: ignore[attr-defined]
 
     def close_reasoning(self) -> None:
-        """Close the reasoning panel. Safe to call from any thread via call_from_thread."""
-        msg = self._current_message_panel()
-        if msg is not None:
-            msg.close_thinking_block()
-        if self.agent_running:  # type: ignore[attr-defined]
-            try:
-                from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO
-                self.query_one(_DO).signal("thinking")  # type: ignore[attr-defined]
-            except Exception:
-                pass
+        return self._svc_tools.close_reasoning()  # type: ignore[attr-defined]
 
     # --- ToolBlock mounting ---
 
@@ -99,187 +70,28 @@ class _ToolRenderingMixin:
         tool_name: "str | None" = None,
         parent_id: "str | None" = None,
     ) -> None:
-        """Mount a ToolBlock into OutputPanel before the live-output duo."""
-        if not lines:
-            return
-        output = self._get_output_panel()
-        if output is None:
-            return
-        msg = output.current_message or output.new_message()
-        msg.mount_tool_block(
-            label,
-            lines,
-            plain_lines,
-            tool_name=tool_name,
-            rerender_fn=rerender_fn,
-            header_stats=header_stats,
-            parent_id=parent_id,
+        return self._svc_tools.mount_tool_block(  # type: ignore[attr-defined]
+            label, lines, plain_lines,
+            rerender_fn=rerender_fn, header_stats=header_stats,
+            tool_name=tool_name, parent_id=parent_id,
         )
-        msg.refresh(layout=True)
-        self._browse_total += 1  # type: ignore[attr-defined]
-        if not output._user_scrolled_up:
-            self.call_after_refresh(output.scroll_end, animate=False)  # type: ignore[attr-defined]
 
     # --- StreamingToolBlock lifecycle ---
 
     def _open_gen_block(self, tool_name: str) -> "Any | None":
-        """Open a StreamingToolBlock at gen_start time. Event-loop only."""
-        output = self._get_output_panel()
-        if output is None:
-            return None
-        msg = output.current_message or output.new_message()
-        block = msg.open_streaming_tool_block(label=get_display_name(tool_name), tool_name=tool_name)
-        self._browse_total += 1  # type: ignore[attr-defined]
-        if not output._user_scrolled_up:
-            self.call_after_refresh(output.scroll_end, animate=False)  # type: ignore[attr-defined]
-        return block
+        return self._svc_tools.open_gen_block(tool_name)  # type: ignore[attr-defined]  # DEPRECATED
 
     def _open_execute_code_block(self, idx: int) -> "Any | None":
-        """Open an ExecuteCodeBlock at gen_start time. Event-loop only."""
-        output = self._get_output_panel()
-        if output is None:
-            return None
-        try:
-            from hermes_cli.tui.execute_code_block import ExecuteCodeBlock
-            from hermes_cli.tui.tool_panel import ToolPanel as _ToolPanel
-            msg = output.current_message or output.new_message()
-            block = ExecuteCodeBlock(initial_label="python")
-            panel = _ToolPanel(block, tool_name="execute_code")
-            msg._mount_nonprose_block(panel)
-            self._browse_total += 1  # type: ignore[attr-defined]
-            if not output._user_scrolled_up:
-                self.call_after_refresh(output.scroll_end, animate=False)  # type: ignore[attr-defined]
-            return block
-        except Exception as e:
-            logger.warning("_open_execute_code_block failed for idx=%d: %s", idx, e)
-            return None
+        return self._svc_tools.open_execute_code_block(idx)  # type: ignore[attr-defined]  # DEPRECATED
 
     def _open_write_file_block(self, idx: int, path: str) -> "Any | None":
-        """Open a WriteFileBlock at gen_start time. Event-loop only."""
-        output = self._get_output_panel()
-        if output is None:
-            return None
-        try:
-            from hermes_cli.tui.write_file_block import WriteFileBlock
-            from hermes_cli.tui.tool_panel import ToolPanel as _ToolPanel
-            msg = output.current_message or output.new_message()
-            block = WriteFileBlock(path=path)
-            panel = _ToolPanel(block, tool_name="write_file")
-            msg._mount_nonprose_block(panel)
-            msg._last_file_tool_block = block
-            self._browse_total += 1  # type: ignore[attr-defined]
-            if not output._user_scrolled_up:
-                self.call_after_refresh(output.scroll_end, animate=False)  # type: ignore[attr-defined]
-            return block
-        except Exception as e:
-            logger.warning("_open_write_file_block failed idx=%d: %s", idx, e)
-            return None
+        return self._svc_tools.open_write_file_block(idx, path)  # type: ignore[attr-defined]  # DEPRECATED
 
     def open_streaming_tool_block(self, tool_call_id: str, label: str, tool_name: "str | None" = None) -> None:
-        """Mount a StreamingToolBlock into OutputPanel before the live-output duo."""
-        output = self._get_output_panel()
-        if output is None:
-            return
-        try:
-            msg = output.current_message or output.new_message()
-            base_panel_id = f"tool-{tool_call_id}"
-            try:
-                self.query_one(f"#{base_panel_id}")  # type: ignore[attr-defined]
-                panel_id: "str | None" = None
-            except Exception:
-                panel_id = base_panel_id
-            _turn_count = getattr(self, "_current_turn_tool_count", 0) + 1
-            self._current_turn_tool_count = _turn_count  # type: ignore[attr-defined]
-            _is_first = (_turn_count == 1)
-
-            # Stack inference — assign parent
-            parent_tool_call_id: "str | None" = getattr(self, '_explicit_parent_map', {}).pop(tool_call_id, None)
-            if parent_tool_call_id is None and self._agent_stack:  # type: ignore[attr-defined]
-                parent_tool_call_id = self._agent_stack[-1]  # type: ignore[attr-defined]
-
-            # Depth computation
-            from hermes_cli.tui.tool_category import classify_tool, ToolCategory
-            try:
-                cat_enum = classify_tool(tool_name or "")
-                cat = cat_enum.value
-            except Exception:
-                cat_enum = None
-                cat = "unknown"
-
-            parent_rec = self._turn_tool_calls.get(parent_tool_call_id) if parent_tool_call_id else None  # type: ignore[attr-defined]
-            computed_depth = (parent_rec.depth + 1) if parent_rec else 0
-            depth = min(computed_depth, 3)
-
-            # Push AFTER parent assignment so tool is not its own parent
-            if cat_enum is ToolCategory.AGENT:
-                self._agent_stack.append(tool_call_id)  # type: ignore[attr-defined]
-
-            # Update parent's children list
-            if parent_rec is not None:
-                parent_rec.children.append(tool_call_id)
-
-            now = _time.monotonic()
-            if self._turn_start_monotonic is None:  # type: ignore[attr-defined]
-                self._turn_start_monotonic = now  # type: ignore[attr-defined]
-            rec = _ToolCallRecord(
-                tool_call_id=tool_call_id,
-                parent_tool_call_id=parent_tool_call_id,
-                label=label,
-                tool_name=tool_name,
-                category=cat,
-                depth=depth,
-                start_s=round(now - self._turn_start_monotonic, 4),  # type: ignore[attr-defined]
-                dur_ms=None,
-                is_error=False,
-                error_kind=None,
-                mcp_server=None,
-            )
-            self._turn_tool_calls[tool_call_id] = rec  # type: ignore[attr-defined]
-
-            # Depth warning if capped
-            if computed_depth > 3 and parent_tool_call_id is not None:
-                ancestor_panel = getattr(msg, '_subagent_panels', {}).get(parent_tool_call_id)
-                if ancestor_panel is not None:
-                    try:
-                        from textual.widgets import Static as _Static
-                        ancestor_panel._body.mount(
-                            _Static("… further nesting suppressed (depth limit reached)", classes="--depth-warning")
-                        )
-                    except Exception:
-                        pass
-
-            block = msg.open_streaming_tool_block(
-                label=label, tool_name=tool_name, panel_id=panel_id,
-                is_first_in_turn=_is_first,
-                parent_tool_call_id=parent_tool_call_id,
-                depth=depth,
-                tool_call_id=tool_call_id,
-            )
-            self._active_streaming_blocks[tool_call_id] = block  # type: ignore[attr-defined]
-            self._streaming_tool_count = len(self._active_streaming_blocks)  # type: ignore[attr-defined]
-            self._active_tool_name = tool_name or ""  # type: ignore[attr-defined]
-            try:
-                from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO
-                self.query_one(_DO).signal("tool")  # type: ignore[attr-defined]
-            except Exception:
-                pass
-            self._update_anim_hint()  # type: ignore[attr-defined]
-            msg.refresh(layout=True)
-            self._browse_total += 1  # type: ignore[attr-defined]
-            if not output._user_scrolled_up:
-                self.call_after_refresh(output.scroll_end, animate=False)  # type: ignore[attr-defined]
-        except NoMatches:
-            pass
+        return self._svc_tools.open_streaming_tool_block(tool_call_id, label, tool_name=tool_name)  # type: ignore[attr-defined]
 
     def append_streaming_line(self, tool_call_id: str, line: str) -> None:
-        """Append a line to the named streaming block. Event-loop only."""
-        block = self._active_streaming_blocks.get(tool_call_id)  # type: ignore[attr-defined]
-        if block is None:
-            return
-        block.append_line(line)
-        panel = self._get_output_panel()
-        if panel is not None and not panel._user_scrolled_up:
-            self.call_after_refresh(panel.scroll_end, animate=False)  # type: ignore[attr-defined]
+        return self._svc_tools.append_streaming_line(tool_call_id, line)  # type: ignore[attr-defined]
 
     def close_streaming_tool_block(
         self,
@@ -289,44 +101,9 @@ class _ToolRenderingMixin:
         summary: "Any | None" = None,
         result_lines: "list[str] | None" = None,
     ) -> None:
-        """Transition streaming block to COMPLETED state. Event-loop only."""
-        from hermes_cli.tui.widgets import OutputPanel
-        block = self._active_streaming_blocks.pop(tool_call_id, None)  # type: ignore[attr-defined]
-        if block is None:
-            return
-        self._streaming_tool_count = len(self._active_streaming_blocks)  # type: ignore[attr-defined]
-        if result_lines:
-            for _line in result_lines:
-                block.append_line(_line)
-        block.complete(duration, is_error=is_error)
-        if summary is not None:
-            panel = getattr(block, "_tool_panel", None)
-            if panel is not None:
-                panel.set_result_summary_v4(summary)
-        if tool_call_id in self._agent_stack:  # type: ignore[attr-defined]
-            self._agent_stack.remove(tool_call_id)  # type: ignore[attr-defined]
-        self._active_tool_name = ""  # type: ignore[attr-defined]
-        self._update_anim_hint()  # type: ignore[attr-defined]
-        rec = self._turn_tool_calls.get(tool_call_id)  # type: ignore[attr-defined]
-        if rec is not None:
-            try:
-                ds = str(duration)
-                if ds.endswith("ms"):
-                    rec.dur_ms = int(float(ds[:-2]))
-                elif ds.endswith("s"):
-                    rec.dur_ms = int(float(ds[:-1]) * 1000)
-            except Exception:
-                pass
-            rec.is_error = is_error
-        panel = self._get_output_panel()
-        if panel is not None and not panel._user_scrolled_up:
-            self.call_after_refresh(panel.scroll_end, animate=False)  # type: ignore[attr-defined]
-        try:
-            from hermes_cli.tui.drawille_overlay import DrawilleOverlay
-            ov = self.query_one(DrawilleOverlay)  # type: ignore[attr-defined]
-            ov.signal("error" if is_error else "thinking")
-        except Exception:
-            pass
+        return self._svc_tools.close_streaming_tool_block(  # type: ignore[attr-defined]
+            tool_call_id, duration, is_error=is_error, summary=summary, result_lines=result_lines
+        )
 
     def close_streaming_tool_block_with_diff(
         self,
@@ -337,141 +114,23 @@ class _ToolRenderingMixin:
         header_stats: object,
         summary: "Any | None" = None,
     ) -> None:
-        """Inject diff into a streaming block's body then complete it. Event-loop only."""
-        block = self._active_streaming_blocks.pop(tool_call_id, None)  # type: ignore[attr-defined]
-        if block is None:
-            return
-        self._streaming_tool_count = len(self._active_streaming_blocks)  # type: ignore[attr-defined]
-        block.inject_diff(diff_lines, header_stats)
-        block.complete(duration, is_error=is_error)
-        if summary is not None:
-            panel = getattr(block, "_tool_panel", None)
-            if panel is not None:
-                panel.set_result_summary_v4(summary)
-        if tool_call_id in self._agent_stack:  # type: ignore[attr-defined]
-            self._agent_stack.remove(tool_call_id)  # type: ignore[attr-defined]
-        rec = self._turn_tool_calls.get(tool_call_id)  # type: ignore[attr-defined]
-        if rec is not None:
-            try:
-                ds = str(duration)
-                if ds.endswith("ms"):
-                    rec.dur_ms = int(float(ds[:-2]))
-                elif ds.endswith("s"):
-                    rec.dur_ms = int(float(ds[:-1]) * 1000)
-            except Exception:
-                pass
-            rec.is_error = is_error
-        panel = self._get_output_panel()
-        if panel is not None and not panel._user_scrolled_up:
-            self.call_after_refresh(panel.scroll_end, animate=False)  # type: ignore[attr-defined]
-        try:
-            from hermes_cli.tui.drawille_overlay import DrawilleOverlay
-            ov = self.query_one(DrawilleOverlay)  # type: ignore[attr-defined]
-            ov.signal("error" if is_error else "thinking")
-        except Exception:
-            pass
+        return self._svc_tools.close_streaming_tool_block_with_diff(  # type: ignore[attr-defined]
+            tool_call_id, duration, is_error, diff_lines, header_stats, summary=summary
+        )
 
     def remove_streaming_tool_block(self, tool_call_id: str) -> None:
-        """Remove a streaming block from the DOM entirely. Event-loop only."""
-        block = self._active_streaming_blocks.pop(tool_call_id, None)  # type: ignore[attr-defined]
-        if block is None:
-            return
-        self._streaming_tool_count = len(self._active_streaming_blocks)  # type: ignore[attr-defined]
-        try:
-            from hermes_cli.tui.tool_panel import ToolPanel as _TP
-            body_pane = block.parent
-            tool_panel = body_pane.parent if body_pane is not None else None
-            if isinstance(tool_panel, _TP):
-                tool_panel.remove()
-            else:
-                block.remove()
-        except Exception:
-            pass
+        return self._svc_tools.remove_streaming_tool_block(tool_call_id)  # type: ignore[attr-defined]
 
-    # --- PlanPanel (R1) mutations — event-loop only ---
-    # Callers in cli.py MUST use call_from_thread.  These methods touch
-    # app-level reactives directly, which is safe only on the event loop.
+    # --- PlanPanel (R1) mutations ---
 
     def set_plan_batch(self, batch: "list[tuple[str, str, str, dict]]") -> None:
-        """Seed planned_calls from a new tool batch (one call per assistant message).
-
-        Parameters
-        ----------
-        batch:
-            List of (tool_call_id, tool_name, label, args_dict) tuples.
-        """
-        from hermes_cli.tui.plan_types import PlannedCall, PlanState
-        # Keep DONE/ERROR entries from prior rounds in the same turn.
-        # Drop stale PENDING/RUNNING entries (defensive cleanup for multi-batch turns).
-        current: list = list(getattr(self, "planned_calls", []))  # type: ignore[attr-defined]
-        kept = [c for c in current if c.state in (PlanState.DONE, PlanState.ERROR, PlanState.CANCELLED, PlanState.SKIPPED)]
-        new_entries = []
-        for tool_call_id, tool_name, label, args in batch:
-            # Build args_preview (truncate to 60 chars)
-            try:
-                import json as _json
-                raw = _json.dumps(args, ensure_ascii=False)
-                preview = raw[:60] + ("…" if len(raw) > 60 else "")
-            except Exception:
-                preview = ""
-            # Determine category
-            try:
-                from hermes_cli.tui.tool_category import classify_tool
-                cat = classify_tool(tool_name).value
-            except Exception:
-                cat = "unknown"
-            new_entries.append(PlannedCall(
-                tool_call_id=tool_call_id,
-                tool_name=tool_name,
-                label=label,
-                category=cat,
-                args_preview=preview,
-                state=PlanState.PENDING,
-                started_at=None,
-                ended_at=None,
-                parent_tool_call_id=None,
-                depth=0,
-            ))
-        self.planned_calls = kept + new_entries  # type: ignore[attr-defined]
+        return self._svc_tools.set_plan_batch(batch)  # type: ignore[attr-defined]
 
     def mark_plan_running(self, tool_call_id: str) -> None:
-        """Transition a PENDING PlannedCall to RUNNING. Event-loop only."""
-        from hermes_cli.tui.plan_types import PlanState
-        items = list(getattr(self, "planned_calls", []))  # type: ignore[attr-defined]
-        for i, call in enumerate(items):
-            if call.tool_call_id == tool_call_id and call.state == PlanState.PENDING:
-                items[i] = call.as_running()
-                break
-        self.planned_calls = items  # type: ignore[attr-defined]
+        return self._svc_tools.mark_plan_running(tool_call_id)  # type: ignore[attr-defined]
 
     def mark_plan_done(self, tool_call_id: str, is_error: bool, dur_ms: int) -> None:
-        """Transition a RUNNING PlannedCall to DONE or ERROR. Event-loop only."""
-        from hermes_cli.tui.plan_types import PlanState
-        items = list(getattr(self, "planned_calls", []))  # type: ignore[attr-defined]
-        for i, call in enumerate(items):
-            if call.tool_call_id == tool_call_id and call.state == PlanState.RUNNING:
-                items[i] = call.as_done(is_error=is_error)
-                break
-        self.planned_calls = items  # type: ignore[attr-defined]
+        return self._svc_tools.mark_plan_done(tool_call_id, is_error, dur_ms)  # type: ignore[attr-defined]
 
     def current_turn_tool_calls(self) -> list[dict]:
-        """Return a list of per-turn tool call records (P7 /tools overlay).
-
-        Thread-safe: builds a fresh list of dicts from _ToolCallRecord values.
-        """
-        return [
-            {
-                "tool_call_id": r.tool_call_id,
-                "parent_tool_call_id": r.parent_tool_call_id,
-                "name": r.tool_name or r.label,
-                "category": r.category,
-                "depth": r.depth,
-                "children": list(r.children),
-                "start_s": r.start_s,
-                "dur_ms": r.dur_ms,
-                "is_error": r.is_error,
-                "error_kind": r.error_kind,
-                "mcp_server": r.mcp_server,
-            }
-            for r in self._turn_tool_calls.values()  # type: ignore[attr-defined]
-        ]
+        return self._svc_tools.current_turn_tool_calls()  # type: ignore[attr-defined]

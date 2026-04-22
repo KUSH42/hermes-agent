@@ -81,7 +81,6 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         self._stats = stats
         self._panel = panel
         self._has_affordances = line_count > COLLAPSE_THRESHOLD
-        self._copy_flash = False
         self._flash_msg: str | None = None
         self._flash_expires: float = 0.0
         self._spinner_char: str | None = None
@@ -356,22 +355,53 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
     def set_error(self, is_error: bool) -> None:
         self._tool_icon_error = is_error
 
-    def flash_copy(self) -> None:
-        self._copy_flash = True
-        self.refresh()
-        self.set_timer(1.5, self._end_flash)
+    def _feedback_channel_id(self) -> str:
+        """Resolve the tool-header channel id for this header."""
+        panel_id = self._panel.id if self._panel is not None else self.id
+        return f"tool-header::{panel_id}"
 
-    def _end_flash(self) -> None:
-        self._copy_flash = False
-        self.refresh()
+    def flash_copy(self, flash_label: str = "✓ Copied", duration: float = 1.5) -> None:
+        """RX1 Phase B: forward to FeedbackService tool-header channel."""
+        try:
+            from hermes_cli.tui.services.feedback import NORMAL
+            self.app.feedback.flash(
+                self._feedback_channel_id(),
+                flash_label,
+                duration=duration,
+                key="copy",
+                tone="success",
+                priority=NORMAL,
+            )
+        except Exception:
+            pass
 
     def flash_success(self) -> None:
-        self.add_class("--flash-success")
-        self.set_timer(0.45, lambda: self.remove_class("--flash-success"))
+        """RX1 Phase B: forward to FeedbackService tool-header channel."""
+        try:
+            from hermes_cli.tui.services.feedback import NORMAL
+            self.app.feedback.flash(
+                self._feedback_channel_id(),
+                "✓",
+                duration=0.45,
+                tone="success",
+                priority=NORMAL,
+            )
+        except Exception:
+            pass
 
     def flash_error(self) -> None:
-        self.add_class("--flash-error")
-        self.set_timer(0.45, lambda: self.remove_class("--flash-error"))
+        """RX1 Phase B: forward to FeedbackService tool-header channel."""
+        try:
+            from hermes_cli.tui.services.feedback import ERROR
+            self.app.feedback.flash(
+                self._feedback_channel_id(),
+                "✗",
+                duration=0.45,
+                tone="error",
+                priority=ERROR,
+            )
+        except Exception:
+            pass
 
     def set_path(self, path: str) -> None:
         self._full_path = path

@@ -62,13 +62,30 @@ class CodeBlockFooter(Widget):
         self._copy = Static("", id="code-copy-action", classes="action")
         self._sep = Static("", classes="sep")
         self._toggle = Static("", id="code-toggle-action", classes="action")
-        self._copy_flash_timer: object | None = None
         self._copy_original: str = ""
 
     def compose(self) -> ComposeResult:
         yield self._copy
         yield self._sep
         yield self._toggle
+
+    def on_mount(self) -> None:
+        # RX1 Phase B: register code-footer channel with FeedbackService
+        try:
+            from hermes_cli.tui.services.feedback import CodeFooterAdapter
+            self.app.feedback.register_channel(
+                f"code-footer::{self.id}",
+                CodeFooterAdapter(self),
+            )
+        except Exception:
+            pass
+
+    def on_unmount(self) -> None:
+        # RX1 Phase B: deregister code-footer channel
+        try:
+            self.app.feedback.deregister_channel(f"code-footer::{self.id}")
+        except Exception:
+            pass
 
     def set_actions(self, *, copy_label: str, toggle_label: str | None) -> None:
         self._copy_original = copy_label
@@ -85,24 +102,19 @@ class CodeBlockFooter(Widget):
             self._toggle.styles.display = "none"
 
     def flash_copy(self, flash_label: str = "✓ Copied", duration: float = 1.5) -> None:
-        """Briefly swap the copy label to a success indicator."""
-        if self._copy_flash_timer is not None:
-            try:
-                self._copy_flash_timer.stop()
-            except Exception:
-                pass
-        self._copy.update(flash_label)
-        self.add_class("--flash-copy")
-        try:
-            self._copy_flash_timer = self.set_timer(duration, self._restore_copy)
-        except Exception:
-            self._restore_copy()
+        """Briefly swap the copy label to a success indicator.
 
-    def _restore_copy(self) -> None:
-        """Restore copy label after flash."""
-        self._copy_flash_timer = None
-        self.remove_class("--flash-copy")
-        self._copy.update(self._copy_original)
+        Routes through FeedbackService (RX1 Phase B).
+        """
+        try:
+            self.app.feedback.flash(
+                f"code-footer::{self.id}",
+                flash_label,
+                duration=duration,
+                key="copy",
+            )
+        except Exception:
+            pass
 
     def on_click(self, event: Any) -> None:
         """Route clicks on footer actions to the parent StreamingCodeBlock."""
@@ -169,7 +181,6 @@ class StreamingCodeBlock(Widget):
         self._log = CopyableRichLog(markup=False)
         self._partial_line: str = ""
         self._collapsed = False
-        self._copy_flash = False
         self._controls_text_plain = ""
         self._complete_skin_vars: dict[str, str] = {}
 
@@ -361,12 +372,7 @@ class StreamingCodeBlock(Widget):
     def flash_copy(self) -> None:
         """Flash copy confirmation via border highlight."""
         self.add_class("--copy-flash")
-        self._copy_flash = True
-        self.set_timer(1.5, self._end_copy_flash)
-
-    def _end_copy_flash(self) -> None:
-        self.remove_class("--copy-flash")
-        self._copy_flash = False
+        self.set_timer(1.5, lambda: self.remove_class("--copy-flash"))
 
     def _update_controls(self) -> None:
         """Update _controls_text_plain for backward compat (tests)."""

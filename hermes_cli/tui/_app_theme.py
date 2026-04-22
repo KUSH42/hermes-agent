@@ -1,7 +1,6 @@
 """_ThemeMixin — skin/theme, slash commands, hint flash, clipboard for HermesApp."""
 from __future__ import annotations
 
-import time as _time
 import logging
 from pathlib import Path
 from typing import Any
@@ -153,34 +152,18 @@ class _ThemeMixin:
     # --- Copy/paste feedback ---
 
     def _flash_hint(self, text: str, duration: float = 1.5) -> None:
-        """Flash *text* in the HintBar for *duration* seconds, then restore."""
-        from hermes_cli.tui.widgets import HintBar
-        try:
-            bar = self.query_one(HintBar)  # type: ignore[attr-defined]
-            if self._flash_hint_timer is not None:  # type: ignore[attr-defined]
-                try:
-                    self._flash_hint_timer.stop()  # type: ignore[attr-defined]
-                except Exception:
-                    pass
-                self._flash_hint_timer = None  # type: ignore[attr-defined]
-                prior = self._flash_hint_prior  # type: ignore[attr-defined]
-            else:
-                prior = bar.hint
-                self._flash_hint_prior = prior  # type: ignore[attr-defined]
-            bar.hint = text
-            self._flash_hint_expires = _time.monotonic() + duration  # type: ignore[attr-defined]
+        """Flash *text* in the HintBar for *duration* seconds, then restore.
 
-            def _restore() -> None:
-                self._flash_hint_timer = None  # type: ignore[attr-defined]
-                self._flash_hint_prior = ""  # type: ignore[attr-defined]
-                try:
-                    setattr(bar, "hint", prior)
-                except Exception:
-                    pass
-
-            self._flash_hint_timer = self.set_timer(duration, _restore)  # type: ignore[attr-defined]
-        except NoMatches:
-            pass
+        Routes through FeedbackService (RX1 Phase B).
+        """
+        from hermes_cli.tui.services.feedback import NORMAL
+        self.feedback.flash(  # type: ignore[attr-defined]
+            "hint-bar",
+            text,
+            duration=duration,
+            priority=NORMAL,
+            key="hint",
+        )
 
     def set_status_error(self, msg: str, auto_clear_s: float = 0.0) -> None:
         """Persistent StatusBar error. Thread-safety: must be called from the event loop."""

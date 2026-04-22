@@ -554,12 +554,30 @@ class ToolPanel(Widget):
         if header is not None:
             header._panel = self
 
+        # RX1 Phase B: register tool-header channel with FeedbackService
+        if header is not None:
+            try:
+                from hermes_cli.tui.services.feedback import ToolHeaderAdapter
+                self.app.feedback.register_channel(
+                    f"tool-header::{self.id}",
+                    ToolHeaderAdapter(header),
+                )
+            except Exception:
+                pass
+
         # Always start expanded — auto-collapse fires at completion
         self.collapsed = False
 
         # Static pre-populated blocks: run auto-collapse immediately if result present
         if self._result_summary_v4 is not None:
             self._apply_complete_auto_collapse()
+
+    def on_unmount(self) -> None:
+        # RX1 Phase B: deregister tool-header channel so stale widget ref is cleaned up
+        try:
+            self.app.feedback.deregister_channel(f"tool-header::{self.id}")
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # collapsed watcher
@@ -877,8 +895,16 @@ class ToolPanel(Widget):
         if not summary.is_error:
             block_microcopy_shown = getattr(self._block, "_microcopy_shown", True)
             if not block_microcopy_shown and header is not None:
-                header._flash_msg = "done"
-                header._flash_expires = time.monotonic() + 0.5
+                # RX1 Phase B: route through FeedbackService instead of direct write
+                try:
+                    self.app.feedback.flash(
+                        f"tool-header::{self.id}",
+                        "done",
+                        duration=0.5,
+                        tone="success",
+                    )
+                except Exception:
+                    pass
 
         # Classify content
         self._update_kind_from_classifier(line_count)
@@ -1034,15 +1060,21 @@ class ToolPanel(Widget):
         return paths
 
     def _flash_header(self, msg: str, tone: str = "success") -> None:
-        """C5: flash msg on header with tone-aware color."""
-        header = getattr(self._block, "_header", None)
-        if header is None:
-            return
-        header._flash_msg = msg
-        header._flash_tone = tone  # C5: tone for color selection
-        header._flash_expires = time.monotonic() + 1.2
-        header.refresh()
-        self.set_timer(1.2, lambda: setattr(header, "_flash_msg", None) or header.refresh())
+        """C5: flash msg on header with tone-aware color.
+
+        Routes through FeedbackService (RX1 Phase B).
+        """
+        from hermes_cli.tui.services.feedback import NORMAL
+        try:
+            self.app.feedback.flash(
+                f"tool-header::{self.id}",
+                msg,
+                duration=1.2,
+                tone=tone,
+                priority=NORMAL,
+            )
+        except Exception:
+            pass
 
     def action_copy_body(self) -> None:
         text = self.copy_content()

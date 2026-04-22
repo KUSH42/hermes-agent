@@ -506,13 +506,8 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
         self._reduced_motion: bool = bool(_os.environ.get("HERMES_REDUCED_MOTION"))
         # Current hint phase — tracks what the user is doing
         self._hint_phase: str = "idle"
-        # Timestamp until which _flash_hint has the hint bar reserved.
-        # _tick_spinner must not overwrite before this expires.
-        self._flash_hint_expires: float = 0.0
-        # D3: timer handle for the current flash so we can cancel it on re-entry.
-        self._flash_hint_timer: "object | None" = None
-        # The hint text that was active before the current flash started.
-        self._flash_hint_prior: str = ""
+        # RX1 Phase C: _flash_hint_expires/_flash_hint_timer/_flash_hint_prior removed.
+        # FeedbackService owns all flash timer state. E3 guard replaced by on_agent_idle().
         # Compaction warning state — reset when progress returns to 0
         self._compaction_warned: bool = False
         # Clear animation guard — prevents re-entry while fade is running
@@ -562,6 +557,20 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
         # PaneManager — owns layout mode, pane-width math, state persistence
         from hermes_cli.tui.pane_manager import PaneManager
         self._pane_manager = PaneManager(cfg=_display_cfg)
+
+        # RX1: FeedbackService — centralised flash coordinator.
+        # Constructed early so other services and widgets can register channels.
+        from hermes_cli.tui.services.feedback import (
+            AppScheduler,
+            FeedbackService,
+            HintBarAdapter,
+        )
+        self.feedback: FeedbackService = FeedbackService(AppScheduler(self))
+        self.feedback.register_channel(
+            "hint-bar",
+            HintBarAdapter(self),
+            lifecycle_aware=True,
+        )
 
     # --- Compose ---
 
@@ -1386,12 +1395,9 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
                 except NoMatches:
                     pass
                 # Clear the HintBar spinner when the agent stops.
-                # E3: respect _flash_hint_expires — don't clear a timed flash.
-                if _time.monotonic() >= self._flash_hint_expires:
-                    try:
-                        self.query_one(HintBar).hint = ""
-                    except NoMatches:
-                        pass
+                # E3 fix: FeedbackService.on_agent_idle() leaves active flashes
+                # untouched and only calls restore() when no flash is active.
+                self.feedback.on_agent_idle()
                 # GAP-17: restore focus so the user can type immediately without clicking
                 self.call_after_refresh(widget.focus)
         except NoMatches:

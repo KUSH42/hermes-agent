@@ -378,6 +378,140 @@ class _CommandsMixin:
                 pass
             return
 
+        # B2: /anim speed <fps>
+        if sub == "speed":
+            try:
+                fps = max(5, min(60, int(args[1])))
+            except (IndexError, ValueError):
+                self._flash_hint("Usage: /anim speed <5-60>", 2.0)  # type: ignore[attr-defined]
+                return
+            self._persist_anim_config({"fps": fps})
+            try:
+                ov = self.query_one(_DO)  # type: ignore[attr-defined]
+                ov.fps = fps
+            except Exception:
+                pass
+            self._flash_hint(f"Animation FPS → {fps}", 2.0)  # type: ignore[attr-defined]
+            return
+
+        # B3: /anim ambient <name>
+        if sub == "ambient":
+            ambient_sub = args[1].lower() if len(args) > 1 else ""
+            if not ambient_sub:
+                self._flash_hint("Usage: /anim ambient <engine>", 2.0)  # type: ignore[attr-defined]
+                return
+            clean_a = "".join(c for c in ambient_sub if c.isalpha())
+            matched_a = next((k for k in list(_ENGINES.keys()) if clean_a in k.replace("_", "")), None)
+            if matched_a is None:
+                self._flash_hint(f"⚠  Unknown engine: {ambient_sub}", 2.0)  # type: ignore[attr-defined]
+                return
+            self._persist_anim_config({"ambient_engine": matched_a, "ambient_enabled": True})
+            try:
+                ov = self.query_one(_DO)  # type: ignore[attr-defined]
+                if ov._visibility_state == "ambient":
+                    ov._current_engine_instance = _ENGINES[matched_a]()
+            except Exception:
+                pass
+            self._flash_hint(f"Ambient → {matched_a}", 2.0)  # type: ignore[attr-defined]
+            return
+
+        # D3: /anim color <hex>
+        if sub == "color":
+            hex_val = args[1].lstrip("#").lower() if len(args) > 1 else ""
+            if len(hex_val) != 6 or not all(c in "0123456789abcdef" for c in hex_val):
+                self._flash_hint("Usage: /anim color <#rrggbb>", 2.0)  # type: ignore[attr-defined]
+                return
+            color = f"#{hex_val}"
+            self._persist_anim_config({"color": color})
+            try:
+                ov = self.query_one(_DO)  # type: ignore[attr-defined]
+                ov.color = color
+            except Exception:
+                pass
+            self._flash_hint(f"Color → {color}", 2.0)  # type: ignore[attr-defined]
+            return
+
+        # D3: /anim gradient [on|off|<color1> [color2]]
+        if sub == "gradient":
+            sub2 = args[1].lower() if len(args) > 1 else ""
+            if sub2 == "off":
+                self._persist_anim_config({"gradient": False})
+                try:
+                    self.query_one(_DO).gradient = False  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+                self._flash_hint("Gradient off", 1.5)  # type: ignore[attr-defined]
+                return
+
+            def _validate_hex(raw: str) -> "str | None":
+                h = raw.lstrip("#").lower()
+                return f"#{h}" if (len(h) == 6 and all(c in "0123456789abcdef" for c in h)) else None
+
+            if sub2 in ("on", "") or sub2.startswith("#"):
+                updates: dict = {"gradient": True}
+                if sub2.startswith("#"):
+                    color1 = _validate_hex(sub2)
+                    if color1 is None:
+                        self._flash_hint("Color must be 6-char hex e.g. #ff0000", 2.0)  # type: ignore[attr-defined]
+                        return
+                    updates["color"] = color1
+                if len(args) > 2 and args[2].startswith("#"):
+                    color2 = _validate_hex(args[2])
+                    if color2 is None:
+                        self._flash_hint("Color2 must be 6-char hex e.g. #0000ff", 2.0)  # type: ignore[attr-defined]
+                        return
+                    updates["color_secondary"] = color2
+                self._persist_anim_config(updates)
+                try:
+                    ov = self.query_one(_DO)  # type: ignore[attr-defined]
+                    ov.gradient = True
+                    if "color" in updates:
+                        ov.color = updates["color"]
+                    if "color_secondary" in updates:
+                        ov.color_b = updates["color_secondary"]
+                except Exception:
+                    pass
+                self._flash_hint("Gradient on", 1.5)  # type: ignore[attr-defined]
+                return
+            self._flash_hint("Usage: /anim gradient [on|off|#color1 #color2]", 2.5)  # type: ignore[attr-defined]
+            return
+
+        # D3: /anim hue [<speed>|off]
+        if sub == "hue":
+            val_str = args[1].lower() if len(args) > 1 else ""
+            if val_str in ("off", "0"):
+                hue_speed = 0.0
+            else:
+                try:
+                    hue_speed = max(0.0, min(5.0, float(val_str or "0.3")))
+                except ValueError:
+                    self._flash_hint("Usage: /anim hue <0-5 | off>", 2.0)  # type: ignore[attr-defined]
+                    return
+            self._persist_anim_config({"hue_shift_speed": hue_speed})
+            try:
+                self.query_one(_DO).hue_shift_speed = hue_speed  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            label = "off" if hue_speed == 0.0 else f"{hue_speed:.2f}"
+            self._flash_hint(f"Hue shift → {label}", 1.5)  # type: ignore[attr-defined]
+            return
+
+        # D4: /anim size <small|medium|large|fill>
+        if sub == "size":
+            valid = ["small", "medium", "large", "fill"]
+            sz = args[1].lower() if len(args) > 1 else ""
+            if sz not in valid:
+                self._flash_hint(f"Usage: /anim size {' | '.join(valid)}", 2.0)  # type: ignore[attr-defined]
+                return
+            self._persist_anim_config({"size": sz})
+            try:
+                ov = self.query_one(_DO)  # type: ignore[attr-defined]
+                ov.size_name = sz
+            except Exception:
+                pass
+            self._flash_hint(f"Size → {sz}", 1.5)  # type: ignore[attr-defined]
+            return
+
         all_keys = list(_ENGINES.keys())
         clean = "".join(c for c in sub if c.isalpha()).lower()
         matched = None
@@ -397,10 +531,17 @@ class _CommandsMixin:
             cfg.animation = matched
             ov.show(cfg)
 
+            # B1: optional preview duration
+            try:
+                preview_dur = float(args[1]) if len(args) > 1 else 4.0
+                preview_dur = max(1.0, min(120.0, preview_dur))
+            except ValueError:
+                preview_dur = 4.0
+
             def _revert_engine() -> None:
                 self._drawille_show_hide(getattr(self, "agent_running", False))  # type: ignore[attr-defined]
 
-            self.set_timer(4.0, _revert_engine)  # type: ignore[attr-defined]
+            self.set_timer(preview_dur, _revert_engine)  # type: ignore[attr-defined]
         except Exception:
             pass
 

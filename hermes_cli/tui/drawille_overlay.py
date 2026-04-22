@@ -59,6 +59,11 @@ from hermes_cli.tui.anim_engines import (
     WaveFunctionEngine,
     CompositeEngine,
     CrossfadeEngine,
+    WireframeCubeEngine,
+    SierpinskiEngine,
+    PlasmaEngine,
+    Torus3DEngine,
+    MatrixRainEngine,
 )
 
 if TYPE_CHECKING:
@@ -313,6 +318,12 @@ _ENGINES: dict[str, type] = {
     "mandala_bloom":     MandalaBloomEngine,
     "rope_braid":        RopeBraidEngine,
     "wave_function":     WaveFunctionEngine,
+    # Part A new engines
+    "wireframe_cube":    WireframeCubeEngine,
+    "sierpinski":        SierpinskiEngine,
+    "plasma":            PlasmaEngine,
+    "torus_3d":          Torus3DEngine,
+    "matrix_rain":       MatrixRainEngine,
 }
 
 # ── Contextual SDF tool label map (C1) ────────────────────────────────────────
@@ -364,6 +375,12 @@ ANIMATION_LABELS: dict[str, str] = {
     "hyperspace":        "Hyperspace",
     "wave_function":     "Wave Function",
     "strange_attractor": "Strange Attractor",
+    # Part A new engines
+    "wireframe_cube":    "Wireframe Cube",
+    "sierpinski":        "Sierpinski Triangle",
+    "plasma":            "Plasma",
+    "torus_3d":          "Torus 3D",
+    "matrix_rain":       "Matrix Rain",
 }
 
 # ── Engine metadata (B2 / E1) ─────────────────────────────────────────────────
@@ -394,8 +411,13 @@ _ENGINE_META: dict[str, dict] = {
     "wave_function":     {"category": "Mathematical", "desc": "Quantum wave packets with interference"},
     # Premium (sdf_morph handled via _get_sdf_engine)
     "sdf_morph":         {"category": "Premium",      "desc": "Typographic SDF letter morphing \u2726"},
+    # Part A new engines
+    "wireframe_cube":    {"category": "Classic",      "desc": "Rotating 3D wireframe cube with depth-sorted edges"},
+    "sierpinski":        {"category": "Mathematical", "desc": "IFS chaos game fractal — Sierpinski triangle with trail decay"},
+    "plasma":            {"category": "Mathematical", "desc": "Demoscene plasma — sum of sine fields thresholded into braille"},
+    "torus_3d":          {"category": "Classic",      "desc": "Rotating wireframe torus with depth-sorted latitude rings"},
+    "matrix_rain":       {"category": "Organic",      "desc": "Falling particle columns with TrailCanvas decay"},
 }
-
 
 # ── Phase B: phase-aware carousel ────────────────────────────────────────────
 
@@ -499,6 +521,46 @@ _PRESETS: dict[str, dict] = {
 }
 
 
+# ── Position grid helpers (D1/D2) ────────────────────────────────────────────
+
+_POS_GRID: list[list[str]] = [
+    ["top-left",    "top-center",    "top-right"],
+    ["mid-left",    "center",        "mid-right"],
+    ["bottom-left", "bottom-center", "bottom-right"],
+]
+_POS_TO_RC: dict[str, tuple[int, int]] = {
+    name: (col, row)
+    for row, rowlist in enumerate(_POS_GRID)
+    for col, name in enumerate(rowlist)
+}
+
+
+def _nearest_anchor(ox: int, oy: int, w: int, h: int, tw: int, th: int) -> str:
+    """Return the named position whose ideal offset is closest to (ox, oy)."""
+    margin = 2
+    top_safe = 1
+    bottom_safe = 2
+    positions = {
+        "center":        ((tw - w) // 2,        (th - h) // 2),
+        "top-right":     (tw - w - margin,       top_safe + margin),
+        "bottom-right":  (tw - w - margin,       th - h - bottom_safe),
+        "bottom-left":   (margin,                th - h - bottom_safe),
+        "top-left":      (margin,                top_safe + margin),
+        "top-center":    ((tw - w) // 2,         top_safe + margin),
+        "bottom-center": ((tw - w) // 2,         th - h - bottom_safe),
+        "mid-right":     (tw - w - margin,       (th - h) // 2),
+        "mid-left":      (margin,                (th - h) // 2),
+    }
+    best = "center"
+    best_d = float("inf")
+    for name, (ix, iy) in positions.items():
+        d = (ox - ix) ** 2 + (oy - iy) ** 2
+        if d < best_d:
+            best_d = d
+            best = name
+    return best
+
+
 # ── DrawilleOverlay ───────────────────────────────────────────────────────────
 
 class DrawilleOverlay(Static):
@@ -599,6 +661,12 @@ class DrawilleOverlay(Static):
     _completion_burst_frames: int = 0
     # Phase D — ambient idle
     _visibility_state: str = "hidden"   # "hidden" | "active" | "ambient"
+    # D2 — mouse drag fields
+    _dragging: bool = False
+    _drag_base_ox: int = 0
+    _drag_base_oy: int = 0
+    _drag_start_sx: int = 0
+    _drag_start_sy: int = 0
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -1391,6 +1459,12 @@ class DrawilleOverlay(Static):
 
     # ── size / position ────────────────────────────────────────────────────
 
+    def _set_offset(self, ox: int, oy: int) -> None:
+        """Set styles.offset and keep drag-base in sync."""
+        self.styles.offset = (ox, oy)
+        self._drag_base_ox = ox
+        self._drag_base_oy = oy
+
     def _apply_layout(self) -> None:
         """Apply size + position from current reactives.  Safe to call any time."""
         cfg = self._cfg
@@ -1399,7 +1473,7 @@ class DrawilleOverlay(Static):
         if self.size_name == "fill":
             self.styles.width = "1fr"
             self.styles.height = "1fr"
-            self.styles.offset = (0, 0)
+            self._set_offset(0, 0)
             return
         if self.vertical:
             sizes = {
@@ -1434,7 +1508,7 @@ class DrawilleOverlay(Static):
                 ox, oy = tw - rail_width, top_safe
             else:
                 ox, oy = 0, top_safe
-            self.styles.offset = (max(0, ox), max(0, oy))
+            self._set_offset(max(0, ox), max(0, oy))
             # Optional: adjust OutputPanel padding
             if cfg is not None and cfg.rail_output_margin:
                 try:
@@ -1468,7 +1542,68 @@ class DrawilleOverlay(Static):
         # Safe area clamping
         ox = max(margin, min(ox, tw - w - margin))
         oy = max(top_safe, min(oy, th - h - bottom_safe))
-        self.styles.offset = (max(0, ox), max(0, oy))
+        self._set_offset(max(0, ox), max(0, oy))
+
+    # ── D2 mouse drag handlers ─────────────────────────────────────────────
+
+    def on_mouse_down(self, event: object) -> None:
+        from textual import events
+        if not isinstance(event, events.MouseDown):
+            return
+        if event.button != 1:
+            return
+        self._dragging = True
+        self._drag_start_sx = event.screen_x
+        self._drag_start_sy = event.screen_y
+        try:
+            self.app.capture_mouse(self)
+        except AttributeError:
+            pass
+        event.stop()
+
+    def on_mouse_move(self, event: object) -> None:
+        from textual import events
+        if not isinstance(event, events.MouseMove):
+            return
+        if not self._dragging:
+            return
+        dx = event.screen_x - self._drag_start_sx
+        dy = event.screen_y - self._drag_start_sy
+        try:
+            tw = self.app.size.width
+            th = self.app.size.height
+            w = self.size.width
+            h = self.size.height
+            margin = 1
+            ox = max(margin, min(tw - w - margin, self._drag_base_ox + dx))
+            oy = max(0, min(th - h - 2, self._drag_base_oy + dy))
+            self.styles.offset = (ox, oy)
+        except Exception:
+            pass
+        event.stop()
+
+    def on_mouse_up(self, event: object) -> None:
+        from textual import events
+        if not isinstance(event, events.MouseUp):
+            return
+        if not self._dragging:
+            return
+        self._dragging = False
+        try:
+            self.app.release_mouse()
+        except AttributeError:
+            pass
+        try:
+            tw, th = self.app.size.width, self.app.size.height
+            w, h = self.size.width, self.size.height
+            ox = self._drag_base_ox + (event.screen_x - self._drag_start_sx)
+            oy = self._drag_base_oy + (event.screen_y - self._drag_start_sy)
+            nearest = _nearest_anchor(ox, oy, w, h, tw, th)
+            self.position = nearest
+            self.app._persist_anim_config({"position": nearest})
+        except Exception:
+            pass
+        event.stop()
 
 
 # ── AnimConfigPanel ───────────────────────────────────────────────────────────
@@ -1564,6 +1699,8 @@ class AnimConfigPanel(ModalScreen):
                         choices=layer_b_choices),
             _PanelField("trail_decay",    "Trail",       "float",  cfg.trail_decay,
                         min_val=0.0, max_val=0.98, step=0.05),
+            _PanelField("hue_shift_speed", "Hue shift",  "float",  cfg.hue_shift_speed,
+                        min_val=0.0, max_val=2.0, step=0.05),
             _PanelField("adaptive",       "Adaptive",    "toggle", cfg.adaptive),
             _PanelField("particle_count", "Particles",   "int",    cfg.particle_count,
                         min_val=10, max_val=200),

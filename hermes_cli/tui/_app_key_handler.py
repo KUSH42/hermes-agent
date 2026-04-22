@@ -288,6 +288,32 @@ class _KeyHandlerMixin:
             event.prevent_default()
             return
 
+        # --- D1: Ctrl+Shift+Arrow — cycle overlay through 9 named grid positions ---
+        if key in ("ctrl+shift+up", "ctrl+shift+down", "ctrl+shift+left", "ctrl+shift+right"):
+            try:
+                from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO, _POS_TO_RC, _POS_GRID, AnimConfigPanel as _ACP
+                ov = self.query_one(_DO)  # type: ignore[attr-defined]
+                if not ov.has_class("-visible") or isinstance(self.screen, _ACP):
+                    pass
+                else:
+                    col, row = _POS_TO_RC.get(ov.position, (1, 1))
+                    if key == "ctrl+shift+right":
+                        col = (col + 1) % 3
+                    elif key == "ctrl+shift+left":
+                        col = (col - 1) % 3
+                    elif key == "ctrl+shift+down":
+                        row = (row + 1) % 3
+                    elif key == "ctrl+shift+up":
+                        row = (row - 1) % 3
+                    new_pos = _POS_GRID[row][col]
+                    ov.position = new_pos
+                    self._persist_anim_config({"position": new_pos})  # type: ignore[attr-defined]
+                    self._flash_hint(f"Overlay → {new_pos}", 1.5)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            event.stop()
+            return
+
         # --- Browse mode key handling ---
         if self.browse_mode:  # type: ignore[attr-defined]
             from hermes_cli.tui.tool_blocks import ToolHeader as _TH

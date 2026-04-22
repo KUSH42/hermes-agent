@@ -835,56 +835,43 @@ class ToolPanel(Widget):
             pass
 
     def set_result_summary(self, summary: "ResultSummaryV4") -> None:
-        """Call from app at tool completion to populate footer and header."""
+        """Call from app at tool completion to populate footer and header.
+
+        E1: Two-tick sequence.
+        Tick 0 (this method): header state, classify, footer content, post Completed.
+        Tick 1 (_post_complete_tidy): auto-collapse, flash, mini-mode.
+        """
         self._result_summary_v4 = summary
         self._completed_at = time.monotonic()
-        # Update accent + header bar state
+
+        # --- Tick 0: land the result ---
+
+        # Update accent state
         final_state = "error" if summary.is_error else "ok"
-        # D1: apply class so CSS can target errors specifically (e.g. compact mode exception)
         if summary.is_error:
             self.add_class("tool-panel--error")
         else:
             self.remove_class("tool-panel--error")
         if getattr(self, '_accent', None) is not None:
             self._accent.state = final_state
+
         # Update ToolHeader state directly (ToolHeaderBar deleted in A1)
-        _header_now = getattr(self._block, "_header", None)
+        header = getattr(self._block, "_header", None)
         line_count = self._body_line_count()
-        if _header_now is not None:
-            _header_now._is_complete = True
-            _header_now._tool_icon_error = summary.is_error
+        if header is not None:
+            header._is_complete = True
+            header._tool_icon_error = summary.is_error
             if self._completed_at is not None:
                 elapsed = self._completed_at - self._start_time
-                _header_now._duration = f"{elapsed:.1f}s"
-            _header_now._line_count = line_count
-            _header_now._has_affordances = line_count > 3
-        # Classify content
-        self._update_kind_from_classifier(line_count)
-        self._apply_complete_auto_collapse()
-        # Refresh footer visibility
-        if getattr(self, '_footer_pane', None) is not None:
-            show = self._has_footer_content()
-            self._footer_pane.styles.display = "block" if show else "none"
-        # Activate mini-mode for qualifying SHELL calls
-        self._maybe_activate_mini(summary)
-        # B2: schedule multi-tick age microcopy (10s / 60s / 300s)
-        self._schedule_age_ticks()
-
-        # Push primary + promoted chips to ToolHeader
-        promoted_texts: frozenset[str] = frozenset()
-        header = getattr(self._block, "_header", None)
-        if header is not None:
+                header._duration = f"{elapsed:.1f}s"
+            header._line_count = line_count
+            header._has_affordances = line_count > 3
             if summary.primary is not None:
                 header._primary_hero = summary.primary
             header._error_kind = summary.error_kind
             # A2: chips live in FooterPane only; header never shows them
             header._header_chips = []
             header.refresh()
-            promoted_texts: frozenset[str] = frozenset()
-
-        # Render v4 footer (skip chips already in header)
-        if self._footer_pane is not None:
-            self._footer_pane.update_summary_v4(summary, promoted_chip_texts=promoted_texts)
 
         # A1: sub-500ms closure flash — if microcopy never shown, flash "done" on header
         if not summary.is_error:
@@ -892,6 +879,9 @@ class ToolPanel(Widget):
             if not block_microcopy_shown and header is not None:
                 header._flash_msg = "done"
                 header._flash_expires = time.monotonic() + 0.5
+
+        # Classify content
+        self._update_kind_from_classifier(line_count)
 
         # A2: error remediation lives in FooterPane._remediation_row (error-banner widget removed)
         if self._footer_pane is not None and summary.is_error and summary.error_kind is not None:
@@ -922,19 +912,54 @@ class ToolPanel(Widget):
             except Exception:
                 pass
 
-        # Auto-collapse / error promotion
-        # D1: errors always expand regardless of user collapse override
+        # Render v4 footer
+        if self._footer_pane is not None:
+            self._footer_pane.update_summary_v4(summary, promoted_chip_texts=frozenset())
+
+        # Refresh footer visibility (pre-tidy state)
+        if getattr(self, '_footer_pane', None) is not None:
+            show = self._has_footer_content()
+            self._footer_pane.styles.display = "block" if show else "none"
+
+        # Post Completed so ToolGroup recomputes immediately
+        self.post_message(ToolPanel.Completed())
+
+        # B2: schedule multi-tick age microcopy (10s / 60s / 300s)
+        self._schedule_age_ticks()
+
+        # --- Schedule Tick 1: tidy-up (auto-collapse, flash, mini-mode) ---
+        try:
+            self.call_after_refresh(self._post_complete_tidy, summary)
+        except Exception:
+            # Not mounted (e.g. unit tests); run inline
+            self._post_complete_tidy(summary)
+
+    def _post_complete_tidy(self, summary: "ResultSummaryV4") -> None:
+        """E1 Tick 1: auto-collapse, flash, mini-mode activation.
+
+        Runs one event-loop turn after set_result_summary so the user sees
+        the completed header/footer before collapse animation fires.
+        Skip-flash rule: if auto-collapse fires, suppress flash (collapse is signal enough).
+        """
+        # Error: always expand; never auto-collapse
         if summary.is_error:
             self.collapsed = False
-        elif not getattr(self, "_user_collapse_override", False):
-            self._apply_complete_auto_collapse()
+            return
 
-        # Show footer when there's something to display
+        # Auto-collapse if warranted (non-error path)
+        did_collapse = False
+        if not getattr(self, "_user_collapse_override", False):
+            before = self.collapsed
+            self._apply_complete_auto_collapse()
+            did_collapse = self.collapsed and not before
+
+        # Mini-mode activation (opt-in via config)
+        self._maybe_activate_mini(summary)
+
+        # Footer visibility refresh after collapse decision
         if self._footer_pane is not None:
             show = self._has_footer_content() and not self.collapsed
             self._footer_pane.styles.display = "block" if show else "none"
-
-        self.post_message(ToolPanel.Completed())
 
     def copy_content(self) -> str:
         """Return full plain-text output regardless of collapse state."""

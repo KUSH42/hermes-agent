@@ -746,7 +746,11 @@ async def test_footer_visible_when_expanded_with_content():
 
 @pytest.mark.asyncio
 async def test_footer_hidden_when_collapsed():
-    """Footer hidden when panel is collapsed regardless of content."""
+    """Footer hidden when panel is collapsed regardless of content.
+
+    E1 note: error summaries force collapsed=False in _post_complete_tidy.
+    Use a non-error summary so auto-collapse is the only driver.
+    """
     from hermes_cli.tui.tool_result_parse import ResultSummaryV4
 
     app = _make_app()
@@ -754,11 +758,14 @@ async def test_footer_hidden_when_collapsed():
         await _pause(pilot)
         panel = await _get_shell_panel(app, pilot)
 
+        # Non-error, no chips → no footer content → footer hidden when collapsed
         summary = ResultSummaryV4(
-            primary=None, exit_code=1, chips=(), stderr_tail="",
-            actions=(), artifacts=(), is_error=True,
+            primary=None, exit_code=0, chips=(), stderr_tail="",
+            actions=(), artifacts=(), is_error=False,
         )
         panel.set_result_summary(summary)
+        await _pause(pilot)  # let _post_complete_tidy run
+
         panel.collapsed = True
         panel.watch_collapsed(False, True)
         await _pause(pilot)

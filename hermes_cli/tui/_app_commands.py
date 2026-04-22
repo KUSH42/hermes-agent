@@ -38,6 +38,21 @@ class _CommandsMixin:
         if stripped == "/density":
             self.action_toggle_density()  # type: ignore[attr-defined]
             return True
+        if stripped == "/density auto-mini":
+            self.action_enable_auto_mini()  # type: ignore[attr-defined]
+            return True
+        if stripped in ("/density full", "/density compact"):
+            # Disable auto-mini when switching to an explicit density level
+            self._disable_auto_mini()  # type: ignore[attr-defined]
+            if stripped == "/density full":
+                self.compact = False  # type: ignore[attr-defined]
+                self._compact_manual = None  # type: ignore[attr-defined]
+                self._flash_hint("Full density", 1.5)  # type: ignore[attr-defined]
+            else:
+                self.compact = True  # type: ignore[attr-defined]
+                self._compact_manual = True  # type: ignore[attr-defined]
+                self._flash_hint("Compact ON", 1.5)  # type: ignore[attr-defined]
+            return True
         if stripped.startswith("/anim"):
             self._handle_anim_command(stripped)
             return True

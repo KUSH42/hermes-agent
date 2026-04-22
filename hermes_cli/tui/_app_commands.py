@@ -255,16 +255,17 @@ class _CommandsMixin:
         self.push_screen(_ACP())  # type: ignore[attr-defined]
 
     def _persist_anim_config(self, cfg_dict: dict) -> None:
-        """Persist animation config dict to YAML config file."""
+        """Merge partial animation config dict into YAML config file."""
         try:
-            from hermes_cli.config import read_raw_config, save_config, _set_nested, get_config_path
+            from hermes_cli.config import read_raw_config, save_config, get_config_path
             import logging as _logging
             config_path = get_config_path()
             if not config_path.exists():
                 _logging.getLogger(__name__).warning("Config path does not exist: %s", config_path)
                 return
             cfg = read_raw_config()
-            _set_nested(cfg, "display.drawille_overlay", cfg_dict)
+            existing = cfg.setdefault("display", {}).setdefault("drawille_overlay", {})
+            existing.update(cfg_dict)
             save_config(cfg)
         except Exception as exc:
             import logging as _logging

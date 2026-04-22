@@ -477,13 +477,14 @@ def test_cycle_animation_right_advances():
     with patch("hermes_cli.tui.drawille_overlay._overlay_config",
                return_value=DrawilleOverlayCfg(enabled=True)):
         panel = AnimConfigPanel()
-    panel._focus_idx = 0  # animation field
+    anim_field = next(f for f in panel._fields if f.name == "animation")
+    panel._focus_idx = panel._fields.index(anim_field)
     panel.refresh = MagicMock()
     panel._push_to_overlay = MagicMock()
 
-    first_val = panel._fields[0].value
+    first_val = anim_field.value
     panel.action_cycle_right()
-    new_val = panel._fields[0].value
+    new_val = anim_field.value
     assert new_val != first_val or len(ANIMATION_KEYS) == 1
 
 
@@ -492,9 +493,9 @@ def test_cycle_animation_wraps():
     with patch("hermes_cli.tui.drawille_overlay._overlay_config",
                return_value=DrawilleOverlayCfg(enabled=True)):
         panel = AnimConfigPanel()
-    anim_field = panel._fields[0]
+    anim_field = next(f for f in panel._fields if f.name == "animation")
     anim_field.value = ANIMATION_KEYS[-1]
-    panel._focus_idx = 0
+    panel._focus_idx = panel._fields.index(anim_field)
     panel.refresh = MagicMock()
     panel._push_to_overlay = MagicMock()
 
@@ -503,19 +504,18 @@ def test_cycle_animation_wraps():
 
 
 def test_fps_inc_clamps_at_15():
-    """↑ on fps=15 stays at 15."""
+    """↑ on fps at max_val stays at max_val."""
     with patch("hermes_cli.tui.drawille_overlay._overlay_config",
                return_value=DrawilleOverlayCfg(enabled=True)):
         panel = AnimConfigPanel()
-    # fps is field index 1
     fps_field = next(f for f in panel._fields if f.name == "fps")
-    fps_field.value = 15
+    fps_field.value = int(fps_field.max_val)
     panel._focus_idx = panel._fields.index(fps_field)
     panel.refresh = MagicMock()
     panel._push_to_overlay = MagicMock()
 
     panel.action_inc_value()
-    assert fps_field.value == 15
+    assert fps_field.value == int(fps_field.max_val)
 
 
 def test_fps_dec_clamps_at_1():

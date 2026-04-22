@@ -622,6 +622,7 @@ class DrawilleOverlay(Static):
     _resolved_color_b: str = "#8800ff"
     _resolved_multi_colors: list = []   # pre-resolved hex strings; set by watch_multi_color
     _resolved_multi_color_rgbs: list | None = None  # pre-parsed RGB tuples — avoids per-frame _parse_rgb lookups
+    _multi_color_row_buf: list = []    # row-length buffer reused across frames
     _fade_step: int = 0
     _fade_state: str = "stable"   # "in" | "out" | "stable"
     _fade_alpha: float = 1.0      # current fade-out alpha [0..1]
@@ -1674,33 +1675,49 @@ class AnimConfigPanel(ModalScreen):
         cfg = _overlay_config()
         layer_b_choices = [""] + [k for k in ANIMATION_KEYS if k != "sdf_morph"]
         self._fields = [
+            # ── Core ──────────────────────────────────────────────────────
+            _PanelField("enabled",    "Enabled",   "toggle", cfg.enabled),
             _PanelField("animation",  "Animation", "cycle",  cfg.animation,
                         choices=ANIMATION_KEYS),
             _PanelField("fps",        "FPS",       "int",    cfg.fps,
-                        min_val=1, max_val=15),
+                        min_val=1, max_val=30),
             _PanelField("size_name",  "Size",      "cycle",  cfg.size,
                         choices=["small", "medium", "large", "fill"]),
             _PanelField("position",   "Position",  "cycle",  cfg.position,
                         choices=["center", "top-right", "bottom-right", "bottom-left", "top-left",
                                  "top-center", "bottom-center", "mid-right", "mid-left",
                                  "rail-right", "rail-left"]),
+            _PanelField("trigger",    "Trigger",   "cycle",  cfg.trigger,
+                        choices=["agent_running", "command_running", "always"]),
+            # ── Color ─────────────────────────────────────────────────────
             _PanelField("color",      "Color",     "color",  cfg.color),
             _PanelField("gradient",   "Gradient",  "toggle", cfg.gradient),
             _PanelField("color_b",    "Color B",   "color",  cfg.color_secondary),
-            _PanelField("trigger",    "Trigger",   "cycle",  cfg.trigger,
-                        choices=["agent_running", "command_running", "always"]),
+            _PanelField("hue_shift_speed", "Hue shift",  "float",  cfg.hue_shift_speed,
+                        min_val=0.0, max_val=2.0, step=0.05),
+            # ── Display ───────────────────────────────────────────────────
             _PanelField("show_border","Border",    "toggle", cfg.show_border),
             _PanelField("dim_bg",     "Dim BG",    "toggle", cfg.dim_background),
             _PanelField("vertical",   "Vertical",  "toggle", cfg.vertical),
-            # v2 fields
+            # ── Ambient idle (Phase D) ─────────────────────────────────────
+            _PanelField("ambient_enabled", "Ambient",      "toggle", cfg.ambient_enabled),
+            _PanelField("ambient_engine",  "Amb engine",   "cycle",  cfg.ambient_engine,
+                        choices=["perlin_flow", "neural_pulse", "wave_collapse", "boids", "dna"]),
+            _PanelField("ambient_heat",    "Amb heat",     "float",  cfg.ambient_heat,
+                        min_val=0.0, max_val=1.0, step=0.02),
+            _PanelField("ambient_alpha",   "Amb alpha",    "float",  cfg.ambient_alpha,
+                        min_val=0.05, max_val=1.0, step=0.05),
+            # ── Carousel ──────────────────────────────────────────────────
+            _PanelField("carousel",           "Carousel",   "toggle", cfg.carousel),
+            _PanelField("carousel_interval_s","Carsl intv", "float",  cfg.carousel_interval_s,
+                        min_val=2.0, max_val=60.0, step=1.0),
+            # ── v2 compositing ────────────────────────────────────────────
             _PanelField("blend_mode",     "Blend",       "cycle",  cfg.blend_mode,
                         choices=["overlay", "additive", "xor", "dissolve"]),
             _PanelField("layer_b",        "Layer B",     "cycle",  cfg.layer_b,
                         choices=layer_b_choices),
             _PanelField("trail_decay",    "Trail",       "float",  cfg.trail_decay,
                         min_val=0.0, max_val=0.98, step=0.05),
-            _PanelField("hue_shift_speed", "Hue shift",  "float",  cfg.hue_shift_speed,
-                        min_val=0.0, max_val=2.0, step=0.05),
             _PanelField("adaptive",       "Adaptive",    "toggle", cfg.adaptive),
             _PanelField("particle_count", "Particles",   "int",    cfg.particle_count,
                         min_val=10, max_val=200),
@@ -1871,6 +1888,7 @@ class AnimConfigPanel(ModalScreen):
         if ov is None:
             return
         attr_map = {
+            "enabled":       None,    # not a reactive; applied via show()/hide()
             "animation":     "animation",
             "fps":           "fps",
             "size_name":     "size_name",
@@ -1878,10 +1896,19 @@ class AnimConfigPanel(ModalScreen):
             "color":         "color",
             "gradient":      "gradient",
             "color_b":       "color_b",
+            "hue_shift_speed": "hue_shift_speed",
             "trigger":       None,    # not a reactive on overlay
             "show_border":   "show_border",
             "dim_bg":        "dim_bg",
             "vertical":      "vertical",
+            # ambient — not reactives; applied via _cfg on show()
+            "ambient_enabled": None,
+            "ambient_engine":  None,
+            "ambient_heat":    None,
+            "ambient_alpha":   None,
+            # carousel — not reactives; applied via show()
+            "carousel":           None,
+            "carousel_interval_s": None,
             # v2 attrs
             "blend_mode":    "blend_mode",
             "layer_b":       "layer_b",
@@ -2134,7 +2161,7 @@ def _current_panel_cfg(fields: list[_PanelField]) -> DrawilleOverlayCfg:
     """Build a DrawilleOverlayCfg from current panel field values."""
     fmap = {f.name: f.value for f in fields}
     return DrawilleOverlayCfg(
-        enabled=True,
+        enabled=bool(fmap.get("enabled", True)),
         animation=str(fmap.get("animation", "dna")),
         trigger=str(fmap.get("trigger", "agent_running")),
         fps=int(fmap.get("fps", 15)),
@@ -2143,6 +2170,7 @@ def _current_panel_cfg(fields: list[_PanelField]) -> DrawilleOverlayCfg:
         color=str(fmap.get("color", "$accent")),
         gradient=bool(fmap.get("gradient", False)),
         color_secondary=str(fmap.get("color_b", "$primary")),
+        hue_shift_speed=float(fmap.get("hue_shift_speed", 0.3)),
         dim_background=bool(fmap.get("dim_bg", True)),
         show_border=bool(fmap.get("show_border", False)),
         vertical=bool(fmap.get("vertical", False)),
@@ -2152,7 +2180,14 @@ def _current_panel_cfg(fields: list[_PanelField]) -> DrawilleOverlayCfg:
         fade_in_frames=3,
         fade_out_frames=0,
         multi_color=[],
-        hue_shift_speed=0.3,
+        # ambient
+        ambient_enabled=bool(fmap.get("ambient_enabled", False)),
+        ambient_engine=str(fmap.get("ambient_engine", "perlin_flow")),
+        ambient_heat=float(fmap.get("ambient_heat", 0.12)),
+        ambient_alpha=float(fmap.get("ambient_alpha", 0.35)),
+        # carousel
+        carousel=bool(fmap.get("carousel", False)),
+        carousel_interval_s=float(fmap.get("carousel_interval_s", 8.0)),
         # v2
         blend_mode=str(fmap.get("blend_mode", "overlay")),
         layer_b=str(fmap.get("layer_b", "")),
@@ -2172,7 +2207,7 @@ def _fields_to_dict(fields: list[_PanelField]) -> dict:
     """Convert panel fields to a dict suitable for saving to config."""
     fmap = {f.name: f.value for f in fields}
     return {
-        "enabled": True,
+        "enabled": bool(fmap.get("enabled", True)),
         "animation": str(fmap.get("animation", "dna")),
         "trigger": str(fmap.get("trigger", "agent_running")),
         "fps": int(fmap.get("fps", 15)),
@@ -2181,6 +2216,7 @@ def _fields_to_dict(fields: list[_PanelField]) -> dict:
         "color": str(fmap.get("color", "$accent")),
         "gradient": bool(fmap.get("gradient", False)),
         "color_secondary": str(fmap.get("color_b", "$primary")),
+        "hue_shift_speed": float(fmap.get("hue_shift_speed", 0.3)),
         "dim_background": bool(fmap.get("dim_bg", True)),
         "show_border": bool(fmap.get("show_border", False)),
         "vertical": bool(fmap.get("vertical", False)),
@@ -2190,7 +2226,14 @@ def _fields_to_dict(fields: list[_PanelField]) -> dict:
         "fade_in_frames": 3,
         "fade_out_frames": 0,
         "multi_color": [],
-        "hue_shift_speed": 0.3,
+        # ambient
+        "ambient_enabled": bool(fmap.get("ambient_enabled", False)),
+        "ambient_engine": str(fmap.get("ambient_engine", "perlin_flow")),
+        "ambient_heat": float(fmap.get("ambient_heat", 0.12)),
+        "ambient_alpha": float(fmap.get("ambient_alpha", 0.35)),
+        # carousel
+        "carousel": bool(fmap.get("carousel", False)),
+        "carousel_interval_s": float(fmap.get("carousel_interval_s", 8.0)),
         # v2
         "blend_mode": str(fmap.get("blend_mode", "overlay")),
         "layer_b": str(fmap.get("layer_b", "")),

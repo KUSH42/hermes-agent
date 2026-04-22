@@ -108,23 +108,19 @@ def test_bounds_check_no_exception_small_canvas(cls):
 
 # ── A3 — TrailCanvas canvas reuse ─────────────────────────────────────────────
 
-def test_trail_canvas_canvas_reuse():
-    """TrailCanvas._canvas object should be the same instance across multiple frame() calls."""
+def test_trail_canvas_fresh_canvas_per_call():
+    """TrailCanvas.to_canvas() returns a fresh BrailleCanvas each call (no pooling)."""
+    from hermes_cli.tui.braille_canvas import BrailleCanvas
     tc = TrailCanvas()
     tc.set(1, 1)
     tc.set(2, 2)
 
-    # Capture the canvas object after construction
-    canvas_id = id(tc._canvas)
+    c1 = tc.to_canvas()
+    c2 = tc.to_canvas()
 
-    for _ in range(5):
-        tc.set(1, 1)
-        tc.frame()
-
-    # The pooled canvas should be the same object throughout
-    assert id(tc._canvas) == canvas_id, (
-        "TrailCanvas._canvas was replaced — canvas is not being pooled"
-    )
+    assert isinstance(c1, BrailleCanvas)
+    assert isinstance(c2, BrailleCanvas)
+    assert c1 is not c2, "to_canvas() should return a new canvas each call"
 
 
 # ── A4 — NeuralPulse edge step cache ─────────────────────────────────────────

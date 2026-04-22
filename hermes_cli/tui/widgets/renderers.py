@@ -634,9 +634,20 @@ class TitledRule(PulseMixin, Widget):
             return self._render_progress_bar()
         return self._render_normal()
 
+    def _rule_width(self) -> int:
+        """Return render width accounting for OutputPanel scrollbar column."""
+        w = self.size.width
+        try:
+            from hermes_cli.tui.widgets.output_panel import OutputPanel
+            op = self.app.query_one(OutputPanel)
+            w = min(w, op.scrollable_content_region.width)
+        except Exception:
+            pass
+        return max(1, w)
+
     def _render_normal(self) -> RenderResult:
         fade_start, fade_end, accent, title_color = self._live_colors()
-        w = self.size.width
+        w = self._rule_width()
         title = self.title_text
         # Split title into leading spaces + accent char (first non-space) + rest.
         # Some skins intentionally prefix response_label with a space, e.g.
@@ -722,7 +733,7 @@ class TitledRule(PulseMixin, Widget):
 
     def _render_progress_bar(self) -> RenderResult:
         fade_start, fade_end, accent, _title_color = self._live_colors()
-        width = max(1, self.size.width)
+        width = self._rule_width()
         filled = int(width * self.progress)
         if self.progress >= 0.9:
             bar_color = _skin_color("error_color", "#E06C75")
@@ -760,8 +771,15 @@ class PlainRule(Widget):
 
     def render(self) -> RenderResult:
         w = self.size.width
+        try:
+            from hermes_cli.tui.widgets.output_panel import OutputPanel
+            op = self.app.query_one(OutputPanel)
+            w = min(w, op.scrollable_content_region.width)
+        except Exception:
+            pass
         if self._max_width:
             w = min(w, self._max_width)
+        w = max(1, w)
         fade_start = self._fade_start
         fade_end = self._fade_end
         try:

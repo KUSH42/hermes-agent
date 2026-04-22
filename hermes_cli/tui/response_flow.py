@@ -309,7 +309,7 @@ def _looks_like_source_line(raw: str) -> bool:
         return True
     if any(tok in raw for tok in ("{", "}", "();", ");", "->", "::", "#include", "System.out.", "fmt.", "println!")):
         return True
-    if "=" in raw and "==" not in raw and len(stripped.split()) <= 8:
+    if re.match(r'^\s*\w+\s*=\s*\S', raw) and "==" not in raw and len(stripped.split()) <= 6:
         return True
     return False
 
@@ -468,6 +468,7 @@ class ResponseFlowEngine:
         self._emitted_emoji_anchors: set[int] = set()  # id() of mounted positions
         # Optional callback fired for each committed prose line (non-blank plain text)
         self._prose_callback: "Callable[[str], None] | None" = None
+        self._code_fence_buffer: list[str] = []  # §5.11.2 InlineCodeFence buffer
 
     def _write_prose(self, rich_text: "Text", plain: str) -> None:
         """Write a prose line and optionally fire the prose callback."""
@@ -477,7 +478,7 @@ class ResponseFlowEngine:
                 self._prose_callback(plain)
             except Exception:
                 pass
-        self._code_fence_buffer: list[str] = []  # §5.11.2 InlineCodeFence buffer
+
     def _sync_prose_log(self) -> None:
         """Refresh the active prose destination from the owning message panel."""
         getter = getattr(type(self._panel), "current_prose_log", None)
@@ -744,7 +745,10 @@ class ResponseFlowEngine:
         plain = _strip_ansi(inline_ansi)
         rich_text = Text.from_ansi(_normalize_ansi_for_render(inline_ansi))
         if not self._write_prose_inline_emojis(rich_text, plain):
-            self._write_prose(rich_text, plain)
+            self._commit_prose_line(inline_ansi, plain)
+        else:
+            # Emoji path bypasses _commit_prose_line; flush any pending numbered-line buffer
+            self._flush_code_fence_buffer()
         self._pending_code_intro = intro_candidate or _is_code_intro_label(plain)
 
     def _scan_media_urls(self, line: str) -> None:
@@ -892,6 +896,7 @@ class ResponseFlowEngine:
 
     def flush(self) -> None:
         """Turn ended — close any open code block; flush StreamingBlockBuffer pending state."""
+        from agent.rich_output import apply_block_line, apply_inline_markdown
         if self._partial:
             pending = self._partial
             self._clear_partial_preview()
@@ -926,6 +931,7 @@ class ResponseFlowEngine:
                     )
         # Flush any prose pending in StreamingBlockBuffer (setext, tables)
         self._flush_block_buf()
+        self._flush_code_fence_buffer()
         self._render_footnote_section()
         self._footnote_defs.clear()
         self._footnote_order.clear()
@@ -1046,8 +1052,7 @@ class ResponseFlowEngine:
             self._panel._mount_nonprose_block(widget)
         except Exception:
             pass
-        # Flush any pending InlineCodeFence buffer
-        self._flush_code_fence_buffer()
+
     def refresh_skin(self, css_vars: dict[str, str]) -> None:
         """Called from HermesApp.apply_skin() after hot-reload.
 
@@ -1073,10 +1078,8 @@ class ResponseFlowEngine:
         if _NUMBERED_LINE_RE.match(plain):
             self._code_fence_buffer.append(plain)
         else:
-            # Flush buffer if ≥ 2 lines
             self._flush_code_fence_buffer()
-            # Write current line normally
-            self._prose_log.write_with_source(Text.from_ansi(inline_ansi), plain)
+            self._write_prose(Text.from_ansi(_normalize_ansi_for_render(inline_ansi)), plain)
 
     def _flush_code_fence_buffer(self) -> None:
         """Flush any buffered numbered-code lines.
@@ -1139,10 +1142,7 @@ class ResponseFlowEngine:
                 inline_ansi = apply_inline_markdown(block_ansi)
                 self._sync_prose_log()
                 plain = _strip_ansi(inline_ansi)
-                self._prose_log.write_with_source(
-                    Text.from_ansi(_normalize_ansi_for_render(inline_ansi)),
-                    plain,
-                )
+                self._commit_prose_line(inline_ansi, plain)
 
     def _mount_code_block(self, block: "StreamingCodeBlock") -> None:
         """Mount block into output DOM. Override in subclasses."""

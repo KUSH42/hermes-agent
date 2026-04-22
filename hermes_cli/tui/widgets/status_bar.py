@@ -231,7 +231,7 @@ class HintBar(Widget):
     def render(self) -> "RenderResult":
         # Override: flash/overlay hints take priority
         if self.hint:
-            return Text.from_markup(self.hint)
+            return Text(self.hint)
         # Shimmer active: render shimmer
         if self._shimmer_base is not None and self._shimmer_timer is not None:
             return shimmer_text(

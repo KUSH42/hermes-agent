@@ -224,10 +224,10 @@ def test_chip_click_calls_xdg_open():
     event = MagicMock()
     event.button.id = "cite-1"
 
-    with patch("subprocess.Popen") as mock_popen:
-        with patch.object(sys, "platform", "linux"):
-            bar.on_button_pressed(event)
-        mock_popen.assert_called_once_with(["xdg-open", "https://example.com"])
+    with patch("hermes_cli.tui.widgets.status_bar.safe_open_url") as mock_open:
+        bar.on_button_pressed(event)
+    mock_open.assert_called_once()
+    assert mock_open.call_args[0] == (bar, "https://example.com")
 
     event.stop.assert_called_once()
 

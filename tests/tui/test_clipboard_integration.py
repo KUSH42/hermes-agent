@@ -98,14 +98,16 @@ async def test_copy_text_xclip_fallback():
         await pilot.pause()
         bar = app.query_one(HintBar)
 
-        with patch("subprocess.run", return_value=MagicMock()) as mock_run:
+        with patch("hermes_cli.tui.services.theme.safe_run") as mock_safe_run:
             app._copy_text_with_hint("data")
+            # Fire on_success callback to simulate worker completing
+            on_success = mock_safe_run.call_args[1]["on_success"]
+            on_success("", "", 0)
             await pilot.pause()
 
-        mock_run.assert_called_once()
-        _, kwargs = mock_run.call_args
-        assert kwargs["stdout"] is subprocess.DEVNULL
-        assert kwargs["stderr"] is subprocess.DEVNULL
+        mock_safe_run.assert_called_once()
+        assert mock_safe_run.call_args[0][1] == ["xclip", "-selection", "clipboard"]
+        assert mock_safe_run.call_args[1]["input_bytes"] == b"data"
         assert app.clipboard == "data"
         assert "⎘" in bar.hint, f"Expected copy icon in hint, got: {bar.hint!r}"
         assert "4" in bar.hint, f"Expected char count '4' in hint, got: {bar.hint!r}"

@@ -147,22 +147,16 @@ class TestOscProgress:
 
 class TestDesktopNotify:
     def _run_sync(self, *args, **kwargs):
-        """Call notify() and run the target function synchronously."""
+        """Call notify() and replay dispatched commands synchronously."""
         from hermes_cli.tui import desktop_notify as dn
-        targets = []
+        import subprocess as _sp
+        mock_caller = MagicMock()
 
-        def fake_thread(target, daemon=True):
-            targets.append(target)
-            m = MagicMock()
-            m.start = MagicMock()
-            return m
+        def _fake_safe_run(caller, cmd, *, timeout=5, on_error=None, **kw):
+            _sp.run(cmd, timeout=timeout)
 
-        with patch("threading.Thread", side_effect=fake_thread):
-            dn.notify(*args, **kwargs)
-
-        # Run targets synchronously so subprocess.run calls are captured
-        for fn in targets:
-            fn()
+        with patch("hermes_cli.tui.desktop_notify.safe_run", side_effect=_fake_safe_run):
+            dn.notify(*args, caller=mock_caller, **kwargs)
 
     def test_notify_send_called_with_correct_args(self):
         from hermes_cli.tui import desktop_notify as dn
@@ -214,21 +208,15 @@ class TestDesktopNotify:
                 self._run_sync("Hermes", "Test")
         assert calls == []
 
-    def test_runs_in_daemon_thread(self):
+    def test_dispatches_via_safe_run(self):
         from hermes_cli.tui import desktop_notify as dn
-        thread_kwargs = []
-
-        def capture_thread(target, daemon=True):
-            thread_kwargs.append(daemon)
-            m = MagicMock()
-            m.start = MagicMock()
-            return m
-
-        with patch("threading.Thread", side_effect=capture_thread):
-            with patch("shutil.which", return_value=None):
-                dn.notify("Hermes", "Test")
-
-        assert thread_kwargs and all(d is True for d in thread_kwargs)
+        mock_caller = MagicMock()
+        with patch("hermes_cli.tui.desktop_notify.safe_run") as mock_safe_run:
+            with patch("shutil.which", return_value="/usr/bin/notify-send"):
+                with patch.object(sys, "platform", "linux"):
+                    dn.notify("Hermes", "Test", caller=mock_caller)
+        mock_safe_run.assert_called_once()
+        assert mock_safe_run.call_args[0][0] is mock_caller
 
     def test_notify_sound_adds_sound_name_macos(self):
         from hermes_cli.tui import desktop_notify as dn

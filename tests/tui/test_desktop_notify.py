@@ -2,8 +2,7 @@
 from __future__ import annotations
 
 import sys
-import threading
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -14,37 +13,29 @@ from hermes_cli.tui.desktop_notify import (
     notify,
 )
 
+_SAFE_RUN = "hermes_cli.tui.desktop_notify.safe_run"
+
 
 # ---------------------------------------------------------------------------
-# notify() — threading behaviour
+# notify() — dispatch behaviour (RX2: safe_run replaces threading.Thread)
 # ---------------------------------------------------------------------------
 
-def test_notify_starts_daemon_thread():
-    """notify() starts a background thread (does not block)."""
-    started = []
-
-    original_thread_init = threading.Thread.__init__
-
-    def _capture_init(self, *args, **kwargs):
-        original_thread_init(self, *args, **kwargs)
-        started.append(kwargs.get("daemon", False))
-
-    with patch("threading.Thread") as mock_thread_cls:
-        mock_t = MagicMock()
-        mock_thread_cls.return_value = mock_t
-        notify("title", "body")
-        mock_thread_cls.assert_called_once()
-        _, kwargs = mock_thread_cls.call_args
-        assert kwargs.get("daemon") is True
-        mock_t.start.assert_called_once()
+def test_notify_dispatches_via_safe_run():
+    """notify() dispatches via safe_run (non-blocking, off-event-loop)."""
+    mock_caller = MagicMock()
+    with patch(_SAFE_RUN) as mock_safe_run:
+        with patch("shutil.which", return_value="/usr/bin/notify-send"):
+            notify("title", "body", caller=mock_caller)
+    mock_safe_run.assert_called_once()
 
 
-def test_notify_does_not_raise_on_exception_in_thread():
-    """notify() swallows exceptions raised by the notification backend."""
-    with patch("hermes_cli.tui.desktop_notify._notify_linux", side_effect=RuntimeError("fail")), \
+def test_notify_does_not_raise():
+    """notify() does not raise when no notification tools are available."""
+    mock_caller = MagicMock()
+    with patch(_SAFE_RUN), \
+         patch("shutil.which", return_value=None), \
          patch("sys.platform", "linux"):
-        # Should not raise — exception is caught inside the thread
-        notify("title", "body")
+        notify("title", "body", caller=mock_caller)  # must not raise
 
 
 # ---------------------------------------------------------------------------
@@ -52,56 +43,61 @@ def test_notify_does_not_raise_on_exception_in_thread():
 # ---------------------------------------------------------------------------
 
 def test_notify_macos_calls_osascript():
+    mock_caller = MagicMock()
     with patch("shutil.which", return_value="/usr/bin/osascript"), \
-         patch("subprocess.run") as mock_run:
-        _notify_macos("Title", "Body", sound=False, sound_name="Glass")
-    mock_run.assert_called_once()
-    args = mock_run.call_args[0][0]
-    assert args[0] == "osascript"
-    assert "-e" in args
+         patch(_SAFE_RUN) as mock_safe_run:
+        _notify_macos("Title", "Body", caller=mock_caller, sound=False, sound_name="Glass")
+    mock_safe_run.assert_called_once()
+    cmd = mock_safe_run.call_args[0][1]
+    assert cmd[0] == "osascript"
+    assert "-e" in cmd
 
 
 def test_notify_macos_script_contains_title_and_body():
+    mock_caller = MagicMock()
     with patch("shutil.which", return_value="/usr/bin/osascript"), \
-         patch("subprocess.run") as mock_run:
-        _notify_macos("MyTitle", "MyBody", sound=False, sound_name="Glass")
-    script = mock_run.call_args[0][0][2]
+         patch(_SAFE_RUN) as mock_safe_run:
+        _notify_macos("MyTitle", "MyBody", caller=mock_caller, sound=False, sound_name="Glass")
+    script = mock_safe_run.call_args[0][1][2]
     assert "MyTitle" in script
     assert "MyBody" in script
 
 
 def test_notify_macos_with_sound_includes_sound_clause():
+    mock_caller = MagicMock()
     with patch("shutil.which", return_value="/usr/bin/osascript"), \
-         patch("subprocess.run") as mock_run:
-        _notify_macos("T", "B", sound=True, sound_name="Ping")
-    script = mock_run.call_args[0][0][2]
+         patch(_SAFE_RUN) as mock_safe_run:
+        _notify_macos("T", "B", caller=mock_caller, sound=True, sound_name="Ping")
+    script = mock_safe_run.call_args[0][1][2]
     assert "sound name" in script
     assert "Ping" in script
 
 
 def test_notify_macos_without_sound_no_sound_clause():
+    mock_caller = MagicMock()
     with patch("shutil.which", return_value="/usr/bin/osascript"), \
-         patch("subprocess.run") as mock_run:
-        _notify_macos("T", "B", sound=False, sound_name="Glass")
-    script = mock_run.call_args[0][0][2]
+         patch(_SAFE_RUN) as mock_safe_run:
+        _notify_macos("T", "B", caller=mock_caller, sound=False, sound_name="Glass")
+    script = mock_safe_run.call_args[0][1][2]
     assert "sound name" not in script
 
 
 def test_notify_macos_no_osascript_does_nothing():
+    mock_caller = MagicMock()
     with patch("shutil.which", return_value=None), \
-         patch("subprocess.run") as mock_run:
-        _notify_macos("T", "B", sound=False, sound_name="Glass")
-    mock_run.assert_not_called()
+         patch(_SAFE_RUN) as mock_safe_run:
+        _notify_macos("T", "B", caller=mock_caller, sound=False, sound_name="Glass")
+    mock_safe_run.assert_not_called()
 
 
 def test_notify_macos_uses_json_dumps_for_safe_quoting():
     """Titles/bodies with special chars are safely quoted via json.dumps."""
+    mock_caller = MagicMock()
     with patch("shutil.which", return_value="/usr/bin/osascript"), \
-         patch("subprocess.run") as mock_run:
-        _notify_macos('Ti"tle', "Bo\\dy", sound=False, sound_name="Glass")
-    script = mock_run.call_args[0][0][2]
-    # json.dumps escapes double quotes and backslashes
-    assert '\\"' in script or "Ti" in script  # at minimum the text appears
+         patch(_SAFE_RUN) as mock_safe_run:
+        _notify_macos('Ti"tle', "Bo\\dy", caller=mock_caller, sound=False, sound_name="Glass")
+    script = mock_safe_run.call_args[0][1][2]
+    assert '\\"' in script or "Ti" in script
 
 
 # ---------------------------------------------------------------------------
@@ -109,36 +105,40 @@ def test_notify_macos_uses_json_dumps_for_safe_quoting():
 # ---------------------------------------------------------------------------
 
 def test_notify_linux_calls_notify_send():
+    mock_caller = MagicMock()
     with patch("shutil.which", side_effect=lambda x: "/usr/bin/notify-send" if x == "notify-send" else None), \
-         patch("subprocess.run") as mock_run:
-        _notify_linux("Title", "Body", sound=False)
-    mock_run.assert_called_once()
-    args = mock_run.call_args[0][0]
-    assert args[0] == "notify-send"
-    assert "Title" in args
-    assert "Body" in args
+         patch(_SAFE_RUN) as mock_safe_run:
+        _notify_linux("Title", "Body", caller=mock_caller, sound=False)
+    mock_safe_run.assert_called_once()
+    cmd = mock_safe_run.call_args[0][1]
+    assert cmd[0] == "notify-send"
+    assert "Title" in cmd
+    assert "Body" in cmd
 
 
 def test_notify_linux_no_notify_send_does_nothing():
+    mock_caller = MagicMock()
     with patch("shutil.which", return_value=None), \
-         patch("subprocess.run") as mock_run:
-        _notify_linux("T", "B", sound=False)
-    mock_run.assert_not_called()
+         patch(_SAFE_RUN) as mock_safe_run:
+        _notify_linux("T", "B", caller=mock_caller, sound=False)
+    mock_safe_run.assert_not_called()
 
 
 def test_notify_linux_sound_calls_play_sound():
+    mock_caller = MagicMock()
     with patch("shutil.which", side_effect=lambda x: "/usr/bin/notify-send" if x == "notify-send" else None), \
-         patch("subprocess.run"), \
+         patch(_SAFE_RUN), \
          patch("hermes_cli.tui.desktop_notify._play_linux_sound") as mock_play:
-        _notify_linux("T", "B", sound=True)
-    mock_play.assert_called_once()
+        _notify_linux("T", "B", caller=mock_caller, sound=True)
+    mock_play.assert_called_once_with(caller=mock_caller)
 
 
 def test_notify_linux_no_sound_does_not_call_play_sound():
+    mock_caller = MagicMock()
     with patch("shutil.which", side_effect=lambda x: "/usr/bin/notify-send" if x == "notify-send" else None), \
-         patch("subprocess.run"), \
+         patch(_SAFE_RUN), \
          patch("hermes_cli.tui.desktop_notify._play_linux_sound") as mock_play:
-        _notify_linux("T", "B", sound=False)
+        _notify_linux("T", "B", caller=mock_caller, sound=False)
     mock_play.assert_not_called()
 
 
@@ -147,46 +147,47 @@ def test_notify_linux_no_sound_does_not_call_play_sound():
 # ---------------------------------------------------------------------------
 
 def test_play_linux_sound_prefers_canberra():
+    mock_caller = MagicMock()
     with patch("shutil.which", return_value="/usr/bin/canberra-gtk-play"), \
-         patch("subprocess.run") as mock_run:
-        _play_linux_sound()
-    mock_run.assert_called_once()
-    assert "canberra-gtk-play" in mock_run.call_args[0][0]
+         patch(_SAFE_RUN) as mock_safe_run:
+        _play_linux_sound(caller=mock_caller)
+    mock_safe_run.assert_called_once()
+    cmd = mock_safe_run.call_args[0][1]
+    assert "canberra-gtk-play" in cmd
 
 
 def test_play_linux_sound_falls_back_to_paplay_when_no_canberra():
-    _FALLBACK = "/usr/share/sounds/freedesktop/stereo/message.oga"
-
     def _which(name):
-        if name == "paplay":
-            return "/usr/bin/paplay"
-        return None
+        return "/usr/bin/paplay" if name == "paplay" else None
 
+    mock_caller = MagicMock()
     with patch("shutil.which", side_effect=_which), \
          patch("os.path.exists", return_value=True), \
-         patch("subprocess.run") as mock_run:
-        _play_linux_sound()
-    mock_run.assert_called_once()
-    args = mock_run.call_args[0][0]
-    assert "paplay" in args
+         patch(_SAFE_RUN) as mock_safe_run:
+        _play_linux_sound(caller=mock_caller)
+    mock_safe_run.assert_called_once()
+    cmd = mock_safe_run.call_args[0][1]
+    assert "paplay" in cmd
 
 
 def test_play_linux_sound_no_tools_does_not_raise():
+    mock_caller = MagicMock()
     with patch("shutil.which", return_value=None), \
-         patch("subprocess.run") as mock_run:
-        _play_linux_sound()
-    mock_run.assert_not_called()
+         patch(_SAFE_RUN) as mock_safe_run:
+        _play_linux_sound(caller=mock_caller)
+    mock_safe_run.assert_not_called()
 
 
 def test_play_linux_sound_paplay_skips_when_file_missing():
     def _which(name):
         return "/usr/bin/paplay" if name == "paplay" else None
 
+    mock_caller = MagicMock()
     with patch("shutil.which", side_effect=_which), \
          patch("os.path.exists", return_value=False), \
-         patch("subprocess.run") as mock_run:
-        _play_linux_sound()
-    mock_run.assert_not_called()
+         patch(_SAFE_RUN) as mock_safe_run:
+        _play_linux_sound(caller=mock_caller)
+    mock_safe_run.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -194,29 +195,28 @@ def test_play_linux_sound_paplay_skips_when_file_missing():
 # ---------------------------------------------------------------------------
 
 def test_notify_dispatches_to_macos_on_darwin():
+    mock_caller = MagicMock()
     with patch("sys.platform", "darwin"), \
          patch("hermes_cli.tui.desktop_notify._notify_macos") as mock_mac, \
          patch("hermes_cli.tui.desktop_notify._notify_linux") as mock_linux:
-        notify("T", "B")
-        # Give the daemon thread a moment to run
-        import time; time.sleep(0.05)
-    mock_mac.assert_called_once_with("T", "B", sound=False, sound_name="Glass")
+        notify("T", "B", caller=mock_caller)
+    mock_mac.assert_called_once_with("T", "B", caller=mock_caller, sound=False, sound_name="Glass")
     mock_linux.assert_not_called()
 
 
 def test_notify_dispatches_to_linux_on_linux():
+    mock_caller = MagicMock()
     with patch("sys.platform", "linux"), \
          patch("hermes_cli.tui.desktop_notify._notify_linux") as mock_linux, \
          patch("hermes_cli.tui.desktop_notify._notify_macos") as mock_mac:
-        notify("T", "B")
-        import time; time.sleep(0.05)
-    mock_linux.assert_called_once_with("T", "B", sound=False)
+        notify("T", "B", caller=mock_caller)
+    mock_linux.assert_called_once_with("T", "B", caller=mock_caller, sound=False)
     mock_mac.assert_not_called()
 
 
 def test_notify_passes_sound_kwarg():
+    mock_caller = MagicMock()
     with patch("sys.platform", "linux"), \
          patch("hermes_cli.tui.desktop_notify._notify_linux") as mock_linux:
-        notify("T", "B", sound=True)
-        import time; time.sleep(0.05)
-    mock_linux.assert_called_once_with("T", "B", sound=True)
+        notify("T", "B", caller=mock_caller, sound=True)
+    mock_linux.assert_called_once_with("T", "B", caller=mock_caller, sound=True)

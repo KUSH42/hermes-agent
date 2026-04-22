@@ -79,32 +79,35 @@ def test_next_section_renders_with_indent():
 
 # T7: set_plan_batch creates all calls at depth=0 (Phase 1 baseline)
 def test_set_plan_batch_all_depth_zero():
-    from hermes_cli.tui._app_tool_rendering import _ToolRenderingMixin
+    from unittest.mock import MagicMock
+    from hermes_cli.tui.services.tools import ToolRenderingService
 
-    class _Stub(_ToolRenderingMixin):
-        planned_calls = []
-        _turn_tool_calls = {}
-        _active_streaming_blocks = {}
-        _streaming_tool_count = 0
-        _agent_stack = []
-        _turn_start_monotonic = None
-        _browse_total = 0
-        _current_turn_tool_count = 0
-        _cached_output_panel = None
+    mock_app = MagicMock()
+    mock_app.planned_calls = []
+    mock_app._turn_tool_calls = {}
+    mock_app._active_streaming_blocks = {}
+    mock_app._streaming_tool_count = 0
+    mock_app._agent_stack = []
+    mock_app._turn_start_monotonic = None
+    mock_app._browse_total = 0
+    mock_app._current_turn_tool_count = 0
+    mock_app._cached_output_panel = None
+    mock_app.query_one = MagicMock(side_effect=Exception)
+    mock_app.call_after_refresh = MagicMock()
 
-        def query_one(self, *a, **kw):
-            raise Exception
+    svc = ToolRenderingService.__new__(ToolRenderingService)
+    svc.app = mock_app
+    svc._streaming_map = {}
+    svc._turn_tool_calls = {}
+    svc._agent_stack = []
+    svc._subagent_panels = {}
 
-        def call_after_refresh(self, *a, **kw):
-            pass
-
-    stub = _Stub()
     batch = [
         ("id1", "terminal", "ls", {"command": "ls"}),
         ("id2", "read_file", "a.py", {"path": "a.py"}),
     ]
-    stub.set_plan_batch(batch)
-    for call in stub.planned_calls:
+    svc.set_plan_batch(batch)
+    for call in mock_app.planned_calls:
         assert call.depth == 0
 
 

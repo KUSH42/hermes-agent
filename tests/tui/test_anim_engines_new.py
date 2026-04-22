@@ -295,13 +295,25 @@ class FakeOverlay:
 
 
 def make_fake_anim_app() -> FakeApp:
-    """Return a FakeApp with _handle_anim_command mixed in."""
-    from hermes_cli.tui._app_commands import _CommandsMixin
+    """Return a FakeApp with _handle_anim_command wired via CommandsService."""
+    from hermes_cli.tui.services.commands import CommandsService
 
-    class FakeAnimApp(FakeApp, _CommandsMixin):
-        pass
+    app = FakeApp()
+    svc = CommandsService.__new__(CommandsService)
+    svc.app = app
+    app._svc_commands = svc
 
-    return FakeAnimApp()
+    # Capture persist_anim_config calls into app._persisted
+    def _fake_persist(cfg_dict: dict) -> None:
+        app._persisted.append(cfg_dict)
+
+    svc.persist_anim_config = _fake_persist  # type: ignore[method-assign]
+
+    def _handle_anim_command(stripped: str) -> None:
+        svc.handle_anim_command(stripped)
+
+    app._handle_anim_command = _handle_anim_command  # type: ignore[method-assign]
+    return app
 
 
 class TestAnimCommandImprovements:

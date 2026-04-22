@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import time as _time
+from dataclasses import dataclass, field as _field
 from typing import TYPE_CHECKING, Any
 
 from textual.css.query import NoMatches
@@ -14,6 +15,22 @@ if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _ToolCallRecord:
+    tool_call_id: str
+    parent_tool_call_id: str | None
+    label: str
+    tool_name: str | None
+    category: str
+    depth: int
+    start_s: float
+    dur_ms: int | None
+    is_error: bool
+    error_kind: str | None
+    mcp_server: str | None
+    children: list = _field(default_factory=list)
 
 
 class ToolRenderingService(AppService):
@@ -223,7 +240,6 @@ class ToolRenderingService(AppService):
             if parent_rec is not None:
                 parent_rec.children.append(tool_call_id)
 
-            from hermes_cli.tui._app_tool_rendering import _ToolCallRecord
             now = _time.monotonic()
             if self.app._turn_start_monotonic is None:
                 self.app._turn_start_monotonic = now

@@ -318,7 +318,7 @@ class KeyDispatchService(AppService):
                     new_pos = _POS_GRID[row][col]
                     ov.position = new_pos
                     self.app._persist_anim_config({"position": new_pos})
-                    self.app._svc_theme.flash_hint(f"Overlay → {new_pos}", 1.5)
+                    self.app._flash_hint(f"Overlay → {new_pos}", 1.5)
             except Exception:
                 pass
             event.stop()
@@ -539,7 +539,7 @@ class KeyDispatchService(AppService):
         if isinstance(text, str) and text.startswith("/"):
             cmd = text.split()[0].lower()
             if cmd not in _KNOWN_SLASH_COMMANDS:
-                self.app._svc_theme.flash_hint(f"Unknown command: {cmd}  (F1 for help)", 3.0)
+                self.app._flash_hint(f"Unknown command: {cmd}  (F1 for help)", 3.0)
                 return
 
         images = list(self.app.attached_images)

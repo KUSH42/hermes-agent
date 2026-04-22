@@ -1,6 +1,6 @@
 """
-Phase 4: /layout slash command — unit tests for _handle_layout_command
-and routing via _handle_tui_command.
+Phase 4: /layout slash command — unit tests for handle_layout_command
+and routing via handle_tui_command.
 
 These are pure unit tests — no Textual app required. All I/O is mocked.
 """
@@ -12,7 +12,7 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# Helpers — build a mock _CommandsMixin host
+# Helpers — build a mock app host for CommandsService
 # ---------------------------------------------------------------------------
 
 def _make_host(
@@ -21,7 +21,7 @@ def _make_host(
     left_w_before: int | None = None,
     right_w_before: int | None = None,
 ) -> MagicMock:
-    """Return a mock object that satisfies _CommandsMixin's attribute expectations."""
+    """Return a mock object that satisfies CommandsService's attribute expectations."""
     host = MagicMock()
     host._display_layout = display_layout
 
@@ -37,10 +37,18 @@ def _make_host(
     return host
 
 
+def _make_svc(host: MagicMock):
+    """Build a CommandsService with the given mock as svc.app."""
+    from hermes_cli.tui.services.commands import CommandsService
+    svc = CommandsService.__new__(CommandsService)
+    svc.app = host
+    return svc
+
+
 def _call_handle_layout(host: MagicMock, args: str) -> None:
-    """Invoke _handle_layout_command directly via the mixin (unbound)."""
-    from hermes_cli.tui._app_commands import _CommandsMixin
-    _CommandsMixin._handle_layout_command(host, args)
+    """Invoke handle_layout_command directly via CommandsService."""
+    svc = _make_svc(host)
+    svc.handle_layout_command(args)
 
 
 # ---------------------------------------------------------------------------
@@ -69,7 +77,7 @@ class TestLayoutNoArgs:
 class TestLayoutVersionSwitch:
     def test_layout_v1_persists_to_config(self) -> None:
         host = _make_host()
-        with patch("hermes_cli.tui._app_commands.re") as mock_re, \
+        with patch("hermes_cli.tui.services.commands.re") as mock_re, \
              patch("hermes_cli.config.read_raw_config") as mock_read, \
              patch("hermes_cli.config.save_config") as mock_save:
             mock_re.findall.return_value = []  # no kv pairs
@@ -81,7 +89,7 @@ class TestLayoutVersionSwitch:
 
     def test_layout_v2_persists_to_config(self) -> None:
         host = _make_host()
-        with patch("hermes_cli.tui._app_commands.re") as mock_re, \
+        with patch("hermes_cli.tui.services.commands.re") as mock_re, \
              patch("hermes_cli.config.read_raw_config") as mock_read, \
              patch("hermes_cli.config.save_config") as mock_save:
             mock_re.findall.return_value = []
@@ -93,7 +101,7 @@ class TestLayoutVersionSwitch:
 
     def test_layout_v2_flashes_restart_hint(self) -> None:
         host = _make_host()
-        with patch("hermes_cli.tui._app_commands.re") as mock_re, \
+        with patch("hermes_cli.tui.services.commands.re") as mock_re, \
              patch("hermes_cli.config.read_raw_config", return_value={}), \
              patch("hermes_cli.config.save_config"):
             mock_re.findall.return_value = []
@@ -104,7 +112,7 @@ class TestLayoutVersionSwitch:
 
     def test_layout_v1_flashes_restart_hint(self) -> None:
         host = _make_host()
-        with patch("hermes_cli.tui._app_commands.re") as mock_re, \
+        with patch("hermes_cli.tui.services.commands.re") as mock_re, \
              patch("hermes_cli.config.read_raw_config", return_value={}), \
              patch("hermes_cli.config.save_config"):
             mock_re.findall.return_value = []
@@ -206,26 +214,30 @@ class TestLayoutUnknown:
 
 
 # ---------------------------------------------------------------------------
-# Routing: _handle_tui_command dispatches /layout
+# Routing: handle_tui_command dispatches /layout
 # ---------------------------------------------------------------------------
 
 class TestLayoutRouting:
     def test_handle_tui_command_routes_layout(self) -> None:
+        from hermes_cli.tui.services.commands import CommandsService
         host = _make_host()
-        # Patch _handle_layout_command on the instance to track calls
-        host._handle_layout_command = MagicMock()
-        from hermes_cli.tui._app_commands import _CommandsMixin
-        result = _CommandsMixin._handle_tui_command(host, "/layout v2")
+        # Patch handle_layout_command on the svc to track calls
+        svc = _make_svc(host)
+        svc.handle_layout_command = MagicMock()
+        # Wire back so handle_tui_command calls the mock
+        host._handle_layout_command = svc.handle_layout_command
+        result = svc.handle_tui_command("/layout v2")
         assert result is True
-        host._handle_layout_command.assert_called_once_with("v2")
+        svc.handle_layout_command.assert_called_once_with("v2")
 
     def test_handle_tui_command_routes_layout_no_args(self) -> None:
         host = _make_host()
-        host._handle_layout_command = MagicMock()
-        from hermes_cli.tui._app_commands import _CommandsMixin
-        result = _CommandsMixin._handle_tui_command(host, "/layout")
+        svc = _make_svc(host)
+        svc.handle_layout_command = MagicMock()
+        host._handle_layout_command = svc.handle_layout_command
+        result = svc.handle_tui_command("/layout")
         assert result is True
-        host._handle_layout_command.assert_called_once_with("")
+        svc.handle_layout_command.assert_called_once_with("")
 
     def test_layout_in_known_slash_commands(self) -> None:
         from hermes_cli.tui._app_constants import KNOWN_SLASH_COMMANDS

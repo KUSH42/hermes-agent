@@ -17,26 +17,48 @@ def _make_batch(n: int) -> "list[tuple[str, str, str, dict]]":
 
 
 def _make_app_stub():
-    from hermes_cli.tui._app_tool_rendering import _ToolRenderingMixin
+    from unittest.mock import MagicMock
+    from hermes_cli.tui.services.tools import ToolRenderingService
 
-    class _StubApp(_ToolRenderingMixin):
-        planned_calls = []
-        _turn_tool_calls = {}
-        _active_streaming_blocks = {}
-        _streaming_tool_count = 0
-        _agent_stack = []
-        _turn_start_monotonic = None
-        _browse_total = 0
-        _current_turn_tool_count = 0
-        _cached_output_panel = None
+    mock_app = MagicMock()
+    mock_app.planned_calls = []
+    mock_app._turn_tool_calls = {}
+    mock_app._active_streaming_blocks = {}
+    mock_app._streaming_tool_count = 0
+    mock_app._agent_stack = []
+    mock_app._turn_start_monotonic = None
+    mock_app._browse_total = 0
+    mock_app._current_turn_tool_count = 0
+    mock_app._cached_output_panel = None
+    mock_app.query_one = MagicMock(side_effect=Exception)
+    mock_app.call_after_refresh = MagicMock()
 
-        def query_one(self, *a, **kw):
-            raise Exception
+    svc = ToolRenderingService.__new__(ToolRenderingService)
+    svc.app = mock_app
+    svc._streaming_map = {}
+    svc._turn_tool_calls = {}
+    svc._agent_stack = []
+    svc._subagent_panels = {}
 
-        def call_after_refresh(self, *a, **kw):
-            pass
+    class _Proxy:
+        @property
+        def planned_calls(self):
+            return mock_app.planned_calls
 
-    return _StubApp()
+        @planned_calls.setter
+        def planned_calls(self, v):
+            mock_app.planned_calls = v
+
+        def set_plan_batch(self, batch):
+            return svc.set_plan_batch(batch)
+
+        def mark_plan_running(self, tid):
+            return svc.mark_plan_running(tid)
+
+        def mark_plan_done(self, tid, is_error, dur_ms):
+            return svc.mark_plan_done(tid, is_error, dur_ms)
+
+    return _Proxy()
 
 
 # T1: set_plan_batch on 20 items completes in < 50ms

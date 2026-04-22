@@ -276,5 +276,5 @@ async def test_known_slash_commands_includes_density() -> None:
 
 @pytest.mark.asyncio
 async def test_known_slash_commands_key_handler_includes_density() -> None:
-    from hermes_cli.tui._app_key_handler import _KNOWN_SLASH_COMMANDS
+    from hermes_cli.tui._app_constants import KNOWN_SLASH_COMMANDS as _KNOWN_SLASH_COMMANDS
     assert "/density" in _KNOWN_SLASH_COMMANDS

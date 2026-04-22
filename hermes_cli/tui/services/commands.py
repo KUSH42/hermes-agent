@@ -71,11 +71,11 @@ class CommandsService(AppService):
             if stripped == "/density full":
                 app.compact = False
                 app._compact_manual = None
-                app._svc_theme.flash_hint("Full density", 1.5)
+                app._flash_hint("Full density", 1.5)
             else:
                 app.compact = True
                 app._compact_manual = True
-                app._svc_theme.flash_hint("Compact ON", 1.5)
+                app._flash_hint("Compact ON", 1.5)
             return True
         if stripped.startswith("/anim"):
             self.handle_anim_command(stripped)
@@ -113,7 +113,7 @@ class CommandsService(AppService):
         if stripped == "/usage":
             agent = getattr(app.cli, "agent", None)
             if agent is None:
-                app._svc_theme.flash_hint("⚠  No active agent — send a message first", 2.0)
+                app._flash_hint("⚠  No active agent — send a message first", 2.0)
                 return True
             app._dismiss_all_info_overlays()
             try:
@@ -196,27 +196,27 @@ class CommandsService(AppService):
         cmd_parts = stripped.split()
         if cmd_parts and cmd_parts[0] == "/schedule":
             if len(cmd_parts) < 2:
-                app._svc_theme.flash_hint(
+                app._flash_hint(
                     "ℹ  Tell the agent what to schedule, e.g. /schedule check logs every hour",
                     3.0,
                 )
                 return True
-            app._svc_theme.flash_hint("📅  Scheduling request sent to agent…", 2.0)
+            app._flash_hint("📅  Scheduling request sent to agent…", 2.0)
             return False
 
         if cmd_parts and cmd_parts[0] == "/new":
-            app._svc_theme.flash_hint("✨  New session started", 2.0)
+            app._flash_hint("✨  New session started", 2.0)
             return False
 
         if cmd_parts and cmd_parts[0] == "/title":
             if len(cmd_parts) > 1:
-                app._svc_theme.flash_hint(f"✓  Title: {' '.join(cmd_parts[1:])}", 2.5)
+                app._flash_hint(f"✓  Title: {' '.join(cmd_parts[1:])}", 2.5)
             else:
-                app._svc_theme.flash_hint("⚠  Usage: /title <name>", 2.0)
+                app._flash_hint("⚠  Usage: /title <name>", 2.0)
             return False
 
         if cmd_parts and cmd_parts[0] == "/stop":
-            app._svc_theme.flash_hint("⏹  Stopping processes…", 1.5)
+            app._flash_hint("⏹  Stopping processes…", 1.5)
             return False
 
         if re.match(r"^/[\w-]+", stripped):
@@ -227,7 +227,7 @@ class CommandsService(AppService):
             except Exception:
                 in_registry = False
             if not in_registry:
-                app._svc_theme.flash_hint("⚠  Unknown command — try /help for all commands", 2.0)
+                app._flash_hint("⚠  Unknown command — try /help for all commands", 2.0)
 
         return False
 
@@ -256,7 +256,7 @@ class CommandsService(AppService):
                 ))
             except NoMatches:
                 pass
-            app._svc_theme.flash_hint("✨  Fresh start!", 2.0)
+            app._flash_hint("✨  Fresh start!", 2.0)
         finally:
             app._clear_animation_in_progress = False
 
@@ -272,12 +272,12 @@ class CommandsService(AppService):
         app = self.app
         from hermes_cli.config import read_raw_config
         if not read_raw_config().get("display", {}).get("tools_overlay", True):
-            app._svc_theme.flash_hint("⚠  /tools disabled in config", 2.0)
+            app._flash_hint("⚠  /tools disabled in config", 2.0)
             return
         app._dismiss_all_info_overlays()
         snapshot = app.current_turn_tool_calls()
         if not snapshot:
-            app._svc_theme.flash_hint("⚠  No tool calls in this turn", 2.0)
+            app._flash_hint("⚠  No tool calls in this turn", 2.0)
             return
         from hermes_cli.tui.tools_overlay import ToolsScreen
         app.push_screen(ToolsScreen(snapshot))
@@ -287,7 +287,7 @@ class CommandsService(AppService):
         app = self.app
         if not args:
             current = getattr(app, "_display_layout", "v1")
-            app._svc_theme.flash_hint(f"Current layout: {current}. Use /layout v1 or /layout v2.", 3.0)
+            app._flash_hint(f"Current layout: {current}. Use /layout v1 or /layout v2.", 3.0)
             return
 
         kv = dict(re.findall(r'(\w+)=(\d+)', args))
@@ -299,7 +299,7 @@ class CommandsService(AppService):
                 app._pane_manager.set_left_w(w)
                 if app._pane_manager.enabled:
                     app._pane_manager._apply_layout(app)
-            app._svc_theme.flash_hint(f"Left pane width → {w}", 2.0)
+            app._flash_hint(f"Left pane width → {w}", 2.0)
             handled_kv = True
 
         if "right" in kv:
@@ -308,7 +308,7 @@ class CommandsService(AppService):
                 app._pane_manager.set_right_w(w)
                 if app._pane_manager.enabled:
                     app._pane_manager._apply_layout(app)
-            app._svc_theme.flash_hint(f"Right pane width → {w}", 2.0)
+            app._flash_hint(f"Right pane width → {w}", 2.0)
             handled_kv = True
 
         if handled_kv:
@@ -324,10 +324,10 @@ class CommandsService(AppService):
                 save_config(cfg)
             except Exception:
                 pass
-            app._svc_theme.flash_hint(f"Layout set to {args}. Restart to apply.", 4.0)
+            app._flash_hint(f"Layout set to {args}. Restart to apply.", 4.0)
             return
 
-        app._svc_theme.flash_hint("Usage: /layout v1|v2  or  /layout left=N right=M", 3.0)
+        app._flash_hint("Usage: /layout v1|v2  or  /layout left=N right=M", 3.0)
 
     def open_anim_config(self) -> None:
         """Push the AnimConfigPanel modal screen."""
@@ -376,7 +376,7 @@ class CommandsService(AppService):
         args = rest.split() if rest else []
 
         if not args:
-            app._svc_theme.flash_hint(
+            app._flash_hint(
                 "/anim [on|off|toggle|config|list|speed <fps>|ambient <name>|"
                 "color <#hex>|gradient [on|off|#c1 #c2]|hue [speed|off]|size <small|medium|large|fill>|preset <name>|sdf <text>]",
                 5.0,
@@ -429,7 +429,7 @@ class CommandsService(AppService):
                 from rich.text import Text as _Text
                 msg._log.write(_Text("Animations: " + ", ".join(keys)))
             except Exception:
-                app._svc_theme.flash_hint(", ".join(keys), 5.0)
+                app._flash_hint(", ".join(keys), 5.0)
             return
 
         if sub == "sdf":
@@ -460,14 +460,14 @@ class CommandsService(AppService):
             import dataclasses as _dc
             preset_name = args[1].lower() if len(args) > 1 else ""
             if not preset_name:
-                app._svc_theme.flash_hint(f"Presets: {', '.join(list(_PRESETS) + ['off'])}", 4.0)
+                app._flash_hint(f"Presets: {', '.join(list(_PRESETS) + ['off'])}", 4.0)
                 return
             if preset_name == "off":
                 self.persist_anim_config({"enabled": False})
                 return
             preset_dict = _PRESETS.get(preset_name)
             if preset_dict is None:
-                app._svc_theme.flash_hint(f"Unknown preset — try: {', '.join(_PRESETS)}", 2.5)
+                app._flash_hint(f"Unknown preset — try: {', '.join(_PRESETS)}", 2.5)
                 return
             current_cfg = _oc()
             merged = {**_dc.asdict(current_cfg), **preset_dict}
@@ -484,7 +484,7 @@ class CommandsService(AppService):
             try:
                 fps = max(5, min(60, int(args[1])))
             except (IndexError, ValueError):
-                app._svc_theme.flash_hint("Usage: /anim speed <5-60>", 2.0)
+                app._flash_hint("Usage: /anim speed <5-60>", 2.0)
                 return
             self.persist_anim_config({"fps": fps})
             try:
@@ -492,18 +492,18 @@ class CommandsService(AppService):
                 ov.fps = fps
             except Exception:
                 pass
-            app._svc_theme.flash_hint(f"Animation FPS → {fps}", 2.0)
+            app._flash_hint(f"Animation FPS → {fps}", 2.0)
             return
 
         if sub == "ambient":
             ambient_sub = args[1].lower() if len(args) > 1 else ""
             if not ambient_sub:
-                app._svc_theme.flash_hint("Usage: /anim ambient <engine>", 2.0)
+                app._flash_hint("Usage: /anim ambient <engine>", 2.0)
                 return
             clean_a = "".join(c for c in ambient_sub if c.isalpha())
             matched_a = next((k for k in list(_ENGINES.keys()) if clean_a in k.replace("_", "")), None)
             if matched_a is None:
-                app._svc_theme.flash_hint(f"⚠  Unknown engine: {ambient_sub}", 2.0)
+                app._flash_hint(f"⚠  Unknown engine: {ambient_sub}", 2.0)
                 return
             self.persist_anim_config({"ambient_engine": matched_a, "ambient_enabled": True})
             try:
@@ -512,13 +512,13 @@ class CommandsService(AppService):
                     ov._current_engine_instance = _ENGINES[matched_a]()
             except Exception:
                 pass
-            app._svc_theme.flash_hint(f"Ambient → {matched_a}", 2.0)
+            app._flash_hint(f"Ambient → {matched_a}", 2.0)
             return
 
         if sub == "color":
             hex_val = args[1].lstrip("#").lower() if len(args) > 1 else ""
             if len(hex_val) != 6 or not all(c in "0123456789abcdef" for c in hex_val):
-                app._svc_theme.flash_hint("Usage: /anim color <#rrggbb>", 2.0)
+                app._flash_hint("Usage: /anim color <#rrggbb>", 2.0)
                 return
             color = f"#{hex_val}"
             self.persist_anim_config({"color": color})
@@ -527,7 +527,7 @@ class CommandsService(AppService):
                 ov.color = color
             except Exception:
                 pass
-            app._svc_theme.flash_hint(f"Color → {color}", 2.0)
+            app._flash_hint(f"Color → {color}", 2.0)
             return
 
         if sub == "gradient":
@@ -538,7 +538,7 @@ class CommandsService(AppService):
                     app.query_one(_DO).gradient = False
                 except Exception:
                     pass
-                app._svc_theme.flash_hint("Gradient off", 1.5)
+                app._flash_hint("Gradient off", 1.5)
                 return
 
             def _validate_hex(raw: str) -> "str | None":
@@ -550,13 +550,13 @@ class CommandsService(AppService):
                 if sub2.startswith("#"):
                     color1 = _validate_hex(sub2)
                     if color1 is None:
-                        app._svc_theme.flash_hint("Color must be 6-char hex e.g. #ff0000", 2.0)
+                        app._flash_hint("Color must be 6-char hex e.g. #ff0000", 2.0)
                         return
                     updates["color"] = color1
                 if len(args) > 2 and args[2].startswith("#"):
                     color2 = _validate_hex(args[2])
                     if color2 is None:
-                        app._svc_theme.flash_hint("Color2 must be 6-char hex e.g. #0000ff", 2.0)
+                        app._flash_hint("Color2 must be 6-char hex e.g. #0000ff", 2.0)
                         return
                     updates["color_secondary"] = color2
                 self.persist_anim_config(updates)
@@ -569,9 +569,9 @@ class CommandsService(AppService):
                         ov.color_b = updates["color_secondary"]
                 except Exception:
                     pass
-                app._svc_theme.flash_hint("Gradient on", 1.5)
+                app._flash_hint("Gradient on", 1.5)
                 return
-            app._svc_theme.flash_hint("Usage: /anim gradient [on|off|#color1 #color2]", 2.5)
+            app._flash_hint("Usage: /anim gradient [on|off|#color1 #color2]", 2.5)
             return
 
         if sub == "hue":
@@ -582,7 +582,7 @@ class CommandsService(AppService):
                 try:
                     hue_speed = max(0.0, min(5.0, float(val_str or "0.3")))
                 except ValueError:
-                    app._svc_theme.flash_hint("Usage: /anim hue <0-5 | off>", 2.0)
+                    app._flash_hint("Usage: /anim hue <0-5 | off>", 2.0)
                     return
             self.persist_anim_config({"hue_shift_speed": hue_speed})
             try:
@@ -590,14 +590,14 @@ class CommandsService(AppService):
             except Exception:
                 pass
             label = "off" if hue_speed == 0.0 else f"{hue_speed:.2f}"
-            app._svc_theme.flash_hint(f"Hue shift → {label}", 1.5)
+            app._flash_hint(f"Hue shift → {label}", 1.5)
             return
 
         if sub == "size":
             valid = ["small", "medium", "large", "fill"]
             sz = args[1].lower() if len(args) > 1 else ""
             if sz not in valid:
-                app._svc_theme.flash_hint(f"Usage: /anim size {' | '.join(valid)}", 2.0)
+                app._flash_hint(f"Usage: /anim size {' | '.join(valid)}", 2.0)
                 return
             self.persist_anim_config({"size": sz})
             try:
@@ -605,7 +605,7 @@ class CommandsService(AppService):
                 ov.size_name = sz
             except Exception:
                 pass
-            app._svc_theme.flash_hint(f"Size → {sz}", 1.5)
+            app._flash_hint(f"Size → {sz}", 1.5)
             return
 
         all_keys = list(_ENGINES.keys())
@@ -616,7 +616,7 @@ class CommandsService(AppService):
                 matched = k
                 break
         if matched is None:
-            app._svc_theme.flash_hint(f"⚠  Unknown animation: {sub}", 2.0)
+            app._flash_hint(f"⚠  Unknown animation: {sub}", 2.0)
             return
 
         try:
@@ -705,14 +705,14 @@ class CommandsService(AppService):
         app = self.app
         from hermes_cli.tui.widgets import MessagePanel
         if app._undo_in_progress:
-            app._svc_theme.flash_hint("⚠  Undo in progress", 1.5)
+            app._flash_hint("⚠  Undo in progress", 1.5)
             return
         if app.agent_running:
-            app._svc_theme.flash_hint("⚠  Cannot undo while agent is running", 2.0)
+            app._flash_hint("⚠  Cannot undo while agent is running", 2.0)
             return
         panels = list(app.query(MessagePanel))
         if not panels:
-            app._svc_theme.flash_hint("⚠  Nothing to undo", 1.5)
+            app._flash_hint("⚠  Nothing to undo", 1.5)
             return
         last_panel = panels[-1]
         user_text = getattr(last_panel, "_user_text", "")
@@ -739,7 +739,7 @@ class CommandsService(AppService):
             try:
                 await asyncio.to_thread(app.cli.agent.undo)
             except (AttributeError, NotImplementedError):
-                app._svc_theme.flash_hint("⚠  Undo not supported by agent", 2.0)
+                app._flash_hint("⚠  Undo not supported by agent", 2.0)
                 panel.styles.opacity = 1.0
                 return
             panel.remove()
@@ -752,7 +752,7 @@ class CommandsService(AppService):
                     hi.cursor_position = len(user_text)
                 except NoMatches:
                     pass
-            app._svc_theme.flash_hint("↩  Undo done", 2.0)
+            app._flash_hint("↩  Undo done", 2.0)
         finally:
             app._undo_in_progress = False
 
@@ -760,15 +760,15 @@ class CommandsService(AppService):
         app = self.app
         from hermes_cli.tui.widgets import MessagePanel
         if app.agent_running:
-            app._svc_theme.flash_hint("⚠  Cannot retry while agent is running", 2.0)
+            app._flash_hint("⚠  Cannot retry while agent is running", 2.0)
             return
         panels = list(app.query(MessagePanel))
         if not panels:
-            app._svc_theme.flash_hint("⚠  Nothing to retry", 1.5)
+            app._flash_hint("⚠  Nothing to retry", 1.5)
             return
         last_user_text = getattr(panels[-1], "_user_text", "")
         if not last_user_text:
-            app._svc_theme.flash_hint("⚠  No user message to retry", 1.5)
+            app._flash_hint("⚠  No user message to retry", 1.5)
             return
         try:
             from hermes_cli.tui.input_widget import HermesInput
@@ -783,7 +783,7 @@ class CommandsService(AppService):
         app = self.app
         m = re.match(r"^/rollback(?:\s+(\d+))?$", text.strip())
         if not m:
-            app._svc_theme.flash_hint("⚠  Usage: /rollback [N]", 2.0)
+            app._flash_hint("⚠  Usage: /rollback [N]", 2.0)
             return
         n = int(m.group(1)) if m.group(1) else 0
         state = UndoOverlayState(
@@ -804,6 +804,6 @@ class CommandsService(AppService):
         app = self.app
         try:
             await asyncio.to_thread(app.cli.agent.rollback, n)
-            app._svc_theme.flash_hint("↩  Rollback done", 2.0)
+            app._flash_hint("↩  Rollback done", 2.0)
         except (AttributeError, NotImplementedError):
-            app._svc_theme.flash_hint("⚠  Rollback not supported by agent", 2.0)
+            app._flash_hint("⚠  Rollback not supported by agent", 2.0)

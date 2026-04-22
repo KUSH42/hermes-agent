@@ -222,6 +222,11 @@ class ThemeManager:
             try:
                 self._load_path(p)
                 log(f"[THEME] loaded {p}")
+                try:
+                    from hermes_cli.config import read_skin_overrides
+                    self._apply_overrides(read_skin_overrides())
+                except Exception:
+                    pass
                 return True
             except (SkinError, OSError) as exc:
                 log.warning(f"[THEME] could not load {p}: {exc}")
@@ -381,6 +386,16 @@ class ThemeManager:
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
+
+    def _apply_overrides(self, overrides: "dict[str, Any]") -> None:
+        """Merge skin_overrides on top of currently loaded skin vars.
+
+        Called at the end of ``load()`` only — NOT in ``load_dict()``.
+        Dict-based loads are transient live previews; running overrides there
+        would overwrite the preview value immediately.
+        """
+        self._css_vars.update(overrides.get("vars", {}))
+        self._component_vars.update(overrides.get("component_vars", {}))
 
     def _load_path(self, path: Path) -> None:
         css_vars, component_vars = load_skin_full(path)

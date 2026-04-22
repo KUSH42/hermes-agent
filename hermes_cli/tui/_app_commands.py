@@ -151,7 +151,7 @@ class _CommandsMixin:
                 overlay = self.query_one(SkinPickerOverlay)  # type: ignore[attr-defined]
                 overlay.refresh_data(self.cli)  # type: ignore[attr-defined]
                 overlay.add_class("--visible")
-                overlay.query_one("#spo-list").focus()
+                overlay._show_tab(0)
             except NoMatches:
                 pass
             return True

@@ -1401,51 +1401,149 @@ class ModelPickerOverlay(PickerOverlay):
         _dismiss_overlay_and_focus_input(self)
 
 
-class SkinPickerOverlay(PickerOverlay):
-    """Skin picker with live preview. Shown by /skin (bare); /skin <name> bypasses.
+FIXTURE_CODE = """\
+def fibonacci(n):
+    if n <= 1:  # base case
+        return n
+    return fibonacci(n-1) + fibonacci(n-2)
 
-    Arrow navigation previews skins live. Escape reverts to original skin.
-    Enter persists to display.skin in config.
+result = [fibonacci(i) for i in range(10)]
+print(f"sequence: {result}")  # [0,1,1,2,3...]
+"""
+
+
+class TabbedSkinOverlay(Widget):
+    """Three-tab overlay: Skin | Syntax | Options.
+
+    Tab 1 — Skin: live preview + persist to display.skin
+    Tab 2 — Syntax: preview-syntax-theme cycle + persist to skin_overrides
+    Tab 3 — Options: bold keywords, cursor colour, anim colour, spinner
+
+    Escape reverts ALL previewed changes to the state captured at open.
+    Tab-local Enter persists only that tab's setting; overlay stays open.
     """
+
+    BINDINGS = [
+        Binding("tab", "next_tab", priority=True),
+        Binding("shift+tab", "prev_tab", priority=True),
+        Binding("1", "goto_tab_1", priority=True),
+        Binding("2", "goto_tab_2", priority=True),
+        Binding("3", "goto_tab_3", priority=True),
+        Binding("escape", "dismiss", priority=True),
+    ]
 
     DEFAULT_CSS = """
-    SkinPickerOverlay {
-        max-height: 24;
+    TabbedSkinOverlay {
+        layer: overlay;
+        dock: top;
+        display: none;
+        height: auto;
+        max-height: 30;
+        width: 1fr;
+        max-width: 80;
+        margin: 1 2;
+        padding: 1 2;
+        background: $surface;
+        border: tall $primary 15%;
     }
-    SkinPickerOverlay.--visible { display: block; }
-    SkinPickerOverlay > #spo-current { color: $text-muted; }
-    SkinPickerOverlay > #spo-list { height: auto; max-height: 18; }
+    TabbedSkinOverlay.--visible { display: block; }
+    TabbedSkinOverlay > #tso-tab-bar { color: $accent; margin-bottom: 1; }
+    TabbedSkinOverlay #tso-skin-current { color: $text-muted; }
+    TabbedSkinOverlay #tso-syntax-current { color: $text-muted; }
+    TabbedSkinOverlay #tso-skin-list { height: auto; max-height: 14; }
+    TabbedSkinOverlay #tso-syntax-list { height: auto; max-height: 8; }
+    TabbedSkinOverlay #tso-fixture { margin-top: 1; }
+    TabbedSkinOverlay .tso-section-header { color: $accent; }
+    TabbedSkinOverlay .tso-opt-row { height: auto; margin-bottom: 1; }
+    TabbedSkinOverlay .tso-opt-label { width: 18; color: $text-muted; }
+    TabbedSkinOverlay .tso-opt-btn { min-width: 8; height: 1; margin-right: 1; }
+    TabbedSkinOverlay .tso-footer { color: $text-muted; margin-top: 1; }
     """
-
-    _css_prefix = "spo"
-    title = "Skin"
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
-        self._original_skin: str = "default"
-        self._original_css_vars: dict[str, str] = {}
-        self._original_component_vars: dict[str, str] = {}
+        self._active_tab: int = 0
+        self._snap_css_vars: dict[str, str] = {}
+        self._snap_component_vars: dict[str, str] = {}
+        self._snap_skin_name: str = "default"
+        self._current_skin: str = "default"
+        self._current_syntax: str = "monokai"
+        self._skin_names: list[str] = []
+        self._syntax_schemes: list[str] = []
 
     def compose(self) -> ComposeResult:
-        # Override fully — #spo-current sits between header and list
-        yield Static(f"  {self.title}", classes="picker-header", id="spo-header")
-        yield Static("", id="spo-current")
-        yield OptionList(id="spo-list")
+        yield Static("", id="tso-tab-bar")
+        # ── Tab 1: Skin ──────────────────────────────────────────────────
+        with Vertical(id="tso-tab1"):
+            yield Static("  Skin", classes="tso-section-header")
+            yield Static("", id="tso-skin-current")
+            yield OptionList(id="tso-skin-list")
+        # ── Tab 2: Syntax ─────────────────────────────────────────────────
+        with Vertical(id="tso-tab2"):
+            yield Static("  Syntax theme", classes="tso-section-header")
+            yield Static("", id="tso-syntax-current")
+            yield OptionList(id="tso-syntax-list")
+            yield Static("", id="tso-fixture")
+        # ── Tab 3: Options ────────────────────────────────────────────────
+        with Vertical(id="tso-tab3"):
+            yield Static("  Options", classes="tso-section-header")
+            with Horizontal(classes="tso-opt-row"):
+                yield Static("  Bold keywords  ", classes="tso-opt-label")
+                yield Button("✓ On", id="tso-bold-on", classes="tso-opt-btn")
+                yield Button("  Off", id="tso-bold-off", classes="tso-opt-btn")
+            with Horizontal(classes="tso-opt-row"):
+                yield Static("  Cursor colour  ", classes="tso-opt-label")
+                yield Button("cream", id="tso-cur-cream", classes="tso-opt-btn")
+                yield Button("cyan",  id="tso-cur-cyan",  classes="tso-opt-btn")
+                yield Button("pink",  id="tso-cur-pink",  classes="tso-opt-btn")
+                yield Button("amber", id="tso-cur-amber", classes="tso-opt-btn")
+            with Horizontal(classes="tso-opt-row"):
+                yield Static("  Anim colour    ", classes="tso-opt-label")
+                yield Button("cyan",  id="tso-anim-cyan",  classes="tso-opt-btn")
+                yield Button("pink",  id="tso-anim-pink",  classes="tso-opt-btn")
+                yield Button("green", id="tso-anim-green", classes="tso-opt-btn")
+                yield Button("amber", id="tso-anim-amber", classes="tso-opt-btn")
+            with Horizontal(classes="tso-opt-row"):
+                yield Static("  Spinner        ", classes="tso-opt-label")
+                yield Button("dots",  id="tso-spin-dots",  classes="tso-opt-btn")
+                yield Button("pulse", id="tso-spin-pulse", classes="tso-opt-btn")
+                yield Button("moon",  id="tso-spin-moon",  classes="tso-opt-btn")
+                yield Button("grow",  id="tso-spin-grow",  classes="tso-opt-btn")
+            yield Static("  Enter=apply  Esc=close", classes="tso-footer")
+
+    def on_mount(self) -> None:
+        self._update_tab_bar()
+        self._show_tab_display(0)
 
     def refresh_data(self, cli: object) -> None:
-        """Populate skin list, snapshot current skin, pre-select current."""
-        cfg = _cfg_read_raw_config()
-        current = cfg.get("display", {}).get("skin", "default")
-        self._original_skin = current
-        self.current_value = current
+        """Sync state from config and capture open-time snapshot. Called before overlay opens."""
+        self._take_snapshot()
+        self._populate_tab1()
+        self._populate_tab2()
+        self._active_tab = 0
+        self._show_tab_display(0)
 
-        # Snapshot current theme vars for escape-revert
+    # ── Snapshot ────────────────────────────────────────────────────────────
+
+    def _take_snapshot(self) -> None:
+        cfg = _cfg_read_raw_config()
+        self._snap_skin_name = cfg.get("display", {}).get("skin", "default")
+        self._current_skin = self._snap_skin_name
         tm = getattr(self.app, "_theme_manager", None)
         if tm is not None:
-            self._original_css_vars = dict(getattr(tm, "_css_vars", {}))
-            self._original_component_vars = dict(getattr(tm, "_component_vars", {}))
+            raw = dict(getattr(tm, "_css_vars", {}))
+            self._snap_css_vars = {k: v for k, v in raw.items() if k != "component_vars"}
+            self._snap_component_vars = dict(getattr(tm, "_component_vars", {}))
+            self._current_syntax = getattr(tm, "_css_vars", {}).get(
+                "preview-syntax-theme", "monokai")
+        else:
+            self._snap_css_vars = {}
+            self._snap_component_vars = {}
+            self._current_syntax = "monokai"
 
-        # Discover skins
+    # ── Tab population ───────────────────────────────────────────────────────
+
+    def _populate_tab1(self) -> None:
         skins_dir = _cfg_get_hermes_home() / "skins"
         names: list[str] = []
         if skins_dir.is_dir():
@@ -1455,21 +1553,131 @@ class SkinPickerOverlay(PickerOverlay):
             )
         if "default" not in names:
             names.insert(0, "default")
-        self.choices = [(n, n) for n in names]
-
+        self._skin_names = names
         try:
-            self.query_one("#spo-current", Static).update(f"Current: {current}")
+            ol = self.query_one("#tso-skin-list", OptionList)
+            ol.clear_options()
+            for name in names:
+                marker = "● " if name == self._current_skin else "  "
+                ol.add_option(Option(f"{marker}{name}", id=f"tso-skin-opt-{name}"))
+            if self._current_skin in names:
+                ol.highlighted = names.index(self._current_skin)
+        except NoMatches:
+            pass
+        try:
+            self.query_one("#tso-skin-current", Static).update(
+                f"Current: {self._current_skin}")
         except NoMatches:
             pass
 
-        super().refresh_data(cli)   # calls _render_options()
+    def _populate_tab2(self) -> None:
+        try:
+            from hermes_cli.skin_engine import SYNTAX_SCHEMES
+            schemes: list[str] = list(SYNTAX_SCHEMES.keys())
+        except Exception:
+            schemes = ["hermes", "monokai", "dracula", "one-dark", "github-dark",
+                       "nord", "catppuccin", "tokyo-night", "gruvbox", "solarized-dark"]
+        self._syntax_schemes = schemes
+        try:
+            ol = self.query_one("#tso-syntax-list", OptionList)
+            ol.clear_options()
+            for name in schemes:
+                marker = "● " if name == self._current_syntax else "  "
+                ol.add_option(Option(f"{marker}{name}", id=f"tso-syntax-opt-{name}"))
+            if self._current_syntax in schemes:
+                ol.highlighted = schemes.index(self._current_syntax)
+        except NoMatches:
+            pass
+        try:
+            self.query_one("#tso-syntax-current", Static).update(
+                f"Current: {self._current_syntax}")
+        except NoMatches:
+            pass
+        self._render_fixture(self._current_syntax)
 
-    def on_highlight(self, value: str) -> None:
-        """Live preview as user navigates with arrow keys."""
-        self._apply_skin_preview(value)
+    def _render_fixture(self, theme: str) -> None:
+        try:
+            from rich.syntax import Syntax as _RichSyntax
+            renderable = _RichSyntax(FIXTURE_CODE, "python", theme=theme)
+            self.query_one("#tso-fixture", Static).update(renderable)
+        except (NoMatches, Exception):
+            pass
 
-    def on_confirm(self, value: str) -> None:
-        self._confirm_skin(value)
+    # ── Tab bar / display ────────────────────────────────────────────────────
+
+    def _update_tab_bar(self) -> None:
+        labels = ["Skin", "Syntax", "Options"]
+        parts = []
+        for i, label in enumerate(labels):
+            if i == self._active_tab:
+                parts.append(f"[bold reverse] {label} ● [/bold reverse]")
+            else:
+                parts.append(f" {label} ")
+        bar_text = "  " + "  ".join(parts) + "   [dim]Esc=close[/dim]"
+        try:
+            self.query_one("#tso-tab-bar", Static).update(bar_text)
+        except NoMatches:
+            pass
+
+    def _show_tab_display(self, tab_idx: int) -> None:
+        """Toggle tab pane visibility and update tab bar without changing focus."""
+        self._active_tab = tab_idx
+        self._update_tab_bar()
+        for i, tab_id in enumerate(["tso-tab1", "tso-tab2", "tso-tab3"]):
+            try:
+                self.query_one(f"#{tab_id}").display = (i == tab_idx)
+            except NoMatches:
+                pass
+
+    def _show_tab(self, tab_idx: int) -> None:
+        """Switch to tab and focus its primary interactive widget."""
+        self._show_tab_display(tab_idx)
+        _focus_map = {0: "#tso-skin-list", 1: "#tso-syntax-list", 2: "#tso-bold-on"}
+        target = _focus_map.get(tab_idx)
+        if target:
+            try:
+                self.query_one(target).focus()
+            except NoMatches:
+                pass
+
+    # ── Tab switch actions ───────────────────────────────────────────────────
+
+    def action_next_tab(self) -> None:
+        self._show_tab((self._active_tab + 1) % 3)
+
+    def action_prev_tab(self) -> None:
+        self._show_tab((self._active_tab - 1) % 3)
+
+    def action_goto_tab_1(self) -> None:
+        self._show_tab(0)
+
+    def action_goto_tab_2(self) -> None:
+        self._show_tab(1)
+
+    def action_goto_tab_3(self) -> None:
+        self._show_tab(2)
+
+    # ── OptionList events (Tab 1 + Tab 2) ───────────────────────────────────
+
+    def on_option_list_option_highlighted(
+            self, event: OptionList.OptionHighlighted) -> None:
+        event.stop()
+        opt_id = event.option_id or ""
+        if opt_id.startswith("tso-skin-opt-"):
+            self._apply_skin_preview(opt_id[len("tso-skin-opt-"):])
+        elif opt_id.startswith("tso-syntax-opt-"):
+            self._apply_syntax_preview(opt_id[len("tso-syntax-opt-"):])
+
+    def on_option_list_option_selected(
+            self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        opt_id = event.option_id or ""
+        if opt_id.startswith("tso-skin-opt-"):
+            self._confirm_skin(opt_id[len("tso-skin-opt-"):])
+        elif opt_id.startswith("tso-syntax-opt-"):
+            self._confirm_syntax(opt_id[len("tso-syntax-opt-"):])
+
+    # ── Tab 1: Skin ──────────────────────────────────────────────────────────
 
     def _apply_skin_preview(self, name: str) -> None:
         try:
@@ -1486,7 +1694,6 @@ class SkinPickerOverlay(PickerOverlay):
             pass
 
     def _confirm_skin(self, name: str) -> None:
-        # Persist to config
         try:
             cfg = _cfg_read_raw_config()
             _cfg_set_nested(cfg, "display.skin", name)
@@ -1497,17 +1704,122 @@ class SkinPickerOverlay(PickerOverlay):
             self.app._flash_hint(f"  Skin → {name}", 2.0)
         except Exception:
             pass
-        _dismiss_overlay_and_focus_input(self)
+        self._current_skin = name
+        self._populate_tab1()
+
+    # ── Tab 2: Syntax ────────────────────────────────────────────────────────
+
+    def _apply_syntax_preview(self, name: str) -> None:
+        try:
+            self.app.apply_skin({"preview-syntax-theme": name})
+        except Exception:
+            pass
+        self._render_fixture(name)
+
+    def _confirm_syntax(self, name: str) -> None:
+        try:
+            from hermes_cli.config import save_skin_override
+            save_skin_override("vars.preview-syntax-theme", name)
+        except Exception:
+            pass
+        try:
+            self.app._flash_hint(f"  Syntax → {name}", 2.0)
+        except Exception:
+            pass
+        self._current_syntax = name
+
+    # ── Tab 3: Options ───────────────────────────────────────────────────────
+
+    _CURSOR_COLORS: dict[str, str] = {
+        "tso-cur-cream": "#FFF8DC",
+        "tso-cur-cyan":  "#00f0ff",
+        "tso-cur-pink":  "#ff2d95",
+        "tso-cur-amber": "#ffab00",
+    }
+    _ANIM_COLORS: dict[str, str] = {
+        "tso-anim-cyan":  "#00d7ff",
+        "tso-anim-pink":  "#ff2d95",
+        "tso-anim-green": "#00ff41",
+        "tso-anim-amber": "#ffab00",
+    }
+    _SPINNER_STYLES: dict[str, str] = {
+        "tso-spin-dots":  "dots",
+        "tso-spin-pulse": "pulse",
+        "tso-spin-moon":  "moon",
+        "tso-spin-grow":  "grow",
+    }
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        btn_id = event.button.id or ""
+        if btn_id == "tso-bold-on":
+            self._apply_bold(True)
+        elif btn_id == "tso-bold-off":
+            self._apply_bold(False)
+        elif btn_id in self._CURSOR_COLORS:
+            self._apply_cursor_color(self._CURSOR_COLORS[btn_id])
+        elif btn_id in self._ANIM_COLORS:
+            self._apply_anim_color(self._ANIM_COLORS[btn_id])
+        elif btn_id in self._SPINNER_STYLES:
+            self._apply_spinner(self._SPINNER_STYLES[btn_id])
+
+    def _apply_bold(self, bold: bool) -> None:
+        value = "true" if bold else "false"
+        try:
+            self.app.apply_skin({"preview-syntax-bold": value})
+        except Exception:
+            pass
+        try:
+            from hermes_cli.config import save_skin_override
+            save_skin_override("vars.preview-syntax-bold", value)
+        except Exception:
+            pass
+
+    def _apply_cursor_color(self, color: str) -> None:
+        try:
+            self.app.apply_skin({"component_vars": {"cursor-color": color}})
+        except Exception:
+            pass
+        try:
+            from hermes_cli.config import save_skin_override
+            save_skin_override("component_vars.cursor-color", color)
+        except Exception:
+            pass
+
+    def _apply_anim_color(self, color: str) -> None:
+        try:
+            self.app.apply_skin({"component_vars": {"drawille-canvas-color": color}})
+        except Exception:
+            pass
+        try:
+            from hermes_cli.config import save_skin_override
+            save_skin_override("component_vars.drawille-canvas-color", color)
+        except Exception:
+            pass
+
+    def _apply_spinner(self, style: str) -> None:
+        try:
+            cfg = _cfg_read_raw_config()
+            _cfg_set_nested(cfg, "display.spinner_style", style)
+            _cfg_save_config(cfg)
+        except Exception:
+            pass
+        try:
+            self.app._flash_hint(f"  Spinner → {style}", 2.0)
+        except Exception:
+            pass
+
+    # ── Dismiss (Escape) — revert ALL previewed changes ──────────────────────
 
     def action_dismiss(self) -> None:
-        """Revert to original skin on escape before base dismissal."""
-        # C2: apply_skin() → ThemeManager.load_dict() pops "component_vars" and treats
-        # all remaining keys as flat CSS variable overrides (_css_vars). The original
-        # skin data is saved as separate _css_vars + _component_vars dicts so we must
-        # merge them with the component_vars key preserved.
-        combined = {**self._original_css_vars, "component_vars": self._original_component_vars}
+        combined = dict(self._snap_css_vars)   # already excludes "component_vars" key
+        combined["component_vars"] = self._snap_component_vars
         try:
             self.app.apply_skin(combined)
         except Exception:
             pass
-        super().action_dismiss()   # calls _dismiss_overlay_and_focus_input
+        _dismiss_overlay_and_focus_input(self)
+
+
+# Backward-compat alias — app.py and _app_commands.py import this name unchanged
+SkinPickerOverlay = TabbedSkinOverlay

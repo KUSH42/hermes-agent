@@ -71,6 +71,14 @@ class _ThemeMixin:
             except Exception:
                 logger.debug("StreamingCodeBlock theme refresh failed", exc_info=True)
 
+    def _apply_override_dict(self, overrides: "dict") -> None:
+        """Apply an override dict live without reloading the skin from disk."""
+        tm = getattr(self, "_theme_manager", None)
+        if tm is None:
+            return
+        tm._apply_overrides(overrides)
+        tm.apply()
+
     def refresh_slash_commands(self, extra: "list[str] | None" = None) -> None:
         """Update the slash command list after plugins are loaded."""
         self._populate_slash_commands()

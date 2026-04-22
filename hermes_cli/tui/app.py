@@ -563,6 +563,20 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
         from hermes_cli.tui.pane_manager import PaneManager
         self._pane_manager = PaneManager(cfg=_display_cfg)
 
+        # RX1: FeedbackService — centralised flash coordinator.
+        # Constructed early so other services and widgets can register channels.
+        from hermes_cli.tui.services.feedback import (
+            AppScheduler,
+            FeedbackService,
+            HintBarAdapter,
+        )
+        self.feedback: FeedbackService = FeedbackService(AppScheduler(self))
+        self.feedback.register_channel(
+            "hint-bar",
+            HintBarAdapter(self),
+            lifecycle_aware=True,
+        )
+
     # --- Compose ---
 
     def compose(self) -> ComposeResult:
@@ -1386,12 +1400,9 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
                 except NoMatches:
                     pass
                 # Clear the HintBar spinner when the agent stops.
-                # E3: respect _flash_hint_expires — don't clear a timed flash.
-                if _time.monotonic() >= self._flash_hint_expires:
-                    try:
-                        self.query_one(HintBar).hint = ""
-                    except NoMatches:
-                        pass
+                # E3 fix: FeedbackService.on_agent_idle() leaves active flashes
+                # untouched and only calls restore() when no flash is active.
+                self.feedback.on_agent_idle()
                 # GAP-17: restore focus so the user can type immediately without clicking
                 self.call_after_refresh(widget.focus)
         except NoMatches:

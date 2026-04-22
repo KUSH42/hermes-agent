@@ -70,6 +70,24 @@ class CodeBlockFooter(Widget):
         yield self._sep
         yield self._toggle
 
+    def on_mount(self) -> None:
+        # RX1 Phase B: register code-footer channel with FeedbackService
+        try:
+            from hermes_cli.tui.services.feedback import CodeFooterAdapter
+            self.app.feedback.register_channel(
+                f"code-footer::{self.id}",
+                CodeFooterAdapter(self),
+            )
+        except Exception:
+            pass
+
+    def on_unmount(self) -> None:
+        # RX1 Phase B: deregister code-footer channel
+        try:
+            self.app.feedback.deregister_channel(f"code-footer::{self.id}")
+        except Exception:
+            pass
+
     def set_actions(self, *, copy_label: str, toggle_label: str | None) -> None:
         self._copy_original = copy_label
         self._copy.update(copy_label)
@@ -85,21 +103,22 @@ class CodeBlockFooter(Widget):
             self._toggle.styles.display = "none"
 
     def flash_copy(self, flash_label: str = "✓ Copied", duration: float = 1.5) -> None:
-        """Briefly swap the copy label to a success indicator."""
-        if self._copy_flash_timer is not None:
-            try:
-                self._copy_flash_timer.stop()
-            except Exception:
-                pass
-        self._copy.update(flash_label)
-        self.add_class("--flash-copy")
+        """Briefly swap the copy label to a success indicator.
+
+        Routes through FeedbackService (RX1 Phase B).
+        """
         try:
-            self._copy_flash_timer = self.set_timer(duration, self._restore_copy)
+            self.app.feedback.flash(
+                f"code-footer::{self.id}",
+                flash_label,
+                duration=duration,
+                key="copy",
+            )
         except Exception:
-            self._restore_copy()
+            pass
 
     def _restore_copy(self) -> None:
-        """Restore copy label after flash."""
+        """Restore copy label after flash. Legacy stub — logic in FeedbackService."""
         self._copy_flash_timer = None
         self.remove_class("--flash-copy")
         self._copy.update(self._copy_original)

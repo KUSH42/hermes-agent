@@ -3210,6 +3210,8 @@ class HermesCLI:
                 stream_delta_callback=self._stream_delta if self.streaming_enabled else None,
                 tool_gen_callback=self._on_tool_gen_start,
                 tool_gen_args_delta_callback=self._on_tool_gen_args_delta,
+                tool_batch_callback=self._on_tool_batch,
+                usage_callback=self._on_usage,
             )
             # Store reference for atexit memory provider shutdown
             global _active_agent_ref
@@ -6896,6 +6898,49 @@ class HermesCLI:
         "skill_view", "skill_manage",
     })
 
+    def _on_tool_batch(self, batch: "list[tuple[str, str, dict]]") -> None:
+        """Handle a full tool batch before per-tool start callbacks fire.
+
+        Runs on the agent thread — must use call_from_thread for all TUI mutations.
+        """
+        tui = _hermes_app
+        if tui is None:
+            return
+        # Build 4-tuples before crossing the thread boundary.
+        four_tuples = [
+            (tool_call_id, function_name, self._build_tool_label(function_name, function_args), dict(function_args))
+            for tool_call_id, function_name, function_args in batch
+        ]
+        tui.call_from_thread(tui.set_plan_batch, four_tuples)
+
+    def _on_usage(self, prompt_tokens: int, completion_tokens: int, cost_usd: float) -> None:
+        """Accumulate per-turn token/cost totals. Runs on the agent thread."""
+        self._turn_prompt_tokens = getattr(self, "_turn_prompt_tokens", 0) + prompt_tokens
+        self._turn_completion_tokens = getattr(self, "_turn_completion_tokens", 0) + completion_tokens
+        self._turn_cost_usd = getattr(self, "_turn_cost_usd", 0.0) + cost_usd
+        tui = _hermes_app
+        if tui is None:
+            return
+        tp = self._turn_prompt_tokens
+        tc = self._turn_completion_tokens
+        tcost = self._turn_cost_usd
+        tui.call_from_thread(setattr, tui, "turn_tokens_in", tp)
+        tui.call_from_thread(setattr, tui, "turn_tokens_out", tc)
+        tui.call_from_thread(setattr, tui, "turn_cost_usd", tcost)
+
+    def _reset_turn_state(self) -> None:
+        """Reset per-turn plan and budget state. Call from the event loop when a new agent turn starts."""
+        self._turn_prompt_tokens = 0
+        self._turn_completion_tokens = 0
+        self._turn_cost_usd = 0.0
+        tui = _hermes_app
+        if tui is None:
+            return
+        tui.planned_calls = []
+        tui.turn_tokens_in = 0
+        tui.turn_tokens_out = 0
+        tui.turn_cost_usd = 0.0
+
     def _build_tool_label(self, function_name: str, function_args: dict) -> str:
         """Build a human-readable label for a tool header."""
         if function_name in ("terminal", "bash"):
@@ -7148,6 +7193,11 @@ class HermesCLI:
                 self._pending_edit_snapshots[tool_call_id] = snapshot
         except Exception:
             logger.debug("Edit snapshot capture failed for %s", function_name, exc_info=True)
+
+        # --- PlanPanel: transition PENDING → RUNNING ---
+        _tui_ref = _hermes_app
+        if _tui_ref is not None:
+            _tui_ref.call_from_thread(_tui_ref.mark_plan_running, tool_call_id)
 
         # --- Background terminal: discard pending gen block, no animated display ---
         tui = _hermes_app
@@ -7572,6 +7622,17 @@ class HermesCLI:
                 except Exception:
                     pass
                 tui.call_from_thread(tui.close_streaming_tool_block, tool_call_id, _stream_duration, _is_tool_error, _summary, _result_lines)
+
+            # --- PlanPanel: transition RUNNING → DONE/ERROR ---
+            _dur_ms_plan = 0
+            try:
+                if _stream_duration.endswith("ms"):
+                    _dur_ms_plan = int(float(_stream_duration[:-2]))
+                elif _stream_duration.endswith("s"):
+                    _dur_ms_plan = int(float(_stream_duration[:-1]) * 1000)
+            except Exception:
+                pass
+            tui.call_from_thread(tui.mark_plan_done, tool_call_id, _is_tool_error, _dur_ms_plan)
 
             # Workspace tracking — record writes for file-mutating tools
             _WRITE_TOOLS = frozenset({"patch", "write_file", "create_file", "edit_file", "str_replace_editor"})

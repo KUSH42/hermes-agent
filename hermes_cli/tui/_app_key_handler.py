@@ -440,6 +440,12 @@ class _KeyHandlerMixin:
                 event.prevent_default()
                 return
 
+        # --- F9: toggle PlanPanel collapsed state ---
+        if key == "f9":
+            self.plan_panel_collapsed = not self.plan_panel_collapsed  # type: ignore[attr-defined]
+            event.prevent_default()
+            return
+
         # Overlay key handling — check each overlay in priority order
         for state_attr, widget_type in [
             ("approval_state", ApprovalWidget),
@@ -553,6 +559,12 @@ class _KeyHandlerMixin:
             self.query_one(ThinkingWidget).activate()  # type: ignore[attr-defined]
         except NoMatches:
             pass
+        # Reset per-turn plan/budget state before starting a new agent turn.
+        if hasattr(self, "cli") and self.cli is not None:  # type: ignore[attr-defined]
+            try:
+                self.cli._reset_turn_state()  # type: ignore[attr-defined]
+            except Exception:
+                pass
         if hasattr(self, "cli") and self.cli is not None:  # type: ignore[attr-defined]
             if hasattr(self.cli, "_pending_input"):  # type: ignore[attr-defined]
                 self.cli._pending_input.put(payload)  # type: ignore[attr-defined]

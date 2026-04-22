@@ -369,6 +369,15 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
     # Image attachments — reactive(list) uses factory form to avoid shared mutable default
     attached_images: reactive[list] = reactive(list)
 
+    # --- PlanPanel (R1) ---
+    # planned_calls: list of PlannedCall (frozen dataclass); factory form avoids shared mutable.
+    # repaint=False — PlanPanel registers its own watch_planned_calls watcher.
+    planned_calls: reactive[list] = reactive(list, repaint=False)
+    turn_cost_usd: reactive[float] = reactive(0.0, repaint=False)
+    turn_tokens_in: reactive[int] = reactive(0, repaint=False)
+    turn_tokens_out: reactive[int] = reactive(0, repaint=False)
+    plan_panel_collapsed: reactive[bool] = reactive(False)
+
     # Spinner label — text shown beside the spinner frame (e.g. "Calling tool…")
     spinner_label: reactive[str] = reactive("")
 
@@ -538,6 +547,9 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
 
     def compose(self) -> ComposeResult:
         yield OutputPanel(id="output-panel")
+        # PlanPanel: bottom-docked strip above StatusBar; shows tool work queue.
+        from hermes_cli.tui.widgets.plan_panel import PlanPanel as _PP
+        yield _PP(id="plan-panel")
         # TTEWidget uses layer: overlay + dock: top in its DEFAULT_CSS so it
         # floats over the banner area when active.  Banner content is already
         # in OutputPanel underneath; when effect ends the overlay hides and

@@ -499,6 +499,8 @@ class AIAgent:
         tool_gen_callback: callable = None,
         tool_gen_args_delta_callback: callable = None,
         status_callback: callable = None,
+        tool_batch_callback: callable = None,
+        usage_callback: callable = None,
         max_tokens: int = None,
         reasoning_config: Dict[str, Any] = None,
         prefill_messages: List[Dict[str, Any]] = None,
@@ -632,6 +634,8 @@ class AIAgent:
         self.status_callback = status_callback
         self.tool_gen_callback = tool_gen_callback
         self.tool_gen_args_delta_callback = tool_gen_args_delta_callback
+        self.tool_batch_callback = tool_batch_callback
+        self.usage_callback = usage_callback
 
         # Tool execution state — allows _vprint during tool execution
         # even when stream consumers are registered (no tokens streaming then)
@@ -6322,6 +6326,14 @@ class AIAgent:
 
             parsed_calls.append((tool_call, function_name, function_args))
 
+        # ── Batch callback (fires before any per-tool callbacks) ─────────
+        if self.tool_batch_callback:
+            try:
+                batch_payload = [(tc.id, name, args) for tc, name, args in parsed_calls]
+                self.tool_batch_callback(batch_payload)
+            except Exception as cb_err:
+                logging.debug(f"Tool batch callback error: {cb_err}")
+
         # ── Logging / callbacks ──────────────────────────────────────────
         tool_names_str = ", ".join(name for _, name, _ in parsed_calls)
         if not self.quiet_mode:
@@ -6486,6 +6498,22 @@ class AIAgent:
 
     def _execute_tool_calls_sequential(self, assistant_message, messages: list, effective_task_id: str, api_call_count: int = 0) -> None:
         """Execute tool calls sequentially (original behavior). Used for single calls or interactive tools."""
+        # Fire batch callback once before the loop — full batch is known at entry.
+        if self.tool_batch_callback:
+            try:
+                batch_payload = []
+                for tc in assistant_message.tool_calls:
+                    try:
+                        args = json.loads(tc.function.arguments)
+                    except Exception:
+                        args = {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    batch_payload.append((tc.id, tc.function.name, args))
+                self.tool_batch_callback(batch_payload)
+            except Exception as cb_err:
+                logging.debug(f"Tool batch callback error: {cb_err}")
+
         for i, tool_call in enumerate(assistant_message.tool_calls, 1):
             # SAFETY: check interrupt BEFORE starting each tool.
             # If the user sent "stop" during a previous tool's execution,
@@ -7985,6 +8013,17 @@ class AIAgent:
                             self.session_estimated_cost_usd += float(cost_result.amount_usd)
                         self.session_cost_status = cost_result.status
                         self.session_cost_source = cost_result.source
+
+                        # Fire usage_callback per API call — TUI accumulates per-turn.
+                        if self.usage_callback:
+                            try:
+                                self.usage_callback(
+                                    canonical_usage.input_tokens,
+                                    canonical_usage.output_tokens,
+                                    float(cost_result.amount_usd) if cost_result.amount_usd is not None else 0.0,
+                                )
+                            except Exception as cb_err:
+                                logging.debug(f"Usage callback error: {cb_err}")
 
                         # Persist token counts to session DB for /insights.
                         # Do this for every platform with a session_id so non-CLI

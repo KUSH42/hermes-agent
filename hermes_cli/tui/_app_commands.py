@@ -278,7 +278,11 @@ class _CommandsMixin:
         args = rest.split() if rest else []
 
         if not args:
-            self.push_screen(_AGA())  # type: ignore[attr-defined]
+            self._flash_hint(  # type: ignore[attr-defined]
+                "/anim [on|off|toggle|config|list|speed <fps>|ambient <name>|"
+                "color <#hex>|gradient [on|off|#c1 #c2]|hue [speed|off]|size <small|medium|large|fill>|preset <name>|sdf <text>]",
+                5.0,
+            )
             return
 
         sub = args[0].lower()

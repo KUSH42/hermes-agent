@@ -366,7 +366,7 @@ class HermesApp(App):
     turn_cost_usd: reactive[float] = reactive(0.0, repaint=False)
     turn_tokens_in: reactive[int] = reactive(0, repaint=False)
     turn_tokens_out: reactive[int] = reactive(0, repaint=False)
-    plan_panel_collapsed: reactive[bool] = reactive(False)
+    plan_panel_collapsed: reactive[bool] = reactive(True)
 
     # Spinner label — text shown beside the spinner frame (e.g. "Calling tool…")
     spinner_label: reactive[str] = reactive("")
@@ -647,8 +647,14 @@ class HermesApp(App):
         yield VoiceStatusBar(id="voice-status")
         yield StatusBar(id="status-bar")
         # Drawille animation overlay — before FPSCounter so FPS HUD stays above.
-        from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO
+        from hermes_cli.tui.drawille_overlay import (
+            DrawilleOverlay as _DO,
+            AnimConfigPanel as _ACP,
+            AnimGalleryOverlay as _AGA,
+        )
         yield _DO(id="drawille-overlay")
+        yield _ACP(id="anim-config-panel")
+        yield _AGA(id="anim-gallery-overlay")
         # FPS HUD — overlay layer, docked top; display:none by default.
         # Must be before ContextMenu so ContextMenu stays topmost in overlay layer.
         yield FPSCounter(id="fps-counter")
@@ -908,6 +914,14 @@ class HermesApp(App):
                 )
         except Exception:
             pass
+        # Session switch: fire deferred exec (set by _svc_sessions.switch_to_session)
+        _exec = getattr(self, "_pending_exec", None)
+        if _exec is not None:
+            self._pending_exec = None
+            try:
+                _exec()
+            except Exception:
+                pass
 
     # --- Bash passthrough ---
 
@@ -1770,8 +1784,31 @@ class HermesApp(App):
         return self.clarify_state is not None or self.approval_state is not None
 
     @property
-    def _turn_tool_calls(self) -> dict:  # DEPRECATED: Phase 3 update callers to app._svc_tools._turn_tool_calls
+    def _turn_tool_calls(self) -> dict:  # DEPRECATED
         return self._svc_tools._turn_tool_calls
+
+    @_turn_tool_calls.setter
+    def _turn_tool_calls(self, value: "list | dict") -> None:  # DEPRECATED: test-only setter
+        from hermes_cli.tui.services.tools import _ToolCallRecord
+        if isinstance(value, dict):
+            self._svc_tools._turn_tool_calls = value
+        else:
+            self._svc_tools._turn_tool_calls = {
+                e["tool_call_id"]: _ToolCallRecord(
+                    tool_call_id=e["tool_call_id"],
+                    parent_tool_call_id=e.get("parent_tool_call_id"),
+                    label=e.get("name", ""),
+                    tool_name=e.get("name"),
+                    category=e.get("category", "shell"),
+                    depth=e.get("depth", 0),
+                    start_s=e.get("start_s", 0.0),
+                    dur_ms=e.get("dur_ms"),
+                    is_error=e.get("is_error", False),
+                    error_kind=e.get("error_kind"),
+                    mcp_server=e.get("mcp_server"),
+                )
+                for e in value
+            }
 
     def _hide_completion_overlay_if_present(self) -> None:
         """Hide the completion overlay when a choice overlay activates."""
@@ -2495,7 +2532,7 @@ class HermesApp(App):
         return self._svc_commands.toggle_drawille_overlay()
 
     def action_open_anim_config(self) -> None:
-        self._toggle_drawille_overlay()
+        self._svc_commands.open_anim_config()
 
     def _initiate_undo(self) -> None:  # DEPRECATED
         return self._svc_commands.initiate_undo()

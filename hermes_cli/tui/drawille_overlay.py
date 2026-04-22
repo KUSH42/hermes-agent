@@ -15,11 +15,10 @@ from rich.style import Style
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.events import Resize
 from textual.reactive import reactive
-from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Input, Static
@@ -1621,9 +1620,10 @@ class _PanelField:
     step: float = 0.05      # used by "float" kind; ignored for other kinds
 
 
-class AnimConfigPanel(ModalScreen):
-    """Modal config screen for the drawille animation.
+class AnimConfigPanel(Widget):
+    """Non-modal config overlay for the drawille animation.
 
+    Pre-mounted in app compose. Toggled via ``--visible`` class.
     Opened by ``/anim config`` slash command or ``ctrl+shift+a``.
     Dismissed by ``Escape``.
     """
@@ -1636,20 +1636,26 @@ class AnimConfigPanel(ModalScreen):
 
     DEFAULT_CSS = """
     AnimConfigPanel {
+        layer: overlay;
         align: center middle;
-    }
-    AnimConfigPanel > * {
+        display: none;
+        width: 74;
+        height: auto;
+        max-height: 30;
         background: $surface;
         border: round $accent;
         padding: 1 2;
-        width: 70;
+    }
+    AnimConfigPanel.--visible { display: block; }
+    AnimConfigPanel > VerticalScroll {
+        width: 1fr;
         height: auto;
-        max-height: 15;
+        max-height: 24;
     }
     """
 
     BINDINGS = [
-        Binding("escape",     "close",        "Close",         show=False),
+        Binding("escape",     "dismiss",       "Close",         show=False, priority=True),
         Binding("tab",        "next_field",    "Next field",    show=False),
         Binding("shift+tab",  "prev_field",    "Prev field",    show=False),
         Binding("left",       "cycle_left",    "Prev value",    show=False),
@@ -1670,6 +1676,13 @@ class AnimConfigPanel(ModalScreen):
         super().__init__(**kwargs)
         self._fields: list[_PanelField] = []
         self._build_fields()
+
+    def show(self) -> None:
+        """Show the panel and refresh fields from current config."""
+        self._build_fields()
+        self._refresh_body()
+        self.add_class("--visible")
+        self.focus()
 
     def _build_fields(self) -> None:
         cfg = _overlay_config()
@@ -1732,10 +1745,11 @@ class AnimConfigPanel(ModalScreen):
         self._focus_idx = 0
 
     def compose(self) -> ComposeResult:
-        yield Static(self._build_text(), id="anim-config-body")
+        with VerticalScroll():
+            yield Static(self._build_text(), id="anim-config-body")
 
     def on_mount(self) -> None:
-        self.focus()
+        pass
 
     def _get_overlay(self) -> "DrawilleOverlay | None":
         try:
@@ -1773,7 +1787,7 @@ class AnimConfigPanel(ModalScreen):
             lines.append(row[0])
         lines.append("")
         lines.append("  [P] Preview  [S] Save  [R] Reset  Esc close")
-        return Text("\n".join(lines))
+        return Text.from_ansi("\n".join(lines))
 
     def _refresh_body(self) -> None:
         """Update the Static child with current field state."""
@@ -1801,8 +1815,13 @@ class AnimConfigPanel(ModalScreen):
 
     # ── key actions ────────────────────────────────────────────────────────
 
-    def action_close(self) -> None:
-        self.dismiss()
+    def action_dismiss(self) -> None:
+        self.remove_class("--visible")
+        try:
+            from hermes_cli.tui.input_widget import HermesInput
+            self.app.query_one(HermesInput).focus()
+        except (NoMatches, ImportError):
+            pass
 
     def action_next_field(self) -> None:
         self._focus_idx = (self._focus_idx + 1) % len(self._fields)
@@ -2040,30 +2059,37 @@ class _GalleryPreview(Widget):
 
 # ── AnimGalleryOverlay ────────────────────────────────────────────────────────
 
-class AnimGalleryOverlay(ModalScreen):
-    """Gallery modal screen for browsing and selecting animation engines (B2)."""
+class AnimGalleryOverlay(Widget):
+    """Non-modal gallery overlay for browsing and selecting animation engines (B2)."""
 
     DEFAULT_CSS = """
     AnimGalleryOverlay {
+        layer: overlay;
         align: center middle;
-    }
-    AnimGalleryOverlay > Vertical {
-        width: 70;
-        height: 20;
-        border: round $accent;
+        display: none;
+        width: 74;
+        height: auto;
+        max-height: 28;
         background: $surface;
+        border: round $accent;
         padding: 0 1;
+    }
+    AnimGalleryOverlay.--visible { display: block; }
+    AnimGalleryOverlay > Vertical {
+        width: 1fr;
+        height: auto;
+        max-height: 24;
     }
     """
 
     BINDINGS = [
-        Binding("escape", "close", "Close", show=False),
-        Binding("enter",  "select", "Select", show=False),
-        Binding("space",  "select", "Select", show=False),
-        Binding("up",     "prev_item", "Prev", show=False),
-        Binding("down",   "next_item", "Next", show=False),
-        Binding("p",      "preview", "Preview", show=False),
-        Binding("s",      "open_config", "Config", show=False),
+        Binding("escape", "dismiss",     "Close",   show=False, priority=True),
+        Binding("enter",  "select",      "Select",  show=False),
+        Binding("space",  "select",      "Select",  show=False),
+        Binding("up",     "prev_item",   "Prev",    show=False),
+        Binding("down",   "next_item",   "Next",    show=False),
+        Binding("p",      "preview",     "Preview", show=False),
+        Binding("s",      "open_config", "Config",  show=False),
     ]
 
     can_focus = True
@@ -2075,13 +2101,20 @@ class AnimGalleryOverlay(ModalScreen):
         self._engine_list: list[str] = list(_ENGINES.keys()) + ["sdf_morph"]
         self._focus_idx = 0
 
+    def show(self) -> None:
+        """Show the gallery and focus it."""
+        self._focus_idx = 0
+        self.add_class("--visible")
+        self._refresh_list()
+        self._update_preview()
+        self.focus()
+
     def compose(self) -> "ComposeResult":
         with Vertical():
             yield Static("", id="gallery-list")
             yield _GalleryPreview(id="gallery-preview")
 
     def on_mount(self) -> None:
-        self.focus()
         self._refresh_list()
         self._update_preview()
 
@@ -2134,10 +2167,15 @@ class AnimGalleryOverlay(ModalScreen):
                 pass
         except IndexError:
             pass
-        self.dismiss()
+        self.action_dismiss()
 
-    def action_close(self) -> None:
-        self.dismiss()
+    def action_dismiss(self) -> None:
+        self.remove_class("--visible")
+        try:
+            from hermes_cli.tui.input_widget import HermesInput
+            self.app.query_one(HermesInput).focus()
+        except (NoMatches, ImportError):
+            pass
 
     def action_preview(self) -> None:
         """Force-show overlay with selected engine for 5s."""
@@ -2154,7 +2192,11 @@ class AnimGalleryOverlay(ModalScreen):
             pass
 
     def action_open_config(self) -> None:
-        self.app.push_screen(AnimConfigPanel())
+        self.remove_class("--visible")
+        try:
+            self.app.query_one(AnimConfigPanel).show()
+        except (NoMatches, Exception):
+            pass
 
 
 def _current_panel_cfg(fields: list[_PanelField]) -> DrawilleOverlayCfg:

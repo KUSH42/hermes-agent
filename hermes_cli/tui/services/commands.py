@@ -292,9 +292,12 @@ class CommandsService(AppService):
         app._flash_hint("Usage: /layout v1|v2  or  /layout left=N right=M", 3.0)
 
     def open_anim_config(self) -> None:
-        """Push the AnimConfigPanel modal screen."""
+        """Show the pre-mounted AnimConfigPanel overlay."""
         from hermes_cli.tui.drawille_overlay import AnimConfigPanel as _ACP
-        self.app.push_screen(_ACP())
+        try:
+            self.app.query_one(_ACP).show()
+        except Exception:
+            pass
 
     def persist_anim_config(self, cfg_dict: dict) -> None:
         """Merge partial animation config dict into YAML config file."""

@@ -1156,7 +1156,13 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
             # Track turn start for desktop notify
             self._turn_start_time = _time.monotonic()
             try:
-                self.query_one(OutputPanel).reset_turn_capture()
+                output = self.query_one(OutputPanel)
+                output.reset_turn_capture()
+                try:
+                    from hermes_cli.tui.widgets.message_panel import ThinkingWidget as _TW
+                    output.query_one(_TW).activate()
+                except NoMatches:
+                    pass
             except NoMatches:
                 pass
             self._sync_workspace_polling_state()

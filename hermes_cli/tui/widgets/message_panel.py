@@ -36,7 +36,10 @@ class ThinkingWidget(Widget):
     Line 2: "Thinking..." with animated dots cycling at 250ms.
     """
 
-    DEFAULT_CSS = "ThinkingWidget { height: 0; display: none; }"
+    DEFAULT_CSS = """
+ThinkingWidget { height: 0; display: none; }
+ThinkingWidget.--active { height: 3; display: block; }
+"""
 
     _shimmer_timer: object | None = None
     _dot_phase: int = 0
@@ -47,12 +50,17 @@ class ThinkingWidget(Widget):
     _THINKING_DOTS = ("Thinking.  ", "Thinking.. ", "Thinking...")
 
     def activate(self) -> None:
-        """Disabled — height:0 renders nothing, skip timer overhead."""
-        pass
+        if self._shimmer_timer is not None:
+            return
+        self.add_class("--active")
+        self._build_helix_if_needed()
+        self._shimmer_timer = self.set_interval(0.25, self._tick_shimmer)
 
     def deactivate(self) -> None:
-        """No-op — no timer to stop."""
-        pass
+        if self._shimmer_timer is not None:
+            self._shimmer_timer.stop()
+            self._shimmer_timer = None
+        self.remove_class("--active")
 
     def _tick_shimmer(self) -> None:
         """Advance dot animation phase and helix frame."""

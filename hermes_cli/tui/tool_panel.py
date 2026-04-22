@@ -835,18 +835,10 @@ class ToolPanel(Widget):
             if summary.primary is not None:
                 header._primary_hero = summary.primary
             header._error_kind = summary.error_kind
-            primary_text = summary.primary or ""
-            promoted: list[tuple[str, str]] = []
-            for chip in (summary.chips or [])[:3]:
-                if chip.text in primary_text:
-                    continue
-                style = _TONE_STYLES.get(chip.tone, "dim")
-                promoted.append((chip.text, style))
-                if len(promoted) >= 2:
-                    break
-            header._header_chips = promoted
+            # A2: chips live in FooterPane only; header never shows them
+            header._header_chips = []
             header.refresh()
-            promoted_texts = frozenset(text for text, _ in promoted)
+            promoted_texts: frozenset[str] = frozenset()
 
         # Render v4 footer (skip chips already in header)
         if self._footer_pane is not None:

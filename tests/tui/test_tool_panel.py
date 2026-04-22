@@ -831,7 +831,7 @@ async def test_p6_hint_clears_on_blur():
 
 @pytest.mark.asyncio
 async def test_p6_build_hint_text_contains_keys():
-    """_build_hint_text contains Enter and c; not d/D."""
+    """B1: _build_hint_text always contains Enter; no legacy d/D or 0-3 level hints."""
     app = _make_app()
     async with app.run_test(size=(120, 40)) as pilot:
         await _pause(pilot)
@@ -841,7 +841,6 @@ async def test_p6_build_hint_text_contains_keys():
         hint = panel._build_hint_text()
         plain = hint.plain if hasattr(hint, "plain") else str(hint)
         assert "Enter" in plain
-        assert "c" in plain
         assert "d/D" not in plain
         assert "0-3" not in plain
 
@@ -964,7 +963,8 @@ async def test_p6_hint_includes_lines_hint_when_bar_present():
 
         hint = panel._build_hint_text()
         plain = hint.plain if hasattr(hint, "plain") else str(hint)
-        assert "+" in plain or "+/-" in plain
+        # B1: OmissionBar present → * all shown in contextual tier
+        assert "*" in plain or "all" in plain or "+" in plain
 
 
 # ---------------------------------------------------------------------------
@@ -1355,9 +1355,10 @@ async def test_hint_row_truncated_on_narrow_screen():
 
         from rich.text import Text
         assert isinstance(hint, Text)
-        # Count hint segments (bold key spans)
-        bold_spans = [s for s in hint._spans if "bold" in str(s.style)]
-        assert len(bold_spans) <= 3, f"Narrow screen should show ≤3 hints, got {len(bold_spans)}"
+        # B1: narrow mode shows primary only (max 2) + F1 overflow indicator
+        # Count hint key spans (bold non-dim)
+        bold_spans = [s for s in hint._spans if "bold" in str(s.style) and "dim" not in str(s.style)]
+        assert len(bold_spans) <= 2, f"Narrow screen should show ≤2 primary hints, got {len(bold_spans)}"
 
 
 # ---------------------------------------------------------------------------
@@ -1485,17 +1486,18 @@ async def test_footer_remediation_hidden_when_no_hints():
 # P2-1: hint tuple is 3-tuple (priority field removed)
 # ---------------------------------------------------------------------------
 
-def test_hint_tuple_is_three_tuple_not_four():
-    """_build_hint_text builds from 3-tuple (key, sep, label) — no dead 4th priority field."""
+def test_hint_tuple_is_two_tuple():
+    """B1: _build_hint_text uses 2-tuple (key, label) — tier model, no legacy sep field."""
     import inspect
     from hermes_cli.tui.tool_panel import ToolPanel
     src = inspect.getsource(ToolPanel._build_hint_text)
-    # The unpack should be 3-variable, not 4
-    assert "key, sep, label, _" not in src, (
-        "_build_hint_text still unpacks 4 fields (key, sep, label, _) — "
-        "dead priority field should be removed"
+    # Old format: (key, sep, label) — should be gone
+    assert "key, sep, label" not in src, (
+        "_build_hint_text still uses old 3-tuple (key, sep, label) — "
+        "B1 tier model uses 2-tuples (key, label)"
     )
-    assert "key, sep, label" in src, "_build_hint_text must unpack 3-tuple (key, sep, label)"
+    # New format uses 2-tuples
+    assert "key, label" in src, "_build_hint_text should use 2-tuple (key, label)"
 
 
 # ---------------------------------------------------------------------------
@@ -1586,3 +1588,90 @@ async def test_action_retry_non_error_flashes_no_error():
         assert any("no error" in m.lower() for m in flashed), (
             f"Expected 'no error' flash message, got: {flashed}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 (B1/B2): Hint tiers + binding swap
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_hint_primary_tier_on_streaming():
+    """B1: streaming panel shows Enter follow + f tail in primary/contextual."""
+    app = _make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        panel = await _get_shell_panel(app, pilot)
+        await _pause(pilot)
+
+        # Fake streaming state
+        panel._block._completed = False
+        hint = panel._build_hint_text()
+        plain = hint.plain if hasattr(hint, "plain") else str(hint)
+        assert "Enter" in plain
+        assert "follow" in plain
+
+
+@pytest.mark.asyncio
+async def test_hint_primary_tier_on_completed():
+    """B1: completed panel shows Enter toggle + c copy in primary."""
+    from hermes_cli.tui.tool_result_parse import ResultSummaryV4
+    rs = ResultSummaryV4(
+        primary="3 lines", exit_code=0, chips=(), stderr_tail="",
+        actions=(), artifacts=(), is_error=False,
+    )
+    app = _make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        panel = await _get_shell_panel(app, pilot)
+        # Mark block as completed so streaming hint path is not taken
+        panel._block._completed = True
+        panel.set_result_summary(rs)
+        await _pause(pilot)
+
+        hint = panel._build_hint_text()
+        plain = hint.plain if hasattr(hint, "plain") else str(hint)
+        assert "Enter" in plain
+        # c copy is in primary for completed panels
+        assert "c" in plain or "copy" in plain
+
+
+@pytest.mark.asyncio
+async def test_hint_max_4_wide_min_2_narrow():
+    """B1: wide shows max 4 hints; narrow shows max 2 primary hints."""
+    from rich.text import Text
+    from unittest.mock import PropertyMock
+
+    app = _make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        panel = await _get_shell_panel(app, pilot)
+        await _pause(pilot)
+
+        # Wide
+        with patch.object(type(panel), "size", new_callable=PropertyMock,
+                          return_value=type("S", (), {"width": 120, "height": 40})()):
+            hint_wide = panel._build_hint_text()
+        bold_wide = [s for s in hint_wide._spans if "bold" in str(s.style) and "dim" not in str(s.style)]
+        assert len(bold_wide) <= 4, f"Wide should show ≤4 hints, got {len(bold_wide)}"
+
+        # Narrow
+        with patch.object(type(panel), "size", new_callable=PropertyMock,
+                          return_value=type("S", (), {"width": 40, "height": 40})()):
+            hint_narrow = panel._build_hint_text()
+        bold_narrow = [s for s in hint_narrow._spans if "bold" in str(s.style) and "dim" not in str(s.style)]
+        assert len(bold_narrow) <= 2, f"Narrow should show ≤2 primary hints, got {len(bold_narrow)}"
+
+
+def test_b2_f1_bound_to_show_help():
+    """B2: F1 must be bound to show_help (not show_context_menu)."""
+    bindings = {b.key: b.action for b in ToolPanel.BINDINGS}
+    assert bindings.get("f1") == "show_help", f"F1 should be show_help, got {bindings.get('f1')}"
+
+
+def test_b2_question_mark_bound_to_context_menu():
+    """B2: ? must be bound to show_context_menu (not show_help)."""
+    bindings = {b.key: b.action for b in ToolPanel.BINDINGS}
+    assert bindings.get("question_mark") == "show_context_menu", (
+        f"? should be show_context_menu, got {bindings.get('question_mark')}"
+    )

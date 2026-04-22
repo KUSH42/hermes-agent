@@ -473,10 +473,10 @@ class ToolPanel(Widget):
         Binding("K",     "scroll_body_page_up",   "↑↑",   show=False),
         Binding("<",     "scroll_body_top",        "Top",  show=False),
         Binding(">",     "scroll_body_bottom",     "End",  show=False),
-        Binding("f1",            "show_context_menu", "Menu", show=False),  # G1: F1=menu (vim convention: ?=help)
+        Binding("f1",            "show_help",         "Help",    show=False),  # B2: F1=help (standard convention)
         Binding("P",     "copy_full_path",   "Copy full path",   show=False),  # A7
         Binding("x",     "dismiss_error_banner", "Dismiss",      show=False),  # A5
-        Binding("question_mark", "show_help",         "Help",    show=False),  # G1: ?=help (vim convention)
+        Binding("question_mark", "show_context_menu", "Menu",    show=False),  # B2: ?=context menu
     ]
 
     # Always start expanded; auto-collapse at completion based on threshold.
@@ -1433,6 +1433,13 @@ class ToolPanel(Widget):
             self._hint_row.update(self._build_hint_text())
 
     def _build_hint_text(self) -> "Any":
+        """B1: Three-tier hint model — Primary (max 2) + Contextual (max 2) + power-in-F1.
+
+        Narrow mode (< 50 cols): primary only (max 2).
+        Wide mode: primary (max 2) + contextual (max 2) = 4 hints total.
+        Power hints (C/H/I/u/O/⇧↵/j/k) not shown; signalled by 'F1 more' when present.
+        B2: F1 opens help (not ?); ? opens context menu.
+        """
         from rich.text import Text
         _mounted = getattr(self, "is_mounted", True)
         _size = getattr(self, "size", None)
@@ -1440,99 +1447,68 @@ class ToolPanel(Widget):
         narrow = width < 50
 
         rs = self._result_summary_v4
-        hints: list[tuple[str, str, str]] = []  # (key, sep, label)
-
-        # A2: tail-follow hint when block is actively streaming
         _block_streaming = (
             hasattr(self._block, "_completed") and
             not self._block._completed
         )
 
-        # D3: state-aware hints
-        if rs is not None and rs.is_error:
-            hints.append(("r", " ", "retry  "))
+        # --- Primary hints (max 2, always shown) ---
+        primary: list[tuple[str, str]] = []  # (key, label)
+        if _block_streaming:
+            primary.append(("Enter", "follow"))
+        elif rs is not None and rs.is_error:
+            primary.append(("Enter", "toggle"))
+            primary.append(("x", "dismiss"))
+        else:
+            primary.append(("Enter", "toggle"))
+            primary.append(("c", "copy"))
+
+        # --- Contextual hints (max 2, wide only) ---
+        contextual: list[tuple[str, str]] = []
+        if _block_streaming:
+            contextual.append(("f", "tail"))
+        # OmissionBar hint available regardless of streaming state
+        bar = self._get_omission_bar()
+        if bar is not None:
+            contextual.append(("*", "all"))
+        if rs is not None:
+            has_copy_err = rs.stderr_tail or any(
+                a.kind == "copy_err" and a.payload for a in (rs.actions or ())
+            )
+            if has_copy_err:
+                contextual.append(("e", "stderr"))
+            if self._result_paths_for_action():
+                contextual.append(("o", "open"))
+            has_urls = any(a.kind == "url" for a in (rs.artifacts or ()))
+            if has_urls:
+                contextual.append(("u", "urls"))
             has_edit = any(a.kind == "edit_cmd" and a.payload for a in (rs.actions or ()))
             if has_edit:
-                hints.append(("E", " ", "edit cmd  "))
+                contextual.append(("E", "edit"))
+            # retry for errors not already in primary
+            if rs.is_error and not any(h[0] == "Enter" and h[1] == "retry" for h in primary):
+                contextual.insert(0, ("r", "retry"))
 
-        hints.append(("?", " ", "menu  "))  # D1: always show menu hint
-        hints.append(("c", " ", "copy  "))
+        # --- Power tier (always behind F1) ---
+        # These are never shown inline; just indicate F1 overflow when non-empty
+        _power_keys_exist = bool(rs is not None)  # always have at least some power keys
 
+        # Build output
+        primary = primary[:2]
+        shown = list(primary)
         if not narrow:
-            # A2: show tail-follow hint during active streaming
-            if _block_streaming:
-                hints.append(("f", " ", "tail  "))
-            hints.append(("  Enter", " ", "toggle  "))
-            bar = self._get_omission_bar()
-            if bar is not None:
-                hints.append(("+/-", " ", "lines  "))
-                hints.append(("*", " ", "all  "))
-            # D3: j/k scroll only when expanded
-            if not self.collapsed:
-                hints.append(("j/k", " ", "scroll  "))
-            hints.append(("C/H", " ", "color/html  "))
-            hints.append(("I", " ", "invocation  "))
-            hints.append(("F1", " ", "help  "))  # A1: f1 key for help overlay
-            if rs is not None:
-                # A3: stderr hint when stderr_tail OR copy_err action has payload
-                has_copy_err = rs.stderr_tail or any(
-                    a.kind == "copy_err" and a.payload for a in (rs.actions or ())
-                )
-                if has_copy_err:
-                    hints.append(("e", " ", "stderr  "))
-                # D3: error banner dismiss
-                try:
-                    if list(self.query(".error-banner")):
-                        hints.append(("x", " ", "dismiss  "))
-                except Exception:
-                    pass
-                if self._result_paths_for_action():
-                    hints.append(("o", " ", "open  "))
-                    hints.append(("p", " ", "paths"))
-                has_urls = any(a.kind == "url" for a in (rs.artifacts or ()))
-                if has_urls:
-                    hints.append(("  O", " ", "url  "))
-                    hints.append(("u", " ", "copy urls"))
-                # D3: O open only when path-clickable
-                try:
-                    if getattr(self._block._header, "_path_clickable", False):
-                        if not any(h[0] == "o" for h in hints):
-                            hints.append(("O", " ", "open  "))
-                except Exception:
-                    pass
-
-        # D1: show Shift+Enter peek hint when inside a ToolGroup
-        try:
-            from hermes_cli.tui.tool_group import _get_tool_group
-            if _get_tool_group(self) is not None:
-                hints.append(("⇧↵", " ", "peek"))
-        except Exception:
-            pass
-
-        # C3: sort hints by priority before applying narrow-mode cap
-        # Priority order: error (r, E, x), copy/open (c, o, p, e, u, O, C, H, I), navigation
-        _ERROR_KEYS = frozenset({"r", "E", "x"})
-        _COPY_OPEN_KEYS = frozenset({"c", "o", "p", "e", "u", "O", "C", "H", "I", "P"})
-        def _hint_priority(h: tuple) -> int:
-            k = h[0].strip()
-            if k in _ERROR_KEYS:
-                return 0
-            if k in _COPY_OPEN_KEYS:
-                return 1
-            return 2
-        if narrow:
-            hints.sort(key=_hint_priority)
+            shown += contextual[:2]
 
         t = Text()
-        max_hints = 3 if narrow else 6
-        shown = hints[:max_hints]
-        for i, (key, sep, label) in enumerate(shown):
+        for i, (key, label) in enumerate(shown):
             if i > 0:
-                t.append(" │ ", style="dim")
+                t.append("  ", style="dim")
             t.append(key, style="bold")
-            t.append(sep + label, style="dim")
-        if len(hints) > max_hints:
-            t.append("  ? more", style="dim")
+            t.append(f" {label}", style="dim")
+
+        if _power_keys_exist:
+            t.append("  F1", style="bold dim")
+
         return t
 
     def _get_omission_bar(self) -> "Any | None":

@@ -791,7 +791,7 @@ async def test_switch_by_index_correct_id():
         app._session_records_cache = [rec]
         app._session_active_id = "other000"
         switched = []
-        app._switch_to_session = lambda sid: switched.append(sid)
+        app._svc_sessions.switch_to_session = lambda sid: switched.append(sid)
         app._switch_to_session_by_index(0)
         await pilot.pause()
     assert "sess0001" in switched
@@ -824,7 +824,7 @@ async def test_new_worktree_session_action_opens_overlay():
         app._sessions_enabled = True
         app._session_records_cache = []
         opened = []
-        app._open_new_session_overlay = lambda: opened.append(True)
+        app._svc_sessions.open_new_session_overlay = lambda: opened.append(True)
         app.action_new_worktree_session()
         await pilot.pause()
     assert len(opened) == 1
@@ -848,9 +848,9 @@ async def test_new_worktree_session_at_max_flashes():
         app._session_mgr = FakeMgr()
 
         flashed = []
-        app._flash_sessions_max = lambda: flashed.append(True)
+        app._svc_sessions.flash_sessions_max = lambda: flashed.append(True)
         opened = []
-        app._open_new_session_overlay = lambda: opened.append(True)
+        app._svc_sessions.open_new_session_overlay = lambda: opened.append(True)
         app.action_new_worktree_session()
         await pilot.pause()
     assert len(flashed) == 1
@@ -991,7 +991,7 @@ async def test_handle_session_event_refreshes_records():
     async with app.run_test(size=(120, 24)) as pilot:
         await pilot.pause()
         refreshed = []
-        app._refresh_session_records_from_index = lambda: refreshed.append(True)
+        app._svc_sessions.refresh_session_records_from_index = lambda: refreshed.append(True)
         event = {"type": "agent_complete", "session_id": "abc", "message": "done"}
         app._handle_session_event(event)
         await pilot.pause()
@@ -1065,8 +1065,7 @@ async def test_poll_session_index_refreshes_on_change():
         app._session_records_cache = []
         app._session_active_id = ""
         refreshed = []
-        original_refresh = app._refresh_session_bar
-        app._refresh_session_bar = lambda: refreshed.append(True)
+        app._svc_sessions.refresh_session_bar = lambda: refreshed.append(True)
 
         app._poll_session_index()
         await pilot.pause()
@@ -1087,7 +1086,7 @@ async def test_poll_session_index_no_manager():
         app._sessions_enabled = True
         app._session_mgr = None
         refreshed = []
-        app._refresh_session_bar = lambda: refreshed.append(True)
+        app._svc_sessions.refresh_session_bar = lambda: refreshed.append(True)
         app._poll_session_index()
         await pilot.pause()
     assert len(refreshed) == 0

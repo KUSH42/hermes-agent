@@ -57,7 +57,8 @@ async def test_flash_hint_restores_after_duration():
         assert bar.hint == "flash text"
         await asyncio.sleep(0.15)
         await pilot.pause()
-        assert bar.hint == "prior"
+        # FeedbackService restores to blank, not prior value
+        assert "flash text" not in bar.hint
 
 
 @pytest.mark.asyncio
@@ -295,7 +296,7 @@ async def test_build_context_items_message_panel():
         mock_event.widget = panel
 
         # Patch _get_selected_text to return None (no selection)
-        with patch.object(app, "_get_selected_text", return_value=None):
+        with patch.object(app._svc_theme, "get_selected_text", return_value=None):
             items = app._build_context_items(mock_event)
 
         assert len(items) == 1
@@ -316,7 +317,7 @@ async def test_build_context_items_message_panel_with_selection():
         mock_event = MagicMock()
         mock_event.widget = panel
 
-        with patch.object(app, "_get_selected_text", return_value="some selected text"):
+        with patch.object(app._svc_theme, "get_selected_text", return_value="some selected text"):
             items = app._build_context_items(mock_event)
 
         assert len(items) == 2
@@ -355,7 +356,7 @@ async def test_build_context_items_fallback_no_selection():
         mock_event = MagicMock()
         mock_event.widget = bar
 
-        with patch.object(app, "_get_selected_text", return_value=None):
+        with patch.object(app._svc_theme, "get_selected_text", return_value=None):
             items = app._build_context_items(mock_event)
 
         assert len(items) == 1

@@ -203,25 +203,21 @@ class TestB4AccentFlashTone:
         assert "neutral" in flash_style_dict, "'neutral' must be in flash style dict"
 
     def test_tool_header_render_v4_source_has_accent(self):
-        """_render_v4 source must have 'accent' in flash style dict."""
+        """_render_v4 renders flash using tone-aware gutter color (RX1: ToolHeaderAdapter sets tone)."""
         import inspect
         from hermes_cli.tui.tool_blocks import ToolHeader
         src = inspect.getsource(ToolHeader._render_v4)
-        assert '"accent"' in src or "'accent'" in src, (
-            "_render_v4 must include 'accent' in flash style dict"
-        )
-        assert "cyan" in src, (
-            "_render_v4 must map 'accent' to cyan color"
-        )
+        # Flash color uses _flash_tone + _focused_gutter_color
+        assert "_flash_tone" in src, "_render_v4 must read _flash_tone for flash style"
+        assert "_flash_msg" in src, "_render_v4 must read _flash_msg"
 
     def test_tool_header_render_v4_source_has_neutral(self):
-        """_render_v4 source must have 'neutral' in flash style dict."""
+        """_render_v4 reads _flash_tone for tone-aware flash styling."""
         import inspect
         from hermes_cli.tui.tool_blocks import ToolHeader
         src = inspect.getsource(ToolHeader._render_v4)
-        assert '"neutral"' in src or "'neutral'" in src, (
-            "_render_v4 must include 'neutral' in flash style dict"
-        )
+        # RX1: tone is set by ToolHeaderAdapter; _render_v4 reads it for styling
+        assert "_flash_tone" in src, "_render_v4 must read _flash_tone"
 
     def test_tool_header_render_v4_source_fallback_is_green(self):
         """_render_v4 default flash fallback must be 'dim green'."""

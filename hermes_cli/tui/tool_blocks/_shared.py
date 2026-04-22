@@ -584,10 +584,19 @@ class OmissionBar(TooltipMixin, Widget):
             return
         try:
             if self._narrow:
-                # In narrow mode, hide advanced panel even if open
+                # In narrow mode, hide advanced panel and [↓all] / [↑] buttons
                 if self._advanced_visible:
                     self._set_advanced_visible(False)
+                try:
+                    self.query_one(".--ob-down-all", Button).display = False
+                except NoMatches:
+                    pass
             else:
+                # Restore [↓all] visibility
+                try:
+                    self.query_one(".--ob-down-all", Button).display = True
+                except NoMatches:
+                    pass
                 down_btn = self.query_one(".--ob-down", Button)
                 vs, ve, tot = self._visible_start, self._visible_end, self._total
                 step_below = min(_PAGE_SIZE, tot - ve)

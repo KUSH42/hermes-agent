@@ -405,13 +405,13 @@ class TestLinkClickedMessage:
     @pytest.mark.asyncio
     async def test_open_external_url_blocked_for_bad_scheme(self):
         """javascript: scheme → no subprocess call."""
-        from hermes_cli.tui.app import HermesApp
+        from hermes_cli.tui.services.context_menu import ContextMenuService
         import subprocess
 
-        app = HermesApp.__new__(HermesApp)
+        svc = object.__new__(ContextMenuService)
         with patch("subprocess.run") as mock_run, \
              patch("threading.Thread") as mock_thread:
-            app._open_external_url("javascript:alert(1)")
+            svc.open_external_url("javascript:alert(1)")
             mock_thread.assert_not_called()
 
     @pytest.mark.asyncio

@@ -56,7 +56,16 @@ def _cached_classify(output_raw: str, tool_name: str, arg_query: str | None) -> 
     s = text.lstrip()
     if s and s[0] in "{[" and (len(text) > 20 or "\n" in text):
         try:
-            json.loads(text)
+            parsed = json.loads(text)
+            # JSON-format search result: {matches:[{path,line,content}], ...}
+            if isinstance(parsed, dict):
+                matches = parsed.get("matches")
+                if isinstance(matches, list) and matches and isinstance(matches[0], dict) \
+                        and ("path" in matches[0] or "file" in matches[0]):
+                    return ClassificationResult(
+                        ResultKind.SEARCH, 0.9,
+                        {"hit_count": len(matches), "query": arg_query, "json": True},
+                    )
             return ClassificationResult(ResultKind.JSON, 0.95)
         except (json.JSONDecodeError, MemoryError):
             pass

@@ -281,7 +281,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             # A1: line count rendered here (ToolHeaderBar deleted)
             # Suppress line count when diff stats are shown (avoids redundant info)
             _has_diff_in_tail = any(name == "diff" for name, _ in tail_segments)
-            if self._line_count and not _has_diff_in_tail:
+            if self._line_count and not _has_diff_in_tail and not self._primary_hero:
                 lc_text = ">99K" if self._line_count > 99999 else f"{self._line_count}L"
                 tail_segments.append(("linecount", Text(f"  {lc_text}", style="dim")))
             if self._has_affordances:

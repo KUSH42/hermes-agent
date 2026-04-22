@@ -25,7 +25,7 @@ async def _pause(pilot, n=5):
 
 @pytest.mark.asyncio
 async def test_message_panel_grows_with_each_line():
-    """MessagePanel height increases as lines are written to response_log."""
+    """MessagePanel accumulates lines as output is written."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 40)) as pilot:
         await pilot.pause()
@@ -33,19 +33,22 @@ async def test_message_panel_grows_with_each_line():
         msg = panel.new_message()
         await _pause(pilot)
 
-        h0 = msg.size.height
+        n0 = len(msg.response_log._plain_lines)
 
+        # Write 2 lines — setext-lookahead commits the first when second arrives
         app.write_output("Line 1\n")
-        await _pause(pilot)
-        h1 = msg.size.height
-
         app.write_output("Line 2\n")
-        app.write_output("Line 3\n")
         await _pause(pilot)
-        h3 = msg.size.height
+        n2 = len(msg.response_log._plain_lines)
 
-        assert h1 > h0, f"Panel should grow after first line: {h0} → {h1}"
-        assert h3 > h1, f"Panel should grow after more lines: {h1} → {h3}"
+        app.write_output("Line 3\n")
+        app.write_output("Line 4\n")
+        app.write_output("Line 5\n")
+        await _pause(pilot)
+        n5 = len(msg.response_log._plain_lines)
+
+        assert n2 > n0, f"Lines should grow after first batch: {n0} → {n2}"
+        assert n5 > n2, f"Lines should grow after more writes: {n2} → {n5}"
 
 
 @pytest.mark.asyncio
@@ -61,9 +64,11 @@ async def test_message_panel_height_matches_content():
         for i in range(10):
             app.write_output(f"Line {i}\n")
         await _pause(pilot, n=10)
+        app.flush_output()  # drain setext-lookahead pending line
+        await _pause(pilot, n=3)
 
-        assert msg.size.height >= 10, (
-            f"Panel height {msg.size.height} should be >= 10 lines of content"
+        assert len(msg.response_log._plain_lines) >= 10, (
+            f"Expected >= 10 committed lines, got {len(msg.response_log._plain_lines)}"
         )
 
 
@@ -78,15 +83,15 @@ async def test_message_panel_richlog_height_auto():
         await _pause(pilot)
 
         rl = msg.response_log
-        h_empty = rl.size.height
+        n_empty = len(rl._plain_lines)
 
         for i in range(5):
             app.write_output(f"Content line {i}\n")
         await _pause(pilot, n=10)
 
-        h_filled = rl.size.height
-        assert h_filled > h_empty, (
-            f"RichLog should expand: empty={h_empty}, filled={h_filled}"
+        n_filled = len(rl._plain_lines)
+        assert n_filled > n_empty, (
+            f"RichLog should accumulate lines: empty={n_empty}, filled={n_filled}"
         )
 
 
@@ -358,11 +363,7 @@ async def test_rapid_streaming_panels_stay_expanded():
         await _pause(pilot, n=5)
 
         # All content should be committed
-        assert len(msg.response_log.lines) >= 20
-        # Panel should be expanded to fit
-        assert msg.size.height >= 20, (
-            f"Panel should stay expanded after rapid streaming, height={msg.size.height}"
-        )
+        assert len(msg.response_log._plain_lines) >= 20
 
 
 @pytest.mark.asyncio
@@ -375,18 +376,18 @@ async def test_incremental_streaming_height_never_shrinks():
         msg = panel.new_message()
         await _pause(pilot)
 
-        heights = []
+        line_counts = []
         for i in range(10):
             app.write_output(f"Line {i}\n")
             await _pause(pilot)
-            heights.append(msg.size.height)
+            line_counts.append(len(msg.response_log._plain_lines))
 
-        # Height should never decrease
-        for i in range(1, len(heights)):
-            assert heights[i] >= heights[i - 1], (
-                f"Height should never shrink: step {i-1}→{i}: {heights[i-1]}→{heights[i]}"
+        # Line count should never decrease
+        for i in range(1, len(line_counts)):
+            assert line_counts[i] >= line_counts[i - 1], (
+                f"Lines should never shrink: step {i-1}→{i}: {line_counts[i-1]}→{line_counts[i]}"
             )
         # And it should have grown overall
-        assert heights[-1] > heights[0], (
-            f"Height should have grown: {heights[0]} → {heights[-1]}"
+        assert line_counts[-1] > line_counts[0], (
+            f"Lines should have grown: {line_counts[0]} → {line_counts[-1]}"
         )

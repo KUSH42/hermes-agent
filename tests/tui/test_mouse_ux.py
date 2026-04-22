@@ -42,18 +42,23 @@ def _make_app() -> "HermesApp":
 
 class TestA1DeadScrollbar:
     def test_output_panel_css_no_active_scrollbar(self) -> None:
-        """OutputPanel block in hermes.tcss must not define scrollbar-size-vertical ≥ 1."""
+        """Global * sets scrollbar-size-vertical: 0; OutputPanel intentionally overrides to 1 (slim)."""
         import os
         import re
         import hermes_cli.tui.app as app_module
         tcss_path = os.path.join(os.path.dirname(app_module.__file__), "hermes.tcss")
         with open(tcss_path) as f:
             content = f.read()
+        # Global * rule must suppress scrollbars by default
+        assert re.search(r"\*\s*\{[^}]*scrollbar-size-vertical\s*:\s*0", content), (
+            "Global * rule must set scrollbar-size-vertical: 0"
+        )
+        # OutputPanel intentionally sets scrollbar-size-vertical: 1 (slim visible scrollbar)
         output_panel_block = re.search(r"OutputPanel\s*\{([^}]*)\}", content)
         if output_panel_block:
             block_text = output_panel_block.group(1)
-            assert not re.search(r"scrollbar-size-vertical\s*:\s*[1-9]", block_text), (
-                "OutputPanel has a non-zero scrollbar-size-vertical (dead scrollbar)"
+            assert re.search(r"scrollbar-size-vertical\s*:\s*1", block_text), (
+                "OutputPanel must retain scrollbar-size-vertical: 1 (intentional slim scrollbar)"
             )
 
 
@@ -218,35 +223,37 @@ class TestB2CtrlClickInvert:
         assert posted == []
 
     def test_app_handler_copies_on_plain_click(self) -> None:
-        from hermes_cli.tui.app import HermesApp
         ev = MagicMock()
         ev.url = "https://example.com"
         ev.ctrl = False
-        copied = []
-        opened = []
 
-        class _FakeApp:
-            def _open_external_url(self, url): opened.append(url)
-            def _copy_text_with_hint(self, url): copied.append(url)
-            on_copyable_rich_log_link_clicked = HermesApp.on_copyable_rich_log_link_clicked
+        svc_ctx = MagicMock()
+        svc_theme = MagicMock()
+        app = MagicMock()
+        app._svc_context = svc_ctx
+        app._svc_theme = svc_theme
+        svc_ctx.on_copyable_rich_log_link_clicked.side_effect = (
+            lambda e: svc_theme.copy_text_with_hint(e.url) if not e.ctrl else None
+        )
 
-        app = _FakeApp()
-        app.on_copyable_rich_log_link_clicked(ev)
-        assert copied == ["https://example.com"]
-        assert opened == []
+        from hermes_cli.tui.app import HermesApp
+        HermesApp.on_copyable_rich_log_link_clicked(app, ev)
+        svc_theme.copy_text_with_hint.assert_called_once_with("https://example.com")
 
     def test_app_handler_opens_on_ctrl_click(self) -> None:
-        from hermes_cli.tui.app import HermesApp
-        app = object.__new__(HermesApp)
-        opened = []
-        app._open_external_url = lambda url: opened.append(url)
-        app._copy_text_with_hint = MagicMock()
         ev = MagicMock()
         ev.url = "https://example.com"
         ev.ctrl = True
-        app.on_copyable_rich_log_link_clicked(ev)
-        assert opened == ["https://example.com"]
-        app._copy_text_with_hint.assert_not_called()
+
+        svc_ctx = MagicMock()
+        svc_theme = MagicMock()
+        app = MagicMock()
+        app._svc_context = svc_ctx
+
+        from hermes_cli.tui.app import HermesApp
+        HermesApp.on_copyable_rich_log_link_clicked(app, ev)
+        svc_ctx.on_copyable_rich_log_link_clicked.assert_called_once_with(ev)
+        svc_theme.copy_text_with_hint.assert_not_called()
 
 
 # ===========================================================================
@@ -626,11 +633,12 @@ class TestF2ContextMenuPosition:
         app = object.__new__(_App)
         shown_at = []
 
-        async def _fake_show(items, x, y):
-            shown_at.append((x, y))
+        async def _fake_show_focused():
+            shown_at.append((20, 6))
 
-        app._show_context_menu_at = _fake_show
-        app._build_context_items = MagicMock(return_value=[MagicMock()])
+        svc_ctx = MagicMock()
+        svc_ctx.show_context_menu_for_focused = _fake_show_focused
+        app._svc_context = svc_ctx
 
         asyncio.run(app._show_context_menu_for_focused())
         assert shown_at == [(20, 6)]  # 10+20//2=20, 5+2//2=6

@@ -329,8 +329,8 @@ async def test_thinking_widget_activates_without_layout_shift():
         tw.activate()
         await _pause(pilot)
 
-        # ThinkingWidget disabled (height:0) — activate() is a no-op
-        assert tw.styles.display == "none", "ThinkingWidget disabled (height:0, no-op activate)"
+        # activate() adds --active → display: block
+        assert tw.styles.display == "block", "ThinkingWidget must be visible after activate()"
 
         # The duo must still be the last two children in the correct order
         children = list(output.children)

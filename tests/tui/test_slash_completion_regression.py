@@ -392,6 +392,7 @@ def test_typing_slash_does_not_trigger_file_drop_detection():
     inp = object.__new__(HermesInput)
     inp._handling_file_drop = False
     inp._sanitizing = False
+    inp._classes = frozenset()
 
     posted: list = []
 

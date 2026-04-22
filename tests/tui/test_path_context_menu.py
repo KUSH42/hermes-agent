@@ -171,7 +171,7 @@ async def test_T26_copy_path_action_calls_copy_and_flash():
     async with app.run_test(size=(80, 24)) as pilot:
         header = MagicMock()
         copied = []
-        app._copy_text_with_hint = lambda t: copied.append(t)
+        app._svc_theme.copy_text_with_hint = lambda t: copied.append(t)
         app._copy_path_action(header, "/home/user/foo.py")
         assert "/home/user/foo.py" in copied
         header.flash_success.assert_called_once()
@@ -183,7 +183,7 @@ async def test_T27_copy_path_action_header_none_no_crash():
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         copied = []
-        app._copy_text_with_hint = lambda t: copied.append(t)
+        app._svc_theme.copy_text_with_hint = lambda t: copied.append(t)
         app._copy_path_action(None, "/some/path.py")
         assert "/some/path.py" in copied
 

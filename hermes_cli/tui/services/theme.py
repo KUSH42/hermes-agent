@@ -168,34 +168,7 @@ class ThemeService(AppService):
 
     def flash_hint(self, text: str, duration: float = 1.5) -> None:
         """Flash *text* in the HintBar for *duration* seconds, then restore."""
-        from hermes_cli.tui.widgets import HintBar
-        app = self.app
-        try:
-            bar = app.query_one(HintBar)
-            if app._flash_hint_timer is not None:
-                try:
-                    app._flash_hint_timer.stop()
-                except Exception:
-                    pass
-                app._flash_hint_timer = None
-                prior = app._flash_hint_prior
-            else:
-                prior = bar.hint
-                app._flash_hint_prior = prior
-            bar.hint = text
-            app._flash_hint_expires = _time.monotonic() + duration
-
-            def _restore() -> None:
-                app._flash_hint_timer = None
-                app._flash_hint_prior = ""
-                try:
-                    setattr(bar, "hint", prior)
-                except Exception:
-                    pass
-
-            app._flash_hint_timer = app.set_timer(duration, _restore)
-        except NoMatches:
-            pass
+        self.app.feedback.flash("hint-bar", text, duration=duration)
 
     def set_status_error(self, msg: str, auto_clear_s: float = 0.0) -> None:
         """Persistent StatusBar error. Thread-safety: must be called from the event loop."""

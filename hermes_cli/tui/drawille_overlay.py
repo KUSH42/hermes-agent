@@ -1823,6 +1823,20 @@ class AnimConfigPanel(Widget):
         except (NoMatches, ImportError):
             pass
 
+    def on_blur(self, event: object) -> None:
+        """Trap focus: while visible, never let focus escape the panel.
+
+        The panel is not fully modal (to keep underlying overlay visuals),
+        so nothing else re-focuses it automatically. Without this trap a
+        stray click or programmatic focus change would strand the panel
+        with no way to interact with it except Escape.
+        """
+        if self.has_class("--visible"):
+            try:
+                self.call_after_refresh(self.focus)
+            except Exception:
+                pass
+
     def action_next_field(self) -> None:
         self._focus_idx = (self._focus_idx + 1) % len(self._fields)
         self._refresh_body()

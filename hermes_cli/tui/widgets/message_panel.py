@@ -550,7 +550,7 @@ class MessagePanel(Widget):
         from hermes_cli.tui.tool_panel import ToolPanel as _ToolPanel
         from hermes_cli.tui.tool_category import classify_tool, ToolCategory
 
-        block = _STB(label=label, tool_name=tool_name)
+        block = _STB(label=label, tool_name=tool_name, tool_call_id=tool_call_id)
 
         cat_enum = classify_tool(tool_name or "")
 

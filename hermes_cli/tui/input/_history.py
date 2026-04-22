@@ -42,12 +42,9 @@ class _HistoryMixin:
     def _save_to_history(self, text: str) -> None:
         """Append an entry to the history file and in-memory list.
 
-        Slash commands (starting with '/') are never saved.
         Deduplicates globally — removes any prior identical entry then promotes to end.
         """
         if not text.strip():
-            return
-        if text.startswith("/"):
             return
         try:
             self._history.remove(text)
@@ -105,11 +102,14 @@ class _HistoryMixin:
         while idx >= 0:
             if self._history[idx].startswith(query):
                 self._rev_idx = idx
+                self._history_loading = True  # type: ignore[attr-defined]
                 try:
                     self.load_text(self._history[idx])  # type: ignore[attr-defined]
                     self.move_cursor((0, len(self._history[idx])))  # type: ignore[attr-defined]
                 except Exception:
                     pass
+                finally:
+                    self._history_loading = False  # type: ignore[attr-defined]
                 return
             idx -= 1
 
@@ -124,11 +124,25 @@ class _HistoryMixin:
         self._rev_idx = -1
         self._rev_match_idx = -1
         if not accept:
+            self._history_loading = True  # type: ignore[attr-defined]
             try:
                 self.load_text(saved)  # type: ignore[attr-defined]
                 self.move_cursor((0, len(saved)))  # type: ignore[attr-defined]
             except Exception:
                 pass
+            finally:
+                self._history_loading = False  # type: ignore[attr-defined]
+            self._history_idx = -1  # type: ignore[attr-defined]
+        else:
+            # Accepted a rev-search match: sync _history_idx so subsequent up/down
+            # continues relative to the matched entry instead of drifting to a
+            # stale pre-rev-search position.
+            match_idx = getattr(self, "_rev_match_idx", -1)
+            hist = getattr(self, "_history", [])
+            if 0 <= match_idx < len(hist):
+                self._history_idx = match_idx  # type: ignore[attr-defined]
+            else:
+                self._history_idx = -1  # type: ignore[attr-defined]
         # Restore idle placeholder
         try:
             self.placeholder = self._idle_placeholder  # type: ignore[attr-defined]
@@ -172,8 +186,12 @@ class _HistoryMixin:
 
     def _history_load(self, text: str) -> None:
         """Load a history entry into the input field and position cursor at end."""
-        self.load_text(text)  # type: ignore[attr-defined]
-        self.move_cursor((0, len(text)))  # type: ignore[attr-defined]
+        self._history_loading = True  # type: ignore[attr-defined]
+        try:
+            self.load_text(text)  # type: ignore[attr-defined]
+            self.move_cursor((0, len(text)))  # type: ignore[attr-defined]
+        finally:
+            self._history_loading = False  # type: ignore[attr-defined]
 
     def _show_subcommand_completions(self, command: str, fragment: str) -> None:
         """Show subcommand completion overlay for a slash command."""

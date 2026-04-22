@@ -208,13 +208,13 @@ class ToolBlock(Widget):
                     t.append(pending_removed, style=f"on {del_bg}")
                     rl.write(t)
                 if self._header_stats and self._header_stats.has_diff_counts and self._lines:
-                    rl.write(Text(""))
+                    rl.write_with_source(Text(""), "")
                 return
 
             for styled, plain in zip(self._lines, self._plain_lines):
                 rl.write_with_source(Text.from_ansi(styled), plain)
             if self._header_stats and self._header_stats.has_diff_counts and self._lines:
-                rl.write(Text(""))
+                rl.write_with_source(Text(""), "")
         except NoMatches:
             pass
 

@@ -996,8 +996,8 @@ class TestOverflowBadgeViewport:
 class TestHistoryTrash:
     """Tests for three history bugs: slash-cmd pollution, file dedup, CLI/TUI merge."""
 
-    def test_slash_command_not_saved(self, tmp_path, monkeypatch):
-        """/clear and other slash commands are NOT saved to history."""
+    def test_slash_command_saved(self, tmp_path, monkeypatch):
+        """Slash commands are saved to history so users can recall them."""
         hist_file = tmp_path / ".hermes_history"
         monkeypatch.setattr("hermes_cli.tui.input._history._HISTORY_FILE", hist_file)
         inp = HermesInput.__new__(HermesInput)
@@ -1005,8 +1005,7 @@ class TestHistoryTrash:
         inp._save_to_history("/clear")
         inp._save_to_history("/anim")
         inp._save_to_history("/model claude-3-5-sonnet")
-        assert inp._history == []
-        assert not hist_file.exists() or hist_file.read_text() == ""
+        assert inp._history == ["/clear", "/anim", "/model claude-3-5-sonnet"]
 
     def test_real_prompt_saved(self, tmp_path, monkeypatch):
         """Real prompts (no leading slash) ARE saved to history."""

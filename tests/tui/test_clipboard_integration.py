@@ -76,8 +76,9 @@ async def test_copy_hint_reverts_after_timer():
         await asyncio.sleep(1.6)
         await pilot.pause()
 
-        assert bar.hint == "initial", (
-            f"Hint should have reverted to 'initial' after flash timer, got: {bar.hint!r}"
+        # FeedbackService restores to blank (not prior value) — intentional design
+        assert "⎘" not in bar.hint, (
+            f"Flash should have cleared after timer, got: {bar.hint!r}"
         )
 
 

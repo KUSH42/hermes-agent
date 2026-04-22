@@ -339,6 +339,7 @@ async def test_statusbar_context_pct_overflow_mode():
     app.cli._cfg["display"]["context_pct_mode"] = "overflow"
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
+        app.status_model = "claude-opus"
         app.context_pct = 42.0
         await pilot.pause()
         bar = app.query_one(StatusBar)
@@ -353,6 +354,7 @@ async def test_statusbar_context_pct_compaction_mode():
     app.cli._cfg["display"]["context_pct_mode"] = "compaction"
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
+        app.status_model = "claude-opus"
         app.status_compaction_progress = 0.55
         await pilot.pause()
         bar = app.query_one(StatusBar)
@@ -396,6 +398,7 @@ async def test_statusbar_context_pct_100_overflow():
     app.cli._cfg["display"]["context_pct_mode"] = "overflow"
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
+        app.status_model = "claude-opus"
         app.context_pct = 100.0
         await pilot.pause()
         bar = app.query_one(StatusBar)
@@ -408,6 +411,7 @@ async def test_statusbar_context_pct_100_compaction():
     app.cli._cfg["display"]["context_pct_mode"] = "compaction"
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
+        app.status_model = "claude-opus"
         app.status_compaction_progress = 1.0
         await pilot.pause()
         bar = app.query_one(StatusBar)

@@ -145,12 +145,12 @@ def test_theme_service_has_key_methods():
 
 
 def test_mixin_flash_hint_routes_to_service(monkeypatch):
-    """app._flash_hint(...) must delegate to app._svc_theme.flash_hint(...)."""
+    """app._flash_hint(...) must delegate to app.feedback.flash('hint-bar', ...)."""
     app = _make_app()
     calls = []
-    monkeypatch.setattr(app._svc_theme, "flash_hint", lambda text, duration=1.5: calls.append((text, duration)))
+    monkeypatch.setattr(app.feedback, "flash", lambda channel, text, **kw: calls.append((channel, text)))
     app._flash_hint("test", 1.0)
-    assert calls == [("test", 1.0)], f"Expected [('test', 1.0)], got {calls}"
+    assert calls == [("hint-bar", "test")], f"Expected [('hint-bar', 'test')], got {calls}"
 
 
 def test_theme_service_flash_hint_callable():
@@ -527,7 +527,7 @@ def test_watchers_service_handle_file_drop_inner_blocked_by_overlay(monkeypatch)
     app = _make_app()
 
     flash_calls = []
-    monkeypatch.setattr(app._svc_theme, "flash_hint", lambda text, dur=1.5: flash_calls.append(text))
+    monkeypatch.setattr(app.feedback, "flash", lambda channel, text, **kw: flash_calls.append(text))
 
     # Patch getattr on the app so approval_state appears non-None without triggering reactive
     sentinel = MagicMock()

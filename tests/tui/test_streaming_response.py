@@ -177,18 +177,23 @@ async def test_thinking_widget_deactivates_on_first_token():
         thinking.activate()
         await pilot.pause()
 
-        assert not thinking.display, "ThinkingWidget disabled (height:0, no-op activate)"
+        # ThinkingWidget v2: activate() is functional — widget shows when running
+        import os
+        if not os.environ.get("HERMES_DETERMINISTIC"):
+            assert thinking.display, "ThinkingWidget should be visible after activate()"
 
         # Feed a chunk — deactivation happens via _consume_output path
         app.write_output("first token\n")
         await asyncio.sleep(0.05)
-        await pilot.pause()
+        for _ in range(5):
+            await pilot.pause()
 
         app.agent_running = False
-        await pilot.pause()
+        for _ in range(5):
+            await pilot.pause()
 
         assert not thinking.display, "ThinkingWidget should be deactivated after first token"
-        assert thinking._shimmer_timer is None, "_shimmer_timer should be None after deactivation"
+        assert thinking._timer is None, "_timer should be None after deactivation"
 
 
 @pytest.mark.asyncio

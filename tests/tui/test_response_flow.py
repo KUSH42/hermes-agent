@@ -611,7 +611,7 @@ async def test_copy_flashes_border_class():
         block = app.query_one(OutputPanel).current_message.query_one(StreamingCodeBlock)
         assert block._state == "COMPLETE"
 
-        with patch.object(app, "_copy_text_with_hint") as mock_copy:
+        with patch.object(app._svc_theme, "copy_text_with_hint") as mock_copy:
             app._copy_code_block(block)
             await pilot.pause()
 

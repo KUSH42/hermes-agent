@@ -430,8 +430,9 @@ async def test_open_streaming_records_turn_entry():
         await _pause(pilot)
         app.open_streaming_tool_block("tc-track1", "read_file src/app.py", tool_name="read_file")
         await _pause(pilot)
-        assert len(app._turn_tool_calls) >= 1
-        entry = app._turn_tool_calls[0]
+        calls = app.current_turn_tool_calls()
+        assert len(calls) >= 1
+        entry = calls[0]
         assert entry["tool_call_id"] == "tc-track1"
         assert entry["dur_ms"] is None
         assert entry["is_error"] is False
@@ -449,7 +450,8 @@ async def test_close_streaming_updates_dur_ms():
         await _pause(pilot)
         app.close_streaming_tool_block("tc-dur", "0.5s")
         await _pause(pilot)
-        entry = next((e for e in app._turn_tool_calls if e["tool_call_id"] == "tc-dur"), None)
+        calls = app.current_turn_tool_calls()
+        entry = next((e for e in calls if e["tool_call_id"] == "tc-dur"), None)
         assert entry is not None
         assert entry["dur_ms"] == 500
         assert entry["is_error"] is False
@@ -482,7 +484,7 @@ async def test_watch_agent_running_resets_turn_calls():
         app.agent_running = True
         await _pause(pilot)
         # After agent_running → True, turn calls reset
-        assert app._turn_tool_calls == []
+        assert app.current_turn_tool_calls() == []
 
 
 # ---------------------------------------------------------------------------

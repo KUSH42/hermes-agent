@@ -589,6 +589,9 @@ class StartupBannerWidget(Static):
     DEFAULT_CSS = """
     StartupBannerWidget {
         height: auto;
+        width: auto;
+        min-width: 100%;
+        overflow-x: visible;
         margin: 1 0 0 0;
     }
     """

@@ -114,12 +114,13 @@ class TestC3NarrowModeHintSort:
             f"'r' should come before 'c' after sort: {keys_in_order}"
 
     def test_hint_sort_implementation_in_build_hint_text(self):
-        """C3: _build_hint_text implementation contains priority sort."""
+        """C3: _build_hint_text uses primary/contextual tier ordering."""
         import inspect
         from hermes_cli.tui.tool_panel import ToolPanel
         src = inspect.getsource(ToolPanel._build_hint_text)
-        assert "_hint_priority" in src or "sort" in src, \
-            "C3: _build_hint_text should sort hints by priority"
+        # B1 three-tier model: primary tier always first, contextual tier second
+        assert "primary" in src, "C3: _build_hint_text must define a primary hints tier"
+        assert "contextual" in src, "C3: _build_hint_text must define a contextual hints tier"
 
 
 # ---------------------------------------------------------------------------

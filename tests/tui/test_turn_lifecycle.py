@@ -44,7 +44,9 @@ async def _run_turn(app: HermesApp, pilot, *, chunks: list[str] | None = None) -
     await asyncio.sleep(0.05)
     await pilot.pause()
     app.agent_running = False
-    await pilot.pause()
+    # Multiple pauses to let 150ms deactivation timer fire and widget children unmount
+    for _ in range(5):
+        await pilot.pause()
 
 
 # ---------------------------------------------------------------------------
@@ -62,12 +64,12 @@ async def test_thinking_widget_deactivates_after_turn_1():
         await _run_turn(app, pilot, chunks=["Hello\n", "world\n"])
 
         assert not thinking.display, "ThinkingWidget should be hidden after turn ends"
-        assert thinking._shimmer_timer is None, "shimmer timer should be stopped"
+        assert thinking._timer is None, "shimmer timer should be stopped"
 
 
 @pytest.mark.asyncio
 async def test_thinking_widget_activates_on_submit():
-    """ThinkingWidget stays hidden — activate() is a no-op (disabled)."""
+    """ThinkingWidget v2: activate() is functional — widget shows when agent starts."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -82,10 +84,15 @@ async def test_thinking_widget_activates_on_submit():
         inp.post_message(HermesInput.Submitted(value="hi"))
         await pilot.pause()
 
-        assert not thinking.display, "ThinkingWidget disabled (height:0, no-op activate)"
+        # ThinkingWidget v2: activate() is functional — widget is shown when running
+        # (unless HERMES_DETERMINISTIC env var set)
+        import os
+        if not os.environ.get("HERMES_DETERMINISTIC"):
+            assert thinking.display, "ThinkingWidget should be visible when agent is running"
 
         app.agent_running = False
-        await pilot.pause()
+        for _ in range(5):
+            await pilot.pause()
 
 
 @pytest.mark.asyncio
@@ -106,7 +113,7 @@ async def test_thinking_widget_deactivates_on_turn_2():
         # never reset because flush_output is never called from cli.py)
         await _run_turn(app, pilot, chunks=["turn 2 response\n"])
         assert not thinking.display, "ThinkingWidget should be hidden after turn 2"
-        assert thinking._shimmer_timer is None
+        assert thinking._timer is None
 
 
 @pytest.mark.asyncio
@@ -120,7 +127,7 @@ async def test_thinking_widget_deactivates_on_turn_3():
         for n in range(3):
             await _run_turn(app, pilot, chunks=[f"turn {n}\n"])
             assert not thinking.display, f"ThinkingWidget still active after turn {n}"
-            assert thinking._shimmer_timer is None
+            assert thinking._timer is None
 
 
 @pytest.mark.asyncio
@@ -138,7 +145,7 @@ async def test_thinking_widget_deactivates_tool_only_turn():
         await _run_turn(app, pilot, chunks=[])  # no text output
 
         assert not thinking.display, "ThinkingWidget should be hidden after tool-only turn"
-        assert thinking._shimmer_timer is None
+        assert thinking._timer is None
 
 
 @pytest.mark.asyncio
@@ -153,10 +160,12 @@ async def test_thinking_widget_deactivates_on_error_turn():
         await pilot.pause()
         # Simulate: agent errors immediately, no output sent
         app.agent_running = False
-        await pilot.pause()
+        # Multiple pauses to let 150ms deactivation timer fire
+        for _ in range(5):
+            await pilot.pause()
 
         assert not thinking.display
-        assert thinking._shimmer_timer is None
+        assert thinking._timer is None
 
 
 # ---------------------------------------------------------------------------

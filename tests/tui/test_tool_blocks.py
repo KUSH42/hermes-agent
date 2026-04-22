@@ -127,8 +127,9 @@ async def test_diff_block_body_has_trailing_blank_line():
         await pilot.pause()
 
         log = block._body.query_one(CopyableRichLog)
-        assert len(log.lines) == len(lines) + 1
-        assert "".join(segment.text for segment in log.lines[-1]) == ""
+        # Use _plain_lines (reliable in tests; log.lines needs compositor to render)
+        assert len(log._plain_lines) == len(lines) + 1
+        assert log._plain_lines[-1] == ""
 
 
 @pytest.mark.asyncio

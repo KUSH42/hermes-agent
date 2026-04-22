@@ -156,8 +156,10 @@ async def test_error_remediation_in_footer_only():
         except Exception:
             pass
 
-        # Footer remediation row should have error content
+        # Remediation is rendered inline in chip text in _content (not _remediation_row)
         fp = panel._footer_pane
         assert fp is not None
-        rem_text = str(fp._remediation_row.render()) if fp._remediation_row else ""
-        assert "⏱" in rem_text or "Timeout" in rem_text or "timeout" in rem_text.lower()
+        content_text = str(fp._content.render()) if fp._content else ""
+        assert "timeout" in content_text.lower() or "hint" in content_text.lower(), (
+            f"remediation chip text not found in footer content: {content_text!r}"
+        )

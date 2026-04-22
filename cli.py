@@ -3382,48 +3382,16 @@ class HermesCLI:
             ctx_len = self.agent.context_compressor.context_length
         cwd = os.getenv("TERMINAL_CWD", os.getcwd())
 
+        # Render banner at full terminal width so the logo never wraps inside
+        # a narrow pane. StartupBannerWidget has width:auto + overflow-x:visible,
+        # so anything wider than the host pane is allowed to overflow.
+        capture_width = shutil.get_terminal_size((80, 24)).columns
         app = _hermes_app
-        capture_width = None
         if app is not None:
-            import threading as _threading
-
-            done = _threading.Event()
-            result = {"width": None}
-
-            def _resolve_width() -> None:
-                try:
-                    from hermes_cli.tui.widgets import OutputPanel
-
-                    try:
-                        panel = app.query_one(OutputPanel)
-                    except Exception:
-                        panel = None
-
-                    if panel is not None:
-                        msg = panel.current_message
-                        if msg is not None:
-                            log = msg.current_prose_log()
-                            width = int(getattr(log.scrollable_content_region, "width", 0) or 0)
-                            if width > 0:
-                                result["width"] = max(1, width - 1)
-                                return
-
-                        panel_width = int(getattr(panel.scrollable_content_region, "width", 0) or 0)
-                        if panel_width > 0:
-                            result["width"] = max(1, panel_width - 1)
-                            return
-
-                    app_width = int(getattr(getattr(app, "size", None), "width", 0) or 0)
-                    if app_width > 0:
-                        result["width"] = max(1, app_width - 1)
-                finally:
-                    done.set()
-
-            app.call_from_thread(_resolve_width)
-            done.wait(timeout=1)
-            capture_width = result["width"]
-        if not capture_width:
-            capture_width = shutil.get_terminal_size((80, 24)).columns
+            app_width = int(getattr(getattr(app, "size", None), "width", 0) or 0)
+            if app_width > capture_width:
+                capture_width = app_width
+        capture_width = max(1, capture_width)
 
         capture = _Console(
             record=True,

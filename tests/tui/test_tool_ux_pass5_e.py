@@ -18,7 +18,7 @@ def _bare_header(**kwargs):
         _has_affordances=False, _label_rich=None, _is_child_diff=False,
         _header_args={}, _flash_msg=None, _flash_expires=0.0, _flash_tone="success",
         _error_kind=None, _tool_icon="", _full_path=None, _path_clickable=False,
-        _classes=frozenset(),
+        _is_child=False, _classes=frozenset(),
     )
     defaults.update(kwargs)
     for k, v in defaults.items():

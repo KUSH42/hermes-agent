@@ -1113,6 +1113,11 @@ class HermesApp(App):
         if ov.has_class("--visible"):
             ov.action_dismiss()
         else:
+            # Don't cover focus-trapping overlays like AnimConfigPanel —
+            # stacking workspace on top strands the underlying modal and
+            # pulls focus into unreachable territory.
+            if self._focus_blocking_overlay_visible():
+                return
             self._dismiss_all_info_overlays()
             tracker = getattr(self, "_workspace_tracker", None)
             if tracker is not None:
@@ -2372,6 +2377,28 @@ class HermesApp(App):
 
     def _dismiss_all_info_overlays(self) -> None:
         return self._svc_context.dismiss_all_info_overlays()
+
+    def _focus_blocking_overlay_visible(self) -> bool:
+        """True when an overlay is visible that traps input focus.
+
+        Used to suppress stacking new info overlays (workspace, help, etc.)
+        over modals like AnimConfigPanel that would be orphaned.
+        """
+        try:
+            from hermes_cli.tui.drawille_overlay import (
+                AnimConfigPanel as _ACP,
+                AnimGalleryOverlay as _AGO,
+            )
+        except Exception:
+            return False
+        for cls in (_ACP, _AGO):
+            try:
+                w = self.query_one(cls)
+            except Exception:
+                continue
+            if w.has_class("--visible"):
+                return True
+        return False
 
     # --- from _app_sessions.py ---
 

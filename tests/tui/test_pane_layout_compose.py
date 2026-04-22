@@ -251,11 +251,14 @@ async def test_v2_all_overlays_present():
     async with app.run_test(size=(140, 40)) as pilot:
         await pilot.pause()
         overlay_ids = [
-            "clarify", "approval", "sudo", "secret", "undo-confirm",
-            "history-search", "keymap-help", "help-overlay", "usage-overlay",
-            "commands-overlay", "workspace-overlay", "session-overlay",
-            "new-session-overlay", "merge-confirm-overlay",
-            "model-picker-overlay", "reasoning-picker-overlay",
+            # R3: 7 interrupt overlays unified into interrupt-overlay
+            "interrupt-overlay",
+            "history-search", "keymap-help",
+            # R3 Phase C: reference overlays
+            "help-overlay", "usage-overlay", "commands-overlay", "workspace-overlay",
+            "session-overlay",
+            # R3: config overlay replaces individual pickers
+            "config-overlay",
         ]
         for oid in overlay_ids:
             widget = app.query_one(f"#{oid}")

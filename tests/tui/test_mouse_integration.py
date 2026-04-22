@@ -417,7 +417,7 @@ async def test_code_block_copy_flashes_border():
         await asyncio.sleep(0.05)
         await _pause(pilot)
 
-        with patch.object(app, "_copy_text_with_hint") as mock_copy:
+        with patch.object(app._svc_theme, "copy_text_with_hint") as mock_copy:
             app._copy_code_block(block)
             await _pause(pilot)
 

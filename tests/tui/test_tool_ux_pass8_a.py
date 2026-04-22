@@ -84,10 +84,10 @@ class TestA2TailFollowHint:
         )
         # Find if the tail append is under the if _block_streaming block
         streaming_if_idx = src.index("if _block_streaming")
-        # The ("f", " ", "tail  ") append must appear after the if block_streaming
-        f_tail_idx = src.find('"tail  "')
+        # The ("f", ..., "tail") append must appear after the if block_streaming
+        f_tail_idx = src.find('"tail"')
         if f_tail_idx == -1:
-            f_tail_idx = src.find("'tail  '")
+            f_tail_idx = src.find("'tail'")
         assert f_tail_idx > streaming_if_idx, (
             "tail hint append must appear after 'if _block_streaming'"
         )

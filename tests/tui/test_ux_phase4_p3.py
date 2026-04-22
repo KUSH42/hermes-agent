@@ -14,17 +14,14 @@ from unittest.mock import MagicMock, patch
 
 
 def test_flash_timer_matches_ttl():
-    """_flash_expires delta must equal the set_timer duration (both 1.2)."""
+    """_flash_header must pass duration=1.2 to feedback.flash (RX1 routing)."""
     import inspect
     from hermes_cli.tui import tool_panel
 
     src = inspect.getsource(tool_panel.ToolPanel._flash_header)
-    # TTL: monotonic() + 1.2
-    assert "time.monotonic() + 1.2" in src
-    # Timer: set_timer(1.2, ...)
-    assert "set_timer(1.2," in src
-    # Old stale value must NOT appear
-    assert "set_timer(1.3," not in src
+    # RX1: routes through feedback.flash with duration=1.2
+    assert "duration=1.2" in src
+    assert "feedback.flash" in src
 
 
 # ---------------------------------------------------------------------------
@@ -277,21 +274,21 @@ def _make_panel_for_hint(result_summary=None) -> Any:
 
 
 def test_hint_text_contains_copy_ansi_html():
-    """_build_hint_text must include C/H for color/html copy."""
-    panel = _make_panel_for_hint()
+    """Power keys (C/H) not shown inline — F1 overflow indicator present when result_summary set."""
+    panel = _make_panel_for_hint(result_summary=_make_summary_v4([]))
     text = panel._build_hint_text()
     plain = text.plain if hasattr(text, "plain") else str(text)
-    assert "C/H" in plain
-    assert "color/html" in plain
+    # Power keys are behind F1; hint bar must signal F1 overflow when result_summary set
+    assert "F1" in plain
 
 
 def test_hint_text_contains_invocation():
-    """_build_hint_text must always include I for invocation copy."""
-    panel = _make_panel_for_hint()
+    """Power keys (I/invocation) not shown inline — F1 overflow indicator present when result_summary set."""
+    panel = _make_panel_for_hint(result_summary=_make_summary_v4([]))
     text = panel._build_hint_text()
     plain = text.plain if hasattr(text, "plain") else str(text)
-    assert "I" in plain
-    assert "invocation" in plain
+    # Power keys are behind F1; hint bar must signal F1 overflow when result_summary set
+    assert "F1" in plain
 
 
 def test_hint_text_shows_url_when_artifacts():
@@ -309,7 +306,7 @@ def test_hint_text_shows_url_when_artifacts():
     text = panel._build_hint_text()
     plain = text.plain if hasattr(text, "plain") else str(text)
     assert "u" in plain
-    assert "copy urls" in plain.lower()
+    assert "urls" in plain.lower()
 
 
 # ---------------------------------------------------------------------------

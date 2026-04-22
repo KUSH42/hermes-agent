@@ -184,11 +184,12 @@ class SessionsService(AppService):
             except Exception:
                 pass
 
-        def _do_exec() -> None:
-            import os as _os
-            _os.execvp(_sys.argv[0], [_sys.argv[0], "--worktree-session-id", session_id])
-
-        self.app.exit(callback=_do_exec)
+        import os as _os
+        # Store exec callback on app; on_unmount fires it after Textual cleans up.
+        self.app._pending_exec = lambda: _os.execvp(
+            _sys.argv[0], [_sys.argv[0], "--worktree-session-id", session_id]
+        )
+        self.app.exit()
 
     def _on_session_notify_event(self, event: dict) -> None:
         """Called from _NotifyListener daemon thread — must use call_from_thread."""

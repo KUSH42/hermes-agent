@@ -254,7 +254,7 @@ class InterruptOverlay(Widget, can_focus=True):
                 self._activate(nxt)
 
     def action_dismiss(self) -> None:  # BINDINGS
-        self.dismiss_current("")
+        self.dismiss_current("__cancel__")
 
     def hide_if_kind(self, kind: "InterruptKind") -> None:
         """Tear down without resolving (used when external state becomes None).

@@ -293,12 +293,12 @@ class TestAnimParamsHeatTrail:
         import drawille
         c = drawille.Canvas()
         # intensity=1.0 → 4 pixels in 2×2 block
-        _braille_density_set(c, 0, 0, 1.0)
+        _braille_density_set(c, 0, 0, 1.0, 10, 10)
         frame = c.frame()
         assert isinstance(frame, str)
         # intensity=0 → 0 pixels
         c2 = drawille.Canvas()
-        _braille_density_set(c2, 0, 0, 0.0)
+        _braille_density_set(c2, 0, 0, 0.0, 10, 10)
         # no exception = pass; we just verify it doesn't crash
         assert isinstance(c2.frame(), str)
 

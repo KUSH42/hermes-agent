@@ -555,10 +555,44 @@ _SEARCH_FILE_RE = re.compile(r'^([\w./_-]+\.[\w]+|/[\w./_-]+)')
 _URL_RE = re.compile(r'^https?://', re.IGNORECASE)
 
 
+def _parse_search_json(result: str) -> dict | None:
+    """Return dict when result is JSON search output {matches:[{path,line,...}], ...}."""
+    s = result.lstrip()
+    if not s or s[0] != "{":
+        return None
+    try:
+        import json as _json
+        data = _json.loads(result)
+    except (ValueError, MemoryError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    matches = data.get("matches")
+    if not isinstance(matches, list):
+        return None
+    return data
+
+
 def _extract_search_artifacts(result: str) -> tuple[Artifact, ...]:
     """Extract ALL search artifacts (no cap — caller handles B3 truncation)."""
     arts: list[Artifact] = []
     seen: set[str] = set()
+
+    data = _parse_search_json(result)
+    if data is not None:
+        for m in data.get("matches") or ():
+            if not isinstance(m, dict):
+                continue
+            path = m.get("path") or m.get("file")
+            if not path or path in seen:
+                continue
+            arts.append(Artifact(
+                label=os.path.basename(str(path)),
+                path_or_url=str(path), kind="file",
+            ))
+            seen.add(path)
+        return tuple(arts)
+
     for line in result.splitlines():
         # URL result lines
         stripped = line.strip()
@@ -602,14 +636,20 @@ def search_result_v4(ctx: ParseContext) -> ResultSummaryV4:
         )
 
     lines = [l for l in raw.splitlines() if l.strip()]
-    # For web_search JSON responses, count actual result objects not raw lines
-    try:
-        import json as _json
-        _parsed = _json.loads(raw)
-        _web = _parsed.get("data", {}).get("web", [])
-        match_count = len(_web) if isinstance(_web, list) else len(lines)
-    except Exception:
-        match_count = len(lines)
+    # Prefer structured counts when result is JSON (search_files, web_search)
+    search_json = _parse_search_json(raw)
+    if search_json is not None:
+        matches = search_json.get("matches") or []
+        total = search_json.get("total_count")
+        match_count = int(total) if isinstance(total, int) else len(matches)
+    else:
+        try:
+            import json as _json
+            _parsed = _json.loads(raw)
+            _web = _parsed.get("data", {}).get("web", [])
+            match_count = len(_web) if isinstance(_web, list) else len(lines)
+        except Exception:
+            match_count = len(lines)
     artifacts = _extract_search_artifacts(raw)
     artifacts_truncated = len(artifacts) > _ARTIFACT_DISPLAY_CAP  # B3
     file_count = _count_distinct_files(artifacts)

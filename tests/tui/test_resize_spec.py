@@ -289,6 +289,8 @@ class TestOmissionBarResize:
         bar._last_resize_w = 80
         bar._label = MagicMock()
         bar._label.display = True
+        bar.size.width = 35  # on_resize uses self.size.width
+        bar._narrow = False
 
         # Simulate crossing below THRESHOLD_NARROW
         OmissionBar.on_resize(bar, _make_size_event(35))
@@ -303,6 +305,8 @@ class TestOmissionBarResize:
         bar._last_resize_w = 0  # initial state
         bar._label = MagicMock()
         bar._label.display = True
+        bar.size.width = 70  # on_resize uses self.size.width
+        bar._narrow = True  # was narrow, going wide
 
         OmissionBar.on_resize(bar, _make_size_event(70))
         # 0 → 70: crosses THRESHOLD_NARROW (60)? was_below=(0<58)=True, now_above=(70>=62)=True → Yes!

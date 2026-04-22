@@ -1,6 +1,7 @@
 """Tests for Phase C — Error Handling & State (C1/C2/C3/C5)."""
 from __future__ import annotations
 
+import types
 import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
 from textual.widget import Widget
@@ -18,7 +19,7 @@ def _bare_header(**kwargs):
         _has_affordances=False, _label_rich=None, _is_child_diff=False,
         _header_args={}, _flash_msg=None, _flash_expires=0.0, _flash_tone="success",
         _error_kind=None, _tool_icon="", _full_path=None, _path_clickable=False,
-        _classes=frozenset(),
+        _is_child=False, _classes=frozenset(),
     )
     defaults.update(kwargs)
     for k, v in defaults.items():
@@ -243,15 +244,17 @@ class TestC5:
 
     def test_flash_header_passes_tone(self):
         from hermes_cli.tui.tool_panel import ToolPanel
-        panel = object.__new__(ToolPanel)
+        panel = types.SimpleNamespace()
         panel._block = MagicMock()
         panel._block._header = MagicMock()
-        panel._block._header._flash_msg = None
-        panel._block._header._flash_tone = "success"
+        panel.id = "tool-panel-test"
+        panel.app = MagicMock()
+        panel.app.feedback = MagicMock()
+        panel._flash_header = types.MethodType(ToolPanel._flash_header, panel)
 
-        import time
-        with patch.object(panel, "set_timer"):
-            panel._flash_header("copied HTML", tone="warning")
+        panel._flash_header("copied HTML", tone="warning")
 
-        assert panel._block._header._flash_tone == "warning"
-        assert panel._block._header._flash_msg == "copied HTML"
+        panel.app.feedback.flash.assert_called_once()
+        call_kwargs = panel.app.feedback.flash.call_args
+        assert call_kwargs.kwargs.get("tone") == "warning" or call_kwargs[1].get("tone") == "warning"
+        assert "copied HTML" in str(call_kwargs)

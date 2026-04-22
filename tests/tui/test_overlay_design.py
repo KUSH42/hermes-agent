@@ -113,7 +113,7 @@ def test_countdown_strip_color_error():
 
 @pytest.mark.asyncio
 async def test_pause_stops_timer():
-    """pause_countdown() clears _countdown_timer."""
+    """InterruptOverlay is visible when approval state is set (R3: CountdownMixin removed)."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -125,16 +125,14 @@ async def test_pause_stops_timer():
         )
         app.approval_state = state
         await pilot.pause()
-        w = app.query_one(ApprovalWidget)
+        from hermes_cli.tui.overlays.interrupt import InterruptOverlay
+        w = app.query_one(InterruptOverlay)
         assert w.display
-        w.pause_countdown()
-        assert w._countdown_timer is None
-        assert w._was_paused is True
 
 
 @pytest.mark.asyncio
 async def test_resume_restarts_timer():
-    """resume_countdown() restarts the timer and extends the deadline."""
+    """InterruptOverlay has active countdown timer when approval state is set."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -147,25 +145,18 @@ async def test_resume_restarts_timer():
         )
         app.approval_state = state
         await pilot.pause()
-        w = app.query_one(ApprovalWidget)
-        w.pause_countdown()
-        old_deadline = state.deadline
-        await asyncio.sleep(0.2)
-        w.resume_countdown()
-        await pilot.pause()
-        # deadline should be extended by ≥0.1s (actual sleep ~0.2s)
-        assert state.deadline > old_deadline + 0.1
+        from hermes_cli.tui.overlays.interrupt import InterruptOverlay
+        w = app.query_one(InterruptOverlay)
+        assert w.display
         assert w._countdown_timer is not None
-        assert w._was_paused is False
 
 
 @pytest.mark.asyncio
 async def test_undo_confirm_pauses_approval_countdown():
-    """Opening UndoConfirmOverlay pauses ApprovalWidget countdown (P0-B stacking)."""
+    """InterruptOverlay remains visible when undo queues on top of approval (preempt)."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        # Activate approval
         rq = queue.Queue()
         app.approval_state = ChoiceOverlayState(
             deadline=time.monotonic() + 30,
@@ -174,9 +165,10 @@ async def test_undo_confirm_pauses_approval_countdown():
             choices=["once", "deny"],
         )
         await pilot.pause()
-        approval = app.query_one(ApprovalWidget)
-        assert approval.display
-        # Activate undo confirm
+        from hermes_cli.tui.overlays.interrupt import InterruptOverlay, InterruptKind
+        overlay = app.query_one(InterruptOverlay)
+        assert overlay.display
+        # Undo preempts approval — overlay still visible
         urq = queue.Queue()
         app.undo_state = UndoOverlayState(
             deadline=time.monotonic() + 10,
@@ -184,14 +176,14 @@ async def test_undo_confirm_pauses_approval_countdown():
             user_text="hello world",
         )
         await pilot.pause()
-        # ApprovalWidget countdown should be paused
-        assert approval._was_paused is True
-        assert approval._countdown_timer is None
+        assert overlay.display
+        # Undo is now on top; approval queued
+        assert overlay.current_kind == InterruptKind.UNDO
 
 
 @pytest.mark.asyncio
 async def test_undo_confirm_resume_on_dismiss():
-    """Dismissing UndoConfirmOverlay resumes paused agent overlay countdown."""
+    """Clearing undo_state allows queued approval to resume in InterruptOverlay."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -203,7 +195,8 @@ async def test_undo_confirm_resume_on_dismiss():
             choices=["once", "deny"],
         )
         await pilot.pause()
-        approval = app.query_one(ApprovalWidget)
+        from hermes_cli.tui.overlays.interrupt import InterruptOverlay, InterruptKind
+        overlay = app.query_one(InterruptOverlay)
         urq = queue.Queue()
         app.undo_state = UndoOverlayState(
             deadline=time.monotonic() + 10,
@@ -211,13 +204,11 @@ async def test_undo_confirm_resume_on_dismiss():
             user_text="hello",
         )
         await pilot.pause()
-        assert approval._was_paused is True
-        # Dismiss undo confirm
+        assert overlay.current_kind == InterruptKind.UNDO
+        # Clear undo → overlay goes back to approval
         app.undo_state = None
         await pilot.pause()
-        # Approval countdown should be resumed
-        assert approval._was_paused is False
-        assert approval._countdown_timer is not None
+        assert overlay.display
 
 
 # ---------------------------------------------------------------------------
@@ -551,16 +542,16 @@ async def test_approval_shows_exclamation_icon():
 
 @pytest.mark.asyncio
 async def test_undo_overlay_border_is_all_sides():
-    """UndoConfirmOverlay DEFAULT_CSS uses all-sides border (not top-only)."""
-    css = UndoConfirmOverlay.DEFAULT_CSS
+    """InterruptOverlay DEFAULT_CSS uses all-sides border (not top-only)."""
+    from hermes_cli.tui.overlays.interrupt import InterruptOverlay
+    css = InterruptOverlay.DEFAULT_CSS
     assert "border: tall" in css
-    assert "border-top" not in css
+    assert "border-top:" not in css
 
 
 @pytest.mark.asyncio
 async def test_tray_modal_border_top_only():
-    """Tray modals (ClarifyWidget, ApprovalWidget, etc.) use top-only border."""
-    for cls in (ClarifyWidget, ApprovalWidget, SudoWidget, SecretWidget):
-        css = cls.DEFAULT_CSS
-        assert "border-top:" in css, f"{cls.__name__} should have border-top"
-        assert "border: tall" not in css, f"{cls.__name__} should NOT have all-sides border"
+    """InterruptOverlay uses tall all-sides border (R3: alias classes share same CSS)."""
+    from hermes_cli.tui.overlays.interrupt import InterruptOverlay
+    css = InterruptOverlay.DEFAULT_CSS
+    assert "border: tall" in css

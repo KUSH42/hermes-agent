@@ -47,6 +47,7 @@ async def test_status_bar_shows_session_label():
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
 
+        app.status_model = "claude-opus"
         app.session_label = "my session"
         await pilot.pause()
 

@@ -1,6 +1,7 @@
 """SearchRenderer — formats grep/search output with path headers and hit highlights."""
 from __future__ import annotations
 
+import json
 import re
 from typing import TYPE_CHECKING, ClassVar
 
@@ -12,8 +13,45 @@ if TYPE_CHECKING:
 _HIT_RE = re.compile(r"^(\s*)(\d+)[:\-]\s*(.*)")
 
 
+def _parse_search_json(text: str) -> list[tuple[str, list[tuple[int, str]]]] | None:
+    """Parse JSON search output {matches:[{path,line,content}]} into groups."""
+    s = text.lstrip()
+    if not s or s[0] != "{":
+        return None
+    try:
+        data = json.loads(text)
+    except (ValueError, MemoryError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    matches = data.get("matches")
+    if not isinstance(matches, list):
+        return None
+    by_path: dict[str, list[tuple[int, str]]] = {}
+    order: list[str] = []
+    for m in matches:
+        if not isinstance(m, dict):
+            continue
+        path = m.get("path") or m.get("file") or "<unknown>"
+        path = str(path)
+        line_no = m.get("line") or m.get("line_number") or 0
+        try:
+            line_no = int(line_no)
+        except (TypeError, ValueError):
+            line_no = 0
+        content = str(m.get("content") or m.get("text") or "").rstrip("\n")
+        if path not in by_path:
+            by_path[path] = []
+            order.append(path)
+        by_path[path].append((line_no, content))
+    return [(p, by_path[p]) for p in order]
+
+
 def _parse_search_output(text: str) -> list[tuple[str, list[tuple[int, str]]]]:
     """Parse search output into [(path, [(line_num, content), ...]), ...]."""
+    json_groups = _parse_search_json(text)
+    if json_groups is not None:
+        return json_groups
     groups: list[tuple[str, list[tuple[int, str]]]] = []
     current_path: str | None = None
     current_hits: list[tuple[int, str]] = []

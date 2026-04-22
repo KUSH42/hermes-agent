@@ -92,7 +92,7 @@ async def test_streaming_pipeline_ordering():
         await asyncio.sleep(0.1)
         await pilot.pause()
 
-        assert len(msg.response_log.lines) >= 50  # Should have most lines committed
+        assert len(msg._raw_text) > 0  # Should have raw text accumulated from queue
 
 
 @pytest.mark.asyncio

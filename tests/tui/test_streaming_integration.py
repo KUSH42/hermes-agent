@@ -44,7 +44,7 @@ async def test_complete_line_committed_to_richlog():
 
         msg = panel.current_message
         assert msg is not None
-        assert len(msg.response_log.lines) >= 1
+        assert len(msg.response_log._plain_lines) >= 1
         # Live line buffer should be empty after committing
         assert panel.live_line._buf == ""
 
@@ -64,7 +64,7 @@ async def test_partial_line_stays_in_live_buffer():
 
         msg = panel.current_message
         assert msg is not None
-        assert len(msg.response_log.lines) == 0
+        assert len(msg.response_log._plain_lines) == 0
         assert panel.live_line._buf == "partial"
 
 
@@ -85,7 +85,7 @@ async def test_mixed_complete_and_partial_lines():
         await _pause(pilot)
 
         msg = panel.current_message
-        assert len(msg.response_log.lines) >= 3
+        assert len(msg.response_log._plain_lines) >= 3
         assert panel.live_line._buf == ""  # flush_output drains partial into engine too
 
 
@@ -109,7 +109,7 @@ async def test_streaming_token_by_token():
         await _pause(pilot)
 
         msg = panel.current_message
-        assert len(msg.response_log.lines) >= 2
+        assert len(msg.response_log._plain_lines) >= 2
         assert panel.live_line._buf == ""
 
 
@@ -142,7 +142,7 @@ async def test_cprint_auto_appends_newline_for_tui():
 
             msg = panel.current_message
             # With the fix, \n is auto-appended so LiveLineWidget commits it
-            assert len(msg.response_log.lines) >= 1
+            assert len(msg.response_log._plain_lines) >= 1
             assert panel.live_line._buf == ""
         finally:
             cli_mod._hermes_app = original_app
@@ -170,7 +170,7 @@ async def test_flush_commits_partial_line():
 
         assert panel.live_line._buf == ""
         msg = panel.current_message
-        assert len(msg.response_log.lines) >= 1
+        assert len(msg.response_log._plain_lines) >= 1
 
 
 @pytest.mark.asyncio
@@ -205,7 +205,7 @@ async def test_flush_after_complete_lines():
         await _pause(pilot)
 
         msg = panel.current_message
-        assert len(msg.response_log.lines) >= 2
+        assert len(msg.response_log._plain_lines) >= 2
         assert panel.live_line._buf == ""
 
 
@@ -228,7 +228,7 @@ async def test_output_creates_message_panel_on_demand():
 
         msg = panel.current_message
         assert msg is not None
-        assert len(msg.response_log.lines) >= 1
+        assert len(msg.response_log._plain_lines) >= 1
 
 
 @pytest.mark.asyncio
@@ -294,7 +294,7 @@ async def test_output_immediately_after_turn_start():
 
         msg = app.query_one(OutputPanel).current_message
         assert msg is not None
-        assert len(msg.response_log.lines) >= 2
+        assert len(msg.response_log._plain_lines) >= 2
 
 
 # ---------------------------------------------------------------------------
@@ -471,7 +471,7 @@ async def test_reasoning_then_response_streaming():
         app.flush_output()
         await _pause(pilot)
 
-        assert len(msg.response_log.lines) >= 2
+        assert len(msg.response_log._plain_lines) >= 2
         assert len(msg.reasoning._plain_lines) >= 1  # 1 reasoning line (no header)
 
 
@@ -495,7 +495,7 @@ async def test_rapid_streaming_does_not_lose_content():
         await _pause(pilot, n=5)
 
         msg = panel.current_message
-        assert len(msg.response_log.lines) >= 50
+        assert len(msg.response_log._plain_lines) >= 50
 
 
 @pytest.mark.asyncio
@@ -521,7 +521,7 @@ async def test_interleaved_output_and_flush():
         await _pause(pilot)
 
         msg = panel.current_message
-        assert len(msg.response_log.lines) >= 3  # First, partial, Second
+        assert len(msg.response_log._plain_lines) >= 3  # First, partial, Second
         assert panel.live_line._buf == ""
 
 
@@ -562,7 +562,7 @@ async def test_chunks_render_incrementally_on_new_message():
         await _pause(pilot)
 
         # Both lines should be committed
-        assert len(msg.response_log.lines) >= 2
+        assert len(msg.response_log._plain_lines) >= 2
 
 
 def test_cpython_fast_path_disabled():
@@ -666,7 +666,7 @@ async def test_user_echo_does_not_pollute_response_log():
         msg = panel.current_message
         assert msg is not None
         # RichLog should only have response text, not user echo
-        assert len(msg.response_log.lines) >= 1
+        assert len(msg.response_log._plain_lines) >= 1
 
 
 # ---------------------------------------------------------------------------

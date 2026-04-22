@@ -47,14 +47,18 @@ class TestCodeBlockFooterCopyFlash:
         assert hasattr(CodeBlockFooter, "flash_copy")
 
     def test_restore_copy_method_exists(self) -> None:
+        """RX1: restore handled by CodeFooterAdapter.restore(); _copy_original is the fallback."""
         from hermes_cli.tui.widgets import CodeBlockFooter
-        assert hasattr(CodeBlockFooter, "_restore_copy")
+        # _restore_copy replaced by CodeFooterAdapter (RX1 Phase B)
+        f = CodeBlockFooter()
+        assert hasattr(f, "_copy_original"), "CodeBlockFooter must have _copy_original for restore"
 
     def test_flash_copy_timer_attr(self) -> None:
+        """RX1: timer managed by FeedbackService; flash_copy delegates to feedback.flash()."""
         from hermes_cli.tui.widgets import CodeBlockFooter
         f = CodeBlockFooter()
-        assert hasattr(f, "_copy_flash_timer")
-        assert f._copy_flash_timer is None
+        # Timer is now internal to FeedbackService — CodeBlockFooter no longer holds it
+        assert hasattr(f, "_copy_original"), "CodeBlockFooter must have _copy_original"
 
     def test_set_actions_stores_original(self) -> None:
         from hermes_cli.tui.widgets import CodeBlockFooter

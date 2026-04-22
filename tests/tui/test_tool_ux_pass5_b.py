@@ -166,7 +166,7 @@ class TestB4:
     def test_update_progress_updates_attrs(self):
         from hermes_cli.tui.write_file_block import WriteFileBlock
         wfb = WriteFileBlock(path="/tmp/test.py")
-        wfb._progress_label = MagicMock()
+        wfb._progress = MagicMock()
         wfb.update_progress(1024, 4096)
         assert wfb._bytes_written == 1024
         assert wfb._bytes_total == 4096
@@ -174,17 +174,18 @@ class TestB4:
     def test_update_progress_zero_clears_label(self):
         from hermes_cli.tui.write_file_block import WriteFileBlock
         wfb = WriteFileBlock(path="/tmp/test.py")
-        wfb._progress_label = MagicMock()
+        wfb._progress = MagicMock()
         wfb.update_progress(0)
-        wfb._progress_label.update.assert_called_with("")
+        # written=0 shows "writing…" placeholder
+        wfb._progress.update.assert_called_with("writing…")
 
     def test_update_progress_shows_bytes(self):
         from hermes_cli.tui.write_file_block import WriteFileBlock
         wfb = WriteFileBlock(path="/tmp/test.py")
-        wfb._progress_label = MagicMock()
+        wfb._progress = MagicMock()
         wfb.update_progress(2048, 8192)
-        call_args = wfb._progress_label.update.call_args[0][0]
-        assert "Writing" in call_args or "writing" in call_args.lower()
+        call_args = wfb._progress.update.call_args[0][0]
+        assert "writing" in call_args.lower()
 
 
 # ---------------------------------------------------------------------------

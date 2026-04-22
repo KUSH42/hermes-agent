@@ -206,17 +206,21 @@ async def test_hermes_input_background_matches_app():
 
 @pytest.mark.asyncio
 async def test_hermes_input_has_no_border():
-    """HermesInput must have no border — clean inline appearance."""
+    """HermesInput border must be subtle (alpha < 0.5) or absent — clean inline appearance."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         inp = app.query_one(HermesInput)
         edges = inp.styles.border
-        # Each side is a (border_type: str, color) tuple; '' = no border
         sides = [edges.top, edges.right, edges.bottom, edges.left]
-        assert all(s[0] == "" for s in sides), (
-            f"HermesInput should have no border on any side, got: {edges!r}"
-        )
+        # Either no border (type=="") or low-alpha border (a < 0.5) for subtle appearance
+        for side in sides:
+            border_type, color = side
+            if border_type:
+                # Has a border — must be very transparent (low alpha)
+                assert color.a < 0.5, (
+                    f"HermesInput border must be transparent (a<0.5), got: {color!r}"
+                )
 
 
 @pytest.mark.asyncio
@@ -361,8 +365,8 @@ async def test_user_echo_has_bullet_prefix():
         bullet: _EchoBullet = panel.query_one("#echo-text")  # type: ignore[assignment]
         content = bullet.get_text()
         plain = content.plain if hasattr(content, "plain") else str(content)
-        assert "●" in plain, (
-            f"User echo should have ● bullet prefix, plain: {plain!r}"
+        assert "●" in plain or "❯" in plain, (
+            f"User echo should have ● or ❯ prefix, plain: {plain!r}"
         )
 
 

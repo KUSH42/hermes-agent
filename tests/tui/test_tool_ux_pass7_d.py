@@ -15,13 +15,15 @@ class TestD1PeekHint:
     """_build_hint_text shows Shift+Enter peek hint when panel is in ToolGroup."""
 
     def test_peek_hint_implementation_in_source(self):
-        """D1: _build_hint_text source references _get_tool_group and peek hint."""
+        """D1: peek/⇧↵ are power-tier hints, signalled by F1 overflow indicator."""
         import inspect
         from hermes_cli.tui.tool_panel import ToolPanel
         src = inspect.getsource(ToolPanel._build_hint_text)
-        assert "_get_tool_group" in src, "D1: _get_tool_group import missing from _build_hint_text"
-        assert "peek" in src, "D1: 'peek' hint text missing from _build_hint_text"
-        assert "⇧↵" in src, "D1: Shift+Enter symbol missing from _build_hint_text"
+        # B1 three-tier model: power keys (⇧↵/peek) are not shown inline;
+        # they are behind F1. Verify F1 overflow is signalled.
+        assert "_power_keys_exist" in src or "F1" in src, (
+            "D1: power-tier overflow (F1) must be signalled in _build_hint_text"
+        )
 
     def test_get_tool_group_import_present(self):
         """D1: _get_tool_group is importable from tool_group."""

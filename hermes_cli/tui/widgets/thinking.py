@@ -229,6 +229,7 @@ class ThinkingWidget(Widget):
 
     DEFAULT_CSS = """
 ThinkingWidget { height: 0; display: none; }
+ThinkingWidget.--active { border-left: wide $primary; }
 ThinkingWidget.--active.--mode-line    { height: 1; display: block; }
 ThinkingWidget.--active.--mode-compact { height: 2; display: block; }
 ThinkingWidget.--active.--mode-default { height: 3; display: block; }

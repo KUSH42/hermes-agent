@@ -14,15 +14,12 @@ def test_plan_panel_collapsed_reactive_exists():
     assert hasattr(HermesApp, "plan_panel_collapsed")
 
 
-# T2: plan_panel_collapsed defaults to False
+# T2: plan_panel_collapsed defaults to True (starts collapsed to avoid empty-gap visual bug)
 def test_plan_panel_collapsed_default():
-    # Access via class attribute descriptor default — reactive default is False
-    # reactive(False) → the default value at init is False
     r = HermesApp.__dict__.get("plan_panel_collapsed")
     assert r is not None
-    # Reactive objects store their default; check the value is falsy (False)
-    # We can't easily access .default without an instance, so just check it's not True
-    assert r._default is False or r._default == False or str(r._default) in ("False", "<function>")
+    # Default is True — panel starts collapsed so the empty sections don't create a gap
+    assert r._default is True or r._default == True
 
 
 # T3: PlanPanel._collapsed reactive default is False

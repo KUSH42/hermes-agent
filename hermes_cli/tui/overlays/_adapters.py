@@ -28,15 +28,24 @@ def _choices_from_state(state: "ChoiceOverlayState") -> list[InterruptChoice]:
     return [InterruptChoice(id=c, label=c) for c in state.choices]
 
 
-def _make_on_resolve(state_attr: str, app: Any, state: Any, timeout_value: Any = None):
+def _make_on_resolve(
+    state_attr: str,
+    app: Any,
+    state: Any,
+    timeout_value: Any = None,
+    cancel_value: Any = None,
+):
     """Build an on_resolve callback that puts value on the state queue and clears reactive.
 
-    Empty string ⇒ cancelled / timed out; ``timeout_value`` used in that case.
+    ``"__cancel__"`` ⇒ explicit escape; uses ``cancel_value``.
+    Empty string ⇒ countdown timeout; uses ``timeout_value``.
     """
 
     def _on_resolve(value: str) -> None:
         try:
-            if value == "":
+            if value == "__cancel__":
+                state.response_queue.put(cancel_value)
+            elif value == "":
                 state.response_queue.put(timeout_value)
             else:
                 state.response_queue.put(value)
@@ -87,7 +96,7 @@ def make_approval_payload(app: Any, state: "ChoiceOverlayState") -> InterruptPay
         selected=int(state.selected or 0),
         diff_text=state.diff_text,
         on_resolve=_make_on_resolve(
-            "approval_state", app, state, timeout_value="deny"
+            "approval_state", app, state, timeout_value="deny", cancel_value=None
         ),
     )
     p._linked_state = state  # type: ignore[attr-defined]

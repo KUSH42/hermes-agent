@@ -40,7 +40,7 @@ def _bare_header(**kwargs):
         _has_affordances=False, _label_rich=None, _is_child_diff=False,
         _header_args={}, _flash_msg=None, _flash_expires=0.0, _flash_tone="success",
         _error_kind=None, _tool_icon="", _full_path=None, _path_clickable=False,
-        _classes=frozenset(),
+        _is_child=False, _classes=frozenset(),
     )
     defaults.update(kwargs)
     for k, v in defaults.items():
@@ -212,7 +212,7 @@ class TestA4:
 
 class TestA5:
     def test_error_banner_mounted_on_error(self):
-        """set_result_summary mounts .error-banner when is_error + error_kind set."""
+        """A2: error CSS class added on set_result_summary when is_error + error_kind set."""
         from hermes_cli.tui.tool_panel import ToolPanel
         from hermes_cli.tui.tool_result_parse import ResultSummaryV4, Chip
 
@@ -223,21 +223,24 @@ class TestA5:
         stb._header._microcopy_shown = True
         stb.query = MagicMock(return_value=[])
 
+        from hermes_cli.tui.tool_category import ToolCategory
+        import time as _time
+
         panel = object.__new__(ToolPanel)
+        panel._classes = set()
         panel._block = stb
         panel._result_summary_v4 = None
         panel._completed_at = None
+        panel._start_time = _time.monotonic()
         panel._user_collapse_override = False
         panel._footer_pane = MagicMock()
         panel._footer_pane.update_summary_v4 = MagicMock()
         panel._saved_visible_start = None
-
-        banner_mounted = []
-
-        def fake_mount(widget, after=None):
-            banner_mounted.append(widget)
-
-        stb.mount = fake_mount
+        panel._accent = None
+        panel._body_pane = None
+        panel._tool_name = "bash"
+        panel._category = ToolCategory.SHELL
+        panel._tool_args = {}
 
         summary = ResultSummaryV4(
             primary="✗ timeout",
@@ -250,28 +253,39 @@ class TestA5:
             error_kind="timeout",
         )
 
+        def _fake_add_class(*names, update=True):
+            panel._classes.update(names)
+
+        def _fake_remove_class(*names, update=True):
+            panel._classes.difference_update(names)
+
         with patch.object(panel, "_has_footer_content", return_value=True):
             with patch.object(panel, "_apply_complete_auto_collapse"):
                 with patch.object(panel, "post_message"):
                     with patch.object(panel, "set_timer"):
-                        # Patch collapsed as a data descriptor on the class level
-                        # to avoid ReactiveError from uninitialized reactive node;
-                        # save original and restore after test
-                        _orig = type(panel).__dict__.get("collapsed")
-                        type(panel).collapsed = property(lambda self: False,
-                                                         lambda self, v: None)
-                        try:
-                            panel.set_result_summary(summary)
-                        finally:
-                            if _orig is not None:
-                                type(panel).collapsed = _orig
-                            else:
+                        with patch.object(panel, "add_class", side_effect=_fake_add_class):
+                            with patch.object(panel, "remove_class", side_effect=_fake_remove_class):
+                                # Patch collapsed as a data descriptor on the class level
+                                # to avoid ReactiveError from uninitialized reactive node;
+                                # save original and restore after test
+                                _orig = type(panel).__dict__.get("collapsed")
+                                type(panel).collapsed = property(lambda self: False,
+                                                                 lambda self, v: None)
                                 try:
-                                    del type(panel).collapsed
-                                except Exception:
-                                    pass
+                                    panel.set_result_summary(summary)
+                                finally:
+                                    if _orig is not None:
+                                        type(panel).collapsed = _orig
+                                    else:
+                                        try:
+                                            del type(panel).collapsed
+                                        except Exception:
+                                            pass
 
-        assert len(banner_mounted) >= 1
+        # A2: error-banner widget removed; error state is now a CSS class
+        assert "tool-panel--error" in panel._classes, (
+            f"expected 'tool-panel--error' in _classes, got: {panel._classes!r}"
+        )
 
 
 # ---------------------------------------------------------------------------

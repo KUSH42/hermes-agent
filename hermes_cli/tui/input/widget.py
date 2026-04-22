@@ -93,6 +93,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         self._history: list[str] = []
         self._history_idx: int = -1
         self._history_draft: str = ""
+        self._history_loading: bool = False
         self._slash_commands: list[str] = []
         self._slash_descriptions: dict[str, str] = {}
         self._slash_args_hints: dict[str, str] = {}
@@ -387,6 +388,18 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         """Sanitize text and update autocomplete on every content change."""
         if self._sanitizing:
             return
+        # If the user (or any external mutation) edited the text while we were
+        # browsing history, drop the cached history index so the next arrow-up
+        # starts at the most-recent entry again.
+        if (
+            not self._history_loading
+            and self._history_idx != -1
+            and not self._handling_file_drop
+        ):
+            hist = self._history
+            idx = self._history_idx
+            if not (0 <= idx < len(hist) and self.text == hist[idx]):
+                self._history_idx = -1
         if not self._handling_file_drop:
             raw_text = self.text.strip()
             if raw_text and "\n" not in raw_text:

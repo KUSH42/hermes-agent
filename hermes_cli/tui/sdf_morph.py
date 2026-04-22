@@ -182,9 +182,9 @@ def _noise_grid(w: int, h: int, t: float) -> np.ndarray:
     return n
 
 def _mask_to_canvas(mask: np.ndarray, dot_w: int, dot_h: int) -> str:
-    """Convert boolean dot mask to drawille braille frame string."""
-    import drawille
-    canvas = drawille.Canvas()
+    """Convert boolean dot mask to braille frame string."""
+    from hermes_cli.tui.braille_canvas import BrailleCanvas
+    canvas = BrailleCanvas()
     ys, xs = np.where(mask[:dot_h, :dot_w])
     for x, y in zip(xs.tolist(), ys.tolist()):
         canvas.set(x, y)
@@ -208,7 +208,7 @@ def _apply_ansi_color(text: str, hex_color: str) -> str:
 # ── SDFMorphEngine ────────────────────────────────────────────────────────────
 
 class SDFMorphEngine:
-    """Drawille engine that morphs letter forms via SDF interpolation.
+    """Drawbraille engine that morphs letter forms via SDF interpolation.
 
     Follows the existing AnimEngine protocol: next_frame(params) -> str.
     Returns empty string if baker isn't ready yet.

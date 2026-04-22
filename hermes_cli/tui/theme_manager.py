@@ -265,8 +265,8 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     # Scrollbar thumb color — ThemeManager overrides via component_vars.
     # Named "scrollbar" to match Textual's built-in CSS var.
     "scrollbar": "#5f87d7",
-    # Drawille overlay braille canvas color (default: bright cyan)
-    "drawille-canvas-color": "#00d7ff",
+    # Drawbraille overlay braille canvas color (default: bright cyan)
+    "drawbraille-canvas-color": "#00d7ff",
     # Panel border color — used by SourcesBar and other bordered panels
     "panel-border":       "#333333",
     # Footnote superscript marker color (in _render_footnote_section)

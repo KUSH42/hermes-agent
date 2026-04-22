@@ -76,7 +76,7 @@ class HermesApp(App):
 | Original file | Split into |
 |---|---|
 | `app.py` | `hermes_cli/tui/services/` — all 10 `_app_*.py` mixin files deleted in R4; logic moved to service classes |
-| `drawille_overlay.py` | `anim_engines.py` (engines) + core |
+| `drawbraille_overlay.py` | `anim_engines.py` (engines) + core |
 | `tool_blocks.py` | `tool_blocks/` subpackage: `_shared.py`, `_header.py`, `_block.py`, `_streaming.py` |
 | `widgets/renderers.py` | `code_blocks.py`, `inline_media.py`, `prose.py` (renderers.py kept as re-export shim) |
 | `input_widget.py` (908L) | `input/` subpackage: `_constants.py`, `_history.py`, `_path_completion.py`, `_autocomplete.py`, `widget.py` |
@@ -140,7 +140,7 @@ Five targeted fixes on `feat/textual-migration`:
 - `widgets/__init__.py::StartupBannerWidget` CSS: `width: auto; min-width: 100%; overflow-x: visible` — widget sizes to the logo's intrinsic width and is allowed to overflow past the parent pane. OutputPanel's `overflow-x: hidden` still clips at the panel edge.
 
 **5. WorkspaceOverlay could pop on top of AnimConfigPanel, focus got stranded** — AnimConfigPanel is non-modal (to preserve underlying overlay visuals) but captures focus. Pressing `w` (when input not focused, which is the case when AnimConfigPanel has focus) opened the workspace overlay on top, and any stray focus loss made the panel unreachable.
-- `drawille_overlay.py::AnimConfigPanel`: new `on_blur` — while `--visible`, schedules `self.focus()` via `call_after_refresh` so focus can't escape.
+- `drawbraille_overlay.py::AnimConfigPanel`: new `on_blur` — while `--visible`, schedules `self.focus()` via `call_after_refresh` so focus can't escape.
 - `app.py::action_toggle_workspace`: bails when `_focus_blocking_overlay_visible()` is True.
 - `app.py::_focus_blocking_overlay_visible`: new helper; returns True if `AnimConfigPanel` or `AnimGalleryOverlay` has `--visible`. Central extension point for future focus-trapping overlays.
 
@@ -176,7 +176,7 @@ Phases 1+2+3 landed; Phase 4 (generator block install + VarSpec type flip + pre-
 - `load_dict()` intentionally unchanged — T7 regression guards that `_apply_overrides` is NOT called there (live-preview contract).
 - 5 new `COMPONENT_VAR_DEFAULTS` keys: `tool-glyph-mcp`, `error-timeout`, `error-critical`, `error-auth`, `error-network` — all pre-existing in Python code (`tool_category.py`, `tool_result_parse.py`) and `hermes.tcss` but never in defaults.
 
-**`hermes.tcss` — 14 missing declarations added**: `app-bg`, `cursor-color`, `cursor-selection-bg`, `cursor-placeholder`, `ghost-text-color`, `chevron-base/file/stream/shell/done/error`, `fps-hud-bg`, `scrollbar`, `drawille-canvas-color`. All were `$`-referenced in tcss rules but not declared — Textual silently resolved to empty string. Values mirror `COMPONENT_VAR_DEFAULTS`.
+**`hermes.tcss` — 14 missing declarations added**: `app-bg`, `cursor-color`, `cursor-selection-bg`, `cursor-placeholder`, `ghost-text-color`, `chevron-base/file/stream/shell/done/error`, `fps-hud-bg`, `scrollbar`, `drawbraille-canvas-color`. All were `$`-referenced in tcss rules but not declared — Textual silently resolved to empty string. Values mirror `COMPONENT_VAR_DEFAULTS`.
 
 **Bundled skin YAML dedent bug — CRITICAL latent failure fixed**:
 All 4 bundled skins (`matrix.yaml`, `catppuccin.yaml`, `solarized-dark.yaml`, `tokyo-night.yaml`) had identical dedent bugs at lines 81/83: `plan-now-fg` and `pane-border` fell out of the `component_vars:` block, making `yaml.safe_load` raise `ParserError`. Since `ThemeManager.load()` catches `Exception`, every bundled skin silently fell back to `COMPONENT_VAR_DEFAULTS` — users loading `/skin matrix` never saw the 54-key skin. Now all 4 skins parse, each carrying 59 keys.
@@ -648,7 +648,7 @@ def _do_hide(self):
 
 **`HERMES_DETERMINISTIC` guard** in `activate()` — returns immediately, keeps widget hidden in CI.
 
-**Engine `on_mount` hook** checked with `hasattr(engine, "on_mount")` before call — existing DrawilleOverlay convention.
+**Engine `on_mount` hook** checked with `hasattr(engine, "on_mount")` before call — existing DrawbrailleOverlay convention.
 
 **Migration:**
 - `message_panel.py` old `ThinkingWidget` class body removed; replaced with `from hermes_cli.tui.widgets.thinking import ThinkingWidget  # noqa: F401`
@@ -700,16 +700,16 @@ def _do_hide(self):
 - `_PHASE_CATEGORIES` unchanged — engines slot in via `_ENGINE_META["category"]` automatically; never add engine keys directly to `_PHASE_CATEGORIES` lists
 - Class-level Python list comprehensions cannot reference earlier class attrs by name (scope rule) — use literals: `_THETA_LUT = [u * (2*math.pi/20) for u in range(20)]`
 
-**Overlay drag + position (D1/D2, `drawille_overlay.py`):**
+**Overlay drag + position (D1/D2, `drawbraille_overlay.py`):**
 - `_POS_GRID: list[list[str]]` (3×3), `_POS_TO_RC: dict[str, tuple[int,int]]` (col, row) — module-level
-- `_set_offset(ox, oy)` helper on `DrawilleOverlay`: sets `styles.offset` AND `_drag_base_ox/oy` together. Replace all 3 `self.styles.offset =` calls in `_apply_layout` with `_set_offset` — keeps drag base in sync regardless of which layout path fires
+- `_set_offset(ox, oy)` helper on `DrawbrailleOverlay`: sets `styles.offset` AND `_drag_base_ox/oy` together. Replace all 3 `self.styles.offset =` calls in `_apply_layout` with `_set_offset` — keeps drag base in sync regardless of which layout path fires
 - `on_mouse_up` snaps via `_nearest_anchor` then calls `self.app._persist_anim_config(...)` — overlay can't call `_CommandsMixin` methods directly; must go via `self.app`
 - D1 key binding: `Ctrl+Shift+Arrow` — `alt+up/alt+down` are taken by browse-mode turn navigation (lines 382–389 of `_app_key_handler.py`)
 - `App.capture_mouse(self)` / `App.release_mouse()` present in Textual 8.2.3; wrap in `try/except AttributeError` for compat
 
 **`/anim` commands (`_app_commands.py`):**
 - `ov.fps = fps` (reactive assignment) — NOT `ov._fps`
-- `ov._visibility_state` lives on `DrawilleOverlay`, not `_CommandsMixin` — check `ov._visibility_state`, not `self._visibility_state`
+- `ov._visibility_state` lives on `DrawbrailleOverlay`, not `_CommandsMixin` — check `ov._visibility_state`, not `self._visibility_state`
 - Gradient hex validation: inner `_validate_hex(raw) → str | None` strips `#`, checks exactly 6 lowercase hex chars; apply to BOTH color1 and color2 args
 
 ### 2026-04-22 — Tool UX Audit Pass 10 (7 commits, merged feat/textual-migration)
@@ -950,12 +950,12 @@ def _do_hide(self):
 - `_active_dim_hex`: computed once in `on_mount` as `_lerp_hex("#000000", accent, 0.30)` — 30% accent so shimmer has meaningful range.
 - Both `_tick_morph` done-branch AND `_tick_glitch` done-branch resume 12fps instead of stopping.
 
-**AnimConfigPanel expansion (`drawille_overlay.py`):**
-- `_multi_color_row_buf: list = []` added as **class-level attr** on `DrawilleOverlay` — prevents `AttributeError` in tests that create the widget without mounting it.
+**AnimConfigPanel expansion (`drawbraille_overlay.py`):**
+- `_multi_color_row_buf: list = []` added as **class-level attr** on `DrawbrailleOverlay` — prevents `AttributeError` in tests that create the widget without mounting it.
 - New fields in `_build_fields`: `enabled` toggle (first field), `hue_shift_speed` float, ambient section (`ambient_enabled`, `ambient_engine`, `ambient_heat`, `ambient_alpha`), carousel section (`carousel`, `carousel_interval_s`).
 - `fps` max raised 15 → 30.
 - `_push_to_overlay`, `_current_panel_cfg`, `_fields_to_dict` all updated to handle new fields (ambient/carousel as `None` in attr_map — applies via `_push_custom_field`).
-- **`_persist_anim_config` merge fix** (`_app_commands.py`): was calling `_set_nested(cfg, "display.drawille_overlay", cfg_dict)` which replaced the whole overlay dict. Fixed to: `existing = cfg.setdefault("display", {}).setdefault("drawille_overlay", {}); existing.update(cfg_dict)`.
+- **`_persist_anim_config` merge fix** (`_app_commands.py`): was calling `_set_nested(cfg, "display.drawbraille_overlay", cfg_dict)` which replaced the whole overlay dict. Fixed to: `existing = cfg.setdefault("display", {}).setdefault("drawbraille_overlay", {}); existing.update(cfg_dict)`.
 
 **Test fixes:**
 - `test_cycle_animation_*`: use `next(f for f in panel._fields if f.name == "animation")` not `_fields[0]` (enabled is now first).
@@ -1045,16 +1045,16 @@ Permission prompts (approval, sudo, clarify, secret, undo, session, merge) now a
 
 - `hermes.tcss` — Screen layers: `base overlay interrupt tooltip`. New `interrupt` layer sits between `overlay` and `tooltip`.
 - `overlays/interrupt.py::InterruptOverlay` — `layer: interrupt` (was `overlay`). `_activate` now calls `self.call_after_refresh(self.focus)` after `_render_current()` so the overlay captures keyboard immediately.
-- `drawille_overlay.py::AnimConfigPanel.on_blur` — focus trap now yields when `InterruptOverlay` has `--visible`. Without this, the trap re-stole focus back every blur event, stranding the interrupt prompt.
+- `drawbraille_overlay.py::AnimConfigPanel.on_blur` — focus trap now yields when `InterruptOverlay` has `--visible`. Without this, the trap re-stole focus back every blur event, stranding the interrupt prompt.
 
 **Why this order matters:** the focus trap fires on every blur, so even if InterruptOverlay grabbed focus correctly, the next event loop tick would call `call_after_refresh(self.focus)` on AnimConfigPanel and steal it back. The `--visible` guard breaks the loop.
 
 **Key gotcha:**
 - Non-modal focus-trapping overlays on `layer: overlay` are painted BELOW `InterruptOverlay` (on `layer: interrupt`). Any widget that uses `on_blur` → refocus must also check `InterruptOverlay.has_class("--visible")` and bail — otherwise the focus trap fights the interrupt overlay every tick.
 
-### 2026-04-21 — Module splits (drawille / tool_blocks / renderers / input)
+### 2026-04-21 — Module splits (drawbraille / tool_blocks / renderers / input)
 
-**Track B — drawille**: `anim_engines.py` holds `AnimParams`, `AnimEngine`, `TrailCanvas`, `_BaseEngine`, 20 engine subclasses, `CompositeEngine`, `CrossfadeEngine`. Deleted duplicate `_GalleryPreview(Widget)` + `AnimGalleryOverlay(Widget)` that were shadowing `ModalScreen` versions (pre-existing test failure fixed).
+**Track B — drawbraille**: `anim_engines.py` holds `AnimParams`, `AnimEngine`, `TrailCanvas`, `_BaseEngine`, 20 engine subclasses, `CompositeEngine`, `CrossfadeEngine`. Deleted duplicate `_GalleryPreview(Widget)` + `AnimGalleryOverlay(Widget)` that were shadowing `ModalScreen` versions (pre-existing test failure fixed).
 
 **Track C — tool_blocks subpackage**: `OmissionBar` placed in `_shared.py` not `_streaming.py` to break circular import: `_block.py` needs `OmissionBar`; `_streaming.py` needs `ToolBlock` from `_block.py`. After splitting, `renderers.py` re-exports all public symbols so existing importers compile unchanged.
 
@@ -1684,7 +1684,7 @@ Always `grep -rn "def method_name"` before calling a method that was added in a 
 
 ### Animation engine performance patterns
 
-**try/except vs bounds check:** Drawille raises on out-of-bounds coords. Replacing `try: canvas.set(x,y) except Exception: pass` with `if 0 <= x < w and 0 <= y < h: canvas.set(x,y)` is 5–15% faster per engine. Exception machinery is ~10× slower when it fires.
+**try/except vs bounds check:** Drawbraille raises on out-of-bounds coords. Replacing `try: canvas.set(x,y) except Exception: pass` with `if 0 <= x < w and 0 <= y < h: canvas.set(x,y)` is 5–15% faster per engine. Exception machinery is ~10× slower when it fires.
 
 **Sin/cos LUT:** `_SIN_LUT`/`_COS_LUT` (1024 entries) + `_lut_sin(angle)`/`_lut_cos(angle)` live in `anim_engines.py`. Max error ~0.006 vs `math.sin` — fine for visual rendering, NOT for physics integration (RK4 etc.). Swap into hot per-pixel loops only.
 
@@ -1692,11 +1692,11 @@ Always `grep -rn "def method_name"` before calling a method that was added in a 
 
 **Spatial grid for boid simulations:** `FlockSwarmEngine` uses `_BOID_CELL_SIZE = 20` (= largest steering radius). Grid built O(n) per frame with `self._grid.clear()` + rebuild. 3×3 cell search replaces O(n²) all-pairs loop. Gain: 15–55% depending on canvas size. Key: use empty tuple `()` as `.get()` default to avoid list allocation on empty cells.
 
-**TrailCanvas canvas pooling:** Store `self._canvas = drawille.Canvas()` at `__init__`; detect `self._canvas_has_clear = hasattr(self._canvas, 'clear')` once. `to_canvas()` reuses the stored canvas instead of allocating each frame.
+**TrailCanvas canvas pooling:** Store `self._canvas = drawbraille.Canvas()` at `__init__`; detect `self._canvas_has_clear = hasattr(self._canvas, 'clear')` once. `to_canvas()` reuses the stored canvas instead of allocating each frame.
 
 **`_layer_frames` buffers:** Module-level `_LAYER_ROW_BUF`/`_LAYER_RESULT_BUF` lists with `.clear()` + append replace per-call allocations. Non-reentrant — only valid from the Textual event loop (single-threaded). Add a comment noting this.
 
-**`_render_multi_color` buffer:** `self._multi_color_row_buf: list[str]` on `DrawilleOverlay`, initialised in `on_mount()` (no `__init__` on this widget). Reuse per row; reallocate only on width change.
+**`_render_multi_color` buffer:** `self._multi_color_row_buf: list[str]` on `DrawbrailleOverlay`, initialised in `on_mount()` (no `__init__` on this widget). Reuse per row; reallocate only on width change.
 
 **`_braille_density_set` / `_depth_to_density` signatures:** Both accept `w, h` parameters (added in perf pass). Call sites: `HyperspaceEngine`, `AuroraRibbonEngine` (direct), `RopeBraidEngine` (via `_depth_to_density`).
 
@@ -1866,7 +1866,7 @@ component_vars:
   primary-darken-3:         "#4a7aaa"   # TitledRule idle glyph (not a Textual built-in)
   brand-glyph-color:        "#FFD700"   # ⟁/⚕ brand glyph, separate from title text
   scrollbar:                "#5f87d7"   # Scrollbar thumb
-  drawille-canvas-color:    "#00d7ff"   # Braille animation canvas default colour
+  drawbraille-canvas-color:    "#00d7ff"   # Braille animation canvas default colour
   panel-border:             "#333333"   # SourcesBar and bordered panel borders
   footnote-ref-color:       "#888888"   # Footnote superscript marker
   tool-mcp-accent:          "#9b59b6"   # MCP tool accent

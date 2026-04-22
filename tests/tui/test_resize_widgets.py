@@ -1,6 +1,6 @@
 """Widget-level resize tests — W01-W12.
 
-Covers: ToolGroup hysteresis, FooterPane compact toggle, DrawilleOverlay
+Covers: ToolGroup hysteresis, FooterPane compact toggle, DrawbrailleOverlay
 engine resize + refresh, CompletionOverlay --narrow toggle, ToolsScreen
 dismiss on narrow, AssistantNameplate canvas tracking, InlineMediaWidget
 seekbar refresh, StatusBar threshold jumps.
@@ -142,49 +142,49 @@ class TestFooterPaneCompact:
 
 
 # ---------------------------------------------------------------------------
-# DrawilleOverlay engine resize (W05-W06)
+# DrawbrailleOverlay engine resize (W05-W06)
 # ---------------------------------------------------------------------------
 
-class TestDrawilleOverlayResize:
-    """W05-W06: DrawilleOverlay resizes engine canvas and calls refresh()."""
+class TestDrawbrailleOverlayResize:
+    """W05-W06: DrawbrailleOverlay resizes engine canvas and calls refresh()."""
 
     def test_on_resize_method_exists(self):
-        from hermes_cli.tui.drawille_overlay import DrawilleOverlay
-        assert hasattr(DrawilleOverlay, "on_resize")
+        from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
+        assert hasattr(DrawbrailleOverlay, "on_resize")
 
     def test_refresh_called_when_active(self):
         # W05: _anim_params set → refresh called after resize
-        from hermes_cli.tui.drawille_overlay import DrawilleOverlay
+        from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
 
-        overlay = MagicMock(spec=DrawilleOverlay)
+        overlay = MagicMock(spec=DrawbrailleOverlay)
         overlay._anim_params = MagicMock()
         overlay._anim_params.width = 160
         overlay._anim_params.height = 96
 
-        DrawilleOverlay.on_resize(overlay, _size_event(100, 30))
+        DrawbrailleOverlay.on_resize(overlay, _size_event(100, 30))
 
         overlay.refresh.assert_called_once()
 
     def test_canvas_dims_updated(self):
         # W06: params.width = event.width*2, params.height = event.height*4
-        from hermes_cli.tui.drawille_overlay import DrawilleOverlay
+        from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
 
-        overlay = MagicMock(spec=DrawilleOverlay)
+        overlay = MagicMock(spec=DrawbrailleOverlay)
         overlay._anim_params = MagicMock()
 
-        DrawilleOverlay.on_resize(overlay, _size_event(80, 24))
+        DrawbrailleOverlay.on_resize(overlay, _size_event(80, 24))
 
         assert overlay._anim_params.width == 160
         assert overlay._anim_params.height == 96
 
     def test_no_refresh_when_inactive(self):
         # W05b: _anim_params is None → no refresh, no error
-        from hermes_cli.tui.drawille_overlay import DrawilleOverlay
+        from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
 
-        overlay = MagicMock(spec=DrawilleOverlay)
+        overlay = MagicMock(spec=DrawbrailleOverlay)
         overlay._anim_params = None
 
-        DrawilleOverlay.on_resize(overlay, _size_event(80, 24))
+        DrawbrailleOverlay.on_resize(overlay, _size_event(80, 24))
         overlay.refresh.assert_not_called()
 
 

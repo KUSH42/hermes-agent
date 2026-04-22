@@ -777,9 +777,9 @@ after position indicator.
 
 **`StreamingCodeBlock` excluded while `_state == "STREAMING"`** from anchor list.
 
-## Drawille overlay coloring
+## Drawbraille overlay coloring
 
-`DrawilleOverlay._tick()` has three coloring branches (highest priority first):
+`DrawbrailleOverlay._tick()` has three coloring branches (highest priority first):
 
 1. **`multi_color`** — N-stop per-character gradient across columns with
    sinusoidal hue-shift drift. Resolves colors in `watch_multi_color` /

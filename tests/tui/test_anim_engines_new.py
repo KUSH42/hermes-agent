@@ -16,7 +16,7 @@ from hermes_cli.tui.anim_engines import (
     MatrixRainEngine,
     _bresenham_pts,
 )
-from hermes_cli.tui.drawille_overlay import (
+from hermes_cli.tui.drawbraille_overlay import (
     _POS_GRID,
     _POS_TO_RC,
     _nearest_anchor,
@@ -269,7 +269,7 @@ class FakeApp:
     def push_screen(self, _screen: object) -> None:
         pass
 
-    def _drawille_show_hide(self, *args: object) -> None:
+    def _drawbraille_show_hide(self, *args: object) -> None:
         pass
 
 
@@ -321,7 +321,7 @@ class TestAnimCommandImprovements:
     def test_b1_duration_passed_to_set_timer(self) -> None:
         app = make_fake_anim_app()
         app.set_timer = MagicMock(return_value=MagicMock())  # type: ignore[method-assign]
-        with patch("hermes_cli.tui.drawille_overlay._overlay_config") as mock_cfg:
+        with patch("hermes_cli.tui.drawbraille_overlay._overlay_config") as mock_cfg:
             mock_cfg.return_value = MagicMock(enabled=True, animation="wave", carousel=False)
             app._handle_anim_command("/anim wave 12")
         calls = [c.args[0] for c in app.set_timer.call_args_list]
@@ -330,7 +330,7 @@ class TestAnimCommandImprovements:
     def test_b1_duration_clamped_to_120(self) -> None:
         app = make_fake_anim_app()
         app.set_timer = MagicMock(return_value=MagicMock())  # type: ignore[method-assign]
-        with patch("hermes_cli.tui.drawille_overlay._overlay_config") as mock_cfg:
+        with patch("hermes_cli.tui.drawbraille_overlay._overlay_config") as mock_cfg:
             mock_cfg.return_value = MagicMock(enabled=True, animation="wave", carousel=False)
             app._handle_anim_command("/anim wave 200")
         calls = [c.args[0] for c in app.set_timer.call_args_list]
@@ -407,7 +407,7 @@ class TestNearestAnchor:
 
     def test_mouse_down_sets_dragging(self) -> None:
         """D2: on_mouse_down sets _dragging = True."""
-        from hermes_cli.tui.drawille_overlay import DrawilleOverlay
+        from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
         from textual import events
 
         class FakeOv:
@@ -428,12 +428,12 @@ class TestNearestAnchor:
         ev.screen_x = 10
         ev.screen_y = 5
         ov = FakeOv()
-        DrawilleOverlay.on_mouse_down(ov, ev)  # type: ignore[arg-type]
+        DrawbrailleOverlay.on_mouse_down(ov, ev)  # type: ignore[arg-type]
         assert ov._dragging is True
 
     def test_mouse_up_clears_dragging(self) -> None:
         """D2: on_mouse_up clears _dragging and sets position."""
-        from hermes_cli.tui.drawille_overlay import DrawilleOverlay
+        from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
         from textual import events
 
         class FakeSize:
@@ -470,7 +470,7 @@ class TestNearestAnchor:
         ev.screen_x = 70
         ev.screen_y = 3
         ov = FakeOv()
-        DrawilleOverlay.on_mouse_up(ov, ev)  # type: ignore[arg-type]
+        DrawbrailleOverlay.on_mouse_up(ov, ev)  # type: ignore[arg-type]
         assert ov._dragging is False
         assert ov.position in _POS_TO_RC
 
@@ -553,8 +553,8 @@ class TestColorCommands:
 class TestHueShiftSpeedField:
 
     def test_hue_shift_speed_field_present(self) -> None:
-        from hermes_cli.tui.drawille_overlay import AnimConfigPanel
-        with patch("hermes_cli.tui.drawille_overlay._overlay_config") as mock_cfg:
+        from hermes_cli.tui.drawbraille_overlay import AnimConfigPanel
+        with patch("hermes_cli.tui.drawbraille_overlay._overlay_config") as mock_cfg:
             mock_cfg.return_value = MagicMock(
                 animation="dna", fps=15, size="medium", position="center",
                 color="$accent", gradient=False, color_secondary="$primary",

@@ -1,6 +1,6 @@
-"""Animation engine classes for the Drawille overlay.
+"""Animation engine classes for the Drawbraille overlay.
 
-Extracted from drawille_overlay.py to keep widget/config/gallery code separate
+Extracted from drawbraille_overlay.py to keep widget/config/gallery code separate
 from the math-heavy engine implementations.
 
 All engine classes implement the AnimEngine protocol (next_frame(params) → str).
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import math as _math
+from hermes_cli.tui.braille_canvas import BrailleCanvas
 import random
 import time
 from dataclasses import dataclass, field  # noqa: F401 (field kept for potential engine use)
@@ -46,7 +47,7 @@ class AnimParams:
     t: float = 0.0
     dt: float = 1 / 15
     vertical: bool = False
-    # SDF morph engine config (set once from DrawilleOverlayCfg)
+    # SDF morph engine config (set once from DrawbrailleOverlayCfg)
     sdf_text: str = "HERMES"
     sdf_hold_ms: float = 900
     sdf_morph_ms: float = 700
@@ -74,8 +75,8 @@ class AnimEngine(Protocol):
 
 
 # Optional hook (not part of Protocol — checked via hasattr):
-# def on_mount(self, overlay: "DrawilleOverlay") -> None:
-#     """Called by DrawilleOverlay.on_mount after engine is selected.
+# def on_mount(self, overlay: "DrawbrailleOverlay") -> None:
+#     """Called by DrawbrailleOverlay.on_mount after engine is selected.
 #     Engines that need app access (e.g. for workers) implement this."""
 
 
@@ -93,11 +94,6 @@ class TrailCanvas:
         self.decay = decay
         self.threshold = threshold
         self._heat: dict[tuple[int, int], float] = {}
-        import drawille as _drawille
-        self._canvas = _drawille.Canvas()
-        self._canvas_has_clear = hasattr(self._canvas, "clear")
-        if not self._canvas_has_clear:
-            self._prev_pixels: set[tuple[int, int]] = set()
 
     def set(self, x: int, y: int, intensity: float = 1.0) -> None:  # noqa: A003
         """Set or reinforce pixel at (x, y). Out-of-bounds silently ignored."""
@@ -116,48 +112,31 @@ class TrailCanvas:
         for k in to_remove:
             del self._heat[k]
 
-    def to_canvas(self) -> object:
-        """Apply threshold → drawille Canvas with pixels set above threshold."""
-        c = self._canvas
-        if self._canvas_has_clear:
-            c.clear()
-            for (x, y), intensity in self._heat.items():
-                if intensity >= self.threshold:
-                    c.set(x, y)
-        else:
-            # Unset previous pixels that are no longer hot; set new ones
-            current: set[tuple[int, int]] = set()
-            for (x, y), intensity in self._heat.items():
-                if intensity >= self.threshold:
-                    current.add((x, y))
-            for px in self._prev_pixels - current:
-                try:
-                    c.unset(px[0], px[1])
-                except Exception:
-                    pass
-            for px in current - self._prev_pixels:
-                c.set(px[0], px[1])
-            self._prev_pixels = current
+    def to_canvas(self) -> BrailleCanvas:
+        """Apply threshold → BrailleCanvas with pixels set above threshold."""
+        c = BrailleCanvas()
+        for (x, y), intensity in self._heat.items():
+            if intensity >= self.threshold:
+                c.set(x, y)
         return c
 
     def frame(self) -> str:
-        """decay_all() then return to_canvas().frame()."""
+        """decay_all() then return rendered braille frame."""
         self.decay_all()
         return self.to_canvas().frame()
 
 
 # ── Helper utilities ──────────────────────────────────────────────────────────
 
-def _make_canvas() -> object:
-    import drawille
-    return drawille.Canvas()
+def _make_canvas() -> BrailleCanvas:
+    return BrailleCanvas()
 
 
-def _make_trail_canvas(decay: float) -> object:
-    """Return TrailCanvas if decay > 0, else standard drawille.Canvas."""
+def _make_trail_canvas(decay: float) -> "TrailCanvas | BrailleCanvas":
+    """Return TrailCanvas if decay > 0, else BrailleCanvas."""
     if decay > 0:
         return TrailCanvas(decay=decay)
-    return _make_canvas()
+    return BrailleCanvas()
 
 
 def _braille_density_set(canvas: object, x: int, y: int, intensity: float, w: int, h: int) -> None:
@@ -1151,17 +1130,29 @@ class LissajousWeaveEngine(_BaseEngine):
 class AuroraRibbonEngine(_BaseEngine):
     """Horizontal ribbons with multi-octave sine stack and soft edges."""
 
+    _OCTAVES = [(1.0, 0.8, 0.5), (2.0, 1.5, 0.3), (4.0, 3.0, 0.2)]
+
     def __init__(self) -> None:
         self._bands: int = 6
         self._bands_width: int = 0
+        # Per-octave x-ramp cache: _x_phases[i][x] = freq_i * x/w * 2π
+        # Invalidated when width changes — avoids recomputing static multiplies each frame.
+        self._x_phases: list[list[float]] = []
+
+    def _rebuild_cache(self, w: int) -> None:
+        two_pi_over_w = 2 * math.pi / w
+        self._x_phases = [
+            [freq * x * two_pi_over_w for x in range(w)]
+            for freq, _spd, _A in self._OCTAVES
+        ]
+        self._bands = max(6, w // 20)
+        self._bands_width = w
 
     def next_frame(self, params: AnimParams) -> str:
         w, h = params.width, params.height
         t = params.t
-        # D5: dynamic bands based on terminal width
-        if not self._bands_width or self._bands_width != w:
-            self._bands = max(6, w // 20)
-            self._bands_width = w
+        if self._bands_width != w:
+            self._rebuild_cache(w)
         n_ribbons = max(2, min(self._bands, params.symmetry))
         canvas = _make_trail_canvas(params.trail_decay) if params.trail_decay > 0 else _make_canvas()
 
@@ -1176,24 +1167,31 @@ class AuroraRibbonEngine(_BaseEngine):
                     ribbon_ys[i] -= force
                     ribbon_ys[j] += force
 
-        octaves = [(1.0, 0.8, 0.5), (2.0, 1.5, 0.3), (4.0, 3.0, 0.2)]
+        octaves = self._OCTAVES
+        x_phases = self._x_phases
         thickness = 2
+        scale = (h / (n_ribbons + 1)) * 0.3
 
         for ri, base_y in enumerate(ribbon_ys):
             phase_offset = ri * 1.3
+            xp0, xp1, xp2 = x_phases[0], x_phases[1], x_phases[2]
+            (_, spd0, A0), (_, spd1, A1), (_, spd2, A2) = octaves
+            t0 = spd0 * t + phase_offset
+            t1 = spd1 * t + phase_offset
+            t2 = spd2 * t + phase_offset
             for x in range(w):
-                y_off = sum(
-                    A * _lut_sin(freq * x / w * 2 * math.pi + spd * t + phase_offset)
-                    for freq, spd, A in octaves
-                ) * (h / (n_ribbons + 1)) * 0.3
+                y_off = (
+                    A0 * _lut_sin(xp0[x] + t0)
+                    + A1 * _lut_sin(xp1[x] + t1)
+                    + A2 * _lut_sin(xp2[x] + t2)
+                ) * scale
 
                 cy = base_y + y_off
-                # Soft edge with density
+                icy = int(cy)
                 for dy in range(-thickness, thickness + 1):
-                    ry = int(cy) + dy
-                    intensity = 1.0 - abs(dy) / (thickness + 1)
+                    ry = icy + dy
                     if 0 <= ry < h:
-                        _braille_density_set(canvas, x, ry, intensity, w, h)
+                        _braille_density_set(canvas, x, ry, 1.0 - abs(dy) / (thickness + 1), w, h)
 
         return canvas.frame() if hasattr(canvas, "frame") else ""
 
@@ -1423,7 +1421,39 @@ class CrossfadeEngine:
         return _layer_frames(fa, fb, "overlay")
 
 
-# ── Bresenham line helper ─────────────────────────────────────────────────────
+# ── Bresenham + Liang-Barsky helpers ─────────────────────────────────────────
+
+def _clip_segment(
+    x0: int, y0: int, x1: int, y1: int, w: int, h: int
+) -> tuple[int, int, int, int] | None:
+    """Liang-Barsky clip segment to [0,w)×[0,h). Returns clipped endpoints or None."""
+    dx, dy = x1 - x0, y1 - y0
+    p = (-dx, dx, -dy, dy)
+    q = (x0, (w - 1) - x0, y0, (h - 1) - y0)
+    t0, t1 = 0.0, 1.0
+    for pi, qi in zip(p, q):
+        if pi == 0:
+            if qi < 0:
+                return None
+        elif pi < 0:
+            r = qi / pi
+            if r > t1:
+                return None
+            if r > t0:
+                t0 = r
+        else:
+            r = qi / pi
+            if r < t0:
+                return None
+            if r < t1:
+                t1 = r
+    if t0 > t1:
+        return None
+    return (
+        round(x0 + t0 * dx), round(y0 + t0 * dy),
+        round(x0 + t1 * dx), round(y0 + t1 * dy),
+    )
+
 
 def _bresenham_pts(x0: int, y0: int, x1: int, y1: int) -> list[tuple[int, int]]:
     """Return integer pixel coords along segment (x0,y0)→(x1,y1) using Bresenham."""
@@ -1519,12 +1549,15 @@ class WireframeCubeEngine(_BaseEngine):
 
         canvas = _make_canvas()
         for mz, i, j in edge_data:
-            for px, py in _bresenham_pts(proj[i][0], proj[i][1], proj[j][0], proj[j][1]):
-                if 0 <= px < w and 0 <= py < h:
-                    if params.depth_cues:
-                        _depth_to_density(mz, canvas, px, py, w, h)
-                    else:
-                        canvas.set(px, py)
+            seg = _clip_segment(proj[i][0], proj[i][1], proj[j][0], proj[j][1], w, h)
+            if seg is None:
+                continue
+            cx0, cy0, cx1, cy1 = seg
+            for px, py in _bresenham_pts(cx0, cy0, cx1, cy1):
+                if params.depth_cues:
+                    _depth_to_density(mz, canvas, px, py, w, h)
+                else:
+                    canvas.set(px, py)
         return canvas.frame()
 
 
@@ -1687,12 +1720,15 @@ class Torus3DEngine(_BaseEngine):
             for k in range(n):
                 x0, y0 = ring_pts[k]
                 x1, y1 = ring_pts[(k + 1) % n]
-                for px, py in _bresenham_pts(x0, y0, x1, y1):
-                    if 0 <= px < w and 0 <= py < h:
-                        if params.depth_cues:
-                            _depth_to_density(mean_z, canvas, px, py, w, h)
-                        else:
-                            canvas.set(px, py)
+                seg = _clip_segment(x0, y0, x1, y1, w, h)
+                if seg is None:
+                    continue
+                cx0, cy0, cx1, cy1 = seg
+                for px, py in _bresenham_pts(cx0, cy0, cx1, cy1):
+                    if params.depth_cues:
+                        _depth_to_density(mean_z, canvas, px, py, w, h)
+                    else:
+                        canvas.set(px, py)
         return canvas.frame()
 
 

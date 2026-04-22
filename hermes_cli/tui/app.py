@@ -134,10 +134,6 @@ from hermes_cli.tui.perf import (
 from hermes_cli.tui.theme_manager import ThemeManager
 from wcwidth import wcswidth
 
-try:
-    import drawille as _drawille
-except ImportError:
-    _drawille = None
 
 if TYPE_CHECKING:
     from hermes_cli.tui.input_widget import HermesInput
@@ -647,13 +643,13 @@ class HermesApp(App):
         yield PlainRule(id="input-rule-bottom")
         yield VoiceStatusBar(id="voice-status")
         yield StatusBar(id="status-bar")
-        # Drawille animation overlay — before FPSCounter so FPS HUD stays above.
-        from hermes_cli.tui.drawille_overlay import (
-            DrawilleOverlay as _DO,
+        # Drawbraille animation overlay — before FPSCounter so FPS HUD stays above.
+        from hermes_cli.tui.drawbraille_overlay import (
+            DrawbrailleOverlay as _DO,
             AnimConfigPanel as _ACP,
             AnimGalleryOverlay as _AGA,
         )
-        yield _DO(id="drawille-overlay")
+        yield _DO(id="drawbraille-overlay")
         yield _ACP(id="anim-config-panel")
         yield _AGA(id="anim-gallery-overlay")
         # FPS HUD — overlay layer, docked top; display:none by default.
@@ -1248,7 +1244,7 @@ class HermesApp(App):
             except Exception:
                 pass
 
-    # Hint phase + drawille methods extracted → _app_spinner.py
+    # Hint phase + drawbraille methods extracted → _app_spinner.py
 
     def watch_yolo_mode(self, old: bool, value: bool) -> None:
         """Update #input-chevron CSS class to reflect yolo state."""
@@ -1267,11 +1263,11 @@ class HermesApp(App):
         self._flash_hint(msg, 2.0)
 
     def watch_agent_running(self, value: bool) -> None:
-        self._drawille_show_hide(value)
+        self._drawbraille_show_hide(value)
         if value:
             # Signal thinking when agent starts
             try:
-                from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO
+                from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO
                 self.query_one(_DO).signal("thinking")
             except Exception:
                 pass
@@ -1294,7 +1290,7 @@ class HermesApp(App):
         else:
             # Signal complete when agent stops
             try:
-                from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO
+                from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO
                 self.query_one(_DO).signal("complete")
             except Exception:
                 pass
@@ -1316,8 +1312,8 @@ class HermesApp(App):
                 pass
             # v2 heat injection: signal turn complete
             try:
-                from hermes_cli.tui.drawille_overlay import DrawilleOverlay
-                ov = self.query_one(DrawilleOverlay)
+                from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
+                ov = self.query_one(DrawbrailleOverlay)
                 ov.signal("complete")
             except Exception:
                 pass
@@ -1721,8 +1717,8 @@ class HermesApp(App):
         self._response_token_window.append((_time.monotonic(), est_tokens))
         # v2 heat injection: bump heat on each streaming token chunk
         try:
-            from hermes_cli.tui.drawille_overlay import DrawilleOverlay
-            ov = self.query_one(DrawilleOverlay)
+            from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
+            ov = self.query_one(DrawbrailleOverlay)
             ov.signal("token")
         except Exception:
             pass
@@ -2185,8 +2181,8 @@ class HermesApp(App):
     def _set_chevron_phase(self, phase: str) -> None:  # DEPRECATED
         return self._svc_spinner.set_chevron_phase(phase)
 
-    def _drawille_show_hide(self, running: bool) -> None:  # DEPRECATED
-        return self._svc_spinner.drawille_show_hide(running)
+    def _drawbraille_show_hide(self, running: bool) -> None:  # DEPRECATED
+        return self._svc_spinner.drawbraille_show_hide(running)
 
     # --- from _app_tool_rendering.py ---
 
@@ -2389,7 +2385,7 @@ class HermesApp(App):
         over modals like AnimConfigPanel that would be orphaned.
         """
         try:
-            from hermes_cli.tui.drawille_overlay import (
+            from hermes_cli.tui.drawbraille_overlay import (
                 AnimConfigPanel as _ACP,
                 AnimGalleryOverlay as _AGO,
             )
@@ -2559,8 +2555,8 @@ class HermesApp(App):
     def _try_auto_title(self) -> None:  # DEPRECATED
         return self._svc_commands.try_auto_title()
 
-    def _toggle_drawille_overlay(self) -> None:  # DEPRECATED
-        return self._svc_commands.toggle_drawille_overlay()
+    def _toggle_drawbraille_overlay(self) -> None:  # DEPRECATED
+        return self._svc_commands.toggle_drawbraille_overlay()
 
     def action_open_anim_config(self) -> None:
         self._svc_commands.open_anim_config()

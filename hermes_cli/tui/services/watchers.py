@@ -342,8 +342,8 @@ class WatchersService(AppService):
         from hermes_cli.tui.overlays import InterruptKind
         from hermes_cli.tui.overlays._adapters import make_approval_payload
         try:
-            from hermes_cli.tui.drawille_overlay import DrawilleOverlay
-            self.app.query_one(DrawilleOverlay).signal("waiting" if value is not None else "thinking")
+            from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
+            self.app.query_one(DrawbrailleOverlay).signal("waiting" if value is not None else "thinking")
         except Exception:
             pass
         ov = self._get_interrupt_overlay()

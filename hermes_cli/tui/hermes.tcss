@@ -61,7 +61,7 @@ $chevron-done: #4CAF50;
 $chevron-error: #E06C75;
 $fps-hud-bg: #1a1a2e;
 $scrollbar: #5f87d7;
-$drawille-canvas-color: #00d7ff;
+$drawbraille-canvas-color: #00d7ff;
 
 /* Screen is the actual DOM root — transparent widgets inherit from it, not from
  * HermesApp. Both must be set so every widget in the tree shows $app-bg. */
@@ -653,23 +653,23 @@ HermesApp.density-compact ToolPanel.tool-panel--error FooterPane { display: bloc
 
 /* A1: ToolHeaderBar deleted — compact label rules moved to density-compact selectors above */
 
-/* ── Drawille Overlay ──────────────────────────────────────── */
+/* ── Drawbraille Overlay ──────────────────────────────────────── */
 /* layer: overlay lives here (not DEFAULT_CSS) to avoid CSS parse issues
-   when drawille_overlay.py is imported before HermesApp CSS loads. */
+   when drawbraille_overlay.py is imported before HermesApp CSS loads. */
 
-DrawilleOverlay {
+DrawbrailleOverlay {
     layer: overlay;
     position: absolute;
     background: $surface 0%;
 }
 
-DrawilleOverlay.-show-border {
+DrawbrailleOverlay.-show-border {
     border: round $accent;
 }
 
 /* Declaration required at parse time so ThemeManager injection works. */
-DrawilleOverlay > .drawille-overlay--canvas {
-    color: $drawille-canvas-color;
+DrawbrailleOverlay > .drawbraille-overlay--canvas {
+    color: $drawbraille-canvas-color;
 }
 
 

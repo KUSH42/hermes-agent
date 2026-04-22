@@ -494,7 +494,7 @@ DEFAULT_CONFIG = {
         "notify_min_seconds": 10.0,    # minimum turn duration (s) before notify fires
         "notify_sound": False,         # play a sound alongside the notification
         "notify_sound_name": "Glass",  # macOS sound name (ignored on Linux)
-        "drawille_overlay": {
+        "drawbraille_overlay": {
             "enabled": True,
             "animation": "neural_pulse",
             "trigger": "agent_running",

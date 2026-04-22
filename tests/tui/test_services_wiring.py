@@ -190,7 +190,7 @@ def test_spinner_service_has_key_methods():
         "build_hint_text",
         "tick_duration",
         "tick_fps",
-        "drawille_show_hide",
+        "drawbraille_show_hide",
         "on_fps_hud_visible",
     ):
         assert hasattr(svc, method), f"SpinnerService missing method: {method}"
@@ -364,7 +364,7 @@ def test_commands_service_has_key_methods():
         "update_anim_hint",
         "handle_anim_command",
         "try_auto_title",
-        "toggle_drawille_overlay",
+        "toggle_drawbraille_overlay",
         "initiate_undo",
         "run_undo_sequence",
         "initiate_retry",

@@ -1,4 +1,4 @@
-"""Tests for drawille overlay premium spec (5 phases, 57 tests).
+"""Tests for drawbraille overlay premium spec (5 phases, 57 tests).
 
 Phase A: Spinner Promotion & Default Config (10)
 Phase B: /anim Command Redesign (14)
@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
 
-from hermes_cli.tui.drawille_overlay import (
+from hermes_cli.tui.drawbraille_overlay import (
     _BaseEngine,
     _ENGINE_META,
     _ENGINES,
@@ -25,8 +25,8 @@ from hermes_cli.tui.drawille_overlay import (
     AnimConfigPanel,
     AnimGalleryOverlay,
     AnimParams,
-    DrawilleOverlay,
-    DrawilleOverlayCfg,
+    DrawbrailleOverlay,
+    DrawbrailleOverlayCfg,
     _overlay_config,
     NeuralPulseEngine,
     FlockSwarmEngine,
@@ -48,23 +48,23 @@ from hermes_cli.tui.drawille_overlay import (
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 @pytest.fixture(autouse=True)
-def _restore_drawille_app_descriptor():
-    """Restore DrawilleOverlay.app descriptor after each test to prevent pollution."""
-    had_app = "app" in DrawilleOverlay.__dict__
-    saved = DrawilleOverlay.__dict__.get("app")
+def _restore_drawbraille_app_descriptor():
+    """Restore DrawbrailleOverlay.app descriptor after each test to prevent pollution."""
+    had_app = "app" in DrawbrailleOverlay.__dict__
+    saved = DrawbrailleOverlay.__dict__.get("app")
     yield
-    # Always restore: remove any patched 'app' from DrawilleOverlay's own __dict__
+    # Always restore: remove any patched 'app' from DrawbrailleOverlay's own __dict__
     # so inherited MessagePump.app takes over again.
     import sys
-    print(f"\n[FIXTURE TEARDOWN] app-in-dict={('app' in DrawilleOverlay.__dict__)}", file=sys.stderr)
-    if "app" in DrawilleOverlay.__dict__:
+    print(f"\n[FIXTURE TEARDOWN] app-in-dict={('app' in DrawbrailleOverlay.__dict__)}", file=sys.stderr)
+    if "app" in DrawbrailleOverlay.__dict__:
         try:
-            delattr(DrawilleOverlay, "app")
-            print(f"[FIXTURE TEARDOWN] deleted app from DrawilleOverlay", file=sys.stderr)
+            delattr(DrawbrailleOverlay, "app")
+            print(f"[FIXTURE TEARDOWN] deleted app from DrawbrailleOverlay", file=sys.stderr)
         except AttributeError:
             pass
     if had_app and saved is not None:
-        DrawilleOverlay.app = saved
+        DrawbrailleOverlay.app = saved
 
 
 def _params(**kw) -> AnimParams:
@@ -73,8 +73,8 @@ def _params(**kw) -> AnimParams:
     return AnimParams(**defaults)
 
 
-def _cfg(**kw) -> DrawilleOverlayCfg:
-    c = DrawilleOverlayCfg(enabled=True)
+def _cfg(**kw) -> DrawbrailleOverlayCfg:
+    c = DrawbrailleOverlayCfg(enabled=True)
     for k, v in kw.items():
         setattr(c, k, v)
     return c
@@ -87,8 +87,8 @@ def _mock_app(accent="#00d7ff"):
 
 
 def _overlay_with_mock_app(**cfg_kw):
-    """Create a DrawilleOverlay with a mock app, no actual DOM."""
-    ov = DrawilleOverlay.__new__(DrawilleOverlay)
+    """Create a DrawbrailleOverlay with a mock app, no actual DOM."""
+    ov = DrawbrailleOverlay.__new__(DrawbrailleOverlay)
     ov._anim_handle = None
     ov._anim_params = AnimParams(width=60, height=28)
     ov._resolved_color = "#00d7ff"
@@ -789,7 +789,7 @@ class TestPhaseE:
 
     def test_panel_preview_widget_present(self):
         """E3: _GalleryPreview can be instantiated (used in panel header)."""
-        from hermes_cli.tui.drawille_overlay import _GalleryPreview
+        from hermes_cli.tui.drawbraille_overlay import _GalleryPreview
         preview = _GalleryPreview()
         assert preview is not None
 
@@ -962,8 +962,8 @@ class TestPhaseAv2:
         # Simulate the logic: value is not None → waiting
         value = MagicMock()
         try:
-            from hermes_cli.tui.drawille_overlay import DrawilleOverlay
-            DrawilleOverlay.signal(ov, "waiting" if value is not None else "thinking")
+            from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
+            DrawbrailleOverlay.signal(ov, "waiting" if value is not None else "thinking")
         except Exception:
             pass
         # Directly verify the routing logic
@@ -1268,7 +1268,7 @@ class TestPhaseFv2:
     def test_preset_merge_semantics(self):
         """Fv2-7: Preset merge keeps base cfg fields not in preset."""
         import dataclasses
-        base_cfg = DrawilleOverlayCfg(enabled=True, fps=10)
+        base_cfg = DrawbrailleOverlayCfg(enabled=True, fps=10)
         merged = {**dataclasses.asdict(base_cfg), **_PRESETS["minimal"]}
         # Preset overrides fps
         assert merged["fps"] == 12
@@ -1292,8 +1292,8 @@ class TestPhaseFv2:
                 )
 
     def test_overlay_config_reads_new_fields(self):
-        """Fv2-10: DrawilleOverlayCfg has all new Phase A-F fields."""
-        cfg = DrawilleOverlayCfg()
+        """Fv2-10: DrawbrailleOverlayCfg has all new Phase A-F fields."""
+        cfg = DrawbrailleOverlayCfg()
         assert hasattr(cfg, "error_hold_frames")
         assert hasattr(cfg, "phase_aware_carousel")
         assert hasattr(cfg, "phase_crossfade_speed")

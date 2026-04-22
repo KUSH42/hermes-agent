@@ -110,7 +110,7 @@ _AnimSurface {
 
     def _init_engine(self) -> None:
         try:
-            from hermes_cli.tui.drawille_overlay import _ENGINES
+            from hermes_cli.tui.drawbraille_overlay import _ENGINES
             cls = _ENGINES.get(self._engine_key)
             if cls is None:
                 logger.debug("ThinkingWidget: engine %r not in _ENGINES", self._engine_key)

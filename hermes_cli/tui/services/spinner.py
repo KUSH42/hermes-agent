@@ -19,10 +19,7 @@ from hermes_cli.tui._app_utils import (
 from hermes_cli.tui.animation import shimmer_text
 from .base import AppService
 
-try:
-    import drawille as _drawille
-except ImportError:
-    _drawille = None  # type: ignore[assignment]
+from hermes_cli.tui.braille_canvas import BrailleCanvas
 
 if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
@@ -135,9 +132,9 @@ class SpinnerService(AppService):
         return available
 
     def helix_spinner_frame(self, elapsed: float, text_after_frame: str, input_width: int) -> str | None:
-        """Return a cached drawille helix frame when the timer has run long enough."""
+        """Return a cached helix frame when the timer has run long enough."""
         app = self.app
-        if _drawille is None or elapsed < _HELIX_DELAY_S:
+        if elapsed < _HELIX_DELAY_S:
             return None
         width_cells = self.helix_width(text_after_frame, input_width)
         if width_cells < _HELIX_MIN_CELLS:
@@ -151,8 +148,8 @@ class SpinnerService(AppService):
         return frames[app._spinner_idx % len(frames)]
 
     def build_helix_frames(self, width_cells: int) -> tuple[str, ...]:
-        """Precompute one-line drawille frames for a 3-strand helix."""
-        if _drawille is None or width_cells < _HELIX_MIN_CELLS:
+        """Precompute one-line braille frames for a 3-strand helix."""
+        if width_cells < _HELIX_MIN_CELLS:
             return ()
 
         width_points = max(2, width_cells * 2)
@@ -161,7 +158,7 @@ class SpinnerService(AppService):
         frames: list[str] = []
 
         for frame_idx in range(_HELIX_FRAME_COUNT):
-            canvas = _drawille.Canvas()
+            canvas = BrailleCanvas()
             phase = (frame_idx / _HELIX_FRAME_COUNT) * (2 * math.pi)
             for strand_idx in range(3):
                 strand_phase = phase + (strand_idx * 2 * math.pi / 3)
@@ -297,11 +294,11 @@ class SpinnerService(AppService):
         except NoMatches:
             pass
 
-    def drawille_show_hide(self, running: bool) -> None:
-        """Show or hide the drawille overlay based on agent state + _anim_force."""
+    def drawbraille_show_hide(self, running: bool) -> None:
+        """Show or hide the drawbraille overlay based on agent state + _anim_force."""
         app = self.app
         try:
-            from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO, _overlay_config
+            from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO, _overlay_config
             from hermes_cli.tui.widgets import OutputPanel
             overlay = app.query_one(_DO)
             cfg = _overlay_config()

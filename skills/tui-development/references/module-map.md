@@ -31,7 +31,7 @@ HermesApp
 │   ├── ThinkingWidget                   (animated thinking indicator — always last-1)
 │   └── LiveLineWidget                   (streaming token line — always last)
 ├── StatusBar / VoiceStatusBar / FPSCounter / HintBar / AnimatedCounter
-├── DrawilleOverlay / AnimConfigPanel    (braille animation overlay)
+├── DrawbrailleOverlay / AnimConfigPanel    (braille animation overlay)
 ├── CompletionOverlay → VirtualCompletionList + PreviewPanel
 ├── ImageBar                             (user-attached file thumbnails)
 ├── InlineImageBar                       (model inline image thumbnails)
@@ -271,9 +271,9 @@ High-signal flow:
   `GitSnapshotEntry` preserves `git_xy`, staged/worktree split, untracked/conflict/rename metadata.
   `GitPoller.poll()` runs blocking Git subprocesses and returns a parsed `GitSnapshot`.
   `WorkspaceUpdated(snapshot, poll_elapsed_ms)` — app-thread handoff message from worker to app.
-- **`hermes_cli/tui/drawille_overlay.py`** (~2300 lines)
-  `DrawilleOverlay` (braille-canvas loading animation, 20 engines), `AnimConfigPanel` (`/anim` config UI),
-  `DrawilleOverlayCfg`, `AnimParams`, `TrailCanvas`, `CompositeEngine`, `CrossfadeEngine`.
+- **`hermes_cli/tui/drawbraille_overlay.py`** (~2300 lines)
+  `DrawbrailleOverlay` (braille-canvas loading animation, 20 engines), `AnimConfigPanel` (`/anim` config UI),
+  `DrawbrailleOverlayCfg`, `AnimParams`, `TrailCanvas`, `CompositeEngine`, `CrossfadeEngine`.
   Engines: `NeuralPulseEngine`, `FluidFieldEngine`, `LissajousWeaveEngine`, `AuroraRibbonEngine`,
   `MandalaBloomEngine`, `FlockSwarmEngine`, `ConwayLifeEngine`, `RopeBraidEngine`, `PerlinFlowEngine`,
   `HyperspaceEngine`, `WaveFunctionEngine`, `StrangeAttractorEngine`, `SDFMorphEngine`, plus 8 originals.
@@ -357,12 +357,12 @@ High-signal flow:
 | `test_completion_overlay.py` / `test_completion_p0.py` | completion overlay behavior |
 | `test_kitty_graphics.py` / `test_halfblock_renderer.py` / `test_inline_image.py` / `test_sixel.py` | inline image pipeline |
 | `test_image_bar.py` | InlineThumbnail, InlineImageBar |
-| `test_drawille_overlay.py` / `test_drawille_v2.py` | DrawilleOverlay, engines, compositing |
+| `test_drawbraille_overlay.py` / `test_drawbraille_v2.py` | DrawbrailleOverlay, engines, compositing |
 | `test_hermes_input.py` | HermesInput TextArea, file drop, ghost text |
 | `test_p2_gaps.py` | resize, overlay simultaneity, browse+context |
 | `test_resize_spec.py` | crosses_threshold R01-R20: MinSizeBackdrop, hysteresis, debounce, scroll anchor, OmissionBar, SeekBar, StatusBar |
-| `test_resize_widgets.py` | W01-W12: ToolGroup/FooterPane hysteresis, DrawilleOverlay dims, CompletionOverlay, AssistantNameplate, InlineMediaWidget, ToolsScreen dismiss |
-| `test_resize_integration.py` | I01-I08: resize during reasoning/stream/completion/drawille/media, floor cycle, debounce, initial-state zero crossing |
+| `test_resize_widgets.py` | W01-W12: ToolGroup/FooterPane hysteresis, DrawbrailleOverlay dims, CompletionOverlay, AssistantNameplate, InlineMediaWidget, ToolsScreen dismiss |
+| `test_resize_integration.py` | I01-I08: resize during reasoning/stream/completion/drawbraille/media, floor cycle, debounce, initial-state zero crossing |
 | `test_tools_overlay.py` | ToolsScreen timeline, render_tool_row |
 | `test_workspace_tracker.py` / `test_workspace_overlay.py` | workspace tracker + overlay |
 | `test_omission_bar.py` | OmissionBar expand/collapse/+/-/* keys |
@@ -371,7 +371,7 @@ High-signal flow:
 | `test_status_widgets.py` | HintBar, StatusBar, browse hint, AnimatedCounter |
 | `test_theme_manager.py` / `test_theme.py` | ThemeManager, skin loading |
 | `test_perf_instrumentation.py` | PerfRegistry, measure_v3 |
-| `test_drawille_toggle.py` | DrawilleOverlay show/hide lifecycle |
+| `test_drawbraille_toggle.py` | DrawbrailleOverlay show/hide lifecycle |
 | `test_reasoning_panel.py` | ReasoningFlowEngine, ReasoningPanel |
 | `tests/cli/test_reasoning_tui_bridge.py` | cli.py → TUI reasoning bridge |
 
@@ -385,13 +385,13 @@ High-signal flow:
 - `widgets.py` + overlay/status/output tests + `test_image_bar.py`
 - `kitty_graphics.py` + `test_kitty_graphics.py` + `test_halfblock_renderer.py` + `test_inline_image.py` + `test_sixel.py`
 - `media_player.py` + `widgets.py §SeekBar,InlineMediaWidget` + `test_inline_media.py`
-- `drawille_overlay.py` + `test_drawille_overlay.py` + `test_drawille_v2.py` + `test_drawille_toggle.py`
+- `drawbraille_overlay.py` + `test_drawbraille_overlay.py` + `test_drawbraille_v2.py` + `test_drawbraille_toggle.py`
 - `overlays.py` + `test_slash_command_overlays.py`
 - `app.py` + `test_turn_lifecycle.py` + `test_integration.py` + focused module test
 - `cli.py` + `tests/cli/test_reasoning_tui_bridge.py`
 - `emoji_registry.py` + `response_flow.py §_EMOJI_RE/_extract_emoji_refs/_mount_emoji` + `app.py §_resolve_user_emoji/on_resize` + `cli.py §_emoji_registry` + `test_emoji_registry.py`
 - `stream_effects.py` + `widgets.py §LiveLineWidget` + `test_stream_effects.py`
-- `resize_utils.py` + `min_size_overlay.py` + `app.py §on_resize/_flush_resize/_apply_min_size_overlay` + `tool_group.py §on_resize` + `tool_panel.py §FooterPane.on_resize` + `completion_overlay.py §on_resize` + `drawille_overlay.py §on_resize` + `tool_blocks.py §OmissionBar.on_resize` + `widgets.py §OutputPanel.on_resize/InlineMediaWidget.on_resize/AssistantNameplate.on_resize` + `test_resize_spec.py` + `test_resize_widgets.py` + `test_resize_integration.py`
+- `resize_utils.py` + `min_size_overlay.py` + `app.py §on_resize/_flush_resize/_apply_min_size_overlay` + `tool_group.py §on_resize` + `tool_panel.py §FooterPane.on_resize` + `completion_overlay.py §on_resize` + `drawbraille_overlay.py §on_resize` + `tool_blocks.py §OmissionBar.on_resize` + `widgets.py §OutputPanel.on_resize/InlineMediaWidget.on_resize/AssistantNameplate.on_resize` + `test_resize_spec.py` + `test_resize_widgets.py` + `test_resize_integration.py`
 - `write_file_block.py` + `test_write_file_block.py`
 - `math_renderer.py` + `response_flow.py` + `widgets.py` + `config.py` + `cli.py` + `test_math_renderer.py`
 
@@ -404,5 +404,5 @@ High-signal flow:
 - **Overlay/input bug:** `app.py` → `widgets.py` → `state.py` → overlay tests
 - **Completion/preview bug:** `input_widget.py` → `completion_context.py` → `path_search.py` → completion tests
 - **Theme bug:** `hermes.tcss` → `theme_manager.py` → `skin_loader.py` → theme tests
-- **Animation bug:** `drawille_overlay.py` → `animation.py` → drawille tests
+- **Animation bug:** `drawbraille_overlay.py` → `animation.py` → drawbraille tests
 - **Inline image/media bug:** `kitty_graphics.py` → `widgets.py §InlineImage` → `media_player.py` → inline tests

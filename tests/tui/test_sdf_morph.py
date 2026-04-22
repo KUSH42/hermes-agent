@@ -278,7 +278,7 @@ class TestEngineIntegration:
 
     def test_sdf_morph_in_animation_keys(self):
         """SDFMorphEngine present in ANIMATION_KEYS."""
-        from hermes_cli.tui.drawille_overlay import ANIMATION_KEYS
+        from hermes_cli.tui.drawbraille_overlay import ANIMATION_KEYS
         assert "sdf_morph" in ANIMATION_KEYS
 
     def test_sdf_morph_engine_creation(self):

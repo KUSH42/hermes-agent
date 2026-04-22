@@ -1,7 +1,7 @@
 """Integration-style resize tests — I01-I08.
 
 Covers: resize during reasoning/streaming (no crash), completion open
-(overlay syncs), drawille active (engine dims update), media playback
+(overlay syncs), drawbraille active (engine dims update), media playback
 (seekbar refreshes), floor/recover cycle, burst debounce (final state
 matches last size), initial-state zero crossing.
 """
@@ -114,33 +114,33 @@ class TestResizeWithCompletionOpen:
 
 
 # ---------------------------------------------------------------------------
-# I03: Resize while drawille overlay active
+# I03: Resize while drawbraille overlay active
 # ---------------------------------------------------------------------------
 
-class TestResizeWithDrawilleActive:
-    """I03: DrawilleOverlay resizes engine when _anim_params set."""
+class TestResizeWithDrawbrailleActive:
+    """I03: DrawbrailleOverlay resizes engine when _anim_params set."""
 
-    def test_drawille_dims_scale_correctly(self):
-        from hermes_cli.tui.drawille_overlay import DrawilleOverlay
+    def test_drawbraille_dims_scale_correctly(self):
+        from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
 
-        overlay = MagicMock(spec=DrawilleOverlay)
+        overlay = MagicMock(spec=DrawbrailleOverlay)
         overlay._anim_params = MagicMock()
 
-        DrawilleOverlay.on_resize(overlay, _size_event(60, 20))
+        DrawbrailleOverlay.on_resize(overlay, _size_event(60, 20))
 
         # Braille canvas = 2× cols, 4× rows
         assert overlay._anim_params.width == 120
         assert overlay._anim_params.height == 80
         overlay.refresh.assert_called_once()
 
-    def test_drawille_multiple_resizes_refresh_each_time(self):
-        from hermes_cli.tui.drawille_overlay import DrawilleOverlay
+    def test_drawbraille_multiple_resizes_refresh_each_time(self):
+        from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
 
-        overlay = MagicMock(spec=DrawilleOverlay)
+        overlay = MagicMock(spec=DrawbrailleOverlay)
         overlay._anim_params = MagicMock()
 
-        DrawilleOverlay.on_resize(overlay, _size_event(80, 24))
-        DrawilleOverlay.on_resize(overlay, _size_event(100, 30))
+        DrawbrailleOverlay.on_resize(overlay, _size_event(80, 24))
+        DrawbrailleOverlay.on_resize(overlay, _size_event(100, 30))
 
         assert overlay.refresh.call_count == 2
 

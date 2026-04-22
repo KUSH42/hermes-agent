@@ -72,7 +72,7 @@ Key invariant: `_save_to_history` writes `\n+line\n…\n` (leading blank + trail
 - **`_derive_mcp_spec` result must NOT be in TOOL_REGISTRY**. Derived MCP specs are ephemeral. Writing them would shadow explicit overrides. `test_mcp_derived_not_in_tool_registry` verifies this invariant.
 - **ToolSpec validation raises at construction time**. `name=""` → ValueError, bad `provenance` → ValueError, invalid `primary_result` → ValueError. Validation in `__post_init__` (frozen dataclass). No lazy validation.
 - **WEB/MCP `emit_heartbeat` default**: `ToolSpec.emit_heartbeat` defaults `False`. For MCP-derived WEB/MCP specs, always set `emit_heartbeat=True` — the `_derive_mcp_spec` condition `elif category in (WEB, MCP) and not inner_spec.streaming` was never True because `inner_spec.streaming` defaults `True`. Fix: `elif category in (WEB, MCP)`.
-- **`_ENGINES` in drawille_overlay is class refs, not instances**. After v2, `_ENGINES` is `dict[str, type]`. `_get_engine()` caches instance in `_current_engine_instance`. Tests must call `engine_cls()` to get an instance — do NOT iterate `_ENGINES` as instances.
+- **`_ENGINES` in drawbraille_overlay is class refs, not instances**. After v2, `_ENGINES` is `dict[str, type]`. `_get_engine()` caches instance in `_current_engine_instance`. Tests must call `engine_cls()` to get an instance — do NOT iterate `_ENGINES` as instances.
 
 ## ToolsScreen async gotchas
 
@@ -298,7 +298,7 @@ fall through to the `set_interval` branch automatically.
 
 **`AnimationClock.tick` per-subscriber timing:**
 - Original log only showed total tick time (`anim_clock.tick took 514ms (5 subs)`) — no way to tell which subscriber blocked.
-- Fix: time each subscriber callback individually. When total > 16ms, log slowest sub ID + ms. Example: `(slowest sub#0: 510ms)` → points at drawille overlay at sub_id=0.
+- Fix: time each subscriber callback individually. When total > 16ms, log slowest sub ID + ms. Example: `(slowest sub#0: 510ms)` → points at drawbraille overlay at sub_id=0.
 
 **`_refresh_live_response_metrics` called from both `_tick_spinner` (10Hz) and `_tick_duration` (1Hz):**
 - Has early return when `_response_metrics_active` is False — safe during idle. But during streaming, 10Hz of `query_one(OutputPanel)` + `msg.set_response_metrics()` is redundant. Acceptable for now since total path is ~1ms.
@@ -343,7 +343,7 @@ Also applies to CSS variables (`$accent`, `$surface-darken-2` etc) — do NOT us
 Without `position: absolute`, a widget's `offset` CSS is relative to its normal layout-flow position, not the screen origin. Symptom: `self.styles.offset = (tw-w-2, 1)` in `_apply_size_position` appears to have no effect — widget stays at its flow position offset by those amounts. Fix: add `position: absolute` to the widget's rule in `hermes.tcss` (next to `layer: overlay`). Both must be in `hermes.tcss` — not `DEFAULT_CSS`.
 
 **Gotcha: `query_one(WidgetType)` in app methods is fragile — prefer `query_one("#id", Type)`**
-`query_one(DrawilleOverlay)` can raise `NoMatches` even when the widget is mounted if the class object differs (import aliasing, hot-reload edge cases). Use `query_one("#drawille-overlay", DrawilleOverlay)` for reliability. When the query is the first line of a toggle/hide handler and is wrapped in `except Exception: pass`, a silent miss means the handler does nothing. Always separate the query guard (`except Exception: return`) from the operation body so operation errors surface.
+`query_one(DrawbrailleOverlay)` can raise `NoMatches` even when the widget is mounted if the class object differs (import aliasing, hot-reload edge cases). Use `query_one("#drawbraille-overlay", DrawbrailleOverlay)` for reliability. When the query is the first line of a toggle/hide handler and is wrapped in `except Exception: pass`, a silent miss means the handler does nothing. Always separate the query guard (`except Exception: return`) from the operation body so operation errors surface.
 
 **Gotcha: `_handle_tui_command` must be wired into `on_hermes_input_submitted`**
 Slash commands like `/anim`, `/undo`, `/compact` are intercepted in `_handle_tui_command`. This method returns `True` if handled. It must be called at the TOP of `on_hermes_input_submitted`, BEFORE the agent-running branch, so commands work whether the agent is idle or running. Individual handlers check `agent_running` themselves. Forgetting the wire-up causes all TUI commands to be forwarded to the agent as user messages.
@@ -366,7 +366,7 @@ Any new `$my-var` used in `.tcss` files must be declared at file scope in `herme
 ## Animation perf patterns
 
 **Per-character `lerp_color()` → batch same-color runs.**
-Functions like `shimmer_text`, `DrawilleOverlay._render_multi_color`, and
+Functions like `shimmer_text`, `DrawbrailleOverlay._render_multi_color`, and
 `VirtualCompletionList._render_shimmer_row` all iterate per-character and
 create individual `Style(color=...)` objects. This creates N Rich Text spans
 for N characters. Instead:
@@ -378,7 +378,7 @@ Result: ~20 spans instead of ~60+. Dramatically reduces Rich/Textual overhead.
 `lerp_color` internally parses hex→RGB every call. When called with the same
 color pair across many characters/ticks, this is wasted work. Fix: module-level
 `_RGB_CACHE: dict[str, tuple[int, int, int]]` in `animation.py`. Also expose
-`lerp_color_rgb(c1_rgb, c2_rgb, t)` for pre-parsed tuples (used in drawille
+`lerp_color_rgb(c1_rgb, c2_rgb, t)` for pre-parsed tuples (used in drawbraille
 overlay and completion shimmer). Cache is bounded at 256 entries.
 
 **Imports inside hot-path callbacks.**
@@ -390,9 +390,9 @@ hoist to module level.
 **`AnimationClock.tick` per-subscriber timing for spike diagnosis.**
 When `anim_clock.tick` exceeds 16ms, log which subscriber was slowest:
 `(slowest sub#N: Xms)`. Subscriber IDs are assigned at `subscribe()` time.
-Drawille overlay = typically sub#0 (divisor=1, 15Hz). PulseMixin = sub#0
-if subscribed before drawille. To find mapping: search for
-`clock.subscribe(DIVISOR, ...)` across `widgets.py`, `drawille_overlay.py`,
+Drawbraille overlay = typically sub#0 (divisor=1, 15Hz). PulseMixin = sub#0
+if subscribed before drawbraille. To find mapping: search for
+`clock.subscribe(DIVISOR, ...)` across `widgets.py`, `drawbraille_overlay.py`,
 `completion_list.py`.
 
 ## File drop gotchas

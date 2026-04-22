@@ -98,7 +98,7 @@ async def test_thinking_widget_shows_dots_animation():
 
 @pytest.mark.asyncio
 async def test_input_bar_no_helix():
-    """Input bar spinner uses dot frames only — drawille helix moved to ThinkingWidget."""
+    """Input bar spinner uses dot frames only — drawbraille helix moved to ThinkingWidget."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -109,7 +109,7 @@ async def test_input_bar_no_helix():
         with patch("hermes_cli.tui.app._time.monotonic", return_value=103.2):
             app._tick_spinner()
         inp = app.query_one("#input-area")
-        # Should contain spinner dots + label, never drawille helix
+        # Should contain spinner dots + label, never drawbraille helix
         ph = inp.placeholder
         assert "terminal" in (ph.plain if hasattr(ph, "plain") else str(ph))
 

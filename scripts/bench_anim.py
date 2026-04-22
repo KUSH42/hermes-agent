@@ -1,11 +1,11 @@
-"""Before/after benchmark for drawille animation optimisations."""
+"""Before/after benchmark for drawbraille animation optimisations."""
 import math, time, statistics
 from hermes_cli.tui.anim_engines import (
     AnimParams, PerlinFlowEngine, FluidFieldEngine, WaveInterferenceEngine,
     NeuralPulseEngine, FlockSwarmEngine, AuroraRibbonEngine, MandalaBloomEngine,
     LissajousWeaveEngine, _layer_frames,
 )
-from hermes_cli.tui.drawille_overlay import DrawilleOverlay
+from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
 
 REPS = 200
 W, H = 120, 40  # typical terminal braille pixel dims (60 cols × 2, 10 rows × 4)

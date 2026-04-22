@@ -33,7 +33,7 @@ class CommandsService(AppService):
       update_anim_hint        — was _update_anim_hint
       handle_anim_command     — was _handle_anim_command
       try_auto_title          — was _try_auto_title
-      toggle_drawille_overlay — was _toggle_drawille_overlay
+      toggle_drawbraille_overlay — was _toggle_drawbraille_overlay
       initiate_undo           — was _initiate_undo
       run_undo_sequence       — was _run_undo_sequence (async, called via @work adapter)
       initiate_retry          — was _initiate_retry
@@ -293,7 +293,7 @@ class CommandsService(AppService):
 
     def open_anim_config(self) -> None:
         """Show the pre-mounted AnimConfigPanel overlay."""
-        from hermes_cli.tui.drawille_overlay import AnimConfigPanel as _ACP
+        from hermes_cli.tui.drawbraille_overlay import AnimConfigPanel as _ACP
         try:
             self.app.query_one(_ACP).show()
         except Exception:
@@ -309,7 +309,7 @@ class CommandsService(AppService):
                 _logging.getLogger(__name__).warning("Config path does not exist: %s", config_path)
                 return
             cfg = read_raw_config()
-            existing = cfg.setdefault("display", {}).setdefault("drawille_overlay", {})
+            existing = cfg.setdefault("display", {}).setdefault("drawbraille_overlay", {})
             existing.update(cfg_dict)
             save_config(cfg)
         except Exception as exc:
@@ -320,7 +320,7 @@ class CommandsService(AppService):
         """Update _anim_hint reactive based on overlay visibility."""
         app = self.app
         try:
-            from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO
+            from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO
             ov = app.query_one(_DO)
             cfg = ov._cfg
             if ov.has_class("-visible") and cfg is not None and cfg.animation == "sdf_morph":
@@ -333,8 +333,8 @@ class CommandsService(AppService):
     def handle_anim_command(self, stripped: str) -> None:
         """Handle /anim subcommands."""
         app = self.app
-        from hermes_cli.tui.drawille_overlay import (
-            DrawilleOverlay as _DO, AnimConfigPanel as _ACP,
+        from hermes_cli.tui.drawbraille_overlay import (
+            DrawbrailleOverlay as _DO, AnimConfigPanel as _ACP,
             _ENGINES, _overlay_config, AnimGalleryOverlay as _AGA,
         )
         rest = stripped[len("/anim"):].strip()
@@ -382,7 +382,7 @@ class CommandsService(AppService):
                 app._anim_force = "off"
             else:
                 app._anim_force = None
-            app._drawille_show_hide(getattr(app, "agent_running", False))
+            app._drawbraille_show_hide(getattr(app, "agent_running", False))
             return
 
         if sub == "list":
@@ -411,7 +411,7 @@ class CommandsService(AppService):
 
                 def _revert_sdf() -> None:
                     ov.animation = _overlay_config().animation
-                    app._drawille_show_hide(getattr(app, "agent_running", False))
+                    app._drawbraille_show_hide(getattr(app, "agent_running", False))
 
                 app.set_timer(10.0, _revert_sdf)
             except Exception:
@@ -419,8 +419,8 @@ class CommandsService(AppService):
             return
 
         if sub == "preset":
-            from hermes_cli.tui.drawille_overlay import (
-                DrawilleOverlay, _overlay_config as _oc, _PRESETS,
+            from hermes_cli.tui.drawbraille_overlay import (
+                DrawbrailleOverlay, _overlay_config as _oc, _PRESETS,
             )
             import dataclasses as _dc
             preset_name = args[1].lower() if len(args) > 1 else ""
@@ -438,7 +438,7 @@ class CommandsService(AppService):
             merged = {**_dc.asdict(current_cfg), **preset_dict}
             self.persist_anim_config(merged)
             try:
-                ov = app.query_one(DrawilleOverlay)
+                ov = app.query_one(DrawbrailleOverlay)
                 ov._do_hide()
                 ov.show(_oc())
             except NoMatches:
@@ -599,7 +599,7 @@ class CommandsService(AppService):
                 preview_dur = 4.0
 
             def _revert_engine() -> None:
-                app._drawille_show_hide(getattr(app, "agent_running", False))
+                app._drawbraille_show_hide(getattr(app, "agent_running", False))
 
             app.set_timer(preview_dur, _revert_engine)
         except Exception:
@@ -645,12 +645,12 @@ class CommandsService(AppService):
             pass
         app._auto_title_done = True
 
-    def toggle_drawille_overlay(self) -> None:
+    def toggle_drawbraille_overlay(self) -> None:
         """Ctrl+Shift+A: dismiss overlay if visible, else show it."""
         app = self.app
-        from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO, DrawilleOverlayCfg, _overlay_config
+        from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO, DrawbrailleOverlayCfg, _overlay_config
         try:
-            overlay = app.query_one("#drawille-overlay", _DO)
+            overlay = app.query_one("#drawbraille-overlay", _DO)
         except Exception:
             return
         if overlay.has_class("-visible"):
@@ -661,7 +661,7 @@ class CommandsService(AppService):
                 cfg = _overlay_config()
                 cfg.enabled = True
             except Exception:
-                cfg = DrawilleOverlayCfg(enabled=True)
+                cfg = DrawbrailleOverlayCfg(enabled=True)
             overlay.show(cfg)
 
     # --- Undo / Retry / Rollback ---

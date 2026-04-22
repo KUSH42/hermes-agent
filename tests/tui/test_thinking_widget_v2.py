@@ -356,7 +356,7 @@ async def test_T18_engine_on_mount_called() -> None:
             def on_mount(self, shim: Any) -> None:
                 on_mount_calls.append(shim)
 
-        from hermes_cli.tui.drawille_overlay import _ENGINES
+        from hermes_cli.tui.drawbraille_overlay import _ENGINES
         original = dict(_ENGINES)
         _ENGINES["_test_engine_hook"] = _MockEngine  # type: ignore[assignment]
         try:

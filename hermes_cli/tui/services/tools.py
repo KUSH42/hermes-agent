@@ -77,7 +77,7 @@ class ToolRenderingService(AppService):
         if msg is not None:
             msg.open_thinking_block(title)
         try:
-            from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO
+            from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO
             self.app.query_one(_DO).signal("reasoning")
         except Exception:
             pass
@@ -95,7 +95,7 @@ class ToolRenderingService(AppService):
             msg.close_thinking_block()
         if self.app.agent_running:
             try:
-                from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO
+                from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO
                 self.app.query_one(_DO).signal("thinking")
             except Exception:
                 pass
@@ -281,7 +281,7 @@ class ToolRenderingService(AppService):
             self.app._streaming_tool_count = len(self.app._active_streaming_blocks)
             self.app._active_tool_name = tool_name or ""
             try:
-                from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO
+                from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO
                 self.app.query_one(_DO).signal("tool")
             except Exception:
                 pass
@@ -343,8 +343,8 @@ class ToolRenderingService(AppService):
         if panel is not None and not panel._user_scrolled_up:
             self.app.call_after_refresh(panel.scroll_end, animate=False)
         try:
-            from hermes_cli.tui.drawille_overlay import DrawilleOverlay
-            ov = self.app.query_one(DrawilleOverlay)
+            from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
+            ov = self.app.query_one(DrawbrailleOverlay)
             ov.signal("error" if is_error else "thinking")
         except Exception:
             pass
@@ -386,8 +386,8 @@ class ToolRenderingService(AppService):
         if panel is not None and not panel._user_scrolled_up:
             self.app.call_after_refresh(panel.scroll_end, animate=False)
         try:
-            from hermes_cli.tui.drawille_overlay import DrawilleOverlay
-            ov = self.app.query_one(DrawilleOverlay)
+            from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
+            ov = self.app.query_one(DrawbrailleOverlay)
             ov.signal("error" if is_error else "thinking")
         except Exception:
             pass

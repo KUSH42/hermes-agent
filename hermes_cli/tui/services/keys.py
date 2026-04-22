@@ -310,7 +310,7 @@ class KeyDispatchService(AppService):
         # --- D1: Ctrl+Shift+Arrow — cycle overlay through 9 named grid positions ---
         if key in ("ctrl+shift+up", "ctrl+shift+down", "ctrl+shift+left", "ctrl+shift+right"):
             try:
-                from hermes_cli.tui.drawille_overlay import DrawilleOverlay as _DO, _POS_TO_RC, _POS_GRID, AnimConfigPanel as _ACP
+                from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO, _POS_TO_RC, _POS_GRID, AnimConfigPanel as _ACP
                 ov = self.app.query_one(_DO)
                 if not ov.has_class("-visible") or isinstance(self.app.screen, _ACP):
                     pass

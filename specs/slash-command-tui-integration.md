@@ -679,7 +679,7 @@ In the `if value:` branch, first line:
 
 ```python
 def watch_agent_running(self, value: bool) -> None:
-    self._drawille_show_hide(value)
+    self._drawbraille_show_hide(value)
     if value:
         self._dismiss_all_info_overlays()  # ← add this
         self._response_metrics_active = False

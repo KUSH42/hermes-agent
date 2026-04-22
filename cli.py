@@ -3563,19 +3563,32 @@ class HermesCLI:
     def show_banner_with_startup_effect(self, tui: bool = False) -> None:
         """Render startup effect then the static banner.
 
-        TUI: effect plays inside OutputPanel at the caduceus position,
-        then the final static banner is printed.
+        TUI: TTE plays via the pre-mounted TTEWidget overlay (no dynamic mount),
+        then the static banner renders via ChatConsole → _cprint → OutputPanel.
         Non-TUI: effect plays on stdout, then banner prints below.
         """
-        if not tui:
-            self.console.clear()
-        played = self._play_startup_text_effect(tui=tui)
         if tui:
             self._ensure_tui_startup_message()
-            if not played:
-                self._set_tui_startup_banner_static()
-            self._show_banner_postamble()
+            # Play TTE via TTEWidget (always in compose — no runtime mount needed)
+            if not self._use_compact_banner():
+                effect_cfg = self._get_startup_text_effect_config()
+                if effect_cfg is not None:
+                    effect_name, params = effect_cfg
+                    from hermes_cli.banner import resolve_banner_hero_assets
+                    _, plain_hero = resolve_banner_hero_assets()
+                    if plain_hero.strip():
+                        app = _hermes_app
+                        if app is not None:
+                            try:
+                                app._svc_io.play_tte_blocking(
+                                    effect_name, plain_hero, params=params
+                                )
+                            except Exception:
+                                pass
+            self._show_banner_body(clear=False, print_hero=True)
             return
+        self.console.clear()
+        self._play_startup_text_effect(tui=False)
         self._show_banner_body(clear=False, print_hero=True)
 
     def _set_tui_startup_banner_static(self) -> None:

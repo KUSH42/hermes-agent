@@ -107,6 +107,8 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         self._error_kind: str | None = None
         self._flash_tone: str = "success"
         self._browse_badge: str = ""
+        # D1: set True by ChildPanel to suppress ┊ gutter prefix
+        self._is_child: bool = False
 
     def on_mount(self) -> None:
         self._refresh_gutter_color()
@@ -171,7 +173,11 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             elif self._is_complete:
                 t.append("[✓] ", style="bold green")
 
-        if self._is_child_diff:
+        if self._is_child:
+            # D1: ChildPanel — no gutter prefix; SubAgentBody vkey border is the connector
+            gutter_text = Text(" ", style="dim")
+            gutter_w = 1
+        elif self._is_child_diff:
             gutter_text = Text("  ╰─", style="dim")
             gutter_w = 4
         elif focused:

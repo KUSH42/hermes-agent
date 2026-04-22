@@ -15,14 +15,10 @@ re-exported from ._legacy during Phases A–C.
 """
 
 from hermes_cli.tui.overlays._legacy import (
-    CommandsOverlay,
     FIXTURE_CODE,
-    HelpOverlay,
     PickerOverlay,
     SessionOverlay,
     ToolPanelHelpOverlay,
-    UsageOverlay,
-    WorkspaceOverlay,
     _cfg_get_hermes_home,
     _cfg_read_raw_config,
     _cfg_save_config,
@@ -30,6 +26,16 @@ from hermes_cli.tui.overlays._legacy import (
     _SessionResumedBanner,
     _SessionRow,
     _dismiss_overlay_and_focus_input,
+)
+
+# R3 Phase C: HelpOverlay, UsageOverlay, CommandsOverlay, WorkspaceOverlay
+# migrated from _legacy.py to reference.py (ReferenceModal subclasses).
+from hermes_cli.tui.overlays.reference import (  # noqa: E402
+    CommandsOverlay,
+    HelpOverlay,
+    ReferenceModal,
+    UsageOverlay,
+    WorkspaceOverlay,
 )
 
 # ConfigOverlay first — it registers aliases into its _css_type_names on import.
@@ -80,6 +86,7 @@ __all__ = [
     "NewSessionOverlay",
     "PickerOverlay",
     "ReasoningPickerOverlay",
+    "ReferenceModal",
     "SecretWidget",
     "SessionOverlay",
     "SkinPickerOverlay",

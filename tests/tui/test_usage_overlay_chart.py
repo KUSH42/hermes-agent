@@ -71,9 +71,9 @@ def _mock_cost() -> MagicMock:
 
 
 def test_t1_zero_total_returns_no_data_note():
-    """T1: total == 0 → _build_chart returns no-data note."""
+    """T1: total == 0 → _build_chart returns exact no-data string with leading spaces."""
     result = _h()._build_chart(0, 0, 0, 0)
-    assert "no token data yet" in result.lower()
+    assert result == "  (no token data yet)"
 
 
 def test_t2_single_bucket_input_only_full_bar():
@@ -86,12 +86,12 @@ def test_t2_single_bucket_input_only_full_bar():
 
 
 def test_t3_two_equal_buckets_half_bars():
-    """T3: 50/50 input/output split → each bar has filled == 15."""
+    """T3: 50/50 input/output split → each bar has exactly 15 filled chars."""
     result = _h()._build_chart(5000, 0, 0, 5000)
     data_rows = [l for l in result.split("\n") if "█" in l]
     assert len(data_rows) == 2
     for row in data_rows:
-        assert "█" * 15 in row
+        assert row.count("█") == 15
 
 
 def test_t4_four_buckets_correct_fill():
@@ -157,7 +157,7 @@ def test_t7_bar_width_never_exceeds_30():
 
 @pytest.mark.asyncio
 async def test_t8_c_key_hidden_no_copy():
-    """T8: c key while --visible NOT set → _copy_text_with_hint NOT called."""
+    """T8: c key while --visible NOT set → copy not triggered, prevent_default not called."""
     app = _make_app()
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
@@ -170,6 +170,7 @@ async def test_t8_c_key_hidden_no_copy():
             app.on_key(event)
             await pilot.pause()
             mock_copy.assert_not_called()
+            event.prevent_default.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -209,6 +210,7 @@ async def test_t10_plain_text_excludes_bar_chart_rows():
         assert "─" not in plain  # rule chars from chart section header
         assert "Token Breakdown" not in plain
         assert "[dim]" not in plain
+        assert "█" not in plain  # bar chart ASCII art excluded from copy
 
 
 @pytest.mark.asyncio
@@ -279,9 +281,25 @@ async def test_t13_clipboard_unavailable_calls_status_error():
 # ---------------------------------------------------------------------------
 
 
-def test_t14_empty_log_returns_empty_string():
-    """T14: empty turn log → sparkline returns ''."""
-    assert _h()._build_sparkline([]) == ""
+@pytest.mark.asyncio
+async def test_t14_no_turn_log_attribute_sparkline_absent():
+    """T14: agent has no session_turn_token_log → sparkline section absent from rendered content."""
+    app = _make_app()
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        uov = app.query_one(UsageOverlay)
+        agent = _make_agent(input=1000, output=500)
+        # Explicitly ensure the attribute is absent (MagicMock would otherwise auto-create it)
+        del agent.session_turn_token_log
+
+        with (
+            patch("agent.usage_pricing.estimate_usage_cost", return_value=_mock_cost()),
+            patch("agent.usage_pricing.CanonicalUsage"),
+        ):
+            uov.refresh_data(agent)
+
+        content = str(uov.query_one("#usage-content", Static).content)
+        assert "Context growth" not in content
 
 
 def test_t15_single_entry_log_flat_baseline():

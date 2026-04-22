@@ -247,8 +247,8 @@ class UsageOverlay(Widget):
             f"[bold]Model:[/bold] {model}",
             "",
             f"Input:        {inp:>12,}",
-            f"Cache read:   {cr:>12,}",
-            f"Cache write:  {cw:>12,}",
+            f"Cache Read:   {cr:>12,}",
+            f"Cache Write:  {cw:>12,}",
             f"Output:       {out:>12,}",
             f"Total tokens: {total:>12,}",
             f"API calls:    {calls:>12,}",
@@ -256,7 +256,7 @@ class UsageOverlay(Widget):
 
         if getattr(cost_result, "amount_usd", None) is not None:
             prefix = "~" if getattr(cost_result, "status", "") == "estimated" else ""
-            lines.append(f"Cost:     {prefix}${float(cost_result.amount_usd):>12.4f}")
+            lines.append(f"Cost:        {prefix}${float(cost_result.amount_usd):>10.4f}")
         elif getattr(cost_result, "status", "") == "included":
             lines.append("Cost:         included")
 
@@ -310,7 +310,7 @@ class UsageOverlay(Widget):
 
         if getattr(cost_result, "amount_usd", None) is not None:
             prefix = "~" if getattr(cost_result, "status", "") == "estimated" else ""
-            lines.append(f"Cost:     {prefix}${float(cost_result.amount_usd):>12.4f}")
+            lines.append(f"Cost:        {prefix}${float(cost_result.amount_usd):>10.4f}")
         elif getattr(cost_result, "status", "") == "included":
             lines.append("Cost:         included")
 
@@ -330,8 +330,11 @@ class UsageOverlay(Widget):
         """Copy last-rendered plain-text stats to clipboard via app helper."""
         try:
             self.app._copy_text_with_hint(self._last_plain_text)  # type: ignore[attr-defined]
-        except Exception:
-            pass
+        except Exception as exc:
+            try:
+                self.app.set_status_error(f"copy failed: {exc}")  # type: ignore[attr-defined]
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Main refresh
@@ -373,11 +376,11 @@ class UsageOverlay(Widget):
         sparkline = self._build_sparkline(turn_log)
         hint_line = "[dim]c copy · Esc dismiss[/dim]"
 
-        parts = [chart_section, stats_section]
+        parts = [chart_section, "", stats_section]
         if sparkline:
             parts.append(sparkline)
         parts.append(hint_line)
-        content = "\n".join(s for s in parts if s)
+        content = "\n".join(parts)
 
         try:
             self.query_one("#usage-content", Static).update(content)

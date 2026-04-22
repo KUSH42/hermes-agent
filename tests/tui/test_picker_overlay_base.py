@@ -551,6 +551,18 @@ async def test_skin_on_highlight_via_base():
         assert "light" in highlight_calls
 
 
+@pytest.mark.asyncio
+async def test_skin_init_sets_original_vars():
+    """S06: __init__ sets _original_skin, _original_css_vars, _original_component_vars."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        overlay = app.query_one(SkinPickerOverlay)
+        assert overlay._original_skin == "default"
+        assert overlay._original_css_vars == {}
+        assert overlay._original_component_vars == {}
+
+
 # ---------------------------------------------------------------------------
 # R01–R08: Regression tests — existing overlays unchanged
 # ---------------------------------------------------------------------------

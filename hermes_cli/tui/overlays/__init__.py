@@ -35,6 +35,15 @@ from hermes_cli.tui.overlays._legacy import (
 # ConfigOverlay first — it registers aliases into its _css_type_names on import.
 from hermes_cli.tui.overlays.config import ConfigOverlay  # noqa: E402
 
+# InterruptOverlay — registers interrupt-kind aliases into its _css_type_names.
+from hermes_cli.tui.overlays.interrupt import (  # noqa: E402
+    InputSpec,
+    InterruptChoice,
+    InterruptKind,
+    InterruptOverlay,
+    InterruptPayload,
+)
+
 # Aliases — these take precedence over the same-named classes in _legacy.
 # Importers like `from hermes_cli.tui.overlays import ModelPickerOverlay`
 # now get the alias (which resolves to ConfigOverlay at runtime).
@@ -61,6 +70,11 @@ __all__ = [
     "ConfigOverlay",
     "FIXTURE_CODE",
     "HelpOverlay",
+    "InputSpec",
+    "InterruptChoice",
+    "InterruptKind",
+    "InterruptOverlay",
+    "InterruptPayload",
     "MergeConfirmOverlay",
     "ModelPickerOverlay",
     "NewSessionOverlay",

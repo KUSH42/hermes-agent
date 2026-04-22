@@ -166,6 +166,8 @@ class ReasoningPanel(Widget):
         display: block;
     }
     ReasoningPanel #reasoning-collapsed {
+        background: $primary 5%;
+        padding: 0 1;
         height: 1;
         display: none;
     }
@@ -215,17 +217,17 @@ class ReasoningPanel(Widget):
         return Text(content, style="dim italic")
 
     def _update_collapsed_stub(self) -> None:
-        """Rebuild the one-line collapsed summary."""
+        """Rebuild the one-line collapsed summary (I1: bold glyph + primary tint)."""
         n = len(self._plain_lines)
         try:
             k = self.app.get_css_variables().get("primary", "#5f87d7")
         except Exception:
             k = "#5f87d7"
-        self._collapsed_stub.update(
-            Text.from_markup(
-                f"[dim]Reasoning collapsed  {n}L  [bold {k}]click to expand[/][/dim]"
-            )
-        )
+        t = Text()
+        t.append("▸ ", style=f"bold {k}")
+        t.append(f"Reasoning collapsed · {n}L · ", style="dim")
+        t.append("click to expand", style=f"dim {k}")
+        self._collapsed_stub.update(t)
 
     def _sync_collapsed_state(self) -> None:
         self._reasoning_log.styles.display = "none" if self._body_collapsed else "block"

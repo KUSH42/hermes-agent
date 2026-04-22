@@ -10,7 +10,11 @@ from hermes_cli.tui.tool_panel import ToolPanel
 
 
 class ChildPanel(ToolPanel):
-    BINDINGS = [Binding("space", "toggle_compact", show=False, priority=True)]
+    BINDINGS = [
+        *ToolPanel.BINDINGS,
+        Binding("space", "toggle_compact", show=False, priority=True),
+        Binding("enter", "toggle_collapse", show=False, priority=True),
+    ]
 
     def __init__(self, block: Any, tool_name: str = "", depth: int = 1,
                  parent_subagent: Any = None, **kwargs: Any) -> None:
@@ -21,7 +25,7 @@ class ChildPanel(ToolPanel):
         self._start_time: float = _time.monotonic()
         self.add_class("--compact")
         if depth >= 1:
-            self.add_class(f"--depth-{depth}")
+            self.add_class(f"--depth-{min(depth, 3)}")
 
     @property
     def _tool_header(self) -> Any:
@@ -40,8 +44,15 @@ class ChildPanel(ToolPanel):
     def action_toggle_compact(self) -> None:
         self.set_compact(not self._compact_mode)
 
+    def action_toggle_collapse(self) -> None:
+        self.collapsed = not self.collapsed
+
     def watch_collapsed(self, old: Any, new: Any) -> None:
-        pass  # compact driven by --compact CSS class; collapsed reactive is no-op
+        from textual.css.query import NoMatches
+        try:
+            self.query_one(".tool-body-container").display = not new
+        except NoMatches:
+            pass
 
     def set_result_summary(self, summary: Any) -> None:
         super().set_result_summary(summary)

@@ -478,6 +478,8 @@ class ResponseFlowEngine:
                 self._prose_callback(plain)
             except Exception:
                 pass
+
+
     def _sync_prose_log(self) -> None:
         """Refresh the active prose destination from the owning message panel."""
         getter = getattr(type(self._panel), "current_prose_log", None)
@@ -1051,6 +1053,8 @@ class ResponseFlowEngine:
             self._panel._mount_nonprose_block(widget)
         except Exception:
             pass
+
+
     def refresh_skin(self, css_vars: dict[str, str]) -> None:
         """Called from HermesApp.apply_skin() after hot-reload.
 
@@ -1224,6 +1228,8 @@ class ReasoningFlowEngine(ResponseFlowEngine):
         self._emoji_images_enabled: bool = getattr(_app, "_emoji_images_enabled", True) and _rp_emoji
         self._emitted_emoji_anchors: set[int] = set()
         self._code_fence_buffer: list[str] = []  # §5.11.2 InlineCodeFence buffer
+        self._prose_callback: "Callable[[str], None] | None" = None
+
     def process_line(self, raw: str) -> None:
         """Override: flush block buffer immediately after every line.
 

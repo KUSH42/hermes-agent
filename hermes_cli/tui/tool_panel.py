@@ -41,7 +41,6 @@ from hermes_cli.tui.tooltip import TooltipMixin
 
 from hermes_cli.tui.tool_accent import ToolAccent
 from hermes_cli.tui.diff_affordance import DiffAffordance
-from hermes_cli.tui.tool_header_bar import ToolHeaderBar
 
 if TYPE_CHECKING:
     from hermes_cli.tui.tool_result_parse import ResultSummary, ResultSummaryV4
@@ -74,26 +73,6 @@ def _artifact_icon(kind: str) -> str:
     else:
         _icons = {"file": "[F]", "url": "[L]", "image": "[I]"}
     return _icons.get(kind, "[?]")
-
-
-# ---------------------------------------------------------------------------
-# _PanelContent — wrapper for ToolHeaderBar + BodyPane
-# ---------------------------------------------------------------------------
-
-
-class _PanelContent(Widget):
-    """Vertical container holding ToolHeaderBar (row 0) and BodyPane (row 1)."""
-
-    DEFAULT_CSS = "_PanelContent { height: auto; layout: vertical; }"
-
-    def __init__(self, header_bar: "ToolHeaderBar", body_pane: "BodyPane", **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self._header_bar = header_bar
-        self._body_pane = body_pane
-
-    def compose(self) -> ComposeResult:
-        yield self._header_bar
-        yield self._body_pane
 
 
 # ---------------------------------------------------------------------------
@@ -470,7 +449,7 @@ class ToolPanel(Widget):
 
     BINDINGS = [
         Binding("enter", "toggle_collapse",  "Toggle",           show=False),
-        Binding("space", "toggle_l0_restore", "Collapse",         show=False),
+        # space removed (C2): inherits container page-down default
         Binding("y",     "copy_body",         "Copy output",      show=False),
         Binding("Y",     "copy_input",        "Copy input",       show=False),
         Binding("c",     "copy_body",        "Copy output",      show=False),
@@ -494,18 +473,25 @@ class ToolPanel(Widget):
         Binding("K",     "scroll_body_page_up",   "↑↑",   show=False),
         Binding("<",     "scroll_body_top",        "Top",  show=False),
         Binding(">",     "scroll_body_bottom",     "End",  show=False),
-        Binding("f1",            "show_context_menu", "Menu", show=False),  # G1: F1=menu (vim convention: ?=help)
+        Binding("f1",            "show_help",         "Help",    show=False),  # B2: F1=help (standard convention)
         Binding("P",     "copy_full_path",   "Copy full path",   show=False),  # A7
         Binding("x",     "dismiss_error_banner", "Dismiss",      show=False),  # A5
-        Binding("question_mark", "show_help",         "Help",    show=False),  # G1: ?=help (vim convention)
+        Binding("question_mark", "show_context_menu", "Menu",    show=False),  # B2: ?=context menu
     ]
 
     # Always start expanded; auto-collapse at completion based on threshold.
     # layout=False: watch_collapsed sets styles.display which already forces a
     # layout refresh — no need for a second one from the reactive itself.
     collapsed: reactive[bool] = reactive(False, layout=False)
-    # detail_level kept for backward compat with older tests; maps 0→collapsed
-    detail_level: reactive[int] = reactive(2)
+    # C1: detail_level retired — single bool reactive only. Legacy alias kept as property
+    # for any external code still reading it (maps 0→collapsed, 1/2/3→expanded).
+    @property
+    def detail_level(self) -> int:
+        return 0 if self.collapsed else 2
+
+    @detail_level.setter
+    def detail_level(self, value: int) -> None:
+        self.collapsed = (value == 0)
 
     def __init__(self, block: Widget, tool_name: str | None = None, **kwargs: object) -> None:
         super().__init__(**kwargs)
@@ -514,7 +500,10 @@ class ToolPanel(Widget):
         from hermes_cli.tui.tool_category import classify_tool
         self._category = classify_tool(self._tool_name)
 
-        self._user_collapse_override: bool = False
+        # C1: replace _user_collapse_override with _auto_collapsed
+        # _auto_collapsed=True when auto-collapse fired; False after user Enter toggle
+        self._auto_collapsed: bool = False
+        self._user_collapse_override: bool = False  # legacy alias
         self._should_auto_collapse: bool = False
         self._result_summary_v4: "ResultSummaryV4 | None" = None
         self._start_time: float = time.monotonic()
@@ -529,7 +518,6 @@ class ToolPanel(Widget):
         self._hint_visible: bool = False
 
         # Phase D state
-        self._pre_collapse_level: int = 2
         self._forced_renderer_kind: "ResultKind | None" = None
         self._tool_args: dict | None = None
 
@@ -538,7 +526,6 @@ class ToolPanel(Widget):
         self._body_pane: BodyPane | None = None
         self._footer_pane: FooterPane | None = None
         self._hint_row: Static | None = None
-        self._header_bar: "ToolHeaderBar | None" = None
 
         # CWD stripping — enable on SHELL category blocks
         from hermes_cli.tui.tool_category import ToolCategory
@@ -547,12 +534,11 @@ class ToolPanel(Widget):
 
     def compose(self) -> ComposeResult:
         self._accent = ToolAccent()
-        self._header_bar = ToolHeaderBar(label=self._tool_name)
         self._body_pane = BodyPane(self._block, category=self._category)
         self._footer_pane = FooterPane()
         self._hint_row = Static("", classes="--focus-hint")
         yield self._accent
-        yield _PanelContent(self._header_bar, self._body_pane)
+        yield self._body_pane
         yield self._footer_pane
         yield self._hint_row
     def on_mount(self) -> None:
@@ -626,9 +612,10 @@ class ToolPanel(Widget):
             except AttributeError:
                 pass
 
-        # Sync ToolHeaderBar chevron
-        if getattr(self, '_header_bar', None) is not None:
-            self._header_bar.set_chevron(new)
+        # Sync ToolHeader chevron via panel ref (ToolHeader reads from panel.collapsed directly)
+        header = getattr(self._block, "_header", None)
+        if header is not None:
+            header.refresh()
 
     def _has_footer_content(self) -> bool:
         rs = self._result_summary_v4
@@ -692,6 +679,8 @@ class ToolPanel(Widget):
                 pass
         should_collapse = total > threshold
         self.collapsed = should_collapse
+        # C1: track auto-collapsed state
+        self._auto_collapsed = should_collapse
         # A3: flash auto-collapse notification so user knows what happened
         if should_collapse:
             self._flash_header(f"▾ auto-collapsed ({total} lines)", tone="success")
@@ -716,8 +705,10 @@ class ToolPanel(Widget):
     def set_tool_args(self, args: dict | None) -> None:
         """Call from app after tool_start to supply parsed args."""
         self._tool_args = args
-        if self._header_bar is not None:
-            self._header_bar.set_arg_summary(self._format_arg_summary())
+        # Arg summary is read by ToolHeader._render_v4 from parent panel's _tool_args
+        header = getattr(self._block, "_header", None)
+        if header is not None:
+            header.refresh()
 
     # ------------------------------------------------------------------
     # ToolHeaderBar helpers (Phase B)
@@ -738,12 +729,10 @@ class ToolPanel(Widget):
         return str(first) if first is not None else ""
 
     def _update_kind_from_classifier(self, line_count: int) -> None:
-        """Run content classifier and update ResultPill kind.
+        """Run content classifier and trigger renderer swap if needed.
 
         Phase C: also triggers _swap_renderer for non-TEXT/SHELL classified output.
         """
-        if self._header_bar is None:
-            return
         try:
             from hermes_cli.tui.content_classifier import classify_content
             from hermes_cli.tui.tool_payload import ToolPayload
@@ -764,7 +753,6 @@ class ToolPanel(Widget):
                 line_count=line_count,
             )
             result = classify_content(payload)
-            self._header_bar.set_kind(result.kind)
             # Phase C: swap renderer for specialized kinds
             self._maybe_swap_renderer(result, payload)
         except Exception:
@@ -816,72 +804,74 @@ class ToolPanel(Widget):
             pass
 
     def _maybe_activate_mini(self, summary: "ResultSummaryV4") -> None:
-        """Activate mini-mode if SHELL+exit0+≤3L+no-stderr criteria met."""
-        from hermes_cli.tui.tool_panel_mini import meets_mini_criteria
-        exit_code = getattr(summary, "exit_code", None)
-        stderr_raw = getattr(summary, "stderr_tail", None) or ""
-        line_count = self._body_line_count()
-        if not meets_mini_criteria(getattr(self, '_category', None), exit_code, line_count, stderr_raw):
-            return
-        if not self.is_attached or self.parent is None:
-            return
+        """E2: mini-mode is opt-in via display.auto_mini_mode config (default False).
+
+        When enabled: panel gets --minified class (height:1 stub row).
+        ToolPanelMini widget is deleted; stub is rendered by ToolPanel header directly.
+        """
         try:
-            from hermes_cli.tui.tool_panel_mini import ToolPanelMini
-            cmd = self._format_arg_summary() or self._tool_name
-            dur = 0.0
-            if self._completed_at is not None:
-                dur = self._completed_at - self._start_time
-            mini = ToolPanelMini(source_panel=self, command=cmd, duration_s=dur)
-            self.parent.mount(mini, after=self)
-            self.add_class("--minified")  # B3: hide via class; hover on mini reveals it
+            cli = getattr(self.app, "cli", None)
+            if cli is None:
+                return
+            cfg = getattr(cli, "_cfg", None) or {}
+            display_cfg = cfg.get("display", {}) if isinstance(cfg, dict) else {}
+            if not display_cfg.get("auto_mini_mode", False):
+                return
+            # Check mini criteria inline (tool_panel_mini deleted)
+            from hermes_cli.tui.tool_category import ToolCategory
+            exit_code = getattr(summary, "exit_code", None)
+            stderr_raw = getattr(summary, "stderr_tail", None) or ""
+            line_count = self._body_line_count()
+            if self._category != ToolCategory.SHELL:
+                return
+            if exit_code != 0:
+                return
+            if line_count > 3:
+                return
+            if stderr_raw:
+                return
+            self.add_class("--minified")
         except Exception:
             pass
 
     def set_result_summary(self, summary: "ResultSummaryV4") -> None:
-        """Call from app at tool completion to populate footer and header."""
+        """Call from app at tool completion to populate footer and header.
+
+        E1: Two-tick sequence.
+        Tick 0 (this method): header state, classify, footer content, post Completed.
+        Tick 1 (_post_complete_tidy): auto-collapse, flash, mini-mode.
+        """
         self._result_summary_v4 = summary
         self._completed_at = time.monotonic()
-        # Update accent + header bar state
+
+        # --- Tick 0: land the result ---
+
+        # Update accent state
         final_state = "error" if summary.is_error else "ok"
-        # D1: apply class so CSS can target errors specifically (e.g. compact mode exception)
         if summary.is_error:
             self.add_class("tool-panel--error")
         else:
             self.remove_class("tool-panel--error")
         if getattr(self, '_accent', None) is not None:
             self._accent.state = final_state
-        if getattr(self, '_header_bar', None) is not None:
-            self._header_bar.set_state(final_state)
-            self._header_bar.set_finished(self._completed_at)
-            line_count = self._body_line_count()
-            self._header_bar.set_line_count(line_count)
-            # Classify content and update pill
-            self._update_kind_from_classifier(line_count)
-        self._apply_complete_auto_collapse()
-        # Refresh footer visibility
-        if getattr(self, '_footer_pane', None) is not None:
-            show = self._has_footer_content()
-            self._footer_pane.styles.display = "block" if show else "none"
-        # Activate mini-mode for qualifying SHELL calls
-        self._maybe_activate_mini(summary)
-        # B2: schedule multi-tick age microcopy (10s / 60s / 300s)
-        self._schedule_age_ticks()
 
-        # Push primary + promoted chips to ToolHeader
-        promoted_texts: frozenset[str] = frozenset()
+        # Update ToolHeader state directly (ToolHeaderBar deleted in A1)
         header = getattr(self._block, "_header", None)
+        line_count = self._body_line_count()
         if header is not None:
+            header._is_complete = True
+            header._tool_icon_error = summary.is_error
+            if self._completed_at is not None:
+                elapsed = self._completed_at - self._start_time
+                header._duration = f"{elapsed:.1f}s"
+            header._line_count = line_count
+            header._has_affordances = line_count > 3
             if summary.primary is not None:
                 header._primary_hero = summary.primary
             header._error_kind = summary.error_kind
             # A2: chips live in FooterPane only; header never shows them
             header._header_chips = []
             header.refresh()
-            promoted_texts: frozenset[str] = frozenset()
-
-        # Render v4 footer (skip chips already in header)
-        if self._footer_pane is not None:
-            self._footer_pane.update_summary_v4(summary, promoted_chip_texts=promoted_texts)
 
         # A1: sub-500ms closure flash — if microcopy never shown, flash "done" on header
         if not summary.is_error:
@@ -890,54 +880,86 @@ class ToolPanel(Widget):
                 header._flash_msg = "done"
                 header._flash_expires = time.monotonic() + 0.5
 
-        # A5: error banner — mount between header and body
-        if header is not None:
-            # Remove any existing error banner first
+        # Classify content
+        self._update_kind_from_classifier(line_count)
+
+        # A2: error remediation lives in FooterPane._remediation_row (error-banner widget removed)
+        if self._footer_pane is not None and summary.is_error and summary.error_kind is not None:
             try:
-                for existing in list(self._block.query(".error-banner")):
-                    existing.remove()
+                _ICON_MAP = {
+                    "timeout": "⏱",
+                    "signal": "💀",
+                    "auth": "🔒",
+                    "exit": "✗",
+                    "network": "🌐",
+                }
+                icon = _ICON_MAP.get(summary.error_kind, "✗")
+                kind_label = summary.error_kind.replace("_", " ").title()
+                remediation = next(
+                    (c.remediation for c in (summary.chips or ()) if c.remediation),
+                    None
+                )
+                if remediation:
+                    remediation_text = f"{icon} {kind_label}  ·  {remediation}"
+                else:
+                    remediation_text = f"{icon} {kind_label}"
+                from rich.text import Text as _RText
+                rem_rich = _RText()
+                rem_rich.append(remediation_text, style="bold red")
+                self._footer_pane._remediation_row.update(rem_rich)
+                self._footer_pane._remediation_row.add_class("footer-remediation--error")
+                self._footer_pane.add_class("has-remediation")
             except Exception:
                 pass
-            if summary.is_error and summary.error_kind is not None:
-                try:
-                    _ICON_MAP = {
-                        "timeout": "⏱",
-                        "signal": "💀",
-                        "auth": "🔒",
-                        "exit": "✗",
-                        "network": "🌐",
-                    }
-                    from hermes_cli.tui.tool_result_parse import _SHELL_REMEDIATIONS
-                    icon = _ICON_MAP.get(summary.error_kind, "✗")
-                    kind_label = summary.error_kind.replace("_", " ").title()
-                    # Find remediation from chips
-                    remediation = next(
-                        (c.remediation for c in (summary.chips or ()) if c.remediation),
-                        None
-                    )
-                    if remediation:
-                        banner_text = f"  {icon}  {kind_label}  ·  {remediation}"
-                    else:
-                        banner_text = f"  {icon}  {kind_label}"
-                    from textual.widgets import Static as _Static
-                    banner = _Static(banner_text, classes="error-banner")
-                    self._block.mount(banner, after=header)
-                except Exception:
-                    pass
 
-        # Auto-collapse / error promotion
-        # D1: errors always expand regardless of user collapse override
+        # Render v4 footer
+        if self._footer_pane is not None:
+            self._footer_pane.update_summary_v4(summary, promoted_chip_texts=frozenset())
+
+        # Refresh footer visibility (pre-tidy state)
+        if getattr(self, '_footer_pane', None) is not None:
+            show = self._has_footer_content()
+            self._footer_pane.styles.display = "block" if show else "none"
+
+        # Post Completed so ToolGroup recomputes immediately
+        self.post_message(ToolPanel.Completed())
+
+        # B2: schedule multi-tick age microcopy (10s / 60s / 300s)
+        self._schedule_age_ticks()
+
+        # --- Schedule Tick 1: tidy-up (auto-collapse, flash, mini-mode) ---
+        try:
+            self.call_after_refresh(self._post_complete_tidy, summary)
+        except Exception:
+            # Not mounted (e.g. unit tests); run inline
+            self._post_complete_tidy(summary)
+
+    def _post_complete_tidy(self, summary: "ResultSummaryV4") -> None:
+        """E1 Tick 1: auto-collapse, flash, mini-mode activation.
+
+        Runs one event-loop turn after set_result_summary so the user sees
+        the completed header/footer before collapse animation fires.
+        Skip-flash rule: if auto-collapse fires, suppress flash (collapse is signal enough).
+        """
+        # Error: always expand; never auto-collapse
         if summary.is_error:
             self.collapsed = False
-        elif not self._user_collapse_override:
-            self._apply_complete_auto_collapse()
+            return
 
-        # Show footer when there's something to display
+        # Auto-collapse if warranted (non-error path)
+        did_collapse = False
+        if not getattr(self, "_user_collapse_override", False):
+            before = self.collapsed
+            self._apply_complete_auto_collapse()
+            did_collapse = self.collapsed and not before
+
+        # Mini-mode activation (opt-in via config)
+        self._maybe_activate_mini(summary)
+
+        # Footer visibility refresh after collapse decision
         if self._footer_pane is not None:
             show = self._has_footer_content() and not self.collapsed
             self._footer_pane.styles.display = "block" if show else "none"
-
-        self.post_message(ToolPanel.Completed())
 
     def copy_content(self) -> str:
         """Return full plain-text output regardless of collapse state."""
@@ -961,63 +983,11 @@ class ToolPanel(Widget):
 
     def action_toggle_collapse(self) -> None:
         self.collapsed = not self.collapsed
-        self._user_collapse_override = True
+        self._user_collapse_override = True   # legacy compat
+        self._auto_collapsed = False          # C1: user explicitly toggled
 
-    def action_toggle_l1_l2(self) -> None:
-        level = self.detail_level
-        if level == 0:
-            self.detail_level = 1
-        elif level == 1:
-            self.detail_level = 2
-        elif level == 2:
-            self.detail_level = 1
-        else:  # level == 3
-            self.detail_level = 2
-
-    def action_set_level_0(self) -> None:
-        self.detail_level = 0
-
-    def action_set_level_1(self) -> None:
-        self.detail_level = 1
-
-    def action_set_level_2(self) -> None:
-        self.detail_level = 2
-
-    def action_set_level_3(self) -> None:
-        self.detail_level = 3
-
-    def action_cycle_detail_forward(self) -> None:
-        level = self.detail_level
-        self.detail_level = (level % 3) + 1 if level > 0 else 1
-
-    def action_cycle_detail_reverse(self) -> None:
-        level = self.detail_level
-        if level == 0:
-            pass  # stay at L0
-        elif level == 1:
-            self.detail_level = 3
-        else:
-            self.detail_level = level - 1
-
-    def watch_detail_level(self, old: int, new: int) -> None:
-        """Stub — detail_level replaced by collapsed bool. Maintains CSS class compat."""
-        self.collapsed = (new == 0)
-        try:
-            self.remove_class(f"-l{old}")
-        except Exception:
-            pass
-        try:
-            self.add_class(f"-l{new}")
-        except Exception:
-            pass
-        bp = getattr(self, "_body_pane", None)
-        if bp is not None and hasattr(bp, "set_mode"):
-            if new == 0:
-                bp.set_mode("none")
-            elif new == 1:
-                bp.set_mode("preview")
-            else:
-                bp.set_mode("full")
+    # C1: action_toggle_l1_l2, action_set_level_*, action_cycle_detail_*, watch_detail_level removed
+    # detail_level is now a property (see class-level definition above)
 
     def action_open_primary(self) -> None:
         """Open header path if path-clickable; else fall back to first file artifact (C1)."""
@@ -1304,10 +1274,12 @@ class ToolPanel(Widget):
         self._flash_header("copied path")
 
     def action_dismiss_error_banner(self) -> None:
-        """A5: dismiss the error banner (x key)."""
+        """A2: dismiss error remediation from footer (x key)."""
         try:
-            for banner in list(self._block.query(".error-banner")):
-                banner.remove()
+            if self._footer_pane is not None:
+                self._footer_pane._remediation_row.update("")
+                self._footer_pane._remediation_row.remove_class("footer-remediation--error")
+                self._footer_pane.remove_class("has-remediation")
         except Exception:
             pass
 
@@ -1445,6 +1417,13 @@ class ToolPanel(Widget):
             self._hint_row.update(self._build_hint_text())
 
     def _build_hint_text(self) -> "Any":
+        """B1: Three-tier hint model — Primary (max 2) + Contextual (max 2) + power-in-F1.
+
+        Narrow mode (< 50 cols): primary only (max 2).
+        Wide mode: primary (max 2) + contextual (max 2) = 4 hints total.
+        Power hints (C/H/I/u/O/⇧↵/j/k) not shown; signalled by 'F1 more' when present.
+        B2: F1 opens help (not ?); ? opens context menu.
+        """
         from rich.text import Text
         _mounted = getattr(self, "is_mounted", True)
         _size = getattr(self, "size", None)
@@ -1452,99 +1431,68 @@ class ToolPanel(Widget):
         narrow = width < 50
 
         rs = self._result_summary_v4
-        hints: list[tuple[str, str, str]] = []  # (key, sep, label)
-
-        # A2: tail-follow hint when block is actively streaming
         _block_streaming = (
             hasattr(self._block, "_completed") and
             not self._block._completed
         )
 
-        # D3: state-aware hints
-        if rs is not None and rs.is_error:
-            hints.append(("r", " ", "retry  "))
+        # --- Primary hints (max 2, always shown) ---
+        primary: list[tuple[str, str]] = []  # (key, label)
+        if _block_streaming:
+            primary.append(("Enter", "follow"))
+        elif rs is not None and rs.is_error:
+            primary.append(("Enter", "toggle"))
+            primary.append(("x", "dismiss"))
+        else:
+            primary.append(("Enter", "toggle"))
+            primary.append(("c", "copy"))
+
+        # --- Contextual hints (max 2, wide only) ---
+        contextual: list[tuple[str, str]] = []
+        if _block_streaming:
+            contextual.append(("f", "tail"))
+        # OmissionBar hint available regardless of streaming state
+        bar = self._get_omission_bar()
+        if bar is not None:
+            contextual.append(("*", "all"))
+        if rs is not None:
+            has_copy_err = rs.stderr_tail or any(
+                a.kind == "copy_err" and a.payload for a in (rs.actions or ())
+            )
+            if has_copy_err:
+                contextual.append(("e", "stderr"))
+            if self._result_paths_for_action():
+                contextual.append(("o", "open"))
+            has_urls = any(a.kind == "url" for a in (rs.artifacts or ()))
+            if has_urls:
+                contextual.append(("u", "urls"))
             has_edit = any(a.kind == "edit_cmd" and a.payload for a in (rs.actions or ()))
             if has_edit:
-                hints.append(("E", " ", "edit cmd  "))
+                contextual.append(("E", "edit"))
+            # retry for errors not already in primary
+            if rs.is_error and not any(h[0] == "Enter" and h[1] == "retry" for h in primary):
+                contextual.insert(0, ("r", "retry"))
 
-        hints.append(("?", " ", "menu  "))  # D1: always show menu hint
-        hints.append(("c", " ", "copy  "))
+        # --- Power tier (always behind F1) ---
+        # These are never shown inline; just indicate F1 overflow when non-empty
+        _power_keys_exist = bool(rs is not None)  # always have at least some power keys
 
+        # Build output
+        primary = primary[:2]
+        shown = list(primary)
         if not narrow:
-            # A2: show tail-follow hint during active streaming
-            if _block_streaming:
-                hints.append(("f", " ", "tail  "))
-            hints.append(("  Enter", " ", "toggle  "))
-            bar = self._get_omission_bar()
-            if bar is not None:
-                hints.append(("+/-", " ", "lines  "))
-                hints.append(("*", " ", "all  "))
-            # D3: j/k scroll only when expanded
-            if not self.collapsed:
-                hints.append(("j/k", " ", "scroll  "))
-            hints.append(("C/H", " ", "color/html  "))
-            hints.append(("I", " ", "invocation  "))
-            hints.append(("F1", " ", "help  "))  # A1: f1 key for help overlay
-            if rs is not None:
-                # A3: stderr hint when stderr_tail OR copy_err action has payload
-                has_copy_err = rs.stderr_tail or any(
-                    a.kind == "copy_err" and a.payload for a in (rs.actions or ())
-                )
-                if has_copy_err:
-                    hints.append(("e", " ", "stderr  "))
-                # D3: error banner dismiss
-                try:
-                    if list(self.query(".error-banner")):
-                        hints.append(("x", " ", "dismiss  "))
-                except Exception:
-                    pass
-                if self._result_paths_for_action():
-                    hints.append(("o", " ", "open  "))
-                    hints.append(("p", " ", "paths"))
-                has_urls = any(a.kind == "url" for a in (rs.artifacts or ()))
-                if has_urls:
-                    hints.append(("  O", " ", "url  "))
-                    hints.append(("u", " ", "copy urls"))
-                # D3: O open only when path-clickable
-                try:
-                    if getattr(self._block._header, "_path_clickable", False):
-                        if not any(h[0] == "o" for h in hints):
-                            hints.append(("O", " ", "open  "))
-                except Exception:
-                    pass
-
-        # D1: show Shift+Enter peek hint when inside a ToolGroup
-        try:
-            from hermes_cli.tui.tool_group import _get_tool_group
-            if _get_tool_group(self) is not None:
-                hints.append(("⇧↵", " ", "peek"))
-        except Exception:
-            pass
-
-        # C3: sort hints by priority before applying narrow-mode cap
-        # Priority order: error (r, E, x), copy/open (c, o, p, e, u, O, C, H, I), navigation
-        _ERROR_KEYS = frozenset({"r", "E", "x"})
-        _COPY_OPEN_KEYS = frozenset({"c", "o", "p", "e", "u", "O", "C", "H", "I", "P"})
-        def _hint_priority(h: tuple) -> int:
-            k = h[0].strip()
-            if k in _ERROR_KEYS:
-                return 0
-            if k in _COPY_OPEN_KEYS:
-                return 1
-            return 2
-        if narrow:
-            hints.sort(key=_hint_priority)
+            shown += contextual[:2]
 
         t = Text()
-        max_hints = 3 if narrow else 6
-        shown = hints[:max_hints]
-        for i, (key, sep, label) in enumerate(shown):
+        for i, (key, label) in enumerate(shown):
             if i > 0:
-                t.append(" │ ", style="dim")
+                t.append("  ", style="dim")
             t.append(key, style="bold")
-            t.append(sep + label, style="dim")
-        if len(hints) > max_hints:
-            t.append("  ? more", style="dim")
+            t.append(f" {label}", style="dim")
+
+        if _power_keys_exist:
+            t.append("  F1", style="bold dim")
+
         return t
 
     def _get_omission_bar(self) -> "Any | None":
@@ -1597,13 +1545,7 @@ class ToolPanel(Widget):
         block._follow_tail = not block._follow_tail
         state = "on" if block._follow_tail else "off"
         self._flash_header(f"tail: {state}")
-    def action_toggle_l0_restore(self) -> None:
-        """space: toggle L0 (collapsed) and restore prior level."""
-        if self.detail_level == 0:
-            self.detail_level = getattr(self, "_pre_collapse_level", 2)
-        else:
-            self._pre_collapse_level = self.detail_level
-            self.detail_level = 0
+    # C2: action_toggle_l0_restore removed; Space no longer bound to collapse
 
     def action_copy_output(self) -> None:
         """y: copy tool output to clipboard."""
@@ -1640,8 +1582,9 @@ class ToolPanel(Widget):
         try:
             from hermes_cli.tui.messages import ToolRerunRequested
             self.post_message(ToolRerunRequested(panel=self))
-            if self._header_bar is not None:
-                self._header_bar.flash_rerun()
+            header = getattr(self._block, "_header", None)
+            if header is not None:
+                header.flash_success()
         except Exception:
             self.app.notify("Rerun not available", timeout=2)
 
@@ -1684,15 +1627,13 @@ class ToolPanel(Widget):
             cls_result = ClassificationResult(kind=kind, confidence=1.0)
             renderer_cls = pick_renderer(cls_result, payload)
             self._swap_renderer(renderer_cls, payload, cls_result)
-            if self._header_bar is not None:
-                self._header_bar.set_kind(kind)
         except Exception:
             pass
 
-    def on_tool_header_bar_clicked(self, event: ToolHeaderBar.Clicked) -> None:
-        """ToolHeaderBar click → cycle detail level."""
-        event.stop()
-        self.action_cycle_detail_forward()
+    def on_tool_header_clicked(self, event: "object") -> None:
+        """ToolHeader click → toggle collapsed (ToolHeaderBar deleted in A1)."""
+        getattr(event, "stop", lambda: None)()
+        self.collapsed = not self.collapsed
 
     # Focus styling is done via CSS :focus pseudo-class in hermes.tcss.
     # No on_focus/on_blur handlers — they trigger layout refreshes that

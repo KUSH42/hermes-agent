@@ -258,12 +258,10 @@ class ExecuteCodeBlock(StreamingToolBlock):
         is_first_line = len(self._code_lines) == 0
         self._code_lines.append(line)
 
-        # Update header label on first non-empty line (once only)
+        # J1: label stays as "execute_code"; first code line goes to arg-summary (secondary)
         if not self._label_set and line.strip():
-            self._header._label = line.strip()[:60]
-            # Highlight full line, then truncate the resulting Rich Text
-            full_rich = Text.from_ansi(self._highlight_line(line.strip()))
-            self._header._label_rich = full_rich[:60] if full_rich.cell_len > 60 else full_rich
+            snippet = line.strip()[:40]
+            self._header._header_args = {"snippet": snippet}
             self._label_set = True
 
         if is_first_line:
@@ -318,13 +316,11 @@ class ExecuteCodeBlock(StreamingToolBlock):
         if code:
             self._code_lines = code.splitlines()
 
-        # Update header label + rich label from canonical first line
+        # J1: label stays as "execute_code"; first line goes to arg-summary only
         if code:
             first_line_full = self._code_lines[0].strip() if self._code_lines else ""
             if first_line_full:
-                self._header._label = first_line_full[:60]
-                full_rich = Text.from_ansi(self._highlight_line(first_line_full))
-                self._header._label_rich = full_rich[:60] if full_rich.cell_len > 60 else full_rich
+                self._header._header_args = {"snippet": first_line_full[:40]}
 
         # Clear CodeSection and write Syntax renderable for lines 1+
         try:
@@ -442,16 +438,12 @@ class ExecuteCodeBlock(StreamingToolBlock):
         self._header._spinner_char = None
         self._header._duration = duration
 
-        # E5: compute and append line count chip to header label
+        # E5: compute line count; J1: label stays constant, line count shown as arg-summary suffix
         self._code_line_count = len(self._code_lines)
-        if self._code_line_count > 1 and self._header._label:
-            if not self._header._label_rich:
-                from rich.text import Text as _RText
-                base = _RText(self._header._label)
-                base.append(f" (+{self._code_line_count - 1} lines)", style="dim")
-                self._header._label_rich = base
-            else:
-                self._header._label_rich.append(f" (+{self._code_line_count - 1} lines)", style="dim")
+        if self._code_line_count > 1:
+            snippet = (self._header._header_args or {}).get("snippet", "")
+            suffix = f" (+{self._code_line_count - 1} lines)"
+            self._header._header_args = {"snippet": snippet + suffix if snippet else suffix.strip()}
 
         # Collapse based on code lines + output lines; suppress "NL" display
         total = len(self._code_lines) + self._total_received

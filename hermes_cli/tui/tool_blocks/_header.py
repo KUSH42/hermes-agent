@@ -107,6 +107,8 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         self._error_kind: str | None = None
         self._flash_tone: str = "success"
         self._browse_badge: str = ""
+        # D1: set True by ChildPanel to suppress ┊ gutter prefix
+        self._is_child: bool = False
 
     def on_mount(self) -> None:
         self._refresh_gutter_color()
@@ -171,7 +173,11 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             elif self._is_complete:
                 t.append("[✓] ", style="bold green")
 
-        if self._is_child_diff:
+        if self._is_child:
+            # D1: ChildPanel — no gutter prefix; SubAgentBody vkey border is the connector
+            gutter_text = Text(" ", style="dim")
+            gutter_w = 1
+        elif self._is_child_diff:
             gutter_text = Text("  ╰─", style="dim")
             gutter_w = 4
         elif focused:
@@ -273,7 +279,12 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                     pass
                 if diff_seg.cell_len > 0:
                     tail_segments.append(("diff", diff_seg))
-            # A2: line count moved to ToolHeaderBar only; not rendered here
+            # A1: line count rendered here (ToolHeaderBar deleted)
+            # Suppress line count when diff stats are shown (avoids redundant info)
+            _has_diff_in_tail = any(name == "diff" for name, _ in tail_segments)
+            if self._line_count and not _has_diff_in_tail:
+                lc_text = ">99K" if self._line_count > 99999 else f"{self._line_count}L"
+                tail_segments.append(("linecount", Text(f"  {lc_text}", style="dim")))
             if self._has_affordances:
                 is_collapsed = self._panel.collapsed if self._panel is not None else self.collapsed
                 tail_segments.append(("chevron", Text("  ▸" if is_collapsed else "  ▾", style="dim")))

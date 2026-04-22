@@ -40,15 +40,16 @@ async def test_collapsed_stub_shows_line_count():
 
 
 @pytest.mark.asyncio
-async def test_collapsed_stub_shows_click_to_expand():
-    """Collapsed stub contains 'click to expand' hint."""
+async def test_collapsed_stub_shows_reasoning_collapsed():
+    """I2: collapsed stub shows 'Reasoning collapsed' but NOT 'click to expand'."""
     async with _App().run_test() as pilot:
         panel = pilot.app.query_one(ReasoningPanel)
         panel._plain_lines = ["x"]
         panel._update_collapsed_stub()
         await pilot.pause()
         stub_text = panel._collapsed_stub._Static__content
-        assert "click to expand" in stub_text.plain
+        assert "Reasoning collapsed" in stub_text.plain
+        assert "click to expand" not in stub_text.plain
 
 
 @pytest.mark.asyncio

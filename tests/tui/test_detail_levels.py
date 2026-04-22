@@ -1,6 +1,10 @@
-"""Phase D tests: detail_level watcher — L0–L3 visibility, InputSection, CSS classes.
+"""C1: detail_level → collapsed bool migration tests.
 
-14 tests.
+After Pass 10 Phase 3, detail_level is a property backed by collapsed:
+  detail_level == 0  ↔  collapsed == True
+  detail_level == 1/2/3  ↔  collapsed == False
+
+watch_detail_level removed; toggle_l0_restore removed.
 """
 from __future__ import annotations
 
@@ -24,313 +28,130 @@ def _make_app() -> HermesApp:
 
 
 # ---------------------------------------------------------------------------
-# Unit-level tests (no app mount needed)
+# C1: detail_level property tests
 # ---------------------------------------------------------------------------
 
 
-def test_detail_level_default_is_2_for_streaming():
-    """Streaming blocks default to detail_level=2 in on_mount."""
-    from hermes_cli.tui.tool_blocks import ToolBlock
+def test_detail_level_property_collapsed_maps_to_0():
+    """C1: collapsed=True → detail_level == 0."""
     block = MagicMock()
     block._total_received = 0
     block._all_plain = []
     panel = ToolPanel(block=block, tool_name="bash")
-    # Before mount, reactive default is 1; after mount it's set to 2 for streaming
-    # Just check the reactive default is an int
-    assert isinstance(panel.detail_level, int)
+    panel.collapsed = True
+    assert panel.detail_level == 0
 
 
-def test_watch_detail_level_hides_body_at_l0():
+def test_detail_level_property_expanded_maps_to_2():
+    """C1: collapsed=False → detail_level == 2."""
+    block = MagicMock()
+    block._total_received = 0
+    block._all_plain = []
+    panel = ToolPanel(block=block, tool_name="bash")
+    panel.collapsed = False
+    assert panel.detail_level == 2
+
+
+def test_detail_level_setter_0_sets_collapsed_true():
+    """C1: detail_level = 0 → collapsed = True."""
     block = MagicMock()
     block._total_received = 0
     panel = ToolPanel(block=block, tool_name="bash")
-
-    # Simulate post-compose pane state
-    panel._args_pane = MagicMock()
-    panel._args_pane.display = True
-    panel._body_pane = MagicMock()
-    panel._body_pane.display = True
-    panel._body_pane.set_mode = MagicMock()
-    panel._footer_pane = MagicMock()
-    panel._footer_pane.display = False
-    panel._input_section = MagicMock()
-    panel._input_section.display = True
-    panel._header_bar = MagicMock()
-    panel._result_summary = None
-
-    # Simulate watch_detail_level with new=0
-    panel.watch_detail_level(2, 0)
-
-    # BodyPane: want_bp = (0 != 0) = False → set to none
-    panel._body_pane.styles.display == "none"
+    panel.detail_level = 0
+    assert panel.collapsed is True
 
 
-def test_watch_detail_level_shows_body_at_l1():
+def test_detail_level_setter_1_sets_collapsed_false():
+    """C1: detail_level = 1 → collapsed = False."""
     block = MagicMock()
     block._total_received = 0
     panel = ToolPanel(block=block, tool_name="bash")
-    panel._args_pane = MagicMock()
-    panel._args_pane.display = False
-    panel._body_pane = MagicMock()
-    panel._body_pane.display = False
-    panel._body_pane.set_mode = MagicMock()
-    panel._footer_pane = MagicMock()
-    panel._footer_pane.display = False
-    panel._input_section = MagicMock()
-    panel._input_section.display = False
-    panel._header_bar = MagicMock()
-    panel._result_summary = None
-
-    panel.watch_detail_level(0, 1)
-
-    # BodyPane should become visible at L1
-    panel._body_pane.set_mode.assert_called_with("preview")
+    panel.detail_level = 1
+    assert panel.collapsed is False
 
 
-def test_watch_detail_level_shows_body_at_l2():
-    block = MagicMock()
-    block._total_received = 0
-    panel = ToolPanel(block=block, tool_name="bash")
-    panel._args_pane = MagicMock()
-    panel._args_pane.display = False
-    panel._body_pane = MagicMock()
-    panel._body_pane.display = False
-    panel._body_pane.set_mode = MagicMock()
-    panel._footer_pane = MagicMock()
-    panel._footer_pane.display = False
-    panel._input_section = MagicMock()
-    panel._input_section.display = False
-    panel._header_bar = MagicMock()
-    panel._result_summary = None
-
-    panel.watch_detail_level(1, 2)
-    panel._body_pane.set_mode.assert_called_with("full")
-
-
-def test_watch_detail_level_shows_args_only_at_l3():
-    block = MagicMock()
-    block._total_received = 0
-    panel = ToolPanel(block=block, tool_name="bash")
-    panel._args_pane = MagicMock()
-    panel._args_pane.display = False
-    panel._body_pane = MagicMock()
-    panel._body_pane.display = True
-    panel._body_pane.set_mode = MagicMock()
-    panel._footer_pane = MagicMock()
-    panel._footer_pane.display = False
-    panel._input_section = MagicMock()
-    panel._input_section.display = True
-    panel._header_bar = MagicMock()
-    panel._result_summary = None
-    panel._tool_args = {"cmd": "ls"}
-
-    panel.watch_detail_level(2, 3)
-
-    # ArgsPane should be shown
-    panel._args_pane.styles.__setattr__  # just confirm the mock exists
-    # set_mode should be "full"
-    panel._body_pane.set_mode.assert_called_with("full")
-
-
-def test_watch_detail_level_adds_css_class():
-    block = MagicMock()
-    block._total_received = 0
-    panel = ToolPanel(block=block, tool_name="bash")
-    panel._args_pane = MagicMock()
-    panel._args_pane.display = False
-    panel._body_pane = MagicMock()
-    panel._body_pane.display = True
-    panel._body_pane.set_mode = MagicMock()
-    panel._footer_pane = MagicMock()
-    panel._footer_pane.display = False
-    panel._input_section = MagicMock()
-    panel._input_section.display = True
-    panel._header_bar = MagicMock()
-    panel._result_summary = None
-
-    added = []
-    removed = []
-    panel.add_class = lambda *a: added.extend(a)
-    panel.remove_class = lambda *a: removed.extend(a)
-
-    panel.watch_detail_level(2, 3)
-    assert "-l3" in added
-    assert "-l2" in removed
-
-
-def test_input_section_visible_at_l2():
-    """InputSection want_is = True at L2 for SHELL category."""
-    block = MagicMock()
-    block._total_received = 0
-    panel = ToolPanel(block=block, tool_name="bash")
-    panel._args_pane = MagicMock()
-    panel._args_pane.display = False
-    panel._body_pane = MagicMock()
-    panel._body_pane.display = False
-    panel._body_pane.set_mode = MagicMock()
-    panel._footer_pane = MagicMock()
-    panel._footer_pane.display = False
-    panel._input_section = MagicMock()
-    panel._input_section.display = False
-    panel._header_bar = MagicMock()
-    panel._result_summary = None
-
-    # SHELL + L2 → want_is = True
-    panel._category = ToolCategory.SHELL
-    panel.watch_detail_level(1, 2)
-
-    panel._input_section.styles.__setattr__  # confirms called
-
-
-def test_input_section_hidden_at_l0():
-    """InputSection hidden at L0 regardless of category."""
-    block = MagicMock()
-    block._total_received = 0
-    panel = ToolPanel(block=block, tool_name="bash")
-    panel._args_pane = MagicMock()
-    panel._args_pane.display = True
-    panel._body_pane = MagicMock()
-    panel._body_pane.display = True
-    panel._body_pane.set_mode = MagicMock()
-    panel._footer_pane = MagicMock()
-    panel._footer_pane.display = False
-    panel._input_section = MagicMock()
-    panel._input_section.display = True
-    panel._header_bar = MagicMock()
-    panel._result_summary = None
-    panel._category = ToolCategory.SHELL
-
-    panel.watch_detail_level(2, 0)
-    # want_is = (0 >= 2) and True = False → should be set to "none"
-    # The mock captures the call
-    assert panel._input_section.styles is not None
-
-
-def test_input_section_hidden_at_l1():
-    """InputSection hidden at L1 (want_is requires >= 2)."""
-    block = MagicMock()
-    block._total_received = 0
-    panel = ToolPanel(block=block, tool_name="bash")
-    panel._args_pane = MagicMock()
-    panel._args_pane.display = False
-    panel._body_pane = MagicMock()
-    panel._body_pane.display = False
-    panel._body_pane.set_mode = MagicMock()
-    panel._footer_pane = MagicMock()
-    panel._footer_pane.display = False
-    panel._input_section = MagicMock()
-    panel._input_section.display = False
-    panel._header_bar = MagicMock()
-    panel._result_summary = None
-    panel._category = ToolCategory.SHELL
-
-    # At L1, want_is = (1 >= 2) = False
-    panel.watch_detail_level(2, 1)
-    # No change expected because display is already False
-    # (display != want_is → False != False → no write)
-    assert True  # just ensure no crash
-
-
-def test_input_section_hidden_for_execute_code_at_l2():
-    """InputSection stays hidden at L2 for CODE (execute_code) category."""
-    block = MagicMock()
-    block._total_received = 0
-    panel = ToolPanel(block=block, tool_name="execute_code")
-    panel._args_pane = MagicMock()
-    panel._args_pane.display = False
-    panel._body_pane = MagicMock()
-    panel._body_pane.display = False
-    panel._body_pane.set_mode = MagicMock()
-    panel._footer_pane = MagicMock()
-    panel._footer_pane.display = False
-    panel._input_section = MagicMock()
-    panel._input_section.display = False
-    panel._header_bar = MagicMock()
-    panel._result_summary = None
-
-    # CODE category → should_show = False → want_is = False
-    panel.watch_detail_level(1, 2)
-    # display remains False, no change
-    assert InputSection.should_show(ToolCategory.CODE) is False
-
-
-def test_l3_bg_tint_class_present():
-    """watch_detail_level adds -l3 CSS class when entering L3."""
-    block = MagicMock()
-    block._total_received = 0
-    panel = ToolPanel(block=block, tool_name="bash")
-    panel._args_pane = MagicMock()
-    panel._args_pane.display = False
-    panel._body_pane = MagicMock()
-    panel._body_pane.display = True
-    panel._body_pane.set_mode = MagicMock()
-    panel._footer_pane = MagicMock()
-    panel._footer_pane.display = False
-    panel._input_section = MagicMock()
-    panel._input_section.display = True
-    panel._header_bar = MagicMock()
-    panel._result_summary = None
-    panel._tool_args = {}
-
-    added = []
-    panel.add_class = lambda *a: added.extend(a)
-    panel.remove_class = lambda *a: None
-
-    panel.watch_detail_level(2, 3)
-    assert "-l3" in added
-
-
-def test_toggle_l0_restore_collapses():
-    """action_toggle_l0_restore at L2 → stores pre-collapse, sets L0."""
+def test_detail_level_setter_2_sets_collapsed_false():
+    """C1: detail_level = 2 → collapsed = False."""
     block = MagicMock()
     block._total_received = 0
     panel = ToolPanel(block=block, tool_name="bash")
     panel.detail_level = 2
-
-    level_changes = []
-    original_setattr = ToolPanel.detail_level.fset if hasattr(ToolPanel.detail_level, 'fset') else None
-
-    # Patch detail_level setter
-    set_calls = []
-
-    class _Tracker:
-        def __set__(self, obj, val):
-            set_calls.append(val)
-            obj.__dict__["_detail_level_raw"] = val
-
-        def __get__(self, obj, objtype=None):
-            if obj is None:
-                return self
-            return obj.__dict__.get("_detail_level_raw", 2)
-
-    # Use direct attribute manipulation
-    panel.__dict__["_detail_level_raw"] = 2
-
-    # Call directly
-    panel._pre_collapse_level = 2
-    saved = panel.detail_level
-    # Simulate the action
-    panel._pre_collapse_level = panel.detail_level
-    panel.detail_level = 0
-    assert panel.detail_level == 0
-    assert panel._pre_collapse_level == saved
+    assert panel.collapsed is False
 
 
-def test_toggle_l0_restore_expands_back():
-    """action_toggle_l0_restore at L0 → restores pre-collapse level."""
+def test_detail_level_setter_3_sets_collapsed_false():
+    """C1: detail_level = 3 → collapsed = False."""
     block = MagicMock()
     block._total_received = 0
     panel = ToolPanel(block=block, tool_name="bash")
-    panel._pre_collapse_level = 2
-    panel.detail_level = 0
+    panel.detail_level = 3
+    assert panel.collapsed is False
 
-    panel.detail_level = panel._pre_collapse_level
-    assert panel.detail_level == 2
+
+def test_detail_level_is_int():
+    """C1: detail_level property returns int."""
+    block = MagicMock()
+    block._total_received = 0
+    block._all_plain = []
+    panel = ToolPanel(block=block, tool_name="bash")
+    assert isinstance(panel.detail_level, int)
+
+
+def test_watch_detail_level_removed():
+    """C1: watch_detail_level method deleted."""
+    block = MagicMock()
+    block._total_received = 0
+    panel = ToolPanel(block=block, tool_name="bash")
+    assert not hasattr(panel, "watch_detail_level"), "watch_detail_level should be deleted in C1"
+
+
+def test_toggle_l0_restore_removed():
+    """C2: action_toggle_l0_restore deleted; Space no longer binds to it."""
+    block = MagicMock()
+    block._total_received = 0
+    panel = ToolPanel(block=block, tool_name="bash")
+    assert not hasattr(panel, "action_toggle_l0_restore"), "action_toggle_l0_restore should be deleted in C2"
+
+
+def test_space_not_bound_to_toggle():
+    """C2: space binding removed from ToolPanel.BINDINGS."""
+    space_bindings = [b for b in ToolPanel.BINDINGS if b.key == "space"]
+    assert len(space_bindings) == 0, f"space should not be bound in ToolPanel, found: {space_bindings}"
+
+
+def test_auto_collapsed_flag_set_on_auto_collapse():
+    """C1: _auto_collapsed flag set True when auto-collapse fires."""
+    block = MagicMock()
+    block._total_received = 0
+    block._all_plain = [f"line {i}" for i in range(200)]
+    panel = ToolPanel(block=block, tool_name="bash")
+    panel._body_pane = MagicMock()
+    panel._footer_pane = MagicMock()
+    panel._footer_pane.display = False
+    panel._accent = MagicMock()
+    # Auto-collapse should fire for 200 lines
+    panel._apply_complete_auto_collapse()
+    if panel.collapsed:
+        assert panel._auto_collapsed is True
+
+
+def test_user_toggle_clears_auto_collapsed():
+    """C1: user Enter toggle sets _auto_collapsed=False."""
+    block = MagicMock()
+    block._total_received = 0
+    block._all_plain = []
+    panel = ToolPanel(block=block, tool_name="bash")
+    panel._auto_collapsed = True
+    panel._body_pane = MagicMock()
+    panel._footer_pane = MagicMock()
+    panel._footer_pane.display = False
+    panel.collapsed = True
+    panel.action_toggle_collapse()
+    assert panel._auto_collapsed is False
 
 
 def test_l1_preview_shows_tail_lines():
     """BodyPane._update_preview shows tail when not streaming."""
-    from hermes_cli.tui.tool_panel import BodyPane
     from textual.widgets import Static
 
     block_mock = MagicMock()
@@ -344,9 +165,7 @@ def test_l1_preview_shows_tail_lines():
     preview_mock = MagicMock(spec=Static)
     bp._update_preview(preview_mock)
 
-    # Should have been called with a Text containing tail lines
     preview_mock.update.assert_called_once()
     call_arg = preview_mock.update.call_args[0][0]
-    # Last 3 lines are line 7, 8, 9
     rendered = str(call_arg)
     assert "line 9" in rendered or "line 8" in rendered or "line 7" in rendered

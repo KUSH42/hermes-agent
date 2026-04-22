@@ -121,8 +121,9 @@ async def test_gen_streaming_appends_lines():
         block.feed_delta('{"code":"import yaml\\nhome = Path.home()\\n"}')
         await _pause(pilot, n=8)
 
-        # Line 0 should be in header label, not in body
-        assert "import yaml" in block._header._label
+        # J1: label stays constant (initial_label); first line goes to arg-summary snippet
+        assert block._header._label == "python"  # initial_label unchanged
+        assert "import yaml" in (block._header._header_args or {}).get("snippet", "")
 
         from hermes_cli.tui.execute_code_block import CodeSection
         from hermes_cli.tui.widgets import CopyableRichLog
@@ -143,7 +144,9 @@ async def test_label_updated_on_first_line():
         block.feed_delta('{"code":"import yaml\\n"}')
         await _pause(pilot, n=8)
 
-        assert block._header._label == "import yaml"
+        # J1: label stays as initial_label; snippet set in _header_args
+        assert block._header._label == "python"  # unchanged
+        assert "import yaml" in (block._header._header_args or {}).get("snippet", "")
         assert block._label_set is True
 
 
@@ -525,8 +528,9 @@ async def test_delta_before_gen_start_replayed():
         block.feed_delta(full_args)
         await _pause(pilot, n=8)
 
-        # Header label should be first line
-        assert "import yaml" in block._header._label
+        # J1: label stays constant (initial_label); first line goes to arg-summary snippet
+        assert block._header._label == "python"
+        assert "import yaml" in (block._header._header_args or {}).get("snippet", "")
         # Multiple code lines decoded
         assert len(block._code_lines) >= 2
 
@@ -675,10 +679,9 @@ async def test_execute_code_block_error_header_not_collapsed():
 # Pass-6 P2-4: label_rich truncates AFTER highlighting
 # ---------------------------------------------------------------------------
 
-def test_execute_code_block_label_rich_truncated_after_highlight():
-    """_emit_code_line highlights the full line then truncates the Rich Text."""
+def test_execute_code_block_snippet_truncated_after_highlight():
+    """J1: _emit_code_line stores first code line in _header_args['snippet'] truncated to 40 chars."""
     from hermes_cli.tui.execute_code_block import ExecuteCodeBlock
-    from rich.text import Text
 
     block = ExecuteCodeBlock.__new__(ExecuteCodeBlock)
     block._code_lines = []
@@ -686,18 +689,18 @@ def test_execute_code_block_label_rich_truncated_after_highlight():
 
     # Mock the header
     header = MagicMock()
-    header._label = None
-    header._label_rich = None
+    header._label = "python"
+    header._header_args = None
     block._header = header
     block._body = MagicMock()
     block._body.query_one.side_effect = Exception("not mounted")
 
-    # Long line: a string literal that spans >60 chars
+    # Long line: a string literal that spans >40 chars
     long_line = 'x = "' + "a" * 80 + '"'
     block._emit_code_line(long_line)
 
-    assert header._label_rich is not None
-    assert isinstance(header._label_rich, Text), "Expected Rich Text, not plain string"
-    assert header._label_rich.cell_len <= 60, (
-        f"Rich Text must be truncated to ≤60 cells, got {header._label_rich.cell_len}"
-    )
+    # J1: snippet goes to _header_args, truncated to 40 chars
+    assert header._header_args is not None
+    snippet = header._header_args.get("snippet", "")
+    assert len(snippet) <= 40, f"Snippet must be truncated to ≤40 chars, got {len(snippet)}"
+    assert snippet.startswith('x = "')

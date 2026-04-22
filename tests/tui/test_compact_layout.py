@@ -168,39 +168,30 @@ async def test_compact_chevron_toggled_back() -> None:
 
 
 # ---------------------------------------------------------------------------
-# E3 — ToolHeaderBar compact broadcast
+# E3 — ToolPanel compact broadcast (ToolHeaderBar deleted in A1)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_compact_broadcasts_to_tool_header_bars() -> None:
-    from hermes_cli.tui.tool_header_bar import ToolHeaderBar
+async def test_compact_broadcasts_to_tool_panels() -> None:
+    """A1: compact sync targets ToolPanel directly (ToolHeaderBar deleted)."""
+    from hermes_cli.tui.tool_panel import ToolPanel
     async with _make_app().run_test(size=(140, 40)) as pilot:
         _set_compact(pilot.app, True)
         await pilot.pause()
-        for thb in pilot.app.query(ToolHeaderBar):
-            assert thb.has_class("--compact")
+        for tp in pilot.app.query(ToolPanel):
+            assert tp.has_class("--compact")
 
 
 @pytest.mark.asyncio
-async def test_compact_off_removes_from_tool_header_bars() -> None:
-    from hermes_cli.tui.tool_header_bar import ToolHeaderBar
+async def test_compact_off_removes_from_tool_panels() -> None:
+    from hermes_cli.tui.tool_panel import ToolPanel
     async with _make_app().run_test(size=(140, 40)) as pilot:
         _set_compact(pilot.app, True)
         await pilot.pause()
         _set_compact(pilot.app, False)
         await pilot.pause()
-        for thb in pilot.app.query(ToolHeaderBar):
-            assert not thb.has_class("--compact")
-
-
-@pytest.mark.asyncio
-async def test_tool_header_bar_on_mount_syncs_compact() -> None:
-    from hermes_cli.tui.tool_header_bar import ToolHeaderBar
-    # Start in compact-triggering size so auto-detection fires
-    async with _make_app().run_test(size=(80, 25)) as pilot:
-        await pilot.pause(delay=0.15)
-        for thb in pilot.app.query(ToolHeaderBar):
-            assert thb.has_class("--compact")
+        for tp in pilot.app.query(ToolPanel):
+            assert not tp.has_class("--compact")
 
 
 # ---------------------------------------------------------------------------

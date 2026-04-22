@@ -577,16 +577,13 @@ HermesApp.density-compact HermesInput          { max-height: 2; }
 HermesApp.density-compact #input-chevron       { width: 1; }
 
 /* Phase B3: tool panel / header tightening */
-HermesApp.density-compact .tool-header-bar--duration   { display: none; }
-HermesApp.density-compact .tool-header-bar--line-count { display: none; }
+/* A1: ToolHeaderBar deleted — duration/line-count compact rules removed */
 HermesApp.density-compact ToolAccent                   { display: none; }
 HermesApp.density-compact ToolPanel FooterPane                   { display: none; }
 HermesApp.density-compact ToolPanel:focus FooterPane             { display: block; }
 HermesApp.density-compact ToolPanel.tool-panel--error FooterPane { display: block; }
 
-/* Phase C1: ToolHeaderBar compact label tightening */
-ToolHeaderBar.--compact .tool-header-bar--label        { max-width: 10; }
-ToolHeaderBar.--compact .tool-header-bar--arg-summary  { max-width: 20; }
+/* A1: ToolHeaderBar deleted — compact label rules moved to density-compact selectors above */
 
 /* ── Drawille Overlay ──────────────────────────────────────── */
 /* layer: overlay lives here (not DEFAULT_CSS) to avoid CSS parse issues
@@ -681,29 +678,16 @@ ToolHeader.result-empty                      { color: $text-muted; }
 OmissionBar .--cap-label                     { color: $warning; display: none; }
 OmissionBar .--cap-label.--visible           { display: block; }
 
-/* --- Tool Panel v3 Phase B (tui-tool-panel-v3-spec.md §5.2) ---
- * ToolHeaderBar chips and layout. */
+/* A1: ToolHeaderBar deleted — rules removed */
+/* E2: --minified shows 1-line stub (not hidden) */
+ToolPanel.--minified { height: 1; }
+ToolPanel.--minified BodyPane,
+ToolPanel.--minified FooterPane,
+ToolPanel.--minified .hint-row { display: none; }
+/* E2: ToolPanelMini deleted */
 
-ToolHeaderBar {
-    layout: horizontal;
-    height: 1;
-    padding: 0 1 0 0;
-}
-ToolHeaderBar > .tool-header-bar--label      { min-width: 6; max-width: 14; text-style: bold; }
-ToolHeaderBar > .tool-header-bar--arg-summary { width: 1fr; color: $text-muted; }
-ToolHeaderBar > .tool-header-bar--pill        { width: auto; margin: 0 1; }
-ToolHeaderBar > .tool-header-bar--line-count  { width: 5; text-align: right; color: $text-muted; }
-ToolHeaderBar > .tool-header-bar--chevron     { width: 2; text-align: center; color: $text-muted; }
-ToolHeaderBar > .tool-header-bar--duration    { width: 6; text-align: right; color: $text-muted; }
-
-/* ToolPanelMini — single-row compact shell variant */
-ToolPanelMini { height: 1; layout: horizontal; }
-ToolPanelMini:focus { background: $accent 10%; }
-/* B3: --minified hides ToolPanel when mini variant is active */
-ToolPanel.--minified { height: 0; overflow: hidden; }
-
-/* --- Tool grouping (virtual — no DOM container) --- */
-ToolPanel.tool-panel--grouped    { padding-left: 2; }
+/* --- Tool grouping --- */
+/* H1: v2 CSS classes (tool-panel--grouped, group-id-*) removed; v4 ToolGroup widget is the sole path */
 ToolPanel.group-hidden           { display: none; }
 ToolPanel.tool-panel--child-diff { margin-left: 2; }
 
@@ -719,13 +703,15 @@ MathBlockWidget .--math-label {
     color: $text-muted;
 }
 
-/* --- ToolGroup widget (v4 P5 — display.tool_group_widget: true) --- */
+/* --- ToolGroup widget (v4) --- */
 ToolGroup {
     height: auto;
     layout: vertical;
     margin: 0 0 1 0;
     border-left: vkey $accent 20%;
 }
+/* H1/D2: ToolPanel inside SubAgentBody ToolGroup gets no extra left padding */
+SubAgentBody ToolGroup > ToolPanel { padding-left: 0; }
 
 ToolGroup:focus {
     background: $accent 8%;

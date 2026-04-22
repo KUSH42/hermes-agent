@@ -703,8 +703,6 @@ async def _do_apply_group_widget(
             if new_panel.parent is message_panel:
                 await new_panel.remove()
             await tg._body.mount(new_panel)
-            new_panel.add_class(f"group-id-{tg._group_id}")
-            new_panel.add_class("tool-panel--grouped")
             tg.recompute_aggregate()
             return tg
         # Fallback: mount group in message_panel
@@ -722,11 +720,6 @@ async def _do_apply_group_widget(
     if new_panel.parent is message_panel:
         await new_panel.remove()
     await group._body.mount(new_panel)
-
-    # Apply v2 CSS classes for compatibility (§9.3)
-    for panel in (existing_panel, new_panel):
-        panel.add_class(f"group-id-{group_id}")
-        panel.add_class("tool-panel--grouped")
 
     group.recompute_aggregate()
 
@@ -749,8 +742,6 @@ async def _do_append_to_group(
         await new_panel.remove()
     if group._body is not None:
         await group._body.mount(new_panel)
-    new_panel.add_class(f"group-id-{group._group_id}")
-    new_panel.add_class("tool-panel--grouped")
     group.recompute_aggregate()
     try:
         group.app._rebuild_browse_anchors()

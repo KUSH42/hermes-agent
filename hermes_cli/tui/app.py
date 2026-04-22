@@ -1622,6 +1622,29 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
             self.compact = w <= 120 or h <= 30
             self._flash_hint("Compact auto", 1.5)
 
+    def action_enable_auto_mini(self) -> None:
+        """E2: /density auto-mini — enable opt-in mini-mode (height:1 stub for trivial SHELL calls)."""
+        try:
+            cfg = getattr(self.cli, "_cfg", None) or {}
+            if isinstance(cfg, dict):
+                cfg.setdefault("display", {})["auto_mini_mode"] = True
+        except Exception:
+            pass
+        self._flash_hint("Auto-mini ON  (/density full to disable)", 2.0)
+
+    def _disable_auto_mini(self) -> None:
+        """E2: Disable auto-mini mode (called by /density full or /density compact)."""
+        try:
+            cfg = getattr(self.cli, "_cfg", None) or {}
+            if isinstance(cfg, dict):
+                cfg.setdefault("display", {})["auto_mini_mode"] = False
+            # Remove --minified from any existing panels
+            from hermes_cli.tui.tool_panel import ToolPanel
+            for panel in self.query(ToolPanel):
+                panel.remove_class("--minified")
+        except Exception:
+            pass
+
     def _dismiss_floating_panels(self) -> None:
         """Dismiss HistorySearchOverlay and KeymapOverlay (P0-B stacking).
 

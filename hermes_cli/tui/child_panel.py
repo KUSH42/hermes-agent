@@ -4,9 +4,11 @@ from __future__ import annotations
 import time as _time
 from typing import Any
 
+from textual.app import ComposeResult
 from textual.binding import Binding
 
-from hermes_cli.tui.tool_panel import ToolPanel
+from hermes_cli.tui.tool_panel import ToolPanel, BodyPane, FooterPane
+from textual.widgets import Static
 
 
 class ChildPanel(ToolPanel):
@@ -26,6 +28,23 @@ class ChildPanel(ToolPanel):
         self.add_class("--compact")
         if depth >= 1:
             self.add_class(f"--depth-{min(depth, 3)}")
+
+    def compose(self) -> ComposeResult:
+        """D1: no ToolAccent — SubAgentBody's vkey border is the parent-child connector."""
+        self._body_pane = BodyPane(self._block, category=self._category)
+        self._footer_pane = FooterPane()
+        self._hint_row = Static("", classes="--focus-hint")
+        yield self._body_pane
+        yield self._footer_pane
+        yield self._hint_row
+
+    def on_mount(self) -> None:
+        """D1: wire _is_child on ToolHeader to suppress ┊ gutter prefix."""
+        super().on_mount()
+        header = getattr(self._block, "_header", None)
+        if header is not None:
+            header._is_child = True
+            header.refresh()
 
     @property
     def _tool_header(self) -> Any:

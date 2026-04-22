@@ -293,39 +293,44 @@ class TestHintFmt:
 
 class TestOverlayBorderTitle:
     def test_yolo_overlay_has_border_title_css(self):
-        from hermes_cli.tui.overlays import YoloConfirmOverlay
-        css = YoloConfirmOverlay.DEFAULT_CSS
+        # R3: YoloConfirmOverlay merged into ConfigOverlay; CSS lives there.
+        from hermes_cli.tui.overlays import ConfigOverlay
+        css = ConfigOverlay.DEFAULT_CSS
         assert "border-title-align" in css
         assert "border-title-color" in css
 
     def test_yolo_overlay_has_yolo_active_css(self):
-        from hermes_cli.tui.overlays import YoloConfirmOverlay
-        css = YoloConfirmOverlay.DEFAULT_CSS
-        assert "--yolo-active" in css
+        # R3: yolo-active class still set on ConfigOverlay during yolo-mode.
+        import inspect
+        from hermes_cli.tui.overlays import ConfigOverlay
+        src = inspect.getsource(ConfigOverlay._refresh_yolo_tab)
+        assert '"--yolo-active"' in src
 
     def test_yolo_overlay_no_internal_header_static(self):
+        # R3: ConfigOverlay uses border_title, not an internal header Static.
         import inspect
-        from hermes_cli.tui.overlays import YoloConfirmOverlay
-        src = inspect.getsource(YoloConfirmOverlay.compose)
+        from hermes_cli.tui.overlays import ConfigOverlay
+        src = inspect.getsource(ConfigOverlay.compose)
         assert "yco-header" not in src
 
     def test_yolo_on_mount_sets_border_title(self):
+        # R3: border_title set to "Config"; YOLO shown via subtitle + tab.
         import inspect
-        from hermes_cli.tui.overlays import YoloConfirmOverlay
-        src = inspect.getsource(YoloConfirmOverlay.on_mount)
-        assert '"YOLO mode"' in src or "'YOLO mode'" in src
+        from hermes_cli.tui.overlays import ConfigOverlay
+        src = inspect.getsource(ConfigOverlay.on_mount)
+        assert 'border_title' in src
 
     def test_yolo_refresh_data_sets_active_subtitle(self):
         import inspect
-        from hermes_cli.tui.overlays import YoloConfirmOverlay
-        src = inspect.getsource(YoloConfirmOverlay.refresh_data)
-        assert '"ACTIVE"' in src or "'ACTIVE'" in src
+        from hermes_cli.tui.overlays import ConfigOverlay
+        src = inspect.getsource(ConfigOverlay._refresh_yolo_tab)
+        assert "YOLO ACTIVE" in src
 
     def test_yolo_refresh_data_sets_inactive_subtitle(self):
         import inspect
-        from hermes_cli.tui.overlays import YoloConfirmOverlay
-        src = inspect.getsource(YoloConfirmOverlay.refresh_data)
-        assert '"inactive"' in src or "'inactive'" in src
+        from hermes_cli.tui.overlays import ConfigOverlay
+        src = inspect.getsource(ConfigOverlay._refresh_yolo_tab)
+        assert 'border_subtitle' in src
 
     def test_picker_overlay_no_internal_header(self):
         import inspect
@@ -371,14 +376,15 @@ class TestOverlayBorderTitle:
         assert "border-title-align" in css
 
     def test_reasoning_picker_border_title_css(self):
-        from hermes_cli.tui.overlays import ReasoningPickerOverlay
-        css = ReasoningPickerOverlay.DEFAULT_CSS
+        # R3: Reasoning picker merged into ConfigOverlay; CSS lives there.
+        from hermes_cli.tui.overlays import ConfigOverlay
+        css = ConfigOverlay.DEFAULT_CSS
         assert "border-title-align" in css
 
     def test_reasoning_picker_no_rpo_header_static(self):
         import inspect
-        from hermes_cli.tui.overlays import ReasoningPickerOverlay
-        src = inspect.getsource(ReasoningPickerOverlay.compose)
+        from hermes_cli.tui.overlays import ConfigOverlay
+        src = inspect.getsource(ConfigOverlay.compose)
         assert "rpo-header" not in src
 
 

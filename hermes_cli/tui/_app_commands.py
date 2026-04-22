@@ -68,9 +68,7 @@ class _CommandsMixin:
 
         # --- Overlay commands ---
         from hermes_cli.tui.overlays import (
-            CommandsOverlay, HelpOverlay, ModelPickerOverlay,
-            ReasoningPickerOverlay, SkinPickerOverlay, UsageOverlay,
-            VerbosePickerOverlay, YoloConfirmOverlay,
+            CommandsOverlay, ConfigOverlay, HelpOverlay, UsageOverlay,
         )
 
         if stripped == "/help":
@@ -103,55 +101,19 @@ class _CommandsMixin:
                 pass
             return True
 
-        if stripped == "/model":
+        _TAB_FOR_CMD = {
+            "/model":     "model",
+            "/verbose":   "verbose",
+            "/yolo":      "yolo",
+            "/reasoning": "reasoning",
+            "/skin":      "skin",
+        }
+        if stripped in _TAB_FOR_CMD:
             self._dismiss_all_info_overlays()  # type: ignore[attr-defined]
             try:
-                overlay = self.query_one(ModelPickerOverlay)  # type: ignore[attr-defined]
+                overlay = self.query_one(ConfigOverlay)  # type: ignore[attr-defined]
+                overlay.show_overlay(tab=_TAB_FOR_CMD[stripped])
                 overlay.refresh_data(self.cli)  # type: ignore[attr-defined]
-                overlay.add_class("--visible")
-                overlay.query_one("#mpo-list").focus()
-            except NoMatches:
-                pass
-            return True
-
-        if stripped == "/verbose":
-            self._dismiss_all_info_overlays()  # type: ignore[attr-defined]
-            try:
-                overlay = self.query_one(VerbosePickerOverlay)  # type: ignore[attr-defined]
-                overlay.refresh_data(self.cli)  # type: ignore[attr-defined]
-                overlay.add_class("--visible")
-                overlay.query_one("#vpo-list").focus()
-            except NoMatches:
-                pass
-            return True
-
-        if stripped == "/yolo":
-            self._dismiss_all_info_overlays()  # type: ignore[attr-defined]
-            try:
-                overlay = self.query_one(YoloConfirmOverlay)  # type: ignore[attr-defined]
-                overlay.refresh_data(self.cli)  # type: ignore[attr-defined]
-                overlay.add_class("--visible")
-            except NoMatches:
-                pass
-            return True
-
-        if stripped == "/reasoning":
-            self._dismiss_all_info_overlays()  # type: ignore[attr-defined]
-            try:
-                overlay = self.query_one(ReasoningPickerOverlay)  # type: ignore[attr-defined]
-                overlay.refresh_data(self.cli)  # type: ignore[attr-defined]
-                overlay.add_class("--visible")
-            except NoMatches:
-                pass
-            return True
-
-        if stripped == "/skin":
-            self._dismiss_all_info_overlays()  # type: ignore[attr-defined]
-            try:
-                overlay = self.query_one(SkinPickerOverlay)  # type: ignore[attr-defined]
-                overlay.refresh_data(self.cli)  # type: ignore[attr-defined]
-                overlay.add_class("--visible")
-                overlay._show_tab(0)
             except NoMatches:
                 pass
             return True

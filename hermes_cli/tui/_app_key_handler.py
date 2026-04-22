@@ -33,8 +33,8 @@ class _KeyHandlerMixin:
             HistorySearchOverlay, HintBar, ThinkingWidget,
         )
         from hermes_cli.tui.overlays import (
-            HelpOverlay, UsageOverlay, CommandsOverlay,
-            WorkspaceOverlay, SessionOverlay,
+            CommandsOverlay, ConfigOverlay, HelpOverlay, SessionOverlay,
+            UsageOverlay, WorkspaceOverlay,
         )
 
         # F4: track last keypress time so _maybe_notify can skip notifying
@@ -177,7 +177,7 @@ class _KeyHandlerMixin:
         # --- escape: cancel overlay, interrupt agent, browse mode, or enter browse ---
         if key == "escape":
             from hermes_cli.tui.overlays import ToolPanelHelpOverlay as _TPHO
-            for _cls in (HelpOverlay, UsageOverlay, CommandsOverlay, WorkspaceOverlay, SessionOverlay, _TPHO):
+            for _cls in (HelpOverlay, UsageOverlay, CommandsOverlay, WorkspaceOverlay, SessionOverlay, ConfigOverlay, _TPHO):
                 try:
                     _ov = self.query_one(_cls)  # type: ignore[attr-defined]
                     if _ov.has_class("--visible"):

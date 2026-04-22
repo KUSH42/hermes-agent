@@ -103,15 +103,11 @@ from hermes_cli.tui.widgets import (
 
 from hermes_cli.tui.overlays import (
     CommandsOverlay,
+    ConfigOverlay,
     HelpOverlay,
-    ModelPickerOverlay,
-    ReasoningPickerOverlay,
     SessionOverlay,
-    SkinPickerOverlay,
     UsageOverlay,
-    VerbosePickerOverlay,
     WorkspaceOverlay,
-    YoloConfirmOverlay,
     _SessionResumedBanner,
 )
 from hermes_cli.tui.session_widgets import (
@@ -592,11 +588,7 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
             yield SessionOverlay(id="session-overlay")
             yield NewSessionOverlay(id="new-session-overlay")
             yield MergeConfirmOverlay(id="merge-confirm-overlay")
-            yield ModelPickerOverlay(id="model-picker-overlay")
-            yield ReasoningPickerOverlay(id="reasoning-picker-overlay")
-            yield SkinPickerOverlay(id="skin-picker-overlay")
-            yield YoloConfirmOverlay(id="yolo-confirm-overlay")
-            yield VerbosePickerOverlay(id="verbose-picker-overlay")
+            yield ConfigOverlay(id="config-overlay")
             # C1: pre-mount ToolPanelHelpOverlay at screen level so layer: overlay
             # resolves against Screen (not a child ToolPanel).
             from hermes_cli.tui.overlays import ToolPanelHelpOverlay as _TPHO

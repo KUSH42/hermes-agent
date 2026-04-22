@@ -165,6 +165,7 @@ class StreamingCodeBlock(Widget):
         self._collapsed = False
         self._copy_flash = False
         self._controls_text_plain = ""
+        self._complete_skin_vars: dict[str, str] = {}
 
     def compose(self) -> ComposeResult:
         yield self._log
@@ -211,6 +212,7 @@ class StreamingCodeBlock(Widget):
             return
         self._state = "COMPLETE"
         self._pygments_theme = skin_vars.get("preview-syntax-theme", self._pygments_theme)
+        self._complete_skin_vars = dict(skin_vars)
         self.add_class("--complete")
         app = getattr(self, "app", None)
         if self._lang == "mermaid" and getattr(app, "_mermaid_enabled", False):
@@ -235,12 +237,30 @@ class StreamingCodeBlock(Widget):
                 pass
 
     def _try_render_mermaid_async(self) -> None:
-        """Trigger async mermaid diagram rendering (stub; patched in tests)."""
-        pass
+        """Spawn a daemon thread to render the mermaid diagram via mmdc/npx.
+
+        On success: mounts an InlineImage sibling after this block.
+        On failure (mmdc absent, render error): falls back to _render_syntax().
+        """
+        import threading
+        from hermes_cli.tui.math_renderer import render_mermaid
+
+        code = "\n".join(self._display_code_lines())
+
+        def _worker() -> None:
+            path = render_mermaid(code)
+            try:
+                self.app.call_from_thread(self._on_mermaid_rendered, path)
+            except Exception:
+                pass
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _on_mermaid_rendered(self, path: "Any") -> None:
-        """Callback from async mermaid worker with rendered PNG path."""
+        """Called on the event-loop thread with the rendered PNG path (or None)."""
         if path is None:
+            # mmdc unavailable or render failed — show syntax-highlighted source
+            self._render_syntax(self._complete_skin_vars or None)
             return
         try:
             from hermes_cli.tui.widgets.inline_media import InlineImage
@@ -248,7 +268,7 @@ class StreamingCodeBlock(Widget):
             img_widget = InlineImage(image=path, max_rows=max_rows)
             self.parent.mount(img_widget, after=self)
         except Exception:
-            pass
+            self._render_syntax(self._complete_skin_vars or None)
 
     def _render_syntax(self, skin_vars: dict[str, str] | None = None) -> None:
         """Render code as rich.Syntax with line numbers. Shared by COMPLETE and FLUSHED."""

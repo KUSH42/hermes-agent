@@ -306,6 +306,7 @@ class TestMermaidRendering:
         scb._collapsed = False
         scb._copy_flash = False
         scb._controls_text_plain = ""
+        scb._complete_skin_vars = {}
         scb.call_after_refresh = lambda fn, *a: fn(*a)
         scb.add_class = MagicMock()
         scb.refresh = MagicMock()
@@ -337,17 +338,21 @@ class TestMermaidRendering:
             scb.complete({"preview-syntax-theme": "monokai"})
         assert workers == []
 
-    def test_f3_on_mermaid_rendered_none_no_mount(self) -> None:
+    def test_f3_on_mermaid_rendered_none_falls_back_to_syntax(self) -> None:
+        """_on_mermaid_rendered(None) falls back to _render_syntax, not silent no-op."""
         from hermes_cli.tui.widgets import StreamingCodeBlock
-        scb = object.__new__(StreamingCodeBlock)
+        scb = self._scb_bare()
+        rendered: list[object] = []
+        scb._render_syntax = lambda sv=None: rendered.append(sv)  # type: ignore[method-assign]
         parent_mock = MagicMock()
         with patch.object(type(scb), "parent", new_callable=PropertyMock, return_value=parent_mock):
             scb._on_mermaid_rendered(None)
+        assert rendered, "_render_syntax should be called as fallback"
         parent_mock.mount.assert_not_called()
 
     def test_f4_on_mermaid_rendered_mounts_sibling(self, tmp_path: Path) -> None:
         from hermes_cli.tui.widgets import StreamingCodeBlock
-        scb = object.__new__(StreamingCodeBlock)
+        scb = self._scb_bare()
         parent_mock = MagicMock()
         app_mock = MagicMock()
         app_mock._math_max_rows = 24
@@ -357,3 +362,65 @@ class TestMermaidRendering:
             with patch.object(type(scb), "app", new_callable=PropertyMock, return_value=app_mock):
                 scb._on_mermaid_rendered(fake_png)
         parent_mock.mount.assert_called_once()
+
+    def test_f5_try_render_mermaid_async_spawns_thread(self) -> None:
+        """_try_render_mermaid_async spawns a thread that calls render_mermaid."""
+        import threading
+        from hermes_cli.tui.widgets import StreamingCodeBlock
+        scb = self._scb_bare()
+        called_with: list[str] = []
+        callback_fired: list[object] = []
+
+        def fake_render(code: str) -> None:
+            called_with.append(code)
+            return None  # simulate mmdc absent
+
+        def fake_call_from_thread(fn: object, *args: object) -> None:
+            callback_fired.append((fn, args))
+
+        app_mock = MagicMock()
+        app_mock.call_from_thread = fake_call_from_thread
+
+        with patch("hermes_cli.tui.math_renderer.render_mermaid", fake_render):
+            with patch.object(type(scb), "app", new_callable=PropertyMock, return_value=app_mock):
+                scb._try_render_mermaid_async()
+                # give the daemon thread time to run
+                deadline = __import__("time").time() + 2.0
+                while not callback_fired and __import__("time").time() < deadline:
+                    __import__("time").sleep(0.02)
+
+        assert called_with, "render_mermaid should have been called"
+        assert called_with[0] == "graph TD\n  A-->B"
+        assert callback_fired, "app.call_from_thread should have been invoked"
+
+    def test_f6_complete_stores_skin_vars_for_fallback(self) -> None:
+        """complete() stores skin_vars so _on_mermaid_rendered can use them."""
+        from hermes_cli.tui.widgets import StreamingCodeBlock
+        scb = self._scb_bare()
+        app_mock = MagicMock()
+        app_mock._mermaid_enabled = True
+        scb._try_render_mermaid_async = MagicMock()  # type: ignore[method-assign]
+        with patch.object(type(scb), "app", new_callable=PropertyMock, return_value=app_mock):
+            scb.complete({"preview-syntax-theme": "dracula", "app-bg": "#111"})
+        assert scb._complete_skin_vars == {"preview-syntax-theme": "dracula", "app-bg": "#111"}
+
+    def test_f7_on_mermaid_rendered_error_falls_back_to_syntax(self, tmp_path: Path) -> None:
+        """If mounting InlineImage raises, _on_mermaid_rendered falls back to _render_syntax."""
+        from hermes_cli.tui.widgets import StreamingCodeBlock
+        scb = self._scb_bare()
+        rendered: list[object] = []
+        scb._render_syntax = lambda sv=None: rendered.append(sv)  # type: ignore[method-assign]
+
+        fake_png = tmp_path / "diagram.png"
+        fake_png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 50)
+
+        parent_mock = MagicMock()
+        parent_mock.mount.side_effect = RuntimeError("DOM error")
+        app_mock = MagicMock()
+        app_mock._math_max_rows = 24
+
+        with patch.object(type(scb), "parent", new_callable=PropertyMock, return_value=parent_mock):
+            with patch.object(type(scb), "app", new_callable=PropertyMock, return_value=app_mock):
+                scb._on_mermaid_rendered(fake_png)
+
+        assert rendered, "_render_syntax fallback should run after mount error"

@@ -1,7 +1,6 @@
 """_ThemeMixin — skin/theme, slash commands, hint flash, clipboard for HermesApp."""
 from __future__ import annotations
 
-import time as _time
 import logging
 from pathlib import Path
 from typing import Any

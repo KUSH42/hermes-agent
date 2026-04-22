@@ -576,11 +576,13 @@ async def test_browse_c_triggers_flash_copy():
         await pilot.pause()
 
         header = app.query_one(ToolHeader)
-        assert not header._copy_flash
+        # RX1 Phase C: _copy_flash replaced by _flash_msg via FeedbackService
+        assert header._flash_msg is None
 
         await pilot.press("c")
         await pilot.pause()
-        assert header._copy_flash
+        # flash_copy routes through FeedbackService → ToolHeaderAdapter sets _flash_msg
+        assert header._flash_msg is not None
 
 
 @pytest.mark.asyncio
@@ -854,10 +856,11 @@ async def test_integration_enter_expand_c_flash():
         await pilot.pause()
         assert panel.collapsed is True  # enter delegates to ToolPanel
 
-        assert not header._copy_flash
+        # RX1 Phase C: _copy_flash replaced by _flash_msg via FeedbackService
+        assert header._flash_msg is None
         await pilot.press("c")
         await pilot.pause()
-        assert header._copy_flash
+        assert header._flash_msg is not None
 
 
 @pytest.mark.asyncio
@@ -1242,7 +1245,10 @@ def test_T14_non_file_tool_no_set_path():
 
 @pytest.mark.asyncio
 async def test_T44_flash_success_adds_class():
-    """flash_success() adds --flash-success CSS class."""
+    """flash_success() routes through FeedbackService and sets _flash_msg on header.
+
+    RX1 Phase C: was CSS class; now uses _flash_msg via ToolHeaderAdapter.
+    """
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         lines = [f"L{i}" for i in range(COLLAPSE_THRESHOLD + 1)]
@@ -1251,12 +1257,17 @@ async def test_T44_flash_success_adds_class():
         await pilot.pause()
         header = app.query_one(ToolHeader)
         header.flash_success()
-        assert header.has_class("--flash-success")
+        await pilot.pause()
+        # RX1: _flash_msg is set by ToolHeaderAdapter.apply()
+        assert header._flash_msg is not None
 
 
 @pytest.mark.asyncio
 async def test_T45_flash_error_adds_class():
-    """flash_error() adds --flash-error CSS class."""
+    """flash_error() routes through FeedbackService and sets _flash_msg on header.
+
+    RX1 Phase C: was CSS class; now uses _flash_msg via ToolHeaderAdapter.
+    """
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         lines = [f"L{i}" for i in range(COLLAPSE_THRESHOLD + 1)]
@@ -1265,7 +1276,9 @@ async def test_T45_flash_error_adds_class():
         await pilot.pause()
         header = app.query_one(ToolHeader)
         header.flash_error()
-        assert header.has_class("--flash-error")
+        await pilot.pause()
+        # RX1: _flash_msg is set by ToolHeaderAdapter.apply()
+        assert header._flash_msg is not None
 
 
 def test_T46_pulse_start_stop_no_crash():

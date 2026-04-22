@@ -327,6 +327,11 @@ class ReasoningPanel(Widget):
     def close_box(self) -> None:
         """Flush remaining buffer and activate collapse affordance."""
         buf = self._live_buf
+        self._live_buf = ""
+        # Hide live line BEFORE writing buf to the log — prevents a render
+        # frame where both _live_line and _reasoning_log show the same content.
+        self._live_line.styles.display = "none"
+        self._live_line.update("")
         if buf:
             if self._reasoning_engine is not None:
                 self._reasoning_engine.process_line(buf)
@@ -334,13 +339,10 @@ class ReasoningPanel(Widget):
             else:
                 self._reasoning_log.write(self._gutter_line(buf), expand=True)
                 self._plain_lines.append(buf)
-            self._live_buf = ""
         elif self._reasoning_engine is not None:
             self._reasoning_engine.flush()
         if self._reasoning_log._deferred_renders:
             self.call_after_refresh(self.refresh, layout=True)
-        self._live_line.styles.display = "none"
-        self._live_line.update("")
         self._is_closed = True
         self.add_class("visible")
         self.add_class("--closeable")

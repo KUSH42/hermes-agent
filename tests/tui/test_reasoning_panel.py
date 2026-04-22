@@ -278,9 +278,9 @@ async def test_reasoning_panel_collapse_toggle():
         assert rp._body_collapsed is True
         assert rp.has_class("--collapsed")
         assert rp._reasoning_log.styles.display == "none"
-        # I2: "click to expand" removed from collapsed stub; check core content
+        # I2: stub shows "Reasoning" label and line count, no "click to expand"
         stub_text = str(rp._collapsed_stub._Static__content)
-        assert "Reasoning collapsed" in stub_text
+        assert "Reasoning" in stub_text
         assert "click to expand" not in stub_text
 
         # Second click — expand again

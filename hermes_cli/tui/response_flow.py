@@ -1226,6 +1226,8 @@ class ReasoningFlowEngine(ResponseFlowEngine):
         self._emoji_images_enabled: bool = getattr(_app, "_emoji_images_enabled", True) and _rp_emoji
         self._emitted_emoji_anchors: set[int] = set()
         self._code_fence_buffer: list[str] = []  # §5.11.2 InlineCodeFence buffer
+        self._prose_callback: "Callable[[str], None] | None" = None
+
     def process_line(self, raw: str) -> None:
         """Override: flush block buffer immediately after every line.
 

@@ -46,6 +46,22 @@ $browse-media: #00bcd4;
 $error-critical: #ef4444;
 $error-auth: #eab308;
 $error-network: #f97316;
+/* RX3 drift cleanup — $-referenced defaults now declared here to satisfy
+   Textual parse-time variable resolution. Values mirror COMPONENT_VAR_DEFAULTS. */
+$app-bg: #1E1E1E;
+$cursor-color: #FFF8DC;
+$cursor-selection-bg: #3A5A8C;
+$cursor-placeholder: #555555;
+$ghost-text-color: #555555;
+$chevron-base: #FFF8DC;
+$chevron-file: #FFBF00;
+$chevron-stream: #6EA8D4;
+$chevron-shell: #A8D46E;
+$chevron-done: #4CAF50;
+$chevron-error: #E06C75;
+$fps-hud-bg: #1a1a2e;
+$scrollbar: #5f87d7;
+$drawille-canvas-color: #00d7ff;
 
 /* Screen is the actual DOM root — transparent widgets inherit from it, not from
  * HermesApp. Both must be set so every widget in the tree shows $app-bg. */

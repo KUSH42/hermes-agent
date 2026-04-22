@@ -807,6 +807,7 @@ class KeymapOverlay(Widget):
         "\n"
         "[bold $text]System[/bold $text]\n"
         "  This help                       [dim]\\[F1][/dim]\n"
+        "  Plan panel                      [dim]\\[F9][/dim]\n"
         "  Quit                            [dim]\\[Ctrl+Q][/dim]\n"
     )
 
@@ -829,7 +830,7 @@ class KeymapOverlay(Widget):
         "  /model /skin /yolo /clear\n"
         "\n"
         "[bold $text]System[/bold $text]\n"
-        "  Help  [dim]\\[F1][/dim]    Quit  [dim]\\[Ctrl+Q][/dim]\n"
+        "  Help  [dim]\\[F1][/dim]    Plan  [dim]\\[F9][/dim]    Quit  [dim]\\[Ctrl+Q][/dim]\n"
     )
 
     def compose(self) -> ComposeResult:

@@ -180,6 +180,9 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     "spinner-shimmer-peak": "#d8d8d8",
     # Second accent color — used for interactive key badges in HintBar
     "accent-interactive":   "#00bcd4",
+    # PlanPanel (R1) — now-section foreground and pending-section foreground
+    "plan-now-fg":          "#00bcd4",
+    "plan-pending-fg":      "#777777",
 }
 
 

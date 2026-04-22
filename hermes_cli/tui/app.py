@@ -547,6 +547,9 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
 
     def compose(self) -> ComposeResult:
         yield OutputPanel(id="output-panel")
+        # PlanPanel: bottom-docked strip above StatusBar; shows tool work queue.
+        from hermes_cli.tui.widgets.plan_panel import PlanPanel as _PP
+        yield _PP(id="plan-panel")
         # TTEWidget uses layer: overlay + dock: top in its DEFAULT_CSS so it
         # floats over the banner area when active.  Banner content is already
         # in OutputPanel underneath; when effect ends the overlay hides and

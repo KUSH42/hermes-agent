@@ -22,6 +22,8 @@
    Local declarations here block runtime skin overrides. */
 
 /* Component variable declarations — must be present for Textual to parse $var refs */
+$plan-now-fg: #00bcd4;
+$plan-pending-fg: #777777;
 $panel-border: #333333;
 $footnote-ref-color: #888888;
 /* Citation chip colors */
@@ -172,6 +174,44 @@ StatusBar {
     background: $app-bg;
     color: $text-muted;
     padding: 0 1;
+}
+
+/* --- PlanPanel (R1) --- */
+
+PlanPanel {
+    background: $app-bg;
+    color: $text-muted;
+    padding: 0 1;
+    border-top: solid $panel-border;
+}
+
+PlanPanel.--collapsed {
+    height: 1;
+    max-height: 1;
+    overflow: hidden;
+}
+
+PlanPanel _NowSection {
+    color: $plan-now-fg;
+}
+
+PlanPanel _NextSection {
+    color: $plan-pending-fg;
+    opacity: 0.8;
+}
+
+PlanPanel _DoneSection {
+    color: $text-muted;
+    opacity: 0.6;
+}
+
+PlanPanel _BudgetSection {
+    color: $text-muted;
+}
+
+/* When the app has an active plan, force ThinkingWidget to LINE mode */
+HermesApp.plan-active ThinkingWidget.--active {
+    height: 1;
 }
 
 /* --- Overlay widgets --- */

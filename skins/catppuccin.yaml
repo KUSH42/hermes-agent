@@ -119,3 +119,5 @@ component_vars:
   tool-mcp-accent:             "#cba6f7"
   tool-vision-accent:          "#89dceb"
   user-echo-bullet-color:      "#fab387"
+  plan-now-fg:                 "#89dceb"
+  plan-pending-fg:             "#6c7086"

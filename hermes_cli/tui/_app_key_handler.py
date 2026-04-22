@@ -440,6 +440,12 @@ class _KeyHandlerMixin:
                 event.prevent_default()
                 return
 
+        # --- F9: toggle PlanPanel collapsed state ---
+        if key == "f9":
+            self.plan_panel_collapsed = not self.plan_panel_collapsed  # type: ignore[attr-defined]
+            event.prevent_default()
+            return
+
         # Overlay key handling — check each overlay in priority order
         for state_attr, widget_type in [
             ("approval_state", ApprovalWidget),

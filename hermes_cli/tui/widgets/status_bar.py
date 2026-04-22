@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
 _hint_cache: dict[tuple[str, str], dict[str, str]] = {}
 
-_SEP = "  [dim]·[/dim]  "
+_SEP = " [dim]·[/dim] "
 
 
 def _build_hints(phase: str, key_color: str) -> dict[str, str]:
@@ -179,7 +179,7 @@ class HintBar(Widget):
         """Read key badge color from CSS variables."""
         try:
             v = self.app.get_css_variables()
-            return v.get("primary", "#5f87d7")
+            return v.get("accent-interactive", v.get("primary", "#5f87d7"))
         except Exception:
             return "#5f87d7"
 

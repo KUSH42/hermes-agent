@@ -3930,18 +3930,6 @@ class HermesCLI:
         # goes to the panel, not stdout.
         self.console = ChatConsole()
         self._ensure_tui_startup_message()
-        try:
-            from hermes_cli.skin_engine import get_active_skin
-            _welcome_skin = get_active_skin()
-            _welcome_text = _welcome_skin.get_branding(
-                "welcome",
-                "Welcome to Hermes Agent! Type your message or /help for commands.",
-            )
-            _welcome_color = _welcome_skin.get_color("banner_text", "#FFF8DC")
-        except Exception:
-            _welcome_text = "Welcome to Hermes Agent! Type your message or /help for commands."
-            _welcome_color = "#FFF8DC"
-        self.console.print(f"[{_welcome_color}]{_welcome_text}[/]")
         if self.preloaded_skills and not self._startup_skills_line_shown:
             skills_label = ", ".join(self.preloaded_skills)
             self.console.print(
@@ -9319,15 +9307,6 @@ class HermesCLI:
                 if self._preload_resumed_session():
                     self._display_resumed_history()
 
-            try:
-                from hermes_cli.skin_engine import get_active_skin
-                _welcome_skin = get_active_skin()
-                _welcome_text = _welcome_skin.get_branding("welcome", "Welcome to Hermes Agent! Type your message or /help for commands.")
-                _welcome_color = _welcome_skin.get_color("banner_text", "#FFF8DC")
-            except Exception:
-                _welcome_text = "Welcome to Hermes Agent! Type your message or /help for commands."
-                _welcome_color = "#FFF8DC"
-            self.console.print(f"[{_welcome_color}]{_welcome_text}[/]")
             if self.preloaded_skills and not self._startup_skills_line_shown:
                 skills_label = ", ".join(self.preloaded_skills)
                 self.console.print(

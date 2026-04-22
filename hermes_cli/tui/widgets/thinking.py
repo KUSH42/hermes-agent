@@ -373,6 +373,7 @@ _LabelLine   { height: 1;   width: 1fr; }
         # Apply CSS classes
         mode_cls = _MODE_CSS.get(resolved_mode, "--mode-default")
         self.add_class("--active", mode_cls)
+        self.app.add_class("thinking-active")
 
         # Set substate
         self._activate_time = time.monotonic()
@@ -397,6 +398,7 @@ _LabelLine   { height: 1;   width: 1fr; }
             self._timer.stop()
             self._timer = None
         self.remove_class("--active", *_ALL_MODE_CLASSES)
+        self.app.remove_class("thinking-active")
         self._substate = None
         self._activate_time = None
         self._current_mode = None

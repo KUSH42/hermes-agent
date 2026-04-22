@@ -75,6 +75,7 @@ component_vars:
   panel-border:                '#004d15'
   spinner-shimmer-dim:         '#005a1a'
   spinner-shimmer-peak:        '#aaffc8'
+  accent-interactive:          '#00ff41'
   tool-mcp-accent:             '#00d849'
   tool-vision-accent:          '#aaffc8'
 description: The Matrix — dark void and hacker green phosphor

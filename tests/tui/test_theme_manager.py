@@ -300,3 +300,17 @@ async def test_app_apply_skin_dict_preserves_component_defaults(tmp_path: Path) 
         await pilot.pause()
         css_vars = app.get_css_variables()
         assert css_vars["cursor-color"] == COMPONENT_VAR_DEFAULTS["cursor-color"]
+
+
+# ---------------------------------------------------------------------------
+# V8 — accent-interactive in COMPONENT_VAR_DEFAULTS
+# ---------------------------------------------------------------------------
+
+def test_accent_interactive_in_component_var_defaults() -> None:
+    """COMPONENT_VAR_DEFAULTS must contain 'accent-interactive' = '#00bcd4'."""
+    assert "accent-interactive" in COMPONENT_VAR_DEFAULTS, (
+        "'accent-interactive' missing from COMPONENT_VAR_DEFAULTS"
+    )
+    assert COMPONENT_VAR_DEFAULTS["accent-interactive"] == "#00bcd4", (
+        f"accent-interactive is {COMPONENT_VAR_DEFAULTS['accent-interactive']!r}, expected '#00bcd4'"
+    )

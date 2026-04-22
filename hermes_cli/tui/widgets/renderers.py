@@ -656,6 +656,7 @@ class TitledRule(PulseMixin, Widget):
         # Determine glyph color: error → hard red; running → pulse; idle → brand-glyph-color
         # brand-glyph-color gives skins a dedicated var for the ⟁/⚕ glyph,
         # independent of the title text color and the pulse active color.
+        v = {}
         try:
             v = self.app.get_css_variables()
             glyph_idle = v.get("brand-glyph-color", v.get("primary-darken-3", _skin_color("banner_dim", "#2d4a6e")))
@@ -665,6 +666,7 @@ class TitledRule(PulseMixin, Widget):
             glyph_idle = _skin_color("banner_title", "#FFD700")
             glyph_active = _skin_color("banner_title", "#5f87d7")
             glyph_err = "#EF5350"
+        meta_color = v.get("foreground", "#aaaaaa")
 
         if self._glyph_error:
             glyph_color = glyph_err
@@ -712,9 +714,9 @@ class TitledRule(PulseMixin, Widget):
         # Right fill: fade out (start → end), then optional timestamp + state glyph
         t.append_text(_fade_rule(right, fade_start, fade_end))
         if metrics_text:
-            t.append(f" {metrics_text}", style="dim")
+            t.append(f" {metrics_text}", style=meta_color)
         if ts_text:
-            t.append(f" · {ts_text}", style="dim")
+            t.append(f" · {ts_text}", style=meta_color)
         t.append_text(state_suffix)
         return t
 

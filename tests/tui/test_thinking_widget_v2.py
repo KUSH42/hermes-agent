@@ -375,3 +375,61 @@ async def test_T18_engine_on_mount_called() -> None:
                 surf.remove()
             except Exception:
                 pass
+
+
+# ── V2: thinking-active app class ────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_V2_activate_adds_thinking_active_class() -> None:
+    """activate() must add 'thinking-active' CSS class to app."""
+    os.environ["HERMES_DETERMINISTIC"] = ""
+    try:
+        async with _App().run_test() as pilot:
+            w = pilot.app.query_one(ThinkingWidget)
+            del os.environ["HERMES_DETERMINISTIC"]
+            w.activate()
+            await pilot.pause()
+            assert pilot.app.has_class("thinking-active"), (
+                "App missing 'thinking-active' class after activate()"
+            )
+    finally:
+        os.environ.pop("HERMES_DETERMINISTIC", None)
+
+
+@pytest.mark.asyncio
+async def test_V2_deactivate_removes_thinking_active_class() -> None:
+    """After deactivate() completes, 'thinking-active' is removed from app."""
+    os.environ["HERMES_DETERMINISTIC"] = ""
+    try:
+        async with _App().run_test() as pilot:
+            w = pilot.app.query_one(ThinkingWidget)
+            del os.environ["HERMES_DETERMINISTIC"]
+            w.activate()
+            await pilot.pause()
+            assert pilot.app.has_class("thinking-active")
+            w.deactivate()
+            # _do_hide fires after 0.15s timer; advance time past it
+            import asyncio
+            await asyncio.sleep(0.2)
+            await pilot.pause()
+            assert not pilot.app.has_class("thinking-active"), (
+                "App still has 'thinking-active' class after deactivate()"
+            )
+    finally:
+        os.environ.pop("HERMES_DETERMINISTIC", None)
+
+
+# ── V4: UserMessagePanel default left padding ─────────────────────────────────
+
+def test_V4_user_message_panel_default_padding_is_2() -> None:
+    """UserMessagePanel DEFAULT_CSS must have padding: 0 2 (2-col left gutter)."""
+    from hermes_cli.tui.widgets.message_panel import UserMessagePanel
+    css = UserMessagePanel.DEFAULT_CSS
+    # Extract the padding value from the CSS block
+    import re
+    match = re.search(r"padding\s*:\s*(\S+)\s+(\d+)", css)
+    assert match is not None, "Could not find padding in UserMessagePanel.DEFAULT_CSS"
+    left_padding = match.group(2)
+    assert left_padding == "2", (
+        f"UserMessagePanel left padding is {left_padding!r}, expected '2'"
+    )

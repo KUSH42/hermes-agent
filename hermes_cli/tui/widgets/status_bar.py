@@ -22,6 +22,7 @@ from .utils import (
     _animate_counters_enabled,
     _format_compact_tokens,
     _format_elapsed_compact,
+    _nf_or_text,
     _pulse_enabled,
 )
 
@@ -460,56 +461,70 @@ class StatusBar(PulseMixin, Widget):
             model = model.removeprefix("claude-")
 
         t = Text()
-        # Startup state: show "connecting…" when model is not yet loaded
-        if not model:
-            t.append("connecting…", style=f"dim")
-            if session_label:
-                t.append(f" · {session_label}", style="dim")
-        else:
-            t.append(model, style="dim")
-            if yolo_mode:
-                t.append(" ⚡YOLO", style="bold yellow")
-            if session_label:
-                t.append(f" · {session_label}", style="dim")
-            t.append(" · ", style="dim")
 
         if width < 40 or (compact and width < 70):
             # Minimal / compact+narrow: model · ctx (no bar glyph)
+            if not model:
+                t.append("connecting…", style="dim")
+            else:
+                t.append(model, style="dim")
+                if yolo_mode:
+                    t.append(" ⚡YOLO", style="bold yellow")
+                if session_label:
+                    t.append(f" · {session_label}", style="dim")
             if enabled and not (compact and width < 70):
+                t.append(" · ", style="dim")
                 pct_int = min(int(progress * 100), 100)
                 t.append(f"{pct_int}%", style=StatusBar._compaction_color(progress, _vars))
-                if ctx_label:
-                    t.append(" · ", style="dim")
             if ctx_label:
+                t.append(" · ", style="dim")
                 t.append(ctx_label, style="dim")
         elif width < 60:
             # Narrow: model · % · ctx (no bar)
+            if not model:
+                t.append("connecting…", style="dim")
+            else:
+                t.append(model, style="dim")
+                if yolo_mode:
+                    t.append(" ⚡YOLO", style="bold yellow")
+                if session_label:
+                    t.append(f" · {session_label}", style="dim")
             if enabled:
+                t.append(" · ", style="dim")
                 pct_int = min(int(progress * 100), 100)
                 t.append(f"{pct_int}%", style=StatusBar._compaction_color(progress, _vars))
-                if ctx_label:
-                    t.append(" · ", style="dim")
             if ctx_label:
+                t.append(" · ", style="dim")
                 t.append(ctx_label, style="dim")
         else:
-            # Full: model · bar % · ctx
-            if enabled:
-                pct_int = min(int(progress * 100), 100)
-                filled  = min(int(progress * _BAR_WIDTH), _BAR_WIDTH)
-                bar_str = _BAR_FILLED * filled + _BAR_EMPTY * (_BAR_WIDTH - filled)
-                bar_color = StatusBar._compaction_color(progress, _vars)
-                t.append(bar_str, style=bar_color)
-                t.append(" ")
-                t.append(f"{pct_int}%", style=bar_color)
+            # Full (>=60 cols): bar% · ctx · model · session  (D6: dynamic info leads)
+            if not model:
+                t.append("connecting…", style="dim")
+            else:
+                if enabled:
+                    pct_int = min(int(progress * 100), 100)
+                    filled  = min(int(progress * _BAR_WIDTH), _BAR_WIDTH)
+                    bar_str = _BAR_FILLED * filled + _BAR_EMPTY * (_BAR_WIDTH - filled)
+                    bar_color = StatusBar._compaction_color(progress, _vars)
+                    t.append(bar_str, style=bar_color)
+                    t.append(" ")
+                    t.append(f"{pct_int}%", style=bar_color)
+                    if ctx_label:
+                        t.append(" · ", style="dim")
                 if ctx_label:
-                    t.append(" · ", style="dim")
-            if ctx_label:
-                t.append(ctx_label, style="dim")
+                    t.append(ctx_label, style="dim")
+                t.append(" · ", style="dim")
+                t.append(model, style="dim")
+                if yolo_mode:
+                    t.append(" ⚡YOLO", style="bold yellow")
+                if session_label:
+                    t.append(f" · {session_label}", style="dim")
 
-        # Active-file breadcrumb — shown when agent is using a file-touching tool
+        # Active-file breadcrumb — shown when agent is using a file-touching tool (D5: NF glyphs)
         active_file = str(getattr(app, "status_active_file", ""))
         if active_file and width >= 60:
-            t.append("  📄 ", style="dim")
+            file_glyph = _nf_or_text("", "editing", app=app)
+            t.append(f"  {file_glyph} ", style="dim")
             max_path = max(10, width // 4)
             display_path = (
                 active_file if len(active_file) <= max_path

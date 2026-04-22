@@ -38,6 +38,24 @@ _ANSI_SEQ_RE = re.compile(
 
 
 # ---------------------------------------------------------------------------
+# Nerd Font helper
+# ---------------------------------------------------------------------------
+
+def _nf_or_text(glyph: str, fallback: str, app: "object | None" = None) -> str:
+    """Return NF glyph if terminal supports it, else fallback text."""
+    if os.environ.get("HERMES_ACCESSIBLE") or os.environ.get("HERMES_NO_UNICODE"):
+        return fallback
+    if app is not None:
+        try:
+            cs = app.console.color_system  # type: ignore[attr-defined]
+            if cs is None or cs == "standard":
+                return fallback
+        except Exception:
+            pass
+    return glyph
+
+
+# ---------------------------------------------------------------------------
 # Skin helpers
 # ---------------------------------------------------------------------------
 

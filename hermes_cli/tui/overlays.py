@@ -58,6 +58,10 @@ class HelpOverlay(Widget):
         padding: 1 2;
         background: $surface;
         border: tall $primary 15%;
+        border-title-align: left;
+        border-title-color: $accent;
+        border-subtitle-align: right;
+        border-subtitle-color: $text-muted;
     }
     HelpOverlay.--visible { display: block; }
     HelpOverlay > #help-content {
@@ -93,6 +97,7 @@ class HelpOverlay(Widget):
 
     def show_overlay(self) -> None:
         """Show overlay and focus the filter input."""
+        self.border_title = "Commands"
         self.add_class("--visible")
         # C1: clear previous search query so the list always opens unfiltered
         try:
@@ -153,6 +158,10 @@ class UsageOverlay(Widget):
         padding: 1 2;
         background: $surface;
         border: tall $primary 15%;
+        border-title-align: left;
+        border-title-color: $accent;
+        border-subtitle-align: right;
+        border-subtitle-color: $text-muted;
     }
     UsageOverlay.--visible { display: block; }
     """
@@ -340,6 +349,11 @@ class UsageOverlay(Widget):
     # Main refresh
     # ------------------------------------------------------------------
 
+    def show_usage(self) -> None:
+        """Set border title and show the overlay."""
+        self.border_title = "Token Usage"
+        self.add_class("--visible")
+
     def refresh_data(self, agent: object) -> None:
         """Pull current usage from agent, rebuild chart + stats, update Static."""
         from agent.usage_pricing import CanonicalUsage, estimate_usage_cost
@@ -417,6 +431,10 @@ class CommandsOverlay(Widget):
         padding: 1 2;
         background: $surface;
         border: tall $primary 15%;
+        border-title-align: left;
+        border-title-color: $accent;
+        border-subtitle-align: right;
+        border-subtitle-color: $text-muted;
     }
     CommandsOverlay.--visible { display: block; }
     CommandsOverlay > #commands-search {
@@ -462,6 +480,7 @@ class CommandsOverlay(Widget):
 
     def show_overlay(self) -> None:
         """Show overlay and focus the filter input."""
+        self.border_title = "Commands"
         self.add_class("--visible")
         try:
             inp = self.query_one("#commands-search", Input)
@@ -504,6 +523,10 @@ class WorkspaceOverlay(Widget):
         padding: 0 1;
         background: $surface;
         border: tall $primary 15%;
+        border-title-align: left;
+        border-title-color: $accent;
+        border-subtitle-align: right;
+        border-subtitle-color: $text-muted;
     }
     WorkspaceOverlay.--visible { display: block; }
     WorkspaceOverlay #ws-tab-bar { height: 1; }
@@ -585,6 +608,7 @@ class WorkspaceOverlay(Widget):
             pass
 
     def show_overlay(self) -> None:
+        self.border_title = "Workspace"
         self.add_class("--visible")
         # C4: focus first tab button so keyboard tab-through works from the start
         try:
@@ -713,6 +737,10 @@ class SessionOverlay(Widget):
         padding: 0 1;
         background: $surface;
         border: tall $primary 15%;
+        border-title-align: left;
+        border-title-color: $accent;
+        border-subtitle-align: right;
+        border-subtitle-color: $text-muted;
     }
     SessionOverlay.--visible { display: block; }
     SessionOverlay #sess-scroll { height: auto; max-height: 50%; overflow-y: auto; }
@@ -744,6 +772,7 @@ class SessionOverlay(Widget):
 
     def open_sessions(self) -> None:
         """Show overlay and load sessions in background worker."""
+        self.border_title = "Sessions"
         self.add_class("--visible")
         self._selected_idx = 0
         try:
@@ -907,6 +936,8 @@ class ToolPanelHelpOverlay(Widget):
         padding: 1 2;
         background: $surface;
         border: tall $primary 20%;
+        border-title-align: left;
+        border-title-color: $accent;
         dock: right;
     }
     ToolPanelHelpOverlay.--visible { display: block; }
@@ -939,6 +970,7 @@ class ToolPanelHelpOverlay(Widget):
         yield Static(self._BINDINGS_TABLE, markup=True)
 
     def show_overlay(self) -> None:
+        self.border_title = "Tool keys"
         self.add_class("--visible")
 
     def hide_overlay(self) -> None:
@@ -1026,19 +1058,21 @@ class PickerOverlay(Widget):
         padding: 1 2;
         background: $surface;
         border: tall $primary 15%;
+        border-title-align: left;
+        border-title-color: $accent;
+        border-subtitle-align: right;
+        border-subtitle-color: $text-muted;
     }
     PickerOverlay.--visible { display: block; }
-    PickerOverlay > .picker-header { color: $accent; }
     """
 
     BINDINGS = [Binding("escape", "dismiss", priority=True)]
 
     def compose(self) -> ComposeResult:
-        yield Static(f"  {self.title}", classes="picker-header",
-                     id=f"{self._css_prefix}-header")
         yield OptionList(id=f"{self._css_prefix}-list")
 
     def on_mount(self) -> None:
+        self.border_title = self.title
         self._render_options()
 
     def _render_options(self) -> None:
@@ -1138,13 +1172,17 @@ class YoloConfirmOverlay(Widget):
         padding: 1 2;
         background: $surface;
         border: tall $primary 15%;
+        border-title-align: left;
+        border-title-color: $accent;
+        border-subtitle-align: right;
+        border-subtitle-color: $text-muted;
     }
     YoloConfirmOverlay.--visible { display: block; }
-    YoloConfirmOverlay > #yco-header { color: $accent; }
-    YoloConfirmOverlay > #yco-state { color: $warning; }
+    YoloConfirmOverlay.--yolo-active { border-left: outer $warning 30%; }
     YoloConfirmOverlay > #yco-desc { color: $text-muted; }
     YoloConfirmOverlay > #yco-buttons { height: auto; margin-top: 1; }
     YoloConfirmOverlay > #yco-buttons > Button { margin-right: 1; }
+    YoloConfirmOverlay > #yco-hint { color: $text-muted; margin-top: 1; }
     """
 
     BINDINGS = [Binding("escape", "dismiss", priority=True)]
@@ -1154,16 +1192,18 @@ class YoloConfirmOverlay(Widget):
         self._previous_mode: str = "manual"
 
     def compose(self) -> ComposeResult:
-        yield Static("  YOLO mode", id="yco-header")
-        yield Static("", id="yco-state")
         yield Static(
-            "YOLO skips all tool approval prompts.\nAll tool calls run without confirmation.",
+            "All tool approval prompts will be skipped.\nTools run without confirmation.",
             id="yco-desc",
         )
         with Horizontal(id="yco-buttons"):
             yield Button("Enable",  id="yco-enable",  variant="warning")
             yield Button("Disable", id="yco-disable", variant="success")
             yield Button("Cancel",  id="yco-cancel",  variant="default")
+        yield Static("[dim]Space · Esc close[/dim]", id="yco-hint")
+
+    def on_mount(self) -> None:
+        self.border_title = "YOLO mode"
 
     def refresh_data(self, cli: object) -> None:
         """Sync overlay state from config."""
@@ -1172,11 +1212,8 @@ class YoloConfirmOverlay(Widget):
         is_active = (mode == "off")
         if not is_active:
             self._previous_mode = mode  # remember non-yolo mode for restore
-        try:
-            state_w = self.query_one("#yco-state", Static)
-            state_w.update("ACTIVE ⚡" if is_active else "inactive")
-        except NoMatches:
-            pass
+        self.border_subtitle = "ACTIVE" if is_active else "inactive"
+        self.set_class(is_active, "--yolo-active")
         # Show/hide buttons
         try:
             self.query_one("#yco-enable", Button).display = not is_active
@@ -1247,9 +1284,12 @@ class ReasoningPickerOverlay(Widget):
         padding: 1 2;
         background: $surface;
         border: tall $primary 15%;
+        border-title-align: left;
+        border-title-color: $accent;
+        border-subtitle-align: right;
+        border-subtitle-color: $text-muted;
     }
     ReasoningPickerOverlay.--visible { display: block; }
-    ReasoningPickerOverlay > #rpo-header { color: $accent; }
     ReasoningPickerOverlay > #rpo-levels { height: auto; margin-bottom: 1; }
     ReasoningPickerOverlay > #rpo-levels > Button { margin-right: 1; }
     ReasoningPickerOverlay > #rpo-toggles { height: auto; margin-bottom: 1; }
@@ -1265,8 +1305,10 @@ class ReasoningPickerOverlay(Widget):
         super().__init__(**kwargs)
         self._current_level: str = "medium"
 
+    def on_mount(self) -> None:
+        self.border_title = "Reasoning"
+
     def compose(self) -> ComposeResult:
-        yield Static("  Reasoning", id="rpo-header")
         with Horizontal(id="rpo-levels"):
             for lvl in self._LEVELS:
                 variant = "primary" if lvl == self._current_level else "default"
@@ -1360,10 +1402,13 @@ class ModelPickerOverlay(PickerOverlay):
     title = "Model"
 
     def compose(self) -> ComposeResult:
-        # Override fully — #mpo-current sits between header and list
-        yield Static(f"  {self.title}", classes="picker-header", id="mpo-header")
+        # Override fully — #mpo-current sits between border_title and list
         yield Static("", id="mpo-current")
         yield OptionList(id="mpo-list")
+
+    def on_mount(self) -> None:
+        self.border_title = self.title
+        self._render_options()
 
     def refresh_data(self, cli: object) -> None:
         """Populate model list and pre-select the current model."""

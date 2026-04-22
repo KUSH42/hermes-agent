@@ -599,27 +599,36 @@ def test_save_calls_config_helpers():
 
 
 def test_anim_config_is_modal_screen():
-    """AnimConfigPanel must be a ModalScreen subclass."""
-    from textual.screen import ModalScreen
+    """AnimConfigPanel must be a Widget subclass (non-modal; pre-mounted with --visible toggle)."""
+    from textual.widget import Widget
     from hermes_cli.tui.drawille_overlay import AnimConfigPanel
-    assert issubclass(AnimConfigPanel, ModalScreen)
+    assert issubclass(AnimConfigPanel, Widget)
 
 
 def test_anim_gallery_is_modal_screen():
-    """AnimGalleryOverlay must be a ModalScreen subclass."""
-    from textual.screen import ModalScreen
+    """AnimGalleryOverlay must be a Widget subclass (non-modal; pre-mounted with --visible toggle)."""
+    from textual.widget import Widget
     from hermes_cli.tui.drawille_overlay import AnimGalleryOverlay
-    assert issubclass(AnimGalleryOverlay, ModalScreen)
+    assert issubclass(AnimGalleryOverlay, Widget)
 
 
 def test_anim_config_dismiss_pops_screen():
-    """action_close() calls self.dismiss()."""
+    """action_dismiss() removes --visible class (non-modal Widget, not ModalScreen.dismiss)."""
     with patch("hermes_cli.tui.drawille_overlay._overlay_config",
                return_value=DrawilleOverlayCfg(enabled=True)):
         panel = AnimConfigPanel()
-    panel.dismiss = MagicMock()
-    panel.action_close()
-    panel.dismiss.assert_called_once()
+    panel.add_class("--visible")
+    # Patch app access to avoid errors during dismiss (focus restore)
+    fake_app = MagicMock()
+    type(panel).app = property(lambda self: fake_app)
+    try:
+        panel.action_dismiss()
+    finally:
+        try:
+            del AnimConfigPanel.app
+        except AttributeError:
+            pass
+    assert not panel.has_class("--visible")
 
 
 # ── Multi-color strand rendering ──────────────────────────────────────────────
@@ -909,13 +918,13 @@ def test_hermes_tcss_has_layer_overlay_for_drawille():
 
 
 def test_anim_gallery_overlay_not_in_default_css():
-    """AnimGalleryOverlay (ModalScreen) must NOT declare layer/position in DEFAULT_CSS.
+    """AnimGalleryOverlay (non-modal Widget) must NOT declare position:absolute in DEFAULT_CSS.
 
-    ModalScreen handles its own screen-layer visibility; layer/position rules are
-    no longer needed and must not appear in DEFAULT_CSS.
+    The overlay is pre-mounted and uses display:none / --visible toggle pattern.
+    It uses layer:overlay for z-ordering but must not use position:absolute
+    (absolute positioning is reserved for DrawilleOverlay which needs manual offset).
     """
     from hermes_cli.tui.drawille_overlay import AnimGalleryOverlay
-    assert "layer: overlay" not in AnimGalleryOverlay.DEFAULT_CSS
     assert "position: absolute" not in AnimGalleryOverlay.DEFAULT_CSS
 
 

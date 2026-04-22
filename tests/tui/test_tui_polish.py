@@ -333,22 +333,25 @@ class TestOverlayBorderTitle:
         assert 'border_subtitle' in src
 
     def test_picker_overlay_no_internal_header(self):
+        # R3: picker overlays were consolidated into ConfigOverlay; no internal header Static.
         import inspect
-        from hermes_cli.tui.overlays import PickerOverlay
-        src = inspect.getsource(PickerOverlay.compose)
+        from hermes_cli.tui.overlays import ConfigOverlay
+        src = inspect.getsource(ConfigOverlay.compose)
         assert "picker-header" not in src
 
     def test_picker_overlay_border_title_css(self):
-        from hermes_cli.tui.overlays import PickerOverlay
-        css = PickerOverlay.DEFAULT_CSS
+        # R3: ConfigOverlay is the canonical picker overlay; border-title lives there.
+        from hermes_cli.tui.overlays import ConfigOverlay
+        css = ConfigOverlay.DEFAULT_CSS
         assert "border-title-align" in css
         assert "border-title-color" in css
 
     def test_picker_on_mount_sets_border_title(self):
+        # R3: ConfigOverlay.on_mount sets border_title = "Config".
         import inspect
-        from hermes_cli.tui.overlays import PickerOverlay
-        src = inspect.getsource(PickerOverlay.on_mount)
-        assert "border_title" in src and "self.title" in src
+        from hermes_cli.tui.overlays import ConfigOverlay
+        src = inspect.getsource(ConfigOverlay.on_mount)
+        assert "border_title" in src
 
     def test_help_overlay_border_title_css(self):
         from hermes_cli.tui.overlays import HelpOverlay

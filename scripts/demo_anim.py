@@ -128,8 +128,8 @@ def _colorize_multi(
 # ── Engine map ────────────────────────────────────────────────────────────────
 
 def _load_engines() -> tuple[dict, dict]:
-    from hermes_cli.tui.drawbraille_overlay import _ENGINES, ANIMATION_LABELS
-    return _ENGINES, ANIMATION_LABELS
+    from hermes_cli.tui.anim_engines import ENGINES, ANIMATION_LABELS
+    return ENGINES, ANIMATION_LABELS
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────

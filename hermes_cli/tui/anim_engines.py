@@ -1814,3 +1814,63 @@ class MatrixRainEngine(_BaseEngine):
                 self._initialised = False
 
         return self._trail.frame()
+
+
+# ── Engine registry + labels (no Textual dep — safe to import standalone) ────
+
+ENGINES: dict[str, type] = {
+    "dna":               DnaHelixEngine,
+    "rotating":          RotatingHelixEngine,
+    "classic":           ClassicHelixEngine,
+    "morph":             MorphHelixEngine,
+    "vortex":            VortexEngine,
+    "wave":              WaveInterferenceEngine,
+    "thick":             ThickHelixEngine,
+    "kaleidoscope":      KaleidoscopeEngine,
+    "neural_pulse":      NeuralPulseEngine,
+    "flock_swarm":       FlockSwarmEngine,
+    "conway_life":       ConwayLifeEngine,
+    "strange_attractor": StrangeAttractorEngine,
+    "hyperspace":        HyperspaceEngine,
+    "perlin_flow":       PerlinFlowEngine,
+    "fluid_field":       FluidFieldEngine,
+    "lissajous_weave":   LissajousWeaveEngine,
+    "aurora_ribbon":     AuroraRibbonEngine,
+    "mandala_bloom":     MandalaBloomEngine,
+    "rope_braid":        RopeBraidEngine,
+    "wave_function":     WaveFunctionEngine,
+    "wireframe_cube":    WireframeCubeEngine,
+    "sierpinski":        SierpinskiEngine,
+    "plasma":            PlasmaEngine,
+    "torus_3d":          Torus3DEngine,
+    "matrix_rain":       MatrixRainEngine,
+}
+
+ANIMATION_LABELS: dict[str, str] = {
+    "dna":               "DNA Double Helix",
+    "rotating":          "Rotating 3D Helix",
+    "classic":           "Classic Triple Wave",
+    "morph":             "Morphing Helix",
+    "vortex":            "Vortex Spiral",
+    "wave":              "Wave Interference",
+    "thick":             "Thick Pulse",
+    "kaleidoscope":      "Kaleidoscope",
+    "sdf_morph":         "SDF Letter Morph",
+    "neural_pulse":      "Neural Pulse",
+    "fluid_field":       "Fluid Field",
+    "lissajous_weave":   "Lissajous Weave",
+    "aurora_ribbon":     "Aurora Ribbon",
+    "mandala_bloom":     "Mandala Bloom",
+    "flock_swarm":       "Flock Swarm",
+    "conway_life":       "Conway Life",
+    "rope_braid":        "Rope Braid",
+    "perlin_flow":       "Perlin Flow",
+    "hyperspace":        "Hyperspace",
+    "wave_function":     "Wave Function",
+    "strange_attractor": "Strange Attractor",
+    "wireframe_cube":    "Wireframe Cube",
+    "sierpinski":        "Sierpinski Triangle",
+    "plasma":            "Plasma",
+    "torus_3d":          "Torus 3D",
+    "matrix_rain":       "Matrix Rain",
+}

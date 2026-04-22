@@ -292,38 +292,9 @@ def _rich_to_hex(value: str) -> str:
         return "#00d7ff"
 
 
-# ── Engine registry (class refs — instantiated per DrawbrailleOverlay session) ────
+# ── Engine registry (re-exported from anim_engines — no Textual dep there) ───
 
-_ENGINES: dict[str, type] = {
-    "dna":               DnaHelixEngine,
-    "rotating":          RotatingHelixEngine,
-    "classic":           ClassicHelixEngine,
-    "morph":             MorphHelixEngine,
-    "vortex":            VortexEngine,
-    "wave":              WaveInterferenceEngine,
-    "thick":             ThickHelixEngine,
-    "kaleidoscope":      KaleidoscopeEngine,
-    # v2 stateful engines
-    "neural_pulse":      NeuralPulseEngine,
-    "flock_swarm":       FlockSwarmEngine,
-    "conway_life":       ConwayLifeEngine,
-    "strange_attractor": StrangeAttractorEngine,
-    "hyperspace":        HyperspaceEngine,
-    "perlin_flow":       PerlinFlowEngine,
-    # v2 mathematical engines
-    "fluid_field":       FluidFieldEngine,
-    "lissajous_weave":   LissajousWeaveEngine,
-    "aurora_ribbon":     AuroraRibbonEngine,
-    "mandala_bloom":     MandalaBloomEngine,
-    "rope_braid":        RopeBraidEngine,
-    "wave_function":     WaveFunctionEngine,
-    # Part A new engines
-    "wireframe_cube":    WireframeCubeEngine,
-    "sierpinski":        SierpinskiEngine,
-    "plasma":            PlasmaEngine,
-    "torus_3d":          Torus3DEngine,
-    "matrix_rain":       MatrixRainEngine,
-}
+from hermes_cli.tui.anim_engines import ENGINES as _ENGINES  # noqa: E402
 
 # ── Contextual SDF tool label map (C1) ────────────────────────────────────────
 
@@ -350,37 +321,9 @@ _TOOL_SDF_LABELS: dict[str, str] = {
 }
 
 
+from hermes_cli.tui.anim_engines import ANIMATION_LABELS  # noqa: E402
+
 ANIMATION_KEYS: list[str] = list(_ENGINES.keys()) + ["sdf_morph"]
-ANIMATION_LABELS: dict[str, str] = {
-    "dna":               "DNA Double Helix",
-    "rotating":          "Rotating 3D Helix",
-    "classic":           "Classic Triple Wave",
-    "morph":             "Morphing Helix",
-    "vortex":            "Vortex Spiral",
-    "wave":              "Wave Interference",
-    "thick":             "Thick Pulse",
-    "kaleidoscope":      "Kaleidoscope",
-    "sdf_morph":         "SDF Letter Morph",
-    # v2
-    "neural_pulse":      "Neural Pulse",
-    "fluid_field":       "Fluid Field",
-    "lissajous_weave":   "Lissajous Weave",
-    "aurora_ribbon":     "Aurora Ribbon",
-    "mandala_bloom":     "Mandala Bloom",
-    "flock_swarm":       "Flock Swarm",
-    "conway_life":       "Conway Life",
-    "rope_braid":        "Rope Braid",
-    "perlin_flow":       "Perlin Flow",
-    "hyperspace":        "Hyperspace",
-    "wave_function":     "Wave Function",
-    "strange_attractor": "Strange Attractor",
-    # Part A new engines
-    "wireframe_cube":    "Wireframe Cube",
-    "sierpinski":        "Sierpinski Triangle",
-    "plasma":            "Plasma",
-    "torus_3d":          "Torus 3D",
-    "matrix_rain":       "Matrix Rain",
-}
 
 # ── Engine metadata (B2 / E1) ─────────────────────────────────────────────────
 

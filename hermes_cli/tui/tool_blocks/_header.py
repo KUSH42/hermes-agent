@@ -273,7 +273,12 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                     pass
                 if diff_seg.cell_len > 0:
                     tail_segments.append(("diff", diff_seg))
-            # A2: line count moved to ToolHeaderBar only; not rendered here
+            # A1: line count rendered here (ToolHeaderBar deleted)
+            # Suppress line count when diff stats are shown (avoids redundant info)
+            _has_diff_in_tail = any(name == "diff" for name, _ in tail_segments)
+            if self._line_count and not _has_diff_in_tail:
+                lc_text = ">99K" if self._line_count > 99999 else f"{self._line_count}L"
+                tail_segments.append(("linecount", Text(f"  {lc_text}", style="dim")))
             if self._has_affordances:
                 is_collapsed = self._panel.collapsed if self._panel is not None else self.collapsed
                 tail_segments.append(("chevron", Text("  ▸" if is_collapsed else "  ▾", style="dim")))

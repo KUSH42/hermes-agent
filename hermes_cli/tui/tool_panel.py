@@ -41,7 +41,6 @@ from hermes_cli.tui.tooltip import TooltipMixin
 
 from hermes_cli.tui.tool_accent import ToolAccent
 from hermes_cli.tui.diff_affordance import DiffAffordance
-from hermes_cli.tui.tool_header_bar import ToolHeaderBar
 
 if TYPE_CHECKING:
     from hermes_cli.tui.tool_result_parse import ResultSummary, ResultSummaryV4
@@ -74,26 +73,6 @@ def _artifact_icon(kind: str) -> str:
     else:
         _icons = {"file": "[F]", "url": "[L]", "image": "[I]"}
     return _icons.get(kind, "[?]")
-
-
-# ---------------------------------------------------------------------------
-# _PanelContent — wrapper for ToolHeaderBar + BodyPane
-# ---------------------------------------------------------------------------
-
-
-class _PanelContent(Widget):
-    """Vertical container holding ToolHeaderBar (row 0) and BodyPane (row 1)."""
-
-    DEFAULT_CSS = "_PanelContent { height: auto; layout: vertical; }"
-
-    def __init__(self, header_bar: "ToolHeaderBar", body_pane: "BodyPane", **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self._header_bar = header_bar
-        self._body_pane = body_pane
-
-    def compose(self) -> ComposeResult:
-        yield self._header_bar
-        yield self._body_pane
 
 
 # ---------------------------------------------------------------------------
@@ -538,7 +517,6 @@ class ToolPanel(Widget):
         self._body_pane: BodyPane | None = None
         self._footer_pane: FooterPane | None = None
         self._hint_row: Static | None = None
-        self._header_bar: "ToolHeaderBar | None" = None
 
         # CWD stripping — enable on SHELL category blocks
         from hermes_cli.tui.tool_category import ToolCategory
@@ -547,12 +525,11 @@ class ToolPanel(Widget):
 
     def compose(self) -> ComposeResult:
         self._accent = ToolAccent()
-        self._header_bar = ToolHeaderBar(label=self._tool_name)
         self._body_pane = BodyPane(self._block, category=self._category)
         self._footer_pane = FooterPane()
         self._hint_row = Static("", classes="--focus-hint")
         yield self._accent
-        yield _PanelContent(self._header_bar, self._body_pane)
+        yield self._body_pane
         yield self._footer_pane
         yield self._hint_row
     def on_mount(self) -> None:
@@ -626,9 +603,10 @@ class ToolPanel(Widget):
             except AttributeError:
                 pass
 
-        # Sync ToolHeaderBar chevron
-        if getattr(self, '_header_bar', None) is not None:
-            self._header_bar.set_chevron(new)
+        # Sync ToolHeader chevron via panel ref (ToolHeader reads from panel.collapsed directly)
+        header = getattr(self._block, "_header", None)
+        if header is not None:
+            header.refresh()
 
     def _has_footer_content(self) -> bool:
         rs = self._result_summary_v4
@@ -716,8 +694,10 @@ class ToolPanel(Widget):
     def set_tool_args(self, args: dict | None) -> None:
         """Call from app after tool_start to supply parsed args."""
         self._tool_args = args
-        if self._header_bar is not None:
-            self._header_bar.set_arg_summary(self._format_arg_summary())
+        # Arg summary is read by ToolHeader._render_v4 from parent panel's _tool_args
+        header = getattr(self._block, "_header", None)
+        if header is not None:
+            header.refresh()
 
     # ------------------------------------------------------------------
     # ToolHeaderBar helpers (Phase B)
@@ -738,12 +718,10 @@ class ToolPanel(Widget):
         return str(first) if first is not None else ""
 
     def _update_kind_from_classifier(self, line_count: int) -> None:
-        """Run content classifier and update ResultPill kind.
+        """Run content classifier and trigger renderer swap if needed.
 
         Phase C: also triggers _swap_renderer for non-TEXT/SHELL classified output.
         """
-        if self._header_bar is None:
-            return
         try:
             from hermes_cli.tui.content_classifier import classify_content
             from hermes_cli.tui.tool_payload import ToolPayload
@@ -764,7 +742,6 @@ class ToolPanel(Widget):
                 line_count=line_count,
             )
             result = classify_content(payload)
-            self._header_bar.set_kind(result.kind)
             # Phase C: swap renderer for specialized kinds
             self._maybe_swap_renderer(result, payload)
         except Exception:
@@ -816,24 +793,33 @@ class ToolPanel(Widget):
             pass
 
     def _maybe_activate_mini(self, summary: "ResultSummaryV4") -> None:
-        """Activate mini-mode if SHELL+exit0+≤3L+no-stderr criteria met."""
-        from hermes_cli.tui.tool_panel_mini import meets_mini_criteria
-        exit_code = getattr(summary, "exit_code", None)
-        stderr_raw = getattr(summary, "stderr_tail", None) or ""
-        line_count = self._body_line_count()
-        if not meets_mini_criteria(getattr(self, '_category', None), exit_code, line_count, stderr_raw):
-            return
-        if not self.is_attached or self.parent is None:
-            return
+        """E2: mini-mode is opt-in via display.auto_mini_mode config (default False).
+
+        When enabled: panel gets --minified class (height:1 stub row).
+        ToolPanelMini widget is deleted; stub is rendered by ToolPanel header directly.
+        """
         try:
-            from hermes_cli.tui.tool_panel_mini import ToolPanelMini
-            cmd = self._format_arg_summary() or self._tool_name
-            dur = 0.0
-            if self._completed_at is not None:
-                dur = self._completed_at - self._start_time
-            mini = ToolPanelMini(source_panel=self, command=cmd, duration_s=dur)
-            self.parent.mount(mini, after=self)
-            self.add_class("--minified")  # B3: hide via class; hover on mini reveals it
+            cli = getattr(self.app, "cli", None)
+            if cli is None:
+                return
+            cfg = getattr(cli, "_cfg", None) or {}
+            display_cfg = cfg.get("display", {}) if isinstance(cfg, dict) else {}
+            if not display_cfg.get("auto_mini_mode", False):
+                return
+            # Check mini criteria inline (tool_panel_mini deleted)
+            from hermes_cli.tui.tool_category import ToolCategory
+            exit_code = getattr(summary, "exit_code", None)
+            stderr_raw = getattr(summary, "stderr_tail", None) or ""
+            line_count = self._body_line_count()
+            if self._category != ToolCategory.SHELL:
+                return
+            if exit_code != 0:
+                return
+            if line_count > 3:
+                return
+            if stderr_raw:
+                return
+            self.add_class("--minified")
         except Exception:
             pass
 
@@ -850,13 +836,19 @@ class ToolPanel(Widget):
             self.remove_class("tool-panel--error")
         if getattr(self, '_accent', None) is not None:
             self._accent.state = final_state
-        if getattr(self, '_header_bar', None) is not None:
-            self._header_bar.set_state(final_state)
-            self._header_bar.set_finished(self._completed_at)
-            line_count = self._body_line_count()
-            self._header_bar.set_line_count(line_count)
-            # Classify content and update pill
-            self._update_kind_from_classifier(line_count)
+        # Update ToolHeader state directly (ToolHeaderBar deleted in A1)
+        _header_now = getattr(self._block, "_header", None)
+        line_count = self._body_line_count()
+        if _header_now is not None:
+            _header_now._is_complete = True
+            _header_now._tool_icon_error = summary.is_error
+            if self._completed_at is not None:
+                elapsed = self._completed_at - self._start_time
+                _header_now._duration = f"{elapsed:.1f}s"
+            _header_now._line_count = line_count
+            _header_now._has_affordances = line_count > 3
+        # Classify content
+        self._update_kind_from_classifier(line_count)
         self._apply_complete_auto_collapse()
         # Refresh footer visibility
         if getattr(self, '_footer_pane', None) is not None:
@@ -890,46 +882,40 @@ class ToolPanel(Widget):
                 header._flash_msg = "done"
                 header._flash_expires = time.monotonic() + 0.5
 
-        # A5: error banner — mount between header and body
-        if header is not None:
-            # Remove any existing error banner first
+        # A2: error remediation lives in FooterPane._remediation_row (error-banner widget removed)
+        if self._footer_pane is not None and summary.is_error and summary.error_kind is not None:
             try:
-                for existing in list(self._block.query(".error-banner")):
-                    existing.remove()
+                _ICON_MAP = {
+                    "timeout": "⏱",
+                    "signal": "💀",
+                    "auth": "🔒",
+                    "exit": "✗",
+                    "network": "🌐",
+                }
+                icon = _ICON_MAP.get(summary.error_kind, "✗")
+                kind_label = summary.error_kind.replace("_", " ").title()
+                remediation = next(
+                    (c.remediation for c in (summary.chips or ()) if c.remediation),
+                    None
+                )
+                if remediation:
+                    remediation_text = f"{icon} {kind_label}  ·  {remediation}"
+                else:
+                    remediation_text = f"{icon} {kind_label}"
+                from rich.text import Text as _RText
+                rem_rich = _RText()
+                rem_rich.append(remediation_text, style="bold red")
+                self._footer_pane._remediation_row.update(rem_rich)
+                self._footer_pane._remediation_row.add_class("footer-remediation--error")
+                self._footer_pane.add_class("has-remediation")
             except Exception:
                 pass
-            if summary.is_error and summary.error_kind is not None:
-                try:
-                    _ICON_MAP = {
-                        "timeout": "⏱",
-                        "signal": "💀",
-                        "auth": "🔒",
-                        "exit": "✗",
-                        "network": "🌐",
-                    }
-                    from hermes_cli.tui.tool_result_parse import _SHELL_REMEDIATIONS
-                    icon = _ICON_MAP.get(summary.error_kind, "✗")
-                    kind_label = summary.error_kind.replace("_", " ").title()
-                    # Find remediation from chips
-                    remediation = next(
-                        (c.remediation for c in (summary.chips or ()) if c.remediation),
-                        None
-                    )
-                    if remediation:
-                        banner_text = f"  {icon}  {kind_label}  ·  {remediation}"
-                    else:
-                        banner_text = f"  {icon}  {kind_label}"
-                    from textual.widgets import Static as _Static
-                    banner = _Static(banner_text, classes="error-banner")
-                    self._block.mount(banner, after=header)
-                except Exception:
-                    pass
 
         # Auto-collapse / error promotion
         # D1: errors always expand regardless of user collapse override
         if summary.is_error:
             self.collapsed = False
-        elif not self._user_collapse_override:
+        elif not getattr(self, "_user_collapse_override", False):
             self._apply_complete_auto_collapse()
 
         # Show footer when there's something to display
@@ -1304,10 +1290,12 @@ class ToolPanel(Widget):
         self._flash_header("copied path")
 
     def action_dismiss_error_banner(self) -> None:
-        """A5: dismiss the error banner (x key)."""
+        """A2: dismiss error remediation from footer (x key)."""
         try:
-            for banner in list(self._block.query(".error-banner")):
-                banner.remove()
+            if self._footer_pane is not None:
+                self._footer_pane._remediation_row.update("")
+                self._footer_pane._remediation_row.remove_class("footer-remediation--error")
+                self._footer_pane.remove_class("has-remediation")
         except Exception:
             pass
 
@@ -1640,8 +1628,9 @@ class ToolPanel(Widget):
         try:
             from hermes_cli.tui.messages import ToolRerunRequested
             self.post_message(ToolRerunRequested(panel=self))
-            if self._header_bar is not None:
-                self._header_bar.flash_rerun()
+            header = getattr(self._block, "_header", None)
+            if header is not None:
+                header.flash_success()
         except Exception:
             self.app.notify("Rerun not available", timeout=2)
 
@@ -1684,15 +1673,13 @@ class ToolPanel(Widget):
             cls_result = ClassificationResult(kind=kind, confidence=1.0)
             renderer_cls = pick_renderer(cls_result, payload)
             self._swap_renderer(renderer_cls, payload, cls_result)
-            if self._header_bar is not None:
-                self._header_bar.set_kind(kind)
         except Exception:
             pass
 
-    def on_tool_header_bar_clicked(self, event: ToolHeaderBar.Clicked) -> None:
-        """ToolHeaderBar click → cycle detail level."""
-        event.stop()
-        self.action_cycle_detail_forward()
+    def on_tool_header_clicked(self, event: "object") -> None:
+        """ToolHeader click → toggle collapsed (ToolHeaderBar deleted in A1)."""
+        getattr(event, "stop", lambda: None)()
+        self.collapsed = not self.collapsed
 
     # Focus styling is done via CSS :focus pseudo-class in hermes.tcss.
     # No on_focus/on_blur handlers — they trigger layout refreshes that

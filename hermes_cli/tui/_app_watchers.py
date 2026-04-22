@@ -81,7 +81,6 @@ class _WatchersMixin:
             pass
 
     def watch_compact(self, value: bool) -> None:
-        from hermes_cli.tui.tool_header_bar import ToolHeaderBar
         from hermes_cli.tui.tool_panel import ToolPanel
         from textual.widgets import Static
 
@@ -99,12 +98,7 @@ class _WatchersMixin:
         except Exception:
             pass
 
-        try:
-            for thb in self.query(ToolHeaderBar):  # type: ignore[attr-defined]
-                thb.set_class(value, "--compact")
-        except Exception:
-            pass
-
+        # A1: ToolHeaderBar deleted — sync --compact on ToolPanel directly
         try:
             for tp in self.query(ToolPanel):  # type: ignore[attr-defined]
                 tp.set_class(value, "--compact")

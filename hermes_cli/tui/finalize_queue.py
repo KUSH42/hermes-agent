@@ -33,8 +33,11 @@ change the timing model vs Phase 1).
 
 from __future__ import annotations
 
+import logging
 from collections import deque
 from typing import Callable
+
+_log = logging.getLogger(__name__)
 
 _queue: deque[Callable[[], None]] = deque()
 
@@ -46,8 +49,8 @@ def enqueue_finalize(fn: Callable[[], None]) -> None:
     if len(_queue) >= MAX_DEPTH:
         try:
             fn()
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("finalize inline (queue full) raised: %s", exc, exc_info=True)
         return
     _queue.append(fn)
 
@@ -59,8 +62,8 @@ def drain_one() -> bool:
     fn = _queue.popleft()
     try:
         fn()
-    except Exception:
-        pass
+    except Exception as exc:
+        _log.warning("finalize drain_one raised: %s", exc, exc_info=True)
     return True
 
 
@@ -71,8 +74,8 @@ def drain_all() -> int:
         fn = _queue.popleft()
         try:
             fn()
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("finalize drain_all raised: %s", exc, exc_info=True)
         count += 1
     return count
 

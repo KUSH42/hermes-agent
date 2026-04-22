@@ -3,11 +3,14 @@ PaneManager — owns layout mode, pane width computation, state persistence.
 Plain class (not a mixin, not a Textual widget); held at HermesApp._pane_manager.
 """
 from __future__ import annotations
+import logging
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     pass
+
+_log = logging.getLogger(__name__)
 
 
 class PaneId(str, Enum):
@@ -237,7 +240,8 @@ class PaneManager:
         try:
             pane_center = app.query_one("#pane-center")
             stub = app.query_one("#split-target-stub")
-        except Exception:
+        except Exception as exc:
+            _log.warning("apply_center_split: pane widget missing: %s", exc)
             return
         if self._center_split:
             pane_center.add_class("--split")
@@ -294,7 +298,8 @@ class PaneManager:
             pane_left = app.query_one("#pane-left")
             pane_center = app.query_one("#pane-center")
             pane_right = app.query_one("#pane-right")
-        except Exception:
+        except Exception as exc:
+            _log.warning("_apply_layout: pane widget missing: %s", exc)
             return
 
         if self._mode == LayoutMode.SINGLE:

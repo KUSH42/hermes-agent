@@ -8,10 +8,13 @@ browse mode.  Snapshot is frozen at construction; no live-reactive updates.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+_log = logging.getLogger(__name__)
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -392,7 +395,8 @@ ToolsScreen > #tools-footer {
         """Refresh snapshot from app state while in-progress tools exist."""
         try:
             new_snapshot = self.app.current_turn_tool_calls()
-        except Exception:
+        except Exception as exc:
+            _log.warning("_auto_refresh: current_turn_tool_calls failed: %s", exc, exc_info=True)
             return
         self._snapshot = new_snapshot
         self._filtered = list(new_snapshot)

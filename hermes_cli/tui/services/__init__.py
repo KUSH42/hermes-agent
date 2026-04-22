@@ -1,4 +1,5 @@
 from .base import AppService
+from .bash_service import BashService
 from .io import IOService
 from .spinner import SpinnerService
 from .tools import ToolRenderingService
@@ -11,7 +12,7 @@ from .watchers import WatchersService
 from .keys import KeyDispatchService
 
 __all__ = [
-    "AppService", "IOService", "SpinnerService", "ToolRenderingService",
+    "AppService", "BashService", "IOService", "SpinnerService", "ToolRenderingService",
     "BrowseService", "ContextMenuService", "SessionsService", "ThemeService",
     "CommandsService", "WatchersService", "KeyDispatchService",
 ]

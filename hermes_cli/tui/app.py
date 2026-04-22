@@ -561,7 +561,7 @@ class HermesApp(App):
         from hermes_cli.tui.services import (
             ThemeService, SpinnerService, IOService, ToolRenderingService,
             BrowseService, SessionsService, ContextMenuService, CommandsService,
-            WatchersService, KeyDispatchService,
+            WatchersService, KeyDispatchService, BashService,
         )
         self._svc_theme    = ThemeService(self)
         self._svc_spinner  = SpinnerService(self)
@@ -571,6 +571,7 @@ class HermesApp(App):
         self._svc_sessions = SessionsService(self)
         self._svc_context  = ContextMenuService(self)
         self._svc_commands = CommandsService(self)
+        self._svc_bash     = BashService(self)
         self._svc_watchers = WatchersService(self)
         self._svc_keys     = KeyDispatchService(self)
 
@@ -862,6 +863,7 @@ class HermesApp(App):
 
     def on_unmount(self) -> None:
         """Stop background helpers tied to app lifetime."""
+        self._svc_bash.kill()
         self.hooks.shutdown()
         self._theme_manager.stop_hot_reload()
         for _attr in ("_anim_clock_h", "_spinner_h", "_fps_h", "_duration_h",
@@ -906,6 +908,24 @@ class HermesApp(App):
                 )
         except Exception:
             pass
+
+    # --- Bash passthrough ---
+
+    @work(thread=True, exclusive=True, group="bash")
+    def _start_bash_worker(self, cmd: str, block: "Any") -> None:
+        """Thread adapter for BashService. exclusive=True serialises within group.
+        NOTE: exclusive cancels the Worker object only — does NOT kill the OS
+        subprocess. The is_running guard in BashService.run() is the real gate."""
+        self._svc_bash._exec_sync(cmd, block)
+
+    def _mount_bash_block(self, cmd: str) -> "Any":
+        """Mount a BashOutputBlock into OutputPanel before the ThinkingWidget sentinel."""
+        from hermes_cli.tui.widgets.bash_output_block import BashOutputBlock
+        from hermes_cli.tui.widgets.thinking import ThinkingWidget
+        block = BashOutputBlock(cmd)
+        output = self._output_panel
+        output.mount(block, before=output.query_one(ThinkingWidget))
+        return block
 
     # --- Workspace tracker ---
 

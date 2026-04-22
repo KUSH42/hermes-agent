@@ -110,6 +110,13 @@ class KeyDispatchService(AppService):
                 event.prevent_default()
                 return
 
+            # Kill bash command before trying overlay-cancel or agent-interrupt
+            if self.app._svc_bash.is_running:
+                self.app._svc_bash.kill()
+                self.app._flash_hint("Command interrupted", 1.5)
+                event.prevent_default()
+                return
+
             for state_attr in ("approval_state", "clarify_state"):
                 state: ChoiceOverlayState | None = getattr(self.app, state_attr)
                 if state is not None:
@@ -512,6 +519,21 @@ class KeyDispatchService(AppService):
         """
         from hermes_cli.tui.widgets import ThinkingWidget
         text = event.value
+
+        # --- bash passthrough: "!cmd" prefix ---
+        if isinstance(text, str) and text.lstrip().startswith("!"):
+            if self.app.agent_running:
+                self.app._flash_hint("Agent running — finish or interrupt first", 2.5)
+                return
+            if self.app._svc_bash.is_running:
+                self.app._flash_hint("Command running — Ctrl+C to kill", 2.5)
+                return
+            cmd = text.lstrip()[1:].strip()
+            if not cmd:
+                self.app._flash_hint("Empty bash command", 2.0)
+                return
+            self.app._svc_bash.run(cmd)
+            return
 
         if isinstance(text, str) and self.app._handle_tui_command(text):
             return

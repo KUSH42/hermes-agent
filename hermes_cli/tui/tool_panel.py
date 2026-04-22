@@ -449,7 +449,7 @@ class ToolPanel(Widget):
 
     BINDINGS = [
         Binding("enter", "toggle_collapse",  "Toggle",           show=False),
-        Binding("space", "toggle_l0_restore", "Collapse",         show=False),
+        # space removed (C2): inherits container page-down default
         Binding("y",     "copy_body",         "Copy output",      show=False),
         Binding("Y",     "copy_input",        "Copy input",       show=False),
         Binding("c",     "copy_body",        "Copy output",      show=False),
@@ -483,8 +483,15 @@ class ToolPanel(Widget):
     # layout=False: watch_collapsed sets styles.display which already forces a
     # layout refresh — no need for a second one from the reactive itself.
     collapsed: reactive[bool] = reactive(False, layout=False)
-    # detail_level kept for backward compat with older tests; maps 0→collapsed
-    detail_level: reactive[int] = reactive(2)
+    # C1: detail_level retired — single bool reactive only. Legacy alias kept as property
+    # for any external code still reading it (maps 0→collapsed, 1/2/3→expanded).
+    @property
+    def detail_level(self) -> int:
+        return 0 if self.collapsed else 2
+
+    @detail_level.setter
+    def detail_level(self, value: int) -> None:
+        self.collapsed = (value == 0)
 
     def __init__(self, block: Widget, tool_name: str | None = None, **kwargs: object) -> None:
         super().__init__(**kwargs)
@@ -493,7 +500,10 @@ class ToolPanel(Widget):
         from hermes_cli.tui.tool_category import classify_tool
         self._category = classify_tool(self._tool_name)
 
-        self._user_collapse_override: bool = False
+        # C1: replace _user_collapse_override with _auto_collapsed
+        # _auto_collapsed=True when auto-collapse fired; False after user Enter toggle
+        self._auto_collapsed: bool = False
+        self._user_collapse_override: bool = False  # legacy alias
         self._should_auto_collapse: bool = False
         self._result_summary_v4: "ResultSummaryV4 | None" = None
         self._start_time: float = time.monotonic()
@@ -508,7 +518,6 @@ class ToolPanel(Widget):
         self._hint_visible: bool = False
 
         # Phase D state
-        self._pre_collapse_level: int = 2
         self._forced_renderer_kind: "ResultKind | None" = None
         self._tool_args: dict | None = None
 
@@ -670,6 +679,8 @@ class ToolPanel(Widget):
                 pass
         should_collapse = total > threshold
         self.collapsed = should_collapse
+        # C1: track auto-collapsed state
+        self._auto_collapsed = should_collapse
         # A3: flash auto-collapse notification so user knows what happened
         if should_collapse:
             self._flash_header(f"▾ auto-collapsed ({total} lines)", tone="success")
@@ -947,63 +958,11 @@ class ToolPanel(Widget):
 
     def action_toggle_collapse(self) -> None:
         self.collapsed = not self.collapsed
-        self._user_collapse_override = True
+        self._user_collapse_override = True   # legacy compat
+        self._auto_collapsed = False          # C1: user explicitly toggled
 
-    def action_toggle_l1_l2(self) -> None:
-        level = self.detail_level
-        if level == 0:
-            self.detail_level = 1
-        elif level == 1:
-            self.detail_level = 2
-        elif level == 2:
-            self.detail_level = 1
-        else:  # level == 3
-            self.detail_level = 2
-
-    def action_set_level_0(self) -> None:
-        self.detail_level = 0
-
-    def action_set_level_1(self) -> None:
-        self.detail_level = 1
-
-    def action_set_level_2(self) -> None:
-        self.detail_level = 2
-
-    def action_set_level_3(self) -> None:
-        self.detail_level = 3
-
-    def action_cycle_detail_forward(self) -> None:
-        level = self.detail_level
-        self.detail_level = (level % 3) + 1 if level > 0 else 1
-
-    def action_cycle_detail_reverse(self) -> None:
-        level = self.detail_level
-        if level == 0:
-            pass  # stay at L0
-        elif level == 1:
-            self.detail_level = 3
-        else:
-            self.detail_level = level - 1
-
-    def watch_detail_level(self, old: int, new: int) -> None:
-        """Stub — detail_level replaced by collapsed bool. Maintains CSS class compat."""
-        self.collapsed = (new == 0)
-        try:
-            self.remove_class(f"-l{old}")
-        except Exception:
-            pass
-        try:
-            self.add_class(f"-l{new}")
-        except Exception:
-            pass
-        bp = getattr(self, "_body_pane", None)
-        if bp is not None and hasattr(bp, "set_mode"):
-            if new == 0:
-                bp.set_mode("none")
-            elif new == 1:
-                bp.set_mode("preview")
-            else:
-                bp.set_mode("full")
+    # C1: action_toggle_l1_l2, action_set_level_*, action_cycle_detail_*, watch_detail_level removed
+    # detail_level is now a property (see class-level definition above)
 
     def action_open_primary(self) -> None:
         """Open header path if path-clickable; else fall back to first file artifact (C1)."""
@@ -1561,13 +1520,7 @@ class ToolPanel(Widget):
         block._follow_tail = not block._follow_tail
         state = "on" if block._follow_tail else "off"
         self._flash_header(f"tail: {state}")
-    def action_toggle_l0_restore(self) -> None:
-        """space: toggle L0 (collapsed) and restore prior level."""
-        if self.detail_level == 0:
-            self.detail_level = getattr(self, "_pre_collapse_level", 2)
-        else:
-            self._pre_collapse_level = self.detail_level
-            self.detail_level = 0
+    # C2: action_toggle_l0_restore removed; Space no longer bound to collapse
 
     def action_copy_output(self) -> None:
         """y: copy tool output to clipboard."""

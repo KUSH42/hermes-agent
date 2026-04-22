@@ -1,6 +1,9 @@
-"""Phase D tests: keyboard bindings on ToolPanel and App.
+"""C1/C2: keyboard bindings on ToolPanel after detail_level retirement.
 
-16 tests covering d/D/0-3/enter/space/y/Y/r/o/i keys.
+After Pass 10 Phase 3:
+- detail_level is a property (0↔collapsed=True, 1/2/3↔collapsed=False)
+- action_toggle_l0_restore and Space binding removed
+- Enter toggles collapsed bool
 """
 from __future__ import annotations
 
@@ -16,135 +19,92 @@ def _make_panel(tool_name: str = "bash") -> ToolPanel:
     block_mock._total_received = 0
     block_mock._all_plain = []
     panel = ToolPanel(block=block_mock, tool_name=tool_name)
-    # Stub out panes so watchers don't crash
-    panel._args_pane = MagicMock()
-    panel._args_pane.display = False
     panel._body_pane = MagicMock()
     panel._body_pane.display = True
-    panel._body_pane.set_mode = MagicMock()
     panel._footer_pane = MagicMock()
     panel._footer_pane.display = False
-    panel._input_section = MagicMock()
-    panel._input_section.display = True
-    panel._header_bar = MagicMock()
-    panel._result_summary = None
+    panel._accent = MagicMock()
     panel.add_class = MagicMock()
     panel.remove_class = MagicMock()
     return panel
 
 
 # ---------------------------------------------------------------------------
-# d / D cycling
+# C1: Enter toggle
 # ---------------------------------------------------------------------------
 
 
-def test_d_key_cycles_forward():
+def test_enter_toggles_collapsed_false_to_true():
+    """Enter toggles collapsed from False → True."""
     p = _make_panel()
-    p.detail_level = 1
-    p.action_cycle_detail_forward()
-    assert p.detail_level == 2
+    p.collapsed = False
+    p.action_toggle_collapse()
+    assert p.collapsed is True
 
 
-def test_d_key_cycles_1_2_3_1():
+def test_enter_toggles_collapsed_true_to_false():
+    """Enter toggles collapsed from True → False."""
     p = _make_panel()
-    p.detail_level = 3
-    p.action_cycle_detail_forward()
-    assert p.detail_level == 1  # wraps 3→1
+    p.collapsed = True
+    p.action_toggle_collapse()
+    assert p.collapsed is False
 
 
-def test_D_key_cycles_reverse():
+def test_enter_clears_auto_collapsed():
+    """C1: Enter toggle sets _auto_collapsed=False."""
     p = _make_panel()
-    p.detail_level = 3
-    p.action_cycle_detail_reverse()
-    assert p.detail_level == 2
+    p._auto_collapsed = True
+    p.collapsed = True
+    p.action_toggle_collapse()
+    assert p._auto_collapsed is False
 
 
-def test_D_key_stays_at_l0():
+# ---------------------------------------------------------------------------
+# C1: detail_level property (binary compat)
+# ---------------------------------------------------------------------------
+
+
+def test_detail_level_0_maps_to_collapsed():
     p = _make_panel()
     p.detail_level = 0
-    p.action_cycle_detail_reverse()
-    assert p.detail_level == 0  # stays at L0
-
-
-# ---------------------------------------------------------------------------
-# 0-3 number keys
-# ---------------------------------------------------------------------------
-
-
-def test_0_key_sets_l0():
-    p = _make_panel()
-    p.detail_level = 2
-    p.action_set_level_0()
+    assert p.collapsed is True
     assert p.detail_level == 0
 
 
-def test_1_key_sets_l1():
-    p = _make_panel()
-    p.detail_level = 2
-    p.action_set_level_1()
-    assert p.detail_level == 1
-
-
-def test_2_key_sets_l2():
-    p = _make_panel()
-    p.detail_level = 0
-    p.action_set_level_2()
-    assert p.detail_level == 2
-
-
-def test_3_key_sets_l3():
+def test_detail_level_1_maps_to_expanded():
     p = _make_panel()
     p.detail_level = 1
-    p.action_set_level_3()
-    assert p.detail_level == 3
+    assert p.collapsed is False
+    assert p.detail_level == 2  # property always returns 2 when not collapsed
 
 
-# ---------------------------------------------------------------------------
-# enter: toggle_l1_l2 cycling
-# ---------------------------------------------------------------------------
-
-
-def test_enter_cycles_detail_level_l0_to_l1():
-    p = _make_panel()
-    p.detail_level = 0
-    p.action_toggle_l1_l2()
-    assert p.detail_level == 1
-
-
-def test_enter_cycles_l1_to_l2():
-    p = _make_panel()
-    p.detail_level = 1
-    p.action_toggle_l1_l2()
-    assert p.detail_level == 2
-
-
-def test_enter_cycles_l2_to_l1():
+def test_detail_level_2_stays_expanded():
     p = _make_panel()
     p.detail_level = 2
-    p.action_toggle_l1_l2()
-    assert p.detail_level == 1
+    assert p.collapsed is False
 
 
-def test_enter_cycles_l3_to_l2():
+def test_detail_level_3_stays_expanded():
     p = _make_panel()
     p.detail_level = 3
-    p.action_toggle_l1_l2()
-    assert p.detail_level == 2
+    assert p.collapsed is False
 
 
 # ---------------------------------------------------------------------------
-# space: toggle_l0_restore
+# C2: Space no longer bound
 # ---------------------------------------------------------------------------
 
 
-def test_space_toggles_l0_and_back():
+def test_space_not_in_bindings():
+    """C2: space removed from ToolPanel.BINDINGS."""
+    space_bindings = [b for b in ToolPanel.BINDINGS if b.key == "space"]
+    assert len(space_bindings) == 0
+
+
+def test_toggle_l0_restore_not_present():
+    """C2: action_toggle_l0_restore deleted."""
     p = _make_panel()
-    p.detail_level = 2
-    p.action_toggle_l0_restore()
-    assert p.detail_level == 0
-    assert p._pre_collapse_level == 2
-    p.action_toggle_l0_restore()
-    assert p.detail_level == 2
+    assert not hasattr(p, "action_toggle_l0_restore")
 
 
 # ---------------------------------------------------------------------------
@@ -165,20 +125,15 @@ def test_y_key_copies_output():
     app_mock = MM()
     app_mock.notify = lambda *a, **kw: notified.append(a)
 
-    # Inject a fake pyperclip module so the import in action_copy_output works
     fake_pyperclip = MM()
     copied = []
     fake_pyperclip.copy = lambda text: copied.append(text)
-    sys.modules.setdefault("pyperclip", fake_pyperclip)
-    # Reset in case it's already set to the real thing
     original = sys.modules.get("pyperclip")
     sys.modules["pyperclip"] = fake_pyperclip
 
     try:
         with patch.object(type(p), "app", new_callable=PropertyMock, return_value=app_mock):
             p.action_copy_output()
-        # Either copied something OR notified (pyperclip may or may not be available)
-        # The important thing is no crash
     finally:
         if original is None:
             sys.modules.pop("pyperclip", None)
@@ -243,59 +198,40 @@ def test_r_key_emits_rerun_message():
 
 @pytest.mark.asyncio
 async def test_o_key_focuses_output_panel():
-    """App.action_focus_output calls OutputPanel.focus()."""
+    """App.action_focus_output doesn't crash."""
     from hermes_cli.tui.app import HermesApp
 
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        # Just verify action exists and doesn't crash
         app.action_focus_output()
         await pilot.pause()
 
 
 @pytest.mark.asyncio
 async def test_i_key_focuses_input_from_output():
-    """App.action_focus_input_from_output calls HermesInput.focus()."""
+    """App.action_focus_input_from_output doesn't crash."""
     from hermes_cli.tui.app import HermesApp
 
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        # Just verify action exists and doesn't crash
         app.action_focus_input_from_output()
         await pilot.pause()
 
 
 # ---------------------------------------------------------------------------
-# Sub-focus L3 / Esc
+# Binding presence check
 # ---------------------------------------------------------------------------
 
 
-def test_sub_focus_enter_enters_l3():
-    """From L2, pressing 3 sets L3."""
-    p = _make_panel()
-    p.detail_level = 2
-    p.action_set_level_3()
-    assert p.detail_level == 3
-
-
-def test_sub_focus_esc_exits_l3():
-    """From L3, toggle_l1_l2 goes to L2."""
-    p = _make_panel()
-    p.detail_level = 3
-    p.action_toggle_l1_l2()
-    assert p.detail_level == 2
-
-
-# ---------------------------------------------------------------------------
-# j / k navigation between panels
-# ---------------------------------------------------------------------------
-
-
-def test_j_k_nav_between_panels():
-    """ToolPanel bindings include enter/space/y/Y/r."""
+def test_enter_in_bindings():
+    """ToolPanel bindings include enter."""
     binding_keys = {b.key for b in ToolPanel.BINDINGS}
-    expected = {"enter", "space", "y", "Y", "r"}
-    for key in expected:
-        assert key in binding_keys, f"Missing binding: {key}"
+    assert "enter" in binding_keys
+
+
+def test_c_copy_in_bindings():
+    """ToolPanel bindings include c for copy."""
+    binding_keys = {b.key for b in ToolPanel.BINDINGS}
+    assert "c" in binding_keys

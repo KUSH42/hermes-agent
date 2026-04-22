@@ -1,0 +1,232 @@
+"""Skin application, flash_hint, copy_with_hint service extracted from _app_theme.py."""
+from __future__ import annotations
+
+import time as _time
+import logging
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from textual.css.query import NoMatches
+
+from .base import AppService
+
+if TYPE_CHECKING:
+    from hermes_cli.tui.app import HermesApp
+
+logger = logging.getLogger(__name__)
+
+# NOTE: get_css_variables() is NOT migrated here. Textual calls it via
+# super().get_css_variables() on App; it must remain on the mixin/App class.
+
+
+class ThemeService(AppService):
+    """
+    Skin application, hint flash, clipboard copy helpers.
+    Migrated from _ThemeMixin in _app_theme.py.
+
+    Methods:
+      apply_skin           — apply skin dict or Path
+      _apply_override_dict — apply override dict live
+      refresh_slash_commands
+      get_selected_text    — selection helper (was _get_selected_text)
+      populate_slash_commands  — was _populate_slash_commands
+      flash_hint           — was _flash_hint
+      set_status_error
+      copy_text_with_hint  — was _copy_text_with_hint
+    """
+
+    def __init__(self, app: "HermesApp") -> None:
+        super().__init__(app)
+        self._flash_timer = None
+        self._error_clear_timer = None
+
+    # --- Theme / skin system ---
+
+    def apply_skin(self, skin_vars: "dict[str, str] | Path") -> None:
+        """Apply a skin as CSS variable overrides. Safe to call via call_from_thread."""
+        from hermes_cli.tui.widgets import _hint_cache, StatusBar, StreamingCodeBlock
+        from hermes_cli.tui.tool_blocks import ToolBlock
+        app = self.app
+        if isinstance(skin_vars, dict):
+            app._theme_manager.load_dict(skin_vars)
+        else:
+            app._theme_manager.load([skin_vars])
+        app._theme_manager.apply()
+        _hint_cache.clear()
+        try:
+            sb = app.query_one(StatusBar)
+            sb._idle_tips_cache = None
+        except NoMatches:
+            pass
+        try:
+            from hermes_cli.tui.completion_list import VirtualCompletionList
+            app.query_one(VirtualCompletionList).refresh_theme()
+        except NoMatches:
+            pass
+        except Exception:
+            logger.debug("Completion list theme refresh failed", exc_info=True)
+        try:
+            from hermes_cli.tui.preview_panel import PreviewPanel
+            app.query_one(PreviewPanel).refresh_theme()
+        except NoMatches:
+            pass
+        except Exception:
+            logger.debug("Preview panel theme refresh failed", exc_info=True)
+        for block in app.query(ToolBlock):
+            try:
+                block.refresh_skin()
+            except Exception:
+                logger.debug("ToolBlock theme refresh failed", exc_info=True)
+        for block in app.query(StreamingCodeBlock):
+            try:
+                block.refresh_skin(app.get_css_variables())
+            except Exception:
+                logger.debug("StreamingCodeBlock theme refresh failed", exc_info=True)
+
+    def _apply_override_dict(self, overrides: "dict") -> None:
+        """Apply an override dict live without reloading the skin from disk."""
+        tm = getattr(self.app, "_theme_manager", None)
+        if tm is None:
+            return
+        tm._apply_overrides(overrides)
+        tm.apply()
+
+    def refresh_slash_commands(self, extra: "list[str] | None" = None) -> None:
+        """Update the slash command list after plugins are loaded."""
+        self.populate_slash_commands()
+        app = self.app
+        if extra:
+            try:
+                from hermes_cli.tui.input_widget import HermesInput as _HI
+                inp = app.query_one(_HI)
+                combined = sorted(set(inp._slash_commands) | {
+                    n if n.startswith("/") else f"/{n}" for n in extra
+                })
+                inp.set_slash_commands(combined)
+            except (NoMatches, Exception):
+                pass
+        try:
+            from hermes_cli.tui.overlays import HelpOverlay as _HO
+            app.query_one(_HO)._refresh_commands_cache()
+        except (NoMatches, Exception):
+            pass
+
+    # --- Clipboard / selection helpers ---
+
+    def get_selected_text(self) -> "str | None":
+        """Return selected text from the screen, or None."""
+        try:
+            result = self.app.screen.get_selected_text()
+            return result if result else None
+        except Exception:
+            return None
+
+    # --- Slash command wiring ---
+
+    def populate_slash_commands(self) -> None:
+        """Feed the canonical command list from COMMAND_REGISTRY into HermesInput."""
+        app = self.app
+        try:
+            from hermes_cli.tui.input_widget import HermesInput as _HI
+            from hermes_cli.commands import COMMAND_REGISTRY, SUBCOMMANDS
+            names: list[str] = []
+            for cmd in COMMAND_REGISTRY:
+                if cmd.gateway_only:
+                    continue
+                names.append(f"/{cmd.name}")
+                for alias in getattr(cmd, "aliases", []):
+                    names.append(f"/{alias}")
+            descs: dict[str, str] = {}
+            args_hints: dict[str, str] = {}
+            keybind_hints: dict[str, str] = {}
+            for cmd in COMMAND_REGISTRY:
+                if cmd.gateway_only:
+                    continue
+                cmd_desc = getattr(cmd, "description", "") or ""
+                cmd_args = getattr(cmd, "args_hint", "") or ""
+                cmd_keybind = getattr(cmd, "keybind_hint", "") or ""
+                descs[f"/{cmd.name}"] = cmd_desc
+                args_hints[f"/{cmd.name}"] = cmd_args
+                keybind_hints[f"/{cmd.name}"] = cmd_keybind
+                for alias in getattr(cmd, "aliases", []):
+                    descs[f"/{alias}"] = cmd_desc
+                    args_hints[f"/{alias}"] = cmd_args
+                    keybind_hints[f"/{alias}"] = cmd_keybind
+            try:
+                inp = app.query_one(_HI)
+                inp.set_slash_commands(names)
+                inp.set_slash_descriptions(descs)
+                inp.set_slash_args_hints(args_hints)
+                inp.set_slash_keybind_hints(keybind_hints)
+                inp.set_slash_subcommands(dict(SUBCOMMANDS))
+            except NoMatches:
+                pass
+        except Exception:
+            pass
+
+    # --- Copy/paste feedback ---
+
+    def flash_hint(self, text: str, duration: float = 1.5) -> None:
+        """Flash *text* in the HintBar for *duration* seconds, then restore."""
+        from hermes_cli.tui.widgets import HintBar
+        app = self.app
+        try:
+            bar = app.query_one(HintBar)
+            if app._flash_hint_timer is not None:
+                try:
+                    app._flash_hint_timer.stop()
+                except Exception:
+                    pass
+                app._flash_hint_timer = None
+                prior = app._flash_hint_prior
+            else:
+                prior = bar.hint
+                app._flash_hint_prior = prior
+            bar.hint = text
+            app._flash_hint_expires = _time.monotonic() + duration
+
+            def _restore() -> None:
+                app._flash_hint_timer = None
+                app._flash_hint_prior = ""
+                try:
+                    setattr(bar, "hint", prior)
+                except Exception:
+                    pass
+
+            app._flash_hint_timer = app.set_timer(duration, _restore)
+        except NoMatches:
+            pass
+
+    def set_status_error(self, msg: str, auto_clear_s: float = 0.0) -> None:
+        """Persistent StatusBar error. Thread-safety: must be called from the event loop."""
+        app = self.app
+        app.status_error = msg
+        flash_duration = auto_clear_s if 0 < auto_clear_s <= 2.5 else 2.5
+        self.flash_hint(f"⚠ {msg}", flash_duration)
+        if auto_clear_s > 0:
+            app.set_timer(auto_clear_s, lambda: setattr(app, "status_error", ""))
+
+    def copy_text_with_hint(self, text: str) -> None:
+        """Copy text to clipboard with capability guard and hint flash."""
+        app = self.app
+        app._clipboard = text
+        if not app._clipboard_available:
+            if app._xclip_cmd:
+                try:
+                    import subprocess
+                    subprocess.run(
+                        app._xclip_cmd,
+                        input=text.encode(),
+                        check=True,
+                        timeout=2,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    self.flash_hint(f"⎘  {len(text)} chars copied", 1.2)
+                except Exception:
+                    self.set_status_error("copy failed", auto_clear_s=10.0)
+            else:
+                self.set_status_error("no clipboard — install xclip or xsel", auto_clear_s=0)
+            return
+        app.copy_to_clipboard(text)
+        self.flash_hint(f"⎘  {len(text)} chars copied", 1.2)

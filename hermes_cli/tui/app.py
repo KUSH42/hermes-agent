@@ -484,9 +484,9 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
 
         # Active StreamingToolBlocks keyed by tool_call_id
         self._active_streaming_blocks: dict[str, Any] = {}
-        # P7 — per-turn tool call tracking for /tools overlay
-        self._turn_tool_calls: dict[str, Any] = {}
-        self._agent_stack: list[str] = []
+        # P7 — per-turn tool call tracking: now owned by ToolRenderingService (_svc_tools)
+        # _turn_tool_calls / _agent_stack remain here only until _svc_tools is constructed below.
+        # After construction the compat property (defined at class level) delegates to the service.
         self._turn_start_monotonic: float | None = None
         self._response_metrics_active: bool = False
         self._response_wall_start_time: float | None = None
@@ -562,6 +562,23 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
         # PaneManager — owns layout mode, pane-width math, state persistence
         from hermes_cli.tui.pane_manager import PaneManager
         self._pane_manager = PaneManager(cfg=_display_cfg)
+
+        # ── R4 services (plain objects; init order is load-bearing — see services/) ──
+        from hermes_cli.tui.services import (
+            ThemeService, SpinnerService, IOService, ToolRenderingService,
+            BrowseService, SessionsService, ContextMenuService, CommandsService,
+            WatchersService, KeyDispatchService,
+        )
+        self._svc_theme    = ThemeService(self)
+        self._svc_spinner  = SpinnerService(self)
+        self._svc_io       = IOService(self)
+        self._svc_tools    = ToolRenderingService(self)
+        self._svc_browse   = BrowseService(self)
+        self._svc_sessions = SessionsService(self)
+        self._svc_context  = ContextMenuService(self)
+        self._svc_commands = CommandsService(self)
+        self._svc_watchers = WatchersService(self)
+        self._svc_keys     = KeyDispatchService(self)
 
     # --- Compose ---
 
@@ -1237,9 +1254,9 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
             self._response_token_window.clear()
             self._set_chevron_phase("--phase-stream")
             self._set_hint_phase("stream")
-            # P7: reset per-turn tool call list for fresh turn
-            self._turn_tool_calls = {}
-            self._agent_stack = []
+            # P7: reset per-turn tool call list for fresh turn (now on ToolRenderingService)
+            self._svc_tools._turn_tool_calls = {}
+            self._svc_tools._agent_stack = []
             self._turn_start_monotonic = None
             self._current_turn_tool_count = 0  # A6: reset first-in-turn counter
             # Track turn start for desktop notify
@@ -1613,6 +1630,10 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
         the user is answering an approval prompt.
         """
         return self.clarify_state is not None or self.approval_state is not None
+
+    @property
+    def _turn_tool_calls(self) -> dict:  # DEPRECATED: Phase 3 update callers to app._svc_tools._turn_tool_calls
+        return self._svc_tools._turn_tool_calls
 
     def _hide_completion_overlay_if_present(self) -> None:
         """Hide the completion overlay when a choice overlay activates."""

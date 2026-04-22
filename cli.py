@@ -3358,7 +3358,8 @@ class HermesCLI:
                         anchor = panel.query_one(ThinkingWidget)
                     panel.mount(widget, before=anchor)
                 result["widget"] = widget
-            except Exception:
+            except Exception as _exc:
+                logger.warning("startup banner mount failed: %s", _exc, exc_info=True)
                 result["widget"] = None
 
         app.call_from_thread(_ensure)
@@ -3583,8 +3584,8 @@ class HermesCLI:
                                 app._svc_io.play_tte_blocking(
                                     effect_name, plain_hero, params=params
                                 )
-                            except Exception:
-                                pass
+                            except Exception as _tte_exc:
+                                logger.warning("TUI startup TTE failed: %s", _tte_exc, exc_info=True)
             self._show_banner_body(clear=False, print_hero=True)
             return
         self.console.clear()
@@ -10952,19 +10953,21 @@ class HermesCLI:
 
 
 # ============================================================================
-# Textual file logging
+# TUI file logging — WARNING+ only, overwrites on restart
 # ============================================================================
 
-_TUI_LOG_PATH = Path.home() / ".hermes" / "logs" / "hermes-tui.log"
+_TUI_LOG_PATH = Path.home() / ".hermes" / "logs" / "tui.log"
 _TUI_LOG_MAX_BYTES = 1 * 1024 * 1024  # 1 MB
 _tui_log_installed: bool = False
 
 
 def _install_tui_file_log() -> None:
-    """Route all textual log() calls to a capped file.
+    """Attach a WARNING-level FileHandler to the root Python logger.
 
-    Overwrites on every restart; auto-truncates when the file exceeds 1 MB.
-    Safe to call multiple times (no-op after first call).
+    Captures logger.warning() / logger.error() / logger.exception() from
+    hermes_cli.* and cli — but not Textual's internal log() calls (fps ticks,
+    widget lifecycle).  File is overwritten on every restart; truncated when
+    it exceeds 1 MB.  Safe to call multiple times (no-op after first call).
     """
     global _tui_log_installed
     if _tui_log_installed:
@@ -10973,27 +10976,36 @@ def _install_tui_file_log() -> None:
 
     try:
         _TUI_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _TUI_LOG_PATH.write_text("")  # overwrite on restart
     except Exception:
         return
 
     try:
-        import textual.constants as _tc
-        from textual import Logger as _Logger
+        import logging as _logging
 
-        _tc.LOG_FILE = str(_TUI_LOG_PATH)  # enable Textual's file-write path
+        handler = _logging.FileHandler(_TUI_LOG_PATH, mode="w", encoding="utf-8")
+        handler.setLevel(_logging.WARNING)
+        handler.setFormatter(_logging.Formatter(
+            "%(asctime)s %(levelname)s %(name)s: %(message)s",
+            datefmt="%H:%M:%S",
+        ))
 
-        _orig_call = _Logger.__call__
+        root = _logging.getLogger()
+        root.addHandler(handler)
 
-        def _capped_call(self, *args, **kwargs):  # type: ignore[override]
+        def _truncate_if_large() -> None:
             try:
                 if _TUI_LOG_PATH.stat().st_size >= _TUI_LOG_MAX_BYTES:
-                    _TUI_LOG_PATH.write_text("")  # truncate at limit
+                    _TUI_LOG_PATH.write_text("")
             except Exception:
                 pass
-            _orig_call(self, *args, **kwargs)
 
-        _Logger.__call__ = _capped_call  # type: ignore[method-assign]
+        _orig_emit = handler.emit
+
+        def _emit_with_cap(record: _logging.LogRecord) -> None:
+            _truncate_if_large()
+            _orig_emit(record)
+
+        handler.emit = _emit_with_cap  # type: ignore[method-assign]
     except Exception:
         pass
 

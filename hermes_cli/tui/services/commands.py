@@ -97,9 +97,7 @@ class CommandsService(AppService):
 
         # --- Overlay commands ---
         from hermes_cli.tui.overlays import (
-            CommandsOverlay, HelpOverlay, ModelPickerOverlay,
-            ReasoningPickerOverlay, SkinPickerOverlay, UsageOverlay,
-            VerbosePickerOverlay, YoloConfirmOverlay,
+            CommandsOverlay, ConfigOverlay, HelpOverlay, UsageOverlay,
         )
 
         if stripped == "/help":
@@ -132,55 +130,19 @@ class CommandsService(AppService):
                 pass
             return True
 
-        if stripped == "/model":
+        _TAB_FOR_CMD = {
+            "/model":     "model",
+            "/verbose":   "verbose",
+            "/yolo":      "yolo",
+            "/reasoning": "reasoning",
+            "/skin":      "skin",
+        }
+        if stripped in _TAB_FOR_CMD:
             app._dismiss_all_info_overlays()
             try:
-                overlay = app.query_one(ModelPickerOverlay)
+                overlay = app.query_one(ConfigOverlay)
+                overlay.show_overlay(tab=_TAB_FOR_CMD[stripped])
                 overlay.refresh_data(app.cli)
-                overlay.add_class("--visible")
-                overlay.query_one("#mpo-list").focus()
-            except NoMatches:
-                pass
-            return True
-
-        if stripped == "/verbose":
-            app._dismiss_all_info_overlays()
-            try:
-                overlay = app.query_one(VerbosePickerOverlay)
-                overlay.refresh_data(app.cli)
-                overlay.add_class("--visible")
-                overlay.query_one("#vpo-list").focus()
-            except NoMatches:
-                pass
-            return True
-
-        if stripped == "/yolo":
-            app._dismiss_all_info_overlays()
-            try:
-                overlay = app.query_one(YoloConfirmOverlay)
-                overlay.refresh_data(app.cli)
-                overlay.add_class("--visible")
-            except NoMatches:
-                pass
-            return True
-
-        if stripped == "/reasoning":
-            app._dismiss_all_info_overlays()
-            try:
-                overlay = app.query_one(ReasoningPickerOverlay)
-                overlay.refresh_data(app.cli)
-                overlay.add_class("--visible")
-            except NoMatches:
-                pass
-            return True
-
-        if stripped == "/skin":
-            app._dismiss_all_info_overlays()
-            try:
-                overlay = app.query_one(SkinPickerOverlay)
-                overlay.refresh_data(app.cli)
-                overlay.add_class("--visible")
-                overlay._show_tab(0)
             except NoMatches:
                 pass
             return True

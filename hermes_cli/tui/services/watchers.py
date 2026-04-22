@@ -313,49 +313,55 @@ class WatchersService(AppService):
     # Overlay state watchers
     # ------------------------------------------------------------------
 
-    def on_clarify_state(self, value: "ChoiceOverlayState | None") -> None:
-        from hermes_cli.tui.widgets import ClarifyWidget
+    def _get_interrupt_overlay(self):
+        """Return the canonical InterruptOverlay instance, or None if not mounted."""
+        from hermes_cli.tui.overlays import InterruptOverlay
         try:
-            w = self.app.query_one(ClarifyWidget)
-            w.display = value is not None
+            return self.app.query_one(InterruptOverlay)
+        except NoMatches:
+            return None
+
+    def on_clarify_state(self, value: "ChoiceOverlayState | None") -> None:
+        from hermes_cli.tui.overlays import InterruptKind
+        from hermes_cli.tui.overlays._adapters import make_clarify_payload
+        ov = self._get_interrupt_overlay()
+        if ov is not None:
             if value is not None:
-                w.update(value)
+                ov.present(make_clarify_payload(self.app, value), replace=True)
                 self.app._hide_completion_overlay_if_present()
                 self.app._dismiss_floating_panels()
-                self.app.call_after_refresh(w.focus)
+                self.app.call_after_refresh(ov.focus)
             else:
+                ov.hide_if_kind(InterruptKind.CLARIFY)
                 if not self.app.agent_running and not self.app.command_running:
                     try:
                         self.app.call_after_refresh(self.app.query_one("#input-area").focus)
                     except NoMatches:
                         pass
-        except NoMatches:
-            pass
         self.app._set_hint_phase(self.app._compute_hint_phase())
 
     def on_approval_state(self, value: "ChoiceOverlayState | None") -> None:
-        from hermes_cli.tui.widgets import ApprovalWidget
+        from hermes_cli.tui.overlays import InterruptKind
+        from hermes_cli.tui.overlays._adapters import make_approval_payload
         try:
             from hermes_cli.tui.drawille_overlay import DrawilleOverlay
             self.app.query_one(DrawilleOverlay).signal("waiting" if value is not None else "thinking")
         except Exception:
             pass
-        try:
-            w = self.app.query_one(ApprovalWidget)
-            w.display = value is not None
+        ov = self._get_interrupt_overlay()
+        if ov is not None:
             if value is not None:
-                w.update(value)
+                ov.present(make_approval_payload(self.app, value), replace=True)
                 self.app._hide_completion_overlay_if_present()
                 self.app._dismiss_floating_panels()
-                self.app.call_after_refresh(w.focus)
+                self.app.call_after_refresh(ov.focus)
             else:
+                ov.hide_if_kind(InterruptKind.APPROVAL)
                 if not self.app.agent_running and not self.app.command_running:
                     try:
                         self.app.call_after_refresh(self.app.query_one("#input-area").focus)
                     except NoMatches:
                         pass
-        except NoMatches:
-            pass
         self.app._set_hint_phase(self.app._compute_hint_phase())
 
     def on_highlighted_candidate(self, c: Any) -> None:
@@ -378,27 +384,27 @@ class WatchersService(AppService):
             pass
 
     def on_sudo_state(self, value: "SecretOverlayState | None") -> None:
-        from hermes_cli.tui.widgets import SudoWidget
-        try:
-            w = self.app.query_one(SudoWidget)
-            w.display = value is not None
+        from hermes_cli.tui.overlays import InterruptKind
+        from hermes_cli.tui.overlays._adapters import make_sudo_payload
+        ov = self._get_interrupt_overlay()
+        if ov is not None:
             if value is not None:
-                w.update(value)
+                ov.present(make_sudo_payload(self.app, value), replace=True)
                 self.app._dismiss_floating_panels()
-        except NoMatches:
-            pass
+            else:
+                ov.hide_if_kind(InterruptKind.SUDO)
         self.app._set_hint_phase(self.app._compute_hint_phase())
 
     def on_secret_state(self, value: "SecretOverlayState | None") -> None:
-        from hermes_cli.tui.widgets import SecretWidget
-        try:
-            w = self.app.query_one(SecretWidget)
-            w.display = value is not None
+        from hermes_cli.tui.overlays import InterruptKind
+        from hermes_cli.tui.overlays._adapters import make_secret_payload
+        ov = self._get_interrupt_overlay()
+        if ov is not None:
             if value is not None:
-                w.update(value)
+                ov.present(make_secret_payload(self.app, value), replace=True)
                 self.app._dismiss_floating_panels()
-        except NoMatches:
-            pass
+            else:
+                ov.hide_if_kind(InterruptKind.SECRET)
         self.app._set_hint_phase(self.app._compute_hint_phase())
 
     # ------------------------------------------------------------------
@@ -436,30 +442,17 @@ class WatchersService(AppService):
     # ------------------------------------------------------------------
 
     def on_undo_state(self, value: "UndoOverlayState | None") -> None:
-        from hermes_cli.tui.widgets import ApprovalWidget, ClarifyWidget, SecretWidget, SudoWidget, UndoConfirmOverlay
-        try:
-            w = self.app.query_one(UndoConfirmOverlay)
-            w.display = value is not None
+        from hermes_cli.tui.overlays import InterruptKind
+        from hermes_cli.tui.overlays._adapters import make_undo_payload
+        ov = self._get_interrupt_overlay()
+        if ov is not None:
             if value is not None:
-                w.update(value)
+                # Undo preempts any currently-visible interrupt; prior resumes
+                # when undo resolves (queue-front insert).
+                ov.present(make_undo_payload(self.app, value), preempt=True)
                 self.app._dismiss_floating_panels()
-                for widget_type in (ApprovalWidget, ClarifyWidget, SudoWidget, SecretWidget):
-                    try:
-                        aw = self.app.query_one(widget_type)
-                        if aw.display:
-                            aw.pause_countdown()
-                    except NoMatches:
-                        pass
             else:
-                for widget_type in (ApprovalWidget, ClarifyWidget, SudoWidget, SecretWidget):
-                    try:
-                        aw = self.app.query_one(widget_type)
-                        if aw.display and getattr(aw, "_was_paused", False):
-                            aw.resume_countdown()
-                    except NoMatches:
-                        pass
-        except NoMatches:
-            pass
+                ov.hide_if_kind(InterruptKind.UNDO)
         try:
             inp = self.app.query_one("#input-area")
             if value is not None:

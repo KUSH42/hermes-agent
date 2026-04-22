@@ -126,13 +126,15 @@ class SessionsService(AppService):
         self.poll_session_index()
 
     def open_new_session_overlay(self) -> None:
-        """Show NewSessionOverlay. Event-loop only."""
-        from hermes_cli.tui.session_widgets import NewSessionOverlay
+        """Show NewSession interrupt overlay. Event-loop only."""
+        from hermes_cli.tui.overlays import InterruptOverlay
+        from hermes_cli.tui.overlays._adapters import make_new_session_payload
         if not self._sessions_enabled:
             return
         self.app._svc_context.dismiss_all_info_overlays()
         try:
-            self.app.query_one(NewSessionOverlay).show_overlay()
+            ov = self.app.query_one(InterruptOverlay)
+            ov.present(make_new_session_payload(), replace=True)
         except NoMatches:
             pass
 
@@ -326,11 +328,14 @@ class SessionsService(AppService):
         self.app.call_from_thread(self.show_merge_overlay, session_id, diff_stat)
 
     def show_merge_overlay(self, session_id: str, diff_stat: str) -> None:
-        """Event-loop: open MergeConfirmOverlay for the given session."""
-        from hermes_cli.tui.session_widgets import MergeConfirmOverlay
+        """Event-loop: open MergeConfirm interrupt overlay for the given session."""
+        from hermes_cli.tui.overlays import InterruptOverlay
+        from hermes_cli.tui.overlays._adapters import make_merge_confirm_payload
         try:
-            overlay = self.app.query_one(MergeConfirmOverlay)
-            overlay.show_for(session_id, diff_stat)
+            overlay = self.app.query_one(InterruptOverlay)
+            overlay.present(
+                make_merge_confirm_payload(session_id, diff_stat), replace=True
+            )
         except NoMatches:
             pass
 

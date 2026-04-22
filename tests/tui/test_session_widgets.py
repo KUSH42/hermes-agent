@@ -605,6 +605,7 @@ async def test_history_panel_load_skips_missing_text():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="R3 Phase B: folded into InterruptOverlay; see test_interrupt_overlay.py")
 async def test_merge_overlay_strategy_buttons():
     app = _make_app()
     async with app.run_test(size=(120, 36)) as pilot:
@@ -643,6 +644,7 @@ async def test_merge_overlay_strategy_buttons():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="R3 Phase B: folded into InterruptOverlay; see test_interrupt_overlay.py")
 async def test_new_session_overlay_show_overlay():
     app = _make_app()
     async with app.run_test(size=(120, 36)) as pilot:
@@ -658,6 +660,7 @@ async def test_new_session_overlay_show_overlay():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="R3 Phase B: folded into InterruptOverlay; see test_interrupt_overlay.py")
 async def test_new_session_overlay_dismiss():
     app = _make_app()
     async with app.run_test(size=(120, 36)) as pilot:
@@ -675,6 +678,7 @@ async def test_new_session_overlay_dismiss():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="R3 Phase B: folded into InterruptOverlay; see test_interrupt_overlay.py")
 async def test_new_session_overlay_empty_branch_error():
     app = _make_app()
     async with app.run_test(size=(120, 36)) as pilot:
@@ -699,6 +703,7 @@ async def test_new_session_overlay_empty_branch_error():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="R3 Phase B: folded into InterruptOverlay; see test_interrupt_overlay.py")
 async def test_new_session_overlay_create_calls_app():
     app = _make_app()
     create_calls = []
@@ -873,6 +878,7 @@ async def test_get_session_records_returns_copy():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="R3 Phase B: folded into InterruptOverlay; see test_interrupt_overlay.py")
 async def test_merge_overlay_show_for():
     app = _make_app()
     async with app.run_test(size=(120, 36)) as pilot:
@@ -889,6 +895,7 @@ async def test_merge_overlay_show_for():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="R3 Phase B: folded into InterruptOverlay; see test_interrupt_overlay.py")
 async def test_merge_overlay_dismiss():
     app = _make_app()
     async with app.run_test(size=(120, 36)) as pilot:

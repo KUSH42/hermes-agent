@@ -391,17 +391,14 @@ class ContextMenuService(AppService):
     def dismiss_all_info_overlays(self) -> None:
         """Remove --visible from all info overlays."""
         from hermes_cli.tui.overlays import (
-            CommandsOverlay, HelpOverlay, ModelPickerOverlay,
-            ReasoningPickerOverlay, SessionOverlay, SkinPickerOverlay,
-            UsageOverlay, VerbosePickerOverlay, WorkspaceOverlay, YoloConfirmOverlay,
+            CommandsOverlay, ConfigOverlay, HelpOverlay, SessionOverlay,
+            UsageOverlay, WorkspaceOverlay,
             ToolPanelHelpOverlay as _TPHO,
         )
         app = self.app
         for cls in (
             HelpOverlay, UsageOverlay, CommandsOverlay, WorkspaceOverlay,
-            SessionOverlay,
-            ModelPickerOverlay, ReasoningPickerOverlay, SkinPickerOverlay,
-            YoloConfirmOverlay, VerbosePickerOverlay, _TPHO,
+            SessionOverlay, ConfigOverlay, _TPHO,
         ):
             for widget in app.query(cls):
                 widget.remove_class("--visible")

@@ -126,16 +126,11 @@ from .status_bar import (  # noqa: F401
 )
 
 from .overlays import (  # noqa: F401
-    ApprovalWidget,
-    ClarifyWidget,
     CountdownMixin,
     HistorySearchOverlay,
     KeymapOverlay,
-    SecretWidget,
-    SudoWidget,
     TurnCandidate,
     TurnResultItem,
-    UndoConfirmOverlay,
     _CrossSessionResult,
     _ModeBar,
     _SearchResult,
@@ -152,6 +147,17 @@ from .overlays import (  # noqa: F401
 from .media import (  # noqa: F401
     InlineMediaWidget,
     SeekBar,
+)
+
+# R3 Phase B: interrupt widget classes are aliases routing to InterruptOverlay.
+from hermes_cli.tui.overlays._aliases import (  # noqa: F401,E402
+    ApprovalWidget,
+    ClarifyWidget,
+    MergeConfirmOverlay,
+    NewSessionOverlay,
+    SecretWidget,
+    SudoWidget,
+    UndoConfirmOverlay,
 )
 
 from .status_bar import SourcesBar, _extract_domain, _truncate  # noqa: F401

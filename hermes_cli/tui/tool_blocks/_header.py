@@ -27,6 +27,27 @@ from ._shared import (
     ToolHeaderStats,
 )
 
+MIN_LABEL_CELLS = 12
+
+_DROP_ORDER = ["flash", "stderrwarn", "linecount", "chevron", "diff", "chip", "hero"]
+
+
+def _trim_tail_segments(
+    segments: "list[tuple[str, Text]]",
+    budget: int,
+) -> "list[tuple[str, Text]]":
+    result = list(segments)
+    total_w = sum(s.cell_len for _, s in result)
+    for name in _DROP_ORDER:
+        if total_w <= budget:
+            break
+        for i in reversed(range(len(result))):
+            if result[i][0] == name:
+                total_w -= result[i][1].cell_len
+                result.pop(i)
+                break
+    return result
+
 
 class ToolHeader(TooltipMixin, PulseMixin, Widget):
     """Single-line header: '  ╌╌ {label}  {stats}  [▸/▾]'.
@@ -196,9 +217,12 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             t.append(" $", style=f"bold {accent}")
             shell_prompt_w = 2
 
-        tail = Text()
+        # A1: build tail as named segments for width-aware trimming
+        tail_segments: list[tuple[str, Text]] = []
+
         if getattr(self, '_browse_badge', ""):
-            tail.append(f" {self._browse_badge} ", style="bold dim")
+            tail_segments.append(("badge", Text(f" {self._browse_badge} ", style="bold dim")))
+
         if self._spinner_char is not None:
             if self._spinner_identity is not None:
                 _phase = pulse_phase_offset(self._pulse_tick, self._spinner_identity.phase_offset)
@@ -207,11 +231,11 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                     self._spinner_identity.color_b,
                     _phase,
                 )
-                tail.append(f"  {self._spinner_char}", style=spin_color)
+                tail_segments.append(("spinner", Text(f"  {self._spinner_char}", style=spin_color)))
             else:
-                tail.append(f"  {self._spinner_char}", style="dim")
+                tail_segments.append(("spinner", Text(f"  {self._spinner_char}", style="dim")))
             if self._duration:
-                tail.append(f"  {self._duration}", style="dim")
+                tail_segments.append(("duration", Text(f"  {self._duration}", style="dim")))
         else:
             if self._primary_hero:
                 if self._tool_icon_error and self._error_kind:
@@ -222,36 +246,37 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                             self._error_kind, "", get_tool_icon_mode()
                         )
                         _ek_hex = self.app.get_css_variables().get(_ek_var, "#ef4444")
-                        tail.append(f"  {_ek_icon} {self._primary_hero}", style=f"bold {_ek_hex}")
+                        tail_segments.append(("hero", Text(f"  {_ek_icon} {self._primary_hero}", style=f"bold {_ek_hex}")))
                     except Exception:
-                        tail.append(f"  {self._primary_hero}", style="bold red")
+                        tail_segments.append(("hero", Text(f"  {self._primary_hero}", style="bold red")))
                 elif self._tool_icon_error:
-                    tail.append(f"  {self._primary_hero}", style="bold red")
+                    tail_segments.append(("hero", Text(f"  {self._primary_hero}", style="bold red")))
                 else:
-                    tail.append(f"  {self._primary_hero}", style="dim green")
+                    tail_segments.append(("hero", Text(f"  {self._primary_hero}", style="dim green")))
             elif self._is_complete and not self._tool_icon_error and not self._line_count:
-                tail.append("  —", style="dim")
-            for chip_text, chip_style in (self._header_chips or []):
-                tail.append(f"  {chip_text}", style=chip_style)
+                tail_segments.append(("hero", Text("  —", style="dim")))
+            # A2: chips removed from header; always served by FooterPane only
             if self._stats and self._stats.has_diff_counts:
                 add_color = getattr(self, "_diff_add_color", _DIFF_ADD_FALLBACK)
                 del_color = getattr(self, "_diff_del_color", _DIFF_DEL_FALLBACK)
+                diff_seg = Text()
                 if self._stats.additions:
-                    tail.append(f"  +{self._stats.additions}", style=f"bold {add_color}")
+                    diff_seg.append(f"  +{self._stats.additions}", style=f"bold {add_color}")
                 if self._stats.deletions:
-                    tail.append(f"  -{self._stats.deletions}", style=f"bold {del_color}")
+                    diff_seg.append(f"  -{self._stats.deletions}", style=f"bold {del_color}")
                 try:
                     if (self._panel is not None and
                             hasattr(self._panel._block, "_visible_count") and
                             self._panel._block._visible_count < len(self._panel._block._all_plain)):
-                        tail.append(" (partial)", style="dim")
+                        diff_seg.append(" (partial)", style="dim")
                 except Exception:
                     pass
-            elif self._line_count and not self._primary_hero:
-                tail.append(f"  {self._line_count}L", style="dim")
+                if diff_seg.cell_len > 0:
+                    tail_segments.append(("diff", diff_seg))
+            # A2: line count moved to ToolHeaderBar only; not rendered here
             if self._has_affordances:
                 is_collapsed = self._panel.collapsed if self._panel is not None else self.collapsed
-                tail.append("  ▸" if is_collapsed else "  ▾", style="dim")
+                tail_segments.append(("chevron", Text("  ▸" if is_collapsed else "  ▾", style="dim")))
             now = time.monotonic()
             if self._flash_msg and now < self._flash_expires:
                 _flash_style = {
@@ -261,23 +286,28 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                     "accent": "dim cyan",
                     "neutral": "dim",
                 }.get(self._flash_tone, "dim green")
-                tail.append(f"  ✓ {self._flash_msg}", style=_flash_style)
+                tail_segments.append(("flash", Text(f"  ✓ {self._flash_msg}", style=_flash_style)))
             try:
                 if (self._panel is not None and
                         self._panel.collapsed and
                         self._tool_icon_error):
                     rs_v4 = getattr(self._panel, "_result_summary_v4", None)
                     if rs_v4 is not None and getattr(rs_v4, "stderr_tail", ""):
-                        tail.append("  ⚠ stderr (e)", style="dim red")
+                        tail_segments.append(("stderrwarn", Text("  ⚠ stderr (e)", style="dim red")))
             except Exception:
                 pass
             if self._duration:
-                tail.append(f"  {self._duration}", style="dim")
+                tail_segments.append(("duration", Text(f"  {self._duration}", style="dim")))
 
         term_w = self.size.width
-        tail_w = tail.cell_len
         FIXED_PREFIX_W = gutter_w + icon_cell_w + space_after_icon + shell_prompt_w
-        available = max(8, term_w - FIXED_PREFIX_W - tail_w - 2) if term_w > 0 else 50
+        tail_budget = max(0, term_w - FIXED_PREFIX_W - MIN_LABEL_CELLS - 2) if term_w > 0 else 80
+        tail_segments = _trim_tail_segments(tail_segments, tail_budget)
+        tail = Text()
+        for _, seg in tail_segments:
+            tail.append_text(seg)
+        tail_w = tail.cell_len
+        available = max(MIN_LABEL_CELLS, term_w - FIXED_PREFIX_W - tail_w - 2) if term_w > 0 else 50
         if self._label_rich is not None:
             label_text = self._label_rich
             if label_text.cell_len > available:

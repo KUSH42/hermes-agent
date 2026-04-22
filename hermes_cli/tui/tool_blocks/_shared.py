@@ -108,6 +108,7 @@ def _build_args_row_text(spec: "object", tool_input: "dict | None") -> "str | No
 
 # StreamingToolBlock constants
 _VISIBLE_CAP = 200          # max lines shown in the RichLog
+THRESHOLD_NARROW = 60       # D2: OmissionBar collapses to 2 buttons below this width
 _LINE_BYTE_CAP = 2000       # truncate single lines beyond this many chars
 _PAGE_SIZE = 50             # lines per [+]/[-] step in OmissionBar
 _SPINNER_FRAMES: tuple[str, ...] = (
@@ -521,6 +522,7 @@ class OmissionBar(TooltipMixin, Widget):
         self._label: Static | None = None
         self._cap_label: Static | None = None
         self._last_resize_w: int = 0
+        self._narrow: bool = False
 
     def compose(self):
         from textual.app import ComposeResult
@@ -539,6 +541,35 @@ class OmissionBar(TooltipMixin, Widget):
             yield Button("[↓]",    classes="--ob-down")
             yield Button("[↓all]", classes="--ob-down-all")
 
+    def on_resize(self, event: Any) -> None:
+        w = self.size.width
+        now_narrow = w < THRESHOLD_NARROW
+        if now_narrow != self._narrow:
+            self._narrow = now_narrow
+            self._sync_narrow_layout()
+        if crosses_threshold(self._last_resize_w, w, THRESHOLD_NARROW):
+            if self._label is not None:
+                self._label.display = w >= THRESHOLD_NARROW
+        self._last_resize_w = w
+
+    def _sync_narrow_layout(self) -> None:
+        if self.position != "bottom":
+            return
+        try:
+            if self._narrow:
+                self.query_one(".--ob-up", Button).display = False
+                self.query_one(".--ob-down-all", Button).display = False
+                self.query_one(".--ob-down", Button).label = "[↓pg]"
+            else:
+                self.query_one(".--ob-up", Button).display = True
+                self.query_one(".--ob-down-all", Button).display = True
+                down_btn = self.query_one(".--ob-down", Button)
+                vs, ve, tot = self._visible_start, self._visible_end, self._total
+                step_below = min(_PAGE_SIZE, tot - ve)
+                down_btn.label = f"[↓+{step_below}]" if step_below > 0 else "[↓+0]"
+        except NoMatches:
+            pass
+
     def set_counts(
         self,
         visible_start: int,
@@ -547,6 +578,7 @@ class OmissionBar(TooltipMixin, Widget):
         above: int | None = None,
         below: int | None = None,
         cap_msg: str | None = None,
+        visible_cap: int = _VISIBLE_CAP,  # H1: honour per-block cap override
     ) -> None:
         """Cache counts and update label + disabled states (B1/B2/B3)."""
         self._visible_start = visible_start
@@ -576,14 +608,17 @@ class OmissionBar(TooltipMixin, Widget):
                 step_below = min(_PAGE_SIZE, total - visible_end)
                 at_default = (
                     visible_start == 0
-                    and (visible_end - visible_start) <= _VISIBLE_CAP
+                    and (visible_end - visible_start) <= visible_cap  # H1
                 )
                 at_end = visible_end >= total
                 try:
                     self.query_one(".--ob-cap",      Button).disabled = at_default
                     self.query_one(".--ob-up",       Button).disabled = at_default
                     down_btn = self.query_one(".--ob-down", Button)
-                    down_btn.label = f"[↓+{step_below}]" if step_below > 0 else "[↓+0]"
+                    if self._narrow:
+                        down_btn.label = "[↓pg]"
+                    else:
+                        down_btn.label = f"[↓+{step_below}]" if step_below > 0 else "[↓+0]"
                     down_btn.disabled = at_end
                     self.query_one(".--ob-down-all", Button).disabled = at_end
                 except NoMatches:
@@ -620,10 +655,3 @@ class OmissionBar(TooltipMixin, Widget):
             pb.rerender_window(vs, tot)
         event.stop()
 
-    def on_resize(self, event: object) -> None:
-        """Hide the count label at narrow widths to make room for buttons."""
-        w = getattr(getattr(event, "size", None), "width", 80)
-        if crosses_threshold(self._last_resize_w, w, THRESHOLD_NARROW):
-            if self._label is not None:
-                self._label.display = w >= THRESHOLD_NARROW
-        self._last_resize_w = w

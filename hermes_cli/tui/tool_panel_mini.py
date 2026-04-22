@@ -98,10 +98,18 @@ class ToolPanelMini(Widget):
             self._expand()
             getattr(event, "stop", lambda: None)()
 
+    def watch_mouse_hover(self, value: bool) -> None:
+        src = self._source_panel  # pre-existing: set in __init__ from source_panel param
+        if src is not None and src.is_mounted:
+            if value:
+                src.remove_class("--minified")
+            else:
+                src.add_class("--minified")
+
     def _expand(self) -> None:
         """Show the originating ToolPanel and remove this mini widget."""
         self._show_toast_once()
-        self._source_panel.display = True
+        self._source_panel.remove_class("--minified")  # pre-existing attr; was: display=True
         self.remove()
 
     def _show_toast_once(self) -> None:

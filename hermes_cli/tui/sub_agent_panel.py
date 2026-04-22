@@ -87,7 +87,8 @@ class SubAgentPanel(Widget):
     can_focus = True
 
     BINDINGS = [
-        Binding("space",        "cycle_collapse",   show=False),
+        Binding("space",        "toggle_collapse",  show=False),
+        Binding("c",            "toggle_compact",   show=False),
         Binding("ctrl+e",       "expand_all",       show=False),
         Binding("ctrl+shift+k", "compact_all",      show=False),
         Binding("ctrl+x",       "collapse_subtree", show=False),
@@ -109,7 +110,7 @@ class SubAgentPanel(Widget):
             CollapseState.COMPACT if depth >= 1 else CollapseState.EXPANDED
         )
         if depth >= 1:
-            self.add_class(f"--depth-{depth}")
+            self.add_class(f"--depth-{min(depth, 3)}")
 
     def compose(self) -> ComposeResult:
         self._header = SubAgentHeader()
@@ -196,8 +197,17 @@ class SubAgentPanel(Widget):
 
     # --- Actions ---
 
-    def action_cycle_collapse(self) -> None:
-        self.collapse_state = CollapseState((int(self.collapse_state) + 1) % 3)
+    def action_toggle_collapse(self) -> None:
+        if self.collapse_state == CollapseState.COLLAPSED:
+            self.collapse_state = CollapseState.EXPANDED
+        else:
+            self.collapse_state = CollapseState.COLLAPSED
+
+    def action_toggle_compact(self) -> None:
+        if self.collapse_state == CollapseState.COMPACT:
+            self.collapse_state = CollapseState.EXPANDED
+        else:
+            self.collapse_state = CollapseState.COMPACT
 
     def action_expand_all(self) -> None:
         from hermes_cli.tui.child_panel import ChildPanel

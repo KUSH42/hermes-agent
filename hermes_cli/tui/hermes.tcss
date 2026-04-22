@@ -580,8 +580,9 @@ HermesApp.density-compact #input-chevron       { width: 1; }
 HermesApp.density-compact .tool-header-bar--duration   { display: none; }
 HermesApp.density-compact .tool-header-bar--line-count { display: none; }
 HermesApp.density-compact ToolAccent                   { display: none; }
-HermesApp.density-compact ToolPanel FooterPane         { display: none; }
-HermesApp.density-compact ToolPanel:focus FooterPane   { display: block; }
+HermesApp.density-compact ToolPanel FooterPane                   { display: none; }
+HermesApp.density-compact ToolPanel:focus FooterPane             { display: block; }
+HermesApp.density-compact ToolPanel.tool-panel--error FooterPane { display: block; }
 
 /* Phase C1: ToolHeaderBar compact label tightening */
 ToolHeaderBar.--compact .tool-header-bar--label        { max-width: 10; }
@@ -666,8 +667,16 @@ ToolPanel:hover                              { background: $accent 5%; }
 ToolPanel.first-in-turn                      { border-top: solid $accent 30%; }
 /* A2: empty result header color */
 ToolHeader.result-empty                      { color: $text-muted; }
-/* A5: error banner between header and body */
-StreamingToolBlock .error-banner             { color: $error; padding: 0 1; height: 1; }
+/* C1: heavier error banner — covers both static ToolBlock and StreamingToolBlock */
+.error-banner {
+    color: $error;
+    background: $error 10%;
+    border-left: vkey #cc3333 80%;
+    padding: 0 1;
+    height: auto;
+    max-height: 3;
+    overflow: hidden;
+}
 /* B3: cap label hidden by default, shown when --visible class added */
 OmissionBar .--cap-label                     { color: $warning; display: none; }
 OmissionBar .--cap-label.--visible           { display: block; }
@@ -690,6 +699,8 @@ ToolHeaderBar > .tool-header-bar--duration    { width: 6; text-align: right; col
 /* ToolPanelMini — single-row compact shell variant */
 ToolPanelMini { height: 1; layout: horizontal; }
 ToolPanelMini:focus { background: $accent 10%; }
+/* B3: --minified hides ToolPanel when mini variant is active */
+ToolPanel.--minified { height: 0; overflow: hidden; }
 
 /* --- Tool grouping (virtual — no DOM container) --- */
 ToolPanel.tool-panel--grouped    { padding-left: 2; }

@@ -12,6 +12,14 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any
 
+def _format_age(elapsed_s: int) -> str:
+    if elapsed_s < 60:
+        return f"completed {elapsed_s}s ago"
+    if elapsed_s < 3600:
+        return f"completed {elapsed_s // 60}m ago"
+    return f"completed {elapsed_s // 3600}h ago"
+
+
 _TONE_STYLES: dict[str, str] = {
     "success": "bold green",
     "warning": "bold yellow",
@@ -277,10 +285,21 @@ class FooterPane(Widget):
         if any(getattr(a, "payload_truncated", False) for a in summary.actions):
             parts.append(" ⚠ payload truncated ", style="bold " + _TONE_STYLES["warning"])
 
+        # C2: ensure retry always present on error
+        actions_to_render = list(summary.actions)
+        if summary.is_error and not any(a.kind == "retry" for a in actions_to_render):
+            from hermes_cli.tui.tool_result_parse import Action as _Action
+            actions_to_render.insert(0, _Action(
+                label="retry",
+                hotkey="r",
+                kind="retry",
+                payload=None,
+            ))
+
         # Action row — only implemented actions; A1: skip when streaming
-        if summary.actions and not _is_streaming:
+        if actions_to_render and not _is_streaming:
             parts.append("  ")
-            for action in summary.actions:
+            for action in actions_to_render:
                 if action.kind not in _IMPLEMENTED_ACTIONS:
                     continue
                 parts.append(f"[{action.hotkey}]", style="dim bold")
@@ -475,10 +494,10 @@ class ToolPanel(Widget):
         Binding("K",     "scroll_body_page_up",   "↑↑",   show=False),
         Binding("<",     "scroll_body_top",        "Top",  show=False),
         Binding(">",     "scroll_body_bottom",     "End",  show=False),
-        Binding("f1",    "show_help",        "Keys", show=False),  # A1: rebind to f1 (? now exclusively context menu)
+        Binding("f1",            "show_context_menu", "Menu", show=False),  # G1: F1=menu (vim convention: ?=help)
         Binding("P",     "copy_full_path",   "Copy full path",   show=False),  # A7
         Binding("x",     "dismiss_error_banner", "Dismiss",      show=False),  # A5
-        Binding("question_mark", "show_context_menu", "Menu",    show=False),  # D1
+        Binding("question_mark", "show_help",         "Help",    show=False),  # G1: ?=help (vim convention)
     ]
 
     # Always start expanded; auto-collapse at completion based on threshold.
@@ -496,6 +515,7 @@ class ToolPanel(Widget):
         self._category = classify_tool(self._tool_name)
 
         self._user_collapse_override: bool = False
+        self._should_auto_collapse: bool = False
         self._result_summary_v4: "ResultSummaryV4 | None" = None
         self._start_time: float = time.monotonic()
         self._completed_at: float | None = None
@@ -638,8 +658,26 @@ class ToolPanel(Widget):
 
     def _apply_complete_auto_collapse(self) -> None:
         from hermes_cli.tui.tool_category import _CATEGORY_DEFAULTS
-        if self._user_collapse_override:
+        if getattr(self, "_user_collapse_override", False):
             return
+        # B1: defer collapse while user is scrolled up reading output
+        if self.has_focus or bool(list(self.query("*:focus"))):
+            self._should_auto_collapse = True
+            return
+        try:
+            output = self.app.query_one("#output-panel")
+            if getattr(output, "_user_scrolled_up", False):
+                block = getattr(self, "_block", None)
+                if block is not None:
+                    vs = getattr(block, "_visible_start", 0)
+                    vc = getattr(block, "_visible_count", 0)
+                    total_lines = len(getattr(block, "_all_plain", []))
+                    if total_lines > 0 and (vs + vc) < total_lines:
+                        self._should_auto_collapse = True
+                        return
+        except Exception:
+            pass
+        self._should_auto_collapse = False
         rs = self._result_summary_v4
         total = self._body_line_count()
         threshold = _CATEGORY_DEFAULTS[self._category].default_collapsed_lines
@@ -657,6 +695,23 @@ class ToolPanel(Widget):
         # A3: flash auto-collapse notification so user knows what happened
         if should_collapse:
             self._flash_header(f"▾ auto-collapsed ({total} lines)", tone="success")
+
+    def _schedule_age_ticks(self) -> None:
+        for delay in (10.0, 60.0, 300.0):
+            self.set_timer(delay, self._tick_age)
+
+    def _tick_age(self) -> None:
+        if not self.is_mounted:
+            return
+        completed_at = getattr(self, "_completed_at", None)  # pre-existing attr set in set_result_summary
+        if completed_at is None:
+            return
+        elapsed = int(time.monotonic() - completed_at)
+        block = getattr(self, "_block", None)  # pre-existing attr set in _maybe_open_block
+        if block is None or not getattr(block, "is_mounted", False):
+            return
+        if hasattr(block, "set_age_microcopy"):
+            block.set_age_microcopy(_format_age(elapsed))
 
     def set_tool_args(self, args: dict | None) -> None:
         """Call from app after tool_start to supply parsed args."""
@@ -778,7 +833,7 @@ class ToolPanel(Widget):
                 dur = self._completed_at - self._start_time
             mini = ToolPanelMini(source_panel=self, command=cmd, duration_s=dur)
             self.parent.mount(mini, after=self)
-            self.display = False
+            self.add_class("--minified")  # B3: hide via class; hover on mini reveals it
         except Exception:
             pass
 
@@ -788,6 +843,11 @@ class ToolPanel(Widget):
         self._completed_at = time.monotonic()
         # Update accent + header bar state
         final_state = "error" if summary.is_error else "ok"
+        # D1: apply class so CSS can target errors specifically (e.g. compact mode exception)
+        if summary.is_error:
+            self.add_class("tool-panel--error")
+        else:
+            self.remove_class("tool-panel--error")
         if getattr(self, '_accent', None) is not None:
             self._accent.state = final_state
         if getattr(self, '_header_bar', None) is not None:
@@ -804,13 +864,8 @@ class ToolPanel(Widget):
             self._footer_pane.styles.display = "block" if show else "none"
         # Activate mini-mode for qualifying SHELL calls
         self._maybe_activate_mini(summary)
-        # F1: schedule "completed Xs ago" age microcopy at 10s post-completion
-        _completed_at_snap = self._completed_at
-        def _show_age() -> None:
-            elapsed = int(time.monotonic() - _completed_at_snap)
-            if hasattr(self._block, "set_age_microcopy"):
-                self._block.set_age_microcopy(f"completed {elapsed}s ago")
-        self.set_timer(10.0, _show_age)
+        # B2: schedule multi-tick age microcopy (10s / 60s / 300s)
+        self._schedule_age_ticks()
 
         # Push primary + promoted chips to ToolHeader
         promoted_texts: frozenset[str] = frozenset()
@@ -819,18 +874,10 @@ class ToolPanel(Widget):
             if summary.primary is not None:
                 header._primary_hero = summary.primary
             header._error_kind = summary.error_kind
-            primary_text = summary.primary or ""
-            promoted: list[tuple[str, str]] = []
-            for chip in (summary.chips or [])[:3]:
-                if chip.text in primary_text:
-                    continue
-                style = _TONE_STYLES.get(chip.tone, "dim")
-                promoted.append((chip.text, style))
-                if len(promoted) >= 2:
-                    break
-            header._header_chips = promoted
+            # A2: chips live in FooterPane only; header never shows them
+            header._header_chips = []
             header.refresh()
-            promoted_texts = frozenset(text for text, _ in promoted)
+            promoted_texts: frozenset[str] = frozenset()
 
         # Render v4 footer (skip chips already in header)
         if self._footer_pane is not None:
@@ -1489,10 +1536,15 @@ class ToolPanel(Widget):
             hints.sort(key=_hint_priority)
 
         t = Text()
-        max_hints = 3 if narrow else len(hints)
-        for key, sep, label in hints[:max_hints]:
+        max_hints = 3 if narrow else 6
+        shown = hints[:max_hints]
+        for i, (key, sep, label) in enumerate(shown):
+            if i > 0:
+                t.append(" │ ", style="dim")
             t.append(key, style="bold")
             t.append(sep + label, style="dim")
+        if len(hints) > max_hints:
+            t.append("  ? more", style="dim")
         return t
 
     def _get_omission_bar(self) -> "Any | None":

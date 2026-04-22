@@ -311,6 +311,10 @@ class OutputPanel(ScrollableContainer):
         self._user_scrolled_up = True
 
     def compose(self) -> ComposeResult:
+        # StartupBannerWidget must be first so startup TTE frames render above
+        # all message content. Empty on init; startup thread fills it via
+        # call_from_thread → set_frame without any runtime mount.
+        yield StartupBannerWidget(id="startup-banner")
         yield ThinkingWidget(id="thinking")
         yield LiveLineWidget(id="live-line")
 
@@ -496,9 +500,6 @@ class TTEWidget(Widget):
 
     DEFAULT_CSS = """
     TTEWidget {
-        layer: overlay;
-        dock: top;
-        width: 100%;
         height: auto;
         min-height: 0;
         display: none;
@@ -591,7 +592,7 @@ class StartupBannerWidget(Static):
         height: auto;
         width: auto;
         min-width: 100%;
-        overflow-x: visible;
+        overflow-x: hidden;
         margin: 1 0 0 0;
     }
     """

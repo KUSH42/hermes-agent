@@ -3490,10 +3490,11 @@ class HermesCLI:
     def _play_tte_in_output_panel(
         self, effect_name: str, plain_hero: str, params: dict
     ) -> bool:
-        """Play TTE animation inside the OutputPanel at the correct position.
+        """Play TTE animation inside OutputPanel via the pre-mounted StartupBannerWidget.
 
         Called from the daemon startup thread.  All widget mutations go through
-        app.call_from_thread.
+        app.call_from_thread.  StartupBannerWidget is pre-mounted in
+        OutputPanel.compose() so it is always queryable — no runtime mount needed.
         """
         import threading as _threading
         from rich.text import Text
@@ -3502,22 +3503,24 @@ class HermesCLI:
         if app is None:
             return False
 
-        banner_widget = self._ensure_tui_startup_banner_widget()
-        if banner_widget is None:
-            logger.warning("TTE: mount failed: could not create startup banner widget")
-            return False
-
         from hermes_cli.tui.tte_runner import iter_frames
         MAX_FRAMES = 3000
         rendered_any = False
         state_lock = _threading.Lock()
-        render_done = _threading.Event()
         latest_frame: Text | None = None
         update_in_flight = False
         template = self._build_startup_banner_template(plain_hero)
 
         def _drain_latest() -> None:
             nonlocal latest_frame, update_in_flight
+            from hermes_cli.tui.widgets import StartupBannerWidget
+            try:
+                widget = app.query_one(StartupBannerWidget)
+            except Exception as exc:
+                logger.warning("TTE: StartupBannerWidget not found: %s", exc, exc_info=True)
+                with state_lock:
+                    update_in_flight = False
+                return
             while True:
                 with state_lock:
                     frame = latest_frame
@@ -3525,13 +3528,11 @@ class HermesCLI:
                 if frame is None:
                     with state_lock:
                         update_in_flight = False
-                    render_done.set()
                     return
-                banner_widget.set_frame(frame)
+                widget.set_frame(frame)
 
-        def _queue_frame(rich_text: Text, *, wait: bool = False) -> None:
+        def _queue_frame(rich_text: Text) -> None:
             nonlocal latest_frame, update_in_flight
-            render_done.clear()
             should_schedule = False
             with state_lock:
                 latest_frame = rich_text
@@ -3540,8 +3541,6 @@ class HermesCLI:
                     should_schedule = True
             if should_schedule:
                 app.call_from_thread(_drain_latest)
-            if wait:
-                render_done.wait(timeout=1)
 
         try:
             for i, frame in enumerate(iter_frames(effect_name, plain_hero, params=params)):
@@ -3555,61 +3554,48 @@ class HermesCLI:
                 )
                 rich_frame.no_wrap = True
                 rich_frame.overflow = "ignore"
-                _queue_frame(rich_frame, wait=False)
-        except Exception as e:
-            logger.warning("TTE frame error: %s", e)
+                _queue_frame(rich_frame)
+        except Exception as exc:
+            logger.warning("TTE frame error: %s", exc, exc_info=True)
 
         return rendered_any
 
     def show_banner_with_startup_effect(self, tui: bool = False) -> None:
         """Render startup effect then the static banner.
 
-        TUI: full banner body renders into OutputPanel first (async queue),
-        then TTEWidget overlay plays the hero animation on top (layer: overlay,
-        dock: top).  While TTE runs the frame/tools/skills are already visible
-        below it.  When TTE finishes the overlay hides and the static hero in
-        OutputPanel is revealed in-place.
+        TUI: TTE plays inside StartupBannerWidget (pre-mounted in OutputPanel)
+        with the animated hero spliced into the correct left-column position of
+        the full banner layout.  When TTE finishes, a static frame is written.
         Non-TUI: effect plays on stdout, then banner prints below.
         """
         if tui:
             self._ensure_tui_startup_message()
-            # Render full banner body first so it is in OutputPanel's queue
-            # while the TTE overlay plays on top.
-            self._show_banner_body(clear=False, print_hero=True)
-            # Play TTE overlay (TTEWidget: layer=overlay, dock=top) on top of
-            # the already-queued banner content.
-            if not self._use_compact_banner():
-                effect_cfg = self._get_startup_text_effect_config()
-                if effect_cfg is not None:
-                    effect_name, params = effect_cfg
-                    from hermes_cli.banner import resolve_banner_hero_assets
-                    _, plain_hero = resolve_banner_hero_assets()
-                    if plain_hero.strip():
-                        app = _hermes_app
-                        if app is not None:
-                            try:
-                                app._svc_io.play_tte_blocking(
-                                    effect_name, plain_hero, params=params
-                                )
-                            except Exception as _tte_exc:
-                                logger.warning("TUI startup TTE failed: %s", _tte_exc, exc_info=True)
+            played = self._play_startup_text_effect(tui=True)
+            if not played:
+                self._set_tui_startup_banner_static()
+            self._show_banner_postamble()
             return
         self.console.clear()
         self._play_startup_text_effect(tui=False)
         self._show_banner_body(clear=False, print_hero=True)
 
     def _set_tui_startup_banner_static(self) -> None:
-        """Render the final static startup banner into the inline banner widget."""
+        """Render the final static startup banner into the pre-mounted StartupBannerWidget."""
         app = _hermes_app
         if app is None:
             return
 
-        banner_widget = self._ensure_tui_startup_banner_widget()
-        if banner_widget is None:
-            return
-
         final_banner = self._render_startup_banner_text(print_hero=True)
-        app.call_from_thread(banner_widget.set_frame, final_banner)
+
+        def _apply() -> None:
+            from hermes_cli.tui.widgets import StartupBannerWidget
+            try:
+                widget = app.query_one(StartupBannerWidget)
+                widget.set_frame(final_banner)
+            except Exception as exc:
+                logger.warning("_set_tui_startup_banner_static: %s", exc, exc_info=True)
+
+        app.call_from_thread(_apply)
 
     def _show_banner_postamble(self) -> None:
         """Print banner warnings and spacing after the main banner render."""

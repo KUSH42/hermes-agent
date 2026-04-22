@@ -67,7 +67,7 @@ $drawille-canvas-color: #00d7ff;
  * HermesApp. Both must be set so every widget in the tree shows $app-bg. */
 Screen {
     background: $app-bg;
-    layers: base overlay tooltip;
+    layers: base overlay interrupt tooltip;
 }
 
 HermesApp {

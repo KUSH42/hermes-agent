@@ -140,7 +140,7 @@ class InterruptOverlay(Widget, can_focus=True):
 
     DEFAULT_CSS = """
     InterruptOverlay {
-        layer: overlay;
+        layer: interrupt;
         dock: top;
         display: none;
         height: auto;
@@ -305,6 +305,18 @@ class InterruptOverlay(Widget, can_focus=True):
 
         self.current_kind = payload.kind
         self._render_current()
+
+        # Grab focus so the user can immediately act on the prompt, even if
+        # another overlay (AnimConfigPanel, workspace, etc.) previously held
+        # focus. InterruptOverlay sits on the dedicated `interrupt` CSS layer
+        # above `overlay`, so it visually paints on top too.
+        try:
+            self.call_after_refresh(self.focus)
+        except Exception:
+            try:
+                self.focus()
+            except Exception:
+                pass
 
         # Start countdown timer if applicable.
         self._stop_countdown_timer()

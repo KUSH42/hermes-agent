@@ -1830,12 +1830,24 @@ class AnimConfigPanel(Widget):
         so nothing else re-focuses it automatically. Without this trap a
         stray click or programmatic focus change would strand the panel
         with no way to interact with it except Escape.
+
+        Yields priority to InterruptOverlay (approval / sudo / clarify /
+        secret / session prompts) — the user must be able to respond to
+        permission prompts regardless of what's on screen.
         """
-        if self.has_class("--visible"):
-            try:
-                self.call_after_refresh(self.focus)
-            except Exception:
-                pass
+        if not self.has_class("--visible"):
+            return
+        try:
+            from hermes_cli.tui.overlays.interrupt import InterruptOverlay as _IO
+            io = self.app.query_one(_IO)
+            if io.has_class("--visible"):
+                return
+        except Exception:
+            pass
+        try:
+            self.call_after_refresh(self.focus)
+        except Exception:
+            pass
 
     def action_next_field(self) -> None:
         self._focus_idx = (self._focus_idx + 1) % len(self._fields)

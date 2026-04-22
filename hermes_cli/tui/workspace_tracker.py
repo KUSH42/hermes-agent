@@ -284,7 +284,7 @@ class GitPoller:
 
         branch = "unknown"
         try:
-            branch = subprocess.check_output(
+            branch = subprocess.check_output(  # allow-sync-io: dispatched from run_worker context, not event loop
                 ["git", "rev-parse", "--abbrev-ref", "HEAD"],
                 stderr=subprocess.DEVNULL,
                 cwd=self._repo_root or None,
@@ -294,7 +294,7 @@ class GitPoller:
             pass
 
         try:
-            raw = subprocess.check_output(
+            raw = subprocess.check_output(  # allow-sync-io: dispatched from run_worker context, not event loop
                 ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
                 stderr=subprocess.DEVNULL,
                 cwd=self._repo_root or None,

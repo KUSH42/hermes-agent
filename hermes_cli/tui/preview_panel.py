@@ -184,7 +184,7 @@ class PreviewPanel(RichLog):
                 return
             # Read raw bytes first so we can binary-sniff without corrupting
             # the decode on a non-UTF-8 text file.
-            with path.open("rb") as fb:
+            with path.open("rb") as fb:  # allow-sync-io: already in worker thread, PILImage.open is not event-loop-blocking
                 raw = fb.read(_MAX_PREVIEW_BYTES)
             # P0-C: check again after the blocking read — cancellation can't
             # interrupt open().read(), so the earliest safe checkpoint is here.

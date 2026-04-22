@@ -254,24 +254,49 @@ class StreamingCodeBlock(Widget):
                 pass
 
     def _try_render_mermaid_async(self) -> None:
-        """Spawn a daemon thread to render the mermaid diagram via mmdc/npx.
+        """Dispatch mermaid rendering via safe_run (io_boundary).
 
         On success: mounts an InlineImage sibling after this block.
         On failure (mmdc absent, render error): falls back to _render_syntax().
         """
-        import threading
-        from hermes_cli.tui.math_renderer import render_mermaid
+        from hermes_cli.tui.math_renderer import _build_mermaid_cmd
+        from hermes_cli.tui.io_boundary import safe_run
 
         code = "\n".join(self._display_code_lines())
+        result = _build_mermaid_cmd(code)
+        if result is None:
+            self._on_mermaid_rendered(None)
+            return
 
-        def _worker() -> None:
-            path = render_mermaid(code)
+        cmd, mmd_tmp, png_tmp = result
+
+        def _cleanup_tmps(m: "object", p: "object") -> None:
             try:
-                self.app.call_from_thread(self._on_mermaid_rendered, path)
+                m.unlink(missing_ok=True)  # type: ignore[union-attr]
+            except Exception:
+                pass
+            try:
+                p.unlink(missing_ok=True)  # type: ignore[union-attr]
             except Exception:
                 pass
 
-        threading.Thread(target=_worker, daemon=True).start()
+        safe_run(
+            self,
+            cmd,
+            timeout=30,
+            on_success=lambda out, err, rc: (
+                self._on_mermaid_rendered(png_tmp),
+                mmd_tmp.unlink(missing_ok=True),
+            ),
+            on_error=lambda exc, err: (
+                self._on_mermaid_rendered(None),
+                _cleanup_tmps(mmd_tmp, png_tmp),
+            ),
+            on_timeout=lambda elapsed: (
+                self._on_mermaid_rendered(None),
+                _cleanup_tmps(mmd_tmp, png_tmp),
+            ),
+        )
 
     def _on_mermaid_rendered(self, path: "Any") -> None:
         """Called on the event-loop thread with the rendered PNG path (or None)."""

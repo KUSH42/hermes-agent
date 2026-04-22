@@ -1,6 +1,7 @@
 """History and ghost-text mixin for HermesInput."""
 from __future__ import annotations
 
+from hermes_cli.tui.io_boundary import safe_write_file
 from ._constants import _HISTORY_FILE, _MAX_HISTORY
 
 
@@ -51,14 +52,14 @@ class _HistoryMixin:
         except ValueError:
             pass
         self._history.append(text)
-        try:
-            _HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-            with open(_HISTORY_FILE, "a", encoding="utf-8") as f:
-                f.write("\n")
-                for line in text.split("\n"):
-                    f.write(f"+{line}\n")
-        except OSError:
-            pass
+        entry_text = "\n" + "".join(f"+{line}\n" for line in text.split("\n"))
+        safe_write_file(
+            self,  # type: ignore[arg-type]
+            _HISTORY_FILE,
+            entry_text,
+            mode="a",
+            mkdir_parents=True,
+        )
 
     def set_slash_commands(self, commands: list[str]) -> None:
         """Set the available slash commands for autocomplete."""

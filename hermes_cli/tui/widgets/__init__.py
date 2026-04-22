@@ -193,7 +193,7 @@ def _stream_effect_cfg() -> dict:
     if skin_path:
         try:
             import yaml
-            skin = yaml.safe_load(open(skin_path)) or {}
+            skin = yaml.safe_load(open(skin_path)) or {}  # allow-sync-io: skin init, one-shot at startup
             se_skin = skin.get("stream_effect")
             if isinstance(se_skin, str):
                 effect_name = se_skin

@@ -573,7 +573,7 @@ def _load_image(
         path = Path(source) if isinstance(source, str) else source
         if not path.exists():
             return None
-        img = PILImage.open(path)
+        img = PILImage.open(path)  # allow-sync-io: already in worker thread, PILImage.open is not event-loop-blocking
         img.load()  # force decode so errors surface here, not later
         return img
     except Exception:

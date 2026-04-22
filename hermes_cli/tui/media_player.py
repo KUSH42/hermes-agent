@@ -42,7 +42,7 @@ def _resolve_youtube_url(url: str) -> str | None:
     if not shutil.which("yt-dlp"):
         return None
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # allow-sync-io: long-lived mpv handle, managed lifecycle, already in worker
             ["yt-dlp", "-g", "--no-playlist", url],
             capture_output=True, text=True, timeout=20,
         )
@@ -121,7 +121,7 @@ class MpvController:
             args.append("--no-video")
         args.extend(self._cfg.player_extra_args)
         try:
-            self._proc = subprocess.Popen(
+            self._proc = subprocess.Popen(  # allow-sync-io: long-lived mpv handle, managed lifecycle, already in worker
                 args,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -260,7 +260,7 @@ def _extract_video_thumbnail(path_or_url: str) -> str | None:
         fd, tmp_path = tempfile.mkstemp(suffix=".jpg")
         import os
         os.close(fd)
-        result = subprocess.run(
+        result = subprocess.run(  # allow-sync-io: long-lived mpv handle, managed lifecycle, already in worker
             [
                 "ffmpeg", "-i", path_or_url,
                 "-vframes", "1",

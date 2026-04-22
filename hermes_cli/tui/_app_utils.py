@@ -30,9 +30,9 @@ def _log_lag(msg: str) -> None:
     try:
         log_dir = get_hermes_home() / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
-        with open(log_dir / "lag.log", "a") as f:
+        with open(log_dir / "lag.log", "a") as f:  # allow-sync-io: module-level lag logger, <100 bytes per call, event-loop impact negligible
             f.write(f"[{ts}] {msg}\n")
-    except Exception:
+    except OSError:
         pass
 
 

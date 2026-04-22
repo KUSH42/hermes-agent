@@ -144,10 +144,22 @@ class IOService(AppService):
         text: str,
         params: "dict[str, object] | None" = None,
     ) -> bool:
-        """Suspend Textual, run TTE animation, then resume."""
-        loop = asyncio.get_running_loop()
-        with self.app.suspend():
-            return await loop.run_in_executor(None, _run_effect_sync, effect_name, text, params)
+        """Suspend Textual, run TTE animation, then resume.
+
+        Returns True if the effect played successfully, False if busy or failed.
+        """
+        if self.app._suspend_busy:
+            return False
+        try:
+            self.app._suspend_busy = True  # first line inside try — consistent with safe_edit_cmd
+            loop = asyncio.get_running_loop()
+            with self.app.suspend():
+                await loop.run_in_executor(None, _run_effect_sync, effect_name, text, params)
+            return True
+        except Exception:
+            return False
+        finally:
+            self.app._suspend_busy = False
 
     def play_effects_blocking(
         self,

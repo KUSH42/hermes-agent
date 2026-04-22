@@ -1276,19 +1276,8 @@ class HermesApp(App):
                 pass
             self._update_anim_hint()
             self._dismiss_all_info_overlays()
-            self._response_metrics_active = False
-            self._response_wall_start_time = None
-            self._response_segment_start_time = None
-            self._response_token_window.clear()
             self._set_chevron_phase("--phase-stream")
             self._set_hint_phase("stream")
-            # P7: reset per-turn tool call list for fresh turn (now on ToolRenderingService)
-            self._svc_tools._turn_tool_calls = {}
-            self._svc_tools._agent_stack = []
-            self._turn_start_monotonic = None
-            self._current_turn_tool_count = 0  # A6: reset first-in-turn counter
-            # Track turn start for desktop notify
-            self._turn_start_time = _time.monotonic()
             try:
                 output = self.query_one(OutputPanel)
                 output.reset_turn_capture()
@@ -1300,8 +1289,6 @@ class HermesApp(App):
             except NoMatches:
                 pass
             self._sync_workspace_polling_state()
-            # OSC progress bar
-            self._osc_progress_update(True)
             # RX4: lifecycle hooks for turn start
             self.hooks.fire("on_turn_start")
         else:
@@ -1313,13 +1300,6 @@ class HermesApp(App):
                 pass
             self._update_anim_hint()
             self._sync_workspace_polling_state()
-            try:
-                chevron = self.query_one("#input-chevron", Static)
-                if not chevron.has_class("--phase-error"):
-                    self._set_chevron_phase("--phase-done")
-                    self.set_timer(0.4, lambda: self._set_chevron_phase(""))
-            except NoMatches:
-                pass
             # Safety net: flush live buffer + stop all per-turn timers.
             # flush_output() is never called from cli.py so the None sentinel
             # that drives flush_live() via _consume_output never arrives.
@@ -1334,39 +1314,6 @@ class HermesApp(App):
                 output.evict_old_turns()
             except NoMatches:
                 pass
-            # D1: clear output-dropped flag on agent stop so StatusBar backpressure
-            # indicator doesn't persist into the next idle period.
-            self.status_output_dropped = False
-            # Clear stale spinner/file breadcrumb — cli.py resets _spinner_text
-            # locally but never pushes spinner_label="" to the app, so the last
-            # tool label persists into turn 2 and StatusBar shows a stale file path.
-            self.spinner_label = ""
-            self.status_active_file = ""
-            self._response_metrics_active = False
-            self._response_wall_start_time = None
-            self._response_segment_start_time = None
-            self._response_token_window.clear()
-            # Clear the tracking dict for blocks left open from an interrupted turn
-            # (agent stopped without calling close_streaming_tool_block).
-            # Leaked refs prevent GC; stale entries corrupt the next turn's diff
-            # connector logic.  DOM nodes stay visible so users see partial output.
-            self._active_streaming_blocks.clear()
-            # Clear file-tool block ref so next turn's diff won't inherit connector
-            try:
-                msg = self.query_one(OutputPanel).current_message
-                if msg is not None:
-                    msg._last_file_tool_block = None
-            except NoMatches:
-                pass
-            # Clear any gen blocks left open from interrupted turns
-            pending = getattr(self.cli, "_pending_gen_queue", None)
-            if pending:
-                for block in pending:
-                    try:
-                        block.remove()
-                    except Exception:
-                        pass
-                pending.clear()
             # v2 heat injection: signal turn complete
             try:
                 from hermes_cli.tui.drawille_overlay import DrawilleOverlay
@@ -1377,13 +1324,6 @@ class HermesApp(App):
             # Rebuild unified browse anchor list now that all blocks are mounted
             if self.browse_mode:
                 self._rebuild_browse_anchors()
-            # OSC progress bar: clear
-            self._osc_progress_update(False)
-            # Desktop notification
-            self._maybe_notify()
-            # Auto-title: derive session title from first user message (once per session)
-            if not self._auto_title_done:
-                self._try_auto_title()
             # Live-refresh history search index if overlay is open
             try:
                 hs = self.query_one(HistorySearchOverlay)
@@ -1428,16 +1368,6 @@ class HermesApp(App):
                     widget.spinner_text = ""
                 # Restore input visibility (safety guard) and clear spinner placeholder
                 widget.display = True
-                if hasattr(widget, "placeholder"):
-                    # A1: restore idle placeholder, not blank string.
-                    # Show error hint in placeholder when status_error is set
-                    # so the error state is visible even at short terminal heights
-                    # where HintBar may be hidden.
-                    if self.status_error:
-                        err_snippet = self.status_error[:60]
-                        widget.placeholder = f"Error: {err_snippet}…  (Esc to clear)"
-                    else:
-                        widget.placeholder = getattr(widget, "_idle_placeholder", "")
                 try:
                     self.query_one("#spinner-overlay", Static).display = False
                 except NoMatches:
@@ -1554,6 +1484,10 @@ class HermesApp(App):
         self._turn_start_monotonic = None
         self._current_turn_tool_count = 0
         self._turn_start_time = _time.monotonic()
+        self._response_metrics_active = False
+        self._response_wall_start_time = None
+        self._response_segment_start_time = None
+        self._response_token_window.clear()
 
     def _lc_osc_progress_start(self) -> None:
         self._osc_progress_update(True)
@@ -1630,12 +1564,26 @@ class HermesApp(App):
         self._compaction_warn_99 = False
 
     def _lc_schedule_error_autoclear(self, error: str = "", **_: object) -> None:
-        # Timer scheduling now handled by on_status_error inline; hook is for future migration
-        pass  # Phase b will move the timer here
+        _timer = getattr(self, "_status_error_timer", None)
+        if _timer is not None:
+            try:
+                _timer.stop()
+            except Exception:
+                pass
+            self._status_error_timer = None
+        if error:
+            self._status_error_timer = self.set_timer(
+                10.0, lambda v=error: self._svc_watchers.auto_clear_status_error(v)
+            )
 
     def _lc_cancel_error_timer(self, **_: object) -> None:
-        # Timer cancellation now handled by on_status_error inline; hook is for future migration
-        pass  # Phase b will move the timer here
+        _timer = getattr(self, "_status_error_timer", None)
+        if _timer is not None:
+            try:
+                _timer.stop()
+            except Exception:
+                pass
+            self._status_error_timer = None
 
     # ── End RX4 ───────────────────────────────────────────────────────────────
 

@@ -57,7 +57,13 @@ class IOService(AppService):
         while True:
             chunk = await app._output_queue.get()
             if chunk is None:
+                was_streaming = not _first_chunk_in_turn
                 _first_chunk_in_turn = True
+                if was_streaming:
+                    # D2: if compaction progress is stuck > 0 when stream ends, signal done
+                    if getattr(app, "status_compaction_progress", 0.0) > 0.0:
+                        app.status_compaction_progress = 0.0
+                    app.hooks.fire("on_streaming_end")
                 try:
                     panel = app.query_one(OutputPanel)
                     panel.flush_live()
@@ -68,6 +74,7 @@ class IOService(AppService):
                 continue
             if _first_chunk_in_turn:
                 _first_chunk_in_turn = False
+                app.hooks.fire("on_streaming_start")
                 try:
                     app.query_one(ThinkingWidget).deactivate()
                 except NoMatches:

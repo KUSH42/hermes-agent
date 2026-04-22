@@ -138,9 +138,6 @@ class WatchersService(AppService):
     def on_status_compaction_progress(self, value: float) -> None:
         from hermes_cli.tui.widgets import TitledRule
         if value == 0.0:
-            self.app.context_pct = 0.0
-            self.app._compaction_warned = False
-            self.app._compaction_warn_99 = False
             self.app.hooks.fire("on_compact_complete")
         try:
             self.app.query_one("#input-rule", TitledRule).progress = value
@@ -424,17 +421,6 @@ class WatchersService(AppService):
             self.app.hooks.fire("on_error_set", error=value)
         else:
             self.app.hooks.fire("on_error_clear")
-        _timer = getattr(self.app, "_status_error_timer", None)
-        if _timer is not None:
-            try:
-                _timer.stop()
-            except Exception:
-                pass
-            self.app._status_error_timer = None
-        if value:
-            self.app._status_error_timer = self.app.set_timer(
-                10.0, lambda v=value: self.auto_clear_status_error(v)
-            )
 
     def auto_clear_status_error(self, expected: str) -> None:
         """Clear status_error if it still matches *expected*."""

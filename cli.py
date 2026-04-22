@@ -7066,12 +7066,14 @@ class HermesCLI:
             pass
         else:
             # Open a StreamingToolBlock at gen_start time.
-            result = [None]
+            # Append to queue inside the closure — call_from_thread is async so
+            # result[0] is always None if checked immediately on the agent thread.
+            _queue = self._pending_gen_queue
             def _open():
-                result[0] = tui._open_gen_block(tool_name)
+                block = tui._open_gen_block(tool_name)
+                if block is not None:
+                    _queue.append(block)
             tui.call_from_thread(_open)
-            if result[0] is not None:
-                self._pending_gen_queue.append(result[0])
 
     def _on_tool_gen_args_delta(self, idx: int, tool_name: str, delta: str, accumulated: str) -> None:
         """Route tool gen args delta to the correct ExecuteCodeBlock (if any)."""

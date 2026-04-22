@@ -5,6 +5,7 @@ Contains: CodeBlockFooter, StreamingCodeBlock.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 from rich.text import Text
@@ -22,6 +23,11 @@ from .utils import (
 
 if TYPE_CHECKING:
     pass
+
+
+def _strip_bold(style_str: str) -> str:
+    """Remove bold, italic, and underline modifiers from a Pygments style string."""
+    return re.sub(r'\b(bold|italic|underline)\b\s*', '', style_str).strip()
 
 
 class CodeBlockFooter(Widget):
@@ -337,6 +343,7 @@ class StreamingCodeBlock(Widget):
     def refresh_skin(self, css_vars: dict[str, str]) -> None:
         """Refresh theme-dependent rendering without remounting the widget."""
         self._pygments_theme = css_vars.get("preview-syntax-theme", self._pygments_theme)
+        self._syntax_bold = css_vars.get("preview-syntax-bold", "true") != "false"
         if self._state in ("COMPLETE", "FLUSHED"):
             self._render_syntax(css_vars)
 

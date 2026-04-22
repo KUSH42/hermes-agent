@@ -456,6 +456,10 @@ DEFAULT_CONFIG = {
             "reasoning": True,         # resolve :name: inside the reasoning panel
         },
         "skin": "default",
+        "skin_overrides": {      # per-user overrides merged on top of every skin load
+            "vars": {},
+            "component_vars": {},
+        },
         "tool_icon_mode": "auto",  # auto|nerdfont|emoji|ascii
         "tool_gutter": True,       # Show ┊/┃ gutter symbols on tool call blocks
         "startup_text_effect": {
@@ -2304,6 +2308,25 @@ def save_config(config: Dict[str, Any]):
         extra_content="".join(parts) if parts else None,
     )
     _secure_file(config_path)
+
+
+def read_skin_overrides() -> Dict[str, Any]:
+    """Read display.skin_overrides from config; return {} if absent."""
+    cfg = read_raw_config()
+    return cfg.get("display", {}).get("skin_overrides", {})
+
+
+def save_skin_override(key_path: str, value: str) -> None:
+    """Persist a nested key into display.skin_overrides.
+
+    key_path: dot-separated e.g. "vars.preview-syntax-theme"
+    Not thread-safe — all callers are single-threaded UI events.
+    """
+    cfg = read_raw_config()
+    overrides = cfg.setdefault("display", {}).setdefault("skin_overrides", {})
+    _set_nested(overrides, key_path, value)
+    _set_nested(cfg, "display.skin_overrides", overrides)
+    save_config(cfg)
 
 
 def load_env() -> Dict[str, str]:

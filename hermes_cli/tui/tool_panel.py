@@ -494,10 +494,10 @@ class ToolPanel(Widget):
         Binding("K",     "scroll_body_page_up",   "↑↑",   show=False),
         Binding("<",     "scroll_body_top",        "Top",  show=False),
         Binding(">",     "scroll_body_bottom",     "End",  show=False),
-        Binding("f1",    "show_help",        "Keys", show=False),  # A1: rebind to f1 (? now exclusively context menu)
+        Binding("f1",            "show_context_menu", "Menu", show=False),  # G1: F1=menu (vim convention: ?=help)
         Binding("P",     "copy_full_path",   "Copy full path",   show=False),  # A7
         Binding("x",     "dismiss_error_banner", "Dismiss",      show=False),  # A5
-        Binding("question_mark", "show_context_menu", "Menu",    show=False),  # D1
+        Binding("question_mark", "show_help",         "Help",    show=False),  # G1: ?=help (vim convention)
     ]
 
     # Always start expanded; auto-collapse at completion based on threshold.
@@ -1536,10 +1536,15 @@ class ToolPanel(Widget):
             hints.sort(key=_hint_priority)
 
         t = Text()
-        max_hints = 3 if narrow else len(hints)
-        for key, sep, label in hints[:max_hints]:
+        max_hints = 3 if narrow else 6
+        shown = hints[:max_hints]
+        for i, (key, sep, label) in enumerate(shown):
+            if i > 0:
+                t.append(" │ ", style="dim")
             t.append(key, style="bold")
             t.append(sep + label, style="dim")
+        if len(hints) > max_hints:
+            t.append("  ? more", style="dim")
         return t
 
     def _get_omission_bar(self) -> "Any | None":

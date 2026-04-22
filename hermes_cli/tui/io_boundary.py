@@ -297,7 +297,7 @@ def safe_run(
             if on_timeout is not None:
                 _safe_callback(app, on_timeout, elapsed)
             return
-        except OSError as exc_os:
+        except (OSError, subprocess.SubprocessError) as exc_os:
             _safe_callback(app, on_error, exc_os, "")
             return
 

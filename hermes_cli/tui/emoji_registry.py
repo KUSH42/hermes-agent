@@ -60,7 +60,7 @@ def normalize_emoji(
         return None
     max_cell_height = 1  # enforce line-height constraint
     try:
-        img = Image.open(path)
+        img = Image.open(path)  # allow-sync-io: already in worker thread, PILImage.open is not event-loop-blocking
         img.seek(0)  # GIF: normalize to first frame
         img = img.convert("RGBA")
         px_w, px_h = img.size
@@ -151,7 +151,7 @@ class EmojiRegistry:
             if path.suffix.lower() == ".gif":
                 try:
                     from PIL import Image as _PILImage
-                    _g = _PILImage.open(path)
+                    _g = _PILImage.open(path)  # allow-sync-io: already in worker thread, PILImage.open is not event-loop-blocking
                     n_frames = getattr(_g, "n_frames", 1)
                     _g.close()
                 except Exception:
@@ -166,7 +166,7 @@ class EmojiRegistry:
                 if cache_path.exists() and cache_path.stat().st_mtime >= path.stat().st_mtime:
                     try:
                         from PIL import Image as _PILImage
-                        _ci = _PILImage.open(cache_path).convert("RGBA")
+                        _ci = _PILImage.open(cache_path).convert("RGBA")  # allow-sync-io: already in worker thread, PILImage.open is not event-loop-blocking
                         # Infer cell dims from pixel size
                         _cw = max(1, round(_ci.width / cpw))
                         _ch = max(1, round(_ci.height / cph))
@@ -293,7 +293,7 @@ def _build_animated_emoji_widget() -> "type":
             delays: list[float] = []
             try:
                 from PIL import Image as _PILImage
-                gif = _PILImage.open(self._entry.path)
+                gif = _PILImage.open(self._entry.path)  # allow-sync-io: already in worker thread, PILImage.open is not event-loop-blocking
                 for i in range(getattr(gif, "n_frames", 1)):
                     gif.seek(i)
                     frames.append(gif.convert("RGBA").copy())

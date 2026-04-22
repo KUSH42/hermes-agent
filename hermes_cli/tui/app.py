@@ -551,6 +551,8 @@ class HermesApp(App):
         # RX4: AgentLifecycleHooks — priority-ordered transition callback registry.
         from hermes_cli.tui.services.lifecycle_hooks import AgentLifecycleHooks
         self.hooks: AgentLifecycleHooks = AgentLifecycleHooks(self)
+        # RX2: suspend-busy guard — prevents concurrent App.suspend() calls
+        self._suspend_busy: bool = False
         # Interrupt source tag — set by interrupt handler before agent_running→False
         self._interrupt_source: str | None = None
 
@@ -866,6 +868,8 @@ class HermesApp(App):
 
     def on_unmount(self) -> None:
         """Stop background helpers tied to app lifetime."""
+        from hermes_cli.tui.io_boundary import cancel_all
+        cancel_all(self)
         self._svc_bash.kill()
         self.hooks.shutdown()
         self._theme_manager.stop_hot_reload()
@@ -1663,6 +1667,7 @@ class HermesApp(App):
             _notify(
                 "Hermes",
                 body,
+                caller=self,
                 sound=bool(display.get("notify_sound", False)),
                 sound_name=str(display.get("notify_sound_name", "Glass")),
             )

@@ -65,7 +65,7 @@ class BashService(AppService):
         cmd0 = args[0] if args else cmd
 
         try:
-            self._proc = subprocess.Popen(
+            self._proc = subprocess.Popen(  # allow-sync-io: long-lived Popen in @work(thread=True, group='bash'), off event loop
                 args,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,

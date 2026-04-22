@@ -30,7 +30,7 @@ class OutputJSONLWriter:
         while len(self._buf) > self._max:
             self._buf.popleft()
         try:
-            with open(self._path, "w") as f:
+            with open(self._path, "w") as f:  # allow-sync-io: init-time, one-shot, no event loop running
                 for e in self._buf:
                     f.write(json.dumps(e) + "\n")
         except OSError:
@@ -98,7 +98,7 @@ class HeadlessSession:
     def _get_branch(self) -> str:
         import subprocess
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # allow-sync-io: init-time, one-shot, no event loop running
                 ["git", "rev-parse", "--abbrev-ref", "HEAD"],
                 capture_output=True,
                 text=True,

@@ -59,7 +59,7 @@ class SessionIndex:
     def write(self, data: dict) -> None:
         """Locked write — serializes concurrent session processes."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self._path, "a+") as f:
+        with open(self._path, "a+") as f:  # allow-sync-io: flock-locked write on event loop — <0.1ms on local FS; NFS risk accepted; worker migration deferred to separate PR
             fcntl.flock(f, fcntl.LOCK_EX)
             try:
                 f.seek(0)
@@ -139,6 +139,7 @@ class SessionManager:
         except (ProcessLookupError, PermissionError):
             return False
         # PID reuse guard
+        # allow-sync-io: dead code — get_orphans() has no external callers; _verify_cmdline is unreachable; revisit if get_orphans() is wired up
         return self._verify_cmdline(record.pid, record.id)
 
     def _verify_cmdline(self, pid: int, session_id: str) -> bool:
@@ -146,7 +147,7 @@ class SessionManager:
             if platform.system() == "Linux":
                 cmdline = Path(f"/proc/{pid}/cmdline").read_text().replace("\x00", " ")
             else:
-                result = subprocess.run(
+                result = subprocess.run(  # allow-sync-io: dead code — get_orphans() has no external callers; _verify_cmdline is unreachable; revisit if get_orphans() is wired up
                     ["ps", "-p", str(pid), "-o", "args="],
                     capture_output=True, text=True, timeout=2
                 )

@@ -10,7 +10,10 @@ from __future__ import annotations
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from hermes_cli.tui.io_boundary import safe_open_url, safe_edit_cmd
 
 def _format_age(elapsed_s: int) -> str:
     if elapsed_s < 60:
@@ -386,16 +389,17 @@ class FooterPane(Widget):
         if "--artifact-chip" in event.button.classes:
             path = getattr(event.button, "_artifact_path", None)
             if path:
-                import sys as _sys
-                open_cmd = "open" if _sys.platform == "darwin" else "xdg-open"
-                try:
-                    subprocess.Popen([open_cmd, path])
-                except Exception as err:
-                    # B3: flash error via parent ToolPanel instead of silently swallowing
-                    try:
-                        self.parent._flash_header(f"open failed: {err}", tone="error")
-                    except Exception:
-                        pass
+                safe_open_url(
+                    self,
+                    Path(path).resolve().as_uri(),
+                    on_error=lambda exc: (
+                        self.parent._flash_header(
+                            f"open failed: {getattr(exc, 'reason', str(exc))}",
+                            tone="error",
+                        )
+                        if self.is_mounted else None
+                    ),
+                )
             event.stop()
 
     def on_resize(self, event: object) -> None:
@@ -1033,16 +1037,33 @@ class ToolPanel(Widget):
         if not paths:
             return
         editor = os.environ.get("EDITOR") or os.environ.get("VISUAL")
-        try:
-            if editor:
-                subprocess.Popen([*shlex.split(editor), paths[0]])
-            else:
-                open_cmd = "open" if sys.platform == "darwin" else "xdg-open"
-                subprocess.Popen([open_cmd, paths[0]])
+        if editor:
+            safe_edit_cmd(
+                self,
+                shlex.split(editor),
+                paths[0],
+                on_exit=lambda: self._flash_header("closed"),
+                on_error=lambda exc: (
+                    self._flash_header(
+                        f"editor failed: {getattr(exc, 'reason', str(exc))}",
+                        tone="error",
+                    )
+                    if self.is_mounted else None
+                ),
+            )
+        else:
             self._flash_header("opening…")
-        except Exception as err:
-            # E2: flash error message instead of silently failing
-            self._flash_header(f"could not open: {err}", tone="error")
+            safe_open_url(
+                self,
+                Path(paths[0]).resolve().as_uri(),
+                on_error=lambda exc: (
+                    self._flash_header(
+                        f"could not open: {getattr(exc, 'reason', str(exc))}",
+                        tone="error",
+                    )
+                    if self.is_mounted else None
+                ),
+            )
 
     # ------------------------------------------------------------------
     # Footer actions — Phase A
@@ -1104,12 +1125,18 @@ class ToolPanel(Widget):
                         break
         if not url:
             return
-        open_cmd = "open" if sys.platform == "darwin" else "xdg-open"
-        try:
-            subprocess.Popen([open_cmd, url])
-            self._flash_header("opening…")
-        except Exception:
-            self._flash_header("open failed")
+        self._flash_header("opening…")
+        safe_open_url(
+            self,
+            url,
+            on_error=lambda exc: (
+                self._flash_header(
+                    f"open failed: {getattr(exc, 'reason', str(exc))}",
+                    tone="error",
+                )
+                if self.is_mounted else None
+            ),
+        )
 
     def action_edit_cmd(self) -> None:
         """A1: pre-populate input with the failed command for editing."""
@@ -1277,7 +1304,7 @@ class ToolPanel(Widget):
         _html_size = len(html.encode("utf-8"))
         _size_suffix = f" ({_hs(_html_size)})" if _html_size >= 1024 else ""
         try:
-            with open(tmp_path, "w") as f:
+            with open(tmp_path, "w") as f:  # allow-sync-io: tempfile under 4KB, fallback path for pbcopy
                 f.write(html)
             self._flash_header(f"copied HTML{_size_suffix}  (saved {tmp_path})")
         except Exception:

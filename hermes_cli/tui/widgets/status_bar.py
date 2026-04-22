@@ -18,6 +18,7 @@ from textual.widget import Widget
 from textual.widgets import Button, Label, Static
 
 from hermes_cli.tui.animation import AnimationClock, PulseMixin, lerp_color, shimmer_text
+from hermes_cli.tui.io_boundary import safe_open_url
 from .utils import (
     _animate_counters_enabled,
     _format_compact_tokens,
@@ -814,6 +815,13 @@ class SourcesBar(Widget):
         event.stop()
         url = self._urls.get(event.button.id or "", "")
         if url:
-            import subprocess
-            opener = "open" if sys.platform == "darwin" else "xdg-open"
-            subprocess.Popen([opener, url])
+            safe_open_url(
+                self,
+                url,
+                on_error=lambda exc: (
+                    self.app._svc_theme.set_status_error(
+                        f"open failed: {getattr(exc, 'reason', str(exc))}"
+                    )
+                    if self.is_mounted else None
+                ),
+            )

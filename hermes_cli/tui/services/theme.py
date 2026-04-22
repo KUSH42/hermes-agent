@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from textual.css.query import NoMatches
 
 from .base import AppService
+from hermes_cli.tui.io_boundary import safe_run
 
 if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
@@ -185,19 +186,15 @@ class ThemeService(AppService):
         app._clipboard = text
         if not app._clipboard_available:
             if app._xclip_cmd:
-                try:
-                    import subprocess
-                    subprocess.run(
-                        app._xclip_cmd,
-                        input=text.encode(),
-                        check=True,
-                        timeout=2,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
-                    self.flash_hint(f"⎘  {len(text)} chars copied", 1.2)
-                except Exception:
-                    self.set_status_error("copy failed", auto_clear_s=10.0)
+                safe_run(
+                    app,
+                    app._xclip_cmd,
+                    timeout=2,
+                    input_bytes=text.encode(),
+                    capture=False,
+                    on_success=lambda o, e, rc: self.flash_hint(f"⎘  {len(text)} chars copied", 1.2),
+                    on_error=lambda exc, e: self.set_status_error("copy failed", auto_clear_s=10.0),
+                )
             else:
                 self.set_status_error("no clipboard — install xclip or xsel", auto_clear_s=0)
             return

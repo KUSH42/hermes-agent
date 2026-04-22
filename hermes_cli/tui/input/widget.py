@@ -20,6 +20,7 @@ from textual.message import Message
 from textual.widgets import TextArea
 
 from hermes_cli.tui.constants import ICON_COPY
+from hermes_cli.tui.io_boundary import safe_run
 
 from ._autocomplete import _AutocompleteMixin
 from ._constants import _sanitize_input_text
@@ -128,19 +129,14 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         event.stop()
         if sys.platform != "linux":
             return
-        try:
-            import hermes_cli.tui.input_widget as _iw
-            _subprocess = getattr(_iw, "subprocess", None)
-            if _subprocess is None:
-                import subprocess as _subprocess
-            result = _subprocess.run(
-                ["xclip", "-selection", "primary", "-o"],
-                capture_output=True, text=True, timeout=1,
-            )
-            if result.returncode == 0 and result.stdout:
-                self.insert(result.stdout)
-        except Exception:
-            pass
+        safe_run(
+            self,
+            ["xclip", "-selection", "primary", "-o"],
+            timeout=1,
+            on_success=lambda out, err, rc: (
+                self.insert(out) if (self.is_mounted and out) else None
+            ),
+        )
 
     def on_unmount(self) -> None:
         if self._path_debounce_timer is not None:

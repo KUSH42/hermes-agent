@@ -158,10 +158,15 @@ class MathRenderer:
             return None
 
 
-def render_mermaid(src: str) -> Path | None:
-    """Render a mermaid diagram via the mmdc CLI. Returns PNG path or None."""
+def _build_mermaid_cmd(src: str) -> "tuple[list[str], Path, Path] | None":
+    """Build the mmdc/npx command and create temp files for mermaid rendering.
+
+    Returns (cmd, mmd_tmp_path, png_tmp_path) if mmdc or npx is available,
+    or None if neither is available.  Both temp files are created with
+    delete=False and their handles are closed before returning so that
+    subprocess can write to png_tmp_path on all platforms.
+    """
     import shutil
-    import subprocess
     import tempfile
 
     mmdc_path = shutil.which("mmdc")
@@ -174,22 +179,41 @@ def render_mermaid(src: str) -> Path | None:
     inp.close()
     out = tempfile.NamedTemporaryFile(suffix=".png", prefix="hermes_mermaid_", delete=False)
     out.close()
+
+    mmd_tmp = Path(inp.name)
+    png_tmp = Path(out.name)
+
+    if mmdc_path:
+        cmd = [mmdc_path, "-i", str(mmd_tmp), "-o", str(png_tmp), "-b", "transparent"]
+    else:
+        cmd = ["npx", "-y", "@mermaid-js/mermaid-cli",
+               "-i", str(mmd_tmp), "-o", str(png_tmp), "-b", "transparent"]
+
+    return cmd, mmd_tmp, png_tmp
+
+
+def render_mermaid(src: str) -> Path | None:
+    """Render a mermaid diagram via the mmdc CLI. Returns PNG path or None.
+
+    Note: This function is kept for legacy/test use only. The TUI uses
+    _build_mermaid_cmd + safe_run instead (Phase B migration).
+    """
+    import subprocess
+
+    result = _build_mermaid_cmd(src)
+    if result is None:
+        return None
+    cmd, mmd_tmp, png_tmp = result
     try:
-        if mmdc_path:
-            cmd = [mmdc_path, "-i", inp.name, "-o", out.name, "-b", "transparent"]
-        else:
-            cmd = ["npx", "-y", "@mermaid-js/mermaid-cli",
-                   "-i", inp.name, "-o", out.name, "-b", "transparent"]
-        result = subprocess.run(cmd, capture_output=True, timeout=15)
-        if result.returncode == 0 and Path(out.name).stat().st_size > 0:
-            return Path(out.name)
+        proc_result = subprocess.run(cmd, capture_output=True, timeout=15)  # allow-sync-io: legacy path; TUI uses _build_mermaid_cmd + safe_run
+        if proc_result.returncode == 0 and png_tmp.stat().st_size > 0:
+            return png_tmp
     except Exception:
         pass
     finally:
-        Path(inp.name).unlink(missing_ok=True)
-    # Leave out file for caller to clean up if it exists, but signal failure
+        mmd_tmp.unlink(missing_ok=True)
     try:
-        Path(out.name).unlink(missing_ok=True)
+        png_tmp.unlink(missing_ok=True)
     except Exception:
         pass
     return None

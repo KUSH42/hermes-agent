@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import sys
-import threading
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from textual.css.query import NoMatches
 
 from .base import AppService
+from hermes_cli.tui.io_boundary import safe_open_url
 
 if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
@@ -279,9 +280,7 @@ class ContextMenuService(AppService):
         _ALLOWED = ("http://", "https://", "file://")
         if not any(url.startswith(s) for s in _ALLOWED):
             return
-        import subprocess
-        opener = "open" if sys.platform == "darwin" else "xdg-open"
-        threading.Thread(target=lambda: subprocess.run([opener, url], check=False), daemon=True).start()
+        safe_open_url(self.app, url)
 
     def on_copyable_rich_log_link_clicked(self, event: Any) -> None:
         """Handle link clicks bubbled from CopyableRichLog widgets."""
@@ -290,27 +289,24 @@ class ContextMenuService(AppService):
         else:
             self.app._svc_theme.copy_text_with_hint(event.url)
 
-    def open_path_action(self, header: Any, path: str, opener: str, folder: bool) -> None:
-        """Open file/URL or containing folder in a worker thread."""
-        app = self.app
+    def open_path_action(self, header: Any, path: str, opener: str, folder: bool) -> None:  # noqa: ARG002
+        """Open file/URL or containing folder via safe_open_url."""
+        target = str(Path(path).parent) if folder else path
+        _err_fired = False
 
-        def _run() -> None:
-            import subprocess
-            from pathlib import Path
-            if header is not None:
-                app.call_from_thread(header._pulse_start)
-            try:
-                target = str(Path(path).parent) if folder else path
-                subprocess.run([opener, target], check=True)
-                if header is not None:
-                    app.call_from_thread(header._pulse_stop)
-                    app.call_from_thread(header.flash_success)
-            except Exception:
-                if header is not None:
-                    app.call_from_thread(header._pulse_stop)
-                    app.call_from_thread(header.flash_error)
+        def _on_error(exc: Exception, h: Any = header) -> None:
+            nonlocal _err_fired
+            _err_fired = True
+            if h is not None and h.is_mounted:
+                h.flash_error()
 
-        threading.Thread(target=_run, daemon=True).start()
+        safe_open_url(
+            self.app,
+            Path(target).resolve().as_uri(),
+            on_error=_on_error if header is not None else None,
+        )
+        if header is not None and not _err_fired:
+            header.flash_success()
 
     def copy_all_output(self) -> None:
         """Copy plain text from every CopyableRichLog in the output panel."""

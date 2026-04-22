@@ -119,13 +119,15 @@ class _SessionsMixin:
         self._poll_session_index()
 
     def _open_new_session_overlay(self) -> None:
-        """Show NewSessionOverlay. Event-loop only."""
-        from hermes_cli.tui.session_widgets import NewSessionOverlay
+        """Show NewSession interrupt overlay. Event-loop only."""
+        from hermes_cli.tui.overlays import InterruptOverlay
+        from hermes_cli.tui.overlays._adapters import make_new_session_payload
         if not self._sessions_enabled:
             return
         self._dismiss_all_info_overlays()  # type: ignore[attr-defined]
         try:
-            self.query_one(NewSessionOverlay).show_overlay()  # type: ignore[attr-defined]
+            ov = self.query_one(InterruptOverlay)  # type: ignore[attr-defined]
+            ov.present(make_new_session_payload(), replace=True)
         except NoMatches:
             pass
 
@@ -315,11 +317,14 @@ class _SessionsMixin:
         self.call_from_thread(self._show_merge_overlay, session_id, diff_stat)  # type: ignore[attr-defined]
 
     def _show_merge_overlay(self, session_id: str, diff_stat: str) -> None:
-        """Event-loop: open MergeConfirmOverlay for the given session."""
-        from hermes_cli.tui.session_widgets import MergeConfirmOverlay
+        """Event-loop: open MergeConfirm interrupt overlay for the given session."""
+        from hermes_cli.tui.overlays import InterruptOverlay
+        from hermes_cli.tui.overlays._adapters import make_merge_confirm_payload
         try:
-            overlay = self.query_one(MergeConfirmOverlay)  # type: ignore[attr-defined]
-            overlay.show_for(session_id, diff_stat)
+            overlay = self.query_one(InterruptOverlay)  # type: ignore[attr-defined]
+            overlay.present(
+                make_merge_confirm_payload(session_id, diff_stat), replace=True
+            )
         except NoMatches:
             pass
 

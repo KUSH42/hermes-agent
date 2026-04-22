@@ -279,49 +279,55 @@ class _WatchersMixin:
         if hint_parts:
             self._flash_hint(" · ".join(hint_parts), 1.2)  # type: ignore[attr-defined]
 
-    def watch_clarify_state(self, value: "ChoiceOverlayState | None") -> None:
-        from hermes_cli.tui.widgets import ClarifyWidget
+    def _get_interrupt_overlay(self):
+        """Return the canonical InterruptOverlay instance, or None if not mounted."""
+        from hermes_cli.tui.overlays import InterruptOverlay
         try:
-            w = self.query_one(ClarifyWidget)  # type: ignore[attr-defined]
-            w.display = value is not None
+            return self.query_one(InterruptOverlay)  # type: ignore[attr-defined]
+        except NoMatches:
+            return None
+
+    def watch_clarify_state(self, value: "ChoiceOverlayState | None") -> None:
+        from hermes_cli.tui.overlays import InterruptKind
+        from hermes_cli.tui.overlays._adapters import make_clarify_payload
+        ov = self._get_interrupt_overlay()
+        if ov is not None:
             if value is not None:
-                w.update(value)
+                ov.present(make_clarify_payload(self, value), replace=True)
                 self._hide_completion_overlay_if_present()  # type: ignore[attr-defined]
                 self._dismiss_floating_panels()  # type: ignore[attr-defined]
-                self.call_after_refresh(w.focus)  # type: ignore[attr-defined]
+                self.call_after_refresh(ov.focus)  # type: ignore[attr-defined]
             else:
+                ov.hide_if_kind(InterruptKind.CLARIFY)
                 if not self.agent_running and not self.command_running:  # type: ignore[attr-defined]
                     try:
                         self.call_after_refresh(self.query_one("#input-area").focus)  # type: ignore[attr-defined]
                     except NoMatches:
                         pass
-        except NoMatches:
-            pass
         self._set_hint_phase(self._compute_hint_phase())  # type: ignore[attr-defined]
 
     def watch_approval_state(self, value: "ChoiceOverlayState | None") -> None:
-        from hermes_cli.tui.widgets import ApprovalWidget
+        from hermes_cli.tui.overlays import InterruptKind
+        from hermes_cli.tui.overlays._adapters import make_approval_payload
         try:
             from hermes_cli.tui.drawille_overlay import DrawilleOverlay
             self.query_one(DrawilleOverlay).signal("waiting" if value is not None else "thinking")  # type: ignore[attr-defined]
         except Exception:
             pass
-        try:
-            w = self.query_one(ApprovalWidget)  # type: ignore[attr-defined]
-            w.display = value is not None
+        ov = self._get_interrupt_overlay()
+        if ov is not None:
             if value is not None:
-                w.update(value)
+                ov.present(make_approval_payload(self, value), replace=True)
                 self._hide_completion_overlay_if_present()  # type: ignore[attr-defined]
                 self._dismiss_floating_panels()  # type: ignore[attr-defined]
-                self.call_after_refresh(w.focus)  # type: ignore[attr-defined]
+                self.call_after_refresh(ov.focus)  # type: ignore[attr-defined]
             else:
+                ov.hide_if_kind(InterruptKind.APPROVAL)
                 if not self.agent_running and not self.command_running:  # type: ignore[attr-defined]
                     try:
                         self.call_after_refresh(self.query_one("#input-area").focus)  # type: ignore[attr-defined]
                     except NoMatches:
                         pass
-        except NoMatches:
-            pass
         self._set_hint_phase(self._compute_hint_phase())  # type: ignore[attr-defined]
 
     def watch_highlighted_candidate(self, c: Any) -> None:
@@ -344,27 +350,27 @@ class _WatchersMixin:
             pass
 
     def watch_sudo_state(self, value: "SecretOverlayState | None") -> None:
-        from hermes_cli.tui.widgets import SudoWidget
-        try:
-            w = self.query_one(SudoWidget)  # type: ignore[attr-defined]
-            w.display = value is not None
+        from hermes_cli.tui.overlays import InterruptKind
+        from hermes_cli.tui.overlays._adapters import make_sudo_payload
+        ov = self._get_interrupt_overlay()
+        if ov is not None:
             if value is not None:
-                w.update(value)
+                ov.present(make_sudo_payload(self, value), replace=True)
                 self._dismiss_floating_panels()  # type: ignore[attr-defined]
-        except NoMatches:
-            pass
+            else:
+                ov.hide_if_kind(InterruptKind.SUDO)
         self._set_hint_phase(self._compute_hint_phase())  # type: ignore[attr-defined]
 
     def watch_secret_state(self, value: "SecretOverlayState | None") -> None:
-        from hermes_cli.tui.widgets import SecretWidget
-        try:
-            w = self.query_one(SecretWidget)  # type: ignore[attr-defined]
-            w.display = value is not None
+        from hermes_cli.tui.overlays import InterruptKind
+        from hermes_cli.tui.overlays._adapters import make_secret_payload
+        ov = self._get_interrupt_overlay()
+        if ov is not None:
             if value is not None:
-                w.update(value)
+                ov.present(make_secret_payload(self, value), replace=True)
                 self._dismiss_floating_panels()  # type: ignore[attr-defined]
-        except NoMatches:
-            pass
+            else:
+                ov.hide_if_kind(InterruptKind.SECRET)
         self._set_hint_phase(self._compute_hint_phase())  # type: ignore[attr-defined]
 
     def watch_status_error(self, value: str) -> None:
@@ -394,30 +400,17 @@ class _WatchersMixin:
             self.status_error = ""  # type: ignore[attr-defined]
 
     def watch_undo_state(self, value: "UndoOverlayState | None") -> None:
-        from hermes_cli.tui.widgets import ApprovalWidget, ClarifyWidget, SecretWidget, SudoWidget, UndoConfirmOverlay
-        try:
-            w = self.query_one(UndoConfirmOverlay)  # type: ignore[attr-defined]
-            w.display = value is not None
+        from hermes_cli.tui.overlays import InterruptKind
+        from hermes_cli.tui.overlays._adapters import make_undo_payload
+        ov = self._get_interrupt_overlay()
+        if ov is not None:
             if value is not None:
-                w.update(value)
+                # Undo preempts any currently-visible interrupt; prior resumes
+                # when undo resolves (queue-front insert).
+                ov.present(make_undo_payload(self, value), preempt=True)
                 self._dismiss_floating_panels()  # type: ignore[attr-defined]
-                for widget_type in (ApprovalWidget, ClarifyWidget, SudoWidget, SecretWidget):
-                    try:
-                        aw = self.query_one(widget_type)  # type: ignore[attr-defined]
-                        if aw.display:
-                            aw.pause_countdown()
-                    except NoMatches:
-                        pass
             else:
-                for widget_type in (ApprovalWidget, ClarifyWidget, SudoWidget, SecretWidget):
-                    try:
-                        aw = self.query_one(widget_type)  # type: ignore[attr-defined]
-                        if aw.display and getattr(aw, "_was_paused", False):
-                            aw.resume_countdown()
-                    except NoMatches:
-                        pass
-        except NoMatches:
-            pass
+                ov.hide_if_kind(InterruptKind.UNDO)
         try:
             inp = self.query_one("#input-area")  # type: ignore[attr-defined]
             if value is not None:

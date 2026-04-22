@@ -446,73 +446,53 @@ class _KeyHandlerMixin:
             event.prevent_default()
             return
 
-        # Overlay key handling — check each overlay in priority order
-        for state_attr, widget_type in [
-            ("approval_state", ApprovalWidget),
-            ("clarify_state", ClarifyWidget),
-        ]:
-            state = getattr(self, state_attr)
-            if state is not None:
-                # For approval overlays: diff log scroll takes priority over
-                # choice navigation when the diff log has focus.
-                if state_attr == "approval_state":
-                    try:
-                        approval_widget = self.query_one(ApprovalWidget)  # type: ignore[attr-defined]
-                        diff_log = approval_widget.query_one(
-                            "CopyableRichLog#approval-diff", CopyableRichLog
-                        )
-                        if diff_log.display and diff_log.has_focus:
-                            if key == "up":
-                                diff_log.scroll_up()
-                                event.stop()
-                                return
-                            if key == "down":
-                                diff_log.scroll_down()
-                                event.stop()
-                                return
-                    except NoMatches:
-                        pass
+        # Overlay key handling — route through InterruptOverlay for clarify /
+        # approval (the 2 kinds that present choice rows).
+        from hermes_cli.tui.overlays import InterruptKind, InterruptOverlay
+        try:
+            io = self.query_one(InterruptOverlay)  # type: ignore[attr-defined]
+        except NoMatches:
+            io = None
+        if io is not None and io._current_payload is not None \
+                and io._current_payload.kind in (InterruptKind.CLARIFY, InterruptKind.APPROVAL):
+            payload = io._current_payload
+            # Approval diff-panel scroll + Tab cycling.
+            if payload.kind == InterruptKind.APPROVAL:
+                try:
+                    diff_log = io.query_one(
+                        "CopyableRichLog#approval-diff", CopyableRichLog
+                    )
+                    if diff_log.display and diff_log.has_focus:
+                        if key == "up":
+                            diff_log.scroll_up()
+                            event.stop()
+                            return
+                        if key == "down":
+                            diff_log.scroll_down()
+                            event.stop()
+                            return
+                    if key == "tab" and diff_log.display:
+                        if diff_log.has_focus:
+                            io.focus()
+                        else:
+                            diff_log.focus()
+                        event.stop()
+                        return
+                except NoMatches:
+                    pass
 
-                    # Tab: cycle focus between diff log and approval widget
-                    if key == "tab":
-                        try:
-                            approval_widget = self.query_one(ApprovalWidget)  # type: ignore[attr-defined]
-                            diff_log = approval_widget.query_one(
-                                "CopyableRichLog#approval-diff", CopyableRichLog
-                            )
-                            if diff_log.display:
-                                if diff_log.has_focus:
-                                    approval_widget.focus()
-                                else:
-                                    diff_log.focus()
-                                event.stop()
-                                return
-                        except NoMatches:
-                            pass
-
-                if key == "up" and state.selected > 0:
-                    state.selected -= 1
-                    try:
-                        self.query_one(widget_type).update(state)  # type: ignore[attr-defined]
-                    except NoMatches:
-                        pass
-                    event.prevent_default()
-                    return
-                elif key == "down" and state.selected < len(state.choices) - 1:
-                    state.selected += 1
-                    try:
-                        self.query_one(widget_type).update(state)  # type: ignore[attr-defined]
-                    except NoMatches:
-                        pass
-                    event.prevent_default()
-                    return
-                elif key == "enter":
-                    if state.choices:
-                        chosen = state.choices[state.selected]
-                        state.response_queue.put(chosen)
-                        setattr(self, state_attr, None)
-                    event.prevent_default()
-                    return
+            if key == "up":
+                io.select_choice(-1)
+                event.prevent_default()
+                return
+            if key == "down":
+                io.select_choice(1)
+                event.prevent_default()
+                return
+            if key == "enter":
+                io.confirm_choice()
+                event.prevent_default()
+                return
 
     def on_hermes_input_submitted(self, event: Any) -> None:
         """Handle input submission from HermesInput.

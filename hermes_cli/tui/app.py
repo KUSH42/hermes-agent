@@ -71,8 +71,6 @@ from hermes_cli.tui.state import (
     UndoOverlayState,
 )
 from hermes_cli.tui.widgets import (
-    ApprovalWidget,
-    ClarifyWidget,
     CopyableRichLog,
     FPSCounter,
     HistorySearchOverlay,
@@ -85,15 +83,12 @@ from hermes_cli.tui.widgets import (
     OutputPanel,
     PlainRule,
     ReasoningPanel,
-    SecretWidget,
     StartupBannerWidget,
     StatusBar,
     StreamingCodeBlock,
-    SudoWidget,
     TTEWidget,
     ThinkingWidget,
     TitledRule,
-    UndoConfirmOverlay,
     UserMessagePanel,
     VoiceStatusBar,
     AssistantNameplate,
@@ -111,8 +106,6 @@ from hermes_cli.tui.overlays import (
     _SessionResumedBanner,
 )
 from hermes_cli.tui.session_widgets import (
-    MergeConfirmOverlay,
-    NewSessionOverlay,
     SessionBar,
     _SessionNotification,
 )
@@ -552,11 +545,8 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
         # the static caduceus is visible in-place.
         yield TTEWidget(id="tte-effect")
         with Vertical(id="overlay-layer"):
-            yield ClarifyWidget(id="clarify")
-            yield ApprovalWidget(id="approval")
-            yield SudoWidget(id="sudo")
-            yield SecretWidget(id="secret")
-            yield UndoConfirmOverlay(id="undo-confirm")
+            from hermes_cli.tui.overlays import InterruptOverlay as _IO
+            yield _IO(id="interrupt-overlay")
         yield AssistantNameplate(
             id="nameplate",
             name=getattr(self, "_nameplate_name", "Hermes"),
@@ -586,8 +576,6 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
             yield CommandsOverlay(id="commands-overlay")
             yield WorkspaceOverlay(id="workspace-overlay")
             yield SessionOverlay(id="session-overlay")
-            yield NewSessionOverlay(id="new-session-overlay")
-            yield MergeConfirmOverlay(id="merge-confirm-overlay")
             yield ConfigOverlay(id="config-overlay")
             # C1: pre-mount ToolPanelHelpOverlay at screen level so layer: overlay
             # resolves against Screen (not a child ToolPanel).

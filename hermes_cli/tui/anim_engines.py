@@ -257,24 +257,28 @@ class DnaHelixEngine(_BaseEngine):
         w, h = params.width, params.height
         t = params.t
         if params.vertical:
+            freq = 8.0 * math.pi / max(h, 1)   # 4 cycles across height
+            rung_step = max(8, h // 15)
             for y in range(h):
-                phase = y * 0.25 + t * 4.0
+                phase = y * freq + t * 4.0
                 x_a = int((math.sin(phase) + 1) * 0.5 * (w - 1))
                 x_b = int((math.sin(phase + math.pi) + 1) * 0.5 * (w - 1))
                 canvas.set(x_a, y)
                 canvas.set(x_b, y)
-                if y % 8 == 0:
+                if y % rung_step == 0:
                     x_lo, x_hi = min(x_a, x_b), max(x_a, x_b)
                     for x in range(x_lo, x_hi + 1, 2):
                         canvas.set(x, y)
         else:
+            freq = 8.0 * math.pi / max(w, 1)   # 4 cycles across width
+            rung_step = max(8, w // 15)
             for x in range(w):
-                phase = x * 0.25 + t * 4.0
+                phase = x * freq + t * 4.0
                 y_a = int((math.sin(phase) + 1) * 0.5 * (h - 1))
                 y_b = int((math.sin(phase + math.pi) + 1) * 0.5 * (h - 1))
                 canvas.set(x, y_a)
                 canvas.set(x, y_b)
-                if x % 8 == 0:
+                if x % rung_step == 0:
                     y_lo, y_hi = min(y_a, y_b), max(y_a, y_b)
                     for y in range(y_lo, y_hi + 1, 2):
                         canvas.set(x, y)
@@ -289,11 +293,17 @@ class RotatingHelixEngine(_BaseEngine):
         w, h = params.width, params.height
         t = params.t
         cx, cy = w // 2, h // 2
-        for i in range(120):
-            angle = i * 0.18 + t * 3.0
-            depth = math.cos(i * 0.12 + t * 1.5)
+        # Scale point count with width so the helix stays dense at any size.
+        # Angular step shrinks proportionally so total sweep (≈21.6 rad) stays fixed.
+        n_pts = max(120, w * 2)
+        a_step = 21.6 / n_pts    # keeps 3.4 rotations total
+        d_step = 14.4 / n_pts
+        y_step =  7.2 / n_pts
+        for i in range(n_pts):
+            angle = i * a_step + t * 3.0
+            depth = math.cos(i * d_step + t * 1.5)
             x = cx + int(math.cos(angle) * (w * 0.4) * (0.7 + 0.3 * depth))
-            y = cy + int(math.sin(i * 0.06) * (h * 0.45))
+            y = cy + int(math.sin(i * y_step) * (h * 0.45))
             if 0 <= x < w and 0 <= y < h:
                 canvas.set(x, y)
         return canvas.frame()
@@ -306,9 +316,10 @@ class ClassicHelixEngine(_BaseEngine):
         canvas = _make_canvas()
         w, h = params.width, params.height
         t = params.t
+        freq = 6.0 * math.pi / max(w, 1)   # 3 cycles across width
         for x in range(w):
             for phase_offset in (0.0, 2.1, 4.2):
-                y = int((math.sin(x * 0.2 + t * 5.0 + phase_offset) + 1) * 0.5 * (h - 1))
+                y = int((math.sin(x * freq + t * 5.0 + phase_offset) + 1) * 0.5 * (h - 1))
                 canvas.set(x, y)
         return canvas.frame()
 
@@ -320,9 +331,10 @@ class MorphHelixEngine(_BaseEngine):
         canvas = _make_canvas()
         w, h = params.width, params.height
         t = params.t
+        freq = 8.0 * math.pi / max(w, 1)   # 4 cycles across width
         amp = 0.35 + 0.15 * math.sin(t * 2.0)
         for x in range(w):
-            phase = x * 0.25 + t * 4.0
+            phase = x * freq + t * 4.0
             y_a = int((math.sin(phase) * amp + 0.5) * (h - 1))
             y_b = int((math.sin(phase + math.pi) * amp + 0.5) * (h - 1))
             y_a = max(0, min(h - 1, y_a))
@@ -359,12 +371,15 @@ class WaveInterferenceEngine(_BaseEngine):
         t = params.t
         src_ax, src_ay = w * 0.25, h * 0.5
         src_bx, src_by = w * 0.75, h * 0.5
+        # Normalize wave frequency so ring density stays constant at any canvas size.
+        # Calibrated at min(w,h)=40 → k=0.4; scales down for larger canvases.
+        k = 16.0 / max(min(w, h), 1)
         threshold = 0.7
         for y in range(0, h, 2):
             for x in range(0, w, 1):
                 da = math.sqrt((x - src_ax) ** 2 + (y - src_ay) ** 2)
                 db = math.sqrt((x - src_bx) ** 2 + (y - src_by) ** 2)
-                val = _lut_sin(da * 0.4 - t * 5) + _lut_sin(db * 0.4 - t * 5)
+                val = _lut_sin(da * k - t * 5) + _lut_sin(db * k - t * 5)
                 if val > threshold:
                     canvas.set(x, y)
         return canvas.frame()
@@ -377,9 +392,10 @@ class ThickHelixEngine(_BaseEngine):
         canvas = _make_canvas()
         w, h = params.width, params.height
         t = params.t
+        freq = 8.0 * math.pi / max(w, 1)   # 4 cycles across width
         thickness = 1 + int(math.sin(t * 3.0) * 2 + 2)
         for x in range(w):
-            phase = x * 0.25 + t * 4.0
+            phase = x * freq + t * 4.0
             y_center = int((math.sin(phase) + 1) * 0.5 * (h - 1))
             for dy in range(-thickness, thickness + 1):
                 y = y_center + dy

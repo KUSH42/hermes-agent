@@ -97,7 +97,9 @@ class _NowSection(Vertical):
     _NowSection {
         height: auto;
         width: 1fr;
+        display: none;
     }
+    _NowSection.--visible { display: block; }
     """
 
     _elapsed_s: int = 0
@@ -180,7 +182,9 @@ class _NextSection(Vertical):
     _NextSection {
         height: auto;
         width: 1fr;
+        display: none;
     }
+    _NextSection.--visible { display: block; }
     """
 
     _MAX_VISIBLE = 5
@@ -241,7 +245,9 @@ class _DoneSection(Vertical):
     _DoneSection {
         height: auto;
         width: 1fr;
+        display: none;
     }
+    _DoneSection.--visible { display: block; }
     """
 
     _MAX_VISIBLE = 5
@@ -307,7 +313,9 @@ class _BudgetSection(Horizontal):
     _BudgetSection {
         height: 1;
         width: 1fr;
+        display: none;
     }
+    _BudgetSection.--visible { display: block; }
     _BudgetSection:hover {
         background: $accent 8%;
     }
@@ -401,6 +409,10 @@ class PlanPanel(Vertical):
         width: 1fr;
         background: $surface;
         border-top: solid $panel-border;
+        display: none;
+    }
+    PlanPanel.--active {
+        display: block;
     }
     PlanPanel.--collapsed {
         height: 1;
@@ -445,15 +457,22 @@ class PlanPanel(Vertical):
 
     def _on_planned_calls_changed(self, calls: list) -> None:
         self._rebuild()
-        # Toggle plan-active class on app
         from hermes_cli.tui.plan_types import PlanState
         has_active = any(c.state in (PlanState.PENDING, PlanState.RUNNING) for c in calls)
+        has_any = bool(calls)
         try:
             app = self.app
             if has_active:
                 app.add_class("plan-active")
             else:
                 app.remove_class("plan-active")
+        except Exception:
+            pass
+        try:
+            if has_any:
+                self.add_class("--active")
+            else:
+                self.remove_class("--active")
         except Exception:
             pass
 
@@ -476,11 +495,11 @@ class PlanPanel(Vertical):
         else:
             self.remove_class("--collapsed")
         self._rebuild_header()
-        # Show/hide body sections
+        # Show/hide body sections via --visible class
         for sec_cls in (_NowSection, _NextSection, _DoneSection, _BudgetSection):
             try:
                 sec = self.query_one(sec_cls)
-                sec.display = not collapsed
+                sec.set_class(not collapsed, "--visible")
             except (NoMatches, Exception):
                 pass
 

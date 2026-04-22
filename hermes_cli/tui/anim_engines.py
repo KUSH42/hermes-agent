@@ -286,26 +286,33 @@ class DnaHelixEngine(_BaseEngine):
 
 
 class RotatingHelixEngine(_BaseEngine):
-    """3D helix projected orthographically and rotated."""
+    """3D helix rotating about its long axis, projected orthographically."""
+
+    _N_TURNS = 4
 
     def next_frame(self, params: AnimParams) -> str:
         canvas = _make_canvas()
         w, h = params.width, params.height
         t = params.t
         cx, cy = w // 2, h // 2
-        # Scale point count with width so the helix stays dense at any size.
-        # Angular step shrinks proportionally so total sweep (≈21.6 rad) stays fixed.
-        n_pts = max(120, w * 2)
-        a_step = 21.6 / n_pts    # keeps 3.4 rotations total
-        d_step = 14.4 / n_pts
-        y_step =  7.2 / n_pts
+        n_pts = max(160, w * 2)
+        rot_y = t * 1.5
+        cos_ry, sin_ry = math.cos(rot_y), math.sin(rot_y)
+        radius = w * 0.38
         for i in range(n_pts):
-            angle = i * a_step + t * 3.0
-            depth = math.cos(i * d_step + t * 1.5)
-            x = cx + int(math.cos(angle) * (w * 0.4) * (0.7 + 0.3 * depth))
-            y = cy + int(math.sin(i * y_step) * (h * 0.45))
-            if 0 <= x < w and 0 <= y < h:
-                canvas.set(x, y)
+            theta = i / n_pts * (2 * math.pi * self._N_TURNS)
+            hx = math.cos(theta)
+            hz = math.sin(theta)
+            rx = hx * cos_ry + hz * sin_ry
+            rz = -hx * sin_ry + hz * cos_ry
+            hy = (i / n_pts - 0.5) * h * 0.9
+            sx = cx + int(rx * radius)
+            sy = cy + int(hy)
+            if 0 <= sx < w and 0 <= sy < h:
+                if params.depth_cues:
+                    _depth_to_density(rz, canvas, sx, sy, w, h)
+                else:
+                    canvas.set(sx, sy)
         return canvas.frame()
 
 
@@ -1580,20 +1587,13 @@ class WireframeCubeEngine(_BaseEngine):
 class SierpinskiEngine(_BaseEngine):
     """Sierpinski triangle via iterated function system chaos game."""
 
-    # Class-level constants — defined once; never recreated per frame.
-    # Triangle IFS (symmetry < 4): Sierpinski triangle pointing up.
-    _TRIANGLE_TRANSFORMS: tuple = (
+    # Three affine maps each scale 0.5 toward one vertex of the unit triangle.
+    _TRANSFORMS: tuple = (
         lambda x, y: (x * 0.5,        y * 0.5),
         lambda x, y: (x * 0.5 + 0.5,  y * 0.5),
         lambda x, y: (x * 0.5 + 0.25, y * 0.5 + 0.5),
     )
-    # Square IFS (symmetry >= 4): Sierpinski carpet (default — AnimParams.symmetry=6).
-    _SQUARE_TRANSFORMS: tuple = (
-        lambda x, y: (x * 0.5,        y * 0.5),
-        lambda x, y: (x * 0.5 + 0.5,  y * 0.5),
-        lambda x, y: (x * 0.5,        y * 0.5 + 0.5),
-        lambda x, y: (x * 0.5 + 0.5,  y * 0.5 + 0.5),
-    )
+    _BURN_IN: int = 20  # discard first N iterations to escape off-attractor transients
 
     def __init__(self) -> None:
         self._x: float = 0.5
@@ -1608,17 +1608,19 @@ class SierpinskiEngine(_BaseEngine):
 
     def next_frame(self, params: AnimParams) -> str:
         w, h = params.width, params.height
-        use_square = params.symmetry >= 4
-        n_iters = 250 + int(params.heat * 300)
-        transforms = self._SQUARE_TRANSFORMS if use_square else self._TRIANGLE_TRANSFORMS
-        n_t = len(transforms)
+        n_iters = 300 + int(params.heat * 400)
+        x, y = self._x, self._y
+        transforms = self._TRANSFORMS
+        # burn-in: converge onto attractor before plotting
+        for _ in range(self._BURN_IN):
+            x, y = transforms[random.randint(0, 2)](x, y)
         for _ in range(n_iters):
-            t_idx = random.randint(0, n_t - 1)
-            self._x, self._y = transforms[t_idx](self._x, self._y)
-            px = int(self._x * (w - 1))
-            py = int((1.0 - self._y) * (h - 1))   # flip Y so triangle points up
+            x, y = transforms[random.randint(0, 2)](x, y)
+            px = int(x * (w - 1))
+            py = int((1.0 - y) * (h - 1))  # flip Y so triangle points up
             self._trail.set(px, py)
-        return self._trail.frame()  # frame() calls decay_all() then renders
+        self._x, self._y = x, y
+        return self._trail.frame()
 
 
 class PlasmaEngine(_BaseEngine):

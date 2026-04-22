@@ -188,6 +188,25 @@ class SessionManager:
         state_path = session_dir / "state.json"
         state_path.write_text(json.dumps(record.to_dict(), indent=2))
 
+    def save_layout_blob(self, session_id: str, layout: dict) -> None:
+        """Persist layout blob for a session to <session_dir>/<session_id>/layout.json."""
+        layout_path = self._session_dir / session_id / "layout.json"
+        try:
+            layout_path.parent.mkdir(parents=True, exist_ok=True)
+            layout_path.write_text(json.dumps(layout, indent=2))
+        except OSError:
+            pass
+
+    def load_layout_blob(self, session_id: str) -> dict:
+        """Read and return layout blob for a session; returns {} if absent or corrupt."""
+        layout_path = self._session_dir / session_id / "layout.json"
+        if not layout_path.exists():
+            return {}
+        try:
+            return json.loads(layout_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            return {}
+
     def read_state(self, session_id: str) -> Optional[SessionRecord]:
         state_path = self._session_dir / session_id / "state.json"
         if not state_path.exists():

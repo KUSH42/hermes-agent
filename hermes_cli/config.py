@@ -538,6 +538,18 @@ DEFAULT_CONFIG = {
         "nameplate_morph_speed": 1.0,        # morph transition speed multiplier
         "nameplate_glitch": True,            # glitch spike on tool-call transitions
         "nameplate_name": "Hermes",          # display name
+        "layout": "v1",
+        "layout_v2": {
+            "panes_off_cols": 120,
+            "panes_wide_cols": 160,
+            "default_left_w": 22,
+            "default_right_w": 24,
+            "default_left_wide_w": 28,
+            "default_right_wide_w": 32,
+            "start_collapsed_left": False,
+            "start_collapsed_right": False,
+            "center_split_enabled": False,
+        },
         "browse_markers": {
             "enabled": True,              # gutter pips + corner badges
             "reasoning": True,            # apply pips/badges inside ReasoningPanel

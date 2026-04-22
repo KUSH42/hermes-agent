@@ -207,6 +207,20 @@ class _KeyHandlerMixin:
             except NoMatches:
                 pass
 
+            # R2 pane layout: Esc returns focus to input when a side pane is active.
+            # Runs AFTER overlay dismissal so overlay Esc is not intercepted here.
+            _pm = getattr(self, "_pane_manager", None)
+            if _pm is not None and _pm.enabled:
+                from hermes_cli.tui.pane_manager import PaneId
+                if _pm._focused_pane != PaneId.CENTER:
+                    try:
+                        self.query_one("#input-area").focus()  # type: ignore[attr-defined]
+                        _pm.focus_pane(PaneId.CENTER)
+                        event.prevent_default()
+                        return
+                    except Exception:
+                        pass
+
             if self.browse_mode:  # type: ignore[attr-defined]
                 self.browse_mode = False  # type: ignore[attr-defined]
                 event.prevent_default()

@@ -314,3 +314,52 @@ def test_accent_interactive_in_component_var_defaults() -> None:
     assert COMPONENT_VAR_DEFAULTS["accent-interactive"] == "#00bcd4", (
         f"accent-interactive is {COMPONENT_VAR_DEFAULTS['accent-interactive']!r}, expected '#00bcd4'"
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 — Pane layout CSS variables
+# ---------------------------------------------------------------------------
+
+_PANE_VARS = ["pane-border", "pane-border-focused", "pane-title-fg", "pane-divider"]
+
+
+def test_pane_component_vars_in_defaults() -> None:
+    """All 4 pane-* keys must be present in COMPONENT_VAR_DEFAULTS."""
+    for key in _PANE_VARS:
+        assert key in COMPONENT_VAR_DEFAULTS, (
+            f"'{key}' missing from COMPONENT_VAR_DEFAULTS"
+        )
+
+
+def test_matrix_skin_has_pane_vars(tmp_path: Path) -> None:
+    """skins/matrix.yaml must contain all 4 pane-* component_vars."""
+    import yaml
+    skins_dir = Path(__file__).parent.parent.parent / "skins"
+    matrix_path = skins_dir / "matrix.yaml"
+    assert matrix_path.exists(), f"matrix.yaml not found at {matrix_path}"
+    data = yaml.safe_load(matrix_path.read_text())
+    comp = data.get("component_vars", {})
+    for key in _PANE_VARS:
+        assert key in comp, f"'{key}' missing from matrix.yaml component_vars"
+
+
+def test_pane_vars_declared_in_tcss() -> None:
+    """hermes.tcss must declare all 4 $pane-* CSS variables."""
+    tcss_path = Path(__file__).parent.parent.parent / "hermes_cli" / "tui" / "hermes.tcss"
+    assert tcss_path.exists(), f"hermes.tcss not found at {tcss_path}"
+    content = tcss_path.read_text()
+    for var in ["$pane-border", "$pane-border-focused", "$pane-title-fg", "$pane-divider"]:
+        assert var in content, f"'{var}' not declared in hermes.tcss"
+
+
+def test_all_bundled_skins_have_pane_vars() -> None:
+    """All bundled skins must contain all 4 pane-* component_vars."""
+    import yaml
+    skins_dir = Path(__file__).parent.parent.parent / "skins"
+    for skin_file in skins_dir.glob("*.yaml"):
+        data = yaml.safe_load(skin_file.read_text())
+        comp = data.get("component_vars", {})
+        for key in _PANE_VARS:
+            assert key in comp, (
+                f"'{key}' missing from {skin_file.name} component_vars"
+            )

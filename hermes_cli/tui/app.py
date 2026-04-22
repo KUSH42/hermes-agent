@@ -299,6 +299,17 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
         Binding("i", "focus_input_from_output", "Input", show=False),
         Binding("ctrl+alt+up",   "jump_subagent_prev", "Prev agent", show=False),
         Binding("ctrl+alt+down", "jump_subagent_next", "Next agent", show=False),
+        # R2 pane layout bindings (no-ops when pane manager disabled / v1 mode)
+        Binding("f5", "focus_left_pane", "Left pane", show=False),
+        Binding("f6", "focus_center_pane", "Center pane", show=False),
+        Binding("f7", "focus_right_pane", "Right pane", show=False),
+        Binding("f9", "cycle_pane_forward", "Next pane", show=False),
+        Binding("shift+f9", "cycle_pane_backward", "Prev pane", show=False),
+        Binding("ctrl+[", "collapse_left_pane", "Collapse left", show=False),
+        Binding("ctrl+]", "collapse_right_pane", "Collapse right", show=False),
+        Binding("alt+[", "collapse_left_pane", "Collapse left", show=False),
+        Binding("alt+]", "collapse_right_pane", "Collapse right", show=False),
+        Binding("ctrl+\\", "toggle_center_split", "Split center", show=False),
     ]
 
     _CHEVRON_PHASE_CLASSES: frozenset[str] = frozenset({
@@ -543,10 +554,29 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
         # F4: track last keypress time for desktop notify active-user gate
         self._last_keypress_time: float = 0.0
 
+        # R2 pane layout — read from display.layout in cli config
+        _display_cfg = (getattr(self.cli, "_cfg", None) or {}).get("display", {})
+        self._display_layout: str = _display_cfg.get("layout", "v1")
+        # Pre-construct OutputPanel so v2 can re-parent it into the center pane
+        self._output_panel: OutputPanel = OutputPanel(id="output-panel")
+        # PaneManager — owns layout mode, pane-width math, state persistence
+        from hermes_cli.tui.pane_manager import PaneManager
+        self._pane_manager = PaneManager(cfg=_display_cfg)
+
     # --- Compose ---
 
     def compose(self) -> ComposeResult:
-        yield OutputPanel(id="output-panel")
+        if self._display_layout == "v2":
+            from hermes_cli.tui.widgets.pane_container import PaneContainer
+            from hermes_cli.tui.widgets.split_target_stub import SplitTargetStub
+            from hermes_cli.tui.pane_manager import PaneId
+            with Horizontal(id="pane-row"):
+                yield PaneContainer(pane_id=PaneId.LEFT, id="pane-left")
+                yield PaneContainer(pane_id=PaneId.CENTER, id="pane-center")
+                yield PaneContainer(pane_id=PaneId.RIGHT, id="pane-right")
+            yield SplitTargetStub(id="split-target-stub")
+        else:
+            yield self._output_panel
         # PlanPanel: bottom-docked strip above StatusBar; shows tool work queue.
         from hermes_cli.tui.widgets.plan_panel import PlanPanel as _PP
         yield _PP(id="plan-panel")
@@ -722,6 +752,36 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
         self._last_assistant_text: str = ""
         # Initialize parallel worktree sessions (feature-gated)
         self._init_sessions()
+        # R2 v2 pane layout wiring
+        if self._display_layout == "v2":
+            self.add_class("layout-v2")
+            try:
+                from hermes_cli.tui.widgets.plan_panel_stub import PlanPanelStub
+                from hermes_cli.tui.widgets.context_panel_stub import ContextPanelStub
+                pane_center = self.query_one("#pane-center")
+                pane_left = self.query_one("#pane-left")
+                pane_right = self.query_one("#pane-right")
+                pane_center.set_content(self._output_panel)
+                pane_left.set_content(PlanPanelStub())
+                pane_right.set_content(ContextPanelStub())
+            except Exception:
+                pass
+        # Restore pane layout blob from previous session (worktree sessions only)
+        try:
+            if (
+                getattr(self, "_pane_manager", None) is not None
+                and self._own_session_id
+                and self._session_mgr is not None
+            ):
+                _layout_blob = self._session_mgr.load_layout_blob(self._own_session_id)
+                if _layout_blob:
+                    self._pane_manager.load_state(_layout_blob)
+                    if self._pane_manager.enabled:
+                        self._pane_manager._apply_layout(self)
+                        if self._pane_manager._center_split:
+                            self._pane_manager.apply_center_split(self)
+        except Exception:
+            pass
 
     _RESIZE_DEBOUNCE_S: float = 0.06  # 60 ms
 
@@ -770,6 +830,11 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
         # Hard floor: w < 30 forces compact regardless of manual override
         if w < 30 and not self.compact:
             self.compact = True
+        # R2 pane layout — recalculate mode on every resize
+        if getattr(self, "_pane_manager", None) and self._pane_manager.enabled:
+            changed = self._pane_manager.on_resize(w, h)
+            if changed:
+                self._pane_manager._apply_layout(self)
 
     def _apply_min_size_overlay(self, w: int, h: int) -> None:
         """Mount or dismiss the MinSizeBackdrop based on current terminal dimensions."""
@@ -821,6 +886,18 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
             if get_caps() == GraphicsCap.TGP:
                 _sys.stdout.write(_get_renderer().delete_all_sequence())
                 _sys.stdout.flush()
+        except Exception:
+            pass
+        # Persist pane layout blob for the current worktree session
+        try:
+            if (
+                getattr(self, "_pane_manager", None) is not None
+                and self._own_session_id
+                and self._session_mgr is not None
+            ):
+                self._session_mgr.save_layout_blob(
+                    self._own_session_id, self._pane_manager.dump_state()
+                )
         except Exception:
             pass
 
@@ -1716,3 +1793,56 @@ class HermesApp(_AppIOMixin, _SpinnerMixin, _ToolRenderingMixin, _BrowseMixin, _
     # --- TUI commands + anim + undo/retry: in _app_commands.py ---
 
     # --- Key handler + input submission: in _app_key_handler.py ---
+
+    # --- R2 pane layout actions ---
+
+    def action_focus_left_pane(self) -> None:
+        """F5: focus left pane."""
+        if getattr(self, "_pane_manager", None) and self._pane_manager.enabled:
+            from hermes_cli.tui.pane_manager import PaneId
+            self._pane_manager.focus_pane_widget(PaneId.LEFT, self)
+
+    def action_focus_center_pane(self) -> None:
+        """F6: focus center pane."""
+        if getattr(self, "_pane_manager", None) and self._pane_manager.enabled:
+            from hermes_cli.tui.pane_manager import PaneId
+            self._pane_manager.focus_pane_widget(PaneId.CENTER, self)
+
+    def action_focus_right_pane(self) -> None:
+        """F7: focus right pane."""
+        if getattr(self, "_pane_manager", None) and self._pane_manager.enabled:
+            from hermes_cli.tui.pane_manager import PaneId
+            self._pane_manager.focus_pane_widget(PaneId.RIGHT, self)
+
+    def action_cycle_pane_forward(self) -> None:
+        """F9: cycle focus to next visible pane."""
+        if getattr(self, "_pane_manager", None) and self._pane_manager.enabled:
+            next_pane = self._pane_manager.next_visible_pane(reverse=False)
+            self._pane_manager.focus_pane_widget(next_pane, self)
+
+    def action_cycle_pane_backward(self) -> None:
+        """Shift+F9: cycle focus to previous visible pane."""
+        if getattr(self, "_pane_manager", None) and self._pane_manager.enabled:
+            prev_pane = self._pane_manager.next_visible_pane(reverse=True)
+            self._pane_manager.focus_pane_widget(prev_pane, self)
+
+    def action_collapse_left_pane(self) -> None:
+        """Ctrl+[ / Alt+[: toggle left pane collapsed."""
+        if not (getattr(self, "_pane_manager", None) and self._pane_manager.enabled):
+            return
+        self._pane_manager.toggle_left_collapsed()
+        self._pane_manager._apply_layout(self)
+
+    def action_collapse_right_pane(self) -> None:
+        """Ctrl+] / Alt+]: toggle right pane collapsed."""
+        if not (getattr(self, "_pane_manager", None) and self._pane_manager.enabled):
+            return
+        self._pane_manager.toggle_right_collapsed()
+        self._pane_manager._apply_layout(self)
+
+    def action_toggle_center_split(self) -> None:
+        """Ctrl+\\: toggle center-pane split between output and stub."""
+        if not (getattr(self, "_pane_manager", None) and self._pane_manager.enabled):
+            return
+        self._pane_manager.toggle_center_split()
+        self._pane_manager.apply_center_split(self)

@@ -78,8 +78,12 @@ component_vars:
   accent-interactive:          '#00ff41'
   tool-mcp-accent:             '#00d849'
   tool-vision-accent:          '#aaffc8'
-  plan-now-fg:                 '#00ff41'
+plan-now-fg:                 '#00ff41'
   plan-pending-fg:             '#2a6b33'
+pane-border:                 '#1a2f1a'
+  pane-border-focused:         '#00ff41'
+  pane-title-fg:               '#008f11'
+  pane-divider:                '#0d1f0d'
 description: The Matrix — dark void and hacker green phosphor
 diff:
   addition_bg: '#0a2a14'

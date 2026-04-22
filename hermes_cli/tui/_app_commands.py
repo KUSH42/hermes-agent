@@ -66,6 +66,11 @@ class _CommandsMixin:
             self._open_tools_overlay()
             return True
 
+        if stripped.startswith("/layout"):
+            args = stripped[len("/layout"):].strip()
+            self._handle_layout_command(args)
+            return True
+
         # --- Overlay commands ---
         from hermes_cli.tui.overlays import (
             CommandsOverlay, HelpOverlay, ModelPickerOverlay,
@@ -248,6 +253,60 @@ class _CommandsMixin:
             return
         from hermes_cli.tui.tools_overlay import ToolsScreen
         self.push_screen(ToolsScreen(snapshot))  # type: ignore[attr-defined]
+
+    def _handle_layout_command(self, args: str) -> None:
+        """
+        /layout               — show current layout version
+        /layout v1|v2         — switch layout version (requires restart)
+        /layout left=N        — set left pane width override (v2 only)
+        /layout right=N       — set right pane width override (v2 only)
+        /layout left=N right=M — set both widths
+        """
+        if not args:
+            current = getattr(self, "_display_layout", "v1")  # type: ignore[attr-defined]
+            self._flash_hint(f"Current layout: {current}. Use /layout v1 or /layout v2.", 3.0)  # type: ignore[attr-defined]
+            return
+
+        # Parse left=N / right=N key-value pairs
+        kv = dict(re.findall(r'(\w+)=(\d+)', args))
+
+        handled_kv = False
+        if "left" in kv:
+            w = max(16, int(kv["left"]))
+            if getattr(self, "_pane_manager", None):  # type: ignore[attr-defined]
+                self._pane_manager.set_left_w(w)  # type: ignore[attr-defined]
+                if self._pane_manager.enabled:  # type: ignore[attr-defined]
+                    self._pane_manager._apply_layout(self)  # type: ignore[attr-defined]
+            self._flash_hint(f"Left pane width → {w}", 2.0)  # type: ignore[attr-defined]
+            handled_kv = True
+
+        if "right" in kv:
+            w = max(16, int(kv["right"]))
+            if getattr(self, "_pane_manager", None):  # type: ignore[attr-defined]
+                self._pane_manager.set_right_w(w)  # type: ignore[attr-defined]
+                if self._pane_manager.enabled:  # type: ignore[attr-defined]
+                    self._pane_manager._apply_layout(self)  # type: ignore[attr-defined]
+            self._flash_hint(f"Right pane width → {w}", 2.0)  # type: ignore[attr-defined]
+            handled_kv = True
+
+        if handled_kv:
+            return
+
+        # v1/v2 version switch
+        if args in ("v1", "v2"):
+            try:
+                from hermes_cli.config import read_raw_config, save_config
+                cfg = read_raw_config()
+                if "display" not in cfg:
+                    cfg["display"] = {}
+                cfg["display"]["layout"] = args
+                save_config(cfg)
+            except Exception:
+                pass
+            self._flash_hint(f"Layout set to {args}. Restart to apply.", 4.0)  # type: ignore[attr-defined]
+            return
+
+        self._flash_hint("Usage: /layout v1|v2  or  /layout left=N right=M", 3.0)  # type: ignore[attr-defined]
 
     def _open_anim_config(self) -> None:
         """Push the AnimConfigPanel modal screen."""

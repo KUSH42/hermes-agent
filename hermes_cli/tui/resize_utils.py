@@ -15,6 +15,11 @@ THRESHOLD_BAR_HIDE     = 12   # below: hide bottom bar widgets (legacy — watch
 # Dead-band ± cols around each threshold; prevents class flip-flop on drag
 HYSTERESIS             = 2
 
+# Pane layout thresholds — used by PaneManager
+THRESHOLD_PANES_OFF        = 120   # below → SINGLE pane layout
+THRESHOLD_PANES_WIDE       = 160   # at/above → THREE_WIDE pane layout
+THRESHOLD_PANES_MIN_HEIGHT = 20    # below → force SINGLE regardless of width
+
 
 def crosses_threshold(old: int, new: int, threshold: int, hyst: int = HYSTERESIS) -> bool:
     """Return True only when the value cleanly crosses through the dead-band zone.

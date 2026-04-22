@@ -277,10 +277,21 @@ class FooterPane(Widget):
         if any(getattr(a, "payload_truncated", False) for a in summary.actions):
             parts.append(" ⚠ payload truncated ", style="bold " + _TONE_STYLES["warning"])
 
+        # C2: ensure retry always present on error
+        actions_to_render = list(summary.actions)
+        if summary.is_error and not any(a.kind == "retry" for a in actions_to_render):
+            from hermes_cli.tui.tool_result_parse import Action as _Action
+            actions_to_render.insert(0, _Action(
+                label="retry",
+                hotkey="r",
+                kind="retry",
+                payload=None,
+            ))
+
         # Action row — only implemented actions; A1: skip when streaming
-        if summary.actions and not _is_streaming:
+        if actions_to_render and not _is_streaming:
             parts.append("  ")
-            for action in summary.actions:
+            for action in actions_to_render:
                 if action.kind not in _IMPLEMENTED_ACTIONS:
                     continue
                 parts.append(f"[{action.hotkey}]", style="dim bold")

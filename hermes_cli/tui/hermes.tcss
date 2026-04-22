@@ -666,8 +666,16 @@ ToolPanel:hover                              { background: $accent 5%; }
 ToolPanel.first-in-turn                      { border-top: solid $accent 30%; }
 /* A2: empty result header color */
 ToolHeader.result-empty                      { color: $text-muted; }
-/* A5: error banner between header and body */
-StreamingToolBlock .error-banner             { color: $error; padding: 0 1; height: 1; }
+/* C1: heavier error banner — covers both static ToolBlock and StreamingToolBlock */
+.error-banner {
+    color: $error;
+    background: $error 10%;
+    border-left: vkey #cc3333 80%;
+    padding: 0 1;
+    height: auto;
+    max-height: 3;
+    overflow: hidden;
+}
 /* B3: cap label hidden by default, shown when --visible class added */
 OmissionBar .--cap-label                     { color: $warning; display: none; }
 OmissionBar .--cap-label.--visible           { display: block; }

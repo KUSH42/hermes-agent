@@ -23,6 +23,11 @@
 
 /* Component variable declarations — must be present for Textual to parse $var refs */
 $panel-border: #333333;
+/* Pane layout variables — v2 three-pane layout */
+$pane-border: #333333;
+$pane-border-focused: #5f87d7;
+$pane-title-fg: #888888;
+$pane-divider: #2a2a2a;
 $footnote-ref-color: #888888;
 /* Citation chip colors */
 $cite-chip-bg: #1a2030;
@@ -912,4 +917,41 @@ SubAgentPanel.--has-children SubAgentHeader .--badges.--done { color: $success; 
 
 /* Focus styling */
 SubAgentPanel:focus SubAgentHeader { background: $boost; }
+
+/* ── R2 pane layout ───────────────────────────────────────────── */
+#pane-row {
+    display: none;
+}
+HermesApp.layout-v2 #pane-row {
+    display: block;
+    layout: horizontal;
+    height: 1fr;
+}
+HermesApp.layout-v2 #input-row {
+    dock: bottom;
+}
+HermesApp.layout-v2 #input-rule-bottom {
+    dock: bottom;
+}
+HermesApp.layout-v2 VoiceStatusBar {
+    dock: bottom;
+}
+HermesApp.layout-v2 StatusBar {
+    dock: bottom;
+}
+/* Center pane split: 2/3 top (OutputPanel), 1/3 bottom (SplitTargetStub) */
+HermesApp.layout-v2 PaneContainer#pane-center.--split {
+    layout: vertical;
+}
+HermesApp.layout-v2 PaneContainer#pane-center.--split OutputPanel {
+    height: 2fr;
+}
+HermesApp.layout-v2 PaneContainer#pane-center.--split SplitTargetStub {
+    display: block;
+    height: 1fr;
+}
+/* SplitTargetStub hidden by default outside split context */
+SplitTargetStub {
+    display: none;
+}
 

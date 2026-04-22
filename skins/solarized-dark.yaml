@@ -119,3 +119,7 @@ component_vars:
   tool-mcp-accent:             "#6c71c4"
   tool-vision-accent:          "#2aa198"
   user-echo-bullet-color:      "#b58900"
+  pane-border:                 "#073642"
+  pane-border-focused:         "#268bd2"
+  pane-title-fg:               "#586e75"
+  pane-divider:                "#002b36"

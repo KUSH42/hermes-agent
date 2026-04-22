@@ -996,6 +996,18 @@ class TestOverflowBadgeViewport:
 class TestHistoryTrash:
     """Tests for three history bugs: slash-cmd pollution, file dedup, CLI/TUI merge."""
 
+    @pytest.fixture(autouse=True)
+    def _sync_safe_write(self, monkeypatch):
+        """Replace safe_write_file with a direct sync write — bare HermesInput.__new__
+        instances have no Textual app context, so _resolve_app would crash."""
+        def _write(caller, path, content, mode="w", mkdir_parents=False, **kw):
+            import os as _os
+            if mkdir_parents:
+                _os.makedirs(_os.path.dirname(str(path)), exist_ok=True)
+            with open(path, mode, encoding="utf-8") as fh:
+                fh.write(content)
+        monkeypatch.setattr("hermes_cli.tui.input._history.safe_write_file", _write)
+
     def test_slash_command_saved(self, tmp_path, monkeypatch):
         """Slash commands are saved to history so users can recall them."""
         hist_file = tmp_path / ".hermes_history"

@@ -2430,7 +2430,7 @@ class HermesApp(App):
         return self._svc_theme.populate_slash_commands()
 
     def _flash_hint(self, text: str, duration: float = 1.5) -> None:
-        return self._svc_theme.flash_hint(text, duration)
+        self.feedback.flash("hint-bar", text, duration=duration)
 
     def set_status_error(self, msg: str, auto_clear_s: float = 0.0) -> None:
         return self._svc_theme.set_status_error(msg, auto_clear_s)

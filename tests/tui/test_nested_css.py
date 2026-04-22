@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 from unittest.mock import MagicMock, patch
 
-from hermes_cli.tui.sub_agent_panel import SubAgentPanel, SubAgentBody, CollapseState
+from hermes_cli.tui.sub_agent_panel import SubAgentPanel, SubAgentBody
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +64,7 @@ def test_collapsed_overrides_has_children():
     panel.add_class("--has-children")
 
     with patch.object(type(panel), "is_mounted", new_callable=lambda: property(lambda _: True)):
-        panel.watch_collapse_state(CollapseState.COLLAPSED)
+        panel.watch_collapsed(True)
 
     assert panel.has_class("--has-children")
     assert panel.has_class("--collapsed")

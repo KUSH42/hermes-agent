@@ -164,7 +164,7 @@ def test_tools_overlay_children_field_used():
 
 def test_collapsed_panel_children_skipped():
     """COLLAPSED SubAgentPanel children are not emitted as browse anchors."""
-    from hermes_cli.tui.sub_agent_panel import SubAgentPanel, CollapseState
+    from hermes_cli.tui.sub_agent_panel import SubAgentPanel
     from hermes_cli.tui._browse_types import BrowseAnchor
 
     panel = SubAgentPanel(depth=0)
@@ -172,13 +172,13 @@ def test_collapsed_panel_children_skipped():
     body = MagicMock()
     body.children = [MagicMock(), MagicMock()]
     panel._body = body
-    # Directly set the reactive value via internal dict
-    panel.__dict__["_reactive_collapse_state"] = CollapseState.COLLAPSED
+    # Set binary collapsed reactive
+    panel.__dict__["_reactive_collapsed"] = True
 
     anchors: list[BrowseAnchor] = []
 
     # Simulate what _rebuild_browse_anchors does: skip body when collapsed
-    if panel.collapse_state != CollapseState.COLLAPSED:
+    if not panel.collapsed:
         for child in panel._body.children:
             anchors.append(BrowseAnchor(
                 anchor_type=BrowseAnchorType.TOOL_BLOCK,

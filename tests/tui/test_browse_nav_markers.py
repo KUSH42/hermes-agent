@@ -191,7 +191,9 @@ def _install_anchors(app: HermesApp, types: list[BrowseAnchorType]) -> list[Brow
         w.add_class = MagicMock()
         anchors.append(BrowseAnchor(anchor_type=t, widget=w, label=f"Label {i}", turn_id=i + 1))
     app._browse_anchors = anchors
+    app._svc_browse._browse_anchors = anchors
     app._browse_cursor = 0
+    app._svc_browse._browse_cursor = 0
     return anchors
 
 
@@ -202,7 +204,7 @@ def test_jump_anchor_forward_any():
     app._browse_cursor = 0
 
     focused = []
-    app._focus_anchor = lambda idx, anchor, **kw: focused.append(idx)
+    app._svc_browse.focus_anchor = lambda idx, anchor, **kw: focused.append(idx)
     app._jump_anchor(+1)
     assert focused == [1]
 
@@ -214,7 +216,7 @@ def test_jump_anchor_backward_any():
     app._browse_cursor = 1
 
     focused = []
-    app._focus_anchor = lambda idx, anchor, **kw: focused.append(idx)
+    app._svc_browse.focus_anchor = lambda idx, anchor, **kw: focused.append(idx)
     app._jump_anchor(-1)
     assert focused == [0]
 
@@ -226,7 +228,7 @@ def test_jump_anchor_forward_wrap():
     app._browse_cursor = 1  # at last
 
     focused = []
-    app._focus_anchor = lambda idx, anchor, **kw: focused.append(idx)
+    app._svc_browse.focus_anchor = lambda idx, anchor, **kw: focused.append(idx)
     app._jump_anchor(+1)
     assert focused == [0]
 
@@ -238,7 +240,7 @@ def test_jump_anchor_backward_wrap():
     app._browse_cursor = 0  # at first
 
     focused = []
-    app._focus_anchor = lambda idx, anchor, **kw: focused.append(idx)
+    app._svc_browse.focus_anchor = lambda idx, anchor, **kw: focused.append(idx)
     app._jump_anchor(-1)
     assert focused == [1]
 
@@ -254,7 +256,7 @@ def test_jump_code_block_filtered():
     app._browse_cursor = 0
 
     focused = []
-    app._focus_anchor = lambda idx, anchor, **kw: focused.append(idx)
+    app._svc_browse.focus_anchor = lambda idx, anchor, **kw: focused.append(idx)
     app._jump_anchor(+1, BrowseAnchorType.CODE_BLOCK)
     assert focused == [1]
 
@@ -266,7 +268,7 @@ def test_jump_code_block_no_blocks():
     app._browse_cursor = 0
 
     focused = []
-    app._focus_anchor = lambda idx, anchor, **kw: focused.append(idx)
+    app._svc_browse.focus_anchor = lambda idx, anchor, **kw: focused.append(idx)
     app._jump_anchor(+1, BrowseAnchorType.CODE_BLOCK)
     assert focused == []
 
@@ -283,7 +285,7 @@ def test_jump_turn_start_forward():
     app._browse_cursor = 0
 
     focused = []
-    app._focus_anchor = lambda idx, anchor, **kw: focused.append(idx)
+    app._svc_browse.focus_anchor = lambda idx, anchor, **kw: focused.append(idx)
     app._jump_anchor(+1, BrowseAnchorType.TURN_START)
     assert focused == [3]
 
@@ -299,7 +301,7 @@ def test_jump_turn_start_backward():
     app._browse_cursor = 2
 
     focused = []
-    app._focus_anchor = lambda idx, anchor, **kw: focused.append(idx)
+    app._svc_browse.focus_anchor = lambda idx, anchor, **kw: focused.append(idx)
     app._jump_anchor(-1, BrowseAnchorType.TURN_START)
     assert focused == [0]
 
@@ -430,6 +432,7 @@ def test_focus_anchor_unmounted_widget():
         BrowseAnchor(BrowseAnchorType.CODE_BLOCK, live_widget, "Code · bash", 1),
     ]
     app._browse_anchors = [anchors[0]]  # only unmounted initially
+    app._svc_browse._browse_anchors = [anchors[0]]
 
     rebuild_calls = []
 
@@ -437,8 +440,9 @@ def test_focus_anchor_unmounted_widget():
         rebuild_calls.append(1)
         # After rebuild, unmounted widget is gone; only live_widget remains
         app._browse_anchors = [anchors[1]]
+        app._svc_browse._browse_anchors = [anchors[1]]
 
-    app._rebuild_browse_anchors = fake_rebuild
+    app._svc_browse.rebuild_browse_anchors = fake_rebuild
 
     scroll_calls = []
 

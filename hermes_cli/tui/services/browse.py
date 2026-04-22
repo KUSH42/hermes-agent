@@ -215,7 +215,8 @@ class BrowseService(AppService):
         # Keep app-level alias in sync
         app._browse_anchors = anchors
         if anchors:
-            self._browse_cursor = min(self._browse_cursor, len(anchors) - 1)
+            cur = getattr(app, "_browse_cursor", self._browse_cursor)
+            self._browse_cursor = min(cur, len(anchors) - 1)
         else:
             self._browse_cursor = 0
         app._browse_cursor = self._browse_cursor
@@ -240,15 +241,16 @@ class BrowseService(AppService):
         ]
         if not candidates:
             return
+        cur = getattr(self.app, "_browse_cursor", self._browse_cursor)
         if direction == 1:
             for idx, anchor in candidates:
-                if idx > self._browse_cursor:
+                if idx > cur:
                     self.focus_anchor(idx, anchor)
                     return
             self.focus_anchor(*candidates[0])
         else:
             for idx, anchor in reversed(candidates):
-                if idx < self._browse_cursor:
+                if idx < cur:
                     self.focus_anchor(idx, anchor)
                     return
             self.focus_anchor(*candidates[-1])
@@ -309,10 +311,11 @@ class BrowseService(AppService):
         if not app._browse_markers_enabled:
             return
         self.clear_browse_pips()
-        code_anchors = [a for a in self._browse_anchors if a.anchor_type == BrowseAnchorType.CODE_BLOCK]
+        anchors = getattr(app, "_browse_anchors", None) or self._browse_anchors
+        code_anchors = [a for a in anchors if a.anchor_type == BrowseAnchorType.CODE_BLOCK]
         total_code = len(code_anchors)
         code_seq: dict[int, int] = {id(a.widget): i + 1 for i, a in enumerate(code_anchors)}
-        for anchor in self._browse_anchors:
+        for anchor in anchors:
             w = anchor.widget
             try:
                 if not w.is_mounted:

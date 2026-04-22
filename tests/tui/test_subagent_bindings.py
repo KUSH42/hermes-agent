@@ -1,10 +1,10 @@
-"""F1: Space toggles EXPANDED↔COLLAPSED; c toggles EXPANDED↔COMPACT."""
+"""F1: Space toggles collapsed bool on SubAgentPanel (binary model, D3)."""
 from __future__ import annotations
 
 import pytest
 from textual.app import App, ComposeResult
 
-from hermes_cli.tui.sub_agent_panel import SubAgentPanel, CollapseState
+from hermes_cli.tui.sub_agent_panel import SubAgentPanel
 
 
 class _App(App):
@@ -16,36 +16,25 @@ class _App(App):
 async def test_space_expands_collapsed():
     async with _App().run_test() as pilot:
         panel = pilot.app.query_one(SubAgentPanel)
-        panel.collapse_state = CollapseState.COLLAPSED
+        panel.collapsed = True
         panel.action_toggle_collapse()
-        assert panel.collapse_state == CollapseState.EXPANDED
+        assert panel.collapsed is False
 
 
 @pytest.mark.asyncio
 async def test_space_collapses_expanded():
     async with _App().run_test() as pilot:
         panel = pilot.app.query_one(SubAgentPanel)
-        panel.collapse_state = CollapseState.EXPANDED
+        panel.collapsed = False
         panel.action_toggle_collapse()
-        assert panel.collapse_state == CollapseState.COLLAPSED
+        assert panel.collapsed is True
 
 
 @pytest.mark.asyncio
-async def test_space_collapses_from_compact():
-    """Space on COMPACT → COLLAPSED (not EXPANDED)."""
+async def test_collapse_subtree_sets_collapsed():
+    """action_collapse_subtree forces collapsed=True."""
     async with _App().run_test() as pilot:
         panel = pilot.app.query_one(SubAgentPanel)
-        panel.collapse_state = CollapseState.COMPACT
-        panel.action_toggle_collapse()
-        assert panel.collapse_state == CollapseState.COLLAPSED
-
-
-@pytest.mark.asyncio
-async def test_c_toggles_compact():
-    async with _App().run_test() as pilot:
-        panel = pilot.app.query_one(SubAgentPanel)
-        panel.collapse_state = CollapseState.EXPANDED
-        panel.action_toggle_compact()
-        assert panel.collapse_state == CollapseState.COMPACT
-        panel.action_toggle_compact()
-        assert panel.collapse_state == CollapseState.EXPANDED
+        panel.collapsed = False
+        panel.action_collapse_subtree()
+        assert panel.collapsed is True

@@ -185,6 +185,9 @@ class SessionsService(AppService):
                 pass
 
         import os as _os
+        # RX4: fire session_switch hooks so callers can release blocking queues
+        # before execvp replaces the process.
+        self.app.hooks.fire("on_session_switch", target_id=session_id)
         # Store exec callback on app; on_unmount fires it after Textual cleans up.
         self.app._pending_exec = lambda: _os.execvp(
             _sys.argv[0], [_sys.argv[0], "--worktree-session-id", session_id]

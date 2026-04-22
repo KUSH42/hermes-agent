@@ -268,6 +268,7 @@ class HermesApp(App):
         Binding("f1", "show_help", "Keyboard shortcuts", show=False),
         Binding("f2", "show_usage", "Usage stats", show=False),  # C5: usage overlay shortcut
         Binding("f8", "toggle_fps_hud", "FPS HUD", show=False),
+        Binding("f12", "debug_hooks_snapshot", "Hooks debug", show=False),
         Binding("alt+up",   "jump_turn_prev", "Previous turn", show=False),
         Binding("alt+down", "jump_turn_next", "Next turn",     show=False),
         Binding("ctrl+shift+a", "open_anim_config", "Animation config", show=False, priority=True),
@@ -1275,7 +1276,6 @@ class HermesApp(App):
             except Exception:
                 pass
             self._update_anim_hint()
-            self._dismiss_all_info_overlays()
             self._set_chevron_phase("--phase-stream")
             self._set_hint_phase("stream")
             try:
@@ -1457,6 +1457,7 @@ class HermesApp(App):
         # ── on_turn_start ─────────────────────────────────────────────────
         h.register("on_turn_start", self._lc_reset_turn_state, owner=self, priority=100, name="reset_turn_state")
         h.register("on_turn_start", self._lc_osc_progress_start, owner=self, priority=10, name="osc_progress_start")
+        h.register("on_turn_start", self._lc_dismiss_info_overlays, owner=self, priority=50, name="dismiss_info_overlays")
         # ── on_turn_end_any ───────────────────────────────────────────────
         h.register("on_turn_end_any", self._lc_osc_progress_end, owner=self, priority=10, name="osc_progress_end")
         h.register("on_turn_end_any", self._lc_clear_output_dropped, owner=self, priority=100, name="clear_output_dropped_flag")
@@ -1477,6 +1478,9 @@ class HermesApp(App):
         # ── on_error_set / on_error_clear ─────────────────────────────────
         h.register("on_error_set", self._lc_schedule_error_autoclear, owner=self, priority=100, name="schedule_status_error_autoclear")
         h.register("on_error_clear", self._lc_cancel_error_timer, owner=self, priority=100, name="cancel_status_error_timer")
+        # ── on_session_switch / on_session_resume ─────────────────────────
+        h.register("on_session_switch", self._lc_session_switch_cleanup, owner=self, priority=100, name="session_switch_cleanup")
+        h.register("on_session_resume", self._lc_session_resume_reset, owner=self, priority=100, name="session_resume_reset")
 
     def _lc_reset_turn_state(self) -> None:
         self._svc_tools._turn_tool_calls = {}
@@ -1584,6 +1588,56 @@ class HermesApp(App):
             except Exception:
                 pass
             self._status_error_timer = None
+
+    def _lc_dismiss_info_overlays(self, **_: object) -> None:
+        self._dismiss_all_info_overlays()
+
+    def _lc_session_switch_cleanup(self, target_id: str = "", **_: object) -> None:
+        """Release blocking queues before execvp so agent threads don't hang."""
+        for attr, sentinel in (
+            ("approval_state", None),
+            ("clarify_state", None),
+            ("sudo_state", ""),
+            ("secret_state", ""),
+            ("undo_state", None),
+        ):
+            state = getattr(self, attr, None)
+            if state is not None:
+                q = getattr(state, "response_queue", None)
+                if q is not None:
+                    try:
+                        q.put_nowait(sentinel)
+                    except Exception:
+                        pass
+        if getattr(self, "agent_running", False):
+            try:
+                if hasattr(self.cli, "agent") and self.cli.agent:
+                    self.cli.agent.interrupt()
+            except Exception:
+                pass
+
+    def _lc_session_resume_reset(self, session_id: str = "", turn_count: int = 0, **_: object) -> None:
+        """Reset per-session ephemeral state on session load."""
+        _timer = getattr(self, "_status_error_timer", None)
+        if _timer is not None:
+            try:
+                _timer.stop()
+            except Exception:
+                pass
+            self._status_error_timer = None
+        try:
+            self.status_error = ""
+        except Exception:
+            pass
+
+    def action_debug_hooks_snapshot(self) -> None:
+        """Log lifecycle hook registrations for debugging (F12)."""
+        snap = self.hooks.snapshot()
+        lines = ["=== AgentLifecycleHooks snapshot ==="]
+        for transition, names in sorted(snap.items()):
+            lines.append(f"  {transition}: {', '.join(names)}")
+        self.log.info("\n".join(lines))
+        self._flash_hint("Hooks snapshot logged", 2.0)
 
     # ── End RX4 ───────────────────────────────────────────────────────────────
 
@@ -1922,6 +1976,8 @@ class HermesApp(App):
             self.query_one(HermesInput).focus()
         except (NoMatches, ImportError):
             pass
+        # RX4: let services reset per-session state on resume
+        self.hooks.fire("on_session_resume", session_id=session_id, turn_count=turn_count)
 
         # --- Input/size/compaction/voice/image/file-drop watchers: in _app_watchers.py ---
 

@@ -154,6 +154,7 @@ class KeyDispatchService(AppService):
                     event.prevent_default()
                     return
                 self.app._last_interrupt_time = now
+                self.app._interrupt_source = "ctrl+shift+c"
                 self.app.cli.agent.interrupt()
                 try:
                     _out = self.app.query_one(OutputPanel)
@@ -245,6 +246,7 @@ class KeyDispatchService(AppService):
                     return
 
             if self.app.agent_running and hasattr(self.app.cli, "agent") and self.app.cli.agent:
+                self.app._interrupt_source = "esc"
                 self.app.cli.agent.interrupt()
                 try:
                     _out = self.app.query_one(OutputPanel)
@@ -562,6 +564,7 @@ class KeyDispatchService(AppService):
             except NoMatches:
                 pass
             if hasattr(self.app.cli, "agent") and self.app.cli.agent:
+                self.app._interrupt_source = "resubmit"
                 self.app.cli.agent.interrupt()
             if hasattr(self.app.cli, "_pending_input"):
                 self.app.cli._pending_input.put(payload)

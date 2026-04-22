@@ -479,8 +479,10 @@ def header_label_v4(
 class OmissionBar(TooltipMixin, Widget):
     """Dual-position omission bar for StreamingToolBlock.
 
-    position="top"    → shows lines above visible window; [↑all] [↑+50]
-    position="bottom" → shows lines below visible window; [↑cap] [↑] [↓] [↓all]
+    G1: Two visible buttons by default; advanced buttons behind [more ▸] toggle.
+
+    position="top"    → default: [↑all]; advanced: [↑+50]
+    position="bottom" → default: [show all] [hide]; advanced: [↑] [↓+N] [reset]
     """
 
     DEFAULT_CSS = """
@@ -523,6 +525,8 @@ class OmissionBar(TooltipMixin, Widget):
         self._cap_label: Static | None = None
         self._last_resize_w: int = 0
         self._narrow: bool = False
+        # G1: advanced buttons toggle state
+        self._advanced_visible: bool = False
 
     def compose(self):
         from textual.app import ComposeResult
@@ -533,13 +537,36 @@ class OmissionBar(TooltipMixin, Widget):
         yield label
         yield cap_label
         if self.position == "top":
+            # G1: default visible
             yield Button("[↑all]", classes="--ob-up-all")
-            yield Button("[↑+50]", classes="--ob-up-page")
+            # G1: advanced (hidden by default)
+            yield Button("[↑+50]", classes="--ob-up-page --ob-advanced", disabled=False)
+            yield Button("[more ▸]", classes="--ob-more")
         else:
-            yield Button(self._reset_label(), classes="--ob-cap")
-            yield Button("[↑]",    classes="--ob-up")
-            yield Button("[↓]",    classes="--ob-down")
-            yield Button("[↓all]", classes="--ob-down-all")
+            # G1: default visible — show all / hide (Rich Text avoids markup bracket parsing)
+            from rich.text import Text as _T
+            yield Button(_T("[show all]"), classes="--ob-down-all")
+            yield Button(_T("[hide]"),     classes="--ob-cap")
+            # G1: advanced (hidden by default)
+            yield Button("[↑]",          classes="--ob-up --ob-advanced")
+            yield Button("[↓]",          classes="--ob-down --ob-advanced")
+            yield Button(self._reset_label(), classes="--ob-cap-adv --ob-advanced")
+            yield Button("[more ▸]", classes="--ob-more")
+
+    def on_mount(self) -> None:
+        """G1: hide advanced buttons initially."""
+        self._set_advanced_visible(False)
+
+    def _set_advanced_visible(self, visible: bool) -> None:
+        """G1: show/hide advanced buttons and update [more ▸] label."""
+        self._advanced_visible = visible
+        try:
+            for btn in self.query(".--ob-advanced"):
+                btn.display = visible
+            more_btn = self.query_one(".--ob-more", Button)
+            more_btn.label = "[less ◂]" if visible else "[more ▸]"
+        except NoMatches:
+            pass
 
     def on_resize(self, event: Any) -> None:
         w = self.size.width
@@ -557,12 +584,10 @@ class OmissionBar(TooltipMixin, Widget):
             return
         try:
             if self._narrow:
-                self.query_one(".--ob-up", Button).display = False
-                self.query_one(".--ob-down-all", Button).display = False
-                self.query_one(".--ob-down", Button).label = "[↓pg]"
+                # In narrow mode, hide advanced panel even if open
+                if self._advanced_visible:
+                    self._set_advanced_visible(False)
             else:
-                self.query_one(".--ob-up", Button).display = True
-                self.query_one(".--ob-down-all", Button).display = True
                 down_btn = self.query_one(".--ob-down", Button)
                 vs, ve, tot = self._visible_start, self._visible_end, self._total
                 step_below = min(_PAGE_SIZE, tot - ve)
@@ -612,14 +637,15 @@ class OmissionBar(TooltipMixin, Widget):
                 )
                 at_end = visible_end >= total
                 try:
-                    self.query_one(".--ob-cap",      Button).disabled = at_default
-                    self.query_one(".--ob-up",       Button).disabled = at_default
+                    # G1: [hide] = reset to default view
+                    self.query_one(".--ob-cap", Button).disabled = at_default
+                    # G1: advanced [↑] button
+                    self.query_one(".--ob-up", Button).disabled = at_default
+                    # G1: advanced [↓+N] button
                     down_btn = self.query_one(".--ob-down", Button)
-                    if self._narrow:
-                        down_btn.label = "[↓pg]"
-                    else:
-                        down_btn.label = f"[↓+{step_below}]" if step_below > 0 else "[↓+0]"
+                    down_btn.label = f"[↓+{step_below}]" if step_below > 0 else "[↓+0]"
                     down_btn.disabled = at_end
+                    # G1: [show all]
                     self.query_one(".--ob-down-all", Button).disabled = at_end
                 except NoMatches:
                     pass
@@ -638,11 +664,20 @@ class OmissionBar(TooltipMixin, Widget):
         pb = self._parent_block
         vs, ve, tot = self._visible_start, self._visible_end, self._total
         classes = event.button.classes
+        # G1: [more ▸] / [less ◂] toggle
+        if "--ob-more" in classes:
+            self._set_advanced_visible(not self._advanced_visible)
+            event.stop()
+            return
         if "--ob-up-all" in classes:
             pb.rerender_window(0, ve)
         elif "--ob-up-page" in classes:
             pb.rerender_window(max(0, vs - _PAGE_SIZE), ve)
         elif "--ob-cap" in classes:
+            # G1: [hide] = reset to default view
+            pb.rerender_window(0, _VISIBLE_CAP)
+        elif "--ob-cap-adv" in classes:
+            # G1: advanced [reset] = full reset
             pb.rerender_window(0, _VISIBLE_CAP)
         elif "--ob-up" in classes:
             pb.rerender_window(

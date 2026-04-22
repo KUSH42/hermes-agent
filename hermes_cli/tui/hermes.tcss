@@ -686,10 +686,8 @@ ToolPanel.--minified FooterPane,
 ToolPanel.--minified .hint-row { display: none; }
 /* E2: ToolPanelMini deleted */
 
-/* --- Tool grouping (virtual — no DOM container) --- */
-ToolPanel.tool-panel--grouped    { padding-left: 2; }
-/* D2: grouped padding must not stack inside SubAgentBody */
-SubAgentBody ToolPanel.tool-panel--grouped { padding-left: 0; }
+/* --- Tool grouping --- */
+/* H1: v2 CSS classes (tool-panel--grouped, group-id-*) removed; v4 ToolGroup widget is the sole path */
 ToolPanel.group-hidden           { display: none; }
 ToolPanel.tool-panel--child-diff { margin-left: 2; }
 
@@ -705,13 +703,15 @@ MathBlockWidget .--math-label {
     color: $text-muted;
 }
 
-/* --- ToolGroup widget (v4 P5 — display.tool_group_widget: true) --- */
+/* --- ToolGroup widget (v4) --- */
 ToolGroup {
     height: auto;
     layout: vertical;
     margin: 0 0 1 0;
     border-left: vkey $accent 20%;
 }
+/* H1/D2: ToolPanel inside SubAgentBody ToolGroup gets no extra left padding */
+SubAgentBody ToolGroup > ToolPanel { padding-left: 0; }
 
 ToolGroup:focus {
     background: $accent 8%;

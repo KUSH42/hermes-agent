@@ -415,6 +415,14 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                 self._sanitizing = False
             return
         self._update_autocomplete()
+        # Toggle bash-passthrough mode indicator
+        _is_bash = self.text.lstrip().startswith("!")
+        if _is_bash != self.has_class("--bash-mode"):
+            self.set_class(_is_bash, "--bash-mode")
+            if _is_bash:
+                self.app._flash_hint("bash  ·  Enter: run  ·  Esc: cancel", 30.0)
+            else:
+                self.app.feedback.cancel("hint-bar")
 
     # --- Actions ---
 

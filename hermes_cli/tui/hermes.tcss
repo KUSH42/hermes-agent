@@ -699,6 +699,8 @@ ToolHeaderBar > .tool-header-bar--duration    { width: 6; text-align: right; col
 /* ToolPanelMini — single-row compact shell variant */
 ToolPanelMini { height: 1; layout: horizontal; }
 ToolPanelMini:focus { background: $accent 10%; }
+/* B3: --minified hides ToolPanel when mini variant is active */
+ToolPanel.--minified { height: 0; overflow: hidden; }
 
 /* --- Tool grouping (virtual — no DOM container) --- */
 ToolPanel.tool-panel--grouped    { padding-left: 2; }

@@ -12,6 +12,14 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any
 
+def _format_age(elapsed_s: int) -> str:
+    if elapsed_s < 60:
+        return f"completed {elapsed_s}s ago"
+    if elapsed_s < 3600:
+        return f"completed {elapsed_s // 60}m ago"
+    return f"completed {elapsed_s // 3600}h ago"
+
+
 _TONE_STYLES: dict[str, str] = {
     "success": "bold green",
     "warning": "bold yellow",
@@ -507,6 +515,7 @@ class ToolPanel(Widget):
         self._category = classify_tool(self._tool_name)
 
         self._user_collapse_override: bool = False
+        self._should_auto_collapse: bool = False
         self._result_summary_v4: "ResultSummaryV4 | None" = None
         self._start_time: float = time.monotonic()
         self._completed_at: float | None = None
@@ -649,8 +658,26 @@ class ToolPanel(Widget):
 
     def _apply_complete_auto_collapse(self) -> None:
         from hermes_cli.tui.tool_category import _CATEGORY_DEFAULTS
-        if self._user_collapse_override:
+        if getattr(self, "_user_collapse_override", False):
             return
+        # B1: defer collapse while user is scrolled up reading output
+        if self.has_focus or bool(list(self.query("*:focus"))):
+            self._should_auto_collapse = True
+            return
+        try:
+            output = self.app.query_one("#output-panel")
+            if getattr(output, "_user_scrolled_up", False):
+                block = getattr(self, "_block", None)
+                if block is not None:
+                    vs = getattr(block, "_visible_start", 0)
+                    vc = getattr(block, "_visible_count", 0)
+                    total_lines = len(getattr(block, "_all_plain", []))
+                    if total_lines > 0 and (vs + vc) < total_lines:
+                        self._should_auto_collapse = True
+                        return
+        except Exception:
+            pass
+        self._should_auto_collapse = False
         rs = self._result_summary_v4
         total = self._body_line_count()
         threshold = _CATEGORY_DEFAULTS[self._category].default_collapsed_lines
@@ -668,6 +695,23 @@ class ToolPanel(Widget):
         # A3: flash auto-collapse notification so user knows what happened
         if should_collapse:
             self._flash_header(f"▾ auto-collapsed ({total} lines)", tone="success")
+
+    def _schedule_age_ticks(self) -> None:
+        for delay in (10.0, 60.0, 300.0):
+            self.set_timer(delay, self._tick_age)
+
+    def _tick_age(self) -> None:
+        if not self.is_mounted:
+            return
+        completed_at = getattr(self, "_completed_at", None)  # pre-existing attr set in set_result_summary
+        if completed_at is None:
+            return
+        elapsed = int(time.monotonic() - completed_at)
+        block = getattr(self, "_block", None)  # pre-existing attr set in _maybe_open_block
+        if block is None or not getattr(block, "is_mounted", False):
+            return
+        if hasattr(block, "set_age_microcopy"):
+            block.set_age_microcopy(_format_age(elapsed))
 
     def set_tool_args(self, args: dict | None) -> None:
         """Call from app after tool_start to supply parsed args."""
@@ -789,7 +833,7 @@ class ToolPanel(Widget):
                 dur = self._completed_at - self._start_time
             mini = ToolPanelMini(source_panel=self, command=cmd, duration_s=dur)
             self.parent.mount(mini, after=self)
-            self.display = False
+            self.add_class("--minified")  # B3: hide via class; hover on mini reveals it
         except Exception:
             pass
 
@@ -820,13 +864,8 @@ class ToolPanel(Widget):
             self._footer_pane.styles.display = "block" if show else "none"
         # Activate mini-mode for qualifying SHELL calls
         self._maybe_activate_mini(summary)
-        # F1: schedule "completed Xs ago" age microcopy at 10s post-completion
-        _completed_at_snap = self._completed_at
-        def _show_age() -> None:
-            elapsed = int(time.monotonic() - _completed_at_snap)
-            if hasattr(self._block, "set_age_microcopy"):
-                self._block.set_age_microcopy(f"completed {elapsed}s ago")
-        self.set_timer(10.0, _show_age)
+        # B2: schedule multi-tick age microcopy (10s / 60s / 300s)
+        self._schedule_age_ticks()
 
         # Push primary + promoted chips to ToolHeader
         promoted_texts: frozenset[str] = frozenset()

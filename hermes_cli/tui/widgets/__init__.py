@@ -273,6 +273,11 @@ class OutputPanel(ScrollableContainer):
                 from hermes_cli.tui.tool_blocks import ToolTail as _TT
                 for tail in self.query(_TT):
                     tail.dismiss()
+                # B1: trigger any deferred auto-collapses
+                from hermes_cli.tui.tool_panel import ToolPanel as _TP
+                for panel in self.query(_TP):
+                    if getattr(panel, "_should_auto_collapse", False):
+                        panel._apply_complete_auto_collapse()
 
     # Lines scrolled per mouse wheel tick.  1 is the OS default; 3 matches
     # most browser/editor defaults and reduces scroll fatigue on long outputs.

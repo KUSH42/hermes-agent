@@ -38,7 +38,7 @@ class ThinkingWidget(Widget):
 
     DEFAULT_CSS = """
 ThinkingWidget { height: 0; display: none; }
-ThinkingWidget.--active { height: 3; display: block; }
+ThinkingWidget.--active { height: 3; display: block; border-left: vkey $primary 15%; }
 """
 
     _shimmer_timer: object | None = None
@@ -217,15 +217,29 @@ class ReasoningPanel(Widget):
         return Text(content, style="dim italic")
 
     def _update_collapsed_stub(self) -> None:
-        """Rebuild the one-line collapsed summary (I1: bold glyph + primary tint)."""
+        """Rebuild the one-line collapsed summary using shared ToolHeader segment anatomy."""
+        from hermes_cli.tui.tool_blocks._header import _trim_tail_segments
+        from hermes_cli.tui.widgets.utils import _nf_or_text
         n = len(self._plain_lines)
-        try:
-            k = self.app.get_css_variables().get("primary", "#5f87d7")
-        except Exception:
-            k = "#5f87d7"
+        gutter = Text("  ┊ ", style="dim")
+        icon_glyph = _nf_or_text("", "[R]", app=self.app)
+        icon = Text(f" {icon_glyph}", style="dim")
+        label = Text(" Reasoning", style="bold")
+        segments: list[tuple[str, Text]] = [
+            ("linecount", Text(f"  {n}L", style="dim")),
+            ("chevron",   Text("  ▸", style="dim")),
+        ]
+        w = self.size.width or 80
+        budget = max(0, w - 4 - 2 - len(" Reasoning") - 2)
+        trimmed = _trim_tail_segments(segments, budget)
+        tail = Text()
+        for _, seg in trimmed:
+            tail.append_text(seg)
         t = Text()
-        t.append("▸ ", style=f"bold {k}")
-        t.append(f"Reasoning collapsed · {n}L", style="dim")
+        t.append_text(gutter)
+        t.append_text(icon)
+        t.append_text(label)
+        t.append_text(tail)
         self._collapsed_stub.update(t)
 
     def _sync_collapsed_state(self) -> None:
@@ -247,6 +261,14 @@ class ReasoningPanel(Widget):
 
     def open_box(self, title: str) -> None:
         """Show the reasoning panel."""
+        # D10: deactivate any active ThinkingWidget — spatial handoff via left border
+        try:
+            for tw in self.app.query(ThinkingWidget):
+                if tw.has_class("--active"):
+                    tw.deactivate()
+                    break
+        except Exception:
+            pass
         self._live_buf = ""
         # Only clear the log if no content committed yet.
         # Guard prevents wiping content when open_box fires after early deltas (race).
@@ -736,7 +758,7 @@ class _EchoBullet(PulseMixin, Widget):
         try:
             v = self.app.get_css_variables()
             self._bullet_peak = (
-                v.get("user-echo-bullet-color") or v.get("rule-accent-color", "#FFBF00")
+                v.get("user-echo-bullet-color") or v.get("primary", "#5f87d7")
             )
             self._bullet_dim = v.get("running-indicator-dim-color", "#6e6e6e")
         except Exception:

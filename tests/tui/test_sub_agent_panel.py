@@ -5,7 +5,6 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 from hermes_cli.tui.sub_agent_panel import (
-    CollapseState,
     SubAgentBody,
     SubAgentHeader,
     SubAgentPanel,
@@ -40,13 +39,17 @@ async def _pause(pilot, n: int = 3) -> None:
 
 
 # ---------------------------------------------------------------------------
-# CollapseState
+# Binary collapse model
 # ---------------------------------------------------------------------------
 
-def test_collapse_state_values():
-    assert int(CollapseState.EXPANDED) == 0
-    assert int(CollapseState.COMPACT) == 1
-    assert int(CollapseState.COLLAPSED) == 2
+def test_no_collapse_state_enum():
+    """CollapseState enum was retired — binary collapsed: bool is the model."""
+    import hermes_cli.tui.sub_agent_panel as m
+    assert not hasattr(m, "CollapseState")
+
+
+def test_collapsed_reactive_exists():
+    assert hasattr(SubAgentPanel, "collapsed")
 
 
 # ---------------------------------------------------------------------------
@@ -67,29 +70,25 @@ async def test_subagent_panel_compose():
 
 
 @pytest.mark.asyncio
-async def test_collapse_state_cycling():
-    """space binding cycles EXPANDED → COMPACT → COLLAPSED → EXPANDED."""
+async def test_toggle_collapse_flips_bool():
+    """action_toggle_collapse flips collapsed bool each call."""
     from hermes_cli.tui.app import HermesApp
     app = HermesApp(cli=MagicMock())
     async with app.run_test() as pilot:
         panel = SubAgentPanel()
         await app.mount(panel)
         await _pause(pilot)
-        panel.focus()
-        await _pause(pilot)
 
-        assert panel.collapse_state == CollapseState.EXPANDED
-        panel.action_cycle_collapse()
-        assert panel.collapse_state == CollapseState.COMPACT
-        panel.action_cycle_collapse()
-        assert panel.collapse_state == CollapseState.COLLAPSED
-        panel.action_cycle_collapse()
-        assert panel.collapse_state == CollapseState.EXPANDED
+        assert panel.collapsed is False
+        panel.action_toggle_collapse()
+        assert panel.collapsed is True
+        panel.action_toggle_collapse()
+        assert panel.collapsed is False
 
 
 @pytest.mark.asyncio
 async def test_collapsed_hides_body():
-    """`COLLAPSED` → `_body.display == False`."""
+    """`collapsed=True` → `_body.display == False`."""
     from hermes_cli.tui.app import HermesApp
     app = HermesApp(cli=MagicMock())
     async with app.run_test() as pilot:
@@ -98,14 +97,14 @@ async def test_collapsed_hides_body():
         await _pause(pilot)
         panel._has_children = True
         panel.add_class("--has-children")
-        panel.collapse_state = CollapseState.COLLAPSED
+        panel.collapsed = True
         await _pause(pilot)
         assert panel._body.display is False
 
 
 @pytest.mark.asyncio
 async def test_collapsed_css_class_added():
-    """--collapsed CSS class added when COLLAPSED, removed on expand."""
+    """--collapsed CSS class added when collapsed=True, removed on expand."""
     from hermes_cli.tui.app import HermesApp
     app = HermesApp(cli=MagicMock())
     async with app.run_test() as pilot:
@@ -114,10 +113,10 @@ async def test_collapsed_css_class_added():
         await _pause(pilot)
         panel._has_children = True
         panel.add_class("--has-children")
-        panel.collapse_state = CollapseState.COLLAPSED
+        panel.collapsed = True
         await _pause(pilot)
         assert panel.has_class("--collapsed")
-        panel.collapse_state = CollapseState.EXPANDED
+        panel.collapsed = False
         await _pause(pilot)
         assert not panel.has_class("--collapsed")
 
@@ -125,41 +124,6 @@ async def test_collapsed_css_class_added():
 # ---------------------------------------------------------------------------
 # SubAgentPanel — child management
 # ---------------------------------------------------------------------------
-
-def test_compact_forces_children_compact():
-    """COMPACT propagates set_compact(True) to ChildPanel children."""
-    panel = _make_unit_panel()
-    child_mock = MagicMock(spec=ChildPanel)
-    panel._body.children = [child_mock]
-    panel._has_children = True
-
-    with patch.object(type(panel), "is_mounted", new_callable=lambda: property(lambda _: True)):
-        panel.watch_collapse_state(CollapseState.COMPACT)
-
-    child_mock.set_compact.assert_called_with(True)
-
-
-def test_compact_skips_nested_subagent():
-    """Nested SubAgentPanel children are NOT touched during COMPACT propagation."""
-    panel = _make_unit_panel()
-    # SubAgentPanel doesn't have set_compact — use a plain MagicMock (not spec=SubAgentPanel)
-    # so we can track whether set_compact is called on it
-    child_sap = MagicMock()  # no spec — we just check it's not called
-    child_sap.__class__ = SubAgentPanel  # make isinstance(child_sap, SubAgentPanel) True... can't
-    # Instead: verify via the isinstance branch — ChildPanel children get set_compact;
-    # non-ChildPanel objects (including SubAgentPanel) are skipped.
-    child_cp = MagicMock(spec=ChildPanel)
-    panel._body.children = [child_cp, child_sap]
-    panel._has_children = True
-
-    with patch.object(type(panel), "is_mounted", new_callable=lambda: property(lambda _: True)):
-        panel.watch_collapse_state(CollapseState.COMPACT)
-
-    # ChildPanel child got compacted
-    child_cp.set_compact.assert_called_once_with(True)
-    # Non-ChildPanel (SubAgentPanel) — set_compact either not called or not in spec
-    # The isinstance(child, ChildPanel) check in the watcher ensures SAP children are skipped
-    assert True  # watcher didn't raise — SubAgentPanel child was correctly skipped
 
 
 def test_add_child_increments_count():

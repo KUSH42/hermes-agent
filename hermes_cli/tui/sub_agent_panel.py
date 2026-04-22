@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import time as _time
-from enum import IntEnum
 from typing import Any
 
 from textual import events
@@ -13,11 +12,7 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Static
 
-
-class CollapseState(IntEnum):
-    EXPANDED  = 0
-    COMPACT   = 1
-    COLLAPSED = 2
+from hermes_cli.tui.widgets.utils import _format_elapsed_compact
 
 
 class SubAgentBody(Vertical):
@@ -43,15 +38,33 @@ class SubAgentHeader(Widget):
         yield self._badges
 
     def update(self, child_count: int, error_count: int, elapsed_ms: int, done: bool) -> None:
-        s = elapsed_ms / 1000
+        elapsed_s = elapsed_ms / 1000.0
+        elapsed_str = _format_elapsed_compact(elapsed_s)
         if _accessibility_mode():
-            badge = f"calls:{child_count} err:{error_count} dur:{s:.1f}s"
-        elif self.app and self.app.size.width < 80:
-            badge = f"{child_count}c {error_count}e {elapsed_ms // 1000}.{(elapsed_ms % 1000) // 100}s"
+            badge = f"calls:{child_count} err:{error_count} dur:{elapsed_str}"
+            self._badges.update(badge)
         else:
-            err_label = "error" if error_count == 1 else "errors"
-            badge = f"{child_count} calls  {error_count} {err_label}  {s:.1f}s"
-        self._badges.update(badge)
+            from rich.text import Text as _Text
+            segments = [("calls", _Text(f"  {child_count} calls", style="dim"))]
+            if error_count > 0:
+                err_word = "error" if error_count == 1 else "errors"
+                try:
+                    warn_color = self.app.get_css_variables().get("status-warn-color", "#FFA726")
+                except Exception:
+                    warn_color = "#FFA726"
+                segments.append(("errors", _Text(f"  {error_count} {err_word}", style=f"bold {warn_color}")))
+            segments.append(("duration", _Text(f"  {elapsed_str}", style="dim")))
+            try:
+                w = self.app.size.width if self.app else 80
+            except Exception:
+                w = 80
+            budget = max(0, w - 20)
+            from hermes_cli.tui.tool_blocks._header import _trim_tail_segments
+            trimmed = _trim_tail_segments(segments, budget)
+            tail = _Text()
+            for _, seg in trimmed:
+                tail.append_text(seg)
+            self._badges.update(tail)
         if error_count > 0:
             self._badges.add_class("--has-errors")
             self._badges.remove_class("--done")
@@ -64,7 +77,7 @@ class SubAgentHeader(Widget):
 
     def on_click(self, event: events.Click) -> None:
         if isinstance(self.parent, SubAgentPanel):
-            self.parent.action_cycle_collapse()
+            self.parent.action_toggle_collapse()
 
     def set_error(self, error_kind: str | None) -> None:
         self._error_kind: str | None = error_kind
@@ -74,12 +87,13 @@ class SubAgentHeader(Widget):
     def _set_gutter(self, is_child_last: bool) -> None:
         """Update gutter prefix. Called only by SubAgentPanel.add_child_panel for depth≥1 panels.
         False = non-last child (├─). True = last child (└─).
+        Gutter is 4 cells wide for column alignment with top-level ToolHeader.
         """
         acc = _accessibility_mode()
         if is_child_last:
-            self._gutter.update("  └─ " if not acc else "  \\- ")
+            self._gutter.update(" └─ " if not acc else " \\- ")
         else:
-            self._gutter.update("  ├─ " if not acc else "  +- ")
+            self._gutter.update(" ├─ " if not acc else " +- ")
 
 
 class SubAgentPanel(Widget):
@@ -88,17 +102,16 @@ class SubAgentPanel(Widget):
 
     BINDINGS = [
         Binding("space",        "toggle_collapse",  show=False),
-        Binding("c",            "toggle_compact",   show=False),
         Binding("ctrl+e",       "expand_all",       show=False),
         Binding("ctrl+shift+k", "compact_all",      show=False),
         Binding("ctrl+x",       "collapse_subtree", show=False),
     ]
 
-    child_count:    reactive[int]           = reactive(0)
-    error_count:    reactive[int]           = reactive(0)
-    elapsed_ms:     reactive[int]           = reactive(0)
-    subtree_done:   reactive[bool]          = reactive(False)
-    collapse_state: reactive[CollapseState] = reactive(CollapseState.EXPANDED)
+    child_count:  reactive[int]  = reactive(0)
+    error_count:  reactive[int]  = reactive(0)
+    elapsed_ms:   reactive[int]  = reactive(0)
+    subtree_done: reactive[bool] = reactive(False)
+    collapsed:    reactive[bool] = reactive(False)
 
     def __init__(self, depth: int = 0, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -106,9 +119,6 @@ class SubAgentPanel(Widget):
         self._has_children: bool = False
         self._open_time: float = _time.monotonic()
         self._completed_child_count: int = 0
-        self._initial_collapse: CollapseState = (
-            CollapseState.COMPACT if depth >= 1 else CollapseState.EXPANDED
-        )
         if depth >= 1:
             self.add_class(f"--depth-{min(depth, 3)}")
 
@@ -119,8 +129,8 @@ class SubAgentPanel(Widget):
         yield self._body
 
     def on_mount(self) -> None:
-        if self._initial_collapse != CollapseState.EXPANDED:
-            self.collapse_state = self._initial_collapse
+        if self._depth >= 1:
+            self.collapsed = True
         if _accessibility_mode():
             self._body.add_class("-accessible")
 
@@ -138,18 +148,14 @@ class SubAgentPanel(Widget):
     def watch_subtree_done(self, v: bool) -> None:
         self._header.update(self.child_count, self.error_count, self.elapsed_ms, v)
 
-    def watch_collapse_state(self, state: CollapseState) -> None:
+    def watch_collapsed(self, v: bool) -> None:
         if not self.is_mounted:
             return
-        if state == CollapseState.COLLAPSED:
+        if v:
             self.add_class("--collapsed")
         else:
             self.remove_class("--collapsed")
-        self._body.display = (state != CollapseState.COLLAPSED) and self._has_children
-        for child in self._body.children:
-            from hermes_cli.tui.child_panel import ChildPanel
-            if isinstance(child, ChildPanel):
-                child.set_compact(state == CollapseState.COMPACT)
+        self._body.display = (not v) and self._has_children
 
     # --- Child management ---
 
@@ -198,16 +204,7 @@ class SubAgentPanel(Widget):
     # --- Actions ---
 
     def action_toggle_collapse(self) -> None:
-        if self.collapse_state == CollapseState.COLLAPSED:
-            self.collapse_state = CollapseState.EXPANDED
-        else:
-            self.collapse_state = CollapseState.COLLAPSED
-
-    def action_toggle_compact(self) -> None:
-        if self.collapse_state == CollapseState.COMPACT:
-            self.collapse_state = CollapseState.EXPANDED
-        else:
-            self.collapse_state = CollapseState.COMPACT
+        self.collapsed = not self.collapsed
 
     def action_expand_all(self) -> None:
         from hermes_cli.tui.child_panel import ChildPanel
@@ -222,7 +219,7 @@ class SubAgentPanel(Widget):
                 child.set_compact(True)
 
     def action_collapse_subtree(self) -> None:
-        self.collapse_state = CollapseState.COLLAPSED
+        self.collapsed = True
 
     # --- Completion ---
 

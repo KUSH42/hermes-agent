@@ -29,7 +29,7 @@ from ._shared import (
 
 MIN_LABEL_CELLS = 12
 
-_DROP_ORDER = ["flash", "stderrwarn", "linecount", "chevron", "diff", "chip", "hero"]
+_DROP_ORDER = ["flash", "linecount", "chip", "hero", "diff", "stderrwarn", "chevron"]
 
 
 def _trim_tail_segments(
@@ -174,19 +174,19 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 t.append("[✓] ", style="bold green")
 
         if self._is_child:
-            # D1: ChildPanel — no gutter prefix; SubAgentBody vkey border is the connector
-            gutter_text = Text(" ", style="dim")
-            gutter_w = 1
+            # D2: ChildPanel — 4-cell gutter (was 1) for column alignment
+            gutter_text = Text("    ", style="dim")
+            gutter_w = 4
         elif self._is_child_diff:
             gutter_text = Text("  ╰─", style="dim")
             gutter_w = 4
         elif focused:
             color = getattr(self, "_focused_gutter_color", _GUTTER_FALLBACK)
-            gutter_text = Text("  ┃", style=f"bold {color}")
-            gutter_w = 3
+            gutter_text = Text("  ┃ ", style=f"bold {color}")
+            gutter_w = 4
         else:
-            gutter_text = Text("  ┊", style="dim")
-            gutter_w = 3
+            gutter_text = Text("  ┊ ", style="dim")
+            gutter_w = 4
         t.append_text(gutter_text)
 
         icon_str = self._tool_icon or ""
@@ -288,15 +288,13 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             if self._has_affordances:
                 is_collapsed = self._panel.collapsed if self._panel is not None else self.collapsed
                 tail_segments.append(("chevron", Text("  ▸" if is_collapsed else "  ▾", style="dim")))
+            # META zone: duration → flash → stderrwarn
+            if self._duration:
+                tail_segments.append(("duration", Text(f"  {self._duration}", style="dim")))
             now = time.monotonic()
             if self._flash_msg and now < self._flash_expires:
-                _flash_style = {
-                    "success": "dim green",
-                    "warning": "dim yellow",
-                    "error": "dim red",
-                    "accent": "dim cyan",
-                    "neutral": "dim",
-                }.get(self._flash_tone, "dim green")
+                accent_color = getattr(self, "_focused_gutter_color", "#5f87d7")
+                _flash_style = "dim red" if self._flash_tone == "error" else f"dim {accent_color}"
                 tail_segments.append(("flash", Text(f"  ✓ {self._flash_msg}", style=_flash_style)))
             try:
                 if (self._panel is not None and
@@ -304,11 +302,13 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                         self._tool_icon_error):
                     rs_v4 = getattr(self._panel, "_result_summary_v4", None)
                     if rs_v4 is not None and getattr(rs_v4, "stderr_tail", ""):
-                        tail_segments.append(("stderrwarn", Text("  ⚠ stderr (e)", style="dim red")))
+                        try:
+                            warn_color = self.app.get_css_variables().get("status-warn-color", "#FFA726")
+                        except Exception:
+                            warn_color = "#FFA726"
+                        tail_segments.append(("stderrwarn", Text("  ⚠ stderr (e)", style=f"bold {warn_color}")))
             except Exception:
                 pass
-            if self._duration:
-                tail_segments.append(("duration", Text(f"  {self._duration}", style="dim")))
 
         term_w = self.size.width
         FIXED_PREFIX_W = gutter_w + icon_cell_w + space_after_icon + shell_prompt_w

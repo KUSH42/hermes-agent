@@ -496,6 +496,9 @@ class TTEWidget(Widget):
 
     DEFAULT_CSS = """
     TTEWidget {
+        layer: overlay;
+        dock: top;
+        width: 100%;
         height: auto;
         min-height: 0;
         display: none;

@@ -341,7 +341,8 @@ ImageBar {
 }
 
 /* --- TTE startup effect widget ---
- * Structural CSS (layer, dock, display) is in TTEWidget.DEFAULT_CSS.
+ * Structural CSS (layer, dock, display, width) is in TTEWidget.DEFAULT_CSS.
+ * layer:overlay + dock:top makes it float over the banner area at startup.
  * Only visual overrides here. */
 
 TTEWidget {

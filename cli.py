@@ -3564,13 +3564,20 @@ class HermesCLI:
     def show_banner_with_startup_effect(self, tui: bool = False) -> None:
         """Render startup effect then the static banner.
 
-        TUI: TTE plays via the pre-mounted TTEWidget overlay (no dynamic mount),
-        then the static banner renders via ChatConsole → _cprint → OutputPanel.
+        TUI: full banner body renders into OutputPanel first (async queue),
+        then TTEWidget overlay plays the hero animation on top (layer: overlay,
+        dock: top).  While TTE runs the frame/tools/skills are already visible
+        below it.  When TTE finishes the overlay hides and the static hero in
+        OutputPanel is revealed in-place.
         Non-TUI: effect plays on stdout, then banner prints below.
         """
         if tui:
             self._ensure_tui_startup_message()
-            # Play TTE via TTEWidget (always in compose — no runtime mount needed)
+            # Render full banner body first so it is in OutputPanel's queue
+            # while the TTE overlay plays on top.
+            self._show_banner_body(clear=False, print_hero=True)
+            # Play TTE overlay (TTEWidget: layer=overlay, dock=top) on top of
+            # the already-queued banner content.
             if not self._use_compact_banner():
                 effect_cfg = self._get_startup_text_effect_config()
                 if effect_cfg is not None:
@@ -3586,7 +3593,6 @@ class HermesCLI:
                                 )
                             except Exception as _tte_exc:
                                 logger.warning("TUI startup TTE failed: %s", _tte_exc, exc_info=True)
-            self._show_banner_body(clear=False, print_hero=True)
             return
         self.console.clear()
         self._play_startup_text_effect(tui=False)

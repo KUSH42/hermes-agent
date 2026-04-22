@@ -605,6 +605,18 @@ _NP_ERROR_COLOR = Style.parse("bold red")
 _NP_DIM_COLOR = Style.parse("dim #888888")
 
 
+def _lerp_hex(a: str, b: str, t: float) -> str:
+    """Interpolate between two #rrggbb hex colors."""
+    a, b = a.lstrip("#"), b.lstrip("#")
+    ra, ga, ba_ = int(a[0:2], 16), int(a[2:4], 16), int(a[4:6], 16)
+    rb, gb, bb = int(b[0:2], 16), int(b[2:4], 16), int(b[4:6], 16)
+    return "#{:02x}{:02x}{:02x}".format(
+        int(ra + (rb - ra) * t),
+        int(ga + (gb - ga) * t),
+        int(ba_ + (bb - ba_) * t),
+    )
+
+
 @dataclass
 class _NPChar:
     target: str
@@ -661,7 +673,9 @@ class AssistantNameplate(Widget):
         self._error_frame = 0
         self._last_was_error = False
         self._accent_hex = "#7b68ee"
+        self._active_dim_hex = "#3d3480"
         self._text_hex = "#cccccc"
+        self._active_phase: float = 0.0
         # morph state
         self._morph_src = ""
         self._morph_dst = ""
@@ -674,6 +688,8 @@ class AssistantNameplate(Widget):
             css_vars = self.app.get_css_variables()
             self._accent_hex = css_vars.get("nameplate-active-color", "#7b68ee")
             self._text_hex = css_vars.get("foreground", "#cccccc")
+            # dim end of pulse wave: 30% of the accent blended toward black
+            self._active_dim_hex = _lerp_hex("#000000", self._accent_hex, 0.30)
         except Exception:
             pass
         if not self._effects_enabled:
@@ -755,11 +771,22 @@ class AssistantNameplate(Widget):
                 except Exception:
                     pass
             return Text(self._target_name, style=_NP_IDLE_COLOR)
+        if self._state == _NPState.ACTIVE_IDLE:
+            return self._render_active_pulse()
         if self._state == _NPState.ERROR_FLASH:
             return Text(self._target_name, style=_NP_ERROR_COLOR)
         t = Text()
         for ch in self._frame:
             t.append(ch.current, style=ch.style)
+        return t
+
+    def _render_active_pulse(self) -> Text:
+        """Traveling sine-wave shimmer in active color while agent is thinking."""
+        t = Text()
+        for i, ch in enumerate(self._frame):
+            wave = (math.sin(self._active_phase - i * 0.55) + 1.0) / 2.0
+            color = _lerp_hex(self._active_dim_hex, self._accent_hex, wave)
+            t.append(ch.target, style=Style.parse(f"bold {color}"))
         return t
 
     # --- advance ---
@@ -772,11 +799,12 @@ class AssistantNameplate(Widget):
             self._tick_idle()
         elif self._state in (_NPState.MORPH_TO_ACTIVE, _NPState.MORPH_TO_IDLE):
             self._tick_morph()
+        elif self._state == _NPState.ACTIVE_IDLE:
+            self._tick_active_idle()
         elif self._state == _NPState.GLITCH:
             self._tick_glitch()
         elif self._state == _NPState.ERROR_FLASH:
             self._tick_error_flash()
-        # ACTIVE_IDLE: timer is stopped; this branch unreachable
         self.refresh()
 
     def _tick_startup(self) -> None:
@@ -803,6 +831,9 @@ class AssistantNameplate(Widget):
             except Exception:
                 pass
 
+    def _tick_active_idle(self) -> None:
+        self._active_phase += 0.18
+
     def _tick_morph(self) -> None:
         dst_style = _NP_ACTIVE_COLOR if self._state == _NPState.MORPH_TO_ACTIVE else _NP_IDLE_COLOR
         done = True
@@ -821,7 +852,8 @@ class AssistantNameplate(Widget):
         if done:
             if self._state == _NPState.MORPH_TO_ACTIVE:
                 self._state = _NPState.ACTIVE_IDLE
-                self._stop_timer()
+                self._active_phase = 0.0
+                self._set_timer_rate(12)
             else:
                 self._state = _NPState.IDLE
                 self._set_timer_rate(6)
@@ -840,12 +872,12 @@ class AssistantNameplate(Widget):
                 ch.current = ch.target
                 ch.style = _NP_ACTIVE_COLOR
         else:
-            # fully clean; stop timer
+            # fully clean; resume pulse
             for ch in self._frame:
                 ch.current = ch.target
                 ch.style = _NP_ACTIVE_COLOR
             self._state = _NPState.ACTIVE_IDLE
-            self._stop_timer()
+            self._set_timer_rate(12)
 
     def _tick_error_flash(self) -> None:
         self._error_frame += 1

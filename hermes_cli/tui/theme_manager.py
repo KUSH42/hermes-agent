@@ -78,7 +78,12 @@ Before/After::
 
 from __future__ import annotations
 
+import logging
+import re
+import sys
 import threading
+import warnings
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
@@ -88,6 +93,117 @@ from hermes_cli.tui.skin_loader import SkinError, load_skin_full
 
 if TYPE_CHECKING:
     from textual.app import App
+
+
+# ---------------------------------------------------------------------------
+# VarSpec + migration shim (RX3 §5)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class VarSpec:
+    """Canonical description of a component CSS variable.
+
+    During RX3 migration, COMPONENT_VAR_DEFAULTS values may be either raw
+    strings or VarSpec instances. Consumers MUST route through ``_default_of``
+    to extract the hex default.
+    """
+
+    default: str
+    description: str = ""
+    since: str | None = None
+    optional_in_skin: bool = False
+    category: str = "misc"
+
+
+def _default_of(x: "str | VarSpec") -> str:
+    """Unwrap a COMPONENT_VAR_DEFAULTS value to its hex default.
+
+    See RX3 spec §5.1 migration shim.
+    """
+    return x if isinstance(x, str) else x.default
+
+
+def _defaults_as_strs() -> dict[str, str]:
+    """Return COMPONENT_VAR_DEFAULTS with all values coerced to strings."""
+    return {k: _default_of(v) for k, v in COMPONENT_VAR_DEFAULTS.items()}
+
+
+# ---------------------------------------------------------------------------
+# Validator (RX3 §8)
+# ---------------------------------------------------------------------------
+
+_HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$")
+
+
+class SkinValidationError(ValueError):
+    """Raised when a skin file fails structural or type validation."""
+
+
+def _validate_hex(path: str, value: Any) -> str:
+    """Accept a hex color string; raise with a helpful error path on failure."""
+    if not isinstance(value, str) or not _HEX_RE.match(value):
+        raise SkinValidationError(
+            f"{path}: expected #RRGGBB or #RRGGBBAA hex color, got {value!r}"
+        )
+    return value
+
+
+def validate_skin_payload(
+    payload: "dict[str, Any]",
+    *,
+    source: str = "<skin>",
+    warn_missing: bool = True,
+) -> None:
+    """Validate a merged skin dict against COMPONENT_VAR_DEFAULTS.
+
+    Raises ``SkinValidationError`` on structural or hex-format errors.
+    Emits ``UserWarning`` for missing/unknown component_vars keys.
+
+    ``source`` is prepended to error paths (e.g. ``"skin_overrides"``,
+    ``"skins/matrix.yaml"``) so users can locate the offending edit.
+    """
+    if not isinstance(payload, dict):
+        raise SkinValidationError(f"{source}: top level must be a mapping")
+
+    cv = payload.get("component_vars", {})
+    if not isinstance(cv, dict):
+        raise SkinValidationError(
+            f"{source}.component_vars: must be a mapping, got {type(cv).__name__}"
+        )
+    for name, value in cv.items():
+        _validate_hex(f"{source}.component_vars.{name}", value)
+
+    # vars block — also hex-valued when present
+    vars_block = payload.get("vars", {})
+    if not isinstance(vars_block, dict):
+        raise SkinValidationError(
+            f"{source}.vars: must be a mapping, got {type(vars_block).__name__}"
+        )
+
+    if warn_missing:
+        known = set(COMPONENT_VAR_DEFAULTS.keys())
+        present = {str(k) for k in cv.keys()}
+        required = {
+            k for k, v in COMPONENT_VAR_DEFAULTS.items()
+            if not (isinstance(v, VarSpec) and v.optional_in_skin)
+        }
+        missing = required - present
+        unknown = present - known
+        if missing:
+            warnings.warn(
+                f"{source}: missing component_vars keys "
+                f"(using defaults): {sorted(missing)}",
+                UserWarning,
+                stacklevel=2,
+            )
+        if unknown:
+            warnings.warn(
+                f"{source}: unknown component_vars keys "
+                f"(ignored): {sorted(unknown)}",
+                UserWarning,
+                stacklevel=2,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +304,13 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     "pane-border-focused":  "#5f87d7",
     "pane-title-fg":        "#888888",
     "pane-divider":         "#2a2a2a",
+    # MCP tool glyph color — referenced by tool_category.CategoryDefaults for MCP
+    "tool-glyph-mcp":       "#9b59b6",
+    # v4 error-kind classification colors (tool_result_parse._ERROR_DISPLAY)
+    "error-timeout":        "#f59e0b",
+    "error-critical":       "#ef4444",
+    "error-auth":           "#eab308",
+    "error-network":        "#f97316",
 }
 
 
@@ -206,7 +329,7 @@ class ThemeManager:
         # CSS vars from semantic/raw skin keys (fed to get_css_variables)
         self._css_vars: dict[str, str] = {}
         # Component-part vars (cursor-color, etc.) merged on top
-        self._component_vars: dict[str, str] = dict(COMPONENT_VAR_DEFAULTS)
+        self._component_vars: dict[str, str] = _defaults_as_strs()
         # Hot-reload tracking
         self._source_path: Path | None = None
         self._source_mtime: float = 0.0
@@ -222,7 +345,10 @@ class ThemeManager:
     def load(self, skin: "Path | list[Path]") -> bool:
         """Load from a path or a fallback chain.
 
-        Tries each path in order; stops at the first success.
+        Tries each path in order; stops at the first success. Every load
+        path runs through the RX3 validator and, if merged with
+        ``display.skin_overrides``, validates the merged output so typos in
+        config.yaml surface loud.
 
         Returns ``True`` if any skin loaded successfully, ``False`` if all
         paths failed (app keeps previous skin / defaults).
@@ -234,15 +360,78 @@ class ThemeManager:
                 log(f"[THEME] loaded {p}")
                 try:
                     from hermes_cli.config import read_skin_overrides
-                    self._apply_overrides(read_skin_overrides())
+                    overrides = read_skin_overrides()
+                    # Validate merged (skin ⊕ overrides) — §8.4
+                    try:
+                        validate_skin_payload(
+                            {"component_vars": {**self._component_vars,
+                                                **(overrides.get("component_vars") or {})},
+                             "vars": overrides.get("vars", {})},
+                            source="skin_overrides",
+                            warn_missing=False,
+                        )
+                    except SkinValidationError:
+                        raise
+                    self._apply_overrides(overrides)
+                except SkinValidationError:
+                    raise
                 except Exception:
                     pass
                 return True
-            except (SkinError, OSError) as exc:
-                log.warning(f"[THEME] could not load {p}: {exc}")
+            except (SkinError, SkinValidationError, OSError) as exc:
+                log.warning(f"[THEME] SKIN_LOAD_FAILED: {p}: {exc}")
+                print(f"SKIN_LOAD_FAILED: {p}: {exc}", file=sys.stderr)
             except Exception as exc:
                 log.warning(f"[THEME] unexpected error loading {p}: {exc}")
+                print(f"SKIN_LOAD_FAILED: {p}: {exc}", file=sys.stderr)
         return False
+
+    def load_with_fallback(
+        self,
+        configured: "Path | list[Path] | None" = None,
+        *,
+        bundled_default: "Path | None" = None,
+    ) -> str:
+        """3-step fallback chain per RX3 §11.4.
+
+        Step 1: configured user skin(s). Step 2: bundled default.yaml.
+        Step 3: emergency COMPONENT_VAR_DEFAULTS-only path (always succeeds).
+
+        Returns the tag of the successful step: ``"configured"``,
+        ``"default"``, or ``"emergency"``.
+        """
+        if configured is not None:
+            try:
+                ok = self.load(configured)
+                if ok:
+                    return "configured"
+            except SkinValidationError as exc:
+                log.warning(f"[THEME] SKIN_LOAD_FAILED: {exc}")
+                print(f"SKIN_LOAD_FAILED: {exc}", file=sys.stderr)
+
+        # Reset partial state before falling through
+        self._css_vars = {}
+        self._component_vars = _defaults_as_strs()
+
+        if bundled_default is not None and bundled_default.exists():
+            try:
+                self._load_path(bundled_default)
+                return "default"
+            except Exception as exc:
+                log.warning(f"[THEME] SKIN_DEFAULT_FAILED: {exc}")
+                print(f"SKIN_DEFAULT_FAILED: {exc}", file=sys.stderr)
+                self._css_vars = {}
+                self._component_vars = _defaults_as_strs()
+
+        # Emergency: bypass YAML entirely; merge skin_overrides onto defaults
+        try:
+            from hermes_cli.config import read_skin_overrides
+            self._apply_overrides(read_skin_overrides())
+        except Exception:
+            pass
+        print("SKIN_EMERGENCY_FALLBACK: using COMPONENT_VAR_DEFAULTS only", file=sys.stderr)
+        log.warning("[THEME] SKIN_EMERGENCY_FALLBACK")
+        return "emergency"
 
     def load_dict(self, skin_vars: "dict[str, Any]") -> None:
         """Load a pre-built variable dict (bypasses file parsing).
@@ -256,7 +445,7 @@ class ThemeManager:
         d = dict(skin_vars)
         raw_component = d.pop("component_vars", {})
         self._css_vars = {str(k): str(v) for k, v in d.items()}
-        updated = dict(COMPONENT_VAR_DEFAULTS)
+        updated = _defaults_as_strs()
         if isinstance(raw_component, dict):
             updated.update({str(k): str(v) for k, v in raw_component.items()})
         self._component_vars = updated
@@ -372,7 +561,7 @@ class ThemeManager:
         self._pending_reload_mtime = 0.0
         if self._source_path != path or mtime <= self._source_mtime:
             return
-        updated_component = dict(COMPONENT_VAR_DEFAULTS)
+        updated_component = _defaults_as_strs()
         updated_component.update(component_vars)
         self._css_vars = css_vars
         self._component_vars = updated_component
@@ -409,7 +598,12 @@ class ThemeManager:
 
     def _load_path(self, path: Path) -> None:
         css_vars, component_vars = load_skin_full(path)
-        updated_component = dict(COMPONENT_VAR_DEFAULTS)
+        # Validate against COMPONENT_VAR_DEFAULTS — §8.1
+        validate_skin_payload(
+            {"component_vars": component_vars, "vars": css_vars},
+            source=str(path),
+        )
+        updated_component = _defaults_as_strs()
         updated_component.update(component_vars)
         self._css_vars = css_vars
         self._component_vars = updated_component

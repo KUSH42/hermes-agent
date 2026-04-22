@@ -1,127 +1,123 @@
 name: catppuccin
-description: Catppuccin Mocha — soft pastel dark theme with mauve/lavender accents
-
-fg:        "#cdd6f4"
-bg:        "#1e1e2e"
-accent:    "#cba6f7"
-accent-dim: "#7f57b4"
-success:   "#a6e3a1"
-warning:   "#f9e2af"
-error:     "#f38ba8"
-muted:     "#585b70"
-border:    "#313244"
-selection: "#45475a"
-
-glass-tint:   "#1e1e2e"
-glass-border: "#313244"
-glass-edge:   "#cba6f7"
-
+description: "Catppuccin Mocha \u2014 soft pastel dark theme with mauve/lavender accents"
+fg: '#cdd6f4'
+bg: '#1e1e2e'
+accent: '#cba6f7'
+accent-dim: '#7f57b4'
+success: '#a6e3a1'
+warning: '#f9e2af'
+error: '#f38ba8'
+muted: '#585b70'
+border: '#313244'
+selection: '#45475a'
+glass-tint: '#1e1e2e'
+glass-border: '#313244'
+glass-edge: '#cba6f7'
 vars:
-  preview-syntax-theme: "catppuccin"
-
+  preview-syntax-theme: catppuccin
 colors:
-  banner_title:    "#cba6f7"
-  banner_accent:   "#f5c2e7"
-  banner_dim:      "#7f57b4"
-  banner_border:   "#313244"
-  banner_text:     "#cdd6f4"
-  input_rule:      "#cba6f7"
-  prompt:          "#f5c2e7"
-  response_border: "#cba6f7"
-  ui_accent:       "#f5c2e7"
-  ui_ok:           "#a6e3a1"
-  ui_error:        "#f38ba8"
-  ui_warn:         "#fab387"
-
+  banner_title: '#cba6f7'
+  banner_accent: '#f5c2e7'
+  banner_dim: '#7f57b4'
+  banner_border: '#313244'
+  banner_text: '#cdd6f4'
+  input_rule: '#cba6f7'
+  prompt: '#f5c2e7'
+  response_border: '#cba6f7'
+  ui_accent: '#f5c2e7'
+  ui_ok: '#a6e3a1'
+  ui_error: '#f38ba8'
+  ui_warn: '#fab387'
 branding:
-  agent_name:     "Hermes"
-  welcome:        "Cozy and efficient. ☕"
-  goodbye:        "Farewell. ⟁"
-  response_label: " ⟁ Hermes "
-  prompt_symbol:  "❯ "
-  help_header:    "(⟁) Commands"
-
+  agent_name: Hermes
+  welcome: "Cozy and efficient. \u2615"
+  goodbye: "Farewell. \u27C1"
+  response_label: " \u27C1 Hermes "
+  prompt_symbol: "\u276F "
+  help_header: "(\u27C1) Commands"
 spinner:
   style: dots
   thinking_faces:
-    - "(☕)"
-    - "(◈)"
-    - "(⌁)"
-    - "(✦)"
+  - "(\u2615)"
+  - "(\u25C8)"
+  - "(\u2301)"
+  - "(\u2726)"
   waiting_faces:
-    - "(·)"
-    - "(··)"
-    - "(···)"
+  - "(\xB7)"
+  - "(\xB7\xB7)"
+  - "(\xB7\xB7\xB7)"
   thinking_verbs:
-    - brewing
-    - pondering
-    - simmering
-    - steeping
-    - contemplating
-
+  - brewing
+  - pondering
+  - simmering
+  - steeping
+  - contemplating
 syntax_scheme: monokai
-
 diff:
-  deletion_bg:  "#2a1420"
-  addition_bg:  "#142a1a"
-  deletion_fg:  "#f38ba8"
-  addition_fg:  "#a6e3a1"
-  line_number:  "#6c7086"
-  hunk_header:  "bold #cba6f7"
-  filename:     "bold #89b4fa"
-
+  deletion_bg: '#2a1420'
+  addition_bg: '#142a1a'
+  deletion_fg: '#f38ba8'
+  addition_fg: '#a6e3a1'
+  line_number: '#6c7086'
+  hunk_header: 'bold #cba6f7'
+  filename: 'bold #89b4fa'
 component_vars:
-  app-bg:                      "#1e1e2e"
-  brand-glyph-color:           "#f5c2e7"
-  browse-code:                 "#a6e3a1"
-  browse-diff:                 "#cba6f7"
-  browse-media:                "#89dceb"
-  browse-tool:                 "#89b4fa"
-  browse-turn:                 "#f9e2af"
-  chevron-base:                "#cdd6f4"
-  chevron-done:                "#a6e3a1"
-  chevron-error:               "#f38ba8"
-  chevron-file:                "#f9e2af"
-  chevron-shell:               "#a6e3a1"
-  chevron-stream:              "#89dceb"
-  cite-chip-bg:                "#181825"
-  cite-chip-fg:                "#89b4fa"
-  completion-empty-bg:         "#313244"
-  cursor-color:                "#f5c2e7"
-  cursor-placeholder:          "#585b70"
-  cursor-selection-bg:         "#45475a"
-  diff-add-bg:                 "#142a1a"
-  diff-del-bg:                 "#2a1420"
-  drawille-canvas-color:       "#89dceb"
-  footnote-ref-color:          "#6c7086"
-  fps-hud-bg:                  "#181825"
-  fuzzy-match-color:           "#f9e2af"
-  ghost-text-color:            "#585b70"
-  nameplate-active-color:      "#cba6f7"
-  nameplate-decrypt-color:     "#a6e3a1"
-  nameplate-idle-color:        "#585b70"
-  panel-border:                "#313244"
-  primary-darken-3:            "#7f57b4"
-  rule-accent-color:           "#cba6f7"
-  rule-accent-dim-color:       "#7f57b4"
-  rule-bg-color:               "#1e1e2e"
-  rule-dim-color:              "#585b70"
-  running-indicator-dim-color: "#585b70"
-  running-indicator-hi-color:  "#f9e2af"
-  scrollbar:                   "#cba6f7"
-  spinner-shimmer-dim:         "#585b70"
-  spinner-shimmer-peak:        "#cdd6f4"
-  status-context-color:        "#89b4fa"
-  status-error-color:          "#f38ba8"
-  status-running-color:        "#f9e2af"
-  status-warn-color:           "#fab387"
-  accent-interactive:          "#89dceb"
-  tool-mcp-accent:             "#cba6f7"
-  tool-vision-accent:          "#89dceb"
-  user-echo-bullet-color:      "#fab387"
-plan-now-fg:                 "#89dceb"
-  plan-pending-fg:             "#6c7086"
-pane-border:                 "#313244"
-  pane-border-focused:         "#89b4fa"
-  pane-title-fg:               "#585b70"
-  pane-divider:                "#181825"
+  app-bg: '#1e1e2e'
+  brand-glyph-color: '#f5c2e7'
+  browse-code: '#a6e3a1'
+  browse-diff: '#cba6f7'
+  browse-media: '#89dceb'
+  browse-tool: '#89b4fa'
+  browse-turn: '#f9e2af'
+  chevron-base: '#cdd6f4'
+  chevron-done: '#a6e3a1'
+  chevron-error: '#f38ba8'
+  chevron-file: '#f9e2af'
+  chevron-shell: '#a6e3a1'
+  chevron-stream: '#89dceb'
+  cite-chip-bg: '#181825'
+  cite-chip-fg: '#89b4fa'
+  completion-empty-bg: '#313244'
+  cursor-color: '#f5c2e7'
+  cursor-placeholder: '#585b70'
+  cursor-selection-bg: '#45475a'
+  diff-add-bg: '#142a1a'
+  diff-del-bg: '#2a1420'
+  drawille-canvas-color: '#89dceb'
+  footnote-ref-color: '#6c7086'
+  fps-hud-bg: '#181825'
+  fuzzy-match-color: '#f9e2af'
+  ghost-text-color: '#585b70'
+  nameplate-active-color: '#cba6f7'
+  nameplate-decrypt-color: '#a6e3a1'
+  nameplate-idle-color: '#585b70'
+  panel-border: '#313244'
+  primary-darken-3: '#7f57b4'
+  rule-accent-color: '#cba6f7'
+  rule-accent-dim-color: '#7f57b4'
+  rule-bg-color: '#1e1e2e'
+  rule-dim-color: '#585b70'
+  running-indicator-dim-color: '#585b70'
+  running-indicator-hi-color: '#f9e2af'
+  scrollbar: '#cba6f7'
+  spinner-shimmer-dim: '#585b70'
+  spinner-shimmer-peak: '#cdd6f4'
+  status-context-color: '#89b4fa'
+  status-error-color: '#f38ba8'
+  status-running-color: '#f9e2af'
+  status-warn-color: '#fab387'
+  accent-interactive: '#89dceb'
+  tool-mcp-accent: '#cba6f7'
+  tool-vision-accent: '#89dceb'
+  user-echo-bullet-color: '#fab387'
+  plan-now-fg: '#89dceb'
+  plan-pending-fg: '#6c7086'
+  pane-border: '#313244'
+  pane-border-focused: '#89b4fa'
+  pane-title-fg: '#585b70'
+  pane-divider: '#181825'
+  error-auth: '#eab308'
+  error-critical: '#ef4444'
+  error-network: '#f97316'
+  error-timeout: '#f59e0b'
+  tool-glyph-mcp: '#9b59b6'

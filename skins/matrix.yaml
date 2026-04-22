@@ -1,15 +1,24 @@
-banner_hero: "              /\\                \n             /#\\\\                \n            /###\\\\               \n           /#####\\\\              \n          /#######\\\\             \n   \
-  \      /#########\\\\            \n        /####/\\\\####\\\\           \n       /####/  \\\\####\\\\          \n      /####/    \\\\####\\\\         \n     /####/      \\\\####\\\\        \n    /####/\
-  \        \\\\####\\\\       \n   /####/          \\\\####\\\\      \n  /####/____________\\\\####\\\\     \n /#########################\\\\    \n/###########################\\\\   \n"
-banner_logo: "___  ___  ___ ___________ _______   __       ___  _____  _____ _   _ _____ \n|  \\/  | / _ \\_   _| ___ \\_   _\\ \\ / /      / _ \\|  __ \\|  ___| \\ | |_   _|\n| .  . |/ /_\\ \\| | | |_/\
-  \ / | |  \\ V /______/ /_\\ \\ |  \\/| |__ |  \\| | | |  \n| |\\/| ||  _  || | |    /  | |  /   \\______|  _  | | __ |  __|| . ` | | |  \n| |  | || | | || | | |\\ \\ _| |_/ /^\\ \\     | | | | |_\\ \\\
-  | |___| |\\  | | |  \n\\_|  |_/\\_| |_/\\_/ \\_| \\_|\\___/\\/   \\/     \\_| |_/\\____/\\____/\\_| \\_/ \\_/  \n"
+banner_hero: "              /\\                \n             /#\\\\             \
+  \   \n            /###\\\\               \n           /#####\\\\              \n\
+  \          /#######\\\\             \n         /#########\\\\            \n    \
+  \    /####/\\\\####\\\\           \n       /####/  \\\\####\\\\          \n    \
+  \  /####/    \\\\####\\\\         \n     /####/      \\\\####\\\\        \n    /####/\
+  \        \\\\####\\\\       \n   /####/          \\\\####\\\\      \n  /####/____________\\\
+  \\####\\\\     \n /#########################\\\\    \n/###########################\\\
+  \\   \n"
+banner_logo: "___  ___  ___ ___________ _______   __       ___  _____  _____ _   _\
+  \ _____ \n|  \\/  | / _ \\_   _| ___ \\_   _\\ \\ / /      / _ \\|  __ \\|  ___|\
+  \ \\ | |_   _|\n| .  . |/ /_\\ \\| | | |_/ / | |  \\ V /______/ /_\\ \\ |  \\/|\
+  \ |__ |  \\| | | |  \n| |\\/| ||  _  || | |    /  | |  /   \\______|  _  | | __\
+  \ |  __|| . ` | | |  \n| |  | || | | || | | |\\ \\ _| |_/ /^\\ \\     | | | | |_\\\
+  \ \\| |___| |\\  | | |  \n\\_|  |_/\\_| |_/\\_/ \\_| \\_|\\___/\\/   \\/     \\\
+  _| |_/\\____/\\____/\\_| \\_/ \\_/  \n"
 branding:
   agent_name: Morpheus
-  goodbye: Remember... all I'm offering is the truth. ⟁
-  help_header: (⟁) Available Commands
-  prompt_symbol: '❯ '
-  response_label: ' ⟁ Matrix'
+  goodbye: "Remember... all I'm offering is the truth. \u27C1"
+  help_header: "(\u27C1) Available Commands"
+  prompt_symbol: "\u276F "
+  response_label: " \u27C1 Matrix"
   welcome: Wake up, Neo...
 colors:
   banner_accent: '#00ff41'
@@ -57,34 +66,39 @@ component_vars:
   status-error-color: '#ff3333'
   status-running-color: '#00ff9f'
   status-warn-color: '#ffb000'
-  user-echo-bullet-color:      '#00d849'
-  drawille-canvas-color:       '#00ff41'
-  browse-code:                 '#aaffc8'
-  browse-diff:                 '#ffb000'
-  browse-media:                '#00c14d'
-  browse-tool:                 '#00d849'
-  browse-turn:                 '#00ff41'
-  cite-chip-bg:                '#0f1a0f'
-  cite-chip-fg:                '#00d849'
-  diff-add-bg:                 '#0a2a14'
-  diff-del-bg:                 '#2a0a0a'
-  footnote-ref-color:          '#2a6b33'
-  nameplate-active-color:      '#00ff41'
-  nameplate-decrypt-color:     '#aaffc8'
-  nameplate-idle-color:        '#2a6b33'
-  panel-border:                '#004d15'
-  spinner-shimmer-dim:         '#005a1a'
-  spinner-shimmer-peak:        '#aaffc8'
-  accent-interactive:          '#00ff41'
-  tool-mcp-accent:             '#00d849'
-  tool-vision-accent:          '#aaffc8'
-plan-now-fg:                 '#00ff41'
-  plan-pending-fg:             '#2a6b33'
-pane-border:                 '#1a2f1a'
-  pane-border-focused:         '#00ff41'
-  pane-title-fg:               '#008f11'
-  pane-divider:                '#0d1f0d'
-description: The Matrix — dark void and hacker green phosphor
+  user-echo-bullet-color: '#00d849'
+  drawille-canvas-color: '#00ff41'
+  browse-code: '#aaffc8'
+  browse-diff: '#ffb000'
+  browse-media: '#00c14d'
+  browse-tool: '#00d849'
+  browse-turn: '#00ff41'
+  cite-chip-bg: '#0f1a0f'
+  cite-chip-fg: '#00d849'
+  diff-add-bg: '#0a2a14'
+  diff-del-bg: '#2a0a0a'
+  footnote-ref-color: '#2a6b33'
+  nameplate-active-color: '#00ff41'
+  nameplate-decrypt-color: '#aaffc8'
+  nameplate-idle-color: '#2a6b33'
+  panel-border: '#004d15'
+  spinner-shimmer-dim: '#005a1a'
+  spinner-shimmer-peak: '#aaffc8'
+  accent-interactive: '#00ff41'
+  tool-mcp-accent: '#00d849'
+  tool-vision-accent: '#aaffc8'
+  plan-now-fg: '#00ff41'
+  plan-pending-fg: '#2a6b33'
+  pane-border: '#1a2f1a'
+  pane-border-focused: '#00ff41'
+  pane-title-fg: '#008f11'
+  pane-divider: '#0d1f0d'
+  error-auth: '#eab308'
+  error-critical: '#ef4444'
+  error-network: '#f97316'
+  error-timeout: '#f59e0b'
+  tool-glyph-mcp: '#9b59b6'
+description: "The Matrix \u2014 dark void and hacker green phosphor"
 diff:
   addition_bg: '#0a2a14'
   addition_fg: '#00ff41'
@@ -101,12 +115,12 @@ diff:
   intra_del_fg: '#ff9999'
   line_number: '#00a839'
 markdown:
-  blockquote_marker: ▌
+  blockquote_marker: "\u258C"
   bullets:
-  - •
-  - ◦
-  - ▸
-  - ·
+  - "\u2022"
+  - "\u25E6"
+  - "\u25B8"
+  - "\xB7"
   code_span: '#00ff41'
   heading_1: 'bold #00ff9f'
   link: '#00ff9f underline'
@@ -115,10 +129,10 @@ name: matrix
 spinner:
   style: pulse
   thinking_faces:
-  - (⚡)
-  - (⌁)
-  - (⟁)
-  - (◇)
+  - "(\u26A1)"
+  - "(\u2301)"
+  - "(\u27C1)"
+  - "(\u25C7)"
   thinking_verbs:
   - decrypting
   - tracing
@@ -134,12 +148,12 @@ spinner:
   - (11)
   - (00)
   wings:
-  - - ⟨
-    - ⟩
-  - - ⟨0
-    - 1⟩
-  - - ⟨⟁
-    - ⟁⟩
+  - - "\u27E8"
+    - "\u27E9"
+  - - "\u27E80"
+    - "1\u27E9"
+  - - "\u27E8\u27C1"
+    - "\u27C1\u27E9"
 syntax:
   comment: 'italic #4a8a5a'
   keyword: 'bold #00ff41'
@@ -154,6 +168,6 @@ stream_effect:
   cascade_ticks: 3
 syntax_scheme: monokai
 tool_icons:
-  search_files: ⌕
-  web_search: ⌕
-tool_prefix: │
+  search_files: "\u2315"
+  web_search: "\u2315"
+tool_prefix: "\u2502"

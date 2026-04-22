@@ -29,7 +29,7 @@ from ._shared import (
 
 MIN_LABEL_CELLS = 12
 
-_DROP_ORDER = ["flash", "linecount", "chip", "hero", "diff", "stderrwarn", "chevron"]
+_DROP_ORDER = ["flash", "linecount", "chip", "hero", "diff", "stderrwarn", "exit", "chevron"]
 
 
 def _trim_tail_segments(
@@ -104,6 +104,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         self._primary_hero: str | None = None
         self._header_chips: list[tuple[str, str]] = []
         self._error_kind: str | None = None
+        self._exit_code: int | None = None
         self._flash_tone: str = "success"
         self._browse_badge: str = ""
         # D1: set True by ChildPanel to suppress ┊ gutter prefix
@@ -308,6 +309,17 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                         tail_segments.append(("stderrwarn", Text("  ⚠ stderr (e)", style=f"bold {warn_color}")))
             except Exception:
                 pass
+
+            # R10: explicit exit code in collapsed header
+            is_collapsed = self._panel.collapsed if self._panel is not None else self.collapsed
+            if is_collapsed and self._is_complete:
+                code = getattr(self, "_exit_code", None)
+                if code is not None:
+                    if code == 0:
+                        if not self._primary_hero:
+                            tail_segments.append(("exit", Text("  ok", style="dim green")))
+                    else:
+                        tail_segments.append(("exit", Text(f"  exit {code}", style="bold red")))
 
         term_w = self.size.width
         FIXED_PREFIX_W = gutter_w + icon_cell_w + space_after_icon + shell_prompt_w

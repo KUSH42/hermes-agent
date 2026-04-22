@@ -891,6 +891,7 @@ class ToolPanel(Widget):
             if summary.primary is not None:
                 header._primary_hero = summary.primary
             header._error_kind = summary.error_kind
+            header._exit_code = getattr(summary, "exit_code", None)
             # A2: chips live in FooterPane only; header never shows them
             header._header_chips = []
             header.refresh()

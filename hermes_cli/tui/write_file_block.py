@@ -60,8 +60,10 @@ class WriteFileBlock(StreamingToolBlock):
         self._content_lines: list[str] = []
         self._pacer = None
         self._extractor = None
+        self._progress: Static | None = None  # J2: single widget — starts "writing…", updates to "writing · NKB"
+        # Legacy aliases kept for any external callers
         self._writing_hint: Static | None = None
-        self._progress_label: Static | None = None  # B4: streaming progress
+        self._progress_label: Static | None = None
         self._bytes_written: int = 0                # B4
         self._bytes_total: int = 0                  # B4
         if path:
@@ -99,10 +101,11 @@ class WriteFileBlock(StreamingToolBlock):
         )
 
         if cps == 0:
-            self._writing_hint = Static("writing…", classes="--wfb-writing-hint")
-            self._progress_label = Static("", classes="--wfb-progress")
-            self._body.mount(self._writing_hint)
-            self._body.mount(self._progress_label)
+            # J2: single progress widget — text transitions from "writing…" to "writing · NKB"
+            self._progress = Static("writing…", classes="--wfb-progress")
+            self._writing_hint = self._progress   # alias for compat
+            self._progress_label = self._progress  # alias for compat
+            self._body.mount(self._progress)
 
     def _apply_write_mount_overrides(self) -> None:
         """Run after all MRO on_mount handlers. Re-apply write_file-specific state."""
@@ -114,22 +117,23 @@ class WriteFileBlock(StreamingToolBlock):
     # ------------------------------------------------------------------
 
     def update_progress(self, written: int, total: int = 0) -> None:
-        """B4: update streaming progress label. Event-loop only."""
+        """J2: update single progress widget — transitions from 'writing…' to 'writing · NKB'."""
         self._bytes_written = written
         self._bytes_total = total
-        if self._progress_label is None:
+        widget = self._progress
+        if widget is None:
             return
         if written == 0:
-            self._progress_label.update("")
+            widget.update("writing…")
             return
         try:
             from hermes_cli.tui.streaming_microcopy import _human_size
-            msg = f"Writing… {_human_size(written)}"
+            msg = f"writing · {_human_size(written)}"
             if total > 0:
                 msg += f" / {_human_size(total)}"
-            self._progress_label.update(msg)
+            widget.update(msg)
         except Exception:
-            self._progress_label.update(f"Writing… {written} bytes")
+            widget.update(f"writing · {written}B")
 
     def set_final_path(self, path: str) -> None:
         """Update path from tool_start function_args. Event-loop only."""
@@ -198,10 +202,15 @@ class WriteFileBlock(StreamingToolBlock):
             self._emit_content_line(self._line_scratch)
             self._line_scratch = ""
 
-        # Clear writing hint if shown (CPS=0 path)
-        if self._writing_hint is not None:
-            self._writing_hint.remove()
+        # Clear progress widget if shown (CPS=0 path)
+        if self._progress is not None:
+            try:
+                self._progress.remove()
+            except Exception:
+                pass
+            self._progress = None
             self._writing_hint = None
+            self._progress_label = None
 
         # Re-highlight full body with rich.Syntax
         self._rehighlight_body()

@@ -225,8 +225,7 @@ class ReasoningPanel(Widget):
             k = "#5f87d7"
         t = Text()
         t.append("▸ ", style=f"bold {k}")
-        t.append(f"Reasoning collapsed · {n}L · ", style="dim")
-        t.append("click to expand", style=f"dim {k}")
+        t.append(f"Reasoning collapsed · {n}L", style="dim")
         self._collapsed_stub.update(t)
 
     def _sync_collapsed_state(self) -> None:
@@ -283,6 +282,8 @@ class ReasoningPanel(Widget):
         shows complete lines while still updating in real-time.
         Each committed line gets dim italic styling (via engine or gutter fallback).
         """
+        # Ensure panel stays visible even if open_box raced with first delta
+        self.add_class("visible")
         self._live_buf += text
         while "\n" in self._live_buf:
             line, self._live_buf = self._live_buf.split("\n", 1)
@@ -319,8 +320,6 @@ class ReasoningPanel(Widget):
         self._live_line.styles.display = "none"
         self._live_line.update("")
         self._is_closed = True
-        # Defensive: finalization must never drop the panel from the transcript,
-        # even if a concurrent class toggle/race stripped visibility earlier.
         self.add_class("visible")
         self.add_class("--closeable")
         self._sync_collapsed_state()

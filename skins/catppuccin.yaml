@@ -115,6 +115,7 @@ component_vars:
   status-error-color:          "#f38ba8"
   status-running-color:        "#f9e2af"
   status-warn-color:           "#fab387"
+  accent-interactive:          "#89dceb"
   tool-mcp-accent:             "#cba6f7"
   tool-vision-accent:          "#89dceb"
   user-echo-bullet-color:      "#fab387"

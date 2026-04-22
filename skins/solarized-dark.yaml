@@ -84,7 +84,7 @@ component_vars:
   cursor-selection-bg: '#073642'
   diff-add-bg: '#0a1a0a'
   diff-del-bg: '#2a0a08'
-  drawille-canvas-color: '#2aa198'
+  drawbraille-canvas-color: '#2aa198'
   footnote-ref-color: '#586e75'
   fps-hud-bg: '#073642'
   fuzzy-match-color: '#b58900'

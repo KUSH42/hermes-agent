@@ -236,6 +236,7 @@ HermesInput {
 /* Prevent Textual's TextArea:focus tint from creating a contrast stripe */
 HermesInput:focus {
     background: $app-bg;
+    border: tall $primary 30%;
 }
 
 /* Component Part variables — themed via ThemeManager.component_vars.
@@ -572,6 +573,9 @@ HermesApp.density-compact AssistantNameplate   { display: none; }
 HermesApp.density-compact SourcesBar           { display: none; }
 HermesApp.density-compact BrowseMinimap        { display: none; }
 
+/* V2: hide nameplate while thinking animation is active */
+HermesApp.thinking-active AssistantNameplate { display: none; }
+
 /* Phase B2: input area tightening */
 HermesApp.density-compact HermesInput          { max-height: 2; }
 HermesApp.density-compact #input-chevron       { width: 1; }
@@ -806,6 +810,7 @@ SourcesBar {
 $nameplate-idle-color: #888888;
 $nameplate-active-color: #7b68ee;
 $nameplate-decrypt-color: #00ff41;
+$accent-interactive: #00bcd4;
 
 AssistantNameplate {
     height: 1;

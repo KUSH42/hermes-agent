@@ -81,7 +81,6 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         self._stats = stats
         self._panel = panel
         self._has_affordances = line_count > COLLAPSE_THRESHOLD
-        self._copy_flash = False
         self._flash_msg: str | None = None
         self._flash_expires: float = 0.0
         self._spinner_char: str | None = None
@@ -375,11 +374,6 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             )
         except Exception:
             pass
-
-    def _end_flash(self) -> None:
-        # Legacy stub — kept for any external references; logic is now in FeedbackService.
-        self._copy_flash = False
-        self.refresh()
 
     def flash_success(self) -> None:
         """RX1 Phase B: forward to FeedbackService tool-header channel."""

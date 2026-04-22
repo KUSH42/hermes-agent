@@ -62,7 +62,6 @@ class CodeBlockFooter(Widget):
         self._copy = Static("", id="code-copy-action", classes="action")
         self._sep = Static("", classes="sep")
         self._toggle = Static("", id="code-toggle-action", classes="action")
-        self._copy_flash_timer: object | None = None
         self._copy_original: str = ""
 
     def compose(self) -> ComposeResult:
@@ -116,12 +115,6 @@ class CodeBlockFooter(Widget):
             )
         except Exception:
             pass
-
-    def _restore_copy(self) -> None:
-        """Restore copy label after flash. Legacy stub — logic in FeedbackService."""
-        self._copy_flash_timer = None
-        self.remove_class("--flash-copy")
-        self._copy.update(self._copy_original)
 
     def on_click(self, event: Any) -> None:
         """Route clicks on footer actions to the parent StreamingCodeBlock."""
@@ -188,7 +181,6 @@ class StreamingCodeBlock(Widget):
         self._log = CopyableRichLog(markup=False)
         self._partial_line: str = ""
         self._collapsed = False
-        self._copy_flash = False
         self._controls_text_plain = ""
         self._complete_skin_vars: dict[str, str] = {}
 
@@ -380,12 +372,7 @@ class StreamingCodeBlock(Widget):
     def flash_copy(self) -> None:
         """Flash copy confirmation via border highlight."""
         self.add_class("--copy-flash")
-        self._copy_flash = True
-        self.set_timer(1.5, self._end_copy_flash)
-
-    def _end_copy_flash(self) -> None:
-        self.remove_class("--copy-flash")
-        self._copy_flash = False
+        self.set_timer(1.5, lambda: self.remove_class("--copy-flash"))
 
     def _update_controls(self) -> None:
         """Update _controls_text_plain for backward compat (tests)."""

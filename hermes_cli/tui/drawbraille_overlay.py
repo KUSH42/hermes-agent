@@ -359,6 +359,10 @@ _ENGINE_META: dict[str, dict] = {
     "plasma":            {"category": "Mathematical", "desc": "Demoscene plasma — sum of sine fields thresholded into braille"},
     "torus_3d":          {"category": "Classic",      "desc": "Rotating wireframe torus with depth-sorted latitude rings"},
     "matrix_rain":       {"category": "Organic",      "desc": "Falling particle columns with TrailCanvas decay"},
+    # Part B new engines
+    "double_helix":      {"category": "Classic",      "desc": "3D double-strand DNA helix with compound rotation and rungs"},
+    "double_helix_lit":  {"category": "Classic",      "desc": "3D double helix with depth-based braille density cues"},
+    "triple_helix":      {"category": "Classic",      "desc": "3D triple-strand helix with compound rotation"},
 }
 
 # ── Phase B: phase-aware carousel ────────────────────────────────────────────

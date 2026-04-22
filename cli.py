@@ -3324,47 +3324,6 @@ class HermesCLI:
         app.call_from_thread(_ensure)
         return result["message"]
 
-    def _ensure_tui_startup_banner_widget(self):
-        """Ensure a lightweight startup banner widget exists in OutputPanel."""
-        from hermes_cli.tui.widgets import (
-            MessagePanel,
-            OutputPanel,
-            StartupBannerWidget,
-            ThinkingWidget,
-        )
-
-        app = _hermes_app
-        if app is None:
-            return None
-
-        result = {"widget": None}
-
-        def _ensure():
-            try:
-                panel = app.query_one(OutputPanel)
-                widget = None
-                for child in panel.children:
-                    if isinstance(child, StartupBannerWidget):
-                        widget = child
-                        break
-                if widget is None:
-                    widget = StartupBannerWidget(id="startup-banner")
-                    anchor = None
-                    for child in panel.children:
-                        if isinstance(child, MessagePanel):
-                            anchor = child
-                            break
-                    if anchor is None:
-                        anchor = panel.query_one(ThinkingWidget)
-                    panel.mount(widget, before=anchor)
-                result["widget"] = widget
-            except Exception as _exc:
-                logger.warning("startup banner mount failed: %s", _exc, exc_info=True)
-                result["widget"] = None
-
-        app.call_from_thread(_ensure)
-        return result["widget"]
-
     def _render_startup_banner_text(
         self,
         *,

@@ -166,22 +166,22 @@ async def test_picker_on_highlight_called_on_nav():
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        overlay = app.query_one(SkinPickerOverlay)
-        overlay.choices = [("dark", "dark"), ("light", "light")]
-        overlay.current_value = "dark"
+        overlay = app.query_one(VerbosePickerOverlay)
+        overlay.choices = [("normal", "normal"), ("verbose", "verbose")]
+        overlay.current_value = "normal"
         overlay._render_options()
         await pilot.pause()
 
         highlighted_values: list[str] = []
         overlay.on_highlight = lambda v: highlighted_values.append(v)  # type: ignore[method-assign]
 
-        ol = overlay.query_one("#spo-list", OptionList)
-        opt = ol.get_option("spo-opt-light")
+        ol = overlay.query_one("#vpo-list", OptionList)
+        opt = ol.get_option("vpo-opt-verbose")
         event = OptionList.OptionHighlighted(ol, opt, 1)
         overlay.on_option_list_option_highlighted(event)
         await pilot.pause()
 
-        assert "light" in highlighted_values
+        assert "verbose" in highlighted_values
 
 
 # ---------------------------------------------------------------------------
@@ -450,117 +450,10 @@ async def test_verbose_query_one_still_works():
 
 
 # ---------------------------------------------------------------------------
-# S01–S05: SkinPickerOverlay subclass tests
+# S01–S06: SkinPickerOverlay subclass tests
+# NOTE: SkinPickerOverlay is now an alias for TabbedSkinOverlay.
+# Full coverage lives in test_tabbed_skin_overlay.py (T-TSO / T-OVR / T-OPT).
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_skin_on_highlight_calls_preview():
-    """S01: arrow nav fires _apply_skin_preview."""
-    app = _make_app()
-    async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause()
-        overlay = app.query_one(SkinPickerOverlay)
-        preview_calls: list[str] = []
-
-        with patch.object(overlay, "_apply_skin_preview", side_effect=preview_calls.append):
-            overlay.on_highlight("dark")
-
-        assert "dark" in preview_calls
-
-
-@pytest.mark.asyncio
-async def test_skin_esc_reverts_skin():
-    """S02: action_dismiss calls app.apply_skin(original)."""
-    app = _make_app()
-    async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause()
-        overlay = app.query_one(SkinPickerOverlay)
-        overlay._original_css_vars = {"foo": "bar"}
-        overlay._original_component_vars = {"baz": "qux"}
-
-        with patch.object(app, "apply_skin") as mock_apply:
-            overlay.action_dismiss()
-            await pilot.pause()
-
-        mock_apply.assert_called_once()
-        applied_arg = mock_apply.call_args[0][0]
-        assert applied_arg.get("foo") == "bar"
-        assert applied_arg.get("component_vars", {}).get("baz") == "qux"
-
-
-@pytest.mark.asyncio
-async def test_skin_confirm_writes_config():
-    """S03: on_confirm("dark") persists display.skin."""
-    app = _make_app()
-    async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause()
-        overlay = app.query_one(SkinPickerOverlay)
-        with (
-            patch("hermes_cli.tui.overlays._cfg_read_raw_config", return_value={}) as _,
-            patch("hermes_cli.tui.overlays._cfg_set_nested") as mock_set,
-            patch("hermes_cli.tui.overlays._cfg_save_config") as mock_save,
-        ):
-            overlay.on_confirm("dark")
-
-        mock_set.assert_called_once()
-        assert mock_set.call_args[0][1] == "display.skin"
-        assert mock_set.call_args[0][2] == "dark"
-        mock_save.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_skin_confirm_dismisses():
-    """S04: on_confirm removes --visible."""
-    app = _make_app()
-    async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause()
-        overlay = app.query_one(SkinPickerOverlay)
-        overlay.add_class("--visible")
-        await pilot.pause()
-        with (
-            patch("hermes_cli.tui.overlays._cfg_read_raw_config", return_value={}),
-            patch("hermes_cli.tui.overlays._cfg_set_nested"),
-            patch("hermes_cli.tui.overlays._cfg_save_config"),
-        ):
-            overlay.on_confirm("dark")
-        await pilot.pause()
-        assert not overlay.has_class("--visible")
-
-
-@pytest.mark.asyncio
-async def test_skin_on_highlight_via_base():
-    """S05: on_option_list_option_highlighted routes to on_highlight."""
-    app = _make_app()
-    async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause()
-        overlay = app.query_one(SkinPickerOverlay)
-        overlay.choices = [("dark", "dark"), ("light", "light")]
-        overlay.current_value = "dark"
-        overlay._render_options()
-        await pilot.pause()
-
-        highlight_calls: list[str] = []
-        with patch.object(overlay, "on_highlight", side_effect=highlight_calls.append):
-            ol = overlay.query_one("#spo-list", OptionList)
-            opt = ol.get_option("spo-opt-light")
-            event = OptionList.OptionHighlighted(ol, opt, 1)
-            overlay.on_option_list_option_highlighted(event)
-            await pilot.pause()
-
-        assert "light" in highlight_calls
-
-
-@pytest.mark.asyncio
-async def test_skin_init_sets_original_vars():
-    """S06: __init__ sets _original_skin, _original_css_vars, _original_component_vars."""
-    app = _make_app()
-    async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause()
-        overlay = app.query_one(SkinPickerOverlay)
-        assert overlay._original_skin == "default"
-        assert overlay._original_css_vars == {}
-        assert overlay._original_component_vars == {}
 
 
 # ---------------------------------------------------------------------------
@@ -615,12 +508,12 @@ async def test_mpo_list_id_stable():
 
 @pytest.mark.asyncio
 async def test_spo_list_id_stable():
-    """R06: SkinPickerOverlay still has #spo-list."""
+    """R06: SkinPickerOverlay (TabbedSkinOverlay) has #tso-skin-list on Tab 1."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         overlay = app.query_one(SkinPickerOverlay)
-        ol = overlay.query_one("#spo-list", OptionList)
+        ol = overlay.query_one("#tso-skin-list", OptionList)
         assert ol is not None
 
 
@@ -637,8 +530,9 @@ async def test_focus_call_sites_still_valid():
         mpo = app.query_one(ModelPickerOverlay)
         mpo.query_one("#mpo-list")  # should not raise
 
+        # SkinPickerOverlay is now TabbedSkinOverlay; _app_commands uses _show_tab(0)
         spo = app.query_one(SkinPickerOverlay)
-        spo.query_one("#spo-list")  # should not raise
+        spo._show_tab(0)  # should not raise
 
 
 @pytest.mark.asyncio

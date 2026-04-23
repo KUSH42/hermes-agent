@@ -518,7 +518,7 @@ class StatusBar(PulseMixin, Widget):
         # S1-D: suppress session label when only one session exists
         session_label = str(getattr(app, "session_label", "") or "")
         session_count = _safe_int(getattr(app, "session_count", 1), 1)
-        if session_count <= 1 and _mockish(app):
+        if session_count <= 1:
             session_label = ""
         # Abbreviate session label only in compact+narrow (< 70 cols avoids 80-col terminals)
         if compact and width < 70 and len(session_label) > 6:
@@ -613,8 +613,7 @@ class StatusBar(PulseMixin, Widget):
         # S1-B: Active-file breadcrumb \u2014 only when block is scrolled off viewport
         active_file = str(getattr(app, "status_active_file", ""))
         offscreen = _safe_bool(getattr(app, "status_active_file_offscreen", False))
-        show_breadcrumb = offscreen or not _mockish(app)
-        if active_file and not _mockish(active_file) and show_breadcrumb and width >= 60:
+        if active_file and offscreen and width >= 60:
             file_glyph = _nf_or_text("\uf040", "editing", app=app)
             t.append(f"  {file_glyph} ", style="dim")
             max_path = max(10, width // 4)

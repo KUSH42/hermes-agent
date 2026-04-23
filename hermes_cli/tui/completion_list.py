@@ -42,10 +42,12 @@ _SHIMMER_LEN   = len(_SHIMMER_CHARS)
 # Pre-built status rows for empty states (avoids allocation in hot render path)
 _NO_MATCH_PREFIX = "  no results"
 _EMPTY_REASON_TEXT: dict[str, str] = {
-    "": "  no results",
-    "path_not_found": "  path not found",
-    "no_slash_match": "  no matching command",
-    "too_short": "  keep typing…",
+    "":               "  no results",
+    "too_short":      "  type 2+ chars to match",
+    "no_results":     "  no results",
+    "no_slash_match": "  no match — /help for list",
+    "path_not_found": "  no such path — try @ alone",
+    "loading":        "  loading…",
 }
 _SEARCHING_PLAIN = Text("  searching…", style="dim italic", overflow="ellipsis", no_wrap=True)
 

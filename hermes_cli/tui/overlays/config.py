@@ -555,6 +555,10 @@ class ConfigOverlay(Widget):
         try:
             from hermes_cli.tui.input_widget import HermesInput
             inp = self.app.query_one(HermesInput)
+            try:
+                inp.save_draft_stash()
+            except Exception:
+                pass
             inp.value = f"/model {value}"
             inp.action_submit()
         except Exception:
@@ -624,6 +628,10 @@ class ConfigOverlay(Widget):
         try:
             from hermes_cli.tui.input_widget import HermesInput
             inp = self.app.query_one(HermesInput)
+            try:
+                inp.save_draft_stash()
+            except Exception:
+                pass
             inp.value = f"/reasoning {level}"
             inp.action_submit()
         except Exception:

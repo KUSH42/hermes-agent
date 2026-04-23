@@ -17,6 +17,7 @@ from hermes_cli.file_drop import detect_file_drop_text, parse_dragged_file_paste
 from textual import events
 from textual.binding import Binding
 from textual.message import Message
+from textual.reactive import reactive
 from textual.widgets import TextArea
 
 from hermes_cli.tui.constants import ICON_COPY
@@ -123,6 +124,11 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         from hermes_cli.tui.path_search import PathCandidate
         self._raw_candidates: list[PathCandidate] = []
         self._path_debounce_timer: "object | None" = None
+        self._draft_stash: str | None = None
+        self._write_fail_warned: bool = False
+
+    # --- Error state reactive ---
+    error_state: reactive[str | None] = reactive(None)
 
     def on_mount(self) -> None:
         self._load_history()
@@ -148,6 +154,41 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         if self._path_debounce_timer is not None:
             self._path_debounce_timer.stop()
             self._path_debounce_timer = None
+
+    # --- Placeholder management ---
+
+    def _refresh_placeholder(self) -> None:
+        """Single source of truth for placeholder text.
+
+        Priority (highest→lowest): locked/disabled > error_state > idle.
+        """
+        if self.disabled:
+            self.placeholder = "running…  Ctrl+C to cancel"
+        elif self.error_state:
+            snippet = self.error_state[:40] + ("…" if len(self.error_state) > 40 else "")
+            self.placeholder = f"⚠ {snippet}  ·  Esc to clear"
+        else:
+            self.placeholder = self._idle_placeholder
+
+    def watch_error_state(self, value: str | None) -> None:
+        self._refresh_placeholder()
+
+    def _set_input_locked(self, locked: bool) -> None:
+        """Sync visual locked state (class + placeholder). Does NOT set self.disabled."""
+        if not getattr(self, "is_mounted", False):
+            return
+        self._refresh_placeholder()
+        if locked:
+            self.add_class("--locked")
+        else:
+            self.remove_class("--locked")
+
+    # --- Draft stash ---
+
+    def save_draft_stash(self) -> None:
+        """Save current text as draft stash when at history_idx == -1 (live draft)."""
+        if self._history_idx == -1:
+            self._draft_stash = self.text
 
     # --- Property bridges (old API → TextArea API) ---
 
@@ -246,6 +287,16 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                         return
                 except Exception:
                     pass
+            # B-2: Enter accepts highlighted completion when overlay is visible
+            if self._completion_overlay_visible():
+                try:
+                    from hermes_cli.tui.completion_list import VirtualCompletionList
+                    clist = self.screen.query_one(VirtualCompletionList)
+                    if clist.highlighted >= 0:
+                        self.action_accept_autocomplete()
+                        return
+                except Exception:
+                    pass
             self.action_submit()
             return
 
@@ -262,6 +313,9 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         if key == "escape":
             event.stop()
             event.prevent_default()
+            if self.error_state is not None and not self.text.strip():
+                self.error_state = None
+                return
             if getattr(self, "_rev_mode", False):
                 self._exit_rev_search()
                 return
@@ -402,6 +456,10 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             idx = self._history_idx
             if not (0 <= idx < len(hist) and self.text == hist[idx]):
                 self._history_idx = -1
+        # Invalidate draft stash if user typed something different from it
+        if self._draft_stash is not None and self._history_idx == -1:
+            if self.text != self._draft_stash:
+                self._draft_stash = None
         if not self._handling_file_drop:
             raw_text = self.text.strip()
             if raw_text and "\n" not in raw_text:
@@ -466,7 +524,8 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         if self.disabled or not self._history:
             return
         if self._history_idx == -1:
-            self._history_draft = self.value
+            if self._draft_stash is None:
+                self._history_draft = self.value
             self._history_idx = len(self._history) - 1
         elif self._history_idx > 0:
             self._history_idx -= 1
@@ -488,7 +547,11 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             self._history_load(self._history[self._history_idx])
         else:
             self._history_idx = -1
-            self._history_load(self._history_draft)
+            if self._draft_stash is not None:
+                self._history_load(self._draft_stash)
+                self._draft_stash = None
+            else:
+                self._history_load(self._history_draft)
 
     # --- Convenience ---
 
@@ -506,11 +569,12 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
     # --- Bash mode UI sync ---
 
     def _sync_bash_mode_ui(self, is_bash: bool) -> None:
-        """Sync placeholder, chevron glyph, and hint to bash-mode state."""
+        """Sync placeholder, chevron glyph, hint, and legend to bash-mode state."""
         if is_bash:
+            # Override idle placeholder temporarily for bash mode
             self.placeholder = "! shell mode  ·  Enter runs  ·  Ctrl+C clear"
         else:
-            self.placeholder = self._idle_placeholder
+            self._refresh_placeholder()
         try:
             from textual.widgets import Label
             self.query_one("#input-chevron", Label).update("$ " if is_bash else self._chevron_label)
@@ -521,6 +585,15 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                 self.app._flash_hint("bash  ·  Enter: run  ·  Ctrl+C clear", 30.0)
             else:
                 self.app.feedback.cancel("hint-bar")
+        except Exception:
+            pass
+        try:
+            from hermes_cli.tui.widgets.input_legend_bar import InputLegendBar
+            legend = self.app.query_one("#input-legend-bar", InputLegendBar)
+            if is_bash:
+                legend.show_legend("bash")
+            else:
+                legend.hide_legend()
         except Exception:
             pass
 

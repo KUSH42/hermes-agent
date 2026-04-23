@@ -57,6 +57,11 @@ class _PathCompletionMixin:
             self.app._completion_hint = "Tab accept  ·  ↑↓ navigate  ·  Esc dismiss"  # type: ignore[attr-defined]
         except Exception:
             pass
+        try:
+            from hermes_cli.tui.widgets.input_legend_bar import InputLegendBar
+            self.app.query_one("#input-legend-bar", InputLegendBar).show_legend("completion")  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
     def _hide_completion_overlay(self) -> None:
         if self._path_debounce_timer is not None:
@@ -71,6 +76,11 @@ class _PathCompletionMixin:
         overlay.remove_class("--slash-only")
         try:
             self.app._completion_hint = ""  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        try:
+            from hermes_cli.tui.widgets.input_legend_bar import InputLegendBar
+            self.app.query_one("#input-legend-bar", InputLegendBar).hide_legend()  # type: ignore[attr-defined]
         except Exception:
             pass
 

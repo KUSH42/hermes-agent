@@ -421,6 +421,13 @@ class WatchersService(AppService):
             self.app.hooks.fire("on_error_set", error=value)
         else:
             self.app.hooks.fire("on_error_clear")
+        # E-1: propagate error text to HermesInput error_state
+        try:
+            from hermes_cli.tui.input.widget import HermesInput
+            inp = self.app.query_one("#input-area", HermesInput)
+            inp.error_state = value if value else None
+        except Exception:
+            pass
 
     def auto_clear_status_error(self, expected: str) -> None:
         """Clear status_error if it still matches *expected*."""
@@ -448,8 +455,16 @@ class WatchersService(AppService):
             inp = self.app.query_one("#input-area")
             if value is not None:
                 inp.disabled = True
+                try:
+                    inp._set_input_locked(True)
+                except Exception:
+                    pass
             elif not self.app.agent_running and not self.app.command_running:
                 inp.disabled = False
+                try:
+                    inp._set_input_locked(False)
+                except Exception:
+                    pass
         except NoMatches:
             pass
         if value is None:

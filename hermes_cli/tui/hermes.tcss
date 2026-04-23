@@ -282,6 +282,15 @@ HermesInput.--bash-mode { border: tall $chevron-shell 40%; }
 HermesInput.--bash-mode:focus { border: tall $chevron-shell 70%; }
 HermesApp.density-compact HermesInput.--bash-mode:focus { border: none; }
 
+HermesInput.--locked {
+    border: tall $panel-lighten-1 30%;
+    color: $text-muted 60%;
+}
+HermesInput.--locked:focus {
+    border: tall $panel-lighten-1 40%;
+}
+HermesApp.density-compact InputLegendBar { display: none !important; }
+
 #spinner-overlay {
     display: none;
     height: 1;

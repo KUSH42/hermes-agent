@@ -633,6 +633,8 @@ class HermesApp(App):
             # resolves against Screen (not a child ToolPanel).
             from hermes_cli.tui.overlays import ToolPanelHelpOverlay as _TPHO
             yield _TPHO(id="tool-panel-help-overlay")
+            from hermes_cli.tui.widgets.input_legend_bar import InputLegendBar as _ILB
+            yield _ILB(id="input-legend-bar")
             with Horizontal(id="input-row"):
                 yield Static("❯ ", id="input-chevron")
                 yield _HI(id="input-area")

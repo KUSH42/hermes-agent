@@ -59,7 +59,27 @@ class _HistoryMixin:
             entry_text,
             mode="a",
             mkdir_parents=True,
+            on_error=self._on_history_write_error,  # type: ignore[arg-type]
+            on_done=lambda _n: setattr(self, "_write_fail_warned", False),
         )
+
+    def _on_history_write_error(self, exc: Exception) -> None:
+        """Called when history file write fails. Shows a toast (once per session)."""
+        if getattr(self, "_write_fail_warned", False):
+            return
+        self._write_fail_warned = True
+        import logging
+        logging.getLogger(__name__).error("history write failed", exc_info=True)
+        try:
+            from hermes_cli.tui.services.feedback import WARN
+            self.app.feedback.flash(  # type: ignore[attr-defined]
+                "hint-bar",
+                "history write failed — recent entries won't persist",
+                duration=6.0,
+                priority=WARN,
+            )
+        except Exception:
+            pass
 
     def set_slash_commands(self, commands: list[str]) -> None:
         """Set the available slash commands for autocomplete."""
@@ -106,6 +126,11 @@ class _HistoryMixin:
                     "Ctrl+G abort · Esc accept · ↑↓ cycle",
                     duration=9999,
                 )
+            except Exception:
+                pass
+            try:
+                from hermes_cli.tui.widgets.input_legend_bar import InputLegendBar
+                self.app.query_one("#input-legend-bar", InputLegendBar).show_legend("rev_search")  # type: ignore[attr-defined]
             except Exception:
                 pass
         query = self._rev_query or current
@@ -162,7 +187,16 @@ class _HistoryMixin:
             pass
         # Restore idle placeholder
         try:
-            self.placeholder = self._idle_placeholder  # type: ignore[attr-defined]
+            self._refresh_placeholder()  # type: ignore[attr-defined]
+        except Exception:
+            try:
+                self.placeholder = self._idle_placeholder  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        # Hide rev-search legend
+        try:
+            from hermes_cli.tui.widgets.input_legend_bar import InputLegendBar
+            self.app.query_one("#input-legend-bar", InputLegendBar).hide_legend()  # type: ignore[attr-defined]
         except Exception:
             pass
 

@@ -21,7 +21,9 @@ metadata:
 
 ### HermesApp mixin map + services layer (R4)
 
-**R4 architecture (complete, all 4 phases merged)**: All 10 `_app_*.py` mixin files deleted. `HermesApp(App)` — no mixin bases. Logic lives in `hermes_cli/tui/services/`. Forwarder methods (`watch_X`, `on_key`, `_handle_tui_command`, etc.) are inlined directly at the bottom of `HermesApp` in `app.py`.
+**R4 architecture (complete, all 4 phases merged)**: All 10 `_app_*.py` mixin files deleted. `HermesApp(App)` — no mixin bases. Logic lives in `hermes_cli/tui/services/`. Forwarder methods (`watch_X`, `on_key`, `_handle_tui_command`, etc.) are inlined directly at the bottom of `HermesApp` in `app.py` (2654 lines).
+
+**R5 DEPRECATED stub cleanup (2026-04-23, commit 864ac9fe)**: 11 zero-external-caller DEPRECATED forwarder stubs deleted from app.py — `_cell_width`, `_input_bar_width`, `_next_spinner_frame`, `_helix_width`, `_helix_spinner_frame`, `_build_helix_frames` (spinner group); `_mount_minimap_default` (browse); `_append_attached_images`, `_insert_link_tokens`, `_drop_path_display`, `_handle_file_drop_inner` (watchers). **64 DEPRECATED markers remain** — all have live external callers in services/ or tests/; do not delete without migrating callers first.
 
 Remaining `_app_*.py` files (NOT mixins — keep them):
 - `_app_constants.py` — `KNOWN_SLASH_COMMANDS` and other module-level constants
@@ -76,7 +78,7 @@ class HermesApp(App):
 | Original file | Split into |
 |---|---|
 | `app.py` | `hermes_cli/tui/services/` — all 10 `_app_*.py` mixin files deleted in R4; logic moved to service classes |
-| `drawbraille_overlay.py` | `anim_engines.py` (engines) + core |
+| `drawille_overlay.py` | `anim_engines.py` (engines) + core |
 | `tool_blocks.py` | `tool_blocks/` subpackage: `_shared.py`, `_header.py`, `_block.py`, `_streaming.py` |
 | `widgets/renderers.py` | `code_blocks.py`, `inline_media.py`, `prose.py` (renderers.py kept as re-export shim) |
 | `input_widget.py` (908L) | `input/` subpackage: `_constants.py`, `_history.py`, `_path_completion.py`, `_autocomplete.py`, `widget.py` |
@@ -120,6 +122,245 @@ Call sites for streaming path: `tool_panel.py`, `execute_code_block.py`, `tool_b
 
 ## Recent changes
 
+### 2026-04-22 — RX2 I/O boundary enforcement (merged feat/textual-migration)
+
+New module `hermes_cli/tui/io_boundary.py` + 63 tests in `tests/tui/test_io_boundary.py`.
+
+**Purpose:** All TUI subprocess calls and hot-path file I/O now route through typed helpers that dispatch off the event loop via `run_worker(thread=True, group="io_boundary")`. A pytest boundary scanner enforces no new violations.
+
+**Public API:**
+```python
+from hermes_cli.tui.io_boundary import (
+    safe_run, safe_open_url, safe_edit_cmd,
+    safe_read_file, safe_write_file, cancel_all, scan_sync_io,
+)
+```
+
+- `safe_run(caller, cmd, *, timeout, on_success=None, on_error=None, on_timeout=None, env=None, cwd=None, input_bytes=None, capture=True) -> Worker | None` — dispatches subprocess off event loop. **Must be called from the event loop** — validation-failure `on_error` fires synchronously on calling thread. Worker cancellation does NOT kill the subprocess. `on_error(exc, stderr: str)` is 2-arg; all other helpers use 1-arg `on_error(exc)`.
+- `safe_open_url(caller, url, *, on_error=None)` — validates URL (allowlist: http/https/file/mailto; rejects javascript:/data:), resolves platform opener, calls `safe_run` internally. Adapts 1-arg `on_error` to 2-arg `safe_run` contract.
+- `safe_edit_cmd(caller, cmd_argv, path, *, line=None, on_exit=None, on_error=None)` — terminal editor via `App.suspend()`. GUI editors fall through to `safe_open_url`. `_suspend_busy` flag prevents collision with TTE effects.
+- `safe_read_file` / `safe_write_file` — 1-arg `on_error(exc)`, no stderr concept.
+- `cancel_all(app)` — wired into `HermesApp.on_unmount`; cancels all `"io_boundary"` group workers.
+- `scan_sync_io(paths: Iterable[Path]) -> list[tuple[Path, int, str]]` — AST scanner; returns `(file, lineno, call_name)` for unexempted violations.
+
+**`_safe_callback(app, cb, *args)` contract:**
+```python
+if cb is None: return
+try:
+    app.call_from_thread(cb, *args)
+except RuntimeError:
+    raise  # called from event loop = programming bug; do not swallow
+except Exception:
+    pass   # broken callback logic; silently drop
+```
+Only call from inside a worker thread. Callbacks execute on the event loop — call widget methods directly, never wrap in another `call_from_thread`.
+
+**Callback rules:**
+1. `on_success(stdout, stderr, returncode)` / `on_error(exc, stderr)` / `on_timeout(elapsed_s)` — all fire on event loop via `_safe_callback`.
+2. Every callback that touches `self.*` must start with `if not self.is_mounted: return` (worker path only — sync validation-failure paths don't need this).
+3. `get_current_worker().is_cancelled` — checked before subprocess.run AND before dispatching callbacks; cancelled workers drop callbacks silently.
+
+**`_suspend_busy` flag:** `HermesApp._suspend_busy: bool = False` added in `__init__` after `self.hooks`. `safe_edit_cmd` checks it and fires `on_error(SuspendBusyError)` if set. `IOService.play_effects_async` also guards it (check before try, set as first line inside try, reset in finally).
+
+**Boundary enforcement:**
+- `# allow-sync-io: <reason>` (≥3 char reason) exempts a call-site from the scanner. Window: `[lineno-2, lineno+2]`.
+- `T-BOUND-02` (`test_no_sync_io`) hard-fails on any unexempted `subprocess`/`open()` in `hermes_cli/tui/**/*.py`. Phase C removed the `skipif` — it's always-on.
+- Scanner false-negatives: aliased imports (`import subprocess as _sp`) and `path_var.open(...)` (non-inline Path) are NOT caught. Pre-step 0 covered these with explicit exemption comments.
+
+**Migrated call sites (Phase B, 9 steps):**
+- `math_renderer.py` — `render_mermaid` split into `_build_mermaid_cmd(code) → (cmd, mmd_tmp, png_tmp) | None`; `code_blocks._try_render_mermaid_async` now uses `safe_run`; bare `threading.Thread` deleted.
+- `tool_panel.py` — `FooterPane.on_button_pressed`, `action_open_primary` (both branches), `action_open_url` → `safe_open_url` / `safe_edit_cmd`.
+- `widgets/status_bar.py` — `SourcesBar.on_button_pressed` → `safe_open_url`.
+- `services/context_menu.py` — `open_external_url` thread wrapper deleted; `open_path_action` → `safe_open_url` with optimistic `flash_success()` + `_err_fired` guard for sync-validation-failure edge case.
+- `services/theme.py` — xclip fallback in `copy_text_with_hint` → `safe_run`.
+- `input/widget.py` — middle-click xclip → `safe_run`; callback guards `is_mounted and out`.
+- `input/_history.py` — per-submit `open()` → `safe_write_file(mode="a", mkdir_parents=True)`.
+- `desktop_notify.py` — all 4 `subprocess.run` + daemon thread (`_run()` + `threading.Thread`) deleted; `notify(title, body, *, caller, sound=..., sound_name=...)` now calls helpers directly via `safe_run`; `_maybe_notify` in `app.py` passes `caller=self`.
+
+**Permanent exemptions (pre-step 0 — `# allow-sync-io:` comments added):**
+- `services/bash_service.py` — long-lived Popen in `@work(thread=True, group='bash')`
+- `media_player.py` — long-lived mpv handle, managed lifecycle
+- `headless_session.py` — init-time, one-shot, no event loop running
+- `workspace_tracker.py` — git calls already in `run_worker` worker context
+- `session_manager.py:62` — flock-locked write, atomicity required
+- `session_manager.py _verify_cmdline` — dead code (`get_orphans()` has no callers)
+- `_app_utils.py:33` — module-level lag logger, <100 bytes, negligible
+- Various `PILImage.open()` — already in worker threads
+
+**Gotchas:**
+- `safe_run` must be called from the event loop — validation-failure `on_error` fires synchronously on the calling thread.
+- `safe_open_url` optimistic success: call `flash_success()` after `safe_open_url` returns; if URL validation fails synchronously, `on_error` fires first then `flash_success()` overwrites it. Use `_err_fired` flag if the overwrite is unacceptable.
+- `desktop_notify.notify()` now requires `caller` kwarg — any new call site must pass `self` or `self.app`.
+- `_build_mermaid_cmd` returns `None` only when BOTH mmdc AND npx are unavailable.
+- Scanner does not catch aliased subprocess imports (`import subprocess as _sp`) — verify manually with `grep -rn "import subprocess as\|_sp\."`.
+
+### 2026-04-23 — InterruptOverlay hardening (merged feat/textual-migration)
+
+8 phases across 5 files, 46 tests in `tests/tui/test_interrupt_hardening.py`.
+
+**Phase A — Dismiss path unification (F-1/F-3):**
+- Deleted 4 bypass blocks from `keys.py` (`dispatch_key`) that wrote directly to `state.response_queue` for ctrl+c (approval/clarify → `"deny"`; sudo/secret → `""`) and escape (approval/clarify → `None`; sudo/secret → `""`).
+- Replaced with single overlay dispatch: `ov = self._get_interrupt_overlay(); if ov and ov.has_class("--visible"): ov.dismiss_current("__cancel__")`.
+- `_get_interrupt_overlay()` added to `KeyDispatchService` (mirrors the one already on `WatchersService`).
+- All dismiss paths now resolve through the adapter's `on_resolve` closure — canonical values: APPROVAL cancel=`None`/timeout=`"deny"`, SUDO/SECRET cancel=`""`/timeout=`None`, UNDO cancel=`None`/timeout=`"cancel"`.
+
+**Phase B — Stale deadline fix (C-1):**
+- `InterruptPayload` gets `_remaining_on_preempt: int = field(default=-1, init=False, repr=False)` — sentinel `-1` = fresh; `≥0` = preempted snapshot.
+- `present()` preempt branch: stamps `prior._remaining_on_preempt = max(0, prior.remaining)` and `prior.deadline = 0` before teardown.
+- `_activate`: when `_remaining_on_preempt >= 0`, uses `max(1, _remaining_on_preempt)` as effective seconds instead of full `countdown_s`. Resets sentinel to `-1` after consuming.
+- `_adopt_state_deadline` in `_adapters.py` now also sets `p.countdown_s = float(state.remaining)` so the bar ratio reflects remaining, not original duration.
+
+**Phase C — Keyboard accelerators (F-2):**
+- `on_key` dispatch for UNDO/CLARIFY/APPROVAL: single alpha char matches `choice.id` or `choice.id[:1]`.
+- `_choices_from_state` in `_adapters.py` now asserts no first-char collisions (debug-only).
+- `_render_undo` hint updated to show "Press y/n or use Arrow + Enter".
+
+**Phase D — Replace flash + Enter guard (G-1):**
+- `_enter_blocked_until: float = 0.0` in `__init__`; checked at top of `confirm_choice`.
+- Same-kind replace path: resets `payload.selected=0`, stamps `_enter_blocked_until = now+0.25`, calls `_flash_replace_border()`.
+- `_flash_replace_border`: adds `--flash-replace` class, removes after 300ms via `set_timer`.
+- CSS: `InterruptOverlay.--flash-replace { border: tall $warning 80%; }` declared AFTER urgency rules (same specificity, last-declared wins).
+- `_teardown_current` resets `_enter_blocked_until = 0.0`.
+
+**Phase E — Queue safety (C-2/C-3):**
+- `_MAX_QUEUE_DEPTH = 8`; oldest dropped (with `logger.warning`) when cap hit.
+- `action_drain_queue`: resolves all queued payloads with `""` (timeout_value), then calls `dismiss_current("__cancel__")` for the active one.
+- `Binding("ctrl+shift+escape", "drain_queue", ...)` — best-effort (Kitty/WezTerm only; other terminals silently ignore).
+- `border_subtitle`: `"+N queued"` when queue non-empty, else `payload.subtitle`.
+
+**Phase F — Button visual sync (A-1):**
+- `_refresh_base_row()` and `_refresh_strategy_row()` helpers update button labels and `--selected-base`/`--selected-strategy` classes.
+- Called from `on_button_pressed` after `ns-base-*` and `mg-*` clicks.
+
+**Phase G — Approval diff focus + urgency (B-1/D-1/A-2/E-1):**
+- Fixed dead CSS: renamed `#approval-diff-panel` rule to `#approval-diff` (widget was mounted with id `"approval-diff"`, no `-panel` suffix).
+- Diff focus ring: `InterruptOverlay #approval-diff:focus { border: tall $accent 80%; }`.
+- `--diff-hint-visible` class on overlay controls hint label visibility (no CSS `+` sibling — Textual 8.x doesn't support it).
+- `_populate_approval_diff`: adds `--scrollable` + `self.add_class("--diff-hint-visible")` when `total_lines > 16`.
+- `_teardown_current`: `self.remove_class("--visible", "--diff-hint-visible")`.
+- `make_secret_payload` urgency: `"info"` → `"warn"`.
+- Double-Enter guard for `"always"`/`"session"`: `_confirm_destructive_id` sentinel + 1.5s timer; second Enter within window resolves.
+- `_teardown_current` clears `_confirm_destructive_id` AFTER `self._current_payload = None` (so `_clear_destructive_confirm` inner guard skips stale countdown refresh).
+- `_tick_countdown`: adds `--urgency-danger` at ≤3s remaining.
+
+**Phase H — Focus return (D-2):**
+- `_post_interrupt_focus()` in `WatchersService`: focuses `#input-area` when not agent_running, else `self.app.screen.focus()` (NOT `app.focus()` — doesn't exist in Textual 8.x).
+- Wired into `on_clarify_state`, `on_approval_state`, `on_sudo_state`, `on_secret_state` None branches.
+- `on_undo_state(None)`: supplements existing `inp.disabled = False` — does NOT replace it.
+
+**Key gotchas:**
+- `app.focus()` does not exist in Textual 8.x — use `app.screen.focus()`.
+- Textual 8.x has no CSS `+` or `~` sibling combinators — use Python class toggles instead.
+- `_confirm_destructive_id` cleared AFTER `_current_payload = None` in `_teardown_current`; order is load-bearing.
+- `_get_interrupt_overlay` now lives on BOTH `WatchersService` and `KeyDispatchService`.
+- `--flash-replace` CSS must be declared after urgency classes or it loses the cascade.
+
+### 2026-04-23 — R10 Header-only collapse: explicit exit code in collapsed ToolHeader
+
+**4 changes (no new state axis — binary `collapsed: bool` unchanged):**
+
+- `ToolHeader.__init__`: `self._exit_code: int | None = None`
+- `_render_v4`: after `stderrwarn` try-except block, before `tail_budget` calc — appends `exit` segment when `is_collapsed and _is_complete and _exit_code is not None`
+- `tool_panel.set_result_summary`: `header._exit_code = getattr(summary, "exit_code", None)` after `header._error_kind`
+- `_DROP_ORDER`: `"exit"` inserted between `"stderrwarn"` and `"chevron"` — stderrwarn drops first in narrow terminals
+
+**Precedence:**
+
+| `_primary_hero` | `exit_code` | Renders |
+|---|---|---|
+| set | 0 | hero only (`ok` suppressed) |
+| set | non-zero | hero AND `exit N` |
+| None | 0 | `ok` (dim green) |
+| None | non-zero | `exit N` (bold red) |
+| any | None | nothing new |
+
+**`exit_code` population:** `ResultSummaryV4.exit_code: int | None` (tool_result_parse.py:207). Only shell-category parsers populate it; non-shell tools → `None` → no segment rendered. By design.
+
+**Tests:** `tests/tui/test_r10_header_only.py` — 18 tests, all pure-unit via `_H` helper class (no `run_test`).
+
+**Gotchas:**
+- Exit segment is appended OUTSIDE the stderrwarn try-except — exceptions in stderrwarn cannot suppress exit code
+- `_primary_hero` truthiness check: falsy (None or empty string) = no hero; whitespace-only won't occur (parser-controlled)
+- ChildPanel inherits this automatically (extends ToolPanel, shares `_render_v4`)
+- SubAgentPanel unaffected — different widget, no POSIX exit code concept
+
+### 2026-04-23 — Header signal hardening (B-1, C-3, F-1, F-2, F-3)
+
+**5 fixes in `_header.py` and `tool_panel.py`. No new state axes.**
+
+**`_DROP_ORDER`** (now): `["linecount", "duration", "chip", "hero", "diff", "stderrwarn", "exit", "chevron", "flash"]`
+- Flash moves from index 0 to last — user-action feedback (✓ Copied) survives until the very last.
+- `"duration"` added at index 1 — drops before chevron/flash under pressure.
+
+**B-1 — Chevron slot always filled:**
+```python
+if self._has_affordances:
+    tail_segments.append(("chevron", Text("  ▸" if is_collapsed else "  ▾", style="dim")))
+else:
+    # B-1: non-interactive signal — always fill chevron slot
+    tail_segments.append(("chevron", Text("  ·", style="dim #444444")))
+```
+
+**C-3 — Category icon preserved on error:** Removed `icon_str = _ek_icon` substitution block (~lines 193–201). Error kind glyph still shows as hero prefix; category icon now stays in icon column.
+
+**F-1 — Flash narrow-clip:** When `self.size.width < 80`, flash `_msg` capped to 14 chars + "…" before `"  ✓ "` prefix. Uses `self.size.width` inline (NOT `term_w` — that's defined after the if/else block).
+
+**F-2 — Duration single append point:**
+```python
+_pending_dur: str | None = None
+if self._spinner_char is not None:
+    ...
+    if self._duration: _pending_dur = self._duration
+else:
+    ...
+    if self._duration: _pending_dur = self._duration
+# F-2: single append outside both branches
+if _pending_dur:
+    tail_segments.append(("duration", Text(f"  {_pending_dur}", style="dim")))
+```
+`_DROP_ORDER` controls trim priority (duration index 1 = drops early); render position in the list doesn't matter.
+
+**F-3A — Gutter color cascade (`_refresh_gutter_color`):**
+```python
+self._focused_gutter_color = (
+    css.get("accent-interactive") or css.get("primary") or _GUTTER_FALLBACK
+)
+```
+Was: `css.get("rule-accent-color", _GUTTER_FALLBACK)`.
+
+**F-3B — Accent chip dynamic color (`tool_panel.py`):**
+- `_TONE_STYLES["accent"] = ""` (sentinel — not `"bold cyan"`).
+- `FooterPane._render_footer`: when `tone_style` empty + `chip.tone == "accent"`, resolves `accent-interactive` → `primary` → `#5f87d7`.
+
+**Tests:** 20 pure-unit tests in `tests/tui/test_header_signal_hardening.py` via `_H` helper (no `run_test`).
+
+**Key gotchas:**
+- `Widget.app` is read-only ContextVar — `_refresh_gutter_color` tests use `patch.object(type(h), "app", new_callable=PropertyMock, return_value=mock_app)`.
+- `_DROP_ORDER` governs trim priority, NOT render position — duration appended last but drops before chevron.
+- Flash narrow-clip uses `self.size.width` inline; `term_w` not yet defined at that point in `_render_v4`.
+
+---
+
+### 2026-04-23 — Startup banner TTE: correct positioning via pre-mounted StartupBannerWidget
+
+**Final correct architecture** (cli.py + `OutputPanel.compose()`):
+
+- `OutputPanel.compose()` pre-yields `StartupBannerWidget(id="startup-banner")` as its first child — always in DOM, always queryable.
+- `_play_tte_in_output_panel` generates TTE frames and for each frame calls `_splice_startup_banner_frame(template, frame)` — this splices the animated hero into the exact left-column pixel position of the full banner (hero + tools + skills), rendered as a single Rich `Text`. The frame is applied via `app.call_from_thread(_drain_latest)` which does `query_one(StartupBannerWidget).set_frame(frame)`.
+- `_build_startup_banner_template(plain_hero)` pre-renders the full banner with a placeholder block (`████`) in the hero slot and records its exact (row, col) within the Text — used to splice each TTE frame in-place.
+- When TTE finishes, `_set_tui_startup_banner_static()` writes the final static banner into the same widget.
+- `_ensure_tui_startup_banner_widget()` deleted — it was broken by design (see bug below) and is no longer needed.
+
+**Bug that caused all previous failures:** `_ensure_tui_startup_banner_widget()` called `app.call_from_thread(_ensure)` then immediately read `result["widget"]` — before `_ensure` had run on the event loop. `call_from_thread` uses `call_soon_threadsafe` and returns immediately; the dict is always read while it's still `None`. The fix is pre-mounting, not threading synchronization.
+
+**Gotcha:** `panel.mount(widget, ...)` called from a sync closure inside `call_from_thread` also silently fails — it returns an `AwaitMount` that is never awaited. **Never rely on runtime mounting from `call_from_thread`; pre-mount in `compose()` instead.**
+
+**Gotcha:** `call_from_thread(fn)` cannot return a value to the calling thread. If you need a widget reference from the event loop, either pre-mount it (query always works) or use a `threading.Event` + shared dict with explicit `.set()` inside the closure + `.wait()` on the calling side.
+
+**Gotcha:** `overflow-x: visible` is not a valid Textual CSS value — only `auto`, `hidden`, `scroll`. Using it in `DEFAULT_CSS` raises `StylesheetParseError` at app init and breaks all tests that instantiate the app.
+
+---
+
 ### 2026-04-22 — UX fixes (search_files JSON, history idx leak, slash cmds in history, banner overflow, AnimConfigPanel focus trap)
 
 Five targeted fixes on `feat/textual-migration`:
@@ -140,7 +381,7 @@ Five targeted fixes on `feat/textual-migration`:
 - `widgets/__init__.py::StartupBannerWidget` CSS: `width: auto; min-width: 100%; overflow-x: visible` — widget sizes to the logo's intrinsic width and is allowed to overflow past the parent pane. OutputPanel's `overflow-x: hidden` still clips at the panel edge.
 
 **5. WorkspaceOverlay could pop on top of AnimConfigPanel, focus got stranded** — AnimConfigPanel is non-modal (to preserve underlying overlay visuals) but captures focus. Pressing `w` (when input not focused, which is the case when AnimConfigPanel has focus) opened the workspace overlay on top, and any stray focus loss made the panel unreachable.
-- `drawbraille_overlay.py::AnimConfigPanel`: new `on_blur` — while `--visible`, schedules `self.focus()` via `call_after_refresh` so focus can't escape.
+- `drawille_overlay.py::AnimConfigPanel`: new `on_blur` — while `--visible`, schedules `self.focus()` via `call_after_refresh` so focus can't escape.
 - `app.py::action_toggle_workspace`: bails when `_focus_blocking_overlay_visible()` is True.
 - `app.py::_focus_blocking_overlay_visible`: new helper; returns True if `AnimConfigPanel` or `AnimGalleryOverlay` has `--visible`. Central extension point for future focus-trapping overlays.
 
@@ -176,7 +417,7 @@ Phases 1+2+3 landed; Phase 4 (generator block install + VarSpec type flip + pre-
 - `load_dict()` intentionally unchanged — T7 regression guards that `_apply_overrides` is NOT called there (live-preview contract).
 - 5 new `COMPONENT_VAR_DEFAULTS` keys: `tool-glyph-mcp`, `error-timeout`, `error-critical`, `error-auth`, `error-network` — all pre-existing in Python code (`tool_category.py`, `tool_result_parse.py`) and `hermes.tcss` but never in defaults.
 
-**`hermes.tcss` — 14 missing declarations added**: `app-bg`, `cursor-color`, `cursor-selection-bg`, `cursor-placeholder`, `ghost-text-color`, `chevron-base/file/stream/shell/done/error`, `fps-hud-bg`, `scrollbar`, `drawbraille-canvas-color`. All were `$`-referenced in tcss rules but not declared — Textual silently resolved to empty string. Values mirror `COMPONENT_VAR_DEFAULTS`.
+**`hermes.tcss` — 14 missing declarations added**: `app-bg`, `cursor-color`, `cursor-selection-bg`, `cursor-placeholder`, `ghost-text-color`, `chevron-base/file/stream/shell/done/error`, `fps-hud-bg`, `scrollbar`, `drawille-canvas-color`. All were `$`-referenced in tcss rules but not declared — Textual silently resolved to empty string. Values mirror `COMPONENT_VAR_DEFAULTS`.
 
 **Bundled skin YAML dedent bug — CRITICAL latent failure fixed**:
 All 4 bundled skins (`matrix.yaml`, `catppuccin.yaml`, `solarized-dark.yaml`, `tokyo-night.yaml`) had identical dedent bugs at lines 81/83: `plan-now-fg` and `pane-border` fell out of the `component_vars:` block, making `yaml.safe_load` raise `ParserError`. Since `ThemeManager.load()` catches `Exception`, every bundled skin silently fell back to `COMPONENT_VAR_DEFAULTS` — users loading `/skin matrix` never saw the 54-key skin. Now all 4 skins parse, each carrying 59 keys.
@@ -648,7 +889,7 @@ def _do_hide(self):
 
 **`HERMES_DETERMINISTIC` guard** in `activate()` — returns immediately, keeps widget hidden in CI.
 
-**Engine `on_mount` hook** checked with `hasattr(engine, "on_mount")` before call — existing DrawbrailleOverlay convention.
+**Engine `on_mount` hook** checked with `hasattr(engine, "on_mount")` before call — existing DrawilleOverlay convention.
 
 **Migration:**
 - `message_panel.py` old `ThinkingWidget` class body removed; replaced with `from hermes_cli.tui.widgets.thinking import ThinkingWidget  # noqa: F401`
@@ -700,16 +941,16 @@ def _do_hide(self):
 - `_PHASE_CATEGORIES` unchanged — engines slot in via `_ENGINE_META["category"]` automatically; never add engine keys directly to `_PHASE_CATEGORIES` lists
 - Class-level Python list comprehensions cannot reference earlier class attrs by name (scope rule) — use literals: `_THETA_LUT = [u * (2*math.pi/20) for u in range(20)]`
 
-**Overlay drag + position (D1/D2, `drawbraille_overlay.py`):**
+**Overlay drag + position (D1/D2, `drawille_overlay.py`):**
 - `_POS_GRID: list[list[str]]` (3×3), `_POS_TO_RC: dict[str, tuple[int,int]]` (col, row) — module-level
-- `_set_offset(ox, oy)` helper on `DrawbrailleOverlay`: sets `styles.offset` AND `_drag_base_ox/oy` together. Replace all 3 `self.styles.offset =` calls in `_apply_layout` with `_set_offset` — keeps drag base in sync regardless of which layout path fires
+- `_set_offset(ox, oy)` helper on `DrawilleOverlay`: sets `styles.offset` AND `_drag_base_ox/oy` together. Replace all 3 `self.styles.offset =` calls in `_apply_layout` with `_set_offset` — keeps drag base in sync regardless of which layout path fires
 - `on_mouse_up` snaps via `_nearest_anchor` then calls `self.app._persist_anim_config(...)` — overlay can't call `_CommandsMixin` methods directly; must go via `self.app`
 - D1 key binding: `Ctrl+Shift+Arrow` — `alt+up/alt+down` are taken by browse-mode turn navigation (lines 382–389 of `_app_key_handler.py`)
 - `App.capture_mouse(self)` / `App.release_mouse()` present in Textual 8.2.3; wrap in `try/except AttributeError` for compat
 
 **`/anim` commands (`_app_commands.py`):**
 - `ov.fps = fps` (reactive assignment) — NOT `ov._fps`
-- `ov._visibility_state` lives on `DrawbrailleOverlay`, not `_CommandsMixin` — check `ov._visibility_state`, not `self._visibility_state`
+- `ov._visibility_state` lives on `DrawilleOverlay`, not `_CommandsMixin` — check `ov._visibility_state`, not `self._visibility_state`
 - Gradient hex validation: inner `_validate_hex(raw) → str | None` strips `#`, checks exactly 6 lowercase hex chars; apply to BOTH color1 and color2 args
 
 ### 2026-04-22 — Tool UX Audit Pass 10 (7 commits, merged feat/textual-migration)
@@ -907,9 +1148,10 @@ def _do_hide(self):
 - Returns `fallback` if `app.console.color_system in (None, "standard")`.
 - Otherwise returns `glyph`. Used for Nerd Font glyphs in stub rows, StatusBar active-file icon.
 
-**D6 — StatusBar layout reorder**:
-- Full-width (≥60 cols): bar+pct leads, then ctx, then model, then session.
-- Narrow (<60) and minimal (<40): unchanged (model leads).
+**D6 — StatusBar layout reorder** *(updated by Bar SNR P0, commit 58ee2650)*:
+- Full-width (≥60 cols): 10-cell bar leads, then optional verbose ctx_label (^T toggle), then model. `pct_int%` removed.
+- Narrow (<60, ≥40): model leads, then single `▰` urgency glyph, then optional verbose ctx_label.
+- Minimal (<40): model only + optional verbose ctx_label. No compaction indicator.
 - Active-file uses `_nf_or_text("", "editing", app=app)` not raw emoji.
 
 **D7 — Flash color simplified**:
@@ -940,6 +1182,31 @@ def _do_hide(self):
 - `border_title`/`border_subtitle` are reactives — calling `on_mount()` on a raw `object.__new__` instance raises `ReactiveError`. Use `inspect.getsource(Cls.on_mount)` to test assignment.
 - Rich `Text("foo", style="dim red")` stores style on `t.style`, NOT `t._spans`. Check `str(t.style)` not `t._spans[0].style`.
 
+### 2026-04-23 — Bar SNR P0: status/hint bar signal-to-noise fixes (commit 58ee2650, feat/textual-migration)
+
+**StatusBar (`widgets/status_bar.py`):**
+- `_BAR_WIDTH` reduced 20 → 10. `_compaction_color` now uses a 3-zone ramp: normal (<70%), green→yellow lerp (70–85%), yellow→red lerp (85–90%), solid crit (≥90%). Order matters — highest threshold checked first so lower zones aren't unreachable.
+- `pct_int%` text removed from ALL render branches (full/narrow/minimal). Full-width: single 10-cell bar + optional verbose ctx_label. Narrow (<60): single `▰` glyph. Minimal (<40): no compaction indicator.
+- `status_verbose: reactive[bool]` on `HermesApp`; `^T` → `KeyDispatchService.dispatch_key` toggles it (NOT `app.on_key`). When True, `ctx_label` appears between bar and model on all paths.
+- Idle tip rotation deleted: `_rotate_timer`, `_hint_idx`, `_hint_phase`, `_rotate_hint`, `_get_idle_tips`, `_idle_tips_cache` all gone. Idle right-side now static: `F1 help · /commands` via `_get_key_color()`.
+- `_on_agent_running_change` now checks `status_streaming` before starting pulse — pulse suppressed while streaming (static dot instead).
+- Two new `status_streaming` watchers registered in `on_mount` (no handle storage — `watch()` returns None): `_on_streaming_change` (stops/starts pulse) and `_on_streaming_dim` (adds/removes `--streaming` CSS class on both StatusBar and HintBar).
+- `on_unmount` simplified to only `self._pulse_stop()` — no watcher cleanup needed (Textual auto-unregisters cross-widget watchers on unmount).
+- **D6 is now outdated**: full-width no longer shows `bar+pct` leading. It shows `bar · [verbose ctx_label · ] model`.
+
+**HintBar (`widgets/status_bar.py`):**
+- `set_phase` guard simplified: `if phase == self._phase: return` (no shimmer-timer check). Shimmer state changes handled by `_on_streaming_change`.
+- `on_mount` added: `self.watch(self.app, "status_streaming", self._on_streaming_change)` (no handle).
+- `on_unmount` added: only `self._shimmer_stop()`.
+- `render()` is streaming-aware: when `status_streaming=True`, shows pinned `^C interrupt · Esc dismiss` (left zone) + optional flash_hint if width permits (right zone, overflow-guarded with `Text.cell_len`). FeedbackService internals unchanged — render-layer pin only.
+
+**app.py:**
+- `status_streaming: reactive[bool] = reactive(False)` added to HermesApp.
+- Lifecycle hooks `on_streaming_start` / `on_streaming_end` registered, plus `on_turn_end_any` safety net. All callbacks use `(**_: object)` signature.
+
+**hermes.tcss:**
+- `StatusBar.--streaming { opacity: 0.55; }` and `HintBar.--streaming { opacity: 0.55; }` — bars dim during streaming, bright during input.
+
 ### 2026-04-22 — Nameplate active-idle pulse + AnimConfigPanel expansion (commits 7030342f + adc1d016, feat/textual-migration)
 
 **Nameplate pulsing (`widgets/__init__.py`):**
@@ -950,12 +1217,12 @@ def _do_hide(self):
 - `_active_dim_hex`: computed once in `on_mount` as `_lerp_hex("#000000", accent, 0.30)` — 30% accent so shimmer has meaningful range.
 - Both `_tick_morph` done-branch AND `_tick_glitch` done-branch resume 12fps instead of stopping.
 
-**AnimConfigPanel expansion (`drawbraille_overlay.py`):**
-- `_multi_color_row_buf: list = []` added as **class-level attr** on `DrawbrailleOverlay` — prevents `AttributeError` in tests that create the widget without mounting it.
+**AnimConfigPanel expansion (`drawille_overlay.py`):**
+- `_multi_color_row_buf: list = []` added as **class-level attr** on `DrawilleOverlay` — prevents `AttributeError` in tests that create the widget without mounting it.
 - New fields in `_build_fields`: `enabled` toggle (first field), `hue_shift_speed` float, ambient section (`ambient_enabled`, `ambient_engine`, `ambient_heat`, `ambient_alpha`), carousel section (`carousel`, `carousel_interval_s`).
 - `fps` max raised 15 → 30.
 - `_push_to_overlay`, `_current_panel_cfg`, `_fields_to_dict` all updated to handle new fields (ambient/carousel as `None` in attr_map — applies via `_push_custom_field`).
-- **`_persist_anim_config` merge fix** (`_app_commands.py`): was calling `_set_nested(cfg, "display.drawbraille_overlay", cfg_dict)` which replaced the whole overlay dict. Fixed to: `existing = cfg.setdefault("display", {}).setdefault("drawbraille_overlay", {}); existing.update(cfg_dict)`.
+- **`_persist_anim_config` merge fix** (`_app_commands.py`): was calling `_set_nested(cfg, "display.drawille_overlay", cfg_dict)` which replaced the whole overlay dict. Fixed to: `existing = cfg.setdefault("display", {}).setdefault("drawille_overlay", {}); existing.update(cfg_dict)`.
 
 **Test fixes:**
 - `test_cycle_animation_*`: use `next(f for f in panel._fields if f.name == "animation")` not `_fields[0]` (enabled is now first).
@@ -1045,16 +1312,16 @@ Permission prompts (approval, sudo, clarify, secret, undo, session, merge) now a
 
 - `hermes.tcss` — Screen layers: `base overlay interrupt tooltip`. New `interrupt` layer sits between `overlay` and `tooltip`.
 - `overlays/interrupt.py::InterruptOverlay` — `layer: interrupt` (was `overlay`). `_activate` now calls `self.call_after_refresh(self.focus)` after `_render_current()` so the overlay captures keyboard immediately.
-- `drawbraille_overlay.py::AnimConfigPanel.on_blur` — focus trap now yields when `InterruptOverlay` has `--visible`. Without this, the trap re-stole focus back every blur event, stranding the interrupt prompt.
+- `drawille_overlay.py::AnimConfigPanel.on_blur` — focus trap now yields when `InterruptOverlay` has `--visible`. Without this, the trap re-stole focus back every blur event, stranding the interrupt prompt.
 
 **Why this order matters:** the focus trap fires on every blur, so even if InterruptOverlay grabbed focus correctly, the next event loop tick would call `call_after_refresh(self.focus)` on AnimConfigPanel and steal it back. The `--visible` guard breaks the loop.
 
 **Key gotcha:**
 - Non-modal focus-trapping overlays on `layer: overlay` are painted BELOW `InterruptOverlay` (on `layer: interrupt`). Any widget that uses `on_blur` → refocus must also check `InterruptOverlay.has_class("--visible")` and bail — otherwise the focus trap fights the interrupt overlay every tick.
 
-### 2026-04-21 — Module splits (drawbraille / tool_blocks / renderers / input)
+### 2026-04-21 — Module splits (drawille / tool_blocks / renderers / input)
 
-**Track B — drawbraille**: `anim_engines.py` holds `AnimParams`, `AnimEngine`, `TrailCanvas`, `_BaseEngine`, 20 engine subclasses, `CompositeEngine`, `CrossfadeEngine`. Deleted duplicate `_GalleryPreview(Widget)` + `AnimGalleryOverlay(Widget)` that were shadowing `ModalScreen` versions (pre-existing test failure fixed).
+**Track B — drawille**: `anim_engines.py` holds `AnimParams`, `AnimEngine`, `TrailCanvas`, `_BaseEngine`, 20 engine subclasses, `CompositeEngine`, `CrossfadeEngine`. Deleted duplicate `_GalleryPreview(Widget)` + `AnimGalleryOverlay(Widget)` that were shadowing `ModalScreen` versions (pre-existing test failure fixed).
 
 **Track C — tool_blocks subpackage**: `OmissionBar` placed in `_shared.py` not `_streaming.py` to break circular import: `_block.py` needs `OmissionBar`; `_streaming.py` needs `ToolBlock` from `_block.py`. After splitting, `renderers.py` re-exports all public symbols so existing importers compile unchanged.
 
@@ -1315,6 +1582,16 @@ class MyApp(App):
 ```
 
 Watchers run synchronously on the event loop. Never do blocking I/O in a watcher.
+
+**`Widget.watch(obj, attr, cb)` returns `None` — never store or stop the handle.** The signature is `-> None`. Storing `self._h = self.watch(...)` then calling `self._h.stop()` in `on_unmount` raises `AttributeError: 'NoneType'.stop()` on every shutdown. Textual auto-unregisters cross-widget watchers when the observing widget unmounts. `on_unmount` should only stop timers/animations the widget owns (e.g. pulse/shimmer timers):
+
+```python
+def on_mount(self) -> None:
+    self.watch(self.app, "status_streaming", self._on_change)  # no handle
+
+def on_unmount(self) -> None:
+    self._pulse_stop()  # own timer — stop it; watcher — Textual cleans it up
+```
 
 **Manually calling `watch_*` does NOT update the reactive value**: `widget.watch_has_focus(False)` invokes the callback but `widget.has_focus` stays unchanged. Track display state in a plain bool attribute the watcher writes to; read that, not the reactive, in other methods:
 
@@ -1684,7 +1961,7 @@ Always `grep -rn "def method_name"` before calling a method that was added in a 
 
 ### Animation engine performance patterns
 
-**try/except vs bounds check:** Drawbraille raises on out-of-bounds coords. Replacing `try: canvas.set(x,y) except Exception: pass` with `if 0 <= x < w and 0 <= y < h: canvas.set(x,y)` is 5–15% faster per engine. Exception machinery is ~10× slower when it fires.
+**try/except vs bounds check:** Drawille raises on out-of-bounds coords. Replacing `try: canvas.set(x,y) except Exception: pass` with `if 0 <= x < w and 0 <= y < h: canvas.set(x,y)` is 5–15% faster per engine. Exception machinery is ~10× slower when it fires.
 
 **Sin/cos LUT:** `_SIN_LUT`/`_COS_LUT` (1024 entries) + `_lut_sin(angle)`/`_lut_cos(angle)` live in `anim_engines.py`. Max error ~0.006 vs `math.sin` — fine for visual rendering, NOT for physics integration (RK4 etc.). Swap into hot per-pixel loops only.
 
@@ -1692,11 +1969,11 @@ Always `grep -rn "def method_name"` before calling a method that was added in a 
 
 **Spatial grid for boid simulations:** `FlockSwarmEngine` uses `_BOID_CELL_SIZE = 20` (= largest steering radius). Grid built O(n) per frame with `self._grid.clear()` + rebuild. 3×3 cell search replaces O(n²) all-pairs loop. Gain: 15–55% depending on canvas size. Key: use empty tuple `()` as `.get()` default to avoid list allocation on empty cells.
 
-**TrailCanvas canvas pooling:** Store `self._canvas = drawbraille.Canvas()` at `__init__`; detect `self._canvas_has_clear = hasattr(self._canvas, 'clear')` once. `to_canvas()` reuses the stored canvas instead of allocating each frame.
+**TrailCanvas canvas pooling:** Store `self._canvas = drawille.Canvas()` at `__init__`; detect `self._canvas_has_clear = hasattr(self._canvas, 'clear')` once. `to_canvas()` reuses the stored canvas instead of allocating each frame.
 
 **`_layer_frames` buffers:** Module-level `_LAYER_ROW_BUF`/`_LAYER_RESULT_BUF` lists with `.clear()` + append replace per-call allocations. Non-reentrant — only valid from the Textual event loop (single-threaded). Add a comment noting this.
 
-**`_render_multi_color` buffer:** `self._multi_color_row_buf: list[str]` on `DrawbrailleOverlay`, initialised in `on_mount()` (no `__init__` on this widget). Reuse per row; reallocate only on width change.
+**`_render_multi_color` buffer:** `self._multi_color_row_buf: list[str]` on `DrawilleOverlay`, initialised in `on_mount()` (no `__init__` on this widget). Reuse per row; reallocate only on width change.
 
 **`_braille_density_set` / `_depth_to_density` signatures:** Both accept `w, h` parameters (added in perf pass). Call sites: `HyperspaceEngine`, `AuroraRibbonEngine` (direct), `RopeBraidEngine` (via `_depth_to_density`).
 
@@ -1866,7 +2143,7 @@ component_vars:
   primary-darken-3:         "#4a7aaa"   # TitledRule idle glyph (not a Textual built-in)
   brand-glyph-color:        "#FFD700"   # ⟁/⚕ brand glyph, separate from title text
   scrollbar:                "#5f87d7"   # Scrollbar thumb
-  drawbraille-canvas-color:    "#00d7ff"   # Braille animation canvas default colour
+  drawille-canvas-color:    "#00d7ff"   # Braille animation canvas default colour
   panel-border:             "#333333"   # SourcesBar and bordered panel borders
   footnote-ref-color:       "#888888"   # Footnote superscript marker
   tool-mcp-accent:          "#9b59b6"   # MCP tool accent
@@ -1989,6 +2266,12 @@ for frame in iter_frames("decrypt", "Connecting…"):
 
 **`run_effect` must be called inside `App.suspend()`** — TTE writes directly to the raw terminal and conflicts with Textual's renderer.
 
+**TUI startup TTE path:** `_play_tte_in_output_panel` (cli.py) — generates frames via `iter_frames`, splices each into the full banner layout via `_splice_startup_banner_frame`, and applies via `call_from_thread` → `query_one(StartupBannerWidget).set_frame(frame)`. `StartupBannerWidget` is pre-mounted as the first child of `OutputPanel.compose()` — no runtime mount needed.
+
+**Do NOT** use `TTEWidget` + `dock:top` overlay for startup — it anchors to the screen top-left, not the hero's left-column position within the banner layout.
+
+**Do NOT** try to mount `StartupBannerWidget` at runtime from a background thread — `call_from_thread(mount)` silently no-ops (unawaited `AwaitMount`), and `call_from_thread(fn)` cannot return widget references to the calling thread (result dict is read before the closure runs).
+
 ### TCSS: declaring new skin vars
 
 Any new `$var-name` referenced in `hermes.tcss` **must** be:
@@ -1997,3 +2280,260 @@ Any new `$var-name` referenced in `hermes.tcss` **must** be:
 3. Documented in the `component_vars:` block of `skin_engine.py`'s module docstring.
 
 `get_css_variables()` alone is insufficient — Textual parses TCSS at class-definition time; unknown `$var-name` refs raise at parse time, not at render time.
+
+### 2026-04-23 — Input Mode Safety (rev-search, bash mode, readline bindings)
+
+**`_exit_rev_mode` bug (now fixed):** The method previously set `self._rev_match_idx = -1` before reading it in the accept path. Fix: capture `match_idx = getattr(self, "_rev_match_idx", -1)` BEFORE the `self._rev_match_idx = -1` line. The accept path then uses the pre-captured value to sync `_history_idx`.
+
+**Rev-search legend via `feedback.flash`:** Use `duration=9999` as a "never expires" sentinel for persistent hints. `FeedbackService` always schedules `app.set_timer(delay, cb)` — with `delay=0.0` Textual fires the expire callback on the very next tick. Use explicit `app.feedback.cancel("hint-bar")` to clear. Call in `_exit_rev_mode` (both accept and abort paths) inside `try/except`.
+
+**Rev-search Enter semantics (bash-style):** In `action_submit`, check `getattr(self, "_rev_mode", False)` at the top and call `_exit_rev_mode(accept=True)` before reading `self.text`. The match text was already loaded by `action_rev_search` during live search; `_exit_rev_mode(accept=True)` only syncs `_history_idx` — it does NOT call `load_text`. The subsequent submit reads whatever text is in the widget.
+
+**`_sync_bash_mode_ui(is_bash: bool)` pattern:** Centralise all bash-mode UI changes (placeholder, chevron glyph, hint) in one method called from `on_text_area_changed`. Do NOT call it from `keys.py` — let `inp.clear()` → `on_text_area_changed` → `_sync_bash_mode_ui(False)` handle exit automatically.
+
+**Ctrl+C bash-mode routing in `keys.py`:** Insert the bash-mode block AFTER the selection-copy check and BEFORE the existing `_svc_bash.is_running` check. Query `#input-area` and check `has_class("--bash-mode")`:
+- Running cmd → `_svc_bash.kill()` + hint
+- No running cmd → `inp.clear()` (triggers `on_text_area_changed` which auto-removes `--bash-mode`)
+
+**`_history_navigate_skip_cmds(direction)` pattern:** Save draft before the loop (once, on `_history_idx == -1` + backward). Use `start = _history_idx if _history_idx != -1 else len(_history)`, then `idx = start + direction`. Forward past end → reset idx to -1, restore `_history_draft`. If no matching entry found, stay put (don't change `_history_idx`).
+
+**`suggestion` is a Textual reactive:** Cannot be set via normal attribute syntax on `object.__new__(HermesInput)` — raises `ReactiveError`. Use a plain Python fake class (`_FakeInput`) for history mixin tests that need to verify `suggestion` changes. The `_FakeInput` class declares `suggestion` as a plain instance attribute.
+
+**`_FakeInput` testing pattern:** For `_HistoryMixin` pure-unit tests, create a plain class (not `object.__new__`) with all the attributes the mixin uses, plus a plain `suggestion: str` field. Assign the unbound mixin methods directly: `_HistoryMixin.action_rev_search(inp)`. No `PropertyMock`, no `Widget.__new__`, no async overhead.
+
+**Bash mode CSS border:** Border on `HermesInput.--bash-mode` uses `$chevron-shell` not `$primary`. Must also add compact override: `HermesApp.density-compact HermesInput.--bash-mode:focus { border: none; }` — compact mode removes focus border to preserve content height (same rule as normal focus border).
+
+**Alt+Up/Down conflict with browse-mode:** `alt+up`/`alt+down` are handled in `services/keys.py` browse-mode block (lines ~427–431) AND `app.py` app-level bindings. Adding `priority=True` in `HermesInput.BINDINGS` correctly intercepts before both when input is focused. No changes to `keys.py` or `app.py` needed.
+
+### 2026-04-23 — Error recoverability + OmissionBar/ChildPanel polish (commit 3b9d7476)
+
+**B-2 — `--completing` two-tick collapse sequence:**
+- `ToolPanel.set_result_summary` adds `--completing` CSS class on the panel, then `set_timer(0.25, _post_complete_tidy)`.
+- `_post_complete_tidy` calls `remove_class("--completing")` (in try/except AttributeError) then applies the final collapsed state.
+- Under `HERMES_DETERMINISTIC=1`: calls `_post_complete_tidy` inline (no timer).
+- CSS: `ToolPanel.--completing > ToolAccent { background: $primary 25%; }` — subtle flash during window.
+
+**C-1 — `[e]` stderr action in expanded FooterPane:**
+- `FooterPane._render_footer` injects a synthetic `copy_err` action when `stderr_tail` is present and no existing `copy_err` action exists in the chip list.
+- Only appears in expanded state (collapsed header uses stderrwarn segment, not this).
+
+**C-2 — `ToolHeader._remediation_hint`:**
+- `ToolHeader.__init__`: `self._remediation_hint: str | None = None`
+- `ToolPanel.set_result_summary`: extracts `chip.remediation` from the first chip, truncates to 28 chars, stores on both `self._header_remediation_hint` and `header._remediation_hint`.
+- `_render_v4`: appends `("remediation", Text(f"  hint:{_rh}", style="dim yellow"))` when `is_collapsed and _is_complete and _tool_icon_error and _remediation_hint`.
+- `_DROP_ORDER`: `"remediation"` inserted between `"stderrwarn"` and `"exit"`.
+
+**D-2 — SubAgentPanel child error glyphs:**
+- `SubAgentPanel.__init__`: `self._child_error_kinds: list[str] = []`
+- `_notify_child_complete`: calls `_extract_error_kind(tool_call_id)`, appends to `_child_error_kinds` if new.
+- `_extract_error_kind`: walks `_body.children`, matches by `_tool_call_id`, returns `error_kind` from `_result_summary_v4`.
+- `SubAgentHeader.update`: accepts `error_kinds` param — renders up to 3 glyphs as `("error-kinds", ...)` segment; accessible fallback appends `err-kinds:...` text.
+
+**D-1 — OmissionBar `[reset]` never disabled:**
+- Button label changed from `[hide]` to `[reset]` (via `Text("[reset]")` — bare string would be eaten by Rich markup parser).
+- `set_counts()`: removed `disabled = at_default`; toggles `--at-default` CSS class instead + sets tooltip (`"Already at default view"` / `"Scroll output window"`).
+- `on_button_pressed`: no-op guard when `--ob-cap` + `--at-default`.
+- CSS: `OmissionBar Button.--at-default { color: $text-muted 50%; }`.
+
+**E-1 — Bottom OmissionBar shown at 80% cap:**
+- `_OB_WARN_THRESHOLD = int(_VISIBLE_CAP * 0.8)` constant in `_shared.py` (= 160 for default 200 cap).
+- `_refresh_omission_bars` in `_streaming.py`: `show_bottom = (total >= warn_threshold) or (visible_end < total) or bool(cap_msg)`.
+
+**E-2 — ChildPanel `space` → `alt+c`:**
+- `Binding("space", "toggle_compact", ...)` removed from `ChildPanel.BINDINGS`.
+- `Binding("alt+c", "toggle_compact", show=False, priority=True)` added.
+
+**Key gotchas:**
+- `Button("[reset]", ...)` → empty label (Rich parses `[reset]` as markup tag). Always use `Button(Text("[reset]"), ...)`.
+- `_remediation_hint` render guard requires `_tool_icon_error` (not just `_error_kind`) to avoid showing hints on non-error collapsed panels.
+- `_child_error_kinds` is a `list` not `set` — order of first-seen preserved; dedup by `if ek not in self._child_error_kinds` before append.
+- Under `HERMES_DETERMINISTIC`, two-tick collapse path is skipped entirely — `_post_complete_tidy` called inline. Tests that set `HERMES_DETERMINISTIC=1` see synchronous collapse without the 0.25s window.
+- Under `HERMES_DETERMINISTIC`, two-tick collapse path is skipped entirely — `_post_complete_tidy` called inline. Tests that set `HERMES_DETERMINISTIC=1` see synchronous collapse without the 0.25s window.
+
+### 2026-04-23 — Input Feedback & Completion UX (commit 51cc833b, merged feat/textual-migration)
+
+A-2/B-1/B-2/B-3/E-1/E-2/E-3/F-3 — 36 tests in `tests/tui/test_input_feedback_completion.py`.
+
+**A-2 — Draft stash for programmatic setters:**
+- `_draft_stash: str | None = None` on `HermesInput`.
+- `save_draft_stash()` — stores `self.text` only when `_history_idx == -1` (not navigating history).
+- `action_history_prev` — in the `_history_idx == -1` branch, only saves `_history_draft` when `_draft_stash is None`; stash holds the real pre-overlay text.
+- `action_history_next` past-end branch — restores `_draft_stash` (then clears it) before `_history_draft`.
+- `on_text_area_changed` invalidation — clears stash when `_history_idx == -1 and self.text != self._draft_stash`.
+- `HistorySearchOverlay._accept_result()` calls `inp.save_draft_stash()` before `inp.value = ...`.
+
+**B-1 — Empty reason copy:**
+- `_EMPTY_REASON_TEXT` in `hermes_cli/tui/completion_list.py` updated: `"too_short": "  type 2+ chars to match"`, `"no_slash_match": "  no match — /help for list"`, `"path_not_found": "  no such path — try @ alone"`.
+
+**B-2 — Enter accepts highlighted completion:**
+- Intercept in `_on_key` key == "enter" branch, AFTER file-drop check, BEFORE `action_submit()`.
+- Checks `self._completion_overlay_visible()` → `screen.query_one(VirtualCompletionList).highlighted >= 0` → calls `self.action_accept_autocomplete(); return`.
+- Second Enter (no overlay visible) falls through to `action_submit()` as normal.
+- MUST be in `_on_key`, NOT `action_submit()` — action_submit is called programmatically and must not be overlay-gated.
+- `action_accept_highlighted()` does NOT exist; `action_accept_autocomplete()` is on `_AutocompleteMixin`.
+- No `self._overlay` attribute exists — always use `self.screen.query_one()`.
+
+**B-3/F-3 — InputLegendBar:**
+- New `hermes_cli/tui/widgets/input_legend_bar.py` — `InputLegendBar(Static)` with `show_legend(mode)` / `hide_legend()` and 4 legend strings: `"bash"`, `"rev_search"`, `"completion"`, `"ghost"`.
+- Mounted in `app.compose()` before `#input-row` (sits above HermesInput in flow layout, NOT dock:bottom).
+- Call sites: `_sync_bash_mode_ui` (bash), `action_rev_search`/`_exit_rev_mode` (rev_search), `CompletionOverlay.show/hide_overlay` (completion), `update_suggestion` (ghost).
+- All calls wrapped in `try/except` — widget may not be mounted in tests.
+- CSS: `HermesApp.density-compact InputLegendBar { display: none !important; }` — hidden in compact mode. `hide_legend()` still removes `--visible` so stale legend doesn't reappear on compact toggle.
+
+**E-1 — Error-aware placeholder:**
+- `error_state: reactive[str | None] = reactive(None)` on `HermesInput`.
+- `_refresh_placeholder()` — single source of truth: locked (`self.disabled`) > error (`self.error_state`) > idle (`self._idle_placeholder`). Every state-changing watcher/setter calls this; never set `self.placeholder` directly.
+- `watch_error_state` delegates to `_refresh_placeholder()`.
+- Esc-to-clear: before overlay-close chain, `if self.error_state is not None and not self.text.strip(): self.error_state = None; return`.
+- Wired in `services/watchers.py` `on_status_error`: `inp.error_state = value if value else None` (additive — existing FeedbackService flash unchanged).
+
+**E-2 — History write failure toast:**
+- `_write_fail_warned: bool = False` on `HermesInput` (init via `widget.py`).
+- `_on_history_write_error(exc)` — deduped via `_write_fail_warned`; flashes hint-bar with `duration=6.0, priority=WARN`; reset to False via `on_done` callback on successful write.
+- `safe_write_file` param is `data` (not `content`), `on_done` (not `on_success`); `on_done` receives `bytes_written: int`.
+- `_write_fail_warned` access uses `getattr(self, "_write_fail_warned", False)` to survive `__new__`-constructed objects.
+
+**E-3 — Locked input indicator:**
+- `_set_input_locked(locked: bool)` — visual-affordance helper ONLY; calls `_refresh_placeholder()` and adds/removes `--locked` CSS class. Does NOT set `self.disabled`.
+- Guard: `if not getattr(self, "is_mounted", False): return`.
+- Called alongside `inp.disabled` mutations in `watchers.py` (on_undo_state and agent-running paths).
+- CSS: `HermesInput.--locked { border: tall $panel-lighten-1 30%; color: $text-muted 60%; }` — uses `color: $text-muted 60%` NOT `opacity:` (opacity unsupported in Textual 8.2.3).
+
+**Key gotchas:**
+- `_refresh_placeholder()` must be the ONLY place that sets `self.placeholder` — watch for any direct `self.placeholder =` assignment that bypasses the priority chain.
+- InputLegendBar must be in flow layout (not dock:bottom) — sits above `#input-row` visually because dock-bottom stack is bottom-to-top in compose order.
+- `_set_input_locked()` is visual-only; `self.disabled` is managed by callers. Mixing the two would block Ctrl+C in locked state.
+- Priority chain must be respected in call order: `_refresh_placeholder()` reads current state at call time, so always call it AFTER updating the state that changed.
+
+---
+
+### 2026-04-23 — PlanPanel P1 polish (commit f7a4ed55, merged feat/textual-migration)
+
+P1-1/P1-2/P1-3 — 86 tests total (48 new in `test_plan_panel_p1.py` + updated `TestErrorCountInChip` in `test_plan_panel_p0.py`).
+
+**P1-1 — Focus navigation:**
+- `_PlanEntry(Static, can_focus=True)` — new widget in `plan_panel.py` before `_NowSection`. `on_click`/Enter → `_jump()`; Esc → refocus `#input-area`. `_jump()` uses `getattr(self.app, "_svc_browse", None)` guard.
+- `BrowseService.scroll_to_tool(tool_call_id: str) -> bool` — new method in `services/browse.py`. Queries `OutputPanel` children via `output.query(ToolPanel)`, matches by `_plan_tool_call_id`, calls `scroll_to_widget(animate=True, center=True)` + `clear_browse_highlight()` + `add_class("--browse-focused")`.
+- `ToolPanel._plan_tool_call_id: str | None = None` — added to `tool_panel.py` `__init__`.
+- Wiring: `message_panel.py` `open_streaming_tool_block` **else branch only** (top-level ToolPanels): `panel._plan_tool_call_id = tool_call_id`. NOT in `tools.py` — `ToolPanel` is not created there.
+- `_NowSection.show_call()` removes old `#now-line` and mounts a `_PlanEntry` with `tool_call_id`. `_update_now_line()` still queries `#now-line` as `Static` — works because `_PlanEntry(Static)`.
+- `_NextSection.update_calls()` mounts `_PlanEntry` for each pending entry; overflow `+N more` stays plain `Static`.
+- `from textual import events` added to `plan_panel.py` (was missing).
+
+**P1-2 — Segmented chip header:**
+- `_ChipSegment(Static, can_focus=False)` — new widget before `_PlanPanelHeader`. `action` kwarg consumed in `__init__` (not passed to super). Actions: `"jump_running"`, `"jump_first_error"`, `"usage"`.
+- `_PlanPanelHeader.compose()` rewritten — yields: `#plan-header-label`, `#plan-chip-title`, `#chip-running/done/errors/cost`, `#plan-f9-badge`.
+- `update_header` delegates to `_show_chip` or `_show_full`. Error segment uses `RichText.from_markup`.
+- `TestErrorCountInChip` in `test_plan_panel_p0.py` updated to chip-segment assertions.
+
+**P1-3:** `Static("[F9]", id="plan-f9-badge")` in compose; `dock: right; color: $text-muted 50%` in `_PlanPanelHeader.DEFAULT_CSS`.
+
+**Critical gotchas:**
+- `ToolPanel` wiring is in `message_panel.py` else branch — NOT `tools.py`.
+- `output.query(ToolPanel)` is recursive; ChildPanels always have `_plan_tool_call_id = None` so they never match.
+- Do NOT add `display: none` to `_ChipSegment.DEFAULT_CSS` — visibility managed via `.display = bool`.
+
+---
+
+### 2026-04-23 — PlanPanel P0 fixes (commit 878d357e, merged feat/textual-migration)
+
+P0-1/P0-2/P0-3/P0-4/P0-5/P0-6 + B-1/B-2/B-3 — 37 tests in `tests/tui/test_plan_panel_p0.py`.
+
+**P0-1 — `_DoneSection` deleted:** All mounting sites removed (`compose`, `_on_collapse_changed`, `_rebuild`, `_rebuild_done`). TCSS rule block deleted. Done count surfaces in chip header only.
+
+**P0-2 — Default collapsed:** `_collapsed: reactive[bool] = reactive(True)`. `on_mount` calls `_on_collapse_changed(getattr(self.app, "plan_panel_collapsed", True))` synchronously after `_rebuild()` to eliminate first-frame flash. Do NOT change `DEFAULT_CSS` height — the existing `PlanPanel.--collapsed { height: 1; max-height: 1; }` rule is correct.
+
+**P0-3 — 2Hz tick + `_base_text`:**
+- `_NowSection._base_text: str = ""` — stores glyph + label without elapsed.
+- `_update_now_line(elapsed)` helper — appends `  [Ns]` only when `elapsed >= 3`; never string-searches `"  ["`.
+- `_tick()` calls `_update_now_line`; `clear()` resets `_base_text = ""`.
+- `set_interval(1.0)` → `set_interval(2.0)`.
+
+**P0-4 — Error count in chip + cost in header:**
+- `_rebuild_header` splits `done` (PlanState.DONE only) and `errors` (PlanState.ERROR) separately.
+- Reads `turn_cost_usd = getattr(self.app, "turn_cost_usd", 0.0)`.
+- `update_header(collapsed, running, pending, done, errors=0, cost_usd=0.0)` — new signature.
+- When `errors > 0`: use `rich.text.Text.from_markup(...)` — plain strings with `[bold red]` tags render literally in `Static.update()`.
+- Cost appended as ` · $0.12` via `RichText.append()` if label is already `RichText`, else plain string concat.
+
+**P0-5 — `_BudgetSection` visibility:**
+- `_budget_hide_timer: Any = None` on `PlanPanel`.
+- `_BudgetSection` removed from `_on_collapse_changed` iteration — budget managed exclusively by `_refresh_budget_visibility`.
+- `_refresh_budget_visibility(has_active, calls)` — hides budget when active; shows for 5s post-turn via `_hide_budget_after_turn` timer.
+
+**P0-6 — Debounce `--active` hide:**
+- `_active_hide_timer: Any = None` on `PlanPanel`.
+- `has_any=False` starts 3s timer to `_do_hide_active` instead of hiding immediately.
+- `has_any=True` cancels any pending timer and shows immediately.
+- `_do_hide_active` is a separate class method (not nested).
+
+**B-1:** `_NextSection._expanded` reactive deleted; `update_calls` always uses `_MAX_VISIBLE`.
+
+**B-2:** `$plan-now-fg: #ffb454` (theme_manager + hermes.tcss); `$plan-pending-fg: #888888`. Use literal hex — Textual 8.2.3 does not resolve variable-to-variable references at parse time. All skin YAMLs unchanged.
+
+---
+
+### 2026-04-23 — Startup Banner Polish (commits 65de2069 + 20563d73, merged feat/textual-migration)
+
+A-1/A-2/A-3/A-5/A-6/B-1/B-3/G-1 — 18 tests in `tests/tui/test_startup_banner_polish.py`. `cli.py` at repo root (not `hermes_cli/cli.py`).
+
+**Pre-flight frame (A-1):** After `template = self._build_startup_banner_template(plain_hero)`, queue `_preflight = self._render_startup_banner_text(print_hero=True); _queue_frame(_preflight)` so `StartupBannerWidget` is never blank during TTE warmup.
+
+**Wall-clock cap (A-5):** `MAX_WALL_S = 6.0` alongside existing `MAX_FRAMES = 3000` at L3466. `_tte_start = time.monotonic()` after preflight queue call. Break condition: `if i >= MAX_FRAMES or (time.monotonic() - _tte_start) >= MAX_WALL_S: break`.
+
+**Hold-frame + static via queue (B-1):** After TTE loop's try/except, if `rendered_any`: `time.sleep(0.25); _queue_frame(self._render_startup_banner_text(print_hero=True))`. `show_banner_with_startup_effect` only calls `_set_tui_startup_banner_static()` when `not played`; otherwise sets `self._postamble_pending = True`. `_set_tui_startup_banner_static` is fallback-only — its body unchanged, only docstring updated.
+
+**Ordering guarantee:** `_drain_latest` loops on the event loop thread reading `latest_frame` until None. After `time.sleep(0.25)`, `_queue_frame(static)` either piggybacks on a still-running `_drain_latest` or schedules a new one — both serialize on the event loop, so static always arrives after all TTE frames. The sleep provides the visible hold, not ordering.
+
+**Reduced motion (G-1):** In `_get_startup_text_effect_config` (L3262), add before existing config reads: `_cfg = getattr(self, "config", {}) or {}; if _cfg.get("tui", {}).get("reduced_motion"): return None; if os.environ.get("HERMES_REDUCED_MOTION"): return None`. Uses already-loaded config dict — no `read_raw_config()` I/O.
+
+**Padding smear (B-3):** In `_splice_startup_banner_frame`, `hero_line.append(" " * delta, style="")` — explicit empty style breaks Rich's style carry from preceding span.
+
+**Pane width (A-3):** Create `OutputPanel.on_mount` (OutputPanel had none): sets `self.app._startup_output_panel_width = self.size.width`. In `_render_startup_banner_text`: `panel_w = getattr(app, "_startup_output_panel_width", 0); if panel_w > 0: capture_width = panel_w`. Startup race is acknowledged/acceptable — daemon reads 0 and falls back to terminal width if `on_mount` hasn't fired yet.
+
+**Deferred postamble (A-6):** In `hermes_cli/tui/services/keys.py`, `dispatch_input_submitted` top: one-shot guard flushes `cli._show_banner_postamble()` and resets `cli._postamble_pending = False`. Guard goes before `event.value` read and bash-passthrough block so it fires on all first submits.
+
+**Test fixture critical patterns:**
+- `import cli as cli_module` — root-level, NOT `hermes_cli.cli`
+- `patch.object(cli_module, "_hermes_app", mock_app)` — module global
+- `mock_app.call_from_thread = MagicMock(side_effect=lambda fn: fn())` — prevents hang on non-running event loop
+- Template dict keys: `{"lines": [], "hero_row": 0, "hero_col": 0, "hero_width": 10, "hero_height": 5}`
+- Monkeypatch: `"cli.time.monotonic"`, `patch("cli.iter_frames", ...)`
+
+---
+
+### 2026-04-23 — Nameplate + ThinkingWidget Lifecycle (commits bfff7488 + 93867798, merged feat/textual-migration)
+
+C-1/C-2/C-3/C-4/C-5/C-6/D-1/D-2/D-3/D-4/D-5/D-6/D-7/E-2/E-3/F-2/G-1 — 29 tests in `tests/tui/test_nameplate_thinking.py`; 2 existing tests in `test_thinking_widget_v2.py` updated.
+
+**Nameplate unhide (C-1):** Deleted `HermesApp.thinking-active AssistantNameplate { display: none; }` from `hermes.tcss:647`. Keep `density-compact` rule at L642.
+
+**Theme colors (C-2, C-5):** In `AssistantNameplate.on_mount` (L697): `self._active_style = Style.parse(f"bold {self._accent_hex}")` and `self._idle_color_hex = _lerp_hex(self._text_hex, self._accent_hex, 0.25)`. Replace all 5 `_NP_IDLE_COLOR` usages (L784/829/849/933/944) and all 5 `_NP_ACTIVE_COLOR` usages (L849/884/889/933/944) with `self._idle_color_hex`/`self._active_style`. Module-level constants kept as unmounted fallbacks. `$nameplate-idle-color`/`$nameplate-active-color` TCSS vars are dead code — left with comment.
+
+**Shimmer fix (C-3):** `_render_active_pulse`: `n = max(3, len(self._frame)); offset = math.pi / n` — spans π across name regardless of length. `_tick_active_idle`: `self._active_phase += 0.28` (was 0.18). **Glitch reset (C-4):** In `_tick_glitch` else branch at ~L889: `self._active_phase = 0.0` before state transition. **Resize refresh (C-6):** `on_resize` calls `self.refresh()` after canvas width update.
+
+**ThinkingWidget config pre-warm (D-7):** Add `ThinkingWidget.on_mount` that calls `self._load_config()`.
+
+**Label escalation (D-1):** LONG_WAIT tick: `prefix = "Thinking"/"Thinking deeply"/"Still thinking"/"Working hard"` at 0/30/60/120s. `label_text = f"{prefix}… ({n}s)"`.
+
+**D-2 flash effect swap:** `activate()` stores `self._resolved_effect = resolved_effect`; creates `self._label_line = _LabelLine("flash", ...)`. In `_tick` STARTED→WORKING: swaps `self._label_line._effect = make_stream_effect({"stream_effect": self._resolved_effect}, lock=self._label_line._lock)`. Import: `from hermes_cli.stream_effects import make_stream_effect` (NOT `hermes_cli.tui.stream_effects`).
+
+**Fade-out (D-3):** `deactivate()` adds `--fading` class; `_do_hide()` removes it. TCSS: `ThinkingWidget.--active { opacity: 1; }` (required for transition to animate, not snap) + `ThinkingWidget.--fading { opacity: 0.0; transition: opacity 150ms in_out_cubic; }`.
+
+**Layout reserve (D-4):** `_do_hide()` sets `self._substate = "--reserved"` and `self.add_class("--reserved")` instead of collapsing. `clear_reserve()` method removes class and resets substate. Call site: `self.query_one(ThinkingWidget).clear_reserve()` (NOT `self.app.query_one` — `ThinkingWidget` is a direct child of `OutputPanel`). TCSS: `ThinkingWidget.--reserved { height: 1; display: block; opacity: 0; }`.
+
+**Engine whitelist split (D-5):** `_WHITELIST_DEEP_AMBIENT` (safe engines) + `_WHITELIST_DEEP_INTENSE` (adds matrix_rain/wireframe_cube etc.); `_WHITELIST_DEEP = _WHITELIST_DEEP_AMBIENT` alias. `_cfg_allow_intense` from `tui.thinking.allow_intense` config key.
+
+**Deterministic static state (D-6):** Replace early-return in `activate()` with static LINE-mode: adds `--active`/`--mode-line` + `thinking-active` classes, mounts `_LabelLine("breathe")`, calls `update_static("Thinking…")`. `_LabelLine.update_static(text)` calls `self.update(RichText(text))` without starting tick.
+
+**Narrow demotion + reduced motion (F-2, G-1) — canonical `_resolve_mode` body:**
+```python
+if self.app.has_class("reduced-motion"): return ThinkingMode.LINE  # first
+if getattr(self.app, "compact", False): return ThinkingMode.COMPACT
+w = self.app.size.width
+if 0 < w < 70: return ThinkingMode.LINE
+if 0 < w < 100: return ThinkingMode.COMPACT
+```
+`_tick_active_idle` guard: `if self.app.has_class("reduced-motion"): return`. `HermesApp.on_mount` in `app.py` adds `reduced-motion` class from both `HERMES_REDUCED_MOTION` env var AND `tui.reduced_motion` config key (fresh `read_raw_config()` call in `on_mount` is acceptable — fires once at startup on the event loop, not a hot path).
+
+**Lock safety (E-3):** `_LabelLine.__init__`: `_lock = kwargs.pop("_lock", None)` before `super().__init__("", **kwargs)`; `self._lock = _lock or threading.Lock()`. `_init_effect` uses `lock=self._lock`. `activate()` passes `_lock=threading.Lock()`.

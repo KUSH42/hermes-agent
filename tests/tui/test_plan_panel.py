@@ -9,11 +9,7 @@ import pytest
 from hermes_cli.tui.plan_types import PlannedCall, PlanState
 from hermes_cli.tui.widgets.plan_panel import (
     PlanPanel,
-    _NowSection,
     _NextSection,
-    _DoneSection,
-    _BudgetSection,
-    _PlanPanelHeader,
     _format_plan_line,
 )
 
@@ -119,9 +115,10 @@ def test_next_section_max_visible():
     assert _NextSection._MAX_VISIBLE == 5
 
 
-# T11: _DoneSection._MAX_VISIBLE is 5
-def test_done_section_max_visible():
-    assert _DoneSection._MAX_VISIBLE == 5
+# T11: _DoneSection remains deleted after P0 cleanup
+def test_done_section_removed():
+    import hermes_cli.tui.widgets.plan_panel as pp_mod
+    assert not hasattr(pp_mod, "_DoneSection")
 
 
 # T12: PlanPanel DEFAULT_CSS references dock: bottom

@@ -57,15 +57,10 @@ def test_format_no_indent_depth_zero():
     assert "top_level" in line
 
 
-# T5: _DoneSection renders depth=1 with indent
-def test_done_section_renders_with_indent():
-    """_DoneSection uses '  ' * depth for indentation."""
-    from hermes_cli.tui.widgets.plan_panel import _DoneSection
-    # Check the source uses call.depth for indentation
-    import inspect
-    src = inspect.getsource(_DoneSection.update_calls)
-    assert "depth" in src
-    assert "indent" in src
+# T5: _DoneSection stays deleted after P0 cleanup
+def test_done_section_removed():
+    import hermes_cli.tui.widgets.plan_panel as pp_mod
+    assert not hasattr(pp_mod, "_DoneSection")
 
 
 # T6: _NextSection renders depth=1 with indent

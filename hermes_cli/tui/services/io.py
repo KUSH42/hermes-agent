@@ -79,6 +79,11 @@ class IOService(AppService):
                     app.query_one(ThinkingWidget).deactivate()
                 except NoMatches:
                     pass
+                # D-4: clear layout-reserve row on first stream chunk
+                try:
+                    app.query_one(ThinkingWidget).clear_reserve()
+                except NoMatches:
+                    pass
             try:
                 panel = app.query_one(OutputPanel)
                 panel.record_raw_output(chunk)

@@ -259,13 +259,28 @@ class StreamingCodeBlock(Widget):
         On success: mounts an InlineImage sibling after this block.
         On failure (mmdc absent, render error): falls back to _render_syntax().
         """
-        from hermes_cli.tui.math_renderer import _build_mermaid_cmd
+        from hermes_cli.tui.math_renderer import _build_mermaid_cmd, render_mermaid
         from hermes_cli.tui.io_boundary import safe_run
 
         code = "\n".join(self._display_code_lines())
+        try:
+            mounted = bool(self.is_mounted)
+        except Exception:
+            mounted = False
+        if not mounted:
+            rendered = render_mermaid(code)
+            try:
+                self.app.call_from_thread(self._on_mermaid_rendered, rendered)
+            except Exception:
+                self._on_mermaid_rendered(rendered)
+            return
         result = _build_mermaid_cmd(code)
         if result is None:
-            self._on_mermaid_rendered(None)
+            rendered = render_mermaid(code)
+            try:
+                self.app.call_from_thread(self._on_mermaid_rendered, rendered)
+            except Exception:
+                self._on_mermaid_rendered(rendered)
             return
 
         cmd, mmd_tmp, png_tmp = result

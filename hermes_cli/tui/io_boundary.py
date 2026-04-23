@@ -283,15 +283,25 @@ def safe_run(
         if w.is_cancelled:
             return
         try:
-            result = subprocess.run(
-                cmd,
-                timeout=timeout,
-                capture_output=capture,
-                env=env,
-                cwd=cwd,
-                input=input_bytes,
-                check=False,
-            )
+            if input_bytes is not None and not capture:
+                result = subprocess.run(
+                    cmd,
+                    input=input_bytes,
+                    check=True,
+                    timeout=timeout,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+            else:
+                result = subprocess.run(
+                    cmd,
+                    timeout=timeout,
+                    capture_output=capture,
+                    env=env,
+                    cwd=cwd,
+                    input=input_bytes,
+                    check=False,
+                )
         except subprocess.TimeoutExpired as exc_te:
             elapsed = float(timeout)
             if on_timeout is not None:

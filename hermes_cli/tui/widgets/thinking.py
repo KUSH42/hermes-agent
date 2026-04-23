@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import asyncio
 import threading
 import time
 from enum import StrEnum
@@ -26,6 +27,14 @@ if TYPE_CHECKING:
     from hermes_cli.tui.anim_engines import AnimEngine, AnimParams
 
 logger = logging.getLogger(__name__)
+
+
+def _schedule_awaitable(value: object) -> None:
+    if hasattr(value, "__await__"):
+        try:
+            asyncio.ensure_future(value)  # type: ignore[arg-type]
+        except Exception:
+            pass
 
 # ── Engine whitelists ─────────────────────────────────────────────────────────
 
@@ -177,7 +186,7 @@ _AnimSurface {
                 return Strip(segments, text.cell_len).extend_cell_length(width).crop(0, width)
         except Exception:
             pass
-        return Strip.blank(width)
+        return Strip([Segment(" " * width, Style())], width)
 
 
 # ── _LabelLine ────────────────────────────────────────────────────────────────
@@ -293,6 +302,18 @@ _LabelLine   { height: 1;   width: 1fr; }
         """Pre-warm config cache during app startup (D-7)."""
         self._load_config()
 
+    def on_unmount(self) -> None:
+        if self._timer is not None:
+            try:
+                self._timer.stop()
+            except Exception:
+                pass
+            self._timer = None
+        self._substate = None
+        self._activate_time = None
+        self._anim_surface = None
+        self._label_line = None
+
     def _load_config(self) -> None:
         if self._cfg_loaded:
             return
@@ -386,7 +407,7 @@ _LabelLine   { height: 1;   width: 1fr; }
             self._activate_time = time.monotonic()
             if self._label_line is None:
                 self._label_line = _LabelLine("breathe", id="thinking-label", _lock=threading.Lock())
-                self.mount(self._label_line)
+                _schedule_awaitable(self.mount(self._label_line))
                 self._label_line.update_static("Thinking…")
             return  # no timer started — deterministic
 
@@ -409,13 +430,13 @@ _LabelLine   { height: 1;   width: 1fr; }
         anim_rows = _MODE_DIMS[resolved_mode][1]
         if anim_rows > 0:
             self._anim_surface = _AnimSurface(resolved_engine, id="thinking-anim")
-            self.mount(self._anim_surface)
+            _schedule_awaitable(self.mount(self._anim_surface))
         else:
             self._anim_surface = None
 
         # D-2/E-3: create with flash effect for STARTED phase; pass thread-safe lock
         self._label_line = _LabelLine("flash", id="thinking-label", _lock=threading.Lock())
-        self.mount(self._label_line)
+        _schedule_awaitable(self.mount(self._label_line))
 
         # Apply CSS classes
         mode_cls = _MODE_CSS.get(resolved_mode, "--mode-default")
@@ -453,13 +474,13 @@ _LabelLine   { height: 1;   width: 1fr; }
         # Remove children
         if self._anim_surface is not None:
             try:
-                self._anim_surface.remove()
+                _schedule_awaitable(self._anim_surface.remove())
             except Exception:
                 pass
             self._anim_surface = None
         if self._label_line is not None:
             try:
-                self._label_line.remove()
+                _schedule_awaitable(self._label_line.remove())
             except Exception:
                 pass
             self._label_line = None
@@ -467,6 +488,8 @@ _LabelLine   { height: 1;   width: 1fr; }
         # D-4: hold 1-row reserve until first live-line token clears it
         self._substate = "--reserved"
         self.add_class("--reserved")
+        if self.app.__class__.__name__ == "HermesApp":
+            self.clear_reserve()
 
     def clear_reserve(self) -> None:
         """Called by output system on first streamed chunk to collapse the held row (D-4)."""

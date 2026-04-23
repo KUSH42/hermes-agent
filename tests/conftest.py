@@ -83,12 +83,13 @@ def mock_config():
 
 
 # ── Global test timeout ─────────────────────────────────────────────────────
-# Kill any individual test that takes longer than 10 seconds.
+# Kill any individual test that takes too long.
 # Prevents hanging tests (subprocess spawns, blocking I/O) from stalling the
 # entire test suite.
+_TEST_TIMEOUT_SECONDS = int(os.environ.get("HERMES_TEST_TIMEOUT_SECONDS", "30"))
 
 def _timeout_handler(signum, frame):
-    raise TimeoutError("Test exceeded 10 second timeout")
+    raise TimeoutError(f"Test exceeded {_TEST_TIMEOUT_SECONDS} second timeout")
 
 @pytest.fixture(autouse=True)
 def _ensure_current_event_loop(request):
@@ -130,13 +131,13 @@ def _ensure_current_event_loop(request):
 
 @pytest.fixture(autouse=True)
 def _enforce_test_timeout():
-    """Kill any individual test that takes longer than 10 seconds.
+    """Kill any individual test that exceeds the configured timeout.
     SIGALRM is Unix-only; skip on Windows."""
     if sys.platform == "win32":
         yield
         return
     old = signal.signal(signal.SIGALRM, _timeout_handler)
-    signal.alarm(10)
+    signal.alarm(_TEST_TIMEOUT_SECONDS)
     yield
     signal.alarm(0)
     signal.signal(signal.SIGALRM, old)

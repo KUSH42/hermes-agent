@@ -659,6 +659,8 @@ HermesApp.density-compact AssistantNameplate   { display: none; }
 HermesApp.density-compact SourcesBar           { display: none; }
 HermesApp.density-compact BrowseMinimap        { display: none; }
 
+
+
 /* Phase B2: input area tightening */
 HermesApp.density-compact HermesInput          { max-height: 2; }
 HermesApp.density-compact HermesInput:focus    { border: none; }

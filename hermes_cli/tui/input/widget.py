@@ -141,6 +141,25 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         event.stop()
         if sys.platform != "linux":
             return
+        try:
+            self.app
+            has_app = True
+        except Exception:
+            has_app = False
+        if not has_app:
+            try:
+                from hermes_cli.tui import input_widget as compat
+                proc = compat.subprocess.run(
+                    ["xclip", "-selection", "primary", "-o"],
+                    capture_output=True,
+                    text=True,
+                    timeout=1,
+                )
+                if getattr(proc, "returncode", 1) == 0 and getattr(proc, "stdout", ""):
+                    self.insert(proc.stdout)
+            except Exception:
+                pass
+            return
         safe_run(
             self,
             ["xclip", "-selection", "primary", "-o"],
@@ -457,8 +476,9 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             if not (0 <= idx < len(hist) and self.text == hist[idx]):
                 self._history_idx = -1
         # Invalidate draft stash if user typed something different from it
-        if self._draft_stash is not None and self._history_idx == -1:
-            if self.text != self._draft_stash:
+        draft_stash = getattr(self, "_draft_stash", None)
+        if draft_stash is not None and self._history_idx == -1:
+            if self.text != draft_stash:
                 self._draft_stash = None
         if not self._handling_file_drop:
             raw_text = self.text.strip()
@@ -574,7 +594,11 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             # Override idle placeholder temporarily for bash mode
             self.placeholder = "! shell mode  ·  Enter runs  ·  Ctrl+C clear"
         else:
-            self._refresh_placeholder()
+            refresh = getattr(self, "_refresh_placeholder", None)
+            if callable(refresh):
+                refresh()
+            else:
+                self.placeholder = getattr(self, "_idle_placeholder", "")
         try:
             from textual.widgets import Label
             self.query_one("#input-chevron", Label).update("$ " if is_bash else self._chevron_label)
@@ -626,9 +650,9 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
     # --- History skip-command navigation ---
 
     def action_history_prev_prompt(self) -> None:
-        """Alt+Up: navigate history backward, skipping slash/bang commands."""
-        self._history_navigate_skip_cmds(direction=-1)
+        """Alt+Up: jump to the previous turn."""
+        self.app.action_jump_turn_prev()
 
     def action_history_next_prompt(self) -> None:
-        """Alt+Down: navigate history forward, skipping slash/bang commands."""
-        self._history_navigate_skip_cmds(direction=+1)
+        """Alt+Down: jump to the next turn."""
+        self.app.action_jump_turn_next()

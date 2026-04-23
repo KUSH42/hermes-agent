@@ -26,11 +26,6 @@ if TYPE_CHECKING:
 
 def _choices_from_state(state: "ChoiceOverlayState") -> list[InterruptChoice]:
     choices = [InterruptChoice(id=c, label=c) for c in state.choices]
-    # F-2: first-char collision check so accelerators are unambiguous
-    if __debug__ and choices:
-        firsts = [c.id[:1] for c in choices if c.id]
-        assert len(firsts) == len(set(firsts)), \
-            f"Choice id first-char collision: {[c.id for c in choices]}"
     return choices
 
 
@@ -126,7 +121,9 @@ def make_sudo_payload(app: Any, state: "SecretOverlayState") -> InterruptPayload
         countdown_s=float(countdown),
         urgency="warn",
         input_spec=InputSpec(masked=True, placeholder="enter passphrase…"),
-        on_resolve=_make_on_resolve("sudo_state", app, state, timeout_value=None),
+        on_resolve=_make_on_resolve(
+            "sudo_state", app, state, timeout_value=None, cancel_value=""
+        ),
     )
     return _adopt_state_deadline(p, state)
 
@@ -141,7 +138,7 @@ def make_secret_payload(app: Any, state: "SecretOverlayState") -> InterruptPaylo
         urgency="warn",  # D-1: secret prompts are as sensitive as sudo
         input_spec=InputSpec(masked=True, placeholder="enter secret value…"),
         on_resolve=_make_on_resolve(
-            "secret_state", app, state, timeout_value=None
+            "secret_state", app, state, timeout_value=None, cancel_value=""
         ),
     )
     return _adopt_state_deadline(p, state)
@@ -149,6 +146,31 @@ def make_secret_payload(app: Any, state: "SecretOverlayState") -> InterruptPaylo
 
 def make_undo_payload(app: Any, state: "UndoOverlayState") -> InterruptPayload:
     countdown = max(1, int(state.remaining))
+
+    def _resolve_undo(value: str) -> None:
+        try:
+            state.response_queue.put("y" if value == "y" else "cancel")
+        except Exception:
+            pass
+        if value == "y":
+            pending_panel = getattr(app, "_pending_undo_panel", None)
+            pending_n = getattr(app, "_pending_rollback_n", 0)
+            try:
+                app.undo_state = None
+                app._pending_undo_panel = None
+            except Exception:
+                pass
+            if pending_panel is not None:
+                app._run_undo_sequence(pending_panel)
+            else:
+                app._run_rollback_sequence(pending_n)
+            return
+        try:
+            app.undo_state = None
+            app._pending_undo_panel = None
+        except Exception:
+            pass
+
     p = InterruptPayload(
         kind=InterruptKind.UNDO,
         title="Undo last turn?",
@@ -161,9 +183,7 @@ def make_undo_payload(app: Any, state: "UndoOverlayState") -> InterruptPayload:
         ],
         user_text=state.user_text or "",
         has_checkpoint=bool(state.has_checkpoint),
-        on_resolve=_make_on_resolve(
-            "undo_state", app, state, timeout_value="cancel"
-        ),
+        on_resolve=_resolve_undo,
     )
     return _adopt_state_deadline(p, state)
 

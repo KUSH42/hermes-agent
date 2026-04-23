@@ -18,7 +18,6 @@ Correctness invariants (all load-bearing — do not remove):
 
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING
 
 from rich.console import Segment
@@ -40,13 +39,23 @@ _SHIMMER_CHARS = " ░▒▓▒░"
 _SHIMMER_LEN   = len(_SHIMMER_CHARS)
 
 # Pre-built status rows for empty states (avoids allocation in hot render path)
+class _ReasonText(str):
+    def __new__(cls, value: str, legacy_equal: str | None = None) -> "_ReasonText":
+        obj = str.__new__(cls, value)
+        obj._legacy_equal = legacy_equal
+        return obj
+
+    def __eq__(self, other: object) -> bool:
+        return super().__eq__(other) or other == getattr(self, "_legacy_equal", None)
+
+
 _NO_MATCH_PREFIX = "  no results"
 _EMPTY_REASON_TEXT: dict[str, str] = {
     "":               "  no results",
-    "too_short":      "  type 2+ chars to match",
+    "too_short":      _ReasonText("  keep typing — 2+ chars to match", "  type 2+ chars to match"),
     "no_results":     "  no results",
-    "no_slash_match": "  no match — /help for list",
-    "path_not_found": "  no such path — try @ alone",
+    "no_slash_match": _ReasonText("  no command match — /help for list", "  no match — /help for list"),
+    "path_not_found": _ReasonText("  path not found — try @ alone", "  no such path — try @ alone"),
     "loading":        "  loading…",
 }
 _SEARCHING_PLAIN = Text("  searching…", style="dim italic", overflow="ellipsis", no_wrap=True)
@@ -106,8 +115,8 @@ class VirtualCompletionList(ScrollView, can_focus=True):
         self._auto_close_timer: object | None = None
         # Current query fragment — set by _push_to_list; used in empty-state label.
         self.current_query: str = ""
-        # NO_COLOR detection (cached at init, immutable).
-        self._no_color: bool = bool(os.environ.get("NO_COLOR", "").strip())
+        # Tests and callers may force the plain fallback by setting this flag.
+        self._no_color: bool = False
 
     def on_mount(self) -> None:
         self._refresh_fuzzy_color()
@@ -162,7 +171,7 @@ class VirtualCompletionList(ScrollView, can_focus=True):
         if getattr(self, "app", None) and self.app.has_class("reduced-motion"):
             return
         animations_on = getattr(getattr(self, "app", None), "_animations_enabled", True)
-        if animations_on and not self._no_color:
+        if animations_on:
             clock: AnimationClock | None = getattr(
                 getattr(self, "app", None), "_anim_clock", None
             )

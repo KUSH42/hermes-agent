@@ -149,7 +149,11 @@ class KeyDispatchService(AppService):
             # Route through overlay so dismiss values are adapter-controlled (F-1)
             ov = self._get_interrupt_overlay()
             if ov is not None and ov.has_class("--visible"):
-                ov.dismiss_current("__cancel__")
+                payload = getattr(ov, "_current_payload", None)
+                kind = getattr(payload, "kind", None)
+                kind_value = getattr(kind, "value", kind)
+                value = "" if kind_value == "approval" else "__cancel__"
+                ov.dismiss_current(value)
                 event.prevent_default()
                 return
 
@@ -441,11 +445,11 @@ class KeyDispatchService(AppService):
                 event.prevent_default()
                 return
             elif key == "alt+down":
-                self.app._jump_anchor(+1, BrowseAnchorType.TURN_START)
+                self.app.action_jump_turn_next()
                 event.prevent_default()
                 return
             elif key == "alt+up":
-                self.app._jump_anchor(-1, BrowseAnchorType.TURN_START)
+                self.app.action_jump_turn_prev()
                 event.prevent_default()
                 return
             elif key == "m":

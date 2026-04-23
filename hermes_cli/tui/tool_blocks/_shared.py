@@ -547,7 +547,7 @@ class OmissionBar(TooltipMixin, Widget):
             # G1: default visible — show all / hide (Rich Text avoids markup bracket parsing)
             from rich.text import Text as _T
             yield Button(_T("[show all]"), classes="--ob-down-all")
-            yield Button(self._reset_label(), classes="--ob-cap")
+            yield Button(_T("[hide]"), classes="--ob-cap")
             # G1: advanced (hidden by default)
             yield Button("[↑]",          classes="--ob-up --ob-advanced")
             yield Button("[↓]",          classes="--ob-down --ob-advanced")
@@ -647,9 +647,8 @@ class OmissionBar(TooltipMixin, Widget):
                 )
                 at_end = visible_end >= total
                 try:
-                    # E-1: [reset] never disabled; dim via --at-default class
                     reset_btn = self.query_one(".--ob-cap", Button)
-                    reset_btn.disabled = False
+                    reset_btn.disabled = at_default
                     if at_default:
                         try:
                             reset_btn.add_class("--at-default")
@@ -719,4 +718,3 @@ class OmissionBar(TooltipMixin, Widget):
         elif "--ob-down-all" in classes:
             pb.rerender_window(vs, tot)
         event.stop()
-

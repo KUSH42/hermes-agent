@@ -141,6 +141,7 @@ class StreamingToolBlock(ToolBlock):
         self._truncated_line_count: int = 0
         self._should_strip_cwd: bool = False
         self._detected_cwd: str | None = None
+        self._body._omission_parent_block = self
 
     def compose(self) -> ComposeResult:
         yield self._header
@@ -173,22 +174,11 @@ class StreamingToolBlock(ToolBlock):
             self._cached_body_log = self._body.query_one(CopyableRichLog)
         except Exception:
             pass
-        if self._body.is_mounted:
-            self._omission_bar_top = OmissionBar(
-                parent_block=self, position="top", classes="--omission-bar-top"
-            )
-            self._omission_bar_bottom = OmissionBar(
-                parent_block=self, position="bottom", classes="--omission-bar-bottom"
-            )
-            if self._microcopy_widget is not None:
-                self._body.mount(self._omission_bar_top, before=self._microcopy_widget)
-            else:
-                self._body.mount(self._omission_bar_top)
-            self._body.mount(self._omission_bar_bottom)
+        if self._omission_bar_top is not None:
             self._omission_bar_top.display = False
+        if self._omission_bar_bottom is not None:
             self._omission_bar_bottom.display = False
-            self._omission_bar_top_mounted = True
-            self._omission_bar_bottom_mounted = True
+        # Compose pre-mounts bars and sets _omission_bar_bottom_mounted = True.
         self._header._pulse_start()
         try:
             from hermes_cli.tui.tool_category import spec_for as _spec_for
@@ -590,9 +580,7 @@ class StreamingToolBlock(ToolBlock):
             )
 
         if self._omission_bar_bottom_mounted and self._omission_bar_bottom is not None:
-            # E-2: warn at 80% of cap; D3: always show when cap_msg present
-            warn_threshold = int(visible_cap * 0.8)
-            show_bottom = (total >= warn_threshold) or (visible_end < total) or bool(cap_msg)
+            show_bottom = (visible_end < total) or bool(cap_msg)
             if self._omission_bar_bottom.display != show_bottom:
                 self._omission_bar_bottom.display = show_bottom
             self._omission_bar_bottom.set_counts(

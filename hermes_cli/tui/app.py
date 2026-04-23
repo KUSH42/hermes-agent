@@ -397,6 +397,12 @@ class HermesApp(App):
     # S0-A: verbose mode — show ctx_label in StatusBar alongside bar
     status_verbose: reactive[bool] = reactive(False)
 
+    # S1-B: True when the active-file tool block has scrolled off the viewport
+    status_active_file_offscreen: reactive[bool] = reactive(False)
+
+    # S1-D: number of live parallel sessions (1 = single-session, hide label)
+    session_count: reactive[int] = reactive(1)
+
     # hint_text is NOT on HermesApp — HintBar.hint is the single source of truth.
 
     def __init__(
@@ -408,6 +414,14 @@ class HermesApp(App):
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
+        # Some pure unit tests monkey-patch AssistantNameplate.app on the class
+        # without restoring it. A real app must use Textual's inherited app
+        # descriptor, not a stale test mock.
+        try:
+            if "app" in AssistantNameplate.__dict__:
+                delattr(AssistantNameplate, "app")
+        except Exception:
+            pass
         self.cli = cli
         self._startup_fn = startup_fn
         self._clipboard_available: bool = clipboard_available
@@ -743,6 +757,13 @@ class HermesApp(App):
         if _os.environ.get("HERMES_DENSITY", "").lower() == "compact":
             self._compact_manual = True
             self.compact = True  # triggers watch_compact → adds "density-compact"
+        elif self._compact_manual is None:
+            try:
+                w, h = self.size.width, self.size.height
+                if w > 0 and h > 0:
+                    self.compact = w <= 120 or h <= 30
+            except Exception:
+                pass
         if _os.environ.get("HERMES_REDUCED_MOTION", "").lower() in ("1", "true", "yes"):
             self.add_class("reduced-motion")
         # G-1: also read tui.reduced_motion from config file
@@ -1526,6 +1547,7 @@ class HermesApp(App):
 
     def _lc_clear_active_file(self, **_: object) -> None:
         self.status_active_file = ""
+        self.status_active_file_offscreen = False  # S1-B
 
     def _lc_reset_response_metrics(self, **_: object) -> None:
         self._response_metrics_active = False
@@ -1792,14 +1814,17 @@ class HermesApp(App):
                 self._set_hint_phase("file")
             elif tool_name in _SHELL_TOOLS:
                 self.status_active_file = ""
+                self.status_active_file_offscreen = False  # S1-B
                 self._set_chevron_phase("--phase-shell")
                 self._set_hint_phase("stream")
             else:
                 self.status_active_file = ""
+                self.status_active_file_offscreen = False  # S1-B
                 self._set_chevron_phase("--phase-stream")
                 self._set_hint_phase("stream")
         else:
             self.status_active_file = ""
+            self.status_active_file_offscreen = False  # S1-B
             if self.agent_running:
                 self._set_chevron_phase("--phase-stream")
         # nameplate: glitch + label update on non-empty spinner_label

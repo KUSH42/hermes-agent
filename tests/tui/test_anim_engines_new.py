@@ -9,6 +9,11 @@ import pytest
 
 from hermes_cli.tui.anim_engines import (
     AnimParams,
+    ENGINES,
+    FlockSwarmEngine,
+    FluidFieldEngine,
+    HyperspaceEngine,
+    NeuralPulseEngine,
     WireframeCubeEngine,
     SierpinskiEngine,
     PlasmaEngine,
@@ -29,6 +34,53 @@ def make_params(**kwargs: object) -> AnimParams:
     defaults = dict(width=80, height=40, t=0.0, dt=1 / 15)
     defaults.update(kwargs)  # type: ignore[arg-type]
     return AnimParams(**defaults)  # type: ignore[arg-type]
+
+
+def test_all_engines_tolerate_zero_dimensions() -> None:
+    params = make_params(width=0, height=0, particle_count=12)
+    for name, cls in ENGINES.items():
+        engine = cls()
+        result = engine.next_frame(params)
+        assert isinstance(result, str), name
+
+
+def test_stateful_engines_reinitialise_on_resize() -> None:
+    old_params = make_params(width=100, height=48, particle_count=30)
+    new_params = make_params(width=7, height=5, particle_count=30)
+
+    neural = NeuralPulseEngine()
+    neural.next_frame(old_params)
+    neural.next_frame(new_params)
+    assert neural._w == 7
+    assert neural._h == 5
+    assert all(0 <= x < 7 and 0 <= y < 5 for x, y in neural._nodes)
+
+    flock = FlockSwarmEngine()
+    flock.next_frame(old_params)
+    flock.next_frame(new_params)
+    assert flock._w == 7
+    assert flock._h == 5
+    assert all(0 <= b[0] < 7 and 0 <= b[1] < 5 for b in flock._boids)
+
+    hyperspace = HyperspaceEngine()
+    hyperspace.next_frame(old_params)
+    hyperspace.next_frame(new_params)
+    assert hyperspace._w == 7
+    assert hyperspace._h == 5
+
+    fluid = FluidFieldEngine()
+    fluid.next_frame(old_params)
+    fluid.next_frame(new_params)
+    assert fluid._w == 7
+    assert fluid._h == 5
+    assert all(0 <= p[0] < 7 and 0 <= p[1] < 5 for p in fluid._particles)
+
+    matrix = MatrixRainEngine()
+    matrix.next_frame(old_params)
+    matrix.next_frame(new_params)
+    assert matrix._w == 7
+    assert matrix._h == 5
+    assert all(0 <= col["x"] < 7 for col in matrix._columns)
 
 
 # ── D1: WireframeCubeEngine ────────────────────────────────────────────────────
@@ -293,6 +345,9 @@ class FakeOverlay:
     def hide(self, _cfg: object) -> None:
         pass
 
+    def _do_hide(self) -> None:
+        pass
+
 
 def make_fake_anim_app() -> FakeApp:
     """Return a FakeApp with _handle_anim_command wired via CommandsService."""
@@ -336,6 +391,16 @@ class TestAnimCommandImprovements:
         calls = [c.args[0] for c in app.set_timer.call_args_list]
         assert 120.0 in calls
 
+    def test_b1_bare_anim_opens_config_panel(self) -> None:
+        app = make_fake_anim_app()
+        panel = MagicMock()
+        app.query_one = MagicMock(return_value=panel)  # type: ignore[method-assign]
+
+        handled = app._svc_commands.handle_tui_command("/anim")
+
+        assert handled is True
+        panel.show.assert_called_once()
+
     def test_b2_speed_persists(self) -> None:
         app = make_fake_anim_app()
         app._handle_anim_command("/anim speed 30")
@@ -358,6 +423,28 @@ class TestAnimCommandImprovements:
         app = make_fake_anim_app()
         app._handle_anim_command("/anim ambient zzzunknown999")
         assert any("Unknown" in str(h) or "unknown" in str(h).lower() for h in app._hints)
+
+    def test_b4_direct_preset_shortcut_persists(self) -> None:
+        app = make_fake_anim_app()
+        app._handle_anim_command("/anim minimal")
+        assert any(
+            isinstance(d, dict)
+            and d.get("animation") == "perlin_flow"
+            and d.get("carousel") is False
+            and d.get("enabled") is True
+            for d in app._persisted
+        )
+
+    def test_b4_preset_subcommand_still_persists(self) -> None:
+        app = make_fake_anim_app()
+        app._handle_anim_command("/anim preset hacker")
+        assert any(
+            isinstance(d, dict)
+            and d.get("animation") == "dna"
+            and d.get("color") == "#00ff41"
+            and d.get("enabled") is True
+            for d in app._persisted
+        )
 
 
 # ── D1: Ctrl+Shift+Arrow position cycling ────────────────────────────────────

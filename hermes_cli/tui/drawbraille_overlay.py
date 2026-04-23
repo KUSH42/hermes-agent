@@ -8,7 +8,7 @@ from __future__ import annotations
 import math
 import random
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import TYPE_CHECKING
 
 from rich.style import Style
@@ -149,23 +149,15 @@ class DrawbrailleOverlayCfg:
     position_margin: int = 2
     rail_width: int = 12
     rail_output_margin: bool = False
+    custom_offset_x: int = -1
+    custom_offset_y: int = -1
 
     def __post_init__(self) -> None:
         if self.multi_color is None:
             self.multi_color = []
 
 
-def _overlay_config() -> DrawbrailleOverlayCfg:
-    """Read current overlay config from disk. Not cached — reads each call.
-
-    Uses read_raw_config() to avoid ensure_hermes_home() side effect during tests.
-    Falls back to empty dict if config file missing.
-    """
-    try:
-        from hermes_cli.config import read_raw_config
-        d = read_raw_config().get("display", {}).get("drawbraille_overlay", {})
-    except Exception:
-        d = {}
+def _cfg_from_mapping(d: dict) -> DrawbrailleOverlayCfg:
     raw_mc = d.get("multi_color", [])
     multi_color = [str(c) for c in raw_mc] if isinstance(raw_mc, list) else []
     return DrawbrailleOverlayCfg(
@@ -230,7 +222,23 @@ def _overlay_config() -> DrawbrailleOverlayCfg:
         position_margin=int(d.get("position_margin", 2)),
         rail_width=int(d.get("rail_width", 12)),
         rail_output_margin=bool(d.get("rail_output_margin", False)),
+        custom_offset_x=int(d.get("custom_offset_x", -1)),
+        custom_offset_y=int(d.get("custom_offset_y", -1)),
     )
+
+
+def _overlay_config() -> DrawbrailleOverlayCfg:
+    """Read current overlay config from disk. Not cached — reads each call.
+
+    Uses read_raw_config() to avoid ensure_hermes_home() side effect during tests.
+    Falls back to empty dict if config file missing.
+    """
+    try:
+        from hermes_cli.config import read_raw_config
+        d = read_raw_config().get("display", {}).get("drawbraille_overlay", {})
+    except Exception:
+        d = {}
+    return _cfg_from_mapping(d)
 
 
 # ── Color resolution ──────────────────────────────────────────────────────────
@@ -690,16 +698,11 @@ class DrawbrailleOverlay(Static):
 
     def watch_size_name(self, _value: str) -> None:
         self._apply_layout()
-        if self._anim_params is not None:
-            self._anim_params.width = self.size.width * 2
-            self._anim_params.height = self.size.height * 4
 
     def watch_vertical(self, value: bool) -> None:
         self._apply_layout()
         if self._anim_params is not None:
             self._anim_params.vertical = value
-            self._anim_params.width = self.size.width * 2
-            self._anim_params.height = self.size.height * 4
 
     def watch_show_border(self, value: bool) -> None:
         if value:
@@ -754,6 +757,11 @@ class DrawbrailleOverlay(Static):
             self._fade_step = cfg.fade_in_frames
             return  # already visible, just interrupt fade-out
         # Sync reactives from config — triggers watchers for live updates.
+        self.animation = cfg.animation
+        self.color = cfg.color
+        self.gradient = cfg.gradient
+        self.color_b = cfg.color_secondary
+        self.dim_bg = cfg.dim_background
         self.size_name = cfg.size
         self.vertical = cfg.vertical
         self.position = cfg.position
@@ -1412,14 +1420,37 @@ class DrawbrailleOverlay(Static):
         self._drag_base_ox = ox
         self._drag_base_oy = oy
 
+    def _clamp_offset(self, ox: int, oy: int, w: int, h: int, tw: int, th: int) -> tuple[int, int]:
+        cfg = self._cfg
+        margin = cfg.position_margin if cfg is not None else 2
+        top_safe = 1 if self._has_nameplate() else 0
+        bottom_safe = 2
+        max_x = max(margin, tw - w - margin)
+        max_y = max(top_safe, th - h - bottom_safe)
+        return (
+            max(0, max(margin, min(ox, max_x))),
+            max(0, max(top_safe, min(oy, max_y))),
+        )
+
+    def _set_anim_param_cells(self, w: int, h: int) -> None:
+        if self._anim_params is not None:
+            self._anim_params.width = max(1, int(w)) * 2
+            self._anim_params.height = max(1, int(h)) * 4
+
     def _apply_layout(self) -> None:
         """Apply size + position from current reactives.  Safe to call any time."""
         cfg = self._cfg
         margin = cfg.position_margin if cfg is not None else 2
+        try:
+            tw = self.app.size.width
+            th = self.app.size.height
+        except Exception:
+            tw, th = 80, 24
 
         if self.size_name == "fill":
             self.styles.width = "1fr"
             self.styles.height = "1fr"
+            self._set_anim_param_cells(tw, th)
             self._set_offset(0, 0)
             return
         if self.vertical:
@@ -1435,11 +1466,6 @@ class DrawbrailleOverlay(Static):
                 "large":  (70, 20),
             }
         w, h = sizes.get(self.size_name, sizes["medium"])
-        try:
-            tw = self.app.size.width
-            th = self.app.size.height
-        except Exception:
-            tw, th = 80, 24
 
         top_safe = 1 if self._has_nameplate() else 0
         bottom_safe = 2
@@ -1451,6 +1477,7 @@ class DrawbrailleOverlay(Static):
             rail_width = cfg.rail_width if cfg is not None else 12
             self.styles.width = rail_width
             self.styles.height = th - top_safe - bottom_safe
+            self._set_anim_param_cells(rail_width, th - top_safe - bottom_safe)
             if pos == "rail-right":
                 ox, oy = tw - rail_width, top_safe
             else:
@@ -1471,6 +1498,16 @@ class DrawbrailleOverlay(Static):
 
         self.styles.width = w
         self.styles.height = h
+        self._set_anim_param_cells(w, h)
+
+        if pos == "custom":
+            ox = cfg.custom_offset_x if cfg is not None else self._drag_base_ox
+            oy = cfg.custom_offset_y if cfg is not None else self._drag_base_oy
+            if ox < 0 or oy < 0:
+                ox, oy = self._drag_base_ox, self._drag_base_oy
+            ox, oy = self._clamp_offset(int(ox), int(oy), w, h, tw, th)
+            self._set_offset(ox, oy)
+            return
 
         # Phase E: 9 named anchors
         positions = {
@@ -1487,9 +1524,8 @@ class DrawbrailleOverlay(Static):
         ox, oy = positions.get(pos, positions["center"])
 
         # Safe area clamping
-        ox = max(margin, min(ox, tw - w - margin))
-        oy = max(top_safe, min(oy, th - h - bottom_safe))
-        self._set_offset(max(0, ox), max(0, oy))
+        ox, oy = self._clamp_offset(ox, oy, w, h, tw, th)
+        self._set_offset(ox, oy)
 
     # ── D2 mouse drag handlers ─────────────────────────────────────────────
 
@@ -1521,9 +1557,11 @@ class DrawbrailleOverlay(Static):
             th = self.app.size.height
             w = self.size.width
             h = self.size.height
-            margin = 1
-            ox = max(margin, min(tw - w - margin, self._drag_base_ox + dx))
-            oy = max(0, min(th - h - 2, self._drag_base_oy + dy))
+            ox, oy = self._clamp_offset(
+                self._drag_base_ox + dx,
+                self._drag_base_oy + dy,
+                w, h, tw, th,
+            )
             self.styles.offset = (ox, oy)
         except Exception:
             pass
@@ -1545,9 +1583,16 @@ class DrawbrailleOverlay(Static):
             w, h = self.size.width, self.size.height
             ox = self._drag_base_ox + (event.screen_x - self._drag_start_sx)
             oy = self._drag_base_oy + (event.screen_y - self._drag_start_sy)
-            nearest = _nearest_anchor(ox, oy, w, h, tw, th)
-            self.position = nearest
-            self.app._persist_anim_config({"position": nearest})
+            ox, oy = self._clamp_offset(ox, oy, w, h, tw, th)
+            cfg = self._cfg or _overlay_config()
+            self._cfg = replace(cfg, position="custom", custom_offset_x=ox, custom_offset_y=oy)
+            self._set_offset(ox, oy)
+            self.position = "custom"
+            self.app._persist_anim_config({
+                "position": "custom",
+                "custom_offset_x": ox,
+                "custom_offset_y": oy,
+            })
         except Exception:
             pass
         event.stop()
@@ -1631,8 +1676,8 @@ class AnimConfigPanel(Widget):
         self.add_class("--visible")
         self.focus()
 
-    def _build_fields(self) -> None:
-        cfg = _overlay_config()
+    def _build_fields(self, cfg: DrawbrailleOverlayCfg | None = None) -> None:
+        cfg = cfg or _overlay_config()
         layer_b_choices = [""] + [k for k in ANIMATION_KEYS if k != "sdf_morph"]
         self._fields = [
             # ── Core ──────────────────────────────────────────────────────
@@ -1640,13 +1685,13 @@ class AnimConfigPanel(Widget):
             _PanelField("animation",  "Animation", "cycle",  cfg.animation,
                         choices=ANIMATION_KEYS),
             _PanelField("fps",        "FPS",       "int",    cfg.fps,
-                        min_val=1, max_val=30),
+                        min_val=1, max_val=60),
             _PanelField("size_name",  "Size",      "cycle",  cfg.size,
                         choices=["small", "medium", "large", "fill"]),
             _PanelField("position",   "Position",  "cycle",  cfg.position,
                         choices=["center", "top-right", "bottom-right", "bottom-left", "top-left",
                                  "top-center", "bottom-center", "mid-right", "mid-left",
-                                 "rail-right", "rail-left"]),
+                                 "rail-right", "rail-left", "custom"]),
             _PanelField("trigger",    "Trigger",   "cycle",  cfg.trigger,
                         choices=["agent_running", "command_running", "always"]),
             # ── Color ─────────────────────────────────────────────────────
@@ -1847,6 +1892,8 @@ class AnimConfigPanel(Widget):
             self._refresh_body()
         elif f.kind == "cycle":
             self._cycle(+1)
+        elif f.kind == "color":
+            self._cycle_color(f, +1)
 
     def on_key(self, event: object) -> None:
         """Handle P/S/R shortcuts."""
@@ -1867,10 +1914,34 @@ class AnimConfigPanel(Widget):
             self._push_to_overlay(f)
             self._refresh_body()
             return
+        if f.kind == "color":
+            self._cycle_color(f, direction)
+            return
         if f.kind != "cycle" or not f.choices:
             return
         idx = (f.choices.index(str(f.value)) + direction) % len(f.choices)
         f.value = f.choices[idx]
+        self._push_to_overlay(f)
+        self._refresh_body()
+
+    def _cycle_color(self, f: _PanelField, direction: int) -> None:
+        palette = [
+            "auto",
+            "$accent",
+            "$primary",
+            "#00d7ff",
+            "#00ff41",
+            "#ff00aa",
+            "#ffb454",
+            "#ffffff",
+        ]
+        current = str(f.value)
+        if current not in palette:
+            palette = [current] + palette
+            idx = 0
+        else:
+            idx = palette.index(current)
+        f.value = palette[(idx + direction) % len(palette)]
         self._push_to_overlay(f)
         self._refresh_body()
 
@@ -1915,6 +1986,21 @@ class AnimConfigPanel(Widget):
         attr = attr_map.get(f.name)
         if attr is not None:
             setattr(ov, attr, f.value)
+        if f.name in {
+            "enabled",
+            "trigger",
+            "ambient_enabled",
+            "ambient_engine",
+            "ambient_heat",
+            "ambient_alpha",
+            "carousel",
+            "carousel_interval_s",
+        }:
+            cfg = _current_panel_cfg(self._fields)
+            if cfg.enabled and (cfg.trigger == "always" or ov.has_class("-visible")):
+                ov.show(cfg)
+            elif not cfg.enabled:
+                ov.hide(cfg)
 
     # ── preview / save / reset ─────────────────────────────────────────────
 
@@ -1923,6 +2009,7 @@ class AnimConfigPanel(Widget):
         if ov is None:
             return
         cfg = _current_panel_cfg(self._fields)
+        cfg.enabled = True
         ov.show(cfg)
         if self._preview_timer is not None:
             self._preview_timer.stop()
@@ -1956,6 +2043,16 @@ class AnimConfigPanel(Widget):
                 self.app.set_timer(2.0, lambda: None)  # type: ignore[attr-defined]
             except Exception:
                 pass
+            try:
+                ov = self._get_overlay()
+                if ov is not None:
+                    cfg = _current_panel_cfg(self._fields)
+                    if cfg.enabled and cfg.trigger == "always":
+                        ov.show(cfg)
+                    elif not cfg.enabled:
+                        ov.hide(cfg)
+            except Exception:
+                pass
         except Exception as exc:
             try:
                 self.app.set_status_error(f"save failed: {exc}", auto_clear_s=5.0)  # type: ignore[attr-defined]
@@ -1970,12 +2067,11 @@ class AnimConfigPanel(Widget):
     def _do_reset(self) -> None:
         from hermes_cli.config import DEFAULT_CONFIG
         d = DEFAULT_CONFIG["display"]["drawbraille_overlay"]  # type: ignore[index]
-        self._fields = []
-        self._build_fields()
+        cfg = _cfg_from_mapping(d)
+        self._build_fields(cfg)
         ov = self._get_overlay()
         if ov is not None:
-            ov.animation = d.get("animation", "dna")
-            ov.color = d.get("color", "$accent")
+            ov.show(replace(cfg, enabled=True))
         self._refresh_body()
 
 
@@ -2172,8 +2268,81 @@ class AnimGalleryOverlay(Widget):
             pass
 
 
+_PANEL_CONFIG_KEYS = {
+    "enabled": "enabled",
+    "animation": "animation",
+    "trigger": "trigger",
+    "fps": "fps",
+    "position": "position",
+    "size_name": "size",
+    "color": "color",
+    "gradient": "gradient",
+    "color_b": "color_secondary",
+    "hue_shift_speed": "hue_shift_speed",
+    "dim_bg": "dim_background",
+    "show_border": "show_border",
+    "vertical": "vertical",
+    "ambient_enabled": "ambient_enabled",
+    "ambient_engine": "ambient_engine",
+    "ambient_heat": "ambient_heat",
+    "ambient_alpha": "ambient_alpha",
+    "carousel": "carousel",
+    "carousel_interval_s": "carousel_interval_s",
+    "blend_mode": "blend_mode",
+    "layer_b": "layer_b",
+    "trail_decay": "trail_decay",
+    "adaptive": "adaptive",
+    "particle_count": "particle_count",
+    "symmetry": "symmetry",
+    "attractor_type": "attractor_type",
+    "life_seed": "life_seed",
+    "depth_cues": "depth_cues",
+}
+
+
+def _panel_updates(fields: list[_PanelField]) -> dict:
+    updates: dict = {}
+    for f in fields:
+        key = _PANEL_CONFIG_KEYS.get(f.name)
+        if key is None:
+            continue
+        value = f.value
+        if key in {"enabled", "gradient", "dim_background", "show_border", "vertical",
+                   "ambient_enabled", "carousel", "adaptive", "depth_cues"}:
+            value = bool(value)
+        elif key in {"fps", "particle_count", "symmetry"}:
+            value = int(value)
+        elif key in {"hue_shift_speed", "ambient_heat", "ambient_alpha",
+                     "carousel_interval_s", "trail_decay"}:
+            value = float(value)
+        elif key in {"animation", "trigger", "position", "size", "color",
+                     "color_secondary", "ambient_engine", "blend_mode", "layer_b",
+                     "attractor_type", "life_seed"}:
+            value = str(value)
+        updates[key] = value
+    return updates
+
+
 def _current_panel_cfg(fields: list[_PanelField]) -> DrawbrailleOverlayCfg:
-    """Build a DrawbrailleOverlayCfg from current panel field values."""
+    """Build a DrawbrailleOverlayCfg from current panel fields.
+
+    Starts from the current full config so preview/live changes preserve
+    advanced keys that the compact panel does not expose.
+    """
+    base = _overlay_config()
+    return replace(base, **_panel_updates(fields))
+
+
+def _fields_to_dict(fields: list[_PanelField]) -> dict:
+    """Convert panel fields to a full config dict, preserving hidden keys."""
+    data = asdict(_overlay_config())
+    data.update(_panel_updates(fields))
+    if data.get("multi_color") is None:
+        data["multi_color"] = []
+    return data
+
+
+def _legacy_current_panel_cfg(fields: list[_PanelField]) -> DrawbrailleOverlayCfg:
     fmap = {f.name: f.value for f in fields}
     return DrawbrailleOverlayCfg(
         enabled=bool(fmap.get("enabled", True)),
@@ -2218,8 +2387,7 @@ def _current_panel_cfg(fields: list[_PanelField]) -> DrawbrailleOverlayCfg:
     )
 
 
-def _fields_to_dict(fields: list[_PanelField]) -> dict:
-    """Convert panel fields to a dict suitable for saving to config."""
+def _legacy_fields_to_dict(fields: list[_PanelField]) -> dict:
     fmap = {f.name: f.value for f in fields}
     return {
         "enabled": bool(fmap.get("enabled", True)),

@@ -286,7 +286,7 @@ class HintBar(Widget):
             flash_hint = self.hint
             if flash_hint:
                 sep = Text.from_markup("  [dim]|[/dim]  ")
-                flash_t = Text.from_markup(flash_hint)
+                flash_t = Text(flash_hint)
                 w = self.content_size.width
                 if pinned.cell_len + sep.cell_len + flash_t.cell_len <= w:
                     pinned.append_text(sep)

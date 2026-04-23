@@ -36,6 +36,7 @@ from hermes_cli.tui.path_search import (
 )
 from hermes_cli.tui.completion_list import VirtualCompletionList
 from hermes_cli.tui.completion_overlay import CompletionOverlay, SlashDescPanel
+from hermes_cli.tui.drawbraille_overlay import AnimConfigPanel
 from hermes_cli.tui.preview_panel import PreviewPanel, _hex_luminance
 
 
@@ -45,6 +46,18 @@ from hermes_cli.tui.preview_panel import PreviewPanel, _hex_luminance
 
 def _make_app() -> HermesApp:
     return HermesApp(cli=MagicMock())
+
+
+@pytest.mark.asyncio
+async def test_exact_slash_command_enter_submits_instead_of_accepting_completion():
+    app = _make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        inp = app.query_one("#input-area", HermesInput)
+        inp.load_text("/anim")
+        await pilot.press("enter")
+        await pilot.pause(0.2)
+        assert app.query_one(AnimConfigPanel).has_class("--visible")
 
 
 # ===========================================================================

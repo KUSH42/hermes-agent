@@ -243,6 +243,17 @@ class TestHintBarStreaming:
         assert "^C" in result
         assert "File saved" in result
 
+    def test_T16b_render_streaming_hint_treats_brackets_as_plain_text(self):
+        app = _make_mock_app(status_streaming=True)
+        hint = "/anim gradient [on|off|#c1 #c2]"
+        hb, cs = self._hint_bar_ctx(app, width=200)
+        with patch.object(type(hb), "content_size", new_callable=PropertyMock, return_value=cs):
+            with patch.object(type(hb), "hint", new_callable=PropertyMock, return_value=hint):
+                with patch.object(type(hb), "app", new_callable=PropertyMock, return_value=app):
+                    result = str(hb.render())
+        assert "^C" in result
+        assert hint in result
+
     def test_T17_render_streaming_wide_flash_absent_when_too_long(self):
         app = _make_mock_app(status_streaming=True)
         hb, cs = self._hint_bar_ctx(app, width=40)

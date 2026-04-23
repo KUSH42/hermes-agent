@@ -139,6 +139,11 @@ def _make_trail_canvas(decay: float) -> "TrailCanvas | BrailleCanvas":
     return BrailleCanvas()
 
 
+def _safe_dims(params: AnimParams) -> tuple[int, int]:
+    """Return positive integer braille-pixel dimensions for engine math."""
+    return max(1, int(params.width)), max(1, int(params.height))
+
+
 def _braille_density_set(canvas: object, x: int, y: int, intensity: float, w: int, h: int) -> None:
     """Set braille pixels in a 2×2 block around (x,y) proportional to intensity.
 
@@ -621,6 +626,8 @@ class NeuralPulseEngine(_BaseEngine):
         self._fire_queue: list[int] = []
         self._edge_steps: dict[tuple[int, int], int] = {}
         self._init_done = False
+        self._w = 0
+        self._h = 0
         self._extra_fires = 0  # set by on_signal
         self._slow_decay_ticks: int = 0  # for "complete" slow-decay
 
@@ -643,6 +650,8 @@ class NeuralPulseEngine(_BaseEngine):
             for j in self._edges[i]:
                 bx, by = self._nodes[j]
                 self._edge_steps[(i, j)] = max(int(math.hypot(bx - ax, by - ay)), 1)
+        self._w = w
+        self._h = h
         self._init_done = True
 
     def on_signal(self, signal: str, value: float = 1.0) -> None:
@@ -666,9 +675,9 @@ class NeuralPulseEngine(_BaseEngine):
             self._fire_queue = []
 
     def next_frame(self, params: AnimParams) -> str:
-        w, h = params.width, params.height
+        w, h = _safe_dims(params)
         n = max(5, min(50, params.particle_count // 3))
-        if not self._init_done or len(self._nodes) != n:
+        if not self._init_done or len(self._nodes) != n or self._w != w or self._h != h:
             self._init(w, h, n)
         canvas = _make_trail_canvas(params.trail_decay) if params.trail_decay > 0 else _make_canvas()
 
@@ -772,17 +781,14 @@ class FlockSwarmEngine(_BaseEngine):
             self._speed_modifier *= 2
 
     def next_frame(self, params: AnimParams) -> str:
-        w, h = params.width, params.height
+        w, h = _safe_dims(params)
         n = max(5, min(100, params.particle_count))
-        if not self._init_done or len(self._boids) != n:
+        if not self._init_done or len(self._boids) != n or self._w != w or self._h != h:
             self._init(w, h, n)
 
         canvas = _make_trail_canvas(0.7) if params.trail_decay <= 0 else _make_trail_canvas(params.trail_decay)
 
         max_speed = (1.5 + params.heat * 3.0) * self._speed_modifier
-        self._w = w
-        self._h = h
-
         # Move attractor
         self._attractor[0] += self._attr_vel[0]
         self._attractor[1] += self._attr_vel[1]
@@ -947,7 +953,7 @@ class ConwayLifeEngine(_BaseEngine):
         self._alive = new_alive
 
     def next_frame(self, params: AnimParams) -> str:
-        w, h = params.width, params.height
+        w, h = _safe_dims(params)
         if not self._init_done or self._w != w or self._h != h:
             self._w, self._h = w, h
             self._seed(params.life_seed, w, h)
@@ -1103,6 +1109,9 @@ class HyperspaceEngine(_BaseEngine):
     def __init__(self) -> None:
         self._stars: list[list[float]] = []  # [x, y, z, px, py]
         self._init_done = False
+        self._w = 0
+        self._h = 0
+        self._n = 0
         self._warp = False
         self._speed_boost_ticks: int = 0
 
@@ -1118,12 +1127,15 @@ class HyperspaceEngine(_BaseEngine):
             [random.uniform(-1, 1), random.uniform(-1, 1), random.uniform(0.7, 1.0), 0.0, 0.0]
             for _ in range(n)
         ]
+        self._w = w
+        self._h = h
+        self._n = n
         self._init_done = True
 
     def next_frame(self, params: AnimParams) -> str:
-        w, h = params.width, params.height
+        w, h = _safe_dims(params)
         n = min(200, params.particle_count * 3)
-        if not self._init_done:
+        if not self._init_done or self._w != w or self._h != h or self._n != n:
             self._init(w, h, n)
 
         trail_decay = max(params.trail_decay, 0.7 if params.heat > 0.3 else 0.0)
@@ -1238,12 +1250,16 @@ class FluidFieldEngine(_BaseEngine):
         self._particles: list[list[float]] = []  # [x, y, age]
         self._max_age = 60
         self._init_done = False
+        self._w = 0
+        self._h = 0
 
     def _init(self, w: int, h: int, n: int) -> None:
         self._particles = [
             [random.random() * w, random.random() * h, random.randint(0, self._max_age)]
             for _ in range(n)
         ]
+        self._w = w
+        self._h = h
         self._init_done = True
 
     def _curl(self, x: float, y: float, t: float, ns: float) -> tuple[float, float]:
@@ -1262,9 +1278,9 @@ class FluidFieldEngine(_BaseEngine):
         return dndy, -dndx
 
     def next_frame(self, params: AnimParams) -> str:
-        w, h = params.width, params.height
+        w, h = _safe_dims(params)
         n = min(200, params.particle_count)
-        if not self._init_done or len(self._particles) != n:
+        if not self._init_done or len(self._particles) != n or self._w != w or self._h != h:
             self._init(w, h, n)
 
         canvas = _make_trail_canvas(params.trail_decay) if params.trail_decay > 0 else _make_canvas()
@@ -1346,7 +1362,7 @@ class AuroraRibbonEngine(_BaseEngine):
         self._bands_width = w
 
     def next_frame(self, params: AnimParams) -> str:
-        w, h = params.width, params.height
+        w, h = _safe_dims(params)
         t = params.t
         if self._bands_width != w:
             self._rebuild_cache(w)
@@ -1931,6 +1947,9 @@ class MatrixRainEngine(_BaseEngine):
         self._columns: list[dict] = []
         self._trail = TrailCanvas(decay=0.82, threshold=0.2)
         self._initialised: bool = False
+        self._w = 0
+        self._h = 0
+        self._n_cols = 0
         self._complete_countdown: int = 0
         self._error_surge_frames: int = 0
 
@@ -1941,7 +1960,7 @@ class MatrixRainEngine(_BaseEngine):
             self._complete_countdown = 20
 
     def _init_columns(self, params: AnimParams) -> None:
-        w, h = params.width, params.height
+        w, h = _safe_dims(params)
         speed_factor = 1.0 + params.heat * 3.0
         n_cols = max(4, w // 6)
         if params.particle_count > 60:
@@ -1955,13 +1974,19 @@ class MatrixRainEngine(_BaseEngine):
             }
             for _ in range(n_cols)
         ]
+        self._w = w
+        self._h = h
+        self._n_cols = n_cols
         self._initialised = True
 
     def next_frame(self, params: AnimParams) -> str:
-        w, h = params.width, params.height
+        w, h = _safe_dims(params)
         speed_factor = 1.0 + params.heat * 3.0
+        n_cols = max(4, w // 6)
+        if params.particle_count > 60:
+            n_cols = max(n_cols, params.particle_count // 6)
 
-        if not self._initialised:
+        if not self._initialised or self._w != w or self._h != h or self._n_cols != n_cols:
             self._init_columns(params)
 
         if self._error_surge_frames > 0:

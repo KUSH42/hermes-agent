@@ -164,10 +164,78 @@ def test_visible_class_added_on_show():
     ov = DrawbrailleOverlay()
     ov.styles = MagicMock()
     ov._start_anim = MagicMock()
+    ov._anim_params = AnimParams(width=1, height=1)
     cfg = _default_cfg(enabled=True, auto_hide_delay=0, fade_in_frames=0)
     with patch.object(type(ov), "app", new_callable=PropertyMock, return_value=mock_app):
         ov.show(cfg)
     assert ov.has_class("-visible")
+
+
+def test_show_syncs_visual_config_reactives():
+    """show() applies animation, colors, gradient, and size from config."""
+    mock_app = MagicMock()
+    mock_app.size = MagicMock(width=120, height=40)
+    mock_app.get_css_variables.return_value = {"accent": "#00d7ff", "primary": "#5f87d7"}
+    ov = DrawbrailleOverlay()
+    ov.styles = MagicMock()
+    ov._start_anim = MagicMock()
+    ov._anim_params = AnimParams(width=1, height=1)
+    cfg = _default_cfg(
+        enabled=True,
+        animation="neural_pulse",
+        color="#ff0000",
+        gradient=True,
+        color_secondary="#0000ff",
+        size="large",
+        dim_background=False,
+        auto_hide_delay=0,
+        fade_in_frames=0,
+    )
+    with patch.object(type(ov), "app", new_callable=PropertyMock, return_value=mock_app):
+        ov.show(cfg)
+    assert ov.animation == "neural_pulse"
+    assert ov.color == "#ff0000"
+    assert ov.gradient is True
+    assert ov.color_b == "#0000ff"
+    assert ov.size_name == "large"
+    assert ov.dim_bg is False
+    assert ov._anim_params.width == 140
+    assert ov._anim_params.height == 80
+
+
+def test_watch_size_name_updates_anim_params_from_target_layout_not_stale_size():
+    mock_app = MagicMock()
+    mock_app.size = MagicMock(width=120, height=40)
+    ov = DrawbrailleOverlay()
+    ov.styles = MagicMock()
+    ov._cfg = _default_cfg(size="large", vertical=False)
+    ov._anim_params = AnimParams(width=10, height=10)
+    ov.size_name = "large"
+    with patch.object(type(ov), "app", new_callable=PropertyMock, return_value=mock_app), \
+         patch.object(type(ov), "size", new_callable=PropertyMock, return_value=MagicMock(width=1, height=1)):
+        ov.watch_size_name("large")
+    assert ov._anim_params.width == 140
+    assert ov._anim_params.height == 80
+
+
+def test_panel_size_change_pushes_target_anim_dimensions_to_overlay():
+    mock_app = MagicMock()
+    mock_app.size = MagicMock(width=120, height=40)
+    ov = DrawbrailleOverlay()
+    ov.styles = MagicMock()
+    ov._cfg = _default_cfg(size="medium", vertical=False)
+    ov._anim_params = AnimParams(width=100, height=56)
+    with patch("hermes_cli.tui.drawbraille_overlay._overlay_config",
+               return_value=DrawbrailleOverlayCfg(enabled=True, size="medium")):
+        panel = AnimConfigPanel()
+    panel._get_overlay = MagicMock(return_value=ov)
+    size_field = next(f for f in panel._fields if f.name == "size_name")
+    size_field.value = "large"
+    with patch.object(type(ov), "app", new_callable=PropertyMock, return_value=mock_app):
+        panel._push_to_overlay(size_field)
+    assert ov.size_name == "large"
+    assert ov._anim_params.width == 140
+    assert ov._anim_params.height == 80
 
 
 def test_hidden_when_disabled():
@@ -393,6 +461,54 @@ def test_position_center_offset_approx():
     assert offsets_set[-1] == expected
 
 
+def test_mouse_drag_release_commits_exact_custom_offset():
+    """Mouse release keeps the dragged offset instead of snapping to an anchor."""
+    from textual import events
+
+    mock_app = MagicMock()
+    mock_app.size = MagicMock(width=120, height=40)
+    mock_app.query.return_value = []
+    ov = DrawbrailleOverlay()
+    ov._cfg = DrawbrailleOverlayCfg(enabled=True, position="top-right", size="medium")
+
+    offsets_set: list[tuple[int, int]] = []
+
+    class StylesMock:
+        @property
+        def width(self): return 0
+        @width.setter
+        def width(self, v): pass
+        @property
+        def height(self): return 0
+        @height.setter
+        def height(self, v): pass
+        @property
+        def offset(self): return offsets_set[-1] if offsets_set else (0, 0)
+        @offset.setter
+        def offset(self, v): offsets_set.append(v)
+
+    ov.styles = StylesMock()
+    ov._set_offset(20, 5)
+    down = events.MouseDown(ov, 0, 0, 0, 0, 1, False, False, False, screen_x=60, screen_y=10)
+    up = events.MouseUp(ov, 0, 0, 0, 0, 1, False, False, False, screen_x=73, screen_y=14)
+
+    with patch.object(type(ov), "app", new_callable=PropertyMock, return_value=mock_app), \
+         patch.object(type(ov), "size", new_callable=PropertyMock, return_value=MagicMock(width=50, height=14)):
+        ov.on_mouse_down(down)
+        ov.on_mouse_up(up)
+
+    assert offsets_set[-1] == (33, 9)
+    assert ov.position == "custom"
+    assert ov._cfg is not None
+    assert ov._cfg.custom_offset_x == 33
+    assert ov._cfg.custom_offset_y == 9
+    mock_app._persist_anim_config.assert_called_with({
+        "position": "custom",
+        "custom_offset_x": 33,
+        "custom_offset_y": 9,
+    })
+
+
 # ── Gradient ──────────────────────────────────────────────────────────────────
 
 def test_gradient_assembles_text_object():
@@ -516,6 +632,7 @@ def test_fps_inc_clamps_at_15():
 
     panel.action_inc_value()
     assert fps_field.value == int(fps_field.max_val)
+    assert fps_field.max_val == 60
 
 
 def test_fps_dec_clamps_at_1():
@@ -548,6 +665,116 @@ def test_preview_forces_overlay_visible():
     panel.set_timer.assert_called_once()
     args = panel.set_timer.call_args[0]
     assert args[0] == 3.0
+
+
+def test_preview_ignores_disabled_field():
+    """Preview should show even when the saved Enabled field is currently off."""
+    with patch("hermes_cli.tui.drawbraille_overlay._overlay_config",
+               return_value=DrawbrailleOverlayCfg(enabled=False)):
+        panel = AnimConfigPanel()
+
+    fake_overlay = MagicMock(spec=DrawbrailleOverlay)
+    panel._get_overlay = MagicMock(return_value=fake_overlay)
+    panel.set_timer = MagicMock()
+
+    panel._do_preview()
+    cfg = fake_overlay.show.call_args.args[0]
+    assert cfg.enabled is True
+
+
+def test_color_fields_cycle_and_push_to_overlay():
+    with patch("hermes_cli.tui.drawbraille_overlay._overlay_config",
+               return_value=DrawbrailleOverlayCfg(enabled=True, color="$accent")):
+        panel = AnimConfigPanel()
+    color_field = next(f for f in panel._fields if f.name == "color")
+    panel._focus_idx = panel._fields.index(color_field)
+    panel._push_to_overlay = MagicMock()
+    panel._refresh_body = MagicMock()
+
+    panel.action_cycle_right()
+
+    assert color_field.value != "$accent"
+    panel._push_to_overlay.assert_called_once_with(color_field)
+
+
+def test_trigger_always_shows_overlay_immediately():
+    with patch("hermes_cli.tui.drawbraille_overlay._overlay_config",
+               return_value=DrawbrailleOverlayCfg(enabled=True, trigger="agent_running")):
+        panel = AnimConfigPanel()
+    fake_overlay = MagicMock(spec=DrawbrailleOverlay)
+    panel._get_overlay = MagicMock(return_value=fake_overlay)
+    trigger_field = next(f for f in panel._fields if f.name == "trigger")
+    trigger_field.value = "always"
+
+    panel._push_to_overlay(trigger_field)
+
+    fake_overlay.show.assert_called_once()
+
+
+def test_panel_config_preserves_hidden_advanced_fields():
+    base = DrawbrailleOverlayCfg(
+        enabled=True,
+        crossfade_speed=0.77,
+        noise_scale=2.5,
+        sdf_text="KEEP",
+        rail_width=33,
+        phase_aware_carousel=False,
+        completion_burst_frames=9,
+    )
+    with patch("hermes_cli.tui.drawbraille_overlay._overlay_config", return_value=base):
+        panel = AnimConfigPanel()
+        fps_field = next(f for f in panel._fields if f.name == "fps")
+        fps_field.value = 42
+        cfg = _current_panel_cfg(panel._fields)
+        data = _fields_to_dict(panel._fields)
+
+    assert cfg.fps == 42
+    assert cfg.crossfade_speed == 0.77
+    assert cfg.noise_scale == 2.5
+    assert cfg.sdf_text == "KEEP"
+    assert cfg.rail_width == 33
+    assert cfg.phase_aware_carousel is False
+    assert cfg.completion_burst_frames == 9
+    assert data["fps"] == 42
+    assert data["crossfade_speed"] == 0.77
+    assert data["noise_scale"] == 2.5
+    assert data["sdf_text"] == "KEEP"
+    assert data["rail_width"] == 33
+    assert data["phase_aware_carousel"] is False
+    assert data["completion_burst_frames"] == 9
+
+
+def test_visible_overlay_reapplies_non_reactive_carousel_change():
+    with patch("hermes_cli.tui.drawbraille_overlay._overlay_config",
+               return_value=DrawbrailleOverlayCfg(enabled=True, carousel=False)):
+        panel = AnimConfigPanel()
+    fake_overlay = MagicMock(spec=DrawbrailleOverlay)
+    fake_overlay.has_class.return_value = True
+    panel._get_overlay = MagicMock(return_value=fake_overlay)
+    carousel_field = next(f for f in panel._fields if f.name == "carousel")
+    carousel_field.value = True
+
+    panel._push_to_overlay(carousel_field)
+
+    fake_overlay.show.assert_called_once()
+
+
+def test_reset_rebuilds_fields_from_default_config_not_current_file():
+    with patch("hermes_cli.tui.drawbraille_overlay._overlay_config",
+               return_value=DrawbrailleOverlayCfg(enabled=True, animation="dna", color="#ff0000")):
+        panel = AnimConfigPanel()
+    fake_overlay = MagicMock(spec=DrawbrailleOverlay)
+    panel._get_overlay = MagicMock(return_value=fake_overlay)
+
+    panel._do_reset()
+
+    animation_field = next(f for f in panel._fields if f.name == "animation")
+    color_field = next(f for f in panel._fields if f.name == "color")
+    assert animation_field.value == "neural_pulse"
+    assert color_field.value == "auto"
+    shown_cfg = fake_overlay.show.call_args.args[0]
+    assert shown_cfg.animation == "neural_pulse"
+    assert shown_cfg.color == "auto"
 
 
 def test_preview_end_noop_when_agent_running():

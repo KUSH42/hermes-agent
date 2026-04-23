@@ -335,17 +335,13 @@ class CommandsService(AppService):
         app = self.app
         from hermes_cli.tui.drawbraille_overlay import (
             DrawbrailleOverlay as _DO, AnimConfigPanel as _ACP,
-            _ENGINES, _overlay_config, AnimGalleryOverlay as _AGA,
+            _ENGINES, _PRESETS, _overlay_config, AnimGalleryOverlay as _AGA,
         )
         rest = stripped[len("/anim"):].strip()
         args = rest.split() if rest else []
 
         if not args:
-            app._flash_hint(
-                "/anim [on|off|toggle|config|list|speed <fps>|ambient <name>|"
-                "color <#hex>|gradient [on|off|#c1 #c2]|hue [speed|off]|size <small|medium|large|fill>|preset <name>|sdf <text>]",
-                5.0,
-            )
+            self.open_anim_config()
             return
 
         sub = args[0].lower()
@@ -435,12 +431,26 @@ class CommandsService(AppService):
                 app._flash_hint(f"Unknown preset — try: {', '.join(_PRESETS)}", 2.5)
                 return
             current_cfg = _oc()
-            merged = {**_dc.asdict(current_cfg), **preset_dict}
+            merged = {**_dc.asdict(current_cfg), **preset_dict, "enabled": True}
             self.persist_anim_config(merged)
             try:
                 ov = app.query_one(DrawbrailleOverlay)
                 ov._do_hide()
                 ov.show(_oc())
+            except NoMatches:
+                pass
+            return
+
+        if sub in _PRESETS:
+            import dataclasses as _dc
+            preset_dict = _PRESETS[sub]
+            current_cfg = _overlay_config()
+            merged = {**_dc.asdict(current_cfg), **preset_dict, "enabled": True}
+            self.persist_anim_config(merged)
+            try:
+                ov = app.query_one(_DO)
+                ov._do_hide()
+                ov.show(_overlay_config())
             except NoMatches:
                 pass
             return

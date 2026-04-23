@@ -311,7 +311,8 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                 try:
                     from hermes_cli.tui.completion_list import VirtualCompletionList
                     clist = self.screen.query_one(VirtualCompletionList)
-                    if clist.highlighted >= 0:
+                    exact_slash = raw.startswith("/") and raw in getattr(self, "_slash_commands", [])
+                    if clist.highlighted >= 0 and not exact_slash:
                         self.action_accept_autocomplete()
                         return
                 except Exception:

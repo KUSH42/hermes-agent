@@ -89,24 +89,26 @@ def _mock_app(accent="#00d7ff"):
 def _overlay_with_mock_app(**cfg_kw):
     """Create a DrawbrailleOverlay with a mock app, no actual DOM."""
     from hermes_cli.tui.anim_orchestrator import AnimOrchestrator
+    from hermes_cli.tui.drawbraille_renderer import DrawbrailleRenderer
     ov = DrawbrailleOverlay.__new__(DrawbrailleOverlay)
     ov._anim_handle = None
     ov._anim_params = AnimParams(width=60, height=28)
-    ov._resolved_color = "#00d7ff"
-    ov._resolved_color_b = "#8800ff"
-    ov._resolved_multi_colors = []
-    ov._resolved_multi_color_rgbs = None
-    ov._fade_step = 0
-    ov._fade_state = "stable"
-    ov._fade_alpha = 1.0
     ov._auto_hide_handle = None
     ov._cfg = None
-    ov._current_engine_key = ""
     ov._heat = 0.0
     ov._heat_target = 0.0
     ov._token_count_last = 0
     # Phase 2: orchestrator owns engine/carousel/SDF/trail state
     ov._orchestrator = AnimOrchestrator(ov)
+    # Phase 3: renderer owns color resolution + fade state
+    ov._renderer = DrawbrailleRenderer()
+    ov._renderer._resolved_color = "#00d7ff"
+    ov._renderer._resolved_color_b = "#8800ff"
+    ov._renderer._resolved_multi_colors = []
+    ov._renderer._resolved_multi_color_rgbs = None
+    ov._renderer._fade_step = 0
+    ov._renderer._fade_state = "stable"
+    ov._renderer._fade_alpha = 1.0
     # (old carousel_elapsed / carousel_engine_idx were dead fields — not set)
     # Reactive attrs must bypass the descriptor entirely — write directly to
     # instance __dict__ so Textual's reactive.__set__ is never invoked on an
@@ -205,19 +207,19 @@ class TestPhaseA:
         cfg = _cfg(fade_out_frames=3)
         ov._cfg = cfg
         ov.add_class("-visible")
-        ov._fade_state = "out"
-        ov._fade_step = 3
+        ov._renderer._fade_state = "out"
+        ov._renderer._fade_step = 3
 
         # Simulate 3 ticks of fade-out manually
         for _ in range(3):
-            if ov._fade_state == "out":
-                ov._fade_step -= 1
-                if ov._fade_step <= 0:
+            if ov._renderer._fade_state == "out":
+                ov._renderer._fade_step -= 1
+                if ov._renderer._fade_step <= 0:
                     ov.remove_class("-visible")
-                    ov._fade_state = "stable"
+                    ov._renderer._fade_state = "stable"
 
         assert not ov.has_class("-visible")
-        assert ov._fade_state == "stable"
+        assert ov._renderer._fade_state == "stable"
 
     def test_fade_out_skipped_when_zero_frames(self):
         """A3: fade_out_frames=0 → immediate hide (no fade-out state)."""
@@ -226,28 +228,28 @@ class TestPhaseA:
         ov.add_class("-visible")
         ov.hide(cfg)
         assert not ov.has_class("-visible")
-        assert ov._fade_state == "stable"
+        assert ov._renderer._fade_state == "stable"
 
     def test_fade_out_interrupts_on_show(self):
         """A3: show() during fade-out → _fade_state='in', fade-out cancelled."""
         ov = _overlay_with_mock_app()
         cfg = _cfg(fade_out_frames=5, fade_in_frames=3)
         ov.add_class("-visible")
-        ov._fade_state = "out"
-        ov._fade_step = 4
+        ov._renderer._fade_state = "out"
+        ov._renderer._fade_step = 4
         # show() during fade-out
         ov.show(cfg)
-        assert ov._fade_state == "in"
+        assert ov._renderer._fade_state == "in"
 
     def test_hide_noop_when_already_hidden(self):
         """A3: hide() when display=False → no state change."""
         ov = _overlay_with_mock_app()
         cfg = _cfg(fade_out_frames=5)
-        ov._fade_state = "stable"
+        ov._renderer._fade_state = "stable"
         # Not visible — hide should be no-op
         ov.hide(cfg)
         # Should still be stable (not "out")
-        assert ov._fade_state == "stable"
+        assert ov._renderer._fade_state == "stable"
 
     def test_signal_thinking_sets_heat(self):
         """A4: signal('thinking') → _heat_target == 0.5."""

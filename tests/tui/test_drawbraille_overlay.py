@@ -152,7 +152,7 @@ def test_watch_color_updates_resolved():
     ov = DrawbrailleOverlay()
     with patch.object(type(ov), "app", new_callable=PropertyMock, return_value=mock_app):
         ov.watch_color("$accent")
-    assert ov._resolved_color.startswith("#")
+    assert ov._renderer._resolved_color.startswith("#")
 
 
 # ── Show / hide lifecycle ─────────────────────────────────────────────────────
@@ -307,7 +307,7 @@ def test_agent_stops_during_fade_in_no_error():
     cfg = _default_cfg(enabled=True, fade_in_frames=10, auto_hide_delay=0)
     with patch.object(type(ov), "app", new_callable=PropertyMock, return_value=mock_app):
         ov.show(cfg)
-        assert ov._fade_step == 10
+        assert ov._renderer._fade_step == 10
         ov.hide(cfg)
     assert ov._anim_handle is None
 
@@ -324,7 +324,7 @@ def test_agent_restart_resets_fade_step():
         ov.hide(cfg)
         cfg2 = _default_cfg(enabled=True, fade_in_frames=7, auto_hide_delay=0)
         ov.show(cfg2)
-    assert ov._fade_step == 7
+    assert ov._renderer._fade_step == 7
 
 
 # ── Auto-hide ─────────────────────────────────────────────────────────────────
@@ -518,8 +518,8 @@ def test_gradient_assembles_text_object():
     ov.styles = MagicMock()
     ov._anim_params = AnimParams(width=100, height=56)
     ov.gradient = True
-    ov._resolved_color = "#00d7ff"
-    ov._resolved_color_b = "#8800ff"
+    ov._renderer._resolved_color = "#00d7ff"
+    ov._renderer._resolved_color_b = "#8800ff"
     ov.add_class("-visible")
 
     updates: list = []
@@ -536,9 +536,9 @@ def test_gradient_false_produces_text_with_single_style():
     ov.styles = MagicMock()
     ov._anim_params = AnimParams(width=100, height=56)
     ov.gradient = False
-    ov._resolved_color = "#00d7ff"
+    ov._renderer._resolved_color = "#00d7ff"
     ov.add_class("-visible")
-    ov._fade_step = 0
+    ov._renderer._fade_step = 0
 
     updates: list = []
     ov.update = lambda v: updates.append(v)
@@ -555,8 +555,8 @@ def test_fade_in_frames_zero_instant_full_color():
     ov.styles = MagicMock()
     ov._anim_params = AnimParams(width=100, height=56)
     ov.gradient = False
-    ov._resolved_color = "#ff6600"
-    ov._fade_step = 0
+    ov._renderer._resolved_color = "#ff6600"
+    ov._renderer._fade_step = 0
     ov.add_class("-visible")
 
     updates: list = []
@@ -574,16 +574,16 @@ def test_fade_in_decrements_fade_step():
     ov.styles = MagicMock()
     ov._anim_params = AnimParams(width=100, height=56)
     ov.gradient = False
-    ov._resolved_color = "#ff6600"
-    ov._fade_step = 3
-    ov._fade_state = "in"
+    ov._renderer._resolved_color = "#ff6600"
+    ov._renderer._fade_step = 3
+    ov._renderer._fade_state = "in"
     ov.add_class("-visible")
     ov.update = MagicMock()
 
     with patch("hermes_cli.tui.drawbraille_overlay._overlay_config",
                return_value=DrawbrailleOverlayCfg(enabled=True, fade_in_frames=3)):
         ov._tick()
-    assert ov._fade_step == 2
+    assert ov._renderer._fade_step == 2
 
 
 # ── AnimConfigPanel ───────────────────────────────────────────────────────────
@@ -865,7 +865,7 @@ def test_multi_color_produces_text_object():
     from rich.text import Text as RichText
     ov = DrawbrailleOverlay()
     ov._anim_params = AnimParams(width=100, height=56)
-    ov._resolved_multi_colors = ["#00ff66", "#004422", "#0066ff"]
+    ov._renderer._resolved_multi_colors = ["#00ff66", "#004422", "#0066ff"]
     ov.hue_shift_speed = 0.3
     ov.add_class("-visible")
     ov.gradient = False
@@ -882,7 +882,7 @@ def test_multi_color_three_stops_distinct_colors():
     from rich.text import Text as RichText
     ov = DrawbrailleOverlay()
     ov._anim_params = AnimParams(width=100, height=56)
-    ov._resolved_multi_colors = ["#ff0000", "#00ff00", "#0000ff"]
+    ov._renderer._resolved_multi_colors = ["#ff0000", "#00ff00", "#0000ff"]
     ov.hue_shift_speed = 0.0  # no drift — deterministic
     ov.add_class("-visible")
 
@@ -898,7 +898,7 @@ def test_multi_color_single_stop_uses_that_color():
     """1-stop multi_color uses the single color for all chars."""
     ov = DrawbrailleOverlay()
     ov._anim_params = AnimParams(width=100, height=56)
-    ov._resolved_multi_colors = ["#ff6600"]
+    ov._renderer._resolved_multi_colors = ["#ff6600"]
     ov.hue_shift_speed = 0.0
     ov.add_class("-visible")
 
@@ -914,7 +914,7 @@ def test_multi_color_overrides_gradient_mode():
     from rich.text import Text as RichText
     ov = DrawbrailleOverlay()
     ov._anim_params = AnimParams(width=100, height=56)
-    ov._resolved_multi_colors = ["#00ff66", "#0066ff"]
+    ov._renderer._resolved_multi_colors = ["#00ff66", "#0066ff"]
     ov.gradient = True   # also set gradient — multi_color should win
     ov.hue_shift_speed = 0.0
     ov.add_class("-visible")
@@ -931,12 +931,12 @@ def test_hue_shift_drift_changes_output_over_time():
     """Different t values with non-zero hue_shift_speed produce different outputs."""
     ov = DrawbrailleOverlay()
     ov._anim_params = AnimParams(width=60, height=28)
-    ov._resolved_multi_colors = ["#00ff66", "#004422", "#0066ff"]
+    ov._renderer._resolved_multi_colors = ["#00ff66", "#004422", "#0066ff"]
     ov.hue_shift_speed = 2.0  # fast shift for test detectability
 
     frame_str = "abc\ndef\n"
-    result_t0 = ov._render_multi_color(frame_str, t=0.0)
-    result_t1 = ov._render_multi_color(frame_str, t=1.2)  # sin moves significantly
+    result_t0 = ov._renderer._render_multi_color(frame_str, t=0.0, hue_shift_speed=2.0)
+    result_t1 = ov._renderer._render_multi_color(frame_str, t=1.2, hue_shift_speed=2.0)
     # The span colors should differ because drift = sin(t * speed) * 0.25 changed
     colors_t0 = [str(s.style.color) for s in result_t0._spans if s.style.color]
     colors_t1 = [str(s.style.color) for s in result_t1._spans if s.style.color]
@@ -947,10 +947,10 @@ def test_multi_color_empty_falls_back_to_gradient_branch():
     """Empty multi_color list falls back to gradient or solid branch."""
     ov = DrawbrailleOverlay()
     ov._anim_params = AnimParams(width=100, height=56)
-    ov._resolved_multi_colors = []   # empty
+    ov._renderer._resolved_multi_colors = []   # empty
     ov.gradient = False
-    ov._resolved_color = "#00ff66"
-    ov._fade_step = 0
+    ov._renderer._resolved_color = "#00ff66"
+    ov._renderer._fade_step = 0
     ov.add_class("-visible")
 
     updates: list = []
@@ -967,8 +967,8 @@ def test_watch_multi_color_resolves_colors():
     ov = DrawbrailleOverlay()
     with patch.object(type(ov), "app", new_callable=PropertyMock, return_value=mock_app):
         ov.watch_multi_color(["#ff0000", "#00ff00", "#0000ff"])
-    assert len(ov._resolved_multi_colors) == 3
-    assert all(c.startswith("#") for c in ov._resolved_multi_colors)
+    assert len(ov._renderer._resolved_multi_colors) == 3
+    assert all(c.startswith("#") for c in ov._renderer._resolved_multi_colors)
 
 
 def test_drawbraille_overlay_cfg_multi_color_defaults():

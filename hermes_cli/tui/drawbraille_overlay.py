@@ -523,36 +523,12 @@ class DrawbrailleOverlay(Static):
 
     _anim_handle: "_ClockSubscription | Timer | None" = None
     _anim_params: "AnimParams | None" = None
-    _resolved_color: str = "#00d7ff"
-    _resolved_color_b: str = "#8800ff"
-    _resolved_multi_colors: list = []   # pre-resolved hex strings; set by watch_multi_color
-    _resolved_multi_color_rgbs: list | None = None  # pre-parsed RGB tuples — avoids per-frame _parse_rgb lookups
-    _multi_color_row_buf: list = []    # row-length buffer reused across frames
-    _fade_step: int = 0
-    _fade_state: str = "stable"   # "in" | "out" | "stable"
-    _fade_alpha: float = 1.0      # current fade-out alpha [0..1]
     _auto_hide_handle: "Timer | None" = None
-    _sdf_engine: object | None = None  # lazily created SDF morph engine
-    # sdf crossfade warmup state
-    _sdf_warmup_instance: object | None = None
-    _sdf_crossfade: object | None = None   # CrossfadeEngine during warmup→SDF transition
-    _sdf_baker_was_ready: bool = False
-    _sdf_permanently_failed: bool = False
     _cfg: "DrawbrailleOverlayCfg | None" = None  # last cfg passed to show()
-    # v2 engine instance cache
-    _current_engine_instance: object | None = None
-    _current_engine_key: str = ""
     # v2 heat / adaptive
     _heat: float = 0.0
     _heat_target: float = 0.0
     _token_count_last: int = 0
-    # v2 carousel
-    _carousel_engines: list = []
-    _carousel_idx: int = 0
-    _carousel_last_switch: float = 0.0
-    _carousel_crossfade: "CrossfadeEngine | None" = None
-    # external trail for stateless engines
-    _external_trail: "TrailCanvas | None" = None
     # Phase A — signal enrichment
     _error_hold_frames: int = 0
     _waiting: bool = False
@@ -580,19 +556,29 @@ class DrawbrailleOverlay(Static):
             from hermes_cli.tui.anim_orchestrator import AnimOrchestrator
             self.__dict__["_orchestrator"] = AnimOrchestrator(self)
 
+    def _ensure_renderer(self) -> None:
+        """Create renderer lazily if on_mount was not called (e.g. in tests)."""
+        if "_renderer" not in self.__dict__:
+            from hermes_cli.tui.drawbraille_renderer import DrawbrailleRenderer
+            self.__dict__["_renderer"] = DrawbrailleRenderer()
+
+    def __getattr__(self, name: str) -> object:
+        """Auto-create _renderer and _orchestrator on first access (test-compat)."""
+        if name == "_renderer":
+            self._ensure_renderer()
+            return self.__dict__["_renderer"]
+        if name == "_orchestrator":
+            self._ensure_orchestrator()
+            return self.__dict__["_orchestrator"]
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
     def on_mount(self) -> None:
         from hermes_cli.tui.anim_orchestrator import AnimOrchestrator
+        from hermes_cli.tui.drawbraille_renderer import DrawbrailleRenderer
         self._orchestrator = AnimOrchestrator(self)
-        self._multi_color_row_buf: list[str] = []
+        self._renderer = DrawbrailleRenderer()
         try:
-            self._resolved_color = _resolve_color(self.color, self.app)
-            self._resolved_color_b = _resolve_color(self.color_b, self.app)
-            self._resolved_multi_colors = [
-                _resolve_color(c, self.app) for c in self.multi_color
-            ]
-            self._resolved_multi_color_rgbs = [
-                _parse_rgb(c) for c in self._resolved_multi_colors
-            ]
+            self._renderer.resolve_colors(self.color, self.color_b, self.multi_color, self.app)
         except Exception:
             pass
         w = self.size.width or 50
@@ -633,20 +619,22 @@ class DrawbrailleOverlay(Static):
 
     def watch_color(self, value: str) -> None:
         try:
-            self._resolved_color = _resolve_color(value, self.app)
+            self._ensure_renderer()
+            self._renderer.resolve_colors(value, self.color_b, self.multi_color, self.app)
         except Exception:
             pass
 
     def watch_color_b(self, value: str) -> None:
         try:
-            self._resolved_color_b = _resolve_color(value, self.app)
+            self._ensure_renderer()
+            self._renderer.resolve_colors(self.color, value, self.multi_color, self.app)
         except Exception:
             pass
 
     def watch_multi_color(self, value: list) -> None:
         try:
-            self._resolved_multi_colors = [_resolve_color(c, self.app) for c in value]
-            self._resolved_multi_color_rgbs = [_parse_rgb(c) for c in self._resolved_multi_colors]
+            self._ensure_renderer()
+            self._renderer.resolve_colors(self.color, self.color_b, value, self.app)
         except Exception:
             pass
 
@@ -706,13 +694,13 @@ class DrawbrailleOverlay(Static):
     def show(self, cfg: DrawbrailleOverlayCfg) -> None:
         """Make overlay visible and start animation.  Idempotent."""
         self._ensure_orchestrator()
+        self._ensure_renderer()
         if not cfg.enabled:
             return
         self._cfg = cfg
-        # If a fade-out is in progress, cancel it
-        if self._fade_state == "out":
-            self._fade_state = "in"
-            self._fade_step = cfg.fade_in_frames
+        # If a fade-out is in progress, cancel it — start fade-in instead
+        if self._renderer._fade_state == "out":
+            self._renderer.start_fade_in(cfg)
             return  # already visible, just interrupt fade-out
         # Sync reactives from config — triggers watchers for live updates.
         self.animation = cfg.animation
@@ -728,9 +716,7 @@ class DrawbrailleOverlay(Static):
         self.hue_shift_speed = cfg.hue_shift_speed
         self.fps = cfg.fps
         self._apply_layout()
-        self._fade_state = "in"
-        self._fade_step = cfg.fade_in_frames
-        self._fade_alpha = 1.0
+        self._renderer.start_fade_in(cfg)
         if self._anim_params is not None:
             self._anim_params.vertical = cfg.vertical
             # Update SDF params from config
@@ -769,6 +755,7 @@ class DrawbrailleOverlay(Static):
     def hide(self, cfg: DrawbrailleOverlayCfg) -> None:
         """Hide overlay, optionally with fade-out."""
         self._ensure_orchestrator()
+        self._ensure_renderer()
         if not self.has_class("-visible"):
             return  # already hidden — no-op
         if self._auto_hide_handle is not None:
@@ -776,8 +763,7 @@ class DrawbrailleOverlay(Static):
             self._auto_hide_handle = None
         fade_frames = cfg.fade_out_frames if cfg is not None else 0
         if fade_frames > 0:
-            self._fade_state = "out"
-            self._fade_step = fade_frames
+            self._renderer.start_fade_out(cfg)
             self._cfg = cfg
             # Don't stop anim yet — _tick() will handle fade and final hide
             return
@@ -787,10 +773,10 @@ class DrawbrailleOverlay(Static):
     def _do_hide(self) -> None:
         """Internal: immediately hide overlay and reset state."""
         self._ensure_orchestrator()
+        self._ensure_renderer()
         self.remove_class("-visible")
         self._stop_anim()
-        self._fade_state = "stable"
-        self._fade_alpha = 1.0
+        self._renderer.cancel_fade_out()
         # Clear orchestrator engine/carousel/SDF cache
         self._orchestrator.reset()
         # _sdf_permanently_failed cleared explicitly here (NOT in reset())
@@ -950,6 +936,7 @@ class DrawbrailleOverlay(Static):
     def _get_engine(self) -> object:
         """Thin delegator — Phase 2 backward compat for existing tests."""
         self._ensure_orchestrator()
+        self._ensure_renderer()
         try:
             gradient = self.gradient
         except Exception:
@@ -957,8 +944,8 @@ class DrawbrailleOverlay(Static):
         return self._orchestrator.get_engine(
             self._anim_params,
             self._cfg,
-            resolved_color=self._resolved_color,
-            resolved_color_b=self._resolved_color_b if gradient else None,
+            resolved_color=self._renderer._resolved_color,
+            resolved_color_b=self._renderer._resolved_color_b if gradient else None,
         )
 
     def _get_carousel_engine(self) -> object:
@@ -972,6 +959,7 @@ class DrawbrailleOverlay(Static):
     def _get_sdf_engine(self, params: AnimParams) -> object:
         """Thin delegator — Phase 2 backward compat for existing tests."""
         self._ensure_orchestrator()
+        self._ensure_renderer()
         try:
             gradient = self.gradient
         except Exception:
@@ -979,17 +967,18 @@ class DrawbrailleOverlay(Static):
         return self._orchestrator.get_sdf_engine(
             params,
             self._cfg,
-            resolved_color=self._resolved_color,
-            resolved_color_b=self._resolved_color_b if gradient else None,
+            resolved_color=self._renderer._resolved_color,
+            resolved_color_b=self._renderer._resolved_color_b if gradient else None,
         )
 
     # ── rendering ──────────────────────────────────────────────────────────
 
     def _tick(self) -> None:
         self._ensure_orchestrator()
+        self._ensure_renderer()
         if not self.has_class("-visible"):
             # Still running during fade-out — only skip if fully hidden (not fading)
-            if self._fade_state != "out":
+            if self._renderer._fade_state != "out":
                 return
         params = self._anim_params
         if params is None:
@@ -1018,8 +1007,7 @@ class DrawbrailleOverlay(Static):
                 if cfg is not None and cfg.ambient_enabled:
                     self._transition_to_ambient()
                 elif cfg is not None and cfg.fade_out_frames > 0:
-                    self._fade_state = "out"
-                    self._fade_step = cfg.fade_out_frames
+                    self._renderer.start_fade_out(cfg)
                 else:
                     self._do_hide()
                     return
@@ -1037,11 +1025,11 @@ class DrawbrailleOverlay(Static):
         if self._visibility_state != "ambient":
             params.heat = max(0.0, min(1.5, self._heat))
 
-        # Get engine via orchestrator (Phase 2: pass resolved colors directly)
+        # Get engine via orchestrator (Phase 3: colors owned by renderer)
         engine = self._orchestrator.get_engine(
             params, cfg,
-            resolved_color=self._resolved_color,
-            resolved_color_b=self._resolved_color_b if self.gradient else None,
+            resolved_color=self._renderer._resolved_color,
+            resolved_color_b=self._renderer._resolved_color_b if self.gradient else None,
         )
 
         with measure("drawbraille_frame"):
@@ -1051,105 +1039,21 @@ class DrawbrailleOverlay(Static):
         # External trail for stateless engines (delegated to orchestrator)
         frame_str = self._orchestrator.apply_external_trail(frame_str, params, cfg)
 
-        # Determine render color (may be dimmed during fade-out)
-        # Phase A3: skip fade-out while _waiting is True
-        if self._waiting and self._fade_state == "out":
-            self._fade_state = "stable"
+        # Phase A3: cancel fade-out while _waiting is True
+        if self._waiting and self._renderer._fade_state == "out":
+            self._renderer.cancel_fade_out()
 
-        if self._fade_state == "out" and cfg is not None:
-            self._fade_step -= 1
-            if self._fade_step <= 0:
-                self._do_hide()
-                return
-            self._fade_alpha = self._fade_step / max(cfg.fade_out_frames, 1)
-            render_color = _resolve_color(cfg.color, self.app, dim=self._fade_alpha)
-        elif self._fade_state == "in" and self._fade_step > 0:
-            fade_in_frames = cfg.fade_in_frames if cfg is not None else 3
-            alpha = 1.0 - self._fade_step / max(fade_in_frames, 1)
-            render_color = lerp_color("#000000", self._resolved_color, alpha)
-            self._fade_step -= 1
-            if self._fade_step <= 0:
-                self._fade_state = "stable"
-        elif self._visibility_state == "ambient" and cfg is not None:
-            # Phase D: ambient color-channel dimming
-            self._fade_state = "stable"
-            render_color = _resolve_color(cfg.color, self.app, dim=cfg.ambient_alpha)
-        else:
-            self._fade_state = "stable"
-            render_color = self._resolved_color
-
-        if self._resolved_multi_colors:
-            self.update(self._render_multi_color(frame_str, params.t))
-        elif self.gradient:
-            rows = frame_str.split("\n")
-            n = max(len(rows), 1)
-            pieces: list[tuple[str, Style]] = []
-            for i, row in enumerate(rows):
-                hex_c = lerp_color(self._resolved_color, self._resolved_color_b, i / n)
-                pieces.append((row + "\n", Style(color=hex_c)))
-            self.update(Text.assemble(*pieces))
-        else:
-            style = Style(color=render_color)
-            self.update(Text(frame_str, style=style))
-
-    def _render_multi_color(self, frame_str: str, t: float) -> Text:
-        """Per-character N-stop gradient with time-based hue-shift drift.
-
-        Each character's column position maps to a position on the gradient.
-        A sinusoidal drift (hue_shift_speed) oscillates the gradient left/right
-        over time, creating the shifting-hue effect.
-        """
-        colors = self._resolved_multi_colors
-        n_stops = len(colors)
-        drift = math.sin(t * self.hue_shift_speed) * 0.25
-
-        # Use pre-parsed RGB tuples (cached at resolve time, not per-frame).
-        # Fallback to per-frame parse if cache wasn't populated (e.g. test setup).
-        stop_rgbs = self._resolved_multi_color_rgbs
-        if stop_rgbs is None:
-            stop_rgbs = [_parse_rgb(c) for c in colors]
-
-        rows = frame_str.split("\n")
-        pieces: list[tuple[str, Style]] = []
-        for row in rows:
-            row_len = len(row)
-            if row_len == 0:
-                pieces.append(("\n", Style()))
-                continue
-
-            # Pre-compute color per position
-            row_inv = 1.0 / max(row_len - 1, 1)
-            if len(self._multi_color_row_buf) != row_len:
-                self._multi_color_row_buf = [""] * row_len
-            row_colors = self._multi_color_row_buf
-            for char_idx in range(row_len):
-                pos = char_idx * row_inv + drift
-                pos = abs(pos % 2.0)
-                if pos > 1.0:
-                    pos = 2.0 - pos
-
-                if n_stops == 1:
-                    hex_c = colors[0]
-                else:
-                    segment = pos * (n_stops - 1)
-                    seg_idx = min(int(segment), n_stops - 2)
-                    seg_t = segment - seg_idx
-                    hex_c = lerp_color_rgb(stop_rgbs[seg_idx], stop_rgbs[seg_idx + 1], seg_t)
-                row_colors[char_idx] = hex_c
-
-            # Batch consecutive same-color runs
-            run_start = 0
-            run_color = row_colors[0]
-            for i in range(1, row_len + 1):
-                c = row_colors[i] if i < row_len else None
-                if c != run_color:
-                    span = row[run_start:i]
-                    pieces.append((span, Style(color=run_color)))
-                    run_start = i
-                    run_color = c
-
-            pieces.append(("\n", Style()))
-        return Text.assemble(*pieces)
+        rich_text = self._renderer.render_frame(
+            frame_str, params.t, cfg,
+            visibility_state=self._visibility_state,
+            gradient=self.gradient,
+            hue_shift_speed=self.hue_shift_speed,
+        )
+        if rich_text is None:
+            # render_frame signals: fade-out complete — hide now
+            self._do_hide()
+            return
+        self.update(rich_text)
 
     # ── size / position ────────────────────────────────────────────────────
 

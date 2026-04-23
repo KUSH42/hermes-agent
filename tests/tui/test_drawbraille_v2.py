@@ -362,10 +362,14 @@ def _make_sdf_overlay() -> DrawbrailleOverlay:
     # Phase 2: on_mount not called without running app; create orchestrator manually
     if not hasattr(ov, "_orchestrator"):
         ov._orchestrator = AnimOrchestrator(ov)
+    # Phase 3: renderer owns color resolution
+    if not hasattr(ov, "_renderer"):
+        from hermes_cli.tui.drawbraille_renderer import DrawbrailleRenderer
+        ov._renderer = DrawbrailleRenderer()
+    ov._renderer._resolved_color = "#00d7ff"
+    ov._renderer._resolved_color_b = "#8800ff"
     # Minimal attrs needed by orchestrator and delegator shims
     ov.__dict__.setdefault("gradient", False)
-    ov._resolved_color = "#00d7ff"
-    ov._resolved_color_b = "#8800ff"
     ov._cfg = None
     return ov
 

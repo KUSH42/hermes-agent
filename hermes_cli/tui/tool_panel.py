@@ -544,6 +544,9 @@ class ToolPanel(Widget):
         self._forced_renderer_kind: "ResultKind | None" = None
         self._tool_args: dict | None = None
 
+        # P1-1: wire for BrowseService.scroll_to_tool
+        self._plan_tool_call_id: str | None = None
+
         # Pane refs (set in compose)
         self._accent: ToolAccent | None = None
         self._body_pane: BodyPane | None = None

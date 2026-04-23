@@ -373,6 +373,27 @@ class BrowseService(AppService):
             hint += "  \\ map"
         app._browse_hint = hint
 
+    # --- Plan panel tool scroll ---
+
+    def scroll_to_tool(self, tool_call_id: str) -> bool:
+        """Scroll and highlight the ToolPanel with the given tool_call_id.
+
+        Returns True if found, False if not mounted yet.
+        """
+        from hermes_cli.tui.tool_panel import ToolPanel
+        from hermes_cli.tui.widgets import OutputPanel
+        try:
+            output = self.app.query_one(OutputPanel)
+            for panel in output.query(ToolPanel):
+                if getattr(panel, "_plan_tool_call_id", None) == tool_call_id:
+                    output.scroll_to_widget(panel, animate=True, center=True)
+                    self.clear_browse_highlight()
+                    panel.add_class("--browse-focused")
+                    return True
+        except Exception:
+            pass
+        return False
+
     # --- SubAgent browse navigation ---
 
     def action_jump_subagent_prev(self) -> None:

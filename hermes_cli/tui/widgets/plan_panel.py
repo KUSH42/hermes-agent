@@ -19,6 +19,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from rich.text import Text as RichText
+from textual import events
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
@@ -86,6 +87,54 @@ def _format_plan_line(call: "PlannedCall", width: int = 60) -> str:
 
 
 # ---------------------------------------------------------------------------
+# _PlanEntry  (focusable plan line — P1-1)
+# ---------------------------------------------------------------------------
+
+class _PlanEntry(Static, can_focus=True):
+    """Focusable plan entry line that links to its ToolPanel."""
+
+    DEFAULT_CSS = """
+    _PlanEntry {
+        height: 1;
+    }
+    _PlanEntry:focus {
+        background: $accent 10%;
+    }
+    _PlanEntry:hover {
+        background: $accent 6%;
+    }
+    """
+
+    def __init__(self, text: str, tool_call_id: str | None = None, **kwargs: object) -> None:
+        super().__init__(text, **kwargs)
+        self._tool_call_id = tool_call_id
+
+    def on_click(self) -> None:
+        self._jump()
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "enter" and self._tool_call_id:
+            self._jump()
+            event.stop()
+        elif event.key == "escape":
+            try:
+                self.app.query_one("#input-area").focus()
+            except Exception:
+                pass
+            event.stop()
+
+    def _jump(self) -> None:
+        if not self._tool_call_id:
+            return
+        try:
+            svc = getattr(self.app, "_svc_browse", None)
+            if svc is not None:
+                svc.scroll_to_tool(self._tool_call_id)
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
 # _NowSection
 # ---------------------------------------------------------------------------
 
@@ -113,7 +162,20 @@ class _NowSection(Vertical):
         """Update the Now line and (re)start the elapsed timer."""
         self._start_monotonic = call.started_at if call.started_at is not None else time.monotonic()
         self._elapsed_s = 0
-        self._refresh_display(call)
+        label = call.label[:50] if len(call.label) > 50 else call.label
+        self._base_text = f"{_glyph_running()} {label}"
+        try:
+            old = self.query_one("#now-line")
+            old.remove()
+        except (NoMatches, Exception):
+            pass
+        elapsed = 0 if _DETERMINISTIC else int(time.monotonic() - self._start_monotonic)
+        entry = _PlanEntry(
+            self._base_text if elapsed < 3 else f"{self._base_text}  [{elapsed}s]",
+            tool_call_id=call.tool_call_id,
+            id="now-line",
+        )
+        self.mount(entry)
         self._ensure_timer()
 
     def clear(self) -> None:
@@ -212,12 +274,16 @@ class _NextSection(Vertical):
         visible = pending[:limit]
         overflow = len(pending) - limit
 
-        new_children: list[Static] = []
+        new_children: list[Widget] = []
         for call in visible:
             indent = "  " * call.depth
             glyph = _glyph_pending()
             label = call.label[:50] if len(call.label) > 50 else call.label
-            new_children.append(Static(f"  {indent}{glyph} {label}", classes="plan-pending-line"))
+            new_children.append(_PlanEntry(
+                f"  {indent}{glyph} {label}",
+                tool_call_id=call.tool_call_id,
+                classes="plan-pending-line",
+            ))
 
         if overflow > 0:
             more = Static(f"  … +{overflow} more", classes="plan-more-line", id="next-more")
@@ -275,11 +341,74 @@ class _BudgetSection(Horizontal):
 
 
 # ---------------------------------------------------------------------------
+# _ChipSegment  (P1-2)
+# ---------------------------------------------------------------------------
+
+class _ChipSegment(Static, can_focus=False):
+    """One clickable chip segment inside the collapsed plan header."""
+
+    DEFAULT_CSS = """
+    _ChipSegment {
+        height: 1;
+        width: auto;
+        padding: 0 1;
+    }
+    _ChipSegment:hover {
+        background: $accent 10%;
+        color: $text;
+    }
+    """
+
+    def __init__(self, text: str, action: str = "", **kwargs: object) -> None:
+        super().__init__(text, **kwargs)
+        self._chip_action = action  # "jump_running", "jump_first_error", "usage"
+
+    def on_click(self) -> None:
+        if self._chip_action == "jump_running":
+            self._jump_running()
+        elif self._chip_action == "jump_first_error":
+            self._jump_first_error()
+        elif self._chip_action == "usage":
+            self._open_usage()
+
+    def _jump_running(self) -> None:
+        try:
+            calls = getattr(self.app, "planned_calls", [])
+            from hermes_cli.tui.plan_types import PlanState
+            running = next((c for c in calls if c.state == PlanState.RUNNING), None)
+            if running:
+                self.app._svc_browse.scroll_to_tool(running.tool_call_id)
+        except Exception:
+            pass
+
+    def _jump_first_error(self) -> None:
+        try:
+            calls = getattr(self.app, "planned_calls", [])
+            from hermes_cli.tui.plan_types import PlanState
+            err = next((c for c in calls if c.state == PlanState.ERROR), None)
+            if err:
+                self.app._svc_browse.scroll_to_tool(err.tool_call_id)
+        except Exception:
+            pass
+
+    def _open_usage(self) -> None:
+        try:
+            from hermes_cli.tui.overlays import UsageOverlay
+            ov = self.app.query_one(UsageOverlay)
+            if hasattr(ov, "show_overlay"):
+                ov.show_overlay()
+            else:
+                ov.add_class("--visible")
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
 # _PlanPanelHeader
 # ---------------------------------------------------------------------------
 
 class _PlanPanelHeader(Horizontal):
-    """Title bar with collapse/expand chevron."""
+    """Title bar with collapse/expand chevron and segmented chip (P1-2/P1-3)."""
 
     DEFAULT_CSS = """
     _PlanPanelHeader {
@@ -289,41 +418,77 @@ class _PlanPanelHeader(Horizontal):
     _PlanPanelHeader:hover {
         background: $accent 5%;
     }
+    _PlanPanelHeader #plan-f9-badge {
+        dock: right;
+        width: auto;
+        color: $text-muted 50%;
+        padding: 0 1;
+    }
     """
 
     def compose(self) -> ComposeResult:
-        yield Static("", id="plan-header-label")
+        yield Static("", id="plan-header-label")        # expanded: full label
+        yield Static("", id="plan-chip-title")           # collapsed: "Plan ▸ "
+        # chip segments (hidden when expanded)
+        yield _ChipSegment("", id="chip-running",  action="jump_running")
+        yield _ChipSegment("", id="chip-done",     action="")            # no action
+        yield _ChipSegment("", id="chip-errors",   action="jump_first_error")
+        yield _ChipSegment("", id="chip-cost",     action="usage")
+        yield Static("[F9]", id="plan-f9-badge")         # P1-3
 
     def update_header(self, collapsed: bool, running: int, pending: int,
                       done: int, errors: int = 0, cost_usd: float = 0.0) -> None:
         """Refresh the header line."""
         chevron = "▸" if collapsed else "▾"
         if collapsed:
-            parts_plain: list[str] = []
-            if running:
-                parts_plain.append(f"{running}▶")
-            if pending:
-                parts_plain.append(f"{pending}▸")
-            if done:
-                parts_plain.append(f"{done}✓")
-            summary_base = " · ".join(parts_plain) if parts_plain else "idle"
-            prefix = f"Plan {chevron}  {summary_base}"
-            if errors:
-                # Must use Text object — plain string with markup renders literally
-                label: str | RichText = RichText.from_markup(
-                    f"{prefix} · [bold red]{errors}✗[/bold red]"
-                )
-            else:
-                label = prefix
-            if cost_usd > 0:
-                if isinstance(label, RichText):
-                    label.append(f" · ${cost_usd:.2f}")
-                else:
-                    label = f"{label} · ${cost_usd:.2f}"
+            self._show_chip(chevron, running, pending, done, errors, cost_usd)
         else:
-            label = f"Plan {chevron}"
+            self._show_full(chevron)
+
+    def _show_full(self, chevron: str) -> None:
         try:
-            self.query_one("#plan-header-label", Static).update(label)
+            self.query_one("#plan-header-label", Static).update(f"Plan {chevron}")
+            self.query_one("#plan-header-label").display = True
+            for seg_id in ("plan-chip-title", "chip-running", "chip-done",
+                           "chip-errors", "chip-cost"):
+                self.query_one(f"#{seg_id}").display = False
+            self.query_one("#plan-f9-badge").display = True
+        except (NoMatches, Exception):
+            pass
+
+    def _show_chip(self, chevron: str, running: int, pending: int,
+                   done: int, errors: int, cost_usd: float) -> None:
+        try:
+            self.query_one("#plan-header-label").display = False
+
+            # pending shown in title (not a separate segment — no scroll target)
+            title_text = f"Plan {chevron} "
+            if pending:
+                title_text += f"{pending}▸ "
+            self.query_one("#plan-chip-title", Static).update(title_text)
+            self.query_one("#plan-chip-title").display = True
+
+            r_seg = self.query_one("#chip-running", _ChipSegment)
+            r_seg.display = running > 0
+            if running:
+                r_seg.update(f"{running}▶")
+
+            d_seg = self.query_one("#chip-done", _ChipSegment)
+            d_seg.display = done > 0
+            if done:
+                d_seg.update(f"{done}✓")
+
+            e_seg = self.query_one("#chip-errors", _ChipSegment)
+            e_seg.display = errors > 0
+            if errors:
+                e_seg.update(RichText.from_markup(f"[bold red]{errors}✗[/bold red]"))
+
+            c_seg = self.query_one("#chip-cost", _ChipSegment)
+            c_seg.display = cost_usd > 0
+            if cost_usd > 0:
+                c_seg.update(f"${cost_usd:.2f}")
+
+            self.query_one("#plan-f9-badge").display = True
         except (NoMatches, Exception):
             pass
 

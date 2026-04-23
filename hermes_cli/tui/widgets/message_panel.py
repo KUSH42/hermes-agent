@@ -574,6 +574,7 @@ class MessagePanel(Widget):
             self._mount_nonprose_block(panel, parent_tool_call_id=parent_tool_call_id)
         else:
             panel = _ToolPanel(block, tool_name=tool_name)
+            panel._plan_tool_call_id = tool_call_id  # P1-1: wire for BrowseService.scroll_to_tool
             block._tool_panel = panel
             self._mount_nonprose_block(panel)
 

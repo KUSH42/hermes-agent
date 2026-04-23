@@ -40,7 +40,8 @@ class _CompactApp(App):
 
 @pytest.mark.asyncio
 async def test_T1_activate_default_mode() -> None:
-    async with _App().run_test() as pilot:
+    # Use a wide terminal so narrow-terminal auto-demotion (F-2) doesn't trigger
+    async with _App().run_test(size=(140, 40)) as pilot:
         w = pilot.app.query_one(ThinkingWidget)
         w.activate()
         await pilot.pause()
@@ -198,7 +199,8 @@ async def test_T10_deactivate_two_phase() -> None:
         # Wait longer for the 150ms timer to fire
         await pilot.pause(delay=0.3)
         assert not w.has_class("--active")
-        assert w._substate is None
+        # D-4: _substate is "--reserved" (layout reserve held until first live-line chunk)
+        assert w._substate == "--reserved"
 
 
 # ── T11: deactivate() while already ABOUT_TO_STREAM → no-op ──────────────────

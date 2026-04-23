@@ -107,6 +107,15 @@ from .message_panel import (  # noqa: F401
 
 from .thinking import ThinkingWidget  # noqa: F401
 
+
+def _clear_thinking_reserve(tw: "ThinkingWidget") -> None:
+    """D-4 helper: safely call clear_reserve() on a ThinkingWidget."""
+    try:
+        tw.clear_reserve()
+    except Exception:
+        pass
+
+
 from .status_bar import (  # noqa: F401
     AnimatedCounter,
     HintBar,
@@ -382,7 +391,10 @@ class OutputPanel(ScrollableContainer):
         """Commit any in-progress buffered line to current message's RichLog."""
         # Deactivate shimmer — covers the empty-response case where no chunk ever arrives
         try:
-            self.query_one(ThinkingWidget).deactivate()
+            tw = self.query_one(ThinkingWidget)
+            tw.deactivate()
+            # D-4: clear the layout reserve row after the 150ms fade-out timer fires
+            self.set_timer(0.20, lambda: _clear_thinking_reserve(tw))
         except NoMatches:
             pass
         live = self.live_line
@@ -686,6 +698,9 @@ class AssistantNameplate(Widget):
         self._accent_hex = "#7b68ee"
         self._active_dim_hex = "#3d3480"
         self._text_hex = "#cccccc"
+        # C-5/C-2: derived in on_mount; fallbacks point to module constants until then
+        self._active_style: Style = _NP_ACTIVE_COLOR
+        self._idle_color_hex: str = "#888888"
         self._active_phase: float = 0.0
         # morph state
         self._morph_src = ""
@@ -701,6 +716,12 @@ class AssistantNameplate(Widget):
             self._text_hex = css_vars.get("foreground", "#cccccc")
             # dim end of pulse wave: 30% of the accent blended toward black
             self._active_dim_hex = _lerp_hex("#000000", self._accent_hex, 0.30)
+            # C-5: derive active style from live accent rather than module constant
+            self._active_style = Style.parse(f"bold {self._accent_hex}")
+            # C-2: idle color = 25% accent tint blended toward base text color
+            self._idle_color_hex: str = _lerp_hex(
+                self._text_hex, self._accent_hex, 0.25
+            )
         except Exception:
             pass
         if not self._effects_enabled:
@@ -728,6 +749,7 @@ class AssistantNameplate(Widget):
         from hermes_cli.tui.resize_utils import HYSTERESIS
         if abs(new_w - self._canvas_width) > HYSTERESIS * 2:
             self._canvas_width = new_w
+            self.refresh()  # C-6: repaint after canvas-width change
         self._last_nameplate_w = new_w
 
     # --- public API ---
@@ -781,7 +803,7 @@ class AssistantNameplate(Widget):
                     )
                 except Exception:
                     pass
-            return Text(self._target_name, style=_NP_IDLE_COLOR)
+            return Text(self._target_name, style=Style.parse(self._idle_color_hex))
         if self._state == _NPState.ACTIVE_IDLE:
             return self._render_active_pulse()
         if self._state == _NPState.ERROR_FLASH:
@@ -794,8 +816,10 @@ class AssistantNameplate(Widget):
     def _render_active_pulse(self) -> Text:
         """Traveling sine-wave shimmer in active color while agent is thinking."""
         t = Text()
+        n = max(3, len(self._frame))
+        offset = math.pi / n  # spans exactly π across name regardless of length
         for i, ch in enumerate(self._frame):
-            wave = (math.sin(self._active_phase - i * 0.55) + 1.0) / 2.0
+            wave = (math.sin(self._active_phase - i * offset) + 1.0) / 2.0
             color = _lerp_hex(self._active_dim_hex, self._accent_hex, wave)
             t.append(ch.target, style=Style.parse(f"bold {color}"))
         return t
@@ -826,7 +850,7 @@ class AssistantNameplate(Widget):
             if self._tick >= ch.lock_at:
                 ch.current = ch.target
                 ch.locked = True
-                ch.style = _NP_IDLE_COLOR
+                ch.style = Style.parse(self._idle_color_hex)
             else:
                 ch.current = _random.choice(_NP_POOL)
                 ch.style = _NP_DECRYPT_COLOR
@@ -843,10 +867,15 @@ class AssistantNameplate(Widget):
                 pass
 
     def _tick_active_idle(self) -> None:
-        self._active_phase += 0.18
+        try:
+            if self.app.has_class("reduced-motion"):
+                return  # static nameplate in reduced-motion mode
+        except Exception:
+            pass
+        self._active_phase += 0.28  # was 0.18; ~1.8 s full cycle
 
     def _tick_morph(self) -> None:
-        dst_style = _NP_ACTIVE_COLOR if self._state == _NPState.MORPH_TO_ACTIVE else _NP_IDLE_COLOR
+        dst_style = self._active_style if self._state == _NPState.MORPH_TO_ACTIVE else Style.parse(self._idle_color_hex)
         done = True
         for i, ch in enumerate(self._frame):
             if ch.locked:
@@ -881,12 +910,13 @@ class AssistantNameplate(Widget):
             # partial restore
             for ch in self._frame:
                 ch.current = ch.target
-                ch.style = _NP_ACTIVE_COLOR
+                ch.style = self._active_style
         else:
             # fully clean; resume pulse
             for ch in self._frame:
                 ch.current = ch.target
-                ch.style = _NP_ACTIVE_COLOR
+                ch.style = self._active_style
+            self._active_phase = 0.0  # C-4: reset so wave restarts cleanly from glitch
             self._state = _NPState.ACTIVE_IDLE
             self._set_timer_rate(12)
 
@@ -930,7 +960,7 @@ class AssistantNameplate(Widget):
                 current=s_ch,
                 locked=(s_ch == d_ch),
                 lock_at=ticks,
-                style=_NP_ACTIVE_COLOR if self._state == _NPState.MORPH_TO_ACTIVE else _NP_IDLE_COLOR,
+                style=self._active_style if self._state == _NPState.MORPH_TO_ACTIVE else Style.parse(self._idle_color_hex),
             ))
             self._morph_dissolve.append(ticks)
 
@@ -941,7 +971,7 @@ class AssistantNameplate(Widget):
         self._init_frame_for(self._active_label, active_style=True)
 
     def _init_frame_for(self, text: str, *, active_style: bool = False) -> None:
-        style = _NP_ACTIVE_COLOR if active_style else _NP_IDLE_COLOR
+        style = self._active_style if active_style else Style.parse(self._idle_color_hex)
         self._frame = [
             _NPChar(target=ch, current=ch, locked=True, lock_at=0, style=style)
             for ch in text

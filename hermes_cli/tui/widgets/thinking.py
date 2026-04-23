@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -34,12 +35,18 @@ _WHITELIST_SMALL: frozenset[str] = frozenset({
     "wave_function",
 })
 
-_WHITELIST_DEEP: frozenset[str] = _WHITELIST_SMALL | frozenset({
-    "vortex", "kaleidoscope", "neural_pulse", "mandala_bloom", "plasma",
-    "matrix_rain", "wireframe_cube", "torus_3d", "sierpinski",
-    "flock_swarm", "strange_attractor", "hyperspace", "fluid_field",
-    "conway_life",
+_WHITELIST_DEEP_AMBIENT: frozenset[str] = _WHITELIST_SMALL | frozenset({
+    "neural_pulse", "mandala_bloom", "fluid_field", "conway_life",
 })
+
+_WHITELIST_DEEP_INTENSE: frozenset[str] = _WHITELIST_DEEP_AMBIENT | frozenset({
+    "vortex", "kaleidoscope", "plasma", "matrix_rain", "wireframe_cube",
+    "torus_3d", "sierpinski", "flock_swarm", "strange_attractor",
+    "hyperspace",
+})
+
+# Alias for backward compat — kept until external callers confirmed absent
+_WHITELIST_DEEP = _WHITELIST_DEEP_AMBIENT
 
 # ── Effect whitelist (static-safe only) ───────────────────────────────────────
 
@@ -189,9 +196,11 @@ _LabelLine {
 """
 
     def __init__(self, effect_key: str, **kwargs: Any) -> None:
+        _lock = kwargs.pop("_lock", None)  # E-3: extract before super() sees kwargs
         super().__init__("", **kwargs)
         self._effect_key = effect_key
         self._effect = None
+        self._lock: threading.Lock = _lock or threading.Lock()  # E-3: thread-safe lock
 
     def on_mount(self) -> None:
         self._init_effect()
@@ -199,10 +208,17 @@ _LabelLine {
     def _init_effect(self) -> None:
         try:
             from hermes_cli.stream_effects import make_stream_effect
-            self._effect = make_stream_effect({"stream_effect": self._effect_key}, lock=None)
+            self._effect = make_stream_effect(
+                {"stream_effect": self._effect_key}, lock=self._lock
+            )
         except Exception:
             logger.debug("ThinkingWidget: effect init failed", exc_info=True)
             self._effect = None
+
+    def update_static(self, text: str) -> None:
+        """Set a static label without starting any animation (D-6 deterministic mode)."""
+        from rich.text import Text as RichText
+        self.update(RichText(text))
 
     def tick_label(self, label_text: str, accent_hex: str, text_hex: str) -> None:
         """Called from ThinkingWidget._tick. Renders updated Rich Text."""
@@ -253,10 +269,12 @@ _LabelLine   { height: 1;   width: 1fr; }
     _cfg_tick_hz: float = 12.0
     _cfg_long_wait_after_s: float = 8.0
     _cfg_show_elapsed: bool = True
+    _cfg_allow_intense: bool = False  # D-5: gate for intense engines
 
     # Children (created in compose)
     _anim_surface: _AnimSurface | None = None
     _label_line: _LabelLine | None = None
+    _resolved_effect: str = _DEFAULT_EFFECT  # D-2: stored so _tick can swap on STARTED→WORKING
 
     # Color cache
     _accent_hex: str = "#888888"
@@ -270,6 +288,10 @@ _LabelLine   { height: 1;   width: 1fr; }
         # compose() yields nothing — activate() mounts children dynamically.
         return
         yield  # make it a generator
+
+    def on_mount(self) -> None:
+        """Pre-warm config cache during app startup (D-7)."""
+        self._load_config()
 
     def _load_config(self) -> None:
         if self._cfg_loaded:
@@ -285,6 +307,7 @@ _LabelLine   { height: 1;   width: 1fr; }
             self._cfg_tick_hz = float(thinking.get("tick_hz", 12.0))
             self._cfg_long_wait_after_s = float(thinking.get("long_wait_after_s", 8.0))
             self._cfg_show_elapsed = bool(thinking.get("show_elapsed", True))
+            self._cfg_allow_intense = bool(thinking.get("allow_intense", False))
         except Exception:
             pass  # use defaults
 
@@ -292,7 +315,16 @@ _LabelLine   { height: 1;   width: 1fr; }
         if explicit is not None:
             return explicit
         try:
+            # G-1: reduced motion — always use LINE to skip all animation
+            if self.app.has_class("reduced-motion"):
+                return ThinkingMode.LINE
             if getattr(self.app, "compact", False):
+                return ThinkingMode.COMPACT
+            # F-2: auto-demote on narrow terminals regardless of user config
+            w = self.app.size.width
+            if w > 0 and w < 70:
+                return ThinkingMode.LINE
+            if w > 0 and w < 100:
                 return ThinkingMode.COMPACT
         except Exception:
             pass
@@ -305,7 +337,10 @@ _LabelLine   { height: 1;   width: 1fr; }
     def _resolve_engine(self, explicit: str | None, mode: ThinkingMode) -> str:
         self._load_config()
         key = explicit or self._cfg_engine
-        whitelist = _WHITELIST_DEEP if mode == ThinkingMode.DEEP else _WHITELIST_SMALL
+        if mode == ThinkingMode.DEEP:
+            whitelist = _WHITELIST_DEEP_INTENSE if self._cfg_allow_intense else _WHITELIST_DEEP_AMBIENT
+        else:
+            whitelist = _WHITELIST_SMALL
         if key not in whitelist:
             logger.debug(
                 "ThinkingWidget: engine %r not whitelisted for mode %s, falling back to dna",
@@ -344,7 +379,16 @@ _LabelLine   { height: 1;   width: 1fr; }
     ) -> None:
         """Show the widget and start animation."""
         if os.environ.get("HERMES_DETERMINISTIC"):
-            return
+            # D-6: Show a static LINE-mode indicator so class-based observers work.
+            self.add_class("--active", "--mode-line")
+            self.app.add_class("thinking-active")
+            self._substate = "WORKING"
+            self._activate_time = time.monotonic()
+            if self._label_line is None:
+                self._label_line = _LabelLine("breathe", id="thinking-label", _lock=threading.Lock())
+                self.mount(self._label_line)
+                self._label_line.update_static("Thinking…")
+            return  # no timer started — deterministic
 
         if self._timer is not None:
             return  # already active — no-op
@@ -355,6 +399,7 @@ _LabelLine   { height: 1;   width: 1fr; }
 
         resolved_engine = self._resolve_engine(engine, resolved_mode)
         resolved_effect = self._resolve_effect(effect)
+        self._resolved_effect = resolved_effect  # D-2: stored for STARTED→WORKING swap
         self._current_mode = resolved_mode
 
         # Refresh colors
@@ -368,7 +413,8 @@ _LabelLine   { height: 1;   width: 1fr; }
         else:
             self._anim_surface = None
 
-        self._label_line = _LabelLine(resolved_effect, id="thinking-label")
+        # D-2/E-3: create with flash effect for STARTED phase; pass thread-safe lock
+        self._label_line = _LabelLine("flash", id="thinking-label", _lock=threading.Lock())
         self.mount(self._label_line)
 
         # Apply CSS classes
@@ -390,6 +436,7 @@ _LabelLine   { height: 1;   width: 1fr; }
         if self._substate == "ABOUT_TO_STREAM":
             return  # already fading
         self._substate = "ABOUT_TO_STREAM"
+        self.add_class("--fading")  # D-3: trigger CSS opacity transition
         self.set_timer(0.15, self._do_hide)
 
     def _do_hide(self) -> None:
@@ -398,9 +445,8 @@ _LabelLine   { height: 1;   width: 1fr; }
         if self._timer is not None:
             self._timer.stop()
             self._timer = None
-        self.remove_class("--active", *_ALL_MODE_CLASSES)
+        self.remove_class("--active", "--fading", *_ALL_MODE_CLASSES)  # D-3: include --fading
         self.app.remove_class("thinking-active")
-        self._substate = None
         self._activate_time = None
         self._current_mode = None
 
@@ -418,10 +464,21 @@ _LabelLine   { height: 1;   width: 1fr; }
                 pass
             self._label_line = None
 
+        # D-4: hold 1-row reserve until first live-line token clears it
+        self._substate = "--reserved"
+        self.add_class("--reserved")
+
+    def clear_reserve(self) -> None:
+        """Called by output system on first streamed chunk to collapse the held row (D-4)."""
+        if self._substate == "--reserved":
+            self.remove_class("--reserved")
+            self._substate = None
+
     def set_mode(self, mode: ThinkingMode) -> None:
         """Update mode while active (updates CSS class; does not restart timer)."""
         if self._timer is None:
             return  # not active
+        self._refresh_colors()  # E-2: pick up any mid-turn skin change
         # Remove old mode class, add new
         self.remove_class(*_ALL_MODE_CLASSES)
         if mode != ThinkingMode.OFF:
@@ -449,13 +506,31 @@ _LabelLine   { height: 1;   width: 1fr; }
         # ── Substate transitions ───────────────────────────────────────────────
         if self._substate == "STARTED" and elapsed >= 0.5:
             self._substate = "WORKING"
+            # D-2: swap flash effect to configured effect on STARTED→WORKING transition
+            if self._label_line is not None:
+                try:
+                    from hermes_cli.stream_effects import make_stream_effect
+                    self._label_line._effect = make_stream_effect(
+                        {"stream_effect": self._resolved_effect},
+                        lock=self._label_line._lock,
+                    )
+                except Exception:
+                    logger.debug("ThinkingWidget: effect swap failed", exc_info=True)
         if self._substate == "WORKING" and elapsed >= self._cfg_long_wait_after_s:
             self._substate = "LONG_WAIT"
 
         # ── Label text ─────────────────────────────────────────────────────────
         if self._substate == "LONG_WAIT" and self._cfg_show_elapsed:
             n = int(elapsed)
-            label_text = f"Thinking… ({n}s)"
+            if elapsed >= 120:
+                prefix = "Working hard"
+            elif elapsed >= 60:
+                prefix = "Still thinking"
+            elif elapsed >= 30:
+                prefix = "Thinking deeply"
+            else:
+                prefix = "Thinking"
+            label_text = f"{prefix}… ({n}s)"
         else:
             label_text = self._base_label
 

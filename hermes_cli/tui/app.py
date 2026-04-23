@@ -745,6 +745,13 @@ class HermesApp(App):
             self.compact = True  # triggers watch_compact → adds "density-compact"
         if _os.environ.get("HERMES_REDUCED_MOTION", "").lower() in ("1", "true", "yes"):
             self.add_class("reduced-motion")
+        # G-1: also read tui.reduced_motion from config file
+        try:
+            from hermes_cli.config import read_raw_config
+            if read_raw_config().get("tui", {}).get("reduced_motion"):
+                self.add_class("reduced-motion")
+        except Exception:
+            pass
         # Wire slash commands from COMMAND_REGISTRY into the autocomplete engine
         if self._use_hermes_input:
             self._populate_slash_commands()

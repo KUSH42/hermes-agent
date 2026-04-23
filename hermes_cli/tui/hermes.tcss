@@ -230,6 +230,22 @@ HermesApp.plan-active ThinkingWidget.--active {
     height: 1;
 }
 
+/* D-3: fade-out transition — opacity start state declared so Textual can animate */
+ThinkingWidget.--active {
+    opacity: 1;
+}
+ThinkingWidget.--fading {
+    opacity: 0.0;
+    transition: opacity 150ms in_out_cubic;
+}
+
+/* D-4: layout reserve row — holds 1 row while first live token arrives */
+ThinkingWidget.--reserved {
+    height: 1;
+    display: block;
+    opacity: 0;
+}
+
 /* --- Overlay widgets --- */
 
 ClarifyWidget,
@@ -643,9 +659,6 @@ HermesApp.density-compact AssistantNameplate   { display: none; }
 HermesApp.density-compact SourcesBar           { display: none; }
 HermesApp.density-compact BrowseMinimap        { display: none; }
 
-/* V2: hide nameplate while thinking animation is active */
-HermesApp.thinking-active AssistantNameplate { display: none; }
-
 /* Phase B2: input area tightening */
 HermesApp.density-compact HermesInput          { max-height: 2; }
 HermesApp.density-compact HermesInput:focus    { border: none; }
@@ -885,7 +898,11 @@ SourcesBar {
     margin-top: 1;
 }
 
+/* NOTE: $nameplate-idle-color is NOT runtime-read by Python (C-2 fix uses _lerp_hex at mount).
+   Left here as a documentation hint for skin authors only. */
 $nameplate-idle-color: #888888;
+/* NOTE: $nameplate-active-color is NOT runtime-read by Python (C-5 fix uses accent hex at mount).
+   Left here as a documentation hint for skin authors only. */
 $nameplate-active-color: #7b68ee;
 $nameplate-decrypt-color: #00ff41;
 $accent-interactive: #00bcd4;

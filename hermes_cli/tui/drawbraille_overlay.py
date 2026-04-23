@@ -547,8 +547,6 @@ class DrawbrailleOverlay(Static):
     _heat_target: float = 0.0
     _token_count_last: int = 0
     # v2 carousel
-    _carousel_elapsed: float = 0.0
-    _carousel_engine_idx: int = 0
     _carousel_engines: list = []
     _carousel_idx: int = 0
     _carousel_last_switch: float = 0.0
@@ -576,7 +574,15 @@ class DrawbrailleOverlay(Static):
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
+    def _ensure_orchestrator(self) -> None:
+        """Create orchestrator lazily if on_mount was not called (e.g. in tests)."""
+        if "_orchestrator" not in self.__dict__:
+            from hermes_cli.tui.anim_orchestrator import AnimOrchestrator
+            self.__dict__["_orchestrator"] = AnimOrchestrator(self)
+
     def on_mount(self) -> None:
+        from hermes_cli.tui.anim_orchestrator import AnimOrchestrator
+        self._orchestrator = AnimOrchestrator(self)
         self._multi_color_row_buf: list[str] = []
         try:
             self._resolved_color = _resolve_color(self.color, self.app)
@@ -699,6 +705,7 @@ class DrawbrailleOverlay(Static):
 
     def show(self, cfg: DrawbrailleOverlayCfg) -> None:
         """Make overlay visible and start animation.  Idempotent."""
+        self._ensure_orchestrator()
         if not cfg.enabled:
             return
         self._cfg = cfg
@@ -745,24 +752,9 @@ class DrawbrailleOverlay(Static):
             self._anim_params.life_seed = cfg.life_seed
         # Clear SDF engine so it gets recreated with new params
         if cfg.animation != "sdf_morph":
-            self._sdf_engine = None
-        # Carousel setup
-        if cfg.carousel:
-            self._carousel_engines = [
-                k for k in _ENGINES
-                if _ENGINE_META.get(k, {}).get("category") not in {"Premium", "System"}
-            ]
-            if len(self._carousel_engines) < 2:
-                self._carousel_engines = []
-            self._carousel_idx = 0
-            self._carousel_last_switch = time.monotonic()
-            self._carousel_crossfade = None
-            # Initialize _carousel_key to first engine
-            if self._carousel_engines:
-                self._carousel_key = self._carousel_engines[0]
-        else:
-            self._carousel_engines = []
-            self._carousel_crossfade = None
+            self._orchestrator._sdf_engine = None
+        # Carousel setup (delegated to orchestrator)
+        self._orchestrator.init_carousel(cfg)
         # Phase D: set visibility state
         self._visibility_state = "active"
         self.add_class("-visible")
@@ -776,6 +768,7 @@ class DrawbrailleOverlay(Static):
 
     def hide(self, cfg: DrawbrailleOverlayCfg) -> None:
         """Hide overlay, optionally with fade-out."""
+        self._ensure_orchestrator()
         if not self.has_class("-visible"):
             return  # already hidden — no-op
         if self._auto_hide_handle is not None:
@@ -793,19 +786,15 @@ class DrawbrailleOverlay(Static):
 
     def _do_hide(self) -> None:
         """Internal: immediately hide overlay and reset state."""
+        self._ensure_orchestrator()
         self.remove_class("-visible")
         self._stop_anim()
         self._fade_state = "stable"
         self._fade_alpha = 1.0
-        self._sdf_engine = None
-        self._sdf_warmup_instance = None
-        self._sdf_crossfade = None
-        self._sdf_baker_was_ready = False
-        self._sdf_permanently_failed = False
-        self._current_engine_instance = None
-        self._current_engine_key = ""
-        self._external_trail = None
-        self._carousel_crossfade = None
+        # Clear orchestrator engine/carousel/SDF cache
+        self._orchestrator.reset()
+        # _sdf_permanently_failed cleared explicitly here (NOT in reset())
+        self._orchestrator._sdf_permanently_failed = False
         # Phase D: reset visibility state
         self._visibility_state = "hidden"
 
@@ -819,6 +808,7 @@ class DrawbrailleOverlay(Static):
         Vocabulary: "thinking", "token", "tool", "complete",
                     "reasoning", "error", "waiting".
         """
+        self._ensure_orchestrator()
         cfg = self._cfg
         # Phase A: reset error_hold on any non-error signal
         if event != "error":
@@ -852,28 +842,24 @@ class DrawbrailleOverlay(Static):
             self._heat_target = 0.2
             self._waiting = True
 
-        # Phase B: update current phase and trigger crossfade
+        # Phase B: update current phase and trigger crossfade (via orchestrator)
         if event in _PHASE_UPDATE_SIGNALS:
-            old_phase = self._current_phase
             self._current_phase = event
-            if cfg is not None and cfg.carousel and self._carousel_engines and event != "token":
-                next_key = self._pick_carousel_candidate(event)
-                if next_key and next_key != self._carousel_key:
-                    eng_a = (self._current_engine_instance
-                             or (_ENGINES.get(self._carousel_key) or _ENGINES["dna"])())
-                    eng_b = _ENGINES[next_key]()
-                    self._carousel_crossfade = CrossfadeEngine(
-                        eng_a, eng_b, speed=cfg.phase_crossfade_speed
-                    )
-                    self._carousel_key = next_key
-                    self._carousel_last_switch = time.monotonic()
+            if cfg is not None:
+                # Guard: when event="thinking" and in ambient state,
+                # _transition_to_active() (called below) installs the carousel
+                # CrossfadeEngine via transition_to_active(). Calling on_phase_signal()
+                # first would install a CrossfadeEngine that transition_to_active()
+                # immediately overwrites. Skip on_phase_signal here.
+                if not (event == "thinking" and self._visibility_state == "ambient"):
+                    self._orchestrator.on_phase_signal(self._current_phase, cfg)
 
         # Phase D: ambient → active transition on "thinking"
         if event == "thinking" and self._visibility_state == "ambient":
             self._transition_to_active()
 
         # Forward to engine if it supports on_signal
-        engine = self._current_engine_instance
+        engine = self._orchestrator._current_engine_instance
         if engine is not None and hasattr(engine, "on_signal"):
             try:
                 engine.on_signal(event, value)
@@ -893,31 +879,16 @@ class DrawbrailleOverlay(Static):
             return "thinking"
         return _TOOL_SDF_LABELS.get(tool, "thinking")
 
-    # ── Phase B helpers ────────────────────────────────────────────────────
+    # ── Phase B helpers (delegated to orchestrator) ─────────────────────
 
     def _pick_carousel_candidate(self, phase: str) -> str | None:
-        """Return a random engine key filtered by phase category, excluding current."""
+        """Thin delegator to AnimOrchestrator.pick_carousel_candidate."""
         cfg = self._cfg
-        if cfg is None or not self._carousel_engines:
+        if cfg is None:
             return None
-        if cfg.phase_aware_carousel:
-            allowed = _PHASE_CATEGORIES.get(phase, [])
-            if allowed:
-                candidates = [
-                    k for k in self._carousel_engines
-                    if _ENGINE_META.get(k, {}).get("category") in allowed
-                    and k != self._carousel_key
-                ]
-            else:
-                candidates = []
-        else:
-            candidates = [k for k in self._carousel_engines if k != self._carousel_key]
-        if not candidates:
-            # Fallback: any engine including current
-            candidates = self._carousel_engines
-        return random.choice(candidates) if candidates else None
+        return self._orchestrator.pick_carousel_candidate(phase, cfg)
 
-    # ── Phase D helpers ────────────────────────────────────────────────────
+    # ── Phase D helpers ────────────────────────────────────────────────────────────────────
 
     def _transition_to_active(self) -> None:
         """Ambient → active light transition (no full show())."""
@@ -926,16 +897,8 @@ class DrawbrailleOverlay(Static):
             return
         self._visibility_state = "active"
         self._heat_target = 0.5
-        next_key = self._pick_carousel_candidate("thinking")
-        if next_key:
-            eng_a = self._current_engine_instance or (
-                _ENGINES.get(self._carousel_key) or _ENGINES["dna"]
-            )()
-            eng_b = _ENGINES[next_key]()
-            self._carousel_crossfade = CrossfadeEngine(
-                eng_a, eng_b, speed=cfg.phase_crossfade_speed
-            )
-            self._carousel_key = next_key
+        self._orchestrator.transition_to_active(cfg)
+        # NOTE: does NOT call add_class("-visible") — overlay is already visible
 
     def _transition_to_ambient(self) -> None:
         """Active → ambient transition after completion burst."""
@@ -944,12 +907,9 @@ class DrawbrailleOverlay(Static):
             return
         self._visibility_state = "ambient"
         self._heat_target = 0.0
-        ambient_key = cfg.ambient_engine
-        if ambient_key in _ENGINES:
-            self._current_engine_instance = _ENGINES[ambient_key]()
-            self._carousel_key = ambient_key
-
-    # ── Phase E helpers ────────────────────────────────────────────────────
+        if cfg.ambient_engine in _ENGINES:
+            self._orchestrator.set_ambient_engine(cfg.ambient_engine)
+        # NOTE: does NOT call add_class("-visible") — overlay is already visible
 
     def _has_nameplate(self) -> bool:
         """Return True if AssistantNameplate is present in the DOM."""
@@ -958,98 +918,18 @@ class DrawbrailleOverlay(Static):
         except Exception:
             return False
 
-    # ── carousel ───────────────────────────────────────────────────────────
-
-    def _get_carousel_engine(self) -> object:
-        """Return the engine for the current carousel position, handling crossfade."""
-        # Phase D: ambient guard — freeze carousel during ambient state
-        if self._visibility_state == "ambient":
-            if self._current_engine_instance is None:
-                cfg = self._cfg
-                ambient_key = (cfg.ambient_engine if cfg else "perlin_flow") or "perlin_flow"
-                if ambient_key not in _ENGINES:
-                    ambient_key = "perlin_flow"
-                self._current_engine_instance = _ENGINES[ambient_key]()
-                self._carousel_key = ambient_key
-            return self._current_engine_instance
-
-        # If crossfade active and not done, return it
-        if self._carousel_crossfade is not None:
-            if self._carousel_crossfade.progress < 1.0:
-                return self._carousel_crossfade
-            else:
-                # Crossfade done — commit new engine key
-                if self._carousel_engines:
-                    self._carousel_idx %= len(self._carousel_engines)
-                    self._current_engine_key = self._carousel_engines[self._carousel_idx]
-                    self._carousel_key = self._current_engine_key
-                self._carousel_crossfade = None
-
-        # Check if time to advance
-        now = time.monotonic()
-        cfg = self._cfg
-        interval = cfg.carousel_interval_s if cfg else 12.0
-        if (now - self._carousel_last_switch) > interval:
-            # Phase B: build filtered candidate list
-            if cfg is not None and cfg.phase_aware_carousel:
-                allowed = _PHASE_CATEGORIES.get(self._current_phase, [])
-                if allowed:
-                    candidates = [
-                        k for k in self._carousel_engines
-                        if _ENGINE_META.get(k, {}).get("category") in allowed
-                    ]
-                else:
-                    candidates = []
-            else:
-                candidates = self._carousel_engines
-
-            if not candidates:
-                candidates = self._carousel_engines  # fallback — never freeze
-
-            if len(candidates) < 1:
-                # No candidates at all — just return current
-                pass
-            else:
-                # Pick next from filtered pool, excluding current
-                others = [k for k in candidates if k != self._carousel_key] or candidates
-                next_key = random.choice(others)
-                self._carousel_key = next_key
-                # Advance global idx to match (find in global list or just append)
-                if next_key in self._carousel_engines:
-                    self._carousel_idx = self._carousel_engines.index(next_key)
-                # Build crossfade
-                engine_a = self._current_engine_instance
-                if engine_a is None:
-                    cur = self._carousel_key or (self._carousel_engines[0] if self._carousel_engines else "dna")
-                    engine_a = _ENGINES.get(cur, _ENGINES["dna"])()
-                engine_b = _ENGINES.get(next_key, _ENGINES["dna"])()
-                speed = cfg.crossfade_speed if cfg else 0.04
-                self._carousel_crossfade = CrossfadeEngine(engine_a, engine_b, speed=speed)
-                self._carousel_last_switch = now
-                return self._carousel_crossfade
-
-        # Normal: return current cached engine
-        if self._carousel_engines:
-            self._carousel_idx %= len(self._carousel_engines)
-        if self._current_engine_instance is None or self._current_engine_key != self._carousel_engines[self._carousel_idx]:
-            key = self._carousel_engines[self._carousel_idx]
-            self._current_engine_key = key
-            self._carousel_key = key
-            self._current_engine_instance = _ENGINES.get(key, _ENGINES["dna"])()
-        return self._current_engine_instance
-
-    # ── clock subscription ─────────────────────────────────────────────────
+    # ── clock subscription ──────────────────────────────────────────────────────
 
     def _start_anim(self) -> None:
         if self._anim_handle is not None:
             return
-        clock: AnimationClock | None = None
+        clock = None
         try:
             clock = getattr(self.app, "_anim_clock", None)
         except Exception:
             pass
         if clock is not None:
-            # Divisor: how many 15-fps clock ticks to skip per overlay tick.
+            from hermes_cli.tui.animation import AnimationClock
             divisor = max(1, round(15 / max(1, self.fps)))
             self._anim_handle = clock.subscribe(divisor, self._tick)
         else:
@@ -1063,122 +943,50 @@ class DrawbrailleOverlay(Static):
             self._anim_handle.stop()
             self._anim_handle = None
 
+    # ── Phase D helpers ────────────────────────────────────────────────────────────────────
+
+    # ── Engine delegators (Phase 2: thin backward-compat shims) ──────────────
+
     def _get_engine(self) -> object:
-        """Return cached engine instance, rebuilding if key changed."""
-        # Carousel path checked first (D2)
-        if self._cfg and self._cfg.carousel and len(self._carousel_engines) >= 2:
-            return self._get_carousel_engine()
+        """Thin delegator — Phase 2 backward compat for existing tests."""
+        self._ensure_orchestrator()
+        try:
+            gradient = self.gradient
+        except Exception:
+            gradient = self.__dict__.get("gradient", False)
+        return self._orchestrator.get_engine(
+            self._anim_params,
+            self._cfg,
+            resolved_color=self._resolved_color,
+            resolved_color_b=self._resolved_color_b if gradient else None,
+        )
 
-        key = self.animation
-
-        # Reset warmup state when switching away from sdf_morph
-        if self._current_engine_key == "sdf_morph" and key != "sdf_morph":
-            self._sdf_warmup_instance = None
-            self._sdf_crossfade = None
-            self._sdf_baker_was_ready = False
-            # Also reset external trail when engine changes
-            self._external_trail = None
-
-        if key != self._current_engine_key and self._external_trail is not None:
-            self._external_trail = None
-
-        if key != "sdf_morph":
-            if self._current_engine_instance is None or self._current_engine_key != key:
-                cls = _ENGINES.get(key, _ENGINES["dna"])
-                self._current_engine_instance = cls()
-                self._current_engine_key = key
-                if hasattr(self._current_engine_instance, "on_mount"):
-                    self._current_engine_instance.on_mount(self)
-            return self._current_engine_instance
-
-        # ── sdf_morph path ────────────────────────────────────────────────────
-        self._current_engine_key = "sdf_morph"
-        sdf = self._get_sdf_engine(self._anim_params)
-        now_ready = sdf._baker.ready.is_set()
-
-        # Edge: baker just became ready → install CrossfadeEngine(warmup → SDF)
-        if now_ready and not self._sdf_baker_was_ready:
-            self._sdf_baker_was_ready = True
-            warmup = self._sdf_warmup_instance
-            if warmup is not None:
-                cfg = _overlay_config()
-                self._sdf_crossfade = CrossfadeEngine(
-                    engine_a=warmup,
-                    engine_b=sdf,
-                    speed=cfg.sdf_crossfade_speed,
-                )
-                self._sdf_warmup_instance = None  # handed off to crossfade
-            # If warmup is None (bake finished before first tick): go straight to SDF
-
-        # Crossfade in progress
-        if self._sdf_crossfade is not None:
-            if self._sdf_crossfade.progress >= 1.0:
-                self._sdf_crossfade = None  # done; fall through to pure SDF
-            else:
-                return self._sdf_crossfade
-
-        # Baker not ready yet → return warmup engine
-        if not now_ready:
-            if self._sdf_warmup_instance is None:
-                cfg = _overlay_config()
-                wkey = cfg.sdf_warmup_engine if cfg.sdf_warmup_engine in _ENGINES else "dna"
-                self._sdf_warmup_instance = _ENGINES[wkey]()
-            return self._sdf_warmup_instance
-
-        # Baker ready, crossfade done → pure SDF
-        return sdf
+    def _get_carousel_engine(self) -> object:
+        """Thin delegator — Phase 2 backward compat for existing tests."""
+        self._ensure_orchestrator()
+        cfg = self._cfg
+        if cfg is None:
+            return self._orchestrator._current_engine_instance or self._orchestrator.set_ambient_engine("dna") or self._orchestrator._current_engine_instance
+        return self._orchestrator.get_carousel_engine(cfg)
 
     def _get_sdf_engine(self, params: AnimParams) -> object:
-        """Lazily create SDF morph engine. Calls on_mount on first creation.
-
-        C2: check baker.failed BEFORE baker.ready (fail-fast).
-        """
-        import logging as _logging
-        _LOG = _logging.getLogger(__name__)
-
-        # Check if permanently failed (C2)
-        if self._sdf_permanently_failed:
-            fallback = (self._cfg.sdf_warmup_engine if self._cfg else None) or "neural_pulse"
-            if fallback not in _ENGINES:
-                fallback = "neural_pulse"
-            return _ENGINES[fallback]()
-
-        if self._sdf_engine is not None:
-            # Check baker.failed BEFORE baker.ready (C2)
-            baker = getattr(self._sdf_engine, "_baker", None)
-            if baker is not None and hasattr(baker, "failed") and baker.failed.is_set():
-                if not self._sdf_permanently_failed:
-                    _LOG.warning("SDF baker failed — falling back to warmup engine")
-                    self._sdf_permanently_failed = True
-                self._sdf_engine = None
-                self._sdf_warmup_instance = None
-                self._sdf_baker_was_ready = False
-                fallback = (self._cfg.sdf_warmup_engine if self._cfg else None) or "neural_pulse"
-                if fallback not in _ENGINES:
-                    fallback = "neural_pulse"
-                return _ENGINES[fallback]()
-
-        if self._sdf_engine is None:
-            from hermes_cli.tui.sdf_morph import SDFMorphEngine
-            self._sdf_engine = SDFMorphEngine(
-                text=params.sdf_text,
-                hold_ms=params.sdf_hold_ms,
-                morph_ms=params.sdf_morph_ms,
-                mode=params.sdf_render_mode,
-                outline_w=params.sdf_outline_width,
-                dissolve_spread=params.sdf_dissolve_spread,
-                font_size=params.sdf_font_size,
-                color=self._resolved_color,
-                color_b=self._resolved_color_b if self.gradient else None,
-            )
-            # Start bake worker
-            if hasattr(self._sdf_engine, "on_mount"):
-                self._sdf_engine.on_mount(self)
-        return self._sdf_engine
+        """Thin delegator — Phase 2 backward compat for existing tests."""
+        self._ensure_orchestrator()
+        try:
+            gradient = self.gradient
+        except Exception:
+            gradient = self.__dict__.get("gradient", False)
+        return self._orchestrator.get_sdf_engine(
+            params,
+            self._cfg,
+            resolved_color=self._resolved_color,
+            resolved_color_b=self._resolved_color_b if gradient else None,
+        )
 
     # ── rendering ──────────────────────────────────────────────────────────
 
     def _tick(self) -> None:
+        self._ensure_orchestrator()
         if not self.has_class("-visible"):
             # Still running during fade-out — only skip if fully hidden (not fading)
             if self._fade_state != "out":
@@ -1229,39 +1037,19 @@ class DrawbrailleOverlay(Static):
         if self._visibility_state != "ambient":
             params.heat = max(0.0, min(1.5, self._heat))
 
-        # Get engine (cached instance)
-        engine = self._get_engine()
+        # Get engine via orchestrator (Phase 2: pass resolved colors directly)
+        engine = self._orchestrator.get_engine(
+            params, cfg,
+            resolved_color=self._resolved_color,
+            resolved_color_b=self._resolved_color_b if self.gradient else None,
+        )
 
         with measure("drawbraille_frame"):
             frame_str = engine.next_frame(params)
         params.t += params.dt
 
-        # External trail for stateless engines (D3)
-        if (self._cfg is not None and self._cfg.trail_decay > 0
-                and not hasattr(engine, "_trail")):
-            w = params.width
-            h = params.height
-            if (self._external_trail is None
-                    or getattr(self._external_trail, "_w", None) != w
-                    or getattr(self._external_trail, "_h", None) != h):
-                self._external_trail = TrailCanvas(decay=self._cfg.trail_decay)
-                self._external_trail._w = w  # type: ignore[attr-defined]
-                self._external_trail._h = h  # type: ignore[attr-defined]
-            et = self._external_trail
-            # Map braille characters to pixel coords
-            for row_idx, row in enumerate(frame_str.split("\n")):
-                for col_idx, ch in enumerate(row):
-                    if 0x2800 <= ord(ch) <= 0x28FF:
-                        bits = ord(ch) - 0x2800
-                        for dy in range(4):
-                            for dx in range(2):
-                                bit_idx = dy * 2 + dx
-                                if bits & (1 << bit_idx):
-                                    px = col_idx * 2 + dx
-                                    py = row_idx * 4 + dy
-                                    et.set(px, py, 1.0)
-            et.decay_all()
-            frame_str = et.to_canvas().frame()
+        # External trail for stateless engines (delegated to orchestrator)
+        frame_str = self._orchestrator.apply_external_trail(frame_str, params, cfg)
 
         # Determine render color (may be dimmed during fade-out)
         # Phase A3: skip fade-out while _waiting is True

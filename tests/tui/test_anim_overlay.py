@@ -88,6 +88,7 @@ def _mock_app(accent="#00d7ff"):
 
 def _overlay_with_mock_app(**cfg_kw):
     """Create a DrawbrailleOverlay with a mock app, no actual DOM."""
+    from hermes_cli.tui.anim_orchestrator import AnimOrchestrator
     ov = DrawbrailleOverlay.__new__(DrawbrailleOverlay)
     ov._anim_handle = None
     ov._anim_params = AnimParams(width=60, height=28)
@@ -99,24 +100,14 @@ def _overlay_with_mock_app(**cfg_kw):
     ov._fade_state = "stable"
     ov._fade_alpha = 1.0
     ov._auto_hide_handle = None
-    ov._sdf_engine = None
-    ov._sdf_warmup_instance = None
-    ov._sdf_crossfade = None
-    ov._sdf_baker_was_ready = False
-    ov._sdf_permanently_failed = False
     ov._cfg = None
-    ov._current_engine_instance = None
     ov._current_engine_key = ""
     ov._heat = 0.0
     ov._heat_target = 0.0
     ov._token_count_last = 0
-    ov._carousel_elapsed = 0.0
-    ov._carousel_engine_idx = 0
-    ov._carousel_engines = []
-    ov._carousel_idx = 0
-    ov._carousel_last_switch = 0.0
-    ov._carousel_crossfade = None
-    ov._external_trail = None
+    # Phase 2: orchestrator owns engine/carousel/SDF/trail state
+    ov._orchestrator = AnimOrchestrator(ov)
+    # (old carousel_elapsed / carousel_engine_idx were dead fields — not set)
     # Reactive attrs must bypass the descriptor entirely — write directly to
     # instance __dict__ so Textual's reactive.__set__ is never invoked on an
     # uninitialized (no DOM) widget.
@@ -486,7 +477,7 @@ class TestPhaseC:
         mock_baker.failed.is_set.return_value = True
         mock_baker.ready.is_set.return_value = False
         mock_sdf._baker = mock_baker
-        ov._sdf_engine = mock_sdf
+        ov._orchestrator._sdf_engine = mock_sdf
 
         result = ov._get_sdf_engine(ov._anim_params)
         # Should return a fallback engine (not the mock sdf)
@@ -501,21 +492,21 @@ class TestPhaseC:
         mock_baker = MagicMock()
         mock_baker.failed.is_set.return_value = True
         mock_sdf._baker = mock_baker
-        ov._sdf_engine = mock_sdf
+        ov._orchestrator._sdf_engine = mock_sdf
 
         ov._get_sdf_engine(ov._anim_params)
-        assert ov._sdf_permanently_failed is True
+        assert ov._orchestrator._sdf_permanently_failed is True
 
     def test_baker_permanently_failed_no_retry(self):
         """C2: Repeated _get_sdf_engine() calls don't re-create baker after permanent failure."""
         ov = _overlay_with_mock_app()
         ov._cfg = _cfg(animation="sdf_morph")
-        ov._sdf_permanently_failed = True
+        ov._orchestrator._sdf_permanently_failed = True
 
         # Should return fallback immediately without checking _sdf_engine
         result = ov._get_sdf_engine(ov._anim_params)
         # _sdf_engine should remain None (not created)
-        assert ov._sdf_engine is None
+        assert ov._orchestrator._sdf_engine is None
         assert result is not None  # fallback engine returned
 
     def test_baker_timeout_marks_failed(self):
@@ -614,32 +605,32 @@ class TestPhaseD:
     def test_carousel_advances_after_interval(self):
         """D2: _carousel_last_switch far in past → carousel advances to next engine."""
         ov = _overlay_with_mock_app()
-        ov._carousel_engines = ["dna", "rotating", "classic"]
-        ov._carousel_idx = 0
-        ov._carousel_last_switch = time.monotonic() - 100.0  # far in past
-        ov._carousel_crossfade = None
-        ov._current_engine_instance = None
+        ov._orchestrator._carousel_engines = ["dna", "rotating", "classic"]
+        ov._orchestrator._carousel_idx = 0
+        ov._orchestrator._carousel_last_switch = time.monotonic() - 100.0  # far in past
+        ov._orchestrator._carousel_crossfade = None
+        ov._orchestrator._current_engine_instance = None
         ov._current_engine_key = ""
         cfg = _cfg(carousel=True, carousel_interval_s=5.0, crossfade_speed=0.04)
         ov._cfg = cfg
 
         engine = ov._get_carousel_engine()
         # Should have created a crossfade (started transition)
-        assert ov._carousel_crossfade is not None or ov._carousel_idx == 1
+        assert ov._orchestrator._carousel_crossfade is not None or ov._orchestrator._carousel_idx == 1
 
     def test_carousel_crossfade_during_transition(self):
         """D2: Mid-transition → CrossfadeEngine returned."""
         ov = _overlay_with_mock_app()
-        ov._carousel_engines = ["dna", "rotating"]
-        ov._carousel_idx = 0
-        ov._carousel_last_switch = time.monotonic()
+        ov._orchestrator._carousel_engines = ["dna", "rotating"]
+        ov._orchestrator._carousel_idx = 0
+        ov._orchestrator._carousel_last_switch = time.monotonic()
         # Install a crossfade in progress
         e_a = DnaHelixEngine()
         e_b = DnaHelixEngine()
         cf = CrossfadeEngine(e_a, e_b, speed=0.04)
         cf.progress = 0.5
-        ov._carousel_crossfade = cf
-        ov._current_engine_instance = None
+        ov._orchestrator._carousel_crossfade = cf
+        ov._orchestrator._current_engine_instance = None
         ov._cfg = _cfg(carousel=True, carousel_interval_s=5.0, crossfade_speed=0.04)
 
         result = ov._get_carousel_engine()
@@ -659,13 +650,13 @@ class TestPhaseD:
     def test_carousel_disabled_below_two_engines(self):
         """D2: < 2 valid engines → carousel silently disabled."""
         ov = _overlay_with_mock_app()
-        ov._carousel_engines = ["dna"]  # only 1 engine
+        ov._orchestrator._carousel_engines = ["dna"]  # only 1 engine
         ov._cfg = _cfg(carousel=True)
 
         # With < 2 engines, get_engine should NOT call get_carousel_engine
         # (spec: if len < 2 disable carousel silently)
         # Just verify the condition check
-        assert len(ov._carousel_engines) < 2
+        assert len(ov._orchestrator._carousel_engines) < 2
 
     def test_external_trail_activates_for_dna_helix(self):
         """D3: DnaHelixEngine + trail_decay=0.9 → _external_trail not None after tick."""
@@ -682,22 +673,22 @@ class TestPhaseD:
 
         # Simulate the check
         if cfg.trail_decay > 0 and not hasattr(engine, "_trail"):
-            ov._external_trail = TrailCanvas(decay=cfg.trail_decay)
+            ov._orchestrator._external_trail = TrailCanvas(decay=cfg.trail_decay)
 
-        assert ov._external_trail is not None
+        assert ov._orchestrator._external_trail is not None
 
     def test_external_trail_reset_on_engine_change(self):
         """D3: Changing engine key → _external_trail is None."""
         ov = _overlay_with_mock_app()
-        ov._external_trail = TrailCanvas(decay=0.9)
+        ov._orchestrator._external_trail = TrailCanvas(decay=0.9)
         ov._current_engine_key = "dna"
         ov.__dict__["animation"] = "rotating"  # Different engine
 
         # Simulate the check in _get_engine (read via __dict__ since no DOM)
-        if ov.__dict__["animation"] != ov._current_engine_key and ov._external_trail is not None:
-            ov._external_trail = None
+        if ov.__dict__["animation"] != ov._current_engine_key and ov._orchestrator._external_trail is not None:
+            ov._orchestrator._external_trail = None
 
-        assert ov._external_trail is None
+        assert ov._orchestrator._external_trail is None
 
     def test_dissolve_deterministic_same_coords(self):
         """D4: _layer_frames dissolve at same (x,y,t) → same use_b value."""
@@ -862,7 +853,7 @@ def _overlay_v2(**cfg_kw):
     ov._error_hold_frames = 0
     ov._waiting = False
     ov._current_phase = "thinking"
-    ov._carousel_key = ""
+    ov._orchestrator._carousel_key = ""
     ov._burst_counter = 0
     ov._burst_decay_ticks = 0
     ov._completion_burst_frames = 0
@@ -996,8 +987,8 @@ class TestPhaseBv2:
                    phase_aware_carousel=True, phase_crossfade_speed=0.08,
                    completion_burst_frames=0)
         ov._cfg = cfg
-        ov._carousel_engines = list(_ENGINES.keys())[:5]
-        ov._carousel_key = ov._carousel_engines[0]
+        ov._orchestrator._carousel_engines = list(_ENGINES.keys())[:5]
+        ov._orchestrator._carousel_key = ov._orchestrator._carousel_engines[0]
         ov._current_phase = "thinking"
         ov.signal("tool")
         # Should have triggered a phase crossfade
@@ -1013,31 +1004,31 @@ class TestPhaseBv2:
     def test_carousel_key_tracks_selection(self):
         """Bv2-6: _carousel_key updated when a new carousel engine is selected."""
         ov = _overlay_v2()
-        ov._carousel_engines = list(_ENGINES.keys())[:6]
-        ov._carousel_idx = 0
+        ov._orchestrator._carousel_engines = list(_ENGINES.keys())[:6]
+        ov._orchestrator._carousel_idx = 0
         cfg = _cfg(carousel=True, carousel_interval_s=5.0, crossfade_speed=0.04,
                    phase_aware_carousel=False, completion_burst_frames=0)
         ov._cfg = cfg
-        ov._carousel_last_switch = time.monotonic() - 100.0
-        ov._current_engine_instance = None
+        ov._orchestrator._carousel_last_switch = time.monotonic() - 100.0
+        ov._orchestrator._current_engine_instance = None
         # _get_carousel_engine should set _carousel_key
         ov._get_carousel_engine()
-        assert ov._carousel_key != "" or len(ov._carousel_engines) == 0
+        assert ov._orchestrator._carousel_key != "" or len(ov._orchestrator._carousel_engines) == 0
 
     def test_carousel_idx_clamped(self):
         """Bv2-7: _carousel_idx is clamped mod len(carousel_engines)."""
         ov = _overlay_v2()
-        ov._carousel_engines = ["dna", "rotating"]
-        ov._carousel_idx = 10  # out of range
-        ov._carousel_crossfade = None
+        ov._orchestrator._carousel_engines = ["dna", "rotating"]
+        ov._orchestrator._carousel_idx = 10  # out of range
+        ov._orchestrator._carousel_crossfade = None
         ov._visibility_state = "active"
         cfg = _cfg(carousel=True, carousel_interval_s=9999.0, crossfade_speed=0.04,
                    phase_aware_carousel=False, completion_burst_frames=0)
         ov._cfg = cfg
-        ov._carousel_last_switch = time.monotonic()  # recently switched — no advance
+        ov._orchestrator._carousel_last_switch = time.monotonic()  # recently switched — no advance
         result = ov._get_carousel_engine()
         assert result is not None
-        assert 0 <= ov._carousel_idx < len(ov._carousel_engines)
+        assert 0 <= ov._orchestrator._carousel_idx < len(ov._orchestrator._carousel_engines)
 
     def test_phase_categories_thinking_organic(self):
         """Bv2-8: 'thinking' phase maps to Organic engines only."""
@@ -1146,8 +1137,8 @@ class TestPhaseDv2:
         ov._cfg = _cfg(ambient_engine="perlin_flow", ambient_enabled=True,
                        completion_burst_frames=0)
         ov._transition_to_ambient()
-        assert ov._current_engine_instance is not None
-        assert ov._carousel_key == "perlin_flow"
+        assert ov._orchestrator._current_engine_instance is not None
+        assert ov._orchestrator._carousel_key == "perlin_flow"
 
     def test_get_carousel_engine_ambient_guard(self):
         """Dv2-5: _get_carousel_engine returns ambient engine when visibility_state==ambient."""
@@ -1158,7 +1149,7 @@ class TestPhaseDv2:
         result = ov._get_carousel_engine()
         assert result is not None
         # Should be the ambient engine, not advancing the carousel
-        assert ov._carousel_key == "dna"
+        assert ov._orchestrator._carousel_key == "dna"
 
     def test_transition_to_active_from_ambient(self):
         """Dv2-6: signal('thinking') when ambient → _visibility_state becomes 'active'."""
@@ -1167,9 +1158,9 @@ class TestPhaseDv2:
         ov._cfg = _cfg(ambient_engine="perlin_flow", ambient_enabled=True,
                        carousel=True, phase_crossfade_speed=0.08,
                        phase_aware_carousel=False, completion_burst_frames=0)
-        ov._carousel_engines = list(_ENGINES.keys())[:4]
-        ov._carousel_key = ov._carousel_engines[0]
-        ov._current_engine_instance = PerlinFlowEngine()
+        ov._orchestrator._carousel_engines = list(_ENGINES.keys())[:4]
+        ov._orchestrator._carousel_key = ov._orchestrator._carousel_engines[0]
+        ov._orchestrator._current_engine_instance = PerlinFlowEngine()
         ov.signal("thinking")
         assert ov._visibility_state == "active"
 

@@ -355,9 +355,18 @@ from unittest.mock import patch, MagicMock, PropertyMock
 
 def _make_sdf_overlay() -> DrawbrailleOverlay:
     """Return a DrawbrailleOverlay with animation='sdf_morph' and minimal params."""
+    from hermes_cli.tui.anim_orchestrator import AnimOrchestrator
     ov = DrawbrailleOverlay()
     ov.animation = "sdf_morph"
     ov._anim_params = AnimParams(width=50, height=14, dt=1 / 15)
+    # Phase 2: on_mount not called without running app; create orchestrator manually
+    if not hasattr(ov, "_orchestrator"):
+        ov._orchestrator = AnimOrchestrator(ov)
+    # Minimal attrs needed by orchestrator and delegator shims
+    ov.__dict__.setdefault("gradient", False)
+    ov._resolved_color = "#00d7ff"
+    ov._resolved_color_b = "#8800ff"
+    ov._cfg = None
     return ov
 
 
@@ -384,7 +393,7 @@ class TestSDFCrossfadeWarmup:
         from hermes_cli.tui.sdf_morph import SDFMorphEngine
         ov = _make_sdf_overlay()
         sdf_engine = _make_sdf_engine_unready()
-        ov._sdf_engine = sdf_engine
+        ov._orchestrator._sdf_engine = sdf_engine
         result = ov._get_engine()
         assert not isinstance(result, SDFMorphEngine)
 
@@ -392,10 +401,10 @@ class TestSDFCrossfadeWarmup:
         """When baker transitions to ready, second call returns CrossfadeEngine."""
         ov = _make_sdf_overlay()
         sdf_engine = _make_sdf_engine_unready()
-        ov._sdf_engine = sdf_engine
+        ov._orchestrator._sdf_engine = sdf_engine
         # First call while not ready → warmup
         first = ov._get_engine()
-        assert ov._sdf_warmup_instance is not None or ov._sdf_crossfade is None
+        assert ov._orchestrator._sdf_warmup_instance is not None or ov._orchestrator._sdf_crossfade is None
         # Simulate baker ready
         sdf_engine._baker.ready.set()
         second = ov._get_engine()
@@ -405,7 +414,7 @@ class TestSDFCrossfadeWarmup:
         """CrossfadeEngine.progress increases across successive _get_engine() calls."""
         ov = _make_sdf_overlay()
         sdf_engine = _make_sdf_engine_unready()
-        ov._sdf_engine = sdf_engine
+        ov._orchestrator._sdf_engine = sdf_engine
         ov._get_engine()  # warmup installed
         sdf_engine._baker.ready.set()
         crossfade = ov._get_engine()  # crossfade installed
@@ -422,21 +431,21 @@ class TestSDFCrossfadeWarmup:
         from hermes_cli.tui.sdf_morph import SDFMorphEngine
         ov = _make_sdf_overlay()
         sdf_engine = _make_sdf_engine_unready()
-        ov._sdf_engine = sdf_engine
+        ov._orchestrator._sdf_engine = sdf_engine
         ov._get_engine()  # warmup
         sdf_engine._baker.ready.set()
         ov._get_engine()  # installs crossfade
         # Force crossfade done
-        ov._sdf_crossfade.progress = 1.0
+        ov._orchestrator._sdf_crossfade.progress = 1.0
         result = ov._get_engine()
         assert isinstance(result, SDFMorphEngine)
-        assert ov._sdf_crossfade is None
+        assert ov._orchestrator._sdf_crossfade is None
 
     def test_get_engine_warmup_invalid_key_falls_back_to_dna(self):
         """Invalid sdf_warmup_engine value → warmup instance is DnaHelixEngine."""
         ov = _make_sdf_overlay()
         sdf_engine = _make_sdf_engine_unready()
-        ov._sdf_engine = sdf_engine
+        ov._orchestrator._sdf_engine = sdf_engine
         bad_cfg = DrawbrailleOverlayCfg(enabled=True, sdf_warmup_engine="not_a_real_engine")
         with patch("hermes_cli.tui.drawbraille_overlay._overlay_config", return_value=bad_cfg):
             result = ov._get_engine()
@@ -446,23 +455,23 @@ class TestSDFCrossfadeWarmup:
         """hide() clears _sdf_warmup_instance, _sdf_crossfade, _sdf_baker_was_ready."""
         ov = _make_sdf_overlay()
         sdf_engine = _make_sdf_engine_unready()
-        ov._sdf_engine = sdf_engine
+        ov._orchestrator._sdf_engine = sdf_engine
         ov._get_engine()  # puts warmup in place
-        assert ov._sdf_warmup_instance is not None
+        assert ov._orchestrator._sdf_warmup_instance is not None
         cfg = DrawbrailleOverlayCfg(enabled=True)
         ov._stop_anim = MagicMock()
         ov.remove_class = MagicMock()
         ov.add_class("-visible")   # must be visible for hide() to act
         ov.hide(cfg)
-        assert ov._sdf_warmup_instance is None
-        assert ov._sdf_crossfade is None
-        assert ov._sdf_baker_was_ready is False
+        assert ov._orchestrator._sdf_warmup_instance is None
+        assert ov._orchestrator._sdf_crossfade is None
+        assert ov._orchestrator._sdf_baker_was_ready is False
 
     def test_warmup_engine_returns_nonempty_frame(self):
         """Warmup engine (neural_pulse) produces a non-empty frame during bake window."""
         ov = _make_sdf_overlay()
         sdf_engine = _make_sdf_engine_unready()
-        ov._sdf_engine = sdf_engine
+        ov._orchestrator._sdf_engine = sdf_engine
         warmup = ov._get_engine()
         params = ov._anim_params
         frame = warmup.next_frame(params)
@@ -474,8 +483,8 @@ class TestSDFCrossfadeWarmup:
         from hermes_cli.tui.sdf_morph import SDFMorphEngine
         ov = _make_sdf_overlay()
         sdf_engine = _make_sdf_engine_ready()
-        ov._sdf_engine = sdf_engine
+        ov._orchestrator._sdf_engine = sdf_engine
         result = ov._get_engine()
         assert isinstance(result, SDFMorphEngine)
-        assert ov._sdf_warmup_instance is None
-        assert ov._sdf_crossfade is None
+        assert ov._orchestrator._sdf_warmup_instance is None
+        assert ov._orchestrator._sdf_crossfade is None

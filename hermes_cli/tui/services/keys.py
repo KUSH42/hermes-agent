@@ -535,6 +535,15 @@ class KeyDispatchService(AppService):
         When agent is running: interrupt first, then send new message
         (except /queue and /btw which queue without interrupting).
         """
+        # One-shot: flush any deferred startup postamble before first real turn.
+        try:
+            cli = self.app.cli
+            if getattr(cli, "_postamble_pending", False):
+                cli._postamble_pending = False
+                cli._show_banner_postamble()
+        except Exception:
+            pass
+
         from hermes_cli.tui.widgets import ThinkingWidget
         text = event.value
 

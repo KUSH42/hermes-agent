@@ -7,7 +7,6 @@ from typing import Any, TYPE_CHECKING
 from textual.css.query import NoMatches
 from rich.text import Text
 
-from hermes_cli.tui.state import ChoiceOverlayState
 from hermes_cli.tui._browse_types import BrowseAnchorType
 from hermes_cli.tui._app_constants import KNOWN_SLASH_COMMANDS as _KNOWN_SLASH_COMMANDS
 from .base import AppService
@@ -21,6 +20,14 @@ class KeyDispatchService(AppService):
 
     def __init__(self, app: "HermesApp") -> None:
         super().__init__(app)
+
+    def _get_interrupt_overlay(self):
+        """Return the canonical InterruptOverlay instance, or None if not mounted."""
+        from hermes_cli.tui.overlays import InterruptOverlay
+        try:
+            return self.app.query_one(InterruptOverlay)
+        except Exception:
+            return None
 
     def dispatch_key(self, event: Any) -> None:
         """Global key handler for overlay navigation, copy, and interrupt."""
@@ -133,20 +140,12 @@ class KeyDispatchService(AppService):
                 event.prevent_default()
                 return
 
-            for state_attr in ("approval_state", "clarify_state"):
-                state: ChoiceOverlayState | None = getattr(self.app, state_attr)
-                if state is not None:
-                    state.response_queue.put("deny")
-                    setattr(self.app, state_attr, None)
-                    event.prevent_default()
-                    return
-            for state_attr in ("sudo_state", "secret_state"):
-                state = getattr(self.app, state_attr)
-                if state is not None:
-                    state.response_queue.put("")
-                    setattr(self.app, state_attr, None)
-                    event.prevent_default()
-                    return
+            # Route through overlay so dismiss values are adapter-controlled (F-1)
+            ov = self._get_interrupt_overlay()
+            if ov is not None and ov.has_class("--visible"):
+                ov.dismiss_current("__cancel__")
+                event.prevent_default()
+                return
 
             if not self.app.agent_running:
                 try:
@@ -246,20 +245,15 @@ class KeyDispatchService(AppService):
                 event.prevent_default()
                 return
 
-            for state_attr in ("approval_state", "clarify_state"):
-                state = getattr(self.app, state_attr)
-                if state is not None:
-                    state.response_queue.put(None)
-                    setattr(self.app, state_attr, None)
-                    event.prevent_default()
-                    return
-            for state_attr in ("sudo_state", "secret_state"):
-                state = getattr(self.app, state_attr)
-                if state is not None:
-                    state.response_queue.put("")
-                    setattr(self.app, state_attr, None)
-                    event.prevent_default()
-                    return
+            # Route through overlay so dismiss values are adapter-controlled (F-1/F-3)
+            # InterruptOverlay.BINDINGS escape(priority=True) handles Escape when the
+            # overlay has focus; this block catches Escape when overlay is visible but
+            # unfocused (e.g. after Tab moves to the diff panel).
+            ov = self._get_interrupt_overlay()
+            if ov is not None and ov.has_class("--visible"):
+                ov.dismiss_current("__cancel__")
+                event.prevent_default()
+                return
 
             if self.app.agent_running and hasattr(self.app.cli, "agent") and self.app.cli.agent:
                 self.app._interrupt_source = "esc"

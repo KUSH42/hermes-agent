@@ -25,7 +25,13 @@ if TYPE_CHECKING:
 
 
 def _choices_from_state(state: "ChoiceOverlayState") -> list[InterruptChoice]:
-    return [InterruptChoice(id=c, label=c) for c in state.choices]
+    choices = [InterruptChoice(id=c, label=c) for c in state.choices]
+    # F-2: first-char collision check so accelerators are unambiguous
+    if __debug__ and choices:
+        firsts = [c.id[:1] for c in choices if c.id]
+        assert len(firsts) == len(set(firsts)), \
+            f"Choice id first-char collision: {[c.id for c in choices]}"
+    return choices
 
 
 def _make_on_resolve(
@@ -60,9 +66,17 @@ def _make_on_resolve(
 
 
 def _adopt_state_deadline(p: InterruptPayload, state: Any) -> InterruptPayload:
-    """Adopt the legacy state's epoch deadline so countdown expiry semantics match."""
+    """Adopt the legacy state's epoch deadline so countdown expiry semantics match.
+
+    Also rebases countdown_s to state.remaining so the bar ratio reflects
+    remaining time, not the original full duration (C-1 fix).
+    """
     try:
         p.deadline = float(state.deadline)
+        # Rebase countdown_s to remaining so bar ratio is correct for partially-elapsed prompts.
+        remaining = getattr(state, "remaining", None)
+        if remaining is not None and remaining > 0:
+            p.countdown_s = float(remaining)
     except Exception:
         pass
     return p
@@ -124,7 +138,7 @@ def make_secret_payload(app: Any, state: "SecretOverlayState") -> InterruptPaylo
         title=state.prompt or "",
         subtitle="",
         countdown_s=float(countdown),
-        urgency="info",
+        urgency="warn",  # D-1: secret prompts are as sensitive as sudo
         input_spec=InputSpec(masked=True, placeholder="enter secret value…"),
         on_resolve=_make_on_resolve(
             "secret_state", app, state, timeout_value=None

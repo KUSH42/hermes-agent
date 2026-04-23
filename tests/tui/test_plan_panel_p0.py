@@ -200,12 +200,36 @@ class TestNowSectionTick(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestErrorCountInChip(unittest.TestCase):
-    """P0-4: _rebuild_header splits done vs errors; update_header builds RichText."""
+    """P0-4 (updated for P1-2): _rebuild_header splits done vs errors;
+    update_header delegates to chip segments."""
 
     def _make_header(self):
         from hermes_cli.tui.widgets.plan_panel import _PlanPanelHeader
         h = _PlanPanelHeader.__new__(_PlanPanelHeader)
         return h
+
+    def _make_chip_segments(self):
+        """Return a dict of mock segments keyed by id."""
+        from unittest.mock import MagicMock
+        segs = {}
+        for seg_id in ("plan-header-label", "plan-chip-title", "chip-running",
+                       "chip-done", "chip-errors", "chip-cost", "plan-f9-badge"):
+            m = MagicMock()
+            m.display = True
+            m.update = MagicMock()
+            segs[seg_id] = m
+        return segs
+
+    def _query_one_factory(self, segs):
+        """Return a query_one side-effect that dispatches on id selector."""
+        def _query_one(selector, *args):
+            if selector.startswith("#"):
+                key = selector[1:]
+                if key in segs:
+                    return segs[key]
+            # Return a generic mock for unknown selectors
+            return MagicMock()
+        return _query_one
 
     def test_update_header_signature_has_errors_param(self):
         import inspect
@@ -214,77 +238,70 @@ class TestErrorCountInChip(unittest.TestCase):
         self.assertIn("errors", sig.parameters)
         self.assertIn("cost_usd", sig.parameters)
 
-    def test_update_header_no_errors_returns_plain_string(self):
-        """When errors=0 the label stored is a plain str."""
+    def test_update_header_collapsed_shows_chip_title(self):
+        """When collapsed=True, #plan-chip-title receives text with 'Plan ▸'."""
         from hermes_cli.tui.widgets.plan_panel import _PlanPanelHeader
-        from rich.text import Text as RichText
         h = self._make_header()
-        stored = []
-        mock_static = MagicMock()
-        mock_static.update = lambda lbl: stored.append(lbl)
-        h.query_one = MagicMock(return_value=mock_static)
+        segs = self._make_chip_segments()
+        h.query_one = MagicMock(side_effect=self._query_one_factory(segs))
         h.update_header(collapsed=True, running=0, pending=2, done=7, errors=0)
-        self.assertEqual(len(stored), 1)
-        self.assertIsInstance(stored[0], str)
-        self.assertNotIsInstance(stored[0], RichText)
+        title_calls = segs["plan-chip-title"].update.call_args_list
+        self.assertTrue(len(title_calls) > 0, "#plan-chip-title.update() must be called")
+        title_text = title_calls[0][0][0]
+        self.assertIn("Plan", title_text)
+        self.assertIn("▸", title_text)
 
-    def test_update_header_with_errors_returns_richtext(self):
-        """When errors > 0 the label is a RichText object."""
+    def test_update_header_collapsed_errors_uses_richtext(self):
+        """When errors > 0 in chip mode, #chip-errors receives a RichText."""
         from hermes_cli.tui.widgets.plan_panel import _PlanPanelHeader
         from rich.text import Text as RichText
         h = self._make_header()
-        stored = []
-        mock_static = MagicMock()
-        mock_static.update = lambda lbl: stored.append(lbl)
-        h.query_one = MagicMock(return_value=mock_static)
+        segs = self._make_chip_segments()
+        # chip-errors needs display to be settable
+        segs["chip-errors"].display = False
+        h.query_one = MagicMock(side_effect=self._query_one_factory(segs))
         h.update_header(collapsed=True, running=0, pending=2, done=7, errors=2)
-        self.assertEqual(len(stored), 1)
-        self.assertIsInstance(stored[0], RichText)
+        error_calls = segs["chip-errors"].update.call_args_list
+        self.assertTrue(len(error_calls) > 0, "#chip-errors.update() must be called")
+        arg = error_calls[0][0][0]
+        self.assertIsInstance(arg, RichText, f"Expected RichText, got {type(arg)}")
 
-    def test_update_header_richtext_plain_text_content(self):
-        """RichText plain text must include 2✗ and 7✓ and 2▸."""
+    def test_update_header_collapsed_error_richtext_bold_red(self):
+        """RichText passed to #chip-errors must contain bold red span over '✗'."""
         from hermes_cli.tui.widgets.plan_panel import _PlanPanelHeader
         from rich.text import Text as RichText
         h = self._make_header()
-        stored = []
-        mock_static = MagicMock()
-        mock_static.update = lambda lbl: stored.append(lbl)
-        h.query_one = MagicMock(return_value=mock_static)
-        h.update_header(collapsed=True, running=0, pending=2, done=7, errors=2)
-        label = stored[0]
-        plain = label.plain if isinstance(label, RichText) else label
-        self.assertIn("2▸", plain)
-        self.assertIn("7✓", plain)
-        self.assertIn("2✗", plain)
-
-    def test_update_header_richtext_error_span_is_bold_red(self):
-        """The ✗ count span must have bold+red style."""
-        from hermes_cli.tui.widgets.plan_panel import _PlanPanelHeader
-        from rich.text import Text as RichText
-        from rich.style import Style
-        h = self._make_header()
-        stored = []
-        mock_static = MagicMock()
-        mock_static.update = lambda lbl: stored.append(lbl)
-        h.query_one = MagicMock(return_value=mock_static)
-        h.update_header(collapsed=True, running=0, pending=2, done=7, errors=2)
-        label = stored[0]
+        segs = self._make_chip_segments()
+        h.query_one = MagicMock(side_effect=self._query_one_factory(segs))
+        h.update_header(collapsed=True, running=0, pending=0, done=0, errors=2)
+        error_calls = segs["chip-errors"].update.call_args_list
+        self.assertTrue(len(error_calls) > 0)
+        label = error_calls[0][0][0]
         self.assertIsInstance(label, RichText)
-        # Find a span covering "2✗"
-        target = "2✗"
         target_found = False
         for start, end, style in label._spans:  # type: ignore[attr-defined]
             span_text = label.plain[start:end]
-            if target in span_text:
-                # style should be bold red
+            if "✗" in span_text:
                 if hasattr(style, "bold") and style.bold and str(style.color) in ("red", "bright_red"):
                     target_found = True
                     break
-                # Rich may store as string "bold red"
                 if isinstance(style, str) and "bold" in style and "red" in style:
                     target_found = True
                     break
-        self.assertTrue(target_found, f"No bold+red span found for '2✗' in {label!r}")
+        self.assertTrue(target_found, f"No bold+red span for '✗' in {label!r}")
+
+    def test_update_header_expanded_shows_full_label(self):
+        """When collapsed=False, #plan-header-label receives 'Plan ▾'."""
+        from hermes_cli.tui.widgets.plan_panel import _PlanPanelHeader
+        h = self._make_header()
+        segs = self._make_chip_segments()
+        h.query_one = MagicMock(side_effect=self._query_one_factory(segs))
+        h.update_header(collapsed=False, running=1, pending=2, done=7, errors=0)
+        label_calls = segs["plan-header-label"].update.call_args_list
+        self.assertTrue(len(label_calls) > 0, "#plan-header-label.update() must be called")
+        label_text = label_calls[0][0][0]
+        self.assertIn("Plan", label_text)
+        self.assertIn("▾", label_text)
 
     def test_rebuild_header_splits_done_and_errors(self):
         """_rebuild_header source must use separate done/errors counts."""

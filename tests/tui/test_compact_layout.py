@@ -231,6 +231,7 @@ async def test_status_bar_compact_session_truncation() -> None:
     async with _make_app().run_test(size=(60, 40)) as pilot:
         pilot.app.status_model = "m"
         pilot.app.session_label = "my-long-session-name"
+        pilot.app.session_count = 2  # S1-D: label suppressed when count <= 1
         _set_compact(pilot.app, True)
         await pilot.pause()
         sbar = pilot.app.query_one(StatusBar)
@@ -244,6 +245,7 @@ async def test_status_bar_normal_session_not_truncated() -> None:
     async with _make_app().run_test(size=(140, 40)) as pilot:
         pilot.app.status_model = "m"
         pilot.app.session_label = "my-short"
+        pilot.app.session_count = 2  # S1-D: label suppressed when count <= 1
         _set_compact(pilot.app, False)
         await pilot.pause()
         sbar = pilot.app.query_one(StatusBar)

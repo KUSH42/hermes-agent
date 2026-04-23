@@ -49,6 +49,7 @@ async def test_status_bar_shows_session_label():
 
         app.status_model = "claude-opus"
         app.session_label = "my session"
+        app.session_count = 2  # S1-D: label suppressed when count <= 1
         await pilot.pause()
 
         bar = app.query_one(StatusBar)

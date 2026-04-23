@@ -207,11 +207,12 @@ async def test_spinner_label_empty_clears_active_file():
 
 @pytest.mark.asyncio
 async def test_statusbar_shows_breadcrumb_when_active_file_set():
-    """StatusBar render includes the file path when status_active_file is set."""
+    """StatusBar render includes the file path when active file is set and offscreen."""
     from hermes_cli.tui.widgets import StatusBar
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         app.status_active_file = "src/auth.py"
+        app.status_active_file_offscreen = True  # S1-B: breadcrumb only when scrolled
         await pilot.pause()
         bar = app.query_one(StatusBar)
         rendered = bar.render()
@@ -296,8 +297,9 @@ async def test_statusbar_breadcrumb_only_in_non_browse_path():
     from hermes_cli.tui.widgets import StatusBar
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
-        # Non-browse path — breadcrumb must appear
+        # Non-browse path — breadcrumb must appear (S1-B: requires offscreen=True)
         app.status_active_file = "src/main.py"
+        app.status_active_file_offscreen = True
         await pilot.pause()
         bar = app.query_one(StatusBar)
         rendered = bar.render()

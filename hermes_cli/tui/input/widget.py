@@ -225,6 +225,8 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         for line in (self.text or "").split("\n"):
             line_width = max(1, cell_len(line))
             rows += max(1, (line_width + width - 1) // width)
+        if not hasattr(self, "styles"):
+            return
         self.styles.max_height = 3
         self.styles.height = max(1, min(3, rows or 1))
 

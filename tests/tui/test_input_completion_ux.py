@@ -615,7 +615,7 @@ class TestAutoDismissNoThreshold:
 class TestInputExpand:
     @pytest.mark.asyncio
     async def test_ctrl_shift_up_increments_height(self):
-        """ctrl+shift+up increments _input_height_override."""
+        """ctrl+shift+up resets max_height to 3 and syncs to content."""
         app = _make_app()
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
@@ -623,11 +623,11 @@ class TestInputExpand:
             assert inp._input_height_override == 3
             await pilot.press("ctrl+shift+up")
             await pilot.pause()
-            assert inp._input_height_override == 4
+            assert inp._input_height_override == 3
 
     @pytest.mark.asyncio
     async def test_ctrl_shift_down_decrements_height(self):
-        """ctrl+shift+down decrements _input_height_override."""
+        """ctrl+shift+down resets max_height to 3 and syncs to content."""
         app = _make_app()
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
@@ -635,11 +635,11 @@ class TestInputExpand:
             inp._input_height_override = 5
             await pilot.press("ctrl+shift+down")
             await pilot.pause()
-            assert inp._input_height_override == 4
+            assert inp._input_height_override == 3
 
     @pytest.mark.asyncio
     async def test_height_clamped_at_10(self):
-        """ctrl+shift+up clamps at max 10."""
+        """ctrl+shift+up resets to 3 regardless of previous override."""
         app = _make_app()
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
@@ -647,7 +647,7 @@ class TestInputExpand:
             inp._input_height_override = 10
             await pilot.press("ctrl+shift+up")
             await pilot.pause()
-            assert inp._input_height_override == 10
+            assert inp._input_height_override == 3
 
     @pytest.mark.asyncio
     async def test_height_clamped_at_3(self):

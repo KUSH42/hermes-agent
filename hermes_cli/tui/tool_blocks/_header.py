@@ -29,7 +29,7 @@ from ._shared import (
 
 MIN_LABEL_CELLS = 12
 
-_DROP_ORDER = ["linecount", "duration", "chip", "hero", "diff", "stderrwarn", "exit", "chevron", "flash"]
+_DROP_ORDER = ["linecount", "duration", "chip", "hero", "diff", "stderrwarn", "remediation", "exit", "chevron", "flash"]
 
 
 def _trim_tail_segments(
@@ -109,6 +109,8 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         self._browse_badge: str = ""
         # D1: set True by ChildPanel to suppress ┊ gutter prefix
         self._is_child: bool = False
+        # C-2: remediation hint for collapsed+error header
+        self._remediation_hint: str | None = None
 
     def on_mount(self) -> None:
         self._refresh_gutter_color()
@@ -324,6 +326,12 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                             tail_segments.append(("exit", Text("  ok", style="dim green")))
                     else:
                         tail_segments.append(("exit", Text(f"  exit {code}", style="bold red")))
+
+            # C-2: remediation hint when collapsed+error
+            if is_collapsed and self._is_complete and self._tool_icon_error:
+                _rh = getattr(self, "_remediation_hint", None)
+                if _rh:
+                    tail_segments.append(("remediation", Text(f"  hint:{_rh}", style="dim yellow")))
 
         # F-2: single duration append point — outside both branches
         if _pending_dur:

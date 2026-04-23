@@ -37,11 +37,14 @@ class SubAgentHeader(Widget):
         self._badges = Static("", classes="--badges")
         yield self._badges
 
-    def update(self, child_count: int, error_count: int, elapsed_ms: int, done: bool) -> None:
+    def update(self, child_count: int, error_count: int, elapsed_ms: int, done: bool,
+               error_kinds: "list[str] | None" = None) -> None:
         elapsed_s = elapsed_ms / 1000.0
         elapsed_str = _format_elapsed_compact(elapsed_s)
         if _accessibility_mode():
             badge = f"calls:{child_count} err:{error_count} dur:{elapsed_str}"
+            if error_count > 0 and error_kinds:
+                badge += f" err-kinds:{','.join(error_kinds[:3])}"
             self._badges.update(badge)
         else:
             from rich.text import Text as _Text
@@ -53,6 +56,12 @@ class SubAgentHeader(Widget):
                 except Exception:
                     warn_color = "#FFA726"
                 segments.append(("errors", _Text(f"  {error_count} {err_word}", style=f"bold {warn_color}")))
+                # D-2: show up to 3 distinct error_kind glyphs
+                if error_kinds:
+                    _GLYPHS = {"timeout": "⏱", "auth": "🔒", "network": "🌐",
+                               "signal": "💀", "exit": "✗"}
+                    glyphs = "".join(_GLYPHS.get(k, "✗") for k in error_kinds[:3])
+                    segments.append(("error-kinds", _Text(f" {glyphs}", style=f"bold {warn_color}")))
             segments.append(("duration", _Text(f"  {elapsed_str}", style="dim")))
             try:
                 w = self.app.size.width if self.app else 80
@@ -119,6 +128,8 @@ class SubAgentPanel(Widget):
         self._has_children: bool = False
         self._open_time: float = _time.monotonic()
         self._completed_child_count: int = 0
+        # D-2: track distinct error kinds across child panels
+        self._child_error_kinds: list[str] = []
         if depth >= 1:
             self.add_class(f"--depth-{min(depth, 3)}")
 
@@ -137,16 +148,20 @@ class SubAgentPanel(Widget):
     # --- Reactive watchers ---
 
     def watch_child_count(self, v: int) -> None:
-        self._header.update(v, self.error_count, self.elapsed_ms, self.subtree_done)
+        self._header.update(v, self.error_count, self.elapsed_ms, self.subtree_done,
+                            error_kinds=self._child_error_kinds)
 
     def watch_error_count(self, v: int) -> None:
-        self._header.update(self.child_count, v, self.elapsed_ms, self.subtree_done)
+        self._header.update(self.child_count, v, self.elapsed_ms, self.subtree_done,
+                            error_kinds=self._child_error_kinds)
 
     def watch_elapsed_ms(self, v: int) -> None:
-        self._header.update(self.child_count, self.error_count, v, self.subtree_done)
+        self._header.update(self.child_count, self.error_count, v, self.subtree_done,
+                            error_kinds=self._child_error_kinds)
 
     def watch_subtree_done(self, v: bool) -> None:
-        self._header.update(self.child_count, self.error_count, self.elapsed_ms, v)
+        self._header.update(self.child_count, self.error_count, self.elapsed_ms, v,
+                            error_kinds=self._child_error_kinds)
 
     def watch_collapsed(self, v: bool) -> None:
         if not self.is_mounted:
@@ -195,11 +210,25 @@ class SubAgentPanel(Widget):
         dur_ms: int | None,
     ) -> None:
         if is_error:
+            # D-2: extract and track distinct error kind
+            _ek = self._extract_error_kind(tool_call_id)
+            if _ek and _ek not in self._child_error_kinds:
+                self._child_error_kinds.append(_ek)
             self.error_count += 1
         self._completed_child_count += 1
         self.elapsed_ms = int((_time.monotonic() - self._open_time) * 1000)
         if self._completed_child_count >= self.child_count > 0:
             self.subtree_done = True
+
+    def _extract_error_kind(self, tool_call_id: str) -> "str | None":
+        """D-2: extract error_kind from the ChildPanel with the given tool_call_id."""
+        for child in self._body.children:
+            child_id = getattr(getattr(child, "_block", None), "_tool_call_id", None)
+            if child_id == tool_call_id:
+                rs = getattr(child, "_result_summary_v4", None)
+                if rs is not None:
+                    return getattr(rs, "error_kind", None)
+        return None
 
     # --- Actions ---
 

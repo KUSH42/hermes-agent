@@ -108,6 +108,7 @@ def _build_args_row_text(spec: "object", tool_input: "dict | None") -> "str | No
 
 # StreamingToolBlock constants
 _VISIBLE_CAP = 200          # max lines shown in the RichLog
+_OB_WARN_THRESHOLD = int(_VISIBLE_CAP * 0.8)  # E-2: warn at 80% of cap (160 lines)
 THRESHOLD_NARROW = 60       # D2: OmissionBar collapses to 2 buttons below this width
 _LINE_BYTE_CAP = 2000       # truncate single lines beyond this many chars
 _PAGE_SIZE = 50             # lines per [+]/[-] step in OmissionBar
@@ -546,7 +547,7 @@ class OmissionBar(TooltipMixin, Widget):
             # G1: default visible — show all / hide (Rich Text avoids markup bracket parsing)
             from rich.text import Text as _T
             yield Button(_T("[show all]"), classes="--ob-down-all")
-            yield Button(_T("[hide]"),     classes="--ob-cap")
+            yield Button(self._reset_label(), classes="--ob-cap")
             # G1: advanced (hidden by default)
             yield Button("[↑]",          classes="--ob-up --ob-advanced")
             yield Button("[↓]",          classes="--ob-down --ob-advanced")
@@ -646,8 +647,21 @@ class OmissionBar(TooltipMixin, Widget):
                 )
                 at_end = visible_end >= total
                 try:
-                    # G1: [hide] = reset to default view
-                    self.query_one(".--ob-cap", Button).disabled = at_default
+                    # E-1: [reset] never disabled; dim via --at-default class
+                    reset_btn = self.query_one(".--ob-cap", Button)
+                    reset_btn.disabled = False
+                    if at_default:
+                        try:
+                            reset_btn.add_class("--at-default")
+                        except AttributeError:
+                            pass
+                        self._tooltip_text = "Already at default view"
+                    else:
+                        try:
+                            reset_btn.remove_class("--at-default")
+                        except AttributeError:
+                            pass
+                        self._tooltip_text = "Scroll output window"
                     # G1: advanced [↑] button
                     self.query_one(".--ob-up", Button).disabled = at_default
                     # G1: advanced [↓+N] button
@@ -683,7 +697,14 @@ class OmissionBar(TooltipMixin, Widget):
         elif "--ob-up-page" in classes:
             pb.rerender_window(max(0, vs - _PAGE_SIZE), ve)
         elif "--ob-cap" in classes:
-            # G1: [hide] = reset to default view
+            # E-1: [reset] = reset to default view; no-op when already at default
+            try:
+                btn = self.query_one(".--ob-cap", Button)
+                if "--at-default" in btn.classes:
+                    event.stop()
+                    return
+            except Exception:
+                pass
             pb.rerender_window(0, _VISIBLE_CAP)
         elif "--ob-cap-adv" in classes:
             # G1: advanced [reset] = full reset

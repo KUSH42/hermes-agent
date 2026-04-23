@@ -285,6 +285,16 @@ class FooterPane(Widget):
                 payload=None,
             ))
 
+        # C-1: ensure [e] copy err appears in action row when stderr_tail present
+        if summary.stderr_tail and not any(a.kind == "copy_err" for a in actions_to_render):
+            from hermes_cli.tui.tool_result_parse import Action as _Action
+            actions_to_render.append(_Action(
+                label="copy err",
+                hotkey="e",
+                kind="copy_err",
+                payload=None,
+            ))
+
         # Action row — only implemented actions; A1: skip when streaming
         if actions_to_render and not _is_streaming:
             parts.append("  ")
@@ -519,6 +529,8 @@ class ToolPanel(Widget):
         self._result_summary_v4: "ResultSummaryV4 | None" = None
         self._start_time: float = time.monotonic()
         self._completed_at: float | None = None
+        # C-2: short remediation hint passed to ToolHeader for collapsed error display
+        self._header_remediation_hint: str | None = None
         self._result_paths: list[str] = []
         self._last_resize_w: int = 0
         self._saved_visible_start: int | None = None  # B6: preserve scroll position
@@ -965,12 +977,34 @@ class ToolPanel(Widget):
         # B2: schedule multi-tick age microcopy (10s / 60s / 300s)
         self._schedule_age_ticks()
 
+        # C-2: store short remediation hint for collapsed header
+        if summary.is_error and summary.error_kind is not None:
+            _remediation = next(
+                (c.remediation for c in (summary.chips or ()) if c.remediation),
+                None,
+            )
+            if _remediation:
+                _short = _remediation.split(";")[0].split(".")[0].strip()
+                self._header_remediation_hint = _short[:28] + ("…" if len(_short) > 28 else "")
+            else:
+                self._header_remediation_hint = None
+            # Pass to header for _render_v4 access
+            _hdr = getattr(self._block, "_header", None)
+            if _hdr is not None:
+                _hdr._remediation_hint = self._header_remediation_hint
+        else:
+            self._header_remediation_hint = None
+
         # --- Schedule Tick 1: tidy-up (auto-collapse, flash, mini-mode) ---
-        try:
-            self.call_after_refresh(self._post_complete_tidy, summary)
-        except Exception:
-            # Not mounted (e.g. unit tests); run inline
+        import os as _os
+        if _os.environ.get("HERMES_DETERMINISTIC"):
             self._post_complete_tidy(summary)
+        else:
+            try:
+                self.add_class("--completing")
+            except AttributeError:
+                pass
+            self.set_timer(0.25, lambda: self._post_complete_tidy(summary))
 
     def _post_complete_tidy(self, summary: "ResultSummaryV4") -> None:
         """E1 Tick 1: auto-collapse, flash, mini-mode activation.
@@ -979,6 +1013,12 @@ class ToolPanel(Widget):
         the completed header/footer before collapse animation fires.
         Skip-flash rule: if auto-collapse fires, suppress flash (collapse is signal enough).
         """
+        # B-2: end of completing window
+        try:
+            self.remove_class("--completing")
+        except AttributeError:
+            pass
+
         # Error: always expand; never auto-collapse
         if summary.is_error:
             self.collapsed = False

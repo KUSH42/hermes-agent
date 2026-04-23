@@ -18,6 +18,7 @@ from hermes_cli.tui.animation import make_spinner_identity, SpinnerIdentity
 
 from ._shared import (
     _VISIBLE_CAP,
+    _OB_WARN_THRESHOLD,
     _LINE_BYTE_CAP,
     _PAGE_SIZE,
     _SPINNER_FRAMES,
@@ -589,8 +590,9 @@ class StreamingToolBlock(ToolBlock):
             )
 
         if self._omission_bar_bottom_mounted and self._omission_bar_bottom is not None:
-            # D3: always show bottom bar when truncated lines exist (cap_msg present)
-            show_bottom = (visible_end < total) or bool(cap_msg)
+            # E-2: warn at 80% of cap; D3: always show when cap_msg present
+            warn_threshold = int(visible_cap * 0.8)
+            show_bottom = (total >= warn_threshold) or (visible_end < total) or bool(cap_msg)
             if self._omission_bar_bottom.display != show_bottom:
                 self._omission_bar_bottom.display = show_bottom
             self._omission_bar_bottom.set_counts(

@@ -14,7 +14,8 @@ from textual.widgets import Static
 class ChildPanel(ToolPanel):
     BINDINGS = [
         *ToolPanel.BINDINGS,
-        Binding("space", "toggle_compact", show=False, priority=True),
+        # D-1: space removed (diverged from top-level); alt+c = compact child
+        Binding("alt+c", "toggle_compact",  show=False, priority=True),
         Binding("enter", "toggle_collapse", show=False, priority=True),
     ]
 

@@ -7,19 +7,12 @@ collapsed = True   →  header only  (auto at completion when body > threshold)"
 
 from __future__ import annotations
 
-import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from hermes_cli.tui.io_boundary import safe_open_url, safe_edit_cmd
-
-
-def _open_external_direct(argv: list[str]) -> None:
-    """Compatibility opener for legacy unit tests that patch subprocess.Popen."""
-    popen = getattr(subprocess, "Popen")
-    popen(argv)
 
 
 def _format_age(elapsed_s: int) -> str:
@@ -413,12 +406,15 @@ class FooterPane(Widget):
         if "--artifact-chip" in event.button.classes:
             path = getattr(event.button, "_artifact_path", None)
             if path:
-                opener = "open" if sys.platform == "darwin" else "xdg-open"
-                target = path if "://" in path else str(Path(path).resolve())
-                try:
-                    _open_external_direct([opener, target])
-                except Exception as exc:
-                    self.parent._flash_header(f"open failed: {exc}", tone="error")
+                target = path if "://" in path else Path(path).resolve().as_uri()
+                safe_open_url(
+                    self,
+                    target,
+                    on_error=lambda exc: (
+                        self.parent._flash_header(f"open failed: {exc}", tone="error")
+                        if self.parent.is_mounted else None
+                    ),
+                )
             event.stop()
 
     def on_resize(self, event: object) -> None:
@@ -1109,11 +1105,14 @@ class ToolPanel(Widget):
             )
         else:
             self._flash_header("opening…")
-            opener = "open" if sys.platform == "darwin" else "xdg-open"
-            try:
-                _open_external_direct([opener, target if is_url else str(Path(target).resolve())])
-            except Exception as exc:
-                self._flash_header(f"could not open: {exc}", tone="error")
+            safe_open_url(
+                self,
+                target if is_url else Path(target).resolve().as_uri(),
+                on_error=lambda exc: (
+                    self._flash_header(f"could not open: {exc}", tone="error")
+                    if self.is_mounted else None
+                ),
+            )
 
     # ------------------------------------------------------------------
     # Footer actions — Phase A
@@ -1176,11 +1175,14 @@ class ToolPanel(Widget):
         if not url:
             return
         self._flash_header("opening…")
-        opener = "open" if sys.platform == "darwin" else "xdg-open"
-        try:
-            _open_external_direct([opener, url])
-        except Exception as exc:
-            self._flash_header(f"open failed: {exc}", tone="error")
+        safe_open_url(
+            self,
+            url,
+            on_error=lambda exc: (
+                self._flash_header(f"open failed: {exc}", tone="error")
+                if self.is_mounted else None
+            ),
+        )
 
     def action_edit_cmd(self) -> None:
         """A1: pre-populate input with the failed command for editing."""

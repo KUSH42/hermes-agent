@@ -122,12 +122,11 @@ async def test_action_open_url_opens_artifact_url():
         )
         panel.set_result_summary(summary)
 
-        opened = []
-        with patch("subprocess.Popen", side_effect=lambda args, **kw: opened.append(args)):
+        with patch("hermes_cli.tui.tool_panel.safe_open_url") as mock_open:
             panel.action_open_url()
 
-        assert len(opened) == 1
-        assert "https://example.com/page" in opened[0]
+        assert mock_open.called
+        assert "https://example.com/page" in mock_open.call_args[0][1]
 
 
 @pytest.mark.asyncio
@@ -146,10 +145,9 @@ async def test_action_open_url_noop_when_no_urls():
 
     async with _App().run_test() as pilot:
         panel = pilot.app.query_one(ToolPanel)
-        opened = []
-        with patch("subprocess.Popen", side_effect=lambda args, **kw: opened.append(args)):
+        with patch("hermes_cli.tui.tool_panel.safe_open_url") as mock_open:
             panel.action_open_url()
-        assert len(opened) == 0
+        assert not mock_open.called
 
 
 @pytest.mark.asyncio
@@ -176,12 +174,11 @@ async def test_action_open_primary_falls_back_to_url_artifact():
         )
         panel.set_result_summary(summary)
 
-        opened = []
-        with patch("subprocess.Popen", side_effect=lambda args, **kw: opened.append(args)):
+        with patch("hermes_cli.tui.tool_panel.safe_open_url") as mock_open:
             panel.action_open_primary()
 
-        assert len(opened) == 1
-        assert "https://example.com" in opened[0]
+        assert mock_open.called
+        assert "https://example.com" in mock_open.call_args[0][1]
 
 
 # ---------------------------------------------------------------------------
@@ -294,12 +291,11 @@ async def test_open_primary_covers_file_artifact():
         )
         panel.set_result_summary(summary)
 
-        opened = []
-        with patch("subprocess.Popen", side_effect=lambda args, **kw: opened.append(args)):
+        with patch("hermes_cli.tui.tool_panel.safe_open_url") as mock_open:
             panel.action_open_primary()
 
-        assert len(opened) == 1
-        assert "/tmp/out.txt" in opened[0]
+        assert mock_open.called
+        assert "/tmp/out.txt" in mock_open.call_args[0][1]
 
 
 @pytest.mark.asyncio

@@ -157,9 +157,13 @@ class TestB3ArtifactChipFlashOnFailure:
         event.button = btn
         event.stop = MagicMock()
 
-        with patch("subprocess.Popen", side_effect=OSError("no app found")):
+        with patch("hermes_cli.tui.tool_panel.safe_open_url") as mock_open:
             FooterPane.on_button_pressed(pane, event)
 
+        on_error = mock_open.call_args.kwargs.get("on_error")
+        assert on_error is not None, "safe_open_url must be called with on_error"
+        parent_mock.is_mounted = True
+        on_error(OSError("no app found"))
         parent_mock._flash_header.assert_called_once()
         call_args = parent_mock._flash_header.call_args
         tone = call_args.kwargs.get("tone") or (call_args.args[1] if len(call_args.args) > 1 else None)

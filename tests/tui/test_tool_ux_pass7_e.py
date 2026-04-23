@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, PropertyMock, patch, call
 
 import pytest
 
@@ -106,11 +106,14 @@ class TestE2OpenPrimaryExceptionHandling:
         return panel
 
     def test_flash_error_on_popen_failure(self):
-        """E2: Popen exception causes flash with error tone."""
+        """E2: on_error callback causes flash with error tone."""
         panel = self._make_panel_with_artifact()
-        import subprocess
-        with patch('subprocess.Popen', side_effect=FileNotFoundError("no xdg-open")):
+        with patch("hermes_cli.tui.tool_panel.safe_open_url") as mock_open:
             panel.action_open_primary()
+        on_error = mock_open.call_args.kwargs.get("on_error")
+        assert on_error is not None, "safe_open_url must be called with on_error"
+        with patch.object(type(panel), "is_mounted", new_callable=PropertyMock, return_value=True):
+            on_error(FileNotFoundError("no xdg-open"))
         panel._flash_header.assert_called()
         call_args = panel._flash_header.call_args
         msg = call_args[0][0]
@@ -121,10 +124,13 @@ class TestE2OpenPrimaryExceptionHandling:
     def test_no_crash_on_open_failure(self):
         """E2: open failure does not propagate exception to caller."""
         panel = self._make_panel_with_artifact()
-        import subprocess
-        with patch('subprocess.Popen', side_effect=OSError("permission denied")):
+        with patch("hermes_cli.tui.tool_panel.safe_open_url") as mock_open:
             # Should not raise
             panel.action_open_primary()
+        on_error = mock_open.call_args.kwargs.get("on_error")
+        if on_error:
+            with patch.object(type(panel), "is_mounted", new_callable=PropertyMock, return_value=True):
+                on_error(OSError("permission denied"))
 
 
 # ---------------------------------------------------------------------------

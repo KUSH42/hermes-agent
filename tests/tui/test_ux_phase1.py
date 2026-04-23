@@ -278,11 +278,10 @@ async def test_action_open_primary_falls_back_to_artifact():
         )
         panel.set_result_summary(summary)
         # No path on header — should fall back to artifact
-        opened = []
-        with patch("subprocess.Popen", side_effect=lambda args, **kw: opened.append(args)):
+        with patch("hermes_cli.tui.tool_panel.safe_open_url") as mock_open:
             panel.action_open_primary()
-        assert len(opened) == 1
-        assert "/tmp/test.py" in opened[0]
+        assert mock_open.called
+        assert "/tmp/test.py" in mock_open.call_args[0][1]
 
 
 @pytest.mark.asyncio
@@ -298,10 +297,9 @@ async def test_action_open_primary_noop_when_no_path_no_artifact():
 
     async with _App().run_test() as pilot:
         panel = pilot.app.query_one(ToolPanel)
-        opened = []
-        with patch("subprocess.Popen", side_effect=lambda args, **kw: opened.append(args)):
+        with patch("hermes_cli.tui.tool_panel.safe_open_url") as mock_open:
             panel.action_open_primary()
-        assert len(opened) == 0
+        assert not mock_open.called
 
 
 # ---------------------------------------------------------------------------

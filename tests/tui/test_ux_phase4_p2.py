@@ -433,7 +433,7 @@ async def test_artifact_chip_click_opens_path():
         chips = list(footer.query(".--artifact-chip"))
         assert len(chips) >= 1
 
-        with patch("subprocess.Popen") as mock_popen:
+        with patch("hermes_cli.tui.tool_panel.safe_open_url") as mock_open:
             chip_btn = chips[0]
             # Simulate on_button_pressed directly on FooterPane
             event = MagicMock()
@@ -441,9 +441,8 @@ async def test_artifact_chip_click_opens_path():
             event.button.classes = chip_btn.classes
             footer.on_button_pressed(event)
 
-        mock_popen.assert_called_once()
-        call_args = mock_popen.call_args[0][0]
-        assert "/tmp/myfile.txt" in call_args
+        mock_open.assert_called_once()
+        assert "/tmp/myfile.txt" in mock_open.call_args[0][1]
 
 
 # ---------------------------------------------------------------------------

@@ -29,7 +29,7 @@ from ._shared import (
 
 MIN_LABEL_CELLS = 12
 
-_DROP_ORDER = ["flash", "linecount", "chip", "hero", "diff", "stderrwarn", "exit", "chevron"]
+_DROP_ORDER = ["linecount", "duration", "chip", "hero", "diff", "stderrwarn", "exit", "chevron", "flash"]
 
 
 def _trim_tail_segments(
@@ -117,7 +117,12 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
     def _refresh_gutter_color(self) -> None:
         try:
             css = self.app.get_css_variables()
-            self._focused_gutter_color = css.get("rule-accent-color", _GUTTER_FALLBACK)
+            # F-3: prefer $accent-interactive → $primary → fallback
+            self._focused_gutter_color = (
+                css.get("accent-interactive") or
+                css.get("primary") or
+                _GUTTER_FALLBACK
+            )
             self._diff_add_color = css.get("addition-marker-fg", _DIFF_ADD_FALLBACK)
             self._diff_del_color = css.get("deletion-marker-fg", _DIFF_DEL_FALLBACK)
             self._running_icon_color = css.get("status-running-color", _RUNNING_FALLBACK)
@@ -190,15 +195,6 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         t.append_text(gutter_text)
 
         icon_str = self._tool_icon or ""
-        if self._tool_icon_error and self._error_kind:
-            try:
-                from hermes_cli.tui.tool_result_parse import _error_kind_display
-                from agent.display import get_tool_icon_mode
-                _ek_icon, _, _ = _error_kind_display(self._error_kind, "", get_tool_icon_mode())
-                if _ek_icon:
-                    icon_str = _ek_icon
-            except Exception:
-                pass
         icon_cell_w = _safe_cell_width(icon_str) if icon_str else 0
         if icon_str:
             if self._spinner_char is not None:
@@ -225,6 +221,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
 
         # A1: build tail as named segments for width-aware trimming
         tail_segments: list[tuple[str, Text]] = []
+        _pending_dur: str | None = None
 
         if getattr(self, '_browse_badge', ""):
             tail_segments.append(("badge", Text(f" {self._browse_badge} ", style="bold dim")))
@@ -241,7 +238,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             else:
                 tail_segments.append(("spinner", Text(f"  {self._spinner_char}", style="dim")))
             if self._duration:
-                tail_segments.append(("duration", Text(f"  {self._duration}", style="dim")))
+                _pending_dur = self._duration
         else:
             if self._primary_hero:
                 if self._tool_icon_error and self._error_kind:
@@ -288,14 +285,21 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             if self._has_affordances:
                 is_collapsed = self._panel.collapsed if self._panel is not None else self.collapsed
                 tail_segments.append(("chevron", Text("  ▸" if is_collapsed else "  ▾", style="dim")))
-            # META zone: duration → flash → stderrwarn
+            else:
+                # B-1: non-interactive signal — always fill chevron slot
+                tail_segments.append(("chevron", Text("  ·", style="dim #444444")))
+            # META zone: flash → stderrwarn  (duration moved to single append after if/else)
             if self._duration:
-                tail_segments.append(("duration", Text(f"  {self._duration}", style="dim")))
+                _pending_dur = self._duration
             now = time.monotonic()
             if self._flash_msg and now < self._flash_expires:
                 accent_color = getattr(self, "_focused_gutter_color", "#5f87d7")
                 _flash_style = "dim red" if self._flash_tone == "error" else f"dim {accent_color}"
-                tail_segments.append(("flash", Text(f"  ✓ {self._flash_msg}", style=_flash_style)))
+                _msg = self._flash_msg
+                _tw = self.size.width
+                if _tw > 0 and _tw < 80:
+                    _msg = _msg[:14] + "…" if len(_msg) > 14 else _msg
+                tail_segments.append(("flash", Text(f"  ✓ {_msg}", style=_flash_style)))
             try:
                 if (self._panel is not None and
                         self._panel.collapsed and
@@ -320,6 +324,10 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                             tail_segments.append(("exit", Text("  ok", style="dim green")))
                     else:
                         tail_segments.append(("exit", Text(f"  exit {code}", style="bold red")))
+
+        # F-2: single duration append point — outside both branches
+        if _pending_dur:
+            tail_segments.append(("duration", Text(f"  {_pending_dur}", style="dim")))
 
         term_w = self.size.width
         FIXED_PREFIX_W = gutter_w + icon_cell_w + space_after_icon + shell_prompt_w

@@ -27,7 +27,7 @@ _TONE_STYLES: dict[str, str] = {
     "success": "bold green",
     "warning": "bold yellow",
     "error": "bold red",
-    "accent": "bold cyan",
+    "accent": "",  # resolved dynamically — see FooterPane._render_footer
     "neutral": "dim",
 }
 
@@ -258,6 +258,13 @@ class FooterPane(Widget):
         chips = [c for c in summary.chips if c.text not in promoted_chip_texts]
         for chip in chips:
             tone_style = _TONE_STYLES.get(chip.tone, "dim")
+            if not tone_style and chip.tone == "accent":
+                try:
+                    css = self.app.get_css_variables()
+                    _ac = css.get("accent-interactive") or css.get("primary") or "#5f87d7"
+                    tone_style = f"bold {_ac}"
+                except Exception:
+                    tone_style = "bold #5f87d7"
             parts.append(f" {chip.text} ", style=tone_style)
             remediation = getattr(chip, "remediation", None)
             if remediation:

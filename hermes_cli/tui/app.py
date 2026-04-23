@@ -2164,26 +2164,6 @@ class HermesApp(App):
     def _tick_spinner(self) -> None:  # DEPRECATED
         return self._svc_spinner.tick_spinner()
 
-    @staticmethod
-    def _cell_width(text: str) -> int:  # DEPRECATED
-        from wcwidth import wcswidth
-        return max(0, wcswidth(text))
-
-    def _input_bar_width(self, inp: Any) -> int:  # DEPRECATED
-        return self._svc_spinner.input_bar_width(inp)
-
-    def _next_spinner_frame(self, text_after_frame: str, elapsed: float, input_width: int) -> str:  # DEPRECATED
-        return self._svc_spinner.next_spinner_frame(text_after_frame, elapsed, input_width)
-
-    def _helix_width(self, text_after_frame: str, input_width: int) -> int:  # DEPRECATED
-        return self._svc_spinner.helix_width(text_after_frame, input_width)
-
-    def _helix_spinner_frame(self, elapsed: float, text_after_frame: str, input_width: int) -> Any:  # DEPRECATED
-        return self._svc_spinner.helix_spinner_frame(elapsed, text_after_frame, input_width)
-
-    def _build_helix_frames(self, width_cells: int) -> Any:  # DEPRECATED
-        return self._svc_spinner.build_helix_frames(width_cells)
-
     def _build_hint_text(self) -> str:  # DEPRECATED
         return self._svc_spinner.build_hint_text()
 
@@ -2306,9 +2286,6 @@ class HermesApp(App):
 
     def watch_browse_mode(self, value: bool) -> None:
         self._svc_browse.on_browse_mode(value)
-
-    def _mount_minimap_default(self) -> None:  # DEPRECATED
-        return self._svc_browse.mount_minimap_default()
 
     async def action_toggle_minimap(self) -> None:
         await self._svc_browse.action_toggle_minimap()
@@ -2634,26 +2611,12 @@ class HermesApp(App):
     def watch_attached_images(self, value: list) -> None:
         self._svc_watchers.on_attached_images(value)
 
-    def _append_attached_images(self, images: "list[Path]") -> None:  # DEPRECATED
-        self._svc_watchers.append_attached_images(images)
-
     def _clear_attached_images(self) -> None:  # DEPRECATED
         self._svc_watchers.clear_attached_images()
-
-    def _insert_link_tokens(self, tokens: "list[str]") -> None:  # DEPRECATED
-        self._svc_watchers.insert_link_tokens(tokens)
-
-    @staticmethod
-    def _drop_path_display(path: Path, cwd: Path) -> str:  # DEPRECATED
-        from hermes_cli.tui.services.watchers import WatchersService
-        return WatchersService.drop_path_display(path, cwd)
 
     def handle_file_drop(self, paths: "list[Path]") -> None:
         """Route terminal drag-and-drop pasted paths into input bar."""
         self._svc_watchers.handle_file_drop(paths)
-
-    def _handle_file_drop_inner(self, paths: "list[Path]") -> None:  # DEPRECATED
-        self._svc_watchers.handle_file_drop_inner(paths)
 
     def watch_clarify_state(self, value: Any) -> None:
         self._svc_watchers.on_clarify_state(value)

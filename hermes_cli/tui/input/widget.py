@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from hermes_cli.file_drop import detect_file_drop_text, parse_dragged_file_paste
 
+from rich.cells import cell_len
 from textual import events
 from textual.binding import Binding
 from textual.message import Message
@@ -132,6 +133,10 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
 
     def on_mount(self) -> None:
         self._load_history()
+        self._sync_height_to_content()
+
+    def on_resize(self, event: events.Resize) -> None:
+        self._sync_height_to_content()
 
     def on_click(self, event: Any) -> None:
         """Middle-click (button=2) pastes primary selection on Linux/X11."""
@@ -208,6 +213,20 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         """Save current text as draft stash when at history_idx == -1 (live draft)."""
         if self._history_idx == -1:
             self._draft_stash = self.text
+
+    def _sync_height_to_content(self) -> None:
+        """Keep the input 1-3 rows tall based only on visible text rows."""
+        try:
+            width = int(getattr(getattr(self, "content_size", None), "width", 0) or 0)
+        except Exception:
+            width = 0
+        width = max(1, width)
+        rows = 0
+        for line in (self.text or "").split("\n"):
+            line_width = max(1, cell_len(line))
+            rows += max(1, (line_width + width - 1) // width)
+        self.styles.max_height = 3
+        self.styles.height = max(1, min(3, rows or 1))
 
     # --- Property bridges (old API → TextArea API) ---
 
@@ -386,8 +405,9 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
 
         if key == "ctrl+shift+up":
             event.prevent_default()
-            self._input_height_override = min(10, self._input_height_override + 1)
+            self._input_height_override = 3
             self.styles.max_height = self._input_height_override
+            self._sync_height_to_content()
             try:
                 self.app._flash_hint(f"Input height: {self._input_height_override}", 1.5)  # type: ignore[attr-defined]
             except Exception:
@@ -396,8 +416,9 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
 
         if key == "ctrl+shift+down":
             event.prevent_default()
-            self._input_height_override = max(3, self._input_height_override - 1)
+            self._input_height_override = 3
             self.styles.max_height = self._input_height_override
+            self._sync_height_to_content()
             try:
                 self.app._flash_hint(f"Input height: {self._input_height_override}", 1.5)  # type: ignore[attr-defined]
             except Exception:
@@ -462,6 +483,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """Sanitize text and update autocomplete on every content change."""
+        self._sync_height_to_content()
         if self._sanitizing:
             return
         # If the user (or any external mutation) edited the text while we were
@@ -528,6 +550,9 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         self._hide_completion_overlay()
         self.post_message(self.Submitted(text))
         self.load_text("")
+        sync_height = getattr(self, "_sync_height_to_content", None)
+        if callable(sync_height):
+            sync_height()
         self._history_idx = -1
         self._suppress_autocomplete_once = False
         if self._input_height_override != 3:

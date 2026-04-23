@@ -724,6 +724,49 @@ async def test_shift_enter_inserts_newline() -> None:
 
 
 @pytest.mark.asyncio
+async def test_focus_does_not_change_input_height() -> None:
+    """Single-line input stays one row tall when focus changes."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+        inp.value = "hello"
+        await pilot.pause()
+        before = inp.region.height
+
+        app.query_one("#output-panel").focus()
+        await pilot.pause()
+        blurred = inp.region.height
+        inp.focus()
+        await pilot.pause()
+
+        assert before == 1
+        assert blurred == 1
+        assert inp.region.height == 1
+
+
+@pytest.mark.asyncio
+async def test_input_height_tracks_lines_to_max_three() -> None:
+    """Input grows for text line breaks and is capped at three rows."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        inp = app.query_one(HermesInput)
+
+        inp.value = "one"
+        await pilot.pause()
+        assert inp.region.height == 1
+
+        inp.value = "one\ntwo"
+        await pilot.pause()
+        assert inp.region.height == 2
+
+        inp.value = "one\ntwo\nthree\nfour"
+        await pilot.pause()
+        assert inp.region.height == 3
+
+
+@pytest.mark.asyncio
 async def test_enter_submits_multiline() -> None:
     """Multiline value is submitted as-is (stripped) on Enter."""
     submitted: list[str] = []

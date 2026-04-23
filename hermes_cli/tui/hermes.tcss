@@ -289,16 +289,15 @@ UndoConfirmOverlay {
 #input-chevron.--yolo-active  { color: $chevron-error; }
 /* Bash-passthrough mode indicator */
 HermesInput.--bash-mode #input-chevron { color: $chevron-shell; }
-HermesInput.--bash-mode { border: tall $chevron-shell 40%; }
-HermesInput.--bash-mode:focus { border: tall $chevron-shell 70%; }
-HermesApp.density-compact HermesInput.--bash-mode:focus { border: none; }
+HermesInput.--bash-mode { outline: tall $chevron-shell 40%; }
+HermesInput.--bash-mode:focus { outline: tall $chevron-shell 70%; }
 
 HermesInput.--locked {
-    border: tall $panel-lighten-1 30%;
+    outline: tall $panel-lighten-1 30%;
     color: $text-muted 60%;
 }
 HermesInput.--locked:focus {
-    border: tall $panel-lighten-1 40%;
+    outline: tall $panel-lighten-1 40%;
 }
 HermesApp.density-compact InputLegendBar { display: none !important; }
 
@@ -322,7 +321,7 @@ HermesInput {
 /* Prevent Textual's TextArea:focus tint from creating a contrast stripe */
 HermesInput:focus {
     background: $app-bg;
-    border: tall $primary 30%;
+    outline: tall $primary 30%;
 }
 
 /* Component Part variables — themed via ThemeManager.component_vars.
@@ -662,8 +661,8 @@ HermesApp.density-compact BrowseMinimap        { display: none; }
 
 
 /* Phase B2: input area tightening */
-HermesApp.density-compact HermesInput          { max-height: 2; }
-HermesApp.density-compact HermesInput:focus    { border: none; }
+HermesApp.density-compact HermesInput          { max-height: 3; }
+HermesApp.density-compact HermesInput:focus    { outline: none; }
 HermesApp.density-compact #input-chevron       { width: 1; }
 
 /* Phase B3: tool panel / header tightening */

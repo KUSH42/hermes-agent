@@ -408,6 +408,74 @@ class _DimRichLogProxy:
 
 
 # ---------------------------------------------------------------------------
+# _LineClassifier
+# ---------------------------------------------------------------------------
+
+class _LineClassifier:
+    """Pure line-type detection for ResponseFlowEngine.process_line().
+
+    Wraps module-level regexes and predicate functions.  Holds no mutable
+    state — every method is a pure function of its arguments.
+    """
+
+    def is_footnote_def(self, raw: str) -> "tuple[str, str] | None":
+        m = _FOOTNOTE_DEF_RE.match(raw)
+        if m:
+            return m.group(1), m.group(2).strip()
+        return None
+
+    def is_footnote_continuation(self, raw: str, footnote_open: bool) -> bool:
+        return bool(footnote_open and (raw.startswith("    ") or raw.startswith("\t")))
+
+    def is_citation(self, raw: str) -> "tuple[int, str, str] | None":
+        m = _CITE_RE.match(raw.strip())
+        if m:
+            return int(m.group(1)), m.group(2).strip(), m.group(3)
+        return None
+
+    def is_fence_open(self, raw: str) -> "tuple[str, str, int] | None":
+        m = _FENCE_OPEN_RE.match(raw.strip())
+        if m:
+            lang = m.group(2).strip() if m.group(2) else ""
+            return lang, m.group(1)[0], len(m.group(1))
+        return None
+
+    def is_fence_close(self, raw: str, fence_char: str, fence_depth: int) -> bool:
+        m = _FENCE_CLOSE_RE.match(raw.strip())
+        return bool(m and m.group(1)[0] == fence_char and len(m.group(1)) >= fence_depth)
+
+    def is_indented_code(self, raw: str) -> "str | None":
+        m = _INDENTED_CODE_RE.match(raw)
+        return m.group(1) if m else None
+
+    def is_block_math_oneline(self, raw: str) -> "str | None":
+        stripped = raw.strip()
+        m = _BLOCK_MATH_ONELINE_RE.match(stripped) or _BLOCK_MATH_ONELINE_BRACKET_RE.match(stripped)
+        return m.group(1) if m else None
+
+    def is_block_math_open(self, raw: str) -> bool:
+        return bool(_BLOCK_MATH_OPEN_RE.match(raw.strip()))
+
+    def is_block_math_close(self, raw: str) -> bool:
+        return bool(_BLOCK_MATH_CLOSE_RE.match(raw.strip()))
+
+    def is_inline_code_label(self, raw: str) -> "tuple[str, str] | None":
+        m = _INLINE_CODE_LABEL_RE.match(raw.strip())
+        if m:
+            return m.group(1), m.group(2).strip()
+        return None
+
+    def is_code_intro_label(self, raw: str) -> bool:
+        return _is_code_intro_label(raw)
+
+    def is_horizontal_rule(self, raw: str) -> bool:
+        return _is_horizontal_rule(raw)
+
+    def looks_like_source_line(self, raw: str) -> bool:
+        return _looks_like_source_line(raw)
+
+
+# ---------------------------------------------------------------------------
 # ResponseFlowEngine
 # ---------------------------------------------------------------------------
 
@@ -424,51 +492,65 @@ class ResponseFlowEngine:
     Wraps apply_inline_markdown() and apply_block_line() for line-level prose.
     """
 
-    def __init__(self, *, panel: "MessagePanel") -> None:
+    def _init_fields(self) -> None:
+        """Initialise all app-independent instance fields.
+
+        Called first by __init__ and by ReasoningFlowEngine.__init__ so that
+        every field is guaranteed to exist regardless of which subclass is
+        constructed.  ReasoningFlowEngine overrides a subset of these after
+        calling _init_fields().
+        """
         from agent.rich_output import StreamingBlockBuffer
-        self._panel = panel
-        getter = getattr(type(panel), "current_prose_log", None)
-        self._prose_log: CopyableRichLog = (
-            panel.current_prose_log() if callable(getter) else panel.response_log
-        )
-        self._skin_vars: dict[str, str] = panel.app.get_css_variables()
-        self._pygments_theme: str = self._skin_vars.get("preview-syntax-theme", "monokai")
-        self._block_buf: StreamingBlockBuffer = StreamingBlockBuffer()
+        self._block_buf: "StreamingBlockBuffer" = StreamingBlockBuffer()
         self._state: Literal["NORMAL", "IN_CODE", "IN_INDENTED_CODE", "IN_SOURCE_LIKE", "IN_MATH"] = "NORMAL"
         self._fence_char: str = "`"
         self._fence_depth: int = 3
         self._active_block: "StreamingCodeBlock | None" = None
-        # Math rendering state
-        _app = getattr(panel, "app", None)
         self._math_lines: list[str] = []
         self._math_env: str = ""
-        self._math_enabled: bool = getattr(_app, "_math_enabled", True)
-        self._math_renderer_mode: str = getattr(_app, "_math_renderer", "auto")
-        self._math_dpi: int = getattr(_app, "_math_dpi", 150)
-        self._math_max_rows: int = getattr(_app, "_math_max_rows", 12)
-        self._mermaid_enabled: bool = getattr(_app, "_mermaid_enabled", True)
+        self._math_enabled: bool = True
+        self._math_renderer_mode: str = "auto"
+        self._math_dpi: int = 150
+        self._math_max_rows: int = 12
+        self._mermaid_enabled: bool = True
         self._pending_source_line: str | None = None
         self._pending_code_intro: bool = False
-        self._prose_section_counter: int = 0  # for unique CopyableBlock IDs
-        self._list_cont_indent: str = ""  # continuation indent for list items
-        self._footnote_defs: dict[str, str] = {}   # label → definition text
-        self._footnote_order: list[str] = []       # labels in order of first definition
-        self._footnote_def_open: str | None = None  # label of continuation-in-progress
-        self._partial: str = ""                     # accumulated partial tail of current line
-        # Citation tag state
-        self._cite_entries: dict[int, tuple[str, str]] = {}   # N → (title, url)
-        self._cite_order: list[int] = []                       # insertion order
-        self._citations_enabled: bool = getattr(_app, "_citations_enabled", True)
-        # Media URL detection
+        self._prose_section_counter: int = 0
+        self._list_cont_indent: str = ""
+        self._footnote_defs: dict[str, str] = {}
+        self._footnote_order: list[str] = []
+        self._footnote_def_open: str | None = None
+        self._partial: str = ""
+        self._cite_entries: dict[int, tuple[str, str]] = {}
+        self._cite_order: list[int] = []
+        self._citations_enabled: bool = True
         self._mount_media_callback: "Callable[[str, str], None] | None" = None
         self._emitted_media_urls: set[str] = set()
-        # Custom emoji substitution
-        self._emoji_registry = getattr(_app, "_emoji_registry", None)
-        self._emoji_images_enabled: bool = getattr(_app, "_emoji_images_enabled", True)
-        self._emitted_emoji_anchors: set[int] = set()  # id() of mounted positions
-        # Optional callback fired for each committed prose line (non-blank plain text)
+        self._emoji_registry = None
+        self._emoji_images_enabled: bool = True
+        self._emitted_emoji_anchors: set[int] = set()
         self._prose_callback: "Callable[[str], None] | None" = None
-        self._code_fence_buffer: list[str] = []  # §5.11.2 InlineCodeFence buffer
+        self._code_fence_buffer: list[str] = []
+        self._clf: _LineClassifier = _LineClassifier()
+
+    def __init__(self, *, panel: "MessagePanel") -> None:
+        self._init_fields()
+        self._panel = panel
+        getter = getattr(type(panel), "current_prose_log", None)
+        self._prose_log: "CopyableRichLog" = (
+            panel.current_prose_log() if callable(getter) else panel.response_log
+        )
+        self._skin_vars: dict[str, str] = panel.app.get_css_variables()
+        self._pygments_theme: str = self._skin_vars.get("preview-syntax-theme", "monokai")
+        _app = getattr(panel, "app", None)
+        self._math_enabled = getattr(_app, "_math_enabled", True)
+        self._math_renderer_mode = getattr(_app, "_math_renderer", "auto")
+        self._math_dpi = getattr(_app, "_math_dpi", 150)
+        self._math_max_rows = getattr(_app, "_math_max_rows", 12)
+        self._mermaid_enabled = getattr(_app, "_mermaid_enabled", True)
+        self._citations_enabled = getattr(_app, "_citations_enabled", True)
+        self._emoji_registry = getattr(_app, "_emoji_registry", None)
+        self._emoji_images_enabled = getattr(_app, "_emoji_images_enabled", True)
 
     def _write_prose(self, rich_text: "Text", plain: str) -> None:
         """Write a prose line and optionally fire the prose callback."""
@@ -519,175 +601,186 @@ class ResponseFlowEngine:
                 self._active_block.clear_partial()
         self._partial = ""
 
-    def process_line(self, raw: str) -> None:
-        """Process one complete line (no trailing newline)."""
+    # ------------------------------------------------------------------
+    # process_line helpers
+    # ------------------------------------------------------------------
+
+    def _handle_footnote(self, raw: str) -> bool:
+        """Collect or continue a footnote definition. Returns True if consumed."""
+        _fn_m = _FOOTNOTE_DEF_RE.match(raw)
+        if _fn_m:
+            label, body = _fn_m.group(1), _fn_m.group(2).strip()
+            if label not in self._footnote_defs:
+                self._footnote_order.append(label)
+            self._footnote_defs[label] = body
+            self._footnote_def_open = label
+            return True
+        if self._footnote_def_open and (raw.startswith("    ") or raw.startswith("\t")):
+            self._footnote_defs[self._footnote_def_open] += " " + raw.strip()
+            return True
+        self._footnote_def_open = None
+        return False
+
+    def _handle_citation_line(self, raw: str) -> bool:
+        """Collect a citation tag line. Returns True if consumed."""
+        _cite_m = _CITE_RE.match(raw.strip())
+        if _cite_m:
+            _n = int(_cite_m.group(1))
+            self._cite_entries[_n] = (_cite_m.group(2).strip(), _cite_m.group(3))
+            if _n not in self._cite_order:
+                self._cite_order.append(_n)
+            return True
+        return False
+
+    def _dispatch_normal_state(self, raw: str, intro_candidate: bool) -> bool:
+        """Handle code-detection paths in NORMAL state.
+
+        Returns True when the line is fully consumed (code block opened/emitted,
+        pending source resolved, math opened, etc.).  Returns False when no
+        code-detection path matched and prose rendering should proceed.
+        """
         from agent.rich_output import apply_block_line, apply_inline_markdown
+        stripped = raw.strip()
 
-        # Media URL scan — runs first so early-return paths don't skip it
-        if self._state == "NORMAL" and self._mount_media_callback is not None:
-            self._scan_media_urls(raw)
-
-        # Phase 1: Code block boundary detection (bypass StreamingBlockBuffer)
-        intro_candidate = _is_code_intro_label(raw)
-        if self._state == "NORMAL":
-            # Footnote definition: collect and suppress from main output.
-            # Must be first — runs before pending-code-intro and fence checks.
-            _fn_m = _FOOTNOTE_DEF_RE.match(raw)
-            if _fn_m:
-                label, body = _fn_m.group(1), _fn_m.group(2).strip()
-                if label not in self._footnote_defs:
-                    self._footnote_order.append(label)
-                self._footnote_defs[label] = body
-                self._footnote_def_open = label
-                return
-            # Multi-line continuation (4-space or tab indent):
-            if self._footnote_def_open and (raw.startswith("    ") or raw.startswith("\t")):
-                self._footnote_defs[self._footnote_def_open] += " " + raw.strip()
-                return
-            self._footnote_def_open = None
-
-            # Citation tag detection — suppress line and collect entry
-            if self._citations_enabled:
-                _cite_m = _CITE_RE.match(raw.strip())
-                if _cite_m:
-                    _n = int(_cite_m.group(1))
-                    _title = _cite_m.group(2).strip()
-                    _url = _cite_m.group(3)
-                    self._cite_entries[_n] = (_title, _url)
-                    if _n not in self._cite_order:
-                        self._cite_order.append(_n)
-                    return  # suppress from main output
-
-            stripped = raw.strip()
-            was_pending_code_intro = self._pending_code_intro
-            if was_pending_code_intro:
-                self._pending_code_intro = False
-                if (
-                    stripped
-                    and not _FENCE_OPEN_RE.match(stripped)
-                    and not _INDENTED_CODE_RE.match(raw)
-                    and not _looks_like_source_line(raw)
-                    and not _LIST_PREFIX_RE.match(raw)
-                    and not stripped.endswith(":")
-                ):
-                    self._flush_block_buf()
-                    self._emit_complete_code_block([raw])
-                    return
-            if intro_candidate:
-                self._pending_code_intro = True
-            if self._pending_source_line is not None:
-                if _looks_like_source_line(raw):
-                    self._flush_block_buf()
-                    self._state = "IN_SOURCE_LIKE"
-                    self._list_cont_indent = ""
-                    self._active_block = self._open_code_block("")
-                    self._active_block.append_line(self._pending_source_line)
-                    self._active_block.append_line(raw)
-                    self._pending_source_line = None
-                    return
-                pending = self._pending_source_line
-                self._pending_source_line = None
-                block_result = self._block_buf.process_line(pending)
-                if block_result is not None:
-                    if _is_horizontal_rule(block_result):
-                        self._emit_rule()
-                    else:
-                        block_ansi = apply_block_line(block_result)
-                        inline_ansi = apply_inline_markdown(block_ansi)
-                        plain = _strip_ansi(inline_ansi)
-                        self._write_prose(Text.from_ansi(_normalize_ansi_for_render(inline_ansi)), plain)
-            # Block math — checked BEFORE fence detection ($$ would match _FENCE_OPEN_RE)
-            if self._math_enabled:
-                oneline_m = _BLOCK_MATH_ONELINE_RE.match(stripped)
-                if not oneline_m:
-                    oneline_m = _BLOCK_MATH_ONELINE_BRACKET_RE.match(stripped)
-                if oneline_m:
-                    self._flush_block_buf()
-                    self._flush_math_block(oneline_m.group(1))
-                    return
-                if _BLOCK_MATH_OPEN_RE.match(stripped):
-                    self._flush_block_buf()
-                    self._math_lines = []
-                    self._math_env = stripped
-                    self._state = "IN_MATH"
-                    return
-            m = _FENCE_OPEN_RE.match(stripped)
-            if m:
-                lang = m.group(2).strip() if m.group(2) else ""
-                fence_char = m.group(1)[0]          # '`' or '~'
-                fence_depth = len(m.group(1))        # minimum closing fence length
-                # Flush pending setext/table state BEFORE changing state (state-safe)
+        was_pending_code_intro = self._pending_code_intro
+        if was_pending_code_intro:
+            self._pending_code_intro = False
+            if (
+                stripped
+                and not _FENCE_OPEN_RE.match(stripped)
+                and not _INDENTED_CODE_RE.match(raw)
+                and not _looks_like_source_line(raw)
+                and not _LIST_PREFIX_RE.match(raw)
+                and not stripped.endswith(":")
+            ):
                 self._flush_block_buf()
-                # Change state and record fence params only after pending prose is emitted
-                self._state = "IN_CODE"
-                self._fence_char = fence_char
-                self._fence_depth = fence_depth
-                self._list_cont_indent = ""
-                self._active_block = self._open_code_block(lang)
-                return  # fence open line itself not written to any log
-            indent_m = _INDENTED_CODE_RE.match(raw)
-            if indent_m:
-                # Treat Markdown-style indented code blocks as first-class code widgets.
+                self._emit_complete_code_block([raw])
+                return True
+        if intro_candidate:
+            self._pending_code_intro = True
+
+        if self._pending_source_line is not None:
+            if _looks_like_source_line(raw):
                 self._flush_block_buf()
-                self._state = "IN_INDENTED_CODE"
+                self._state = "IN_SOURCE_LIKE"
                 self._list_cont_indent = ""
                 self._active_block = self._open_code_block("")
-                self._active_block.append_line(indent_m.group(1))
-                return
-            inline_label_m = _INLINE_CODE_LABEL_RE.match(stripped)
-            if inline_label_m:
-                value = inline_label_m.group(2).strip()
-                if value and not stripped.endswith(":"):
-                    self._flush_block_buf()
-                    label = f"{inline_label_m.group(1)}:"
-                    block_ansi = apply_block_line(label)
+                self._active_block.append_line(self._pending_source_line)
+                self._active_block.append_line(raw)
+                self._pending_source_line = None
+                return True
+            pending = self._pending_source_line
+            self._pending_source_line = None
+            block_result = self._block_buf.process_line(pending)
+            if block_result is not None:
+                if _is_horizontal_rule(block_result):
+                    self._emit_rule()
+                else:
+                    block_ansi = apply_block_line(block_result)
                     inline_ansi = apply_inline_markdown(block_ansi)
                     plain = _strip_ansi(inline_ansi)
                     self._write_prose(Text.from_ansi(_normalize_ansi_for_render(inline_ansi)), plain)
-                    self._emit_complete_code_block([value])
-                    return
-            if _looks_like_source_line(raw):
-                self._pending_source_line = raw
-                return
 
+        # Block math — checked BEFORE fence detection ($$ would match _FENCE_OPEN_RE)
+        if self._math_enabled:
+            oneline_m = _BLOCK_MATH_ONELINE_RE.match(stripped) or _BLOCK_MATH_ONELINE_BRACKET_RE.match(stripped)
+            if oneline_m:
+                self._flush_block_buf()
+                self._flush_math_block(oneline_m.group(1))
+                return True
+            if _BLOCK_MATH_OPEN_RE.match(stripped):
+                self._flush_block_buf()
+                self._math_lines = []
+                self._math_env = stripped
+                self._state = "IN_MATH"
+                return True
+
+        m = _FENCE_OPEN_RE.match(stripped)
+        if m:
+            lang = m.group(2).strip() if m.group(2) else ""
+            self._flush_block_buf()
+            self._state = "IN_CODE"
+            self._fence_char = m.group(1)[0]
+            self._fence_depth = len(m.group(1))
+            self._list_cont_indent = ""
+            self._active_block = self._open_code_block(lang)
+            return True
+
+        indent_m = _INDENTED_CODE_RE.match(raw)
+        if indent_m:
+            self._flush_block_buf()
+            self._state = "IN_INDENTED_CODE"
+            self._list_cont_indent = ""
+            self._active_block = self._open_code_block("")
+            self._active_block.append_line(indent_m.group(1))
+            return True
+
+        inline_label_m = _INLINE_CODE_LABEL_RE.match(stripped)
+        if inline_label_m:
+            value = inline_label_m.group(2).strip()
+            if value and not stripped.endswith(":"):
+                self._flush_block_buf()
+                label = f"{inline_label_m.group(1)}:"
+                block_ansi = apply_block_line(label)
+                inline_ansi = apply_inline_markdown(block_ansi)
+                plain = _strip_ansi(inline_ansi)
+                self._write_prose(Text.from_ansi(_normalize_ansi_for_render(inline_ansi)), plain)
+                self._emit_complete_code_block([value])
+                return True
+
+        if _looks_like_source_line(raw):
+            self._pending_source_line = raw
+            return True
+
+        return False
+
+    def _dispatch_non_normal_state(self, raw: str) -> bool:
+        """Handle a line while in a non-NORMAL state.
+
+        Returns True when the line is fully consumed.
+        Returns False for IN_INDENTED_CODE/IN_SOURCE_LIKE block-close paths —
+        caller must fall through to prose rendering for the closing line.
+        """
         if self._state == "IN_CODE":
             stripped = raw.strip()
             close_m = _FENCE_CLOSE_RE.match(stripped)
             if (
                 close_m
-                and close_m.group(1)[0] == self._fence_char     # same fence char type
-                and len(close_m.group(1)) >= self._fence_depth  # same or greater depth
+                and close_m.group(1)[0] == self._fence_char
+                and len(close_m.group(1)) >= self._fence_depth
             ):
                 assert self._active_block is not None
                 self._active_block.complete(self._skin_vars)
                 self._active_block = None
                 self._state = "NORMAL"
-                return  # fence close line itself not written to any log
+                return True
             assert self._active_block is not None
             self._active_block.append_line(raw)
-            return  # code lines go to StreamingCodeBlock, not prose log
+            return True
 
         if self._state == "IN_INDENTED_CODE":
             assert self._active_block is not None
-            indent_m = _INDENTED_CODE_RE.match(raw)
             if raw == "":
                 self._active_block.append_line("")
-                return
+                return True
+            indent_m = _INDENTED_CODE_RE.match(raw)
             if indent_m:
                 self._active_block.append_line(indent_m.group(1))
-                return
+                return True
             self._active_block.complete(self._skin_vars)
             self._active_block = None
             self._state = "NORMAL"
+            return False  # fall through to prose for the closing line
 
         if self._state == "IN_SOURCE_LIKE":
             assert self._active_block is not None
             if _looks_like_source_line(raw):
                 self._active_block.append_line(raw)
-                return
+                return True
             self._active_block.complete(self._skin_vars)
             self._active_block = None
             self._state = "NORMAL"
+            return False  # fall through to prose for the closing line
 
         if self._state == "IN_MATH":
             stripped = raw.strip()
@@ -698,33 +791,27 @@ class ResponseFlowEngine:
                 self._state = "NORMAL"
             else:
                 self._math_lines.append(raw)
-            return
+            return True
 
-        # Phase 2: Prose — through StreamingBlockBuffer (setext, tables, BQ continuation)
-        # Apply inline math substitution on raw text before markdown processing
+        return True  # unknown state — consume safely
+
+    def _dispatch_prose(self, raw: str, intro_candidate: bool) -> None:
+        """Render raw as prose through StreamingBlockBuffer + markdown pipeline."""
+        from agent.rich_output import apply_block_line, apply_inline_markdown
         if self._math_enabled:
             raw = self._apply_inline_math(raw)
         block_result = self._block_buf.process_line(raw)
         if block_result is None:
-            return  # buffered (table row or setext lookahead pending)
-
-        # Phase 3: Horizontal rule intercept — emit Rich Rule renderable
+            return  # buffered (setext/table lookahead)
         if _is_horizontal_rule(block_result):
             self._emit_rule()
             return
-
-        # Phase 4: Block + inline rendering via existing PT-mode pipeline
-        # Track list state for continuation indent
         list_ci = _detect_list_cont_indent(block_result)
         if list_ci:
-            # List item — pre-wrap with hanging indent so wrapped lines
-            # align with text after marker, not flush-left
             self._list_cont_indent = list_ci
-            indented = _apply_cont_indent(block_result, list_ci)
-            block_ansi = apply_block_line(indented)
+            block_ansi = apply_block_line(_apply_cont_indent(block_result, list_ci))
         else:
             block_ansi = apply_block_line(block_result)
-            # Reset list state on blank line or structural elements
             stripped = block_result.strip()
             if (stripped == ""
                 or _HR_RE.match(stripped)
@@ -732,25 +819,34 @@ class ResponseFlowEngine:
                 or _LIST_PREFIX_RE.match(block_result)):
                 self._list_cont_indent = ""
             elif self._list_cont_indent and not block_result[0:1].isspace():
-                # Non-list prose after list — reset indent, don't apply it
                 self._list_cont_indent = ""
         inline_ansi = apply_inline_markdown(block_ansi)
-
-        # Phase 5: Write to prose log
-        # Phase 6 (interleaved): route custom emoji through InlineProseLog's
-        # mixed text/image path instead of mounting sibling InlineImage widgets.
-        # That keeps TGP/SIXEL handling inside the existing inline image cache
-        # renderer rather than letting raw graphics protocol bytes touch the
-        # normal transcript flow.
         self._sync_prose_log()
         plain = _strip_ansi(inline_ansi)
         rich_text = Text.from_ansi(_normalize_ansi_for_render(inline_ansi))
         if not self._write_prose_inline_emojis(rich_text, plain):
             self._commit_prose_line(inline_ansi, plain)
         else:
-            # Emoji path bypasses _commit_prose_line; flush any pending numbered-line buffer
             self._flush_code_fence_buffer()
         self._pending_code_intro = intro_candidate or _is_code_intro_label(plain)
+
+    def process_line(self, raw: str) -> None:
+        """Process one complete line (no trailing newline)."""
+        if self._state == "NORMAL" and self._mount_media_callback is not None:
+            self._scan_media_urls(raw)
+        intro_candidate = _is_code_intro_label(raw)
+        if self._state == "NORMAL":
+            if self._handle_footnote(raw):
+                return
+            if self._citations_enabled and self._handle_citation_line(raw):
+                return
+            if self._dispatch_normal_state(raw, intro_candidate):
+                return
+        elif self._dispatch_non_normal_state(raw):
+            # elif: IN_INDENTED_CODE/IN_SOURCE_LIKE close paths return False,
+            # falling through to _dispatch_prose for the line that closed the block.
+            return
+        self._dispatch_prose(raw, intro_candidate)
 
     def _scan_media_urls(self, line: str) -> None:
         """Scan a NORMAL-state line for media URLs and invoke _mount_media_callback."""
@@ -1184,51 +1280,25 @@ class ReasoningFlowEngine(ResponseFlowEngine):
     """
 
     def __init__(self, *, panel: "ReasoningPanel") -> None:  # type: ignore[override]
-        from agent.rich_output import StreamingBlockBuffer
+        self._init_fields()
         self._panel = panel  # type: ignore[assignment]
         self._prose_log: _DimRichLogProxy = _DimRichLogProxy(  # type: ignore[assignment]
             panel._reasoning_log, panel._plain_lines
         )
-        self._skin_vars: dict[str, str] = {}
-        self._pygments_theme: str = "monokai"
-        self._block_buf: StreamingBlockBuffer = StreamingBlockBuffer()
-        self._state: Literal["NORMAL", "IN_CODE", "IN_INDENTED_CODE", "IN_SOURCE_LIKE", "IN_MATH"] = "NORMAL"
-        self._fence_char: str = "`"
-        self._fence_depth: int = 3
-        self._active_block: "StreamingCodeBlock | None" = None
-        self._pending_source_line: str | None = None
-        self._pending_code_intro: bool = False
-        self._prose_section_counter: int = 0
-        self._list_cont_indent: str = ""
-        self._footnote_defs: dict[str, str] = {}
-        self._footnote_order: list[str] = []
-        self._footnote_def_open: str | None = None
-        self._partial: str = ""
-        # Citations — mirrored from ResponseFlowEngine.__init__
-        # Gated on BOTH _citations_enabled AND _reasoning_rich_prose
+        self._skin_vars = {}
+        self._pygments_theme = "monokai"
+        # Math disabled in reasoning output (Non-Goal per spec)
+        self._math_enabled = False
+        self._math_renderer_mode = "unicode"
+        self._mermaid_enabled = False
+        # Citations gated on BOTH app flag AND _reasoning_rich_prose
         _rp = getattr(panel.app, "_reasoning_rich_prose", True)
-        self._cite_entries: dict[int, tuple[str, str]] = {}
-        self._cite_order: list[int] = []
-        self._citations_enabled: bool = getattr(panel.app, "_citations_enabled", True) and _rp
-        # Math rendering — disabled in reasoning output (Non-Goal per spec)
-        self._math_lines: list[str] = []
-        self._math_env: str = ""
-        self._math_enabled: bool = False
-        self._math_renderer_mode: str = "unicode"
-        self._math_dpi: int = 150
-        self._math_max_rows: int = 12
-        self._mermaid_enabled: bool = False
-        # Media URL detection — disabled in reasoning output
-        self._mount_media_callback: "Callable[[str, str], None] | None" = None
-        self._emitted_media_urls: set[str] = set()
-        # Custom emoji — gated on _emoji_reasoning
+        self._citations_enabled = getattr(panel.app, "_citations_enabled", True) and _rp
+        # Emoji gated on _emoji_reasoning
         _rp_emoji = getattr(panel.app, "_emoji_reasoning", True)
         _app = getattr(panel, "app", None)
         self._emoji_registry = getattr(_app, "_emoji_registry", None) if _rp_emoji else None
-        self._emoji_images_enabled: bool = getattr(_app, "_emoji_images_enabled", True) and _rp_emoji
-        self._emitted_emoji_anchors: set[int] = set()
-        self._code_fence_buffer: list[str] = []  # §5.11.2 InlineCodeFence buffer
-        self._prose_callback: "Callable[[str], None] | None" = None
+        self._emoji_images_enabled = getattr(_app, "_emoji_images_enabled", True) and _rp_emoji
 
     def process_line(self, raw: str) -> None:
         """Override: flush block buffer immediately after every line.

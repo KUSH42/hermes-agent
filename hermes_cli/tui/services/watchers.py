@@ -319,6 +319,22 @@ class WatchersService(AppService):
         except NoMatches:
             return None
 
+    def _post_interrupt_focus(self) -> None:
+        """Restore focus after any interrupt dismissal.
+
+        Priority: input-area (if not agent-running) → app root.
+        Called unconditionally from every on_*_state(None) branch.
+        """
+        try:
+            if not self.app.agent_running and not getattr(self.app, "command_running", False):
+                self.app.call_after_refresh(self.app.query_one("#input-area").focus)
+            else:
+                # Agent still running: return focus to screen (App.focus() doesn't exist
+                # in Textual 8.x; screen.focus() is the correct call).
+                self.app.call_after_refresh(self.app.screen.focus)
+        except Exception:
+            pass
+
     def on_clarify_state(self, value: "ChoiceOverlayState | None") -> None:
         from hermes_cli.tui.overlays import InterruptKind
         from hermes_cli.tui.overlays._adapters import make_clarify_payload
@@ -331,11 +347,7 @@ class WatchersService(AppService):
                 self.app.call_after_refresh(ov.focus)
             else:
                 ov.hide_if_kind(InterruptKind.CLARIFY)
-                if not self.app.agent_running and not self.app.command_running:
-                    try:
-                        self.app.call_after_refresh(self.app.query_one("#input-area").focus)
-                    except NoMatches:
-                        pass
+                self._post_interrupt_focus()
         self.app._set_hint_phase(self.app._compute_hint_phase())
 
     def on_approval_state(self, value: "ChoiceOverlayState | None") -> None:
@@ -355,11 +367,7 @@ class WatchersService(AppService):
                 self.app.call_after_refresh(ov.focus)
             else:
                 ov.hide_if_kind(InterruptKind.APPROVAL)
-                if not self.app.agent_running and not self.app.command_running:
-                    try:
-                        self.app.call_after_refresh(self.app.query_one("#input-area").focus)
-                    except NoMatches:
-                        pass
+                self._post_interrupt_focus()
         self.app._set_hint_phase(self.app._compute_hint_phase())
 
     def on_highlighted_candidate(self, c: Any) -> None:
@@ -391,6 +399,7 @@ class WatchersService(AppService):
                 self.app._dismiss_floating_panels()
             else:
                 ov.hide_if_kind(InterruptKind.SUDO)
+                self._post_interrupt_focus()
         self.app._set_hint_phase(self.app._compute_hint_phase())
 
     def on_secret_state(self, value: "SecretOverlayState | None") -> None:
@@ -403,6 +412,7 @@ class WatchersService(AppService):
                 self.app._dismiss_floating_panels()
             else:
                 ov.hide_if_kind(InterruptKind.SECRET)
+                self._post_interrupt_focus()
         self.app._set_hint_phase(self.app._compute_hint_phase())
 
     # ------------------------------------------------------------------
@@ -451,6 +461,7 @@ class WatchersService(AppService):
                 self.app._dismiss_floating_panels()
             else:
                 ov.hide_if_kind(InterruptKind.UNDO)
+                self._post_interrupt_focus()
         try:
             inp = self.app.query_one("#input-area")
             if value is not None:

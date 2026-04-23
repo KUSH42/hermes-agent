@@ -17,6 +17,11 @@ Design:
   kind-specific child widgets into the ``#interrupt-body`` container. Old
   per-variant state (diff panel, masked input, session form, merge buttons)
   is preserved verbatim in the variant renderers.
+
+NEW_SESSION and MERGE_CONFIRM use ``countdown_s=None`` intentionally. These
+are user-initiated flows (invoked by the user pressing a session button), not
+agent-driven interrupts, so there is no agent-side timeout. Timed countdowns
+are only appropriate for prompts the agent is blocked on.
 """
 
 from __future__ import annotations
@@ -111,6 +116,8 @@ class InterruptPayload:
     on_resolve: Callable[[str], None] | None = None
     # Deadline epoch (set by present() if countdown_s is not None).
     deadline: float = 0.0
+    # C-1: snapshot of remaining seconds when preempted; -1 = fresh (not preempted)
+    _remaining_on_preempt: int = field(default=-1, init=False, repr=False)
 
     @property
     def remaining(self) -> int:
@@ -133,6 +140,8 @@ _URGENCY_CLASSES = {
     "warn":   "--urgency-warn",
     "danger": "--urgency-danger",
 }
+
+_MAX_QUEUE_DEPTH = 8
 
 
 class InterruptOverlay(Widget, can_focus=True):
@@ -158,18 +167,30 @@ class InterruptOverlay(Widget, can_focus=True):
     InterruptOverlay.--urgency-info { border: tall $primary 20%; }
     InterruptOverlay.--urgency-warn { border: tall $warning 40%; }
     InterruptOverlay.--urgency-danger { border: tall $error 60%; }
+    InterruptOverlay.--flash-replace { border: tall $warning 80%; }
 
     InterruptOverlay #interrupt-body { height: auto; }
     InterruptOverlay #interrupt-countdown { height: 1; color: $text-muted; }
 
-    InterruptOverlay #approval-diff-panel {
+    InterruptOverlay #approval-diff {
         height: auto;
         max-height: 16;
         overflow-y: auto;
         border: tall $primary 15%;
         padding: 0 1;
     }
-    InterruptOverlay #approval-diff-panel.--hidden { display: none; }
+    InterruptOverlay #approval-diff.--hidden { display: none; }
+    InterruptOverlay #approval-diff:focus {
+        border: tall $accent 80%;
+    }
+    InterruptOverlay #approval-diff-hint {
+        height: 1;
+        color: $text-muted;
+        display: none;
+    }
+    InterruptOverlay.--diff-hint-visible #approval-diff-hint {
+        display: block;
+    }
 
     InterruptOverlay #ns-error { color: $error; height: 1; }
     InterruptOverlay #ns-base-row, InterruptOverlay #ns-buttons,
@@ -179,6 +200,7 @@ class InterruptOverlay(Widget, can_focus=True):
 
     BINDINGS = [
         Binding("escape", "dismiss", "Cancel", priority=True, show=False),
+        Binding("ctrl+shift+escape", "drain_queue", "Dismiss all", priority=True, show=False),
     ]
 
     current_kind: reactive["InterruptKind | None"] = reactive(None, repaint=False)
@@ -196,6 +218,11 @@ class InterruptOverlay(Widget, can_focus=True):
         # Merge flow strategy selection.
         self._merge_strategy: str = "squash"
         self._ns_base: str = "current"
+        # G-1: block inflight Enter after same-kind replace
+        self._enter_blocked_until: float = 0.0
+        # A-2: double-Enter guard for destructive approval choices
+        self._confirm_destructive_id: str | None = None
+        self._confirm_destructive_timer: Any = None
 
     def compose(self) -> ComposeResult:
         # Single body container; variant renderers mount children into it.
@@ -225,6 +252,10 @@ class InterruptOverlay(Widget, can_focus=True):
             return
         if replace and self._current_payload.kind == payload.kind:
             self._teardown_current(resolve=False, value=None)
+            # G-1: signal content change and eat inflight Enter
+            payload.selected = 0
+            self._enter_blocked_until = _time.monotonic() + 0.25
+            self._flash_replace_border()
             try:
                 self.call_after_refresh(self._activate, payload)
             except Exception:
@@ -232,6 +263,9 @@ class InterruptOverlay(Widget, can_focus=True):
             return
         if replace or preempt:
             prior = self._current_payload
+            # C-1: snapshot remaining so resume can rebase instead of using stale epoch
+            prior._remaining_on_preempt = max(0, prior.remaining)
+            prior.deadline = 0  # force re-deadline on activate
             self._teardown_current(resolve=False, value=None)
             self._queue.insert(0, prior)
             try:
@@ -239,6 +273,16 @@ class InterruptOverlay(Widget, can_focus=True):
             except Exception:
                 self._activate(payload)
             return
+        # C-3: cap queue depth to _MAX_QUEUE_DEPTH, drop oldest if over limit
+        if len(self._queue) >= _MAX_QUEUE_DEPTH:
+            dropped = self._queue.pop(0)
+            try:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "InterruptOverlay queue cap hit; dropped %s", dropped.kind
+                )
+            except Exception:
+                pass
         self._queue.append(payload)
 
     def dismiss_current(self, value: str | None = "") -> None:
@@ -279,9 +323,15 @@ class InterruptOverlay(Widget, can_focus=True):
 
     def _activate(self, payload: "InterruptPayload") -> None:
         self._current_payload = payload
-        if payload.countdown_s is not None and payload.countdown_s > 0 \
-                and payload.deadline <= 0:
-            payload.deadline = _time.monotonic() + float(payload.countdown_s)
+        if payload.countdown_s is not None and payload.countdown_s > 0:
+            if payload.deadline <= 0:
+                # C-1: use preempted remaining, not stale full countdown_s
+                if payload._remaining_on_preempt >= 0:
+                    effective = max(1, payload._remaining_on_preempt)
+                else:
+                    effective = float(payload.countdown_s)
+                payload.deadline = _time.monotonic() + effective
+                payload._remaining_on_preempt = -1  # reset sentinel
 
         # Reset selection / strategy defaults per-kind.
         self._unmasked = False
@@ -299,7 +349,12 @@ class InterruptOverlay(Widget, can_focus=True):
         if self.is_mounted:
             try:
                 self.border_title = payload.title or ""
-                self.border_subtitle = payload.subtitle or ""
+                # C-2: show queue depth in subtitle
+                depth = len(self._queue)
+                if depth > 0:
+                    self.border_subtitle = f"+{depth} queued"
+                else:
+                    self.border_subtitle = payload.subtitle or ""
             except Exception:
                 pass
 
@@ -361,8 +416,10 @@ class InterruptOverlay(Widget, can_focus=True):
         except NoMatches:
             pass
         self._current_payload = None
+        self._clear_destructive_confirm()   # sees _current_payload=None → skips refresh
+        self._enter_blocked_until = 0.0     # prevent block bleeding to next payload
         self.current_kind = None
-        self.remove_class("--visible")
+        self.remove_class("--visible", "--diff-hint-visible")
         for urg_cls in _URGENCY_CLASSES.values():
             self.remove_class(urg_cls)
         self.display = False
@@ -392,6 +449,10 @@ class InterruptOverlay(Widget, can_focus=True):
         if payload is None or payload.countdown_s is None:
             self._stop_countdown_timer()
             return
+        # E-1: escalate border urgency when ≤3s remaining
+        remaining = payload.remaining
+        if remaining <= 3 and not self.has_class("--urgency-danger"):
+            self.add_class("--urgency-danger")
         self._refresh_countdown_display()
         if payload.expired:
             # Timeout ⇒ cancel.
@@ -512,6 +573,7 @@ class InterruptOverlay(Widget, can_focus=True):
             id="approval-diff", highlight=False, max_lines=40, wrap=False
         )
         body.mount(diff_log)
+        body.mount(Static("  [Tab] scroll diff · [Enter] confirm selection", id="approval-diff-hint"))
         # Defer render; diff_log needs to be mounted first.
         self.call_after_refresh(self._populate_approval_diff)
         body.mount(Static(self._render_choice_row(payload), id="approval-choices"))
@@ -551,6 +613,12 @@ class InterruptOverlay(Widget, can_focus=True):
             # Fallback to plain text.
             for line in (payload.diff_text or "").splitlines():
                 diff_log.write(line)
+        # B-1: show scroll hint when diff is long
+        total_lines = len((payload.diff_text or "").splitlines())
+        if total_lines > 16:
+            diff_log.add_class("--scrollable")
+            # Show hint via overlay class (no CSS sibling combinator in Textual 8.x)
+            self.add_class("--diff-hint-visible")
 
     # ── SUDO / SECRET ───────────────────────────────────────────────────────
 
@@ -616,6 +684,17 @@ class InterruptOverlay(Widget, can_focus=True):
                 event.prevent_default()
                 return
 
+        # F-2: single-char accelerators for choice-driven kinds
+        if payload.kind in (
+            InterruptKind.UNDO, InterruptKind.CLARIFY, InterruptKind.APPROVAL
+        ) and len(event.key) == 1 and event.key.isalpha():
+            for choice in payload.choices:
+                # Match on full id OR first char of id
+                if event.key == choice.id or event.key == choice.id[:1]:
+                    self.dismiss_current(choice.id)
+                    event.prevent_default()
+                    return
+
     def on_blur(self, event: Any) -> None:  # type: ignore[override]
         payload = self._current_payload
         if payload is None:
@@ -649,7 +728,8 @@ class InterruptOverlay(Widget, can_focus=True):
         body.mount(Static(cp_text, id="undo-has-checkpoint"))
         body.mount(
             Static(
-                "     [bold]\\[y][/bold] Undo and retry    [bold]\\[n][/bold] Cancel",
+                "     [bold]\\[y][/bold] Undo and retry    [bold]\\[n][/bold] Cancel"
+                "\n     [dim]Press y/n or use Arrow + Enter[/dim]",
                 id="undo-choices",
             )
         )
@@ -717,9 +797,11 @@ class InterruptOverlay(Widget, can_focus=True):
             elif btn_id == "ns-base-current":
                 event.stop()
                 self._ns_base = "current"
+                self._refresh_base_row()
             elif btn_id == "ns-base-main":
                 event.stop()
                 self._ns_base = "main"
+                self._refresh_base_row()
             elif btn_id == "ns-create":
                 event.stop()
                 self._do_new_session_create()
@@ -730,6 +812,7 @@ class InterruptOverlay(Widget, can_focus=True):
             elif btn_id in ("mg-merge", "mg-squash", "mg-rebase"):
                 event.stop()
                 self._merge_strategy = btn_id[len("mg-"):]
+                self._refresh_strategy_row()
             elif btn_id == "mg-confirm":
                 event.stop()
                 self._run_merge(payload, close_on_success=True)
@@ -743,6 +826,72 @@ class InterruptOverlay(Widget, can_focus=True):
             self.query_one("#ns-error", Static).update(msg)
         except NoMatches:
             pass
+
+    def _flash_replace_border(self) -> None:
+        """Briefly add --flash-replace class so the border pulses on same-kind swap."""
+        self.add_class("--flash-replace")
+        try:
+            self.set_timer(0.3, lambda: self.remove_class("--flash-replace"))
+        except Exception:
+            self.remove_class("--flash-replace")
+
+    def _refresh_base_row(self) -> None:
+        """Update NEW_SESSION base buttons to reflect self._ns_base."""
+        for btn_id, value in (("ns-base-current", "current"), ("ns-base-main", "main")):
+            try:
+                btn = self.query_one(f"#{btn_id}", Button)
+                is_sel = (self._ns_base == value)
+                label = ("● " if is_sel else "○ ") + ("current branch" if value == "current" else "main")
+                btn.label = label
+                if is_sel:
+                    btn.add_class("--selected-base")
+                else:
+                    btn.remove_class("--selected-base")
+            except Exception:
+                pass
+
+    def _refresh_strategy_row(self) -> None:
+        """Update MERGE_CONFIRM strategy buttons to reflect self._merge_strategy."""
+        strategy_map = {
+            "mg-merge":  "merge",
+            "mg-squash": "squash",
+            "mg-rebase": "rebase",
+        }
+        label_map = {"merge": "Merge commit", "squash": "Squash", "rebase": "Rebase"}
+        for btn_id, value in strategy_map.items():
+            try:
+                btn = self.query_one(f"#{btn_id}", Button)
+                is_sel = (self._merge_strategy == value)
+                btn.label = ("● " if is_sel else "○ ") + label_map[value]
+                if is_sel:
+                    btn.add_class("--selected-strategy")
+                else:
+                    btn.remove_class("--selected-strategy")
+            except Exception:
+                pass
+
+    def _clear_destructive_confirm(self) -> None:
+        self._confirm_destructive_id = None
+        if self._confirm_destructive_timer is not None:
+            try:
+                self._confirm_destructive_timer.stop()
+            except Exception:
+                pass
+        self._confirm_destructive_timer = None
+        # Restore countdown strip (will re-render on next tick)
+        if self._current_payload is not None:
+            self._refresh_countdown_display()
+
+    def action_drain_queue(self) -> None:
+        """Resolve all queued payloads with their timeout_value and hide the overlay."""
+        while self._queue:
+            queued = self._queue.pop(0)
+            if queued.on_resolve is not None:
+                try:
+                    queued.on_resolve("")  # "" = timeout_value (safest: deny for approval)
+                except Exception:
+                    pass
+        self.dismiss_current("__cancel__")  # resolve the active one too
 
     def _do_new_session_create(self) -> None:
         try:
@@ -799,11 +948,35 @@ class InterruptOverlay(Widget, can_focus=True):
 
     def confirm_choice(self) -> None:
         """Resolve the currently-selected choice."""
+        # G-1: ignore inflight Enter that was queued before a replace
+        if _time.monotonic() < self._enter_blocked_until:
+            return
         payload = self._current_payload
         if payload is None or not payload.choices:
             self.dismiss_current("")
             return
         chosen = payload.choices[payload.selected]
+        # A-2: double-Enter guard for destructive choices
+        if chosen.id in {"always", "session"} and payload.kind == InterruptKind.APPROVAL:
+            if self._confirm_destructive_id != chosen.id:
+                self._confirm_destructive_id = chosen.id
+                if self._confirm_destructive_timer is not None:
+                    try:
+                        self._confirm_destructive_timer.stop()
+                    except Exception:
+                        pass
+                self._confirm_destructive_timer = self.set_timer(
+                    1.5, self._clear_destructive_confirm
+                )
+                # Show confirmation prompt in countdown strip
+                try:
+                    self.query_one("#interrupt-countdown", Static).update(
+                        f"[bold yellow]⚠ Press Enter again to confirm '{chosen.id}'[/bold yellow]"
+                    )
+                except Exception:
+                    pass
+                return
+        self._clear_destructive_confirm()
         self.dismiss_current(chosen.id)
 
 

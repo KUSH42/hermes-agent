@@ -5,14 +5,11 @@ Plugs into AnimationClock; zero overhead when disabled.
 """
 from __future__ import annotations
 
-import math
 import random
 import time
 from dataclasses import asdict, dataclass, replace
 from typing import TYPE_CHECKING
 
-from rich.style import Style
-from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
@@ -23,7 +20,7 @@ from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Input, Static
 
-from hermes_cli.tui.animation import AnimationClock, _ClockSubscription, lerp_color, _parse_rgb, lerp_color_rgb
+from hermes_cli.tui.animation import AnimationClock, _ClockSubscription
 from hermes_cli.tui.perf import measure
 from hermes_cli.tui.anim_engines import (
     AnimParams,
@@ -973,18 +970,12 @@ class DrawbrailleOverlay(Static):
 
     # ── rendering ──────────────────────────────────────────────────────────
 
-    def _tick(self) -> None:
-        self._ensure_orchestrator()
-        self._ensure_renderer()
-        if not self.has_class("-visible"):
-            # Still running during fade-out — only skip if fully hidden (not fading)
-            if self._renderer._fade_state != "out":
-                return
-        params = self._anim_params
-        if params is None:
-            return
-        cfg = self._cfg
+    def _update_heat_and_burst(self, params: AnimParams, cfg: "DrawbrailleOverlayCfg | None") -> bool:
+        """Update heat, burst counters, and completion state.
 
+        Returns True if caller should stop (e.g. _do_hide was called internally).
+        Side effects: modifies params.heat, self._heat, self._heat_target, self._burst_*.
+        """
         # Phase A: error hold countdown
         if self._error_hold_frames > 0:
             self._error_hold_frames -= 1
@@ -1010,7 +1001,7 @@ class DrawbrailleOverlay(Static):
                     self._renderer.start_fade_out(cfg)
                 else:
                     self._do_hide()
-                    return
+                    return True
             # No heat interpolation during burst — fall through to render
         elif self._visibility_state == "ambient":
             # Phase D: ambient branch — override heat
@@ -1024,6 +1015,23 @@ class DrawbrailleOverlay(Static):
         # Phase C: authoritative heat clamp [0, 1.5]
         if self._visibility_state != "ambient":
             params.heat = max(0.0, min(1.5, self._heat))
+
+        return False
+
+    def _tick(self) -> None:
+        self._ensure_orchestrator()
+        self._ensure_renderer()
+        if not self.has_class("-visible"):
+            # Still running during fade-out — only skip if fully hidden (not fading)
+            if self._renderer._fade_state != "out":
+                return
+        params = self._anim_params
+        if params is None:
+            return
+        cfg = self._cfg
+
+        if self._update_heat_and_burst(params, cfg):
+            return
 
         # Get engine via orchestrator (Phase 3: colors owned by renderer)
         engine = self._orchestrator.get_engine(

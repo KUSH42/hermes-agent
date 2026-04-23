@@ -1028,3 +1028,11 @@ SplitTargetStub {
     display: none;
 }
 
+
+/* S0-E: calm during streaming — bars dim to reduce peripheral competition */
+StatusBar.--streaming {
+    opacity: 0.55;
+}
+HintBar.--streaming {
+    opacity: 0.55;
+}

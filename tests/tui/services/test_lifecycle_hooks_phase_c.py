@@ -35,6 +35,7 @@ EXPECTED_SNAPSHOT = {
     "on_turn_end_any": [
         (10, "osc_progress_end"),
         (10, "desktop_notify"),
+        (50, "streaming_end_safety"),
         (100, "clear_output_dropped_flag"),
         (100, "clear_spinner_label"),
         (100, "clear_active_file"),
@@ -64,6 +65,12 @@ EXPECTED_SNAPSHOT = {
     ],
     "on_session_resume": [
         (100, "session_resume_reset"),
+    ],
+    "on_streaming_start": [
+        (100, "streaming_start"),
+    ],
+    "on_streaming_end": [
+        (100, "streaming_end"),
     ],
 }
 
@@ -539,6 +546,7 @@ class TestPhaseD:
             "on_turn_start", "on_turn_end_any", "on_turn_end_success",
             "on_interrupt", "on_compact_complete", "on_error_set", "on_error_clear",
             "on_session_switch", "on_session_resume",
+            "on_streaming_start", "on_streaming_end",
         ]
         for t in TRANSITIONS:
             hooks.register(t, lambda **kw: None, owner=object(), priority=100, name=f"test_{t}")

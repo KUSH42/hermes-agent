@@ -134,7 +134,7 @@ def _build_streaming_hint(key_color: str) -> "tuple[Text, list[tuple[int, int]]]
 
 _BAR_FILLED = "▰"
 _BAR_EMPTY = "▱"
-_BAR_WIDTH = 20
+_BAR_WIDTH = 10
 
 
 # ---------------------------------------------------------------------------
@@ -184,15 +184,32 @@ class HintBar(Widget):
         except Exception:
             return "#5f87d7"
 
+    def on_mount(self) -> None:
+        self.watch(self.app, "status_streaming", self._on_streaming_change)
+
+    def on_unmount(self) -> None:
+        self._shimmer_stop()
+
+    def _on_streaming_change(self, streaming: bool = False) -> None:
+        """S0-C: suppress shimmer while streaming; restore when done."""
+        if streaming and self._shimmer_timer is not None:
+            self._shimmer_stop()
+            self.refresh()
+        elif not streaming and self._phase in ("stream", "file"):
+            if getattr(self.app, "_animations_enabled", True):
+                self._shimmer_start()
+
     def set_phase(self, phase: str) -> None:
         """Transition to a new hint phase. Manages shimmer lifecycle."""
-        if phase == self._phase and self._shimmer_timer is not None:
-            return  # already in this phase and shimmer is running
+        if phase == self._phase:
+            return  # shimmer-state changes driven by _on_streaming_change, not set_phase
         # Stop any existing shimmer first
         self._shimmer_stop()
         self._phase = phase
-        if phase in ("stream", "file") and getattr(self.app, "_animations_enabled", True):
-            self._shimmer_start()
+        streaming = getattr(self.app, "status_streaming", False)
+        if phase in ("stream", "file") and not streaming:
+            if getattr(self.app, "_animations_enabled", True):
+                self._shimmer_start()
         else:
             self.refresh()
 
@@ -231,10 +248,29 @@ class HintBar(Widget):
         self._shimmer_tick += 1
 
     def render(self) -> "RenderResult":
-        # Override: flash/overlay hints take priority
+        streaming = getattr(self.app, "status_streaming", False)
+
+        if streaming:
+            try:
+                k = self.app.get_css_variables().get("accent-interactive", "#5f87d7")
+            except Exception:
+                k = "#5f87d7"
+            pinned = Text.from_markup(
+                f"[bold {k}]^C[/] [dim]interrupt[/dim]  ·  [bold {k}]Esc[/] [dim]dismiss[/dim]"
+            )
+            flash_hint = self.hint
+            if flash_hint:
+                sep = Text.from_markup("  [dim]|[/dim]  ")
+                flash_t = Text.from_markup(flash_hint)
+                w = self.content_size.width
+                if pinned.cell_len + sep.cell_len + flash_t.cell_len <= w:
+                    pinned.append_text(sep)
+                    pinned.append_text(flash_t)
+            return pinned
+
+        # Non-streaming: existing behaviour unchanged
         if self.hint:
-            return Text(self.hint)
-        # Shimmer active: render shimmer
+            return Text(self.hint)  # pre-existing: strips markup; fix deferred
         if self._shimmer_base is not None and self._shimmer_timer is not None:
             return shimmer_text(
                 self._shimmer_base,
@@ -244,7 +280,6 @@ class HintBar(Widget):
                 period=32,
                 skip_ranges=self._shimmer_skip,
             )
-        # Phase-based static hint
         key_color = self._get_key_color()
         hints = _hints_for(self._phase, key_color)
         w = self.content_size.width
@@ -275,39 +310,16 @@ class StatusBar(PulseMixin, Widget):
     # Animated tok/s backing reactive — drives smooth counter easing
     _tok_s_displayed: reactive[float] = reactive(0.0, repaint=True)
 
-    # Built lazily in _get_idle_tips() — skin not loaded at class definition time
-    _idle_tips_cache: "list[str] | None" = None
-
     def compose(self) -> "ComposeResult":
         yield Static("⚠ no clipboard", id="status-clipboard-warning")
 
-    def _get_idle_tips(self) -> list[str]:
-        """Build idle tips lazily with key-badge format."""
-        if self._idle_tips_cache is not None:
-            return self._idle_tips_cache
+    def _get_key_color(self) -> str:
+        """Read key badge color from CSS variables."""
         try:
-            k = self.app.get_css_variables().get("primary", "#5f87d7")
+            v = self.app.get_css_variables()
+            return v.get("primary", "#5f87d7")
         except Exception:
-            k = "#5f87d7"
-        sep = "  ·  "
-        mouse_enabled = getattr(self.app, "_mouse_enabled", True)
-        tip5 = (
-            f"[bold {k}]right-click[/] [dim]for options[/dim]"
-            if mouse_enabled else
-            f"[bold {k}]^D[/] [dim]attach image[/dim]{sep}[bold {k}]^V[/] [dim]paste[/dim]"
-        )
-        tips = [
-            f"[bold {k}]F1[/] [dim]help[/dim]{sep}[bold {k}]^F[/] [dim]history search[/dim]",
-            f"[bold {k}]^Z[/] [dim]undo last turn[/dim]{sep}[bold {k}]^G[/] [dim]retry[/dim]",
-            f"[bold {k}]@[/][dim]file[/dim]{sep}[bold {k}]/[/][dim]command[/dim]{sep}[bold {k}]⇥[/] [dim]accept[/dim]",
-            f"[bold {k}]^L[/] [dim]clear[/dim]{sep}[bold {k}]^K[/] [dim]new session[/dim]",
-            tip5,
-            f"[bold {k}]Alt+↑↓[/] [dim]browse turns[/dim]{sep}[bold {k}]b[/] [dim]browse mode[/dim]",
-            f"[bold {k}]F8[/] [dim]toggle FPS HUD[/dim]{sep}[bold {k}]^B[/] [dim]animation config[/dim]",
-            f"[bold {k}]/anim[/] [dim]animation engines[/dim]{sep}[bold {k}]?[/] [dim]tool panel help[/dim]",
-        ]
-        self._idle_tips_cache = tips
-        return tips
+            return "#5f87d7"
 
     def on_mount(self) -> None:
         app = self.app
@@ -323,6 +335,7 @@ class StatusBar(PulseMixin, Widget):
             "status_active_file",
             "context_pct", "yolo_mode",
             "session_label",
+            "status_verbose",
         ):
             self.watch(app, attr, self._on_status_change)
         # agent_running: dedicated callback to start/stop pulse + refresh
@@ -333,22 +346,17 @@ class StatusBar(PulseMixin, Widget):
         # which always fires before we need to re-render.
         # status_error: triggers repaint when a persistent error is set/cleared
         self.watch(app, "status_error", self._on_status_change)
-        self._hint_idx: int = 0
-        self._hint_phase: str = "idle"
-        clock: AnimationClock | None = getattr(
-            getattr(self, "app", None), "_anim_clock", None
-        )
-        if clock is not None:
-            self._rotate_timer = clock.subscribe(75, self._rotate_hint)
-        else:
-            self._rotate_timer = self.set_interval(5.0, self._rotate_hint)
+        # S0-D: suppress pulse during streaming; S0-E: dim bars during streaming
+        self.watch(app, "status_streaming", self._on_streaming_change)
+        self.watch(app, "status_streaming", self._on_streaming_dim)
 
     def _on_status_change(self, _value: object = None) -> None:
         self.refresh()
 
     def _on_agent_running_change(self, running: bool = False) -> None:
         """Start or stop the pulse animation when agent_running changes."""
-        if running and _pulse_enabled():
+        streaming = getattr(self.app, "status_streaming", False)
+        if running and not streaming and _pulse_enabled():
             self._pulse_start()
         else:
             self._pulse_stop()
@@ -356,9 +364,6 @@ class StatusBar(PulseMixin, Widget):
 
     def on_unmount(self) -> None:
         self._pulse_stop()
-        if getattr(self, "_rotate_timer", None) is not None:
-            self._rotate_timer.stop()
-            self._rotate_timer = None
 
     def _on_tok_s_change(self, tok_s: float = 0.0) -> None:
         """Animate _tok_s_displayed to new tok/s value over 200ms."""
@@ -367,21 +372,28 @@ class StatusBar(PulseMixin, Widget):
         else:
             self._tok_s_displayed = float(tok_s)
 
-    def _rotate_hint(self) -> None:
-        """Advance idle hint text to the next entry — idle phase only."""
-        # Only rotate when in idle phase (no agent/browse/error active)
-        app = self.app
-        is_idle = (
-            not getattr(app, "agent_running", False)
-            and not getattr(app, "command_running", False)
-            and not getattr(app, "browse_mode", False)
-            and not bool(getattr(app, "status_error", ""))
-        )
-        if not is_idle:
-            return
-        tips = self._get_idle_tips()
-        self._hint_idx = (self._hint_idx + 1) % len(tips)
+    def _on_streaming_change(self, streaming: bool = False) -> None:
+        """S0-D: suppress pulse while tokens are actively flowing."""
+        if streaming:
+            self._pulse_stop()
+        elif getattr(self.app, "agent_running", False) and _pulse_enabled():
+            self._pulse_start()
         self.refresh()
+
+    def _on_streaming_dim(self, streaming: bool = False) -> None:
+        """S0-E: dim StatusBar and HintBar during streaming."""
+        if streaming:
+            self.add_class("--streaming")
+            try:
+                self.app.query_one(HintBar).add_class("--streaming")
+            except Exception:
+                pass  # HintBar not yet mounted
+        else:
+            self.remove_class("--streaming")
+            try:
+                self.app.query_one(HintBar).remove_class("--streaming")
+            except Exception:
+                pass  # HintBar may be unmounted during teardown
 
     def render(self) -> RenderResult:
         app = self.app
@@ -464,7 +476,7 @@ class StatusBar(PulseMixin, Widget):
         t = Text()
 
         if width < 40 or (compact and width < 70):
-            # Minimal / compact+narrow: model · ctx (no bar glyph)
+            # Minimal / compact+narrow: model only; verbose ctx_label if enabled
             if not model:
                 t.append("connecting…", style="dim")
             else:
@@ -473,15 +485,11 @@ class StatusBar(PulseMixin, Widget):
                     t.append(" ⚡YOLO", style="bold yellow")
                 if session_label:
                     t.append(f" · {session_label}", style="dim")
-            if enabled and not (compact and width < 70):
-                t.append(" · ", style="dim")
-                pct_int = min(int(progress * 100), 100)
-                t.append(f"{pct_int}%", style=StatusBar._compaction_color(progress, _vars))
-            if ctx_label:
+            if getattr(app, "status_verbose", False) and ctx_label:
                 t.append(" · ", style="dim")
                 t.append(ctx_label, style="dim")
         elif width < 60:
-            # Narrow: model · % · ctx (no bar)
+            # Narrow (40–59 cols): model · ▰ glyph · verbose ctx_label
             if not model:
                 t.append("connecting…", style="dim")
             else:
@@ -491,30 +499,25 @@ class StatusBar(PulseMixin, Widget):
                 if session_label:
                     t.append(f" · {session_label}", style="dim")
             if enabled:
-                t.append(" · ", style="dim")
-                pct_int = min(int(progress * 100), 100)
-                t.append(f"{pct_int}%", style=StatusBar._compaction_color(progress, _vars))
-            if ctx_label:
+                pct_color = StatusBar._compaction_color(progress, _vars)
+                t.append(" ▰", style=pct_color)  # leading space — model text precedes
+            if getattr(app, "status_verbose", False) and ctx_label:
                 t.append(" · ", style="dim")
                 t.append(ctx_label, style="dim")
         else:
-            # Full (>=60 cols): bar% · ctx · model · session  (D6: dynamic info leads)
+            # Full (>=60 cols): 10-cell bar · ctx · model · session  (D6: dynamic info leads)
             if not model:
                 t.append("connecting…", style="dim")
             else:
                 if enabled:
-                    pct_int = min(int(progress * 100), 100)
                     filled  = min(int(progress * _BAR_WIDTH), _BAR_WIDTH)
                     bar_str = _BAR_FILLED * filled + _BAR_EMPTY * (_BAR_WIDTH - filled)
                     bar_color = StatusBar._compaction_color(progress, _vars)
                     t.append(bar_str, style=bar_color)
-                    t.append(" ")
-                    t.append(f"{pct_int}%", style=bar_color)
-                    if ctx_label:
-                        t.append(" · ", style="dim")
-                if ctx_label:
+                    t.append(" · ", style="dim")
+                if getattr(app, "status_verbose", False) and ctx_label:
                     t.append(ctx_label, style="dim")
-                t.append(" · ", style="dim")
+                    t.append(" · ", style="dim")
                 t.append(model, style="dim")
                 if yolo_mode:
                     t.append(" ⚡YOLO", style="bold yellow")
@@ -542,34 +545,37 @@ class StatusBar(PulseMixin, Widget):
         if running:
             _run_theme = _vars.get("status-running-color", "#FFBF00")
             _run_dim = _vars.get("running-indicator-dim-color", "#6e6e6e")
-            # ● glyph: pulse between dim (trough) and theme color (peak) via PulseMixin
-            if self._pulse_t > 0:
-                glyph_color = lerp_color(_run_dim, _run_theme, self._pulse_t)
-            else:
-                glyph_color = _run_theme
+            streaming = getattr(app, "status_streaming", False)
             state_t = Text()
-            state_t.append(" ● ", style=f"bold {glyph_color}")
-            # Shimmer "running": base=dim, wave peak=theme color (inverted visibility)
-            if getattr(app, "_animations_enabled", True):
-                running_shimmer = shimmer_text(
-                    "running",
-                    self._pulse_tick,
-                    dim=_run_dim,
-                    peak=_run_theme,
-                    period=32,
-                )
-                state_t.append_text(running_shimmer)
+            if streaming:
+                # Static dot — pulse competes with the token stream
+                state_t.append(" ● ", style=f"bold {_run_theme}")
+                state_t.append("running", style=f"dim {_run_dim}")
             else:
-                state_t.append("running", style=f"bold {_run_dim}")
+                # Silent tool execution — pulse is the only liveness signal; keep it
+                if self._pulse_t > 0:
+                    glyph_color = lerp_color(_run_dim, _run_theme, self._pulse_t)
+                else:
+                    glyph_color = _run_theme
+                state_t.append(" ● ", style=f"bold {glyph_color}")
+                if getattr(app, "_animations_enabled", True):
+                    running_shimmer = shimmer_text(
+                        "running",
+                        self._pulse_tick,
+                        dim=_run_dim,
+                        peak=_run_theme,
+                        period=32,
+                    )
+                    state_t.append_text(running_shimmer)
+                else:
+                    state_t.append("running", style=f"bold {_run_dim}")
         elif _status_err:
             state_t = Text(f" ⚠ {_status_err}", style=f"bold {_err_color}")
         else:
-            tips = self._get_idle_tips()
-            hint_idx = getattr(self, "_hint_idx", 0)
-            hint = tips[hint_idx % len(tips)]
-            state_t = Text()
-            state_t.append(" ")
-            state_t.append_text(Text.from_markup(hint))
+            k = self._get_key_color()
+            state_t = Text.from_markup(
+                f" [bold {k}]F1[/] [dim]help[/dim]  ·  [bold {k}]/[/][dim]commands[/dim]"
+            )
 
         if dropped:
             state_t = Text(f" ⚠ output truncated", style=_err_color) + state_t
@@ -581,23 +587,22 @@ class StatusBar(PulseMixin, Widget):
 
     @staticmethod
     def _compaction_color(progress: float, css_vars: dict) -> str:
-        """Lerp context-bar colour from CSS variables (no legacy skin_engine read).
+        """Lerp context-bar colour from CSS variables.
 
-        Fallbacks use lowercase hex to match lerp_color()'s output format,
-        so direct returns (< 0.50, >= 0.95) and lerp returns are consistently
-        cased when using the defaults.
+        Three zones: normal (< 70%), yellow→red (70–85%), red (>= 90%).
+        Order matters — >= 0.90 checked before >= 0.85 to avoid unreachable code.
         """
         color_normal = css_vars.get("status-context-color", "#5f87d7")
         color_warn   = css_vars.get("status-warn-color",    "#FFA726")
         color_crit   = css_vars.get("status-error-color",   "#ef5350")
-        if progress >= 0.95:
+        if progress >= 0.90:
             return color_crit
-        if progress >= 0.80:
-            t = (progress - 0.80) / 0.15
-            return lerp_color(color_warn, color_crit, t)
-        if progress >= 0.50:
-            t = (progress - 0.50) / 0.30
-            return lerp_color(color_normal, color_warn, t)
+        if progress >= 0.85:
+            t = (progress - 0.85) / 0.05
+            return lerp_color(color_warn, color_crit, t)   # yellow→red (85–90%)
+        if progress >= 0.70:
+            t = (progress - 0.70) / 0.15
+            return lerp_color(color_normal, color_warn, t) # green→yellow (70–85%)
         return color_normal
 
 

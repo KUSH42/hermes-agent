@@ -45,6 +45,12 @@ class KeyDispatchService(AppService):
         self.app._last_keypress_time = _time.monotonic()
         key = event.key
 
+        # --- ctrl+t → toggle status_verbose (S0-A) ---
+        if key == "ctrl+t":
+            event.prevent_default()
+            self.app.status_verbose = not self.app.status_verbose
+            return
+
         # --- ctrl+p → path/file picker (@-completion) ---
         if key == "ctrl+p":
             try:

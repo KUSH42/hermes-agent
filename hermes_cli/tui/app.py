@@ -391,6 +391,12 @@ class HermesApp(App):
     # Current session label — display-only; shown in StatusBar chip
     session_label: reactive[str] = reactive("")
 
+    # S0-D/S0-E: True while assistant is actively streaming tokens
+    status_streaming: reactive[bool] = reactive(False)
+
+    # S0-A: verbose mode — show ctx_label in StatusBar alongside bar
+    status_verbose: reactive[bool] = reactive(False)
+
     # hint_text is NOT on HermesApp — HintBar.hint is the single source of truth.
 
     def __init__(
@@ -1483,6 +1489,10 @@ class HermesApp(App):
         # ── on_session_switch / on_session_resume ─────────────────────────
         h.register("on_session_switch", self._lc_session_switch_cleanup, owner=self, priority=100, name="session_switch_cleanup")
         h.register("on_session_resume", self._lc_session_resume_reset, owner=self, priority=100, name="session_resume_reset")
+        # ── on_streaming_start / on_streaming_end ─────────────────────────
+        h.register("on_streaming_start", self._on_streaming_start, owner=self, priority=100, name="streaming_start")
+        h.register("on_streaming_end", self._on_streaming_end, owner=self, priority=100, name="streaming_end")
+        h.register("on_turn_end_any", self._on_streaming_end, owner=self, priority=50, name="streaming_end_safety")
 
     def _lc_reset_turn_state(self) -> None:
         self._svc_tools._turn_tool_calls = {}
@@ -1632,6 +1642,14 @@ class HermesApp(App):
         except Exception:
             pass
 
+    def _on_streaming_start(self, **_: object) -> None:
+        """S0-D: mark that assistant tokens are actively flowing."""
+        self.status_streaming = True
+
+    def _on_streaming_end(self, **_: object) -> None:
+        """S0-D: clear streaming flag when tokens stop (or turn ends)."""
+        self.status_streaming = False
+
     def action_debug_hooks_snapshot(self) -> None:
         """Log lifecycle hook registrations for debugging (F12)."""
         snap = self.hooks.snapshot()
@@ -1709,6 +1727,7 @@ class HermesApp(App):
             self._response_metrics_active = True
             self._response_wall_start_time = _time.monotonic()
             self._response_token_window.clear()
+            self.hooks.fire("on_streaming_start")
         if self._response_segment_start_time is None:
             self._response_segment_start_time = _time.monotonic()
         self._refresh_live_response_metrics()
@@ -1742,6 +1761,7 @@ class HermesApp(App):
         self._response_metrics_active = False
         self._response_wall_start_time = None
         self._response_token_window.clear()
+        self.hooks.fire("on_streaming_end")
         try:
             output = self.query_one(OutputPanel)
         except NoMatches:

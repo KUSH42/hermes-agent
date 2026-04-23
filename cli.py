@@ -3261,6 +3261,14 @@ class HermesCLI:
 
     def _get_startup_text_effect_config(self) -> tuple[str, dict[str, object]] | None:
         """Return configured startup text effect, or None when disabled/invalid."""
+        # Reduced motion: skip TTE on both TUI and non-TUI paths.
+        # config is getattr(self, "config", CLI_CONFIG) — already loaded; no I/O.
+        _cfg = getattr(self, "config", {}) or {}
+        if _cfg.get("tui", {}).get("reduced_motion"):
+            return None
+        if os.environ.get("HERMES_REDUCED_MOTION"):
+            return None
+
         config = getattr(self, "config", CLI_CONFIG)
         display_cfg = (config.get("display") or {}) if isinstance(config, dict) else {}
         effect_cfg = display_cfg.get("startup_text_effect") or {}
@@ -3351,6 +3359,11 @@ class HermesCLI:
             app_width = int(getattr(getattr(app, "size", None), "width", 0) or 0)
             if app_width > capture_width:
                 capture_width = app_width
+        # Prefer OutputPanel width when available (set by OutputPanel.on_mount before
+        # daemon thread starts — safe to read from daemon thread on CPython).
+        panel_w = getattr(app, "_startup_output_panel_width", 0) if app is not None else 0
+        if panel_w and panel_w > 0:
+            capture_width = panel_w
         capture_width = max(1, capture_width)
 
         capture = _Console(
@@ -3437,7 +3450,8 @@ class HermesCLI:
                     hero_line = hero_line[:hero_width]
                 elif len(hero_plain) < hero_width:
                     hero_line = hero_line.copy()
-                    hero_line.append(" " * (hero_width - len(hero_plain)))
+                    delta = hero_width - len(hero_plain)
+                    hero_line.append(" " * delta, style="")
                 composed = base_line[:hero_col] + hero_line + base_line[hero_col + hero_width :]
             else:
                 composed = base_line.copy()
@@ -3464,6 +3478,7 @@ class HermesCLI:
 
         from hermes_cli.tui.tte_runner import iter_frames
         MAX_FRAMES = 3000
+        MAX_WALL_S = 6.0
         rendered_any = False
         state_lock = _threading.Lock()
         latest_frame: Text | None = None
@@ -3501,9 +3516,16 @@ class HermesCLI:
             if should_schedule:
                 app.call_from_thread(_drain_latest)
 
+        # Pre-flight: paint static banner before TTE starts so widget is never blank.
+        # Use _render_startup_banner_text (not _splice_startup_banner_frame) because
+        # it applies skin coloring; plain_hero is uncolored ANSI-free text.
+        _preflight = self._render_startup_banner_text(print_hero=True)
+        _queue_frame(_preflight)
+        _tte_start = time.monotonic()   # time imported at module level
+
         try:
             for i, frame in enumerate(iter_frames(effect_name, plain_hero, params=params)):
-                if i >= MAX_FRAMES:
+                if i >= MAX_FRAMES or (time.monotonic() - _tte_start) >= MAX_WALL_S:
                     break
                 rendered_any = True
                 rich_frame = (
@@ -3516,6 +3538,13 @@ class HermesCLI:
                 _queue_frame(rich_frame)
         except Exception as exc:
             logger.warning("TTE frame error: %s", exc, exc_info=True)
+
+        if rendered_any:
+            # Hold final TTE frame for 250 ms, then queue the static banner through
+            # the same coalescing path — guarantees static arrives after last TTE frame.
+            time.sleep(0.25)   # time is module-level; do not re-import as _t
+            static_banner = self._render_startup_banner_text(print_hero=True)
+            _queue_frame(static_banner)
 
         return rendered_any
 
@@ -3531,15 +3560,22 @@ class HermesCLI:
             self._ensure_tui_startup_message()
             played = self._play_startup_text_effect(tui=True)
             if not played:
+                # played=False covers: (a) TTE disabled in config, (b) compact terminal,
+                # (c) no plain_hero — all need static banner painted via this path.
                 self._set_tui_startup_banner_static()
-            self._show_banner_postamble()
+            self._postamble_pending = True  # deferred to first user submission
             return
         self.console.clear()
         self._play_startup_text_effect(tui=False)
         self._show_banner_body(clear=False, print_hero=True)
 
     def _set_tui_startup_banner_static(self) -> None:
-        """Render the final static startup banner into the pre-mounted StartupBannerWidget."""
+        """Render the static startup banner into StartupBannerWidget.
+
+        Called ONLY when TTE was not played (disabled, compact terminal, no hero).
+        When TTE was played, the static frame is enqueued inside
+        _play_tte_in_output_panel via _queue_frame instead.
+        """
         app = _hermes_app
         if app is None:
             return

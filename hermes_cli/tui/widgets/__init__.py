@@ -107,6 +107,15 @@ from .message_panel import (  # noqa: F401
 
 from .thinking import ThinkingWidget  # noqa: F401
 
+
+def _clear_thinking_reserve(tw: "ThinkingWidget") -> None:
+    """D-4 helper: safely call clear_reserve() on a ThinkingWidget."""
+    try:
+        tw.clear_reserve()
+    except Exception:
+        pass
+
+
 from .status_bar import (  # noqa: F401
     AnimatedCounter,
     HintBar,
@@ -405,7 +414,10 @@ class OutputPanel(ScrollableContainer):
         """Commit any in-progress buffered line to current message's RichLog."""
         # Deactivate shimmer — covers the empty-response case where no chunk ever arrives
         try:
-            self.query_one(ThinkingWidget).deactivate()
+            tw = self.query_one(ThinkingWidget)
+            tw.deactivate()
+            # D-4: clear the layout reserve row after the 150ms fade-out timer fires
+            self.set_timer(0.20, lambda: _clear_thinking_reserve(tw))
         except NoMatches:
             pass
         live = self.live_line
@@ -709,6 +721,9 @@ class AssistantNameplate(Widget):
         self._accent_hex = "#7b68ee"
         self._active_dim_hex = "#3d3480"
         self._text_hex = "#cccccc"
+        # C-5/C-2: derived in on_mount; fallbacks point to module constants until then
+        self._active_style: Style = _NP_ACTIVE_COLOR
+        self._idle_color_hex: str = "#888888"
         self._active_phase: float = 0.0
         # C-2/C-5: theme-derived colors (updated in on_mount; fallbacks match constants)
         self._active_style: Style = _NP_ACTIVE_COLOR
@@ -727,6 +742,12 @@ class AssistantNameplate(Widget):
             self._text_hex = css_vars.get("foreground", "#cccccc")
             # dim end of pulse wave: 30% of the accent blended toward black
             self._active_dim_hex = _lerp_hex("#000000", self._accent_hex, 0.30)
+            # C-5: derive active style from live accent rather than module constant
+            self._active_style = Style.parse(f"bold {self._accent_hex}")
+            # C-2: idle color = 25% accent tint blended toward base text color
+            self._idle_color_hex: str = _lerp_hex(
+                self._text_hex, self._accent_hex, 0.25
+            )
         except Exception:
             pass
         # C-5: active style from live accent color (not hardcoded constant)
@@ -758,7 +779,7 @@ class AssistantNameplate(Widget):
         from hermes_cli.tui.resize_utils import HYSTERESIS
         if abs(new_w - self._canvas_width) > HYSTERESIS * 2:
             self._canvas_width = new_w
-            self.refresh()  # C-6: redraw after canvas width update
+            self.refresh()  # C-6: repaint after canvas-width change
         self._last_nameplate_w = new_w
 
     # --- public API ---
@@ -826,7 +847,7 @@ class AssistantNameplate(Widget):
         """Traveling sine-wave shimmer in active color while agent is thinking."""
         t = Text()
         n = max(3, len(self._frame))
-        offset = math.pi / n  # C-3: spans exactly π across the name regardless of length
+        offset = math.pi / n  # spans exactly π across name regardless of length
         for i, ch in enumerate(self._frame):
             wave = (math.sin(self._active_phase - i * offset) + 1.0) / 2.0
             color = _lerp_hex(self._active_dim_hex, self._accent_hex, wave)
@@ -878,10 +899,10 @@ class AssistantNameplate(Widget):
     def _tick_active_idle(self) -> None:
         try:
             if self.app.has_class("reduced-motion"):
-                return  # G-1: static nameplate in reduced-motion mode
+                return  # static nameplate in reduced-motion mode
         except Exception:
             pass
-        self._active_phase += 0.28  # C-3: was 0.18; ~1.8s full cycle
+        self._active_phase += 0.28  # was 0.18; ~1.8 s full cycle
 
     def _tick_morph(self) -> None:
         dst_style = self._active_style if self._state == _NPState.MORPH_TO_ACTIVE else Style.parse(self._idle_color_hex)

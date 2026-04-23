@@ -50,9 +50,14 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
     """
 
     BINDINGS = [
-        Binding("ctrl+shift+a", "select_all",  "Select all",  show=False),
-        Binding("ctrl+shift+z", "redo",        "Redo",        show=False),
-        Binding("ctrl+r",       "rev_search",  "History",     show=False),
+        Binding("ctrl+shift+a", "select_all",      "Select all",  show=False),
+        Binding("ctrl+shift+z", "redo",             "Redo",        show=False),
+        Binding("ctrl+r",       "rev_search",       "History",     show=False),
+        Binding("ctrl+g",       "abort_rev_search", "",            show=False, priority=True),
+        Binding("ctrl+u",       "kill_line_start",  "",            show=False, priority=True),
+        Binding("ctrl+k",       "kill_line_end",    "",            show=False, priority=True),
+        Binding("alt+up",       "history_prev_prompt", "",         show=False, priority=True),
+        Binding("alt+down",     "history_next_prompt", "",         show=False, priority=True),
     ]
 
     # --- Messages ---
@@ -101,6 +106,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         self._slash_keybind_hints: dict[str, str] = {}
         self._slash_subcommands: dict[str, list[str]] = {}
         self._idle_placeholder: str = _effective_placeholder
+        self._chevron_label: str = "❯ "
         self._rev_mode: bool = False
         self._rev_query: str = ""
         self._rev_idx: int = -1
@@ -428,15 +434,14 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         _is_bash = self.text.lstrip().startswith("!")
         if _is_bash != self.has_class("--bash-mode"):
             self.set_class(_is_bash, "--bash-mode")
-            if _is_bash:
-                self.app._flash_hint("bash  ·  Enter: run  ·  Esc: cancel", 30.0)
-            else:
-                self.app.feedback.cancel("hint-bar")
+            self._sync_bash_mode_ui(_is_bash)
 
     # --- Actions ---
 
     def action_submit(self) -> None:
         """Save to history, post Submitted, then clear the input."""
+        if getattr(self, "_rev_mode", False):
+            self._exit_rev_mode(accept=True)
         text = self.text.strip()
         if self.disabled or not text:
             return
@@ -497,3 +502,60 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
     def clear(self) -> None:
         """Clear the input content and reset undo history."""
         self.load_text("")
+
+    # --- Bash mode UI sync ---
+
+    def _sync_bash_mode_ui(self, is_bash: bool) -> None:
+        """Sync placeholder, chevron glyph, and hint to bash-mode state."""
+        if is_bash:
+            self.placeholder = "! shell mode  ·  Enter runs  ·  Ctrl+C clear"
+        else:
+            self.placeholder = self._idle_placeholder
+        try:
+            from textual.widgets import Label
+            self.query_one("#input-chevron", Label).update("$ " if is_bash else self._chevron_label)
+        except Exception:
+            pass
+        try:
+            if is_bash:
+                self.app._flash_hint("bash  ·  Enter: run  ·  Ctrl+C clear", 30.0)
+            else:
+                self.app.feedback.cancel("hint-bar")
+        except Exception:
+            pass
+
+    # --- Rev-search abort ---
+
+    def action_abort_rev_search(self) -> None:
+        """Ctrl+G: abort rev-search, restoring pre-search value."""
+        if not getattr(self, "_rev_mode", False):
+            return
+        self._exit_rev_mode(accept=False)
+
+    # --- Readline kill bindings ---
+
+    def action_kill_line_start(self) -> None:
+        """Ctrl+U: delete from cursor to start of current line."""
+        cursor_row, cursor_col = self.cursor_location
+        if cursor_col == 0:
+            return
+        self.delete(start=(cursor_row, 0), end=(cursor_row, cursor_col))
+
+    def action_kill_line_end(self) -> None:
+        """Ctrl+K: delete from cursor to end of current line."""
+        row, col = self.cursor_location
+        line = self.get_line(row)
+        end_col = len(line.plain)
+        if col >= end_col:
+            return
+        self.delete(start=(row, col), end=(row, end_col))
+
+    # --- History skip-command navigation ---
+
+    def action_history_prev_prompt(self) -> None:
+        """Alt+Up: navigate history backward, skipping slash/bang commands."""
+        self._history_navigate_skip_cmds(direction=-1)
+
+    def action_history_next_prompt(self) -> None:
+        """Alt+Down: navigate history forward, skipping slash/bang commands."""
+        self._history_navigate_skip_cmds(direction=+1)

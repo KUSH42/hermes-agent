@@ -36,6 +36,8 @@ class _AutocompleteMixin:
                 self._hide_completion_overlay()  # type: ignore[attr-defined]
                 return
 
+            # In bash mode: @file completion is intentional (useful for !cat @path)
+            # Slash-command completion is suppressed (/ is a path separator in shell)
             if (
                 "\n" not in self.value  # type: ignore[attr-defined]
                 and self.value.startswith("/")  # type: ignore[attr-defined]

@@ -278,6 +278,9 @@ UndoConfirmOverlay {
 #input-chevron.--yolo-active  { color: $chevron-error; }
 /* Bash-passthrough mode indicator */
 HermesInput.--bash-mode #input-chevron { color: $chevron-shell; }
+HermesInput.--bash-mode { border: tall $chevron-shell 40%; }
+HermesInput.--bash-mode:focus { border: tall $chevron-shell 70%; }
+HermesApp.density-compact HermesInput.--bash-mode:focus { border: none; }
 
 #spinner-overlay {
     display: none;
@@ -692,6 +695,8 @@ OmissionBar Button {
 
 OmissionBar Button:hover { background: $primary 20%; }
 OmissionBar Button:disabled { color: $text-disabled; }
+/* E-1: [reset] at default state — dim but still clickable (never disabled) */
+OmissionBar Button.--at-default { color: $text-muted 50%; }
 
 .--omission-bar-top {
     margin-bottom: 0;
@@ -714,6 +719,11 @@ ToolAccent.-ok          { background: $success; }
 ToolAccent.-error       { background: $error; }
 ToolAccent.-warning     { background: $warning; }
 ToolAccent.-muted       { background: $primary 8%; }
+
+/* B-2: completing flash — subtle accent border signals result has landed */
+ToolPanel.--completing > ToolAccent {
+    background: $primary 25%;
+}
 
 ToolPanel.tool-panel--accent                 { border-left: vkey $accent 30%; }
 ToolPanel.category-file.tool-panel--accent   { border-left: vkey $accent 80%; }

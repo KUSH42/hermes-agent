@@ -110,6 +110,22 @@ class KeyDispatchService(AppService):
                 event.prevent_default()
                 return
 
+            # Bash mode: SIGINT running command, or clear input
+            try:
+                inp = self.app.query_one("#input-area")
+            except NoMatches:
+                inp = None
+            if inp is not None and inp.has_class("--bash-mode"):
+                if self.app._svc_bash.is_running:
+                    self.app._svc_bash.kill()
+                    self.app._flash_hint("Command interrupted", 1.5)
+                    event.prevent_default()
+                    return
+                else:
+                    inp.clear()
+                    event.prevent_default()
+                    return
+
             # Kill bash command before trying overlay-cancel or agent-interrupt
             if self.app._svc_bash.is_running:
                 self.app._svc_bash.kill()

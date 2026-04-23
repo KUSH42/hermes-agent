@@ -98,6 +98,16 @@ class _HistoryMixin:
                 self.placeholder = f"reverse-i-search: {query_display}_"  # type: ignore[attr-defined]
             except Exception:
                 pass
+            # Clear any ghost text and show persistent rev-search legend
+            self.suggestion = ""  # type: ignore[attr-defined]
+            try:
+                self.app.feedback.flash(  # type: ignore[attr-defined]
+                    "hint-bar",
+                    "Ctrl+G abort · Esc accept · ↑↓ cycle",
+                    duration=9999,
+                )
+            except Exception:
+                pass
         query = self._rev_query or current
         idx = self._rev_idx - 1
         while idx >= 0:
@@ -120,6 +130,8 @@ class _HistoryMixin:
     def _exit_rev_mode(self, accept: bool = True) -> None:
         """Exit reverse-search mode. If accept=False, restore the pre-search value."""
         saved = getattr(self, "_rev_saved_value", "")
+        # Capture match_idx before clearing state (used in accept path below)
+        match_idx = getattr(self, "_rev_match_idx", -1)
         self._rev_mode = False
         self._rev_query = ""
         self._rev_idx = -1
@@ -138,12 +150,16 @@ class _HistoryMixin:
             # Accepted a rev-search match: sync _history_idx so subsequent up/down
             # continues relative to the matched entry instead of drifting to a
             # stale pre-rev-search position.
-            match_idx = getattr(self, "_rev_match_idx", -1)
             hist = getattr(self, "_history", [])
             if 0 <= match_idx < len(hist):
                 self._history_idx = match_idx  # type: ignore[attr-defined]
             else:
                 self._history_idx = -1  # type: ignore[attr-defined]
+        # Cancel the persistent rev-search hint
+        try:
+            self.app.feedback.cancel("hint-bar")  # type: ignore[attr-defined]
+        except Exception:
+            pass
         # Restore idle placeholder
         try:
             self.placeholder = self._idle_placeholder  # type: ignore[attr-defined]
@@ -194,6 +210,28 @@ class _HistoryMixin:
         finally:
             self._history_loading = False  # type: ignore[attr-defined]
 
+    def _history_navigate_skip_cmds(self, direction: int) -> None:
+        """Navigate history skipping slash and bang commands."""
+        if not self._history:
+            return
+        if self._history_idx == -1 and direction == +1:
+            return
+        if self._history_idx == -1 and direction == -1:
+            self._history_draft = self.value  # type: ignore[attr-defined]
+        start = self._history_idx if self._history_idx != -1 else len(self._history)
+        idx = start + direction
+        if direction == +1 and idx >= len(self._history):
+            self._history_idx = -1  # type: ignore[attr-defined]
+            self._history_load(self._history_draft)  # type: ignore[attr-defined]
+            return
+        while 0 <= idx < len(self._history):
+            entry = self._history[idx]
+            if not entry.startswith("/") and not entry.startswith("!"):
+                self._history_idx = idx  # type: ignore[attr-defined]
+                self._history_load(entry)  # type: ignore[attr-defined]
+                return
+            idx += direction
+
     def _show_subcommand_completions(self, command: str, fragment: str) -> None:
         """Show subcommand completion overlay for a slash command."""
         from hermes_cli.tui.path_search import SlashCandidate
@@ -218,6 +256,8 @@ class _HistoryMixin:
 
     def update_suggestion(self) -> None:
         """Set ghost text from history. Called by TextArea after every edit."""
+        if getattr(self, "_rev_mode", False):
+            return
         current = self.text  # type: ignore[attr-defined]
         row, col = self.cursor_location  # type: ignore[attr-defined]
 

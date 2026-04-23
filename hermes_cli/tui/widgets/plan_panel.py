@@ -6,12 +6,11 @@ Sections:
   _PlanPanelHeader  — title + collapse chevron
   _NowSection       — currently-executing tool + elapsed timer
   _NextSection      — pending tools (max 5 + "+N more")
-  _DoneSection      — completed tools this turn (max 5 + "+N more")
   _BudgetSection    — turn cost/token display, click opens UsageOverlay
 
 TCSS vars required (must also be in hermes.tcss and all skin files):
-  $plan-now-fg:     $accent-interactive (default #00bcd4)
-  $plan-pending-fg: #777777 60%
+  $plan-now-fg:     #ffb454 (warm amber — "in-flight")
+  $plan-pending-fg: #888888
 """
 from __future__ import annotations
 
@@ -19,7 +18,7 @@ import os
 import time
 from typing import TYPE_CHECKING, Any
 
-from rich.text import Text
+from rich.text import Text as RichText
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
@@ -105,6 +104,7 @@ class _NowSection(Vertical):
     _elapsed_s: int = 0
     _timer_handle: Any = None
     _start_monotonic: float = 0.0
+    _base_text: str = ""
 
     def compose(self) -> ComposeResult:
         yield Static("", id="now-line")
@@ -118,6 +118,7 @@ class _NowSection(Vertical):
 
     def clear(self) -> None:
         """Clear the Now line and stop the timer."""
+        self._base_text = ""
         try:
             self.query_one("#now-line", Static).update("")
         except (NoMatches, Exception):
@@ -128,7 +129,7 @@ class _NowSection(Vertical):
         if _DETERMINISTIC:
             return
         if self._timer_handle is None:
-            self._timer_handle = self.set_interval(1.0, self._tick)
+            self._timer_handle = self.set_interval(2.0, self._tick)
 
     def _stop_timer(self) -> None:
         if self._timer_handle is not None:
@@ -139,34 +140,27 @@ class _NowSection(Vertical):
             self._timer_handle = None
 
     def _tick(self) -> None:
+        if _DETERMINISTIC:
+            return
         elapsed = int(time.monotonic() - self._start_monotonic)
         self._elapsed_s = elapsed
-        # Refresh the label without a full call reference — just update elapsed text
-        try:
-            static = self.query_one("#now-line", Static)
-            current = static.renderable  # type: ignore[attr-defined]
-            # Replace elapsed suffix
-            text = str(current) if not isinstance(current, str) else current
-            # Strip existing elapsed and re-add
-            if "  [" in text:
-                base = text[:text.rfind("  [")]
-            else:
-                base = text
-            static.update(f"{base}  [{elapsed}s]")
-        except (NoMatches, Exception):
-            pass
+        self._update_now_line(elapsed)
 
     def _refresh_display(self, call: "PlannedCall") -> None:
-        elapsed = 0 if _DETERMINISTIC else int(time.monotonic() - self._start_monotonic)
         label = call.label[:50] if len(call.label) > 50 else call.label
         glyph = _glyph_running()
-        text = f"{glyph} {label}  [{elapsed}s]"
+        self._base_text = f"{glyph} {label}"
+        elapsed = 0 if _DETERMINISTIC else int(time.monotonic() - self._start_monotonic)
+        self._update_now_line(elapsed)
+
+    def _update_now_line(self, elapsed: int) -> None:
+        """Apply current elapsed to the Now line. Uses _base_text — never string-parses."""
+        if elapsed >= 3:
+            text = f"{self._base_text}  [{elapsed}s]"
+        else:
+            text = self._base_text
         try:
-            self.query_one("#now-line", Static).update(
-                Text.from_markup(f"[$plan-now-fg]{text}[/$plan-now-fg]")
-                if False  # Rich can't use TCSS vars — use plain text with inline style
-                else text
-            )
+            self.query_one("#now-line", Static).update(text)
         except (NoMatches, Exception):
             pass
 
@@ -188,7 +182,6 @@ class _NextSection(Vertical):
     """
 
     _MAX_VISIBLE = 5
-    _expanded: reactive[bool] = reactive(False)
 
     def compose(self) -> ComposeResult:
         yield Static("", id="next-header")
@@ -215,7 +208,7 @@ class _NextSection(Vertical):
         except NoMatches:
             pass
 
-        limit = len(pending) if self._expanded else self._MAX_VISIBLE
+        limit = self._MAX_VISIBLE
         visible = pending[:limit]
         overflow = len(pending) - limit
 
@@ -229,74 +222,6 @@ class _NextSection(Vertical):
         if overflow > 0:
             more = Static(f"  … +{overflow} more", classes="plan-more-line", id="next-more")
             new_children.append(more)
-
-        if new_children:
-            container.mount(*new_children)
-
-
-# ---------------------------------------------------------------------------
-# _DoneSection
-# ---------------------------------------------------------------------------
-
-class _DoneSection(Vertical):
-    """Shows completed tools this turn (up to 5 + overflow indicator)."""
-
-    DEFAULT_CSS = """
-    _DoneSection {
-        height: auto;
-        width: 1fr;
-        display: none;
-    }
-    _DoneSection.--visible { display: block; }
-    """
-
-    _MAX_VISIBLE = 5
-    _expanded: reactive[bool] = reactive(False)
-
-    def compose(self) -> ComposeResult:
-        yield Static("", id="done-header")
-
-    def update_calls(self, calls: "list[PlannedCall]") -> None:
-        """Rebuild the done section content."""
-        from hermes_cli.tui.plan_types import PlanState
-        done = [c for c in calls if c.state in (PlanState.DONE, PlanState.ERROR, PlanState.CANCELLED, PlanState.SKIPPED)]
-        container = self
-        for child in list(container.children):
-            if child.id != "done-header":
-                child.remove()
-
-        if not done:
-            try:
-                self.query_one("#done-header", Static).update("")
-            except NoMatches:
-                pass
-            return
-
-        try:
-            self.query_one("#done-header", Static).update("Done:")
-        except NoMatches:
-            pass
-
-        limit = len(done) if self._expanded else self._MAX_VISIBLE
-        visible = done[:limit]
-        overflow = len(done) - limit
-
-        new_children: list[Static] = []
-        for call in visible:
-            indent = "  " * call.depth
-            if call.state == PlanState.ERROR:
-                glyph = _glyph_error()
-            else:
-                glyph = _glyph_done()
-            label = call.label[:50] if len(call.label) > 50 else call.label
-            dur_str = ""
-            if call.started_at is not None and call.ended_at is not None:
-                dur_ms = int((call.ended_at - call.started_at) * 1000)
-                dur_str = f" ({dur_ms}ms)"
-            new_children.append(Static(f"  {indent}{glyph} {label}{dur_str}", classes="plan-done-line"))
-
-        if overflow > 0:
-            new_children.append(Static(f"  … +{overflow} more", classes="plan-more-line", id="done-more"))
 
         if new_children:
             container.mount(*new_children)
@@ -369,11 +294,32 @@ class _PlanPanelHeader(Horizontal):
     def compose(self) -> ComposeResult:
         yield Static("", id="plan-header-label")
 
-    def update_header(self, collapsed: bool, running: int, pending: int, done: int) -> None:
+    def update_header(self, collapsed: bool, running: int, pending: int,
+                      done: int, errors: int = 0, cost_usd: float = 0.0) -> None:
         """Refresh the header line."""
         chevron = "▸" if collapsed else "▾"
         if collapsed:
-            label = f"Plan {chevron}  {running}▶ · {pending}▸ · {done}✓"
+            parts_plain: list[str] = []
+            if running:
+                parts_plain.append(f"{running}▶")
+            if pending:
+                parts_plain.append(f"{pending}▸")
+            if done:
+                parts_plain.append(f"{done}✓")
+            summary_base = " · ".join(parts_plain) if parts_plain else "idle"
+            prefix = f"Plan {chevron}  {summary_base}"
+            if errors:
+                # Must use Text object — plain string with markup renders literally
+                label: str | RichText = RichText.from_markup(
+                    f"{prefix} · [bold red]{errors}✗[/bold red]"
+                )
+            else:
+                label = prefix
+            if cost_usd > 0:
+                if isinstance(label, RichText):
+                    label.append(f" · ${cost_usd:.2f}")
+                else:
+                    label = f"{label} · ${cost_usd:.2f}"
         else:
             label = f"Plan {chevron}"
         try:
@@ -397,7 +343,7 @@ class _PlanPanelHeader(Horizontal):
 class PlanPanel(Vertical):
     """Bottom-docked plan/action queue panel.
 
-    Composed of four subsections: Now, Next, Done, Budget.
+    Composed of three subsections: Now, Next, Budget.
     Collapses to a one-line chip via plan_panel_collapsed reactive.
     """
 
@@ -423,13 +369,14 @@ class PlanPanel(Vertical):
     }
     """
 
-    _collapsed: reactive[bool] = reactive(False)
+    _collapsed: reactive[bool] = reactive(True)
+    _budget_hide_timer: Any = None
+    _active_hide_timer: Any = None
 
     def compose(self) -> ComposeResult:
         yield _PlanPanelHeader()
         yield _NowSection()
         yield _NextSection()
-        yield _DoneSection()
         yield _BudgetSection()
 
     def on_mount(self) -> None:
@@ -454,6 +401,11 @@ class PlanPanel(Vertical):
             pass
         # Initial render
         self._rebuild()
+        # Sync collapsed state immediately to avoid mount flash
+        try:
+            self._on_collapse_changed(getattr(self.app, "plan_panel_collapsed", True))
+        except Exception:
+            pass
 
     def _on_planned_calls_changed(self, calls: list) -> None:
         self._rebuild()
@@ -468,11 +420,31 @@ class PlanPanel(Vertical):
                 app.remove_class("plan-active")
         except Exception:
             pass
-        try:
-            if has_any:
+        # Debounced --active hide
+        if has_any:
+            # Show immediately; cancel any pending hide timer
+            if self._active_hide_timer is not None:
+                try:
+                    self._active_hide_timer.stop()
+                except Exception:
+                    pass
+                self._active_hide_timer = None
+            try:
                 self.add_class("--active")
-            else:
-                self.remove_class("--active")
+            except Exception:
+                pass
+        else:
+            # Defer hide by 3s
+            if self._active_hide_timer is None:
+                self._active_hide_timer = self.set_timer(3.0, self._do_hide_active)
+        # Budget visibility
+        self._refresh_budget_visibility(has_active, calls)
+
+    def _do_hide_active(self) -> None:
+        self._active_hide_timer = None
+        try:
+            self.remove_class("--active")
+            self.app.remove_class("plan-active")
         except Exception:
             pass
 
@@ -496,7 +468,8 @@ class PlanPanel(Vertical):
             self.remove_class("--collapsed")
         self._rebuild_header()
         # Show/hide body sections via --visible class
-        for sec_cls in (_NowSection, _NextSection, _DoneSection, _BudgetSection):
+        # Budget section visibility is managed exclusively by _refresh_budget_visibility
+        for sec_cls in (_NowSection, _NextSection):
             try:
                 sec = self.query_one(sec_cls)
                 sec.set_class(not collapsed, "--visible")
@@ -512,7 +485,6 @@ class PlanPanel(Vertical):
         self._rebuild_header()
         self._rebuild_now(calls)
         self._rebuild_next(calls)
-        self._rebuild_done(calls)
 
     def _rebuild_header(self) -> None:
         try:
@@ -522,10 +494,15 @@ class PlanPanel(Vertical):
         from hermes_cli.tui.plan_types import PlanState
         running = sum(1 for c in calls if c.state == PlanState.RUNNING)
         pending = sum(1 for c in calls if c.state == PlanState.PENDING)
-        done = sum(1 for c in calls if c.state in (PlanState.DONE, PlanState.ERROR))
+        done = sum(1 for c in calls if c.state == PlanState.DONE)
+        errors = sum(1 for c in calls if c.state == PlanState.ERROR)
+        try:
+            cost_usd: float = getattr(self.app, "turn_cost_usd", 0.0)
+        except Exception:
+            cost_usd = 0.0
         try:
             header = self.query_one(_PlanPanelHeader)
-            header.update_header(self._collapsed, running, pending, done)
+            header.update_header(self._collapsed, running, pending, done, errors, cost_usd)
         except (NoMatches, Exception):
             pass
 
@@ -548,9 +525,29 @@ class PlanPanel(Vertical):
         except (NoMatches, Exception):
             pass
 
-    def _rebuild_done(self, calls: list) -> None:
+    def _refresh_budget_visibility(self, has_active: bool, calls: list) -> None:
         try:
-            done_sec = self.query_one(_DoneSection)
-            done_sec.update_calls(calls)
+            budget = self.query_one(_BudgetSection)
+        except (NoMatches, Exception):
+            return
+        if has_active:
+            # Hide during active turn; cancel any pending show-timer
+            if self._budget_hide_timer is not None:
+                try:
+                    self._budget_hide_timer.stop()
+                except Exception:
+                    pass
+                self._budget_hide_timer = None
+            budget.set_class(False, "--visible")
+        else:
+            # Show for 5s after turn ends, then hide
+            budget.set_class(not self._collapsed, "--visible")
+            if self._budget_hide_timer is None:
+                self._budget_hide_timer = self.set_timer(5.0, self._hide_budget_after_turn)
+
+    def _hide_budget_after_turn(self) -> None:
+        self._budget_hide_timer = None
+        try:
+            self.query_one(_BudgetSection).set_class(False, "--visible")
         except (NoMatches, Exception):
             pass

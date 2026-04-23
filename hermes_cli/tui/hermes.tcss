@@ -22,8 +22,8 @@
    Local declarations here block runtime skin overrides. */
 
 /* Component variable declarations — must be present for Textual to parse $var refs */
-$plan-now-fg: #00bcd4;
-$plan-pending-fg: #777777;
+$plan-now-fg: #ffb454;
+$plan-pending-fg: #888888;
 $panel-border: #333333;
 /* Pane layout variables — v2 three-pane layout */
 $pane-border: #333333;
@@ -219,11 +219,6 @@ PlanPanel _NowSection {
 PlanPanel _NextSection {
     color: $plan-pending-fg;
     opacity: 0.8;
-}
-
-PlanPanel _DoneSection {
-    color: $text-muted;
-    opacity: 0.6;
 }
 
 PlanPanel _BudgetSection {

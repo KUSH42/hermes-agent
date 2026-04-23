@@ -297,8 +297,8 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     # Second accent color — used for interactive key badges in HintBar
     "accent-interactive":   "#00bcd4",
     # PlanPanel (R1) — now-section foreground and pending-section foreground
-    "plan-now-fg":          "#00bcd4",
-    "plan-pending-fg":      "#777777",
+    "plan-now-fg":          "#ffb454",
+    "plan-pending-fg":      "#888888",
     # Pane layout border colors — used by PaneContainer in v2 layout
     "pane-border":          "#333333",
     "pane-border-focused":  "#5f87d7",

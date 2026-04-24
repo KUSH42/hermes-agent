@@ -1058,6 +1058,11 @@ HermesApp.layout-v2 PaneContainer#pane-center.--split SplitTargetStub {
     display: block;
     height: 1fr;
 }
+HermesApp.layout-v2 #pane-left PlanPanel {
+    dock: none;
+    height: 1fr;
+    max-height: 100%;
+}
 /* SplitTargetStub hidden by default outside split context */
 SplitTargetStub {
     display: none;

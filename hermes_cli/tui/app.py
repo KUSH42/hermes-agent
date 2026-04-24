@@ -614,9 +614,10 @@ class HermesApp(App):
             yield SplitTargetStub(id="split-target-stub")
         else:
             yield self._output_panel
-        # PlanPanel: bottom-docked strip above StatusBar; shows tool work queue.
-        from hermes_cli.tui.widgets.plan_panel import PlanPanel as _PP
-        yield _PP(id="plan-panel")
+        # PlanPanel: bottom-docked strip above StatusBar (non-v2 layout only).
+        if self._display_layout != "v2":
+            from hermes_cli.tui.widgets.plan_panel import PlanPanel as _PP
+            yield _PP(id="plan-panel")
         # TTEWidget uses layer: overlay + dock: top in its DEFAULT_CSS so it
         # floats over the banner area when active.  Banner content is already
         # in OutputPanel underneath; when effect ends the overlay hides and
@@ -806,16 +807,16 @@ class HermesApp(App):
         if self._display_layout == "v2":
             self.add_class("layout-v2")
             try:
-                from hermes_cli.tui.widgets.plan_panel_stub import PlanPanelStub
+                from hermes_cli.tui.widgets.plan_panel import PlanPanel as _PP
                 from hermes_cli.tui.widgets.context_panel_stub import ContextPanelStub
                 pane_center = self.query_one("#pane-center")
                 pane_left = self.query_one("#pane-left")
                 pane_right = self.query_one("#pane-right")
                 pane_center.set_content(self._output_panel)
-                pane_left.set_content(PlanPanelStub())
+                pane_left.set_content(_PP(id="plan-panel"))
                 pane_right.set_content(ContextPanelStub())
             except Exception:
-                pass
+                logger.exception("v2 pane wiring failed")
         # Restore pane layout blob from previous session (worktree sessions only)
         try:
             if (

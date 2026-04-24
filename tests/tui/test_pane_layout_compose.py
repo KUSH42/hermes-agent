@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 
 from hermes_cli.tui.app import HermesApp
 from hermes_cli.tui.widgets.pane_container import PaneContainer
-from hermes_cli.tui.widgets.plan_panel_stub import PlanPanelStub
+from hermes_cli.tui.widgets.plan_panel import PlanPanel
 from hermes_cli.tui.widgets.context_panel_stub import ContextPanelStub
 from hermes_cli.tui.pane_manager import PaneId, PaneManager
 from hermes_cli.tui.widgets import OutputPanel, StatusBar
@@ -166,13 +166,13 @@ async def test_v2_output_panel_queryable():
 
 
 @pytest.mark.asyncio
-async def test_v2_plan_stub_in_left_pane():
+async def test_v2_plan_panel_in_left_pane():
     app = _make_app("v2")
     async with app.run_test(size=(140, 40)) as pilot:
         await pilot.pause()
         pane_left = app.query_one("#pane-left")
-        stubs = pane_left.query(PlanPanelStub)
-        assert len(stubs) == 1
+        panels = pane_left.query(PlanPanel)
+        assert len(panels) == 1
 
 
 @pytest.mark.asyncio

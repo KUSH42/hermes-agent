@@ -65,6 +65,53 @@ _IMPLEMENTED_ACTIONS: frozenset[str] = frozenset({
 class _ArtifactButton(TooltipMixin, Button):
     """B2: Artifact chip button with tooltip support for full path/URL."""
 
+
+# B9: module-level flag — once any panel has shown the discovery hint via ?,
+# suppress it for all subsequent panels in the session.
+_DISCOVERY_GLOBAL_SHOWN: bool = False
+
+
+# B1: per-category collapsed action strip definitions
+def _build_collapsed_actions_map() -> "dict":
+    from hermes_cli.tui.tool_category import ToolCategory
+    return {
+        ToolCategory.SHELL:  [("r", "retry"), ("e", "err"), ("y", "copy"), ("?", "keys")],
+        ToolCategory.FILE:   [("o", "open"), ("y", "copy"), ("c", "diff"), ("?", "keys")],
+        ToolCategory.SEARCH: [("y", "copy"), ("o", "open"), ("?", "keys")],
+        ToolCategory.WEB:    [("o", "open"), ("y", "copy"), ("?", "keys")],
+        ToolCategory.CODE:   [("y", "copy"), ("r", "retry"), ("?", "keys")],
+        ToolCategory.AGENT:  [("?", "keys")],
+        ToolCategory.MCP:    [("y", "copy"), ("?", "keys")],
+    }
+
+
+_COLLAPSED_ACTIONS: "dict | None" = None
+
+
+def _get_collapsed_actions(category: "object") -> "list[tuple[str, str]]":
+    global _COLLAPSED_ACTIONS
+    if _COLLAPSED_ACTIONS is None:
+        try:
+            _COLLAPSED_ACTIONS = _build_collapsed_actions_map()
+        except Exception:
+            _COLLAPSED_ACTIONS = {}
+    return _COLLAPSED_ACTIONS.get(category, [("?", "keys")])  # type: ignore[arg-type]
+
+
+class _CollapsedActionStrip(Static):
+    """B1: one-line action strip shown below header when panel is collapsed+focused."""
+
+    DEFAULT_CSS = """
+    _CollapsedActionStrip {
+        display: none;
+        height: 1;
+        color: $text-muted 70%;
+        padding: 0 2;
+    }
+    _CollapsedActionStrip.--visible { display: block; }
+    """
+
+
 def _artifact_icon(kind: str) -> str:
     """Return the icon character for an artifact kind, respecting tool_icon_mode."""
     from agent.display import get_tool_icon_mode as _gim
@@ -192,7 +239,26 @@ class FooterPane(Widget):
         background: transparent;
         min-width: 0;
         color: $accent-muted;
-    }    """
+    }
+    FooterPane > .action-row {
+        height: 1;
+        layout: horizontal;
+        display: none;
+    }
+    FooterPane.has-actions > .action-row { display: block; }
+    FooterPane > .action-row > .--action-chip {
+        height: 1;
+        border: none;
+        background: transparent;
+        min-width: 0;
+        color: $text-muted 80%;
+        padding: 0 1;
+    }
+    FooterPane > .action-row > .--action-chip:hover {
+        color: $accent;
+        background: $accent 10%;
+    }
+    """
 
     COMPONENT_CLASSES = {"footer--exit-chip", "footer--badge", "footer--retry-hint"}
 
@@ -210,11 +276,13 @@ class FooterPane(Widget):
         self._stderr_row = Static("", classes="footer-stderr")
         self._remediation_row = Static("", classes="footer-remediation")
         self._artifact_row = Horizontal(classes="artifact-row")
+        self._action_row = Horizontal(classes="action-row")
         self._diff_affordance = DiffAffordance()
         yield self._content
         yield self._stderr_row
         yield self._remediation_row
         yield self._artifact_row
+        yield self._action_row
         yield self._diff_affordance
     def _render_stderr(self, tail: str) -> "Any":
         from rich.text import Text
@@ -295,18 +363,10 @@ class FooterPane(Widget):
                 payload=None,
             ))
 
-        # Action row — only implemented actions; A1: skip when streaming
-        if actions_to_render and not _is_streaming:
-            parts.append("  ")
-            for action in actions_to_render:
-                if action.kind not in _IMPLEMENTED_ACTIONS:
-                    continue
-                parts.append(f"[{action.hotkey}]", style="dim bold")
-                parts.append(f" {action.label}  ", style="dim")
-
         self._content.update(parts)
 
-        # D2: rebuild artifact row with clickable buttons
+        # B5: rebuild action buttons; D2: rebuild artifact row
+        self._rebuild_action_buttons(summary, actions_to_render if not _is_streaming else [])
         self._rebuild_artifact_buttons(summary)
 
         # Stderr split row — multi-line, last 300 chars
@@ -390,8 +450,51 @@ class FooterPane(Widget):
             self._artifact_row.mount(*buttons)
         self.add_class("has-artifacts")
 
+    def _rebuild_action_buttons(self, summary: "ResultSummaryV4", actions_to_render: list) -> None:
+        """B5: rebuild action row with clickable Button per action."""
+        from rich.text import Text as RichText
+        action_row = getattr(self, "_action_row", None)
+        if action_row is None:
+            return
+        try:
+            for btn in list(action_row.query(".--action-chip")):
+                btn.remove()
+        except Exception:
+            pass
+        filtered = [a for a in actions_to_render if a.kind in _IMPLEMENTED_ACTIONS]
+        if not filtered:
+            self.remove_class("has-actions")
+            return
+        buttons = []
+        for action in filtered:
+            label = RichText(f"[{action.hotkey}] {action.label}", no_wrap=True)
+            btn = Button(label, classes="--action-chip", name=action.kind)
+            buttons.append(btn)
+        if buttons:
+            action_row.mount(*buttons)
+        self.add_class("has-actions")
+
     def on_button_pressed(self, event: "Button.Pressed") -> None:
-        """B3: artifact overflow; D2: artifact chip click; D4: collapse."""
+        """B3: artifact overflow; D2: artifact chip click; D4: collapse; B5: action chip."""
+        # B5: action chip buttons
+        if "--action-chip" in event.button.classes:
+            kind = event.button.name
+            panel = self.parent
+            if isinstance(panel, ToolPanel):
+                _CHIP_ACTION_MAP = {
+                    "retry":      panel.action_retry,
+                    "copy_err":   panel.action_copy_err,
+                    "open_first": panel.action_open_primary,
+                    "copy_body":  panel.action_copy_body,
+                }
+                handler = _CHIP_ACTION_MAP.get(kind)
+                if handler is not None:
+                    try:
+                        handler()
+                    except Exception:
+                        pass
+            event.stop()
+            return
         if "--artifact-overflow" in event.button.classes:
             self._show_all_artifacts = True
             self._rebuild_chips()
@@ -547,9 +650,13 @@ class ToolPanel(Widget):
 
         # Pane refs (set in compose)
         self._accent: ToolAccent | None = None
+        self._collapsed_strip: _CollapsedActionStrip | None = None
         self._body_pane: BodyPane | None = None
         self._footer_pane: FooterPane | None = None
         self._hint_row: Static | None = None
+
+        # B9: one-shot discovery hint per panel
+        self._discovery_shown: bool = False
 
         # CWD stripping — enable on SHELL category blocks
         from hermes_cli.tui.tool_category import ToolCategory
@@ -558,10 +665,12 @@ class ToolPanel(Widget):
 
     def compose(self) -> ComposeResult:
         self._accent = ToolAccent()
+        self._collapsed_strip = _CollapsedActionStrip()
         self._body_pane = BodyPane(self._block, category=self._category)
         self._footer_pane = FooterPane()
         self._hint_row = Static("", classes="--focus-hint")
         yield self._accent
+        yield self._collapsed_strip
         yield self._body_pane
         yield self._footer_pane
         yield self._hint_row
@@ -659,6 +768,71 @@ class ToolPanel(Widget):
         header = getattr(self._block, "_header", None)
         if header is not None:
             header.refresh()
+
+        # B1: update collapsed action strip on collapse state change
+        self._refresh_collapsed_strip()
+
+    # ------------------------------------------------------------------
+    # B1: Collapsed action strip
+    # ------------------------------------------------------------------
+
+    def _refresh_collapsed_strip(self) -> None:
+        strip = getattr(self, "_collapsed_strip", None)
+        if strip is None:
+            return
+        # Suppress under HERMES_DETERMINISTIC to simplify tests
+        import os
+        if os.environ.get("HERMES_DETERMINISTIC"):
+            strip.remove_class("--visible")
+            return
+        if not self.has_focus or not self.collapsed:
+            strip.remove_class("--visible")
+            return
+        if self._result_summary_v4 is None:
+            strip.remove_class("--visible")
+            return
+        actions = _get_collapsed_actions(self._category)
+        filtered = []
+        for hotkey, label in actions:
+            if hotkey == "r" and not getattr(self._result_summary_v4, "is_error", False):
+                continue
+            if hotkey == "e" and not getattr(self._result_summary_v4, "stderr_tail", ""):
+                continue
+            filtered.append((hotkey, label))
+        if not filtered:
+            strip.remove_class("--visible")
+            return
+        from rich.text import Text
+        t = Text()
+        for hotkey, label in filtered:
+            t.append(f"[{hotkey}]", style="dim bold")
+            t.append(f" {label}  ", style="dim")
+        strip.update(t)
+        strip.add_class("--visible")
+
+    # ------------------------------------------------------------------
+    # B9: Discovery hint
+    # ------------------------------------------------------------------
+
+    def _maybe_show_discovery_hint(self) -> None:
+        global _DISCOVERY_GLOBAL_SHOWN
+        from hermes_cli.tui.constants import accessibility_mode
+        if _DISCOVERY_GLOBAL_SHOWN or self._discovery_shown or accessibility_mode():
+            return
+        if self._result_summary_v4 is None:
+            return
+        self._discovery_shown = True
+        try:
+            from hermes_cli.tui.services import feedback as _fb_mod
+            self.app.feedback.flash(
+                "hint-bar",
+                "  [?] or F1 → tool keys",
+                duration=3.0,
+                priority=_fb_mod.LOW,
+                key="tool-discovery",
+            )
+        except Exception:
+            pass
 
     def _has_footer_content(self) -> bool:
         rs = self._result_summary_v4
@@ -1477,6 +1651,8 @@ class ToolPanel(Widget):
 
     def action_show_help(self) -> None:
         """C1: toggle ToolPanel key reference overlay (pre-mounted in app.compose)."""
+        global _DISCOVERY_GLOBAL_SHOWN
+        _DISCOVERY_GLOBAL_SHOWN = True
         from hermes_cli.tui.overlays import ToolPanelHelpOverlay
         from textual.css.query import NoMatches
         try:
@@ -1493,7 +1669,12 @@ class ToolPanel(Widget):
     # with click hit-testing. watch_has_focus is content-only update.
 
     def on_focus(self) -> None:
-        """D4: on first focus, flash one-shot '(Enter) toggle' hint — only when affordances."""
+        """B1/B9/D4: focus handlers for strip, discovery hint, toggle hint."""
+        # B9: discovery hint (one-shot per session)
+        self._maybe_show_discovery_hint()
+        # B1: show collapsed action strip
+        self._refresh_collapsed_strip()
+        # D4: on first focus, flash one-shot '(Enter) toggle' hint — only when affordances
         if getattr(self, "_toggle_hint_shown", False):
             return
         block = getattr(self, "_block", None)
@@ -1503,6 +1684,12 @@ class ToolPanel(Widget):
                 return
         self._toggle_hint_shown = True
         self._flash_header("(Enter) toggle", tone="accent")
+
+    def on_blur(self) -> None:
+        """B1: hide collapsed action strip on blur."""
+        strip = getattr(self, "_collapsed_strip", None)
+        if strip is not None:
+            strip.remove_class("--visible")
 
     def watch_has_focus(self, value: bool) -> None:
         if self._hint_row is None:

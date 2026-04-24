@@ -6389,51 +6389,79 @@ class AIAgent:
             spinner = KawaiiSpinner(f"{face} ⚡ running {num_tools} tools concurrently", spinner_type='dots', print_fn=self._print_fn)
             spinner.start()
 
+        # SM-04: emit UI completion events as each future finishes (ordered message
+        # append is deferred to the post-execution loop below).
+        _completed_set: set = set()
+
+        def _emit_completion(i: int, tc, name: str, args):
+            """Fire progress + complete callbacks for tool i immediately."""
+            r = results[i]
+            if r is None:
+                function_result = f"Error executing tool '{name}': thread did not return a result"
+                tool_duration = 0.0
+                is_error = True
+            else:
+                _fn, _fa, function_result, tool_duration, is_error = r
+                if is_error:
+                    result_preview = function_result[:200] if len(function_result) > 200 else function_result
+                    logger.warning("Tool %s returned error (%.2fs): %s", _fn, tool_duration, result_preview)
+                if self.verbose_logging:
+                    logging.debug(f"Tool {_fn} completed in {tool_duration:.2f}s")
+                    logging.debug(f"Tool result ({len(function_result)} chars): {function_result}")
+
+            if self.tool_progress_callback:
+                try:
+                    self.tool_progress_callback(
+                        "tool.completed", name, None, None,
+                        duration=tool_duration, is_error=is_error,
+                    )
+                except Exception as cb_err:
+                    logging.debug(f"Tool progress callback error: {cb_err}")
+
+            self._current_tool = None
+            self._touch_activity(f"tool completed: {name} ({tool_duration:.1f}s)")
+
+            if self.tool_complete_callback:
+                try:
+                    self.tool_complete_callback(tc.id, name, args, function_result)
+                except Exception as cb_err:
+                    logging.debug(f"Tool complete callback error: {cb_err}")
+
+            _completed_set.add(i)
+
         try:
             max_workers = min(num_tools, _MAX_TOOL_WORKERS)
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = []
-                for i, (tc, name, args) in enumerate(parsed_calls):
-                    f = executor.submit(_run_tool, i, tc, name, args)
-                    futures.append(f)
-
-                # Wait for all to complete (exceptions are captured inside _run_tool)
-                concurrent.futures.wait(futures)
+                # Map future → (index, tc, name, args) for as_completed lookup
+                future_meta = {
+                    executor.submit(_run_tool, i, tc, name, args): (i, tc, name, args)
+                    for i, (tc, name, args) in enumerate(parsed_calls)
+                }
+                # Fire completion callbacks as each future finishes (SM-04)
+                for future in concurrent.futures.as_completed(future_meta):
+                    i_done, tc_done, name_done, args_done = future_meta[future]
+                    try:
+                        future.result()  # surface unhandled exceptions from _run_tool
+                    except Exception:
+                        pass  # _run_tool already stored error in results[i]
+                    _emit_completion(i_done, tc_done, name_done, args_done)
         finally:
             if spinner:
-                # Build a summary message for the spinner stop
                 completed = sum(1 for r in results if r is not None)
                 total_dur = sum(r[3] for r in results if r is not None)
                 spinner.stop(f"⚡ {completed}/{num_tools} tools completed in {total_dur:.1f}s total")
 
-        # ── Post-execution: display per-tool results ─────────────────────
+        # ── Post-execution: print per-tool results in original order ─────
         for i, (tc, name, args) in enumerate(parsed_calls):
             r = results[i]
             if r is None:
-                # Shouldn't happen, but safety fallback
                 function_result = f"Error executing tool '{name}': thread did not return a result"
                 tool_duration = 0.0
+                is_error = True
             else:
                 function_name, function_args, function_result, tool_duration, is_error = r
 
-                if is_error:
-                    result_preview = function_result[:200] if len(function_result) > 200 else function_result
-                    logger.warning("Tool %s returned error (%.2fs): %s", function_name, tool_duration, result_preview)
-
-                if self.tool_progress_callback:
-                    try:
-                        self.tool_progress_callback(
-                            "tool.completed", function_name, None, None,
-                            duration=tool_duration, is_error=is_error,
-                        )
-                    except Exception as cb_err:
-                        logging.debug(f"Tool progress callback error: {cb_err}")
-
-                if self.verbose_logging:
-                    logging.debug(f"Tool {function_name} completed in {tool_duration:.2f}s")
-                    logging.debug(f"Tool result ({len(function_result)} chars): {function_result}")
-
-            # Print cute message per tool
+            # Print cute message per tool (output ordering preserved)
             if self.quiet_mode:
                 cute_msg = _get_cute_tool_message_impl(name, args, tool_duration, result=function_result)
                 self._safe_print(f"  {cute_msg}")
@@ -6444,15 +6472,6 @@ class AIAgent:
                 else:
                     response_preview = function_result[:self.log_prefix_chars] + "..." if len(function_result) > self.log_prefix_chars else function_result
                     print(f"  ✅ Tool {i+1} completed in {tool_duration:.2f}s - {response_preview}")
-
-            self._current_tool = None
-            self._touch_activity(f"tool completed: {name} ({tool_duration:.1f}s)")
-
-            if self.tool_complete_callback:
-                try:
-                    self.tool_complete_callback(tc.id, name, args, function_result)
-                except Exception as cb_err:
-                    logging.debug(f"Tool complete callback error: {cb_err}")
 
             function_result = maybe_persist_tool_result(
                 content=function_result,

@@ -469,7 +469,7 @@ async def test_current_turn_tool_calls_returns_copy():
         assert isinstance(copy, list)
         # Mutating the copy does not affect internal list
         copy.append({"tool_call_id": "injected"})
-        assert not any(e["tool_call_id"] == "injected" for e in app._turn_tool_calls)
+        assert not any(e["tool_call_id"] == "injected" for e in app._svc_tools._turn_tool_calls)
 
 
 @pytest.mark.asyncio

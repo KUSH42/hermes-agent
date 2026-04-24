@@ -7029,8 +7029,9 @@ class HermesCLI:
         """Called when the model begins generating tool-call arguments.
 
         Closes any open streaming boxes (reasoning / response) exactly once,
-        then opens a StreamingToolBlock so the user sees an animated header
-        (spinner + timer) while argument generation is in progress.
+        then delegates block creation to the state machine service so the user
+        sees an animated header (spinner + timer) while argument generation is
+        in progress.
         """
         self._tool_gen_active = True
         if getattr(self, "_stream_box_opened", False):
@@ -7042,52 +7043,20 @@ class HermesCLI:
         if tui is None:
             return  # PT mode: no visual widget
 
-        if tool_name == "execute_code":
-            # Event-loop callback sets _gen_blocks_by_idx directly — avoids
-            # the call_from_thread async race where result[0] would still be
-            # None when checked immediately on the agent thread.
-            gen_blocks = self._gen_blocks_by_idx
-            _idx_cap = idx
-            def _open_execute():
-                b = tui._open_execute_code_block(_idx_cap)
-                if b is not None:
-                    gen_blocks[_idx_cap] = b
-            tui.call_from_thread(_open_execute)
-        elif tool_name in ("write_file", "create_file"):
-            # Same pattern: event-loop sets the dict entry directly.
-            gen_blocks = self._gen_blocks_by_idx
-            _idx_cap = idx
-            def _open_write():
-                b = tui._open_write_file_block(_idx_cap, "")
-                if b is not None:
-                    gen_blocks[_idx_cap] = b
-            tui.call_from_thread(_open_write)
-        elif tool_name in self._SKILL_NAME_TOOLS:
-            # Skill tools: defer block creation to tool_start so we have the skill name.
-            # Gen block would open with display name "skill" (orphan risk) — skip it.
-            pass
-        else:
-            # Open a StreamingToolBlock at gen_start time.
-            # Append to queue inside the closure — call_from_thread is async so
-            # result[0] is always None if checked immediately on the agent thread.
-            _queue = self._pending_gen_queue
-            def _open():
-                block = tui._open_gen_block(tool_name)
-                if block is not None:
-                    _queue.append(block)
-            tui.call_from_thread(_open)
+        # SM-02: delegate entirely to the service; no CLI-owned gen queues.
+        tui.call_from_thread(tui.open_tool_generation, idx, tool_name)
 
     def _on_tool_gen_args_delta(self, idx: int, tool_name: str, delta: str, accumulated: str) -> None:
         """Route tool gen args delta to the correct ExecuteCodeBlock (if any)."""
-        block = (
-            self._gen_blocks_by_idx.get(idx)
-            or self._active_execute_blocks_by_idx.get(idx)
-        )
-        if block is None:
-            return  # non-execute_code tool, or delta arrived with no registered block
         tui = _hermes_app
         if tui is None:
             return
+        # SM-02: block is now owned by the service state machine; look it up there.
+        svc = getattr(tui, "_svc_tools", None)
+        view = svc._tool_views_by_gen_index.get(idx) if svc is not None else None
+        block = view.block if view is not None else None
+        if block is None:
+            return  # non-execute_code tool, or delta arrived with no registered block
         tui.call_from_thread(block.feed_delta, delta)
         # B4: update write_file streaming progress from accumulated bytes
         if tool_name in ("write_file", "create_file", "str_replace_editor"):
@@ -7147,14 +7116,13 @@ class HermesCLI:
             pass
 
     def _on_tool_start(self, tool_call_id: str, function_name: str, function_args: dict):
-        """Capture local before-state for write-capable tools.
+        """Capture local before-state for write-capable tools, then delegate UI to service.
 
-        Opens a StreamingToolBlock for ALL tools (not just terminal/execute_code).
-        Dequeues a pending gen block if one was created at gen_start, otherwise
-        creates a new block directly. Non-streaming tools show header-only
-        (spinner + timer, empty body).
+        Non-UI concerns (edit snapshots, streaming callbacks, voice) remain here.
+        All DOM creation, plan transitions, phase tracking, and active-block
+        indexing are handled by ToolRenderingService.start_tool_call().
         """
-        # Edit snapshot capture (unchanged)
+        # Edit snapshot capture — local before-state for diff rendering
         try:
             from agent.display import capture_local_edit_snapshot
             snapshot = capture_local_edit_snapshot(function_name, function_args)
@@ -7163,146 +7131,33 @@ class HermesCLI:
         except Exception:
             logger.debug("Edit snapshot capture failed for %s", function_name, exc_info=True)
 
-        # --- PlanPanel: transition PENDING → RUNNING ---
-        _tui_ref = _hermes_app
-        if _tui_ref is not None:
-            _tui_ref.call_from_thread(_tui_ref.mark_plan_running, tool_call_id)
-
-        # --- Background terminal: discard pending gen block, no animated display ---
         tui = _hermes_app
-        if function_name == "terminal" and function_args.get("background"):
-            if tui is not None and self._pending_gen_queue:
-                discarded = self._pending_gen_queue.pop(0)
-                tui.call_from_thread(discarded.remove)
-            return  # no streaming block for background tools
-
         if tui is None:
             return  # PT mode: no streaming block
 
-        # --- Handle execute_code: use the pre-allocated ExecuteCodeBlock ---
-        if function_name == "execute_code":
-            # Find the block via gen_blocks_by_idx (correlate by tool_call_id ordering)
-            # Since we don't have idx here, use the first available entry
-            block = None
-            idx_used = None
-            for idx_key, blk in list(self._gen_blocks_by_idx.items()):
-                block = blk
-                idx_used = idx_key
-                break
+        # SM-02: delegate UI lifecycle (incl. background terminal handling and
+        # PlanPanel PENDING→RUNNING) to the service state machine.
+        args_dict = dict(function_args) if isinstance(function_args, dict) else {}
+        tui.call_from_thread(tui.start_tool_call, tool_call_id, function_name, args_dict)
 
-            # Guard: if block already registered (duplicate _on_tool_start), skip
-            if tool_call_id in tui._active_streaming_blocks:
-                logger.debug("execute_code tool_call_id %s already registered, skipping", tool_call_id)
-                return
+        # Background terminal exits after delegating cancel to the service
+        if function_name == "terminal" and args_dict.get("background"):
+            return
 
-            if block is not None:
-                if idx_used is not None:
-                    del self._gen_blocks_by_idx[idx_used]
-                    self._active_execute_blocks_by_idx[idx_used] = block
-                tui._active_streaming_blocks[tool_call_id] = block
-                # Finalize code arg
-                code = function_args.get("code", "") if isinstance(function_args, dict) else ""
-                if not isinstance(code, str):
-                    logger.warning(
-                        "execute_code args['code'] is not a string (got %s); treating as empty",
-                        type(code).__name__,
-                    )
-                    code = ""
-                tui.call_from_thread(block.finalize_code, code)
-            else:
-                # Fallback: gen_start didn't register a block — create ECB inline.
-                # Wrap in ToolPanel (same as _open_execute_code_block) so J/K
-                # navigation and browse anchors work. finalize_code is scheduled
-                # inside the closure to avoid the ecb_ref async race.
-                from hermes_cli.tui.execute_code_block import ExecuteCodeBlock as _ECB
-                label = self._build_tool_label(function_name, function_args)
-                code = function_args.get("code", "") if isinstance(function_args, dict) else ""
-                if not isinstance(code, str):
-                    code = ""
-                def _create_ecb_fallback(_label=label, _code=code):
-                    try:
-                        from hermes_cli.tui.widgets import OutputPanel
-                        from hermes_cli.tui.tool_panel import ToolPanel as _TP
-                        # By the time this fires, _open_execute (queued earlier
-                        # from _on_tool_gen_start) will have already run and
-                        # populated _gen_blocks_by_idx.  Reuse that block to
-                        # avoid creating a duplicate orphan ECB.
-                        for _ik, _blk in list(self._gen_blocks_by_idx.items()):
-                            if isinstance(_blk, _ECB):
-                                del self._gen_blocks_by_idx[_ik]
-                                self._active_execute_blocks_by_idx[_ik] = _blk
-                                tui._active_streaming_blocks[tool_call_id] = _blk
-                                tui.call_after_refresh(lambda _b=_blk, _c=_code: _b.finalize_code(_c))
-                                return
-                        output = tui.query_one(OutputPanel)
-                        msg = output.current_message or output.new_message()
-                        b = _ECB(initial_label=_label)
-                        panel = _TP(b, tool_name="execute_code")
-                        msg._mount_nonprose_block(panel)
-                        tui._active_streaming_blocks[tool_call_id] = b
-                        tui._browse_total += 1
-                        if not output._user_scrolled_up:
-                            tui.call_after_refresh(output.scroll_end, animate=False)
-                        # Defer finalize_code until after mount completes.
-                        _b, _c = b, _code
-                        tui.call_after_refresh(lambda: _b.finalize_code(_c))
-                    except Exception as _e:
-                        logger.warning("execute_code fallback ECB creation failed: %s", _e)
-                tui.call_from_thread(_create_ecb_fallback)
-
-            # Track tool + register streaming callback (shared code below)
-        elif function_name in ("write_file", "create_file"):
-            # --- Handle write_file/create_file: use pre-allocated WriteFileBlock ---
-            if tool_call_id in tui._active_streaming_blocks:
-                logger.debug("%s tool_call_id %s already registered, skipping", function_name, tool_call_id)
-                return
-            block = None
-            idx_used = None
-            for idx_key, blk in list(self._gen_blocks_by_idx.items()):
-                from hermes_cli.tui.write_file_block import WriteFileBlock as _WFB
-                if isinstance(blk, _WFB):
-                    block = blk
-                    idx_used = idx_key
-                    break
-            path = function_args.get("path", "") if isinstance(function_args, dict) else ""
-            if not isinstance(path, str):
-                path = ""
-            if block is not None:
-                if idx_used is not None:
-                    del self._gen_blocks_by_idx[idx_used]
-                tui._active_streaming_blocks[tool_call_id] = block
-                if path:
-                    tui.call_from_thread(block.set_final_path, path)
-            # Track tool (shared code below — no streaming callback for write_file)
-        else:
-            # --- Dequeue pending gen block, re-key to tool_call_id ---
-            block = self._pending_gen_queue.pop(0) if self._pending_gen_queue else None
-
-            if block is not None:
-                # Re-key: move from gen queue to active dict
-                tui._active_streaming_blocks[tool_call_id] = block
-                # Update label with actual command
-                self._update_block_label(block, function_name, function_args)
-                # Deduplicate consecutive patches to the same file — suppress second+ STBs
-                if function_name == "patch":
-                    path = function_args.get("path", "") if isinstance(function_args, dict) else ""
-                    if path:
-                        prev_id = self._pending_patch_paths.get(path)
-                        if prev_id and prev_id in self._active_stream_tool_ids:
-                            # A patch to this path is already active — remove new STB silently
-                            tui.call_from_thread(tui.remove_streaming_tool_block, tool_call_id)
-                        else:
-                            self._pending_patch_paths[path] = tool_call_id
-            else:
-                # Fallback: gen_start didn't fire (tool_gen_callback was None, or queue race)
-                # Create a new StreamingToolBlock directly
-                label = self._build_tool_label(function_name, function_args)
-                tui.call_from_thread(tui.open_streaming_tool_block, tool_call_id, label, function_name)
-
-        # Track ALL tools (not just streaming-capable ones)
+        # Track ALL tools for duration computation at complete time
         import time as _t
         self._stream_start_times[tool_call_id] = _t.monotonic()
         self._active_stream_tool_ids.add(tool_call_id)
+
+        # Patch deduplication — suppress second+ STBs for the same file
+        if function_name == "patch":
+            path = args_dict.get("path", "")
+            if path:
+                prev_id = self._pending_patch_paths.get(path)
+                if prev_id and prev_id in self._active_stream_tool_ids:
+                    tui.call_from_thread(tui.remove_streaming_tool_block, tool_call_id)
+                else:
+                    self._pending_patch_paths[path] = tool_call_id
 
         # Register streaming callback for terminal/execute_code only
         if function_name in ("terminal", "execute_code"):
@@ -7396,6 +7251,17 @@ class HermesCLI:
             # No preview will be mounted — close streaming block normally
             if tui is not None and _was_streaming:
                 tui.call_from_thread(tui.close_streaming_tool_block, tool_call_id, _stream_duration, _is_tool_error, _summary)
+            # SM-05: always mark plan done regardless of display.tool_progress
+            if tui is not None:
+                _dur_ms_off = 0
+                try:
+                    if _stream_duration.endswith("ms"):
+                        _dur_ms_off = int(float(_stream_duration[:-2]))
+                    elif _stream_duration.endswith("s"):
+                        _dur_ms_off = int(float(_stream_duration[:-1]) * 1000)
+                except Exception:
+                    pass
+                tui.call_from_thread(tui.mark_plan_done, tool_call_id, _is_tool_error, _dur_ms_off)
             return
 
         _TOOL_PREFIX = "  ┊ "

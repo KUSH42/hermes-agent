@@ -35,15 +35,7 @@ _DROP_ORDER: list[str] = ["linecount", "duration", "chip", "hero", "diff", "stde
 
 def _safe_collapsed(header: "ToolHeader") -> bool:
     panel = getattr(header, "_panel", None)
-    if panel is not None:
-        try:
-            return bool(panel.collapsed)
-        except Exception:
-            return False
-    try:
-        return bool(header.collapsed)
-    except Exception:
-        return bool(getattr(header, "__dict__", {}).get("collapsed", False))
+    return bool(panel.collapsed if panel is not None else False)
 
 
 def _trim_tail_segments(

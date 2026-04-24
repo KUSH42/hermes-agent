@@ -24,6 +24,40 @@ from ._shared import (
 from ._header import ToolHeader, ToolBodyContainer
 
 
+def _render_diff_chunk(
+    removed: "list[str]",
+    added: "list[str]",
+    del_bg: str,
+    add_bg: str,
+) -> "list[Text]":
+    """N:M word-level diff for accumulated removal/addition chunks.
+
+    Pairs min(N, M) lines using per-line _word_diff; excess lines get
+    plain line-level background styling. Combined SequenceMatcher on
+    concatenated text would give cross-line accuracy but per-line pairing
+    is sufficient for visual rendering.
+    """
+    result: list[Text] = []
+    pairs = min(len(removed), len(added))
+    for i in range(pairs):
+        rem_t, add_t = _word_diff(removed[i], added[i])
+        rt = Text("-", style="red")
+        rt.append_text(rem_t)
+        result.append(rt)
+        at = Text("+", style="green")
+        at.append_text(add_t)
+        result.append(at)
+    for r in removed[pairs:]:
+        t = Text("-", style="red")
+        t.append(r, style=f"on {del_bg}")
+        result.append(t)
+    for a in added[pairs:]:
+        t = Text("+", style="green")
+        t.append(a, style=f"on {add_bg}")
+        result.append(t)
+    return result
+
+
 class ToolBlock(Widget):
     """Collapsible widget pairing a ToolHeader with expandable body content.
 
@@ -163,50 +197,38 @@ class ToolBlock(Widget):
 
             if self._label == "diff":
                 add_bg, del_bg = self._diff_bg_colors()
-                pending_removed: str | None = None
+                _pending_removed: list[str] = []
+                _pending_added: list[str] = []
                 for styled, plain in zip(self._lines, self._plain_lines):
                     rich_line = self._render_diff_line(plain)
                     if rich_line is not None:
-                        if pending_removed is not None:
-                            t = Text("-", style="red")
-                            t.append(pending_removed, style=f"on {del_bg}")
-                            rl.write(t)
-                            pending_removed = None
+                        if _pending_removed or _pending_added:
+                            for _dl in _render_diff_chunk(_pending_removed, _pending_added, del_bg, add_bg):
+                                rl.write(_dl)
+                            _pending_removed.clear()
+                            _pending_added.clear()
                         rl.write(rich_line)
                         continue
                     stripped = plain.rstrip("\n")
                     if stripped.startswith("-") and not stripped.startswith("---"):
-                        if pending_removed is not None:
-                            t = Text("-", style="red")
-                            t.append(pending_removed, style=f"on {del_bg}")
-                            rl.write(t)
-                        pending_removed = stripped[1:]
+                        if _pending_added:
+                            for _dl in _render_diff_chunk(_pending_removed, _pending_added, del_bg, add_bg):
+                                rl.write(_dl)
+                            _pending_removed.clear()
+                            _pending_added.clear()
+                        _pending_removed.append(stripped[1:])
                     elif stripped.startswith("+") and not stripped.startswith("+++"):
-                        content = stripped[1:]
-                        if pending_removed is not None:
-                            rem_t, add_t = _word_diff(pending_removed, content)
-                            rt = Text("-", style="red")
-                            rt.append_text(rem_t)
-                            rl.write(rt)
-                            at = Text("+", style="green")
-                            at.append_text(add_t)
-                            rl.write(at)
-                            pending_removed = None
-                        else:
-                            t = Text("+", style="green")
-                            t.append(content, style=f"on {add_bg}")
-                            rl.write(t)
+                        _pending_added.append(stripped[1:])
                     else:
-                        if pending_removed is not None:
-                            t = Text("-", style="red")
-                            t.append(pending_removed, style=f"on {del_bg}")
-                            rl.write(t)
-                            pending_removed = None
+                        if _pending_removed or _pending_added:
+                            for _dl in _render_diff_chunk(_pending_removed, _pending_added, del_bg, add_bg):
+                                rl.write(_dl)
+                            _pending_removed.clear()
+                            _pending_added.clear()
                         rl.write_with_source(Text.from_ansi(styled), plain)
-                if pending_removed is not None:
-                    t = Text("-", style="red")
-                    t.append(pending_removed, style=f"on {del_bg}")
-                    rl.write(t)
+                if _pending_removed or _pending_added:
+                    for _dl in _render_diff_chunk(_pending_removed, _pending_added, del_bg, add_bg):
+                        rl.write(_dl)
                 if self._header_stats and self._header_stats.has_diff_counts and self._lines:
                     rl.write_with_source(Text(""), "")
                 return

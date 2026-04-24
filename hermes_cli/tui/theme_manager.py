@@ -231,6 +231,9 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     "chevron-shell":        "#A8D46E",
     "chevron-done":         "#4CAF50",
     "chevron-error":        "#E06C75",
+    "chevron-rev-search":   "#FFBF00",
+    "chevron-completion":   "#5F9FD7",
+    "chevron-locked":       "#666666",
     # Fuzzy match highlight in autocomplete list
     "fuzzy-match-color":    "#FFD866",
     # Status / pulse indicators

@@ -78,11 +78,25 @@ class ThemeService(AppService):
                 block.refresh_skin()
             except Exception:
                 logger.debug("ToolBlock theme refresh failed", exc_info=True)
+        css = app.get_css_variables()
         for block in app.query(StreamingCodeBlock):
             try:
-                block.refresh_skin(app.get_css_variables())
+                block.refresh_skin(css)
             except Exception:
                 logger.debug("StreamingCodeBlock theme refresh failed", exc_info=True)
+        from hermes_cli.tui.widgets.message_panel import MessagePanel, ReasoningPanel
+        for mp in app.query(MessagePanel):
+            if mp._response_engine is not None:
+                try:
+                    mp._response_engine.refresh_skin(css)
+                except Exception:
+                    logger.debug("ResponseFlowEngine skin refresh failed", exc_info=True)
+        for rp in app.query(ReasoningPanel):
+            if rp._reasoning_engine is not None:
+                try:
+                    rp._reasoning_engine.refresh_skin(css)
+                except Exception:
+                    logger.debug("ReasoningFlowEngine skin refresh failed", exc_info=True)
 
     def _apply_override_dict(self, overrides: "dict") -> None:
         """Apply an override dict live without reloading the skin from disk."""

@@ -401,7 +401,37 @@ class _DimRichLogProxy:
         self._plain_list.append(plain)
 
     def write(self, renderable, **kw) -> None:
+        # Forwards without dim wrap and without _plain_list update.
+        # Callers that need copy-source MUST use write_with_source.
+        # Documented exception: rule emission goes through
+        # ReasoningFlowEngine._emit_rule which writes to _reasoning_log
+        # directly and appends to _plain_lines explicitly.
         self._log.write(renderable, **kw)
+
+    def write_inline(self, spans) -> None:
+        """Forward to the wrapped log with TextSpan content wrapped in dim italic.
+
+        ImageSpans pass through unchanged. Plain text equivalent is appended to
+        _plain_list so copy buffer stays consistent.
+        """
+        from hermes_cli.tui.inline_prose import ImageSpan, TextSpan
+        from rich.text import Text as RichText
+
+        wrapped: list[object] = []
+        plain_parts: list[str] = []
+        for span in spans:
+            if isinstance(span, TextSpan):
+                new_text = RichText(style="dim italic")
+                new_text.append_text(span.text)
+                wrapped.append(TextSpan(text=new_text))
+                plain_parts.append(span.text.plain)
+            elif isinstance(span, ImageSpan):
+                wrapped.append(span)
+                plain_parts.append(getattr(span, "alt_text", "") or "")
+            else:
+                wrapped.append(span)
+        self._log.write_inline(wrapped)
+        self._plain_list.append("".join(plain_parts))
 
     def __getattr__(self, name: str):
         return getattr(self._log, name)
@@ -607,15 +637,15 @@ class ResponseFlowEngine:
 
     def _handle_footnote(self, raw: str) -> bool:
         """Collect or continue a footnote definition. Returns True if consumed."""
-        _fn_m = _FOOTNOTE_DEF_RE.match(raw)
-        if _fn_m:
-            label, body = _fn_m.group(1), _fn_m.group(2).strip()
+        fn = self._clf.is_footnote_def(raw)
+        if fn is not None:
+            label, body = fn
             if label not in self._footnote_defs:
                 self._footnote_order.append(label)
             self._footnote_defs[label] = body
             self._footnote_def_open = label
             return True
-        if self._footnote_def_open and (raw.startswith("    ") or raw.startswith("\t")):
+        if self._clf.is_footnote_continuation(raw, self._footnote_def_open is not None):
             self._footnote_defs[self._footnote_def_open] += " " + raw.strip()
             return True
         self._footnote_def_open = None
@@ -623,10 +653,10 @@ class ResponseFlowEngine:
 
     def _handle_citation_line(self, raw: str) -> bool:
         """Collect a citation tag line. Returns True if consumed."""
-        _cite_m = _CITE_RE.match(raw.strip())
-        if _cite_m:
-            _n = int(_cite_m.group(1))
-            self._cite_entries[_n] = (_cite_m.group(2).strip(), _cite_m.group(3))
+        cite = self._clf.is_citation(raw)
+        if cite is not None:
+            _n, title, url = cite
+            self._cite_entries[_n] = (title, url)
             if _n not in self._cite_order:
                 self._cite_order.append(_n)
             return True
@@ -647,9 +677,9 @@ class ResponseFlowEngine:
             self._pending_code_intro = False
             if (
                 stripped
-                and not _FENCE_OPEN_RE.match(stripped)
-                and not _INDENTED_CODE_RE.match(raw)
-                and not _looks_like_source_line(raw)
+                and self._clf.is_fence_open(raw) is None
+                and self._clf.is_indented_code(raw) is None
+                and not self._clf.looks_like_source_line(raw)
                 and not _LIST_PREFIX_RE.match(raw)
                 and not stripped.endswith(":")
             ):
@@ -660,7 +690,7 @@ class ResponseFlowEngine:
             self._pending_code_intro = True
 
         if self._pending_source_line is not None:
-            if _looks_like_source_line(raw):
+            if self._clf.looks_like_source_line(raw):
                 self._flush_block_buf()
                 self._state = "IN_SOURCE_LIKE"
                 self._list_cont_indent = ""
@@ -683,44 +713,44 @@ class ResponseFlowEngine:
 
         # Block math — checked BEFORE fence detection ($$ would match _FENCE_OPEN_RE)
         if self._math_enabled:
-            oneline_m = _BLOCK_MATH_ONELINE_RE.match(stripped) or _BLOCK_MATH_ONELINE_BRACKET_RE.match(stripped)
-            if oneline_m:
+            oneline = self._clf.is_block_math_oneline(raw)
+            if oneline is not None:
                 self._flush_block_buf()
-                self._flush_math_block(oneline_m.group(1))
+                self._flush_math_block(oneline)
                 return True
-            if _BLOCK_MATH_OPEN_RE.match(stripped):
+            if self._clf.is_block_math_open(raw):
                 self._flush_block_buf()
                 self._math_lines = []
                 self._math_env = stripped
                 self._state = "IN_MATH"
                 return True
 
-        m = _FENCE_OPEN_RE.match(stripped)
-        if m:
-            lang = m.group(2).strip() if m.group(2) else ""
+        fence = self._clf.is_fence_open(raw)
+        if fence is not None:
+            lang, fchar, fdepth = fence
             self._flush_block_buf()
             self._state = "IN_CODE"
-            self._fence_char = m.group(1)[0]
-            self._fence_depth = len(m.group(1))
+            self._fence_char = fchar
+            self._fence_depth = fdepth
             self._list_cont_indent = ""
             self._active_block = self._open_code_block(lang)
             return True
 
-        indent_m = _INDENTED_CODE_RE.match(raw)
-        if indent_m:
+        indent_content = self._clf.is_indented_code(raw)
+        if indent_content is not None:
             self._flush_block_buf()
             self._state = "IN_INDENTED_CODE"
             self._list_cont_indent = ""
             self._active_block = self._open_code_block("")
-            self._active_block.append_line(indent_m.group(1))
+            self._active_block.append_line(indent_content)
             return True
 
-        inline_label_m = _INLINE_CODE_LABEL_RE.match(stripped)
-        if inline_label_m:
-            value = inline_label_m.group(2).strip()
+        inline_label = self._clf.is_inline_code_label(raw)
+        if inline_label is not None:
+            value = inline_label[1].strip()
             if value and not stripped.endswith(":"):
                 self._flush_block_buf()
-                label = f"{inline_label_m.group(1)}:"
+                label = f"{inline_label[0]}:"
                 block_ansi = apply_block_line(label)
                 inline_ansi = apply_inline_markdown(block_ansi)
                 plain = _strip_ansi(inline_ansi)
@@ -728,11 +758,23 @@ class ResponseFlowEngine:
                 self._emit_complete_code_block([value])
                 return True
 
-        if _looks_like_source_line(raw):
+        if self._clf.looks_like_source_line(raw):
             self._pending_source_line = raw
             return True
 
         return False
+
+    def _handle_unknown_state(self, raw: str) -> bool:
+        """Recover from an unknown _state. Logs once and falls through to prose."""
+        try:
+            self._panel.app.log.warning(
+                f"response_flow: unknown _state={self._state!r}; resetting to NORMAL"
+            )
+        except Exception:
+            pass
+        self._state = "NORMAL"
+        self._active_block = None
+        return False  # caller falls through to NORMAL classification + prose
 
     def _dispatch_non_normal_state(self, raw: str) -> bool:
         """Handle a line while in a non-NORMAL state.
@@ -742,30 +784,27 @@ class ResponseFlowEngine:
         caller must fall through to prose rendering for the closing line.
         """
         if self._state == "IN_CODE":
-            stripped = raw.strip()
-            close_m = _FENCE_CLOSE_RE.match(stripped)
-            if (
-                close_m
-                and close_m.group(1)[0] == self._fence_char
-                and len(close_m.group(1)) >= self._fence_depth
-            ):
-                assert self._active_block is not None
+            if self._active_block is None:
+                self._state = "NORMAL"
+                return False  # re-classify via A-1 path
+            if self._clf.is_fence_close(raw, self._fence_char, self._fence_depth):
                 self._active_block.complete(self._skin_vars)
                 self._active_block = None
                 self._state = "NORMAL"
                 return True
-            assert self._active_block is not None
             self._active_block.append_line(raw)
             return True
 
         if self._state == "IN_INDENTED_CODE":
-            assert self._active_block is not None
+            if self._active_block is None:
+                self._state = "NORMAL"
+                return False
             if raw == "":
                 self._active_block.append_line("")
                 return True
-            indent_m = _INDENTED_CODE_RE.match(raw)
-            if indent_m:
-                self._active_block.append_line(indent_m.group(1))
+            indent_m = self._clf.is_indented_code(raw)
+            if indent_m is not None:
+                self._active_block.append_line(indent_m)
                 return True
             self._active_block.complete(self._skin_vars)
             self._active_block = None
@@ -773,8 +812,10 @@ class ResponseFlowEngine:
             return False  # fall through to prose for the closing line
 
         if self._state == "IN_SOURCE_LIKE":
-            assert self._active_block is not None
-            if _looks_like_source_line(raw):
+            if self._active_block is None:
+                self._state = "NORMAL"
+                return False
+            if self._clf.looks_like_source_line(raw):
                 self._active_block.append_line(raw)
                 return True
             self._active_block.complete(self._skin_vars)
@@ -783,8 +824,7 @@ class ResponseFlowEngine:
             return False  # fall through to prose for the closing line
 
         if self._state == "IN_MATH":
-            stripped = raw.strip()
-            if _BLOCK_MATH_CLOSE_RE.match(stripped):
+            if self._clf.is_block_math_close(raw):
                 self._flush_math_block("\n".join(self._math_lines))
                 self._math_lines = []
                 self._math_env = ""
@@ -793,7 +833,7 @@ class ResponseFlowEngine:
                 self._math_lines.append(raw)
             return True
 
-        return True  # unknown state — consume safely
+        return self._handle_unknown_state(raw)
 
     def _dispatch_prose(self, raw: str, intro_candidate: bool) -> None:
         """Render raw as prose through StreamingBlockBuffer + markdown pipeline."""
@@ -835,17 +875,25 @@ class ResponseFlowEngine:
         if self._state == "NORMAL" and self._mount_media_callback is not None:
             self._scan_media_urls(raw)
         intro_candidate = _is_code_intro_label(raw)
-        if self._state == "NORMAL":
-            if self._handle_footnote(raw):
+        if self._state != "NORMAL":
+            if self._dispatch_non_normal_state(raw):
                 return
-            if self._citations_enabled and self._handle_citation_line(raw):
+            # State just fell back to NORMAL on a block close. The closing line
+            # itself still needs full NORMAL-state classification — see A-1.
+        if self._state == "NORMAL":
+            if self._handle_footnote(raw) or (
+                self._citations_enabled and self._handle_citation_line(raw)
+            ):
+                # Handler consumed the footnote/citation. Drain any held pending
+                # source line NOW so it appears in prose BEFORE the footnote footer
+                # that flush() renders later. Must be inside this branch — draining
+                # unconditionally here would clear _pending_source_line before
+                # _dispatch_normal_state's source-like lookahead, breaking
+                # IN_SOURCE_LIKE detection.
+                self._drain_pending_source()
                 return
             if self._dispatch_normal_state(raw, intro_candidate):
                 return
-        elif self._dispatch_non_normal_state(raw):
-            # elif: IN_INDENTED_CODE/IN_SOURCE_LIKE close paths return False,
-            # falling through to _dispatch_prose for the line that closed the block.
-            return
         self._dispatch_prose(raw, intro_candidate)
 
     def _scan_media_urls(self, line: str) -> None:
@@ -884,7 +932,11 @@ class ResponseFlowEngine:
         return cap in (GraphicsCap.TGP, GraphicsCap.SIXEL, GraphicsCap.HALFBLOCK)
 
     def _extract_emoji_refs(self, text: str) -> "list[str]":
-        """Return distinct emoji names found in text that exist in the registry."""
+        """Return distinct emoji names found in text that exist in the registry.
+
+        NOTE: Test-only public surface. Production emoji rendering goes through
+        `_write_prose_inline_emojis`. Do not call from new production code.
+        """
         if (
             self._emoji_registry is None
             or not self._emoji_images_enabled
@@ -953,7 +1005,10 @@ class ResponseFlowEngine:
         return True
 
     def _mount_emoji(self, name: str) -> None:
-        """Mount an emoji image widget. Safe to call from either event-loop or worker thread."""
+        """Mount an emoji image widget. Safe to call from either event-loop or worker thread.
+
+        NOTE: Test-only public surface — see `_extract_emoji_refs` note.
+        """
         registry = self._emoji_registry
         if registry is None:
             return
@@ -993,13 +1048,13 @@ class ResponseFlowEngine:
 
     def flush(self) -> None:
         """Turn ended — close any open code block; flush StreamingBlockBuffer pending state."""
-        from agent.rich_output import apply_block_line, apply_inline_markdown
         if self._partial:
             pending = self._partial
             self._clear_partial_preview()
             self.process_line(pending)
-        if self._state == "IN_MATH" and self._math_lines:
-            self._flush_math_block("\n".join(self._math_lines))
+        if self._state == "IN_MATH":
+            if self._math_lines:
+                self._flush_math_block("\n".join(self._math_lines))
             self._math_lines = []
             self._math_env = ""
             self._state = "NORMAL"
@@ -1014,18 +1069,7 @@ class ResponseFlowEngine:
         if self._pending_source_line is not None:
             pending = self._pending_source_line
             self._pending_source_line = None
-            block_result = self._block_buf.process_line(pending)
-            if block_result is not None:
-                if _is_horizontal_rule(block_result):
-                    self._emit_rule()
-                else:
-                    block_ansi = apply_block_line(block_result)
-                    inline_ansi = apply_inline_markdown(block_ansi)
-                    plain = _strip_ansi(inline_ansi)
-                    self._prose_log.write_with_source(
-                        Text.from_ansi(_normalize_ansi_for_render(inline_ansi)),
-                        plain,
-                    )
+            self._emit_prose_line(pending)
         # Flush any prose pending in StreamingBlockBuffer (setext, tables)
         self._flush_block_buf()
         self._flush_code_fence_buffer()
@@ -1204,11 +1248,38 @@ class ResponseFlowEngine:
             for line in buf:
                 self._prose_log.write_with_source(Text.from_ansi(line), line)
 
+    def _emit_prose_line(self, raw: str) -> None:
+        """Render one already-resolved prose line through the full inline pipeline."""
+        from agent.rich_output import apply_block_line, apply_inline_markdown
+        block_result = self._block_buf.process_line(raw)
+        if block_result is None:
+            return
+        if _is_horizontal_rule(block_result):
+            self._emit_rule()
+            return
+        block_ansi = apply_block_line(block_result)
+        inline_ansi = apply_inline_markdown(block_ansi)
+        self._sync_prose_log()
+        plain = _strip_ansi(inline_ansi)
+        rich_text = Text.from_ansi(_normalize_ansi_for_render(inline_ansi))
+        if not self._write_prose_inline_emojis(rich_text, plain):
+            self._commit_prose_line(inline_ansi, plain)
+        else:
+            self._flush_code_fence_buffer()
+
+    def _drain_pending_source(self) -> None:
+        """Flush any held _pending_source_line as prose. Idempotent."""
+        if self._pending_source_line is None:
+            return
+        pending = self._pending_source_line
+        self._pending_source_line = None
+        self._emit_prose_line(pending)
+
     def _emit_rule(self) -> None:
         """Emit a width-bounded horizontal rule to the prose log."""
         self._sync_prose_log()
-        self._prose_log.write(_make_rule(self._prose_log))
-        self._prose_log._plain_lines.append("---")  # plain copy source
+        rule = _make_rule(self._prose_log)
+        self._prose_log.write_with_source(rule, "---")
 
     def _flush_block_buf(self) -> None:
         """Emit any pending StreamingBlockBuffer state to the prose log."""
@@ -1285,8 +1356,15 @@ class ReasoningFlowEngine(ResponseFlowEngine):
         self._prose_log: _DimRichLogProxy = _DimRichLogProxy(  # type: ignore[assignment]
             panel._reasoning_log, panel._plain_lines
         )
-        self._skin_vars = {}
-        self._pygments_theme = "monokai"
+        # Pull skin vars from the owning app so reasoning code blocks + footnote
+        # refs honour the active skin (see B-1). Safe even when app is missing in
+        # tests — fall back to the previous defaults.
+        _app_b1 = getattr(panel, "app", None)
+        if _app_b1 is not None and hasattr(_app_b1, "get_css_variables"):
+            self._skin_vars = _app_b1.get_css_variables()
+        else:
+            self._skin_vars = {}
+        self._pygments_theme = self._skin_vars.get("preview-syntax-theme", "monokai")
         # Math disabled in reasoning output (Non-Goal per spec)
         self._math_enabled = False
         self._math_renderer_mode = "unicode"
@@ -1306,9 +1384,12 @@ class ReasoningFlowEngine(ResponseFlowEngine):
         ResponseFlowEngine keeps one line pending in StreamingBlockBuffer for
         setext/table lookahead, which causes visible lag during streaming and a
         flash in typewriter mode (content disappears from live_line before
-        appearing in the log).  Flushing after every call eliminates the lag.
-        Tradeoff: setext headings render as prose + HR; tables as plain rows.
-        Both are rare in reasoning output.
+        appearing in the log). Flushing after every call eliminates the lag.
+
+        Tradeoff: setext headings (`Heading\\n========`) and pipe tables render
+        as their constituent lines (no setext promotion, no table widget). Both
+        are rare in reasoning output. Pinned by
+        test_reasoning_engine_setext_renders_as_two_prose_lines.
         """
         super().process_line(raw)
         self._flush_block_buf()
@@ -1328,5 +1409,4 @@ class ReasoningFlowEngine(ResponseFlowEngine):
         super()._render_footnote_section()
 
     def _emit_rule(self) -> None:
-        self._panel._reasoning_log.write(_make_rule(self._panel._reasoning_log))
-        self._panel._plain_lines.append("---")
+        super()._emit_rule()  # parent uses write_with_source which the proxy handles

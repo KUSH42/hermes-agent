@@ -22,6 +22,55 @@ cd ~/.hermes/hermes-agent
 source venv/bin/activate  # ALWAYS activate before running Python
 ```
 
+## Additional workflow rules
+
+### Commit and PR language
+
+- Never mention `Claude` or `Claude Code` in git commit messages or pull
+  request text.
+
+### Skills
+
+- Before installing any Claude-oriented skill from an external source, scan it
+  with Snyk Agent Scan first. Do not install it unless the scan returns safe.
+
+### Specs
+
+- Spec template: `~/.hermes/spec-template.md`
+- Specs live in `~/.hermes/`
+- Every spec header must include `**Status:** DRAFT | APPROVED | IMPLEMENTED`
+- Update the spec header when a lifecycle transition completes. Do not leave a
+  reviewed spec at `DRAFT`, or an implemented spec at `APPROVED`.
+- During "review spec / fix spec / loop" work, edit the spec only. Do not
+  write production code or tests until the user explicitly asks for
+  implementation.
+- In a spec review loop, fix all HIGH issues before MEDIUM before LOW, and stop
+  only when the reviewer reports zero remaining issues.
+- If a spec is still `DRAFT` in a later session, confirm with the user before
+  implementing it.
+- Split a spec before writing the body if it touches more than two independent
+  subsystems, if it likely needs more than about 35 tests, or if it contains a
+  risky phase that may need independent rollback.
+- Spec issue sections must stay concrete: include the problem with file and
+  line, the exact fix, behavior tables when needed, named tests with expected
+  assertions, and an implementation order section when issues depend on each
+  other.
+
+### Testing workflow
+
+- Never run `python -m pytest tests/tui/` as a full suite. It times out in this
+  repo. Run only targeted TUI test files relevant to the changed modules.
+- If no relevant test file exists yet, use an import check as the fallback:
+  `python3 -c "from hermes_cli.tui.xxx import Foo; print('OK')"`
+- Use one discovery run to collect failures, fix the full batch, then run one
+  verification pass. Use targeted single-test runs between those passes instead
+  of rerunning whole suites repeatedly.
+
+### Code quality
+
+- Every `except` block must re-raise, log with `exc_info=True`, or include an
+  explicit comment explaining why swallowing the exception is correct.
+
 ## Project Structure
 
 ```

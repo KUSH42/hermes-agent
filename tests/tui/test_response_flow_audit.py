@@ -266,11 +266,20 @@ class TestA4UnknownState:
         eng, log = _make_engine()
         eng._state = "BOGUS"
         eng._active_block = None
+        # Wire panel.app.log.warning spy without replacing the panel
+        # (_make_engine returns a MagicMock panel; we only add a real app.log)
+        warning_calls: list[str] = []
+        fake_app_log = MagicMock()
+        fake_app_log.warning.side_effect = lambda msg: warning_calls.append(msg)
+        fake_app = MagicMock()
+        fake_app.log = fake_app_log
+        eng._panel.app = fake_app
         eng.process_line("hello")
         assert eng._state == "NORMAL"
         assert eng._active_block is None
-        # Line should have gone to prose pipeline — check something was written
-        # (may be buffered by block_buf; flush to drain)
+        # Warning must have been logged with the unknown state name
+        assert any("BOGUS" in m for m in warning_calls), f"Expected warning about BOGUS; got {warning_calls}"
+        # Line should have gone to prose pipeline — flush to drain any _block_buf buffering
         eng.flush()
         assert any("hello" in p for p in log._plain_lines)
 
@@ -318,12 +327,99 @@ class TestA5FlushPendingSourceLine:
         eng._pending_source_line = "hello callback"
         callback = MagicMock()
         eng._prose_callback = callback
+        # Mock _block_buf.process_line to return input unchanged so _emit_prose_line
+        # emits immediately (not buffered for setext); pins that the callback fires
+        # via _emit_prose_line and not via _flush_block_buf.
+        eng._block_buf.process_line = lambda raw: raw
         eng.flush()
         assert eng._pending_source_line is None
-        # Callback should have fired with string containing "hello"
         assert callback.called
         args = callback.call_args[0][0]
         assert "hello" in args
+
+    def test_emit_prose_line_does_not_clear_list_cont_indent(self):
+        """_emit_prose_line deliberately leaves _list_cont_indent untouched (EOT path).
+        Force _block_buf to emit immediately so the trailing _flush_block_buf() in
+        flush() has nothing left to drain — isolating the _emit_prose_line code path."""
+        eng, log = _make_engine()
+        eng._list_cont_indent = "  "
+        eng._pending_source_line = "x = 1"
+        # Bypass setext-lookahead buffering so the line is emitted by _emit_prose_line
+        # directly and not deferred to the trailing _flush_block_buf() (which would
+        # clear _list_cont_indent via its own non-indented-line branch).
+        eng._block_buf.process_line = lambda raw: raw
+        eng.flush()
+        # list_cont_indent NOT cleared by _emit_prose_line
+        assert eng._list_cont_indent == "  "
+
+    def test_mid_turn_drain_does_not_clear_list_cont_indent(self):
+        """Mid-turn drain via footnote branch leaves _list_cont_indent untouched until
+        the next _dispatch_prose call clears it."""
+        eng, log = _make_engine()
+        eng._list_cont_indent = "  "
+        eng._pending_source_line = "x = 1"
+        # Footnote arrives mid-turn — triggers _drain_pending_source() inside process_line
+        eng.process_line("[^1]: note")
+        # Stale indent preserved — _emit_prose_line does not clear it
+        assert eng._list_cont_indent == "  "
+        # Next non-indented non-list prose line clears it via _dispatch_prose
+        eng._block_buf.process_line = lambda raw: raw  # bypass setext buffering
+        eng.process_line("plain prose")
+        assert eng._list_cont_indent == ""
+
+    def test_flush_pending_source_with_partial_setext_candidate_does_not_misroute_emoji(self):
+        """R-18 guard: leading _flush_block_buf() drains setext-buffered state so that
+        _emit_prose_line's _block_buf call receives only the pending source line.
+
+        Without R-18: process_line(_partial) setext-buffers "Heading"; then
+        _emit_prose_line("hi :smile:") calls _block_buf.process_line → gets "Heading"
+        back (setext flush), "hi :smile:" buffered. "Heading" goes through emoji path.
+
+        With R-18: leading _flush_block_buf() drains "Heading" BEFORE _emit_prose_line;
+        _emit_prose_line("hi :smile:") → process_line("hi :smile:") → returns "hi :smile:"
+        directly → correct emoji path.
+
+        Setup uses stubs to simulate the setext-buffer state without going through the
+        full engine pipeline (which would drain _pending_source_line prematurely via
+        _dispatch_normal_state). _block_buf.flush simulates "Heading" held in buffer;
+        _block_buf.process_line returns its input immediately (no secondary buffering).
+        """
+        eng, log = _make_engine()
+
+        # Simulate pre-existing setext-buffer state: flush() returns "Heading" on the
+        # first call (the R-18 leading drain); returns None after (buffer empty).
+        flush_calls = [0]
+        orig_flush = eng._block_buf.flush
+
+        def stubbed_flush():
+            flush_calls[0] += 1
+            if flush_calls[0] == 1:
+                return "Heading"  # leading _flush_block_buf() drains this
+            return orig_flush()  # trailing drain: empty buffer
+
+        eng._block_buf.flush = stubbed_flush
+        # Process_line returns input immediately — no secondary setext-buffering so
+        # _emit_prose_line does not return early from block_result is None.
+        eng._block_buf.process_line = lambda raw: raw
+
+        emoji_path_calls: list = []
+
+        def fake_emoji(rich_text, plain):
+            emoji_path_calls.append(plain)
+            return True
+
+        eng._write_prose_inline_emojis = fake_emoji
+        eng._pending_source_line = "hi :smile:"
+        eng.flush()
+        # With R-18 fix: "Heading" is committed via _flush_block_buf/_commit_prose_line
+        # (NOT emoji path), then "hi :smile:" goes through _emit_prose_line → emoji path.
+        assert any("smile" in p or "hi" in p for p in emoji_path_calls), (
+            f"Pending source line did not reach emoji path; emoji_path_calls={emoji_path_calls}"
+        )
+        # Also verify "Heading" did not appear in emoji_path_calls (it went to commit, not emoji)
+        assert not any("Heading" in p for p in emoji_path_calls), (
+            f"'Heading' should have been committed, not routed to emoji; calls={emoji_path_calls}"
+        )
 
 
 # ---------------------------------------------------------------------------

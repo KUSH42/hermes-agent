@@ -1066,6 +1066,9 @@ class ResponseFlowEngine:
             self._active_block.complete(self._skin_vars)
             self._active_block = None
             self._state = "NORMAL"
+        # Drain any _block_buf state from process_line(_partial) above so
+        # _emit_prose_line starts with an empty buffer (see R-18).
+        self._flush_block_buf()
         if self._pending_source_line is not None:
             pending = self._pending_source_line
             self._pending_source_line = None

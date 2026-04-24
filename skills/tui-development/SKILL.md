@@ -25,7 +25,7 @@ metadata:
 
 **R4 architecture (complete, all 4 phases merged)**: All 10 `_app_*.py` mixin files deleted. `HermesApp(App)` — no mixin bases. Logic lives in `hermes_cli/tui/services/`. Forwarder methods (`watch_X`, `on_key`, `_handle_tui_command`, etc.) are inlined directly at the bottom of `HermesApp` in `app.py` (2654 lines).
 
-**R5 DEPRECATED stub cleanup (2026-04-23, commit 864ac9fe)**: 11 zero-external-caller DEPRECATED forwarder stubs deleted from app.py — `_cell_width`, `_input_bar_width`, `_next_spinner_frame`, `_helix_width`, `_helix_spinner_frame`, `_build_helix_frames` (spinner group); `_mount_minimap_default` (browse); `_append_attached_images`, `_insert_link_tokens`, `_drop_path_display`, `_handle_file_drop_inner` (watchers). **64 DEPRECATED markers remain** — all have live external callers in services/ or tests/; do not delete without migrating callers first.
+**R5 DEPRECATED stub cleanup (2026-04-23, commit 864ac9fe)**: 11 zero-external-caller DEPRECATED forwarder stubs deleted from app.py — `_cell_width`, `_input_bar_width`, `_next_spinner_frame`, `_helix_width`, `_helix_spinner_frame`, `_build_helix_frames` (spinner group); `_mount_minimap_default` (browse); `_append_attached_images`, `_insert_link_tokens`, `_drop_path_display`, `_handle_file_drop_inner` (watchers). **0 DEPRECATED markers remain** — all forwarders deleted across three passes (R5 + D1-D7 dead-code cleanup + app forwarder removal spec, commit 284a981e). All production code now calls service layer directly.
 
 Remaining `_app_*.py` files (NOT mixins — keep them):
 - `_app_constants.py` — `KNOWN_SLASH_COMMANDS` and other module-level constants
@@ -100,10 +100,22 @@ Two parallel renderer systems exist — do **not** unify their APIs:
 - Import: `from hermes_cli.tui.body_renderers.streaming import StreamingBodyRenderer`
 
 **`body_renderers/` (ABC, Phase C)** — post-hoc rich rendering after tool completion:
-- Base: `BodyRenderer` (ABC, `body_renderers/base.py`)
+- Base: `BodyRenderer` (ABC, `body_renderers/base.py`) — `__init__(payload, cls_result, *, app=None)`; lazy `colors` property → `SkinColors`
 - Factory: `pick_renderer(cls_result, payload)` in `body_renderers/__init__.py`
 - API: `can_render()`, `build()`, `build_widget()`
 - Import: `from hermes_cli.tui.body_renderers import pick_renderer, FallbackRenderer`
+
+**`body_renderers/_grammar.py`** — shared visual grammar for renderer bodies (G1–G4, merged 2026-04-24):
+- `glyph(char) → str` — returns ASCII fallback when `HERMES_NO_UNICODE=1`
+- `SkinColors` — frozen dataclass; `from_app(app)`, `default()`; hex-validates all fields; special-cases `syntax-theme`/`syntax-scheme` as non-hex string fields
+- `build_path_header(path, *, right_meta, colors)` → Rich `Text`
+- `build_gutter_line_num(n)` → Rich `Text`
+- `build_rule(label?)` → Rich `Text`
+- `BodyFooter(Static)` — `dock: bottom; height: 1`; renders `[c] copy · [o] open in $EDITOR`; hidden during `--streaming` and `density-compact`
+
+**`build_widget` override policy:** Only justified when the override instantiates something other than `CopyableRichLog`. `ShellOutputRenderer` and `FallbackRenderer` have NO override (base handles it). `SearchRenderer` delegates ≤100 hits to `super().build_widget()`. Test `test_no_redundant_build_widget_overrides` enforces this via AST inspection.
+
+**`--streaming` CSS class lifecycle:** Added by `ToolRenderingService.open_streaming_tool_block` on panel open; removed as the FIRST line of `_maybe_swap_renderer` before any other logic. `BodyFooter { display: none }` while class is present.
 
 Call sites for streaming path: `tool_panel.py`, `execute_code_block.py`, `tool_blocks/_block.py`, `write_file_block.py` — all import `StreamingBodyRenderer` from `body_renderers.streaming`.
 
@@ -180,8 +192,14 @@ Single widget handles 7 interrupt kinds (CLARIFY/APPROVAL/SUDO/SECRET/UNDO/NEW_S
 ### ResponseFlowEngine (`hermes_cli/tui/response_flow.py`)
 
 - `_init_fields()` initialises all 26 app-independent instance fields. Both `ResponseFlowEngine` and `ReasoningFlowEngine` call it first in `__init__`. **New fields go in `_init_fields()` only** — `ReasoningFlowEngine` inherits automatically.
-- `_LineClassifier` — 13 pure detection methods, no mutable state. Instantiated as `self._clf`.
-- `process_line()` dispatcher uses `elif` — **do not change to `if`**. IN_INDENTED_CODE/IN_SOURCE_LIKE close paths return `False` from `_dispatch_non_normal_state` to fall through to prose.
+- `_LineClassifier` — pure detection methods, no mutable state. Instantiated as `self._clf`. **All regex calls in dispatchers must go through `self._clf`** — the classifier is the single source of truth; inline regex calls in dispatch methods will silently diverge.
+- `process_line()` uses `if self._state != "NORMAL": dispatch_non_normal(); if self._state == "NORMAL": ...` — both checks are `if`, not `elif`. When a non-NORMAL handler returns `False` (block close), state resets to NORMAL and the closing line re-enters the NORMAL classifiers. Do NOT convert to `elif`.
+- `_dispatch_non_normal_state`: `_active_block is None` guard in each state resets to NORMAL and returns `False` (recovery path, no assert). Safe under `python -O`.
+- `_emit_prose_line(raw)` — routes one prose line through the full inline pipeline (block buf → apply_block_line → inline_markdown → emoji path → _commit_prose_line). Does NOT manage `_list_cont_indent` or `_pending_code_intro` — deliberate; callers that need those updated must use `_dispatch_prose` instead.
+- `_drain_pending_source()` — idempotent helper; flushes `_pending_source_line` via `_emit_prose_line`. Called inside the footnote/citation branch of `process_line` so the pending source line appears BEFORE the footnote footer. Do NOT call it unconditionally at the top of the NORMAL block (would break IN_SOURCE_LIKE lookahead).
+- `flush()` leading `_flush_block_buf()` call: inserted before `_emit_prose_line(_pending_source_line)` to drain any `_block_buf` state left by `process_line(_partial)`. Without it, setext-buffered partial content contaminates the pending source line's emoji detection (R-18).
+- `_emit_rule()` uses `self._prose_log.write_with_source(rule, "---")` — never append to `_prose_log._plain_lines` directly. The proxy handles dim wrap and plain tracking.
+- `_DimRichLogProxy` overrides `write_with_source` (dim italic wrap + plain append), `write` (forward only, no plain update), and `write_inline` (dim italic per TextSpan, plain accumulate). Use `write_with_source` for any call that needs copy-buffer tracking.
 
 ### StatusBar / HintBar (`widgets/status_bar.py`)
 
@@ -597,6 +615,8 @@ HelpOverlay > #help-content {
 
 New `$var-name` refs must be declared in the `.tcss` file at parse time — `get_css_variables()` alone is insufficient.
 
+**Custom CSS variable values must be literal hex — never variable references.** `$my-var: $warning;` silently drops `my-var` from `get_css_variables()` entirely (confirmed in Textual 8.2.3). This applies to ALL rhs references — both built-in theme vars (`$warning`, `$primary`, `$text-muted`) and other custom vars. Always use hex: `$my-var: #FEA62B;`. Built-in theme var hex equivalents: `$warning=#FEA62B`, `$primary=#0178D4`.
+
 **No CSS `+` or `~` sibling combinators** — Textual 8.x does not support them. Use Python class toggles on a parent instead:
 ```python
 # WRONG — invalid in Textual TCSS
@@ -846,6 +866,101 @@ Always `grep -rn "def method_name"` before calling a method that was added in a 
 
 **`_braille_density_set` / `_depth_to_density` signatures:** Both accept `w, h` parameters (added in perf pass). Call sites: `HyperspaceEngine`, `AuroraRibbonEngine` (direct), `RopeBraidEngine` (via `_depth_to_density`).
 
+### Rich `Syntax.__repr__` does not include the theme name
+
+The spec comment "Rich's `Syntax.__repr__` includes the theme name" is **wrong** for Rich ≥15. `repr(Syntax(..., theme="dracula"))` returns `<rich.syntax.Syntax object at 0x...>` — no theme name. To assert the theme in tests, read the internal attribute:
+
+```python
+theme_name = syntax._theme._pygments_style_class.__name__.lower()
+assert "dracula" in theme_name  # "DraculaStyle" → "draculastyle"
+```
+
+### MagicMock `app.config` makes collapse-threshold read return 1
+
+When an app is `MagicMock()`, `app.config` auto-returns a MagicMock. Dict-chain lookups on MagicMock (`cfg.get("tui")` etc.) stay truthy and chain further MagicMocks. `int(MagicMock())` calls `__int__` which MagicMock implements — returns **1** by default. If a renderer reads a threshold via `app.config`, tests with a bare MagicMock app will trigger that threshold unexpectedly. Always set `app.config = {}` when the test doesn't care about config:
+
+```python
+app = MagicMock()
+app.get_css_variables.return_value = {"syntax-theme": "dracula"}
+app.config = {}  # prevents threshold = 1 via MagicMock.__int__
+```
+
+### `_JsonCollapseWidget` child widgets in `__init__` for pure-unit toggle tests
+
+When a widget has a `_toggle_expand()` or similar method that flips `child.display`, and tests call it without `run_test`, child widgets **must** be assigned in `__init__` (not `compose()`). `compose()` only runs after mounting; calling `_toggle_expand()` on an unmounted widget would raise `AttributeError` on missing children.
+
+```python
+class _JsonCollapseWidget(Widget):
+    def __init__(self, summary_text, syntax, full_json):
+        from textual.widgets import Static
+        super().__init__()
+        self._summary = Static(summary_text)       # in __init__
+        self._syntax_view = Static(syntax)         # in __init__
+        self._syntax_view.display = False
+        self._full_json = full_json
+
+    def compose(self):
+        yield self._summary        # yielded in compose too for mounting
+        yield self._syntax_view
+
+    def _toggle_expand(self):
+        self._syntax_view.display = not self._syntax_view.display
+```
+
+Test: `widget._toggle_expand(); assert widget._syntax_view.display is True` — no `run_test` needed.
+
+### Rich `Color.__str__` returns full repr, not hex; comparison is case-sensitive
+
+`str(span.style.color)` returns `"Color('#ff3333', ColorType.TRUECOLOR, ...)"` — NOT bare hex. Rich normalises hex to **lowercase** internally (e.g. `"#E06C75"` → stored as `"#e06c75"`). Test assertions must use `in` AND lower-case:
+
+```python
+# WRONG — fails (wrong form) or flaky (case mismatch)
+assert str(span.style.color) == "#E06C75"
+assert "#E06C75" in str(span.style.color)
+
+# CORRECT
+assert "#e06c75" in str(span.style.color).lower()
+# or case-insensitive:
+assert SkinColors.default().error.lower() in str(span.style.color).lower()
+```
+
+This affects any test that checks span colours from Rich `Text._spans`.
+
+### `rich.console.Group` doesn't stringify to content — use `._renderables`
+
+`str(Group(...))` returns the Python object repr, not rendered text. To extract content from a `Group` in tests:
+
+```python
+from rich.console import Group
+from rich.text import Text
+
+def _group_text(g):
+    if isinstance(g, Group):
+        return " ".join(
+            r.plain if isinstance(r, Text) else str(r)
+            for r in g._renderables
+        )
+    return g.plain if isinstance(g, Text) else str(g)
+```
+
+### `Rich.Text.append()` has no `end=` kwarg
+
+`text.append("x", style=s, end="")` raises `TypeError: Text.append() got an unexpected keyword argument 'end'`. `end` is not an arg. Just omit it; append always concatenates without separator.
+
+### Float field truthiness: `0.0` is falsy — use `is not None`
+
+```python
+# WRONG — skips elapsed when started_at == 0.0
+if finished_at and started_at:
+    elapsed = finished_at - started_at
+
+# CORRECT
+if finished_at is not None and started_at is not None:
+    elapsed = finished_at - started_at
+```
+
+Any numeric field that can legitimately be `0` or `0.0` (timestamps, counts, thresholds) must be checked with `is not None`, not truthiness.
+
 ### Rich bracket eating in Button labels
 
 `Button("[show all]", ...)` renders as empty — Rich parses `[show all]` as a markup tag. Always wrap bracket-containing labels:
@@ -948,6 +1063,254 @@ Quick facts for TUI work:
 ---
 
 ## Changelog
+
+### 2026-04-24 — SearchRenderer + VirtualSearchList overhaul (commit c1454a88, branch feat/render-search-overhaul)
+
+R-Sr1/Sr2/Sr3/Sr4/Sr5 — 32 tests in `tests/tui/test_render_search_overhaul.py`.
+
+**Parse layer (R-Sr1):**
+- `_HIT_RE = re.compile(r"^(\s*)(\d+)[:]\s*(.*)")` and `_CONTEXT_RE = re.compile(r"^(\s*)(\d+)[\-]\s*(.*)")` — separate hit (`:`) from context (`-`) lines.
+- Inner hit tuples are now `(line_num, content, is_hit: bool)` — 3-tuples throughout.
+- JSON path: `is_hit = m.get("type", "match") != "context"` (ripgrep `--json` schema).
+- Context lines render `Style(color=colors.muted, italic=True)` on content span. Hit-line content is normal (no italic).
+
+**Path header (R-Sr2):**
+- `build_path_header(path, right_meta=f"{n} hits", colors=colors)` with `"  "` icon-column prefix prepended by `SearchRenderer` (not by grammar). Header is `"  ▸ path · N hits"`.
+- "matches" → "hits" for brevity and footer consistency.
+
+**Unified 4-tuple line model (R-Sr3):**
+- `_build_lines_list()` returns `list[tuple[str, str, str | None, int | None]]` — `(formatted_line, kind, path_or_none, line_num_or_none)`.
+- `kind ∈ {"header", "hit", "context", "rule", "blank"}`.
+- `_ansi_highlight(text, query)` helper: `re.sub(re.escape(query), bold-escape, text, flags=IGNORECASE)`. Safe on empty/whitespace query; swallows `re.error` defensively.
+- `VirtualSearchList.__init__` takes `lines=` keyword arg (was `lines_text=`).
+- `on_mount` derives `_strips`, `_line_kinds`, `_hit_count`, `_viewport_height` atomically, then calls `_update_footer()`.
+
+**Full keyboard nav + editor open (R-Sr4):**
+- `BINDINGS`: `j,down` / `k,up` / `pagedown` / `pageup` / `g,home` / `shift+g,end` / `enter`. Textual expands comma-separated keys automatically.
+- All 6 scroll actions: mutate `_cursor_idx` (clamped), call `_update_sticky()` + `_update_footer()` + `_safe_refresh()`. `_safe_refresh()` wraps `self.refresh()` in `try/except AttributeError` for `__new__`-constructed test objects.
+- Cursor row: `Style(reverse=True)` in `render_line(y)` — cross-theme safe.
+- `action_open_selection()`: checks `kind in {"hit", "context"}`, reads `path`/`line_num` from `_lines[_cursor_idx]`, calls `safe_edit_cmd(self, cmd_argv, path, line=line_num, on_exit=lambda: self.refresh())`. `on_exit` is zero-arg.
+- `_update_footer()`: `"[j/k scroll · g/G top/bottom · enter open] · pos/total lines · N hits"`. `glyph("·")` for accessibility. Wrapped in `try/except` — safe before mount.
+- CSS: `VirtualSearchList { scrollbar-size-vertical: 1; scrollbar-color: $text-muted 30%; height: 1fr; overflow-y: auto; }` replacing `height: auto`.
+
+**Sticky group header (R-Sr5):**
+- `_StickyGroupHeader(Static, can_focus=False)`: `dock: top; height: 1; display: none`.
+- `_SearchFooter(Static, can_focus=False)`: `dock: bottom; height: 1`.
+- Both yielded in `VirtualSearchList.compose()` — always in DOM, never dynamically mounted.
+- `_update_sticky()`: scans backward from `_cursor_idx` for nearest header. **Only shows sticky when `≥2` groups exist** (single-group results need no boundary context). Hides when cursor is on a header row.
+- Inter-group separator: `build_rule(colors=colors).plain` → `("rule", None, None)` tuple instead of blank line. `build()` also uses `build_rule()` for the text-only path.
+
+**Key gotchas:**
+- `_safe_refresh()` is required for pure-unit tests that use `Widget.__new__()` — calling `self.refresh()` directly raises `AttributeError: _is_mounted` on unmounted objects.
+- `_update_sticky()` single-group guard: without it, backward scan finds the only header and always shows the sticky — but a single-file result has no group boundaries to indicate.
+- `build_rule()` sets muted colour on `Text.style` (base), NOT as a span — test with `str(rule.style)` not `rule._spans`.
+- `VirtualSearchList.build_widget()` keyword arg changed from `lines_text=` to `lines=` — update any callers.
+
+---
+
+### 2026-04-24 — TableRenderer + LogRenderer polish (commit 12858046, branch feat/textual-migration)
+
+R-T1/T2/T3, R-L1/L2/L3 — 20 tests in `tests/tui/test_render_table_log.py`.
+
+**TableRenderer (`body_renderers/table.py`):**
+- `_looks_like_table(lines, delim)` — `Counter` modal column count; requires mode ≥2 and ≥70% coverage; returns `False` on empty; `build()` falls back to `FallbackRenderer` when rejected.
+- No fake headers: `show_header=False` with bare `table.add_column()` (no `justify` only, no label) when `has_header` is False. `f"Col{j+1}"` path deleted.
+- `_column_numeric_stats(rows, j) -> (num, nonnum, is_numeric_col)` — proportional 0.8 threshold; replaces whole-column boolean scan. Outlier cells in numeric columns rendered `Text(cell, style=Style(color=colors.muted))`.
+
+**LogRenderer (`body_renderers/log.py`):**
+- `_LEVEL_STYLES` and `_LEVEL_COLORS` deleted. Per-call `style_map` built from `self.colors` (SkinColors) in `build()`.
+- `_TS_RE` extended: `r"^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)"` — captures full sub-second + TZ.
+- `_timestamp_mode: str = "full"` replaces `_timestamps_visible: bool`. Modes: `"full"` (emit full captured group, dim), `"relative"` (first-parseable-ts epoch reference; format `f"+{elapsed:.3f}s"`), `"none"` (strip entirely).
+- Continuation-line gutter: `_CONTINUATION_RE = re.compile(r"^(?:\t| {2,})")` + `prev_had_signal` flag. Continuation lines get `glyph(GLYPH_GUTTER) + " "` prefix in `Style(color=c.muted)`.
+
+**Key gotcha:** `str(rich.Color)` returns full repr — use `"#hex" in str(span.style.color)` not `== "#hex"` in tests.
+
+---
+
+### 2026-04-24 — Audit 4 Quick Wins (commit 88c6c7b6, branch feat/audit4-quick-wins)
+
+TRIGGER-01/02/04, INTR-01/05/06, PANE-01/02, CONFIG-02/03/04, REF-02/03, BROWSE-02, SESS-01 — 33 tests in `tests/tui/test_audit4_quick_wins.py`.
+
+**Binding changes (`app.py`):**
+- `ctrl+b` → `action_toggle_browse_mode` (was duplicate anim-config alias). `action_toggle_browse_mode` added near `action_toggle_minimap`.
+- `ctrl+shift+a` `show=True` — now surfaces in Keys tab.
+- `f3` → `action_show_commands` (new, calls `CommandsOverlay.show_overlay()`).
+- `f4` → `action_toggle_workspace` (was unbound).
+
+**InterruptOverlay countdown guard (`overlays/interrupt.py`):**
+- `_COUNTDOWN_ALLOWED: frozenset = {InterruptKind.CLARIFY}` — module-level constant above payload dataclasses.
+- `_activate_payload`: timer only starts when `payload.kind in _COUNTDOWN_ALLOWED`. APPROVAL/SUDO/SECRET never auto-dismiss.
+- `_tick_countdown`: belt-and-suspenders guard returns early for non-CLARIFY kinds.
+- `_flash_replace_border`: `if getattr(self, "app", None) and self.app.has_class("reduced-motion"): return` — skips animation entirely.
+
+**Pane fixes:**
+- `_RIGHT_PANE_HAS_CONTENT: bool = False` constant in `pane_manager.py`. `_right_collapsed` always `True` when `False`; config only takes effect when flipped.
+- `PaneContainer.compose` deleted — Widget base provides no-op by default.
+
+**Config overlay (`overlays/config.py`):**
+- `on_option_list_option_highlighted`: previews skin via `tm.load_skin(name)` on arrow-key highlight without committing. Esc still reverts to open-time snapshot.
+- `_refresh_syntax_tab`: reads `app.status_active_file` extension → `_EXT_TO_LANG` dict → picks fixture from `_FIXTURE_BY_LANG` (new in `_legacy.py`; 12 languages).
+- Reasoning tab: `Horizontal` of `Button` replaced by `OptionList(id="co-rpo-list")`. `_update_reasoning_highlights` now clears and repopulates OptionList. `_apply_reasoning_level` extracted as helper. `on_option_list_option_selected` handles `co-rpo-opt-*`. Focus map gains `"reasoning": "#co-rpo-list"`.
+
+**WorkspaceOverlay (`overlays/reference.py`):**
+- Sessions tab button, `_SessionsTab` widget, `_refresh_sessions_tab` method, and sessions branch in `_switch_tab` all deleted. Canonical session list is `SessionOverlay`.
+
+**HelpOverlay `q` key (`overlays/reference.py`):**
+- `Binding("q", "dismiss", priority=False)` removed. Replaced by `on_key` that checks `self.screen.focused is search` before dismissing — prevents `q` from dismissing when `#help-search` Input has focus.
+
+**BrowseMinimap (`browse_minimap.py`):**
+- `render_line` reads `self.app.get_css_variables().get("accent", "cyan")` per render. Falls back to `"cyan"` on any exception.
+
+**Session relative time (`overlays/_legacy.py`):**
+- `_build_label`: sessions ≥56 days (8 weeks) now render `datetime.fromtimestamp(last_active).strftime("%Y-%m-%d")` instead of `Nw ago`.
+
+**Test patterns:**
+- `app` / `screen` on Textual widgets are read-only properties — always `patch.object(type(ov), "app", new_callable=PropertyMock, ...)`.
+- `browse_mode` is a reactive — use `types.SimpleNamespace(browse_mode=False)` not `HermesApp.__new__`.
+- `_SessionRow._build_label` (not `_build_line`) — inspect source before calling methods on `__new__` objects.
+
+---
+
+### 2026-04-24 — Audit 3 Input Mode Enum (commit 13f4f72e, branch feat/textual-migration)
+
+I9/I17 — 30 tests in `tests/tui/test_audit3_input_mode_enum.py`.
+
+**New `hermes_cli/tui/input/_mode.py` — `InputMode` enum:**
+- Values: `NORMAL`, `BASH`, `REV_SEARCH`, `COMPLETION`, `LOCKED`
+- Priority for `_compute_mode()`: `LOCKED > REV_SEARCH > BASH > COMPLETION > NORMAL`
+
+**`_mode: reactive[InputMode]` on `HermesInput`:**
+- `_compute_mode()` — derives from `self.disabled`, `_rev_mode`, `--bash-mode` class, `_completion_overlay_visible()`
+- `watch__mode(old, new)` — calls `_sync_chevron_to_mode(new)` + `_sync_legend_to_mode(new)`
+- Module-level dicts `_CHEVRON_GLYPHS`, `_CHEVRON_VAR`, `_LEGEND_KEY` map enum → glyph/var/legend-key
+
+**Chevron routing (`_sync_chevron_to_mode`):**
+- Resolves color from `app.get_css_variables()` using var name without `$` prefix (e.g. `"chevron-rev-search"` not `"$chevron-rev-search"`)
+- Falls back to `Style()` (no color) on any failure — never crashes
+- Rich imports (`Style`, `Text`, `Label`) are module-level in widget.py — never inside method body
+
+**Legend routing (`_sync_legend_to_mode`):**
+- `NORMAL` mode with active `suggestion` → does NOT hide legend (ghost preservation)
+- `LOCKED` mode shows "locked" key → "running…  ·  Ctrl+C to interrupt" (I9 fix — visible even with text in field)
+
+**`_refresh_placeholder()` priority order (updated):**
+`locked/disabled > bash (--bash-mode class) > error_state > idle`
+
+**`_sync_bash_mode_ui` stripped:** chevron + legend removed (owned by `watch__mode`). Now only calls `_refresh_placeholder()` + `feedback.cancel`.
+
+**Recompute call sites:**
+- `on_text_area_changed` — after `_sync_bash_mode_ui` call
+- `_set_input_locked` — after add/remove class (guarded by try/except)
+- `_show_completion_overlay` / `_hide_completion_overlay` in `_path_completion.py`
+- `action_rev_search` / `_exit_rev_mode` in `_history.py` (replaced old legend blocks)
+
+**New CSS vars (literal hex — no variable-to-variable):**
+- `chevron-rev-search: #FFBF00` — amber
+- `chevron-completion: #5F9FD7` — blue
+- `chevron-locked: #666666` — muted gray
+- All 3 in `COMPONENT_VAR_DEFAULTS`, `hermes.tcss`, and all 4 bundled skins
+
+**`InputLegendBar.LEGENDS`** gained `"locked"` key.
+
+**Test pattern for `_sync_legend_to_mode` NORMAL+ghost guard:**
+```python
+# Must NOT hide when suggestion is active
+inp = types.SimpleNamespace(suggestion=" -la", ...)
+HermesInput._sync_legend_to_mode(inp, InputMode.NORMAL)
+legend.hide_legend.assert_not_called()
+```
+
+**`test_input_mode_safety.py` updates:**
+- `_FakeInput` gained `_classes: set`, `add_class`, `remove_class`, updated `has_class`/`set_class`, and `_refresh_placeholder()`
+- 4 `TestBashModeUI` tests updated: placeholder tests now set `--bash-mode` class first; chevron tests now call `_sync_chevron_to_mode` directly
+
+---
+
+### 2026-04-24 — Audit 3 Completion Accept (commit c9c2fd71, branch feat/textual-migration)
+
+I4/I10 — 10 tests in `tests/tui/test_audit3_completion_accept.py`.
+
+**I4 — Mid-string Tab flash hint (`input/_autocomplete.py` `action_accept_autocomplete`):**
+- Guard `cursor_position < len(self.value)` now flashes `"Tab: move cursor to end to accept"` (2.0s) via `app._flash_hint` before closing the overlay and returning. Overlay still closes — mid-string SlashCandidate accept would corrupt text.
+- Flash wrapped in `try/except Exception: pass` — safe when `app` is not available in tests.
+
+**I10 — Enter respects highlighted candidate for exact-slash bypass (`input/widget.py` `_on_key` Enter branch):**
+- Old code: `exact_slash = raw.startswith("/") and raw in _slash_commands; if highlighted >= 0 and not exact_slash: accept`. Problem: user navigating to `/help-me` when `/help` is typed → submit skips highlighted candidate.
+- New code: `is_exact_slash` + `highlighted_is_typed` two-step. `highlighted_is_typed` only True when `item.command.strip() == raw.strip()`. Accept runs when `highlighted >= 0 and not highlighted_is_typed` — covers all cases where user moved the highlight.
+- `clist.items[clist.highlighted]` access is bounds-checked (`0 <= clist.highlighted < len(clist.items)`) before reading.
+
+**Behavior table (I10):**
+
+| Typed | Highlighted | `is_exact_slash` | `highlighted_is_typed` | Action |
+|-------|------------|-----------------|----------------------|--------|
+| `/help` | `/help ` (idx 0) | True | True | Submit `/help` ✓ |
+| `/help` | `/help-me ` (idx 1) | True | False | Accept `/help-me ` ✓ |
+| `/foo` | `/foobar ` | False | — | Accept `/foobar ` ✓ |
+| `plain text` | any candidate | False | — | Accept highlighted ✓ |
+
+**Test pattern (`_FakeInput` for `_on_key` async tests):**
+- I10 tests call `await HermesInput._on_key(inp, event)` with a `types.SimpleNamespace` `inp`.
+- `inp` must have: `disabled`, `text`, `value`, `cursor_position`, `_rev_mode`, `error_state`, `_completion_overlay_visible`, `screen.query_one`, `action_accept_autocomplete` (MagicMock), `action_submit` (MagicMock), `_slash_commands`.
+- I4 tests call `_AutocompleteMixin.action_accept_autocomplete.__get__(inp)()` — `inp` also needs `_completion_overlay_visible` (lambda returning True).
+
+---
+
+### 2026-04-24 — Audit 3 Input Quick Wins (commit fd34922b, branch feat/textual-migration)
+
+I1/I2/I3/I7/I8/I11/I12/I13/I15/I16 — 22 tests in `tests/tui/test_audit3_input_quick_wins.py`.
+
+**I1 — Rev-search ↑↓ routing (`widget.py` `_on_key`):**
+- Up/down in `_on_key` now checks `getattr(self, "_rev_mode", False)` first; routes to `_rev_search_find(direction=-1/+1)` and returns. Generic history nav only runs when not in rev-mode.
+
+**I8 — Rev-search substring (`_history.py` `action_rev_search`):**
+- Changed `self._history[idx].startswith(query)` → `query in self._history[idx]`. Bundled: also sets `self._rev_match_idx = idx` after match so I1's ↑↓ cycling starts from the correct position.
+
+**I2 — Esc clears `error_state` unconditionally (`widget.py`):**
+- Removed `and not self.text.strip()` guard. `if self.error_state is not None:` clears regardless of input content.
+
+**I3 — No `_flash_hint` from bash mode (`widget.py` `_sync_bash_mode_ui`):**
+- Deleted the `if is_bash: self.app._flash_hint("bash …", 30.0)` call. Only the `if not is_bash: feedback.cancel("hint-bar")` safety belt remains.
+
+**I7 — Ghost text 1-char guard (`_history.py` `update_suggestion`):**
+- After reading `current`, added `if len(current) < 2: self.suggestion = ""; _hide_ghost_legend(self); return`. Prevents noise on first char.
+
+**I11 — Placeholder advertises `!shell` (`widget.py`):**
+- `_default_placeholder` changed from `"Type a message  @file  /  commands"` to `"Type a message  @file  /cmd  !shell"`.
+
+**I12 — Height resize with bounds (`widget.py` `_on_key`):**
+- `ctrl+shift+up`: `min(6, override + 1)`. `ctrl+shift+down`: `max(1, override - 1)`. Both blocks were previously `= 3` (identical, dead bindings).
+
+**I13 — Delete dead compat branch (`widget.py` `on_click`):**
+- Removed the `try: self.app; has_app=True; except: has_app=False; if not has_app: ...` block. `safe_run` is the only code path.
+
+**I15 — Auto-close 3s for readable states (`completion_list.py`):**
+- `_maybe_schedule_auto_close`: `delay = 3.0 if self.empty_reason in {"too_short", "no_slash_match"} else 1.5`.
+
+**I16 — Paste flash gated on >80 chars (`widget.py` `_on_paste`):**
+- Wrapped `self.app._flash_hint(...)` in `if len(event.text) > 80:`. Small pastes skip the banner.
+
+### 2026-04-24 — Audit 2 Quick Wins (commits 581fb2cd–20043592, branch feat/audit2-quick-wins)
+
+B3/B4/B6/B7/B10/B11 — 22 tests across 6 test files.
+
+**B11 — `flash_error`/`flash_success` branch (`_streaming.py`):**
+- `StreamingToolBlock.complete()` — was always calling `self._header.flash_success()`. Now branches: `flash_error()` when `is_error=True`, `flash_success()` when `is_error=False`. `flash_error()` already existed at `_header.py:472`.
+
+**B4 — `_DropOrder` shim deleted (`_header.py`):**
+- `_DropOrder` was a `list` subclass that used `inspect.stack()` to return a reversed list to `test_tui_polish.py` — production/test divergence. Deleted the class and `import inspect`. `_DROP_ORDER` is now `list[str] = ["linecount", "duration", "chip", "hero", "diff", "stderrwarn", "remediation", "exit", "chevron", "flash"]`. Updated 3 assertions in `test_tui_polish.py`.
+
+**B6 — OmissionBar `[hide]` → `[reset]`, `--ob-cap-adv` removed (`_shared.py`):**
+- Button label changed from `[hide]` to `[reset]` (via `_T("[reset]")` — Rich markup safety). Deleted the duplicate `--ob-cap-adv` button from `compose()`, its `elif "--ob-cap-adv" in classes:` handler block, and the now-unused `_reset_label()` static method.
+
+**B7 — `SubAgentHeader` running glyph (`sub_agent_panel.py`):**
+- In `update()` Rich path: `segments.insert(0, ("running", _Text("● ", style="bold green")))` when `not done and error_count == 0` — inserted BEFORE `_trim_tail_segments`. Accessibility path: prepends `"[running] "` to `badge`. Guard: glyph absent when `done=True` or `error_count > 0`.
+
+**B10 — `EmptyStateRenderer` category-aware messages (`body_renderers/empty.py`):**
+- Added `_get_empty_message(category) -> str` module-level helper mapping `ToolCategory` to: SHELL/CODE → `"(no output)"`, SEARCH → `"No matches"`, FILE → `"Empty file"`, WEB → `"No content"`, AGENT/MCP → `"(no result)"`, fallback → `"(no output)"`. `build()` and `build_widget()` use `_get_empty_message(getattr(self.payload, "category", None))`.
+
+**B3 — Auto-collapse tail restore (`tool_panel.py`):**
+- Bug: `_apply_complete_auto_collapse` set `collapsed=True`, triggering `watch_collapsed` which saved `_visible_start=0` (streaming end). Expand saw saved==0 and bailed, reopening at top.
+- Fix: `_apply_complete_auto_collapse` pre-seeds `_saved_visible_start = max(0, total - visible_cap)` when `_saved_visible_start is None`. `watch_collapsed(True)` save guard preserves pre-seeded value when `current==0`. Expand path removes `if saved > 0` guard — calls `rerender_window` whenever `_saved_visible_start is not None`.
 
 ### 2026-04-23 — Input Mode Safety (rev-search, bash mode, readline bindings)
 
@@ -1290,40 +1653,6 @@ if 0 < w < 100: return ThinkingMode.COMPACT
 
 ---
 
-### 2026-04-24 — Audit 1 Error Prominence (commit f688ba5f, merged feat/textual-migration)
-
-A3/A7 — 20 tests in `tests/tui/test_audit1_error_prominence.py`.
-
-**A3-1 — Nameplate error freeze:**
-- `AssistantNameplate` registers `on_error_set`/`on_error_clear` lifecycle hooks in `on_mount` (try/except guard; `unregister_owner(self)` in `on_unmount`).
-- `_on_error_set(**_)`: `_pulse_stop()` → `remove_class("--active", "--idle")` → `add_class("--error")` → `refresh()`.
-- `_on_error_clear(**_)`: `remove_class("--error")` → `_activate_idle_phase()`.
-- `_activate_idle_phase()`: sets `_state = _NPState.IDLE`, calls `_set_timer_rate(6)` only if `_timer is None`.
-- `_error_color_hex` read from `css_vars.get("status-error-color", "#ef5350")` in `on_mount` try block; fallback `"#ef5350"` in `__init__`.
-- CSS: `AssistantNameplate.--error { color: $status-error-color; }` — static red, no animation.
-
-**A3-2 — HintBar auto-route on error:**
-- In `WatchersService.on_status_error`, after `inp.error_state` line: flash `⚠ {value}` with `priority=10, duration=9999` (persistent); cancel `"hint-bar"` on clear.
-
-**A3-3 — StatusBar error left-anchor:**
-- At top of `StatusBar.render()` (before browse check): if `status_error` non-empty, return `⚠ {error[:40]}  {model}` immediately — all other segments bypassed.
-
-**A7-0 — Named compaction constants:**
-- Module-level in `status_bar.py`: `_COMPACT_COLOR_MID=0.50`, `_COMPACT_COLOR_WARN=0.85`, `_COMPACT_COLOR_CRIT=0.91`, `_COMPACT_BADGE_CRIT=0.95`. Replace bare literals in `_compaction_color()`.
-- Runtime config reads: `_compact_warn = float(_display_cfg.get("compact_warn_threshold", _COMPACT_COLOR_WARN))`, `_compact_crit = float(_display_cfg.get("compact_badge_threshold", _COMPACT_BADGE_CRIT))` in `render()`.
-
-**A7-1 — One-shot warn flash:**
-- `WatchersService.__init__`: `self._compact_warn_flashed: bool = False`.
-- `on_status_compaction_progress`: reads `_warn`/`_crit` from `app.config`. Fires `feedback.flash("hint-bar", f"Context {int(_warn*100)}% full — /compact available", duration=8.0, priority=5)` once per climb. Resets `_compact_warn_flashed = False` when drops below `_warn`. Old `_flash_hint` + `_compaction_warned` references removed.
-
-**A7-2 — `[!]` critical badge:**
-- In `StatusBar.render()`, `width >= 60` + `if enabled:` branch, BEFORE bar construction: `if progress >= _compact_crit: t.append("[!] ", style="bold red blink")`.
-
-**Key gotchas:**
-- Hooks registration in nameplate `on_mount` must be outside the `if not self._effects_enabled: return` guard — error handling is independent of effects.
-- `_activate_idle_phase` only restarts timer when `_timer is None` — avoids double-timer if already running.
-- `WatchersService.on_status_compaction_progress` uses `getattr(self.app, "config", {})` (not `self.app.config` directly) — safe for test contexts where app is a mock without `config` attr.
-
 ### 2026-04-24 — Audit 1 Quick Wins (commit 827e6036, merged feat/textual-migration)
 
 A6/A8/A10/A11/A12/A13/A14/A15 — 23 tests in `tests/tui/test_audit1_quick_wins.py`.
@@ -1397,3 +1726,27 @@ panel._refresh_budget_visibility = PlanPanel._refresh_budget_visibility.__get__(
 ```
 
 `PlanPanel._collapsed` is a reactive — setting it directly on `SimpleNamespace` bypasses the reactive setter entirely, which is correct for pure-logic unit tests. Do NOT use `PlanPanel.__new__` for this — `_collapsed` is a class-level reactive and setting it raises `ReactiveError`.
+
+---
+
+### 2026-04-24 — Audit 2 Discovery & Affordances (commits 75f2ae00–cfb00c59, branch feat/audit2-discovery-affordances)
+
+B1/B5/B9 — 37 tests across 3 test files.
+
+**B5 — FooterPane action buttons:**
+- `_action_row: Horizontal` added in `FooterPane.compose()` (not `__init__`). Use `getattr(self, "_action_row", None)` guard in `_rebuild_action_buttons` — compose hasn't run on pre-compose objects.
+- `_rebuild_action_buttons(summary, actions_to_render)` clears old `.--action-chip` buttons, mounts new `Button(RichText(...), classes="--action-chip", name=action.kind)` per filtered action.
+- `on_button_pressed` extended: `"--action-chip" in event.button.classes` block at TOP routes `event.button.name` → `panel.action_retry/copy_err/open_primary/copy_body`. Must call `event.stop(); return`.
+- `action_copy_result` does NOT exist — the real method is `action_copy_body`. Map `"copy_body"` → `panel.action_copy_body`.
+
+**B1 — Collapsed action strip:**
+- `_CollapsedActionStrip(Static)` with `DEFAULT_CSS` default `display: none` and `.--visible { display: block; }`.
+- `_COLLAPSED_ACTIONS` map is lazy-init (deferred import of `ToolCategory` to avoid cycle): use a module-level `_COLLAPSED_ACTIONS: dict | None = None` + builder function.
+- Filter logic: `"r"` (retry) only when `result_summary_v4.is_error`, `"e"` (err) only when `stderr_tail`. Skip when `_result_summary_v4 is None` (streaming) or `not collapsed` or `not has_focus`.
+- Wire: `watch_collapsed` calls `_refresh_collapsed_strip()` at end. `on_focus` calls it. `on_blur` removes `"--visible"` directly.
+- Suppress under `HERMES_DETERMINISTIC=1`: `os.environ.get("HERMES_DETERMINISTIC")` check at top of `_refresh_collapsed_strip`.
+
+**B9 — Discovery hint:**
+- `_DISCOVERY_GLOBAL_SHOWN: bool = False` module-level in `tool_panel.py`. Import as `_tp_module._DISCOVERY_GLOBAL_SHOWN` in tests; reset in `autouse` fixture.
+- `FeedbackService.LOW` is NOT a class attribute — it's a module-level constant (`LOW: int = 0` in `feedback.py`). Import: `from hermes_cli.tui.services import feedback as _fb_mod; priority=_fb_mod.LOW`. Using `FeedbackService.LOW` raises `AttributeError` (silently swallowed by `except Exception: pass`).
+- `action_show_help` sets `global _DISCOVERY_GLOBAL_SHOWN = True` as first line — before the overlay logic.

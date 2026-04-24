@@ -63,7 +63,7 @@ High-signal flow:
   `append_streaming_line(id, line)`,
   `close_streaming_tool_block(id, duration, is_error, summary)`,
   `close_streaming_tool_block_with_diff(id, duration, diff_lines, plain_lines, stats, is_error, summary)`,
-  `mount_tool_block(label, lines, plain_lines, tool_name, rerender_fn, header_stats)`,
+  `mount_tool_block(label, lines, plain_lines, tool_name, rerender_fn, header_stats, is_error=False) -> Widget | None` — also wires completion state via `call_after_refresh` (sets `_is_complete`, flashes header, populates `FooterPane`),
   `write_output(chunk)`.
   Browse mode `a`/`A` keys query **ToolPanel** (not ToolBlock) — check `panel.collapsed`.
   Resize: `on_resize` debounces via `_resize_timer.stop()` + `set_timer(_RESIZE_DEBOUNCE_S, _flush_resize)`.
@@ -92,17 +92,23 @@ High-signal flow:
   **ToolHeader is inside BodyPane inside ToolPanel — always visible even when panel.collapsed=True.**
   ToolBlock.toggle(): when `header._panel` is set, delegates to `panel.action_toggle_collapse()`.
 
-- **`hermes_cli/tui/tool_panel.py`**
-  `ToolPanel(Widget)` — binary collapse container for all tool calls.
-  `BodyPane` — hosts the tool block; always visible (BodyPane never hidden).
-  `FooterPane` — exit-code chip, stderr tail, action hints; shown when result has content.
-  Key reactive: `collapsed: reactive[bool] = reactive(False, layout=True)`.
-  `watch_collapsed`: hides `block._body` (ToolBodyContainer), NOT BodyPane.
-  `set_result_summary_v4(summary)` — wires result → header chips + footer + auto-collapse.
-  `_apply_complete_auto_collapse()` — collapses when body > threshold; errors force expand.
-  `action_toggle_collapse()` — sets `_user_collapse_override=True`, flips collapsed.
-  BINDINGS: `enter` (toggle), `+/-/*` (OmissionBar lines).
-  ToolPanel.Completed posted after `set_result_summary_v4`.
+- **`hermes_cli/tui/tool_panel/`** (subpackage — B16 split; `tool_panel.py` deleted)
+  `__init__.py` — backward-compat re-export shim; all old `from hermes_cli.tui.tool_panel import X` still work.
+  `_footer.py` — standalone helpers + `BodyPane`, `FooterPane`.
+    `FooterPane.on_mount` raises `RuntimeError` if mounted twice (B13 guard).
+  `_completion.py` — `_ToolPanelCompletionMixin`; `_DISCOVERY_GLOBAL_SHOWN: bool` lives here (NOT in `__init__`).
+  `_actions.py` — `_ToolPanelActionsMixin`; `action_show_help` does `from . import _completion as _comp_mod` to mutate the flag.
+  `_core.py` — `ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget)`.
+    Key reactive: `collapsed: reactive[bool] = reactive(False, layout=True)`.
+    `watch_collapsed`: hides `block._body` (ToolBodyContainer), NOT BodyPane.
+    `set_result_summary_v4(summary)` — wires result → header chips + footer + auto-collapse.
+    `_apply_complete_auto_collapse()` — collapses when body > threshold; errors force expand.
+    `action_toggle_collapse()` — sets `_user_collapse_override=True`, flips collapsed.
+    BINDINGS: `enter` (toggle), `+/-/*` (OmissionBar lines). ToolPanel.Completed posted after `set_result_summary_v4`.
+  `_child.py` — `ChildPanel(ToolPanel)`; compact mode + `_user_touched_compact` guard (B14).
+    `action_toggle_compact` sets `_user_touched_compact=True`. Auto-uncompact on error skipped when `_user_touched_compact=True`.
+  `child_panel.py` — shim re-exporting `ChildPanel` from `tool_panel._child`.
+  **Import gotcha**: `_DISCOVERY_GLOBAL_SHOWN` re-export in `__init__` is a value copy. Tests that set or check this flag MUST target `hermes_cli.tui.tool_panel._completion._DISCOVERY_GLOBAL_SHOWN` directly.
   `FooterPane.on_resize` — hysteresis via `crosses_threshold`; sets `compact` class below `THRESHOLD_NARROW=60`; tracks `_last_resize_w`.
 
 - **`hermes_cli/tui/tool_category.py`**

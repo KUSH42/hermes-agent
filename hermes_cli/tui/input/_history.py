@@ -139,7 +139,7 @@ class _HistoryMixin:
                 self.placeholder = f"reverse-i-search: {query_display}_"  # type: ignore[attr-defined]
             except Exception:
                 pass
-            # Clear any ghost text and show persistent rev-search legend
+            # Clear any ghost text and show persistent rev-search hint
             self.suggestion = ""  # type: ignore[attr-defined]
             try:
                 self.app.feedback.flash(  # type: ignore[attr-defined]
@@ -149,9 +149,9 @@ class _HistoryMixin:
                 )
             except Exception:
                 pass
+            # Recompute mode so watch__mode handles legend/chevron
             try:
-                from hermes_cli.tui.widgets.input_legend_bar import InputLegendBar
-                self.app.query_one("#input-legend-bar", InputLegendBar).show_legend("rev_search")  # type: ignore[attr-defined]
+                self._mode = self._compute_mode()  # type: ignore[attr-defined]
             except Exception:
                 pass
         query = self._rev_query or current
@@ -215,10 +215,9 @@ class _HistoryMixin:
                 self.placeholder = self._idle_placeholder  # type: ignore[attr-defined]
             except Exception:
                 pass
-        # Hide rev-search legend
+        # Recompute mode so watch__mode handles legend/chevron
         try:
-            from hermes_cli.tui.widgets.input_legend_bar import InputLegendBar
-            self.app.query_one("#input-legend-bar", InputLegendBar).hide_legend()  # type: ignore[attr-defined]
+            self._mode = self._compute_mode()  # type: ignore[attr-defined]
         except Exception:
             pass
 

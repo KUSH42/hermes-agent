@@ -33,6 +33,7 @@ class _FakeInput:
         self._cursor_location: tuple = (0, len(text))
         self.app: object = MagicMock()
         self.app.feedback = MagicMock()
+        self._classes: set[str] = set()
 
     @property
     def text(self) -> str:
@@ -61,10 +62,31 @@ class _FakeInput:
         raise Exception("no widget")
 
     def has_class(self, cls: str) -> bool:
-        return False
+        return cls in self._classes
 
-    def set_class(self, condition: bool, cls: str):
-        pass
+    def add_class(self, cls: str) -> None:
+        self._classes.add(cls)
+
+    def remove_class(self, cls: str) -> None:
+        self._classes.discard(cls)
+
+    def set_class(self, condition: bool, cls: str) -> None:
+        if condition:
+            self._classes.add(cls)
+        else:
+            self._classes.discard(cls)
+
+    def _refresh_placeholder(self) -> None:
+        if getattr(self, "disabled", False):
+            self.placeholder = "running…  ·  Ctrl+C to interrupt"
+            return
+        if "--bash-mode" in self._classes:
+            self.placeholder = "! shell mode  ·  Enter runs  ·  Ctrl+C clear"
+            return
+        if getattr(self, "error_state", None):
+            self.placeholder = str(self.error_state)
+            return
+        self.placeholder = self._idle_placeholder
 
     def save_draft_stash(self) -> None:
         if self._history_idx == -1:
@@ -274,9 +296,10 @@ class TestRevSearchCorrectness:
 class TestBashModeUI:
 
     def test_bash_mode_placeholder_set(self):
-        """_sync_bash_mode_ui(True) sets bash placeholder."""
+        """_sync_bash_mode_ui(True) sets bash placeholder via _refresh_placeholder."""
         from hermes_cli.tui.input.widget import HermesInput
         inp = _make_input()
+        inp._classes.add("--bash-mode")  # _refresh_placeholder checks this class
         HermesInput._sync_bash_mode_ui(inp, True)
         assert "shell mode" in inp.placeholder
 
@@ -285,27 +308,39 @@ class TestBashModeUI:
         from hermes_cli.tui.input.widget import HermesInput
         inp = _make_input()
         inp.placeholder = "! shell mode  ·  Enter runs  ·  Ctrl+C clear"
+        # --bash-mode class not set → _refresh_placeholder falls through to idle
         HermesInput._sync_bash_mode_ui(inp, False)
         assert inp.placeholder == inp._idle_placeholder
 
     def test_bash_mode_chevron_is_dollar_sign(self):
-        """_sync_bash_mode_ui(True) updates #input-chevron label to '$'."""
+        """BASH mode _sync_chevron_to_mode() updates chevron to '$'."""
+        from hermes_cli.tui.input._mode import InputMode
         from hermes_cli.tui.input.widget import HermesInput
+        from rich.text import Text as RichText
         mock_label = MagicMock()
         inp = _make_input()
+        inp.app = MagicMock()
+        inp.app.get_css_variables.return_value = {"chevron-shell": "#A8D46E"}
         inp.query_one = lambda *a, **kw: mock_label
-        HermesInput._sync_bash_mode_ui(inp, True)
-        mock_label.update.assert_called_with("$ ")
+        HermesInput._sync_chevron_to_mode(inp, InputMode.BASH)
+        arg = mock_label.update.call_args[0][0]
+        assert isinstance(arg, RichText)
+        assert "$" in str(arg)
 
     def test_bash_mode_chevron_restored_on_exit(self):
-        """_sync_bash_mode_ui(False) restores _chevron_label."""
+        """NORMAL mode _sync_chevron_to_mode() restores '❯' glyph."""
+        from hermes_cli.tui.input._mode import InputMode
         from hermes_cli.tui.input.widget import HermesInput
+        from rich.text import Text as RichText
         mock_label = MagicMock()
         inp = _make_input()
-        inp._chevron_label = "❯ "
+        inp.app = MagicMock()
+        inp.app.get_css_variables.return_value = {"accent": "#FFF8DC"}
         inp.query_one = lambda *a, **kw: mock_label
-        HermesInput._sync_bash_mode_ui(inp, False)
-        mock_label.update.assert_called_with("❯ ")
+        HermesInput._sync_chevron_to_mode(inp, InputMode.NORMAL)
+        arg = mock_label.update.call_args[0][0]
+        assert isinstance(arg, RichText)
+        assert "❯" in str(arg)
 
     def test_ctrl_c_clears_input_in_bash_mode(self):
         """Ctrl+C in bash mode (no running cmd) calls inp.clear()."""

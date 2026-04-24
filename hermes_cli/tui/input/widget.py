@@ -15,11 +15,13 @@ from typing import TYPE_CHECKING
 from hermes_cli.file_drop import detect_file_drop_text, parse_dragged_file_paste
 
 from rich.cells import cell_len
+from rich.style import Style
+from rich.text import Text as RichText
 from textual import events
 from textual.binding import Binding
 from textual.message import Message
 from textual.reactive import reactive
-from textual.widgets import TextArea
+from textual.widgets import Label, TextArea
 
 from hermes_cli.tui.constants import ICON_COPY
 from hermes_cli.tui.io_boundary import safe_run
@@ -27,7 +29,29 @@ from hermes_cli.tui.io_boundary import safe_run
 from ._autocomplete import _AutocompleteMixin
 from ._constants import _sanitize_input_text
 from ._history import _HistoryMixin
+from ._mode import InputMode
 from ._path_completion import _PathCompletionMixin
+
+_CHEVRON_GLYPHS: dict[InputMode, str] = {
+    InputMode.NORMAL:     "❯ ",
+    InputMode.BASH:       "$ ",
+    InputMode.REV_SEARCH: "⟲ ",
+    InputMode.COMPLETION: "⊞ ",
+    InputMode.LOCKED:     "⊘ ",
+}
+_CHEVRON_VAR: dict[InputMode, str] = {
+    InputMode.NORMAL:     "accent",
+    InputMode.BASH:       "chevron-shell",
+    InputMode.REV_SEARCH: "chevron-rev-search",
+    InputMode.COMPLETION: "chevron-completion",
+    InputMode.LOCKED:     "chevron-locked",
+}
+_LEGEND_KEY: dict[InputMode, str] = {
+    InputMode.BASH:       "bash",
+    InputMode.REV_SEARCH: "rev_search",
+    InputMode.COMPLETION: "completion",
+    InputMode.LOCKED:     "locked",
+}
 
 if TYPE_CHECKING:
     pass
@@ -128,6 +152,9 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         self._write_fail_warned: bool = False
         self._ghost_legend_shown: bool = False  # A12: one-per-session gate
 
+    # --- Mode reactive (derived display state) ---
+    _mode: reactive[InputMode] = reactive(InputMode.NORMAL)
+
     # --- Error state reactive ---
     error_state: reactive[str | None] = reactive(None)
 
@@ -165,15 +192,19 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
     def _refresh_placeholder(self) -> None:
         """Single source of truth for placeholder text.
 
-        Priority (highest→lowest): locked/disabled > error_state > idle.
+        Priority (highest→lowest): locked/disabled > bash > error_state > idle.
         """
         if self.disabled:
-            self.placeholder = "running…  Ctrl+C to cancel"
-        elif self.error_state:
+            self.placeholder = "running…  ·  Ctrl+C to interrupt"
+            return
+        if self.has_class("--bash-mode"):
+            self.placeholder = "! shell mode  ·  Enter runs  ·  Ctrl+C clear"
+            return
+        if self.error_state:
             snippet = self.error_state[:40] + ("…" if len(self.error_state) > 40 else "")
             self.placeholder = f"⚠ {snippet}  ·  Esc to clear"
-        else:
-            self.placeholder = self._idle_placeholder
+            return
+        self.placeholder = self._idle_placeholder
 
     def watch_error_state(self, value: str | None) -> None:
         self._refresh_placeholder()
@@ -187,6 +218,10 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             self.add_class("--locked")
         else:
             self.remove_class("--locked")
+        try:
+            self._mode = self._compute_mode()
+        except Exception:
+            pass
 
     # --- Draft stash ---
 
@@ -533,6 +568,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         if _is_bash != self.has_class("--bash-mode"):
             self.set_class(_is_bash, "--bash-mode")
             self._sync_bash_mode_ui(_is_bash)
+        self._mode = self._compute_mode()
 
     # --- Actions ---
 
@@ -609,36 +645,59 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         """Clear the input content and reset undo history."""
         self.load_text("")
 
-    # --- Bash mode UI sync ---
+    # --- Input mode enum ---
 
-    def _sync_bash_mode_ui(self, is_bash: bool) -> None:
-        """Sync placeholder, chevron glyph, hint, and legend to bash-mode state."""
-        if is_bash:
-            # Override idle placeholder temporarily for bash mode
-            self.placeholder = "! shell mode  ·  Enter runs  ·  Ctrl+C clear"
-        else:
-            refresh = getattr(self, "_refresh_placeholder", None)
-            if callable(refresh):
-                refresh()
-            else:
-                self.placeholder = getattr(self, "_idle_placeholder", "")
+    def _compute_mode(self) -> InputMode:
+        """Derive display mode from source-of-truth flags. Priority: LOCKED > REV_SEARCH > BASH > COMPLETION > NORMAL."""
+        if self.disabled:
+            return InputMode.LOCKED
+        if getattr(self, "_rev_mode", False):
+            return InputMode.REV_SEARCH
+        if self.has_class("--bash-mode"):
+            return InputMode.BASH
+        if self._completion_overlay_visible():
+            return InputMode.COMPLETION
+        return InputMode.NORMAL
+
+    def watch__mode(self, old: InputMode, new: InputMode) -> None:
+        """Single source of truth for chevron glyph, chevron color, and InputLegendBar."""
+        self._sync_chevron_to_mode(new)
+        self._sync_legend_to_mode(new)
+
+    def _sync_chevron_to_mode(self, mode: InputMode) -> None:
+        glyph = _CHEVRON_GLYPHS[mode]
+        var_name = _CHEVRON_VAR[mode]
         try:
-            from textual.widgets import Label
-            self.query_one("#input-chevron", Label).update("$ " if is_bash else self._chevron_label)
+            color_hex = self.app.get_css_variables().get(var_name, "")
+            style = Style(color=color_hex) if color_hex else Style()
+            self.query_one("#input-chevron", Label).update(RichText(glyph, style=style))
         except Exception:
             pass
-        try:
-            if not is_bash:
-                self.app.feedback.cancel("hint-bar")
-        except Exception:
-            pass
+
+    def _sync_legend_to_mode(self, mode: InputMode) -> None:
+        """Single query; handles all modes including LOCKED (I9) and ghost preservation."""
         try:
             from hermes_cli.tui.widgets.input_legend_bar import InputLegendBar
             legend = self.app.query_one("#input-legend-bar", InputLegendBar)
-            if is_bash:
-                legend.show_legend("bash")
+            key = _LEGEND_KEY.get(mode)
+            if key:
+                legend.show_legend(key)
             else:
-                legend.hide_legend()
+                # NORMAL: hide legend unless a ghost suggestion is active
+                if not getattr(self, "suggestion", ""):
+                    legend.hide_legend()
+                # else: ghost legend is showing; leave it — update_suggestion owns it
+        except Exception:
+            pass
+
+    # --- Bash mode UI sync ---
+
+    def _sync_bash_mode_ui(self, is_bash: bool) -> None:
+        """Chevron/legend owned by watch__mode. Placeholder via _refresh_placeholder()."""
+        self._refresh_placeholder()
+        try:
+            if not is_bash:
+                self.app.feedback.cancel("hint-bar")
         except Exception:
             pass
 

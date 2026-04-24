@@ -30,6 +30,7 @@ class InputLegendBar(Static):
         "rev_search": "rev-search  ·  ↑↓=cycle  ·  Esc=accept  ·  Ctrl+G=abort",
         "completion": "@file  ·  Tab=accept  ·  Enter=accept  ·  Esc=cancel",
         "ghost":      "suggestion  ·  Tab=accept  ·  →=accept",
+        "locked":     "running…  ·  Ctrl+C to interrupt",
     }
 
     def show_legend(self, mode: str) -> None:

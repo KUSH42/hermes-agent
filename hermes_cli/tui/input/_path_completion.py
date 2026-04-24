@@ -58,8 +58,7 @@ class _PathCompletionMixin:
         except Exception:
             pass
         try:
-            from hermes_cli.tui.widgets.input_legend_bar import InputLegendBar
-            self.app.query_one("#input-legend-bar", InputLegendBar).show_legend("completion")  # type: ignore[attr-defined]
+            self._mode = self._compute_mode()  # type: ignore[attr-defined]
         except Exception:
             pass
 
@@ -79,8 +78,7 @@ class _PathCompletionMixin:
         except Exception:
             pass
         try:
-            from hermes_cli.tui.widgets.input_legend_bar import InputLegendBar
-            self.app.query_one("#input-legend-bar", InputLegendBar).hide_legend()  # type: ignore[attr-defined]
+            self._mode = self._compute_mode()  # type: ignore[attr-defined]
         except Exception:
             pass
 

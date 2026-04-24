@@ -4,8 +4,7 @@ Replaces VerbosePickerOverlay, ModelPickerOverlay, TabbedSkinOverlay,
 ReasoningPickerOverlay, YoloConfirmOverlay with a single tabbed overlay.
 
 Per spec §2.1 of 2026-04-22-tui-v2-R3-overlay-consolidation-spec.md:
-- 7 top-level tabs: model / skin / syntax / options / reasoning / verbose / yolo
-- Tabs 2/3/4 carry what was TabbedSkinOverlay's 3 internal tabs, flattened
+- 6 top-level tabs: model / skin / syntax / reasoning / verbose / yolo
 - ConfigOverlay owns overlay chrome; tab bodies are plain Widgets
 - Pre-mounted; toggled via `--visible`; dismiss via Escape → focus HermesInput
 """
@@ -44,10 +43,9 @@ _TABS: list[tuple[str, str, str]] = [
     ("model",     "1", "Model"),
     ("skin",      "2", "Skin"),
     ("syntax",    "3", "Syntax"),
-    ("options",   "4", "Options"),
-    ("reasoning", "5", "Reasoning"),
-    ("verbose",   "6", "Verbose"),
-    ("yolo",      "7", "YOLO"),
+    ("reasoning", "4", "Reasoning"),
+    ("verbose",   "5", "Verbose"),
+    ("yolo",      "6", "YOLO"),
 ]
 
 _TAB_KEYS: list[str] = [t[0] for t in _TABS]
@@ -141,33 +139,6 @@ class ConfigOverlay(Widget):
             yield OptionList(id="co-syntax-list", classes="co-list")
             yield Static("", id="co-syntax-fixture", classes="co-fixture")
 
-        # ── Tab: options ─────────────────────────────────────────────────
-        with Vertical(id="co-body-options"):
-            yield Static("  Options", classes="co-section-header")
-            with Horizontal(classes="co-row"):
-                yield Static("  Bold keywords  ", classes="co-lbl")
-                yield Button("✓ On", id="co-bold-on", classes="co-btn")
-                yield Button("  Off", id="co-bold-off", classes="co-btn")
-            with Horizontal(classes="co-row"):
-                yield Static("  Cursor colour  ", classes="co-lbl")
-                yield Button("cream", id="co-cur-cream", classes="co-btn")
-                yield Button("cyan",  id="co-cur-cyan",  classes="co-btn")
-                yield Button("pink",  id="co-cur-pink",  classes="co-btn")
-                yield Button("amber", id="co-cur-amber", classes="co-btn")
-            with Horizontal(classes="co-row"):
-                yield Static("  Anim colour    ", classes="co-lbl")
-                yield Button("cyan",  id="co-anim-cyan",  classes="co-btn")
-                yield Button("pink",  id="co-anim-pink",  classes="co-btn")
-                yield Button("green", id="co-anim-green", classes="co-btn")
-                yield Button("amber", id="co-anim-amber", classes="co-btn")
-            with Horizontal(classes="co-row"):
-                yield Static("  Spinner        ", classes="co-lbl")
-                yield Button("dots",  id="co-spin-dots",  classes="co-btn")
-                yield Button("pulse", id="co-spin-pulse", classes="co-btn")
-                yield Button("moon",  id="co-spin-moon",  classes="co-btn")
-                yield Button("grow",  id="co-spin-grow",  classes="co-btn")
-            yield Static("  Enter=apply  Esc=close", classes="co-footer")
-
         # ── Tab: reasoning ───────────────────────────────────────────────
         with Vertical(id="co-body-reasoning"):
             yield Static("  Reasoning", classes="co-section-header")
@@ -234,9 +205,6 @@ class ConfigOverlay(Widget):
         elif tab == "syntax":
             self._take_skin_snapshot()
             self._refresh_syntax_tab()
-        elif tab == "options":
-            self._take_skin_snapshot()
-            # Options tab has no data to populate beyond button state
         elif tab == "reasoning":
             self._refresh_reasoning_tab()
         elif tab == "verbose":

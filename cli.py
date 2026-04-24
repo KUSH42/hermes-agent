@@ -10793,13 +10793,11 @@ class HermesCLI:
             import os as _os
             _os.environ.setdefault("TEXTUAL_FPS", "60")
             from hermes_cli.tui.app import HermesApp as _HApp
-            from hermes_cli.tui.osc52_probe import (
-                check_clipboard_env as _check_clipboard_env,
-                find_xclip_cmd as _find_xclip_cmd,
-            )
-            _clipboard_override = _check_clipboard_env()
-            if _clipboard_override is not None:
-                _clipboard_ok = _clipboard_override
+            _cb_env = _os.environ.get("HERMES_CLIPBOARD", "").strip()
+            if _cb_env == "1":
+                _clipboard_ok = True
+            elif _cb_env == "0":
+                _clipboard_ok = False
             else:
                 # Do not auto-probe OSC 52 at startup. Some terminals surface the
                 # readback payload as raw user input, which pollutes the input bar
@@ -10807,7 +10805,17 @@ class HermesCLI:
                 # force-enable clipboard support with HERMES_CLIPBOARD=1, and local
                 # clipboard helpers remain available via xclip/xsel/wl-copy.
                 _clipboard_ok = False
-            _xclip_cmd = _find_xclip_cmd() if not _clipboard_ok else None
+            if not _clipboard_ok:
+                import shutil as _shutil
+                _sess = _os.environ.get("XDG_SESSION_TYPE", "").strip().lower()
+                _has_wl = bool(_os.environ.get("WAYLAND_DISPLAY")) or _sess == "wayland"
+                _has_x11 = bool(_os.environ.get("DISPLAY")) or _sess == "x11"
+                _wl = ["wl-copy"] if _shutil.which("wl-copy") else None
+                _xc = ["xclip", "-selection", "clipboard"] if _shutil.which("xclip") else None
+                _xs = ["xsel", "--clipboard", "--input"] if _shutil.which("xsel") else None
+                _xclip_cmd = (_wl or _xc or _xs) if _has_wl else (_xc or _xs or _wl) if _has_x11 else (_wl or _xc or _xs)
+            else:
+                _xclip_cmd = None
             _tui_app = _HApp(
                 cli=self,
                 startup_fn=self._tui_startup_display,

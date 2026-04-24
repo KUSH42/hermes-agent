@@ -37,6 +37,10 @@ class InputLegendBar(Static):
         """Show the legend for the given mode key."""
         text = self.LEGENDS.get(mode, "")
         self.update(text)
+        for cls in ("--legend-bash", "--legend-rev-search", "--legend-completion",
+                    "--legend-ghost", "--legend-locked"):
+            self.remove_class(cls)
+        self.add_class(f"--legend-{mode.replace('_', '-')}")
         self.add_class("--visible")
 
     def hide_legend(self) -> None:

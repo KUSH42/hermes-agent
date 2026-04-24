@@ -326,11 +326,13 @@ class TestStatusBarStreaming:
     def test_T22_streaming_running_static_dot_no_lerp(self):
         app = _make_mock_app(status_streaming=True, agent_running=True)
         app.command_running = False
+        app.status_phase = "reasoning"
         text = self._render_sb(app, pulse_t=0.5)
 
         assert "●" in text
-        # "running" text present as dim (no shimmer)
-        assert "running" in text
+        # streaming label shown (not hard-coded "running")
+        assert "streaming" in text
+        assert "running" not in text
 
     def test_T23_not_streaming_running_pulse_t_contributes(self):
         app = _make_mock_app(status_streaming=False, agent_running=True)
@@ -442,13 +444,21 @@ class TestAppStreamingHandlers:
 # ---------------------------------------------------------------------------
 
 class TestCSSDimming:
-    def test_T31_tcss_contains_streaming_opacity_rules(self):
+    def test_T31_tcss_streaming_uses_supported_css(self):
         tcss_path = Path(__file__).parent.parent.parent / "hermes_cli" / "tui" / "hermes.tcss"
         content = tcss_path.read_text()
-        assert "StatusBar.--streaming" in content, "Missing StatusBar.--streaming rule"
+        # StatusBar.--streaming must NOT use unsupported opacity
+        assert "StatusBar.--streaming" not in content or \
+            "opacity" not in content.split("StatusBar.--streaming")[1].split("}")[0], (
+            "StatusBar.--streaming must not use opacity (unsupported in Textual 8.x); "
+            "use render-path dimming instead"
+        )
+        # HintBar.--streaming must use supported color: alpha syntax, not opacity
         assert "HintBar.--streaming" in content, "Missing HintBar.--streaming rule"
-        assert "opacity" in content.split("StatusBar.--streaming")[1].split("}")[0], (
-            "StatusBar.--streaming must contain opacity"
+        hint_block = content.split("HintBar.--streaming")[1].split("}")[0]
+        assert "color:" in hint_block, "HintBar.--streaming must use color: alpha syntax"
+        assert "opacity" not in hint_block, (
+            "HintBar.--streaming must not use opacity (unsupported in Textual 8.x)"
         )
 
 

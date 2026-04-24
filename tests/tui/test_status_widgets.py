@@ -499,7 +499,7 @@ async def test_push_tui_status_falls_back_to_model_context_length():
 
 @pytest.mark.asyncio
 async def test_status_bar_shows_running_when_agent_active():
-    """StatusBar appends 'running' label when agent_running is True."""
+    """StatusBar shows 'thinking' label (not 'running') when agent_running is True."""
     from unittest.mock import PropertyMock
     from textual.geometry import Size
 
@@ -515,7 +515,8 @@ async def test_status_bar_shows_running_when_agent_active():
         bar = app.query_one(StatusBar)
         with patch.object(type(bar), "size", new_callable=PropertyMock, return_value=Size(80, 1)):
             rendered = str(bar.render())
-        assert "running" in rendered
+        assert "thinking" in rendered
+        assert "running" not in rendered
 
 
 @pytest.mark.asyncio
@@ -612,7 +613,8 @@ async def test_statusbar_running_indicator_has_bullet():
         with patch.object(type(bar), "size", new_callable=PropertyMock, return_value=Size(80, 1)):
             rendered = str(bar.render())
         assert "●" in rendered
-        assert "running" in rendered
+        assert "thinking" in rendered
+        assert "running" not in rendered
 
 
 @pytest.mark.asyncio

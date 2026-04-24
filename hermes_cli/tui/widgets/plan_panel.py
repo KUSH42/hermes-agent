@@ -27,6 +27,8 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Static
 
+from hermes_cli.tui.widgets.utils import _format_compact_tokens
+
 if TYPE_CHECKING:
     from hermes_cli.tui.plan_types import PlannedCall
 
@@ -438,11 +440,13 @@ class _PlanPanelHeader(Horizontal):
 
     def update_header(self, collapsed: bool, running: int, pending: int,
                       done: int, errors: int = 0, cost_usd: float = 0.0,
-                      next_tool_name: str = "") -> None:
+                      next_tool_name: str = "", tokens_in: int = 0,
+                      tokens_out: int = 0) -> None:
         """Refresh the header line."""
         chevron = "▸" if collapsed else "▾"
         if collapsed:
-            self._show_chip(chevron, running, pending, done, errors, cost_usd, next_tool_name)
+            self._show_chip(chevron, running, pending, done, errors, cost_usd, next_tool_name,
+                            tokens_in=tokens_in, tokens_out=tokens_out)
         else:
             self._show_full(chevron)
 
@@ -459,7 +463,8 @@ class _PlanPanelHeader(Horizontal):
 
     def _show_chip(self, chevron: str, running: int, pending: int,
                    done: int, errors: int, cost_usd: float,
-                   next_tool_name: str = "") -> None:
+                   next_tool_name: str = "", tokens_in: int = 0,
+                   tokens_out: int = 0) -> None:
         # A5: show next tool name + pending count; drop running/done counts
         try:
             self.query_one("#plan-header-label").display = False
@@ -495,9 +500,12 @@ class _PlanPanelHeader(Horizontal):
                 e_seg.update(RichText.from_markup(f"[bold red]{errors}✗[/bold red]"))
 
             c_seg = self.query_one("#chip-cost", _ChipSegment)
-            c_seg.display = cost_usd > 0
+            budget_non_zero = cost_usd > 0 or tokens_in > 0 or tokens_out > 0
+            c_seg.display = budget_non_zero
             if cost_usd > 0:
                 c_seg.update(f"${cost_usd:.2f}")
+            else:
+                c_seg.update(f"{_format_compact_tokens(tokens_in)}↑ {_format_compact_tokens(tokens_out)}↓")
 
             self.query_one("#plan-f9-badge").display = True
         except (NoMatches, Exception):
@@ -623,17 +631,26 @@ class PlanPanel(Vertical):
         except Exception:
             pass
 
-    def _on_budget_changed(self, _: Any = None) -> None:
+    def _on_budget_changed(self, _=None) -> None:
         try:
-            app = self.app
+            from hermes_cli.tui.plan_types import PlanState  # local import — avoids circular at module level
+            cost_usd  = float(getattr(self.app, "turn_cost_usd",   0.0) or 0.0)
+            tokens_in = int(  getattr(self.app, "turn_tokens_in",  0)   or 0)
+            tokens_out= int(  getattr(self.app, "turn_tokens_out", 0)   or 0)
             budget = self.query_one(_BudgetSection)
-            budget.update_budget(
-                getattr(app, "turn_cost_usd", 0.0),
-                getattr(app, "turn_tokens_in", 0),
-                getattr(app, "turn_tokens_out", 0),
+            budget.update_budget(cost_usd, tokens_in, tokens_out)
+            planned_calls = list(getattr(self.app, "planned_calls", []) or [])
+            has_active = any(
+                getattr(c, "state", None) == PlanState.RUNNING
+                for c in planned_calls
             )
-        except (NoMatches, Exception):
-            pass
+            calls = planned_calls
+            self._rebuild_header()
+            self._refresh_budget_visibility(has_active, calls)
+        except Exception:
+            pass  # swallow: DOM query (_BudgetSection, _ChipSegment) can fail during
+                  # app teardown or before compose(); any budget-refresh failure is
+                  # non-fatal — stale header is acceptable, a crash is not.
 
     def _on_collapse_changed(self, collapsed: bool) -> None:
         self._collapsed = collapsed
@@ -679,12 +696,17 @@ class PlanPanel(Vertical):
                 break
         try:
             cost_usd: float = getattr(self.app, "turn_cost_usd", 0.0)
+            tokens_in_h: int = int(getattr(self.app, "turn_tokens_in", 0) or 0)
+            tokens_out_h: int = int(getattr(self.app, "turn_tokens_out", 0) or 0)
         except Exception:
             cost_usd = 0.0
+            tokens_in_h = 0
+            tokens_out_h = 0
         try:
             header = self.query_one(_PlanPanelHeader)
             header.update_header(self._collapsed, running, pending, done, errors, cost_usd,
-                                 next_tool_name=next_tool_name)
+                                 next_tool_name=next_tool_name,
+                                 tokens_in=tokens_in_h, tokens_out=tokens_out_h)
         except (NoMatches, Exception):
             pass
 
@@ -712,7 +734,8 @@ class PlanPanel(Vertical):
         app = self.app
         cost_usd = getattr(app, "turn_cost_usd", 0.0)
         tokens_in = getattr(app, "turn_tokens_in", 0)
-        budget_non_zero = cost_usd > 0 or tokens_in > 0
+        tokens_out = getattr(app, "turn_tokens_out", 0)
+        budget_non_zero = cost_usd > 0 or tokens_in > 0 or tokens_out > 0
         show = (
             not has_active
             and not self._collapsed

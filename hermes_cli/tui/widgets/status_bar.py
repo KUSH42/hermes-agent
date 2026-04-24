@@ -292,7 +292,7 @@ class HintBar(Widget):
             flash_hint = self.hint
             if flash_hint:
                 sep = Text.from_markup("  [dim]|[/dim]  ")
-                flash_t = Text(flash_hint)
+                flash_t = Text(flash_hint, style="dim")
                 w = self.content_size.width
                 if pinned.cell_len + sep.cell_len + flash_t.cell_len <= w:
                     pinned.append_text(sep)
@@ -328,6 +328,12 @@ class HintBar(Widget):
 # ---------------------------------------------------------------------------
 # StatusBar
 # ---------------------------------------------------------------------------
+
+def _append_status_segment(text_obj: "Text", label: str, style: str, *, streaming: bool) -> None:
+    """Append label to text_obj; adds `dim` when streaming to visually calm the bar."""
+    final_style = f"{style} dim" if streaming else style
+    text_obj.append(label, style=final_style)
+
 
 class StatusBar(PulseMixin, Widget):
     """Bottom status bar showing model, compaction bar, ctx usage, and state.
@@ -385,6 +391,8 @@ class StatusBar(PulseMixin, Widget):
         # S0-D: suppress pulse during streaming; S0-E: dim bars during streaming
         self.watch(app, "status_streaming", self._on_streaming_change)
         self.watch(app, "status_streaming", self._on_streaming_dim)
+        # STATUS-2: watch phase changes to repaint distinct agent phase labels
+        self.watch(app, "status_phase", self._on_status_change)
         # S1-C: track model change time for flash-then-dim behaviour
         self._model_changed_at: float = 0.0
         self.watch(app, "status_model", self._on_model_change)
@@ -494,6 +502,7 @@ class StatusBar(PulseMixin, Widget):
         ctx_max    = getattr(app, "status_context_max", 0)
         progress = getattr(app, "status_compaction_progress", 0.0)
         enabled  = getattr(app, "status_compaction_enabled", True)
+        _status_streaming = _safe_bool(getattr(app, "status_streaming", False))
         running  = (
             _safe_bool(getattr(app, "agent_running", False))
             or _safe_bool(getattr(app, "command_running", False))
@@ -578,18 +587,18 @@ class StatusBar(PulseMixin, Widget):
             if not model:
                 t.append("connecting\u2026", style="dim")
             else:
-                t.append(model, style=_model_style)  # S1-C
+                _append_status_segment(t, model, _model_style, streaming=_status_streaming)  # S1-C
                 if session_label:
                     t.append(f" \u00b7 {session_label}", style="dim")
             if show_ctx_label:
                 t.append(" \u00b7 ", style="dim")
-                t.append(ctx_label, style="dim")
+                _append_status_segment(t, ctx_label, "dim", streaming=_status_streaming)
         elif width < 60:
             # Narrow (40\u201359 cols): model \u00b7 \u25b0 glyph \u00b7 verbose ctx_label
             if not model:
                 t.append("connecting\u2026", style="dim")
             else:
-                t.append(model, style=_model_style)  # S1-C
+                _append_status_segment(t, model, _model_style, streaming=_status_streaming)  # S1-C
                 if session_label:
                     t.append(f" \u00b7 {session_label}", style="dim")
             if enabled:
@@ -597,13 +606,13 @@ class StatusBar(PulseMixin, Widget):
                 t.append(" \u25b0", style=pct_color)  # leading space \u2014 model text precedes
             if show_ctx_label:
                 t.append(" \u00b7 ", style="dim")
-                t.append(ctx_label, style="dim")
+                _append_status_segment(t, ctx_label, "dim", streaming=_status_streaming)
         else:
             # Full (>=60 cols): model \u00b7 bar \u00b7 pct \u00b7 ctx \u00b7 session  (A11: model anchored left)
             if not model:
                 t.append("connecting\u2026", style="dim")
             else:
-                t.append(model, style=_model_style)  # A11/S1-C: model always first
+                _append_status_segment(t, model, _model_style, streaming=_status_streaming)  # A11/S1-C
                 if enabled:
                     if progress >= _compact_crit:
                         t.append("[!] ", style="bold red blink")
@@ -618,7 +627,7 @@ class StatusBar(PulseMixin, Widget):
                         t.append(pct_text, style="dim")
                 if show_ctx_label:
                     t.append(" \u00b7 ", style="dim")
-                    t.append(ctx_label, style="dim")
+                    _append_status_segment(t, ctx_label, "dim", streaming=_status_streaming)
                 if session_label:
                     t.append(f" \u00b7 {session_label}", style="dim")
 
@@ -644,30 +653,44 @@ class StatusBar(PulseMixin, Widget):
         if running:
             _run_theme = _vars.get("status-running-color", "#FFBF00")
             _run_dim = _vars.get("running-indicator-dim-color", "#6e6e6e")
-            streaming = _safe_bool(getattr(app, "status_streaming", False))
+            streaming = _status_streaming
+            phase = str(getattr(app, "status_phase", "") or "")
+            # STATUS-2: map app state to distinct phase label
+            if getattr(app, "command_running", False):
+                label = "command"
+            elif streaming or phase == "streaming":
+                label = "streaming"
+            elif phase == "tool_exec":
+                label = "tools"
+            else:
+                label = "thinking"
             state_t = Text()
-            if streaming:
+            if label == "streaming":
                 # Static dot \u2014 pulse competes with the token stream
                 state_t.append(" \u25cf ", style=f"bold {_run_theme}")
-                state_t.append("running", style=f"dim {_run_dim}")
+                _append_status_segment(state_t, "streaming", f"dim {_run_dim}", streaming=streaming)
+            elif label == "command":
+                # Plain command label \u2014 no shimmer for command execution
+                state_t.append(" \u25cf ", style=f"bold {_run_theme}")
+                _append_status_segment(state_t, "command", f"bold {_run_dim}", streaming=streaming)
             else:
-                # Silent tool execution \u2014 pulse is the only liveness signal; keep it
+                # thinking / tools \u2014 pulse is the only liveness signal; keep it
                 if self._pulse_t > 0:
                     glyph_color = lerp_color(_run_dim, _run_theme, self._pulse_t)
                 else:
                     glyph_color = _run_theme
                 state_t.append(" \u25cf ", style=f"bold {glyph_color}")
                 if getattr(app, "_animations_enabled", True):
-                    running_shimmer = shimmer_text(
-                        "running",
+                    phase_shimmer = shimmer_text(
+                        label,
                         self._pulse_tick,
                         dim=_run_dim,
                         peak=_run_theme,
                         period=32,
                     )
-                    state_t.append_text(running_shimmer)
+                    state_t.append_text(phase_shimmer)
                 else:
-                    state_t.append("running", style=f"bold {_run_dim}")
+                    _append_status_segment(state_t, label, f"bold {_run_dim}", streaming=streaming)
         elif _status_err:
             state_t = Text(f" \u26a0 {_status_err}", style=f"bold {_err_color}")
         else:

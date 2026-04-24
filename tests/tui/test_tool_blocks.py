@@ -1959,3 +1959,69 @@ def test_expand_no_scroll_when_total_within_cap():
     end = min(total, saved + visible_cap)
     panel._block.rerender_window(saved, end)
     panel._block.rerender_window.assert_called_with(0, 50)
+
+
+# ---------------------------------------------------------------------------
+# B15 — _safe_collapsed simplification
+# ---------------------------------------------------------------------------
+
+def test_safe_collapsed_with_panel():
+    """_safe_collapsed returns panel.collapsed when panel present."""
+    import inspect
+    from hermes_cli.tui.tool_blocks._header import _safe_collapsed
+    from unittest.mock import MagicMock
+    header = MagicMock()
+    panel = MagicMock()
+    panel.collapsed = True
+    header._panel = panel
+    assert _safe_collapsed(header) is True
+    panel.collapsed = False
+    assert _safe_collapsed(header) is False
+
+
+def test_safe_collapsed_without_panel():
+    """_safe_collapsed returns False when _panel is None."""
+    from hermes_cli.tui.tool_blocks._header import _safe_collapsed
+    from unittest.mock import MagicMock
+    header = MagicMock()
+    header._panel = None
+    assert _safe_collapsed(header) is False
+
+
+def test_safe_collapsed_no_try_except():
+    """_safe_collapsed implementation contains no bare except clauses."""
+    import inspect
+    from hermes_cli.tui.tool_blocks._header import _safe_collapsed
+    src = inspect.getsource(_safe_collapsed)
+    assert "except" not in src
+
+
+# ---------------------------------------------------------------------------
+# B13 — FooterPane non-remountability guard
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_footer_pane_sets_mounted_flag():
+    """After mounting, _mounted_once is True on FooterPane."""
+    from hermes_cli.tui.tool_panel import FooterPane
+    from textual.app import App, ComposeResult
+
+    class _App(App):
+        def compose(self) -> ComposeResult:
+            yield FooterPane(id="fp")
+
+    app = _App()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        fp = app.query_one(FooterPane)
+        assert fp._mounted_once is True
+
+
+def test_footer_pane_refs_set_in_compose():
+    """_content, _stderr_row, _artifact_row are set after compose (checked via __init__ attrs)."""
+    from hermes_cli.tui.tool_panel import FooterPane
+    fp = FooterPane()
+    # Before compose/mount, __init__ attrs are set
+    assert hasattr(fp, "_show_all_artifacts")
+    assert hasattr(fp, "_last_summary")
+    assert hasattr(fp, "_last_promoted")

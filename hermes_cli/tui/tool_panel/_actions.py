@@ -1,0 +1,636 @@
+"""_ToolPanelActionsMixin — all keyboard action handlers for ToolPanel."""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from hermes_cli.tui.io_boundary import safe_open_url, safe_edit_cmd
+
+if TYPE_CHECKING:
+    from hermes_cli.tui.tool_result_parse import ResultSummaryV4
+    from hermes_cli.tui.tool_payload import ResultKind
+
+
+class _ToolPanelActionsMixin:
+    """Keyboard action handlers and their private helpers."""
+
+    def action_toggle_collapse(self) -> None:
+        self.collapsed = not self.collapsed  # type: ignore[attr-defined]
+        self._user_collapse_override = True  # type: ignore[attr-defined]
+        self._auto_collapsed = False  # type: ignore[attr-defined]
+
+    def action_open_primary(self) -> None:
+        import os
+        import shlex
+        header = getattr(self._block, "_header", None)  # type: ignore[attr-defined]
+        if header is not None and getattr(header, "_path_clickable", False) and header._full_path:
+            opener = "open" if sys.platform == "darwin" else "xdg-open"
+            try:
+                self.app._open_path_action(header, header._full_path, opener, False)  # type: ignore[attr-defined]
+                self._flash_header("opening…")
+            except Exception:
+                pass
+            return
+        paths = self._result_paths_for_action()
+        if not paths:
+            return
+        target = paths[0]
+        is_url = "://" in target
+        editor = os.environ.get("EDITOR") or os.environ.get("VISUAL")
+        if editor and not is_url:
+            safe_edit_cmd(
+                self,
+                shlex.split(editor),
+                target,
+                on_exit=lambda: self._flash_header("closed"),
+                on_error=lambda exc: (
+                    self._flash_header(
+                        f"editor failed: {getattr(exc, 'reason', str(exc))}",
+                        tone="error",
+                    )
+                    if self.is_mounted else None  # type: ignore[attr-defined]
+                ),
+            )
+        else:
+            self._flash_header("opening…")
+            safe_open_url(
+                self,
+                target if is_url else Path(target).resolve().as_uri(),
+                on_error=lambda exc: (
+                    self._flash_header(f"could not open: {exc}", tone="error")
+                    if self.is_mounted else None  # type: ignore[attr-defined]
+                ),
+            )
+
+    def _result_paths_for_action(self) -> list[str]:
+        rs = self._result_summary_v4  # type: ignore[attr-defined]
+        paths: list[str] = []
+        if rs is not None:
+            for artifact in (rs.artifacts or ()):
+                if artifact.kind in ("file", "url"):
+                    paths.append(artifact.path_or_url)
+        if not paths:
+            paths = list(self._result_paths)  # type: ignore[attr-defined]
+        return paths
+
+    def _flash_header(self, msg: str, tone: str = "success") -> None:
+        from hermes_cli.tui.services.feedback import NORMAL
+        try:
+            self.app.feedback.flash(  # type: ignore[attr-defined]
+                f"tool-header::{self.id}",  # type: ignore[attr-defined]
+                msg,
+                duration=1.2,
+                tone=tone,
+                priority=NORMAL,
+            )
+        except Exception:
+            pass
+
+    def action_copy_body(self) -> None:
+        text = self.copy_content()  # type: ignore[attr-defined]
+        if not text:
+            return
+        self.app._copy_text_with_hint(text)  # type: ignore[attr-defined]
+        from hermes_cli.tui.streaming_microcopy import _human_size
+        size = len(text.encode("utf-8"))
+        size_suffix = f" ({_human_size(size)})" if size >= 1024 else ""
+        self._flash_header(f"copied text{size_suffix}")
+
+    def action_open_url(self) -> None:
+        rs = self._result_summary_v4  # type: ignore[attr-defined]
+        url: str | None = None
+        if rs is not None:
+            for action in (rs.actions or ()):
+                if action.kind == "open_url" and action.payload:
+                    url = action.payload
+                    break
+            if not url:
+                for artifact in (rs.artifacts or ()):
+                    if artifact.kind == "url":
+                        url = artifact.path_or_url
+                        break
+        if not url:
+            return
+        self._flash_header("opening…")
+        safe_open_url(
+            self,
+            url,
+            on_error=lambda exc: (
+                self._flash_header(f"open failed: {exc}", tone="error")
+                if self.is_mounted else None  # type: ignore[attr-defined]
+            ),
+        )
+
+    def action_edit_cmd(self) -> None:
+        rs = self._result_summary_v4  # type: ignore[attr-defined]
+        payload: str | None = None
+        if rs is not None:
+            for action in (rs.actions or ()):
+                if action.kind == "edit_cmd" and action.payload:
+                    payload = action.payload
+                    break
+        if not payload:
+            return
+        try:
+            from hermes_cli.tui.input_widget import HermesInput
+            inp = self.app.query_one(HermesInput)  # type: ignore[attr-defined]
+            existing = inp.text.strip() if hasattr(inp, "text") else ""
+            if existing:
+                try:
+                    inp._save_to_history(existing)
+                except Exception:
+                    pass
+            inp.value = payload
+            inp.focus()
+            self._flash_header("edit cmd")
+        except Exception:
+            self._flash_header("edit unavailable")
+
+    def action_copy_err(self) -> None:
+        rs = self._result_summary_v4  # type: ignore[attr-defined]
+        if rs is None:
+            return
+        payload = rs.stderr_tail
+        if not payload:
+            for action in (rs.actions or ()):
+                if action.kind == "copy_err" and action.payload:
+                    payload = action.payload
+                    break
+        if not payload:
+            return
+        self.app._copy_text_with_hint(payload)  # type: ignore[attr-defined]
+        self._flash_header("copied stderr")
+
+    def action_copy_paths(self) -> None:
+        paths = self._result_paths_for_action()
+        if not paths:
+            return
+        self.app._copy_text_with_hint("\n".join(paths))  # type: ignore[attr-defined]
+        self._flash_header(f"copied paths ({len(paths)})")
+
+    def action_retry(self) -> None:
+        rs = self._result_summary_v4  # type: ignore[attr-defined]
+        if rs is None or not rs.is_error:
+            self._flash_header("no error")
+            return
+        try:
+            self.app._initiate_retry()  # type: ignore[attr-defined]
+        except Exception:
+            self._flash_header("retry failed")
+
+    def action_copy_invocation(self) -> None:
+        terminal_width = getattr(self.app, "size", None)  # type: ignore[attr-defined]
+        terminal_width = terminal_width.width if terminal_width else 80
+        try:
+            from hermes_cli.tui.tool_category import spec_for, ToolCategory
+            spec = spec_for(self._tool_name or "")  # type: ignore[attr-defined]
+            is_shell = spec.category == ToolCategory.SHELL
+            cat_name = spec.category.value
+        except Exception:
+            is_shell = False
+            cat_name = "tool"
+        label = self._tool_name or "tool"  # type: ignore[attr-defined]
+        if is_shell:
+            block = self._block  # type: ignore[attr-defined]
+            cmd = ""
+            if block is not None:
+                args = getattr(block, "_header", None)
+                args = getattr(args, "_header_args", {}) if args else {}
+                cmd = str(args.get("command") or args.get("cmd") or "")
+            header_line = f"{label} (shell)  $  {cmd}"
+        else:
+            primary_label = self._tool_name or "tool"  # type: ignore[attr-defined]
+            block = self._block  # type: ignore[attr-defined]
+            if block is not None:
+                _hdr = getattr(block, "_header", None)
+                if _hdr is not None:
+                    primary_label = _hdr._label or primary_label
+            header_line = f"{label} ({cat_name})    {primary_label}"
+        sep_len = min(40, terminal_width - 4)
+        separator = "─" * sep_len
+        body = self.copy_content()  # type: ignore[attr-defined]
+        text = "\n".join([header_line, separator, body])
+        self.app._copy_text_with_hint(text)  # type: ignore[attr-defined]
+        self._flash_header("copied invocation")
+
+    def action_copy_ansi(self) -> None:
+        import io
+        from rich.console import Console
+        terminal_width = getattr(self.app, "size", None)  # type: ignore[attr-defined]
+        terminal_width = terminal_width.width if terminal_width else 80
+        block = self._block  # type: ignore[attr-defined]
+        if block is None:
+            return
+        all_rich = getattr(block, "_all_rich", None)
+        if all_rich is None:
+            try:
+                from hermes_cli.tui.widgets import CopyableRichLog
+                rl = block._body.query_one(CopyableRichLog)
+                all_rich = getattr(rl, "_all_rich", None)
+            except Exception:
+                pass
+        if not all_rich:
+            self.action_copy_body()
+            return
+        buf = io.StringIO()
+        console = Console(force_terminal=True, width=terminal_width, file=buf, highlight=False)
+        for t in all_rich:
+            console.print(t, highlight=False)
+        ansi_text = buf.getvalue()
+        self.app._copy_text_with_hint(ansi_text)  # type: ignore[attr-defined]
+        from hermes_cli.tui.streaming_microcopy import _human_size
+        size = len(ansi_text.encode("utf-8"))
+        size_suffix = f" ({_human_size(size)})" if size >= 1024 else ""
+        self._flash_header(f"copied ANSI{size_suffix}")
+
+    def action_copy_html(self) -> None:
+        import time as _time
+        from rich.console import Console
+        terminal_width = getattr(self.app, "size", None)  # type: ignore[attr-defined]
+        terminal_width = terminal_width.width if terminal_width else 80
+        block = self._block  # type: ignore[attr-defined]
+        if block is None:
+            return
+        all_rich = getattr(block, "_all_rich", None)
+        if all_rich is None:
+            try:
+                from hermes_cli.tui.widgets import CopyableRichLog
+                rl = block._body.query_one(CopyableRichLog)
+                all_rich = getattr(rl, "_all_rich", None)
+            except Exception:
+                pass
+        if not all_rich:
+            return
+        console = Console(record=True, width=terminal_width)
+        for t in all_rich:
+            console.print(t, highlight=False)
+        html = console.export_html(inline_styles=True)
+        try:
+            bg_hex = self.app.get_css_variables().get("base", "#1e1e2e")  # type: ignore[attr-defined]
+        except Exception:
+            bg_hex = "#1e1e2e"
+        html = html.replace('<pre style="', f'<pre style="background:{bg_hex}; ', 1)
+        tmp_path = f"/tmp/hermes_copy_{int(_time.time())}.html"
+        self.app._copy_text_with_hint(html)  # type: ignore[attr-defined]
+        from hermes_cli.tui.streaming_microcopy import _human_size as _hs
+        _html_size = len(html.encode("utf-8"))
+        _size_suffix = f" ({_hs(_html_size)})" if _html_size >= 1024 else ""
+        try:
+            with open(tmp_path, "w") as f:  # allow-sync-io: tempfile under 4KB, fallback path for pbcopy
+                f.write(html)
+            self._flash_header(f"copied HTML{_size_suffix}  (saved {tmp_path})")
+        except Exception:
+            self._flash_header(f"copied HTML{_size_suffix}")
+
+    def action_copy_urls(self) -> None:
+        rs = self._result_summary_v4  # type: ignore[attr-defined]
+        if rs is None:
+            return
+        urls = [a.path_or_url for a in rs.artifacts if a.kind == "url"]
+        if not urls:
+            return
+        self.app._copy_text_with_hint("\n".join(urls))  # type: ignore[attr-defined]
+        self._flash_header(f"copied URLs ({len(urls)})")
+
+    def action_copy_full_path(self) -> None:
+        header = getattr(self._block, "_header", None)  # type: ignore[attr-defined]
+        if header is None:
+            return
+        path = getattr(header, "_full_path", None)
+        if not path:
+            return
+        self.app._copy_text_with_hint(path)  # type: ignore[attr-defined]
+        self._flash_header("copied path")
+
+    def action_dismiss_error_banner(self) -> None:
+        try:
+            if self._footer_pane is not None:  # type: ignore[attr-defined]
+                self._footer_pane._remediation_row.update("")  # type: ignore[attr-defined]
+                self._footer_pane._remediation_row.remove_class("footer-remediation--error")  # type: ignore[attr-defined]
+                self._footer_pane.remove_class("has-remediation")  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+    def action_show_context_menu(self) -> None:
+        header = getattr(self._block, "_header", None)  # type: ignore[attr-defined]
+        if header is None:
+            return
+        try:
+            header._show_context_menu_at_center()
+        except Exception:
+            pass
+
+    def action_scroll_body_down(self) -> None:
+        if self.collapsed:  # type: ignore[attr-defined]
+            return
+        try:
+            from hermes_cli.tui.widgets import CopyableRichLog
+            log = self._block._body.query_one(CopyableRichLog)  # type: ignore[attr-defined]
+            log.scroll_down(animate=False)
+        except Exception:
+            pass
+
+    def action_scroll_body_up(self) -> None:
+        if self.collapsed:  # type: ignore[attr-defined]
+            return
+        try:
+            from hermes_cli.tui.widgets import CopyableRichLog
+            log = self._block._body.query_one(CopyableRichLog)  # type: ignore[attr-defined]
+            log.scroll_up(animate=False)
+        except Exception:
+            pass
+
+    def action_scroll_body_page_down(self) -> None:
+        if self.collapsed:  # type: ignore[attr-defined]
+            return
+        try:
+            from hermes_cli.tui.widgets import CopyableRichLog
+            log = self._block._body.query_one(CopyableRichLog)  # type: ignore[attr-defined]
+            page = max(5, (self.size.height or 20) // 2)  # type: ignore[attr-defined]
+            for _ in range(page):
+                log.scroll_down(animate=False)
+        except Exception:
+            pass
+
+    def action_scroll_body_page_up(self) -> None:
+        if self.collapsed:  # type: ignore[attr-defined]
+            return
+        try:
+            from hermes_cli.tui.widgets import CopyableRichLog
+            log = self._block._body.query_one(CopyableRichLog)  # type: ignore[attr-defined]
+            page = max(5, (self.size.height or 20) // 2)  # type: ignore[attr-defined]
+            for _ in range(page):
+                log.scroll_up(animate=False)
+        except Exception:
+            pass
+
+    def action_scroll_body_top(self) -> None:
+        if self.collapsed:  # type: ignore[attr-defined]
+            return
+        try:
+            from hermes_cli.tui.widgets import CopyableRichLog
+            log = self._block._body.query_one(CopyableRichLog)  # type: ignore[attr-defined]
+            log.scroll_home(animate=False)
+        except Exception:
+            pass
+
+    def action_scroll_body_bottom(self) -> None:
+        if self.collapsed:  # type: ignore[attr-defined]
+            return
+        try:
+            from hermes_cli.tui.widgets import CopyableRichLog
+            log = self._block._body.query_one(CopyableRichLog)  # type: ignore[attr-defined]
+            log.scroll_end(animate=False)
+        except Exception:
+            pass
+
+    def action_show_help(self) -> None:
+        # Set the session-wide discovery flag
+        from . import _completion as _comp_mod
+        _comp_mod._DISCOVERY_GLOBAL_SHOWN = True
+        from hermes_cli.tui.overlays import ToolPanelHelpOverlay
+        from textual.css.query import NoMatches
+        try:
+            overlay = self.app.query_one(ToolPanelHelpOverlay)  # type: ignore[attr-defined]
+            if overlay.has_class("--visible"):
+                overlay.remove_class("--visible")
+            else:
+                overlay.add_class("--visible")
+        except (NoMatches, Exception):
+            pass
+
+    def on_focus(self) -> None:
+        self._maybe_show_discovery_hint()  # type: ignore[attr-defined]
+        self._refresh_collapsed_strip()  # type: ignore[attr-defined]
+        if getattr(self, "_toggle_hint_shown", False):
+            return
+        block = getattr(self, "_block", None)
+        if block is not None:
+            header = getattr(block, "_header", None)
+            if not getattr(header, "_has_affordances", False):
+                return
+        self._toggle_hint_shown = True  # type: ignore[attr-defined]
+        self._flash_header("(Enter) toggle", tone="accent")
+
+    def on_blur(self) -> None:
+        strip = getattr(self, "_collapsed_strip", None)
+        if strip is not None:
+            strip.remove_class("--visible")
+
+    def watch_has_focus(self, value: bool) -> None:
+        if self._hint_row is None:  # type: ignore[attr-defined]
+            return
+        self._hint_visible = value  # type: ignore[attr-defined]
+        if value:
+            self._hint_row.update(self._build_hint_text())  # type: ignore[attr-defined]
+            self._hint_row.add_class("--has-hint")  # type: ignore[attr-defined]
+            try:
+                block = self._block  # type: ignore[attr-defined]
+                if block is not None and getattr(block._header, "_path_clickable", False):
+                    self.post_message(self.__class__.PathFocused(self))  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        else:
+            self._hint_row.update("")  # type: ignore[attr-defined]
+            self._hint_row.remove_class("--has-hint")  # type: ignore[attr-defined]
+
+    def on_resize(self, event: object) -> None:
+        width = getattr(getattr(event, "size", None), "width", 80)
+        self._last_resize_w = width  # type: ignore[attr-defined]
+        if self._hint_visible and self._hint_row is not None:  # type: ignore[attr-defined]
+            self._hint_row.update(self._build_hint_text())  # type: ignore[attr-defined]
+
+    def _build_hint_text(self) -> "Any":
+        from rich.text import Text
+        _mounted = getattr(self, "is_mounted", True)
+        _size = getattr(self, "size", None)
+        width = ((_size.width if _size is not None else 0) or 80) if _mounted else 80
+        narrow = width < 50
+
+        rs = self._result_summary_v4  # type: ignore[attr-defined]
+        _block_streaming = (
+            hasattr(self._block, "_completed") and  # type: ignore[attr-defined]
+            not self._block._completed  # type: ignore[attr-defined]
+        )
+
+        primary: list[tuple[str, str]] = []
+        if _block_streaming:
+            primary.append(("Enter", "follow"))
+        elif rs is not None and rs.is_error:
+            primary.append(("Enter", "toggle"))
+            primary.append(("x", "dismiss"))
+        else:
+            primary.append(("Enter", "toggle"))
+            primary.append(("c", "copy"))
+
+        contextual: list[tuple[str, str]] = []
+        if _block_streaming:
+            contextual.append(("f", "tail"))
+        bar = self._get_omission_bar()
+        if bar is not None:
+            contextual.append(("*", "all"))
+        if rs is not None:
+            has_copy_err = rs.stderr_tail or any(
+                a.kind == "copy_err" and a.payload for a in (rs.actions or ())
+            )
+            if has_copy_err:
+                contextual.append(("e", "stderr"))
+            if self._result_paths_for_action():
+                contextual.append(("o", "open"))
+            has_urls = any(a.kind == "url" for a in (rs.artifacts or ()))
+            if has_urls:
+                contextual.append(("u", "urls"))
+            has_edit = any(a.kind == "edit_cmd" and a.payload for a in (rs.actions or ()))
+            if has_edit:
+                contextual.append(("E", "edit"))
+            if rs.is_error and not any(h[0] == "Enter" and h[1] == "retry" for h in primary):
+                contextual.insert(0, ("r", "retry"))
+
+        _power_keys_exist = bool(rs is not None)
+
+        primary = primary[:2]
+        shown = list(primary)
+        if not narrow:
+            shown += contextual[:2]
+
+        t = Text()
+        for i, (key, label) in enumerate(shown):
+            if i > 0:
+                t.append("  ", style="dim")
+            t.append(key, style="bold")
+            t.append(f" {label}", style="dim")
+
+        if _power_keys_exist:
+            t.append("  F1", style="bold dim")
+
+        return t
+
+    def _get_omission_bar(self) -> "Any | None":
+        try:
+            from hermes_cli.tui.tool_blocks import OmissionBar as _OB
+            block = self._block  # type: ignore[attr-defined]
+            bar = getattr(block, "_omission_bar_bottom", None)
+            if isinstance(bar, _OB) and getattr(block, "_omission_bar_bottom_mounted", False):
+                return bar
+        except Exception:
+            pass
+        return None
+
+    def action_expand_lines(self) -> None:
+        bar = self._get_omission_bar()
+        if bar is not None:
+            from hermes_cli.tui.tool_blocks import _PAGE_SIZE
+            bar._parent_block.rerender_window(
+                bar._visible_start,
+                min(bar._total, bar._visible_end + _PAGE_SIZE),
+            )
+
+    def action_collapse_lines(self) -> None:
+        bar = self._get_omission_bar()
+        if bar is None:
+            return
+        from hermes_cli.tui.tool_blocks import _PAGE_SIZE, _VISIBLE_CAP
+        new_start = max(0, bar._visible_start - _PAGE_SIZE)
+        new_end = max(_VISIBLE_CAP, bar._visible_end - _PAGE_SIZE)
+        if new_start == bar._visible_start and new_end == bar._visible_end:
+            self._flash_header("at minimum")
+            return
+        bar._parent_block.rerender_window(new_start, new_end)
+
+    def action_expand_all_lines(self) -> None:
+        bar = self._get_omission_bar()
+        if bar is not None:
+            bar._parent_block.rerender_window(bar._visible_start, bar._total)
+
+    def action_toggle_tail_follow(self) -> None:
+        block = self._block  # type: ignore[attr-defined]
+        if not hasattr(block, '_follow_tail'):
+            return
+        if getattr(block, "_completed", False) is True:
+            self._flash_header("tail-follow N/A", tone="warning")
+            return
+        block._follow_tail = not block._follow_tail
+        state = "on" if block._follow_tail else "off"
+        self._flash_header(f"tail: {state}")
+
+    def action_copy_output(self) -> None:
+        text = self.copy_content()  # type: ignore[attr-defined]
+        if text:
+            try:
+                import pyperclip
+                pyperclip.copy(text)
+                self.app.notify("Copied output", timeout=1.5)  # type: ignore[attr-defined]
+            except Exception:
+                self.app.notify("Copy failed — use mouse select", timeout=3)  # type: ignore[attr-defined]
+
+    def action_copy_input(self) -> None:
+        text = ""
+        try:
+            inp = getattr(self, "_input_section", None)
+            if inp is not None:
+                text = getattr(inp, "_build_text", lambda: "")() or ""
+        except Exception:
+            pass
+        if not text:
+            text = self._format_arg_summary()  # type: ignore[attr-defined]
+        if text:
+            try:
+                import pyperclip
+                pyperclip.copy(text)
+                self.app.notify("Copied input", timeout=1.5)  # type: ignore[attr-defined]
+            except Exception:
+                self.app.notify("Copy failed", timeout=3)  # type: ignore[attr-defined]
+
+    def action_rerun(self) -> None:
+        try:
+            from hermes_cli.tui.messages import ToolRerunRequested
+            self.post_message(ToolRerunRequested(panel=self))  # type: ignore[attr-defined]
+            header = getattr(self._block, "_header", None)  # type: ignore[attr-defined]
+            if header is not None:
+                header.flash_success()
+        except Exception:
+            self.app.notify("Rerun not available", timeout=2)  # type: ignore[attr-defined]
+
+    def action_omission_expand(self) -> None:
+        try:
+            from hermes_cli.tui.tool_blocks import OmissionBar
+            bar = next(iter(self.query(OmissionBar)), None)  # type: ignore[attr-defined]
+            if bar is not None:
+                bar._do_expand_one()
+        except Exception:
+            pass
+
+    def action_omission_collapse(self) -> None:
+        try:
+            from hermes_cli.tui.tool_blocks import OmissionBar
+            bar = next(iter(self.query(OmissionBar)), None)  # type: ignore[attr-defined]
+            if bar is not None:
+                bar._do_collapse_one()
+        except Exception:
+            pass
+
+    def force_renderer(self, kind: "ResultKind") -> None:
+        self._forced_renderer_kind = kind  # type: ignore[attr-defined]
+        try:
+            from hermes_cli.tui.body_renderers import pick_renderer
+            from hermes_cli.tui.tool_payload import ToolPayload, ClassificationResult
+
+            output_raw = self.copy_content()  # type: ignore[attr-defined]
+            payload = ToolPayload(
+                tool_name=self._tool_name,  # type: ignore[attr-defined]
+                category=self._category,    # type: ignore[attr-defined]
+                args=self._tool_args or {}, # type: ignore[attr-defined]
+                input_display=None,
+                output_raw=output_raw,
+                line_count=self._body_line_count(),  # type: ignore[attr-defined]
+            )
+            cls_result = ClassificationResult(kind=kind, confidence=1.0)
+            renderer_cls = pick_renderer(cls_result, payload)
+            self._swap_renderer(renderer_cls, payload, cls_result)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+    def on_tool_header_clicked(self, event: "object") -> None:
+        getattr(event, "stop", lambda: None)()
+        self.collapsed = not self.collapsed  # type: ignore[attr-defined]

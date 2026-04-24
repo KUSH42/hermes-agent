@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 import hermes_cli.tui.tool_panel as _tp_module
+import hermes_cli.tui.tool_panel._completion as _comp_module
 
 
 # ---------------------------------------------------------------------------
@@ -49,9 +50,9 @@ def _make_panel(*, result=None) -> "types.SimpleNamespace":
 @pytest.fixture(autouse=True)
 def reset_global_flag():
     """Reset _DISCOVERY_GLOBAL_SHOWN before/after each test."""
-    _tp_module._DISCOVERY_GLOBAL_SHOWN = False
+    _comp_module._DISCOVERY_GLOBAL_SHOWN = False
     yield
-    _tp_module._DISCOVERY_GLOBAL_SHOWN = False
+    _comp_module._DISCOVERY_GLOBAL_SHOWN = False
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +82,7 @@ class TestDiscoveryHint:
 
     def test_hint_not_fired_after_global_suppress(self, monkeypatch):
         monkeypatch.setenv("HERMES_ACCESSIBLE", "")
-        _tp_module._DISCOVERY_GLOBAL_SHOWN = True
+        _comp_module._DISCOVERY_GLOBAL_SHOWN = True
         panel = _make_panel(result=_make_summary())
         panel._maybe_show_discovery_hint()
         panel.app.feedback.flash.assert_not_called()
@@ -124,7 +125,7 @@ class TestDiscoveryHint:
 
     def test_discovery_flag_reset_between_test_panels(self):
         # The autouse fixture resets the flag; this test confirms it starts False
-        assert _tp_module._DISCOVERY_GLOBAL_SHOWN is False
+        assert _comp_module._DISCOVERY_GLOBAL_SHOWN is False
 
     def test_global_flag_persists_across_panel_instances(self, monkeypatch):
         monkeypatch.setenv("HERMES_ACCESSIBLE", "")
@@ -133,7 +134,7 @@ class TestDiscoveryHint:
         # panel1 set _discovery_shown=True, but NOT the global flag via hint alone
         # The global flag is set only via action_show_help
         # Confirm flag still False after hint (hint doesn't set global)
-        assert _tp_module._DISCOVERY_GLOBAL_SHOWN is False
+        assert _comp_module._DISCOVERY_GLOBAL_SHOWN is False
 
         # Second panel should still be able to show hint (global not yet set)
         panel2 = _make_panel(result=_make_summary())
@@ -153,6 +154,6 @@ class TestActionShowHelpSetsGlobalFlag:
         from hermes_cli.tui.tool_panel import ToolPanel
         panel.action_show_help = ToolPanel.action_show_help.__get__(panel)
 
-        _tp_module._DISCOVERY_GLOBAL_SHOWN = False
+        _comp_module._DISCOVERY_GLOBAL_SHOWN = False
         panel.action_show_help()
-        assert _tp_module._DISCOVERY_GLOBAL_SHOWN is True
+        assert _comp_module._DISCOVERY_GLOBAL_SHOWN is True

@@ -22,7 +22,7 @@ def _make_block():
 
 def _make_panel(depth=1, parent=None):
     block = _make_block()
-    with patch("hermes_cli.tui.child_panel._time") as mock_t:
+    with patch("hermes_cli.tui.tool_panel._child._time") as mock_t:
         mock_t.monotonic.return_value = 0.0
         panel = ChildPanel(block, tool_name="Grep", depth=depth, parent_subagent=parent)
     return panel
@@ -177,7 +177,7 @@ def test_parent_notified_on_complete():
 
     # Wire super().set_result_summary to be a no-op
     with patch.object(ChildPanel.__bases__[0], "set_result_summary"), \
-         patch("hermes_cli.tui.child_panel._time") as mock_t:
+         patch("hermes_cli.tui.tool_panel._child._time") as mock_t:
         mock_t.monotonic.return_value = 1.0
         panel._start_time = 0.0
 
@@ -196,7 +196,7 @@ def test_error_auto_expands_child():
     panel = _make_panel(parent=parent)
 
     with patch.object(ChildPanel.__bases__[0], "set_result_summary"), \
-         patch("hermes_cli.tui.child_panel._time") as mock_t:
+         patch("hermes_cli.tui.tool_panel._child._time") as mock_t:
         mock_t.monotonic.return_value = 1.0
         panel._start_time = 0.0
         summary = MagicMock()
@@ -317,3 +317,63 @@ async def test_subagent_panels_registration():
 
         assert registered_before_mount, "open_streaming_tool_block created no SubAgentPanel"
         assert all(registered_before_mount), "Panel not registered before mount"
+
+
+# ---------------------------------------------------------------------------
+# B14 — _user_touched_compact guard
+# ---------------------------------------------------------------------------
+
+def _make_summary(is_error: bool = True) -> MagicMock:
+    s = MagicMock()
+    s.is_error = is_error
+    return s
+
+
+def test_user_touched_false_initially():
+    """Fresh ChildPanel has _user_touched_compact = False."""
+    panel = _make_panel()
+    assert panel._user_touched_compact is False
+
+
+def test_user_touched_set_on_toggle():
+    """action_toggle_compact sets _user_touched_compact = True."""
+    panel = _make_panel()
+    panel.action_toggle_compact()
+    assert panel._user_touched_compact is True
+
+
+def test_auto_uncompact_on_error():
+    """Fresh panel: error result auto-uncompacts (user hasn't touched)."""
+    panel = _make_panel()
+    with patch.object(ChildPanel.__bases__[0], "set_result_summary"), \
+         patch("hermes_cli.tui.tool_panel._child._time") as mock_t:
+        mock_t.monotonic.return_value = 1.0
+        panel._start_time = 0.0
+        panel.set_result_summary(_make_summary(is_error=True))
+    assert panel._compact_mode is False
+
+
+def test_no_auto_uncompact_when_user_touched():
+    """User toggled compact → error result does NOT auto-uncompact."""
+    panel = _make_panel()
+    panel.action_toggle_compact()  # sets _user_touched_compact = True, toggles compact off
+    panel.set_compact(True)         # manually re-compact
+    with patch.object(ChildPanel.__bases__[0], "set_result_summary"), \
+         patch("hermes_cli.tui.tool_panel._child._time") as mock_t:
+        mock_t.monotonic.return_value = 1.0
+        panel._start_time = 0.0
+        panel.set_result_summary(_make_summary(is_error=True))
+    # Still compact because user_touched=True
+    assert panel._compact_mode is True
+
+
+def test_no_auto_uncompact_on_success():
+    """Non-error result: compact state unchanged regardless of _user_touched_compact."""
+    panel = _make_panel()
+    assert panel._compact_mode is True
+    with patch.object(ChildPanel.__bases__[0], "set_result_summary"), \
+         patch("hermes_cli.tui.tool_panel._child._time") as mock_t:
+        mock_t.monotonic.return_value = 1.0
+        panel._start_time = 0.0
+        panel.set_result_summary(_make_summary(is_error=False))
+    assert panel._compact_mode is True

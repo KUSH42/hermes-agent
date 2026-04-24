@@ -49,6 +49,7 @@ class ToolCallViewState:
     category: str
     depth: int
     start_s: float
+    started_at: float = _field(default_factory=_time.monotonic)
     dur_ms: "int | None" = None
     is_error: bool = False
     error_kind: "str | None" = None
@@ -684,6 +685,7 @@ class ToolRenderingService(AppService):
             view.state = ToolCallState.STARTED
             view.parent_tool_call_id = parent_id
             view.depth = depth
+            view.started_at = _time.monotonic()  # reset from gen-block creation time to actual tool start
             self._tool_views_by_id[tool_call_id] = view
 
             # Register the pre-created block in the active map
@@ -885,13 +887,19 @@ class ToolRenderingService(AppService):
 
         # Compute duration string for UI display
         duration = ""
-        import time as _t
-        # Try to infer duration from _active_streaming_blocks block's start time
+        dur_ms_float: float = 0.0
         block = self.app._active_streaming_blocks.get(tool_call_id)
-        if block is not None:
+        if view is not None:
+            dur_ms_float = (_time.monotonic() - view.started_at) * 1000.0
+            if dur_ms_float >= 1000:
+                duration = f"{dur_ms_float/1000:.1f}s"
+            else:
+                duration = f"{dur_ms_float:.0f}ms"
+        elif block is not None:
             started = getattr(block, "_stream_started_at", None)
             if started is not None:
-                elapsed_ms = (_t.monotonic() - started) * 1000.0
+                elapsed_ms = (_time.monotonic() - started) * 1000.0
+                dur_ms_float = elapsed_ms
                 if elapsed_ms >= 1000:
                     duration = f"{elapsed_ms/1000:.1f}s"
                 else:
@@ -908,15 +916,12 @@ class ToolRenderingService(AppService):
             )
 
         # SM-05: always mark plan done regardless of tool_progress mode
-        dur_ms = 0
-        try:
-            if duration.endswith("ms"):
-                dur_ms = int(float(duration[:-2]))
-            elif duration.endswith("s"):
-                dur_ms = int(float(duration[:-1]) * 1000)
-        except Exception:
-            pass
-        self.mark_plan_done(tool_call_id, is_error=is_error, dur_ms=dur_ms)
+        dur_ms_int = int(dur_ms_float)
+        self.mark_plan_done(tool_call_id, is_error=is_error, dur_ms=dur_ms_int)
+
+        # Record tool call latency into perf probe
+        from hermes_cli.tui.perf import _tool_probe
+        _tool_probe.record(tool_name, tool_call_id, dur_ms_float, is_error=is_error)
 
         # Update view state to terminal
         if view is not None:

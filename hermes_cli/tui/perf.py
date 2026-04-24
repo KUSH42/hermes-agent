@@ -6,6 +6,9 @@ maintains a 60 FPS feel:
     measure()               — hot-path latency gate using time.perf_counter()
     WorkerWatcher           — leak detector: monitors len(app.workers)
     EventLoopLatencyProbe   — frame-time monitor via timer delivery jitter
+    ToolCallProbe           — per-tool-name latency recorder ([TOOL] tag)
+    QueueDepthProbe         — output queue depth sampler ([QUEUE] tag)
+    StreamJitterProbe       — inter-chunk gap tracker ([STREAM] tag)
 
 Diagnostic commands
 -------------------
@@ -33,6 +36,9 @@ Worker stats::
     [WORKERS]    — leak/peak reports
     [LOOP]       — event-loop jitter readings
     [PERF]       — per-call latency with budget warnings
+    [TOOL]       — tool call round-trip latency
+    [QUEUE]      — output queue depth samples
+    [STREAM]     — streaming token inter-chunk gaps
 
 Stress test scenario (torture test)
 ------------------------------------
@@ -57,6 +63,9 @@ Expected metrics
 | VirtualCompletionList render_line    | 1 ms/row | 1 ms      |
 | set_interval delivery jitter         | 16.67 ms | 50 ms     |
 | Active worker count (idle)           | 1        | 8 (leak)  |
+| tool call round-trip (p95)           | 5 000 ms | 5 000 ms  |
+| output queue depth (healthy)         | < 80%    | >= 80%    |
+| stream inter-chunk gap (healthy)     | < 2 000ms| >= 2 000ms|
 +--------------------------------------+----------+-----------+
 
 Before/after proof
@@ -78,11 +87,12 @@ from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from statistics import median, quantiles
-from typing import TYPE_CHECKING, Callable, Generator
+from typing import TYPE_CHECKING, Any, Callable, Generator
 
 from textual import log
 
 if TYPE_CHECKING:
+    import asyncio as _asyncio_t
     from textual.app import App
 
 
@@ -523,6 +533,216 @@ class PerfRegistry:
 
 
 _registry = PerfRegistry()
+
+
+# ---------------------------------------------------------------------------
+# ToolCallProbe — per-tool-name latency recorder  [TOOL]
+# ---------------------------------------------------------------------------
+
+class ToolCallProbe:
+    """Per-tool-name latency recorder and alarm escalator.
+
+    Records into the module-level _registry under "tool:<tool_name>" and emits
+    [TOOL] log lines. Slow completions emit [PERF-ALARM] via SuspicionDetector.
+    """
+
+    _BUDGET_MS = 5_000.0    # 5 s — user-perceptible stall
+    _SEVERE_MS = 30_000.0   # 30 s — runaway tool
+
+    def __init__(self) -> None:
+        self._detectors: dict[str, SuspicionDetector] = {}
+
+    def _detector(self, tool_name: str) -> SuspicionDetector:
+        if tool_name not in self._detectors:
+            self._detectors[tool_name] = SuspicionDetector(
+                f"tool:{tool_name}",
+                budget_ms=self._BUDGET_MS,
+                severe_ms=self._SEVERE_MS,
+                burst_window=4,
+                burst_count=2,
+                streak_count=2,
+                cooldown_s=30.0,
+            )
+        return self._detectors[tool_name]
+
+    def record(
+        self,
+        tool_name: str,
+        tool_call_id: str,
+        dur_ms: float,
+        *,
+        is_error: bool = False,
+    ) -> None:
+        """Record one tool completion; emit log line; escalate if slow."""
+        label = f"tool:{tool_name}"
+        _registry.record(label, dur_ms)
+
+        status = "err" if is_error else "ok"
+        msg = (
+            f"[TOOL] {tool_name} id={tool_call_id[:8]} "
+            f"dur={dur_ms:.0f}ms status={status}"
+        )
+        if dur_ms > self._BUDGET_MS:
+            log.warning(f"{msg} ⚠ OVER {self._BUDGET_MS/1000:.0f}s budget")
+        else:
+            log(msg)
+
+        self._detector(tool_name).observe(
+            dur_ms,
+            detail=f"id={tool_call_id[:8]} status={status}",
+        )
+
+    def stats(self, tool_name: str) -> dict[str, float]:
+        return _registry.stats(f"tool:{tool_name}")
+
+
+_tool_probe = ToolCallProbe()
+
+
+# ---------------------------------------------------------------------------
+# QueueDepthProbe — output queue depth sampler  [QUEUE]
+# ---------------------------------------------------------------------------
+
+class QueueDepthProbe:
+    """Samples asyncio.Queue depth; warns on saturation; counts drops.
+
+    Call tick(queue) from a 1 Hz timer. Call record_drop() from QueueFull
+    handlers instead of logging directly.
+    """
+
+    _SATURATION_RATIO = 0.80    # warn at 80% of maxsize
+    _HEARTBEAT_INTERVAL = 30    # ticks between unconditional [QUEUE] logs (~30 s at 1 Hz)
+    _DROP_ALARM_COUNT = 3       # cumulative drops that trigger a [QUEUE-ALARM]
+
+    def __init__(self) -> None:
+        self._drop_count: int = 0
+        self._ticks: int = 0
+
+    def record_drop(self) -> None:
+        """Call on every QueueFull; replaces bare logger.warning."""
+        self._drop_count += 1
+        log.warning(
+            f"[QUEUE-DROP] output queue full "
+            f"total_drops={self._drop_count}"
+        )
+        _registry.record("queue_drops", 1.0)
+        if self._drop_count == self._DROP_ALARM_COUNT:
+            log.warning(
+                f"[QUEUE-ALARM] queue-depth: {self._drop_count} drops accumulated"
+            )
+
+    def tick(self, queue: "Any") -> int:
+        """Sample depth; emit logs; return current depth."""
+        self._ticks += 1
+        depth = queue.qsize()
+        maxsize = queue.maxsize or 1
+        ratio = depth / maxsize
+
+        _registry.record("queue_depth", float(depth))
+
+        saturated = ratio >= self._SATURATION_RATIO
+        if saturated:
+            log.warning(
+                f"[QUEUE-WARN] depth={depth}/{maxsize} "
+                f"({ratio*100:.0f}%) approaching saturation "
+                f"drops={self._drop_count}"
+            )
+        elif self._ticks % self._HEARTBEAT_INTERVAL == 0:
+            log(
+                f"[QUEUE] depth={depth}/{maxsize} "
+                f"drops={self._drop_count}"
+            )
+
+        return depth
+
+    @property
+    def drop_count(self) -> int:
+        return self._drop_count
+
+    def stats(self) -> dict[str, float]:
+        return _registry.stats("queue_depth")
+
+
+_queue_probe = QueueDepthProbe()
+
+
+# ---------------------------------------------------------------------------
+# StreamJitterProbe — inter-chunk gap tracker  [STREAM]
+# ---------------------------------------------------------------------------
+
+class StreamJitterProbe:
+    """Tracks inter-chunk gap for assistant streaming tokens.
+
+    Detects stalls (gap > 2 s) and bursts (gap < 5 ms) in the token stream.
+    Records "stream_chunk_gap_ms" into PerfRegistry.
+    Emits session summary at turn end via summarize().
+    """
+
+    _STALL_MS = 2_000.0     # gap > 2 s → stall
+    _BURST_MS = 5.0         # gap < 5 ms → burst (provider batching)
+
+    def __init__(self) -> None:
+        self._stall_count: int = 0
+        self._chunk_count: int = 0
+        self._alarm = SuspicionDetector(
+            "stream-stall",
+            budget_ms=self._STALL_MS,
+            severe_ms=10_000.0,
+            burst_window=3,
+            burst_count=2,
+            streak_count=2,
+            cooldown_s=10.0,
+        )
+
+    def record_chunk(self, gap_ms: float, tokens: int) -> None:
+        """Record one inter-chunk gap; emit logs if stall or burst."""
+        self._chunk_count += 1
+        _registry.record("stream_chunk_gap_ms", gap_ms)
+
+        if gap_ms >= self._STALL_MS:
+            self._stall_count += 1
+            log.warning(
+                f"[STREAM-STALL] gap={gap_ms:.0f}ms tokens={tokens} "
+                f"stalls={self._stall_count}"
+            )
+            self._alarm.observe(gap_ms, detail=f"tokens={tokens}")
+        elif gap_ms < self._BURST_MS and tokens > 0:
+            log(
+                f"[STREAM-BURST] gap={gap_ms:.1f}ms tokens={tokens} "
+                f"rapid batch"
+            )
+        else:
+            log(
+                f"[STREAM] chunk_gap={gap_ms:.1f}ms tokens={tokens}"
+            )
+
+    def summarize(self) -> None:
+        """Log turn-end summary; call from finalize_response_metrics()."""
+        if self._chunk_count == 0:
+            return
+        stats = _registry.stats("stream_chunk_gap_ms")
+        log(
+            f"[STREAM-SUMMARY] chunks={self._chunk_count} "
+            f"p50={stats['p50']:.0f}ms p95={stats['p95']:.0f}ms "
+            f"max={stats['max']:.0f}ms stalls={self._stall_count}"
+        )
+        self._chunk_count = 0
+        self._stall_count = 0
+        _registry.clear("stream_chunk_gap_ms")
+
+    @property
+    def stall_count(self) -> int:
+        return self._stall_count
+
+    @property
+    def chunk_count(self) -> int:
+        return self._chunk_count
+
+    def stats(self) -> dict[str, float]:
+        return _registry.stats("stream_chunk_gap_ms")
+
+
+_stream_probe = StreamJitterProbe()
 
 
 @contextmanager

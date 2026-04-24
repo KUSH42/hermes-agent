@@ -494,6 +494,7 @@ class HermesApp(App):
         self._response_wall_start_time: float | None = None
         self._response_segment_start_time: float | None = None
         self._response_token_window: collections.deque[tuple[float, int]] = collections.deque()
+        self._last_stream_chunk_ts: float | None = None
 
         # Undo/retry state
         self._undo_in_progress: bool = False
@@ -1771,6 +1772,7 @@ class HermesApp(App):
             self.hooks.fire("on_streaming_start")
         if self._response_segment_start_time is None:
             self._response_segment_start_time = _time.monotonic()
+        self._last_stream_chunk_ts = None
         self._refresh_live_response_metrics()
 
     def mark_response_stream_delta(self, text: str) -> None:
@@ -1781,7 +1783,13 @@ class HermesApp(App):
         est_tokens = estimate_tokens_rough(text)
         if est_tokens <= 0:
             return
-        self._response_token_window.append((_time.monotonic(), est_tokens))
+        now = _time.monotonic()
+        if self._last_stream_chunk_ts is not None:
+            gap_ms = (now - self._last_stream_chunk_ts) * 1000.0
+            from hermes_cli.tui.perf import _stream_probe
+            _stream_probe.record_chunk(gap_ms, est_tokens)
+        self._last_stream_chunk_ts = now
+        self._response_token_window.append((now, est_tokens))
         # v2 heat injection: bump heat on each streaming token chunk
         try:
             from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
@@ -1801,6 +1809,9 @@ class HermesApp(App):
         self.pause_response_stream()
         self._response_metrics_active = False
         self._response_wall_start_time = None
+        from hermes_cli.tui.perf import _stream_probe
+        _stream_probe.summarize()
+        self._last_stream_chunk_ts = None
         self._response_token_window.clear()
         self.hooks.fire("on_streaming_end")
         try:

@@ -205,6 +205,8 @@ class SpinnerService(AppService):
             app._event_loop_probe.tick()
         if app._worker_watcher is not None:
             app._worker_watcher.tick()
+        from hermes_cli.tui.perf import _queue_probe
+        _queue_probe.tick(app._output_queue)
         app._refresh_live_response_metrics()
         _dt = (_t.perf_counter() - _t0) * 1000
         if _dt > 16:

@@ -328,7 +328,7 @@ async def test_focus_anchor_adds_class():
             turn_id=1,
         )
         app._browse_anchors = [anchor]
-        app._focus_anchor(0, anchor)
+        app._svc_browse.focus_anchor(0, anchor)
         await pilot.pause()
         assert panel.has_class("--browse-focused")
 
@@ -350,11 +350,11 @@ async def test_focus_anchor_clears_previous():
         a2 = BrowseAnchor(BrowseAnchorType.TURN_START, panel2, "Turn 2", 2)
         app._browse_anchors = [a1, a2]
 
-        app._focus_anchor(0, a1)
+        app._svc_browse.focus_anchor(0, a1)
         await pilot.pause()
         assert panel1.has_class("--browse-focused")
 
-        app._focus_anchor(1, a2)
+        app._svc_browse.focus_anchor(1, a2)
         await pilot.pause()
         assert not panel1.has_class("--browse-focused")
         assert panel2.has_class("--browse-focused")
@@ -382,7 +382,7 @@ async def test_focus_anchor_scroll_called():
 
         anchor = BrowseAnchor(BrowseAnchorType.TURN_START, panel, "Turn 1", 1)
         app._browse_anchors = [anchor]
-        app._focus_anchor(0, anchor)
+        app._svc_browse.focus_anchor(0, anchor)
         await pilot.pause()
 
         assert len(scroll_calls) == 1
@@ -405,7 +405,7 @@ async def test_clear_browse_highlight_removes_all():
 
         panel1.add_class("--browse-focused")
         panel2.add_class("--browse-focused")
-        app._clear_browse_highlight()
+        app._svc_browse.clear_browse_highlight()
         await pilot.pause()
 
         assert not panel1.has_class("--browse-focused")
@@ -455,7 +455,7 @@ def test_focus_anchor_unmounted_widget():
 
     with patch.object(app, "query_one", return_value=mock_output):
         with patch.object(app, "query", return_value=[]):
-            app._focus_anchor(0, anchors[0])
+            app._svc_browse.focus_anchor(0, anchors[0])
 
     assert rebuild_calls == [1]
     # Retry should have landed on live_widget (first CODE_BLOCK in rebuilt list)

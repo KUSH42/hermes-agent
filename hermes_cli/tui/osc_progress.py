@@ -4,8 +4,8 @@ Emits escape sequences to the terminal's own fd — compatible with Ghostty,
 iTerm2, Rio, WezTerm, and Windows Terminal.  All other terminals silently
 ignore the sequences.
 
-Must only be called from the Textual event loop thread (same pattern as
-osc52_probe.py — os.write to stdout.fileno() is safe during TUI operation).
+Must only be called from the Textual event loop thread
+(os.write to stdout.fileno() is safe during TUI operation).
 """
 from __future__ import annotations
 

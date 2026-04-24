@@ -565,15 +565,7 @@ class _ToolPanelActionsMixin:
                 self.app.notify("Copy failed — use mouse select", timeout=3)  # type: ignore[attr-defined]
 
     def action_copy_input(self) -> None:
-        text = ""
-        try:
-            inp = getattr(self, "_input_section", None)
-            if inp is not None:
-                text = getattr(inp, "_build_text", lambda: "")() or ""
-        except Exception:
-            pass
-        if not text:
-            text = self._format_arg_summary()  # type: ignore[attr-defined]
+        text = self._format_arg_summary()  # type: ignore[attr-defined]
         if text:
             try:
                 import pyperclip

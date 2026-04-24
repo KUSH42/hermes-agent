@@ -147,8 +147,7 @@ def test_Y_key_copies_input():
     from unittest.mock import PropertyMock, MagicMock as MM
 
     p = _make_panel()
-    p._input_section = MagicMock()
-    p._input_section._build_text = lambda: "ls -la"
+    p._tool_args = {"command": "ls -la"}
 
     notified = []
     app_mock = MM()

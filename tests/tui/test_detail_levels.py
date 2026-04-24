@@ -15,7 +15,6 @@ from hermes_cli.tui.app import HermesApp
 from hermes_cli.tui.widgets import OutputPanel
 from hermes_cli.tui.tool_panel import ToolPanel, BodyPane, FooterPane
 from hermes_cli.tui.tool_category import ToolCategory
-from hermes_cli.tui.input_section import InputSection
 
 
 async def _pause(pilot, n: int = 5) -> None:

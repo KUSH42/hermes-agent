@@ -161,9 +161,9 @@ def make_undo_payload(app: Any, state: "UndoOverlayState") -> InterruptPayload:
             except Exception:
                 pass
             if pending_panel is not None:
-                app._run_undo_sequence(pending_panel)
+                app.run_worker(app._svc_commands.run_undo_sequence(pending_panel), thread=False)
             else:
-                app._run_rollback_sequence(pending_n)
+                app.run_worker(app._svc_commands.run_rollback_sequence(pending_n), thread=False)
             return
         try:
             app.undo_state = None

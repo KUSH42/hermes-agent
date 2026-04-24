@@ -87,7 +87,7 @@ async def test_undo_opens_overlay():
         await output.mount(panel)
         await pilot.pause()
 
-        app._initiate_undo()
+        app._svc_commands.initiate_undo()
         await pilot.pause()
 
         assert app.undo_state is not None
@@ -110,7 +110,7 @@ async def test_n_key_cancels_overlay():
         await output.mount(panel)
         await pilot.pause()
 
-        app._initiate_undo()
+        app._svc_commands.initiate_undo()
         await pilot.pause()
         assert app.undo_state is not None
 
@@ -135,7 +135,7 @@ async def test_escape_cancels_overlay():
         await output.mount(panel)
         await pilot.pause()
 
-        app._initiate_undo()
+        app._svc_commands.initiate_undo()
         await pilot.pause()
         assert app.undo_state is not None
 
@@ -165,7 +165,7 @@ async def test_y_key_triggers_undo_sequence():
 
         count_before = len(list(app.query(MessagePanel)))
 
-        app._initiate_undo()
+        app._svc_commands.initiate_undo()
         await pilot.pause()
 
         await pilot.press("y")
@@ -204,7 +204,7 @@ async def test_undo_sequence_fades_panel():
 
         panel.remove = _check_opacity_then_remove
 
-        app._initiate_undo()
+        app._svc_commands.initiate_undo()
         await pilot.pause()
         await pilot.press("y")
         await asyncio.sleep(0.6)
@@ -231,7 +231,7 @@ async def test_undo_sequence_calls_agent_undo():
         await output.mount(panel)
         await pilot.pause()
 
-        app._initiate_undo()
+        app._svc_commands.initiate_undo()
         await pilot.pause()
         await pilot.press("y")
         await asyncio.sleep(0.6)
@@ -261,7 +261,7 @@ async def test_undo_removes_last_panel():
         count_before = len(list(app.query(MessagePanel)))
         assert count_before == 2
 
-        app._initiate_undo()
+        app._svc_commands.initiate_undo()
         await pilot.pause()
         await pilot.press("y")
         await asyncio.sleep(0.6)
@@ -288,7 +288,7 @@ async def test_undo_restores_input_text():
         await output.mount(panel)
         await pilot.pause()
 
-        app._initiate_undo()
+        app._svc_commands.initiate_undo()
         await pilot.pause()
         await pilot.press("y")
         await asyncio.sleep(0.6)
@@ -315,7 +315,7 @@ async def test_undo_blocked_while_agent_running():
         app.agent_running = True
         await pilot.pause()
 
-        app._initiate_undo()
+        app._svc_commands.initiate_undo()
         await pilot.pause()
 
         hint = _get_hint(app)
@@ -334,7 +334,7 @@ async def test_undo_with_no_panels():
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
 
-        app._initiate_undo()
+        app._svc_commands.initiate_undo()
         await pilot.pause()
 
         hint = _get_hint(app)
@@ -482,7 +482,7 @@ async def test_rollback_opens_overlay():
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
 
-        app._initiate_rollback("/rollback 1")
+        app._svc_commands.initiate_rollback("/rollback 1")
         await pilot.pause()
 
         assert app.undo_state is not None
@@ -503,7 +503,7 @@ async def test_rollback_confirm_calls_agent():
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
 
-        app._initiate_rollback("/rollback 3")
+        app._svc_commands.initiate_rollback("/rollback 3")
         await pilot.pause()
 
         await pilot.press("y")
@@ -532,7 +532,7 @@ async def test_rollback_cancel_leaves_dom_unchanged():
 
         count_before = len(list(app.query(MessagePanel)))
 
-        app._initiate_rollback("/rollback")
+        app._svc_commands.initiate_rollback("/rollback")
         await pilot.pause()
         await pilot.press("n")
         await pilot.pause()
@@ -559,7 +559,7 @@ async def test_undo_not_implemented_flashes_warning():
         await output.mount(panel)
         await pilot.pause()
 
-        app._initiate_undo()
+        app._svc_commands.initiate_undo()
         await pilot.pause()
         await pilot.press("y")
         await asyncio.sleep(0.6)
@@ -610,7 +610,7 @@ async def test_undo_in_progress_guard():
         await pilot.pause()
         app._undo_in_progress = True
 
-        app._initiate_undo()
+        app._svc_commands.initiate_undo()
         await pilot.pause()
 
         hint = _get_hint(app)

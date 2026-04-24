@@ -79,9 +79,9 @@ class KeyDispatchService(AppService):
                 self.app.undo_state = None
                 self.app._pending_undo_panel = None
                 if pending_panel is not None:
-                    self.app._run_undo_sequence(pending_panel)
+                    self.app.run_worker(self.app._svc_commands.run_undo_sequence(pending_panel), thread=False)
                 else:
-                    self.app._run_rollback_sequence(pending_n)
+                    self.app.run_worker(self.app._svc_commands.run_rollback_sequence(pending_n), thread=False)
                 event.prevent_default()
                 return
             if event.key in ("n", "escape"):

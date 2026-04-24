@@ -37,7 +37,7 @@ async def test_e1_auto_clear_status_error_clears_matching_error() -> None:
         app.status_error = "original error"
         await pilot.pause()
         # Simulate timer callback firing
-        app._auto_clear_status_error("original error")
+        app._svc_watchers.auto_clear_status_error("original error")
         await pilot.pause()
         assert app.status_error == "", f"status_error={app.status_error!r}"
 
@@ -51,7 +51,7 @@ async def test_e1_auto_clear_does_not_clear_newer_error() -> None:
         app.status_error = "newer error"
         await pilot.pause()
         # Simulate old timer callback with stale message
-        app._auto_clear_status_error("old error")
+        app._svc_watchers.auto_clear_status_error("old error")
         await pilot.pause()
         assert app.status_error == "newer error", (
             f"status_error={app.status_error!r} was wrongly cleared"

@@ -742,7 +742,7 @@ class HermesApp(App):
         self._anim_clock = AnimationClock()
         self._anim_clock_h = self.set_interval(1 / 15, self._anim_clock.tick)
         self._spinner_h = self.set_interval(0.14, self._tick_spinner)  # ~7Hz — smooth enough, 30% less event-loop pressure vs 10Hz
-        self._fps_h = self.set_interval(_frame_interval, self._tick_fps)
+        self._fps_h = self.set_interval(_frame_interval, self._svc_spinner.tick_fps)
         self._duration_h = self.set_interval(1.0, self._tick_duration)
         # Restore FPS HUD state from config (runtime toggle overrides this)
         if _fps_hud_enabled():
@@ -1320,7 +1320,7 @@ class HermesApp(App):
             except Exception:
                 pass
             self._update_anim_hint()
-            self._set_chevron_phase("--phase-stream")
+            self._svc_spinner.set_chevron_phase("--phase-stream")
             self._set_hint_phase("stream")
             try:
                 output = self.query_one(OutputPanel)
@@ -1603,14 +1603,14 @@ class HermesApp(App):
             from textual.widgets import Static as _Static
             chevron = self.query_one("#input-chevron", _Static)
             if not chevron.has_class("--phase-error"):
-                self._set_chevron_phase("--phase-done")
-                self.set_timer(0.4, lambda: self._set_chevron_phase(""))
+                self._svc_spinner.set_chevron_phase("--phase-done")
+                self.set_timer(0.4, lambda: self._svc_spinner.set_chevron_phase(""))
         except Exception:
             pass
 
     def _lc_auto_title(self, **_: object) -> None:
         if not self._auto_title_done:
-            self._try_auto_title()
+            self._svc_commands.try_auto_title()
 
     def _lc_reset_compact_flags(self, **_: object) -> None:
         self.context_pct = 0.0
@@ -1819,23 +1819,23 @@ class HermesApp(App):
             if tool_name in _FILE_TOOLS:
                 m = _PATH_EXTRACT_RE.search(value)
                 self.status_active_file = m.group(1) if m else ""
-                self._set_chevron_phase("--phase-file")
+                self._svc_spinner.set_chevron_phase("--phase-file")
                 self._set_hint_phase("file")
             elif tool_name in _SHELL_TOOLS:
                 self.status_active_file = ""
                 self.status_active_file_offscreen = False  # S1-B
-                self._set_chevron_phase("--phase-shell")
+                self._svc_spinner.set_chevron_phase("--phase-shell")
                 self._set_hint_phase("stream")
             else:
                 self.status_active_file = ""
                 self.status_active_file_offscreen = False  # S1-B
-                self._set_chevron_phase("--phase-stream")
+                self._svc_spinner.set_chevron_phase("--phase-stream")
                 self._set_hint_phase("stream")
         else:
             self.status_active_file = ""
             self.status_active_file_offscreen = False  # S1-B
             if self.agent_running:
-                self._set_chevron_phase("--phase-stream")
+                self._svc_spinner.set_chevron_phase("--phase-stream")
         # nameplate: glitch + label update on non-empty spinner_label
         if value:
             try:
@@ -1853,33 +1853,6 @@ class HermesApp(App):
         the user is answering an approval prompt.
         """
         return self.clarify_state is not None or self.approval_state is not None
-
-    @property
-    def _turn_tool_calls(self) -> dict:  # DEPRECATED
-        return self._svc_tools._turn_tool_calls
-
-    @_turn_tool_calls.setter
-    def _turn_tool_calls(self, value: "list | dict") -> None:  # DEPRECATED: test-only setter
-        from hermes_cli.tui.services.tools import _ToolCallRecord
-        if isinstance(value, dict):
-            self._svc_tools._turn_tool_calls = value
-        else:
-            self._svc_tools._turn_tool_calls = {
-                e["tool_call_id"]: _ToolCallRecord(
-                    tool_call_id=e["tool_call_id"],
-                    parent_tool_call_id=e.get("parent_tool_call_id"),
-                    label=e.get("name", ""),
-                    tool_name=e.get("name"),
-                    category=e.get("category", "shell"),
-                    depth=e.get("depth", 0),
-                    start_s=e.get("start_s", 0.0),
-                    dur_ms=e.get("dur_ms"),
-                    is_error=e.get("is_error", False),
-                    error_kind=e.get("error_kind"),
-                    mcp_server=e.get("mcp_server"),
-                )
-                for e in value
-            }
 
     def _hide_completion_overlay_if_present(self) -> None:
         """Hide the completion overlay when a choice overlay activates."""
@@ -2218,9 +2191,6 @@ class HermesApp(App):
     def _tick_duration(self) -> None:  # DEPRECATED
         return self._svc_spinner.tick_duration()
 
-    def _tick_fps(self) -> None:  # DEPRECATED
-        return self._svc_spinner.tick_fps()
-
     def watch_fps_hud_visible(self, value: bool) -> None:
         self._svc_spinner.on_fps_hud_visible(value)
 
@@ -2232,9 +2202,6 @@ class HermesApp(App):
 
     def _set_hint_phase(self, phase: str) -> None:  # DEPRECATED
         return self._svc_spinner.set_hint_phase(phase)
-
-    def _set_chevron_phase(self, phase: str) -> None:  # DEPRECATED
-        return self._svc_spinner.set_chevron_phase(phase)
 
     def _drawbraille_show_hide(self, running: bool) -> None:  # DEPRECATED
         return self._svc_spinner.drawbraille_show_hide(running)
@@ -2331,9 +2298,6 @@ class HermesApp(App):
 
     # --- from _app_browse.py ---
 
-    def _apply_browse_focus(self) -> None:  # DEPRECATED
-        return self._svc_browse.apply_browse_focus()
-
     def watch_browse_mode(self, value: bool) -> None:
         self._svc_browse.on_browse_mode(value)
 
@@ -2351,21 +2315,6 @@ class HermesApp(App):
 
     def _jump_anchor(self, direction: int, filter_type: Any = None) -> None:  # DEPRECATED
         return self._svc_browse.jump_anchor(direction, filter_type)
-
-    def _focus_anchor(self, idx: int, anchor: Any, *, _retry: bool = True) -> None:  # DEPRECATED
-        return self._svc_browse.focus_anchor(idx, anchor, _retry=_retry)
-
-    def _clear_browse_highlight(self) -> None:  # DEPRECATED
-        return self._svc_browse.clear_browse_highlight()
-
-    def _clear_browse_pips(self) -> None:  # DEPRECATED
-        return self._svc_browse.clear_browse_pips()
-
-    def _apply_browse_pips(self) -> None:  # DEPRECATED
-        return self._svc_browse.apply_browse_pips()
-
-    def _update_browse_status(self, anchor: Any) -> None:  # DEPRECATED
-        return self._svc_browse.update_browse_status(anchor)
 
     def action_jump_subagent_prev(self) -> None:
         self._svc_browse.action_jump_subagent_prev()
@@ -2588,17 +2537,8 @@ class HermesApp(App):
     async def _handle_clear_tui(self) -> None:  # DEPRECATED
         await self._svc_commands.handle_clear_tui()
 
-    def _has_rollback_checkpoint(self) -> bool:  # DEPRECATED
-        return self._svc_commands.has_rollback_checkpoint()
-
     def _open_tools_overlay(self) -> None:  # DEPRECATED
         return self._svc_commands.open_tools_overlay()
-
-    def _handle_layout_command(self, args: str) -> None:  # DEPRECATED
-        return self._svc_commands.handle_layout_command(args)
-
-    def _open_anim_config(self) -> None:  # DEPRECATED
-        return self._svc_commands.open_anim_config()
 
     def _persist_anim_config(self, cfg_dict: dict) -> None:  # DEPRECATED
         return self._svc_commands.persist_anim_config(cfg_dict)
@@ -2606,34 +2546,11 @@ class HermesApp(App):
     def _update_anim_hint(self) -> None:  # DEPRECATED
         return self._svc_commands.update_anim_hint()
 
-    def _handle_anim_command(self, stripped: str) -> None:  # DEPRECATED
-        return self._svc_commands.handle_anim_command(stripped)
-
-    def _try_auto_title(self) -> None:  # DEPRECATED
-        return self._svc_commands.try_auto_title()
-
-    def _toggle_drawbraille_overlay(self) -> None:  # DEPRECATED
-        return self._svc_commands.toggle_drawbraille_overlay()
-
     def action_open_anim_config(self) -> None:
         self._svc_commands.open_anim_config()
 
-    def _initiate_undo(self) -> None:  # DEPRECATED
-        return self._svc_commands.initiate_undo()
-
-    @work(thread=False)
-    async def _run_undo_sequence(self, panel: Any) -> None:  # DEPRECATED
-        await self._svc_commands.run_undo_sequence(panel)
-
     def _initiate_retry(self) -> None:  # DEPRECATED
         return self._svc_commands.initiate_retry()
-
-    def _initiate_rollback(self, text: str) -> None:  # DEPRECATED
-        return self._svc_commands.initiate_rollback(text)
-
-    @work(thread=False)
-    async def _run_rollback_sequence(self, n: int) -> None:  # DEPRECATED
-        await self._svc_commands.run_rollback_sequence(n)
 
     # --- from _app_watchers.py ---
 
@@ -2693,9 +2610,6 @@ class HermesApp(App):
         if old:
             self.remove_class(f"--phase-{old}")
         self.add_class(f"--phase-{new}")
-
-    def _auto_clear_status_error(self, expected: str) -> None:  # DEPRECATED
-        self._svc_watchers.auto_clear_status_error(expected)
 
     def watch_undo_state(self, value: Any) -> None:
         self._svc_watchers.on_undo_state(value)

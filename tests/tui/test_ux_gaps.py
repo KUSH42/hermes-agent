@@ -259,14 +259,9 @@ def test_chevron_phase_classes_defined():
     assert HermesApp._CHEVRON_PHASE_CLASSES == expected
 
 
-def test_set_chevron_phase_method_exists():
-    """HermesApp has _set_chevron_phase method."""
-    assert callable(getattr(HermesApp, "_set_chevron_phase", None))
-
-
 @pytest.mark.asyncio
 async def test_set_chevron_phase_clears_others():
-    """_set_chevron_phase removes all other phase classes before adding new one."""
+    """set_chevron_phase removes all other phase classes before adding new one."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -276,7 +271,7 @@ async def test_set_chevron_phase_clears_others():
         chevron.add_class("--phase-file")
         chevron.add_class("--phase-stream")
         # Now set to shell phase
-        app._set_chevron_phase("--phase-shell")
+        app._svc_spinner.set_chevron_phase("--phase-shell")
         assert chevron.has_class("--phase-shell")
         assert not chevron.has_class("--phase-file")
         assert not chevron.has_class("--phase-stream")

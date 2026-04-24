@@ -3,7 +3,6 @@
 Steps 1–12:
   Step 1 (D2)  — Gutter unification (12 tests)
   Step 2 (D5)  — _nf_or_text helper (6 tests)
-  Step 3 (D4a) — hint_fmt (8 tests)
   Step 4 (D4b) — Overlay border-title + YOLO (16 tests)
   Step 5 (D6)  — StatusBar layout order (8 tests)
   Step 6 (D7)  — Flash color (4 tests)
@@ -237,54 +236,6 @@ class TestNfOrText:
         with patch.dict(os.environ, {"HERMES_NO_UNICODE": "1", "HERMES_ACCESSIBLE": ""}, clear=False):
             result = _nf_or_text("", "[R]")
         assert result == "[R]"
-
-
-# ---------------------------------------------------------------------------
-# Step 3 — hint_fmt (D4 partial) — 8 tests
-# ---------------------------------------------------------------------------
-
-class TestHintFmt:
-    def test_empty_pairs_returns_empty(self):
-        from hermes_cli.tui._hint_fmt import hint_fmt
-        assert hint_fmt([]) == ""
-
-    def test_single_pair_no_sep(self):
-        from hermes_cli.tui._hint_fmt import hint_fmt
-        result = hint_fmt([("Esc", "close")])
-        assert "·" not in result
-        assert "Esc" in result
-        assert "close" in result
-
-    def test_two_pairs_have_separator(self):
-        from hermes_cli.tui._hint_fmt import hint_fmt, _SEP
-        result = hint_fmt([("Esc", "close"), ("↵", "confirm")])
-        assert "·" in result
-
-    def test_separator_is_standard(self):
-        from hermes_cli.tui._hint_fmt import _SEP
-        assert "·" in _SEP
-
-    def test_key_color_in_output(self):
-        from hermes_cli.tui._hint_fmt import hint_fmt
-        result = hint_fmt([("Esc", "close")], key_color="#5f87d7")
-        assert "#5f87d7" in result
-        assert "Esc" in result
-
-    def test_no_key_color_uses_bold(self):
-        from hermes_cli.tui._hint_fmt import hint_fmt
-        result = hint_fmt([("Esc", "close")])
-        assert "[bold]" in result or "[bold " in result
-
-    def test_dim_verb(self):
-        from hermes_cli.tui._hint_fmt import hint_fmt
-        result = hint_fmt([("Esc", "close")])
-        assert "[dim]" in result
-        assert "close" in result
-
-    def test_importable_from_hint_fmt(self):
-        from hermes_cli.tui._hint_fmt import hint_fmt, _SEP
-        assert callable(hint_fmt)
-        assert isinstance(_SEP, str)
 
 
 # ---------------------------------------------------------------------------

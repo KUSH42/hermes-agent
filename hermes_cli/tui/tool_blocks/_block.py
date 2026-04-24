@@ -103,8 +103,6 @@ class ToolBlock(Widget):
 
         if tool_name in ("read_file", "patch"):
             self._header._no_underline = True
-        if tool_name in ("read_file", "search_files"):
-            self._header._hide_duration = True
         if tool_name in ("search_files", "clarify"):
             self._header._bold_label = True
         if tool_name == "terminal":

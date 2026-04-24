@@ -16,6 +16,13 @@ class _ToolPanelActionsMixin:
     """Keyboard action handlers and their private helpers."""
 
     def action_toggle_collapse(self) -> None:
+        block = getattr(self, "_block", None)
+        tail = getattr(block, "_tail", None) if block is not None else None
+        if tail is not None and tail.has_class("--visible"):
+            tail.remove_class("--visible")
+            if hasattr(tail, "dismiss"):
+                tail.dismiss()
+            return
         self.collapsed = not self.collapsed  # type: ignore[attr-defined]
         self._user_collapse_override = True  # type: ignore[attr-defined]
         self._auto_collapsed = False  # type: ignore[attr-defined]
@@ -386,9 +393,11 @@ class _ToolPanelActionsMixin:
             pass
 
     def action_show_help(self) -> None:
-        # Set the session-wide discovery flag
+        # Mark all categories as discovered when help is explicitly opened
         from . import _completion as _comp_mod
-        _comp_mod._DISCOVERY_GLOBAL_SHOWN = True
+        from hermes_cli.tui.tool_category import ToolCategory
+        for _cat in ToolCategory:
+            _comp_mod._DISCOVERY_SHOWN_CATEGORIES.add(_cat)
         from hermes_cli.tui.overlays import ToolPanelHelpOverlay
         from textual.css.query import NoMatches
         try:
@@ -414,9 +423,7 @@ class _ToolPanelActionsMixin:
         self._flash_header("(Enter) toggle", tone="accent")
 
     def on_blur(self) -> None:
-        strip = getattr(self, "_collapsed_strip", None)
-        if strip is not None:
-            strip.remove_class("--visible")
+        self._refresh_collapsed_strip()  # type: ignore[attr-defined]
 
     def watch_has_focus(self, value: bool) -> None:
         if self._hint_row is None:  # type: ignore[attr-defined]
@@ -462,7 +469,7 @@ class _ToolPanelActionsMixin:
             primary.append(("x", "dismiss"))
         else:
             primary.append(("Enter", "toggle"))
-            primary.append(("c", "copy"))
+            primary.append(("y", "copy"))
 
         contextual: list[tuple[str, str]] = []
         if _block_streaming:

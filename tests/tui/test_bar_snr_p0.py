@@ -194,9 +194,9 @@ class TestIdleTipRotation:
                 r1 = str(sb.render())
                 r2 = str(sb.render())
 
-        assert "F1" in r1
-        assert "/" in r1
-        # Consistent — no rotation
+        # S1-E/A8: key hints moved to HintBar; idle StatusBar shows model + compaction bar
+        assert "F1 help" not in r1
+        # Idle state is deterministic (no rotation in StatusBar itself)
         assert r1 == r2
 
 

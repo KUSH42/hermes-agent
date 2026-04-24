@@ -31,7 +31,18 @@ from ._shared import (
 
 MIN_LABEL_CELLS = 12
 
-_DROP_ORDER: list[str] = ["linecount", "duration", "chip", "hero", "diff", "stderrwarn", "remediation", "exit", "chevron", "flash"]
+_DROP_ORDER: list[str] = [
+    "flash",         # ephemeral visual, losing it is fine
+    "remediation",   # long hint text; tolerable loss at narrow widths
+    "stderrwarn",    # redundant with exit when present
+    "chip",          # browse-badge, lowest-signal
+    "linecount",     # size context, nice-to-have
+    "duration",      # often available via age microcopy
+    "hero",          # primary summary; preferable to linecount
+    "diff",          # structural, preserve
+    "chevron",       # collapse hint; preserve
+    "exit",          # highest-signal: always keep
+]
 
 
 def _safe_collapsed(header: "ToolHeader") -> bool:
@@ -237,11 +248,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             t.append(f" {icon_str}", style=icon_style)
         space_after_icon = 1
 
-        shell_prompt_w = 0
-        if spec.primary_arg == "command" and spec.category == ToolCategory.SHELL:
-            accent = getattr(self, "_focused_gutter_color", _GUTTER_FALLBACK)
-            t.append(" $", style=f"bold {accent}")
-            shell_prompt_w = 2
+        shell_prompt_w = 0  # retained for tail-width math; glyph suppressed (QW-01)
 
         # A1: build tail as named segments for width-aware trimming
         tail_segments: list[tuple[str, Text]] = []
@@ -346,9 +353,9 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             except Exception:
                 pass
 
-            # R10: explicit exit code in collapsed header
+            # R10 / QW-02: exit chip always visible when complete (not only when collapsed)
             is_collapsed = _safe_collapsed(self)
-            if is_collapsed and self._is_complete:
+            if self._is_complete:
                 code = getattr(self, "_exit_code", None)
                 if code is not None:
                     if code == 0:
@@ -370,9 +377,12 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         term_w = self.size.width
         FIXED_PREFIX_W = gutter_w + icon_cell_w + space_after_icon + shell_prompt_w
         tail_budget = max(0, term_w - FIXED_PREFIX_W - MIN_LABEL_CELLS - 2) if term_w > 0 else 80
-        tail_segments = _trim_tail_segments(tail_segments, tail_budget)
+        separator_overhead = max(0, 2 * (len(tail_segments) - 1))
+        tail_segments = _trim_tail_segments(tail_segments, tail_budget - separator_overhead)
         tail = Text()
-        for _, seg in tail_segments:
+        for idx, (_, seg) in enumerate(tail_segments):
+            if idx > 0:
+                tail.append(" ·", style="dim #666666")
             tail.append_text(seg)
         tail_w = tail.cell_len
         available = max(MIN_LABEL_CELLS, term_w - FIXED_PREFIX_W - tail_w - 2) if term_w > 0 else 50

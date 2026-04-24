@@ -65,12 +65,15 @@ class ToolTail(Static):
         if n > 0:
             self.update(f"  ↓ {n} new lines  ")
             self.display = True
+            self.add_class("--visible")
         else:
             self.display = False
+            self.remove_class("--visible")
 
     def dismiss(self) -> None:
         self._new_line_count = 0
         self.display = False
+        self.remove_class("--visible")
 
 
 # ---------------------------------------------------------------------------

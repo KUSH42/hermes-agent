@@ -5,10 +5,13 @@ Three render modes: filled, outline, dissolve. No scipy dependency required.
 """
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+logger = logging.getLogger(__name__)
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -94,6 +97,7 @@ class SDFBaker:
                     self._cache[ch] = self._bake_char(ch)
             self.ready.set()
         except Exception:
+            logger.warning("_SDFBaker.bake: glyph baking failed; splash will fall back", exc_info=True)
             self.failed.set()
 
     def get(self, ch: str) -> np.ndarray:

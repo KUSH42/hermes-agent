@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import dataclasses
 import enum
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class BrowseAnchorType(enum.Enum):
@@ -35,7 +38,7 @@ def _is_in_reasoning(widget: object) -> bool:
             if isinstance(ancestor, _RP):
                 return True
     except Exception:
-        pass
+        logger.debug("_is_in_reasoning: ancestry check failed", exc_info=True)
     return False
 
 

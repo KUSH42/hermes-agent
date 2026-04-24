@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shutil
 import socket
@@ -14,6 +15,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Callable
 from urllib.parse import parse_qs, urlparse
+
+logger = logging.getLogger(__name__)
 
 # ── URL detection patterns ─────────────────────────────────────────────────────
 _AUDIO_EXT_RE = re.compile(
@@ -50,7 +53,7 @@ def _resolve_youtube_url(url: str) -> str | None:
             line = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
             return line or None
     except Exception:
-        pass
+        logger.warning("_resolve_youtube_url: yt-dlp failed for %r", url, exc_info=True)
     return None
 
 
@@ -74,6 +77,7 @@ def _inline_media_config() -> InlineMediaCfg:
         from hermes_cli.config import read_raw_config
         d = read_raw_config().get("display", {}).get("inline_media", {})
     except Exception:
+        logger.debug("_inline_media_config: read_raw_config failed, using defaults", exc_info=True)
         d = {}
     return InlineMediaCfg(
         enabled=bool(d.get("enabled", False)),

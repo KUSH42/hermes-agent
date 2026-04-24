@@ -10,8 +10,11 @@ when the user clicks elsewhere, enabling automatic dismissal.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Callable
+
+logger = logging.getLogger(__name__)
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -77,7 +80,11 @@ class _ContextItem(Static):
         try:
             self._item.action()
         except Exception:
-            pass
+            logger.exception("ContextMenu: item action %r raised", self._item.label)
+            try:
+                self.app.notify(f"Action failed: {self._item.label}", severity="error", timeout=4)
+            except Exception:
+                logger.debug("ContextMenu: app.notify failed during action error report", exc_info=True)
         try:
             self.app.query_one(ContextMenu).remove_class("--visible")
         except NoMatches:
@@ -88,7 +95,7 @@ class _ContextItem(Static):
             try:
                 self.app.query_one("#input-area").focus()
             except Exception:
-                pass
+                logger.debug("ContextMenu: focus restore to #input-area failed", exc_info=True)
 
 
 class ContextMenu(Widget):
@@ -179,7 +186,12 @@ class ContextMenu(Widget):
             try:
                 items[self._selected_index]._item.action()
             except Exception:
-                pass
+                label = items[self._selected_index]._item.label
+                logger.exception("ContextMenu: execute_selected action %r raised", label)
+                try:
+                    self.app.notify(f"Action failed: {label}", severity="error", timeout=4)
+                except Exception:
+                    logger.debug("ContextMenu: app.notify failed during execute_selected error report", exc_info=True)
         self.dismiss()
 
     async def show(self, items: list[MenuItem], screen_x: int, screen_y: int) -> None:
@@ -247,7 +259,7 @@ class ContextMenu(Widget):
             try:
                 self.app.query_one("#input-area").focus()
             except Exception:
-                pass
+                logger.debug("ContextMenu.action_dismiss: focus restore to #input-area failed", exc_info=True)
 
     def on_blur(self) -> None:
         """Dismiss when focus leaves the menu."""

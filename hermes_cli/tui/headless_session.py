@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import time
 from collections import deque
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 class OutputJSONLWriter:
@@ -34,7 +37,7 @@ class OutputJSONLWriter:
                 for e in self._buf:
                     f.write(json.dumps(e) + "\n")
         except OSError:
-            pass
+            logger.warning("HeadlessSession: failed to write output.jsonl", exc_info=True)
 
     def load_lines(self) -> list[dict]:
         if not self._path.exists():
@@ -50,7 +53,7 @@ class OutputJSONLWriter:
                 except json.JSONDecodeError:
                     pass
         except OSError:
-            pass
+            logger.debug("HeadlessSession: failed to read output.jsonl", exc_info=True)
         return lines
 
 
@@ -107,6 +110,7 @@ class HeadlessSession:
             )
             return result.stdout.strip()
         except Exception:
+            logger.debug("HeadlessSession._get_branch: subprocess failed", exc_info=True)
             return ""
 
     def _on_complete(self) -> None:
@@ -121,7 +125,7 @@ class HeadlessSession:
                     {"type": "agent_complete", "session_id": self._session_id, "message": "agent finished"},
                 )
         except Exception:
-            pass
+            logger.warning("HeadlessSession._on_complete: notification send failed", exc_info=True)
 
     def write_output(self, text: str, role: str = "assistant") -> None:
         self._writer.write(text, role)

@@ -23,7 +23,11 @@ CompletionOverlay (Vertical)
 
 from __future__ import annotations
 
+import logging
+
 from textual import events
+
+logger = logging.getLogger(__name__)
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import RichLog, Static
@@ -149,7 +153,7 @@ class CompletionOverlay(Vertical):
             self.set_class(w < THRESHOLD_COMP_NARROW, "--narrow")
             self._last_applied_w = w
         except Exception:
-            pass
+            logger.debug("CompletionOverlay.on_mount: narrow-class setup failed", exc_info=True)
 
     def on_resize(self, event: events.Resize) -> None:
         w = event.size.width
@@ -161,14 +165,14 @@ class CompletionOverlay(Vertical):
         try:
             self.styles.max_height = avail
         except Exception:
-            pass
+            logger.debug("CompletionOverlay.on_resize: max_height set failed", exc_info=True)
 
     def _clear_highlighted_candidate(self) -> None:
         """Reset app.highlighted_candidate so ghost text is cleared."""
         try:
             self.app.highlighted_candidate = None
         except Exception:
-            pass
+            logger.debug("CompletionOverlay._clear_highlighted_candidate failed", exc_info=True)
 
     def on_virtual_completion_list_auto_dismiss(
         self, _message: VirtualCompletionList.AutoDismiss,

@@ -14,10 +14,13 @@ Sections
 
 from __future__ import annotations
 
+import logging
 import sys
 import warnings
 from collections import OrderedDict
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -243,6 +246,10 @@ class InlineImageCache:
                     result.append(Strip.blank(span.cell_width))
                 return result, image_id
             except Exception:
+                logger.debug(
+                    "InlineImageCache: TGP render failed for span %r, using alt text",
+                    span.alt_text, exc_info=True,
+                )
                 return self._alt_strips(span), 0
 
         if mode.cap == GraphicsCap.SIXEL and not _sixel_warned:
@@ -264,6 +271,10 @@ class InlineImageCache:
                 rgb_img.paste(img_resized)
             raw_strips = render_halfblock(rgb_img, max_cols=span.cell_width, max_rows=span.cell_height)
         except Exception:
+            logger.debug(
+                "InlineImageCache: halfblock render failed for span %r, using alt text",
+                span.alt_text, exc_info=True,
+            )
             return self._alt_strips(span), 0
 
         result = [s.adjust_cell_length(span.cell_width) for s in raw_strips[:span.cell_height]]
@@ -282,7 +293,7 @@ class InlineImageCache:
                 sys.stdout.write(f"\x1b_Ga=d,d=I,i={entry.image_id},q=2\x1b\\")
                 sys.stdout.flush()
             except Exception:
-                pass
+                logger.debug("InlineImageCache: kitty delete-image write failed", exc_info=True)
 
     def _evict_if_needed(self) -> None:
         while len(self._entries) > _MAX_CACHE:

@@ -26,10 +26,6 @@ class PaneContainer(Widget):
         super().__init__(**kwargs)
         self._pane_id = pane_id
 
-    def compose(self) -> ComposeResult:
-        return
-        yield  # noqa: unreachable — needed to satisfy ComposeResult type
-
     def set_content(self, widget: Widget) -> None:
         """Mount a content widget into this pane."""
         self.mount(widget)

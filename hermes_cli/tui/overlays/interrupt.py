@@ -71,6 +71,8 @@ class InterruptKind(str, Enum):
     MERGE_CONFIRM = "merge-confirm"
 
 
+_COUNTDOWN_ALLOWED: frozenset["InterruptKind"] = frozenset({InterruptKind.CLARIFY})
+
 # ── Payload dataclasses ─────────────────────────────────────────────────────
 
 
@@ -373,9 +375,13 @@ class InterruptOverlay(Widget, can_focus=True):
             except Exception:
                 pass
 
-        # Start countdown timer if applicable.
+        # Start countdown timer if applicable (CLARIFY only — APPROVAL/SUDO/SECRET never auto-dismiss).
         self._stop_countdown_timer()
-        if payload.countdown_s is not None and payload.countdown_s > 0:
+        if (
+            payload.countdown_s is not None
+            and payload.countdown_s > 0
+            and payload.kind in _COUNTDOWN_ALLOWED
+        ):
             try:
                 self._countdown_timer = self.set_interval(
                     1.0, self._tick_countdown
@@ -447,6 +453,9 @@ class InterruptOverlay(Widget, can_focus=True):
     def _tick_countdown(self) -> None:
         payload = self._current_payload
         if payload is None or payload.countdown_s is None:
+            self._stop_countdown_timer()
+            return
+        if payload.kind not in _COUNTDOWN_ALLOWED:
             self._stop_countdown_timer()
             return
         # E-1: escalate border urgency when ≤3s remaining
@@ -829,6 +838,8 @@ class InterruptOverlay(Widget, can_focus=True):
 
     def _flash_replace_border(self) -> None:
         """Briefly add --flash-replace class so the border pulses on same-kind swap."""
+        if getattr(self, "app", None) and self.app.has_class("reduced-motion"):
+            return
         self.add_class("--flash-replace")
         try:
             self.set_timer(0.3, lambda: self.remove_class("--flash-replace"))

@@ -68,7 +68,12 @@ class BrowseMinimap(Widget):
                     getattr(anchor.anchor_type, "value", ""),
                     "\u00b7",  # · fallback
                 )
-                style = Style(reverse=True) if i == cursor else Style(color="cyan")
+                _accent = "cyan"
+                try:
+                    _accent = self.app.get_css_variables().get("accent", "cyan")
+                except Exception:
+                    pass
+                style = Style(reverse=True) if i == cursor else Style(color=_accent)
                 return Strip([Segment(glyph, style)])
 
         return Strip([Segment(" ")])

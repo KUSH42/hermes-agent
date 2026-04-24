@@ -245,6 +245,7 @@ class _SessionRow(Static):
 
     def _build_label(self) -> str:
         import time as _time
+        from datetime import datetime as _datetime
         meta = self._meta
         title = meta.get("title") or ""
         sid = meta.get("id") or ""
@@ -261,8 +262,10 @@ class _SessionRow(Static):
             rel = f"{int(diff/3600)}h ago"
         elif diff < 604800:
             rel = f"{int(diff/86400)}d ago"
-        else:
+        elif diff < 4838400:  # < 56 days (8 weeks)
             rel = f"{int(diff/604800)}w ago"
+        else:
+            rel = _datetime.fromtimestamp(float(last_active)).strftime("%Y-%m-%d") if last_active else "?"
         turn_word = "turn" if turn_count == 1 else "turns"
         return f"{bullet} {label:<32}  {rel:<10}  {turn_count} {turn_word}"
 
@@ -356,4 +359,74 @@ def fibonacci(n):
 result = [fibonacci(i) for i in range(10)]
 print(f"sequence: {result}")  # [0,1,1,2,3...]
 """
+
+_FIXTURE_BY_LANG: dict[str, str] = {
+    "python": FIXTURE_CODE,
+    "javascript": """\
+function fibonacci(n) {
+  if (n <= 1) return n;  // base case
+  return fibonacci(n - 1) + fibonacci(n - 2);
+}
+console.log([...Array(10).keys()].map(fibonacci));
+""",
+    "typescript": """\
+function fibonacci(n: number): number {
+  if (n <= 1) return n;  // base case
+  return fibonacci(n - 1) + fibonacci(n - 2);
+}
+console.log(Array.from({length: 10}, (_, i) => fibonacci(i)));
+""",
+    "go": """\
+func fibonacci(n int) int {
+    if n <= 1 { return n }  // base case
+    return fibonacci(n-1) + fibonacci(n-2)
+}
+""",
+    "rust": """\
+fn fibonacci(n: u64) -> u64 {
+    if n <= 1 { return n; }  // base case
+    fibonacci(n - 1) + fibonacci(n - 2)
+}
+""",
+    "ruby": """\
+def fibonacci(n)
+  return n if n <= 1  # base case
+  fibonacci(n - 1) + fibonacci(n - 2)
+end
+puts (0..9).map { |i| fibonacci(i) }.inspect
+""",
+    "bash": """\
+fibonacci() {
+  local n=$1
+  [ "$n" -le 1 ] && echo $n && return  # base case
+  echo $(( $(fibonacci $((n-1))) + $(fibonacci $((n-2))) ))
+}
+""",
+    "java": """\
+static int fibonacci(int n) {
+    if (n <= 1) return n;  // base case
+    return fibonacci(n - 1) + fibonacci(n - 2);
+}
+""",
+    "cpp": """\
+int fibonacci(int n) {
+    if (n <= 1) return n;  // base case
+    return fibonacci(n-1) + fibonacci(n-2);
+}
+""",
+    "c": """\
+int fibonacci(int n) {
+    if (n <= 1) return n;  /* base case */
+    return fibonacci(n-1) + fibonacci(n-2);
+}
+""",
+    "markdown": """\
+# Fibonacci
+
+A sequence where each number is the sum of the two preceding ones.
+
+- Starts with: `0, 1, 1, 2, 3, 5, 8, 13...`
+- Formula: `F(n) = F(n-1) + F(n-2)`
+""",
+}
 

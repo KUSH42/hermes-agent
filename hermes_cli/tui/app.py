@@ -2256,11 +2256,13 @@ class HermesApp(App):
         header_stats: Any = None,
         tool_name: "str | None" = None,
         parent_id: "str | None" = None,
-    ) -> None:
+        is_error: bool = False,
+    ) -> "Widget | None":
         return self._svc_tools.mount_tool_block(
             label, lines, plain_lines,
             rerender_fn=rerender_fn, header_stats=header_stats,
             tool_name=tool_name, parent_id=parent_id,
+            is_error=is_error,
         )
 
     def _open_gen_block(self, tool_name: str) -> "Any | None":

@@ -514,11 +514,14 @@ class MessagePanel(Widget):
         rerender_fn=None,
         header_stats=None,
         parent_id: str | None = None,
+        is_error: bool = False,
     ) -> Widget | None:
         if not lines:
             return None
         from hermes_cli.tui.tool_blocks import ToolBlock as _ToolBlock
         from hermes_cli.tui.tool_panel import ToolPanel as _ToolPanel
+        from hermes_cli.tui.tool_result_parse import ResultSummaryV4
+
         block = _ToolBlock(
             label,
             lines,
@@ -534,6 +537,26 @@ class MessagePanel(Widget):
         if label == "diff":
             panel.add_class("tool-panel--child-diff")
         self._mount_nonprose_block(panel)
+
+        _summary = ResultSummaryV4(
+            primary=None,
+            exit_code=None,
+            chips=(),
+            stderr_tail="",
+            actions=(),
+            artifacts=(),
+            is_error=is_error,
+        )
+
+        # CRITICAL: Use only captured names (_b, _p, _s, _err) in body, never outer names.
+        def _finalize(_b=block, _p=panel, _s=_summary, _err=is_error):
+            if not _b.is_mounted or not _p.is_mounted:
+                return
+            _p.set_result_summary_v4(_s)   # sets _is_complete, _tool_icon_error, _line_count
+            _b._header._duration = ""      # clear spurious "0.0s" from set_result_summary_v4
+            _b._complete_static(is_error=_err)
+
+        self.call_after_refresh(_finalize)
         return block
 
     def open_streaming_tool_block(

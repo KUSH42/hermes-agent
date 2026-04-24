@@ -240,6 +240,24 @@ class ToolBlock(Widget):
         except NoMatches:
             pass
 
+    def _complete_static(self, is_error: bool = False) -> None:
+        """Fire visual completion flash for statically-constructed blocks.
+
+        State fields (_is_complete, _tool_icon_error, _line_count) are set by
+        set_result_summary_v4, which runs first in _finalize. This method fires
+        the flash that set_result_summary_v4 unconditionally skips for static
+        ToolBlock instances: set_result_summary_v4 in tool_result_parse.py guards
+        its flash call with `getattr(block, '_microcopy_shown', True)` — the
+        attribute only exists on StreamingToolBlock, so for plain ToolBlock the
+        default True is returned, `not True` == False, and the flash branch is
+        never reached. _complete_static is the sole flash source for the static
+        path.
+        """
+        if is_error:
+            self._header.flash_error()
+        else:
+            self._header.flash_success()
+
     def toggle(self) -> None:
         panel = getattr(self._header, "_panel", None)
         if panel is not None:

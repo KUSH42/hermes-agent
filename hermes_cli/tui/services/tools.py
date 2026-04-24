@@ -114,15 +114,16 @@ class ToolRenderingService(AppService):
         header_stats: Any = None,
         tool_name: "str | None" = None,
         parent_id: "str | None" = None,
-    ) -> None:
+        is_error: bool = False,
+    ) -> "Widget | None":
         """Mount a ToolBlock into OutputPanel before the live-output duo."""
         if not lines:
-            return
+            return None
         output = self._get_output_panel()
         if output is None:
-            return
+            return None
         msg = output.current_message or output.new_message()
-        msg.mount_tool_block(
+        result = msg.mount_tool_block(
             label,
             lines,
             plain_lines,
@@ -130,11 +131,13 @@ class ToolRenderingService(AppService):
             rerender_fn=rerender_fn,
             header_stats=header_stats,
             parent_id=parent_id,
+            is_error=is_error,
         )
         msg.refresh(layout=True)
         self.app._browse_total += 1
         if not output._user_scrolled_up:
             self.app.call_after_refresh(output.scroll_end, animate=False)
+        return result
 
     # ------------------------------------------------------------------
     # StreamingToolBlock lifecycle

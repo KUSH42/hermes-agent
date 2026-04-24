@@ -538,8 +538,9 @@ async def test_status_bar_shows_idle_when_not_running():
         bar = app.query_one(StatusBar)
         with patch.object(type(bar), "size", new_callable=PropertyMock, return_value=Size(80, 1)):
             rendered = str(bar.render())
-        # Idle now shows rotating hints; first hint contains "F1 help"
-        assert "F1 help" in rendered
+        # Idle: key hints live in HintBar (S1-E/A8); StatusBar shows model + compaction bar
+        assert "claude" in rendered
+        assert "F1 help" not in rendered
 
 
 @pytest.mark.asyncio
@@ -560,9 +561,10 @@ async def test_status_bar_running_label_right_anchored():
         bar = app.query_one(StatusBar)
         with patch.object(type(bar), "size", new_callable=PropertyMock, return_value=Size(80, 1)):
             rendered = str(bar.render())
-        # There should be spaces between the left content and the right-anchored hint label
-        hint_pos = rendered.rfind("F1 help")
-        assert hint_pos > 10, f"Hint too close to start: pos {hint_pos} in {rendered!r}"
+        # Model name should be left-anchored; padding fills the rest to 80 cols
+        model_pos = rendered.find("m")
+        assert model_pos < 5, f"Model too far right: pos {model_pos} in {rendered!r}"
+        assert len(rendered) >= 78, f"Render too short: {len(rendered)!r}"
 
 
 # ---------------------------------------------------------------------------

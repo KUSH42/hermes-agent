@@ -157,8 +157,9 @@ class _HistoryMixin:
         query = self._rev_query or current
         idx = self._rev_idx - 1
         while idx >= 0:
-            if self._history[idx].startswith(query):
+            if query in self._history[idx]:
                 self._rev_idx = idx
+                self._rev_match_idx = idx  # I1: sync so ↑↓ continues from here
                 self._history_loading = True  # type: ignore[attr-defined]
                 try:
                     self.load_text(self._history[idx])  # type: ignore[attr-defined]
@@ -315,6 +316,11 @@ class _HistoryMixin:
             return
         current = self.text  # type: ignore[attr-defined]
         row, col = self.cursor_location  # type: ignore[attr-defined]
+
+        if len(current) < 2:
+            self.suggestion = ""  # type: ignore[attr-defined]
+            _hide_ghost_legend(self)
+            return
 
         if "\n" in current:
             lines = current.split("\n")

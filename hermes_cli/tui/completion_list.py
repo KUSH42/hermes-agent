@@ -250,8 +250,8 @@ class VirtualCompletionList(ScrollView, can_focus=True):
         self._cancel_auto_close()
         if self.items or self.searching:
             return
-        # no threshold — any empty result schedules close
-        self._auto_close_timer = self.set_timer(1.5, self._fire_auto_dismiss)
+        delay = 3.0 if self.empty_reason in {"too_short", "no_slash_match"} else 1.5
+        self._auto_close_timer = self.set_timer(delay, self._fire_auto_dismiss)
 
     def _fire_auto_dismiss(self) -> None:
         self._auto_close_timer = None

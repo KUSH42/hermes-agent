@@ -1,7 +1,10 @@
 """Parallel sessions orchestration service extracted from _app_sessions.py."""
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
+
+_log = logging.getLogger(__name__)
 
 from textual import work
 from textual.css.query import NoMatches
@@ -79,8 +82,8 @@ class SessionsService(AppService):
                     sock_path, self._on_session_notify_event
                 )
                 self.app._notify_listener.start()
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.warning("init_sessions: notify listener failed to start", exc_info=True)
         self.app._sessions_poll_timer = self.app.set_interval(2.0, self.poll_session_index)
 
     def get_session_records(self) -> list:
@@ -120,8 +123,8 @@ class SessionsService(AppService):
                 self.app.session_count = len(records)  # S1-D
                 self.refresh_session_bar()
                 self.app._svc_watchers.sync_compact_visibility()
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("poll_session_index: index read failed", exc_info=True)
 
     def refresh_session_records_from_index(self) -> None:
         """Re-read sessions.json and update bar. Event-loop only."""
@@ -173,18 +176,18 @@ class SessionsService(AppService):
         try:
             if self.app._session_mgr:
                 self.app._session_mgr.index.update_active(session_id)
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("switch_to_session: update_active failed", exc_info=True)
         if self.app._notify_listener:
             try:
                 self.app._notify_listener.stop()
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.debug("switch_to_session: listener stop failed: %s", exc)
         if self.app._sessions_poll_timer:
             try:
                 self.app._sessions_poll_timer.stop()
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.debug("switch_to_session: timer stop failed: %s", exc)
 
         import os as _os
         # RX4: fire session_switch hooks so callers can release blocking queues
@@ -262,13 +265,13 @@ class SessionsService(AppService):
                     ["git", "worktree", "remove", "--force", str(worktree_path)],
                     capture_output=True, timeout=5,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.warning("create_new_session: worktree cleanup failed", exc_info=True)
             return
         try:
             self.app._session_mgr.index.add_session(rec)
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.error("create_new_session: index.add_session failed", exc_info=True)
         self.app.call_from_thread(self.on_session_created, new_id, overlay)
 
     def on_session_created(self, new_id: str, overlay: object) -> None:
@@ -292,8 +295,8 @@ class SessionsService(AppService):
             if self.app._session_mgr:
                 self.app._session_mgr.kill_session(rec)
             self.app._session_mgr.index.remove_session(session_id)
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("kill_session_prompt: kill or index remove failed", exc_info=True)
         self.app.call_from_thread(self.refresh_session_records_from_index)
 
     @work(thread=True)
@@ -391,8 +394,8 @@ class SessionsService(AppService):
                         capture_output=True, timeout=10,
                     )
                     self.app._session_mgr.index.remove_session(session_id)
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.warning("run_merge: post-merge cleanup failed", exc_info=True)
         self.app.call_from_thread(self.refresh_session_records_from_index)
         self.app.call_from_thread(getattr(overlay, "action_dismiss", lambda: None))
 
@@ -412,14 +415,15 @@ class SessionsService(AppService):
                 cwd=worktree_path,
                 start_new_session=True,
             )
-        except Exception:
+        except Exception as exc:
+            _log.error("reopen_orphan_session: Popen failed", exc_info=True)
             return
         new_rec = self.app._session_mgr.poll_state_until_pid(session_id, timeout=3.0) if self.app._session_mgr else None
         if new_rec:
             try:
                 self.app._session_mgr.index.add_session(new_rec)
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.warning("reopen_orphan_session: index.add_session failed", exc_info=True)
         self.app.call_from_thread(self.refresh_session_records_from_index)
 
     @work(thread=True)
@@ -435,13 +439,13 @@ class SessionsService(AppService):
                     ["git", "worktree", "remove", "--force", worktree_path],
                     capture_output=True, timeout=10,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.warning("delete_orphan_session: worktree remove failed %r", worktree_path, exc_info=True)
         try:
             if self.app._session_mgr:
                 self.app._session_mgr.index.remove_session(session_id)
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("delete_orphan_session: index.remove_session failed", exc_info=True)
         self.app.call_from_thread(self.refresh_session_records_from_index)
 
     @work(thread=True)
@@ -465,7 +469,7 @@ class SessionsService(AppService):
                     self.app.handle_session_resume, session_id, title, turn_count
                 )
         except Exception:
-            pass
+            _log.exception("resume_session: failed")
 
     def open_sessions(self) -> None:
         """Open the session browser overlay."""

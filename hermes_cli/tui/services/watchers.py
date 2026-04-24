@@ -1,9 +1,12 @@
 """Reactive watcher logic, file-drop helpers service extracted from _app_watchers.py."""
 from __future__ import annotations
 
+import logging
 import os as _os_mod
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
+
+_log = logging.getLogger(__name__)
 
 from textual.css.query import NoMatches
 
@@ -108,20 +111,17 @@ class WatchersService(AppService):
         try:
             chev = self.app.query_one("#input-chevron", Static)
             chev.update("❯" if value else "❯ ")
-        except Exception:
+        except NoMatches:
             pass
 
         # A1: ToolHeaderBar deleted — sync --compact on ToolPanel directly
-        try:
-            for tp in self.app.query(ToolPanel):
-                tp.set_class(value, "--compact")
-        except Exception:
-            pass
+        for tp in self.app.query(ToolPanel):
+            tp.set_class(value, "--compact")
 
         try:
             self.sync_compact_visibility()
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.debug("on_compact: sync_compact_visibility failed: %s", exc)
 
     def sync_compact_visibility(self) -> None:
         from hermes_cli.tui.session_widgets import SessionBar
@@ -160,8 +160,8 @@ class WatchersService(AppService):
                     duration=8.0,
                     priority=5,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.warning("on_status_compaction_progress: feedback.flash failed: %s", exc, exc_info=True)
         elif value < _warn:
             self._compact_warn_flashed = False
         if value >= _crit and not getattr(self.app, "_compaction_warn_99", False):
@@ -173,8 +173,8 @@ class WatchersService(AppService):
                     duration=8.0,
                     priority=8,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.warning("on_status_compaction_progress: feedback.flash failed: %s", exc, exc_info=True)
 
     # ------------------------------------------------------------------
     # Voice watchers
@@ -291,6 +291,7 @@ class WatchersService(AppService):
         try:
             self.handle_file_drop_inner(paths)
         except Exception:
+            _log.exception("handle_file_drop: inner handler raised")
             self.app._flash_hint("file drop failed — see log for details", 2.0)
 
     def handle_file_drop_inner(self, paths: list[Path]) -> None:
@@ -358,8 +359,10 @@ class WatchersService(AppService):
                 # Agent still running: return focus to screen (App.focus() doesn't exist
                 # in Textual 8.x; screen.focus() is the correct call).
                 self.app.call_after_refresh(self.app.screen.focus)
-        except Exception:
+        except NoMatches:
             pass
+        except Exception as exc:
+            _log.debug("_post_interrupt_focus: focus call failed: %s", exc)
 
     def on_clarify_state(self, value: "ChoiceOverlayState | None") -> None:
         from hermes_cli.tui.overlays import InterruptKind
@@ -382,7 +385,7 @@ class WatchersService(AppService):
         try:
             from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
             self.app.query_one(DrawbrailleOverlay).signal("waiting" if value is not None else "thinking")
-        except Exception:
+        except NoMatches:
             pass
         ov = self._get_interrupt_overlay()
         if ov is not None:
@@ -469,7 +472,7 @@ class WatchersService(AppService):
             from hermes_cli.tui.input.widget import HermesInput
             inp = self.app.query_one("#input-area", HermesInput)
             inp.error_state = value if value else None
-        except Exception:
+        except NoMatches:
             pass
         # A3-2: route error message to HintBar for prominent left-side display
         try:
@@ -482,8 +485,8 @@ class WatchersService(AppService):
                 )
             else:
                 self.app.feedback.cancel("hint-bar")
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("on_status_error: feedback flash/cancel failed: %s", exc, exc_info=True)
 
     def auto_clear_status_error(self, expected: str) -> None:
         """Clear status_error if it still matches *expected*."""
@@ -514,14 +517,14 @@ class WatchersService(AppService):
                 inp.disabled = True
                 try:
                     inp._set_input_locked(True)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _log.debug("on_undo_state: _set_input_locked(True) failed: %s", exc)
             elif not self.app.agent_running and not self.app.command_running:
                 inp.disabled = False
                 try:
                     inp._set_input_locked(False)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _log.debug("on_undo_state: _set_input_locked(False) failed: %s", exc)
         except NoMatches:
             pass
         if value is None:

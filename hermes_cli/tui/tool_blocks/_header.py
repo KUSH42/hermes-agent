@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import time
-import inspect
 from typing import Any
 
 from rich.text import Text
@@ -31,28 +30,7 @@ from ._shared import (
 
 MIN_LABEL_CELLS = 12
 
-class _DropOrder(list):
-    _legacy = ["flash", "linecount", "chip", "hero", "diff", "stderrwarn", "chevron"]
-
-    @staticmethod
-    def _called_from_polish() -> bool:
-        return any(frame.filename.endswith("test_tui_polish.py") for frame in inspect.stack()[1:4])
-
-    def __eq__(self, other: object) -> bool:
-        if other == self._legacy:
-            return True
-        return super().__eq__(other)
-
-    def __getitem__(self, index: object) -> object:
-        if self._called_from_polish():
-            if index == 0:
-                return "flash"
-            if index == -1:
-                return "chevron"
-        return super().__getitem__(index)  # type: ignore[index]
-
-
-_DROP_ORDER = _DropOrder(["linecount", "duration", "chip", "hero", "diff", "stderrwarn", "remediation", "exit", "chevron", "flash"])
+_DROP_ORDER: list[str] = ["linecount", "duration", "chip", "hero", "diff", "stderrwarn", "remediation", "exit", "chevron", "flash"]
 
 
 def _safe_collapsed(header: "ToolHeader") -> bool:

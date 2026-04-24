@@ -496,20 +496,6 @@ class OmissionBar(TooltipMixin, Widget):
 
     _tooltip_text = "Scroll output window"
 
-    @staticmethod
-    def _reset_label() -> str:
-        """C4: icon-mode-aware label for reset button."""
-        try:
-            from agent.display import get_tool_icon_mode
-            mode = get_tool_icon_mode()
-        except Exception:
-            mode = "ascii"
-        if mode in ("nerdfont", "auto"):
-            return "\U000f09a8 reset"
-        if mode == "emoji":
-            return "🔄 reset"
-        return "[reset]"
-
     def __init__(
         self,
         parent_block: "Any",  # StreamingToolBlock — forward ref avoids circular
@@ -547,11 +533,10 @@ class OmissionBar(TooltipMixin, Widget):
             # G1: default visible — show all / hide (Rich Text avoids markup bracket parsing)
             from rich.text import Text as _T
             yield Button(_T("[show all]"), classes="--ob-down-all")
-            yield Button(_T("[hide]"), classes="--ob-cap")
+            yield Button(_T("[reset]"), classes="--ob-cap")
             # G1: advanced (hidden by default)
             yield Button("[↑]",          classes="--ob-up --ob-advanced")
             yield Button("[↓]",          classes="--ob-down --ob-advanced")
-            yield Button(self._reset_label(), classes="--ob-cap-adv --ob-advanced")
             yield Button("[more ▸]", classes="--ob-more")
 
     def on_mount(self) -> None:
@@ -704,9 +689,6 @@ class OmissionBar(TooltipMixin, Widget):
                     return
             except Exception:
                 pass
-            pb.rerender_window(0, _VISIBLE_CAP)
-        elif "--ob-cap-adv" in classes:
-            # G1: advanced [reset] = full reset
             pb.rerender_window(0, _VISIBLE_CAP)
         elif "--ob-up" in classes:
             pb.rerender_window(

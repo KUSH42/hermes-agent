@@ -347,3 +347,47 @@ def test_br20_for_category_factory_and_cache():
 
     unknown = BodyRenderer.for_category(ToolCategory.UNKNOWN)
     assert isinstance(unknown, TextRenderer)
+
+
+# ---------------------------------------------------------------------------
+# B10 — EmptyStateRenderer category-aware messages
+# ---------------------------------------------------------------------------
+
+def _make_empty_renderer(category):
+    """Build an EmptyStateRenderer with a payload mock for the given category."""
+    from unittest.mock import MagicMock
+    from hermes_cli.tui.body_renderers.empty import EmptyStateRenderer
+    renderer = EmptyStateRenderer.__new__(EmptyStateRenderer)
+    payload = MagicMock()
+    payload.category = category
+    renderer.payload = payload
+    return renderer
+
+
+def test_empty_renderer_shell_message():
+    from hermes_cli.tui.tool_category import ToolCategory
+    r = _make_empty_renderer(ToolCategory.SHELL)
+    assert r.build().plain == "(no output)"
+
+
+def test_empty_renderer_search_message():
+    from hermes_cli.tui.tool_category import ToolCategory
+    r = _make_empty_renderer(ToolCategory.SEARCH)
+    assert r.build().plain == "No matches"
+
+
+def test_empty_renderer_file_message():
+    from hermes_cli.tui.tool_category import ToolCategory
+    r = _make_empty_renderer(ToolCategory.FILE)
+    assert r.build().plain == "Empty file"
+
+
+def test_empty_renderer_web_message():
+    from hermes_cli.tui.tool_category import ToolCategory
+    r = _make_empty_renderer(ToolCategory.WEB)
+    assert r.build().plain == "No content"
+
+
+def test_empty_renderer_unknown_fallback():
+    r = _make_empty_renderer(None)
+    assert r.build().plain == "(no output)"

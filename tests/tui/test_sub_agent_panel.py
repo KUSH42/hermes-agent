@@ -234,3 +234,61 @@ def test_set_result_summary_v4_marks_done():
     summary.is_error = False
     panel.set_result_summary_v4(summary)
     assert panel.subtree_done is True
+
+
+# ---------------------------------------------------------------------------
+# B7 — SubAgentHeader running glyph
+# ---------------------------------------------------------------------------
+
+def _make_unit_header():
+    """SubAgentHeader with mocked internal widgets for unit tests."""
+    from unittest.mock import patch
+    h = SubAgentHeader.__new__(SubAgentHeader)
+    badges = MagicMock()
+    h._badges = badges
+    # collect what update() passes to badges.update()
+    h._last_badge_arg = None
+
+    def _capture(val):
+        h._last_badge_arg = val
+
+    badges.update.side_effect = _capture
+    badges.add_class = MagicMock()
+    badges.remove_class = MagicMock()
+    return h
+
+
+def test_running_glyph_when_not_done():
+    """update(done=False, error_count=0) adds '●' running indicator."""
+    from unittest.mock import patch
+    h = _make_unit_header()
+    with patch("hermes_cli.tui.sub_agent_panel._accessibility_mode", return_value=True):
+        h.update(child_count=2, error_count=0, elapsed_ms=1000, done=False)
+    arg = h._last_badge_arg
+    assert "●" in str(arg) or "[running]" in str(arg), (
+        f"Running indicator missing from badge: {arg!r}"
+    )
+
+
+def test_no_running_glyph_when_done():
+    """update(done=True) must not add a running indicator."""
+    from unittest.mock import patch
+    h = _make_unit_header()
+    with patch("hermes_cli.tui.sub_agent_panel._accessibility_mode", return_value=True):
+        h.update(child_count=2, error_count=0, elapsed_ms=1000, done=True)
+    arg = h._last_badge_arg
+    assert "●" not in str(arg) and "[running]" not in str(arg), (
+        f"Running indicator should not appear when done=True: {arg!r}"
+    )
+
+
+def test_no_running_glyph_when_has_errors():
+    """update(error_count=1, done=False) must not add a running indicator."""
+    from unittest.mock import patch
+    h = _make_unit_header()
+    with patch("hermes_cli.tui.sub_agent_panel._accessibility_mode", return_value=True):
+        h.update(child_count=2, error_count=1, elapsed_ms=1000, done=False)
+    arg = h._last_badge_arg
+    assert "●" not in str(arg) and "[running]" not in str(arg), (
+        f"Running indicator should not appear when error_count > 0: {arg!r}"
+    )

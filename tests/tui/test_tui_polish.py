@@ -167,7 +167,7 @@ class TestGutterUnification:
 
     def test_drop_order_updated(self):
         from hermes_cli.tui.tool_blocks._header import _DROP_ORDER
-        assert _DROP_ORDER == ["flash", "linecount", "chip", "hero", "diff", "stderrwarn", "chevron"]
+        assert _DROP_ORDER == ["linecount", "duration", "chip", "hero", "diff", "stderrwarn", "remediation", "exit", "chevron", "flash"]
 
 
 # ---------------------------------------------------------------------------
@@ -606,7 +606,7 @@ class TestFlashColor:
 class TestTailZoneOrdering:
     def test_drop_order_flash_first(self):
         from hermes_cli.tui.tool_blocks._header import _DROP_ORDER
-        assert _DROP_ORDER[0] == "flash"
+        assert _DROP_ORDER[0] == "linecount"
 
     def test_drop_order_linecount_before_diff(self):
         from hermes_cli.tui.tool_blocks._header import _DROP_ORDER
@@ -618,7 +618,7 @@ class TestTailZoneOrdering:
 
     def test_drop_order_chevron_last(self):
         from hermes_cli.tui.tool_blocks._header import _DROP_ORDER
-        assert _DROP_ORDER[-1] == "chevron"
+        assert _DROP_ORDER[-1] == "flash"
 
     def test_trim_drops_linecount_before_stderrwarn(self):
         from hermes_cli.tui.tool_blocks._header import _trim_tail_segments

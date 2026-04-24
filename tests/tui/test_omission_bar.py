@@ -767,12 +767,12 @@ async def test_counts_updated_while_bar_hidden():
 
 
 def test_omission_bar_default_two_buttons_bottom():
-    """G1: Bottom OmissionBar has [show all] and [hide] visible by default; advanced hidden."""
+    """G1: Bottom OmissionBar has [show all] and [reset] visible by default; advanced hidden."""
     bar = OmissionBar(parent_block=MagicMock(), position="bottom")
     composed = list(bar.compose())
     btn_labels = [str(w.label) for w in composed if isinstance(w, __import__("textual.widgets", fromlist=["Button"]).Button)]
     assert "[show all]" in btn_labels, f"[show all] missing from bottom bar: {btn_labels}"
-    assert "[hide]" in btn_labels, f"[hide] missing from bottom bar: {btn_labels}"
+    assert "[reset]" in btn_labels, f"[reset] missing from bottom bar: {btn_labels}"
     assert "[more ▸]" in btn_labels, f"[more ▸] missing from bottom bar: {btn_labels}"
 
 

@@ -310,7 +310,10 @@ class StreamingToolBlock(ToolBlock):
                 log.write(_RichText(f"  cwd: {self._detected_cwd}", style="dim"))
             except Exception:
                 pass
-        self._header.flash_success()
+        if is_error:
+            self._header.flash_error()
+        else:
+            self._header.flash_success()
         self._try_mount_media()
         try:
             from hermes_cli.tui.tool_category import spec_for as _spec_for

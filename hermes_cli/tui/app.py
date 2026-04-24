@@ -1535,6 +1535,8 @@ class HermesApp(App):
         self._svc_tools._turn_tool_calls = {}
         self._svc_tools._agent_stack = []
         self._svc_tools._open_tool_count = 0  # A1: reset concurrent tool count
+        self._svc_tools._tool_views_by_id = {}
+        self._svc_tools._tool_views_by_gen_index = {}
         self._turn_start_monotonic = None
         self._current_turn_tool_count = 0
         self._turn_start_time = _time.monotonic()
@@ -2263,6 +2265,33 @@ class HermesApp(App):
 
     def current_turn_tool_calls(self) -> "list[dict]":
         return self._svc_tools.current_turn_tool_calls()
+
+    # SM-02 forwarders
+    def open_tool_generation(self, gen_index: int, tool_name: str) -> None:
+        return self._svc_tools.open_tool_generation(gen_index, tool_name)
+
+    def start_tool_call(self, tool_call_id: str, tool_name: str, args: "Any") -> None:
+        return self._svc_tools.start_tool_call(tool_call_id, tool_name, args)
+
+    def append_tool_output(self, tool_call_id: str, line: str) -> None:
+        return self._svc_tools.append_tool_output(tool_call_id, line)
+
+    def complete_tool_call(self, tool_call_id: str, tool_name: str, args: "Any",
+                           raw_result: str, *, is_error: bool, summary: "Any | None",
+                           diff_lines: "Any | None" = None,
+                           header_stats: "Any | None" = None,
+                           result_lines: "Any | None" = None) -> None:
+        return self._svc_tools.complete_tool_call(
+            tool_call_id, tool_name, args, raw_result,
+            is_error=is_error, summary=summary,
+            diff_lines=diff_lines, header_stats=header_stats,
+            result_lines=result_lines,
+        )
+
+    def cancel_tool_call(self, tool_call_id: "str | None" = None,
+                         gen_index: "int | None" = None) -> None:
+        return self._svc_tools.cancel_tool_call(tool_call_id=tool_call_id,
+                                                gen_index=gen_index)
 
     # --- from _app_browse.py ---
 

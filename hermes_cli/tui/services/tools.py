@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import time as _time
 from dataclasses import dataclass, field as _field
+from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from textual.css.query import NoMatches
@@ -15,6 +16,43 @@ if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# SM-01: Tool-call unified state machine model
+# ---------------------------------------------------------------------------
+
+class ToolCallState(str, Enum):
+    """Lifecycle states for a single tool call."""
+    GENERATED  = "generated"   # model is still generating tool args
+    STARTED    = "started"     # tool handler has started
+    STREAMING  = "streaming"   # output body is receiving lines
+    COMPLETING = "completing"  # result parsing / diff merge in progress
+    DONE       = "done"
+    ERROR      = "error"
+    CANCELLED  = "cancelled"
+    REMOVED    = "removed"
+
+
+@dataclass
+class ToolCallViewState:
+    """Per-tool-call view state owned by ToolRenderingService."""
+    tool_call_id: "str | None"
+    gen_index: "int | None"
+    tool_name: str
+    label: str
+    args: "dict[str, Any]"
+    state: ToolCallState
+    block: "Any | None"
+    panel: "Any | None"
+    parent_tool_call_id: "str | None"
+    category: str
+    depth: int
+    start_s: float
+    dur_ms: "int | None" = None
+    is_error: bool = False
+    error_kind: "str | None" = None
+    children: "list[str]" = _field(default_factory=list)
 
 
 @dataclass
@@ -36,6 +74,10 @@ class _ToolCallRecord:
 class ToolRenderingService(AppService):
     """Tool block mounting, streaming, reasoning, plan-call tracking."""
 
+    # Tools whose gen-start block creation is intentionally deferred to tool-start
+    # (we know the skill name only after the call starts).
+    _SKILL_TOOL_NAMES: frozenset = frozenset({"skill_view", "skill_manage"})
+
     def __init__(self, app: "HermesApp") -> None:
         super().__init__(app)
         self._streaming_map: dict = {}
@@ -43,6 +85,9 @@ class ToolRenderingService(AppService):
         self._agent_stack: list = []
         self._subagent_panels: dict = {}
         self._open_tool_count: int = 0  # A1: tracks concurrent open tool blocks
+        # SM-01: unified state-machine indexes
+        self._tool_views_by_id: "dict[str, ToolCallViewState]" = {}
+        self._tool_views_by_gen_index: "dict[int, ToolCallViewState]" = {}
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -486,14 +531,444 @@ class ToolRenderingService(AppService):
         self.app.planned_calls = items
 
     def mark_plan_done(self, tool_call_id: str, is_error: bool, dur_ms: int) -> None:
-        """Transition a RUNNING PlannedCall to DONE or ERROR. Event-loop only."""
+        """Transition a PENDING or RUNNING PlannedCall to DONE or ERROR. Event-loop only.
+
+        Accepts PENDING in addition to RUNNING so that completion is idempotent
+        even when the start callback was skipped or raced with completion (SM-05).
+        """
         from hermes_cli.tui.plan_types import PlanState
         items = list(getattr(self.app, "planned_calls", []))
         for i, call in enumerate(items):
-            if call.tool_call_id == tool_call_id and call.state == PlanState.RUNNING:
+            if call.tool_call_id == tool_call_id and call.state in (PlanState.PENDING, PlanState.RUNNING):
                 items[i] = call.as_done(is_error=is_error)
                 break
         self.app.planned_calls = items
+
+    # ------------------------------------------------------------------
+    # SM-01/02/03/05/06: Unified state-machine lifecycle methods
+    # ------------------------------------------------------------------
+
+    def _make_view_category(self, tool_name: str) -> str:
+        try:
+            from hermes_cli.tui.tool_category import classify_tool
+            return classify_tool(tool_name).value
+        except Exception:
+            return "unknown"
+
+    def _wire_args(self, view: ToolCallViewState, args: "dict[str, Any]") -> None:
+        """SM-03: attach invocation args to block and panel."""
+        args_copy = dict(args or {})
+        view.args = args_copy
+        if view.block is not None and hasattr(view.block, "_tool_input"):
+            view.block._tool_input = args_copy
+        if view.panel is not None and hasattr(view.panel, "set_tool_args"):
+            view.panel.set_tool_args(args_copy)
+            header = getattr(view.block, "_header", None) if view.block is not None else None
+            if header is not None:
+                try:
+                    header.refresh()
+                except Exception:
+                    pass
+
+    def _pop_pending_gen_for(self, tool_name: str) -> "ToolCallViewState | None":
+        """Pop the oldest GENERATED record matching tool_name, or any GENERATED if none match."""
+        if not self._tool_views_by_gen_index:
+            return None
+        # First pass: match by tool_name
+        for gen_idx in sorted(self._tool_views_by_gen_index):
+            v = self._tool_views_by_gen_index[gen_idx]
+            if v.state == ToolCallState.GENERATED and v.tool_name == tool_name:
+                del self._tool_views_by_gen_index[gen_idx]
+                return v
+        # Second pass: any GENERATED (FIFO fallback — handles provider skipping gen-start)
+        for gen_idx in sorted(self._tool_views_by_gen_index):
+            v = self._tool_views_by_gen_index[gen_idx]
+            if v.state == ToolCallState.GENERATED:
+                del self._tool_views_by_gen_index[gen_idx]
+                return v
+        return None
+
+    def _cancel_first_pending_gen(self, tool_name: str) -> None:
+        """Cancel the oldest GENERATED record for tool_name (e.g. background terminal)."""
+        for gen_idx in sorted(self._tool_views_by_gen_index):
+            v = self._tool_views_by_gen_index[gen_idx]
+            if v.state == ToolCallState.GENERATED and v.tool_name == tool_name:
+                v.state = ToolCallState.CANCELLED
+                del self._tool_views_by_gen_index[gen_idx]
+                if v.block is not None:
+                    try:
+                        v.block.remove()
+                    except Exception:
+                        pass
+                return
+
+    def _compute_parent_depth(self, tool_call_id: str) -> "tuple[str | None, int]":
+        """Return (parent_tool_call_id, depth) for a new tool call."""
+        parent_id: "str | None" = getattr(self.app, "_explicit_parent_map", {}).pop(tool_call_id, None)
+        if parent_id is None and self._agent_stack:
+            parent_id = self._agent_stack[-1]
+        parent_rec = self._turn_tool_calls.get(parent_id) if parent_id else None
+        computed = (parent_rec.depth + 1) if parent_rec else 0
+        return parent_id, min(computed, 3)
+
+    def open_tool_generation(self, gen_index: int, tool_name: str) -> None:
+        """SM-02: Create a GENERATED view state record and open the visual block.
+
+        Called from the event loop via call_from_thread. Returns None — callers
+        must not capture a block reference; all block access goes through the
+        state machine.
+        """
+        cat = self._make_view_category(tool_name)
+        now = _time.monotonic()
+        turn_start = getattr(self.app, "_turn_start_monotonic", None) or now
+        view = ToolCallViewState(
+            tool_call_id=None,
+            gen_index=gen_index,
+            tool_name=tool_name,
+            label=get_display_name(tool_name),
+            args={},
+            state=ToolCallState.GENERATED,
+            block=None,
+            panel=None,
+            parent_tool_call_id=None,
+            category=cat,
+            depth=0,
+            start_s=round(now - turn_start, 4),
+        )
+
+        # Route to appropriate block creator
+        block: "Any | None" = None
+        if tool_name == "execute_code":
+            block = self.open_execute_code_block(gen_index)
+        elif tool_name in ("write_file", "create_file"):
+            block = self.open_write_file_block(gen_index, "")
+        elif tool_name not in self._SKILL_TOOL_NAMES:
+            block = self.open_gen_block(tool_name)
+        # Skill tools intentionally get no gen block — deferred to start_tool_call
+
+        view.block = block
+        self._tool_views_by_gen_index[gen_index] = view
+
+    def start_tool_call(
+        self,
+        tool_call_id: str,
+        tool_name: str,
+        args: "dict[str, Any] | None",
+    ) -> None:
+        """SM-02: Adopt a GENERATED record or create a new STARTED record.
+
+        If a GENERATED record exists, adopts it (assigns tool_call_id, args,
+        parent, depth) and transitions to STARTED.  If no GENERATED record
+        exists, creates a new record directly in STARTED (non-streaming or
+        provider paths that skip gen-start).
+
+        All DOM creation and active-block indexing happens here; the CLI
+        callback layer only forwards parsed provider events.
+        """
+        args_clean = dict(args or {})
+
+        # Background terminal: cancel the pending gen block and skip start
+        if tool_name == "terminal" and args_clean.get("background"):
+            self._cancel_first_pending_gen("terminal")
+            return
+
+        parent_id, depth = self._compute_parent_depth(tool_call_id)
+        now = _time.monotonic()
+        turn_start = getattr(self.app, "_turn_start_monotonic", None) or now
+
+        view = self._pop_pending_gen_for(tool_name)
+
+        if view is not None:
+            # ── Adopted path ──────────────────────────────────────────────
+            view.tool_call_id = tool_call_id
+            view.state = ToolCallState.STARTED
+            view.parent_tool_call_id = parent_id
+            view.depth = depth
+            self._tool_views_by_id[tool_call_id] = view
+
+            # Register the pre-created block in the active map
+            if view.block is not None:
+                self.app._active_streaming_blocks[tool_call_id] = view.block
+                self.app._streaming_tool_count = len(self.app._active_streaming_blocks)
+
+            # Handle tool-specific finalization on the adopted block
+            if tool_name == "execute_code":
+                code = args_clean.get("code", "")
+                if not isinstance(code, str):
+                    code = ""
+                if view.block is not None and hasattr(view.block, "finalize_code"):
+                    try:
+                        self.app.call_after_refresh(lambda _b=view.block, _c=code: _b.finalize_code(_c))
+                    except Exception:
+                        logger.debug("finalize_code scheduling failed", exc_info=True)
+            elif tool_name in ("write_file", "create_file"):
+                path = args_clean.get("path", "")
+                if not isinstance(path, str):
+                    path = ""
+                if view.block is not None and path and hasattr(view.block, "set_final_path"):
+                    try:
+                        view.block.set_final_path(path)
+                    except Exception:
+                        logger.debug("set_final_path failed", exc_info=True)
+
+            # Update parent children list
+            parent_rec = self._turn_tool_calls.get(parent_id) if parent_id else None
+            if parent_rec is not None:
+                parent_rec.children.append(tool_call_id)
+
+            # Backward-compat _ToolCallRecord
+            from hermes_cli.tui.tool_category import classify_tool as _ct
+            try:
+                cat = _ct(tool_name).value
+            except Exception:
+                cat = view.category
+            rec = _ToolCallRecord(
+                tool_call_id=tool_call_id,
+                parent_tool_call_id=parent_id,
+                label=view.label,
+                tool_name=tool_name,
+                category=cat,
+                depth=depth,
+                start_s=round(now - turn_start, 4),
+                dur_ms=None,
+                is_error=False,
+                error_kind=None,
+                mcp_server=None,
+            )
+            self._turn_tool_calls[tool_call_id] = rec
+
+            # Wire args (SM-03)
+            self._wire_args(view, args_clean)
+
+            # A1: increment open tool count and set phase (gen-start didn't do this)
+            self._open_tool_count += 1
+            from hermes_cli.tui.agent_phase import Phase as _Phase
+            self.app.status_phase = _Phase.TOOL_EXEC
+
+        else:
+            # ── Direct-start path (no GENERATED record) ───────────────────
+            if tool_name in ("write_file", "create_file", "str_replace_editor"):
+                # SM-06: create write-tool fallback block
+                block, panel = self._create_write_fallback(tool_call_id, tool_name, args_clean)
+            else:
+                # For all other tools, use the existing method which handles
+                # DOM mounting, record creation, phase, agent stack, etc.
+                label = get_display_name(tool_name)
+                self.open_streaming_tool_block(tool_call_id, label, tool_name=tool_name)
+                block = self.app._active_streaming_blocks.get(tool_call_id)
+                panel = None
+
+            cat = self._make_view_category(tool_name)
+            view = ToolCallViewState(
+                tool_call_id=tool_call_id,
+                gen_index=None,
+                tool_name=tool_name,
+                label=get_display_name(tool_name),
+                args=args_clean,
+                state=ToolCallState.STARTED,
+                block=block,
+                panel=panel,
+                parent_tool_call_id=parent_id,
+                category=cat,
+                depth=depth,
+                start_s=round(now - turn_start, 4),
+            )
+            self._tool_views_by_id[tool_call_id] = view
+            # Wire args (SM-03) — for the existing open_streaming_tool_block path,
+            # _wire_args also stores on the block.
+            self._wire_args(view, args_clean)
+
+        # PlanPanel: transition PENDING → RUNNING
+        self.mark_plan_running(tool_call_id)
+
+    def _create_write_fallback(
+        self, tool_call_id: str, tool_name: str, args: "dict[str, Any]"
+    ) -> "tuple[Any, Any]":
+        """SM-06: Create a WriteFileBlock fallback when no gen block exists."""
+        path = args.get("path", "")
+        if not isinstance(path, str):
+            path = ""
+        output = self._get_output_panel()
+        block: "Any | None" = None
+        panel: "Any | None" = None
+        try:
+            from hermes_cli.tui.write_file_block import WriteFileBlock
+            from hermes_cli.tui.tool_panel import ToolPanel as _ToolPanel
+            block = WriteFileBlock(path=path)
+            panel = _ToolPanel(block, tool_name=tool_name)
+            panel._plan_tool_call_id = tool_call_id
+            if output is not None:
+                msg = output.current_message or output.new_message()
+                msg._mount_nonprose_block(panel)
+                self.app._browse_total += 1
+                if not output._user_scrolled_up:
+                    self.app.call_after_refresh(output.scroll_end, animate=False)
+            self.app._active_streaming_blocks[tool_call_id] = block
+            self.app._streaming_tool_count = len(self.app._active_streaming_blocks)
+            # A1: count this as an open tool block
+            self._open_tool_count += 1
+            from hermes_cli.tui.agent_phase import Phase as _Phase
+            self.app.status_phase = _Phase.TOOL_EXEC
+            # Backward-compat record
+            from hermes_cli.tui.tool_category import classify_tool as _ct
+            try:
+                cat = _ct(tool_name).value
+            except Exception:
+                cat = "file_tools"
+            now = _time.monotonic()
+            turn_start = getattr(self.app, "_turn_start_monotonic", None) or now
+            rec = _ToolCallRecord(
+                tool_call_id=tool_call_id,
+                parent_tool_call_id=None,
+                label=get_display_name(tool_name),
+                tool_name=tool_name,
+                category=cat,
+                depth=0,
+                start_s=round(now - turn_start, 4),
+                dur_ms=None,
+                is_error=False,
+                error_kind=None,
+                mcp_server=None,
+            )
+            self._turn_tool_calls[tool_call_id] = rec
+        except Exception:
+            logger.warning("_create_write_fallback failed for %s id=%s", tool_name, tool_call_id, exc_info=True)
+        return block, panel
+
+    def append_tool_output(self, tool_call_id: str, line: str) -> None:
+        """SM-02: Transition STARTED→STREAMING on first call; append line to block.
+
+        Idempotent on terminal states; logs warning for unknown IDs.
+        """
+        if not line:
+            return
+        view = self._tool_views_by_id.get(tool_call_id)
+        if view is None:
+            logger.warning("append_tool_output: unknown tool_call_id=%s", tool_call_id)
+            return
+        if view.state in (ToolCallState.DONE, ToolCallState.ERROR,
+                          ToolCallState.CANCELLED, ToolCallState.REMOVED):
+            return
+        if view.state == ToolCallState.STARTED:
+            view.state = ToolCallState.STREAMING
+        self.append_streaming_line(tool_call_id, line)
+
+    def complete_tool_call(
+        self,
+        tool_call_id: str,
+        tool_name: str,
+        args: "dict[str, Any]",
+        raw_result: str,
+        *,
+        is_error: bool,
+        summary: "Any | None",
+        diff_lines: "list[str] | None" = None,
+        header_stats: "Any | None" = None,
+        result_lines: "list[str] | None" = None,
+    ) -> None:
+        """SM-02: Complete a tool call. Idempotent on terminal states.
+
+        Enters COMPLETING (transient), closes the streaming block, marks the
+        PlanPanel done (SM-05: always, regardless of display.tool_progress),
+        then exits to DONE or ERROR.
+        """
+        view = self._tool_views_by_id.get(tool_call_id)
+
+        # Idempotent if already terminal (or unknown — still complete plan)
+        _terminal = (ToolCallState.DONE, ToolCallState.ERROR,
+                     ToolCallState.CANCELLED, ToolCallState.REMOVED)
+        if view is not None and view.state in _terminal:
+            return
+
+        if view is not None:
+            view.state = ToolCallState.COMPLETING
+
+        # Compute duration string for UI display
+        duration = ""
+        import time as _t
+        # Try to infer duration from _active_streaming_blocks block's start time
+        block = self.app._active_streaming_blocks.get(tool_call_id)
+        if block is not None:
+            started = getattr(block, "_stream_started_at", None)
+            if started is not None:
+                elapsed_ms = (_t.monotonic() - started) * 1000.0
+                if elapsed_ms >= 1000:
+                    duration = f"{elapsed_ms/1000:.1f}s"
+                else:
+                    duration = f"{elapsed_ms:.0f}ms"
+
+        # Close the streaming block
+        if diff_lines is not None:
+            self.close_streaming_tool_block_with_diff(
+                tool_call_id, duration, is_error, diff_lines, header_stats, summary
+            )
+        else:
+            self.close_streaming_tool_block(
+                tool_call_id, duration, is_error, summary, result_lines
+            )
+
+        # SM-05: always mark plan done regardless of tool_progress mode
+        dur_ms = 0
+        try:
+            if duration.endswith("ms"):
+                dur_ms = int(float(duration[:-2]))
+            elif duration.endswith("s"):
+                dur_ms = int(float(duration[:-1]) * 1000)
+        except Exception:
+            pass
+        self.mark_plan_done(tool_call_id, is_error=is_error, dur_ms=dur_ms)
+
+        # Update view state to terminal
+        if view is not None:
+            view.state = ToolCallState.ERROR if is_error else ToolCallState.DONE
+            view.is_error = is_error
+            # Remove from active indexes but retain as immutable snapshot
+            self._tool_views_by_id.pop(tool_call_id, None)
+            # Note: we do NOT re-insert — snapshot is accessible via _turn_tool_calls
+
+    def cancel_tool_call(
+        self,
+        tool_call_id: "str | None" = None,
+        gen_index: "int | None" = None,
+    ) -> None:
+        """SM-02: Cancel a tool call (GENERATED, STARTED, or STREAMING).
+
+        Lookup order: tool_call_id takes precedence over gen_index.
+        Raises ValueError if both are None.
+        No-op with warning if no matching record exists.
+        """
+        if tool_call_id is None and gen_index is None:
+            raise ValueError("cancel_tool_call requires tool_call_id or gen_index")
+
+        view: "ToolCallViewState | None" = None
+        if tool_call_id is not None:
+            view = self._tool_views_by_id.pop(tool_call_id, None)
+        if view is None and gen_index is not None:
+            view = self._tool_views_by_gen_index.pop(gen_index, None)
+
+        if view is None:
+            logger.warning("cancel_tool_call: no record for tool_call_id=%s gen_index=%s",
+                           tool_call_id, gen_index)
+            return
+
+        _terminal = (ToolCallState.DONE, ToolCallState.ERROR,
+                     ToolCallState.CANCELLED, ToolCallState.REMOVED)
+        if view.state in _terminal:
+            return
+
+        view.state = ToolCallState.CANCELLED
+
+        # Remove from active streaming blocks
+        if view.tool_call_id:
+            self.app._active_streaming_blocks.pop(view.tool_call_id, None)
+            self.app._streaming_tool_count = len(self.app._active_streaming_blocks)
+
+        # Remove visual block if present
+        if view.block is not None:
+            try:
+                view.block.remove()
+            except Exception:
+                pass
 
     def current_turn_tool_calls(self) -> list[dict]:
         """Return a list of per-turn tool call records (P7 /tools overlay).

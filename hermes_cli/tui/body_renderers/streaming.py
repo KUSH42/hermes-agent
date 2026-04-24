@@ -116,11 +116,11 @@ class ShellRenderer(StreamingBodyRenderer):
         if text.startswith(("{", "[")):
             try:
                 _json.loads(text)
-                return Syntax(text, "json", line_numbers=False, theme="monokai")
+                return Syntax(text, "json", line_numbers=False, theme="ansi_dark")
             except Exception:
                 pass
         if text.startswith("---"):
-            return Syntax(text, "yaml", line_numbers=False, theme="monokai")
+            return Syntax(text, "yaml", line_numbers=False, theme="ansi_dark")
         return None
 
     def preview(self, all_plain: list[str], max_lines: int) -> "ConsoleRenderable":
@@ -158,7 +158,7 @@ class CodeRenderer(StreamingBodyRenderer):
     # ------------------------------------------------------------------
 
     def render_code_line(
-        self, raw: str, plain: str, theme: str = "monokai"
+        self, raw: str, plain: str, theme: str = "ansi_dark"
     ) -> "ConsoleRenderable":
         """Python source line → per-line Pygments highlighted Text."""
         return Text.from_ansi(self._highlight_python(plain, theme))
@@ -170,7 +170,7 @@ class CodeRenderer(StreamingBodyRenderer):
     def finalize_code(
         self,
         code: str,
-        theme: str = "monokai",
+        theme: str = "ansi_dark",
         bg: str | None = None,
     ) -> "ConsoleRenderable | None":
         """Full-body rich.Syntax for CodeSection at TOOL_START.
@@ -194,7 +194,7 @@ class CodeRenderer(StreamingBodyRenderer):
         except Exception:
             return Text(body_code)
 
-    def highlight_line(self, line: str, theme: str = "monokai") -> str:
+    def highlight_line(self, line: str, theme: str = "ansi_dark") -> str:
         """Return Pygments-highlighted ANSI string for a Python line."""
         return self._highlight_python(line, theme)
 
@@ -254,7 +254,7 @@ class FileRenderer(StreamingBodyRenderer):
             return Syntax(
                 plain,
                 lang,
-                theme="monokai",
+                theme="ansi_dark",
                 background_color="default",
                 line_numbers=False,
             )
@@ -275,7 +275,7 @@ class FileRenderer(StreamingBodyRenderer):
             return Syntax(
                 "\n".join(all_plain),
                 lang,
-                theme="monokai",
+                theme="ansi_dark",
                 background_color="default",
                 line_numbers=False,
             )
@@ -429,7 +429,7 @@ class WebRenderer(StreamingBodyRenderer):
                 parsed = json.loads(joined)
                 pretty = json.dumps(parsed, indent=2)
                 from rich.syntax import Syntax
-                return Syntax(pretty, "json", theme="monokai", background_color="default")
+                return Syntax(pretty, "json", theme="ansi_dark", background_color="default")
             except Exception:
                 pass
         return None  # leave as-streamed

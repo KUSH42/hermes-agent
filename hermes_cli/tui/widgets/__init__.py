@@ -768,6 +768,11 @@ class AssistantNameplate(Widget):
             self._idle_fx = make_stream_effect({"stream_effect": idle_name})
         self._init_decrypt()
         self._timer = self.set_interval(1 / 20, self._advance)
+        # A2: watch status_phase to pause/resume pulse
+        try:
+            self.watch(self.app, "status_phase", self._on_phase_change)
+        except Exception:
+            pass
 
     def on_unmount(self) -> None:
         if self._timer:
@@ -1017,3 +1022,24 @@ class AssistantNameplate(Widget):
         if self._timer:
             self._timer.stop()
             self._timer = None
+
+    def _pause_pulse(self) -> None:
+        """Stop animation timer; --active stays so the turn-in-progress color persists."""
+        self._stop_timer()
+
+    def _on_phase_change(self, phase: str) -> None:
+        """A2: gate nameplate pulse on status_phase."""
+        from hermes_cli.tui.agent_phase import Phase
+        try:
+            if phase == Phase.REASONING:
+                # (re)start pulse if currently active state
+                if self._state == _NPState.ACTIVE_IDLE and self._timer is None:
+                    self._active_phase = 0.0
+                    self._set_timer_rate(12)
+            elif phase in (Phase.STREAMING, Phase.TOOL_EXEC):
+                self._pause_pulse()
+            elif phase == Phase.IDLE:
+                pass  # transition_to_idle() drives IDLE transitions
+            # Phase.ERROR handled by A3 (error-prominence spec)
+        except Exception:
+            pass

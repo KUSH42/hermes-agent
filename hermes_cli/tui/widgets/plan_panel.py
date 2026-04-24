@@ -437,11 +437,12 @@ class _PlanPanelHeader(Horizontal):
         yield Static("[F9]", id="plan-f9-badge")         # P1-3
 
     def update_header(self, collapsed: bool, running: int, pending: int,
-                      done: int, errors: int = 0, cost_usd: float = 0.0) -> None:
+                      done: int, errors: int = 0, cost_usd: float = 0.0,
+                      next_tool_name: str = "") -> None:
         """Refresh the header line."""
         chevron = "▸" if collapsed else "▾"
         if collapsed:
-            self._show_chip(chevron, running, pending, done, errors, cost_usd)
+            self._show_chip(chevron, running, pending, done, errors, cost_usd, next_tool_name)
         else:
             self._show_full(chevron)
 
@@ -457,26 +458,36 @@ class _PlanPanelHeader(Horizontal):
             pass
 
     def _show_chip(self, chevron: str, running: int, pending: int,
-                   done: int, errors: int, cost_usd: float) -> None:
+                   done: int, errors: int, cost_usd: float,
+                   next_tool_name: str = "") -> None:
+        # A5: show next tool name + pending count; drop running/done counts
         try:
             self.query_one("#plan-header-label").display = False
 
-            # pending shown in title (not a separate segment — no scroll target)
-            title_text = f"Plan {chevron} "
-            if pending:
-                title_text += f"{pending}▸ "
+            title_text = f"Plan {chevron}  "
+            if next_tool_name:
+                title_text += f"next: {next_tool_name}"
+            elif pending == 0 and (running > 0 or done > 0):
+                title_text += "all done"
+            else:
+                title_text += "—"
             self.query_one("#plan-chip-title", Static).update(title_text)
             self.query_one("#plan-chip-title").display = True
 
+            # running and done segments hidden (A5: dropped from chip)
             r_seg = self.query_one("#chip-running", _ChipSegment)
-            r_seg.display = running > 0
-            if running:
-                r_seg.update(f"{running}▶")
+            r_seg.display = False
 
             d_seg = self.query_one("#chip-done", _ChipSegment)
-            d_seg.display = done > 0
-            if done:
-                d_seg.update(f"{done}✓")
+            d_seg.display = False
+
+            # pending count only shown when > 0 — reuse chip-done slot is not ideal;
+            # use chip-running slot to display pending remainder
+            # Actually use the title for pending count too (as per spec)
+            if pending > 0:
+                # Append pending count to title
+                title_text += f"  {pending}⏵"
+                self.query_one("#plan-chip-title", Static).update(title_text)
 
             e_seg = self.query_one("#chip-errors", _ChipSegment)
             e_seg.display = errors > 0
@@ -661,13 +672,20 @@ class PlanPanel(Vertical):
         pending = sum(1 for c in calls if c.state == PlanState.PENDING)
         done = sum(1 for c in calls if c.state == PlanState.DONE)
         errors = sum(1 for c in calls if c.state == PlanState.ERROR)
+        # A5: resolve next pending tool name for chip display
+        next_tool_name = ""
+        for c in calls:
+            if c.state == PlanState.PENDING:
+                next_tool_name = getattr(c, "tool_name", "") or ""
+                break
         try:
             cost_usd: float = getattr(self.app, "turn_cost_usd", 0.0)
         except Exception:
             cost_usd = 0.0
         try:
             header = self.query_one(_PlanPanelHeader)
-            header.update_header(self._collapsed, running, pending, done, errors, cost_usd)
+            header.update_header(self._collapsed, running, pending, done, errors, cost_usd,
+                                 next_tool_name=next_tool_name)
         except (NoMatches, Exception):
             pass
 

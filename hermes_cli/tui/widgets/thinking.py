@@ -277,6 +277,7 @@ _LabelLine   { height: 1;   width: 1fr; }
     _cfg_effect: str = "breathe"
     _cfg_tick_hz: float = 12.0
     _cfg_long_wait_after_s: float = 8.0
+    _cfg_deep_after_s: float = 120.0  # A4: DEEP only after extended wait
     _cfg_show_elapsed: bool = True
     _cfg_allow_intense: bool = False  # D-5: gate for intense engines
 
@@ -327,6 +328,7 @@ _LabelLine   { height: 1;   width: 1fr; }
             self._cfg_effect = str(thinking.get("effect", "breathe"))
             self._cfg_tick_hz = float(thinking.get("tick_hz", 12.0))
             self._cfg_long_wait_after_s = float(thinking.get("long_wait_after_s", 8.0))
+            self._cfg_deep_after_s = float(thinking.get("deep_after_s", 120.0))
             self._cfg_show_elapsed = bool(thinking.get("show_elapsed", True))
             self._cfg_allow_intense = bool(thinking.get("allow_intense", False))
         except Exception:
@@ -350,10 +352,17 @@ _LabelLine   { height: 1;   width: 1fr; }
         except Exception:
             pass
         self._load_config()
+        resolved = ThinkingMode.DEFAULT
         try:
-            return ThinkingMode(self._cfg_mode)
+            resolved = ThinkingMode(self._cfg_mode)
         except ValueError:
-            return ThinkingMode.DEFAULT
+            pass
+        # A4: DEEP only after extended wait — gate on elapsed since LONG_WAIT entry
+        if resolved == ThinkingMode.DEEP:
+            elapsed = time.monotonic() - getattr(self, "_substate_start", time.monotonic())
+            if elapsed < self._cfg_deep_after_s:
+                return ThinkingMode.COMPACT
+        return resolved
 
     def _resolve_engine(self, explicit: str | None, mode: ThinkingMode) -> str:
         self._load_config()
@@ -515,6 +524,25 @@ _LabelLine   { height: 1;   width: 1fr; }
             return 0.0
         return time.monotonic() - self._activate_time
 
+    def _get_label_text(self, elapsed: float | None = None) -> str:
+        """A9: derive label text for current substate."""
+        if self._substate == "STARTED":
+            return "Connecting…"
+        if self._substate == "LONG_WAIT" and self._cfg_show_elapsed:
+            if elapsed is None:
+                elapsed = self.elapsed_s()
+            n = int(elapsed)
+            if elapsed >= 120:
+                prefix = "Working hard"
+            elif elapsed >= 60:
+                prefix = "Still thinking"
+            elif elapsed >= 30:
+                prefix = "Thinking deeply"
+            else:
+                prefix = "Thinking"
+            return f"{prefix}… ({n}s)"
+        return self._base_label
+
     # ── Internal tick ──────────────────────────────────────────────────────────
 
     def _tick(self) -> None:
@@ -541,21 +569,10 @@ _LabelLine   { height: 1;   width: 1fr; }
                     logger.debug("ThinkingWidget: effect swap failed", exc_info=True)
         if self._substate == "WORKING" and elapsed >= self._cfg_long_wait_after_s:
             self._substate = "LONG_WAIT"
+            self._substate_start = time.monotonic()  # A4: record when LONG_WAIT began
 
         # ── Label text ─────────────────────────────────────────────────────────
-        if self._substate == "LONG_WAIT" and self._cfg_show_elapsed:
-            n = int(elapsed)
-            if elapsed >= 120:
-                prefix = "Working hard"
-            elif elapsed >= 60:
-                prefix = "Still thinking"
-            elif elapsed >= 30:
-                prefix = "Thinking deeply"
-            else:
-                prefix = "Thinking"
-            label_text = f"{prefix}… ({n}s)"
-        else:
-            label_text = self._base_label
+        label_text = self._get_label_text(elapsed)
 
         # ── Drive children ─────────────────────────────────────────────────────
         if self._anim_surface is not None:

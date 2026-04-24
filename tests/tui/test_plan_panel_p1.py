@@ -491,18 +491,19 @@ class TestChipSegments(unittest.TestCase):
         h.update_header(collapsed=False, running=0, pending=0, done=5, errors=0)
         self.assertFalse(segs["plan-chip-title"].display)
 
-    def test_chip_running_shows_when_running_gt_0(self):
-        """#chip-running display=True when running > 0."""
+    def test_chip_running_always_hidden_in_chip(self):
+        """A5: #chip-running always hidden in collapsed chip (running count dropped)."""
         h, segs = self._make_header_with_segs()
-        segs["chip-running"].display = False
+        segs["chip-running"].display = True
         h.update_header(collapsed=True, running=2, pending=0, done=0, errors=0)
-        self.assertTrue(segs["chip-running"].display)
-
-    def test_chip_running_hidden_when_running_zero(self):
-        """#chip-running display=False when running == 0."""
-        h, segs = self._make_header_with_segs()
-        h.update_header(collapsed=True, running=0, pending=1, done=3, errors=0)
         self.assertFalse(segs["chip-running"].display)
+
+    def test_chip_done_always_hidden_in_chip(self):
+        """A5: #chip-done always hidden in collapsed chip (done count dropped)."""
+        h, segs = self._make_header_with_segs()
+        segs["chip-done"].display = True
+        h.update_header(collapsed=True, running=0, pending=1, done=3, errors=0)
+        self.assertFalse(segs["chip-done"].display)
 
     def test_chip_errors_shows_when_errors_gt_0(self):
         """#chip-errors display=True when errors > 0."""
@@ -541,13 +542,13 @@ class TestChipSegments(unittest.TestCase):
         self.assertTrue(segs["plan-f9-badge"].display)
 
     def test_show_chip_pending_in_title_text(self):
-        """Pending count appears in the chip title text."""
+        """A5: pending count appears in chip title with ⏵ glyph."""
         h, segs = self._make_header_with_segs()
         h.update_header(collapsed=True, running=0, pending=3, done=1, errors=0)
-        update_calls = segs["plan-chip-title"].update.call_args_list
-        self.assertTrue(len(update_calls) > 0)
-        title_text = update_calls[0][0][0]
-        self.assertIn("3▸", title_text)
+        all_update_text = " ".join(
+            str(call[0][0]) for call in segs["plan-chip-title"].update.call_args_list
+        )
+        self.assertIn("3⏵", all_update_text)
 
 
 # ---------------------------------------------------------------------------

@@ -87,7 +87,7 @@ component_vars:
   diff-add-bg: '#142a1a'
   diff-del-bg: '#2a1420'
   info: '#89b4fa'
-  syntax-theme: 'ansi_dark'
+  syntax-theme: 'catppuccin'
   drawbraille-canvas-color: '#89dceb'
   footnote-ref-color: '#6c7086'
   fps-hud-bg: '#181825'

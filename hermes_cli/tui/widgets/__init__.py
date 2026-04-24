@@ -719,6 +719,7 @@ class AssistantNameplate(Widget):
         self._glitch_frame = 0
         self._error_frame = 0
         self._last_was_error = False
+        self._error_color_hex: str = "#ef5350"
         self._accent_hex = "#7b68ee"
         self._active_dim_hex = "#3d3480"
         self._text_hex = "#cccccc"
@@ -749,6 +750,7 @@ class AssistantNameplate(Widget):
             self._idle_color_hex: str = _lerp_hex(
                 self._text_hex, self._accent_hex, 0.25
             )
+            self._error_color_hex = css_vars.get("status-error-color", "#ef5350")
         except Exception:
             pass
         # C-5: active style from live accent color (not hardcoded constant)
@@ -774,11 +776,21 @@ class AssistantNameplate(Widget):
             self.watch(self.app, "status_phase", self._on_phase_change)
         except Exception:
             pass
+        # A3-1: register error hooks (independent of _effects_enabled)
+        try:
+            self.app.hooks.register("on_error_set",   self._on_error_set,   owner=self, priority=100, name="nameplate_error_set")
+            self.app.hooks.register("on_error_clear", self._on_error_clear, owner=self, priority=100, name="nameplate_error_clear")
+        except Exception:
+            pass
 
     def on_unmount(self) -> None:
         if self._timer:
             self._timer.stop()
             self._timer = None
+        try:
+            self.app.hooks.unregister_owner(self)
+        except Exception:
+            pass
 
     def on_resize(self, event: Any) -> None:
         new_w = getattr(getattr(event, "size", None), "width", self._canvas_width)
@@ -1042,5 +1054,31 @@ class AssistantNameplate(Widget):
             elif phase == Phase.IDLE:
                 pass  # transition_to_idle() drives IDLE transitions
             # Phase.ERROR handled by A3 (error-prominence spec)
+        except Exception:
+            pass
+
+    def _activate_idle_phase(self) -> None:
+        """Resume idle animation after error cleared."""
+        if not self._effects_enabled:
+            return
+        self._state = _NPState.IDLE
+        if self._timer is None:
+            self._set_timer_rate(6)
+
+    def _on_error_set(self, **_) -> None:
+        """A3-1: switch nameplate into error state."""
+        try:
+            self._pulse_stop()
+            self.remove_class("--active", "--idle")
+            self.add_class("--error")
+            self.refresh()
+        except Exception:
+            pass
+
+    def _on_error_clear(self, **_) -> None:
+        """A3-1: restore nameplate after error is cleared."""
+        try:
+            self.remove_class("--error")
+            self._activate_idle_phase()
         except Exception:
             pass

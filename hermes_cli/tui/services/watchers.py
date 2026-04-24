@@ -21,6 +21,7 @@ class WatchersService(AppService):
     def __init__(self, app: "HermesApp") -> None:
         super().__init__(app)
         self._phase_before_error: str = ""  # A1: phase saved before ERROR overlay
+        self._compact_warn_flashed: bool = False  # A7-1: guard single warn flash per cycle
 
     # ------------------------------------------------------------------
     # Input change watchers
@@ -144,12 +145,36 @@ class WatchersService(AppService):
             self.app.query_one("#input-rule", TitledRule).progress = value
         except NoMatches:
             pass
-        if value >= 0.9 and not self.app._compaction_warned:
-            self.app._compaction_warned = True
-            self.app._flash_hint("⚠  Context window 90% full — compaction imminent", 3.0)
-        if value >= 0.99 and not getattr(self.app, "_compaction_warn_99", False):
+        _warn = float(
+            getattr(self.app, "config", {}).get("display", {}).get("compact_warn_threshold", 0.85)
+        )
+        _crit = float(
+            getattr(self.app, "config", {}).get("display", {}).get("compact_badge_threshold", 0.95)
+        )
+        if value >= _warn and not self._compact_warn_flashed:
+            self._compact_warn_flashed = True
+            try:
+                self.app.feedback.flash(
+                    "hint-bar",
+                    f"Context {int(_warn * 100)}% full — /compact available",
+                    duration=8.0,
+                    priority=5,
+                )
+            except Exception:
+                pass
+        elif value < _warn:
+            self._compact_warn_flashed = False
+        if value >= _crit and not getattr(self.app, "_compaction_warn_99", False):
             self.app._compaction_warn_99 = True
-            self.app._flash_hint("⚠  Context 99% — send /compact or clear conversation", 5.0)
+            try:
+                self.app.feedback.flash(
+                    "hint-bar",
+                    f"Context {int(_crit * 100)}% full — /compact or clear conversation",
+                    duration=8.0,
+                    priority=8,
+                )
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Voice watchers
@@ -444,6 +469,19 @@ class WatchersService(AppService):
             from hermes_cli.tui.input.widget import HermesInput
             inp = self.app.query_one("#input-area", HermesInput)
             inp.error_state = value if value else None
+        except Exception:
+            pass
+        # A3-2: route error message to HintBar for prominent left-side display
+        try:
+            if value:
+                self.app.feedback.flash(
+                    "hint-bar",
+                    f"⚠ {value}",
+                    duration=9999,
+                    priority=10,
+                )
+            else:
+                self.app.feedback.cancel("hint-bar")
         except Exception:
             pass
 

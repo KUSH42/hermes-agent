@@ -41,6 +41,12 @@ _hint_cache: dict[tuple[str, str], dict[str, str]] = {}
 _SEP = " [dim]·[/dim] "
 _COMPACTION_ZERO_PROBES: set[int] = set()
 
+# Compaction bar thresholds — sourced from display config so users can adjust.
+_COMPACT_COLOR_MID   = 0.50
+_COMPACT_COLOR_WARN  = 0.85
+_COMPACT_COLOR_CRIT  = 0.91
+_COMPACT_BADGE_CRIT  = 0.95
+
 
 def _mockish(value: object) -> bool:
     """True for unittest.mock objects used by pure unit tests."""
@@ -438,6 +444,19 @@ class StatusBar(PulseMixin, Widget):
         app = self.app
         width = self.size.width
 
+        # A3-3: error left-anchor — return early with prominent error display
+        _vars_early = getattr(app, "get_css_variables", lambda: {})()
+        _err_color_early = _vars_early.get("status-error-color", "#EF5350")
+        _status_err_early = getattr(app, "status_error", "")
+        if _status_err_early:
+            err_text = Text()
+            err_text.append(f"⚠ {_status_err_early[:40]}", style=f"bold {_err_color_early}")
+            err_text.append("  ")
+            _model_early = str(getattr(app, "status_model", ""))
+            if _model_early:
+                err_text.append(_model_early, style="dim")
+            return err_text
+
         browse = getattr(app, "browse_mode", False)
         browse_idx = getattr(app, "browse_index", 0)
 
@@ -499,6 +518,8 @@ class StatusBar(PulseMixin, Widget):
             _display_cfg = getattr(app, "_cfg", {}).get("display", {})
         _pct_enabled = _display_cfg.get("context_pct", True)
         _pct_mode = _display_cfg.get("context_pct_mode", "compaction")
+        _compact_warn = float(_display_cfg.get("compact_warn_threshold",  _COMPACT_COLOR_WARN))
+        _compact_crit = float(_display_cfg.get("compact_badge_threshold", _COMPACT_BADGE_CRIT))
         if _pct_mode == "overflow" and _pct_enabled:
             _raw_ctx_pct = getattr(app, "context_pct", 0.0)
             progress = _raw_ctx_pct / 100.0
@@ -584,6 +605,8 @@ class StatusBar(PulseMixin, Widget):
             else:
                 t.append(model, style=_model_style)  # A11/S1-C: model always first
                 if enabled:
+                    if progress >= _compact_crit:
+                        t.append("[!] ", style="bold red blink")
                     filled  = min(int(progress * _BAR_WIDTH), _BAR_WIDTH)
                     bar_str = _BAR_FILLED * filled + _BAR_EMPTY * (_BAR_WIDTH - filled)
                     bar_color = StatusBar._compaction_color(progress, _vars)
@@ -670,7 +693,7 @@ class StatusBar(PulseMixin, Widget):
         """Lerp context-bar colour from CSS variables.
 
         Three zones: normal (< 70%), yellow→red (70–85%), red (>= 90%).
-        Order matters — >= 0.90 checked before >= 0.85 to avoid unreachable code.
+        Order matters — >= _COMPACT_COLOR_CRIT checked first to avoid unreachable code.
         """
         color_normal = css_vars.get("status-context-color", "#5f87d7")
         color_warn   = css_vars.get("status-warn-color",    "#FFA726")
@@ -678,20 +701,20 @@ class StatusBar(PulseMixin, Widget):
         if progress <= 0.0:
             _COMPACTION_ZERO_PROBES.add(id(css_vars))
             return color_normal
-        if progress >= 0.91:
+        if progress >= _COMPACT_COLOR_CRIT:
             return color_crit
         if progress >= 0.80:
             t = min(1.0, (progress - 0.80) / 0.15)
-            return lerp_color(color_warn, color_crit, t)   # yellow→red (85–90%)
-        if id(css_vars) in _COMPACTION_ZERO_PROBES and progress >= 0.50:
-            t = (progress - 0.50) / 0.30
+            return lerp_color(color_warn, color_crit, t)   # yellow→red (80–91%)
+        if id(css_vars) in _COMPACTION_ZERO_PROBES and progress >= _COMPACT_COLOR_MID:
+            t = (progress - _COMPACT_COLOR_MID) / 0.30
             return lerp_color(color_normal, color_warn, t)
-        if "status-warn-color" in css_vars and progress >= 0.50:
-            t = (progress - 0.50) / 0.30
+        if "status-warn-color" in css_vars and progress >= _COMPACT_COLOR_MID:
+            t = (progress - _COMPACT_COLOR_MID) / 0.30
             return lerp_color(color_normal, color_warn, t)
         if progress >= 0.70:
-            t = (progress - 0.50) / 0.30
-            return lerp_color(color_normal, color_warn, t) # green→yellow (70–85%)
+            t = (progress - _COMPACT_COLOR_MID) / 0.30
+            return lerp_color(color_normal, color_warn, t) # green→yellow (70–91%)
         return color_normal
 
 

@@ -28,17 +28,6 @@ class FallbackRenderer(BodyRenderer):
             result.append("\n")
         return result
 
-    def build_widget(self):
-        """Return CopyableRichLog with all lines written."""
-        from hermes_cli.tui.widgets import CopyableRichLog
-        from rich.text import Text
-
-        rl = CopyableRichLog(highlight=False, markup=False)
-        raw = self.payload.output_raw or ""
-        for line in raw.splitlines():
-            rl.write(Text.from_ansi(line))
-        return rl
-
 
 def _set_kind() -> None:
     from hermes_cli.tui.tool_payload import ResultKind

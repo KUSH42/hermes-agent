@@ -278,9 +278,12 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     "tool-mcp-accent": "#9b59b6",
     # Vision tool accent — teal
     "tool-vision-accent": "#00bcd4",
-    # Diff background colors — used by ToolBlock._diff_bg_colors()
+    # Diff background colors — used by ToolBlock._diff_bg_colors() and DiffRenderer
     "diff-add-bg": "#1a3a1a",
     "diff-del-bg": "#3a1a1a",
+    # Body renderer grammar vars — info color (distinct from $primary accent)
+    "info": "#58A6FF",
+    # syntax-theme is a pygments theme name (not hex) — tracked only in hermes.tcss + skins
     # Citation chip colors — used by SourcesBar
     "cite-chip-bg": "#1a2030",
     "cite-chip-fg": "#8899bb",

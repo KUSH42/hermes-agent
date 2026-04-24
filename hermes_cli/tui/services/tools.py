@@ -284,6 +284,12 @@ class ToolRenderingService(AppService):
             self.app._active_streaming_blocks[tool_call_id] = block
             self.app._streaming_tool_count = len(self.app._active_streaming_blocks)
             self.app._active_tool_name = tool_name or ""
+            try:
+                panel = getattr(block, "_tool_panel", None)
+                if panel is not None:
+                    panel.add_class("--streaming")
+            except Exception:
+                pass
             # A1: increment open tool count and set TOOL_EXEC phase
             self._open_tool_count += 1
             from hermes_cli.tui.agent_phase import Phase as _Phase

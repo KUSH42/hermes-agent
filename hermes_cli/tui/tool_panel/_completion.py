@@ -200,7 +200,7 @@ class _ToolPanelCompletionMixin:
         if self._body_pane is None:  # type: ignore[attr-defined]
             return
         try:
-            renderer = new_renderer_cls(payload, cls_result)
+            renderer = new_renderer_cls(payload, cls_result, app=self.app)  # type: ignore[attr-defined]
             new_widget = renderer.build_widget()
             old_block = self._block  # type: ignore[attr-defined]
             self._body_pane.mount(new_widget)  # type: ignore[attr-defined]
@@ -208,6 +208,12 @@ class _ToolPanelCompletionMixin:
                 old_block.remove()
             self._block = new_widget  # type: ignore[attr-defined]
             self._body_pane._block = new_widget  # type: ignore[attr-defined]
+            from hermes_cli.tui.tool_payload import ResultKind
+            from hermes_cli.tui.body_renderers._grammar import BodyFooter
+            if getattr(cls_result, "kind", None) != ResultKind.EMPTY:
+                for old_footer in self._body_pane.query(BodyFooter):  # type: ignore[attr-defined]
+                    old_footer.remove()
+                self._body_pane.mount(BodyFooter())  # type: ignore[attr-defined]
         except Exception:
             pass
 
@@ -216,6 +222,10 @@ class _ToolPanelCompletionMixin:
         result: "ClassificationResult",
         payload: "ToolPayload",
     ) -> None:
+        try:
+            self.remove_class("--streaming")  # type: ignore[attr-defined]
+        except Exception:
+            pass
         try:
             from hermes_cli.tui.tool_payload import ResultKind
             from hermes_cli.tui.tool_category import ToolCategory

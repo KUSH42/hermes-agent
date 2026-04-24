@@ -198,7 +198,7 @@ class SearchRenderer(BodyRenderer):
         return lines
 
     def build_widget(self):
-        """Return VirtualSearchList for >100 hits, else CopyableRichLog."""
+        """Return VirtualSearchList for >100 hits, else base CopyableRichLog."""
         hit_count = 0
         if self.cls_result.metadata:
             hit_count = int(self.cls_result.metadata.get("hit_count", 0))
@@ -207,10 +207,7 @@ class SearchRenderer(BodyRenderer):
             lines = self._build_lines_list()
             return VirtualSearchList(lines_text=lines)
 
-        from hermes_cli.tui.widgets import CopyableRichLog
-        rl = CopyableRichLog(highlight=False, markup=False)
-        rl.write(self.build())
-        return rl
+        return super().build_widget()
 
 
 def _set_kind() -> None:

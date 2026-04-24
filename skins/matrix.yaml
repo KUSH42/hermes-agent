@@ -80,6 +80,8 @@ component_vars:
   cite-chip-fg: '#00d849'
   diff-add-bg: '#0a2a14'
   diff-del-bg: '#2a0a0a'
+  info: '#58A6FF'
+  syntax-theme: 'ansi_dark'
   footnote-ref-color: '#2a6b33'
   nameplate-active-color: '#00ff41'
   nameplate-decrypt-color: '#aaffc8'

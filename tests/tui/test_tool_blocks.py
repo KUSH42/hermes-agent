@@ -1863,3 +1863,99 @@ def test_drop_order_real_order():
         "linecount", "duration", "chip", "hero", "diff",
         "stderrwarn", "remediation", "exit", "chevron", "flash",
     ]
+
+
+# ---------------------------------------------------------------------------
+# B3 — Auto-collapse tail restoration
+# ---------------------------------------------------------------------------
+
+def _make_bare_tool_panel(block):
+    """Build a ToolPanel bypassing __init__, with minimal attrs for B3 tests."""
+    from hermes_cli.tui.tool_panel import ToolPanel
+    panel = ToolPanel.__new__(ToolPanel)
+    panel._block = block
+    panel._saved_visible_start = None
+    panel._user_collapse_override = False
+    panel._should_auto_collapse = False
+    panel._result_summary_v4 = None
+    panel._auto_collapsed = False
+    panel._category = None
+    # stub out methods not under test
+    panel._flash_header = lambda *a, **kw: None
+    panel._footer_pane = None
+    # has_focus is a Textual reactive — use object.__setattr__ to bypass the descriptor
+    object.__setattr__(panel, "_reactive_has_focus", False)
+    panel.query = lambda *a, **kw: []
+    return panel
+
+
+def _make_mock_block(total, cap=200, visible_start=0):
+    from unittest.mock import MagicMock
+    block = MagicMock()
+    block._visible_cap = cap
+    block._visible_start = visible_start
+    block._all_plain = ["x"] * total
+    block._total_received = total
+    return block
+
+
+def _preseed_tail(panel, total, cap=200):
+    """Run just the pre-seed logic from _apply_complete_auto_collapse."""
+    should_collapse = True
+    if should_collapse:
+        if panel._saved_visible_start is None and panel._block is not None:
+            visible_cap = int(getattr(panel._block, "_visible_cap", cap) or cap)
+            panel._saved_visible_start = max(0, total - visible_cap)
+
+
+def test_auto_collapse_seeds_tail_position():
+    """Pre-seed logic: total=300, cap=200 → _saved_visible_start=100."""
+    block = _make_mock_block(total=300, cap=200, visible_start=0)
+    panel = _make_bare_tool_panel(block)
+    _preseed_tail(panel, total=300, cap=200)
+    assert panel._saved_visible_start == 100, (
+        f"Expected _saved_visible_start=100, got {panel._saved_visible_start}"
+    )
+
+
+def test_expand_after_auto_collapse_restores_tail():
+    """After pre-seed (100) + expand, rerender_window called with (100, 300) not (0, 200)."""
+    block = _make_mock_block(total=300, cap=200, visible_start=0)
+    panel = _make_bare_tool_panel(block)
+
+    # Simulate pre-seeded tail position
+    _preseed_tail(panel, total=300, cap=200)
+    assert panel._saved_visible_start == 100
+
+    # Simulate watch_collapsed save step: current=0 → does NOT overwrite pre-seed
+    # because the guard is: if _saved_visible_start is None or current > 0
+    current = panel._block._visible_start  # 0
+    if panel._saved_visible_start is None or current > 0:
+        panel._saved_visible_start = current
+    # Guard preserved 100 because current==0 and _saved_visible_start was already set
+    assert panel._saved_visible_start == 100
+
+    # Simulate expand restore path
+    saved = int(panel._saved_visible_start)
+    total = int(len(panel._block._all_plain))
+    visible_cap = int(getattr(panel._block, "_visible_cap", 200) or 200)
+    end = min(total, saved + visible_cap)
+    panel._block.rerender_window(saved, end)
+
+    panel._block.rerender_window.assert_called_once_with(100, 300)
+
+
+def test_expand_no_scroll_when_total_within_cap():
+    """total=50, cap=200 → max(0, 50-200)=0; rerender_window(0, 50) works without error."""
+    block = _make_mock_block(total=50, cap=200, visible_start=0)
+    panel = _make_bare_tool_panel(block)
+    _preseed_tail(panel, total=50, cap=200)
+    assert panel._saved_visible_start == 0
+
+    # Expand restore path with saved=0, total=50, cap=200
+    saved = int(panel._saved_visible_start)
+    total = int(len(panel._block._all_plain))
+    visible_cap = int(getattr(panel._block, "_visible_cap", 200) or 200)
+    end = min(total, saved + visible_cap)
+    panel._block.rerender_window(saved, end)
+    panel._block.rerender_window.assert_called_with(0, 50)

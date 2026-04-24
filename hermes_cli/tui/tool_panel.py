@@ -610,9 +610,11 @@ class ToolPanel(Widget):
     def watch_collapsed(self, old: bool, new: bool) -> None:
         # B6: save/restore visible window position across collapse/expand
         if new:
-            # Collapsing — save visible_start
+            # Collapsing — save visible_start; prefer pre-seeded tail position over 0
             if hasattr(self._block, "_visible_start"):
-                self._saved_visible_start = self._block._visible_start
+                current = self._block._visible_start
+                if self._saved_visible_start is None or current > 0:
+                    self._saved_visible_start = current
         else:
             # Expanding — restore visible window if we have a saved position
             if (self._saved_visible_start is not None and
@@ -623,8 +625,7 @@ class ToolPanel(Widget):
                     total = int(len(self._block._all_plain))
                     visible_cap = int(getattr(self._block, "_visible_cap", 200) or 200)
                     end = min(total, saved + visible_cap)
-                    if saved > 0:
-                        self._block.rerender_window(saved, end)
+                    self._block.rerender_window(saved, end)
                 except Exception:
                     pass
 
@@ -720,6 +721,12 @@ class ToolPanel(Widget):
             except Exception:
                 pass
         should_collapse = total > threshold
+        if should_collapse:
+            # Pre-seed saved position to tail so expand restores tail, not top.
+            # Only when user hasn't manually set a position (_saved_visible_start is None).
+            if self._saved_visible_start is None and self._block is not None:
+                visible_cap = int(getattr(self._block, "_visible_cap", 200) or 200)
+                self._saved_visible_start = max(0, total - visible_cap)
         self.collapsed = should_collapse
         # C1: track auto-collapsed state
         self._auto_collapsed = should_collapse

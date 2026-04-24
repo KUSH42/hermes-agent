@@ -19,6 +19,8 @@ metadata:
 
 ## Codebase structure
 
+> Quick module ownership lookup: [references/module-map.md](references/module-map.md)
+
 ### HermesApp mixin map + services layer (R4)
 
 **R4 architecture (complete, all 4 phases merged)**: All 10 `_app_*.py` mixin files deleted. `HermesApp(App)` — no mixin bases. Logic lives in `hermes_cli/tui/services/`. Forwarder methods (`watch_X`, `on_key`, `_handle_tui_command`, etc.) are inlined directly at the bottom of `HermesApp` in `app.py` (2654 lines).
@@ -217,7 +219,7 @@ Single widget handles 7 interrupt kinds (CLARIFY/APPROVAL/SUDO/SECRET/UNDO/NEW_S
 - `TrailCanvas.frame()` = `decay_all()` + render. Never call `tick()` (doesn't exist) or `decay_all()` separately.
 - `_SIN_LUT`/`_COS_LUT` (1024 entries) + `_lut_sin`/`_lut_cos` — max error ~0.006, fine for visuals only.
 - Bounds check (`if 0 <= x < w`) is 5–15% faster than `try/except` for out-of-bounds coords.
-- `DrawbrailleOverlay` split pending (spec at `/home/xush/.hermes/2026-04-23-drawbraille-overlay-split-spec.md`): `anim_orchestrator.py` + `drawbraille_renderer.py` + thin shell + `widgets/anim_config_panel.py`.
+- `DrawbrailleOverlay` split **complete** (2026-04-24): `anim_orchestrator.py` + `drawbraille_renderer.py` + thin shell + `widgets/anim_config_panel.py`. See changelog entry below.
 
 ### Skin / RX3 vars (`theme_manager.py`, `hermes.tcss`)
 
@@ -237,6 +239,8 @@ Flag-gated: `display.layout: "v2"`. Breakpoints: SINGLE < 120 cols, THREE 120–
 `query_one(PaneContainer)` is ambiguous (3 instances) — always use `query_one("#pane-left")` etc.
 
 ---
+
+### io_boundary — full implementation notes (RX2, 2026-04-21)
 
 New module `hermes_cli/tui/io_boundary.py` + 63 tests in `tests/tui/test_io_boundary.py`.
 
@@ -368,6 +372,8 @@ class MyService:
 `owner=self` enables bulk cleanup via `unregister_owner(self)`. For bound methods, the registry uses `WeakMethod` — owner GC → registration silently pruned on next `fire`.
 
 ### Key gotchas
+
+> Dense pitfall list: [references/gotchas.md](references/gotchas.md) — check before editing tricky TUI code.
 
 - **Do not set the reactive that owns the transition.** A callback on `on_turn_end_any` that sets `agent_running = True` re-enters immediately. Policy: callbacks must not set the reactive whose transition they're responding to.
 - **Nested fires are allowed.** `fire("on_turn_end_any")` can call `fire("on_interrupt")` inside a callback. Each `fire` snapshots its registration list at entry — mid-fire register/unregister is safe.
@@ -700,6 +706,8 @@ Reads `HERMES_NO_UNICODE` and `HERMES_ACCESSIBLE` env vars at call time — not 
 
 ## Testing patterns
 
+> Widget, overlay, theming, and output flow patterns: [references/patterns.md](references/patterns.md)
+
 ### Running tests
 
 **NEVER run `python -m pytest tests/tui/`** — full suite has 3700+ tests and takes ~16 minutes. Run only targeted files:
@@ -939,221 +947,7 @@ Quick facts for TUI work:
 
 ---
 
-## _Skin system full reference (inline copy — see skin-reference.md for canonical)_
-
-### Two-layer architecture
-
-**Layer 1 — `skin_engine.py` (legacy ANSI/banner layer)**
-- `SkinEngine` dataclass with `.colors`, `.spinner`, `.branding`, `.tool_icons`, `.diff`, `.markdown`, `.syntax_scheme`, etc.
-- Used for Rich-rendered banner art, prompt_toolkit ANSI mode, TTE effects, and `_skin_color()` helper in `widgets/utils.py`.
-- API: `get_active_skin()` → `SkinEngine`; `set_active_skin(name)`; `list_skins()`.
-- `skin.get_color(key, fallback)` — reads `.colors[key]` with fallback.
-- `skin.get_branding(key, fallback)` — reads `.branding[key]` with fallback.
-
-**Layer 2 — `theme_manager.py` + `skin_loader.py` (Textual CSS variable layer)**
-- `ThemeManager` translates skin files into Textual CSS variables via `get_css_variables()`.
-- `apply_skin(skin_vars: dict | Path)` on `HermesApp` — single entry point; calls `_theme_manager.load_dict()` or `load([path])` then `apply()`.
-- `ThemeManager.css_variables` property: `{**_css_vars, **_component_vars}` — component vars win on conflict.
-
-### Skin file location
-
-User skins: `~/.hermes/skins/<name>.yaml` or `<name>.json`.  
-`SkinPickerOverlay` discovers skins by scanning that directory for `.json/.yaml/.yml` extensions.  
-`"default"` is always inserted at index 0 even if no default file exists.
-
-### Skin file format (YAML)
-
-```yaml
-# ── Semantic keys (skin_loader._SEMANTIC_MAP) ──────────────────────────
-fg:         "#E0E0E0"    # → foreground, text
-bg:         "#0F0F23"    # → background, surface, panel
-accent:     "#7C3AED"    # → primary, accent
-accent-dim: "#5A2A9A"    # → primary-darken-2, primary-darken-3
-success:    "#4CAF50"    # → success
-warning:    "#FFA726"    # → warning
-error:      "#ef5350"    # → error
-muted:      "#888888"    # → text-muted
-border:     "#333333"    # → panel-lighten-1
-selection:  "#1E4080"    # → boost
-
-# ── Glass keys (pass through unchanged) ────────────────────────────────
-glass-tint:   "#0D0D0D"
-glass-border: "#333333"
-glass-edge:   "#555555"
-
-# ── Raw Textual CSS var overrides (Pass 1 — highest precedence) ─────────
-vars:
-  primary: "#7C3AED"               # Wins over semantic fan-out
-  preview-syntax-theme: "dracula"  # Pygments theme for code blocks (default: monokai)
-                                   # Options: monokai, dracula, one-dark, nord, gruvbox, etc.
-
-# ── Component Part variables (injected by ThemeManager) ─────────────────
-component_vars:
-  app-bg:                   "#1E1E1E"   # Global app bg — Screen + HermesApp + chrome
-  cursor-color:             "#FFF8DC"   # Input cursor glyph/block
-  cursor-selection-bg:      "#3A5A8C"   # Text selection highlight
-  cursor-placeholder:       "#555555"   # Placeholder text colour
-  ghost-text-color:         "#555555"   # Autocomplete ghost/suggestion text
-  chevron-base:             "#FFF8DC"   # Input chevron idle state
-  chevron-file:             "#FFBF00"   # Input chevron file mode
-  chevron-stream:           "#6EA8D4"   # Input chevron streaming
-  chevron-shell:            "#A8D46E"   # Input chevron shell mode
-  chevron-done:             "#4CAF50"   # Input chevron done
-  chevron-error:            "#E06C75"   # Input chevron error
-  fuzzy-match-color:        "#FFD866"   # Autocomplete fuzzy match highlight
-  status-running-color:     "#FFBF00"   # StatusBar running indicator
-  status-error-color:       "#ef5350"   # StatusBar error
-  status-warn-color:        "#FFA726"   # StatusBar warning
-  status-context-color:     "#5f87d7"   # StatusBar context info
-  running-indicator-hi-color:  "#FFA726"   # Running indicator bright phase
-  running-indicator-dim-color: "#6e6e6e"   # Running indicator trough/shimmer base
-  fps-hud-bg:               "#1a1a2e"   # FPS counter background
-  user-echo-bullet-color:   "#FFBF00"   # User message bullet
-  completion-empty-bg:      "#2A2A2A"   # Completion list empty state
-  rule-dim-color:           "#888888"   # TitledRule/PlainRule dim text
-  rule-bg-color:            "#1E1E1E"   # Rule gradient endpoint (MUST match app-bg)
-  rule-accent-color:        "#FFD700"   # TitledRule title text accent
-  rule-accent-dim-color:    "#B8860B"   # TitledRule accent dim variant
-  primary-darken-3:         "#4a7aaa"   # TitledRule idle glyph (not a Textual built-in)
-  brand-glyph-color:        "#FFD700"   # ⟁/⚕ brand glyph, separate from title text
-  scrollbar:                "#5f87d7"   # Scrollbar thumb
-  drawille-canvas-color:    "#00d7ff"   # Braille animation canvas default colour
-  panel-border:             "#333333"   # SourcesBar and bordered panel borders
-  footnote-ref-color:       "#888888"   # Footnote superscript marker
-  tool-mcp-accent:          "#9b59b6"   # MCP tool accent
-  tool-vision-accent:       "#00bcd4"   # Vision tool accent
-  diff-add-bg:              "#1a3a1a"   # Diff addition background
-  diff-del-bg:              "#3a1a1a"   # Diff deletion background
-  cite-chip-bg:             "#1a2030"   # Citation chip background
-  cite-chip-fg:             "#8899bb"   # Citation chip foreground
-  browse-turn:              "#d4a017"   # Browse mode turn anchor pip
-  browse-code:              "#4caf50"   # Browse mode code anchor pip
-  browse-tool:              "#2196f3"   # Browse mode tool anchor pip
-  browse-diff:              "#e040fb"   # Browse mode diff anchor pip
-  browse-media:             "#00bcd4"   # Browse mode media anchor pip
-  nameplate-idle-color:     "#888888"   # AssistantNameplate idle state
-  nameplate-active-color:   "#7b68ee"   # AssistantNameplate active state
-  nameplate-decrypt-color:  "#00ff41"   # AssistantNameplate decrypt animation
-  spinner-shimmer-dim:      "#555555"   # Spinner shimmer trough (skinnable for light bg)
-  spinner-shimmer-peak:     "#d8d8d8"   # Spinner shimmer peak
-
-# ── Legacy skin_engine keys (ANSI/banner layer — skin_engine.py) ────────
-colors:
-  banner_title:   "#FFD700"    # Banner/TTE gradient stop 1 — skin.get_color("banner_title")
-  banner_accent:  "#FFBF00"    # Banner/TTE gradient stop 2 — skin.get_color("banner_accent")
-  banner_dim:     "#CD7F32"    # Banner/TTE gradient stop 3 — skin.get_color("banner_dim")
-  # ... (full schema in hermes_cli/skin_engine.py docstring)
-
-branding:
-  agent_name:     "Hermes Agent"
-  prompt_symbol:  "❯ "
-
-syntax_scheme: monokai   # Named scheme; separate from vars.preview-syntax-theme
-```
-
-### Precedence rules (skin_loader)
-
-1. **Pass 1** — `vars:` block written directly to output dict (highest precedence, overrides everything).
-2. **Pass 2** — semantic keys (`fg`, `bg`, `accent`, …) fan out via `_SEMANTIC_MAP`; `setdefault` used so Pass 1 wins on conflict.
-3. **Glass keys** (`glass-tint`, `glass-border`, `glass-edge`) pass through unchanged after Pass 2.
-4. **`component_vars:`** extracted separately; merged on top of `COMPONENT_VAR_DEFAULTS` (ThemeManager).
-5. **Textual built-in defaults** — lowest precedence (overridden by everything above).
-
-### `apply_skin()` refresh chain
-
-```python
-app.apply_skin(Path("~/.hermes/skins/mytheme.yaml"))
-# or
-app.apply_skin({"accent": "#7C3AED", "component_vars": {"cursor-color": "#FFD700"}})
-```
-
-`apply_skin` invalidates (in order):
-1. `_theme_manager.load_dict()` / `load([path])` + `apply()` → calls `refresh_css()`.
-2. `_hint_cache.clear()` — StatusBar idle-tip rendering cache.
-3. `StatusBar._idle_tips_cache = None` — forces tip re-render on next tick.
-4. `VirtualCompletionList.refresh_theme()` — completion list repaints.
-5. `PreviewPanel.refresh_theme()` — preview panel repaints.
-6. All mounted `ToolBlock` instances: `block.refresh_skin()`.
-7. All mounted `StreamingCodeBlock` instances: `block.refresh_skin(css_vars)`.
-
-### Hot reload
-
-```python
-# Start background watcher (1 Hz poll by default)
-app._theme_manager.start_hot_reload(poll_interval_s=1.0)
-
-# Stop on exit
-app._theme_manager.stop_hot_reload()
-
-# Manual poll (used in set_interval callbacks at ~1 Hz)
-changed = app._theme_manager.check_for_changes()
-```
-
-Hot reload is off-thread: `_watch_loop` does blocking `stat()` + file read in a daemon thread, then schedules `_apply_hot_reload_payload` onto the Textual event loop via `app.call_from_thread`. Skin file edits land in the TUI within ~2 s with no frame drops.
-
-**Dict-loaded skins (`load_dict`) cannot hot-reload** — `_source_path` is set to `None`.
-
-### `preview-syntax-theme` raw var
-
-Controls Pygments syntax highlighting theme for code blocks and the preview panel. Set in the `vars:` block (raw override):
-
-```yaml
-vars:
-  preview-syntax-theme: "dracula"
-```
-
-Consumed by:
-- `ResponseFlow._pygments_theme` (updated by `refresh_skin_vars()`)
-- `StreamingCodeBlock.refresh_skin()` → `_pygments_theme`
-- `PreviewPanel.refresh_theme()` → reads `css.get("preview-syntax-theme", "")`
-- `ExecuteCodeBlock` → `css_vars.get("preview-syntax-theme", "monokai")`
-
-Default: `"monokai"` everywhere. Valid names: any Pygments style name (`monokai`, `dracula`, `one-dark`, `nord`, `gruvbox`, `github-dark`, `catppuccin`, `solarized-dark`, `tokyo-night`).
-
-### TTE effects integration
-
-`tte_runner.py` provides skin-aware terminal text effects (optional dep: `pip install "hermes-agent[fun]"`).
-
-```python
-from hermes_cli.tui.tte_runner import run_effect, iter_frames, EFFECT_MAP, EFFECT_DESCRIPTIONS
-
-# Synchronous — caller must suspend Textual TUI first (inside App.suspend())
-success = run_effect("matrix", "Hello Hermes")
-
-# Async frame generator — for rendering into a widget
-for frame in iter_frames("decrypt", "Connecting…"):
-    widget.update(frame)
-```
-
-**Skin-aware gradient**: both `run_effect` and `iter_frames` pull `banner_title`, `banner_accent`, `banner_dim` from `skin_engine.get_active_skin()` and apply them to `effect.effect_config.final_gradient_stops` — the three TTE gradient color stops. This is skipped if the caller passes explicit `params={"final_gradient_stops": [...]}`.
-
-**Effect catalogue** (`EFFECT_MAP` keys — 40+ effects):
-
-| Category | Effects |
-|---|---|
-| Reveal / dramatic | `matrix`, `blackhole`, `decrypt`, `laseretch`, `binarypath`, `synthgrid` |
-| Flow / ambient | `beams`, `waves`, `rain`, `overflow`, `sweep` |
-| Text reveal | `print`, `slide`, `highlight` |
-| Fun / misc | `wipe`, `colorshift`, `crumble`, `burn`, `fireworks`, `bouncyballs`, `bubbles`, `vhstape`, `thunderstorm`, `smoke`, `rings`, `scattered`, `spray`, `swarm`, `spotlights`, `unstable`, `slice`, `middleout`, `pour`, `orbittingvolley`, `randomsequence`, `expand`, `errorcorrect` |
-
-**`_apply_effect_params()`** coerces raw config values to match each effect's config field type (bool/int/float/str/tuple/Color). Unknown keys are ignored with a print warning. `"parser_spec"` key is always skipped.
-
-**`run_effect` must be called inside `App.suspend()`** — TTE writes directly to the raw terminal and conflicts with Textual's renderer.
-
-**TUI startup TTE path:** `_play_tte_in_output_panel` (cli.py) — generates frames via `iter_frames`, splices each into the full banner layout via `_splice_startup_banner_frame`, and applies via `call_from_thread` → `query_one(StartupBannerWidget).set_frame(frame)`. `StartupBannerWidget` is pre-mounted as the first child of `OutputPanel.compose()` — no runtime mount needed.
-
-**Do NOT** use `TTEWidget` + `dock:top` overlay for startup — it anchors to the screen top-left, not the hero's left-column position within the banner layout.
-
-**Do NOT** try to mount `StartupBannerWidget` at runtime from a background thread — `call_from_thread(mount)` silently no-ops (unawaited `AwaitMount`), and `call_from_thread(fn)` cannot return widget references to the calling thread (result dict is read before the closure runs).
-
-### TCSS: declaring new skin vars
-
-Any new `$var-name` referenced in `hermes.tcss` **must** be:
-1. Added to `COMPONENT_VAR_DEFAULTS` in `theme_manager.py` with a sensible default.
-2. Declared in `hermes.tcss` under the Component Part variables comment block (`/* Component Part variables */`).
-3. Documented in the `component_vars:` block of `skin_engine.py`'s module docstring.
-
-`get_css_variables()` alone is insufficient — Textual parses TCSS at class-definition time; unknown `$var-name` refs raise at parse time, not at render time.
+## Changelog
 
 ### 2026-04-23 — Input Mode Safety (rev-search, bash mode, readline bindings)
 
@@ -1221,7 +1015,6 @@ Any new `$var-name` referenced in `hermes.tcss` **must** be:
 - `Button("[reset]", ...)` → empty label (Rich parses `[reset]` as markup tag). Always use `Button(Text("[reset]"), ...)`.
 - `_remediation_hint` render guard requires `_tool_icon_error` (not just `_error_kind`) to avoid showing hints on non-error collapsed panels.
 - `_child_error_kinds` is a `list` not `set` — order of first-seen preserved; dedup by `if ek not in self._child_error_kinds` before append.
-- Under `HERMES_DETERMINISTIC`, two-tick collapse path is skipped entirely — `_post_complete_tidy` called inline. Tests that set `HERMES_DETERMINISTIC=1` see synchronous collapse without the 0.25s window.
 - Under `HERMES_DETERMINISTIC`, two-tick collapse path is skipped entirely — `_post_complete_tidy` called inline. Tests that set `HERMES_DETERMINISTIC=1` see synchronous collapse without the 0.25s window.
 
 ### 2026-04-23 — Input Feedback & Completion UX (commit 51cc833b, merged feat/textual-migration)

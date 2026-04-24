@@ -158,6 +158,10 @@ class _AutocompleteMixin:
 
         if self.cursor_position < len(self.value):  # type: ignore[attr-defined]
             self._hide_completion_overlay()  # type: ignore[attr-defined]
+            try:
+                self.app._flash_hint("Tab: move cursor to end to accept", 2.0)  # type: ignore[attr-defined]
+            except Exception:
+                pass
             return
 
         c = clist.items[clist.highlighted]

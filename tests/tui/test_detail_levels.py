@@ -127,7 +127,6 @@ def test_auto_collapsed_flag_set_on_auto_collapse():
     panel._body_pane = MagicMock()
     panel._footer_pane = MagicMock()
     panel._footer_pane.display = False
-    panel._accent = MagicMock()
     # Auto-collapse should fire for 200 lines
     panel._apply_complete_auto_collapse()
     if panel.collapsed:

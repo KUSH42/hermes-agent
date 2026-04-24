@@ -328,9 +328,6 @@ class _ToolPanelCompletionMixin:
             self.collapsed = False  # type: ignore[attr-defined]
         else:
             self.remove_class("tool-panel--error")  # type: ignore[attr-defined]
-        if getattr(self, '_accent', None) is not None:
-            self._accent.state = final_state  # type: ignore[attr-defined]
-
         header = getattr(self._block, "_header", None)  # type: ignore[attr-defined]
         line_count = self._body_line_count()
         if header is not None:

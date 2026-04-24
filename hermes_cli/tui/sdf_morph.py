@@ -259,14 +259,22 @@ class SDFMorphEngine:
         self._baker.bake(self._text)
 
     def next_frame(self, params: object) -> str:
-        """AnimEngine protocol. Returns braille frame or empty string."""
+        """AnimEngine protocol. Returns braille frame or empty string.
+
+        params.width/height are braille DOT coords (cells × 2, cells × 4).
+        _render_frame expects CELL coords and multiplies by 2/4 internally.
+        Convert here — passing dots directly caused an 8× pixel blowup that
+        turned _mask_to_canvas into a 140ms-per-frame hotspot at fill sizes.
+        """
         if not self._baker.ready.is_set():
             return ""
         dt_ms = getattr(params, "dt", 1 / 15) * 1000.0
         self._advance_state(dt_ms)
+        dot_w = int(getattr(params, "width", 100))
+        dot_h = int(getattr(params, "height", 56))
         return self._render_frame(
-            canvas_w=getattr(params, "width", 50),
-            canvas_h=getattr(params, "height", 14),
+            canvas_w=max(1, dot_w // 2),
+            canvas_h=max(1, dot_h // 4),
         )
 
     def tick(self, dt_ms: float, canvas_w: int = 50, canvas_h: int = 14) -> str | None:

@@ -33,6 +33,17 @@ source venv/bin/activate  # ALWAYS activate before running Python
 
 - Before installing any Claude-oriented skill from an external source, scan it
   with Snyk Agent Scan first. Do not install it unless the scan returns safe.
+- After every implementation that touches TUI code, update the
+  `tui-development` skill files before closing the task:
+  `~/.claude/skills/tui-development/SKILL.md` and any relevant reference files
+  inside that skill directory.
+- TUI skill updates must capture reusable details such as new APIs or methods,
+  changed behavior, gotchas hit during implementation, non-obvious test
+  patterns, module-level constants or maps, changed dispatch logic,
+  Rich/Textual API quirks, and mocking patterns.
+- Update memory files under `~/.claude/projects/.../memory/` when a TUI change
+  creates durable project context, including spec entries and reusable feedback
+  entries.
 
 ### Specs
 
@@ -55,13 +66,24 @@ source venv/bin/activate  # ALWAYS activate before running Python
   line, the exact fix, behavior tables when needed, named tests with expected
   assertions, and an implementation order section when issues depend on each
   other.
+- Spec issue sections must avoid vague language such as "handle X" or
+  "improve Y"; each fix must be precise enough to implement without guessing.
+- Add an implementation order section when spec issues depend on each other.
 
 ### Testing workflow
 
 - Never run `python -m pytest tests/tui/` as a full suite. It times out in this
   repo. Run only targeted TUI test files relevant to the changed modules.
+- Example TUI test targets: changes to `drawbraille_overlay.py` should use
+  `test_anim_overlay.py` and `test_drawille_v2.py`; changes to `tool_blocks/`
+  should use `test_tool_blocks.py` and `test_tool_panel.py`; changes to
+  `app.py` should use `test_app.py` if it exists, not the whole TUI suite.
 - If no relevant test file exists yet, use an import check as the fallback:
   `python3 -c "from hermes_cli.tui.xxx import Foo; print('OK')"`
+- Use `pytest path/to/test.py::TestClass::test_name` to verify an individual
+  fix.
+- If a full suite is truly needed, use a timeout of at least 1200000 ms and run
+  it in the background.
 - Use one discovery run to collect failures, fix the full batch, then run one
   verification pass. Use targeted single-test runs between those passes instead
   of rerunning whole suites repeatedly.

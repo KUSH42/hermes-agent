@@ -1,11 +1,14 @@
 """ToolTail and StreamingToolBlock widgets."""
 from __future__ import annotations
 
+import logging
 import time
 from collections import deque
 from typing import Any
 
 import re
+
+logger = logging.getLogger(__name__)
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -615,8 +618,10 @@ class StreamingToolBlock(ToolBlock):
                 try:
                     btn = bar.query_one(".--ob-cap", Button)
                     btn.label = OmissionBar._reset_label()
-                except Exception:
-                    pass
+                except NoMatches:
+                    logger.debug("omission bar reset button not found during skin refresh", exc_info=True)
+                except AttributeError as exc:
+                    logger.warning("omission bar API drift in refresh_skin: %s", exc, exc_info=True)
 
     def set_age_microcopy(self, text: str) -> None:
         """F1: update the microcopy slot with age text (only when complete)."""

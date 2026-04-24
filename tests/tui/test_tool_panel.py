@@ -22,7 +22,6 @@ from hermes_cli.tui.app import HermesApp
 from hermes_cli.tui.widgets import OutputPanel
 from hermes_cli.tui.tool_category import ToolCategory, classify_tool, _CATEGORY_DEFAULTS
 from hermes_cli.tui.tool_panel import ToolPanel, BodyPane, FooterPane
-from hermes_cli.tui.tool_accent import ToolAccent
 
 
 # ---------------------------------------------------------------------------

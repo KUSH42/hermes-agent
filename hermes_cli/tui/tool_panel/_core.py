@@ -14,8 +14,6 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Static
 
-from hermes_cli.tui.tool_accent import ToolAccent
-
 from ._actions import _ToolPanelActionsMixin
 from ._completion import _ToolPanelCompletionMixin
 from ._footer import (
@@ -133,7 +131,6 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
 
         self._plan_tool_call_id: str | None = None
 
-        self._accent: ToolAccent | None = None
         self._collapsed_strip: _CollapsedActionStrip | None = None
         self._body_pane: BodyPane | None = None
         self._footer_pane: FooterPane | None = None
@@ -146,12 +143,10 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
             block._should_strip_cwd = True
 
     def compose(self) -> ComposeResult:
-        self._accent = ToolAccent()
         self._collapsed_strip = _CollapsedActionStrip()
         self._body_pane = BodyPane(self._block, category=self._category)
         self._footer_pane = FooterPane()
         self._hint_row = Static("", classes="--focus-hint")
-        yield self._accent
         yield self._collapsed_strip
         yield self._body_pane
         yield self._footer_pane
@@ -162,8 +157,6 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
 
         self.add_class(f"category-{self._category.value}")
         self.add_class("tool-panel--accent")
-        if self._accent is not None:
-            self._accent.state = "streaming" if self._result_summary_v4 is None else "ok"
 
         header = getattr(self._block, "_header", None)
         if header is not None:

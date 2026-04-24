@@ -23,7 +23,6 @@ def _make_panel(tool_name: str = "bash") -> ToolPanel:
     panel._body_pane.display = True
     panel._footer_pane = MagicMock()
     panel._footer_pane.display = False
-    panel._accent = MagicMock()
     panel.add_class = MagicMock()
     panel.remove_class = MagicMock()
     return panel

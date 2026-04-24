@@ -682,7 +682,6 @@ HermesApp.density-compact #input-chevron       { width: 1; }
 
 /* Phase B3: tool panel / header tightening */
 /* A1: ToolHeaderBar deleted — duration/line-count compact rules removed */
-HermesApp.density-compact ToolAccent                   { display: none; }
 HermesApp.density-compact ToolPanel FooterPane                   { display: none; }
 HermesApp.density-compact ToolPanel:focus FooterPane             { display: block; }
 HermesApp.density-compact ToolPanel.tool-panel--error FooterPane { display: block; }
@@ -741,22 +740,10 @@ OmissionBar Button.--at-default { color: $text-muted 50%; }
     border-top: dashed $accent 20%;
 }
 
-/* --- Tool Panel v3 Phase A (tui-tool-panel-v3-spec.md §5.1) ---
- * ToolAccent widget replaces v2 border-left AND inline ┊ from ToolHeader.
- * Only Textual built-in design tokens — component vars fail silently for
- * background: at TCSS parse time. */
-
-ToolAccent              { background: $primary 15%; }
-ToolAccent.-streaming   { background: $accent; }
-ToolAccent.-ok          { background: $success; }
-ToolAccent.-error       { background: $error; }
-ToolAccent.-warning     { background: $warning; }
-ToolAccent.-muted       { background: $primary 8%; }
-
-/* B-2: completing flash — subtle accent border signals result has landed */
-ToolPanel.--completing > ToolAccent {
-    background: $primary 25%;
-}
+/* --- Tool panel accent contract ---
+ * ToolPanel uses one class-driven border-left accent.
+ * Do not add a separate accent rail widget; category-* and tool-panel--error are
+ * the single visual state source for category and error emphasis. */
 
 ToolPanel.tool-panel--accent                 { border-left: vkey $accent 30%; }
 ToolPanel.category-file.tool-panel--accent   { border-left: vkey $accent 80%; }

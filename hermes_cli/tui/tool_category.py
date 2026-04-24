@@ -51,13 +51,35 @@ _CATEGORY_DEFAULTS: dict[ToolCategory, CategoryDefaults] = {
     ToolCategory.FILE:    CategoryDefaults("tool-file-accent",    "tool-glyph-file",    "F", "file_result",    15, icon_nf="\uf718"),   # 
     ToolCategory.SHELL:   CategoryDefaults("tool-shell-accent",   "tool-glyph-shell",   "$", "shell_result",   10, icon_nf="\ue795"),   # 
     ToolCategory.CODE:    CategoryDefaults("tool-code-accent",    "tool-glyph-code",    "P", "code_result",    6,  icon_nf="\ue60c"),   # 
-    ToolCategory.SEARCH:  CategoryDefaults("tool-search-accent",  "tool-glyph-search",  "?", "search_result",  10, icon_nf="\uf002"),   # 
+    ToolCategory.SEARCH:  CategoryDefaults("tool-search-accent",  "tool-glyph-search",  ">", "search_result",  10, icon_nf="\uf002"),   #
     ToolCategory.WEB:     CategoryDefaults("tool-web-accent",     "tool-glyph-web",     "@", "web_result",     10, icon_nf="\uf0ac"),   # 
     ToolCategory.AGENT:   CategoryDefaults("tool-agent-accent",   "tool-glyph-agent",   "*", "agent_result",   15, icon_nf="\uf444"),   # 
     ToolCategory.VISION:  CategoryDefaults("tool-vision-accent",  "tool-glyph-vision",  "V", "vision_result",  10, icon_nf="\uf03e"),   # 
     ToolCategory.MCP:     CategoryDefaults("tool-mcp-accent",     "tool-glyph-mcp",     "#", "mcp_result",     10, icon_nf="\uf868"),   # 󰡨
-    ToolCategory.UNKNOWN: CategoryDefaults("tool-unknown-accent", "tool-glyph-unknown", "?", "generic_result", 6,  icon_nf="\uf059"),   # 
+    ToolCategory.UNKNOWN: CategoryDefaults("tool-unknown-accent", "tool-glyph-unknown", ".", "generic_result", 6,  icon_nf="\uf059"),   # 
 }
+
+
+# ---------------------------------------------------------------------------
+# Display tiers — 4 functional tiers for the display layer (A-6)
+# ---------------------------------------------------------------------------
+
+_DISPLAY_TIER: dict[ToolCategory, str] = {
+    ToolCategory.FILE:    "file",   # read/write artefacts
+    ToolCategory.SHELL:   "exec",   # run something, wait for it
+    ToolCategory.CODE:    "exec",
+    ToolCategory.SEARCH:  "query",  # external lookup, returns results
+    ToolCategory.WEB:     "query",
+    ToolCategory.MCP:     "query",
+    ToolCategory.AGENT:   "agent",  # reasoning / image / fallback
+    ToolCategory.VISION:  "agent",
+    ToolCategory.UNKNOWN: "agent",
+}
+
+
+def display_tier_for(cat: ToolCategory) -> str:
+    """Return the 4-tier display-layer identifier for a category."""
+    return _DISPLAY_TIER[cat]
 
 
 # ---------------------------------------------------------------------------
@@ -300,12 +322,12 @@ def _derive_mcp_spec(
 _EMOJI_ICONS: dict[ToolCategory, str] = {
     ToolCategory.FILE:    "📄",
     ToolCategory.SHELL:   "🐚",
-    ToolCategory.CODE:    "🐍",
+    ToolCategory.CODE:    "💻",   # was 🐍 — CODE is language-agnostic
     ToolCategory.SEARCH:  "🔍",
     ToolCategory.WEB:     "🌐",
     ToolCategory.AGENT:   "🤖",
-    ToolCategory.VISION:  "👁",
-    ToolCategory.MCP:     "🔌",
+    ToolCategory.VISION:  "🖼",   # was 👁 — wider Noto/Segoe coverage
+    ToolCategory.MCP:     "🧩",   # was 🔌 — clearer extension metaphor
     ToolCategory.UNKNOWN: "❓",
 }
 
@@ -522,5 +544,6 @@ __all__ = [
     "spec_for",
     "classify_tool",          # back-compat legacy shim
     "resolve_icon_final",     # canonical public entry point — use this everywhere
+    "display_tier_for",       # A-6: 4-tier display layer
     # Internal: _resolve_icon, _category_glyph, _classify_by_schema, _derive_mcp_spec
 ]

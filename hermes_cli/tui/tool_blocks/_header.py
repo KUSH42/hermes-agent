@@ -4,7 +4,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from rich.text import Text
+from rich.text import Span, Text
 from textual.app import ComposeResult
 from textual.events import Click
 from textual.reactive import reactive
@@ -31,12 +31,24 @@ from ._shared import (
 
 MIN_LABEL_CELLS = 12
 
-_DROP_ORDER: list[str] = ["linecount", "duration", "chip", "hero", "diff", "stderrwarn", "remediation", "exit", "chevron", "flash"]
+_DROP_ORDER: list[str] = [
+    "flash", "remediation", "stderrwarn", "chip",
+    "linecount", "duration", "diff", "hero",
+    "chevron", "exit",
+]
 
 
 def _safe_collapsed(header: "ToolHeader") -> bool:
     panel = getattr(header, "_panel", None)
     return bool(panel.collapsed if panel is not None else False)
+
+
+def _remap_spans(seg: Text, strip_n: int) -> list:
+    return [
+        Span(max(0, s.start - strip_n), max(0, s.end - strip_n), s.style)
+        for s in seg._spans
+        if s.end > strip_n
+    ]
 
 
 def _trim_tail_segments(
@@ -231,17 +243,19 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 icon_style = f"bold {err_color}"
             elif self._is_complete or self._duration:
                 ok_color = getattr(self, "_diff_add_color", _DIFF_ADD_FALLBACK)
-                icon_style = f"bold {ok_color}"
+                _cat_accent = ok_color
+                try:
+                    from hermes_cli.tui.tool_category import display_tier_for
+                    _tier = display_tier_for(spec.category)
+                    _cv = self.app.get_css_variables()
+                    _cat_accent = _cv.get(f"tool-tier-{_tier}-accent") or ok_color
+                except Exception:  # CSS vars or app context unavailable pre-mount; ok_color fallback is correct
+                    pass
+                icon_style = f"bold {_cat_accent}"
             else:
                 icon_style = "dim"
             t.append(f" {icon_str}", style=icon_style)
         space_after_icon = 1
-
-        shell_prompt_w = 0
-        if spec.primary_arg == "command" and spec.category == ToolCategory.SHELL:
-            accent = getattr(self, "_focused_gutter_color", _GUTTER_FALLBACK)
-            t.append(" $", style=f"bold {accent}")
-            shell_prompt_w = 2
 
         # A1: build tail as named segments for width-aware trimming
         tail_segments: list[tuple[str, Text]] = []
@@ -279,7 +293,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 elif self._tool_icon_error:
                     tail_segments.append(("hero", Text(f"  {self._primary_hero}", style="bold red")))
                 else:
-                    tail_segments.append(("hero", Text(f"  {self._primary_hero}", style="dim green")))
+                    tail_segments.append(("hero", Text(f"  {self._primary_hero}", style="dim")))
             elif self._is_complete and not self._tool_icon_error and not self._line_count:
                 tail_segments.append(("hero", Text("  —", style="dim")))
             # A2: chips removed from header; always served by FooterPane only
@@ -346,9 +360,8 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             except Exception:
                 pass
 
-            # R10: explicit exit code in collapsed header
-            is_collapsed = _safe_collapsed(self)
-            if is_collapsed and self._is_complete:
+            # A-5: exit code visible regardless of collapsed state
+            if self._is_complete:
                 code = getattr(self, "_exit_code", None)
                 if code is not None:
                     if code == 0:
@@ -358,6 +371,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                         tail_segments.append(("exit", Text(f"  exit {code}", style="bold red")))
 
             # C-2: remediation hint when collapsed+error
+            is_collapsed = _safe_collapsed(self)
             if is_collapsed and self._is_complete and self._tool_icon_error:
                 _rh = getattr(self, "_remediation_hint", None)
                 if _rh:
@@ -368,12 +382,19 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             tail_segments.append(("duration", Text(f"  {_pending_dur}", style="dim")))
 
         term_w = self.size.width
-        FIXED_PREFIX_W = gutter_w + icon_cell_w + space_after_icon + shell_prompt_w
+        FIXED_PREFIX_W = gutter_w + icon_cell_w + space_after_icon
         tail_budget = max(0, term_w - FIXED_PREFIX_W - MIN_LABEL_CELLS - 2) if term_w > 0 else 80
         tail_segments = _trim_tail_segments(tail_segments, tail_budget)
+        from hermes_cli.tui.body_renderers._grammar import GLYPH_META_SEP, glyph as _glyph
+        _sep = Text(f" {_glyph(GLYPH_META_SEP)} ", style="dim #555555")
         tail = Text()
-        for _, seg in tail_segments:
-            tail.append_text(seg)
+        for i, (_, seg) in enumerate(tail_segments):
+            if i > 0:
+                tail.append_text(_sep)
+            strip_n = len(seg.plain) - len(seg.plain.lstrip())
+            stripped = Text(seg.plain.lstrip(), style=seg.style)
+            stripped._spans.extend(_remap_spans(seg, strip_n))
+            tail.append_text(stripped)
         tail_w = tail.cell_len
         available = max(MIN_LABEL_CELLS, term_w - FIXED_PREFIX_W - tail_w - 2) if term_w > 0 else 50
         if self._label_rich is not None:

@@ -8,9 +8,8 @@ if TYPE_CHECKING:
     from hermes_cli.tui.tool_result_parse import ResultSummaryV4
     from hermes_cli.tui.tool_payload import ClassificationResult, ToolPayload, ResultKind
 
-# Module-level flag: once any panel has shown the discovery hint via ?,
-# suppress for all subsequent panels in this session.
-_DISCOVERY_GLOBAL_SHOWN: bool = False
+# Per-category discovery set: fires once per distinct category per session.
+_DISCOVERY_SHOWN_CATEGORIES: "set[object]" = set()
 
 
 class _ToolPanelCompletionMixin:
@@ -69,7 +68,7 @@ class _ToolPanelCompletionMixin:
         if os.environ.get("HERMES_DETERMINISTIC"):
             strip.remove_class("--visible")
             return
-        if not self.has_focus or not self.collapsed:  # type: ignore[attr-defined]
+        if not self.collapsed:  # type: ignore[attr-defined]
             strip.remove_class("--visible")
             return
         if self._result_summary_v4 is None:  # type: ignore[attr-defined]
@@ -100,13 +99,15 @@ class _ToolPanelCompletionMixin:
     # ------------------------------------------------------------------
 
     def _maybe_show_discovery_hint(self) -> None:
-        global _DISCOVERY_GLOBAL_SHOWN
+        global _DISCOVERY_SHOWN_CATEGORIES
         from hermes_cli.tui.constants import accessibility_mode
-        if _DISCOVERY_GLOBAL_SHOWN or self._discovery_shown or accessibility_mode():  # type: ignore[attr-defined]
+        cat = getattr(self, "_category", None)
+        if cat in _DISCOVERY_SHOWN_CATEGORIES or self._discovery_shown or accessibility_mode():  # type: ignore[attr-defined]
             return
         if self._result_summary_v4 is None:  # type: ignore[attr-defined]
             return
         self._discovery_shown = True  # type: ignore[attr-defined]
+        _DISCOVERY_SHOWN_CATEGORIES.add(cat)
         try:
             from hermes_cli.tui.services import feedback as _fb_mod
             self.app.feedback.flash(  # type: ignore[attr-defined]

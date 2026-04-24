@@ -67,7 +67,7 @@ def _build_collapsed_actions_map() -> "dict":
     from hermes_cli.tui.tool_category import ToolCategory
     return {
         ToolCategory.SHELL:  [("r", "retry"), ("e", "err"), ("y", "copy"), ("?", "keys")],
-        ToolCategory.FILE:   [("o", "open"), ("y", "copy"), ("c", "copy"), ("?", "keys")],
+        ToolCategory.FILE:   [("o", "open"), ("y", "copy"), ("?", "keys")],
         ToolCategory.SEARCH: [("y", "copy"), ("o", "open"), ("?", "keys")],
         ToolCategory.WEB:    [("o", "open"), ("y", "copy"), ("?", "keys")],
         ToolCategory.CODE:   [("y", "copy"), ("r", "retry"), ("?", "keys")],

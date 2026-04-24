@@ -763,6 +763,9 @@ ToolPanel.category-agent.tool-panel--accent  { border-left: vkey $accent 40%; }
 ToolPanel.category-mcp.tool-panel--accent    { border-left: vkey #9b59b6 80%; }
 ToolPanel.category-vision.tool-panel--accent { border-left: vkey $tool-vision-accent 80%; }
 ToolPanel.tool-panel--error                  { border-left: vkey $error 80%; }
+/* QW-03: collapsed strip always visible when collapsed; dimmer when unfocused */
+_CollapsedActionStrip { color: $text-muted 50%; }
+ToolPanel:focus _CollapsedActionStrip { color: $text-muted 85%; }
 /* D2: more visible focus indicator */
 ToolPanel:focus                              { background: $accent 10%; border-left: vkey $accent 60%; }
 ToolPanel:hover                              { background: $accent 5%; }

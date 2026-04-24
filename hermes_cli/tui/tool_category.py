@@ -51,12 +51,12 @@ _CATEGORY_DEFAULTS: dict[ToolCategory, CategoryDefaults] = {
     ToolCategory.FILE:    CategoryDefaults("tool-file-accent",    "tool-glyph-file",    "F", "file_result",    15, icon_nf="\uf718"),   # 
     ToolCategory.SHELL:   CategoryDefaults("tool-shell-accent",   "tool-glyph-shell",   "$", "shell_result",   10, icon_nf="\ue795"),   # 
     ToolCategory.CODE:    CategoryDefaults("tool-code-accent",    "tool-glyph-code",    "P", "code_result",    6,  icon_nf="\ue60c"),   # 
-    ToolCategory.SEARCH:  CategoryDefaults("tool-search-accent",  "tool-glyph-search",  "?", "search_result",  10, icon_nf="\uf002"),   # 
+    ToolCategory.SEARCH:  CategoryDefaults("tool-search-accent",  "tool-glyph-search",  ">", "search_result",  10, icon_nf="\uf002"),   #
     ToolCategory.WEB:     CategoryDefaults("tool-web-accent",     "tool-glyph-web",     "@", "web_result",     10, icon_nf="\uf0ac"),   # 
     ToolCategory.AGENT:   CategoryDefaults("tool-agent-accent",   "tool-glyph-agent",   "*", "agent_result",   15, icon_nf="\uf444"),   # 
     ToolCategory.VISION:  CategoryDefaults("tool-vision-accent",  "tool-glyph-vision",  "V", "vision_result",  10, icon_nf="\uf03e"),   # 
     ToolCategory.MCP:     CategoryDefaults("tool-mcp-accent",     "tool-glyph-mcp",     "#", "mcp_result",     10, icon_nf="\uf868"),   # 󰡨
-    ToolCategory.UNKNOWN: CategoryDefaults("tool-unknown-accent", "tool-glyph-unknown", "?", "generic_result", 6,  icon_nf="\uf059"),   # 
+    ToolCategory.UNKNOWN: CategoryDefaults("tool-unknown-accent", "tool-glyph-unknown", "\u00b7", "generic_result", 6,  icon_nf="\uf059"),   #
 }
 
 
@@ -300,7 +300,7 @@ def _derive_mcp_spec(
 _EMOJI_ICONS: dict[ToolCategory, str] = {
     ToolCategory.FILE:    "📄",
     ToolCategory.SHELL:   "🐚",
-    ToolCategory.CODE:    "🐍",
+    ToolCategory.CODE:    "💻",
     ToolCategory.SEARCH:  "🔍",
     ToolCategory.WEB:     "🌐",
     ToolCategory.AGENT:   "🤖",

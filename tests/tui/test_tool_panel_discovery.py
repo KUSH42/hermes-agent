@@ -1,16 +1,16 @@
-"""B9 — Action discovery: [?] focus-hint pill on first focus.
+"""B9 / QW-12 — Action discovery: per-category hint gating.
 
-Tests for _maybe_show_discovery_hint and _DISCOVERY_GLOBAL_SHOWN flag.
+Tests for _maybe_show_discovery_hint and _DISCOVERY_SHOWN_CATEGORIES set.
 """
 from __future__ import annotations
 
 import types
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock
 
 import pytest
 
-import hermes_cli.tui.tool_panel as _tp_module
 import hermes_cli.tui.tool_panel._completion as _comp_module
+from hermes_cli.tui.tool_category import ToolCategory
 
 
 # ---------------------------------------------------------------------------
@@ -26,10 +26,11 @@ def _make_summary():
     )
 
 
-def _make_panel(*, result=None) -> "types.SimpleNamespace":
+def _make_panel(*, result=None, category=ToolCategory.SHELL) -> "types.SimpleNamespace":
     panel = types.SimpleNamespace()
     panel._discovery_shown = False
     panel._result_summary_v4 = result
+    panel._category = category
 
     mock_feedback = MagicMock()
     mock_feedback.LOW = 0
@@ -49,10 +50,10 @@ def _make_panel(*, result=None) -> "types.SimpleNamespace":
 
 @pytest.fixture(autouse=True)
 def reset_global_flag():
-    """Reset _DISCOVERY_GLOBAL_SHOWN before/after each test."""
-    _comp_module._DISCOVERY_GLOBAL_SHOWN = False
+    """Reset _DISCOVERY_SHOWN_CATEGORIES before/after each test."""
+    _comp_module._DISCOVERY_SHOWN_CATEGORIES.clear()
     yield
-    _comp_module._DISCOVERY_GLOBAL_SHOWN = False
+    _comp_module._DISCOVERY_SHOWN_CATEGORIES.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -80,10 +81,10 @@ class TestDiscoveryHint:
         panel._maybe_show_discovery_hint()
         assert panel.app.feedback.flash.call_count == 1
 
-    def test_hint_not_fired_after_global_suppress(self, monkeypatch):
+    def test_hint_not_fired_after_category_in_set(self, monkeypatch):
         monkeypatch.setenv("HERMES_ACCESSIBLE", "")
-        _comp_module._DISCOVERY_GLOBAL_SHOWN = True
-        panel = _make_panel(result=_make_summary())
+        _comp_module._DISCOVERY_SHOWN_CATEGORIES.add(ToolCategory.SHELL)
+        panel = _make_panel(result=_make_summary(), category=ToolCategory.SHELL)
         panel._maybe_show_discovery_hint()
         panel.app.feedback.flash.assert_not_called()
 
@@ -123,28 +124,35 @@ class TestDiscoveryHint:
         assert "?" in msg
         assert "F1" in msg
 
-    def test_discovery_flag_reset_between_test_panels(self):
-        # The autouse fixture resets the flag; this test confirms it starts False
-        assert _comp_module._DISCOVERY_GLOBAL_SHOWN is False
+    def test_discovery_set_empty_at_start(self):
+        assert len(_comp_module._DISCOVERY_SHOWN_CATEGORIES) == 0
 
-    def test_global_flag_persists_across_panel_instances(self, monkeypatch):
+    def test_category_added_to_set_after_hint(self, monkeypatch):
         monkeypatch.setenv("HERMES_ACCESSIBLE", "")
-        panel1 = _make_panel(result=_make_summary())
-        panel1._maybe_show_discovery_hint()
-        # panel1 set _discovery_shown=True, but NOT the global flag via hint alone
-        # The global flag is set only via action_show_help
-        # Confirm flag still False after hint (hint doesn't set global)
-        assert _comp_module._DISCOVERY_GLOBAL_SHOWN is False
+        panel = _make_panel(result=_make_summary(), category=ToolCategory.FILE)
+        panel._maybe_show_discovery_hint()
+        assert ToolCategory.FILE in _comp_module._DISCOVERY_SHOWN_CATEGORIES
 
-        # Second panel should still be able to show hint (global not yet set)
-        panel2 = _make_panel(result=_make_summary())
+    def test_different_category_still_fires_after_first(self, monkeypatch):
+        monkeypatch.setenv("HERMES_ACCESSIBLE", "")
+        panel1 = _make_panel(result=_make_summary(), category=ToolCategory.SHELL)
+        panel1._maybe_show_discovery_hint()
+        # FILE not yet shown — a different panel should fire
+        panel2 = _make_panel(result=_make_summary(), category=ToolCategory.FILE)
         panel2._maybe_show_discovery_hint()
         panel2.app.feedback.flash.assert_called_once()
 
+    def test_same_category_second_panel_skips(self, monkeypatch):
+        monkeypatch.setenv("HERMES_ACCESSIBLE", "")
+        panel1 = _make_panel(result=_make_summary(), category=ToolCategory.SHELL)
+        panel1._maybe_show_discovery_hint()
+        panel2 = _make_panel(result=_make_summary(), category=ToolCategory.SHELL)
+        panel2._maybe_show_discovery_hint()
+        panel2.app.feedback.flash.assert_not_called()
+
 
 class TestActionShowHelpSetsGlobalFlag:
-    def test_action_show_help_sets_global_flag(self, monkeypatch):
-        # Build minimal panel with app mock
+    def test_action_show_help_marks_all_categories(self, monkeypatch):
         panel = types.SimpleNamespace()
         panel._discovery_shown = False
         mock_app = MagicMock()
@@ -154,6 +162,7 @@ class TestActionShowHelpSetsGlobalFlag:
         from hermes_cli.tui.tool_panel import ToolPanel
         panel.action_show_help = ToolPanel.action_show_help.__get__(panel)
 
-        _comp_module._DISCOVERY_GLOBAL_SHOWN = False
+        assert len(_comp_module._DISCOVERY_SHOWN_CATEGORIES) == 0
         panel.action_show_help()
-        assert _comp_module._DISCOVERY_GLOBAL_SHOWN is True
+        for cat in ToolCategory:
+            assert cat in _comp_module._DISCOVERY_SHOWN_CATEGORIES

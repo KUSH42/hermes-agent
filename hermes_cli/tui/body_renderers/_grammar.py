@@ -205,8 +205,6 @@ BodyFooter {
         colors = self._colors if self._colors is not None else SkinColors.default()
         sep = glyph("·")
         t = Text()
-        t.append("[c]", style=Style(color=colors.muted, bold=True))
-        t.append(f" copy {sep} ", style=Style(color=colors.muted))
-        t.append("[o]", style=Style(color=colors.muted, bold=True))
-        t.append(" open in $EDITOR", style=Style(color=colors.muted))
+        t.append("[y]", style=Style(color=colors.muted, bold=True))
+        t.append(" copy", style=Style(color=colors.muted))
         return t

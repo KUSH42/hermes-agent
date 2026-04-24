@@ -71,7 +71,6 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         Binding("enter", "toggle_collapse",  "Toggle",           show=False),
         Binding("y",     "copy_body",         "Copy output",      show=False),
         Binding("Y",     "copy_input",        "Copy input",       show=False),
-        Binding("c",     "copy_body",        "Copy output",      show=False),
         Binding("C",     "copy_ansi",        "Copy +color",      show=False),
         Binding("H",     "copy_html",        "Copy HTML",        show=False),
         Binding("I",     "copy_invocation",  "Copy invocation",  show=False),

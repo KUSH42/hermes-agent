@@ -15,7 +15,7 @@ from ._footer import (
     BodyPane,
     FooterPane,
 )
-from ._completion import _ToolPanelCompletionMixin, _DISCOVERY_GLOBAL_SHOWN
+from ._completion import _ToolPanelCompletionMixin, _DISCOVERY_SHOWN_CATEGORIES
 from ._actions import _ToolPanelActionsMixin
 from ._core import ToolPanel
 from ._child import ChildPanel
@@ -39,5 +39,5 @@ __all__ = [
     "_artifact_icon",
     "_ToolPanelCompletionMixin",
     "_ToolPanelActionsMixin",
-    "_DISCOVERY_GLOBAL_SHOWN",
+    "_DISCOVERY_SHOWN_CATEGORIES",
 ]

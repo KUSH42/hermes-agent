@@ -1,4 +1,4 @@
-"""Tests for ConfigOverlay — canonical 7-tab picker overlay (R3 Phase A)."""
+"""Tests for ConfigOverlay — canonical 6-tab picker overlay (R3 Phase A)."""
 
 from __future__ import annotations
 
@@ -93,8 +93,8 @@ async def test_hotkeys_switch_tabs():
         ov = app.query_one(ConfigOverlay)
         ov.show_overlay()
         ov.focus()
-        for hotkey, expected in [("2", "skin"), ("5", "reasoning"),
-                                  ("6", "verbose"), ("7", "yolo"), ("1", "model")]:
+        for hotkey, expected in [("2", "skin"), ("4", "reasoning"),
+                                  ("5", "verbose"), ("6", "yolo"), ("1", "model")]:
             ov.focus()
             await pilot.press(hotkey)
             assert ov.active_tab == expected, f"after '{hotkey}'"
@@ -140,7 +140,7 @@ async def test_only_active_tab_body_visible():
         ov = app.query_one(ConfigOverlay)
         ov.show_overlay(tab="reasoning")
         from textual.containers import Vertical
-        for key in ("model", "skin", "syntax", "options", "reasoning", "verbose", "yolo"):
+        for key in ("model", "skin", "syntax", "reasoning", "verbose", "yolo"):
             body = ov.query_one(f"#co-body-{key}", Vertical)
             if key == "reasoning":
                 assert body.display
@@ -215,9 +215,13 @@ async def test_reasoning_tab_has_six_level_buttons():
     async with app.run_test():
         ov = app.query_one(ConfigOverlay)
         ov.show_overlay(tab="reasoning")
-        from textual.widgets import Button
-        buttons = list(ov.query("#co-rpo-levels Button"))
-        assert len(buttons) == 6
+        ov._update_reasoning_highlights()
+        from textual.widgets import OptionList
+        ol = ov.query_one("#co-rpo-list", OptionList)
+        option_ids = [ol.get_option_at_index(i).id for i in range(ol.option_count)]
+        assert ol.option_count == 6
+        for level in ("none", "low", "minimal", "medium", "high", "xhigh"):
+            assert f"co-rpo-opt-{level}" in option_ids, f"missing option for {level}"
 
 
 @pytest.mark.asyncio
@@ -342,7 +346,7 @@ async def test_tab_state_preserved_across_switch():
         ol = ov.query_one("#co-model-list", OptionList)
         ol.highlighted = 2
         # Switch away and back
-        await pilot.press("6")  # verbose
+        await pilot.press("5")  # verbose
         assert ov.active_tab == "verbose"
         await pilot.press("1")  # back to model
         assert ov.active_tab == "model"

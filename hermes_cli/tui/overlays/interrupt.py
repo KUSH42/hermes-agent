@@ -649,6 +649,12 @@ class InterruptOverlay(Widget, can_focus=True):
         )
         body.mount(inp)
         self.call_after_refresh(inp.focus)
+        import os as _os
+        _sep = "·" if not _os.environ.get("HERMES_NO_UNICODE") else "-"
+        body.mount(Static(
+            f"[dim]Alt+P reveal temporarily {_sep} Enter submit {_sep} Esc cancel[/dim]",
+            id=f"{prefix}-hint",
+        ))
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         payload = self._current_payload
@@ -749,9 +755,12 @@ class InterruptOverlay(Widget, can_focus=True):
         body.mount(Static("[bold]New Session[/bold]", id="ns-title"))
         body.mount(Static("Branch name:", id="ns-branch-label"))
         spec = payload.input_spec or InputSpec(placeholder="feat/my-feature")
-        body.mount(
-            Input(placeholder=spec.placeholder or "feat/my-feature", id="ns-branch-input")
-        )
+        inp = Input(placeholder=spec.placeholder or "feat/my-feature", id="ns-branch-input")
+        body.mount(inp)
+        # Deferred one extra tick so this fires after _activate's call_after_refresh(self.focus).
+        # _activate queues self.focus in the same sync turn; by nesting here, inp.focus
+        # lands on the following refresh and wins.
+        self.call_after_refresh(lambda: self.call_after_refresh(inp.focus))
         body.mount(Static("Base:", id="ns-base-label"))
         base_row = Horizontal(id="ns-base-row")
         body.mount(base_row)

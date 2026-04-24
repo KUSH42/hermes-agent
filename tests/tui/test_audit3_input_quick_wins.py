@@ -30,7 +30,7 @@ class _FakeInput:
     suggestion: str = ""
     _history_idx: int = -1
     _history: list = field(default_factory=list)
-    _history_draft: str = ""
+    _draft_stash: "str | None" = None
     _history_loading: bool = False
     _rev_mode: bool = False
     _rev_query: str = ""

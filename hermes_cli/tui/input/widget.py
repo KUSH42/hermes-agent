@@ -100,7 +100,6 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         )
         self._history: list[str] = []
         self._history_idx: int = -1
-        self._history_draft: str = ""
         self._history_loading: bool = False
         self._slash_commands: list[str] = []
         self._slash_descriptions: dict[str, str] = {}
@@ -569,7 +568,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             return
         if self._history_idx == -1:
             if self._draft_stash is None:
-                self._history_draft = self.value
+                self.save_draft_stash()
             self._history_idx = len(self._history) - 1
         elif self._history_idx > 0:
             self._history_idx -= 1
@@ -595,7 +594,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                 self._history_load(self._draft_stash)
                 self._draft_stash = None
             else:
-                self._history_load(self._history_draft)
+                self._history_load("")
 
     # --- Convenience ---
 

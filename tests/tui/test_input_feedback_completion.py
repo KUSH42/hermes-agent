@@ -45,7 +45,6 @@ class _FakeInput:
     suggestion: str = ""
     _history_idx: int = -1
     _history: list = field(default_factory=list)
-    _history_draft: str = ""
     _history_loading: bool = False
     _draft_stash: "str | None" = None
     _write_fail_warned: bool = False
@@ -148,11 +147,9 @@ class TestDraftStash:
         inp._history_idx = -1
         # Simulate overlay accepted text and save_draft_stash was called with "real draft"
         inp._draft_stash = "real draft"
-        # Now call action_history_prev — should not overwrite _history_draft
-        inp._history_draft = "old history draft"
         HermesInput.action_history_prev(inp)
-        # _history_draft should remain unchanged (draft_stash was set)
-        assert inp._history_draft == "old history draft"
+        # _draft_stash should remain unchanged (guard preserved it)
+        assert inp._draft_stash == "real draft"
         assert inp._history_idx == 1  # moved to last entry
 
     def test_draft_stash_cleared_after_typing(self):
@@ -174,7 +171,6 @@ class TestDraftStash:
         """Up arrow after history browse-back restores _draft_stash, not _history_draft."""
         inp = self._make_inp(history=["e1"], text="e1")
         inp._history_idx = 0  # currently on a history entry
-        inp._history_draft = "old draft"
         inp._draft_stash = "real user text"
         # Press Down to go back past end
         HermesInput.action_history_next(inp)

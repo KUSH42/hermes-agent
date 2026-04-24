@@ -273,12 +273,16 @@ class _HistoryMixin:
         if self._history_idx == -1 and direction == +1:
             return
         if self._history_idx == -1 and direction == -1:
-            self._history_draft = self.value  # type: ignore[attr-defined]
+            if getattr(self, "_draft_stash", None) is None:
+                self.save_draft_stash()  # type: ignore[attr-defined]
         start = self._history_idx if self._history_idx != -1 else len(self._history)
         idx = start + direction
         if direction == +1 and idx >= len(self._history):
             self._history_idx = -1  # type: ignore[attr-defined]
-            self._history_load(self._history_draft)  # type: ignore[attr-defined]
+            stash = getattr(self, "_draft_stash", None)
+            self._history_load(stash if stash is not None else "")  # type: ignore[attr-defined]
+            if stash is not None:
+                self._draft_stash = None  # type: ignore[attr-defined]
             return
         while 0 <= idx < len(self._history):
             entry = self._history[idx]

@@ -18,7 +18,7 @@ class _FakeInput:
     def __init__(self, text="", history=None):
         self._history: list = list(history or [])
         self._history_idx: int = -1
-        self._history_draft: str = ""
+        self._draft_stash: "str | None" = None
         self._history_loading: bool = False
         self._idle_placeholder: str = "Type a message  @file  /  commands"
         self._chevron_label: str = "❯ "
@@ -65,6 +65,10 @@ class _FakeInput:
 
     def set_class(self, condition: bool, cls: str):
         pass
+
+    def save_draft_stash(self) -> None:
+        if self._history_idx == -1:
+            self._draft_stash = self.text
 
 
 def _make_input(text="", history=None) -> "_FakeInput":
@@ -479,7 +483,7 @@ class TestReadlineBindings:
     def _make_hist_inp(self, history, idx=-1):
         inp = _make_input(history=history)
         inp._history_idx = idx
-        inp._history_draft = ""
+        inp._draft_stash = None
         loaded = []
 
         def fake_load(text):
@@ -513,7 +517,7 @@ class TestReadlineBindings:
         inp, loaded = self._make_hist_inp(["hello"])
         inp._text = "my draft"
         _HistoryMixin._history_navigate_skip_cmds(inp, direction=-1)
-        assert inp._history_draft == "my draft"
+        assert inp._draft_stash == "my draft"
 
     def test_alt_up_draft_saved_once(self):
         """Draft not overwritten on subsequent Alt+Up presses."""
@@ -521,10 +525,10 @@ class TestReadlineBindings:
         inp, loaded = self._make_hist_inp(["hello", "world"])
         inp._text = "original"
         _HistoryMixin._history_navigate_skip_cmds(inp, direction=-1)
-        draft_after_first = inp._history_draft
+        draft_after_first = inp._draft_stash
         # Second nav (idx now 1, not -1)
         _HistoryMixin._history_navigate_skip_cmds(inp, direction=-1)
-        assert inp._history_draft == draft_after_first == "original"
+        assert inp._draft_stash == draft_after_first == "original"
 
     def test_alt_up_no_prompts_stays_put(self):
         """If all entries are slash/bang, _history_idx stays unchanged."""
@@ -546,7 +550,7 @@ class TestReadlineBindings:
         """Alt+Down past most-recent entry restores draft."""
         from hermes_cli.tui.input._history import _HistoryMixin
         inp, loaded = self._make_hist_inp(["hello"], idx=0)
-        inp._history_draft = "my draft"
+        inp._draft_stash = "my draft"
         _HistoryMixin._history_navigate_skip_cmds(inp, direction=+1)
         assert loaded == ["my draft"]
         assert inp._history_idx == -1

@@ -838,7 +838,7 @@ async def test_down_on_last_row_goes_to_history() -> None:
         inp._history = ["first", "second"]
         inp.value = "first"
         inp._history_idx = 0
-        inp._history_draft = "draft"
+        inp._draft_stash = "draft"
         await pilot.pause()
 
         last_row = inp.text.count("\n")

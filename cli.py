@@ -3485,7 +3485,8 @@ class HermesCLI:
         update_in_flight = False
         template = self._build_startup_banner_template(plain_hero)
 
-        def _drain_latest() -> None:
+        async def _drain_latest() -> None:
+            import asyncio as _asyncio
             nonlocal latest_frame, update_in_flight
             from hermes_cli.tui.widgets import StartupBannerWidget
             try:
@@ -3503,6 +3504,9 @@ class HermesCLI:
                         update_in_flight = False
                         return
                 widget.set_frame(frame)
+                # Yield to event loop so the idle event fires and Textual renders the
+                # frame before the future resolves and the daemon queues the next one.
+                await _asyncio.sleep(1.0 / 60)
 
         def _queue_frame(rich_text: Text) -> None:
             nonlocal latest_frame, update_in_flight
@@ -3521,11 +3525,6 @@ class HermesCLI:
         _preflight = self._render_startup_banner_text(print_hero=True)
         _queue_frame(_preflight)
         _tte_start = time.monotonic()   # time imported at module level
-        try:
-            from textual.constants import MAX_FPS as _MAX_FPS
-        except Exception:
-            _MAX_FPS = 60
-        _frame_interval = 1.0 / _MAX_FPS
 
         try:
             for i, frame in enumerate(iter_frames(effect_name, plain_hero, params=params)):
@@ -3540,7 +3539,6 @@ class HermesCLI:
                 rich_frame.no_wrap = True
                 rich_frame.overflow = "ignore"
                 _queue_frame(rich_frame)
-                time.sleep(_frame_interval)
         except Exception as exc:
             logger.warning("TTE frame error: %s", exc, exc_info=True)
 

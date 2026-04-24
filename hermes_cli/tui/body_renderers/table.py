@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from typing import TYPE_CHECKING, ClassVar
 
 from hermes_cli.tui.body_renderers.base import BodyRenderer
@@ -31,7 +32,6 @@ def _detect_delimiter(lines: list[str]) -> str:
 def _split_row(line: str, delim: str) -> list[str]:
     """Split a row by delimiter, stripping outer pipes and whitespace."""
     if delim == "|":
-        # Strip outer pipes
         stripped = line.strip()
         if stripped.startswith("|"):
             stripped = stripped[1:]
@@ -40,6 +40,37 @@ def _split_row(line: str, delim: str) -> list[str]:
         return [c.strip() for c in stripped.split("|")]
     else:
         return [c.strip() for c in line.split("\t")]
+
+
+def _looks_like_table(lines: list[str], delim: str) -> bool:
+    """Return True when ≥70% of lines share the modal column count and ncols ≥ 2."""
+    if not lines:
+        return False
+    col_counts = [len(_split_row(l, delim)) for l in lines]
+    most_common = Counter(col_counts).most_common(1)
+    if not most_common:
+        return False
+    mode_count, mode_freq = most_common[0]
+    ratio = mode_freq / len(lines)
+    return ratio >= 0.7 and mode_count >= 2
+
+
+def _column_numeric_stats(rows: list[list[str]], j: int) -> tuple[int, int, bool]:
+    """Return (numeric_count, non_numeric_count, is_numeric_col)."""
+    num = nonnum = 0
+    for r in rows:
+        if j >= len(r):
+            continue
+        cell = r[j].strip()
+        if not cell:
+            continue
+        if _is_numeric(cell):
+            num += 1
+        else:
+            nonnum += 1
+    total = num + nonnum
+    is_numeric_col = (num / total >= 0.8) if total > 0 else False
+    return num, nonnum, is_numeric_col
 
 
 class TableRenderer(BodyRenderer):
@@ -55,28 +86,30 @@ class TableRenderer(BodyRenderer):
         """Build a rich.table.Table from delimited output."""
         from rich.table import Table
         from rich import box
+        from rich.text import Text
+        from rich.style import Style
 
         raw = self.payload.output_raw or ""
         lines = [l for l in raw.splitlines() if l.strip()]
 
         if not lines:
-            from rich.text import Text
             return Text("(empty table)")
 
         delim = _detect_delimiter(lines)
-        table = Table(box=box.HORIZONTALS, show_header=False, padding=(0, 1))
+
+        if not _looks_like_table(lines, delim):
+            from hermes_cli.tui.body_renderers.fallback import FallbackRenderer
+            return FallbackRenderer(self.payload, self.cls_result, app=self._app).build()
 
         # Detect header row
         has_header = False
         data_start = 0
         if len(lines) >= 2:
-            # Check if second row is a separator row (---|---)
             second = lines[1].strip()
             if _SEP_ROW_RE.match(second) or re.match(r"^[\-|+:]+$", second):
                 has_header = True
-                data_start = 2  # skip header and separator
+                data_start = 2
             elif len(lines) >= 1:
-                # Check if first row looks like headers (non-numeric)
                 first_cols = _split_row(lines[0], delim)
                 if first_cols and all(not _is_numeric(c) and c for c in first_cols):
                     has_header = True
@@ -91,29 +124,37 @@ class TableRenderer(BodyRenderer):
             ncols = len(_split_row(lines[0], delim)) if lines else 0
 
         if ncols == 0:
-            from rich.text import Text
             return Text(raw)
 
-        # Detect numeric columns from data rows
         data_rows = [_split_row(l, delim) for l in lines[data_start:]]
-        numeric_cols: set[int] = set()
-        for row in data_rows:
-            for j, cell in enumerate(row):
-                if j < ncols and _is_numeric(cell):
-                    numeric_cols.add(j)
 
-        # Build table columns
-        table = Table(box=box.HORIZONTALS, padding=(0, 1))
+        # Proportional numeric detection per column
+        numeric_cols: set[int] = set()
+        for j in range(ncols):
+            _, _, is_num = _column_numeric_stats(data_rows, j)
+            if is_num:
+                numeric_cols.add(j)
+
+        # Build table columns; no fake "ColN" headers when has_header is False
+        table = Table(box=box.HORIZONTALS, show_header=has_header, padding=(0, 1))
         for j in range(ncols):
             justify = "right" if j in numeric_cols else "left"
-            header = header_cols[j] if has_header and j < len(header_cols) else f"Col{j+1}"
-            table.add_column(header, justify=justify)
+            if has_header:
+                header = header_cols[j] if j < len(header_cols) else ""
+                table.add_column(header, justify=justify)
+            else:
+                table.add_column(justify=justify)
 
-        # Add data rows
+        colors = self.colors
         for row in data_rows:
-            # Pad/trim to ncols
             padded = (row + [""] * ncols)[:ncols]
-            table.add_row(*padded)
+            styled = []
+            for j, cell in enumerate(padded):
+                if j in numeric_cols and cell.strip() and not _is_numeric(cell):
+                    styled.append(Text(cell, style=Style(color=colors.muted)))
+                else:
+                    styled.append(cell)
+            table.add_row(*styled)
 
         return table
 

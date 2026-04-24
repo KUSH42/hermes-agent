@@ -147,6 +147,18 @@ def build_rule(label: str = "", *, colors: "SkinColors | None" = None) -> "objec
     return t
 
 
+def truncation_footer(
+    *,
+    hidden_n: int,
+    unit: str = "lines",
+    action: str = "expand",
+    colors: "SkinColors | None" = None,
+) -> "object":
+    """'── 47 lines hidden · expand ──' — single wording, dim muted."""
+    label = f"{hidden_n} {unit} hidden {glyph('·')} {action}"
+    return build_rule(label, colors=colors)
+
+
 # ---------------------------------------------------------------------------
 # BodyFooter — sticky per-panel affordance footer
 # ---------------------------------------------------------------------------

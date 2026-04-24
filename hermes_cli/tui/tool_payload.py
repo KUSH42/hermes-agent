@@ -43,3 +43,4 @@ class ToolPayload:
     finished_at: float | None = None
     ansi: bool = False
     line_count: int = 0             # populated at finalize
+    header_has_cwd: bool = False    # True when ToolPanel header breadcrumb includes CWD

@@ -108,20 +108,59 @@ class ShellRenderer(StreamingBodyRenderer):
         return Text.from_ansi(raw)
 
     def finalize(self, all_plain: list[str], **kw: object) -> "ConsoleRenderable | None":
-        """C3: re-render as syntax-highlighted block when output is JSON or YAML."""
+        """C3: re-render as syntax-highlighted block when output is JSON or YAML.
+
+        R-X1: skip swap when content contains ANSI escapes or config disables swap.
+        Emits a leading rule notice when swap occurs.
+        """
         import json as _json
         from rich.syntax import Syntax
+        from hermes_cli.tui.body_renderers._grammar import SkinColors, build_rule
 
         text = "\n".join(all_plain).strip()
+
+        # R-X1: skip swap if content already has ANSI escape sequences
+        if "\x1b[" in text:
+            return None
+
+        app = kw.get("app")
+
+        # R-X1: config gate — swap_on_complete=false → keep as-streamed
+        if app is not None:
+            try:
+                swap = app.config.get("tui", {}).get("render", {}).get("swap_on_complete", True)
+                if not swap:
+                    return None
+            except Exception:
+                pass
+
+        colors = SkinColors.from_app(app)
+        theme = colors.syntax_theme
+
+        lang: str | None = None
         if text.startswith(("{", "[")):
             try:
                 _json.loads(text)
-                return Syntax(text, "json", line_numbers=False, theme="ansi_dark")
+                lang = "json"
             except Exception:
                 pass
-        if text.startswith("---"):
-            return Syntax(text, "yaml", line_numbers=False, theme="ansi_dark")
-        return None
+        if lang is None and text.startswith("---"):
+            lang = "yaml"
+
+        if lang is None:
+            return None
+
+        from rich.text import Text as _Text
+        notice = _Text()
+        notice.append_text(build_rule(f"↻ rendered as {lang}", colors=colors))
+        notice.append("\n")
+        try:
+            syntax = Syntax(text, lang, line_numbers=False, theme=theme, background_color="default")
+        except Exception:
+            syntax = _Text(text)
+
+        from rich.console import Group
+        return Group(notice, syntax)
 
     def preview(self, all_plain: list[str], max_lines: int) -> "ConsoleRenderable":
         tail = all_plain[-max_lines:] if all_plain else []
@@ -267,35 +306,67 @@ class FileRenderer(StreamingBodyRenderer):
         lang: str = "text",
         **kwargs: object,
     ) -> "ConsoleRenderable | None":
-        """Full-body Syntax re-render for write_file at completion."""
+        """Full-body Syntax re-render for write_file at completion.
+
+        R-X1: skip swap when ANSI escapes present or config disables swap.
+        Emits a leading rule notice when swap occurs.
+        """
         if not all_plain:
             return None
+
+        text = "\n".join(all_plain)
+
+        # R-X1: skip swap if content already has ANSI escape sequences
+        if "\x1b[" in text:
+            return None
+
+        app = kwargs.get("app")
+
+        # R-X1: config gate
+        if app is not None:
+            try:
+                swap = app.config.get("tui", {}).get("render", {}).get("swap_on_complete", True)
+                if not swap:
+                    return None
+            except Exception:
+                pass
+
+        from hermes_cli.tui.body_renderers._grammar import SkinColors, build_rule
+        colors = SkinColors.from_app(app)
+        theme = colors.syntax_theme
+
+        notice = Text()
+        notice.append_text(build_rule(f"↻ rendered as {lang}", colors=colors))
+        notice.append("\n")
+
         try:
             from rich.syntax import Syntax
-            return Syntax(
-                "\n".join(all_plain),
-                lang,
-                theme="ansi_dark",
-                background_color="default",
-                line_numbers=False,
-            )
+            syntax = Syntax(text, lang, theme=theme, background_color="default", line_numbers=False)
         except Exception:
-            return Text("\n".join(all_plain))
+            syntax = Text(text)
 
-    def render_diff_line(self, plain: str) -> "ConsoleRenderable | None":
-        """Return styled Rich Text for diff path lines, else None.
+        from rich.console import Group
+        return Group(notice, syntax)
 
-        Matches ToolBlock._render_diff_line exactly for snapshot equivalence.
+    def render_diff_line(self, plain: str, **kwargs: object) -> "ConsoleRenderable | None":
+        """Return styled Rich Text for diff lines with skin-colored gutter.
+
+        R-X3: extend beyond header-only styling to full +/-/context gutter with
+        skin-derived colors and background tints. No word-diff during streaming.
 
         Handles two formats:
         - Raw: '--- a/src/foo.py' / '+++ b/src/foo.py'
         - Rendered: 'a/src/foo.py → b/src/foo.py'
-
-        File paths are styled with underline to indicate they are interactive
-        (left-click opens via ToolHeader, right-click shows context menu).
+        - Diff lines: '+added', '-removed', ' context'
+        - Hunk headers: '@@ ... @@'
         """
+        from hermes_cli.tui.body_renderers._grammar import SkinColors
+        app = kwargs.get("app")
+        colors = SkinColors.from_app(app) if app else SkinColors.default()
+
         stripped = plain.strip()
-        # ---/+++ format: regex already strips a/ / b/ prefix; group 1 = "--- ", group 2 = path
+
+        # ---/+++ format: regex already strips a/ / b/ prefix
         m = _DIFF_HEADER_RE.match(stripped)
         if m:
             prefix, path_str = m.group(1), m.group(2).strip()
@@ -309,6 +380,7 @@ class FileRenderer(StreamingBodyRenderer):
                 t.append(dir_part, style="dim underline")
             t.append(fname, style="bold underline")
             return t
+
         # "old_path → new_path" rendered file header
         m2 = _DIFF_ARROW_RE.match(stripped)
         if m2:
@@ -324,7 +396,33 @@ class FileRenderer(StreamingBodyRenderer):
             t = Text(prefix_str, style="dim")
             t.append(fname, style="bold underline")
             return t
-        return None
+
+        # Hunk header: @@ ... @@ — dim passthrough
+        if plain.startswith("@@"):
+            return Text(plain, style="dim")
+
+        # R-X3: diff content lines — 2-col gutter + background tint
+        from rich.style import Style
+        if plain.startswith("+"):
+            content = plain[1:]
+            t = Text()
+            t.append("+ ", style=Style(color=colors.success))
+            t.append(content, style=Style(bgcolor=colors.diff_add_bg))
+            return t
+
+        if plain.startswith("-"):
+            content = plain[1:]
+            t = Text()
+            t.append("- ", style=Style(color=colors.error))
+            t.append(content, style=Style(bgcolor=colors.diff_del_bg))
+            return t
+
+        # Context line
+        content = plain[1:] if plain.startswith(" ") else plain
+        t = Text()
+        t.append("  ", style=Style(color=colors.muted))
+        t.append(content, style=Style(color=colors.muted))
+        return t
 
     def preview(self, all_plain: list[str], max_lines: int) -> "ConsoleRenderable":
         tail = all_plain[-max_lines:] if all_plain else []
@@ -359,11 +457,37 @@ def _render_web_search_results(items: list) -> "ConsoleRenderable":
     return t
 
 
+_RG_LINE_RE = _re.compile(r"^([^:]+):(\d+):")
+
+
 class SearchRenderer(StreamingBodyRenderer):
-    """Search results: plain stream, structured finalize, sidecar path extraction."""
+    """Search results: plain stream with path headers, structured finalize, sidecar path extraction.
+
+    R-X2: emits grammar path headers when the file path changes between lines,
+    matching the layout of the post-hoc SearchRenderer (minus hit-count and virtual-scroll).
+    """
+
+    def __init__(self) -> None:
+        self._last_emitted_path: str | None = None
 
     def render_stream_line(self, raw: str, plain: str) -> "ConsoleRenderable":
-        return Text.from_ansi(raw)
+        from hermes_cli.tui.body_renderers._grammar import build_path_header
+        lines: list = []
+
+        # R-X2: detect path from rg-style "file:line:content" format
+        m = _RG_LINE_RE.match(plain)
+        if m:
+            path = m.group(1)
+            if path != self._last_emitted_path:
+                header = build_path_header(path, right_meta="", colors=None)
+                lines.append(header)
+                self._last_emitted_path = path
+
+        lines.append(Text.from_ansi(raw))
+        if len(lines) == 1:
+            return lines[0]
+        from rich.console import Group
+        return Group(*lines)
 
     def finalize(self, all_plain: list[str], **kwargs: object) -> "ConsoleRenderable | None":
         if not all_plain:

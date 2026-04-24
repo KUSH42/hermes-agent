@@ -25,21 +25,53 @@ class ShellOutputRenderer(BodyRenderer):
     def build(self):
         """Build Rich renderable from shell output, stripping CWD tokens."""
         from rich.text import Text
+        from rich.style import Style
         from hermes_cli.tui.cwd_strip import strip_cwd
+        from hermes_cli.tui.body_renderers._grammar import build_rule, glyph
 
         raw = self.payload.output_raw or ""
         cleaned, cwd = strip_cwd(raw)
 
         result = Text()
+
+        # Emit leading CWD rule only when header breadcrumb does not already show it
+        header_has_cwd = getattr(self.payload, "header_has_cwd", False)
+        if cwd is not None and not header_has_cwd:
+            cwd_rule = build_rule(f"cwd: {cwd}", colors=self.colors)
+            result.append_text(cwd_rule)
+            result.append("\n")
+
         for line in cleaned.splitlines():
             result.append_text(Text.from_ansi(line))
             result.append("\n")
 
-        if cwd is not None:
-            from rich.text import Text as RichText
-            cwd_line = RichText(f"cwd: {cwd}", style="dim")
-            result.append_text(cwd_line)
+        # Exit code rule (non-zero or non-None shows rule; zero skipped)
+        exit_code = getattr(self.payload, "exit_code", None)
+        if exit_code is not None and exit_code != 0:
+            rule = build_rule(f"exit {exit_code}", colors=self.colors)
+            # Recolour the label span to error color
+            error_color = self.colors.error if self.colors else "#E06C75"
+            # build_rule returns a Text; find the label span and recolour
+            from rich.style import Style as _Style
+            # Append a separate error-colored exit line alongside the rule
+            exit_line = Text()
+            exit_line.append(glyph("──") + " ", style=_Style(color=error_color))
+            exit_line.append(f"exit {exit_code}", style=_Style(color=error_color))
+            exit_line.append(" " + glyph("──"), style=_Style(color=error_color))
+            result.append_text(exit_line)
             result.append("\n")
+
+        # Stderr lines with "! " gutter
+        stderr_raw = getattr(self.payload, "stderr_raw", None)
+        if stderr_raw:
+            error_color = self.colors.error if self.colors else "#E06C75"
+            from rich.style import Style as _Style
+            for line in stderr_raw.splitlines():
+                stderr_line = Text()
+                stderr_line.append("! ", style=_Style(color=error_color))
+                stderr_line.append(line)
+                result.append_text(stderr_line)
+                result.append("\n")
 
         return result
 

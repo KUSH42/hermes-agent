@@ -84,7 +84,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         id: str | None = None,
         classes: str | None = None,
     ) -> None:
-        _default_placeholder = "Type a message  @file  /  commands"
+        _default_placeholder = "Type a message  @file  /cmd  !shell"
         _effective_placeholder = placeholder if placeholder else _default_placeholder
         super().__init__(
             text="",
@@ -146,25 +146,6 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             return
         event.stop()
         if sys.platform != "linux":
-            return
-        try:
-            self.app
-            has_app = True
-        except Exception:
-            has_app = False
-        if not has_app:
-            try:
-                from hermes_cli.tui import input_widget as compat
-                proc = compat.subprocess.run(
-                    ["xclip", "-selection", "primary", "-o"],
-                    capture_output=True,
-                    text=True,
-                    timeout=1,
-                )
-                if getattr(proc, "returncode", 1) == 0 and getattr(proc, "stdout", ""):
-                    self.insert(proc.stdout)
-            except Exception:
-                pass
             return
         safe_run(
             self,
@@ -355,7 +336,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         if key == "escape":
             event.stop()
             event.prevent_default()
-            if self.error_state is not None and not self.text.strip():
+            if self.error_state is not None:
                 self.error_state = None
                 return
             if getattr(self, "_rev_mode", False):
@@ -391,6 +372,10 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                 return
 
         if key == "up":
+            if getattr(self, "_rev_mode", False):
+                event.prevent_default()
+                self._rev_search_find(direction=-1)
+                return
             if self._completion_overlay_slash_only():
                 event.prevent_default()
                 self._hide_completion_overlay()
@@ -408,7 +393,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
 
         if key == "ctrl+shift+up":
             event.prevent_default()
-            self._input_height_override = 3
+            self._input_height_override = min(6, self._input_height_override + 1)
             self.styles.max_height = self._input_height_override
             self._sync_height_to_content()
             try:
@@ -419,7 +404,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
 
         if key == "ctrl+shift+down":
             event.prevent_default()
-            self._input_height_override = 3
+            self._input_height_override = max(1, self._input_height_override - 1)
             self.styles.max_height = self._input_height_override
             self._sync_height_to_content()
             try:
@@ -429,6 +414,10 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             return
 
         if key == "down":
+            if getattr(self, "_rev_mode", False):
+                event.prevent_default()
+                self._rev_search_find(direction=+1)
+                return
             if self._completion_overlay_slash_only():
                 event.prevent_default()
                 self._hide_completion_overlay()
@@ -476,10 +465,11 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             event.stop()
             return
         event._no_default_action = True
-        try:
-            self.app._flash_hint(f"{ICON_COPY}  {len(event.text)} chars pasted", 1.2)
-        except Exception:
-            pass
+        if len(event.text) > 80:
+            try:
+                self.app._flash_hint(f"{ICON_COPY}  {len(event.text)} chars pasted", 1.2)
+            except Exception:
+                pass
         await super()._on_paste(event)
 
     # --- TextArea change handler ---
@@ -634,9 +624,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         except Exception:
             pass
         try:
-            if is_bash:
-                self.app._flash_hint("bash  ·  Enter: run  ·  Ctrl+C clear", 30.0)
-            else:
+            if not is_bash:
                 self.app.feedback.cancel("hint-bar")
         except Exception:
             pass

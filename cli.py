@@ -7165,7 +7165,7 @@ class HermesCLI:
                 from tools.terminal_tool import set_streaming_callback as _set_cb
                 token = _set_cb(
                     lambda line, _tid=tool_call_id: tui.call_from_thread(
-                        tui.append_streaming_line, _tid, line
+                        tui.append_tool_output, _tid, line
                     )
                 )
                 self._stream_callback_tokens[tool_call_id] = token
@@ -7247,32 +7247,36 @@ class HermesCLI:
         except Exception:
             pass
 
+        # Initialize diff/result vars before any branching (spec TCS-HIGH-01)
+        display_lines: list[str] = []
+        header_stats = None
+        _result_lines: list[str] | None = None
+
         if self.tool_progress_mode == "off":
-            # No preview will be mounted — close streaming block normally
-            if tui is not None and _was_streaming:
-                tui.call_from_thread(tui.close_streaming_tool_block, tool_call_id, _stream_duration, _is_tool_error, _summary)
-            # SM-05: always mark plan done regardless of display.tool_progress
             if tui is not None:
-                _dur_ms_off = 0
-                try:
-                    if _stream_duration.endswith("ms"):
-                        _dur_ms_off = int(float(_stream_duration[:-2]))
-                    elif _stream_duration.endswith("s"):
-                        _dur_ms_off = int(float(_stream_duration[:-1]) * 1000)
-                except Exception:
-                    pass
-                tui.call_from_thread(tui.mark_plan_done, tool_call_id, _is_tool_error, _dur_ms_off)
+                tui.call_from_thread(
+                    tui.complete_tool_call,
+                    tool_call_id,
+                    function_name,
+                    function_args if isinstance(function_args, dict) else {},
+                    function_result,
+                    is_error=_is_tool_error,
+                    summary=_summary,
+                    diff_lines=None,
+                    header_stats=None,
+                    result_lines=None,
+                    duration=_stream_duration,
+                )
             return
 
         _TOOL_PREFIX = "  ┊ "
         tui = _hermes_app
-        _will_mount_preview = False
         if tui is not None:
             from hermes_cli.tui.widgets import _strip_ansi
-            def _plain_lines(display_lines: list[str]) -> list[str]:
+            def _plain_lines(raw_lines: list[str]) -> list[str]:
                 return [
                     _strip_ansi(l).removeprefix("  ┊ ").removeprefix("  ┊   ")
-                    for l in display_lines
+                    for l in raw_lines
                 ]
             # --- TUI path: collect lines, mount ToolBlock ---
             try:
@@ -7283,7 +7287,6 @@ class HermesCLI:
                     function_args=function_args,
                     snapshot=snapshot,
                 )
-                header_stats = None
                 if diff_text:
                     from hermes_cli.tui.tool_blocks import ToolHeaderStats
                     additions = 0
@@ -7297,33 +7300,16 @@ class HermesCLI:
                             deletions += 1
                     if additions or deletions:
                         header_stats = ToolHeaderStats(additions=additions, deletions=deletions)
-                _file_tools = frozenset({
-                    "patch", "read_file", "write_file", "create_file",
-                    "edit_file", "str_replace_editor", "view",
-                })
-                display_lines: list[str] = []
                 render_captured_diff_preview(diff_text, print_fn=display_lines.append, prefix=_TOOL_PREFIX)
                 if display_lines:
-                    _will_mount_preview = True
                     plain = _plain_lines(display_lines)
                     # Strip the CLI-only "review diff" header — not useful in TUI.
                     if plain and plain[0].strip() == "review diff":
                         display_lines = display_lines[1:]
                         plain = plain[1:]
 
-                    if _was_streaming and function_name in _file_tools:
-                        # Merge diff into STB body: +/- counts appear in header,
-                        # ▸/▾ arrow expands the inline diff — no child block.
-                        tui.call_from_thread(
-                            tui.close_streaming_tool_block_with_diff,
-                            tool_call_id, _stream_duration, _is_tool_error,
-                            display_lines, header_stats, _summary,
-                        )
-                    else:
-                        # Non-file or non-streaming: static child diff block.
-                        if _was_streaming:
-                            tui.call_from_thread(tui.remove_streaming_tool_block, tool_call_id)
-
+                    if not _was_streaming:
+                        # Carve-out: static child diff block when not streaming.
                         def _rerender_diff(_diff_text=diff_text):
                             rerendered: list[str] = []
                             render_captured_diff_preview(
@@ -7334,8 +7320,12 @@ class HermesCLI:
                             return rerendered, _plain_lines(rerendered)
 
                         tui.call_from_thread(
-                            tui.mount_tool_block, "diff", display_lines, plain, _rerender_diff, header_stats, function_name
+                            tui.mount_tool_block, "diff", display_lines, plain,
+                            _rerender_diff, header_stats, function_name
                         )
+                        # complete_tool_call below uses diff_lines=None for the carve-out
+                        display_lines = []
+                        header_stats = None
             except Exception:
                 logger.debug("Edit diff preview failed for %s", function_name, exc_info=True)
 
@@ -7350,11 +7340,11 @@ class HermesCLI:
                     if function_name == "execute_code":
                         # Skip static preview when a StreamingToolBlock was used
                         if not _was_streaming and _result_succeeded(function_result):
-                            display_lines = []
+                            _ec_lines: list[str] = []
                             code = function_args.get("code", "")
-                            render_execute_code_preview(code, print_fn=display_lines.append, prefix=_TOOL_PREFIX)
-                            if display_lines:
-                                plain = _plain_lines(display_lines)
+                            render_execute_code_preview(code, print_fn=_ec_lines.append, prefix=_TOOL_PREFIX)
+                            if _ec_lines:
+                                _ec_plain = _plain_lines(_ec_lines)
                                 def _rerender_execute_code_preview(_code=code):
                                     rerendered: list[str] = []
                                     render_execute_code_preview(_code, print_fn=rerendered.append, prefix=_TOOL_PREFIX)
@@ -7362,8 +7352,8 @@ class HermesCLI:
 
                                 _ec_panel_id = f"tool-{tool_call_id}"
                                 tui.call_from_thread(
-                                    lambda *_a, _pid=_ec_panel_id: tui.mount_tool_block(
-                                        "code", display_lines, plain,
+                                    lambda *_a, _pid=_ec_panel_id, _dl=_ec_lines, _pl=_ec_plain: tui.mount_tool_block(
+                                        "code", _dl, _pl,
                                         _rerender_execute_code_preview, None,
                                         function_name, parent_id=_pid,
                                     )
@@ -7371,11 +7361,11 @@ class HermesCLI:
                     elif function_name == "read_file":
                         # Skip static preview when a StreamingToolBlock was used
                         if not _was_streaming:
-                            display_lines = []
+                            _rf_lines: list[str] = []
                             path = function_args.get("path", "")
-                            render_read_file_preview(path, function_result, print_fn=display_lines.append, prefix=_TOOL_PREFIX)
-                            if display_lines:
-                                plain = _plain_lines(display_lines)
+                            render_read_file_preview(path, function_result, print_fn=_rf_lines.append, prefix=_TOOL_PREFIX)
+                            if _rf_lines:
+                                _rf_plain = _plain_lines(_rf_lines)
 
                                 def _rerender_read_file_preview(_path=path, _result=function_result):
                                     rerendered: list[str] = []
@@ -7390,8 +7380,8 @@ class HermesCLI:
                                 tui.call_from_thread(
                                     tui.mount_tool_block,
                                     "code",
-                                    display_lines,
-                                    plain,
+                                    _rf_lines,
+                                    _rf_plain,
                                     _rerender_read_file_preview,
                                     None,
                                     function_name,
@@ -7399,11 +7389,11 @@ class HermesCLI:
                     elif function_name == "terminal":
                         # Skip static preview when a StreamingToolBlock was used
                         if not _was_streaming:
-                            display_lines = []
+                            _term_lines: list[str] = []
                             command = function_args.get("command", "")
-                            render_terminal_preview(command, function_result, print_fn=display_lines.append, prefix=_TOOL_PREFIX)
-                            if display_lines:
-                                plain = _plain_lines(display_lines)
+                            render_terminal_preview(command, function_result, print_fn=_term_lines.append, prefix=_TOOL_PREFIX)
+                            if _term_lines:
+                                _term_plain = _plain_lines(_term_lines)
 
                                 def _rerender_terminal_preview(_command=command, _result=function_result):
                                     rerendered: list[str] = []
@@ -7418,8 +7408,8 @@ class HermesCLI:
                                 tui.call_from_thread(
                                     tui.mount_tool_block,
                                     "output",
-                                    display_lines,
-                                    plain,
+                                    _term_lines,
+                                    _term_plain,
                                     _rerender_terminal_preview,
                                     None,
                                     function_name,
@@ -7427,12 +7417,8 @@ class HermesCLI:
                 except Exception:
                     logger.debug("%s highlight failed", function_name, exc_info=True)
 
-            # Close the streaming block only when no diff was merged into it and
-            # no diff child replaced it (i.e. tool produced no diff output).
-            if _was_streaming and not _will_mount_preview:
-                # For SEARCH/WEB tools the result arrives as a single blob (no
-                # streaming callback), so feed lines into the body before close.
-                _result_lines: list[str] | None = None
+            # Compute result_lines for streaming tools with no diff content
+            if _was_streaming and not display_lines:
                 try:
                     from hermes_cli.tui.tool_category import classify_tool as _classify, ToolCategory as _TC
                     _cat = _classify(function_name)
@@ -7456,18 +7442,21 @@ class HermesCLI:
                             pass
                 except Exception:
                     pass
-                tui.call_from_thread(tui.close_streaming_tool_block, tool_call_id, _stream_duration, _is_tool_error, _summary, _result_lines)
 
-            # --- PlanPanel: transition RUNNING → DONE/ERROR ---
-            _dur_ms_plan = 0
-            try:
-                if _stream_duration.endswith("ms"):
-                    _dur_ms_plan = int(float(_stream_duration[:-2]))
-                elif _stream_duration.endswith("s"):
-                    _dur_ms_plan = int(float(_stream_duration[:-1]) * 1000)
-            except Exception:
-                pass
-            tui.call_from_thread(tui.mark_plan_done, tool_call_id, _is_tool_error, _dur_ms_plan)
+            # Single authoritative completion call (TCS-HIGH-01)
+            tui.call_from_thread(
+                tui.complete_tool_call,
+                tool_call_id,
+                function_name,
+                function_args if isinstance(function_args, dict) else {},
+                function_result,
+                is_error=_is_tool_error,
+                summary=_summary,
+                diff_lines=display_lines if display_lines else None,
+                header_stats=header_stats,
+                result_lines=_result_lines,
+                duration=_stream_duration,
+            )
 
             # Workspace tracking — record writes for file-mutating tools
             _WRITE_TOOLS = frozenset({"patch", "write_file", "create_file", "edit_file", "str_replace_editor"})

@@ -385,7 +385,13 @@ class ToolRenderingService(AppService):
                 panel.set_result_summary_v4(summary)
         if tool_call_id in self._agent_stack:
             self._agent_stack.remove(tool_call_id)
-        self.app._active_tool_name = ""
+        # Clear active tool name only when this tool owns it or no tools remain
+        _tool_label = ""
+        rec = self._turn_tool_calls.get(tool_call_id)
+        if rec is not None:
+            _tool_label = rec.tool_name or rec.label
+        if self.app._active_tool_name == _tool_label or self._open_tool_count == 0:
+            self.app._active_tool_name = ""
         # A1: decrement open tool count; revert phase when last tool closes
         self._open_tool_count = max(0, self._open_tool_count - 1)
         if self._open_tool_count == 0:
@@ -395,7 +401,6 @@ class ToolRenderingService(AppService):
             else:
                 self.app.status_phase = _Phase.IDLE
         self.app._svc_commands.update_anim_hint()
-        rec = self._turn_tool_calls.get(tool_call_id)
         if rec is not None:
             try:
                 ds = str(duration)
@@ -438,6 +443,11 @@ class ToolRenderingService(AppService):
                 panel.set_result_summary_v4(summary)
         if tool_call_id in self._agent_stack:
             self._agent_stack.remove(tool_call_id)
+        # Clear active tool name only when this tool owns it or no tools remain
+        _rec_diff = self._turn_tool_calls.get(tool_call_id)
+        _tool_label_diff = (_rec_diff.tool_name or _rec_diff.label) if _rec_diff is not None else ""
+        if self.app._active_tool_name == _tool_label_diff or self._open_tool_count == 0:
+            self.app._active_tool_name = ""
         # A1: decrement open tool count; revert phase when last tool closes
         self._open_tool_count = max(0, self._open_tool_count - 1)
         if self._open_tool_count == 0:
@@ -446,17 +456,16 @@ class ToolRenderingService(AppService):
                 self.app.status_phase = _Phase.REASONING
             else:
                 self.app.status_phase = _Phase.IDLE
-        rec = self._turn_tool_calls.get(tool_call_id)
-        if rec is not None:
+        if _rec_diff is not None:
             try:
                 ds = str(duration)
                 if ds.endswith("ms"):
-                    rec.dur_ms = int(float(ds[:-2]))
+                    _rec_diff.dur_ms = int(float(ds[:-2]))
                 elif ds.endswith("s"):
-                    rec.dur_ms = int(float(ds[:-1]) * 1000)
+                    _rec_diff.dur_ms = int(float(ds[:-1]) * 1000)
             except Exception:
                 pass
-            rec.is_error = is_error
+            _rec_diff.is_error = is_error
         panel = self._get_output_panel()
         if panel is not None and not panel._user_scrolled_up:
             self.app.call_after_refresh(panel.scroll_end, animate=False)
@@ -467,22 +476,127 @@ class ToolRenderingService(AppService):
         except Exception:
             pass
 
+    def _terminalize_tool_view(
+        self,
+        tool_call_id: str,
+        *,
+        terminal_state: ToolCallState,
+        is_error: bool = False,
+        mark_plan: bool = True,
+        remove_visual: bool = False,
+        delete_view: bool = False,
+        dur_ms: int | None = None,
+    ) -> "ToolCallViewState | None":
+        """TCS-HIGH-02: Shared terminal cleanup helper for remove, cancel, and completion.
+
+        Handles _open_tool_count, _agent_stack, _active_tool_name, status_phase,
+        PlanPanel, and view-state indexes in one place. Returns the view before
+        mutation so callers can log it; returns None when no record exists.
+        """
+        view = self._tool_views_by_id.get(tool_call_id)
+
+        # Pop active streaming block
+        block = self.app._active_streaming_blocks.pop(tool_call_id, None)
+        if block is not None:
+            self.app._streaming_tool_count = len(self.app._active_streaming_blocks)
+
+        # Decrement open count only for views that incremented it
+        _was_active = view is not None and view.state in (ToolCallState.STARTED, ToolCallState.STREAMING)
+        if _was_active:
+            self._open_tool_count = max(0, self._open_tool_count - 1)
+
+        # Remove from agent stack
+        if tool_call_id in self._agent_stack:
+            self._agent_stack.remove(tool_call_id)
+
+        # Clear active tool name conditionally
+        if view is not None:
+            tool_label = view.tool_name or view.label
+            if self.app._active_tool_name == tool_label or self._open_tool_count == 0:
+                self.app._active_tool_name = ""
+
+        # Update status phase
+        if self._open_tool_count == 0:
+            from hermes_cli.tui.agent_phase import Phase as _Phase
+            if getattr(self.app, "agent_running", False):
+                self.app.status_phase = _Phase.REASONING
+            else:
+                self.app.status_phase = _Phase.IDLE
+        self.app._svc_commands.update_anim_hint()
+
+        # Update turn record
+        rec = self._turn_tool_calls.get(tool_call_id)
+        if rec is not None:
+            if dur_ms is not None:
+                rec.dur_ms = dur_ms
+            rec.is_error = is_error
+
+        # Mark PlanPanel
+        if mark_plan:
+            if terminal_state == ToolCallState.CANCELLED:
+                self.mark_plan_cancelled(tool_call_id)
+            else:
+                _dur = rec.dur_ms if rec is not None and rec.dur_ms is not None else (dur_ms or 0)
+                self.mark_plan_done(tool_call_id, is_error=is_error, dur_ms=_dur)
+
+        # Update view state and remove from active indexes
+        if view is not None:
+            view.state = terminal_state
+            view.is_error = is_error
+            self._tool_views_by_id.pop(tool_call_id, None)
+            if view.gen_index is not None:
+                self._tool_views_by_gen_index.pop(view.gen_index, None)
+            if delete_view:
+                self._turn_tool_calls.pop(tool_call_id, None)
+
+        # Remove visual panel
+        if remove_visual and block is not None:
+            try:
+                from hermes_cli.tui.tool_panel._core import ToolPanel as _TP
+                from hermes_cli.tui.tool_panel._child import ChildPanel as _CP
+                body_pane = block.parent
+                panel = body_pane.parent if body_pane is not None else None
+                if isinstance(panel, (_TP, _CP)):
+                    panel.remove()
+                else:
+                    block.remove()
+            except Exception:
+                logger.debug("remove_visual failed for tool_call_id=%s", tool_call_id, exc_info=True)
+
+        return view
+
     def remove_streaming_tool_block(self, tool_call_id: str) -> None:
-        """Remove a streaming block from the DOM entirely. Event-loop only."""
+        """Remove a streaming block from the DOM entirely. Event-loop only.
+
+        Routes through _terminalize_tool_view so _open_tool_count, status_phase,
+        and agent stack stay consistent.
+        """
+        view = self._tool_views_by_id.get(tool_call_id)
+        # Only terminalize if we have an active view (patch dedup path)
+        if view is not None:
+            self._terminalize_tool_view(
+                tool_call_id,
+                terminal_state=ToolCallState.REMOVED,
+                mark_plan=False,
+                remove_visual=True,
+            )
+            return
+        # Fallback: no state-machine record — just remove the block visually
         block = self.app._active_streaming_blocks.pop(tool_call_id, None)
         if block is None:
             return
         self.app._streaming_tool_count = len(self.app._active_streaming_blocks)
         try:
-            from hermes_cli.tui.tool_panel import ToolPanel as _TP
+            from hermes_cli.tui.tool_panel._core import ToolPanel as _TP
+            from hermes_cli.tui.tool_panel._child import ChildPanel as _CP
             body_pane = block.parent
-            tool_panel = body_pane.parent if body_pane is not None else None
-            if isinstance(tool_panel, _TP):
-                tool_panel.remove()
+            panel = body_pane.parent if body_pane is not None else None
+            if isinstance(panel, (_TP, _CP)):
+                panel.remove()
             else:
                 block.remove()
         except Exception:
-            pass
+            logger.debug("remove_streaming_tool_block DOM remove failed", exc_info=True)
 
     # ------------------------------------------------------------------
     # PlanPanel mutations — event-loop only
@@ -541,6 +655,16 @@ class ToolRenderingService(AppService):
         for i, call in enumerate(items):
             if call.tool_call_id == tool_call_id and call.state in (PlanState.PENDING, PlanState.RUNNING):
                 items[i] = call.as_done(is_error=is_error)
+                break
+        self.app.planned_calls = items
+
+    def mark_plan_cancelled(self, tool_call_id: str) -> None:
+        """Transition a PENDING or RUNNING PlannedCall to CANCELLED. Event-loop only."""
+        from hermes_cli.tui.plan_types import PlanState
+        items = list(getattr(self.app, "planned_calls", []))
+        for i, call in enumerate(items):
+            if call.tool_call_id == tool_call_id and call.state in (PlanState.PENDING, PlanState.RUNNING):
+                items[i] = call.as_cancelled()
                 break
         self.app.planned_calls = items
 
@@ -737,8 +861,51 @@ class ToolRenderingService(AppService):
             )
             self._turn_tool_calls[tool_call_id] = rec
 
+            # TCS-HIGH-03: Backfill panel identity onto adopted generated block
+            if view.block is not None:
+                # 1. Backfill tool_call_id onto the block itself
+                if hasattr(view.block, "__dict__"):
+                    view.block._tool_call_id = tool_call_id
+
+                # 2. Resolve panel from block attribute or ancestor walk
+                _adopted_panel = getattr(view.block, "_tool_panel", None)
+                if _adopted_panel is None:
+                    try:
+                        from hermes_cli.tui.tool_panel._core import ToolPanel as _TP
+                        from hermes_cli.tui.tool_panel._child import ChildPanel as _CP
+                        _ancestor = view.block.parent
+                        while _ancestor is not None:
+                            if isinstance(_ancestor, (_TP, _CP)):
+                                _adopted_panel = _ancestor
+                                break
+                            _ancestor = getattr(_ancestor, "parent", None)
+                    except Exception:
+                        logger.debug("panel ancestor walk failed for %s", tool_call_id, exc_info=True)
+
+                # 3. Store panel on view
+                view.panel = _adopted_panel
+
+                # 4. Backfill panel identity
+                if _adopted_panel is not None:
+                    _adopted_panel._plan_tool_call_id = tool_call_id
+                    _target_id = f"tool-{tool_call_id}"
+                    try:
+                        self.app.query(f"#{_target_id}")
+                    except Exception:
+                        try:
+                            _adopted_panel.id = _target_id
+                        except Exception:
+                            logger.debug("panel ID backfill failed for %s", tool_call_id, exc_info=True)
+
             # Wire args (SM-03)
             self._wire_args(view, args_clean)
+
+            # 5. Refresh panel so updated args/invocation copy are visible immediately
+            if view.panel is not None:
+                try:
+                    view.panel.refresh()
+                except Exception:
+                    pass
 
             # A1: increment open tool count and set phase (gen-start didn't do this)
             self._open_tool_count += 1
@@ -865,12 +1032,15 @@ class ToolRenderingService(AppService):
         diff_lines: "list[str] | None" = None,
         header_stats: "Any | None" = None,
         result_lines: "list[str] | None" = None,
+        duration: "str | None" = None,
     ) -> None:
         """SM-02: Complete a tool call. Idempotent on terminal states.
 
         Enters COMPLETING (transient), closes the streaming block, marks the
         PlanPanel done (SM-05: always, regardless of display.tool_progress),
         then exits to DONE or ERROR.
+
+        When `duration` is supplied it overrides the inferred block duration.
         """
         view = self._tool_views_by_id.get(tool_call_id)
 
@@ -880,43 +1050,55 @@ class ToolRenderingService(AppService):
         if view is not None and view.state in _terminal:
             return
 
+        # When view is absent the tool was already terminalized (e.g. via remove).
+        # Skip block closure to avoid duplicate close; still mark plan done below.
+        _view_absent = view is None
+
         if view is not None:
             view.state = ToolCallState.COMPLETING
 
-        # Compute duration string for UI display
-        duration = ""
-        import time as _t
-        # Try to infer duration from _active_streaming_blocks block's start time
-        block = self.app._active_streaming_blocks.get(tool_call_id)
-        if block is not None:
-            started = getattr(block, "_stream_started_at", None)
-            if started is not None:
-                elapsed_ms = (_t.monotonic() - started) * 1000.0
-                if elapsed_ms >= 1000:
-                    duration = f"{elapsed_ms/1000:.1f}s"
-                else:
-                    duration = f"{elapsed_ms:.0f}ms"
+        # Resolve duration — supplied arg takes precedence over block inference
+        _duration: str = duration or ""
+        if not _duration:
+            import time as _t
+            block = self.app._active_streaming_blocks.get(tool_call_id)
+            if block is not None:
+                started = getattr(block, "_stream_started_at", None)
+                if started is not None:
+                    elapsed_ms = (_t.monotonic() - started) * 1000.0
+                    if elapsed_ms >= 1000:
+                        _duration = f"{elapsed_ms/1000:.1f}s"
+                    else:
+                        _duration = f"{elapsed_ms:.0f}ms"
 
-        # Close the streaming block
-        if diff_lines is not None:
-            self.close_streaming_tool_block_with_diff(
-                tool_call_id, duration, is_error, diff_lines, header_stats, summary
-            )
-        else:
-            self.close_streaming_tool_block(
-                tool_call_id, duration, is_error, summary, result_lines
-            )
+        # Close the streaming block only when view was present (not already terminalized)
+        if not _view_absent:
+            if diff_lines is not None:
+                self.close_streaming_tool_block_with_diff(
+                    tool_call_id, _duration, is_error, diff_lines, header_stats, summary
+                )
+            else:
+                self.close_streaming_tool_block(
+                    tool_call_id, _duration, is_error, summary, result_lines
+                )
 
         # SM-05: always mark plan done regardless of tool_progress mode
         dur_ms = 0
         try:
-            if duration.endswith("ms"):
-                dur_ms = int(float(duration[:-2]))
-            elif duration.endswith("s"):
-                dur_ms = int(float(duration[:-1]) * 1000)
+            if _duration.endswith("ms"):
+                dur_ms = int(float(_duration[:-2]))
+            elif _duration.endswith("s"):
+                dur_ms = int(float(_duration[:-1]) * 1000)
         except Exception:
             pass
         self.mark_plan_done(tool_call_id, is_error=is_error, dur_ms=dur_ms)
+
+        # Update _turn_tool_calls even when block was absent
+        rec = self._turn_tool_calls.get(tool_call_id)
+        if rec is not None:
+            if dur_ms:
+                rec.dur_ms = dur_ms
+            rec.is_error = is_error
 
         # Update view state to terminal
         if view is not None:
@@ -942,9 +1124,9 @@ class ToolRenderingService(AppService):
 
         view: "ToolCallViewState | None" = None
         if tool_call_id is not None:
-            view = self._tool_views_by_id.pop(tool_call_id, None)
+            view = self._tool_views_by_id.get(tool_call_id)
         if view is None and gen_index is not None:
-            view = self._tool_views_by_gen_index.pop(gen_index, None)
+            view = self._tool_views_by_gen_index.get(gen_index)
 
         if view is None:
             logger.warning("cancel_tool_call: no record for tool_call_id=%s gen_index=%s",
@@ -956,19 +1138,16 @@ class ToolRenderingService(AppService):
         if view.state in _terminal:
             return
 
-        view.state = ToolCallState.CANCELLED
-
-        # Remove from active streaming blocks
-        if view.tool_call_id:
-            self.app._active_streaming_blocks.pop(view.tool_call_id, None)
-            self.app._streaming_tool_count = len(self.app._active_streaming_blocks)
-
-        # Remove visual block if present
-        if view.block is not None:
-            try:
-                view.block.remove()
-            except Exception:
-                pass
+        # _terminalize_tool_view handles removal from both indexes
+        self._terminalize_tool_view(
+            view.tool_call_id or "",
+            terminal_state=ToolCallState.CANCELLED,
+            mark_plan=True,
+            remove_visual=True,
+        )
+        # Also remove gen_index lookup if cancellation was via gen_index
+        if gen_index is not None and gen_index in self._tool_views_by_gen_index:
+            self._tool_views_by_gen_index.pop(gen_index, None)
 
     def current_turn_tool_calls(self) -> list[dict]:
         """Return a list of per-turn tool call records (P7 /tools overlay).

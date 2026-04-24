@@ -175,7 +175,7 @@ class TestUnknownSlashCommand:
             event = MagicMock()
             event.value = "/loop do something"
             # Should NOT flash; should route to agent or _handle_tui_command
-            app._handle_tui_command = MagicMock(return_value=True)
+            app._svc_commands.handle_tui_command = MagicMock(return_value=True)
             app.on_hermes_input_submitted(event)
             unknown_flashes = [m for m in flashed if "Unknown" in m]
             assert len(unknown_flashes) == 0

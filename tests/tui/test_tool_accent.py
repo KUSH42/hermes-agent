@@ -124,7 +124,7 @@ async def test_tool_panel_has_accent_as_direct_child():
         app.agent_running = True
         for _ in range(5):
             await pilot.pause()
-        app._open_gen_block("bash")
+        app._svc_tools.open_gen_block("bash")
         for _ in range(5):
             await pilot.pause()
 
@@ -147,7 +147,7 @@ async def test_streaming_block_accent_is_streaming():
         app.agent_running = True
         for _ in range(5):
             await pilot.pause()
-        app._open_gen_block("bash")
+        app._svc_tools.open_gen_block("bash")
         for _ in range(5):
             await pilot.pause()
 
@@ -171,7 +171,7 @@ async def test_completed_block_accent_becomes_ok():
         app.agent_running = True
         for _ in range(5):
             await pilot.pause()
-        app._open_gen_block("bash")
+        app._svc_tools.open_gen_block("bash")
         for _ in range(5):
             await pilot.pause()
 
@@ -202,7 +202,7 @@ async def test_error_block_accent_becomes_error():
         app.agent_running = True
         for _ in range(5):
             await pilot.pause()
-        app._open_gen_block("bash")
+        app._svc_tools.open_gen_block("bash")
         for _ in range(5):
             await pilot.pause()
 

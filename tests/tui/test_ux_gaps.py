@@ -534,7 +534,7 @@ def test_handle_tui_command_density():
     app = _make_app()
     called: list[bool] = []
     with patch.object(app, "action_toggle_density", side_effect=lambda: called.append(True)):
-        result = app._handle_tui_command("/density")
+        result = app._svc_commands.handle_tui_command("/density")
     assert result is True
     assert called
 
@@ -655,7 +655,7 @@ def test_density_command_handled():
     """_handle_tui_command('/density') returns True."""
     app = _make_app()
     with patch.object(app, "action_toggle_density"):
-        result = app._handle_tui_command("/density")
+        result = app._svc_commands.handle_tui_command("/density")
     assert result is True
 
 

@@ -175,7 +175,7 @@ class _ToolPanelActionsMixin:
             self._flash_header("no error")
             return
         try:
-            self.app._initiate_retry()  # type: ignore[attr-defined]
+            self.app._svc_commands.initiate_retry()  # type: ignore[attr-defined]
         except Exception:
             self._flash_header("retry failed")
 

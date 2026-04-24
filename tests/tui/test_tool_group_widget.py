@@ -473,7 +473,7 @@ async def test_t21a_collapsed_group_hides_children_from_anchors():
         app._browse_mode_reactive = True
         app.browse_mode = True
         await _pause(pilot)
-        app._rebuild_browse_anchors()
+        app._svc_browse.rebuild_browse_anchors()
 
         # ToolGroup should be present; count TOOL_BLOCK anchors from ToolGroup
         from hermes_cli.tui.app import BrowseAnchorType
@@ -503,7 +503,7 @@ async def test_t21b_group_created_collapsed_children_not_in_anchors():
         await _pause(pilot)
 
         app.browse_mode = True
-        app._rebuild_browse_anchors()
+        app._svc_browse.rebuild_browse_anchors()
 
         tg_anchors = [
             a for a in app._browse_anchors

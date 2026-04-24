@@ -152,7 +152,7 @@ class CommandsService(AppService):
         if stripped == "/clear":
             if not app._clear_animation_in_progress:
                 app._clear_animation_in_progress = True
-                app._handle_clear_tui()
+                app.run_worker(app._svc_commands.handle_clear_tui(), thread=False, group="clear")
             return True
 
         cmd_parts = stripped.split()
@@ -378,7 +378,7 @@ class CommandsService(AppService):
                 app._anim_force = "off"
             else:
                 app._anim_force = None
-            app._drawbraille_show_hide(getattr(app, "agent_running", False))
+            app._svc_spinner.drawbraille_show_hide(getattr(app, "agent_running", False))
             return
 
         if sub == "list":
@@ -407,7 +407,7 @@ class CommandsService(AppService):
 
                 def _revert_sdf() -> None:
                     ov.animation = _overlay_config().animation
-                    app._drawbraille_show_hide(getattr(app, "agent_running", False))
+                    app._svc_spinner.drawbraille_show_hide(getattr(app, "agent_running", False))
 
                 app.set_timer(10.0, _revert_sdf)
             except Exception:
@@ -609,7 +609,7 @@ class CommandsService(AppService):
                 preview_dur = 4.0
 
             def _revert_engine() -> None:
-                app._drawbraille_show_hide(getattr(app, "agent_running", False))
+                app._svc_spinner.drawbraille_show_hide(getattr(app, "agent_running", False))
 
             app.set_timer(preview_dur, _revert_engine)
         except Exception:

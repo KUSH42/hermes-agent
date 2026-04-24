@@ -223,23 +223,6 @@ def test_browse_service_anchors_initialized():
     assert svc._browse_anchors == [], "_browse_anchors must be empty on init"
 
 
-def test_mixin_set_hint_phase_routes_to_spinner(monkeypatch):
-    """app._set_hint_phase(...) must delegate to app._svc_spinner.set_hint_phase(...)."""
-    app = _make_app()
-    calls = []
-    monkeypatch.setattr(app._svc_spinner, "set_hint_phase", lambda phase: calls.append(phase))
-    app._set_hint_phase("stream")
-    assert calls == ["stream"], f"Expected ['stream'], got {calls}"
-
-
-def test_mixin_rebuild_browse_anchors_routes_to_browse(monkeypatch):
-    """app._rebuild_browse_anchors() must delegate to app._svc_browse.rebuild_browse_anchors()."""
-    app = _make_app()
-    calls = []
-    monkeypatch.setattr(app._svc_browse, "rebuild_browse_anchors", lambda: calls.append(True))
-    app._rebuild_browse_anchors()
-    assert calls == [True], f"Expected [True], got {calls}"
-
 
 # ---------------------------------------------------------------------------
 # Phase 2 batch 3+: SessionsService + ToolRenderingService
@@ -392,15 +375,6 @@ def test_app_write_output_is_permanent_forwarder():
     app.write_output("hello")
     assert calls == ["hello"], f"app.write_output() did not delegate to svc: {calls}"
 
-
-def test_app_handle_tui_command_routes_to_service(monkeypatch):
-    """app._handle_tui_command() must delegate to _svc_commands.handle_tui_command()."""
-    app = _make_app()
-    calls = []
-    monkeypatch.setattr(app._svc_commands, "handle_tui_command", lambda text: calls.append(text) or False)
-    result = app._handle_tui_command("/help")
-    assert calls == ["/help"], f"Expected ['/help'], got {calls}"
-    assert result is False
 
 
 def test_app_initiate_undo_routes_to_service(monkeypatch):

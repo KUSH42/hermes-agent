@@ -210,7 +210,7 @@ async def test_usage_overlay_no_agent_flashes_hint():
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
         with patch.object(app, "_flash_hint") as mock_flash:
-            result = app._handle_tui_command("/usage")
+            result = app._svc_commands.handle_tui_command("/usage")
         assert result is True
         mock_flash.assert_called_once()
         assert not app.query_one(UsageOverlay).has_class("--visible")
@@ -351,7 +351,7 @@ async def test_title_with_arg_flashes_and_forwards():
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
         with patch.object(app, "_flash_hint") as mock_flash:
-            result = app._handle_tui_command("/title my-session")
+            result = app._svc_commands.handle_tui_command("/title my-session")
         assert result is False
         mock_flash.assert_called_once()
         args = mock_flash.call_args[0][0]
@@ -364,7 +364,7 @@ async def test_title_no_arg_flashes_usage():
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
         with patch.object(app, "_flash_hint") as mock_flash:
-            result = app._handle_tui_command("/title")
+            result = app._svc_commands.handle_tui_command("/title")
         assert result is False
         mock_flash.assert_called_once()
         assert "Usage" in mock_flash.call_args[0][0]
@@ -376,7 +376,7 @@ async def test_stop_flashes_and_forwards():
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
         with patch.object(app, "_flash_hint") as mock_flash:
-            result = app._handle_tui_command("/stop")
+            result = app._svc_commands.handle_tui_command("/stop")
         assert result is False
         mock_flash.assert_called_once()
 
@@ -387,7 +387,7 @@ async def test_new_flashes_and_forwards():
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
         with patch.object(app, "_flash_hint") as mock_flash:
-            result = app._handle_tui_command("/new")
+            result = app._svc_commands.handle_tui_command("/new")
         assert result is False
         mock_flash.assert_called_once()
 
@@ -401,8 +401,9 @@ async def test_clear_returns_true():
     app = _make_app()
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
-        with patch.object(app, "_handle_clear_tui"):
-            result = app._handle_tui_command("/clear")
+        with patch.object(app._svc_commands, "handle_clear_tui", return_value=None), \
+             patch.object(app, "run_worker"):
+            result = app._svc_commands.handle_tui_command("/clear")
         assert result is True
 
 
@@ -414,15 +415,15 @@ async def test_clear_prevents_reentry_while_in_progress():
         app._clear_animation_in_progress = True
         call_count = 0
 
-        original = app._handle_clear_tui
+        original = app._svc_commands.handle_clear_tui
 
-        def _spy():
+        async def _spy():
             nonlocal call_count
             call_count += 1
-            return original()
+            await original()
 
-        with patch.object(app, "_handle_clear_tui", side_effect=_spy):
-            app._handle_tui_command("/clear")
+        app._svc_commands.handle_clear_tui = _spy
+        app._svc_commands.handle_tui_command("/clear")
         assert call_count == 0  # blocked by flag
 
 
@@ -503,7 +504,7 @@ async def test_density_command_triggers_density_toggle():
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
         with patch.object(app, "action_toggle_density") as mock_toggle:
-            result = app._handle_tui_command("/density")
+            result = app._svc_commands.handle_tui_command("/density")
         assert result is True
         mock_toggle.assert_called_once()
 
@@ -515,7 +516,7 @@ async def test_sessions_command_opens_overlay():
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
         with patch.object(app, "action_open_sessions") as mock_open:
-            result = app._handle_tui_command("/sessions")
+            result = app._svc_commands.handle_tui_command("/sessions")
         assert result is True
         mock_open.assert_called_once()
 
@@ -691,7 +692,7 @@ async def test_unknown_slash_command_flash_hint():
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
         with patch.object(app, "_flash_hint") as mock_flash:
-            result = app._handle_tui_command("/foobar")
+            result = app._svc_commands.handle_tui_command("/foobar")
         assert result is False
         mock_flash.assert_called()
         # The flash hint should mention "Unknown command"
@@ -706,7 +707,7 @@ async def test_known_cli_command_no_flash_hint():
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
         with patch.object(app, "_flash_hint") as mock_flash:
-            result = app._handle_tui_command("/new")
+            result = app._svc_commands.handle_tui_command("/new")
         assert result is False
         # /new flashes "New session started", not "Unknown command"
         if mock_flash.called:
@@ -761,7 +762,7 @@ async def test_tools_no_args_opens_overlay():
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
         with patch.object(app._svc_commands, "open_tools_overlay") as mock_open:
-            result = app._handle_tui_command("/tools")
+            result = app._svc_commands.handle_tui_command("/tools")
         assert result is True
         mock_open.assert_called_once()
 
@@ -772,7 +773,7 @@ async def test_tools_with_args_falls_through():
     app = _make_app()
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
-        result = app._handle_tui_command("/tools list")
+        result = app._svc_commands.handle_tui_command("/tools list")
         assert result is False
 
 

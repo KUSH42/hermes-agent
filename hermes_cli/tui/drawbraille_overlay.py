@@ -1236,7 +1236,7 @@ class DrawbrailleOverlay(Static):
             self._cfg = replace(cfg, position="custom", custom_offset_x=ox, custom_offset_y=oy)
             self._set_offset(ox, oy)
             self.position = "custom"
-            self.app._persist_anim_config({
+            self.app._svc_commands.persist_anim_config({
                 "position": "custom",
                 "custom_offset_x": ox,
                 "custom_offset_y": oy,

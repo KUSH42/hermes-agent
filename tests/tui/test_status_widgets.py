@@ -107,7 +107,7 @@ async def test_input_bar_no_helix():
         app._tool_start_time = 100.0
         await pilot.pause()
         with patch("hermes_cli.tui.app._time.monotonic", return_value=103.2):
-            app._tick_spinner()
+            app._svc_spinner.tick_spinner()
         inp = app.query_one("#input-area")
         # Should contain spinner dots + label, never drawbraille helix
         ph = inp.placeholder

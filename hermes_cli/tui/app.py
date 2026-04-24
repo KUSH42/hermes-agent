@@ -741,9 +741,9 @@ class HermesApp(App):
         self._consume_output()  # starts the @work consumer
         self._anim_clock = AnimationClock()
         self._anim_clock_h = self.set_interval(1 / 15, self._anim_clock.tick)
-        self._spinner_h = self.set_interval(0.14, self._tick_spinner)  # ~7Hz — smooth enough, 30% less event-loop pressure vs 10Hz
+        self._spinner_h = self.set_interval(0.14, self._svc_spinner.tick_spinner)  # ~7Hz — smooth enough, 30% less event-loop pressure vs 10Hz
         self._fps_h = self.set_interval(_frame_interval, self._svc_spinner.tick_fps)
-        self._duration_h = self.set_interval(1.0, self._tick_duration)
+        self._duration_h = self.set_interval(1.0, self._svc_spinner.tick_duration)
         # Restore FPS HUD state from config (runtime toggle overrides this)
         if _fps_hud_enabled():
             self.fps_hud_visible = True
@@ -783,7 +783,7 @@ class HermesApp(App):
         if self._use_hermes_input:
             self._populate_slash_commands()
         # Initialize hint bar to idle phase — shows key-badge hints immediately
-        self._set_hint_phase("idle")
+        self._svc_spinner.set_hint_phase("idle")
         # Apply InlineImageBar enabled state from config
         try:
             self.query_one(InlineImageBar)._enabled = self._inline_image_bar_enabled
@@ -801,7 +801,7 @@ class HermesApp(App):
         self._turn_start_time: float = 0.0
         self._last_assistant_text: str = ""
         # Initialize parallel worktree sessions (feature-gated)
-        self._init_sessions()
+        self._svc_sessions.init_sessions()
         # R2 v2 pane layout wiring
         if self._display_layout == "v2":
             self.add_class("layout-v2")
@@ -1311,7 +1311,7 @@ class HermesApp(App):
     def watch_agent_running(self, value: bool) -> None:
         # A1: coarse phase transition on turn start/end
         self.status_phase = _Phase.REASONING if value else _Phase.IDLE
-        self._drawbraille_show_hide(value)
+        self._svc_spinner.drawbraille_show_hide(value)
         if value:
             # Signal thinking when agent starts
             try:
@@ -1319,9 +1319,9 @@ class HermesApp(App):
                 self.query_one(_DO).signal("thinking")
             except Exception:
                 pass
-            self._update_anim_hint()
+            self._svc_commands.update_anim_hint()
             self._svc_spinner.set_chevron_phase("--phase-stream")
-            self._set_hint_phase("stream")
+            self._svc_spinner.set_hint_phase("stream")
             try:
                 output = self.query_one(OutputPanel)
                 output.reset_turn_capture()
@@ -1342,7 +1342,7 @@ class HermesApp(App):
                 self.query_one(_DO).signal("complete")
             except Exception:
                 pass
-            self._update_anim_hint()
+            self._svc_commands.update_anim_hint()
             self._sync_workspace_polling_state()
             # Safety net: flush live buffer + stop all per-turn timers.
             # flush_output() is never called from cli.py so the None sentinel
@@ -1367,7 +1367,7 @@ class HermesApp(App):
                 pass
             # Rebuild unified browse anchor list now that all blocks are mounted
             if self.browse_mode:
-                self._rebuild_browse_anchors()
+                self._svc_browse.rebuild_browse_anchors()
             # Live-refresh history search index if overlay is open
             try:
                 hs = self.query_one(HistorySearchOverlay)
@@ -1478,7 +1478,7 @@ class HermesApp(App):
                 pass
         # Recompute hint phase when agent stops
         if not value:
-            self._set_hint_phase(self._compute_hint_phase())
+            self._svc_spinner.set_hint_phase(self._svc_spinner.compute_hint_phase())
 
     def _osc_progress_update(self, running: bool) -> None:
         """Emit OSC 9;4 sequence when config flag is set."""
@@ -1820,17 +1820,17 @@ class HermesApp(App):
                 m = _PATH_EXTRACT_RE.search(value)
                 self.status_active_file = m.group(1) if m else ""
                 self._svc_spinner.set_chevron_phase("--phase-file")
-                self._set_hint_phase("file")
+                self._svc_spinner.set_hint_phase("file")
             elif tool_name in _SHELL_TOOLS:
                 self.status_active_file = ""
                 self.status_active_file_offscreen = False  # S1-B
                 self._svc_spinner.set_chevron_phase("--phase-shell")
-                self._set_hint_phase("stream")
+                self._svc_spinner.set_hint_phase("stream")
             else:
                 self.status_active_file = ""
                 self.status_active_file_offscreen = False  # S1-B
                 self._svc_spinner.set_chevron_phase("--phase-stream")
-                self._set_hint_phase("stream")
+                self._svc_spinner.set_hint_phase("stream")
         else:
             self.status_active_file = ""
             self.status_active_file_offscreen = False  # S1-B
@@ -1920,7 +1920,7 @@ class HermesApp(App):
         if self.agent_running:
             self._flash_hint("Navigation paused while agent is running", 1.5)
             return
-        self._jump_anchor(-1, BrowseAnchorType.TURN_START)
+        self._svc_browse.jump_anchor(-1, BrowseAnchorType.TURN_START)
 
 
     def action_jump_turn_next(self) -> None:
@@ -1928,7 +1928,7 @@ class HermesApp(App):
         if self.agent_running:
             self._flash_hint("Navigation paused while agent is running", 1.5)
             return
-        self._jump_anchor(+1, BrowseAnchorType.TURN_START)
+        self._svc_browse.jump_anchor(+1, BrowseAnchorType.TURN_START)
 
 
     def action_focus_output(self) -> None:
@@ -2182,37 +2182,13 @@ class HermesApp(App):
 
     # --- from _app_spinner.py ---
 
-    def _tick_spinner(self) -> None:  # DEPRECATED
-        return self._svc_spinner.tick_spinner()
-
-    def _build_hint_text(self) -> str:  # DEPRECATED
-        return self._svc_spinner.build_hint_text()
-
-    def _tick_duration(self) -> None:  # DEPRECATED
-        return self._svc_spinner.tick_duration()
-
     def watch_fps_hud_visible(self, value: bool) -> None:
         self._svc_spinner.on_fps_hud_visible(value)
 
     def action_toggle_fps_hud(self) -> None:
         self.fps_hud_visible = not self.fps_hud_visible
 
-    def _compute_hint_phase(self) -> str:  # DEPRECATED
-        return self._svc_spinner.compute_hint_phase()
-
-    def _set_hint_phase(self, phase: str) -> None:  # DEPRECATED
-        return self._svc_spinner.set_hint_phase(phase)
-
-    def _drawbraille_show_hide(self, running: bool) -> None:  # DEPRECATED
-        return self._svc_spinner.drawbraille_show_hide(running)
-
     # --- from _app_tool_rendering.py ---
-
-    def _get_output_panel(self) -> "Any | None":
-        return self._svc_tools._get_output_panel()  # DEPRECATED
-
-    def _current_message_panel(self) -> "Any | None":
-        return self._svc_tools.current_message_panel()  # DEPRECATED
 
     def open_reasoning(self, title: str = "Reasoning") -> None:
         return self._svc_tools.open_reasoning(title)
@@ -2240,15 +2216,6 @@ class HermesApp(App):
             tool_name=tool_name, parent_id=parent_id,
             is_error=is_error,
         )
-
-    def _open_gen_block(self, tool_name: str) -> "Any | None":
-        return self._svc_tools.open_gen_block(tool_name)  # DEPRECATED
-
-    def _open_execute_code_block(self, idx: int) -> "Any | None":
-        return self._svc_tools.open_execute_code_block(idx)  # DEPRECATED
-
-    def _open_write_file_block(self, idx: int, path: str) -> "Any | None":
-        return self._svc_tools.open_write_file_block(idx, path)  # DEPRECATED
 
     def open_streaming_tool_block(self, tool_call_id: str, label: str, tool_name: "str | None" = None) -> None:
         return self._svc_tools.open_streaming_tool_block(tool_call_id, label, tool_name=tool_name)
@@ -2310,20 +2277,11 @@ class HermesApp(App):
     def watch_browse_index(self, _value: int) -> None:
         self._svc_browse.on_browse_index(_value)
 
-    def _rebuild_browse_anchors(self) -> None:  # DEPRECATED
-        return self._svc_browse.rebuild_browse_anchors()
-
-    def _jump_anchor(self, direction: int, filter_type: Any = None) -> None:  # DEPRECATED
-        return self._svc_browse.jump_anchor(direction, filter_type)
-
     def action_jump_subagent_prev(self) -> None:
         self._svc_browse.action_jump_subagent_prev()
 
     def action_jump_subagent_next(self) -> None:
         self._svc_browse.action_jump_subagent_next()
-
-    def _focus_tool_panel(self, direction: int) -> None:  # DEPRECATED
-        return self._svc_browse.focus_tool_panel(direction)
 
     # --- from _app_context_menu.py ---
 
@@ -2416,72 +2374,9 @@ class HermesApp(App):
     def _sessions_enabled(self, value: bool) -> None:
         self._svc_sessions._sessions_enabled = value
 
-    def _init_sessions(self) -> None:
-        return self._svc_sessions.init_sessions()  # DEPRECATED
-
-    def _get_session_records(self) -> list:
-        return self._svc_sessions.get_session_records()  # DEPRECATED
-
-    def _get_active_session_id(self) -> str:
-        return self._svc_sessions.get_active_session_id()  # DEPRECATED
-
-    def _refresh_session_bar(self) -> None:
-        return self._svc_sessions.refresh_session_bar()  # DEPRECATED
-
-    def _poll_session_index(self) -> None:
-        return self._svc_sessions.poll_session_index()  # DEPRECATED
-
-    def _refresh_session_records_from_index(self) -> None:
-        return self._svc_sessions.refresh_session_records_from_index()  # DEPRECATED
-
-    def _open_new_session_overlay(self) -> None:
-        return self._svc_sessions.open_new_session_overlay()  # DEPRECATED
-
-    def _flash_sessions_max(self) -> None:
-        return self._svc_sessions.flash_sessions_max()  # DEPRECATED
-
     def action_new_worktree_session(self) -> None:
         """Ctrl+W N — open new session overlay."""
         return self._svc_sessions.new_worktree_session()
-
-    def _switch_to_session_by_index(self, n: int) -> None:
-        return self._svc_sessions.switch_to_session_by_index(n)  # DEPRECATED
-
-    def _switch_to_session(self, session_id: str) -> None:
-        return self._svc_sessions.switch_to_session(session_id)  # DEPRECATED
-
-    def _on_session_notify_event(self, event: dict) -> None:
-        return self._svc_sessions._on_session_notify_event(event)  # DEPRECATED
-
-    def _handle_session_event(self, event: dict) -> None:
-        return self._svc_sessions.handle_session_event(event)  # DEPRECATED
-
-    def _create_new_session(self, branch: str, base: str, overlay: object) -> None:
-        return self._svc_sessions.create_new_session(branch, base, overlay)  # DEPRECATED
-
-    def _on_session_created(self, new_id: str, overlay: object) -> None:
-        return self._svc_sessions.on_session_created(new_id, overlay)  # DEPRECATED
-
-    def _kill_session_prompt(self, session_id: str) -> None:
-        return self._svc_sessions.kill_session_prompt(session_id)  # DEPRECATED
-
-    def _do_kill_session(self, session_id: str) -> None:
-        return self._svc_sessions.do_kill_session(session_id)  # DEPRECATED
-
-    def _open_merge_overlay(self, session_id: str) -> None:
-        return self._svc_sessions.open_merge_overlay(session_id)  # DEPRECATED
-
-    def _show_merge_overlay(self, session_id: str, diff_stat: str) -> None:
-        return self._svc_sessions.show_merge_overlay(session_id, diff_stat)  # DEPRECATED
-
-    def _run_merge(self, session_id: str, strategy: str, close_on_success: bool, overlay: object) -> None:
-        return self._svc_sessions.run_merge(session_id, strategy, close_on_success, overlay)  # DEPRECATED
-
-    def _reopen_orphan_session(self, session_id: str) -> None:
-        return self._svc_sessions.reopen_orphan_session(session_id)  # DEPRECATED
-
-    def _delete_orphan_session(self, session_id: str) -> None:
-        return self._svc_sessions.delete_orphan_session(session_id)  # DEPRECATED
 
     def action_resume_session(self, session_id: str) -> None:
         """Resume a session by ID."""
@@ -2530,27 +2425,8 @@ class HermesApp(App):
 
     # --- from _app_commands.py ---
 
-    def _handle_tui_command(self, text: str) -> bool:  # DEPRECATED
-        return self._svc_commands.handle_tui_command(text)
-
-    @work(thread=False, group="clear")
-    async def _handle_clear_tui(self) -> None:  # DEPRECATED
-        await self._svc_commands.handle_clear_tui()
-
-    def _open_tools_overlay(self) -> None:  # DEPRECATED
-        return self._svc_commands.open_tools_overlay()
-
-    def _persist_anim_config(self, cfg_dict: dict) -> None:  # DEPRECATED
-        return self._svc_commands.persist_anim_config(cfg_dict)
-
-    def _update_anim_hint(self) -> None:  # DEPRECATED
-        return self._svc_commands.update_anim_hint()
-
     def action_open_anim_config(self) -> None:
         self._svc_commands.open_anim_config()
-
-    def _initiate_retry(self) -> None:  # DEPRECATED
-        return self._svc_commands.initiate_retry()
 
     # --- from _app_watchers.py ---
 
@@ -2566,9 +2442,6 @@ class HermesApp(App):
     def watch_compact(self, value: bool) -> None:
         self._svc_watchers.on_compact(value)
 
-    def _sync_compact_visibility(self) -> None:  # DEPRECATED
-        self._svc_watchers.sync_compact_visibility()
-
     def watch_status_compaction_progress(self, value: float) -> None:
         self._svc_watchers.on_status_compaction_progress(value)
 
@@ -2580,9 +2453,6 @@ class HermesApp(App):
 
     def watch_attached_images(self, value: list) -> None:
         self._svc_watchers.on_attached_images(value)
-
-    def _clear_attached_images(self) -> None:  # DEPRECATED
-        self._svc_watchers.clear_attached_images()
 
     def handle_file_drop(self, paths: "list[Path]") -> None:
         """Route terminal drag-and-drop pasted paths into input bar."""

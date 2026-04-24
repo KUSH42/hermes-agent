@@ -386,7 +386,7 @@ async def test_retry_with_no_panels():
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
 
-        app._initiate_retry()
+        app._svc_commands.initiate_retry()
         await pilot.pause()
 
         hint = _get_hint(app)
@@ -418,7 +418,7 @@ async def test_retry_sets_input_and_submits():
         except Exception:
             return  # Skip if HermesInput unavailable
 
-        app._initiate_retry()
+        app._svc_commands.initiate_retry()
         await pilot.pause()
 
         assert hi.value == "retry this"
@@ -448,7 +448,7 @@ async def test_retry_does_not_open_overlay():
         except Exception:
             pass
 
-        app._initiate_retry()
+        app._svc_commands.initiate_retry()
         await pilot.pause()
 
         assert app.undo_state is None
@@ -580,7 +580,7 @@ async def test_handle_tui_command_undo_returns_true():
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         # No panels — _initiate_undo will flash a hint, but still returns True
-        result = app._handle_tui_command("/undo")
+        result = app._svc_commands.handle_tui_command("/undo")
         assert result is True
 
 
@@ -594,7 +594,7 @@ async def test_handle_tui_command_help_returns_true():
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        result = app._handle_tui_command("/help")
+        result = app._svc_commands.handle_tui_command("/help")
         assert result is True
 
 

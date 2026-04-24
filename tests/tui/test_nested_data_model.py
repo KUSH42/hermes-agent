@@ -27,7 +27,7 @@ def _make_mock_app():
     app._browse_total = 0
     app._cached_output_panel = None
     app._explicit_parent_map = {}
-    app._update_anim_hint = MagicMock()
+    app._svc_commands.update_anim_hint = MagicMock()
     app.call_after_refresh = MagicMock()
     app.query_one = MagicMock(side_effect=Exception("no match"))
     app.planned_calls = []

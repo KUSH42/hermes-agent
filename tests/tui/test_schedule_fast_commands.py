@@ -78,7 +78,7 @@ async def test_bare_schedule_flashes_usage_and_returns_true():
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
         with patch.object(app, "_flash_hint") as mock_flash:
-            result = app._handle_tui_command("/schedule")
+            result = app._svc_commands.handle_tui_command("/schedule")
         assert result is True
         mock_flash.assert_called_once()
         hint_msg = mock_flash.call_args[0][0]
@@ -95,7 +95,7 @@ async def test_schedule_with_text_flashes_and_forwards():
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
         with patch.object(app, "_flash_hint") as mock_flash:
-            result = app._handle_tui_command("/schedule check logs every hour")
+            result = app._svc_commands.handle_tui_command("/schedule check logs every hour")
         assert result is False
         mock_flash.assert_called_once()
         hint_msg = mock_flash.call_args[0][0]
@@ -130,7 +130,7 @@ async def test_schedule_with_text_no_unknown_command_flash():
         await pilot.pause()
         flash_calls: list[tuple] = []
         with patch.object(app, "_flash_hint", side_effect=lambda msg, dur: flash_calls.append((msg, dur))):
-            result = app._handle_tui_command("/schedule do something useful")
+            result = app._svc_commands.handle_tui_command("/schedule do something useful")
         # Must return False (forward to agent)
         assert result is False
         # No "Unknown command" flash
@@ -172,7 +172,7 @@ async def test_schedule_with_extra_whitespace_forwards():
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
         with patch.object(app, "_flash_hint") as mock_flash:
-            result = app._handle_tui_command("/schedule   run nightly  backup  ")
+            result = app._svc_commands.handle_tui_command("/schedule   run nightly  backup  ")
         assert result is False
         mock_flash.assert_called_once()
         hint_msg = mock_flash.call_args[0][0]

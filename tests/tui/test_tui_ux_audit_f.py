@@ -52,7 +52,7 @@ async def test_f1_spinner_uses_theme_vars() -> None:
         with _patch.object(_anim, "shimmer_text", side_effect=_capture):
             app.agent_running = True
             await pilot.pause()
-            app._tick_spinner()
+            app._svc_spinner.tick_spinner()
             await pilot.pause()
         if captured:
             assert captured.get("dim") == "#ff0000", (

@@ -105,12 +105,12 @@ class SessionBar(Widget):
             event.stop()
             if len(self._sessions_data) < self._max_sessions:
                 try:
-                    self.app._open_new_session_overlay()
+                    self.app._svc_sessions.open_new_session_overlay()
                 except Exception:
                     pass
             else:
                 try:
-                    self.app._flash_sessions_max()
+                    self.app._svc_sessions.flash_sessions_max()
                 except Exception:
                     pass
             return
@@ -121,7 +121,7 @@ class SessionBar(Widget):
                 target_id = getattr(rec, "id", None)
                 if target_id and target_id != self._active_id:
                     try:
-                        self.app._switch_to_session(target_id)
+                        self.app._svc_sessions.switch_to_session(target_id)
                     except Exception:
                         pass
             event.stop()
@@ -211,42 +211,42 @@ class _SessionsTab(Widget):
         if btn_id == "sess-tab-new":
             event.stop()
             try:
-                app._open_new_session_overlay()
+                app._svc_sessions.open_new_session_overlay()
             except Exception:
                 pass
         elif btn_id.startswith("switch-"):
             sid = btn_id[len("switch-"):]
             event.stop()
             try:
-                app._switch_to_session(sid)
+                app._svc_sessions.switch_to_session(sid)
             except Exception:
                 pass
         elif btn_id.startswith("kill-"):
             sid = btn_id[len("kill-"):]
             event.stop()
             try:
-                app._kill_session_prompt(sid)
+                app._svc_sessions.kill_session_prompt(sid)
             except Exception:
                 pass
         elif btn_id.startswith("merge-"):
             sid = btn_id[len("merge-"):]
             event.stop()
             try:
-                app._open_merge_overlay(sid)
+                app._svc_sessions.open_merge_overlay(sid)
             except Exception:
                 pass
         elif btn_id.startswith("reopen-"):
             sid = btn_id[len("reopen-"):]
             event.stop()
             try:
-                app._reopen_orphan_session(sid)
+                app._svc_sessions.reopen_orphan_session(sid)
             except Exception:
                 pass
         elif btn_id.startswith("delete-"):
             sid = btn_id[len("delete-"):]
             event.stop()
             try:
-                app._delete_orphan_session(sid)
+                app._svc_sessions.delete_orphan_session(sid)
             except Exception:
                 pass
 
@@ -329,7 +329,7 @@ class _SessionNotification(Horizontal):
                 self.remove_class("--visible")
                 self._timer = None
                 try:
-                    self.app._switch_to_session(sid)
+                    self.app._svc_sessions.switch_to_session(sid)
                 except Exception:
                     pass
 

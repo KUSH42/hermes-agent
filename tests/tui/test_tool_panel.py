@@ -41,7 +41,7 @@ def _make_app() -> HermesApp:
 async def _get_shell_panel(app, pilot) -> ToolPanel:
     app.agent_running = True
     await _pause(pilot)
-    app._open_gen_block("terminal")
+    app._svc_tools.open_gen_block("terminal")
     await _pause(pilot)
     output = app.query_one(OutputPanel)
     return output.query_one(ToolPanel)
@@ -134,7 +134,7 @@ async def test_tool_panel_collapsed_default_false():
         await _pause(pilot)
         app.agent_running = True
         await _pause(pilot)
-        app._open_gen_block("bash")
+        app._svc_tools.open_gen_block("bash")
         await _pause(pilot)
 
         output = app.query_one(OutputPanel)
@@ -150,7 +150,7 @@ async def test_tool_panel_category_classification():
         await _pause(pilot)
         app.agent_running = True
         await _pause(pilot)
-        app._open_gen_block("terminal")
+        app._svc_tools.open_gen_block("terminal")
         await _pause(pilot)
 
         output = app.query_one(OutputPanel)
@@ -167,7 +167,7 @@ async def test_tool_panel_unknown_category_fallback():
         await _pause(pilot)
         app.agent_running = True
         await _pause(pilot)
-        app._open_gen_block("unknown_custom_tool")
+        app._svc_tools.open_gen_block("unknown_custom_tool")
         await _pause(pilot)
 
         output = app.query_one(OutputPanel)
@@ -200,7 +200,7 @@ async def test_streaming_tool_block_wrapped_in_tool_panel():
         await _pause(pilot)
         app.agent_running = True
         await _pause(pilot)
-        block_ref = app._open_gen_block("bash")
+        block_ref = app._svc_tools.open_gen_block("bash")
         await _pause(pilot)
 
         output = app.query_one(OutputPanel)
@@ -226,7 +226,7 @@ async def test_tool_panel_back_ref_on_header():
         await _pause(pilot)
         app.agent_running = True
         await _pause(pilot)
-        block_ref = app._open_gen_block("bash")
+        block_ref = app._svc_tools.open_gen_block("bash")
         await _pause(pilot)
 
         output = app.query_one(OutputPanel)
@@ -244,7 +244,7 @@ async def test_streaming_tool_block_has_tool_panel_back_ref():
         await _pause(pilot)
         app.agent_running = True
         await _pause(pilot)
-        block_ref = app._open_gen_block("bash")
+        block_ref = app._svc_tools.open_gen_block("bash")
         await _pause(pilot)
 
         output = app.query_one(OutputPanel)
@@ -291,7 +291,7 @@ async def test_execute_code_block_wrapped_in_tool_panel():
         output.new_message()
         await _pause(pilot)
 
-        block_ref = app._open_execute_code_block(idx=0)
+        block_ref = app._svc_tools.open_execute_code_block(idx=0)
         await _pause(pilot)
 
         tp = output.query_one(ToolPanel)
@@ -313,7 +313,7 @@ async def test_write_file_block_wrapped_in_tool_panel():
         output.new_message()
         await _pause(pilot)
 
-        block_ref = app._open_write_file_block(idx=0, path="/tmp/test.py")
+        block_ref = app._svc_tools.open_write_file_block(idx=0, path="/tmp/test.py")
         await _pause(pilot)
 
         tp = output.query_one(ToolPanel)
@@ -630,7 +630,7 @@ async def test_file_tool_gets_category_class():
         await _pause(pilot)
         app.agent_running = True
         await _pause(pilot)
-        app._open_gen_block("read_file")
+        app._svc_tools.open_gen_block("read_file")
         await _pause(pilot)
 
         output = app.query_one(OutputPanel)
@@ -646,7 +646,7 @@ async def test_shell_tool_gets_category_class():
         await _pause(pilot)
         app.agent_running = True
         await _pause(pilot)
-        app._open_gen_block("terminal")
+        app._svc_tools.open_gen_block("terminal")
         await _pause(pilot)
 
         output = app.query_one(OutputPanel)
@@ -666,7 +666,7 @@ async def test_inner_block_ref_append_line_works():
         await _pause(pilot)
         app.agent_running = True
         await _pause(pilot)
-        block = app._open_gen_block("bash")
+        block = app._svc_tools.open_gen_block("bash")
         await _pause(pilot)
 
         block.append_line("hello world")
@@ -681,7 +681,7 @@ async def test_inner_block_ref_complete_works():
         await _pause(pilot)
         app.agent_running = True
         await _pause(pilot)
-        block = app._open_gen_block("bash")
+        block = app._svc_tools.open_gen_block("bash")
         await _pause(pilot)
 
         block.complete("1.2s")
@@ -1065,7 +1065,7 @@ async def test_action_retry_calls_initiate_retry():
         await _pause(pilot)
 
         called = []
-        app._initiate_retry = lambda: called.append(True)
+        app._svc_commands.initiate_retry = lambda: called.append(True)
         panel.action_retry()
         assert called == [True]
 
@@ -1566,7 +1566,7 @@ async def test_action_retry_non_error_flashes_no_error():
         await _pause(pilot)
         app.agent_running = True
         await _pause(pilot)
-        app._open_gen_block("bash")
+        app._svc_tools.open_gen_block("bash")
         await _pause(pilot)
 
         output = app.query_one(OutputPanel)

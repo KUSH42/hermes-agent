@@ -554,7 +554,7 @@ class AnimConfigPanel(Widget):
         try:
             vals = _fields_to_dict(self._fields)
             try:
-                self.app._persist_anim_config(vals)  # type: ignore[attr-defined]
+                self.app._svc_commands.persist_anim_config(vals)  # type: ignore[attr-defined]
             except Exception:
                 # Fallback: direct write
                 from hermes_cli.config import read_raw_config, save_config, _set_nested

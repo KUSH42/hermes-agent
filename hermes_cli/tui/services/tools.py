@@ -299,7 +299,7 @@ class ToolRenderingService(AppService):
                 self.app.query_one(_DO).signal("tool")
             except Exception:
                 pass
-            self.app._update_anim_hint()
+            self.app._svc_commands.update_anim_hint()
             msg.refresh(layout=True)
             self.app._browse_total += 1
             if not output._user_scrolled_up:
@@ -349,7 +349,7 @@ class ToolRenderingService(AppService):
                 self.app.status_phase = _Phase.REASONING
             else:
                 self.app.status_phase = _Phase.IDLE
-        self.app._update_anim_hint()
+        self.app._svc_commands.update_anim_hint()
         rec = self._turn_tool_calls.get(tool_call_id)
         if rec is not None:
             try:

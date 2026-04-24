@@ -11,7 +11,7 @@ Phase C — session_widgets.py + app.py session attrs.
   6.  SessionBar._rebuild() with empty list shows only + button
   7.  SessionBar at max capacity shows dim + button
   8.  SessionBar + click calls app._open_new_session_overlay()
-  9.  SessionBar session button click calls app._switch_to_session(id)
+  9.  SessionBar session button click calls app._svc_sessions.switch_to_session(id)
   10. SessionBar active session button click is no-op (no switch)
   11. HermesApp._sessions_enabled defaults False
   12. HermesApp on_mount with sessions.enabled=False leaves bar hidden
@@ -219,7 +219,7 @@ async def test_session_bar_add_click_opens_overlay():
 
     async with app.run_test(size=(120, 24)) as pilot:
         await pilot.pause()
-        app._open_new_session_overlay = lambda: called.append(True)
+        app._svc_sessions.open_new_session_overlay = lambda: called.append(True)
         app._sessions_enabled = True
         bar = app.query_one(SessionBar)
         bar._sessions_data = []
@@ -240,7 +240,7 @@ async def test_session_bar_add_click_opens_overlay():
 
 
 # ---------------------------------------------------------------------------
-# 9. SessionBar session button click calls app._switch_to_session(id)
+# 9. SessionBar session button click calls app._svc_sessions.switch_to_session(id)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -251,7 +251,7 @@ async def test_session_bar_session_click_switches():
 
     async with app.run_test(size=(120, 24)) as pilot:
         await pilot.pause()
-        app._switch_to_session = lambda sid: switched_to.append(sid)
+        app._svc_sessions.switch_to_session = lambda sid: switched_to.append(sid)
         app._sessions_enabled = True
         bar = app.query_one(SessionBar)
         rec = _make_record(id="target00")
@@ -282,7 +282,7 @@ async def test_session_bar_active_click_noop():
 
     async with app.run_test(size=(120, 24)) as pilot:
         await pilot.pause()
-        app._switch_to_session = lambda sid: switched_to.append(sid)
+        app._svc_sessions.switch_to_session = lambda sid: switched_to.append(sid)
         bar = app.query_one(SessionBar)
         rec = _make_record(id="active000")
         bar._active_id = "active000"
@@ -336,7 +336,7 @@ async def test_hermes_app_get_session_records():
         await pilot.pause()
         rec = _make_record()
         app._session_records_cache = [rec]
-        result = app._get_session_records()
+        result = app._svc_sessions.get_session_records()
         assert len(result) == 1
         assert result[0].id == rec.id
 
@@ -351,7 +351,7 @@ async def test_hermes_app_get_active_session_id():
     async with app.run_test(size=(120, 24)) as pilot:
         await pilot.pause()
         app._session_active_id = "active123"
-        assert app._get_active_session_id() == "active123"
+        assert app._svc_sessions.get_active_session_id() == "active123"
 
 
 # ---------------------------------------------------------------------------
@@ -362,7 +362,7 @@ async def test_hermes_app_get_active_session_id():
 async def test_new_worktree_session_disabled_noop():
     app = _make_app(sessions_enabled=False)
     called = []
-    app._open_new_session_overlay = lambda: called.append(True)
+    app._svc_sessions.open_new_session_overlay = lambda: called.append(True)
     async with app.run_test(size=(120, 24)) as pilot:
         await pilot.pause()
         app.action_new_worktree_session()
@@ -382,7 +382,7 @@ async def test_flash_sessions_max():
         app._sessions_enabled = True
         flashed = []
         app._flash_hint = lambda msg, duration=1.5: flashed.append(msg)
-        app._flash_sessions_max()
+        app._svc_sessions.flash_sessions_max()
         await pilot.pause()
     assert any("Max sessions" in m for m in flashed)
 
@@ -707,7 +707,7 @@ async def test_new_session_overlay_empty_branch_error():
 async def test_new_session_overlay_create_calls_app():
     app = _make_app()
     create_calls = []
-    app._create_new_session = lambda branch, base, overlay: create_calls.append((branch, base))
+    app._svc_sessions.create_new_session = lambda branch, base, overlay: create_calls.append((branch, base))
     async with app.run_test(size=(120, 36)) as pilot:
         await pilot.pause()
         overlay = app.query_one(NewSessionOverlay)
@@ -737,7 +737,7 @@ async def test_switch_to_same_session_noop():
         app._session_active_id = "current00"
         exited = []
         app.exit = lambda **kw: exited.append(True)
-        app._switch_to_session("current00")
+        app._svc_sessions.switch_to_session("current00")
         await pilot.pause()
     assert len(exited) == 0
 
@@ -754,7 +754,7 @@ async def test_switch_to_session_disabled_noop():
         app._sessions_enabled = False
         exited = []
         app.exit = lambda **kw: exited.append(True)
-        app._switch_to_session("other-session")
+        app._svc_sessions.switch_to_session("other-session")
         await pilot.pause()
     assert len(exited) == 0
 
@@ -771,8 +771,8 @@ async def test_switch_by_index_empty_noop():
         app._sessions_enabled = True
         app._session_records_cache = []
         switched = []
-        app._switch_to_session = lambda sid: switched.append(sid)
-        app._switch_to_session_by_index(0)
+        app._svc_sessions.switch_to_session = lambda sid: switched.append(sid)
+        app._svc_sessions.switch_to_session_by_index(0)
         await pilot.pause()
     assert len(switched) == 0
 
@@ -792,7 +792,7 @@ async def test_switch_by_index_correct_id():
         app._session_active_id = "other000"
         switched = []
         app._svc_sessions.switch_to_session = lambda sid: switched.append(sid)
-        app._switch_to_session_by_index(0)
+        app._svc_sessions.switch_to_session_by_index(0)
         await pilot.pause()
     assert "sess0001" in switched
 
@@ -808,7 +808,7 @@ async def test_flash_sessions_max_message():
         await pilot.pause()
         flashed = []
         app._flash_hint = lambda msg, duration=1.5: flashed.append(msg)
-        app._flash_sessions_max()
+        app._svc_sessions.flash_sessions_max()
     assert any("Max" in m for m in flashed)
 
 
@@ -868,7 +868,7 @@ async def test_get_session_records_returns_copy():
         await pilot.pause()
         rec = _make_record()
         app._session_records_cache = [rec]
-        result = app._get_session_records()
+        result = app._svc_sessions.get_session_records()
         assert result is not app._session_records_cache
         assert len(result) == 1
 
@@ -976,7 +976,7 @@ async def test_handle_session_event_pushes_notification():
         await pilot.pause()
         notif = app.query_one(_SessionNotification)
         event = {"type": "agent_complete", "session_id": "abc", "message": "done"}
-        app._handle_session_event(event)
+        app._svc_sessions.handle_session_event(event)
         await pilot.pause()
         assert notif.has_class("--visible")
 
@@ -993,7 +993,7 @@ async def test_handle_session_event_refreshes_records():
         refreshed = []
         app._svc_sessions.refresh_session_records_from_index = lambda: refreshed.append(True)
         event = {"type": "agent_complete", "session_id": "abc", "message": "done"}
-        app._handle_session_event(event)
+        app._svc_sessions.handle_session_event(event)
         await pilot.pause()
     assert len(refreshed) == 1
 
@@ -1008,7 +1008,7 @@ async def test_session_notification_switch_button():
     switched = []
     async with app.run_test(size=(120, 24)) as pilot:
         await pilot.pause()
-        app._switch_to_session = lambda sid: switched.append(sid)
+        app._svc_sessions.switch_to_session = lambda sid: switched.append(sid)
         notif = app.query_one(_SessionNotification)
         notif.push({"type": "agent_complete", "session_id": "target00", "message": "done"})
         await pilot.pause()
@@ -1067,7 +1067,7 @@ async def test_poll_session_index_refreshes_on_change():
         refreshed = []
         app._svc_sessions.refresh_session_bar = lambda: refreshed.append(True)
 
-        app._poll_session_index()
+        app._svc_sessions.poll_session_index()
         await pilot.pause()
 
     assert len(refreshed) == 1
@@ -1087,6 +1087,6 @@ async def test_poll_session_index_no_manager():
         app._session_mgr = None
         refreshed = []
         app._svc_sessions.refresh_session_bar = lambda: refreshed.append(True)
-        app._poll_session_index()
+        app._svc_sessions.poll_session_index()
         await pilot.pause()
     assert len(refreshed) == 0

@@ -112,7 +112,7 @@ def _make_keys_svc(agent_running=False, bash_running=False):
     app.agent_running = agent_running
     app._svc_bash = MagicMock()
     app._svc_bash.is_running = bash_running
-    app._handle_tui_command = MagicMock(return_value=False)
+    app._svc_commands.handle_tui_command = MagicMock(return_value=False)
     svc.app = app
     return svc, app
 
@@ -167,7 +167,7 @@ def test_t12_no_bang_routes_to_agent_path():
         mock_app.agent_running = False
         mock_app._svc_bash = MagicMock()
         mock_app._svc_bash.is_running = False
-        mock_app._handle_tui_command = MagicMock(return_value=False)
+        mock_app._svc_commands.handle_tui_command = MagicMock(return_value=False)
         mock_app.attached_images = []
         mock_app.cli = MagicMock()
         mock_app.cli._pending_input = MagicMock()
@@ -183,7 +183,7 @@ def test_t12_no_bang_routes_to_agent_path():
 
 def test_t13_slash_cmd_not_treated_as_bash():
     svc, app = _make_keys_svc()
-    app._handle_tui_command = MagicMock(return_value=True)
+    app._svc_commands.handle_tui_command = MagicMock(return_value=True)
     svc.dispatch_input_submitted(_submitted("/model"))
     app._svc_bash.run.assert_not_called()
 

@@ -81,7 +81,7 @@ async def test_single_header_row():
         app.agent_running = True
         for _ in range(5):
             await pilot.pause()
-        app._open_gen_block("patch")
+        app._svc_tools.open_gen_block("patch")
         for _ in range(5):
             await pilot.pause()
 
@@ -104,7 +104,7 @@ async def test_tool_panel_compose_no_panel_content():
         app.agent_running = True
         for _ in range(5):
             await pilot.pause()
-        app._open_gen_block("read_file")
+        app._svc_tools.open_gen_block("read_file")
         for _ in range(5):
             await pilot.pause()
 
@@ -130,7 +130,7 @@ async def test_error_remediation_in_footer_only():
         app.agent_running = True
         for _ in range(5):
             await pilot.pause()
-        app._open_gen_block("terminal")
+        app._svc_tools.open_gen_block("terminal")
         for _ in range(5):
             await pilot.pause()
 

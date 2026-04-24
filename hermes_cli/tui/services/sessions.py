@@ -59,7 +59,7 @@ class SessionsService(AppService):
         self.app._session_records_cache = self.app._session_mgr.index.get_sessions()
         self.app._session_active_id = self.app._session_mgr.index.get_active_id()
         self.app.session_count = len(self.app._session_records_cache)  # S1-D
-        self.app._sync_compact_visibility()
+        self.app._svc_watchers.sync_compact_visibility()
         try:
             bar = self.app.query_one(SessionBar)
             bar.add_class("--sessions-enabled")
@@ -119,7 +119,7 @@ class SessionsService(AppService):
                 self.app._session_active_id = active_id
                 self.app.session_count = len(records)  # S1-D
                 self.refresh_session_bar()
-                self.app._sync_compact_visibility()
+                self.app._svc_watchers.sync_compact_visibility()
         except Exception:
             pass
 

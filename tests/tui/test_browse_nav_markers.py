@@ -43,7 +43,7 @@ async def test_rebuild_anchors_empty():
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        app._rebuild_browse_anchors()
+        app._svc_browse.rebuild_browse_anchors()
         assert app._browse_anchors == []
         assert app._browse_cursor == 0
 
@@ -59,7 +59,7 @@ async def test_rebuild_anchors_turn_start():
         await output.mount(panel)
         await pilot.pause()
 
-        app._rebuild_browse_anchors()
+        app._svc_browse.rebuild_browse_anchors()
         ts = [a for a in app._browse_anchors if a.anchor_type == BrowseAnchorType.TURN_START]
         assert len(ts) == 1
         assert ts[0].turn_id == 1
@@ -78,7 +78,7 @@ async def test_rebuild_anchors_code_block_complete():
         scb._state = "COMPLETE"
         await pilot.pause()
 
-        app._rebuild_browse_anchors()
+        app._svc_browse.rebuild_browse_anchors()
         cb = [a for a in app._browse_anchors if a.anchor_type == BrowseAnchorType.CODE_BLOCK]
         assert len(cb) == 1
         assert cb[0].widget is scb
@@ -97,7 +97,7 @@ async def test_rebuild_anchors_code_block_streaming():
         scb._state = "STREAMING"
         await pilot.pause()
 
-        app._rebuild_browse_anchors()
+        app._svc_browse.rebuild_browse_anchors()
         cb = [a for a in app._browse_anchors if a.anchor_type == BrowseAnchorType.CODE_BLOCK]
         assert len(cb) == 0
 
@@ -113,7 +113,7 @@ async def test_rebuild_anchors_tool_header():
         await output.mount(block)
         await pilot.pause()
 
-        app._rebuild_browse_anchors()
+        app._svc_browse.rebuild_browse_anchors()
         tb = [a for a in app._browse_anchors if a.anchor_type == BrowseAnchorType.TOOL_BLOCK]
         assert len(tb) == 1
         assert tb[0].label == block._header._label or tb[0].label == "Tool"
@@ -135,7 +135,7 @@ async def test_rebuild_anchors_document_order():
         await output.mount(block)
         await pilot.pause()
 
-        app._rebuild_browse_anchors()
+        app._svc_browse.rebuild_browse_anchors()
         types = [a.anchor_type for a in app._browse_anchors]
         assert types == [
             BrowseAnchorType.TURN_START,
@@ -156,7 +156,7 @@ async def test_rebuild_anchors_diff_header_label():
         block._header.add_class("--diff-header")
         await pilot.pause()
 
-        app._rebuild_browse_anchors()
+        app._svc_browse.rebuild_browse_anchors()
         tb = [a for a in app._browse_anchors if a.anchor_type == BrowseAnchorType.TOOL_BLOCK]
         assert len(tb) == 1
         assert tb[0].label.startswith("Diff · ")
@@ -174,7 +174,7 @@ async def test_rebuild_anchors_cursor_clamp():
         await pilot.pause()
 
         app._browse_cursor = 99
-        app._rebuild_browse_anchors()
+        app._svc_browse.rebuild_browse_anchors()
         assert app._browse_cursor == 2
 
 
@@ -205,7 +205,7 @@ def test_jump_anchor_forward_any():
 
     focused = []
     app._svc_browse.focus_anchor = lambda idx, anchor, **kw: focused.append(idx)
-    app._jump_anchor(+1)
+    app._svc_browse.jump_anchor(+1)
     assert focused == [1]
 
 
@@ -217,7 +217,7 @@ def test_jump_anchor_backward_any():
 
     focused = []
     app._svc_browse.focus_anchor = lambda idx, anchor, **kw: focused.append(idx)
-    app._jump_anchor(-1)
+    app._svc_browse.jump_anchor(-1)
     assert focused == [0]
 
 
@@ -229,7 +229,7 @@ def test_jump_anchor_forward_wrap():
 
     focused = []
     app._svc_browse.focus_anchor = lambda idx, anchor, **kw: focused.append(idx)
-    app._jump_anchor(+1)
+    app._svc_browse.jump_anchor(+1)
     assert focused == [0]
 
 
@@ -241,7 +241,7 @@ def test_jump_anchor_backward_wrap():
 
     focused = []
     app._svc_browse.focus_anchor = lambda idx, anchor, **kw: focused.append(idx)
-    app._jump_anchor(-1)
+    app._svc_browse.jump_anchor(-1)
     assert focused == [1]
 
 
@@ -257,7 +257,7 @@ def test_jump_code_block_filtered():
 
     focused = []
     app._svc_browse.focus_anchor = lambda idx, anchor, **kw: focused.append(idx)
-    app._jump_anchor(+1, BrowseAnchorType.CODE_BLOCK)
+    app._svc_browse.jump_anchor(+1, BrowseAnchorType.CODE_BLOCK)
     assert focused == [1]
 
 
@@ -269,7 +269,7 @@ def test_jump_code_block_no_blocks():
 
     focused = []
     app._svc_browse.focus_anchor = lambda idx, anchor, **kw: focused.append(idx)
-    app._jump_anchor(+1, BrowseAnchorType.CODE_BLOCK)
+    app._svc_browse.jump_anchor(+1, BrowseAnchorType.CODE_BLOCK)
     assert focused == []
 
 
@@ -286,7 +286,7 @@ def test_jump_turn_start_forward():
 
     focused = []
     app._svc_browse.focus_anchor = lambda idx, anchor, **kw: focused.append(idx)
-    app._jump_anchor(+1, BrowseAnchorType.TURN_START)
+    app._svc_browse.jump_anchor(+1, BrowseAnchorType.TURN_START)
     assert focused == [3]
 
 
@@ -302,7 +302,7 @@ def test_jump_turn_start_backward():
 
     focused = []
     app._svc_browse.focus_anchor = lambda idx, anchor, **kw: focused.append(idx)
-    app._jump_anchor(-1, BrowseAnchorType.TURN_START)
+    app._svc_browse.jump_anchor(-1, BrowseAnchorType.TURN_START)
     assert focused == [0]
 
 
@@ -505,13 +505,13 @@ async def test_rebuild_called_on_agent_stop():
         await pilot.pause()
 
         rebuild_calls = []
-        original = app._rebuild_browse_anchors
+        original = app._svc_browse.rebuild_browse_anchors
 
         def tracking_rebuild():
             rebuild_calls.append(1)
             original()
 
-        app._rebuild_browse_anchors = tracking_rebuild
+        app._svc_browse.rebuild_browse_anchors = tracking_rebuild
         app.browse_mode = True
         rebuild_calls.clear()  # ignore the entry rebuild
 

@@ -219,7 +219,7 @@ class SessionOverlay(Widget):
     def action_new_session(self) -> None:
         self.action_dismiss()
         try:
-            self.app._handle_tui_command("/new")
+            self.app._svc_commands.handle_tui_command("/new")
         except Exception:
             pass
 

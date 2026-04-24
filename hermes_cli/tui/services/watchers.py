@@ -43,7 +43,7 @@ class WatchersService(AppService):
                     )
                 ):
                     has_content = bool(getattr(inp, "value", ""))
-                    self.app._set_hint_phase("typing" if has_content else "idle")
+                    self.app._svc_spinner.set_hint_phase("typing" if has_content else "idle")
 
     def on_input_changed(self, event: Any) -> None:
         """Update hint phase on input content change (typing phase detection)."""
@@ -61,7 +61,7 @@ class WatchersService(AppService):
                     )
                 ):
                     has_content = bool(getattr(inp, "value", ""))
-                    self.app._set_hint_phase("typing" if has_content else "idle")
+                    self.app._svc_spinner.set_hint_phase("typing" if has_content else "idle")
 
     # ------------------------------------------------------------------
     # Size / compact watchers
@@ -186,7 +186,7 @@ class WatchersService(AppService):
             self.app.query_one(VoiceStatusBar).set_class(value, "active")
         except NoMatches:
             pass
-        self.app._set_hint_phase("voice" if value else self.app._compute_hint_phase())
+        self.app._svc_spinner.set_hint_phase("voice" if value else self.app._svc_spinner.compute_hint_phase())
 
     def on_voice_recording(self, value: bool) -> None:
         from hermes_cli.tui.widgets import VoiceStatusBar
@@ -374,7 +374,7 @@ class WatchersService(AppService):
             else:
                 ov.hide_if_kind(InterruptKind.CLARIFY)
                 self._post_interrupt_focus()
-        self.app._set_hint_phase(self.app._compute_hint_phase())
+        self.app._svc_spinner.set_hint_phase(self.app._svc_spinner.compute_hint_phase())
 
     def on_approval_state(self, value: "ChoiceOverlayState | None") -> None:
         from hermes_cli.tui.overlays import InterruptKind
@@ -394,7 +394,7 @@ class WatchersService(AppService):
             else:
                 ov.hide_if_kind(InterruptKind.APPROVAL)
                 self._post_interrupt_focus()
-        self.app._set_hint_phase(self.app._compute_hint_phase())
+        self.app._svc_spinner.set_hint_phase(self.app._svc_spinner.compute_hint_phase())
 
     def on_highlighted_candidate(self, c: Any) -> None:
         """Route highlighted candidate to PreviewPanel (PathCandidate only)."""
@@ -426,7 +426,7 @@ class WatchersService(AppService):
             else:
                 ov.hide_if_kind(InterruptKind.SUDO)
                 self._post_interrupt_focus()
-        self.app._set_hint_phase(self.app._compute_hint_phase())
+        self.app._svc_spinner.set_hint_phase(self.app._svc_spinner.compute_hint_phase())
 
     def on_secret_state(self, value: "SecretOverlayState | None") -> None:
         from hermes_cli.tui.overlays import InterruptKind
@@ -439,7 +439,7 @@ class WatchersService(AppService):
             else:
                 ov.hide_if_kind(InterruptKind.SECRET)
                 self._post_interrupt_focus()
-        self.app._set_hint_phase(self.app._compute_hint_phase())
+        self.app._svc_spinner.set_hint_phase(self.app._svc_spinner.compute_hint_phase())
 
     # ------------------------------------------------------------------
     # Status error watcher
@@ -452,7 +452,7 @@ class WatchersService(AppService):
             self.app.query_one("#input-rule", TitledRule).set_error(bool(value))
         except NoMatches:
             pass
-        self.app._set_hint_phase(self.app._compute_hint_phase())
+        self.app._svc_spinner.set_hint_phase(self.app._svc_spinner.compute_hint_phase())
         # A1: ERROR phase is orthogonal — save/restore previous phase
         from hermes_cli.tui.agent_phase import Phase as _Phase
         if value:

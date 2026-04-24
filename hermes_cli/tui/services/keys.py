@@ -67,7 +67,7 @@ class KeyDispatchService(AppService):
         if key.startswith("alt+") and key[4:].isdigit() and len(key) == 5:
             n = int(key[4:]) - 1
             if n >= 0 and self.app._sessions_enabled:
-                self.app._switch_to_session_by_index(n)
+                self.app._svc_sessions.switch_to_session_by_index(n)
                 event.prevent_default()
                 return
 
@@ -319,11 +319,11 @@ class KeyDispatchService(AppService):
 
         # --- J/K: focus next/prev ToolPanel (Phase 3 panel nav) ---
         if key == "J":
-            self.app._focus_tool_panel(+1)
+            self.app._svc_browse.focus_tool_panel(+1)
             event.prevent_default()
             return
         elif key == "K":
-            self.app._focus_tool_panel(-1)
+            self.app._svc_browse.focus_tool_panel(-1)
             event.prevent_default()
             return
 
@@ -346,7 +346,7 @@ class KeyDispatchService(AppService):
                         row = (row - 1) % 3
                     new_pos = _POS_GRID[row][col]
                     ov.position = new_pos
-                    self.app._persist_anim_config({"position": new_pos})
+                    self.app._svc_commands.persist_anim_config({"position": new_pos})
                     self.app._flash_hint(f"Overlay → {new_pos}", 1.5)
             except Exception:
                 pass
@@ -429,19 +429,19 @@ class KeyDispatchService(AppService):
                 event.prevent_default()
                 return
             elif key == "]":
-                self.app._jump_anchor(+1)
+                self.app._svc_browse.jump_anchor(+1)
                 event.prevent_default()
                 return
             elif key == "[":
-                self.app._jump_anchor(-1)
+                self.app._svc_browse.jump_anchor(-1)
                 event.prevent_default()
                 return
             elif key == "}":
-                self.app._jump_anchor(+1, BrowseAnchorType.CODE_BLOCK)
+                self.app._svc_browse.jump_anchor(+1, BrowseAnchorType.CODE_BLOCK)
                 event.prevent_default()
                 return
             elif key == "{":
-                self.app._jump_anchor(-1, BrowseAnchorType.CODE_BLOCK)
+                self.app._svc_browse.jump_anchor(-1, BrowseAnchorType.CODE_BLOCK)
                 event.prevent_default()
                 return
             elif key == "alt+down":
@@ -453,11 +453,11 @@ class KeyDispatchService(AppService):
                 event.prevent_default()
                 return
             elif key == "m":
-                self.app._jump_anchor(+1, BrowseAnchorType.MEDIA)
+                self.app._svc_browse.jump_anchor(+1, BrowseAnchorType.MEDIA)
                 event.prevent_default()
                 return
             elif key == "M":
-                self.app._jump_anchor(-1, BrowseAnchorType.MEDIA)
+                self.app._svc_browse.jump_anchor(-1, BrowseAnchorType.MEDIA)
                 event.prevent_default()
                 return
             elif key == "backslash":
@@ -465,7 +465,7 @@ class KeyDispatchService(AppService):
                 event.prevent_default()
                 return
             elif key == "T":
-                self.app._open_tools_overlay()
+                self.app._svc_commands.open_tools_overlay()
                 event.prevent_default()
                 return
             elif event.character is not None:
@@ -566,7 +566,7 @@ class KeyDispatchService(AppService):
             self.app._svc_bash.run(cmd)
             return
 
-        if isinstance(text, str) and self.app._handle_tui_command(text):
+        if isinstance(text, str) and self.app._svc_commands.handle_tui_command(text):
             return
 
         if isinstance(text, str) and text.startswith("/"):
@@ -577,7 +577,7 @@ class KeyDispatchService(AppService):
 
         images = list(self.app.attached_images)
         if images:
-            self.app._clear_attached_images()
+            self.app._svc_watchers.clear_attached_images()
             payload = (text, images)
         else:
             payload = text

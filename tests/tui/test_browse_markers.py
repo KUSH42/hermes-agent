@@ -179,7 +179,7 @@ async def test_pip_reapplied_after_rebuild():
         initial_has_pip = panel.has_class("--has-pip")
         # remove to simulate stale state
         panel.remove_class("--has-pip", "--anchor-pip-turn")
-        app._rebuild_browse_anchors()
+        app._svc_browse.rebuild_browse_anchors()
         await pilot.pause()
         # pips re-applied because browse_mode=True
         assert panel.has_class("--has-pip") or not app._browse_anchors

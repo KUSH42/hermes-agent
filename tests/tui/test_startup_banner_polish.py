@@ -503,7 +503,7 @@ def test_T_SBP_17_dispatch_input_calls_postamble_once(monkeypatch):
     mock_app.cli = mock_cli
     mock_app.agent_running = False
     mock_app.attached_images = []
-    mock_app._handle_tui_command = MagicMock(return_value=False)
+    mock_app._svc_commands.handle_tui_command = MagicMock(return_value=False)
     mock_app._svc_bash = MagicMock()
     mock_app._svc_bash.is_running = False
 
@@ -533,7 +533,7 @@ def test_T_SBP_18_dispatch_input_postamble_not_called_second_time(monkeypatch):
     mock_app.cli = mock_cli
     mock_app.agent_running = False
     mock_app.attached_images = []
-    mock_app._handle_tui_command = MagicMock(return_value=False)
+    mock_app._svc_commands.handle_tui_command = MagicMock(return_value=False)
     mock_app._svc_bash = MagicMock()
     mock_app._svc_bash.is_running = False
 

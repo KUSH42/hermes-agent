@@ -502,7 +502,7 @@ def test_mouse_drag_release_commits_exact_custom_offset():
     assert ov._cfg is not None
     assert ov._cfg.custom_offset_x == 33
     assert ov._cfg.custom_offset_y == 9
-    mock_app._persist_anim_config.assert_called_with({
+    mock_app._svc_commands.persist_anim_config.assert_called_with({
         "position": "custom",
         "custom_offset_x": 33,
         "custom_offset_y": 9,
@@ -801,7 +801,7 @@ def test_save_calls_config_helpers():
 
     # Force fallback by making app._persist_anim_config raise
     fake_app = MagicMock()
-    fake_app._persist_anim_config.side_effect = AttributeError("no persist")
+    fake_app._svc_commands.persist_anim_config.side_effect = AttributeError("no persist")
     _orig_app = AnimConfigPanel.__dict__.get("app", None)
     type(panel).app = property(lambda self: fake_app)
 

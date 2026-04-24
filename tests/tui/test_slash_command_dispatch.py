@@ -45,7 +45,7 @@ def _call_handle(app, text: str):
     app.query_one = MagicMock(side_effect=NoMatches("no dom"))  # type: ignore[method-assign]
     app.query = MagicMock(return_value=[])  # type: ignore[method-assign]
 
-    result = app._handle_tui_command(text)
+    result = app._svc_commands.handle_tui_command(text)
     return result, flash_calls
 
 
@@ -92,8 +92,8 @@ def test_unknown_command_flashes():
 def test_tui_handled_clear_dispatches():
     """/clear is TUI-handled; returns True, no Unknown command flash."""
     app = _make_app()
-    # _handle_clear_tui is a @work coroutine; patch it so no event loop needed.
-    with patch.object(app, "_handle_clear_tui"):
+    with patch.object(app._svc_commands, "handle_clear_tui", return_value=None), \
+         patch.object(app, "run_worker"):
         result, flashes = _call_handle(app, "/clear")
     assert result is True
     assert not any("Unknown command" in f for f in flashes)
@@ -102,7 +102,7 @@ def test_tui_handled_clear_dispatches():
 def test_tui_handled_undo_dispatches():
     """/undo returns True, no flash."""
     app = _make_app()
-    with patch.object(app, "_initiate_undo"):
+    with patch.object(app._svc_commands, "initiate_undo"):
         result, flashes = _call_handle(app, "/undo")
     assert result is True
     assert not any("Unknown command" in f for f in flashes)
@@ -111,7 +111,7 @@ def test_tui_handled_undo_dispatches():
 def test_tui_handled_retry_dispatches():
     """/retry returns True, no flash."""
     app = _make_app()
-    with patch.object(app, "_initiate_retry"):
+    with patch.object(app._svc_commands, "initiate_retry"):
         result, flashes = _call_handle(app, "/retry")
     assert result is True
     assert not any("Unknown command" in f for f in flashes)

@@ -1466,7 +1466,7 @@ async def test_ecb_mounts_top_omission_bar():
         await pilot.pause()
         app.agent_running = True
         await pilot.pause()
-        app._open_execute_code_block(0)
+        app._svc_tools.open_execute_code_block(0)
         await pilot.pause()
         # Let call_after_refresh fire
         for _ in range(10):
@@ -1490,7 +1490,7 @@ async def test_ecb_mounts_bottom_omission_bar():
         await pilot.pause()
         app.agent_running = True
         await pilot.pause()
-        app._open_execute_code_block(0)
+        app._svc_tools.open_execute_code_block(0)
         await pilot.pause()
         for _ in range(10):
             await pilot.pause()
@@ -1554,7 +1554,7 @@ async def test_mcp_microcopy_cleared_on_complete():
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         app.agent_running = True
-        app._open_gen_block("mcp__some__tool")
+        app._svc_tools.open_gen_block("mcp__some__tool")
         await pilot.pause()
 
         from hermes_cli.tui.widgets import OutputPanel
@@ -1578,7 +1578,7 @@ async def test_non_mcp_microcopy_still_cleared():
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         app.agent_running = True
-        app._open_gen_block("terminal")
+        app._svc_tools.open_gen_block("terminal")
         await pilot.pause()
 
         from hermes_cli.tui.widgets import OutputPanel

@@ -311,7 +311,7 @@ async def test_tools_slash_command_opens_overlay():
         await _pause(pilot)
 
         with patch.object(app, "push_screen", wraps=app.push_screen) as mock_push:
-            app._handle_tui_command("/tools")
+            app._svc_commands.handle_tui_command("/tools")
             await _pause(pilot)
 
         # Either push_screen was called (overlay opened) or flash_hint (no calls guard)
@@ -334,11 +334,11 @@ async def test_t_key_opens_overlay_in_browse_mode():
         app.browse_mode = True
         await _pause(pilot)
 
-        with patch.object(app, "_open_tools_overlay") as mock_open:
+        with patch.object(app._svc_commands, "open_tools_overlay") as mock_open:
             await pilot.press("T")
             await _pause(pilot)
 
-        # _open_tools_overlay should have been called
+        # open_tools_overlay should have been called
         assert mock_open.called
 
 

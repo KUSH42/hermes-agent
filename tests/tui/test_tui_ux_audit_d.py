@@ -129,7 +129,7 @@ async def test_d4_empty_browse_flashes_hint() -> None:
         app.browse_mode = True
         await pilot.pause()
         # Rebuild with no turns
-        app._rebuild_browse_anchors()
+        app._svc_browse.rebuild_browse_anchors()
         await pilot.pause()
         hint = app.query_one(HintBar).hint
         assert "No turns" in hint or "no turns" in hint.lower(), (

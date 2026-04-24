@@ -90,7 +90,7 @@ async def test_diff_affordance_in_footer_pane():
         app.agent_running = True
         for _ in range(5):
             await pilot.pause()
-        app._open_gen_block("patch")
+        app._svc_tools.open_gen_block("patch")
         for _ in range(5):
             await pilot.pause()
 
@@ -115,7 +115,7 @@ async def test_diff_affordance_set_diff_shows():
         app.agent_running = True
         for _ in range(5):
             await pilot.pause()
-        app._open_gen_block("patch")
+        app._svc_tools.open_gen_block("patch")
         for _ in range(5):
             await pilot.pause()
 

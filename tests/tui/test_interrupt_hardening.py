@@ -1042,8 +1042,8 @@ class TestPhaseH:
         svc = self._make_watchers_service()
         svc._post_interrupt_focus = MagicMock()
         svc._get_interrupt_overlay = MagicMock(return_value=None)
-        svc.app._set_hint_phase = MagicMock()
-        svc.app._compute_hint_phase = MagicMock(return_value="idle")
+        svc.app._svc_spinner.set_hint_phase = MagicMock()
+        svc.app._svc_spinner.compute_hint_phase = MagicMock(return_value="idle")
         svc.app._hide_completion_overlay_if_present = MagicMock()
         svc.app._dismiss_floating_panels = MagicMock()
 
@@ -1072,8 +1072,8 @@ class TestPhaseH:
         svc._post_interrupt_focus = MagicMock()
         mock_ov = MagicMock()
         svc._get_interrupt_overlay = MagicMock(return_value=mock_ov)
-        svc.app._set_hint_phase = MagicMock()
-        svc.app._compute_hint_phase = MagicMock(return_value="idle")
+        svc.app._svc_spinner.set_hint_phase = MagicMock()
+        svc.app._svc_spinner.compute_hint_phase = MagicMock(return_value="idle")
         svc.app._dismiss_floating_panels = MagicMock()
 
         from hermes_cli.tui.overlays import InterruptKind
@@ -1091,8 +1091,8 @@ class TestPhaseH:
         svc._post_interrupt_focus = MagicMock()
         mock_ov = MagicMock()
         svc._get_interrupt_overlay = MagicMock(return_value=mock_ov)
-        svc.app._set_hint_phase = MagicMock()
-        svc.app._compute_hint_phase = MagicMock(return_value="idle")
+        svc.app._svc_spinner.set_hint_phase = MagicMock()
+        svc.app._svc_spinner.compute_hint_phase = MagicMock(return_value="idle")
         svc.app._dismiss_floating_panels = MagicMock()
 
         from hermes_cli.tui.overlays import InterruptKind
@@ -1109,8 +1109,8 @@ class TestPhaseH:
         svc._post_interrupt_focus = MagicMock()
         mock_ov = MagicMock()
         svc._get_interrupt_overlay = MagicMock(return_value=mock_ov)
-        svc.app._set_hint_phase = MagicMock()
-        svc.app._compute_hint_phase = MagicMock(return_value="idle")
+        svc.app._svc_spinner.set_hint_phase = MagicMock()
+        svc.app._svc_spinner.compute_hint_phase = MagicMock(return_value="idle")
         svc.app._dismiss_floating_panels = MagicMock()
         svc.app._pending_undo_panel = None
         svc.app.agent_running = False

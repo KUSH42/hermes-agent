@@ -305,7 +305,7 @@ class ToolGroup(Widget):
 
         # Rebuild browse anchors so hidden children are skipped
         try:
-            self.app._rebuild_browse_anchors()
+            self.app._svc_browse.rebuild_browse_anchors()
         except Exception:
             pass
 
@@ -725,7 +725,7 @@ async def _do_apply_group_widget(
 
     # Rebuild browse anchors
     try:
-        group.app._rebuild_browse_anchors()
+        group.app._svc_browse.rebuild_browse_anchors()
     except Exception:
         pass
 
@@ -744,7 +744,7 @@ async def _do_append_to_group(
         await group._body.mount(new_panel)
     group.recompute_aggregate()
     try:
-        group.app._rebuild_browse_anchors()
+        group.app._svc_browse.rebuild_browse_anchors()
     except Exception:
         pass
 

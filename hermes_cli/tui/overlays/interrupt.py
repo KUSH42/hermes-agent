@@ -913,7 +913,7 @@ class InterruptOverlay(Widget, can_focus=True):
             self._set_error("Branch name required.")
             return
         try:
-            self.app._create_new_session(branch, self._ns_base, self)  # type: ignore[attr-defined]
+            self.app._svc_sessions.create_new_session(branch, self._ns_base, self)  # type: ignore[attr-defined]
         except Exception as exc:
             self._set_error(str(exc))
 
@@ -921,7 +921,7 @@ class InterruptOverlay(Widget, can_focus=True):
         self, payload: "InterruptPayload", *, close_on_success: bool
     ) -> None:
         try:
-            self.app._run_merge(  # type: ignore[attr-defined]
+            self.app._svc_sessions.run_merge(  # type: ignore[attr-defined]
                 payload.session_id,
                 self._merge_strategy,
                 close_on_success=close_on_success,

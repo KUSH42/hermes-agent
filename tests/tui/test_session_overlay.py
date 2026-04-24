@@ -259,7 +259,7 @@ async def test_n_key_triggers_new_session():
         overlay.add_class("--visible")
 
         cmd_calls = []
-        with patch.object(app, "_handle_tui_command", side_effect=lambda cmd: cmd_calls.append(cmd)):
+        with patch.object(app._svc_commands, "handle_tui_command", side_effect=lambda cmd: cmd_calls.append(cmd)):
             overlay.action_new_session()
             await pilot.pause()
 

@@ -195,9 +195,6 @@ Single widget handles 7 interrupt kinds (CLARIFY/APPROVAL/SUDO/SECRET/UNDO/NEW_S
 - `_LineClassifier` — pure detection methods, no mutable state. Instantiated as `self._clf`. **All regex calls in dispatchers must go through `self._clf`** — the classifier is the single source of truth; inline regex calls in dispatch methods will silently diverge.
 - `process_line()` uses `if self._state != "NORMAL": dispatch_non_normal(); if self._state == "NORMAL": ...` — both checks are `if`, not `elif`. When a non-NORMAL handler returns `False` (block close), state resets to NORMAL and the closing line re-enters the NORMAL classifiers. Do NOT convert to `elif`.
 - `_dispatch_non_normal_state`: `_active_block is None` guard in each state resets to NORMAL and returns `False` (recovery path, no assert). Safe under `python -O`.
-- `_emit_prose_line(raw)` — routes one prose line through the full inline pipeline (block buf → apply_block_line → inline_markdown → emoji path → _commit_prose_line). Does NOT manage `_list_cont_indent` or `_pending_code_intro` — deliberate; callers that need those updated must use `_dispatch_prose` instead.
-- `_drain_pending_source()` — idempotent helper; flushes `_pending_source_line` via `_emit_prose_line`. Called inside the footnote/citation branch of `process_line` so the pending source line appears BEFORE the footnote footer. Do NOT call it unconditionally at the top of the NORMAL block (would break IN_SOURCE_LIKE lookahead).
-- `flush()` leading `_flush_block_buf()` call: inserted before `_emit_prose_line(_pending_source_line)` to drain any `_block_buf` state left by `process_line(_partial)`. Without it, setext-buffered partial content contaminates the pending source line's emoji detection (R-18).
 - `_emit_rule()` uses `self._prose_log.write_with_source(rule, "---")` — never append to `_prose_log._plain_lines` directly. The proxy handles dim wrap and plain tracking.
 - `_DimRichLogProxy` overrides `write_with_source` (dim italic wrap + plain append), `write` (forward only, no plain update), and `write_inline` (dim italic per TextSpan, plain accumulate). Use `write_with_source` for any call that needs copy-buffer tracking.
 
@@ -868,8 +865,19 @@ Always `grep -rn "def method_name"` before calling a method that was added in a 
 
 ### Rich `Syntax.__repr__` does not include the theme name
 
-The spec comment "Rich's `Syntax.__repr__` includes the theme name" is **wrong** for Rich ≥15. `repr(Syntax(..., theme="dracula"))` returns `<rich.syntax.Syntax object at 0x...>` — no theme name. To assert the theme in tests, read the internal attribute:
+The spec comment "Rich's `Syntax.__repr__` includes the theme name" is **wrong** for Rich ≥15. `repr(Syntax(..., theme="dracula"))` returns `<rich.syntax.Syntax object at 0x...>` — no theme name. `Syntax._theme` is a `PygmentsSyntaxTheme` object, not a string. Two ways to assert the theme:
 
+**Preferred — patch `rich.syntax.Syntax` and capture the kwarg:**
+```python
+import rich.syntax as _rich_syntax
+_real = _rich_syntax.Syntax
+themes = []
+with patch.object(_rich_syntax, "Syntax", side_effect=lambda *a, **kw: (themes.append(kw.get("theme")), _real(*a, **kw))[1]):
+    widget._render_body()
+assert themes[0] == "nord"
+```
+
+**Alternative — read the resolved style class name:**
 ```python
 theme_name = syntax._theme._pygments_style_class.__name__.lower()
 assert "dracula" in theme_name  # "DraculaStyle" → "draculastyle"
@@ -1064,25 +1072,6 @@ Quick facts for TUI work:
 
 ## Changelog
 
-### 2026-04-24 — DiffRenderer overhaul (branch feat/render-diff-overhaul)
-
-R-D1/R-D2/R-D3/R-D4/R-D5 — 26 tests in `tests/tui/test_render_diff_overhaul.py`.
-
-**DiffRenderer (`body_renderers/diff.py`):**
-- `build_widget()` now returns `_DiffContainer(*children)` and uses `_HunkHeader(Vertical, can_focus=True)` for collapsed hunks after the first one when `total_lines > 40 or hunk_count > 3` and `tui.diff.auto_collapse` is enabled.
-- `_word_diff()` now tokenizes with `_TOK = re.compile(r"\s+|\w+|[^\w\s]")` and preserves exact whitespace/punctuation round-trips (`Text.plain` stays byte-for-byte equal to the input strings).
-- Per-file headers now use `_parse_file_stats()` + `build_path_header(path, right_meta=Text(...), colors=colors)` so diff files render `▸ path  · +A -B` with success/error-colored counts.
-- Diff lines now route through `_line_text()` + `_render_word_diff_pair()` and use `SkinColors.diff_add_bg` / `diff_del_bg` instead of hardcoded dark hex backgrounds.
-
-**Shared grammar / copy path:**
-- `body_renderers/_grammar.py` gained `diff_gutter(sign, *, colors)` returning a fixed-width 2-char non-copyable gutter span (`meta={"copyable": False}`), and `build_path_header()` now accepts `right_meta: str | Text` so callers can preserve per-span coloring.
-- `widgets/renderers.py` gained `CopyableRichLog._filter_non_copyable(text)` for stripping non-copyable spans from copied plain text; diff gutter tests call this directly.
-
-**Key gotchas:**
-- `_HunkHeader` must assign `_summary` and `_body` in `__init__`, not just in `compose()`, because tests toggle it directly before mount.
-- `_DiffContainer` uses `@on(_HunkHeader.DiffHunkExpanded)` — define `_HunkHeader` before `_DiffContainer` or the decorator will fail at class body evaluation time.
-- Avoid tracking `docs/project-memory.md` from this branch if the main worktree already has it as an untracked local file; merging a tracked version over that path will fail with an untracked-overwrite error.
-
 ### 2026-04-24 — SearchRenderer + VirtualSearchList overhaul (commit c1454a88, branch feat/render-search-overhaul)
 
 R-Sr1/Sr2/Sr3/Sr4/Sr5 — 32 tests in `tests/tui/test_render_search_overhaul.py`.
@@ -1184,7 +1173,7 @@ TRIGGER-01/02/04, INTR-01/05/06, PANE-01/02, CONFIG-02/03/04, REF-02/03, BROWSE-
 - `_build_label`: sessions ≥56 days (8 weeks) now render `datetime.fromtimestamp(last_active).strftime("%Y-%m-%d")` instead of `Nw ago`.
 
 **Test patterns:**
-- `app` / `screen` on Textual widgets are read-only properties — always `patch.object(type(ov), "app", new_callable=PropertyMock, ...)`.
+- `app` / `screen` / `parent` on Textual widgets are read-only properties — always `patch.object(WidgetClass, "app", new_callable=PropertyMock, ...)`. Direct assignment raises `AttributeError: property 'X' of 'Y' object has no setter`.
 - `browse_mode` is a reactive — use `types.SimpleNamespace(browse_mode=False)` not `HermesApp.__new__`.
 - `_SessionRow._build_label` (not `_build_line`) — inspect source before calling methods on `__new__` objects.
 
@@ -1757,6 +1746,27 @@ B1/B5/B9 — 37 tests across 3 test files.
 - `_rebuild_action_buttons(summary, actions_to_render)` clears old `.--action-chip` buttons, mounts new `Button(RichText(...), classes="--action-chip", name=action.kind)` per filtered action.
 - `on_button_pressed` extended: `"--action-chip" in event.button.classes` block at TOP routes `event.button.name` → `panel.action_retry/copy_err/open_primary/copy_body`. Must call `event.stop(); return`.
 - `action_copy_result` does NOT exist — the real method is `action_copy_body`. Map `"copy_body"` → `panel.action_copy_body`.
+
+---
+
+### 2026-04-24 — TUI Design 01 Tool Panel Affordances (commit 8942caeb, branch feat/textual-migration)
+
+TOOL-1/2/3/4 — 6 tests in `tests/tui/test_tool_panel_affordances.py`.
+
+**TOOL-1 — `ACTION_KIND_TO_PANEL_METHOD` (module-level, `_footer.py`):**
+- Added `ACTION_KIND_TO_PANEL_METHOD: dict[str, str]` at module level — maps all 9 `_IMPLEMENTED_ACTIONS` kinds to their `ToolPanel.action_*` method names.
+- `open_first` maps to `"action_open_primary"` (not `"action_open_first"`).
+- `FooterPane.on_button_pressed` now looks up `ACTION_KIND_TO_PANEL_METHOD.get(kind)`; flashes `_flash_header("Action unavailable", tone="error")` when method name is absent from map or panel lacks the handler; flashes `_flash_header("Action failed", tone="error")` then **re-raises** when the handler raises.
+- Flash guard: `getattr(panel, "is_mounted", False)` — do not flash on unmounted panel.
+
+**TOOL-2 — File collapsed strip label:**
+- `_build_collapsed_actions_map`: `ToolCategory.FILE` entry changed from `("c", "diff")` → `("c", "copy")` to match the existing `Binding("c", "copy_body", ...)`.
+
+**TOOL-3 — `_trim_tail_segments` priority fix (`_header.py`):**
+- Special-case when only `{"hero", "flash"}` compete for budget: now drops `hero`, not `flash`. `flash` carries copy/open feedback and must survive longest per `_DROP_ORDER`.
+
+**TOOL-4 — Static file preview syntax theme (`_block.py`):**
+- `ToolBlock._render_body` static-file branch reads theme with: `css.get("preview-syntax-theme") or css.get("syntax-theme") or "monokai"` before constructing `Syntax(...)`. `preview-syntax-theme` is the key `ConfigOverlay` persists; `syntax-theme` is legacy fallback. Exception in CSS lookup is caught and silently falls back to `"monokai"`.
 
 **B1 — Collapsed action strip:**
 - `_CollapsedActionStrip(Static)` with `DEFAULT_CSS` default `display: none` and `.--visible { display: block; }`.

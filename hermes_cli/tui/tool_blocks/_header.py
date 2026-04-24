@@ -24,6 +24,7 @@ from ._shared import (
     _URL_SCHEMES,
     _safe_cell_width,
     header_label_v4,
+    truncate_path,
     ToolHeaderStats,
     OmissionBar,
 )
@@ -205,7 +206,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             gutter_text = Text("  ┃ ", style=f"bold {color}")
             gutter_w = 4
         else:
-            gutter_text = Text("  ┊ ", style="dim")
+            gutter_text = Text("    ", style="")
             gutter_w = 4
         t.append_text(gutter_text)
 
@@ -318,7 +319,14 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             now = time.monotonic()
             if self._flash_msg and now < self._flash_expires:
                 accent_color = getattr(self, "_focused_gutter_color", "#5f87d7")
-                _flash_style = "dim red" if self._flash_tone == "error" else f"dim {accent_color}"
+                if self._flash_tone == "error":
+                    try:
+                        _err_color = self.app.get_css_variables().get("status-error-color", "red")
+                    except Exception:
+                        _err_color = "red"
+                    _flash_style = f"dim {_err_color}"
+                else:
+                    _flash_style = f"dim {accent_color}"
                 _msg = self._flash_msg
                 _tw = self.size.width
                 if _tw > 0 and _tw < 80:
@@ -464,29 +472,8 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
 
     def _render_path_label(self, max_cells: int) -> "Text":
         path = self._full_path or self._label
-        parts = path.rsplit("/", 1)
-        if len(parts) == 2 and parts[0]:
-            dir_part, fname = parts[0] + "/", parts[1]
-        else:
-            dir_part, fname = "", path
-
-        fname_w = _safe_cell_width(fname)
-        dir_budget = max(0, max_cells - fname_w - 1)
-
-        if _safe_cell_width(dir_part) > dir_budget:
-            trimmed = dir_part
-            while trimmed and _safe_cell_width("…/" + trimmed) > dir_budget:
-                trimmed = trimmed.split("/", 1)[-1] if "/" in trimmed else ""
-            dir_part = ("…/" + trimmed) if trimmed else "…/"
-
-        t = Text()
-        if dir_part:
-            t.append(" " + dir_part, style="dim")
-        else:
-            t.append(" ", style="dim")
         fname_style = "bold" if self._no_underline else "bold underline"
-        t.append(fname, style=fname_style)
-        return t
+        return truncate_path(path, max_cells, style_fname=fname_style)
 
     def on_click(self, event: Click) -> None:
         if event.button == 3:

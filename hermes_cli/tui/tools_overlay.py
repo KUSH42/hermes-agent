@@ -219,6 +219,21 @@ def render_tool_row(
 
 
 # ---------------------------------------------------------------------------
+# M9: per-turn filter-state cache
+# ---------------------------------------------------------------------------
+
+class _ToolsScreenState:
+    filter_text: str = ""
+    active_categories: frozenset = frozenset()
+    errors_only: bool = False
+    sort_mode: int = 0
+    turn_id: str | None = None
+
+
+_tools_state = _ToolsScreenState()
+
+
+# ---------------------------------------------------------------------------
 # ToolsScreen
 # ---------------------------------------------------------------------------
 
@@ -302,11 +317,21 @@ ToolsScreen > #tools-footer {
         self._snapshot: list[dict] = snapshot
         self._filtered: list[dict] = list(snapshot)
         self._cursor: int = 0
-        self._filter_text: str = ""
-        self._active_categories: set[str] = set()
-        self._errors_only: bool = False
-        self._sort_mode: int = 0  # D5: 0=chrono, 1=duration desc, 2=category asc
         self._tree_view: bool = True
+
+        # M9: derive a stable turn key from the snapshot (first entry's tool_call_id)
+        snap_turn_id: str | None = snapshot[0].get("tool_call_id") if snapshot else None
+        if snap_turn_id is not None and snap_turn_id == _tools_state.turn_id:
+            self._filter_text: str = _tools_state.filter_text
+            self._active_categories: set[str] = set(_tools_state.active_categories)
+            self._errors_only: bool = _tools_state.errors_only
+            self._sort_mode: int = _tools_state.sort_mode
+        else:
+            self._filter_text = ""
+            self._active_categories = set()
+            self._errors_only = False
+            self._sort_mode = 0
+        self._snap_turn_id = snap_turn_id
         self._turn_total_s: float = _compute_turn_total_s(snapshot)
         self._term_w: int = 80
         self._last_resize_w: int = 0
@@ -528,12 +553,15 @@ ToolsScreen > #tools-footer {
             await self.action_jump_to_panel()
 
     async def action_dismiss_overlay(self) -> None:
-        # A4: clear filter input state before dismissal so re-opens start clean
+        # M9: persist filter state for same-turn reopens
+        _tools_state.filter_text = getattr(self, "_filter_text", "")
+        _tools_state.active_categories = frozenset(getattr(self, "_active_categories", set()))
+        _tools_state.errors_only = getattr(self, "_errors_only", False)
+        _tools_state.sort_mode = getattr(self, "_sort_mode", 0)
+        _tools_state.turn_id = getattr(self, "_snap_turn_id", None)
         try:
             fi = self.query_one("#filter-input", Input)
             fi.display = False
-            fi.value = ""
-            self._filter_text = ""
         except Exception:
             pass
         self.app.pop_screen()

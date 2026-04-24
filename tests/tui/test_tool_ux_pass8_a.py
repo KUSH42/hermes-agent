@@ -206,7 +206,8 @@ class TestA4DismissOverlayClearsFilter:
         return screen, app_ns
 
     def test_dismiss_overlay_clears_filter_value(self):
-        from hermes_cli.tui.tools_overlay import ToolsScreen
+        # M9: dismiss now PERSISTS filter state to _tools_state (not clears it)
+        from hermes_cli.tui.tools_overlay import ToolsScreen, _tools_state
 
         fi_mock = MagicMock()
         fi_mock.display = True
@@ -220,8 +221,10 @@ class TestA4DismissOverlayClearsFilter:
             ToolsScreen.action_dismiss_overlay(screen)
         )
 
-        assert screen._filter_text == "", "filter text must be cleared on dismiss"
-        assert fi_mock.value == "", "filter input value must be cleared on dismiss"
+        # M9: filter text preserved in _tools_state, not cleared from screen
+        assert _tools_state.filter_text == "some query", "filter text must be saved to _tools_state"
+        # filter input widget is hidden (display=False)
+        assert fi_mock.display is False, "filter input must be hidden on dismiss"
         app_ns.pop_screen.assert_called_once()
 
     def test_dismiss_overlay_hides_filter_input(self):

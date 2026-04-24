@@ -203,6 +203,35 @@ def _safe_cell_width(s: str) -> int:
         return len(s)
 
 
+def truncate_path(
+    path: str,
+    max_w: int,
+    *,
+    style_dir: str = "dim",
+    style_fname: str = "bold underline",
+) -> "Text":
+    """Render path as dim dirname + emphasized basename, truncating from the left."""
+    parts = path.rsplit("/", 1)
+    if len(parts) == 2 and parts[0]:
+        dir_part, fname = parts[0] + "/", parts[1]
+    else:
+        dir_part, fname = "", path
+
+    fname_w = _safe_cell_width(fname)
+    dir_budget = max(0, max_w - fname_w - 1)
+
+    if dir_part and _safe_cell_width(dir_part) > dir_budget:
+        trimmed = dir_part
+        while trimmed and _safe_cell_width("…/" + trimmed) > dir_budget:
+            trimmed = trimmed.split("/", 1)[-1] if "/" in trimmed else ""
+        dir_part = ("…/" + trimmed) if trimmed else "…/"
+
+    t = Text()
+    t.append(" " + dir_part if dir_part else " ", style=style_dir)
+    t.append(fname, style=style_fname)
+    return t
+
+
 def _secondary_args_text(category: "Any", tool_input: "dict | None") -> str:
     """Extract secondary display text from tool input args (B1)."""
     if not tool_input:
@@ -383,21 +412,7 @@ def header_label_v4(
 
     if primary == "path":
         path = full_path or full_label
-        parts = path.rsplit("/", 1)
-        if len(parts) == 2 and parts[0]:
-            dir_part, fname = parts[0] + "/", parts[1]
-        else:
-            dir_part, fname = "", path
-        fname_w = _safe_cell_width(fname)
-        dir_budget = max(0, available - fname_w - 1)
-        if _safe_cell_width(dir_part) > dir_budget:
-            trimmed = dir_part
-            while trimmed and _safe_cell_width("…/" + trimmed) > dir_budget:
-                trimmed = trimmed.split("/", 1)[-1] if "/" in trimmed else ""
-            dir_part = ("…/" + trimmed) if trimmed else "…/"
-        t = Text()
-        t.append(" " + dir_part if dir_part else " ", style="dim")
-        t.append(fname, style="bold underline")
+        t = truncate_path(path, available)
         start = args.get("start_line")
         end = args.get("end_line")
         lr = args.get("line_range")
@@ -538,6 +553,11 @@ class OmissionBar(TooltipMixin, Widget):
             yield Button("[↑]",          classes="--ob-up --ob-advanced")
             yield Button("[↓]",          classes="--ob-down --ob-advanced")
             yield Button("[more ▸]", classes="--ob-more")
+
+    @staticmethod
+    def _reset_label() -> str:
+        """Return the canonical label for the reset ([reset]) button."""
+        return "[reset]"
 
     def on_mount(self) -> None:
         """G1: hide advanced buttons initially."""

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 import uuid
 from typing import TYPE_CHECKING
@@ -34,8 +35,6 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.reactive import reactive
 from textual.widget import Widget
-
-from hermes_cli.tui.tool_accent import ToolAccent
 
 from hermes_cli.tui.resize_utils import THRESHOLD_TOOL_NARROW, crosses_threshold
 
@@ -47,10 +46,19 @@ if TYPE_CHECKING:
 _log = logging.getLogger(__name__)
 
 # Summary rule constants
-RULE_DIFF_ATTACH = 1
-RULE_SEARCH_OPEN = 2
-RULE_SHELL_PIPE = 3
+RULE_DIFF_ATTACH  = 1
+RULE_SEARCH_OPEN  = 2
+RULE_SHELL_PIPE   = 3
 RULE_SEARCH_BATCH = 31  # "3b" in spec
+RULE_SHELL_BATCH  = 32  # temporal cluster without pipeline operators
+RULE_FILE_EDIT    = 4   # read followed by write on the same path
+
+# H2: pipeline-operator detection (single | but not ||)
+_PIPELINE_OPS_RE = re.compile(r"(?:&&|\|\||;|(?<!\|)\|(?!\|))")
+
+# H3: tool name sets for file-edit pairing
+_FILE_WRITE_TOOLS = frozenset({"patch", "write_file", "create_file", "edit_file", "str_replace_editor"})
+_FILE_READ_TOOLS  = frozenset({"read_file", "view"})
 
 
 # ---------------------------------------------------------------------------
@@ -209,9 +217,13 @@ class GroupHeader(Widget):
         if self._error_count > 0:
             t.append(f"  {self._error_count} err", style="bold red")
 
-        # Op count (drop first if narrow)
-        if self._child_count > 1 and term_w >= 60:
-            t.append(f"  {self._child_count} ops", style="dim")
+        # Op count — compact form at narrow widths
+        if self._child_count > 1:
+            if term_w >= 60:
+                t.append(f"  {self._child_count} ops", style="dim")
+            elif term_w >= 40:
+                t.append(f"  ×{self._child_count}", style="dim")
+            # below 40: omit (header already truncated hard)
 
         return t
 
@@ -492,21 +504,35 @@ def _share_dir_prefix(path_a: str, path_b: str, depth: int = 2) -> bool:
     return sum(1 for a, b in zip(dir_a, dir_b) if a == b) >= depth
 
 
-def _find_diff_target(siblings: list[Widget]) -> Widget | None:
-    diff_tools = {"patch", "write_file", "create_file"}
+def _find_diff_targets(siblings: list[Widget], window_s: float) -> list[Widget]:
+    """Return all write panels within the attach window sharing the same target path."""
     now = time.monotonic()
+    # Use path of the most recent eligible write as anchor
+    anchor_path: str | None = None
+    out: list[Widget] = []
+    for panel in reversed(siblings):
+        tool_name = getattr(panel, "_tool_name", "") or ""
+        if tool_name not in _FILE_WRITE_TOOLS:
+            continue
+        completed = getattr(panel, "_completed_at", None)
+        if completed is not None and (now - completed) >= window_s:
+            break
+        panel_path = _get_header_label(panel) or ""
+        if anchor_path is None:
+            anchor_path = panel_path
+        if panel_path == anchor_path:
+            out.append(panel)
+    return out
+
+
+def _find_diff_target(siblings: list[Widget]) -> Widget | None:
     try:
         from hermes_cli.config import read_raw_config
         attach_window = float(read_raw_config().get("display", {}).get("diff_attach_window_s", 15.0))
     except Exception:
         attach_window = 15.0
-    for panel in reversed(siblings):
-        tool_name = getattr(panel, "_tool_name", "")
-        if tool_name in diff_tools:
-            completed = getattr(panel, "_completed_at", None)
-            if completed is None or (now - completed) < attach_window:
-                return panel
-    return None
+    targets = _find_diff_targets(siblings, attach_window)
+    return targets[0] if targets else None
 
 
 def _is_diff_panel(panel: Widget) -> bool:
@@ -576,6 +602,19 @@ def _build_summary_text(rule: int, children: list[Widget]) -> str:
             if cmd:
                 return f"shell pipeline · {cmd[:40]}"
         return "shell pipeline"
+    elif rule == RULE_SHELL_BATCH:
+        n = len(children)
+        first = (_get_header_label(children[0]) or "")[:24] if children else ""
+        last  = (_get_header_label(children[-1]) or "")[:24] if children else ""
+        if n > 2 and first and last:
+            return f"{n} shell calls · {first} … {last}"
+        elif first and last and first != last:
+            return f"shell · {first} · {last}"
+        return f"{n} shell calls"
+    elif rule == RULE_FILE_EDIT:
+        label = _get_header_label(children[-1]) if children else None
+        basename = os.path.basename(label) if label else ""
+        return f"edited {basename}" if basename else "edited file"
     elif rule == RULE_SEARCH_BATCH:
         return f"searched · {len(children)} patterns"
     return "grouped"
@@ -615,6 +654,32 @@ def _find_rule_match(
 
     prev = siblings[-1]
 
+    # Rule 4: File-edit pairing (read followed by write on same path)
+    # Evaluated before Rule 1 so a subsequent patch doesn't diff-attach to the
+    # write instead of forming a proper read→write→patch trio under Rule 1.
+    prev_name = getattr(prev, "_tool_name", "") or ""
+    new_name  = getattr(new_panel, "_tool_name", "") or ""
+    if prev_name in _FILE_READ_TOOLS and new_name in _FILE_WRITE_TOOLS:
+        prev_path = _get_header_label(prev)
+        new_path  = _get_header_label(new_panel)
+        if prev_path and new_path and prev_path == new_path:
+            prev_start = getattr(prev, "_start_time", None)
+            new_start  = getattr(new_panel, "_start_time", None)
+            try:
+                from hermes_cli.config import read_raw_config
+                attach_window = float(
+                    read_raw_config().get("display", {}).get("diff_attach_window_s", 15.0)
+                )
+            except Exception:
+                attach_window = 15.0
+            gap = (
+                abs(new_start - prev_start)
+                if prev_start is not None and new_start is not None
+                else 0.0
+            )
+            if gap <= attach_window:
+                return prev, RULE_FILE_EDIT
+
     # Rule 1: Diff attachment
     if _is_diff_panel(new_panel):
         target = _find_diff_target(siblings)
@@ -633,13 +698,16 @@ def _find_rule_match(
         ):
             return prev, RULE_SEARCH_OPEN
 
-    # Rule 3: Shell pipeline
+    # Rule 3: Shell pipeline / batch
     if (
         _is_category(new_panel, ToolCategory.SHELL)
         and _is_category(prev, ToolCategory.SHELL)
     ):
-        prev_cmd = _get_header_label(prev)
-        chained = any(m in prev_cmd for m in ("&&", "||", ";", "|"))
+        prev_cmd = _get_header_label(prev) or ""
+        new_cmd  = _get_header_label(new_panel) or ""
+        has_operator = bool(
+            _PIPELINE_OPS_RE.search(prev_cmd) or _PIPELINE_OPS_RE.search(new_cmd)
+        )
         prev_start = getattr(prev, "_start_time", None)
         new_start = getattr(new_panel, "_start_time", None)
         try:
@@ -652,8 +720,15 @@ def _find_rule_match(
             and new_start is not None
             and abs(new_start - prev_start) < pipeline_ms / 1000.0
         )
-        if within_window or chained:
-            return prev, RULE_SHELL_PIPE
+        wide_window = (
+            prev_start is not None
+            and new_start is not None
+            and abs(new_start - prev_start) < pipeline_ms * 4 / 1000.0
+        )
+        if has_operator and (within_window or wide_window):
+            return prev, RULE_SHELL_PIPE   # true pipeline
+        if within_window:
+            return prev, RULE_SHELL_BATCH  # temporal cluster only
 
     # Rule 3b: Search batch
     if (
@@ -743,6 +818,11 @@ async def _do_append_to_group(
     if group._body is not None:
         await group._body.mount(new_panel)
     group.recompute_aggregate()
+    if group.collapsed:
+        group.collapsed = False  # reveal the new panel
+        if group._header is not None:
+            group._header.add_class("--group-appended")
+            group.set_timer(0.6, lambda: group._header.remove_class("--group-appended"))
     try:
         group.app._svc_browse.rebuild_browse_anchors()
     except Exception:
@@ -754,6 +834,21 @@ async def _do_append_to_group(
 # ---------------------------------------------------------------------------
 
 
+async def _do_apply_multi_diff_group(
+    message_panel: Widget,
+    targets: list[Widget],
+    new_panel: Widget,
+) -> None:
+    """Create a group for all write targets + the diff panel (M3)."""
+    # Use oldest write as the anchor for position; newer writes + diff are appended
+    anchor = targets[-1]  # oldest (list is most-recent-first)
+    group = await _do_apply_group_widget(message_panel, anchor, new_panel, RULE_DIFF_ATTACH)
+    # Append remaining writes (all except anchor, newest first)
+    for extra in targets[:-1]:
+        if extra.parent is not None:
+            await _do_append_to_group(group, extra, message_panel)
+
+
 def _maybe_start_group(message_panel: Widget, new_panel: Widget) -> None:
     """Sync entry point: evaluate grouping rules and schedule async reparent if matched."""
     if not _grouping_enabled():
@@ -762,6 +857,26 @@ def _maybe_start_group(message_panel: Widget, new_panel: Widget) -> None:
     if match is None:
         return
     existing_panel, rule = match
+
+    # M3: when diff attaches, collect all eligible writes into one group
+    if rule == RULE_DIFF_ATTACH:
+        siblings = _get_effective_tp_siblings(message_panel)
+        siblings = [s for s in siblings if s is not new_panel]
+        try:
+            from hermes_cli.config import read_raw_config
+            attach_window = float(read_raw_config().get("display", {}).get("diff_attach_window_s", 15.0))
+        except Exception:
+            attach_window = 15.0
+        all_targets = _find_diff_targets(siblings, attach_window)
+        if len(all_targets) > 1:
+            message_panel.app.call_after_refresh(
+                lambda: message_panel.run_worker(
+                    _do_apply_multi_diff_group(message_panel, all_targets, new_panel),
+                    exclusive=False,
+                )
+            )
+            return
+
     existing_group = _get_tool_group(existing_panel)
     if existing_group is not None:
         message_panel.app.call_after_refresh(

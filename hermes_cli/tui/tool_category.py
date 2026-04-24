@@ -48,15 +48,15 @@ class CategoryDefaults:
 # normal (SHELL, SEARCH, WEB, MCP): 10 — standard
 # compact (CODE, UNKNOWN): 6 — short output expected
 _CATEGORY_DEFAULTS: dict[ToolCategory, CategoryDefaults] = {
-    ToolCategory.FILE:    CategoryDefaults("tool-file-accent",    "tool-glyph-file",    "F", "file_result",    15),
-    ToolCategory.SHELL:   CategoryDefaults("tool-shell-accent",   "tool-glyph-shell",   "$", "shell_result",   10),
-    ToolCategory.CODE:    CategoryDefaults("tool-code-accent",    "tool-glyph-code",    "P", "code_result",    6),
-    ToolCategory.SEARCH:  CategoryDefaults("tool-search-accent",  "tool-glyph-search",  "?", "search_result",  10),
-    ToolCategory.WEB:     CategoryDefaults("tool-web-accent",     "tool-glyph-web",     "@", "web_result",     10),
-    ToolCategory.AGENT:   CategoryDefaults("tool-agent-accent",   "tool-glyph-agent",   "*", "agent_result",   15),
-    ToolCategory.VISION:  CategoryDefaults("tool-vision-accent",  "tool-glyph-vision",  "V", "vision_result",  10, icon_nf="\uf03e"),  #
-    ToolCategory.MCP:     CategoryDefaults("tool-mcp-accent",     "tool-glyph-mcp",     "#", "mcp_result",     10, icon_nf="\uf868"),  # 󰡨
-    ToolCategory.UNKNOWN: CategoryDefaults("tool-unknown-accent", "tool-glyph-unknown", "?", "generic_result", 6),
+    ToolCategory.FILE:    CategoryDefaults("tool-file-accent",    "tool-glyph-file",    "F", "file_result",    15, icon_nf="\uf718"),   # 
+    ToolCategory.SHELL:   CategoryDefaults("tool-shell-accent",   "tool-glyph-shell",   "$", "shell_result",   10, icon_nf="\ue795"),   # 
+    ToolCategory.CODE:    CategoryDefaults("tool-code-accent",    "tool-glyph-code",    "P", "code_result",    6,  icon_nf="\ue60c"),   # 
+    ToolCategory.SEARCH:  CategoryDefaults("tool-search-accent",  "tool-glyph-search",  "?", "search_result",  10, icon_nf="\uf002"),   # 
+    ToolCategory.WEB:     CategoryDefaults("tool-web-accent",     "tool-glyph-web",     "@", "web_result",     10, icon_nf="\uf0ac"),   # 
+    ToolCategory.AGENT:   CategoryDefaults("tool-agent-accent",   "tool-glyph-agent",   "*", "agent_result",   15, icon_nf="\uf444"),   # 
+    ToolCategory.VISION:  CategoryDefaults("tool-vision-accent",  "tool-glyph-vision",  "V", "vision_result",  10, icon_nf="\uf03e"),   # 
+    ToolCategory.MCP:     CategoryDefaults("tool-mcp-accent",     "tool-glyph-mcp",     "#", "mcp_result",     10, icon_nf="\uf868"),   # 󰡨
+    ToolCategory.UNKNOWN: CategoryDefaults("tool-unknown-accent", "tool-glyph-unknown", "?", "generic_result", 6,  icon_nf="\uf059"),   # 
 }
 
 
@@ -296,6 +296,24 @@ def _derive_mcp_spec(
 # Icon resolution (v4 §6)
 # ---------------------------------------------------------------------------
 
+# M1: emoji icon mapping — one entry per ToolCategory
+_EMOJI_ICONS: dict[ToolCategory, str] = {
+    ToolCategory.FILE:    "📄",
+    ToolCategory.SHELL:   "🐚",
+    ToolCategory.CODE:    "🐍",
+    ToolCategory.SEARCH:  "🔍",
+    ToolCategory.WEB:     "🌐",
+    ToolCategory.AGENT:   "🤖",
+    ToolCategory.VISION:  "👁",
+    ToolCategory.MCP:     "🔌",
+    ToolCategory.UNKNOWN: "❓",
+}
+
+
+def _emoji_for(spec: ToolSpec) -> str:
+    return _EMOJI_ICONS.get(spec.category, "")
+
+
 def _category_glyph(cat: ToolCategory) -> str:
     """Return the static nerd-font glyph for a category, or '' if none."""
     return _CATEGORY_DEFAULTS[cat].icon_nf
@@ -317,12 +335,14 @@ def _resolve_icon(spec: ToolSpec, nerd_font: bool) -> str:
 
 def resolve_icon_final(spec: ToolSpec, nerd_font: bool) -> str:
     """Canonical public entry point for all icon resolution (v4 §6.1, §9)."""
-    # P2-8: emoji mode degrades to ascii_fallback (header slot is 1 cell wide)
     try:
         from agent.display import get_tool_icon_mode  # type: ignore[import]
-        if get_tool_icon_mode() == "emoji":
-            defaults = _CATEGORY_DEFAULTS.get(spec.category)
-            return defaults.ascii_fallback if defaults else "?"
+        mode = get_tool_icon_mode()
+        if mode == "emoji":
+            return _emoji_for(spec) or spec.icon_nf or spec.icon_ascii or \
+                   _CATEGORY_DEFAULTS[spec.category].ascii_fallback
+        if mode == "ascii":
+            return spec.icon_ascii or _CATEGORY_DEFAULTS[spec.category].ascii_fallback
     except Exception:
         pass
     if spec.provenance and spec.provenance.startswith("mcp:"):

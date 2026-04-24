@@ -12,6 +12,8 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
+from hermes_cli.tui.tool_category import ToolCategory as _TC
+
 if TYPE_CHECKING:
     from hermes_cli.tui.tool_category import ToolSpec
 
@@ -179,10 +181,32 @@ _ARTIFACT_DISPLAY_CAP = 5  # B3: render-time display cap; parse stores ALL
 
 @dataclass(frozen=True, slots=True)
 class Chip:
+    """Summary chip rendered in header / footer.
+
+    Tone contract (do not violate):
+      - "error"   : failure (exit != 0, HTTP >= 400, exception, disconnect)
+      - "warning" : recoverable / partial (stderr with exit=0, HTTP 3xx,
+                    artifacts_truncated, diff deletions, retry succeeded)
+      - "success" : confirmed ok (exit=0 with output, HTTP 2xx, diff additions)
+      - "accent"  : provenance / source tag (mcp server, tool name)
+      - "neutral" : count-only (match counts, byte counts, sizes)
+    """
     text: str
     kind: ChipKind
     tone: ChipTone = "neutral"
     remediation: str | None = None  # A2: hint shown in footer for error chips
+
+
+_TONE_BY_KIND: dict[ChipKind, set[ChipTone]] = {
+    "diff+":      {"success"},
+    "diff-":      {"error"},
+    "bytes":      {"neutral"},
+    "count":      {"neutral", "success"},
+    "status":     {"success", "warning", "error", "neutral"},
+    "exit":       {"error", "success"},
+    "mcp-source": {"accent"},
+    "mcp-error":  {"error"},
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,6 +236,24 @@ class ResultSummaryV4:
     is_error: bool
     error_kind: str | None = None
     artifacts_truncated: bool = False  # B3: True when artifacts > _ARTIFACT_DISPLAY_CAP
+
+    def __post_init__(self) -> None:
+        for chip in self.chips:
+            allowed = _TONE_BY_KIND.get(chip.kind)
+            if allowed is not None and chip.tone not in allowed:
+                raise ValueError(
+                    f"Chip(kind={chip.kind!r}) cannot have tone={chip.tone!r}; "
+                    f"allowed: {sorted(allowed)}"
+                )
+        seen: dict[str, str] = {}
+        for action in self.actions:
+            prior = seen.get(action.hotkey)
+            if prior is not None:
+                raise ValueError(
+                    f"Action hotkey collision: '{action.hotkey}' used by both "
+                    f"{prior!r} and {action.kind!r}"
+                )
+            seen[action.hotkey] = action.kind
 
 
 # ---------------------------------------------------------------------------
@@ -364,7 +406,7 @@ def file_result_v4(ctx: ParseContext) -> ResultSummaryV4:
         if additions:
             chips.append(Chip(f"+{additions}", "diff+", "success"))
         if deletions:
-            chips.append(Chip(f"-{deletions}", "diff-", "warning"))
+            chips.append(Chip(f"-{deletions}", "diff-", "error"))
         return ResultSummaryV4(
             primary=f"✓ +{additions} -{deletions}", exit_code=None,
             chips=tuple(chips), stderr_tail="",
@@ -386,6 +428,38 @@ def file_result_v4(ctx: ParseContext) -> ResultSummaryV4:
 
 
 # ---------------------------------------------------------------------------
+# M5: Central remediation registry
+# ---------------------------------------------------------------------------
+
+RemediationKey = tuple["_TC", str]  # (category, error_kind)
+
+_REMEDIATIONS: dict[RemediationKey, str] = {
+    (_TC.SHELL, "timeout"): "increase timeout_sec parameter",
+    (_TC.SHELL, "signal"):  "process was killed — check memory or resource limits",
+    (_TC.SHELL, "auth"):    "check file permissions or run with sudo",
+    (_TC.CODE,  "timeout"): "increase execution timeout in config",
+    (_TC.CODE,  "signal"):  "script was killed — check for infinite loops or memory use",
+    (_TC.MCP,   "timeout"): "increase timeout or check server load",
+    (_TC.MCP,   "parse"):   "check server output — invalid JSON response",
+    (_TC.MCP,   "signal"):  "server may have crashed — check logs",
+    (_TC.WEB,   "auth"):    "check API credentials or auth header",
+    (_TC.WEB,   "timeout"): "increase request timeout or retry",
+    (_TC.WEB,   "network"): "check connectivity; DNS or proxy may be down",
+}
+
+
+def register_remediation(category: "_TC", error_kind: str, hint: str) -> None:
+    """Register a remediation hint. MCP servers / plugins may call this."""
+    _REMEDIATIONS[(category, error_kind)] = hint
+
+
+def lookup_remediation(category: "_TC", error_kind: str | None) -> str | None:
+    if error_kind is None:
+        return None
+    return _REMEDIATIONS.get((category, error_kind))
+
+
+# ---------------------------------------------------------------------------
 # v4 shell_result
 # ---------------------------------------------------------------------------
 
@@ -393,13 +467,6 @@ def _count_nonempty_lines(text: str) -> int:
     return sum(1 for line in text.splitlines() if line.strip())
 
 
-# C2: shell remediation hints
-_SHELL_REMEDIATIONS: dict[str, str | None] = {
-    "timeout": "increase timeout_sec parameter",
-    "signal":  "process was killed — check memory or resource limits",
-    "auth":    "check file permissions or run with sudo",
-    "exit":    None,  # generic — no hint
-}
 
 
 def shell_result_v4(ctx: ParseContext) -> ResultSummaryV4:
@@ -423,8 +490,8 @@ def shell_result_v4(ctx: ParseContext) -> ResultSummaryV4:
     if is_error:
         if exit_code == 127:
             remediation = "command not found — check PATH"
-        elif error_kind in _SHELL_REMEDIATIONS:
-            remediation = _SHELL_REMEDIATIONS[error_kind]
+        else:
+            remediation = lookup_remediation(_TC.SHELL, error_kind)
 
     if error_kind == "timeout":
         chips = (Chip("timeout", "exit", "error", remediation=remediation),)
@@ -435,7 +502,7 @@ def shell_result_v4(ctx: ParseContext) -> ResultSummaryV4:
             actions=(
                 _make_copy_err(stderr_tail, raw),
                 _make_action("retry", "r", "retry"),
-                _make_action("edit cmd", "e", "edit_cmd", cmd),
+                _make_action("edit cmd", "E", "edit_cmd", cmd),
             ),
             artifacts=(), is_error=True, error_kind=error_kind,
         )
@@ -450,7 +517,7 @@ def shell_result_v4(ctx: ParseContext) -> ResultSummaryV4:
             actions=(
                 _make_copy_err(stderr_tail, raw),
                 _make_action("retry", "r", "retry"),
-                _make_action("edit cmd", "e", "edit_cmd", cmd),
+                _make_action("edit cmd", "E", "edit_cmd", cmd),
             ),
             artifacts=(), is_error=True, error_kind=error_kind,
         )
@@ -484,11 +551,6 @@ def _extract_media_artifacts(raw: str) -> tuple[Artifact, ...]:
     return tuple(arts)
 
 
-# C2: code remediation hints
-_CODE_REMEDIATIONS: dict[str, str | None] = {
-    "timeout": "increase execution timeout in config",
-    "signal":  "script was killed — check for infinite loops or memory use",
-}
 
 
 def code_result_v4(ctx: ParseContext) -> ResultSummaryV4:
@@ -514,8 +576,8 @@ def code_result_v4(ctx: ParseContext) -> ResultSummaryV4:
     if is_error:
         if "ModuleNotFoundError" in raw or "ImportError" in raw:
             code_remediation = "install missing package via pip"
-        elif error_kind in _CODE_REMEDIATIONS:
-            code_remediation = _CODE_REMEDIATIONS[error_kind]
+        else:
+            code_remediation = lookup_remediation(_TC.CODE, error_kind)
 
     if error_kind == "timeout" or is_error:
         code_str = str(exit_code) if exit_code is not None else "?"
@@ -527,7 +589,7 @@ def code_result_v4(ctx: ParseContext) -> ResultSummaryV4:
             actions=(
                 _make_copy_err(stderr_tail, raw),
                 _make_action("retry", "r", "retry"),
-                _make_action("edit cmd", "e", "edit_cmd", code_text),
+                _make_action("edit cmd", "E", "edit_cmd", code_text),
             ),
             artifacts=artifacts, is_error=True, error_kind=error_kind,
             artifacts_truncated=artifacts_truncated,
@@ -673,7 +735,7 @@ def search_result_v4(ctx: ParseContext) -> ResultSummaryV4:
     if file_paths:
         actions.append(_make_action("copy paths", "p", "copy_paths", file_paths))
     if query:
-        actions.append(_make_action("edit cmd", "e", "edit_cmd", query))
+        actions.append(_make_action("edit cmd", "E", "edit_cmd", query))
 
     return ResultSummaryV4(
         primary=primary, exit_code=None, chips=chips,
@@ -739,7 +801,7 @@ def web_result_v4(ctx: ParseContext) -> ResultSummaryV4:
             actions=(
                 _make_copy_err("", raw),
                 _make_action("retry", "r", "retry"),
-                _make_action("edit cmd", "e", "edit_cmd", url),
+                _make_action("edit cmd", "E", "edit_cmd", url),
             ),
             artifacts=artifacts, is_error=True, error_kind=error_kind,
         )
@@ -754,7 +816,7 @@ def web_result_v4(ctx: ParseContext) -> ResultSummaryV4:
             actions=(
                 _make_copy_err("", raw),
                 _make_action("retry", "r", "retry"),
-                _make_action("edit cmd", "e", "edit_cmd", url),
+                _make_action("edit cmd", "E", "edit_cmd", url),
             ),
             artifacts=artifacts, is_error=True, error_kind=error_kind,
         )
@@ -774,7 +836,7 @@ def web_result_v4(ctx: ParseContext) -> ResultSummaryV4:
             actions=(
                 _make_copy_err("", raw),
                 _make_action("retry", "r", "retry"),
-                _make_action("edit cmd", "e", "edit_cmd", url),
+                _make_action("edit cmd", "E", "edit_cmd", url),
             ),
             artifacts=artifacts, is_error=True, error_kind=error_kind,
         )
@@ -796,13 +858,15 @@ def web_result_v4(ctx: ParseContext) -> ResultSummaryV4:
     display_code = f"{code}"
     display_reason = f" {reason}" if reason else ""
     primary = f"✓ {display_code}{display_reason} · {size_str}"
-    # B5: 3xx redirects use warning tone; 2xx use success; else neutral
+    # B5: 3xx redirects use warning tone; 2xx use success; 4xx+ are errors
     if code < 300:
         tone: ChipTone = "success"
     elif code < 400:
         tone = "warning"  # B5: 3xx redirect
+    elif code >= 400:
+        tone = "error"
     else:
-        tone = "neutral"
+        tone = "neutral"  # status unknown / not extracted
     return ResultSummaryV4(
         primary=primary, exit_code=code,
         chips=(
@@ -901,7 +965,7 @@ def mcp_result_v4(ctx: ParseContext) -> ResultSummaryV4:
 
     if error_kind == "timeout" or is_error:
         err_label = f"mcp · {error_kind}" if error_kind else "mcp · error"
-        remediation = _MCP_REMEDIATIONS.get(error_kind or "", None)
+        remediation = lookup_remediation(_TC.MCP, error_kind)
         return ResultSummaryV4(
             primary=f"✗ {err_label} · {server}",
             exit_code=None,
@@ -1045,11 +1109,6 @@ _ERROR_DISPLAY: dict[str, tuple[str, str, str, str]] = {
 }
 _MODE_IDX: dict[str, int] = {"nerdfont": 0, "emoji": 1, "ascii": 2}
 
-_MCP_REMEDIATIONS: dict[str, str] = {
-    "timeout": "increase timeout or check server load",
-    "parse":   "check server output — invalid JSON response",
-    "signal":  "server may have crashed — check logs",
-}
 
 
 def _error_kind_display(kind: str, detail: str, icon_mode: str) -> tuple[str, str, str]:

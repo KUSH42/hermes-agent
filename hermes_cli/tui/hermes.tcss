@@ -36,6 +36,11 @@ $cite-chip-bg: #1a2030;
 $cite-chip-fg: #8899bb;
 $tool-glyph-mcp: "󰡨";
 $tool-vision-accent: #00bcd4;
+/* A-6: 4 display tiers for post-completion icon tinting */
+$tool-tier-file-accent:  #4DB6AC;
+$tool-tier-exec-accent:  #81C784;
+$tool-tier-query-accent: #64B5F6;
+$tool-tier-agent-accent: #CE93D8;
 $error-timeout: #f59e0b;
 /* Browse mode visual marker colors */
 $browse-turn: #d4a017;

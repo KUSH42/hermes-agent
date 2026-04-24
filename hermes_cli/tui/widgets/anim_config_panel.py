@@ -88,7 +88,6 @@ _PANEL_CONFIG_KEYS: dict[str, str] = {
     "blend_mode": "blend_mode",
     "layer_b": "layer_b",
     "trail_decay": "trail_decay",
-    "adaptive": "adaptive",
     "particle_count": "particle_count",
     "symmetry": "symmetry",
     "attractor_type": "attractor_type",
@@ -105,7 +104,7 @@ def _panel_updates(fields: list[_PanelField]) -> dict:
             continue
         value = f.value
         if key in {"enabled", "gradient", "dim_background", "show_border", "vertical",
-                   "ambient_enabled", "carousel", "adaptive", "depth_cues"}:
+                   "ambient_enabled", "carousel", "depth_cues"}:
             value = bool(value)
         elif key in {"fps", "particle_count", "symmetry"}:
             value = int(value)
@@ -260,7 +259,6 @@ class AnimConfigPanel(Widget):
                         choices=layer_b_choices),
             _PanelField("trail_decay",    "Trail",       "float",  cfg.trail_decay,
                         min_val=0.0, max_val=0.98, step=0.05),
-            _PanelField("adaptive",       "Adaptive",    "toggle", cfg.adaptive),
             _PanelField("particle_count", "Particles",   "int",    cfg.particle_count,
                         min_val=10, max_val=200),
             _PanelField("symmetry",       "Symmetry",    "int",    cfg.symmetry,
@@ -502,7 +500,6 @@ class AnimConfigPanel(Widget):
             "blend_mode":    "blend_mode",
             "layer_b":       "layer_b",
             "trail_decay":   "trail_decay",
-            "adaptive":      "adaptive",
             "particle_count": "particle_count",
             "symmetry":      "symmetry",
             "attractor_type": "attractor_type",

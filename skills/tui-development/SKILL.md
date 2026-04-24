@@ -5,7 +5,7 @@ description: >
   thread safety, testing with run_test/pilot, CSS theming, reactive state, and all
   known Textual 8.x gotchas. TRIGGER when: building, fixing, or auditing hermes TUI
   components; adding new widgets, overlays, animations, or bindings.
-version: "1.2"
+version: "2.0"
 author: Hermes Agent
 metadata:
   hermes:
@@ -120,9 +120,123 @@ Call sites for streaming path: `tool_panel.py`, `execute_code_block.py`, `tool_b
 
 ---
 
-## Recent changes
+## Subsystem reference
 
-### 2026-04-22 — RX2 I/O boundary enforcement (merged feat/textual-migration)
+### io_boundary (`hermes_cli/tui/io_boundary.py`)
+
+All TUI subprocess and hot-path file I/O must route through these helpers. `scan_sync_io` enforces this — `T-BOUND-02` hard-fails on unexempted violations.
+
+```python
+from hermes_cli.tui.io_boundary import (
+    safe_run, safe_open_url, safe_edit_cmd,
+    safe_read_file, safe_write_file, cancel_all, scan_sync_io,
+)
+```
+
+- `safe_run(caller, cmd, *, timeout, on_success=None, on_error=None, on_timeout=None, ...)` — **must be called from event loop**. `on_error(exc, stderr)` is 2-arg; all other `on_error` callbacks are 1-arg.
+- `safe_open_url(caller, url, *, on_error=None)` — validates URL (http/https/file/mailto only). **Bare file paths fail** — always convert: `path.resolve().as_uri()` → `file:///tmp/foo.txt`.
+- `safe_edit_cmd(caller, cmd_argv, path, *, line=None, on_exit=None, on_error=None)` — terminal editor via `App.suspend()`. `_suspend_busy` flag prevents collision with TTE effects.
+- `cancel_all(app)` — wired into `HermesApp.on_unmount`.
+- `# allow-sync-io: <reason>` (≥3 chars) exempts a call-site. Scanner window: `[lineno-2, lineno+2]`.
+- Worker cancellation does NOT kill the subprocess; callbacks in cancelled workers are silently dropped.
+- Every callback touching `self.*` must start `if not self.is_mounted: return`.
+
+**Test patch targets** — `_open_external_direct` shim was deleted 2026-04-24. Patch `hermes_cli.tui.tool_panel.safe_open_url`, not `subprocess.Popen`. Extract `on_error` from `mock.call_args.kwargs` and invoke manually.
+
+### FeedbackService (`hermes_cli/tui/services/feedback.py`)
+
+Unified flash/feedback for HintBar, ToolHeader, CodeBlockFooter. Accessed as `app.feedback`.
+
+- `app.feedback.flash(channel_id, msg, *, duration, priority)` — event-loop-only.
+- Priority: `P1 > P0` preempts; same = replaces; lower = blocked. `key=` replaces regardless of priority.
+- `cancel()` calls `adapter.restore()`; preempt does NOT (prevents overwrite-race).
+- `on_agent_idle()` only restores when no flash active (E3 fix).
+- Channel IDs: `"hint-bar"` (lifecycle-aware), `"tool-header::<panel-id>"`, `"code-footer::<id>"`.
+- `app.feedback.peek("hint-bar")` — passive check, no re-render triggered.
+- `_flash_hint()` on App routes to `feedback.flash("hint-bar", ...)` — do NOT call `_svc_theme.flash_hint()`.
+
+### ToolHeader (`tool_blocks/_header.py`)
+
+`_DROP_ORDER` (current): `["linecount", "duration", "chip", "hero", "diff", "stderrwarn", "exit", "remediation", "chevron", "flash"]`
+- Flash is last — user-action feedback survives until very end.
+- `exit` segment only renders for shell-category tools with non-None `exit_code`.
+- `remediation` renders when `is_collapsed and _is_complete and _tool_icon_error`.
+- B-1: non-interactive tools get `·` placeholder in chevron slot (not empty).
+
+### InterruptOverlay (`overlays/interrupt.py`)
+
+Single widget handles 7 interrupt kinds (CLARIFY/APPROVAL/SUDO/SECRET/UNDO/NEW_SESSION/MERGE_CONFIRM) via FIFO queue. Lives on `layer: interrupt` (above `overlay`, below `tooltip`).
+
+- `present(payload, replace=False)` — FIFO queue; `replace=True` for same-kind re-present.
+- `preempt=True` — pushes current to queue front, activates new one.
+- `dismiss_current("__cancel__")` — the canonical dismiss path from `KeyDispatchService`.
+- `_confirm_destructive_id` must be cleared AFTER `_current_payload = None` in `_teardown_current` — order is load-bearing.
+- `app.focus()` does not exist in Textual 8.x — use `app.screen.focus()`.
+- Textual 8.x has no CSS `+` or `~` sibling combinators — use Python class toggles instead.
+- `AnimConfigPanel.on_blur` must bail when `InterruptOverlay.has_class("--visible")` or focus trap re-steals focus every tick.
+
+### ResponseFlowEngine (`hermes_cli/tui/response_flow.py`)
+
+- `_init_fields()` initialises all 26 app-independent instance fields. Both `ResponseFlowEngine` and `ReasoningFlowEngine` call it first in `__init__`. **New fields go in `_init_fields()` only** — `ReasoningFlowEngine` inherits automatically.
+- `_LineClassifier` — 13 pure detection methods, no mutable state. Instantiated as `self._clf`.
+- `process_line()` dispatcher uses `elif` — **do not change to `if`**. IN_INDENTED_CODE/IN_SOURCE_LIKE close paths return `False` from `_dispatch_non_normal_state` to fall through to prose.
+
+### StatusBar / HintBar (`widgets/status_bar.py`)
+
+- `status_streaming: reactive[bool]` on HermesApp — bars dim to 55% opacity during streaming.
+- `Widget.watch(app, attr, cb)` returns `None` — never store or stop handle. Textual auto-unregisters on unmount.
+- Breadcrumb (S1-B) gates on `status_active_file_offscreen AND active_file AND width >= 60`. The `status_active_file_offscreen` flag is set by `OutputPanel.watch_scroll_y` — do NOT add `super().watch_scroll_y()` (ScrollableContainer doesn't define it → AttributeError).
+- `import time as _time` must be at MODULE TOP in status_bar.py — never re-import inside render (fires every frame).
+
+### PlanPanel (`widgets/plan_panel.py`)
+
+- Key app reactives: `planned_calls`, `turn_cost_usd`, `turn_tokens_in`, `turn_tokens_out`, `plan_panel_collapsed`.
+- `set_plan_batch` / `mark_plan_running(tool_call_id)` / `mark_plan_done(tool_call_id, is_error, dur_ms)` on `ToolRenderingService`.
+- Never mutate `planned_calls` list in-place — always replace: `items = list(self.planned_calls); ...; self.planned_calls = items`.
+- `_plan_tool_call_id` set on ToolPanels in `message_panel.py` else-branch (top-level only). NOT in `tools.py`.
+- `_PlanEntry.on_click` → `BrowseService.scroll_to_tool(tool_call_id)` for jump-to-tool navigation.
+
+### Input system (`input/widget.py` + mixins)
+
+- `Enter-to-accept completion` must be in `_on_key` (not `action_submit`) — action_submit is called programmatically and must not be overlay-gated.
+- Rev-search `_exit_rev_mode`: capture `match_idx = getattr(self, "_rev_match_idx", -1)` BEFORE setting `self._rev_match_idx = -1`. Pre-capture is load-bearing.
+- `_refresh_placeholder()` is the single source of truth for input placeholder text — never set `self.placeholder` directly. Priority: locked > error > idle.
+- `InputLegendBar` must be in flow layout (NOT dock:bottom) — sits above `#input-row` in compose order.
+
+### Overlay architecture (`overlays/`)
+
+- 5 canonical overlays: `ConfigOverlay` (7 tabs), `InterruptOverlay` (7 kinds), `HistorySearchOverlay`, `KeymapOverlay`, `ToolPanelHelpOverlay`.
+- All pre-mounted, always in DOM. Show/hide via `--visible` CSS class only — never `mount()`/`remove()` at runtime.
+- `ConfigOverlay.show_overlay(tab="model"|"skin"|...)` — routes `/model`, `/skin`, `/reasoning`, `/verbose`, `/yolo`.
+- `_dismiss_all_info_overlays()` iterates `{ConfigOverlay, InterruptOverlay, HistorySearchOverlay, KeymapOverlay, ToolPanelHelpOverlay}`.
+- Alias classes (e.g. `ModelPickerOverlay`) use `_AliasMeta` + registration in `_css_type_names` frozenset — both `query_one(Alias)` and `isinstance(obj, Alias)` work.
+
+### Animation engines (`anim_engines.py`)
+
+- 26 engines. New engines slot via `_ENGINE_META["category"]` — never add directly to `_PHASE_CATEGORIES` lists.
+- `TrailCanvas.frame()` = `decay_all()` + render. Never call `tick()` (doesn't exist) or `decay_all()` separately.
+- `_SIN_LUT`/`_COS_LUT` (1024 entries) + `_lut_sin`/`_lut_cos` — max error ~0.006, fine for visuals only.
+- Bounds check (`if 0 <= x < w`) is 5–15% faster than `try/except` for out-of-bounds coords.
+- `DrawbrailleOverlay` split pending (spec at `/home/xush/.hermes/2026-04-23-drawbraille-overlay-split-spec.md`): `anim_orchestrator.py` + `drawbraille_renderer.py` + thin shell + `widgets/anim_config_panel.py`.
+
+### Skin / RX3 vars (`theme_manager.py`, `hermes.tcss`)
+
+Adding a new component var requires **3 edits**:
+1. `COMPONENT_VAR_DEFAULTS` in `theme_manager.py`
+2. `$name: value;` declaration in `hermes.tcss` (required at TCSS parse time)
+3. `component_vars:` entry in all 4 bundled skins (`matrix`, `catppuccin`, `solarized-dark`, `tokyo-night`)
+
+`_defaults_as_strs()` / `_default_of(x)` — always use these instead of `dict(COMPONENT_VAR_DEFAULTS)` directly (T8 grep test enforces this).
+
+`load_with_fallback` — 3-step chain: configured → bundled default → emergency `COMPONENT_VAR_DEFAULTS`. TUI always starts.
+
+### R2 panes layout (`pane_manager.py`)
+
+Flag-gated: `display.layout: "v2"`. Breakpoints: SINGLE < 120 cols, THREE 120–159, THREE_WIDE ≥ 160. `compute_layout(w, h)` is a pure function. `_apply_layout(app)` is idempotent — call from `_flush_resize` only, not `watch_size`.
+
+`query_one(PaneContainer)` is ambiguous (3 instances) — always use `query_one("#pane-left")` etc.
+
+---
 
 New module `hermes_cli/tui/io_boundary.py` + 63 tests in `tests/tui/test_io_boundary.py`.
 
@@ -193,1275 +307,9 @@ Only call from inside a worker thread. Callbacks execute on the event loop — c
 - `desktop_notify.notify()` now requires `caller` kwarg — any new call site must pass `self` or `self.app`.
 - `_build_mermaid_cmd` returns `None` only when BOTH mmdc AND npx are unavailable.
 - Scanner does not catch aliased subprocess imports (`import subprocess as _sp`) — verify manually with `grep -rn "import subprocess as\|_sp\."`.
+- **`safe_open_url` requires a URL with a scheme** — bare file paths like `/tmp/foo.txt` fail `_validate_url` with `"missing scheme"`. Always convert: `path.resolve().as_uri()` → `file:///tmp/foo.txt`. The `is_url = "://" in target` check determines which branch to use.
+- **`_open_external_direct` shim deleted (2026-04-24)** — `tool_panel.py` previously had a `getattr(subprocess, "Popen")` indirection to dodge the scan. It is gone. Tests that patched `subprocess.Popen` for tool_panel open actions must now patch `hermes_cli.tui.tool_panel.safe_open_url`. Error-flash tests must extract `on_error` from `mock.call_args.kwargs` and invoke it manually; `is_mounted` is a read-only property so use `patch.object(type(panel), "is_mounted", new_callable=PropertyMock, return_value=True)`.
 
-### 2026-04-23 — InterruptOverlay hardening (merged feat/textual-migration)
-
-8 phases across 5 files, 46 tests in `tests/tui/test_interrupt_hardening.py`.
-
-**Phase A — Dismiss path unification (F-1/F-3):**
-- Deleted 4 bypass blocks from `keys.py` (`dispatch_key`) that wrote directly to `state.response_queue` for ctrl+c (approval/clarify → `"deny"`; sudo/secret → `""`) and escape (approval/clarify → `None`; sudo/secret → `""`).
-- Replaced with single overlay dispatch: `ov = self._get_interrupt_overlay(); if ov and ov.has_class("--visible"): ov.dismiss_current("__cancel__")`.
-- `_get_interrupt_overlay()` added to `KeyDispatchService` (mirrors the one already on `WatchersService`).
-- All dismiss paths now resolve through the adapter's `on_resolve` closure — canonical values: APPROVAL cancel=`None`/timeout=`"deny"`, SUDO/SECRET cancel=`""`/timeout=`None`, UNDO cancel=`None`/timeout=`"cancel"`.
-
-**Phase B — Stale deadline fix (C-1):**
-- `InterruptPayload` gets `_remaining_on_preempt: int = field(default=-1, init=False, repr=False)` — sentinel `-1` = fresh; `≥0` = preempted snapshot.
-- `present()` preempt branch: stamps `prior._remaining_on_preempt = max(0, prior.remaining)` and `prior.deadline = 0` before teardown.
-- `_activate`: when `_remaining_on_preempt >= 0`, uses `max(1, _remaining_on_preempt)` as effective seconds instead of full `countdown_s`. Resets sentinel to `-1` after consuming.
-- `_adopt_state_deadline` in `_adapters.py` now also sets `p.countdown_s = float(state.remaining)` so the bar ratio reflects remaining, not original duration.
-
-**Phase C — Keyboard accelerators (F-2):**
-- `on_key` dispatch for UNDO/CLARIFY/APPROVAL: single alpha char matches `choice.id` or `choice.id[:1]`.
-- `_choices_from_state` in `_adapters.py` now asserts no first-char collisions (debug-only).
-- `_render_undo` hint updated to show "Press y/n or use Arrow + Enter".
-
-**Phase D — Replace flash + Enter guard (G-1):**
-- `_enter_blocked_until: float = 0.0` in `__init__`; checked at top of `confirm_choice`.
-- Same-kind replace path: resets `payload.selected=0`, stamps `_enter_blocked_until = now+0.25`, calls `_flash_replace_border()`.
-- `_flash_replace_border`: adds `--flash-replace` class, removes after 300ms via `set_timer`.
-- CSS: `InterruptOverlay.--flash-replace { border: tall $warning 80%; }` declared AFTER urgency rules (same specificity, last-declared wins).
-- `_teardown_current` resets `_enter_blocked_until = 0.0`.
-
-**Phase E — Queue safety (C-2/C-3):**
-- `_MAX_QUEUE_DEPTH = 8`; oldest dropped (with `logger.warning`) when cap hit.
-- `action_drain_queue`: resolves all queued payloads with `""` (timeout_value), then calls `dismiss_current("__cancel__")` for the active one.
-- `Binding("ctrl+shift+escape", "drain_queue", ...)` — best-effort (Kitty/WezTerm only; other terminals silently ignore).
-- `border_subtitle`: `"+N queued"` when queue non-empty, else `payload.subtitle`.
-
-**Phase F — Button visual sync (A-1):**
-- `_refresh_base_row()` and `_refresh_strategy_row()` helpers update button labels and `--selected-base`/`--selected-strategy` classes.
-- Called from `on_button_pressed` after `ns-base-*` and `mg-*` clicks.
-
-**Phase G — Approval diff focus + urgency (B-1/D-1/A-2/E-1):**
-- Fixed dead CSS: renamed `#approval-diff-panel` rule to `#approval-diff` (widget was mounted with id `"approval-diff"`, no `-panel` suffix).
-- Diff focus ring: `InterruptOverlay #approval-diff:focus { border: tall $accent 80%; }`.
-- `--diff-hint-visible` class on overlay controls hint label visibility (no CSS `+` sibling — Textual 8.x doesn't support it).
-- `_populate_approval_diff`: adds `--scrollable` + `self.add_class("--diff-hint-visible")` when `total_lines > 16`.
-- `_teardown_current`: `self.remove_class("--visible", "--diff-hint-visible")`.
-- `make_secret_payload` urgency: `"info"` → `"warn"`.
-- Double-Enter guard for `"always"`/`"session"`: `_confirm_destructive_id` sentinel + 1.5s timer; second Enter within window resolves.
-- `_teardown_current` clears `_confirm_destructive_id` AFTER `self._current_payload = None` (so `_clear_destructive_confirm` inner guard skips stale countdown refresh).
-- `_tick_countdown`: adds `--urgency-danger` at ≤3s remaining.
-
-**Phase H — Focus return (D-2):**
-- `_post_interrupt_focus()` in `WatchersService`: focuses `#input-area` when not agent_running, else `self.app.screen.focus()` (NOT `app.focus()` — doesn't exist in Textual 8.x).
-- Wired into `on_clarify_state`, `on_approval_state`, `on_sudo_state`, `on_secret_state` None branches.
-- `on_undo_state(None)`: supplements existing `inp.disabled = False` — does NOT replace it.
-
-**Key gotchas:**
-- `app.focus()` does not exist in Textual 8.x — use `app.screen.focus()`.
-- Textual 8.x has no CSS `+` or `~` sibling combinators — use Python class toggles instead.
-- `_confirm_destructive_id` cleared AFTER `_current_payload = None` in `_teardown_current`; order is load-bearing.
-- `_get_interrupt_overlay` now lives on BOTH `WatchersService` and `KeyDispatchService`.
-- `--flash-replace` CSS must be declared after urgency classes or it loses the cascade.
-
-### 2026-04-23 — R10 Header-only collapse: explicit exit code in collapsed ToolHeader
-
-**4 changes (no new state axis — binary `collapsed: bool` unchanged):**
-
-- `ToolHeader.__init__`: `self._exit_code: int | None = None`
-- `_render_v4`: after `stderrwarn` try-except block, before `tail_budget` calc — appends `exit` segment when `is_collapsed and _is_complete and _exit_code is not None`
-- `tool_panel.set_result_summary`: `header._exit_code = getattr(summary, "exit_code", None)` after `header._error_kind`
-- `_DROP_ORDER`: `"exit"` inserted between `"stderrwarn"` and `"chevron"` — stderrwarn drops first in narrow terminals
-
-**Precedence:**
-
-| `_primary_hero` | `exit_code` | Renders |
-|---|---|---|
-| set | 0 | hero only (`ok` suppressed) |
-| set | non-zero | hero AND `exit N` |
-| None | 0 | `ok` (dim green) |
-| None | non-zero | `exit N` (bold red) |
-| any | None | nothing new |
-
-**`exit_code` population:** `ResultSummaryV4.exit_code: int | None` (tool_result_parse.py:207). Only shell-category parsers populate it; non-shell tools → `None` → no segment rendered. By design.
-
-**Tests:** `tests/tui/test_r10_header_only.py` — 18 tests, all pure-unit via `_H` helper class (no `run_test`).
-
-**Gotchas:**
-- Exit segment is appended OUTSIDE the stderrwarn try-except — exceptions in stderrwarn cannot suppress exit code
-- `_primary_hero` truthiness check: falsy (None or empty string) = no hero; whitespace-only won't occur (parser-controlled)
-- ChildPanel inherits this automatically (extends ToolPanel, shares `_render_v4`)
-- SubAgentPanel unaffected — different widget, no POSIX exit code concept
-
-### 2026-04-23 — Header signal hardening (B-1, C-3, F-1, F-2, F-3)
-
-**5 fixes in `_header.py` and `tool_panel.py`. No new state axes.**
-
-**`_DROP_ORDER`** (now): `["linecount", "duration", "chip", "hero", "diff", "stderrwarn", "exit", "chevron", "flash"]`
-- Flash moves from index 0 to last — user-action feedback (✓ Copied) survives until the very last.
-- `"duration"` added at index 1 — drops before chevron/flash under pressure.
-
-**B-1 — Chevron slot always filled:**
-```python
-if self._has_affordances:
-    tail_segments.append(("chevron", Text("  ▸" if is_collapsed else "  ▾", style="dim")))
-else:
-    # B-1: non-interactive signal — always fill chevron slot
-    tail_segments.append(("chevron", Text("  ·", style="dim #444444")))
-```
-
-**C-3 — Category icon preserved on error:** Removed `icon_str = _ek_icon` substitution block (~lines 193–201). Error kind glyph still shows as hero prefix; category icon now stays in icon column.
-
-**F-1 — Flash narrow-clip:** When `self.size.width < 80`, flash `_msg` capped to 14 chars + "…" before `"  ✓ "` prefix. Uses `self.size.width` inline (NOT `term_w` — that's defined after the if/else block).
-
-**F-2 — Duration single append point:**
-```python
-_pending_dur: str | None = None
-if self._spinner_char is not None:
-    ...
-    if self._duration: _pending_dur = self._duration
-else:
-    ...
-    if self._duration: _pending_dur = self._duration
-# F-2: single append outside both branches
-if _pending_dur:
-    tail_segments.append(("duration", Text(f"  {_pending_dur}", style="dim")))
-```
-`_DROP_ORDER` controls trim priority (duration index 1 = drops early); render position in the list doesn't matter.
-
-**F-3A — Gutter color cascade (`_refresh_gutter_color`):**
-```python
-self._focused_gutter_color = (
-    css.get("accent-interactive") or css.get("primary") or _GUTTER_FALLBACK
-)
-```
-Was: `css.get("rule-accent-color", _GUTTER_FALLBACK)`.
-
-**F-3B — Accent chip dynamic color (`tool_panel.py`):**
-- `_TONE_STYLES["accent"] = ""` (sentinel — not `"bold cyan"`).
-- `FooterPane._render_footer`: when `tone_style` empty + `chip.tone == "accent"`, resolves `accent-interactive` → `primary` → `#5f87d7`.
-
-**Tests:** 20 pure-unit tests in `tests/tui/test_header_signal_hardening.py` via `_H` helper (no `run_test`).
-
-**Key gotchas:**
-- `Widget.app` is read-only ContextVar — `_refresh_gutter_color` tests use `patch.object(type(h), "app", new_callable=PropertyMock, return_value=mock_app)`.
-- `_DROP_ORDER` governs trim priority, NOT render position — duration appended last but drops before chevron.
-- Flash narrow-clip uses `self.size.width` inline; `term_w` not yet defined at that point in `_render_v4`.
-
----
-
-### 2026-04-23 — Startup banner TTE: correct positioning via pre-mounted StartupBannerWidget
-
-**Final correct architecture** (cli.py + `OutputPanel.compose()`):
-
-- `OutputPanel.compose()` pre-yields `StartupBannerWidget(id="startup-banner")` as its first child — always in DOM, always queryable.
-- `_play_tte_in_output_panel` generates TTE frames and for each frame calls `_splice_startup_banner_frame(template, frame)` — this splices the animated hero into the exact left-column pixel position of the full banner (hero + tools + skills), rendered as a single Rich `Text`. The frame is applied via `app.call_from_thread(_drain_latest)` which does `query_one(StartupBannerWidget).set_frame(frame)`.
-- `_build_startup_banner_template(plain_hero)` pre-renders the full banner with a placeholder block (`████`) in the hero slot and records its exact (row, col) within the Text — used to splice each TTE frame in-place.
-- When TTE finishes, `_set_tui_startup_banner_static()` writes the final static banner into the same widget.
-- `_ensure_tui_startup_banner_widget()` deleted — it was broken by design (see bug below) and is no longer needed.
-
-**Bug that caused all previous failures:** `_ensure_tui_startup_banner_widget()` called `app.call_from_thread(_ensure)` then immediately read `result["widget"]` — before `_ensure` had run on the event loop. `call_from_thread` uses `call_soon_threadsafe` and returns immediately; the dict is always read while it's still `None`. The fix is pre-mounting, not threading synchronization.
-
-**Gotcha:** `panel.mount(widget, ...)` called from a sync closure inside `call_from_thread` also silently fails — it returns an `AwaitMount` that is never awaited. **Never rely on runtime mounting from `call_from_thread`; pre-mount in `compose()` instead.**
-
-**Gotcha:** `call_from_thread(fn)` cannot return a value to the calling thread. If you need a widget reference from the event loop, either pre-mount it (query always works) or use a `threading.Event` + shared dict with explicit `.set()` inside the closure + `.wait()` on the calling side.
-
-**Gotcha:** `overflow-x: visible` is not a valid Textual CSS value — only `auto`, `hidden`, `scroll`. Using it in `DEFAULT_CSS` raises `StylesheetParseError` at app init and breaks all tests that instantiate the app.
-
----
-
-### 2026-04-22 — UX fixes (search_files JSON, history idx leak, slash cmds in history, banner overflow, AnimConfigPanel focus trap)
-
-Five targeted fixes on `feat/textual-migration`:
-
-**1. `search_files` JSON result shown unprocessed** — `search_files` returns `{"total_count": N, "matches": [{path, line, content}, ...]}`. Previously rendered as pretty JSON with header count of 1 (raw line count).
-- `tool_result_parse.py`: new `_parse_search_json()` helper; `_extract_search_artifacts` now extracts file artifacts from `matches[].path`; `search_result_v4` uses `total_count` / `len(matches)` for the header count.
-- `content_classifier.py`: JSON with `matches:[{path,…}]` shape now classifies as `ResultKind.SEARCH` (conf 0.9) instead of `JSON`, so `SearchRenderer` runs. Metadata carries `{"json": True, "hit_count": …, "query": …}`.
-- `body_renderers/search.py`: `_parse_search_output` detects JSON at the top and groups `matches` by `path` before falling back to the text regex path. Query highlight still works via `cls_result.metadata["query"]`.
-
-**2. Input history arrow-up "does not always show most recent"** — `_history_idx` was only reset by `action_submit`; any other mutation (rev-search exit, `edit_cmd` action, paste, user editing a recalled entry) left it stale, and the next up-arrow stepped from that stale position.
-- `input/widget.py`: new `_history_loading: bool` flag; `on_text_area_changed` resets `_history_idx = -1` when text diverges from `_history[_history_idx]` (guarded by the flag + `_handling_file_drop`).
-- `input/_history.py`: `_history_load` wraps `load_text` with `_history_loading = True`; same guard on rev-search matcher loads; `_exit_rev_mode` now syncs `_history_idx` to `_rev_match_idx` on accept (so up/down continue from the match) and to `-1` on restore.
-
-**3. Slash commands not saved to history** — `_save_to_history` had `if text.startswith("/"): return` which dropped every `/cmd` from history. Removed the guard so `/clear`, `/model …`, etc. recall via up-arrow. `test_input_completion_ux.py::test_slash_command_not_saved` flipped to `test_slash_command_saved`.
-
-**4. Startup banner logo width** — banner was captured with `panel.scrollable_content_region.width - 1`, which wraps the caduceus hero when the center pane is narrower than the logo.
-- `cli.py::_render_startup_banner_text`: always use `shutil.get_terminal_size().columns` (or app width, whichever is wider) as `capture_width`. Deleted the ~35-line `_resolve_width` thread hop.
-- `widgets/__init__.py::StartupBannerWidget` CSS: `width: auto; min-width: 100%; overflow-x: visible` — widget sizes to the logo's intrinsic width and is allowed to overflow past the parent pane. OutputPanel's `overflow-x: hidden` still clips at the panel edge.
-
-**5. WorkspaceOverlay could pop on top of AnimConfigPanel, focus got stranded** — AnimConfigPanel is non-modal (to preserve underlying overlay visuals) but captures focus. Pressing `w` (when input not focused, which is the case when AnimConfigPanel has focus) opened the workspace overlay on top, and any stray focus loss made the panel unreachable.
-- `drawille_overlay.py::AnimConfigPanel`: new `on_blur` — while `--visible`, schedules `self.focus()` via `call_after_refresh` so focus can't escape.
-- `app.py::action_toggle_workspace`: bails when `_focus_blocking_overlay_visible()` is True.
-- `app.py::_focus_blocking_overlay_visible`: new helper; returns True if `AnimConfigPanel` or `AnimGalleryOverlay` has `--visible`. Central extension point for future focus-trapping overlays.
-
-**Gotchas (new):**
-- When adding a tool parser that returns JSON, the classifier routes JSON-with-`matches[{path,…}]` to `SearchRenderer`, not `JsonRenderer`. If you want JsonRenderer for a different JSON shape with a `matches` key, disambiguate via tool category or an extra field.
-- Any code that sets `HermesInput.value` programmatically (paste, edit_cmd, skin injection, etc.) now correctly clears `_history_idx` via `on_text_area_changed`. Don't wrap external mutations in the `_history_loading` flag unless you genuinely want the idx preserved.
-- Non-modal overlays that rely on `self.focus()` in `show()` should also implement `on_blur` → refocus-if-visible, otherwise the first descendant focus event or click outside strands them.
-- `action_toggle_*` entry points for info overlays should check `_focus_blocking_overlay_visible()` before `_dismiss_all_info_overlays()` + show; the suppress-when-input-focused guard in `services/keys.py` isn't enough because focus-trapping overlays steal focus *away* from the input.
-
-### 2026-04-22 — RX3 CSS var single-source-of-truth infra (merge 89b89a53, merged feat/textual-migration)
-
-Phases 1+2+3 landed; Phase 4 (generator block install + VarSpec type flip + pre-commit hook) deferred to a freeze-window PR.
-
-**Spec:** `/home/xush/.hermes/2026-04-22-tui-v2-RX3-css-var-single-source-spec.md` (approved 9.6/10 after 3 review iterations).
-
-**New file `hermes_cli/tui/build_skin_vars.py`** — scanner + generator + CLI:
-- `TEXTUAL_BUILTIN_VARS: frozenset[str]` — introspected from `App().get_css_variables()` at import with Textual 8.x version-pin `assert`. `TEXTUAL_BUILTIN_VARS_FALLBACK` enumerated snapshot for degraded environments.
-- `scan_tcss_references()` / `scan_tcss_declarations()` / `scan_default_css_references(tui_dir)` / `scan_bundled_skins(skins_dir)` / `scan_docstring_keys()` — audit inputs.
-- `build_matrix(defaults)` + `print_matrix(rows)` — drift report.
-- `render_tcss_block(defaults)` / `render_docstring_block(defaults)` — deterministic generator output with strict alphabetical ordering, BEGIN/END markers, `hash: sha256:<hex>` line over full VarSpec tuple incl. description.
-- `write_tcss()` / `write_docstring()` / `fill_skin(path, defaults)` — mutation entry points.
-- CLI: `python -m hermes_cli.tui.build_skin_vars` / `--check` / `--matrix` / `--fill-skin PATH`.
-- Comment-stripping in `scan_tcss_references`: `_TCSS_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)` applied before ref regex — stops `$var` in comments from producing false positives.
-
-**`hermes_cli/tui/theme_manager.py` — new exports:**
-- `VarSpec` (frozen dataclass) — fields: `default`, `description`, `since`, `optional_in_skin`, `category`.
-- `_default_of(x: str | VarSpec) -> str` — migration shim unwrap.
-- `_defaults_as_strs() -> dict[str, str]` — canonical reader; replaces all 4 prior `dict(COMPONENT_VAR_DEFAULTS)` call sites in `__init__`, `load_dict`, `_apply_hot_reload_payload`, `_load_path`.
-- `SkinValidationError(ValueError)` + `validate_skin_payload(payload, *, source="<skin>", warn_missing=True)` — dataclass+regex validator; `_HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$")`. Missing keys → `UserWarning`; bad hex or non-mapping → `SkinValidationError`.
-- `load_with_fallback(configured, *, bundled_default)` — 3-step chain: configured → bundled default → emergency `COMPONENT_VAR_DEFAULTS`-only. Each failure prints `SKIN_LOAD_FAILED` / `SKIN_DEFAULT_FAILED` / `SKIN_EMERGENCY_FALLBACK` to stderr. Emergency path always succeeds — TUI always starts.
-- `_load_path` now calls `validate_skin_payload` after `load_skin_full`; invalid skins `raise` (loop in `load()` logs + continues).
-- `load()` also validates merged `(skin ⊕ skin_overrides)` payload per §8.4 — a bad hex in `config.yaml` `display.skin_overrides` surfaces at load time with `source="skin_overrides"` in the error path.
-- `load_dict()` intentionally unchanged — T7 regression guards that `_apply_overrides` is NOT called there (live-preview contract).
-- 5 new `COMPONENT_VAR_DEFAULTS` keys: `tool-glyph-mcp`, `error-timeout`, `error-critical`, `error-auth`, `error-network` — all pre-existing in Python code (`tool_category.py`, `tool_result_parse.py`) and `hermes.tcss` but never in defaults.
-
-**`hermes.tcss` — 14 missing declarations added**: `app-bg`, `cursor-color`, `cursor-selection-bg`, `cursor-placeholder`, `ghost-text-color`, `chevron-base/file/stream/shell/done/error`, `fps-hud-bg`, `scrollbar`, `drawille-canvas-color`. All were `$`-referenced in tcss rules but not declared — Textual silently resolved to empty string. Values mirror `COMPONENT_VAR_DEFAULTS`.
-
-**Bundled skin YAML dedent bug — CRITICAL latent failure fixed**:
-All 4 bundled skins (`matrix.yaml`, `catppuccin.yaml`, `solarized-dark.yaml`, `tokyo-night.yaml`) had identical dedent bugs at lines 81/83: `plan-now-fg` and `pane-border` fell out of the `component_vars:` block, making `yaml.safe_load` raise `ParserError`. Since `ThemeManager.load()` catches `Exception`, every bundled skin silently fell back to `COMPONENT_VAR_DEFAULTS` — users loading `/skin matrix` never saw the 54-key skin. Now all 4 skins parse, each carrying 59 keys.
-
-**Tests — `tests/tui/test_css_var_single_source.py`** (19 tests + 1 xfail, all pass):
-- T1: every `$name` referenced from tcss or `DEFAULT_CSS` blocks resolves (in `COMPONENT_VAR_DEFAULTS` or `TEXTUAL_BUILTIN_VARS`).
-- T2: `$`-referenced defaults declared in hermes.tcss (stricter "all defaults declared" xfail'd for Phase 4).
-- T3: every bundled skin covers all required keys (skips `optional_in_skin=True`).
-- T4: no orphan tcss declarations.
-- T5: generator deterministic.
-- T6: validator rejects bad hex + non-mapping `component_vars`/`vars`; warns on missing + unknown keys.
-- T6b: merged-overrides validator flags `source="skin_overrides"` in error path.
-- T7: `load_dict()` does NOT call `_apply_overrides()` (live-preview regression guard).
-- T8: grep test — no call site uses raw `COMPONENT_VAR_DEFAULTS[...]` outside `_default_of` (shim gate).
-- Extras: `_default_of` str passthrough + VarSpec unwrap; `TEXTUAL_BUILTIN_VARS` contains core colors + ≥50 entries; hash includes description (description-only edits change hash).
-
-**Key gotchas (new from RX3):**
-- `COMPONENT_VAR_DEFAULTS` consumers MUST use `_default_of(v)` / `_defaults_as_strs()` — never `dict(COMPONENT_VAR_DEFAULTS)`. T8 grep test gates this.
-- Adding a new component var still requires 3 edits until Phase 4 generator lands: (1) `COMPONENT_VAR_DEFAULTS`, (2) `$name: value;` declaration in `hermes.tcss` IF `$name` referenced from tcss/DEFAULT_CSS, (3) `component_vars:` entry in each bundled skin. T1/T2/T3 catch omissions.
-- `$name` references inside TCSS `/* ... */` comments previously tripped the scanner — comment-stripping applied before regex. Any new scanner paths must do the same.
-- `validate_skin_payload` emits `UserWarning` on missing required keys — existing `test_theme_manager.py` fixtures that pass partial skins now produce warnings. This is correct behavior (matches §8.3); tests still pass because warnings are not errors.
-- Fallback chain uses bare `print(..., file=sys.stderr)` alongside `log.warning` so tags surface even when textual logging is disabled (e.g. in tests).
-- `SkinValidationError` inherits from `ValueError` so existing `except (SkinError, OSError)` handlers needed updating to `except (SkinError, SkinValidationError, OSError)`.
-
-**Commit trail (4 commits):**
-1. `c7cceb9a` fix(skins): restore component_vars nesting in all 4 bundled skins
-2. `67ee15bc` fix(tcss): declare 14 $-referenced component_vars
-3. `7e64aaeb` feat(theme): VarSpec + _default_of shim + validator + 3-step fallback
-4. `69b57a5b` feat(build): scanner/generator + T1-T8 tests
-
-**Phase 4 (deferred):** replace hand-written tcss declaration block with generated BEGIN/END block, flip `COMPONENT_VAR_DEFAULTS: dict[str, str]` → `dict[str, VarSpec]` (pure value-type change — all call sites already go through shim), add `.pre-commit-config.yaml` entry for `--check`. Needs a freeze-window day with zero open PRs touching `hermes.tcss` declarations.
-
-### 2026-04-22 — RX4 AgentLifecycleHooks — lifecycle cleanup registry (merged feat/textual-migration)
-
-19 tests, 0.16s. Extracted cleanup logic from 175-line `watch_agent_running` into a named, priority-ordered registry.
-
-**New file: `hermes_cli/tui/services/lifecycle_hooks.py`** — `AgentLifecycleHooks`:
-- `register(transition, cb, *, owner, priority, name) → RegistrationHandle` — `WeakMethod` for bound methods; owner GC → silent prune
-- `unregister(handle)` / `unregister_owner(owner)` — bulk cleanup for widget unmount
-- `fire(transition, **ctx)` — snapshots registrations at entry; exceptions caught+logged; `SystemExit`/`KeyboardInterrupt` propagate
-- `drain_deferred()` — called from `on_mount`; fires events queued while `app.is_running` was False
-- `shutdown()` — called from `on_unmount`; sets `_shutdown` flag, clears all registrations
-- `snapshot() → dict[str, list[str]]` — debug: transition → list of callback names
-
-**`app.py` wiring:**
-- `__init__`: `self.hooks = AgentLifecycleHooks(self)` (before R4 services) + `self._interrupt_source: str | None = None`
-- `on_mount`: `_register_lifecycle_hooks()` + `drain_deferred()` at end
-- `on_unmount`: `hooks.shutdown()` at start
-- `watch_agent_running(True)`: fires `on_turn_start` at end of if-branch
-- `watch_agent_running(False)`: fires `on_turn_end_any`, then `on_turn_end_{success,error}`, then `on_interrupt` if `_interrupt_source` set (and clears it)
-
-**Registered callbacks** (priority / name) — Phases a + b:
-- `on_turn_start`: `reset_turn_state` (100) ← includes response metrics reset, `osc_progress_start` (10)
-- `on_turn_end_any`: `osc_progress_end` (10), `clear_output_dropped_flag` (100), `clear_spinner_label` (100), `clear_active_file` (100), `reset_response_metrics` (100), `clear_streaming_blocks` (100), `drain_gen_queue` (100), `desktop_notify` (10), `restore_input_placeholder` (900)
-- `on_turn_end_success`: `chevron_done_pulse` (500), `auto_title_first_turn` (100)
-- `on_interrupt`: `osc_progress_end_interrupt` (10)
-- `on_compact_complete`: `reset_compaction_warn_flags` (100)
-- `on_error_set`: `schedule_status_error_autoclear` (100) — schedules 10s timer via `_lc_schedule_error_autoclear`
-- `on_error_clear`: `cancel_status_error_timer` (100) — cancels via `_lc_cancel_error_timer`
-
-**Phase b additions (commit 16f7004a):**
-- Dual execution removed — inline cleanup in `watch_agent_running` deleted (−88 lines); hooks are sole owners
-- `_lc_schedule_error_autoclear` / `_lc_cancel_error_timer` implemented (were stubs); timer moved out of `on_status_error` inline code
-- `on_compact_complete` inline flag resets removed from `on_status_compaction_progress`; `_lc_reset_compact_flags` hook is sole owner
-- `IOService.consume_output` fires `on_streaming_start` (first chunk) and `on_streaming_end` (flush sentinel); D2 fix: zeros `status_compaction_progress` at stream end if still > 0
-- `_lc_reset_turn_state` extended to include response-metrics reset (covers True-branch cleanup)
-
-**`watchers.py`**: `hooks.fire("on_compact_complete")` in `on_status_compaction_progress(0.0)` (inline resets removed); `hooks.fire("on_error_set"/"on_error_clear")` in `on_status_error` (inline timer removed).
-
-**Key gotchas:**
-- `_lc_osc_progress_end` must accept `**_` — registered on both `on_turn_end_any` (no ctx) and `on_interrupt` (carries `source=`)
-- Callbacks on `on_turn_end_success` must also accept `**_` since `on_turn_end_any` fires before it and callers fire all three in sequence with same ctx
-- Do NOT set the reactive that owns the transition inside a hook callback (reactive deadlock)
-- `_interrupt_source` is set by `services/keys.py` (`KeyDispatchService`) before dispatching each interrupt; cleared by `watch_agent_running(False)` after hooks.fire
-- `on_streaming_start/end` fire per assistant-message stream (multiple per turn if multiple messages); `_first_chunk_in_turn` resets on each None sentinel
-
-**Tests:** `tests/tui/services/test_lifecycle_hooks.py` (19), `tests/tui/services/test_lifecycle_hooks_phase_b.py` (33) — pure-unit, no Textual dep.
-
-### 2026-04-22 — R3 overlay consolidation Phases A+B (merge de005f7a, merged feat/textual-migration)
-
-21 pre-mounted overlays → 5 canonical + 3 standalones (C/D/E phases still pending). Alias layer preserves every existing `query_one(OldName)` / `isinstance(x, OldName)` call site.
-
-**Phase A — ConfigOverlay (commits 3c46d2b1 + fa5ad015):**
-- New `hermes_cli/tui/overlays/` package. **`overlays.py` renamed atomically to `overlays/_legacy.py`** with `overlays/__init__.py` doing `from ._legacy import *`. All existing importers work unchanged.
-- New `overlays/config.py` — `ConfigOverlay(Widget)` with 7 tabs: Model, Skin, Syntax, Options, Reasoning, Verbose, YOLO. Tab keys `1`–`7` + `Tab`/`Shift+Tab` cycle. `ConfigOverlay.show_overlay(tab="model"|"skin"|...)` routes.
-- Retired 5 picker overlays: `ModelPickerOverlay`, `VerbosePickerOverlay`, `ReasoningPickerOverlay`, `YoloConfirmOverlay`, `TabbedSkinOverlay` (the `SkinPickerOverlay` alias still resolves).
-- Slash handlers `/model`, `/skin`, `/reasoning`, `/verbose`, `/yolo` dispatch to `ConfigOverlay.show_overlay(tab=...)` via `services/commands.py`.
-- `_dismiss_all_info_overlays()` in `services/context_menu.py` updated: adds `ConfigOverlay`, retires 5 picker entries.
-- Tests: **29 new** in `tests/tui/test_config_overlay.py` (tab switching, alias semantics, tab-state preservation); **~85 retired** (test_config_picker_overlays.py, test_tabbed_skin_overlay.py, test_picker_overlay_base.py).
-
-**Phase B — InterruptOverlay (commits a5398706 + e60be059 + b6a05208 + db9dce05):**
-- New `overlays/interrupt.py` — `InterruptOverlay(Widget)` with `InterruptKind` StrEnum (CLARIFY/APPROVAL/SUDO/SECRET/UNDO/NEW_SESSION/MERGE_CONFIRM), `InterruptPayload` + `InterruptChoice` + `InputSpec` dataclasses, FIFO queue, 7 variant renderers.
-- Replaces 7 widgets: `ClarifyWidget`, `ApprovalWidget`, `SudoWidget`, `SecretWidget`, `UndoConfirmOverlay` (were in `widgets/overlays.py`) + `NewSessionOverlay`, `MergeConfirmOverlay` (were in `session_widgets.py`).
-- New `overlays/_adapters.py` — `make_{clarify,approval,sudo,secret,undo,new_session,merge_confirm}_payload` factories convert legacy `ChoiceOverlayState`/`SecretOverlayState`/`UndoOverlayState` (unchanged agent-side wire format) into `InterruptPayload`. `_adopt_state_deadline` carries epoch deadline through.
-- `compose()` in `app.py`: 7 yields collapsed to one `yield InterruptOverlay(id="interrupt-overlay")`.
-- 5 state watchers (`clarify`/`approval`/`sudo`/`secret`/`undo`) in `services/watchers.py` route through adapters + `InterruptOverlay.present(payload, replace=True)`. Undo uses `preempt=True` (pushes current interrupt to queue front).
-- Session flow in `services/sessions.py`: `open_new_session_overlay` / `show_merge_overlay` go through `InterruptOverlay.present(make_*_payload(...))`.
-- `services/keys.py`: arrow/Enter dispatch uses `InterruptOverlay.select_choice` / `confirm_choice`; approval diff-panel scroll + Tab focus cycle preserved.
-- **Escape dispatch**: InterruptOverlay is NOT added to the `_app_key_handler.py:180` tuple. Its own `BINDINGS = [Binding("escape", "dismiss", priority=True)]` handles Escape.
-- Tests: **35 new** in `tests/tui/test_interrupt_overlay.py`; 7 retired in `test_session_widgets.py`.
-
-**Alias layer (`overlays/_aliases.py`):**
-- `_AliasMeta` metaclass — `__instancecheck__(cls, obj)` returns `isinstance(obj, cls._alias_target) and getattr(obj, active_tab_or_kind, None) == cls._alias_mode`.
-- Two-mechanism approach: alias names registered into canonical's `_css_type_names` frozenset (makes `query_one(VerbosePickerOverlay)` resolve to `ConfigOverlay`), and `_AliasMeta.__instancecheck__` handles bare `isinstance`.
-- Aliases are `Widget` subclasses (NOT canonical subclasses) — avoids making them valid mount targets.
-- Tests that assumed "query_one fails when wrong picker visible" must check `has_class("--visible") and active_tab == "verbose"` instead.
-
-**Key gotchas:**
-- `query_one(Alias)` uses `Alias.__name__` as CSS type selector. Works only because alias name is in `_css_type_names` frozenset. Pure-metaclass `__instancecheck__` alone does NOT cover `query_one`.
-- `call_after_refresh(self._activate, payload)` for queue advance / replace / preempt paths — `child.remove()` returns `AwaitRemove`, so same-id re-mount would race `DuplicateIds` without deferring.
-- Adapters keep a `_linked_state` back-pointer to sync `ChoiceOverlayState.selected` — legacy tests that assert on `state.selected` still pass.
-- `preempt=True` semantics (undo-over-approval): pushes current interrupt to queue front, activates new one; old resumes on new-one resolve. Replaces spec's pause/resume approach.
-
-**Still pending (R3 D):**
-- Phase D: SessionOverlay body → SessionStrip dropdown (R7 dependency).
-
-**Merge notes (conflicts with R4 services refactor):** R3 was forked before R4 landed. Merge resolution kept HEAD's thin-adapter mixin shape and pushed R3's overlay wiring INTO the services (`services/commands.py`, `services/context_menu.py`, `services/keys.py`, `services/sessions.py`, `services/watchers.py`). `_get_interrupt_overlay` helper lives on `WatchersService`. Two pre-existing cross-branch failures surfaced on merge (test_turn_undo_retry 12 fails — `ThemeService.flash_hint` references removed `app._flash_hint_timer` from RX1 Phase C; test_session_widgets 7 fails — monkey-patch sites moved to `SessionsService`). NOT caused by R3.
-
-### 2026-04-22 — R3 Overlay Consolidation Phases A/B/C (merged feat/textual-migration)
-
-21 pre-mounted overlays → 5. Three phases, stacked and merged.
-
-**Phase A — ConfigOverlay (2 commits):**
-- `overlays.py` → `overlays/` package (atomic rename: `_legacy.py` + `__init__.py` re-export); delete stale `__pycache__` in same commit
-- `overlays/config.py`: `ConfigOverlay(Widget)` — 7-tab canonical picker; tabs 1–7 map to Model/Skin/Syntax/Options/Reasoning/Verbose/YOLO
-- `overlays/_aliases.py`: alias classes (`VerbosePickerOverlay`, `ModelPickerOverlay`, etc.) with `_AliasMeta.__instancecheck__` for bare `isinstance`; alias names registered into `ConfigOverlay._css_type_names` for `query_one(Alias)` CSS type resolution
-- Escape dispatch: `ConfigOverlay` added to `_app_key_handler.py:180` tuple; old 5 picker entries removed from `_dismiss_all_info_overlays`
-- ~30 new tests in `test_config_overlay.py`; ~85 retired from `test_config_picker_overlays.py` + `test_tabbed_skin_overlay.py`
-
-**Phase B — InterruptOverlay (4 commits):**
-- `overlays/interrupt.py`: `InterruptKind(StrEnum)` (CLARIFY/APPROVAL/SUDO/SECRET/UNDO/NEW_SESSION/MERGE_CONFIRM), `InterruptPayload` ABC + per-kind dataclasses, `InterruptOverlay(Widget)` — single widget, variant-dispatched on `state.kind`
-- State adapters: `make_clarify_payload`, `make_approval_payload`, etc. adapt existing `ChoiceOverlayState`/`SecretOverlayState`/`UndoOverlayState` at overlay boundary — wire formats unchanged
-- 7 old class bodies deleted; `compose()` yields one `InterruptOverlay()` instead of 7
-- `InterruptOverlay.present(payload, replace=False)` — FIFO queue; `replace=True` for same-kind re-present from watchers
-- 35 new tests in `test_interrupt_overlay.py`; ~58 retired across 4 files
-
-**Phase C — ReferenceModal fallback (1 commit, §7.4 path — no PaneManager yet):**
-- `overlays/reference.py`: `ReferenceModal(Widget)` base with shared `show_overlay`/`hide_overlay`/`action_dismiss`/`on_mount`; 4 thin subclasses (`HelpOverlay`, `UsageOverlay`, `CommandsOverlay`, `WorkspaceOverlay`) — all logic preserved, only inheritance changed
-- 4 classes removed from `_legacy.py`; exported from `overlays/__init__.py` via `reference.py`
-- 28 new tests in `test_pane_surfaces.py`; ~75 retired from 5 files
-- **Spec error caught**: `F1` opens `KeymapOverlay` (not `HelpOverlay`) per `app.py:285,1557` — test replaced with pre-mount ID verification
-
-**Key gotchas:**
-- `query_one(Alias)` uses `Alias.__name__` as CSS type selector → must register alias names into canonical's `_css_type_names` frozenset; pure metaclass `__instancecheck__` alone is insufficient
-- Alias classes subclass `Widget` directly (NOT the canonical) — subclassing canonical would break "one pre-mounted instance" invariant
-- `overlays.py` → `overlays/` rename: delete `__pycache__/overlays.cpython-*.pyc` in same commit or old bytecode shadows new package
-- `_dismiss_all_info_overlays` (not `_hide_all_overlays`) is the central helper — 13 call sites; post-R3 iterates `{ConfigOverlay, InterruptOverlay, HistorySearchOverlay, KeymapOverlay, ToolPanelHelpOverlay}`
-- `InterruptOverlay` stays pre-mounted (NOT ModalScreen) — ModalScreen breaks alias instancecheck trick and every `has_class("--visible")` test
-- R3 forked before R4 landed; merge resolution pushed overlay wiring INTO services (`services/commands.py` etc.)
-
-### 2026-04-22 — RX1 FeedbackService — unified flash/feedback coordination (4 commits, merged feat/textual-migration)
-
-18 tests (T1–T15 unit + I1–I3 integration). Replaces 7 ad-hoc per-widget flash implementations with a single service.
-
-**New files:**
-- `hermes_cli/tui/services/__init__.py` — package init
-- `hermes_cli/tui/services/feedback.py` — `FeedbackService`, `FlashState`, `FlashHandle` (`.displayed: bool`), `ChannelAdapter`, `AppScheduler` (prod), `HintBarAdapter`, `ToolHeaderAdapter`, `CodeFooterAdapter`; `Scheduler`/`CancelToken` protocols; `ExpireReason(StrEnum)` (NATURAL/CANCELLED/PREEMPTED/UNMOUNTED); `LOW/NORMAL/WARN/ERROR/CRITICAL` priority constants; `ChannelUnmountedError` (internal only — not exported)
-- `tests/tui/services/test_feedback_service.py` — T1–T15 unit tests; no App/run_test; `FakeScheduler`/`FakeCancelToken` fixtures; covers D3/D5/E3 regression cases
-- `tests/tui/test_feedback_integration.py` — I1–I3 integration tests with real `HermesApp`
-
-**Modified:**
-- `hermes_cli/tui/app.py` — `self.feedback: FeedbackService = FeedbackService(AppScheduler(self))` in `__init__`; registers `HintBarAdapter` for `"hint-bar"` (lifecycle_aware=True); `watch_agent_running(False)` now calls `self.feedback.on_agent_idle()` (E3 fix); `_flash_hint_expires/_timer/_prior` fields removed
-- `hermes_cli/tui/_app_theme.py` — `_flash_hint()` is now a 3-line forwarder to `feedback.flash("hint-bar", ...)`; shrunk from ~30 lines
-- `hermes_cli/tui/tool_panel.py` — `_flash_header()` forwards to `feedback.flash(f"tool-header::{self.id}", ...)`; direct write at line 880 (`header._flash_msg = "done"`) replaced with `feedback.flash(..., duration=0.5)`; `on_mount`/`on_unmount` register/deregister `ToolHeaderAdapter`
-- `hermes_cli/tui/tool_blocks/_header.py` — `flash_copy/flash_success/flash_error` forward to `tool-header::<panel-id>` channel; `_copy_flash` field and `_end_flash` stub deleted
-- `hermes_cli/tui/widgets/code_blocks.py` — `CodeBlockFooter.flash_copy` forwards to `code-footer::<id>` channel; `on_mount`/`on_unmount` register/deregister `CodeFooterAdapter`; `_copy_flash_timer` field and `_restore_copy` method deleted; `StreamingCodeBlock._copy_flash` bool deleted (CSS class is authoritative)
-
-**Key design:**
-- `FlashState` uses `@dataclass` (not frozen) so `token` can be assigned after construction
-- One lambda in entire service: `lambda: self._on_expire(state.id)` — captures only the primitive `state.id` string; fixes D5 ref cycle
-- Priority semantics: `P1 > P0` preempts; `P1 == P0` replaces; `P1 < P0` blocked (handle `.displayed = False`)
-- `key=` replaces regardless of priority (explicit caller intent)
-- `cancel()` calls `adapter.restore()`; preempt does NOT (D3 fix)
-- `shutdown()` fires UNMOUNTED callbacks but does NOT call `adapter.restore()` (I4)
-- `on_agent_idle()` only restores when no flash active (E3 fix); `hint-bar` is the only lifecycle-aware channel
-- `ChannelUnmountedError` internal to `services/feedback.py` — never import it elsewhere
-- All flash call sites under `call_from_thread` continue to use `call_from_thread`; service API is event-loop-only
-- Per-block adapters accumulate until `on_unmount` → `deregister_channel()` — prevents stale widget refs after ToolPanel removal
-
-**Bugs fixed (traceability):**
-- D3 overwrite race → I1+I2+I3 (preempt cancels timer; old restore never fires); regression T2/T3/I1
-- D5 ref cycle (lambda captures) → service owns state; `_on_expire` drops state; no widget refs in lambdas; regression T13
-- E3 `watch_agent_running` clears active flash → `on_agent_idle()` no-op during active flash; regression T11/I3
-
-**Gotchas:**
-- `FakeScheduler.advance(dt)` fires expired callbacks synchronously; mark token stopped before firing to prevent double-fire
-- `ToolHeader._feedback_channel_id()` resolves `panel_id` from `self._panel.id if self._panel is not None else self.id` — header may not always have a panel reference
-- `session-notify` is NOT a registered channel (Option B) — `_SessionNotification` keeps its own independent timer
-
-### 2026-04-22 — R1 PlanPanel — plan/action queue surface (5 commits, merged feat/textual-migration)
-
-78 tests. Surfaces the agent's work queue as first-class TUI state.
-
-**New files:**
-- `hermes_cli/tui/plan_types.py` — `PlanState(StrEnum)` (PENDING/RUNNING/DONE/ERROR/CANCELLED/SKIPPED) + `PlannedCall` (frozen dataclass with `as_running()` / `as_done()` transition helpers)
-- `hermes_cli/tui/widgets/plan_panel.py` — `PlanPanel(Vertical)` with 4 subsections + module-level `_format_plan_line()` pure helper
-
-**`app.py`** — 5 new class-level reactives (all `repaint=False`):
-```python
-planned_calls: reactive[list[PlannedCall]] = reactive(list, repaint=False)
-turn_cost_usd: reactive[float] = reactive(0.0, repaint=False)
-turn_tokens_in: reactive[int] = reactive(0, repaint=False)
-turn_tokens_out: reactive[int] = reactive(0, repaint=False)
-plan_panel_collapsed: reactive[bool] = reactive(False)
-```
-
-**`services/tools.py`** (`ToolRenderingService`) — three new event-loop-only methods:
-- `set_plan_batch(batch: list[tuple[str, str, str, dict]])` — seeds PENDING entries, clears stale PENDING from prior batches
-- `mark_plan_running(tool_call_id)` — PENDING → RUNNING, set `started_at`
-- `mark_plan_done(tool_call_id, is_error, dur_ms)` — → DONE/ERROR, set `ended_at`
-- All three: `items = list(self.planned_calls); ...; self.planned_calls = items` — never mutate in-place
-
-**`run_agent.py`** (Shape A — preferred):
-- `AIAgent.__init__` accepts `tool_batch_callback` + `usage_callback`
-- Batch CB fires once per assistant message: concurrent path after `parsed_calls` assembled (before first `tool_start_callback`); sequential path before the `for i, tool_call in enumerate(...)` loop
-- Usage CB fires after `session_*_tokens` update block; wraps `(prompt_tokens, completion_tokens, cost_usd)`
-- Both wrapped in `try/except logging.debug(...)` — agent must never crash on TUI failure
-
-**`cli.py`**:
-- `_on_tool_batch(batch)` — builds 4-tuples, calls `tui.call_from_thread(tui.set_plan_batch, tuples)`; compute batch repr *before* `call_from_thread` (don't close over mutable dicts)
-- `_on_usage(prompt, completion, cost_usd)` — accumulates on agent thread, then `call_from_thread(setattr, tui, 'turn_tokens_in', ...)`
-- `_reset_turn_state()` — zeros all 4 reactives + clears `planned_calls`; called from `on_hermes_input_submitted` only when submission actually starts an agent turn
-- `_on_tool_start` calls `tui.call_from_thread(tui.mark_plan_running, tool_call_id)`
-- `_on_tool_complete` calls `tui.call_from_thread(tui.mark_plan_done, tool_call_id, is_error, dur_ms)`
-
-**`PlanPanel` widget architecture:**
-```
-PlanPanel(Vertical)              # id="plan-panel"; dock: bottom; height: auto (max 12)
-├── _PlanPanelHeader(Horizontal) # title + collapse chevron
-├── _NowSection(Vertical)        # ● current tool  elapsed  [cancel stub]
-├── _NextSection(Vertical)       # ▸ pending tools (max 5 + "… +N more" Static)
-├── _DoneSection(Vertical)       # ✓/✗ done tools (max 5 + "… +N more" Static)
-└── _BudgetSection(Horizontal)   # "$0.12 · 4.3k↑ 12.1k↓"; click → UsageOverlay
-```
-- `_NowSection` uses `set_interval(1.0, self._tick)` for elapsed; NOT `CountdownMixin` (monotonically increasing, not countdown). Timer started on first RUNNING entry, stopped when empty.
-- Under `HERMES_DETERMINISTIC=1`: `_NowSection` elapsed pinned at `0s` (same contract as ThinkingWidget)
-- Overflow: max 5 per section; excess → `… +N more` Static; click to expand inline (per-section `_expanded: reactive[bool]`)
-- Collapsed = `--collapsed` CSS class; 1-row chip: `Plan · 2▸ · 3✓`
-- At ≥ 140 cols: subsections flip to Horizontal [Now | Next | Done | Budget]
-- On `compact == True`: chip form regardless of width (reuses existing `compact` reactive)
-- Accessibility: `●/▸/✓/✗` → `*/>/ [ok]/[X]` when `HERMES_ACCESSIBILITY=1` (read via `_accessibility_mode()` helper — NOT `accessibility_mode()` from constants, as PlanPanel avoids that import)
-
-**`watch_planned_calls` on `HermesApp`**: adds/removes `plan-active` app class. `hermes.tcss` uses `HermesApp.plan-active ThinkingWidget.--active { height: 1; }` — forces ThinkingWidget to LINE height while plan is active. No changes to `ThinkingWidget` class.
-
-**`services/keys.py`**: `F9` toggles `plan_panel_collapsed`. Free across bash/zsh/fish + tmux.
-
-**TCSS vars** — must be in `hermes.tcss` declaration block AND `COMPONENT_VAR_DEFAULTS` AND all 4 skin files:
-- `plan-now-fg`: `#00bcd4` (= `$accent-interactive`)
-- `plan-pending-fg`: `#777777 60%`
-
-**Gotchas:**
-- **PlanPanel must start hidden**: DEFAULT_CSS needs `display: none;` + `PlanPanel.--active { display: block; }`. Without this it renders empty header+sections at startup, eating 5-6 rows and overlapping the input area. `_on_planned_calls_changed` controls `--active`: add when `bool(calls)`, remove when empty.
-- `PlannedCall` lives in `plan_types.py` (not `_app_tool_rendering.py`) — avoids circular import with `tool_category.py`
-- `_NowSection._timer_handle` stopped by calling `_timer_handle.stop()` before reassigning; leaking an un-stopped timer causes double-ticks at section transitions
-- `_BudgetSection` click routing: widget itself can't focus; `on_click` calls `self.app.action_show_usage()` — same pattern as other non-input widgets that open overlays
-- Sub-agent nesting: `PlannedCall.depth` preserved through `as_running()` / `as_done()`; `_NextSection` / `_DoneSection` indent via `"  " * call.depth` prefix
-
-**Test targets (never run `tests/tui/` in full):**
-```
-tests/tui/test_plan_types.py
-tests/tui/test_plan_state_transitions.py
-tests/tui/test_plan_panel.py
-tests/tui/test_plan_panel_narrow.py
-tests/tui/test_plan_panel_collapse.py
-tests/tui/test_plan_panel_budget.py
-tests/tui/test_plan_panel_usage_link.py
-tests/tui/test_plan_panel_nested.py
-tests/tui/test_plan_panel_perf.py
-tests/tui/test_help_overlay_plan_entry.py
-tests/agent/test_tool_batch_callback.py
-```
-
-### 2026-04-22 — R4 services refactor — Phase 1+2 (1 commit, merged feat/textual-migration)
-
-40 wiring tests (`tests/tui/test_services_wiring.py`). All 4 phases merged — all 10 `_app_*.py` mixin files deleted; `HermesApp(App)` directly.
-
-**New package**: `hermes_cli/tui/services/` — 10 `AppService` subclasses + `base.py`.
-
-**Pattern**: logic lives in service classes. `app._svc_X.method()` is the call path.
-
-**`_flash_hint` conflict resolved**: HEAD wins — `_ThemeMixin._flash_hint` still routes through `FeedbackService.flash("hint-bar", ...)` (RX1 design). `ThemeService.flash_hint()` exists but is NOT called by `_flash_hint`. If you see a test patching `app._svc_theme.flash_hint`, that's wrong — patch `app.feedback.flash` or `app._flash_hint` instead.
-
-**State that moved to services** (backward-compat `@property` proxies on App for the reactive period):
-- `_svc_tools._turn_tool_calls` — proxied by `app._turn_tool_calls`
-- `_svc_tools._streaming_map` — proxied by `app._streaming_map`
-- `_svc_browse._browse_anchors`, `_browse_cursor` — proxied
-- `_svc_sessions._sessions_index` — proxied
-- `_svc_spinner._helix_frame_cache` — proxied
-
-**Gotchas:**
-- Service `__init__` receives `app: HermesApp`; access dom via `self.app.query_one(...)`
-- `import time as _time` at module level in `services/keys.py` — required so tests can `monkeypatch.setattr("hermes_cli.tui.services.keys._time", ...)`
-- `WatchersService.drop_path_display` is a `@staticmethod` (no `self.app` needed)
-- `on_hermes_input_files_dropped` on mixin calls `self._svc_watchers.handle_file_drop(event.paths)` — NOT `_svc_keys`
-
-**Test targets:**
-```
-tests/tui/test_services_wiring.py   # 40 tests — instantiation + method presence + routing
-```
-
-### 2026-04-22 — R2 panes layout — three-pane skeleton (1 commit, merged feat/textual-migration)
-
-202 tests across 6 files. Flag-gated: `display.layout: "v2"` (default `"v1"`; zero behavior change for existing users).
-
-**New files:**
-- `hermes_cli/tui/pane_manager.py` — `PaneManager` (plain class, not mixin), `PaneId(StrEnum)`, `LayoutMode(StrEnum)`, `PaneHost(Protocol)`
-- `hermes_cli/tui/widgets/pane_container.py` — `PaneContainer(Widget)` — visual pane shell
-- `hermes_cli/tui/widgets/plan_panel_stub.py` — placeholder for R1 (until R1 wires its `PlanPanel` in)
-- `hermes_cli/tui/widgets/context_panel_stub.py` — placeholder for R6/R9
-- `hermes_cli/tui/widgets/split_target_stub.py` — pre-mounted (display:none); made visible by Ctrl+\
-
-**`PaneManager` architecture:**
-- Plain class held at `self._pane_manager` on `HermesApp` — NOT a mixin
-- `enabled: bool` — False in v1 mode; all public methods no-op when False
-- Breakpoints: `SINGLE` < 120 cols OR h < 20 OR v1 mode; `THREE` 120–159; `THREE_WIDE` ≥ 160
-- `_apply_layout(app)` — idempotent; sets `display` + `styles.width` on `#pane-left/#pane-center/#pane-right`; called from `_flush_resize` only (NOT `watch_size`)
-- `dump_state() → dict` / `load_state(dict)` — persisted to `<session_dir>/layout.json` via `SessionManager.save_layout_blob` / `load_layout_blob`
-- `compute_layout(w, h)` is a **pure function** — returns `(mode, left_w, center_w, right_w)`; center always ≥ 80 or falls to SINGLE
-- Hysteresis: 2 cells on both SINGLE and THREE_WIDE boundaries
-
-**`app.py` changes:**
-- `__init__`: `self._output_panel = OutputPanel(id="output-panel")` constructed early (needed so v2 can re-parent it into `#pane-center` without re-instantiating); `self._pane_manager = PaneManager(cfg=_display_cfg)`
-- `compose()` branches on `self._display_layout`:
-  - v1: `yield self._output_panel; yield _PP(id="plan-panel")`
-  - v2: `Horizontal#pane-row` → 3 `PaneContainer` widgets + `SplitTargetStub`; `_PP` yielded after pane-row in both modes
-- `on_mount` (v2): adds `layout-v2` CSS class; calls `pane_center.set_content(self._output_panel)`, mounts `PlanPanelStub` + `ContextPanelStub` into side panes
-
-**Key bindings (v2 only, all guarded by `_pane_manager.enabled`):**
-- `F5/F6/F7` — focus left/center/right pane
-- `F9 / Shift+F9` — cycle visible (non-collapsed) panes forward/backward
-- `Ctrl+[ / Alt+[` — collapse/expand left pane
-- `Ctrl+] / Alt+]` — collapse/expand right pane
-- `Ctrl+\` — toggle center-pane split (shows/hides `SplitTargetStub`)
-- `Esc` in side pane — returns focus to `#input-area`
-
-**TCSS (in `hermes.tcss`, section `/* ── R2 pane layout ──`):**
-```css
-HermesApp.layout-v2 #pane-row      { height: 1fr; display: block; layout: horizontal; }
-HermesApp.layout-v2 #input-row     { dock: bottom; }
-HermesApp.layout-v2 #input-rule-bottom { dock: bottom; }
-HermesApp.layout-v2 VoiceStatusBar { dock: bottom; }
-HermesApp.layout-v2 StatusBar      { dock: bottom; }
-/* Center split: OutputPanel 2fr, SplitTargetStub 1fr */
-HermesApp.layout-v2 PaneContainer#pane-center.--split OutputPanel    { height: 2fr; }
-HermesApp.layout-v2 PaneContainer#pane-center.--split SplitTargetStub { display: block; height: 1fr; }
-```
-
-**New component vars (all 4 bundled skins updated):**
-- `pane-border`, `pane-border-focused`, `pane-title-fg`, `pane-divider`
-
-**`/layout` slash command:**
-- `/layout v1|v2` — persists to config; restart required
-- `/layout left=N` / `/layout right=M` — live-applies pane width overrides
-
-**Key gotchas:**
-- `_apply_layout` takes `app` as arg — `PaneManager` is not a Widget and has no `self.app`
-- `F9` was previously free; `Alt+[` / `Alt+]` are the always-available Ctrl aliases (some terminals send Ctrl+[ as ESC)
-- Dock-bottom stacking for v2: `StatusBar` pins to bottom, `VoiceStatusBar` above it, `input-rule-bottom` above that, `#input-row` above that — matches current visual order because compose order is preserved
-- `PaneContainer.DEFAULT_CSS` must use **literal hex** not `$pane-border` vars — `DEFAULT_CSS` is parsed before the app's `hermes.tcss` loads custom vars; `hermes.tcss` overrides them for the real app
-- `query_one(PaneContainer)` is ambiguous — 3 instances in DOM; always use `query_one("#pane-left")` / `query_one("#pane-center")` / `query_one("#pane-right")`
-- Tests that need v2 mode: set `app._display_layout = "v2"` + `app._pane_manager = PaneManager({"layout": "v2"})` before `run_test(size=(140, 40))`
-- Session layout blob: `session_manager.save_layout_blob(session_id, layout)` writes `<session_dir>/<session_id>/layout.json`; `load_layout_blob` reads it; `app.on_unmount` calls save; `app.on_mount` calls load+apply
-
-**Test targets:**
-```
-tests/tui/test_pane_manager.py          # 36 tests — PaneManager pure logic
-tests/tui/test_pane_layout_compose.py   # 31 tests — v1/v2 compose, pane structure
-tests/tui/test_pane_responsive.py       # 39 tests — breakpoints, hysteresis, focus, Esc
-tests/tui/test_pane_persistence.py      # 28 tests — dump/load/roundtrip, session blob
-tests/tui/test_layout_slash_commands.py # 21 tests — /layout command
-tests/tui/test_pane_split.py            # 12 tests — Ctrl+\ split toggle
-```
-
-### 2026-04-22 — TUI Visual Redesign V1–V8 (7 commits, merged feat/textual-migration)
-
-8 visual/layout fixes across banner, input, gutter, accent, contrast.
-
-**V1 — Full-width splash**: added `expand=True` to `Panel(layout_table, ...)` in `banner.py:build_welcome_banner()`. Left column `width=_hero_width` preserved. Width bug was in Rich content, not Textual widget.
-
-**V2 — Hide AssistantNameplate while thinking**: `thinking.py:activate()` calls `self.app.add_class("thinking-active")`; `_do_hide()` calls `self.app.remove_class("thinking-active")`. `hermes.tcss` adds `HermesApp.thinking-active AssistantNameplate { display: none; }`. App-level classes use single-hyphen convention (`thinking-active`, not `--thinking-active`). Safe to call without `call_from_thread` — `activate()` is called from `_consume_output` (async coroutine worker on event loop, see `_app_io.py:33`).
-
-**V3 — Welcome line removed**: two `try/except + console.print` blocks deleted from `cli.py` (~line 3933–3944 TUI path, ~9322–9330 REPL path). Skin `welcome` branding field kept.
-
-**V4 — 2-col gutter**: `UserMessagePanel` padding `0 1` → `0 2`. Input `#input-chevron` unchanged (already `width: 2`). Browse pips at col 0 — indent keeps col 0 clear.
-
-**V5 — HintBar separator**: `_SEP = "  [dim]·[/dim]  "` → `_SEP = " [dim]·[/dim] "` in `status_bar.py:39`.
-
-**V6 — Meta contrast**: `_render_normal()` in `renderers.py`. Add `v = {}` before try block; add `meta_color = v.get("foreground", "#aaaaaa")` after try/except; replace `style="dim"` with `style=meta_color` at the two `metrics_text` / `ts_text` append calls. `foreground` is a Textual built-in variable (no TCSS declaration needed).
-
-**V7 — Input focus border**: `hermes.tcss` `HermesInput:focus` block gains `border: tall $primary 30%;`. Intentional reversal of prior `border: none` design.
-
-**V8 — Second accent color**: new `accent-interactive` token (`#00bcd4` cyan, distinct from orange brand).
-- `COMPONENT_VAR_DEFAULTS` in `theme_manager.py`: `"accent-interactive": "#00bcd4"` — Python fallback for all skins without the key.
-- `hermes.tcss`: declare `$accent-interactive: #00bcd4;` with other variable declarations (required for TCSS parse — Textual doesn't support CSS `var()` fallback syntax).
-- `HintBar._get_key_color()` in `status_bar.py`: `v.get("accent-interactive", v.get("primary", "#5f87d7"))`.
-- All 4 skins (`catppuccin`, `matrix`, `solarized-dark`, `tokyo-night`): add `accent-interactive:` under `component_vars:` with skin-appropriate color.
-
-**Tests**: 9 new — `tests/tui/test_banner.py` (new), additions to `test_status_widgets.py`, `test_thinking_widget_v2.py`, `test_theme_manager.py`.
-
-### 2026-04-22 — ThinkingWidget v2 — composable anim engine + text effect (commit c330aada, merged feat/textual-migration c0f22ac9)
-
-**New file: `hermes_cli/tui/widgets/thinking.py`** — replaces 120-line hand-rolled helix in `message_panel.py`.
-
-**Architecture — three new classes:**
-- `ThinkingMode(StrEnum)` — `OFF / LINE / COMPACT / DEFAULT / DEEP`
-- `_AnimSurface(Widget)` — drives any `_ENGINES` entry via `engine.next_frame(params) → str`; `render_line(y)` slices stored frame strings; parent drives ticks
-- `_LabelLine(Static)` — calls `effect.tick_tui()` then `effect.render_tui(label_text, accent_hex, text_hex)` → Rich `Text`; calls `self.update(rich_text)`
-
-**`ThinkingWidget` modes and heights:**
-
-| Mode    | Height | Anim rows |
-|---------|--------|-----------|
-| OFF     | 0      | 0         |
-| LINE    | 1      | 0         |
-| COMPACT | 2      | 1         |
-| DEFAULT | 3      | 2         |
-| DEEP    | 5      | 4         |
-
-Mode resolution at `activate()`: explicit arg → `self.app.compact == True` → config `tui.thinking.mode`.
-
-**Effect instantiation:**
-```python
-from hermes_cli.stream_effects import make_stream_effect
-effect = make_stream_effect({"stream_effect": effect_name}, lock=None)
-```
-`make_stream_effect` reads `cfg["stream_effect"]`, not a bare key.
-
-**Static-label effect whitelist** (must work without incoming tokens):
-
-| Key | Mechanism |
-|---|---|
-| `breathe` (default) | `time.monotonic()` in `render_tui` |
-| `glow_settle` | `tick_tui()` overridden |
-| `cosmic` | `tick_tui()` overridden |
-| `nier` | `tick_tui()` overridden |
-| `flash` | `tick_tui()` overridden |
-
-**`shimmer` EXCLUDED** — `_pos` advances only via `_register_terminal()` (token arrival). Called on a static label it freezes. Default is `breathe`.
-
-**Engine whitelist keys (exact `_ENGINES` dict keys):**
-- Small modes (≤2 anim rows): `dna`, `rotating`, `classic`, `morph`, `thick`, `wave`, `lissajous_weave`, `aurora_ribbon`, `rope_braid`, `perlin_flow`, `wave_function`
-- DEEP (4 anim rows) adds: `vortex`, `kaleidoscope`, `neural_pulse`, `mandala_bloom`, `plasma`, `matrix_rain`, `wireframe_cube`, `torus_3d`, `sierpinski`, `flock_swarm`, `strange_attractor`, `hyperspace`, `fluid_field`, `conway_life`
-
-Non-whitelisted engine for small mode → fall back to `dna` + debug log.
-
-**Four substates** — updated in `_tick`:
-- `STARTED` (first 500ms) — `flash` effect overrides label
-- `WORKING` — configured engine + effect
-- `LONG_WAIT` (after `long_wait_after_s=8s`) — label becomes `Thinking… (Ns)`
-- `ABOUT_TO_STREAM` — set by `deactivate()`; 150ms fade via `set_timer(0.15, _do_hide)`
-
-**Two-phase deactivate** (`set_timer`, not `call_later`):
-```python
-def deactivate(self):
-    if self._substate == "ABOUT_TO_STREAM":
-        return  # no-op, already fading
-    self._substate = "ABOUT_TO_STREAM"
-    self.set_timer(0.15, self._do_hide)
-
-def _do_hide(self):
-    if not self.is_attached:
-        return
-    if self._timer:
-        self._timer.stop()
-        self._timer = None
-    self.remove_class("--active", "--mode-line", "--mode-compact", "--mode-default", "--mode-deep")
-    self._substate = None
-```
-
-**`HERMES_DETERMINISTIC` guard** in `activate()` — returns immediately, keeps widget hidden in CI.
-
-**Engine `on_mount` hook** checked with `hasattr(engine, "on_mount")` before call — existing DrawilleOverlay convention.
-
-**Migration:**
-- `message_panel.py` old `ThinkingWidget` class body removed; replaced with `from hermes_cli.tui.widgets.thinking import ThinkingWidget  # noqa: F401`
-- `widgets/__init__.py` import redirected from `.message_panel` to `.thinking`
-- All 4 existing call sites (`_app_key_handler.py:543,553`, `_app_io.py:70`, `__init__.py:310,333`) unchanged
-
-**Tests:** 18 in `tests/tui/test_thinking_widget_v2.py` + 4 updated in `test_thinking_widget_activate.py`.
-
-**Key gotchas:**
-- `call_later(callback)` has NO delay param in Textual 8.x — for a timed callback use `set_timer(delay_s, callback)` not `call_later(0.15, cb)`
-- `compose()` yields nothing — `_AnimSurface` and `_LabelLine` are mounted dynamically in `activate()` to avoid constructing them before mode and engine are known
-- `shimmer` freezes on static text — always use `breathe` as default for non-streaming labels
-
-### 2026-04-22 — ResponseFlowEngine parser hardening (commits cc3b75be + 94926cd8, merged feat/textual-migration)
-
-**5 bugs fixed in `hermes_cli/tui/response_flow.py` and `widgets/code_blocks.py`:**
-
-**P1 — `_code_fence_buffer` in wrong scope**: was re-initialized to `[]` at the end of `_write_prose()` body, resetting on every prose write. Moved to `ResponseFlowEngine.__init__`. `ReasoningFlowEngine` already had it correct; `ResponseFlowEngine` missed it.
-
-**P2 — Missing imports in `flush()`**: `flush()` used `apply_block_line` / `apply_inline_markdown` without importing them. `process_line()` imports them locally (function-scoped); those bindings are NOT in scope inside `flush()`. Added `from agent.rich_output import apply_block_line, apply_inline_markdown` at top of `flush()`. Latent `NameError` when `_pending_source_line` was non-None at turn end.
-
-**P3 — `_commit_prose_line()` dead code**: defined but never called; the prose path called `_write_prose()` directly everywhere. Wired into Phase 5 of `process_line()` (emoji-else branch flushes; normal path calls `_commit_prose_line`). Also wired into `_flush_block_buf()` (replaced direct `_prose_log.write_with_source` call). Added explicit `_flush_code_fence_buffer()` call in `flush()` before `_render_footnote_section()`. InlineCodeFence now accumulates and mounts correctly.
-
-**P4 — Stray `_flush_code_fence_buffer()` in `_mount_math_image()`**: unrelated to math rendering, leftover from earlier refactor. Removed.
-
-**P5 — `_looks_like_source_line()` `=`-heuristic false positives**: `"=" in raw and "==" not in raw and len <= 8` triggered on prose like "the value is x = 5". Replaced with `re.match(r'^\s*\w+\s*=\s*\S', raw) and "==" not in raw and len <= 6` — anchored to line start, so only lines beginning directly with `identifier =` fire.
-
-**`StreamingCodeBlock` mermaid stub fixed** (P0 blocker): `_try_render_mermaid_async()` was a no-op stub. Implemented: daemon thread → `render_mermaid()` → `app.call_from_thread(_on_mermaid_rendered, path)`. `_on_mermaid_rendered(None)` now falls back to `_render_syntax(skin_vars)` instead of returning silently. `_complete_skin_vars` stored at `complete()` time so fallback has theme context.
-
-**Key gotchas from this work:**
-- `StreamingBlockBuffer` (SBB) holds one line in lookahead. Numbered lines arrive in `_commit_prose_line` one turn LATE (not when `process_line` receives them, but when the next line flushes SBB). Pre-flushing the numbered-line buffer BEFORE `_commit_prose_line` adds the current line breaks accumulation. Flush only in the emoji-else branch; let `_commit_prose_line` handle flushing for the normal path.
-- `_flush_block_buf()` wrote directly to `_prose_log` — when wiring a new buffer route, ALL prose-writing paths must go through the same funnel or lines escape the accumulator.
-
-**Tests**: 17 new in `tests/tui/test_response_flow_parser.py`; F3–F7 added to `test_math_renderer.py`.
-
-### 2026-04-22 — 5 new anim engines + /anim improvements + overlay drag (commit 0c05c223, feat/textual-migration)
-
-**New engines (`anim_engines.py`)** — 26 engines total (was 21):
-- `WireframeCubeEngine` — orthographic rotating cube, depth-sorted edges via `_bresenham_pts`, `on_signal("complete")` → `_spin_brake` slow-stop
-- `SierpinskiEngine` — IFS chaos game via `TrailCanvas`; `_SQUARE_TRANSFORMS`/`_TRIANGLE_TRANSFORMS` are **class-level tuples** (never lambdas inside `next_frame`)
-- `PlasmaEngine` — summed sine plasma; `y_sine2` (entire 2nd sine term) hoisted outside xi loop — saves W LUT calls/row
-- `Torus3DEngine` — N_U=20×N_V=36 wireframe torus; `_THETA_LUT`/`_PHI_LUT` class-level precomputed (720 divisions eliminated); `_TORUS_TILT_COS/SIN` module-level constants
-- `MatrixRainEngine` — falling column particles via `TrailCanvas`; error surge mode; complete-reinit countdown
-
-**`_bresenham_pts(x0, y0, x1, y1) → list[tuple[int,int]]`** — new module-level helper in `anim_engines.py`. Callers apply bounds check per point.
-
-**Gotchas for animation engines:**
-- `TrailCanvas.frame()` = `decay_all()` + render. Never call `tick()` (doesn't exist) or `decay_all()` separately.
-- `_PHASE_CATEGORIES` unchanged — engines slot in via `_ENGINE_META["category"]` automatically; never add engine keys directly to `_PHASE_CATEGORIES` lists
-- Class-level Python list comprehensions cannot reference earlier class attrs by name (scope rule) — use literals: `_THETA_LUT = [u * (2*math.pi/20) for u in range(20)]`
-
-**Overlay drag + position (D1/D2, `drawille_overlay.py`):**
-- `_POS_GRID: list[list[str]]` (3×3), `_POS_TO_RC: dict[str, tuple[int,int]]` (col, row) — module-level
-- `_set_offset(ox, oy)` helper on `DrawilleOverlay`: sets `styles.offset` AND `_drag_base_ox/oy` together. Replace all 3 `self.styles.offset =` calls in `_apply_layout` with `_set_offset` — keeps drag base in sync regardless of which layout path fires
-- `on_mouse_up` snaps via `_nearest_anchor` then calls `self.app._persist_anim_config(...)` — overlay can't call `_CommandsMixin` methods directly; must go via `self.app`
-- D1 key binding: `Ctrl+Shift+Arrow` — `alt+up/alt+down` are taken by browse-mode turn navigation (lines 382–389 of `_app_key_handler.py`)
-- `App.capture_mouse(self)` / `App.release_mouse()` present in Textual 8.2.3; wrap in `try/except AttributeError` for compat
-
-**`/anim` commands (`_app_commands.py`):**
-- `ov.fps = fps` (reactive assignment) — NOT `ov._fps`
-- `ov._visibility_state` lives on `DrawilleOverlay`, not `_CommandsMixin` — check `ov._visibility_state`, not `self._visibility_state`
-- Gradient hex validation: inner `_validate_hex(raw) → str | None` strips `#`, checks exactly 6 lowercase hex chars; apply to BOTH color1 and color2 args
-
-### 2026-04-22 — Tool UX Audit Pass 10 (7 commits, merged feat/textual-migration)
-
-19 fixes / 10 themes (A–J). Key deletions: `tool_header_bar.py`, `result_pill.py`, `tool_panel_mini.py` removed. `detail_level` reactive retired. 7 implementation phases.
-
-**A1–A3: ToolHeaderBar/ResultPill/ToolPanelMini deleted**:
-- `tool_header_bar.py` deleted — `ToolHeaderBar` was a v3 residual duplicating `ToolHeader._render_v4`. Compact-sync now lives in `services/watchers.py` (`WatchersService`) and works directly with `ToolPanel._header`.
-- `result_pill.py` deleted — dead code, no call sites.
-- `tool_panel_mini.py` deleted — `ToolPanelMini` / `--minified` class approach replaced by two-tick completion sequence (E1/E2).
-- Tests in `test_tool_header_bar.py` and `test_tool_panel_mini.py` updated to test ToolPanel/ToolHeader interfaces directly.
-
-**B1/B2: Hint tier model**:
-- Tier 1 (always shown): primary action hints. Tier 2 (focus-shown): copy/collapse. Tier 3 (? → show): all others.
-- `_build_hint_text()` builds tier list; `?` binding toggles `_hints_expanded: bool` on ToolPanel.
-
-**C1/C2: detail_level retired**:
-- `detail_level: reactive[int]` (L0–L3 stub) removed from ToolPanel. `collapsed: bool` is the sole collapse axis.
-- `toggle_l0_restore` action removed. All `detail_level` references in tests migrated.
-
-**D1/D2: ChildPanel gutter**:
-- ChildPanel drops `ToolAccent` border-left — uses `_is_child: bool` class attribute instead.
-- `_is_child = True` suppresses `┊` gutter connector. `SubAgentBody` padding capped at 2.
-
-**E1/E2: Two-tick completion + opt-in mini-mode**:
-- E1: ToolPanel completion uses two-tick deferred collapse: tick 1 marks `--completing`, tick 2 applies final collapsed state. Prevents flash.
-- E2: `/density auto-mini` is explicit opt-in; not default. `--minified` CSS class approach retired with `tool_panel_mini.py`.
-
-**F1: Keybind fix**: `?` → `show_help`, `f1` → `show_context_menu` (corrected from earlier pass).
-
-**G1: OmissionBar 2-button default + [more ▸] toggle**:
-- Default shows `[show all]` + `[hide]` only. Advanced buttons hidden behind `[more ▸]` toggle.
-- Rich markup gotcha: `Button("[show all]", ...)` renders as empty — `[show all]` parsed as markup tag. Fix: `Button(Text("[show all]"), ...)` using `rich.text.Text`.
-- `set_counts()` checks `self._narrow` to avoid overwriting label set by `_sync_narrow_layout()`.
-
-**H1: Retire v2 grouping CSS**:
-- Removed `panel.add_class(f"group-id-{group_id}")` and `panel.add_class("tool-panel--grouped")` from `tool_group.py:_do_apply_group_widget`.
-- Removed corresponding v2 CSS rules from `hermes.tcss`. Only v4 `ToolGroup` widget grouping remains.
-
-**I1/I2: ReasoningPanel**:
-- I1 race fix: `append_delta` calls `self.add_class("visible")` defensively before `open_box` can race with first delta.
-- I2: Removed `"click to expand"` from collapsed stub — redundant with click affordance. Stub now: `"▸ "` + `"Reasoning collapsed · NL"`.
-
-**ReasoningPanel last-line duplication fix (fix/tool-ux-pass6)**:
-- Root cause: `close_box` committed `_live_buf` to `_reasoning_log` BEFORE hiding `_live_line`, leaving a render window where both showed the same content.
-- Fix: `close_box` now clears `_live_buf`, hides `_live_line`, and calls `update("")` BEFORE calling `process_line(buf)`.
-- Also fixed: `ReasoningFlowEngine.__init__` was missing `_prose_callback: Callable | None = None` — caused `AttributeError` in `_write_prose` since `ReasoningFlowEngine` doesn't call `super().__init__()`.
-- Gotcha: `ReasoningFlowEngine` manually re-declares all `ResponseFlowEngine` fields — any new field added to `ResponseFlowEngine.__init__` must ALSO be added to `ReasoningFlowEngine.__init__`.
-
-**J1/J2: ExecuteCodeBlock / WriteFileBlock**:
-- J1: ECB label stays constant (initial_label / tool name). First code line goes to `_header._header_args = {"snippet": ...}` truncated to 40 chars. Line count suffix appended to snippet.
-- J2: WFB merged `_writing_hint` + `_progress_label` into single `_progress: Static`. Text transitions `"writing…"` → `"writing · NKB"` via `update_progress()`. Legacy aliases kept for any external callers.
-
-**Key gotchas (new in Pass 10)**:
-- Rich bracket eating: `Button("[foo]", ...)` → empty label. Always wrap bracket-containing labels with `rich.text.Text("[foo]")`.
-- D3 OmissionBar: bar stays visible when `cap_msg` exists even if all lines shown — tests expecting `display is False` when `total > visible_cap` are wrong.
-- `_header._header_args` dict (not `_label`) carries arg-summary content; `_render_v4` reads it for the secondary display line.
-
-### 2026-04-22 — Nested Agent Tool Tree (commit f90cda34, merged feat/textual-migration)
-
-**Data model** (`hermes_cli/tui/services/tools.py`):
-- `_ToolCallRecord` dataclass replaces `list[dict]` for `_turn_tool_calls` (now `dict[str, _ToolCallRecord]`). Fields: `tool_call_id`, `parent_tool_call_id`, `label`, `tool_name`, `category`, `depth`, `start_s`, `dur_ms`, `is_error`, `error_kind`, `mcp_server`, `children: list[str]`.
-- `_agent_stack: list[str]` on `HermesApp` — event-loop stack; push AFTER parent assignment, pop in BOTH `close_streaming_tool_block` paths (before completion hook).
-- `classify_tool("Task")` → `ToolCategory.UNKNOWN`; only `"think"`, `"plan"`, `"delegate"` → `ToolCategory.AGENT`. Use `tool_name="delegate"` in tests needing AGENT stack push.
-- `current_turn_tool_calls()` — serializes `_turn_tool_calls.values()` to `list[dict]` with all required keys incl. `children`, `depth`, `parent_tool_call_id`.
-
-**SubAgentPanel** (`sub_agent_panel.py`):
-- Binary `collapsed: reactive[bool]` — `CollapseState` IntEnum removed (D3). `action_toggle_collapse` is the sole collapse action.
-- `SubAgentBody(Vertical)` — named subclass required for TCSS type selectors; plain `Vertical` won't match
-- `SubAgentHeader` — aggregate header; `_set_gutter(is_child_last: bool)` takes only `bool` (no `None` overload)
-- `watch_collapsed(v: bool)`: `if not self.is_mounted: return` guard; sets `--collapsed` class; `_body.display = (not v) and _has_children`
-- `add_child_panel` — tracks `_is_child_last` gutter flag on previous child via `_tool_header._is_child_last`
-- `_notify_child_complete` — NOT `on_*` prefix (would trigger Textual auto-dispatch)
-
-**ChildPanel** (`child_panel.py`):
-- `ChildPanel(ToolPanel)` with `BINDINGS = [Binding("space", "toggle_compact", show=False, priority=True)]`
-- `_tool_header` property: `return self._block._header`
-- `set_result_summary` uses wall-clock `_start_time` for duration — `ResultSummaryV4` has no `duration_ms`
-- `watch_collapsed` is a no-op (compact driven by CSS class, not collapsed reactive)
-
-**MessagePanel wiring** (`widgets/message_panel.py`):
-- `_subagent_panels: dict[str, Any]`, `_child_buffer: dict[str, list]`, `_flush_scheduled: set[str]` — `_child_buffer` (NOT `_pending_children`; Textual Widget internals use that name as a list)
-- `_mount_nonprose_block(block, parent_tool_call_id=None)` — AGENT→SubAgentPanel, child non-AGENT→ChildPanel, top-level→ToolPanel; buffers racing children
-- AGENT panels registered in `_subagent_panels` BEFORE `_mount_nonprose_block` call
-- `_flush_child_buffer` uses `discard()` to re-arm future scheduling on next arrival
-
-**Browse & overlay** (`_browse_types.py`, `tools_overlay.py`):
-- `BrowseAnchorType.SUBAGENT_ROOT = "subagent_root"`, glyph `"🤖"` in `_BROWSE_TYPE_GLYPH`
-- `ToolsScreen._tree_view: bool = True`; `Binding("t", "toggle_view", ...)` added
-- `_get_ordered_records(records)` — DFS for tree (returns `list[tuple[dict, int]]`), flat at depth 0 for timeline
-
-**CSS gotchas**:
-- `border-left: vkey $text-muted` fails at TCSS parse time — use literal hex: `border-left: vkey #666666 60%`
-- `--collapsed` must appear AFTER `--has-children` in TCSS (equal specificity 0,1,1; last-declared wins)
-- `ChildPanel.--compact ToolBodyContainer { display: none; }` hides body in compact mode
-
-**Testing patterns**:
-- Never use `Widget.__new__(Widget)` — bypasses `Widget.__init__`, breaks `_reactive_*` dict storage → `ReactiveError`
-- `MagicMock(spec=SubAgentPanel)` has no `set_compact` (SubAgentPanel doesn't either); simplify assertions
-- `_pending_children` is a Textual Widget internal list — naming conflicts cause `'list' object has no attribute 'setdefault'`
-- Patch `_maybe_start_group` at `hermes_cli.tui.tool_group._maybe_start_group` (defined there, imported inside function)
-- Use real `Static("x")` widget (not MagicMock) for tests that trigger `call_after_refresh` flush paths
-
-### 2026-04-22 — TabbedSkinOverlay 3-tab /skin picker + override persistence layer (commit 2360764d, feat/textual-migration)
-
-**Replaces `SkinPickerOverlay`** (`overlays.py`) with `TabbedSkinOverlay(Widget)`. Alias `SkinPickerOverlay = TabbedSkinOverlay` kept for backward compat — no import changes elsewhere.
-
-**Three tabs**:
-- Tab 1 (Skin): OptionList of skin files; arrow → live preview; Enter → `_confirm_skin()` persists `display.skin` and re-populates list; overlay stays open
-- Tab 2 (Syntax): OptionList of 10 Pygments themes from `skin_engine.SYNTAX_SCHEMES`; arrow → `apply_skin({"preview-syntax-theme": name})`; Enter → `save_skin_override("vars.preview-syntax-theme", name)`; FIXTURE_CODE (7-line fibonacci) below list for live preview
-- Tab 3 (Options): buttons for cursor colour, anim colour, bold toggle, spinner style
-
-**Tab switching**: `1`/`2`/`3` digit keys + `Tab`/`Shift+Tab` cycle. All bindings need `priority=True` in BINDINGS to intercept before OptionList. `_show_tab_display(tab_idx)` — toggles widget `.display` without focus change. `_show_tab(tab_idx)` — calls `_show_tab_display` then focuses primary widget.
-
-**Snapshot/revert pattern**:
-- `_take_snapshot()` called on `show_overlay()` — captures `_css_vars` (minus `"component_vars"` key) + `_component_vars` separately
-- `action_dismiss()` — calls `apply_skin({**_snap_css_vars, "component_vars": _snap_component_vars})` before `_dismiss_overlay_and_focus_input`
-- Must strip `"component_vars"` from `_css_vars` snapshot: `load_dict()` extracts it but may leave traces; stripping prevents collision on restore
-- Tab-level Enter persists that tab's setting only — overlay stays open for more changes
-
-**Override persistence layer** (`config.py`, `theme_manager.py`):
-- `display.skin_overrides: {"vars": {}, "component_vars": {}}` in `DEFAULT_CONFIG` and `config.yaml`
-- `read_skin_overrides() → dict` — reads current overrides; `save_skin_override(key_path, value)` — dot-path setter (e.g. `"vars.preview-syntax-theme"`)
-- `ThemeManager._apply_overrides(overrides)` — `_css_vars.update(vars)` + `_component_vars.update(component_vars)`
-- `ThemeManager.load()` calls `_apply_overrides(read_skin_overrides())` after file load — overrides persist across skin switches
-- `load_dict()` intentionally does NOT call `_apply_overrides()` — dict calls are live overlay previews; running overrides over them would prevent preview from showing different values
-
-**`preview-syntax-bold`** — new Python-only CSS var (not in `COMPONENT_VAR_DEFAULTS`, not in `.tcss`). `"true"` (default) = bold/italic token modifiers retained; `"false"` = stripped via `_strip_bold(style_str)` helper in `code_blocks.py`. `StreamingCodeBlock.refresh_skin()` reads it.
-
-**`_app_commands.py`** change: `/skin` handler changed `overlay.query_one("#spo-list").focus()` → `overlay._show_tab(0)`.
-
-**`_app_theme.py`** addition: `_apply_override_dict(overrides)` on `_ThemeMixin` — wraps `tm._apply_overrides(overrides); tm.apply()`.
-
-**Testing gotchas**:
-- `Widget.app` is a read-only ContextVar property — `ov.app = mock_app` raises `AttributeError`. Must use `patch.object(type(ov), "app", new_callable=PropertyMock, return_value=mock_app)` inside a `with` block.
-- `ov.compose()` requires an active Textual app (uses `with Vertical(...)` context manager). Tests that only need BINDINGS should read `TabbedSkinOverlay.BINDINGS` directly.
-- `load_dict()` must NOT call `_apply_overrides()` — 2 tests verify this isolation (T-OVR-06b).
-- 40 tests in `tests/tui/test_tabbed_skin_overlay.py` (T-TSO-01–15, T-OVR-01–09+06b, T-OPT-01–12)
-
-### 2026-04-22 — Overlay specs: CommandsOverlay filter, PickerOverlay base, UsageOverlay chart
-
-**CommandsOverlay** (`overlays.py:401`):
-- Filter `Input(id="commands-search")` + `_lines_cache: list[str]` + `show_overlay()` + `_populate()` + `on_input_changed()`
-- `show_overlay()` clears input value, focuses it, then calls `_populate(self._lines_cache)` — programmatic `.value = ""` does NOT fire `on_input_changed`, explicit `_populate()` call is required
-- `q` binding at `priority=False` — inserts into Input when focused, dismisses when overlay itself is focused
-
-**PickerOverlay base class** (`overlays.py:974`):
-- Abstract base for `VerbosePickerOverlay`, `ModelPickerOverlay`, `SkinPickerOverlay`
-- `_css_prefix: str` — set on each subclass; drives widget IDs (`#{prefix}-list`, `#{prefix}-header`)
-- `refresh_data(cli)` → `_render_options()` — subclasses update `self.choices` and `self.current_value`, then call `super().refresh_data(cli)`
-- `choices` is a class variable — subclasses that compute choices dynamically MUST assign to `self.choices` (instance attr), NOT mutate `cls.choices`
-- `ModelPickerOverlay` and `SkinPickerOverlay` override `compose()` fully (extra `#mpo-current` / `#spo-current` Static between header and list); `PickerOverlay.compose()` is NOT called via `super()`
-- `SkinPickerOverlay` overrides `action_dismiss()` to revert skin; calls `super().action_dismiss()` at end
-- `YoloConfirmOverlay` and `ReasoningPickerOverlay` remain standalone `Widget` subclasses — structural mismatch (Buttons not OptionList)
-
-**UsageOverlay** (`overlays.py:140`):
-- `_build_chart(inp, cr, cw, out) -> str` — proportional bars (each bucket as fraction of total), `BAR_WIDTH=30`, `round()` for fill, skips zero buckets
-- `_build_sparkline(turn_log) -> str` — 8 block chars `▁▂▃▄▅▆▇█`, caps at 40 entries, returns `""` when log empty
-- `_do_copy()` reads `self._last_plain_text` (pre-built by `refresh_data`) and calls `self.app._copy_text_with_hint()`
-- `c` key handler lives in `_KeyHandlerMixin.on_key` (NOT on the overlay) — overlay doesn't capture focus; HermesInput retains it; key events from HermesInput bubble to App, not to sibling overlay widget
-- Guard pattern: `if _uov.has_class("--visible"): _uov._do_copy(); event.prevent_default(); return`
-
-**Testing patterns from this work**:
-- `_ChartHelper` pattern — for pure-function tests on Widget methods that don't use Textual internals (only `self._BAR_WIDTH` etc.), create a plain helper class with the relevant attrs and assign the unbound method: `class _ChartHelper: _BAR_WIDTH = 30; _build_chart = UsageOverlay._build_chart`. No `Widget.__new__` needed.
-- `Static.content` not `.renderable` — `str(widget.query_one("#id", Static).content)` to get text; `.renderable` raises `AttributeError` in Textual 8.x
-- Patching function-local imports: `from agent.usage_pricing import estimate_usage_cost` inside a method → patch `agent.usage_pricing.estimate_usage_cost` (source module), NOT `hermes_cli.tui.overlays.estimate_usage_cost` (never bound there)
-- App-level key handler testing: call `app.on_key(MagicMock(key="c"))` directly; use `event.prevent_default.assert_called()` to verify consumption
-- T1 exact string: assert `result == "  (no token data yet)"` not `"no token data yet" in result.lower()` — 2-space prefix is part of the contract
-
-### 2026-04-22 — TUI Visual Polish pass D1–D13 (commit 79864de5, merged feat/textual-migration cc897d06)
-
-101 tests in `tests/tui/test_tui_polish.py`.
-
-**D2 — Gutter unification (4 cells everywhere)**:
-- `_is_child` → `Text("    ", style="dim")`, gutter_w=4
-- unfocused top-level → `"  ┊ "`, focused → `"  ┃ "`
-- SubAgentPanel child-last → `" └─ "` (was `"  └─ "` 5), non-last → `" ├─ "` (was `"  ├─ "` 5)
-
-**D3 — SubAgentPanel binary collapse**:
-- `CollapseState` IntEnum **removed**. Binary `collapsed: reactive[bool]` is the sole model.
-- `action_toggle_collapse` replaces `action_cycle_collapse`. `COMPACT` state retired.
-- `on_mount`: `self.collapsed = True` for depth≥1.
-- `watch_collapsed(v: bool)`: early-return if `not self.is_mounted`; sets `--collapsed` class; sets `_body.display = (not v) and _has_children`.
-- `SubAgentHeader.on_click` calls `action_toggle_collapse` (not `action_cycle_collapse`).
-
-**D4 — Overlay border-title via Textual property**:
-- All 9 overlays: `border_title`/`border_subtitle` set in `on_mount()` / `show_overlay()` / `open_sessions()` etc. — no internal `Static` header widget.
-- `YoloConfirmOverlay`: `border_title = "YOLO mode"` in `on_mount`; `border_subtitle = "ACTIVE"/"inactive"` in `refresh_data()`.
-- `PickerOverlay.on_mount()`: `self.border_title = self.title` — all picker subclasses share this.
-- `ModelPickerOverlay` and `SkinPickerOverlay` override `compose()` fully — they call their own `on_mount()` since they don't call `super().compose()`.
-- `hermes_cli/tui/_hint_fmt.py`: `hint_fmt(pairs, key_color="") -> str` with `_SEP = "  ·  "` separator.
-
-**D5 — `_nf_or_text(glyph, fallback, app=None)` in utils.py**:
-- Returns `fallback` if `HERMES_ACCESSIBLE` or `HERMES_NO_UNICODE` set.
-- Returns `fallback` if `app.console.color_system in (None, "standard")`.
-- Otherwise returns `glyph`. Used for Nerd Font glyphs in stub rows, StatusBar active-file icon.
-
-**D6 — StatusBar layout reorder** *(updated by Bar SNR P0, commit 58ee2650)*:
-- Full-width (≥60 cols): 10-cell bar leads, then optional verbose ctx_label (^T toggle), then model. `pct_int%` removed.
-- Narrow (<60, ≥40): model leads, then single `▰` urgency glyph, then optional verbose ctx_label.
-- Minimal (<40): model only + optional verbose ctx_label. No compaction indicator.
-- Active-file uses `_nf_or_text("", "editing", app=app)` not raw emoji.
-
-**D7 — Flash color simplified**:
-- `_flash_style = "dim red" if h._flash_tone == "error" else f"dim {accent_color}"`
-- No per-tone branches; warning/neutral/success all use accent.
-
-**D8 — ReasoningPanel collapsed stub**:
-- Gutter `"  ┊ "` (4 cells), icon `_nf_or_text("", "[R]", app=self.app)`, label "Reasoning".
-- Segments: linecount + chevron, trimmed via `_trim_tail_segments`.
-
-**D9 — SubAgentHeader badge**:
-- Uses `_format_elapsed_compact` + `_trim_tail_segments`. Calls/errors/duration as named segments.
-- Error style `f"bold {warn_color}"`. State classes: `--has-errors` / `--done`.
-
-**D10 — ThinkingWidget → ReasoningPanel handoff**:
-- `ThinkingWidget --active { border-left: vkey $primary 15%; }` in DEFAULT_CSS.
-- `ReasoningPanel.open_box()` calls `tw.deactivate()` on any active ThinkingWidget via try/except.
-
-**D11 — _EchoBullet color fallback**:
-- Fallback key changed from `"rule-accent-color"` → `"primary"`. `"rule-accent-color"` not in COMPONENT_VAR_DEFAULTS.
-
-**D12/D13 — Tail zone ordering**:
-- `_DROP_ORDER = ["flash", "linecount", "chip", "hero", "diff", "stderrwarn", "chevron"]`
-- Zone order in `_render_v4`: STATS (duration) → CONTROL (flash) → META (stderrwarn). stderrwarn style `f"bold {warn_color}"`.
-
-**Key gotchas from this work**:
-- `Widget.size`, `Widget.app`, `Widget.content_size`, `Widget.is_mounted` are **data descriptor properties with no setter**. Setting them on `object.__new__` instances fails. Use `patch.object(type(obj), 'size', new_callable=PropertyMock, return_value=Size(80,1))`.
-- `border_title`/`border_subtitle` are reactives — calling `on_mount()` on a raw `object.__new__` instance raises `ReactiveError`. Use `inspect.getsource(Cls.on_mount)` to test assignment.
-- Rich `Text("foo", style="dim red")` stores style on `t.style`, NOT `t._spans`. Check `str(t.style)` not `t._spans[0].style`.
-
-### 2026-04-23 — Bar SNR P0: status/hint bar signal-to-noise fixes (commit 58ee2650, feat/textual-migration)
-
-**StatusBar (`widgets/status_bar.py`):**
-- `_BAR_WIDTH` reduced 20 → 10. `_compaction_color` now uses a 3-zone ramp: normal (<70%), green→yellow lerp (70–85%), yellow→red lerp (85–90%), solid crit (≥90%). Order matters — highest threshold checked first so lower zones aren't unreachable.
-- `pct_int%` text removed from ALL render branches (full/narrow/minimal). Full-width: single 10-cell bar + optional verbose ctx_label. Narrow (<60): single `▰` glyph. Minimal (<40): no compaction indicator.
-- `status_verbose: reactive[bool]` on `HermesApp`; `^T` → `KeyDispatchService.dispatch_key` toggles it (NOT `app.on_key`). When True, `ctx_label` appears between bar and model on all paths.
-- Idle tip rotation deleted: `_rotate_timer`, `_hint_idx`, `_hint_phase`, `_rotate_hint`, `_get_idle_tips`, `_idle_tips_cache` all gone. Idle right-side now static: `F1 help · /commands` via `_get_key_color()`.
-- `_on_agent_running_change` now checks `status_streaming` before starting pulse — pulse suppressed while streaming (static dot instead).
-- Two new `status_streaming` watchers registered in `on_mount` (no handle storage — `watch()` returns None): `_on_streaming_change` (stops/starts pulse) and `_on_streaming_dim` (adds/removes `--streaming` CSS class on both StatusBar and HintBar).
-- `on_unmount` simplified to only `self._pulse_stop()` — no watcher cleanup needed (Textual auto-unregisters cross-widget watchers on unmount).
-- **D6 is now outdated**: full-width no longer shows `bar+pct` leading. It shows `bar · [verbose ctx_label · ] model`.
-
-**HintBar (`widgets/status_bar.py`):**
-- `set_phase` guard simplified: `if phase == self._phase: return` (no shimmer-timer check). Shimmer state changes handled by `_on_streaming_change`.
-- `on_mount` added: `self.watch(self.app, "status_streaming", self._on_streaming_change)` (no handle).
-- `on_unmount` added: only `self._shimmer_stop()`.
-- `render()` is streaming-aware: when `status_streaming=True`, shows pinned `^C interrupt · Esc dismiss` (left zone) + optional flash_hint if width permits (right zone, overflow-guarded with `Text.cell_len`). FeedbackService internals unchanged — render-layer pin only.
-
-**app.py:**
-- `status_streaming: reactive[bool] = reactive(False)` added to HermesApp.
-- Lifecycle hooks `on_streaming_start` / `on_streaming_end` registered, plus `on_turn_end_any` safety net. All callbacks use `(**_: object)` signature.
-
-**hermes.tcss:**
-- `StatusBar.--streaming { opacity: 0.55; }` and `HintBar.--streaming { opacity: 0.55; }` — bars dim during streaming, bright during input.
-
-### 2026-04-22 — Nameplate active-idle pulse + AnimConfigPanel expansion (commits 7030342f + adc1d016, feat/textual-migration)
-
-**Nameplate pulsing (`widgets/__init__.py`):**
-- `_NPState.ACTIVE_IDLE` previously stopped the timer — nameplate was static while agent ran.
-- Now keeps timer alive at 12fps after morphing/glitching completes; calls `_tick_active_idle()` → advances `_active_phase` by 0.18 rad/frame.
-- `_render_active_pulse()`: per-character `wave = (sin(_active_phase - i * 0.55) + 1.0) / 2.0` → `_lerp_hex(dim, accent, wave)`. Creates traveling sine shimmer.
-- `_lerp_hex(a, b, t) -> str`: module-level helper, interpolates two hex colors by component (integer truncation — `int(r_a + t*(r_b - r_a))`).
-- `_active_dim_hex`: computed once in `on_mount` as `_lerp_hex("#000000", accent, 0.30)` — 30% accent so shimmer has meaningful range.
-- Both `_tick_morph` done-branch AND `_tick_glitch` done-branch resume 12fps instead of stopping.
-
-**AnimConfigPanel expansion (`drawille_overlay.py`):**
-- `_multi_color_row_buf: list = []` added as **class-level attr** on `DrawilleOverlay` — prevents `AttributeError` in tests that create the widget without mounting it.
-- New fields in `_build_fields`: `enabled` toggle (first field), `hue_shift_speed` float, ambient section (`ambient_enabled`, `ambient_engine`, `ambient_heat`, `ambient_alpha`), carousel section (`carousel`, `carousel_interval_s`).
-- `fps` max raised 15 → 30.
-- `_push_to_overlay`, `_current_panel_cfg`, `_fields_to_dict` all updated to handle new fields (ambient/carousel as `None` in attr_map — applies via `_push_custom_field`).
-- **`_persist_anim_config` merge fix** (`_app_commands.py`): was calling `_set_nested(cfg, "display.drawille_overlay", cfg_dict)` which replaced the whole overlay dict. Fixed to: `existing = cfg.setdefault("display", {}).setdefault("drawille_overlay", {}); existing.update(cfg_dict)`.
-
-**Test fixes:**
-- `test_cycle_animation_*`: use `next(f for f in panel._fields if f.name == "animation")` not `_fields[0]` (enabled is now first).
-- `test_fps_inc_clamps_at_15`: changed to `int(fps_field.max_val)` dynamically (max raised to 30).
-
-### 2026-04-22 — Bundled skin audit + 3 new skins (commit fdff67c7, merged feat/textual-migration b02ad1b5)
-
-**Audit result**: all 5 custom skins (`~/.hermes/skins/`) were 47/47 `component_vars`. Repo's `skins/matrix.yaml` was 29/47 — missing 18 keys from dev passes 5-10.
-
-**matrix.yaml backport** — 18 added: `browse-*` (5), `cite-chip-*` (2), `diff-add/del-bg` (2), `footnote-ref-color`, `nameplate-*` (3), `panel-border`, `spinner-shimmer-*` (2), `tool-mcp-accent`, `tool-vision-accent`.
-
-**3 new bundled skins** (all 47/47, committed to `skins/`):
-- `tokyo-night`: deep navy `#1a1b26`, blue `#7aa2f7` accent, `preview-syntax-theme: tokyo-night`
-- `catppuccin`: Mocha dark `#1e1e2e`, lavender `#cba6f7` accent, `preview-syntax-theme: catppuccin`
-- `solarized-dark`: warm dark `#002b36`, blue `#268bd2` + teal `#2aa198` accents, `preview-syntax-theme: solarized-dark`
-
-**Skin completeness checklist**: after any new `COMPONENT_VAR_DEFAULTS` key, run:
-```python
-python3 -c "
-import yaml, os
-DEFAULTS = set()  # populate from theme_manager.py
-for f in os.listdir('skins'):
-    cvars = yaml.safe_load(open(f'skins/{f}')).get('component_vars', {})
-    missing = DEFAULTS - set(cvars)
-    print(f'{f}: {\"OK\" if not missing else sorted(missing)}')
-"
-```
-- T3 fill count: use `row.count("█") == N` not `"█" * N in row` — substring match passes for rows with more filled chars
-- T8 hidden-guard: assert BOTH `mock_copy.assert_not_called()` AND `event.prevent_default.assert_not_called()` — spec requires neither fires when overlay is hidden
-- T10 bar exclusion: assert `"█" not in plain` — without this, bar rows leaking into plain-text copy go undetected
-- T14 absent attribute: delete the attribute from MagicMock (`del agent.session_turn_token_log`) and call `refresh_data` — tests the `getattr(..., [])` guard path, not just `_build_sparkline([])`
-
-**UsageOverlay UI polish (commit ea838836)**:
-- Cost row alignment: `f"Cost:        {prefix}${value:>10.4f}"` — `$` and optional `~` sit **outside** the `>N` format spec, so the label column must absorb their width. `"Cost:        "` (13 chars) + `"$"` = 14 chars total label column, matching all other rows.
-- Label case: `_build_stats` and `_build_plain_text` must use identical label strings (`"Cache Read:"`, `"Cache Write:"` — title case). Any copy-paste between the two methods risks divergence.
-- Section separation: always put a blank `""` string between chart and stats sections in the `parts` list; joining with `"\n"` alone makes bar rows run directly into the model line with no gap.
-- Copy error handling: `_do_copy` must NOT use bare `except Exception: pass` — call `self.app.set_status_error(f"copy failed: {exc}")` so unexpected failures surface. Clipboard-unavailability is handled inside `_copy_text_with_hint` itself, so the outer except is only for structural errors.
-
-### 2026-04-22 — Bash passthrough mode (commit 621303d0, merged feat/textual-migration)
-
-`!cmd` in the input bar runs a shell command and streams output into a `BashOutputBlock` in `OutputPanel` — no agent involvement.
-
-**New files:**
-- `hermes_cli/tui/services/bash_service.py` — `BashService(_svc_bash)`: `run(cmd)`, `kill()`, `_exec_sync`, `_finalize`
-- `hermes_cli/tui/widgets/bash_output_block.py` — `BashOutputBlock(Static)`: `CopyableRichLog` body, elapsed timer, `--done/--error`
-
-**`BashService._exec_sync` key details:**
-- `shlex.split` before the `Popen` `try` — `ValueError` on malformed quotes caught by an explicit `except ValueError` block and displays `"[parse error] …"`, then calls `_finalize` and returns early
-- `Popen(start_new_session=True)` — process gets its own pgid; `kill()` uses `os.killpg(os.getpgid(pid), SIGINT)` for full process-group kill
-- `_finalize` runs on event loop via `call_from_thread`; sets `_running = False` THEN calls `block.mark_done` — prevents TOCTOU window
-- `_running = True` set before `_start_bash_worker`; reset in `try/except` if worker raises; never left stuck True
-
-**`BashOutputBlock` key details:**
-- Uses `CopyableRichLog` (NOT bare `RichLog`) — avoids pre-layout width collapse when first line arrives before layout
-- `push_line(line)` calls `_body.write(Text.from_ansi(line))` — ANSI colors preserved
-- `on_unmount`: stops elapsed timer; calls `self.app._svc_bash.kill()` if `--running` — no orphan processes on widget removal
-- Mounts into `OutputPanel` via `output.mount(block, before=output.query_one(ThinkingWidget))` — NOT into `MessagePanel` (which may not exist)
-
-**`app.py` additions:**
-- `_svc_bash = BashService(self)` — init after `_svc_commands`, before `_svc_watchers`
-- `@work(thread=True, exclusive=True, group="bash") def _start_bash_worker(cmd, block)` — `exclusive=True` is Textual Worker dedup only, NOT OS process kill
-- `_mount_bash_block(cmd)` — mounts before `ThinkingWidget` in `_output_panel`
-- `on_unmount` calls `self._svc_bash.kill()` before hooks shutdown
-
-**`services/keys.py` changes:**
-- `dispatch_input_submitted`: `!` fork added BEFORE `_handle_tui_command` check; guards: `agent_running`, `is_running`, empty cmd
-- `ctrl+c` block: bash kill inserted AFTER selection-copy check, BEFORE overlay-cancel; selection takes priority
-
-**`input/widget.py`:** `on_text_area_changed` appends `--bash-mode` CSS class toggle + `_flash_hint(30.0)` / `feedback.cancel("hint-bar")` at end (after `_update_autocomplete`)
-
-**CSS:** `HermesInput.--bash-mode #input-chevron { color: $chevron-shell; }` in `hermes.tcss`
-
-**History:** `!cmd` is intentionally saved to history (`_save_to_history` fires before routing fork)
-
-**34 tests** in `tests/tui/test_bash_passthrough.py` (T01–T31)
-
-**Key gotchas:**
-- `Widget.app` is a read-only ContextVar property. Tests for `BashOutputBlock.on_unmount` (which calls `self.app._svc_bash.kill()`) must use `patch.object(type(block), "app", new_callable=PropertyMock, return_value=mock_app)` inside a `with` block
-- `_FakeInput` / plain namespace: input widget toggle tests should NOT use `object.__new__(HermesInput)` since `app` is unsettable — build a simple fake class instead
-- `MessagePanel` is nested under `OutputPanel`, not a direct query target at app level. Use `self._output_panel.query_one(ThinkingWidget)` as mount anchor, not `query_one(MessagePanel)`
-
-### 2026-04-22 — InterruptOverlay focus priority fix (116 tests pass, feat/textual-migration)
-
-Permission prompts (approval, sudo, clarify, secret, undo, session, merge) now always paint on top of every other overlay and capture focus regardless of what was open.
-
-**Three-file change:**
-
-- `hermes.tcss` — Screen layers: `base overlay interrupt tooltip`. New `interrupt` layer sits between `overlay` and `tooltip`.
-- `overlays/interrupt.py::InterruptOverlay` — `layer: interrupt` (was `overlay`). `_activate` now calls `self.call_after_refresh(self.focus)` after `_render_current()` so the overlay captures keyboard immediately.
-- `drawille_overlay.py::AnimConfigPanel.on_blur` — focus trap now yields when `InterruptOverlay` has `--visible`. Without this, the trap re-stole focus back every blur event, stranding the interrupt prompt.
-
-**Why this order matters:** the focus trap fires on every blur, so even if InterruptOverlay grabbed focus correctly, the next event loop tick would call `call_after_refresh(self.focus)` on AnimConfigPanel and steal it back. The `--visible` guard breaks the loop.
-
-**Key gotcha:**
-- Non-modal focus-trapping overlays on `layer: overlay` are painted BELOW `InterruptOverlay` (on `layer: interrupt`). Any widget that uses `on_blur` → refocus must also check `InterruptOverlay.has_class("--visible")` and bail — otherwise the focus trap fights the interrupt overlay every tick.
-
-### 2026-04-21 — Module splits (drawille / tool_blocks / renderers / input)
-
-**Track B — drawille**: `anim_engines.py` holds `AnimParams`, `AnimEngine`, `TrailCanvas`, `_BaseEngine`, 20 engine subclasses, `CompositeEngine`, `CrossfadeEngine`. Deleted duplicate `_GalleryPreview(Widget)` + `AnimGalleryOverlay(Widget)` that were shadowing `ModalScreen` versions (pre-existing test failure fixed).
-
-**Track C — tool_blocks subpackage**: `OmissionBar` placed in `_shared.py` not `_streaming.py` to break circular import: `_block.py` needs `OmissionBar`; `_streaming.py` needs `ToolBlock` from `_block.py`. After splitting, `renderers.py` re-exports all public symbols so existing importers compile unchanged.
-
-**Track D — renderers split**: Fixed `rich.strip.Strip` → `textual.strip.Strip` (Rich has no `strip` module).
-
-**input/ subpackage**: `HermesInput` MRO must be `(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextArea, ...)` — TextArea defines `update_suggestion`, which shadows the mixin's version if TextArea comes first.
-
-**After any module split — two required steps**:
-1. Add re-export lines to the original file (or `__init__.py`) so old importers still work.
-2. Check for module-level names (e.g. `random`, `re`) that the old file imported but the new module does not.
-
-### 2026-04-21 — M3 Write approval with inline diff (commit b8343f6f)
-
-`ChoiceOverlayState` (state.py) gained `diff_text: str | None = None`. When set, `ApprovalWidget` shows a scrollable `CopyableRichLog#approval-diff` panel rendered via `DiffRenderer`.
-
-**Approval choices:** `["once", "session", "always", "deny"]` — mirrors shell command approval. "session" adds path to `cli._write_session_allowlist: set[str]`; "always" appends to `CLI_CONFIG["write_allowlist"]` via `save_config`.
-
-**Callback pattern:** plain module global in `tools/file_tools.py` (NOT ContextVar — ContextVar is for per-context streaming callbacks only):
-```python
-_write_approval_callback = None
-def set_write_approval_callback(cb): global _write_approval_callback; _write_approval_callback = cb
-def _request_write_approval(path, new_content): cb = _write_approval_callback; return cb(path, new_content) if cb else "allow"
-```
-
-**YOLO:** `os.getenv("HERMES_YOLO_MODE")` skips the approval prompt. Diff still appears in tool block body via `_on_tool_complete` / `_pending_edit_snapshots` — YOLO never suppresses that.
-
-**DiffRenderer instantiation** from `ApprovalWidget.update()` requires all 5 `ToolPayload` fields + `ClassificationResult(kind=ResultKind.DIFF, confidence=1.0)`:
-```python
-payload = ToolPayload(tool_name="diff", category=None, args={}, input_display=None, output_raw=diff_text)
-cls_result = ClassificationResult(kind=ResultKind.DIFF, confidence=1.0)
-DiffRenderer(payload, cls_result).build()
-```
-
-**CSS:** `ApprovalWidget > CopyableRichLog#approval-diff` needs `overflow-y: auto` (unlike normal `CopyableRichLog` which uses `overflow-y: hidden`). Safe here because parent is not an `OutputPanel`.
-
-**Key handler (§7):** diff scroll (Up/Down when diff has focus) and Tab cycling use `query_one("CopyableRichLog#approval-diff", CopyableRichLog)` wrapped in `try/except NoMatches`. `approval_widget.focus()` returns focus to the choices row.
-
-**`create_file` tool absent:** `tools/file_tools.py` has no separate `create_file_tool` — only `write_file_tool` and `patch_tool` were hooked.
-
-### 2026-04-21 — M2 Compact/responsive layout
-
-- `compact: reactive[bool]` + `_compact_manual: bool | None = None` on `HermesApp`.
-- `watch_compact` lives in `services/watchers.py` (`WatchersService`). All DOM ops wrapped in `try/except Exception` (watcher fires at reactive init before DOM exists — Textual fires `_check_watchers` during `_initialize_reactive`). CSS class mutation uses `if hasattr(self, "_classes")` guard.
-- Auto-trigger: `_flush_resize` (NOT `watch_size`). `watch_size` fires on every event without debouncing; `_flush_resize` is the debounced callback (60 ms, `_RESIZE_DEBOUNCE_S`). Threshold: `w <= 120 or h <= 30`.
-- Hard floor: `w < 30` forces compact even when `_compact_manual` is set.
-- Tests that directly set `app.compact = True` must also set `app._compact_manual = True` — otherwise `_flush_resize` fires and resets to False based on terminal dimensions.
-- StatusBar text abbreviations (model prefix strip, session truncation) gated on `compact AND width < 70` to avoid breaking tests/usage at standard 80-col terminals.
-- `HERMES_DENSITY=compact` env var: set `_compact_manual = True; self.compact = True` in `on_mount` — do NOT call `add_class("density-compact")` directly.
-- Compact sync (`watch_compact` in `services/watchers.py`) iterates mounted ToolPanels directly — `ToolHeaderBar` deleted in Pass 10.
-- `services/sessions.py` (`SessionsService`) mutation sites for `_session_records_cache`: call `_sync_compact_visibility()` after both `init_sessions` and `_poll_session_index` mutations.
-- **`/density` (NOT `/compact`) toggles layout density.** `/compact` is reserved for context compaction (forwarded to agent). The hint in `services/watchers.py:on_status_compaction_progress` already uses `/compact` for that purpose. Density slash command lives in `services/commands.py` and `_app_constants.py` as `"/density"`.
-- **`action_toggle_density` else-branch uses `self.size`**: on unmounted app `size=(0,0)` so `w <= 120` is always True — restoring auto resets to compact. Tests must mock `type(app).size` as a `PropertyMock(return_value=Size(160,50))` or use `run_test(size=(140,40))`.
-- **`density-compact` + `border: tall` on focused input = zero content area**: `HermesApp.density-compact HermesInput { max-height: 2; }` + `HermesInput:focus { border: tall ...; }` (2 border rows) leaves content_size.height=0. Cursor invisible, input appears broken. Fix: `HermesApp.density-compact HermesInput:focus { border: none; }`. Check `inp.content_size.height` in tests — zero means this broke again.
-
-### 2026-04-21 — app.py 4-phase mixin extraction
-
-Unique gotchas from this work (patterns are in Framework sections below):
-
-- **Shared types in `_browse_types.py`**: `BrowseAnchorType`/`BrowseAnchor` live in `_browse_types.py`; both `app.py` and `services/browse.py` import from there.
-- **Slash commands in `_app_constants.py`**: `KNOWN_SLASH_COMMANDS` is in `hermes_cli/tui/_app_constants.py`. Add new slash commands there only. `/density` (layout toggle) lives here; `/compact` forwards to the agent for context compaction.
-- **`body_renderer.py` deleted**: all legacy streaming renderer classes moved to `body_renderers/streaming.py`; base class renamed `StreamingBodyRenderer`. Import from `body_renderers.streaming`, not the old path.
-- **All `_app_*.py` mixin files deleted (R4)**: logic now lives in `services/` subpackage. Do not recreate mixin files.
-- **Duplicate method bug (pre-existing)**: `app.py` had a second session block (appended during branch merges) that re-defined cached methods with inferior disk-reading versions. Always `grep -n "def method_name"` across a file before assuming a method definition is unique.
-
-### 2026-04-21 — UX audits (Pass 9 + Full UX Audit, ~45 fixes)
-
-Key behavioral specs implemented (structural patterns are in Framework):
-
-- `CodeBlockFooter.flash_copy()`: flashes "✓ Copied" for 1.5 s via `_copy_flash_timer`; `--flash-copy { color: $success; }` in DEFAULT_CSS.
-- `ToolPanel.action_rerun()`: calls `self._header_bar.flash_rerun()` → pulses glyph to "streaming" for 600 ms then restores `_last_state`.
-- StatusBar browse badge format: `BROWSE ▸N/M`; `browse_detail_level` reactive retired with `detail_level` in Pass 10; `_apply_browse_focus()` uses `collapsed` state instead.
-- `VirtualCompletionList.empty_reason: reactive[str]`; `_EMPTY_REASON_TEXT` dict; `watch_items` resets to `""` when items arrive.
-- `FooterPane._narrow_diff_glyph` (Static "±") shown in compact mode when diff present.
-- `CompletionOverlay.on_resize` caps `max_height = max(4, h-8)`; DEFAULT_CSS `min-height: 4`.
-- `HelpOverlay.show_overlay()` clears search input and repopulates full command list on every open.
-- `SessionOverlay._update_selection()` calls `scroll_to_widget` to keep selected row visible.
-- `WorkspaceOverlay.show_overlay()` focuses `#ws-tab-git` button on open.
-- Error-aware placeholder: when agent stops with `status_error` set, `HermesInput.placeholder` shows `Error: <snippet>… (Esc to clear)`.
-- `Chip.remediation` strings from all chips joined with ` · ` into `FooterPane._remediation_row`. Not inline in chip row.
-- `generic_result_v4` single-line threshold: `primary = f"✓ {n} lines" if n > 1 else "✓"` — single-line gives bare `"✓"`.
-- `set_result_summary_v4` merged into `set_result_summary` — single method handles accent state, mini-mode, hero chip, promoted chips, error banner, age timer, auto-collapse, footer render. `ResultSummary` (old dataclass) still exists for v2 parsers but is no longer accepted. App callers always pass `ResultSummaryV4`.
-
-### 2026-04-21 — API renames to track
-
-| Old (removed) | New |
-|---|---|
-| `action_prev_turn` | `action_jump_turn_prev` |
-| `action_next_turn` | `action_jump_turn_next` |
-| scroll-based turn nav (`scroll_visible()`) | `app._jump_anchor(direction, anchor_type)` on `_browse_anchors` |
-| `set_result_summary_v4` | `set_result_summary` (merged) |
-
-### 2026-04-21 — Rendering fixes (commits 40eba1e0, c1683598)
-
-**`render_halfblock` white-box bug** (`kitty_graphics.py:515`): PIL's `.convert("RGB")` composites transparent pixels against **white** by default. Any PNG with transparent background (e.g. matplotlib math renders) appears as a solid white rectangle. Fix: composite RGBA against `#0d0d0d` before conversion:
-```python
-if "A" in image.mode:
-    rgba = image.convert("RGBA")
-    bg = PILImage.new("RGB", rgba.size, (13, 13, 13))
-    bg.paste(rgba, mask=rgba.split()[3])
-    img = bg
-else:
-    img = image.convert("RGB")
-```
-
-**`_split_row` pipe artifacts** (`agent/rich_output.py`): naive `s.split("|")` splits on pipes inside backtick spans (`` `a | b` ``) and `\|` escape sequences, producing phantom extra columns. Fix: scan the row tracking backtick fence depth and treating `\|` as literal `|`.
-
-**Single-line `\[...\]` block math** (`response_flow.py`): `_BLOCK_MATH_OPEN_RE` only matched standalone `\[` on its own line. `\[expr\]` on one line passed through as prose (partially mangled by inline markdown). Fix: add `_BLOCK_MATH_ONELINE_BRACKET_RE = re.compile(r'^\\\[(.+)\\\]\s*$')` and check it alongside `_BLOCK_MATH_ONELINE_RE`.
-
-**`EnterWorktree` branch base gotcha**: `EnterWorktree` creates the new branch from the repo's current HEAD — which may not match your active feature branch if you're in a detached state or the tool resolves HEAD differently. Workaround: `git worktree add .claude/worktrees/NAME -b BRANCH BASE_BRANCH` manually, then `EnterWorktree path=.claude/worktrees/NAME`.
-
-### 2026-04-21 — Full TUI audit sweep fixes
-
-**`CopyableBlock` and prose log migration**: `CopyableBlock.__init__` now creates `InlineProseLog` (a subclass of `CopyableRichLog`) instead of `CopyableRichLog` directly. Same for `ReasoningPanel._reasoning_log`. Tests checking `isinstance(panel.response_log, InlineProseLog)` need this. The change is backward-compatible since `InlineProseLog` extends `CopyableRichLog`.
-
-**`_HistoryMixin` rev-search API** (`hermes_cli/tui/input/_history.py`):
-- `_rev_search_find(query=None, direction=-1)` — both params optional; `query` defaults to `self._rev_query`; `direction=-1` searches backward, `+1` forward; updates `self._rev_match_idx` and loads match into widget via `load_text()`
-- `_rev_match_idx: int` — tracks current position in history list for cycling
-- `_rev_saved_value: str` — saved on `action_rev_search()` entry, restored on `_exit_rev_mode(accept=False)`
-- `_exit_rev_mode(accept: bool = True)` — new method; `_exit_rev_search()` now delegates here with `accept=True`
-
-**`_save_to_history` global dedup**: old guard `if self._history[-1] == text: return` is replaced with `try: self._history.remove(text)` before appending. This promotes repeated entries to end. Slash commands (`text.startswith("/")`) are still NOT saved — this guard is tested and must stay.
-
-**`HistorySearchOverlay` additions** (`hermes_cli/tui/widgets/overlays.py`):
-- `action_prev_query()` — sets input to `_query_history[-1]` (most recent)
-- `action_find_next()` — advances `_selected_idx` by 1 mod count (Ctrl+G in overlay)
-- `action_toggle_mode()` — toggles `_mode` between `"current"` / `"all"`; updates `_ModeBar`
-- `_handle_cross_session_jump(result)` — sets `HintBar.hint` for non-current-session jumps
-- `action_dismiss()` now saves non-empty query to `_query_history` (deduped: remove+append)
-- `open_search()` reads `app.cli._cfg["display"]["history_search_max_results"]` → sets `self._max_results`
-- `_render_results()` uses `self._max_results` (not hardcoded 20)
-
-**`HermesApp.BINDINGS`**: removed `ctrl+g` app-level binding — Ctrl+G now only handled inside `HistorySearchOverlay.BINDINGS` (spec B5). `ctrl+f` remains at app level.
-
-**Flaky test pattern — history file dependency**: `test_hermes_input.py::test_enter_submits_as_typed_with_overlay_visible` was asserting `inp._history[-1] == "/he"` which only passed when developer's `~/.hermes_history` file happened to contain "/he". Slash commands aren't saved (guard). Fixed by removing that assertion — test still verifies `inp.value == ""` (form cleared after submit).
-
-**`tools_overlay.py` rebuild flooding**: `_update_staleness_pip` timer fires every second; each tick was calling `asyncio.ensure_future(_rebuild())`, flooding the message queue and causing `pilot.pause()` to hang forever. Fixed with `_rebuild_in_flight: bool` flag — only one rebuild in flight at a time.
-
-**`_update_pills` DuplicateIds**: `call_after_refresh` mount lambda deduplicates by checking existing child IDs before mounting.
-
----
 
 ## Lifecycle Hooks — cleanup outside watchers (RX4)
 
@@ -1743,6 +591,17 @@ HelpOverlay > #help-content {
 
 New `$var-name` refs must be declared in the `.tcss` file at parse time — `get_css_variables()` alone is insufficient.
 
+**No CSS `+` or `~` sibling combinators** — Textual 8.x does not support them. Use Python class toggles on a parent instead:
+```python
+# WRONG — invalid in Textual TCSS
+InterruptOverlay.--diff-visible + #diff-hint { display: block; }
+
+# CORRECT — toggle class on parent
+self.add_class("--diff-hint-visible")
+```
+
+**New component var requires 3 edits**: (1) `COMPONENT_VAR_DEFAULTS` in `theme_manager.py`, (2) `$name: value;` declaration in `hermes.tcss`, (3) `component_vars:` entry in all 4 bundled skins. T1/T2/T3 in `test_css_var_single_source.py` catch omissions.
+
 **CSS class operations require `_classes`** (set by `DOMNode.__init__`): Calling `add_class`/`remove_class` on `object.__new__(SomeWidget)` raises `AttributeError`. In production methods exercised by unit tests, wrap CSS mutations:
 ```python
 try:
@@ -1932,6 +791,8 @@ patch("hermes_cli.tui.tool_category.spec_for")
 
 After `input/` subpackage split, `input_widget.py` is a shim — it re-exports but doesn't re-import into its own namespace. Tests patching `hermes_cli.tui.input_widget.some_fn` must update to `hermes_cli.tui.input.widget.some_fn`.
 
+**`safe_open_url` patch target** — `_open_external_direct` shim was deleted 2026-04-24. Patch `hermes_cli.tui.tool_panel.safe_open_url`, not `subprocess.Popen`. Extract `on_error` from `mock.call_args.kwargs` and invoke manually; use `patch.object(type(panel), "is_mounted", new_callable=PropertyMock, return_value=True)` for is_mounted guards.
+
 ### Overlay test fixtures
 
 Tests using a minimal `_App` class must yield overlay widgets in `compose()`. Without them, actions that use `query_one(SomeOverlay)` silently no-op (caught `NoMatches`) and visibility assertions never fire:
@@ -1976,6 +837,19 @@ Always `grep -rn "def method_name"` before calling a method that was added in a 
 **`_render_multi_color` buffer:** `self._multi_color_row_buf: list[str]` on `DrawilleOverlay`, initialised in `on_mount()` (no `__init__` on this widget). Reuse per row; reallocate only on width change.
 
 **`_braille_density_set` / `_depth_to_density` signatures:** Both accept `w, h` parameters (added in perf pass). Call sites: `HyperspaceEngine`, `AuroraRibbonEngine` (direct), `RopeBraidEngine` (via `_depth_to_density`).
+
+### Rich bracket eating in Button labels
+
+`Button("[show all]", ...)` renders as empty — Rich parses `[show all]` as a markup tag. Always wrap bracket-containing labels:
+```python
+from rich.text import Text
+Button(Text("[show all]"), ...)  # correct
+Button("[show all]", ...)        # empty label
+```
+
+### `_pending_children` internal name conflict
+
+Textual's `Widget` base class uses `_pending_children` as an internal list attribute. Naming your own widget dict attribute `_pending_children` causes `'list' object has no attribute 'setdefault'` errors. Use `_child_buffer` or similar instead.
 
 ### Static content access
 
@@ -2502,6 +1376,47 @@ A-1/A-2/A-3/A-5/A-6/B-1/B-3/G-1 — 18 tests in `tests/tui/test_startup_banner_p
 
 ---
 
+### 2026-04-24 — Audit 1 Phase Legibility (commits b76e0f6b + 1d00d678, branch feat/audit1-phase-legibility)
+
+A1/A2/A4/A5/A9 — 50 tests in `tests/tui/test_audit1_phase_legibility.py`; `test_plan_panel_p1.py` updated.
+
+**A1 — `status_phase` reactive + `agent_phase.py`:**
+- `hermes_cli/tui/agent_phase.py` — `Phase` plain-string constants. Use plain strings (not `Enum`) to avoid import cycles and reactive serialization friction.
+- `HermesApp.status_phase: reactive[str] = reactive(_Phase.IDLE)` — import `_Phase` at module top as `from hermes_cli.tui.agent_phase import Phase as _Phase`.
+- `watch_status_phase(old, new)` — removes `--phase-{old}` and adds `--phase-{new}` on app root. Enables TCSS rules like `HermesApp.--phase-tool-exec ToolPanel { ... }`.
+- `watch_agent_running` — sets `status_phase = _Phase.REASONING if value else _Phase.IDLE` as FIRST statement before any other logic.
+- `IOService.consume_output` — sets `STREAMING` on first chunk (`_first_chunk_in_turn = False` branch); sets `REASONING or IDLE` in the `chunk is None` path after firing `on_streaming_end`.
+- `ToolRenderingService._open_tool_count: int = 0` — increment in `open_streaming_tool_block` after storing block, set `TOOL_EXEC`. Decrement in BOTH `close_streaming_tool_block` AND `close_streaming_tool_block_with_diff`; revert to `REASONING` (or `IDLE`) when count == 0.
+- `_lc_reset_turn_state` must reset `self._svc_tools._open_tool_count = 0` alongside other turn-state resets.
+- `WatchersService._phase_before_error: str = ""` — saves `status_phase` before setting `ERROR`; restores on clear. Guard: only save if current phase != ERROR (prevents double-save).
+
+**A2 — Nameplate phase gating:**
+- `AssistantNameplate.on_mount` registers `self.watch(self.app, "status_phase", self._on_phase_change)` in try/except (may not be mounted in tests).
+- `_pause_pulse()` calls `_stop_timer()` only — `--active` class deliberately not removed (turn-in-progress color persists through STREAMING/TOOL_EXEC).
+- `_on_phase_change(phase)` — REASONING: restart pulse only if `_state == ACTIVE_IDLE and _timer is None` to avoid double-starting; STREAMING/TOOL_EXEC: `_pause_pulse()`; IDLE/ERROR: no-op (other paths own these).
+- **Do not** call `_pulse_stop` — the nameplate has no such method. The stop method is `_stop_timer`.
+
+**A4 — DEEP mode threshold (ThinkingWidget):**
+- `_cfg_deep_after_s: float = 120.0` class attribute (config key: `tui.thinking.deep_after_s`). Loaded in `_load_config` alongside other cfg keys.
+- `_substate_start: float` — set to `time.monotonic()` when `_substate == "LONG_WAIT"` is entered in `_tick`. NOT a class attribute — only set at runtime.
+- `_resolve_mode` — after all width/compact/reduced-motion guards, if resolved mode == DEEP: compute `elapsed = time.monotonic() - getattr(self, "_substate_start", time.monotonic())`. If `elapsed < _cfg_deep_after_s` → return COMPACT instead.
+- `getattr(self, "_substate_start", time.monotonic())` default is correct: field absent → elapsed=0 → COMPACT (widget not in LONG_WAIT yet).
+
+**A5 — PlanPanel chip next-tool semantics:**
+- `update_header` signature gains `next_tool_name: str = ""` kwarg.
+- `_show_chip`: chip-running and chip-done always `display = False`. Title text: `f"Plan {chevron}  next: {name}"` / `"all done"` / `"—"`. Pending count `{n}⏵` appended to title if > 0. Errors and cost unchanged.
+- `_rebuild_header` iterates `planned_calls` for first `PlanState.PENDING` entry and passes its `tool_name` as `next_tool_name`.
+- **Updating existing tests:** `chip-running` and `chip-done` segment tests must assert `display == False` (not True). `test_show_chip_pending_in_title_text` must check for `⏵` not `▸` and must join ALL `update.call_args_list` entries (title is updated twice when pending > 0).
+
+**A9 — STARTED label (`_get_label_text`):**
+- `ThinkingWidget._get_label_text(elapsed: float | None = None) -> str` — extracted from `_tick`. Returns `"Connecting…"` for `"STARTED"`, base_label for `"WORKING"`, escalated label for `"LONG_WAIT"`, `""` otherwise.
+- `_tick` calls `label_text = self._get_label_text(elapsed)` in place of inline logic. `elapsed` is already computed in `_tick` — pass it through to avoid a second `time.monotonic()` call.
+- HERMES_DETERMINISTIC path sets `_substate = "WORKING"` directly in `activate()` and returns — STARTED is never reached.
+
+**Test isolation gotcha:** `os.environ.setdefault("HERMES_DETERMINISTIC", "1")` at module level in any test file pollutes the environment for `test_thinking_widget_v2.py` when run in the same process. This is a pre-existing issue (test_plan_panel_p1.py also does it). Run thinking_widget_v2 in isolation when needed.
+
+---
+
 ### 2026-04-24 — DrawbrailleOverlay split + Phase 5 cleanup (commits 02efe64a–93c47af1, merged feat/textual-migration)
 
 Phases 0–5; 5 new files; 75 tests across 4 test files.
@@ -2579,3 +1494,79 @@ if 0 < w < 100: return ThinkingMode.COMPACT
 `_tick_active_idle` guard: `if self.app.has_class("reduced-motion"): return`. `HermesApp.on_mount` in `app.py` adds `reduced-motion` class from both `HERMES_REDUCED_MOTION` env var AND `tui.reduced_motion` config key (fresh `read_raw_config()` call in `on_mount` is acceptable — fires once at startup on the event loop, not a hot path).
 
 **Lock safety (E-3):** `_LabelLine.__init__`: `_lock = kwargs.pop("_lock", None)` before `super().__init__("", **kwargs)`; `self._lock = _lock or threading.Lock()`. `_init_effect` uses `lock=self._lock`. `activate()` passes `_lock=threading.Lock()`.
+
+---
+
+### 2026-04-24 — Audit 1 Quick Wins (commit 827e6036, merged feat/textual-migration)
+
+A6/A8/A10/A11/A12/A13/A14/A15 — 23 tests in `tests/tui/test_audit1_quick_wins.py`.
+
+**A6 — Nameplate idle default `"breathe"`:**
+- Changed default in `AssistantNameplate.__init__` (`idle_effect: str = "breathe"`), `cli.py` (`CLI_CONFIG["display"].get("nameplate_idle_effect", "breathe")`), and `app.py` (`getattr(self, "_nameplate_idle_effect", "breathe")`).
+- Added `self._cfg_idle_effect = idle_effect` alias in `__init__` for test inspection.
+
+**A8 — StatusBar idle no key hints:**
+- Deleted the `"F1 help · /commands"` idle state text entirely. Idle state now renders `Text("  ", style="dim")` always — HintBar owns key hints.
+
+**A10 — Dead `__getattr__` deleted:**
+- Entire `__getattr__` method removed from `StatusBar`. Any `AttributeError` from missing attrs will now surface immediately instead of being silently swallowed.
+
+**A11 — Model anchored left in StatusBar ≥60-col branch:**
+- New order: `model · [bar · pct] · [ctx] · [session]`. Model is always first regardless of width branch.
+- **A15 bundled here:** Removed `(progress > 0 or not _mockish(app))` guard on pct label — now just `if _pct_enabled:`. `0%` always renders when compaction bar is enabled.
+
+**A12 — Ghost legend one-per-session gate:**
+- `self._ghost_legend_shown: bool = False` added to `HermesInput.__init__` in `widget.py`.
+- `_show_ghost_legend(widget)` and `_hide_ghost_legend(widget)` helpers added to top of `_history.py` (module-level, not methods).
+- `update_suggestion()` in `_HistoryMixin` calls `_show_ghost_legend(self)` after every non-empty set and `_hide_ghost_legend(self)` after every empty set.
+- `_show_ghost_legend` returns early if `_ghost_legend_shown is True` — gate prevents repeated legend shows.
+
+**A13 — Budget visibility: synchronous gate, no timer:**
+- Removed `_budget_hide_timer: Any = None` class attr and `_hide_budget_after_turn` method.
+- `_refresh_budget_visibility` now: `show = not has_active and not self._collapsed and (cost_usd > 0 or tokens_in > 0)`.
+- Updated `tests/tui/test_plan_panel_p0.py::TestBudgetVisibility` — removed 5s timer tests, added collapsed/zero-budget/no-timer-started tests.
+
+**A14 — ThinkingWidget `--reserved` 2s fallback:**
+- `_reserve_fallback_timer: object | None = None` added as class-level attr on `ThinkingWidget`.
+- `_do_hide()` now calls `self.set_timer(2.0, self._clear_reserve_fallback)` after `add_class("--reserved")` — removed the old immediate `clear_reserve()` call for `HermesApp`.
+- `_clear_reserve_fallback()` checks `has_class("--reserved")` before calling `clear_reserve()` — idempotent.
+- `clear_reserve()` cancels `_reserve_fallback_timer` with `.stop()` before removing class.
+
+**StatusBar unit test pattern (widget with read-only `size`/`app` properties):**
+
+Textual's `Widget.size` and `Widget.app` are read-only properties — `__new__` objects can't set them. Use a subclass + `PropertyMock`:
+
+```python
+class _BarHelper(StatusBar):
+    _pulse_t = 0.0
+    _pulse_tick = 0
+    _model_changed_at = 0.0
+
+helper = _BarHelper.__new__(_BarHelper)
+
+class _FakeSize:
+    def __init__(self, w): self.width = w
+
+size_prop = PropertyMock(return_value=_FakeSize(80))
+app_prop = PropertyMock(return_value=mock_app)
+with patch.object(_BarHelper, "size", size_prop, create=True):
+    with patch.object(_BarHelper, "app", app_prop, create=True):
+        result = StatusBar.render(helper)
+```
+
+**`types.SimpleNamespace` + bound method pattern (widget methods without reactive issues):**
+
+For widget methods that only use a subset of `self.*` with no DOM or reactive deps:
+
+```python
+import types
+from hermes_cli.tui.widgets.plan_panel import PlanPanel
+
+panel = types.SimpleNamespace()
+panel._collapsed = False
+panel.app = mock_app
+panel._refresh_budget_visibility = PlanPanel._refresh_budget_visibility.__get__(panel)
+# Same pattern works for ThinkingWidget._do_hide, clear_reserve, etc.
+```
+
+`PlanPanel._collapsed` is a reactive — setting it directly on `SimpleNamespace` bypasses the reactive setter entirely, which is correct for pure-logic unit tests. Do NOT use `PlanPanel.__new__` for this — `_collapsed` is a class-level reactive and setting it raises `ReactiveError`.

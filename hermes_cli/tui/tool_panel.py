@@ -453,8 +453,11 @@ class FooterPane(Widget):
     def _rebuild_action_buttons(self, summary: "ResultSummaryV4", actions_to_render: list) -> None:
         """B5: rebuild action row with clickable Button per action."""
         from rich.text import Text as RichText
+        action_row = getattr(self, "_action_row", None)
+        if action_row is None:
+            return
         try:
-            for btn in list(self._action_row.query(".--action-chip")):
+            for btn in list(action_row.query(".--action-chip")):
                 btn.remove()
         except Exception:
             pass
@@ -468,7 +471,7 @@ class FooterPane(Widget):
             btn = Button(label, classes="--action-chip", name=action.kind)
             buttons.append(btn)
         if buttons:
-            self._action_row.mount(*buttons)
+            action_row.mount(*buttons)
         self.add_class("has-actions")
 
     def on_button_pressed(self, event: "Button.Pressed") -> None:

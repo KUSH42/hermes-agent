@@ -1844,3 +1844,22 @@ def test_streaming_tool_block_complete_calls_flash_success_not_flash_complete():
     assert "flash_complete" not in src, (
         "StreamingToolBlock.complete still references flash_complete() — must be updated to flash_success()"
     )
+
+
+# ---------------------------------------------------------------------------
+# B4 — _DROP_ORDER is a plain list (no inspect.stack() shim)
+# ---------------------------------------------------------------------------
+
+def test_drop_order_is_plain_list():
+    """_DROP_ORDER must be a plain list, not a _DropOrder shim."""
+    from hermes_cli.tui.tool_blocks._header import _DROP_ORDER
+    assert type(_DROP_ORDER) is list
+
+
+def test_drop_order_real_order():
+    """_DROP_ORDER must match the canonical order."""
+    from hermes_cli.tui.tool_blocks._header import _DROP_ORDER
+    assert _DROP_ORDER == [
+        "linecount", "duration", "chip", "hero", "diff",
+        "stderrwarn", "remediation", "exit", "chevron", "flash",
+    ]

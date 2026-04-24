@@ -264,12 +264,14 @@ class HermesApp(App):
         Binding("ctrl+f", "open_history_search", "History search", show=False, priority=True),
         Binding("f1", "show_help", "Keyboard shortcuts", show=False),
         Binding("f2", "show_usage", "Usage stats", show=False),  # C5: usage overlay shortcut
+        Binding("f3", "show_commands", "Commands", show=False),
+        Binding("f4", "toggle_workspace", "Workspace", show=False),
         Binding("f8", "toggle_fps_hud", "FPS HUD", show=False),
         Binding("f12", "debug_hooks_snapshot", "Hooks debug", show=False),
         Binding("alt+up",   "jump_turn_prev", "Previous turn", show=False),
         Binding("alt+down", "jump_turn_next", "Next turn",     show=False),
-        Binding("ctrl+shift+a", "open_anim_config", "Animation config", show=False, priority=True),
-        Binding("ctrl+b", "open_anim_config", show=False, priority=True),
+        Binding("ctrl+shift+a", "open_anim_config", "Animation config", show=True, priority=True),
+        Binding("ctrl+b", "toggle_browse_mode", "Browse", show=True, priority=True),
         Binding("ctrl+shift+h", "open_sessions", show=False),
         Binding("ctrl+w+n", "new_worktree_session", show=False),
         Binding("o", "focus_output", "Output", show=False),
@@ -1904,6 +1906,13 @@ class HermesApp(App):
         except NoMatches:
             pass
 
+    def action_show_commands(self) -> None:
+        """F3: Show the slash commands reference overlay."""
+        try:
+            self.query_one(CommandsOverlay).show_overlay()
+        except NoMatches:
+            pass
+
     def action_show_help(self) -> None:
         """Toggle the keyboard-shortcut reference overlay."""
         try:
@@ -2330,6 +2339,9 @@ class HermesApp(App):
 
     async def action_toggle_minimap(self) -> None:
         await self._svc_browse.action_toggle_minimap()
+
+    def action_toggle_browse_mode(self) -> None:
+        self.browse_mode = not self.browse_mode
 
     def watch_browse_index(self, _value: int) -> None:
         self._svc_browse.on_browse_index(_value)

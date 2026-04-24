@@ -38,6 +38,10 @@ class PaneHost(Protocol):
     def on_pane_width_change(self, w: int) -> None: ...
 
 
+# Right pane content not yet implemented. Keep collapsed until filled.
+_RIGHT_PANE_HAS_CONTENT: bool = False
+
+
 class PaneManager:
     """
     Owns layout mode, pane-width math, host registry, and state persistence.
@@ -84,7 +88,9 @@ class PaneManager:
 
         self._mode: LayoutMode = LayoutMode.SINGLE
         self._left_collapsed: bool = self._start_collapsed_left
-        self._right_collapsed: bool = self._start_collapsed_right
+        self._right_collapsed: bool = (
+            self._start_collapsed_right if _RIGHT_PANE_HAS_CONTENT else True
+        )
         self._center_split: bool = bool(lv2.get("center_split_enabled", False))
         self._split_target: str | None = None
         self._focused_pane: PaneId = PaneId.CENTER

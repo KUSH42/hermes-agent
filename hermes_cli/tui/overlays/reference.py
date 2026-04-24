@@ -10,6 +10,7 @@ When R2's PaneManager lands, subclasses flip to pane targets; external API
 
 from __future__ import annotations
 
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
@@ -123,14 +124,23 @@ class HelpOverlay(ReferenceModal):
 
     BINDINGS = [
         Binding("escape", "dismiss", priority=True),
-        # priority=False: when #help-search Input has focus, q inserts normally.
-        # When the overlay itself has focus, q fires dismiss.
-        Binding("q", "dismiss", priority=False),
     ]
 
     def compose(self) -> ComposeResult:
         yield Input(placeholder="Filter commands...", id="help-search")
         yield Vertical(id="help-content")
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key != "q":
+            return
+        try:
+            search = self.query_one("#help-search", Input)
+            if self.screen.focused is search:
+                return
+        except NoMatches:
+            pass
+        self.action_dismiss()
+        event.prevent_default()
 
     def on_mount(self) -> None:
         self._refresh_commands_cache()
@@ -626,7 +636,6 @@ class WorkspaceOverlay(ReferenceModal):
     def compose(self) -> ComposeResult:
         with Horizontal(id="ws-tab-bar"):
             yield Button("[ Git Status ]", id="ws-tab-git", classes="--tab-active")
-            yield Button("[ Sessions ]", id="ws-tab-sessions")
         with ContentSwitcher(initial="ws-git-pane", id="ws-switcher"):
             with Vertical(id="ws-git-pane"):
                 yield Static("", id="ws-header")
@@ -634,8 +643,6 @@ class WorkspaceOverlay(ReferenceModal):
                 with ScrollableContainer(id="ws-scroll"):
                     yield Vertical(id="ws-files")
                     yield Vertical(id="ws-complexity")
-            from hermes_cli.tui.session_widgets import _SessionsTab
-            yield _SessionsTab(id="ws-sessions-pane")
         yield Static("[dim]w / esc to close[/dim]", id="ws-footer")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -643,10 +650,6 @@ class WorkspaceOverlay(ReferenceModal):
         if btn_id == "ws-tab-git":
             event.stop()
             self._switch_tab("ws-git-pane")
-        elif btn_id == "ws-tab-sessions":
-            event.stop()
-            self._switch_tab("ws-sessions-pane")
-            self._refresh_sessions_tab()
 
     def _switch_tab(self, pane_id: str) -> None:
         try:
@@ -657,28 +660,7 @@ class WorkspaceOverlay(ReferenceModal):
         # Update tab button active class
         try:
             git_btn = self.query_one("#ws-tab-git", Button)
-            sess_btn = self.query_one("#ws-tab-sessions", Button)
-            if pane_id == "ws-git-pane":
-                git_btn.add_class("--tab-active")
-                sess_btn.remove_class("--tab-active")
-            else:
-                sess_btn.add_class("--tab-active")
-                git_btn.remove_class("--tab-active")
-        except Exception:
-            pass
-
-    def _refresh_sessions_tab(self) -> None:
-        try:
-            from hermes_cli.tui.session_widgets import _SessionsTab
-            tab = self.query_one(_SessionsTab)
-            records = []
-            active_id = ""
-            try:
-                records = self.app._get_session_records()
-                active_id = self.app._get_active_session_id()
-            except Exception:
-                pass
-            tab.refresh_sessions(records, active_id)
+            git_btn.add_class("--tab-active")
         except Exception:
             pass
 

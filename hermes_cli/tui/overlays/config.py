@@ -12,6 +12,7 @@ Per spec §2.1 of 2026-04-22-tui-v2-R3-overlay-consolidation-spec.md:
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from textual.app import ComposeResult
@@ -26,6 +27,7 @@ from textual.widgets.option_list import Option
 from hermes_cli.tui.overlays._aliases import register_config_aliases
 from hermes_cli.tui.overlays._legacy import (
     FIXTURE_CODE,
+    _FIXTURE_BY_LANG,
     _cfg_read_raw_config,
     _cfg_save_config,
     _cfg_set_nested,
@@ -169,10 +171,7 @@ class ConfigOverlay(Widget):
         # ── Tab: reasoning ───────────────────────────────────────────────
         with Vertical(id="co-body-reasoning"):
             yield Static("  Reasoning", classes="co-section-header")
-            with Horizontal(id="co-rpo-levels", classes="co-row"):
-                for lvl in _REASONING_LEVELS:
-                    variant = "primary" if lvl == self._reasoning_current_level else "default"
-                    yield Button(lvl, id=f"co-rpo-{lvl}", variant=variant, classes="co-btn")
+            yield OptionList(id="co-rpo-list", classes="co-list")
             with Horizontal(id="co-rpo-toggles", classes="co-row"):
                 yield Checkbox("Show panel", id="co-rpo-show", value=False)
                 yield Checkbox("Rich mode",  id="co-rpo-rich", value=True)
@@ -279,6 +278,7 @@ class ConfigOverlay(Widget):
             "skin":      "#co-skin-list",
             "syntax":    "#co-syntax-list",
             "verbose":   "#co-verbose-list",
+            "reasoning": "#co-rpo-list",
         }
         sel = focus_map.get(self.active_tab)
         if not sel:
@@ -367,12 +367,16 @@ class ConfigOverlay(Widget):
         self._update_reasoning_highlights()
 
     def _update_reasoning_highlights(self) -> None:
-        for lvl in _REASONING_LEVELS:
-            try:
-                btn = self.query_one(f"#co-rpo-{lvl}", Button)
-                btn.variant = "primary" if lvl == self._reasoning_current_level else "default"
-            except NoMatches:
-                pass
+        try:
+            ol = self.query_one("#co-rpo-list", OptionList)
+            ol.clear_options()
+            for lvl in _REASONING_LEVELS:
+                marker = "● " if lvl == self._reasoning_current_level else "  "
+                ol.add_option(Option(f"{marker}{lvl}", id=f"co-rpo-opt-{lvl}"))
+            if self._reasoning_current_level in _REASONING_LEVELS:
+                ol.highlighted = _REASONING_LEVELS.index(self._reasoning_current_level)
+        except NoMatches:
+            pass
 
     # ── YOLO tab ──────────────────────────────────────────────────────────
 
@@ -482,7 +486,16 @@ class ConfigOverlay(Widget):
         except NoMatches:
             pass
         try:
-            self.query_one("#co-syntax-fixture", Static).update(FIXTURE_CODE)
+            active = getattr(self.app, "status_active_file", "") or ""
+            ext = Path(active).suffix.lstrip(".").lower() if active else ""
+            _EXT_TO_LANG = {
+                "py": "python", "js": "javascript", "ts": "typescript",
+                "go": "go", "rs": "rust", "rb": "ruby", "sh": "bash",
+                "java": "java", "cpp": "cpp", "c": "c", "md": "markdown",
+            }
+            lang = _EXT_TO_LANG.get(ext, "python")
+            fixture = _FIXTURE_BY_LANG.get(lang, FIXTURE_CODE)
+            self.query_one("#co-syntax-fixture", Static).update(fixture)
         except NoMatches:
             pass
 
@@ -505,6 +518,25 @@ class ConfigOverlay(Widget):
 
     # ── Event wiring ──────────────────────────────────────────────────────
 
+    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        """Preview skin on highlight WITHOUT committing to disk."""
+        if event.option_list.id != "co-skin-list":
+            return
+        opt_id = getattr(event.option, "id", None) or ""
+        if not opt_id.startswith("co-skin-opt-"):
+            return
+        name = opt_id[len("co-skin-opt-"):]
+        tm = getattr(self.app, "_theme_manager", None)
+        if tm is None:
+            return
+        if not hasattr(tm, "load_skin"):
+            return
+        try:
+            tm.load_skin(name)
+        except Exception:
+            pass
+        event.stop()
+
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
         opt_id = event.option_id or ""
@@ -516,17 +548,15 @@ class ConfigOverlay(Widget):
             self._confirm_skin(opt_id[len("co-skin-opt-"):])
         elif opt_id.startswith("co-syntax-opt-"):
             self._confirm_syntax(opt_id[len("co-syntax-opt-"):])
+        elif opt_id.startswith("co-rpo-opt-"):
+            lvl = opt_id[len("co-rpo-opt-"):]
+            if lvl in _REASONING_LEVELS:
+                self._apply_reasoning_level(lvl)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         bid = event.button.id or ""
-        if bid.startswith("co-rpo-") and bid not in ("co-rpo-show", "co-rpo-rich"):
-            level = bid[len("co-rpo-"):]
-            if level in _REASONING_LEVELS:
-                self._reasoning_current_level = level
-                self._update_reasoning_highlights()
-                self._inject_reasoning_command(level)
-        elif bid == "co-yolo-enable":
+        if bid == "co-yolo-enable":
             self._set_yolo(True)
         elif bid == "co-yolo-disable":
             self._set_yolo(False)
@@ -623,6 +653,11 @@ class ConfigOverlay(Widget):
             self.app._flash_hint(f"  Syntax → {value}", 2.0)  # type: ignore[attr-defined]
         except Exception:
             pass
+
+    def _apply_reasoning_level(self, level: str) -> None:
+        self._reasoning_current_level = level
+        self._update_reasoning_highlights()
+        self._inject_reasoning_command(level)
 
     def _inject_reasoning_command(self, level: str) -> None:
         try:

@@ -7047,34 +7047,12 @@ class HermesCLI:
         tui.call_from_thread(tui.open_tool_generation, idx, tool_name)
 
     def _on_tool_gen_args_delta(self, idx: int, tool_name: str, delta: str, accumulated: str) -> None:
-        """Route tool gen args delta to the correct ExecuteCodeBlock (if any)."""
+        """Route tool gen args delta through the service state machine. SM-HIGH-02."""
         tui = _hermes_app
         if tui is None:
             return
-        # SM-02: block is now owned by the service state machine; look it up there.
-        svc = getattr(tui, "_svc_tools", None)
-        view = svc._tool_views_by_gen_index.get(idx) if svc is not None else None
-        block = view.block if view is not None else None
-        if block is None:
-            return  # non-execute_code tool, or delta arrived with no registered block
-        tui.call_from_thread(block.feed_delta, delta)
-        # B4: update write_file streaming progress from accumulated bytes
-        if tool_name in ("write_file", "create_file", "str_replace_editor"):
-            try:
-                _written = len(accumulated.encode("utf-8", errors="replace"))
-                # Try to parse total_size from accumulated JSON if available
-                _total = 0
-                try:
-                    import json as _json
-                    _parsed = _json.loads(accumulated)
-                    if isinstance(_parsed, dict):
-                        _total = int(_parsed.get("total_size") or _parsed.get("bytes_written") or 0)
-                except Exception:
-                    pass
-                if hasattr(block, "update_progress"):
-                    tui.call_from_thread(block.update_progress, _written, _total)
-            except Exception:
-                pass
+        # SM-HIGH-02: delegate entirely to the service; do not read service internals.
+        tui.call_from_thread(tui.append_generation_args_delta, idx, tool_name, delta, accumulated)
 
     # ====================================================================
     # Tool progress callback (audio cues for voice mode)
@@ -7248,20 +7226,18 @@ class HermesCLI:
             pass
 
         if self.tool_progress_mode == "off":
-            # No preview will be mounted — close streaming block normally
-            if tui is not None and _was_streaming:
-                tui.call_from_thread(tui.close_streaming_tool_block, tool_call_id, _stream_duration, _is_tool_error, _summary)
-            # SM-05: always mark plan done regardless of display.tool_progress
+            # SM-HIGH-01: route terminal transition through state machine
             if tui is not None:
-                _dur_ms_off = 0
-                try:
-                    if _stream_duration.endswith("ms"):
-                        _dur_ms_off = int(float(_stream_duration[:-2]))
-                    elif _stream_duration.endswith("s"):
-                        _dur_ms_off = int(float(_stream_duration[:-1]) * 1000)
-                except Exception:
-                    pass
-                tui.call_from_thread(tui.mark_plan_done, tool_call_id, _is_tool_error, _dur_ms_off)
+                tui.call_from_thread(
+                    tui.complete_tool_call,
+                    tool_call_id,
+                    function_name,
+                    function_args if isinstance(function_args, dict) else {},
+                    function_result,
+                    is_error=_is_tool_error,
+                    summary=_summary,
+                    duration=_stream_duration,
+                )
             return
 
         _TOOL_PREFIX = "  ┊ "
@@ -7274,6 +7250,10 @@ class HermesCLI:
                     _strip_ansi(l).removeprefix("  ┊ ").removeprefix("  ┊   ")
                     for l in display_lines
                 ]
+            # SM-HIGH-01: pre-initialize all variables referenced in complete_tool_call
+            display_lines: list[str] = []
+            _result_lines: list[str] | None = None
+            header_stats = None
             # --- TUI path: collect lines, mount ToolBlock ---
             try:
                 from agent.display import extract_edit_diff, render_captured_diff_preview
@@ -7283,7 +7263,6 @@ class HermesCLI:
                     function_args=function_args,
                     snapshot=snapshot,
                 )
-                header_stats = None
                 if diff_text:
                     from hermes_cli.tui.tool_blocks import ToolHeaderStats
                     additions = 0
@@ -7312,13 +7291,8 @@ class HermesCLI:
                         plain = plain[1:]
 
                     if _was_streaming and function_name in _file_tools:
-                        # Merge diff into STB body: +/- counts appear in header,
-                        # ▸/▾ arrow expands the inline diff — no child block.
-                        tui.call_from_thread(
-                            tui.close_streaming_tool_block_with_diff,
-                            tool_call_id, _stream_duration, _is_tool_error,
-                            display_lines, header_stats, _summary,
-                        )
+                        # SM-HIGH-01: complete_tool_call will call close_streaming_tool_block_with_diff
+                        pass
                     else:
                         # Non-file or non-streaming: static child diff block.
                         if _was_streaming:
@@ -7338,6 +7312,9 @@ class HermesCLI:
                         )
             except Exception:
                 logger.debug("Edit diff preview failed for %s", function_name, exc_info=True)
+
+            # Snapshot diff lines before the verbose section may overwrite display_lines
+            _diff_display_lines = list(display_lines) if display_lines else []
 
             if self.tool_progress_mode == "verbose" and self._code_highlight_enabled:
                 try:
@@ -7427,12 +7404,9 @@ class HermesCLI:
                 except Exception:
                     logger.debug("%s highlight failed", function_name, exc_info=True)
 
-            # Close the streaming block only when no diff was merged into it and
-            # no diff child replaced it (i.e. tool produced no diff output).
+            # For SEARCH/WEB tools the result arrives as a single blob (no
+            # streaming callback), so compute result lines before closing.
             if _was_streaming and not _will_mount_preview:
-                # For SEARCH/WEB tools the result arrives as a single blob (no
-                # streaming callback), so feed lines into the body before close.
-                _result_lines: list[str] | None = None
                 try:
                     from hermes_cli.tui.tool_category import classify_tool as _classify, ToolCategory as _TC
                     _cat = _classify(function_name)
@@ -7456,18 +7430,21 @@ class HermesCLI:
                             pass
                 except Exception:
                     pass
-                tui.call_from_thread(tui.close_streaming_tool_block, tool_call_id, _stream_duration, _is_tool_error, _summary, _result_lines)
 
-            # --- PlanPanel: transition RUNNING → DONE/ERROR ---
-            _dur_ms_plan = 0
-            try:
-                if _stream_duration.endswith("ms"):
-                    _dur_ms_plan = int(float(_stream_duration[:-2]))
-                elif _stream_duration.endswith("s"):
-                    _dur_ms_plan = int(float(_stream_duration[:-1]) * 1000)
-            except Exception:
-                pass
-            tui.call_from_thread(tui.mark_plan_done, tool_call_id, _is_tool_error, _dur_ms_plan)
+            # SM-HIGH-01: single terminal transition through the state machine
+            tui.call_from_thread(
+                tui.complete_tool_call,
+                tool_call_id,
+                function_name,
+                function_args if isinstance(function_args, dict) else {},
+                function_result,
+                is_error=_is_tool_error,
+                summary=_summary,
+                diff_lines=_diff_display_lines if _diff_display_lines else None,
+                header_stats=header_stats,
+                result_lines=_result_lines,
+                duration=_stream_duration,
+            )
 
             # Workspace tracking — record writes for file-mutating tools
             _WRITE_TOOLS = frozenset({"patch", "write_file", "create_file", "edit_file", "str_replace_editor"})

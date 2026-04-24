@@ -88,6 +88,8 @@ class ToolRenderingService(AppService):
         # SM-01: unified state-machine indexes
         self._tool_views_by_id: "dict[str, ToolCallViewState]" = {}
         self._tool_views_by_gen_index: "dict[int, ToolCallViewState]" = {}
+        # SM-HIGH-02: buffered arg deltas keyed by gen_index
+        self._pending_gen_arg_deltas: "dict[int, list[tuple[str, str]]]" = {}
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -647,7 +649,68 @@ class ToolRenderingService(AppService):
         # Skill tools intentionally get no gen block — deferred to start_tool_call
 
         view.block = block
+        # SM-MED-01: capture panel back-reference from block
+        view.panel = getattr(block, "_tool_panel", None) if block is not None else None
         self._tool_views_by_gen_index[gen_index] = view
+
+        # SM-HIGH-02: drain any buffered arg deltas that arrived before the view
+        self._drain_gen_arg_deltas(gen_index, view)
+
+    def append_generation_args_delta(
+        self,
+        gen_index: int,
+        tool_name: str,
+        delta: str,
+        accumulated: str,
+    ) -> None:
+        """SM-HIGH-02: Apply or buffer a generation arg delta. Event-loop only.
+
+        If the view exists and has a block, applies the delta immediately.
+        Otherwise buffers (delta, accumulated) for drain when the view opens.
+        """
+        view = self._tool_views_by_gen_index.get(gen_index)
+        if view is not None and view.block is not None:
+            self._apply_gen_arg_delta(view.block, tool_name, delta, accumulated)
+        else:
+            self._pending_gen_arg_deltas.setdefault(gen_index, []).append((delta, accumulated))
+
+    def _apply_gen_arg_delta(
+        self,
+        block: "Any",
+        tool_name: str,
+        delta: str,
+        accumulated: str,
+    ) -> None:
+        """Apply one arg delta to a block. No-op if block has no feed_delta."""
+        if not hasattr(block, "feed_delta"):
+            return
+        try:
+            block.feed_delta(delta)
+        except Exception:
+            logger.debug("feed_delta failed for %s", tool_name, exc_info=True)
+        if tool_name in ("write_file", "create_file", "str_replace_editor"):
+            if hasattr(block, "update_progress"):
+                try:
+                    written = len(accumulated.encode("utf-8", errors="replace"))
+                    total = 0
+                    try:
+                        import json as _json
+                        parsed = _json.loads(accumulated)
+                        if isinstance(parsed, dict):
+                            total = int(parsed.get("total_size") or parsed.get("bytes_written") or 0)
+                    except Exception:
+                        pass
+                    block.update_progress(written, total)
+                except Exception:
+                    logger.debug("update_progress failed for %s", tool_name, exc_info=True)
+
+    def _drain_gen_arg_deltas(self, gen_index: int, view: "ToolCallViewState") -> None:
+        """SM-HIGH-02: Drain buffered deltas for gen_index into view.block."""
+        buffered = self._pending_gen_arg_deltas.pop(gen_index, None)
+        if not buffered or view.block is None:
+            return
+        for delta, accumulated in buffered:
+            self._apply_gen_arg_delta(view.block, view.tool_name, delta, accumulated)
 
     def start_tool_call(
         self,
@@ -737,8 +800,18 @@ class ToolRenderingService(AppService):
             )
             self._turn_tool_calls[tool_call_id] = rec
 
+            # SM-MED-01: populate view.panel from block back-ref now that ID is known
+            if view.panel is None and view.block is not None:
+                view.panel = getattr(view.block, "_tool_panel", None)
+            if view.panel is not None and hasattr(view.panel, "_plan_tool_call_id"):
+                view.panel._plan_tool_call_id = tool_call_id
+
             # Wire args (SM-03)
             self._wire_args(view, args_clean)
+
+            # SM-HIGH-02: discard any stale buffered deltas for the adopted gen slot
+            if view.gen_index is not None:
+                self._pending_gen_arg_deltas.pop(view.gen_index, None)
 
             # A1: increment open tool count and set phase (gen-start didn't do this)
             self._open_tool_count += 1
@@ -756,7 +829,8 @@ class ToolRenderingService(AppService):
                 label = get_display_name(tool_name)
                 self.open_streaming_tool_block(tool_call_id, label, tool_name=tool_name)
                 block = self.app._active_streaming_blocks.get(tool_call_id)
-                panel = None
+                # SM-MED-01: capture panel back-ref from block
+                panel = getattr(block, "_tool_panel", None) if block is not None else None
 
             cat = self._make_view_category(tool_name)
             view = ToolCallViewState(
@@ -865,12 +939,16 @@ class ToolRenderingService(AppService):
         diff_lines: "list[str] | None" = None,
         header_stats: "Any | None" = None,
         result_lines: "list[str] | None" = None,
+        duration: "str | None" = None,
     ) -> None:
         """SM-02: Complete a tool call. Idempotent on terminal states.
 
         Enters COMPLETING (transient), closes the streaming block, marks the
         PlanPanel done (SM-05: always, regardless of display.tool_progress),
         then exits to DONE or ERROR.
+
+        If `duration` is supplied, it takes precedence over the inferred value
+        from the block's start time (SM-HIGH-01: CLI passes its own timer).
         """
         view = self._tool_views_by_id.get(tool_call_id)
 
@@ -884,18 +962,21 @@ class ToolRenderingService(AppService):
             view.state = ToolCallState.COMPLETING
 
         # Compute duration string for UI display
-        duration = ""
         import time as _t
-        # Try to infer duration from _active_streaming_blocks block's start time
-        block = self.app._active_streaming_blocks.get(tool_call_id)
-        if block is not None:
-            started = getattr(block, "_stream_started_at", None)
-            if started is not None:
-                elapsed_ms = (_t.monotonic() - started) * 1000.0
-                if elapsed_ms >= 1000:
-                    duration = f"{elapsed_ms/1000:.1f}s"
-                else:
-                    duration = f"{elapsed_ms:.0f}ms"
+        if duration is not None:
+            # Caller supplied duration (e.g. CLI's _stream_start_times timer)
+            pass
+        else:
+            duration = ""
+            block = self.app._active_streaming_blocks.get(tool_call_id)
+            if block is not None:
+                started = getattr(block, "_stream_started_at", None)
+                if started is not None:
+                    elapsed_ms = (_t.monotonic() - started) * 1000.0
+                    if elapsed_ms >= 1000:
+                        duration = f"{elapsed_ms/1000:.1f}s"
+                    else:
+                        duration = f"{elapsed_ms:.0f}ms"
 
         # Close the streaming block
         if diff_lines is not None:

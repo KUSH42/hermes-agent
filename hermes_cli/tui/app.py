@@ -2270,6 +2270,10 @@ class HermesApp(App):
     def open_tool_generation(self, gen_index: int, tool_name: str) -> None:
         return self._svc_tools.open_tool_generation(gen_index, tool_name)
 
+    def append_generation_args_delta(self, gen_index: int, tool_name: str,
+                                     delta: str, accumulated: str) -> None:
+        return self._svc_tools.append_generation_args_delta(gen_index, tool_name, delta, accumulated)
+
     def start_tool_call(self, tool_call_id: str, tool_name: str, args: "Any") -> None:
         return self._svc_tools.start_tool_call(tool_call_id, tool_name, args)
 
@@ -2280,12 +2284,13 @@ class HermesApp(App):
                            raw_result: str, *, is_error: bool, summary: "Any | None",
                            diff_lines: "Any | None" = None,
                            header_stats: "Any | None" = None,
-                           result_lines: "Any | None" = None) -> None:
+                           result_lines: "Any | None" = None,
+                           duration: "str | None" = None) -> None:
         return self._svc_tools.complete_tool_call(
             tool_call_id, tool_name, args, raw_result,
             is_error=is_error, summary=summary,
             diff_lines=diff_lines, header_stats=header_stats,
-            result_lines=result_lines,
+            result_lines=result_lines, duration=duration,
         )
 
     def cancel_tool_call(self, tool_call_id: "str | None" = None,

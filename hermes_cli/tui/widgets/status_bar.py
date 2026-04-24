@@ -336,17 +336,6 @@ class StatusBar(PulseMixin, Widget):
     _tok_s_displayed: reactive[float] = reactive(0.0, repaint=True)
 
     def __getattr__(self, name: str) -> Any:
-        if name == "_get_idle_tips":
-            return lambda: [
-                "F1 help",
-                "/ commands",
-                "Alt+Up previous turn",
-                "Alt+Down next turn",
-                "Ctrl+F search history",
-                "F8 FPS HUD",
-                "o focus output",
-                "i focus input",
-            ]
         raise AttributeError(name)
 
     def compose(self) -> "ComposeResult":
@@ -589,24 +578,24 @@ class StatusBar(PulseMixin, Widget):
                 t.append(" \u00b7 ", style="dim")
                 t.append(ctx_label, style="dim")
         else:
-            # Full (>=60 cols): 10-cell bar \u00b7 ctx \u00b7 model \u00b7 session  (D6: dynamic info leads)
+            # Full (>=60 cols): model \u00b7 bar \u00b7 pct \u00b7 ctx \u00b7 session  (A11: model anchored left)
             if not model:
                 t.append("connecting\u2026", style="dim")
             else:
+                t.append(model, style=_model_style)  # A11/S1-C: model always first
                 if enabled:
                     filled  = min(int(progress * _BAR_WIDTH), _BAR_WIDTH)
                     bar_str = _BAR_FILLED * filled + _BAR_EMPTY * (_BAR_WIDTH - filled)
                     bar_color = StatusBar._compaction_color(progress, _vars)
+                    t.append(" \u00b7 ", style="dim")
                     t.append(bar_str, style=bar_color)
-                    t.append(" \u00b7 ", style="dim")
-                    if _pct_enabled and (progress > 0 or not _mockish(app)):
+                    if _pct_enabled:
                         pct_text = f"{min(100, max(0, int(round(progress * 100))))}%"
-                        t.append(pct_text, style="dim")
                         t.append(" \u00b7 ", style="dim")
+                        t.append(pct_text, style="dim")
                 if show_ctx_label:
-                    t.append(ctx_label, style="dim")
                     t.append(" \u00b7 ", style="dim")
-                t.append(model, style=_model_style)  # S1-C
+                    t.append(ctx_label, style="dim")
                 if session_label:
                     t.append(f" \u00b7 {session_label}", style="dim")
 
@@ -659,14 +648,7 @@ class StatusBar(PulseMixin, Widget):
         elif _status_err:
             state_t = Text(f" \u26a0 {_status_err}", style=f"bold {_err_color}")
         else:
-            # S1-E: suppress idle affordance text when HintBar is already flashing
-            if _hintbar_flashing:
-                state_t = Text("  ", style="dim")  # minimal spacer only
-            else:
-                k = self._get_key_color()
-                state_t = Text.from_markup(
-                    f" [bold {k}]F1[/] [dim]help[/dim]  \u00b7  [bold {k}]/[/][dim]commands[/dim]"
-                )
+            state_t = Text("  ", style="dim")  # S1-E / A8: key hints are HintBar's responsibility
 
         if dropped:
             state_t = Text(f" \u26a0 output truncated", style=_err_color) + state_t

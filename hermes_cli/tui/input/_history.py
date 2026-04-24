@@ -5,6 +5,27 @@ from hermes_cli.tui.io_boundary import safe_write_file
 from ._constants import _HISTORY_FILE, _MAX_HISTORY
 
 
+def _show_ghost_legend(widget: object) -> None:
+    """A12: show ghost legend on first suggestion; one-per-session."""
+    if getattr(widget, "_ghost_legend_shown", False):
+        return
+    try:
+        from hermes_cli.tui.widgets.input_legend_bar import InputLegendBar
+        widget._ghost_legend_shown = True  # type: ignore[attr-defined]
+        widget.screen.query_one(InputLegendBar).show_legend("ghost")  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+
+def _hide_ghost_legend(widget: object) -> None:
+    """A12: hide ghost legend when suggestion cleared."""
+    try:
+        from hermes_cli.tui.widgets.input_legend_bar import InputLegendBar
+        widget.screen.query_one(InputLegendBar).hide_legend()  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+
 class _HistoryMixin:
     """Mixin: persistent command history + Fish-style ghost-text suggestion."""
 
@@ -301,23 +322,30 @@ class _HistoryMixin:
             last_line = lines[-1]
             if not last_line or row != last_row or col != len(last_line):
                 self.suggestion = ""  # type: ignore[attr-defined]
+                _hide_ghost_legend(self)
                 return
             for entry in reversed(self._history):
                 entry_last = entry.split("\n")[-1] if "\n" in entry else entry
                 if entry_last.startswith(last_line) and entry_last != last_line:
                     self.suggestion = entry_last[len(last_line):]  # type: ignore[attr-defined]
+                    _show_ghost_legend(self)
                     return
             self.suggestion = ""  # type: ignore[attr-defined]
+            _hide_ghost_legend(self)
             return
 
         if not current:
             self.suggestion = ""  # type: ignore[attr-defined]
+            _hide_ghost_legend(self)
             return
         if row != 0 or col != len(current):
             self.suggestion = ""  # type: ignore[attr-defined]
+            _hide_ghost_legend(self)
             return
         for entry in reversed(self._history):
             if entry.startswith(current) and entry != current:
                 self.suggestion = entry[len(current):]  # type: ignore[attr-defined]
+                _show_ghost_legend(self)
                 return
         self.suggestion = ""  # type: ignore[attr-defined]
+        _hide_ghost_legend(self)

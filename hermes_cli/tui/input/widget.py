@@ -127,6 +127,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         self._path_debounce_timer: "object | None" = None
         self._draft_stash: str | None = None
         self._write_fail_warned: bool = False
+        self._ghost_legend_shown: bool = False  # A12: one-per-session gate
 
     # --- Error state reactive ---
     error_state: reactive[str | None] = reactive(None)

@@ -320,24 +320,21 @@ class TestErrorCountInChip(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestBudgetVisibility(unittest.TestCase):
-    """P0-5: _BudgetSection hidden during active turn, shown for 5s after."""
+    """P0-5 / A13: _BudgetSection gated on not-active + not-collapsed + non-zero budget."""
 
-    def _make_panel(self, collapsed: bool = False):
-        """Create a minimal PlanPanel-like object for unit testing budget visibility.
-
-        We avoid instantiating the real widget (requires Textual app context).
-        Instead we create a simple namespace that mimics the interface.
-        """
+    def _make_panel(self, collapsed: bool = False, cost_usd: float = 1.5, tokens_in: int = 1000):
+        """Create a minimal PlanPanel-like object for unit testing budget visibility."""
         import types
         from hermes_cli.tui.widgets.plan_panel import PlanPanel
 
         panel = types.SimpleNamespace()
         panel._collapsed = collapsed
-        panel._budget_hide_timer = None
         panel._active_hide_timer = None
-        # Bind PlanPanel methods to this namespace
+        app = MagicMock()
+        app.turn_cost_usd = cost_usd
+        app.turn_tokens_in = tokens_in
+        panel.app = app
         panel._refresh_budget_visibility = PlanPanel._refresh_budget_visibility.__get__(panel)
-        panel._hide_budget_after_turn = PlanPanel._hide_budget_after_turn.__get__(panel)
         return panel
 
     def test_refresh_budget_visibility_hides_during_active(self):
@@ -347,44 +344,36 @@ class TestBudgetVisibility(unittest.TestCase):
         panel._refresh_budget_visibility(has_active=True, calls=[])
         mock_budget.set_class.assert_called_with(False, "--visible")
 
-    def test_refresh_budget_visibility_cancels_timer_on_active(self):
-        panel = self._make_panel()
-        mock_timer = MagicMock()
-        panel._budget_hide_timer = mock_timer
+    def test_refresh_budget_visibility_hides_when_collapsed(self):
+        panel = self._make_panel(collapsed=True)
         mock_budget = MagicMock()
         panel.query_one = MagicMock(return_value=mock_budget)
-        panel._refresh_budget_visibility(has_active=True, calls=[])
-        mock_timer.stop.assert_called_once()
-        self.assertIsNone(panel._budget_hide_timer)
+        panel._refresh_budget_visibility(has_active=False, calls=[])
+        mock_budget.set_class.assert_called_with(False, "--visible")
 
     def test_refresh_budget_visibility_shows_after_turn(self):
-        panel = self._make_panel()
+        panel = self._make_panel(collapsed=False)
         mock_budget = MagicMock()
         panel.query_one = MagicMock(return_value=mock_budget)
-        panel.set_timer = MagicMock(return_value=MagicMock())
         panel._refresh_budget_visibility(has_active=False, calls=[])
-        # collapsed=False → should show
         mock_budget.set_class.assert_called_with(True, "--visible")
 
-    def test_refresh_budget_visibility_starts_5s_timer(self):
+    def test_refresh_budget_no_timer_started(self):
+        """A13: no 5s timer — budget visibility is synchronous gate only."""
         panel = self._make_panel()
         mock_budget = MagicMock()
         panel.query_one = MagicMock(return_value=mock_budget)
-        mock_timer = MagicMock()
-        panel.set_timer = MagicMock(return_value=mock_timer)
+        panel.set_timer = MagicMock()
         panel._refresh_budget_visibility(has_active=False, calls=[])
-        panel.set_timer.assert_called_once()
-        args = panel.set_timer.call_args
-        self.assertEqual(args[0][0], 5.0)
-        self.assertEqual(panel._budget_hide_timer, mock_timer)
+        panel.set_timer.assert_not_called()
 
-    def test_hide_budget_after_turn_hides_budget(self):
-        panel = self._make_panel()
+    def test_refresh_budget_hides_when_zero_budget(self):
+        """A13: zero-budget panels stay hidden even when expanded+idle."""
+        panel = self._make_panel(collapsed=False, cost_usd=0.0, tokens_in=0)
         mock_budget = MagicMock()
         panel.query_one = MagicMock(return_value=mock_budget)
-        panel._hide_budget_after_turn()
+        panel._refresh_budget_visibility(has_active=False, calls=[])
         mock_budget.set_class.assert_called_with(False, "--visible")
-        self.assertIsNone(panel._budget_hide_timer)
 
     def test_collapse_watcher_excludes_budget_section(self):
         """_on_collapse_changed must not toggle _BudgetSection visibility."""

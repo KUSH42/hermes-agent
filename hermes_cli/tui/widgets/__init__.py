@@ -698,7 +698,7 @@ class AssistantNameplate(Widget):
         self,
         name: str = "Hermes",
         effects_enabled: bool = True,
-        idle_effect: str = "shimmer",
+        idle_effect: str = "breathe",
         morph_speed: float = 1.0,
         glitch_enabled: bool = True,
         **kwargs: Any,
@@ -712,6 +712,7 @@ class AssistantNameplate(Widget):
         self._timer = None
         self._effects_enabled = effects_enabled
         self._idle_effect_name = idle_effect
+        self._cfg_idle_effect = idle_effect  # A6: alias for tests/config inspection
         self._morph_speed = morph_speed
         self._glitch_enabled = glitch_enabled
         self._idle_fx: "Any | None" = None

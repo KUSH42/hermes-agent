@@ -364,6 +364,7 @@ class SearchRenderer(BodyRenderer):
         """Build Rich Text with grammar path headers and hit/context distinction. R-Sr1/R-Sr2."""
         from rich.text import Text
         from rich.style import Style
+        from hermes_cli.tui.body_renderers._grammar import build_rule
 
         raw = self.payload.output_raw or ""
         query = self.cls_result.metadata.get("query") if self.cls_result.metadata else None
@@ -371,6 +372,13 @@ class SearchRenderer(BodyRenderer):
         colors = self.colors
 
         result = Text()
+
+        # R-P2: low-confidence disclosure header (is True guards against MagicMock attrs)
+        if getattr(self.cls_result, "_low_confidence_disclosed", False) is True:
+            kind_name = self.cls_result.kind.name.lower()
+            result.append_text(build_rule(f"detected: {kind_name} · low confidence", colors=colors))
+            result.append("\n")
+
         for i, (path, hits) in enumerate(groups):
             if i > 0:
                 # R-Sr5: rule separator between groups

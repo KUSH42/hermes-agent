@@ -322,7 +322,8 @@ class TestErrorCountInChip(unittest.TestCase):
 class TestBudgetVisibility(unittest.TestCase):
     """P0-5 / A13: _BudgetSection gated on not-active + not-collapsed + non-zero budget."""
 
-    def _make_panel(self, collapsed: bool = False, cost_usd: float = 1.5, tokens_in: int = 1000):
+    def _make_panel(self, collapsed: bool = False, cost_usd: float = 1.5, tokens_in: int = 1000,
+                    tokens_out: int = 0):
         """Create a minimal PlanPanel-like object for unit testing budget visibility."""
         import types
         from hermes_cli.tui.widgets.plan_panel import PlanPanel
@@ -333,6 +334,7 @@ class TestBudgetVisibility(unittest.TestCase):
         app = MagicMock()
         app.turn_cost_usd = cost_usd
         app.turn_tokens_in = tokens_in
+        app.turn_tokens_out = tokens_out
         panel.app = app
         panel._refresh_budget_visibility = PlanPanel._refresh_budget_visibility.__get__(panel)
         return panel
@@ -368,12 +370,20 @@ class TestBudgetVisibility(unittest.TestCase):
         panel.set_timer.assert_not_called()
 
     def test_refresh_budget_hides_when_zero_budget(self):
-        """A13: zero-budget panels stay hidden even when expanded+idle."""
-        panel = self._make_panel(collapsed=False, cost_usd=0.0, tokens_in=0)
+        """A13: zero-budget panels stay hidden even when expanded+idle (all three legs zero)."""
+        panel = self._make_panel(collapsed=False, cost_usd=0.0, tokens_in=0, tokens_out=0)
         mock_budget = MagicMock()
         panel.query_one = MagicMock(return_value=mock_budget)
         panel._refresh_budget_visibility(has_active=False, calls=[])
         mock_budget.set_class.assert_called_with(False, "--visible")
+
+    def test_refresh_budget_shows_when_output_tokens_nonzero(self):
+        """New tokens_out predicate: output-only turns remain visible in expanded+idle."""
+        panel = self._make_panel(collapsed=False, cost_usd=0.0, tokens_in=0, tokens_out=56)
+        mock_budget = MagicMock()
+        panel.query_one = MagicMock(return_value=mock_budget)
+        panel._refresh_budget_visibility(has_active=False, calls=[])
+        mock_budget.set_class.assert_called_with(True, "--visible")
 
     def test_collapse_watcher_excludes_budget_section(self):
         """_on_collapse_changed must not toggle _BudgetSection visibility."""

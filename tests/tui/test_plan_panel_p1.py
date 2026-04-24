@@ -445,7 +445,7 @@ class TestNextEntryClickable(unittest.TestCase):
 class TestChipSegments(unittest.TestCase):
     """P1-2: _PlanPanelHeader chip segments show/hide correctly."""
 
-    def _make_header_with_segs(self):
+    def _make_header_with_segs(self, tokens_in: int = 0, tokens_out: int = 0):
         """Create a header with mocked chip segments."""
         from hermes_cli.tui.widgets.plan_panel import _PlanPanelHeader, _ChipSegment
         h = _PlanPanelHeader.__new__(_PlanPanelHeader)
@@ -465,6 +465,9 @@ class TestChipSegments(unittest.TestCase):
             return MagicMock()
 
         h.query_one = MagicMock(side_effect=_query_one)
+        # Store token defaults so callers can pass them to update_header
+        h._test_tokens_in = tokens_in
+        h._test_tokens_out = tokens_out
         return h, segs
 
     def test_collapsed_true_shows_chip_title(self):
@@ -525,11 +528,24 @@ class TestChipSegments(unittest.TestCase):
         h.update_header(collapsed=True, running=0, pending=0, done=1, errors=0, cost_usd=0.15)
         self.assertTrue(segs["chip-cost"].display)
 
-    def test_chip_cost_hidden_when_zero(self):
-        """#chip-cost display=False when cost_usd == 0."""
-        h, segs = self._make_header_with_segs()
-        h.update_header(collapsed=True, running=0, pending=0, done=1, errors=0, cost_usd=0.0)
+    def test_chip_cost_hidden_when_zero_and_no_tokens(self):
+        """#chip-cost display=False when cost_usd==0 and no input/output tokens."""
+        h, segs = self._make_header_with_segs(tokens_in=0, tokens_out=0)
+        h.update_header(collapsed=True, running=0, pending=0, done=1, errors=0,
+                        cost_usd=0.0, tokens_in=0, tokens_out=0)
         self.assertFalse(segs["chip-cost"].display)
+
+    def test_chip_cost_shows_token_usage_when_cost_zero_but_tokens_non_zero(self):
+        """#chip-cost display=True and shows token usage when cost==0 but tokens non-zero."""
+        h, segs = self._make_header_with_segs(tokens_in=1234, tokens_out=56)
+        h.update_header(collapsed=True, running=0, pending=0, done=1, errors=0,
+                        cost_usd=0.0, tokens_in=1234, tokens_out=56)
+        self.assertTrue(segs["chip-cost"].display)
+        update_text = " ".join(
+            str(call[0][0]) for call in segs["chip-cost"].update.call_args_list
+        )
+        assert "↑" in update_text or "in" in update_text, \
+            "chip-cost should show token direction signal"
 
     def test_f9_badge_visible_in_both_modes(self):
         """#plan-f9-badge is visible in collapsed and expanded mode."""

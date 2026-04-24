@@ -307,7 +307,9 @@ HermesInput.--locked {
 HermesInput.--locked:focus {
     outline: tall $panel-lighten-1 40%;
 }
-HermesApp.density-compact InputLegendBar { display: none !important; }
+.density-compact InputLegendBar.--legend-ghost {
+    display: none;
+}
 
 #spinner-overlay {
     display: none;
@@ -1069,12 +1071,9 @@ SplitTargetStub {
 }
 
 
-/* S0-E: calm during streaming — bars dim to reduce peripheral competition */
-StatusBar.--streaming {
-    opacity: 0.55;
-}
+/* S0-E: calm during streaming — HintBar dims via supported color alpha (opacity unsupported in Textual 8.x) */
 HintBar.--streaming {
-    opacity: 0.55;
+    color: $text-muted 55%;
 }
 
 /* BodyFooter — sticky per-panel affordance footer */

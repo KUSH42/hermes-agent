@@ -243,8 +243,9 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             rows += max(1, (line_width + width - 1) // width)
         if not hasattr(self, "styles"):
             return
-        self.styles.max_height = 3
-        self.styles.height = max(1, min(3, rows or 1))
+        limit = max(1, int(getattr(self, "_input_height_override", 3) or 3))
+        self.styles.max_height = limit
+        self.styles.height = max(1, min(limit, rows or 1))
 
     # --- Property bridges (old API → TextArea API) ---
 

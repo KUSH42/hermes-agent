@@ -497,3 +497,46 @@ async def test_refresh_skin_is_subclass_safe():
         for b in blocks:
             b.refresh_skin()
         await pilot.pause()
+
+
+# ---------------------------------------------------------------------------
+# B11 — flash_error fires on error completion, flash_success on success
+# ---------------------------------------------------------------------------
+
+def _make_bare_streaming_block():
+    """Create a StreamingToolBlock bypassing __init__, with all internal attrs mocked."""
+    from unittest.mock import patch
+    block = StreamingToolBlock.__new__(StreamingToolBlock)
+    block._completed = False
+    block._follow_tail = True
+    block._render_timer = MagicMock()
+    block._spinner_timer = MagicMock()
+    block._duration_timer = MagicMock()
+    block._secondary_args_snapshot = None
+    block._total_received = 5
+    block._stream_started_at = None
+    block._detected_cwd = None
+    block._header = MagicMock()
+    block._tail = MagicMock()
+    block._body = MagicMock()
+    # Stub out methods that require full widget tree
+    block._flush_pending = MagicMock()
+    block._clear_microcopy_on_complete = MagicMock()
+    block._try_mount_media = MagicMock()
+    return block
+
+
+def test_flash_error_fires_on_error_completion():
+    """complete(is_error=True) must call flash_error, not flash_success."""
+    block = _make_bare_streaming_block()
+    block.complete(duration="1.0s", is_error=True)
+    block._header.flash_error.assert_called_once()
+    block._header.flash_success.assert_not_called()
+
+
+def test_flash_success_fires_on_success_completion():
+    """complete(is_error=False) must call flash_success, not flash_error."""
+    block = _make_bare_streaming_block()
+    block.complete(duration="1.0s", is_error=False)
+    block._header.flash_success.assert_called_once()
+    block._header.flash_error.assert_not_called()

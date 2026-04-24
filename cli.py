@@ -3499,10 +3499,9 @@ class HermesCLI:
                 with state_lock:
                     frame = latest_frame
                     latest_frame = None
-                if frame is None:
-                    with state_lock:
+                    if frame is None:
                         update_in_flight = False
-                    return
+                        return
                 widget.set_frame(frame)
 
         def _queue_frame(rich_text: Text) -> None:
@@ -3522,6 +3521,11 @@ class HermesCLI:
         _preflight = self._render_startup_banner_text(print_hero=True)
         _queue_frame(_preflight)
         _tte_start = time.monotonic()   # time imported at module level
+        try:
+            from textual.constants import MAX_FPS as _MAX_FPS
+        except Exception:
+            _MAX_FPS = 60
+        _frame_interval = 1.0 / _MAX_FPS
 
         try:
             for i, frame in enumerate(iter_frames(effect_name, plain_hero, params=params)):
@@ -3536,6 +3540,7 @@ class HermesCLI:
                 rich_frame.no_wrap = True
                 rich_frame.overflow = "ignore"
                 _queue_frame(rich_frame)
+                time.sleep(_frame_interval)
         except Exception as exc:
             logger.warning("TTE frame error: %s", exc, exc_info=True)
 

@@ -14,8 +14,8 @@ class ShellOutputRenderer(BodyRenderer):
     kind: ClassVar  # set at module level below
     supports_streaming: ClassVar[bool] = True
 
-    def __init__(self, payload: "ToolPayload", cls_result: "ClassificationResult") -> None:
-        super().__init__(payload, cls_result)
+    def __init__(self, payload: "ToolPayload", cls_result: "ClassificationResult", **kwargs) -> None:
+        super().__init__(payload, cls_result, **kwargs)
         self._log_widget: "CopyableRichLog | None" = None
 
     @classmethod
@@ -42,27 +42,6 @@ class ShellOutputRenderer(BodyRenderer):
             result.append("\n")
 
         return result
-
-    def build_widget(self):
-        """Create a CopyableRichLog, populate it, and store a ref for streaming."""
-        from hermes_cli.tui.widgets import CopyableRichLog
-        from rich.text import Text
-        from hermes_cli.tui.cwd_strip import strip_cwd
-
-        rl = CopyableRichLog(highlight=False, markup=False)
-        self._log_widget = rl
-
-        raw = self.payload.output_raw or ""
-        cleaned, cwd = strip_cwd(raw)
-
-        for line in cleaned.splitlines():
-            rl.write(Text.from_ansi(line))
-
-        if cwd is not None:
-            cwd_line = Text(f"cwd: {cwd}", style="dim")
-            rl.write(cwd_line)
-
-        return rl
 
     def refresh_incremental(self, chunk: str) -> None:
         """Append a new chunk to the live log widget."""

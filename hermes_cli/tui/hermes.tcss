@@ -66,6 +66,10 @@ $fps-hud-bg: #1a1a2e;
 $scrollbar: #5f87d7;
 $drawbraille-canvas-color: #00d7ff;
 $status-error-color: #ef5350;
+/* Body renderer visual grammar vars */
+$diff-add-bg: #0e2a16;
+$diff-del-bg: #2a0e0e;
+$info: #58A6FF;
 
 /* Screen is the actual DOM root — transparent widgets inherit from it, not from
  * HermesApp. Both must be set so every widget in the tree shows $app-bg. */
@@ -1062,3 +1066,13 @@ StatusBar.--streaming {
 HintBar.--streaming {
     opacity: 0.55;
 }
+
+/* BodyFooter — sticky per-panel affordance footer */
+BodyFooter {
+    dock: bottom;
+    height: 1;
+    color: $text-muted 70%;
+    padding: 0 1;
+}
+HermesApp.density-compact BodyFooter { display: none; }
+ToolPanel.--streaming BodyFooter { display: none; }

@@ -7,15 +7,31 @@ from typing import ClassVar, TYPE_CHECKING
 if TYPE_CHECKING:
     from hermes_cli.tui.tool_payload import ResultKind, ClassificationResult, ToolPayload
     from textual.widget import Widget
+    from hermes_cli.tui.body_renderers._grammar import SkinColors
 
 
 class BodyRenderer(ABC):
     kind: ClassVar["ResultKind"]
     supports_streaming: ClassVar[bool] = False  # only ShellOutputRenderer = True
 
-    def __init__(self, payload: "ToolPayload", cls_result: "ClassificationResult") -> None:
+    def __init__(
+        self,
+        payload: "ToolPayload",
+        cls_result: "ClassificationResult",
+        *,
+        app=None,
+    ) -> None:
         self.payload = payload
         self.cls_result = cls_result
+        self._app = app
+        self._colors: "SkinColors | None" = None
+
+    @property
+    def colors(self) -> "SkinColors":
+        if self._colors is None:
+            from hermes_cli.tui.body_renderers._grammar import SkinColors
+            self._colors = SkinColors.from_app(self._app) if self._app else SkinColors.default()
+        return self._colors
 
     @classmethod
     @abstractmethod

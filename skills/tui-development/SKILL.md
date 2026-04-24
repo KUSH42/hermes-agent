@@ -2502,6 +2502,48 @@ A-1/A-2/A-3/A-5/A-6/B-1/B-3/G-1 — 18 tests in `tests/tui/test_startup_banner_p
 
 ---
 
+### 2026-04-24 — DrawbrailleOverlay split + Phase 5 cleanup (commits 02efe64a–93c47af1, merged feat/textual-migration)
+
+Phases 0–5; 5 new files; 75 tests across 4 test files.
+
+**File structure after split:**
+- `hermes_cli/tui/_color_utils.py` — `_resolve_color`, `_hex_to_rgb`, `_expand_short_hex`, `_rich_to_hex`; no Textual dep; re-exported from `drawbraille_overlay` for backward compat
+- `hermes_cli/tui/anim_orchestrator.py` — `AnimOrchestrator` (plain class, no Textual dep); owns engine cache, carousel, SDF warmup, external trail; `DrawbrailleOverlay._orchestrator`
+- `hermes_cli/tui/drawbraille_renderer.py` — `DrawbrailleRenderer` (plain class, no Textual dep); frame→Rich Text, multi-color gradient, fade alpha; `DrawbrailleOverlay._renderer`
+- `hermes_cli/tui/widgets/anim_config_panel.py` — `AnimConfigPanel`, `AnimGalleryOverlay`, `_GalleryPreview`, `ANIMATION_KEYS`, `_PANEL_CONFIG_KEYS`, `_panel_updates`; re-exported from `drawbraille_overlay`
+- `hermes_cli/tui/drawbraille_overlay.py` — thin Widget shell; all module-level constants stay here (`_PRESETS`, `_POS_GRID`, `_ENGINE_META`, `_PHASE_CATEGORIES`, `_TOOL_SDF_LABELS`, `_RAIL_POSITIONS`)
+
+**Circular import solution:** `_color_utils.py` is the break. Both `drawbraille_overlay` and `drawbraille_renderer` import from it; neither imports from the other. `anim_orchestrator` and `drawbraille_renderer` use `from __future__ import annotations` + `TYPE_CHECKING`-only `DrawbrailleOverlayCfg` import to avoid runtime circular.
+
+**`AnimOrchestrator` — key contracts:**
+- `_sdf_permanently_failed` cleared via direct attr write in `_do_hide` (`self._orchestrator._sdf_permanently_failed = False`), NOT in `reset()` — prevents accidental SDF retry during mid-session `_stop_anim`
+- `reset()` clears engine/carousel/SDF cache but NOT `_sdf_permanently_failed`
+- `cancel_fade_out()` resets BOTH `_fade_state = "stable"` AND `_fade_alpha = 1.0`
+- `init_carousel(cfg)` called unconditionally from `show()` — handles carousel=True (build) and False (clear) internally
+- `on_phase_signal` is no-op for `event="token"`
+- `signal("thinking")` + ambient state: skip `on_phase_signal` — `transition_to_active()` owns CrossfadeEngine install for that path
+
+**`DrawbrailleRenderer` — key contracts:**
+- `resolve_colors()` called from `on_mount` and all `watch_color*` watchers
+- `render_frame()` returns `None` when fade-out steps reach 0 — caller (`_tick`) must call `_do_hide()` and return
+- Ambient dimming: `render_frame` applies `cfg.ambient_alpha` scalar to `_resolved_color` via `_hex_to_rgb` inline when `visibility_state == "ambient"` — no re-resolve via `_resolve_color` per frame
+
+**Phase 5 additions:**
+- **5A dead fields removed** from `DrawbrailleOverlayCfg` + `_cfg_from_mapping` + `DrawbrailleOverlay` reactive + `AnimConfigPanel`: `adaptive`, `adaptive_metric`, `ease_in`, `ease_out`
+- **5B `_ambient_allowed()`**: uses `self.position` reactive (not `_cfg.position`) — drag from rail position to custom suppresses ambient correctly. `_RAIL_POSITIONS = frozenset({"rail-right", "rail-left"})`.
+- **5C crossfade early-flight guard** in `on_phase_signal`: `progress < 0.5` → skip CrossfadeEngine install; update `_carousel_idx` AND `_carousel_key` to `next_key` so the completing crossfade lands on the right engine.
+
+**Re-export contract** — all of these must stay importable from `drawbraille_overlay`:
+`DrawbrailleOverlay`, `DrawbrailleOverlayCfg`, `_overlay_config`, `_resolve_color`, `AnimConfigPanel`, `AnimGalleryOverlay`, `ANIMATION_KEYS`, `_ENGINES`, `ANIMATION_LABELS`, `_PRESETS`, `_POS_GRID`, `_POS_TO_RC`, `_ENGINE_META`, `_PHASE_CATEGORIES`, `_TOOL_SDF_LABELS`, `_nearest_anchor`
+
+**Test files:**
+- `tests/tui/test_anim_orchestrator.py` — O-01–O-26 (26 pure unit)
+- `tests/tui/test_drawbraille_renderer.py` — R-01–R-21 (21 pure unit)
+- `tests/tui/test_anim_config_panel_split.py` — S-01–S-10 (import smoke)
+- `tests/tui/test_drawbraille_cleanup.py` — C-01–C-14 + extras (17 tests, Phase 5)
+
+---
+
 ### 2026-04-23 — Nameplate + ThinkingWidget Lifecycle (commits bfff7488 + 93867798, merged feat/textual-migration)
 
 C-1/C-2/C-3/C-4/C-5/C-6/D-1/D-2/D-3/D-4/D-5/D-6/D-7/E-2/E-3/F-2/G-1 — 29 tests in `tests/tui/test_nameplate_thinking.py`; 2 existing tests in `test_thinking_widget_v2.py` updated.

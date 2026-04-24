@@ -225,6 +225,7 @@ class AnimationClock:
     def __init__(self) -> None:
         self._tick: int = 0
         self._subscribers: dict[int, tuple[int, Callable[[], None]]] = {}
+        self._sub_names: dict[int, str] = {}
         self._next_id: int = 0
 
     def subscribe(self, divisor: int, callback: Callable[[], None]) -> _ClockSubscription:
@@ -239,10 +240,15 @@ class AnimationClock:
         sub_id = self._next_id
         self._next_id += 1
         self._subscribers[sub_id] = (divisor, callback)
+        try:
+            self._sub_names[sub_id] = getattr(callback, "__qualname__", repr(callback))
+        except Exception:
+            self._sub_names[sub_id] = repr(callback)
         return _ClockSubscription(self, sub_id)
 
     def unsubscribe(self, sub_id: int) -> None:
         self._subscribers.pop(sub_id, None)
+        self._sub_names.pop(sub_id, None)
 
     def tick(self) -> None:
         """15Hz interval callback — must be plain def, registered via set_interval(1/15, ...)."""
@@ -264,7 +270,11 @@ class AnimationClock:
         if _dt > 16 or n_subs > 50:
             try:
                 from hermes_cli.tui.app import _log_lag
-                detail = f" (slowest sub#{slowest_id}: {slowest_ms:.1f}ms)" if slowest_ms > 8 else ""
+                if slowest_ms > 8:
+                    slowest_name = self._sub_names.get(slowest_id, "?")
+                    detail = f" (slowest sub#{slowest_id} {slowest_name}: {slowest_ms:.1f}ms)"
+                else:
+                    detail = ""
                 _log_lag(f"anim_clock.tick took {_dt:.1f}ms ({n_subs} subs){detail}")
             except Exception:
                 pass

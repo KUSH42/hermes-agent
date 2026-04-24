@@ -206,13 +206,24 @@ def _resolve_log_width(log_widget: "Any") -> int:
 
 
 def _make_rule(log_widget: "Any") -> "Text":
-    """Return a dim rule sized to the log widget width, not the terminal width."""
+    """Return a dim rule sized to the log widget width, not the terminal width.
+
+    Caps the width at `app.size.width - 5` to account for CopyableBlock margin
+    (0 2 = 4) + OutputPanel scrollbar (1). Observed overflow: `scrollable_
+    content_region.width` can briefly report the pre-chrome width during
+    reflow, letting the rule spill under the scrollbar / outside the viewport.
+    """
     w = _resolve_log_width(log_widget)
     if w <= 0:
         try:
             w = log_widget.app.size.width
         except Exception:
             w = 80
+    try:
+        app_cap = max(log_widget.app.size.width - 5, 20)
+        w = min(w, app_cap)
+    except Exception:
+        pass
     return Text("─" * w, style="dim")
 
 

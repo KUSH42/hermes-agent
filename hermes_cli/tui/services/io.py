@@ -130,7 +130,8 @@ class IOService(AppService):
             if app.status_output_dropped:
                 app.status_output_dropped = False
         except asyncio.QueueFull:
-            logger.warning("Output queue full — dropped chunk (backpressure)")
+            from hermes_cli.tui.perf import _queue_probe
+            _queue_probe.record_drop()
             app.status_output_dropped = True
         except RuntimeError:
             pass

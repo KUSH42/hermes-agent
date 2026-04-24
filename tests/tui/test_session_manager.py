@@ -2,7 +2,7 @@
 
 Phase A — session_manager.py + OutputJSONLWriter ring-cap.
 
-22 tests:
+17 tests:
   1.  SessionRecord round-trip to_dict / from_dict
   2.  SessionRecord.from_dict tolerates missing optional fields
   3.  SessionIndex.read() on missing file returns defaults
@@ -16,15 +16,11 @@ Phase A — session_manager.py + OutputJSONLWriter ring-cap.
   11. SessionManager.new_id() returns 12-char hex string
   12. SessionManager.validate_socket_path() passes for normal path
   13. SessionManager.validate_socket_path() raises for overly long path
-  14. SessionManager.is_alive() returns False for PID 0
-  15. SessionManager.is_alive() returns False for dead PID
-  16. SessionManager._verify_cmdline() checks --worktree-session-id not --session-id
-  17. SessionManager.get_orphans() returns records with dead PIDs
-  18. SessionManager.kill_session() sends SIGTERM (mocked)
-  19. _NotifyListener.start() creates socket at path
-  20. _NotifyListener.stop() cleans up socket file
-  21. send_notification() returns True on success (mock socket)
-  22. send_notification() returns False on connection refused
+  14. SessionManager.kill_session() sends SIGTERM (mocked)
+  15. _NotifyListener.start() creates socket at path
+  16. _NotifyListener.stop() cleans up socket file
+  17. send_notification() returns True on success (mock socket)
+  18. send_notification() returns False on connection refused
 """
 
 from __future__ import annotations
@@ -241,66 +237,7 @@ def test_session_manager_validate_socket_path_too_long(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# 14. SessionManager.is_alive() returns False for PID 0
-# ---------------------------------------------------------------------------
-
-def test_session_manager_is_alive_pid_zero(tmp_session_dir: Path):
-    mgr = SessionManager(tmp_session_dir)
-    rec = _make_record(pid=0)
-    assert mgr.is_alive(rec) is False
-
-
-# ---------------------------------------------------------------------------
-# 15. SessionManager.is_alive() returns False for dead PID
-# ---------------------------------------------------------------------------
-
-def test_session_manager_is_alive_dead_pid(tmp_session_dir: Path):
-    mgr = SessionManager(tmp_session_dir)
-    # PID 99999999 almost certainly doesn't exist
-    rec = _make_record(pid=99999999)
-    assert mgr.is_alive(rec) is False
-
-
-# ---------------------------------------------------------------------------
-# 16. SessionManager._verify_cmdline() checks --worktree-session-id
-# ---------------------------------------------------------------------------
-
-def test_session_manager_verify_cmdline_correct_flag(tmp_session_dir: Path):
-    mgr = SessionManager(tmp_session_dir)
-    session_id = "abc123def456"
-    # Simulate cmdline that contains the correct flag
-    fake_cmdline = f"hermes --worktree-session-id {session_id} --headless"
-    with patch("platform.system", return_value="Linux"):
-        with patch("pathlib.Path.read_text", return_value=fake_cmdline.replace(" ", "\x00")):
-            result = mgr._verify_cmdline(12345, session_id)
-    assert result is True
-
-
-def test_session_manager_verify_cmdline_old_flag_rejected(tmp_session_dir: Path):
-    """Old --session-id flag must NOT match; only --worktree-session-id is valid."""
-    mgr = SessionManager(tmp_session_dir)
-    session_id = "abc123def456"
-    fake_cmdline = f"hermes --session-id {session_id}"
-    with patch("platform.system", return_value="Linux"):
-        with patch("pathlib.Path.read_text", return_value=fake_cmdline.replace(" ", "\x00")):
-            result = mgr._verify_cmdline(12345, session_id)
-    assert result is False
-
-
-# ---------------------------------------------------------------------------
-# 17. SessionManager.get_orphans() returns records with dead PIDs
-# ---------------------------------------------------------------------------
-
-def test_session_manager_get_orphans(tmp_session_dir: Path):
-    mgr = SessionManager(tmp_session_dir)
-    dead_rec = _make_record(id="dead000000", pid=99999999)
-    mgr.index.add_session(dead_rec)
-    orphans = mgr.get_orphans()
-    assert any(o.id == "dead000000" for o in orphans)
-
-
-# ---------------------------------------------------------------------------
-# 18. SessionManager.kill_session() sends SIGTERM (mocked)
+# 14. SessionManager.kill_session() sends SIGTERM (mocked)
 # ---------------------------------------------------------------------------
 
 def test_session_manager_kill_session_sends_sigterm(tmp_session_dir: Path):

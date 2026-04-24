@@ -3,16 +3,19 @@ from __future__ import annotations
 
 import fcntl
 import json
+import logging
 import os
 import platform
 import socket
-import subprocess
+import tempfile
 import threading
 import time
 import uuid
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Callable, Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -59,14 +62,22 @@ class SessionIndex:
     def write(self, data: dict) -> None:
         """Locked write — serializes concurrent session processes."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self._path, "a+") as f:  # allow-sync-io: flock-locked write on event loop — <0.1ms on local FS; NFS risk accepted; worker migration deferred to separate PR
-            fcntl.flock(f, fcntl.LOCK_EX)
+        with open(self._path, "a+") as lock_f:  # allow-sync-io: flock-locked write on event loop — <0.1ms on local FS; NFS risk accepted; worker migration deferred to separate PR
+            fcntl.flock(lock_f, fcntl.LOCK_EX)
             try:
-                f.seek(0)
-                f.truncate()
-                json.dump(data, f, indent=2)
+                fd, tmp_path = tempfile.mkstemp(dir=self._path.parent, suffix=".tmp")
+                try:
+                    with os.fdopen(fd, "w") as f:
+                        json.dump(data, f, indent=2)
+                    os.replace(tmp_path, str(self._path))
+                except Exception:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+                    raise
             finally:
-                fcntl.flock(f, fcntl.LOCK_UN)
+                fcntl.flock(lock_f, fcntl.LOCK_UN)
 
     def add_session(self, record: SessionRecord) -> None:
         data = self.read()
@@ -131,37 +142,6 @@ class SessionManager:
         d = self._session_dir / session_id
         d.mkdir(parents=True, exist_ok=True)
         return d
-
-    def is_alive(self, record: SessionRecord) -> bool:
-        """Return True if PID exists AND belongs to a Hermes session with this ID."""
-        try:
-            os.kill(record.pid, 0)
-        except (ProcessLookupError, PermissionError):
-            return False
-        # PID reuse guard
-        # allow-sync-io: dead code — get_orphans() has no external callers; _verify_cmdline is unreachable; revisit if get_orphans() is wired up
-        return self._verify_cmdline(record.pid, record.id)
-
-    def _verify_cmdline(self, pid: int, session_id: str) -> bool:
-        try:
-            if platform.system() == "Linux":
-                cmdline = Path(f"/proc/{pid}/cmdline").read_text().replace("\x00", " ")
-            else:
-                result = subprocess.run(  # allow-sync-io: dead code — get_orphans() has no external callers; _verify_cmdline is unreachable; revisit if get_orphans() is wired up
-                    ["ps", "-p", str(pid), "-o", "args="],
-                    capture_output=True, text=True, timeout=2
-                )
-                cmdline = result.stdout
-            return (
-                f"--worktree-session-id {session_id}" in cmdline
-                or f"--worktree-session-id={session_id}" in cmdline
-            )
-        except (OSError, subprocess.SubprocessError, FileNotFoundError):
-            return False
-
-    def get_orphans(self) -> list[SessionRecord]:
-        """Sessions whose PID is dead or belongs to a different process."""
-        return [r for r in self._index.get_sessions() if not self.is_alive(r)]
 
     def kill_session(self, record: SessionRecord, *, timeout: float = 2.0) -> None:
         """Send SIGTERM; escalate to SIGKILL after timeout."""
@@ -243,6 +223,7 @@ class _NotifyListener:
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._sock: Optional[socket.socket] = None
+        self._lock = threading.Lock()
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -257,11 +238,12 @@ class _NotifyListener:
 
     def stop(self) -> None:
         self._stop_event.set()
-        if self._sock:
-            try:
-                self._sock.close()
-            except OSError:
-                pass
+        with self._lock:
+            if self._sock:
+                try:
+                    self._sock.close()
+                except OSError:
+                    pass
 
     def _run(self) -> None:
         try:
@@ -269,7 +251,8 @@ class _NotifyListener:
             srv.bind(self._socket_path)
             srv.listen(4)
             srv.settimeout(1.0)
-            self._sock = srv
+            with self._lock:
+                self._sock = srv
             while not self._stop_event.is_set():
                 try:
                     conn, _ = srv.accept()
@@ -281,6 +264,8 @@ class _NotifyListener:
         except OSError:
             pass
         finally:
+            with self._lock:
+                self._sock = None
             try:
                 Path(self._socket_path).unlink(missing_ok=True)
             except OSError:
@@ -300,8 +285,13 @@ class _NotifyListener:
                     continue
                 try:
                     self._on_event(json.loads(line))
-                except (json.JSONDecodeError, Exception):
+                except json.JSONDecodeError:
                     pass
+                except Exception:
+                    logger.warning(
+                        "_NotifyListener._handle: on_event dispatch raised",
+                        exc_info=True,
+                    )
         except OSError:
             pass
         finally:

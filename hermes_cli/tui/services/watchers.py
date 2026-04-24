@@ -388,15 +388,22 @@ class WatchersService(AppService):
         except NoMatches:
             pass
         ov = self._get_interrupt_overlay()
-        if ov is not None:
+        if ov is None:
             if value is not None:
+                _log.warning("on_approval_state: InterruptOverlay not mounted — approval prompt cannot show")
+            return
+        if value is not None:
+            try:
                 ov.present(make_approval_payload(self.app, value), replace=True)
-                self.app._hide_completion_overlay_if_present()
-                self.app._dismiss_floating_panels()
-                self.app.call_after_refresh(ov.focus)
-            else:
-                ov.hide_if_kind(InterruptKind.APPROVAL)
-                self._post_interrupt_focus()
+            except Exception:
+                _log.exception("on_approval_state: make_approval_payload/present failed")
+                return
+            self.app._hide_completion_overlay_if_present()
+            self.app._dismiss_floating_panels()
+            self.app.call_after_refresh(ov.focus)
+        else:
+            ov.hide_if_kind(InterruptKind.APPROVAL)
+            self._post_interrupt_focus()
         self.app._svc_spinner.set_hint_phase(self.app._svc_spinner.compute_hint_phase())
 
     def on_highlighted_candidate(self, c: Any) -> None:

@@ -770,7 +770,7 @@ class AssistantNameplate(Widget):
         if idle_name != "none":
             self._idle_fx = make_stream_effect({"stream_effect": idle_name})
         self._init_decrypt()
-        self._timer = self.set_interval(1 / 20, self._advance)
+        self._timer = self.set_interval(1 / 30, self._advance)
         # A2: watch status_phase to pause/resume pulse
         try:
             self.watch(self.app, "status_phase", self._on_phase_change)
@@ -808,27 +808,27 @@ class AssistantNameplate(Widget):
             self._snap_to_idle()
         self._state = _NPState.MORPH_TO_ACTIVE
         self._init_morph(self._target_name, self._active_label)
-        self._set_timer_rate(20)
+        self._set_timer_rate(30)
 
     def transition_to_idle(self) -> None:
         if self._last_was_error:
             self._last_was_error = False
             self._state = _NPState.ERROR_FLASH
             self._error_frame = 0
-            self._set_timer_rate(20)
+            self._set_timer_rate(30)
             return
         if self._state == _NPState.MORPH_TO_ACTIVE:
             self._snap_to_active()
         self._state = _NPState.MORPH_TO_IDLE
         self._init_morph(self._active_label, self._target_name)
-        self._set_timer_rate(20)
+        self._set_timer_rate(30)
 
     def glitch(self) -> None:
         if self._state != _NPState.ACTIVE_IDLE or not self._glitch_enabled:
             return
         self._state = _NPState.GLITCH
         self._glitch_frame = 0
-        self._set_timer_rate(20)
+        self._set_timer_rate(30)
 
     def set_active_label(self, label: str) -> None:
         self._active_label = label
@@ -905,7 +905,7 @@ class AssistantNameplate(Widget):
                 all_locked = False
         if all_locked and self._frame:
             self._state = _NPState.IDLE
-            self._set_timer_rate(6)
+            self._set_timer_rate(30)
 
     def _tick_idle(self) -> None:
         if self._idle_fx is not None:
@@ -920,7 +920,7 @@ class AssistantNameplate(Widget):
                 return  # static nameplate in reduced-motion mode
         except Exception:
             pass
-        self._active_phase += 0.28  # was 0.18; ~1.8 s full cycle
+        self._active_phase += 0.11  # ~1.9 s full cycle @ 30 fps
 
     def _tick_morph(self) -> None:
         dst_style = self._active_style if self._state == _NPState.MORPH_TO_ACTIVE else Style.parse(self._idle_color_hex)
@@ -941,10 +941,10 @@ class AssistantNameplate(Widget):
             if self._state == _NPState.MORPH_TO_ACTIVE:
                 self._state = _NPState.ACTIVE_IDLE
                 self._active_phase = 0.0
-                self._set_timer_rate(12)
+                self._set_timer_rate(30)
             else:
                 self._state = _NPState.IDLE
-                self._set_timer_rate(6)
+                self._set_timer_rate(30)
 
     def _tick_glitch(self) -> None:
         self._glitch_frame += 1
@@ -966,7 +966,7 @@ class AssistantNameplate(Widget):
                 ch.style = self._active_style
             self._active_phase = 0.0  # C-4: reset so wave restarts cleanly from glitch
             self._state = _NPState.ACTIVE_IDLE
-            self._set_timer_rate(12)
+            self._set_timer_rate(30)
 
     def _tick_error_flash(self) -> None:
         self._error_frame += 1
@@ -974,14 +974,18 @@ class AssistantNameplate(Widget):
             # transition directly to MORPH_TO_IDLE without re-entering transition_to_idle
             self._state = _NPState.MORPH_TO_IDLE
             self._init_morph(self._active_label, self._target_name)
-            # timer stays at 20fps
+            # timer stays at 30fps
 
     # --- helpers ---
 
+    _DECRYPT_TICKS = 150  # 5s @ 30fps
+
     def _init_decrypt(self) -> None:
         self._frame = []
+        n = max(1, len(self._target_name))
+        step = self._DECRYPT_TICKS / max(1, n - 1)
         for i, ch in enumerate(self._target_name):
-            lock_at = 2 + i * 2 + _random.randint(-1, 1)
+            lock_at = int(round(i * step)) + _random.randint(-1, 1)
             self._frame.append(_NPChar(
                 target=ch,
                 current=_random.choice(_NP_POOL),
@@ -995,7 +999,7 @@ class AssistantNameplate(Widget):
         self._morph_src = src
         self._morph_dst = dst
         length = max(len(src), len(dst))
-        ticks_base = max(1, int(round(8 * self._morph_speed)))
+        ticks_base = max(1, int(round(150 * self._morph_speed)))
         self._frame = []
         self._morph_dissolve = []
         for i in range(length):
@@ -1048,7 +1052,7 @@ class AssistantNameplate(Widget):
                 # (re)start pulse if currently active state
                 if self._state == _NPState.ACTIVE_IDLE and self._timer is None:
                     self._active_phase = 0.0
-                    self._set_timer_rate(12)
+                    self._set_timer_rate(30)
             elif phase in (Phase.STREAMING, Phase.TOOL_EXEC):
                 self._pause_pulse()
             elif phase == Phase.IDLE:
@@ -1063,7 +1067,7 @@ class AssistantNameplate(Widget):
             return
         self._state = _NPState.IDLE
         if self._timer is None:
-            self._set_timer_rate(6)
+            self._set_timer_rate(30)
 
     def _on_error_set(self, **_) -> None:
         """A3-1: switch nameplate into error state."""

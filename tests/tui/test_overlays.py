@@ -217,8 +217,12 @@ async def test_approval_renders_question_and_choices():
 
 
 @pytest.mark.asyncio
-async def test_approval_timeout_auto_denies():
-    """ApprovalWidget timeout response is 'deny'."""
+async def test_approval_expired_deadline_stays_visible():
+    """APPROVAL overlay with expired deadline stays visible — no auto-dismiss (INTR-01).
+
+    Timeout is handled by the callback thread (state.expired poll), not the overlay timer.
+    The overlay remains until the user interacts or the callback clears approval_state.
+    """
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -234,8 +238,11 @@ async def test_approval_timeout_auto_denies():
         import asyncio
         await asyncio.sleep(1.2)
         await pilot.pause()
-        result = rq.get(timeout=2)
-        assert result == "deny"
+        # Overlay must still be visible — no auto-dismiss from countdown timer.
+        w = app.query_one(ApprovalWidget)
+        assert w.display, "APPROVAL overlay must stay visible; callback thread handles timeout"
+        # Queue must be empty — no auto-deny was put by the overlay.
+        assert rq.empty(), "APPROVAL overlay must not put anything on the queue on its own"
 
 
 @pytest.mark.asyncio
@@ -336,8 +343,11 @@ async def test_sudo_renders_prompt():
 
 
 @pytest.mark.asyncio
-async def test_sudo_timeout_resolves_none():
-    """SudoWidget timeout puts None on queue."""
+async def test_sudo_expired_deadline_stays_visible():
+    """SUDO overlay with expired deadline stays visible — no auto-dismiss (INTR-01).
+
+    Timeout is handled by the callback thread, not the overlay countdown timer.
+    """
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -352,8 +362,9 @@ async def test_sudo_timeout_resolves_none():
         import asyncio
         await asyncio.sleep(1.2)
         await pilot.pause()
-        result = rq.get(timeout=2)
-        assert result is None
+        w = app.query_one(SudoWidget)
+        assert w.display, "SUDO overlay must stay visible; callback thread handles timeout"
+        assert rq.empty(), "SUDO overlay must not auto-put on queue"
 
 
 # ---------------------------------------------------------------------------
@@ -405,8 +416,11 @@ async def test_secret_renders_prompt():
 
 
 @pytest.mark.asyncio
-async def test_secret_timeout_resolves_none():
-    """SecretWidget timeout puts None on queue."""
+async def test_secret_expired_deadline_stays_visible():
+    """SECRET overlay with expired deadline stays visible — no auto-dismiss (INTR-01).
+
+    Timeout is handled by the callback thread, not the overlay countdown timer.
+    """
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -421,5 +435,6 @@ async def test_secret_timeout_resolves_none():
         import asyncio
         await asyncio.sleep(1.2)
         await pilot.pause()
-        result = rq.get(timeout=2)
-        assert result is None
+        w = app.query_one(SecretWidget)
+        assert w.display, "SECRET overlay must stay visible; callback thread handles timeout"
+        assert rq.empty(), "SECRET overlay must not auto-put on queue"

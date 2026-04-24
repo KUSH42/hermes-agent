@@ -108,9 +108,6 @@ class DrawbrailleOverlayCfg:
     crossfade_speed: float = 0.04
     # v2 temporal trail
     trail_decay: float = 0.0
-    # v2 adaptive
-    adaptive: bool = False
-    adaptive_metric: str = "token_rate"
     # v2 particle engines
     particle_count: int = 60
     # v2 symmetry / structure
@@ -119,9 +116,6 @@ class DrawbrailleOverlayCfg:
     depth_cues: bool = True
     attractor_type: str = "lorenz"
     life_seed: str = "gosper"
-    # v2 easing
-    ease_in: str = "sine"
-    ease_out: str = "sine"
     # v2 carousel
     carousel: bool = False
     carousel_interval_s: float = 8.0
@@ -188,16 +182,12 @@ def _cfg_from_mapping(d: dict) -> DrawbrailleOverlayCfg:
         layer_b=str(d.get("layer_b", "")),
         crossfade_speed=float(d.get("crossfade_speed", 0.04)),
         trail_decay=float(d.get("trail_decay", 0.0)),
-        adaptive=bool(d.get("adaptive", False)),
-        adaptive_metric=str(d.get("adaptive_metric", "token_rate")),
         particle_count=int(d.get("particle_count", 60)),
         symmetry=int(d.get("symmetry", 6)),
         noise_scale=float(d.get("noise_scale", 1.0)),
         depth_cues=bool(d.get("depth_cues", True)),
         attractor_type=str(d.get("attractor_type", "lorenz")),
         life_seed=str(d.get("life_seed", "gosper")),
-        ease_in=str(d.get("ease_in", "sine")),
-        ease_out=str(d.get("ease_out", "sine")),
         carousel=bool(d.get("carousel", False)),
         carousel_interval_s=float(d.get("carousel_interval_s", 8.0)),
         sdf_warmup_engine=str(d.get("sdf_warmup_engine", "neural_pulse")),
@@ -425,6 +415,9 @@ _PRESETS: dict[str, dict] = {
 
 # ── Position grid helpers (D1/D2) ────────────────────────────────────────────
 
+# Positions where ambient idle is permitted (braille chars opaque — non-rail positions cover output)
+_RAIL_POSITIONS: frozenset[str] = frozenset({"rail-right", "rail-left"})
+
 _POS_GRID: list[list[str]] = [
     ["top-left",    "top-center",    "top-right"],
     ["mid-left",    "center",        "mid-right"],
@@ -509,7 +502,6 @@ class DrawbrailleOverlay(Static):
     hue_shift_speed: reactive[float] = reactive(0.3)
     # v2 reactive attrs
     trail_decay:     reactive[float] = reactive(0.0)
-    adaptive:        reactive[bool]  = reactive(False)
     particle_count:  reactive[int]   = reactive(60)
     symmetry:        reactive[int]   = reactive(6)
     blend_mode:      reactive[str]   = reactive("overlay")
@@ -968,6 +960,11 @@ class DrawbrailleOverlay(Static):
             resolved_color_b=self._renderer._resolved_color_b if gradient else None,
         )
 
+    def _ambient_allowed(self) -> bool:
+        """Ambient idle only makes sense at rail positions — non-rail positions cover output."""
+        cfg = self._cfg
+        return cfg is not None and cfg.ambient_enabled and self.position in _RAIL_POSITIONS
+
     # ── rendering ──────────────────────────────────────────────────────────
 
     def _update_heat_and_burst(self, params: AnimParams, cfg: "DrawbrailleOverlayCfg | None") -> bool:
@@ -995,7 +992,7 @@ class DrawbrailleOverlay(Static):
             if self._completion_burst_frames == 0:
                 # Burst just ended — set target and trigger fade/ambient
                 self._heat_target = 0.0
-                if cfg is not None and cfg.ambient_enabled:
+                if self._ambient_allowed():
                     self._transition_to_ambient()
                 elif cfg is not None and cfg.fade_out_frames > 0:
                     self._renderer.start_fade_out(cfg)

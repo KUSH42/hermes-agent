@@ -16,6 +16,21 @@ def _hex_to_rgb(h: str) -> tuple[int, int, int]:
     return r, g, b
 
 
+def _hue_rotate(hex_color: str, delta: float) -> str:
+    """Rotate the hue of '#rrggbb' by delta turns (0..1). Preserves lightness/saturation."""
+    import colorsys
+    try:
+        r, g, b = _hex_to_rgb(hex_color)
+    except Exception:
+        return hex_color
+    h, l, s = colorsys.rgb_to_hls(r / 255.0, g / 255.0, b / 255.0)
+    h = (h + delta) % 1.0
+    nr, ng, nb = colorsys.hls_to_rgb(h, l, s)
+    return "#{:02x}{:02x}{:02x}".format(
+        int(nr * 255), int(ng * 255), int(nb * 255)
+    )
+
+
 def _expand_short_hex(h: str) -> str:
     """#abc → #aabbcc."""
     h = h.lstrip("#")

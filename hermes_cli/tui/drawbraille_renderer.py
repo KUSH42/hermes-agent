@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from rich.style import Style
 from rich.text import Text
 
-from hermes_cli.tui._color_utils import _resolve_color, _hex_to_rgb
+from hermes_cli.tui._color_utils import _resolve_color, _hex_to_rgb, _hue_rotate
 from hermes_cli.tui.animation import lerp_color, lerp_color_rgb, _parse_rgb
 
 if TYPE_CHECKING:
@@ -131,17 +131,28 @@ class DrawbrailleRenderer:
             self._fade_state = "stable"
             render_color = self._resolved_color
 
+        # Hue-shift delta applied to single/gradient modes when enabled.
+        # Fade-out already baked into render_color; rotation preserves the dim.
+        hue_delta = (t * hue_shift_speed * 0.05) % 1.0 if hue_shift_speed > 0 else 0.0
+
         if self._resolved_multi_colors:
             return self._render_multi_color(frame_str, t, hue_shift_speed)
         elif gradient:
+            color_a = self._resolved_color
+            color_b = self._resolved_color_b
+            if hue_delta:
+                color_a = _hue_rotate(color_a, hue_delta)
+                color_b = _hue_rotate(color_b, hue_delta)
             rows = frame_str.split("\n")
             n = max(len(rows), 1)
             pieces: list[tuple[str, Style]] = []
             for i, row in enumerate(rows):
-                hex_c = lerp_color(self._resolved_color, self._resolved_color_b, i / n)
+                hex_c = lerp_color(color_a, color_b, i / n)
                 pieces.append((row + "\n", Style(color=hex_c)))
             return Text.assemble(*pieces)
         else:
+            if hue_delta:
+                render_color = _hue_rotate(render_color, hue_delta)
             style = Style(color=render_color)
             return Text(frame_str, style=style)
 

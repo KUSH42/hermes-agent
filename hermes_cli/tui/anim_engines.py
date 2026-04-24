@@ -1789,6 +1789,8 @@ class SierpinskiEngine(_BaseEngine):
         self._x: float = 0.5
         self._y: float = 0.5
         self._trail = TrailCanvas(decay=0.7, threshold=0.25)
+        self._w: int = 0
+        self._h: int = 0
 
     def on_signal(self, signal: str, value: float = 1.0) -> None:
         if signal == "complete":
@@ -1798,6 +1800,10 @@ class SierpinskiEngine(_BaseEngine):
 
     def next_frame(self, params: AnimParams) -> str:
         w, h = params.width, params.height
+        if self._w != w or self._h != h:
+            # Size changed — stale pixel coords pollute the canvas; reset trail.
+            self._trail._heat.clear()
+            self._w, self._h = w, h
         n_iters = 300 + int(params.heat * 400)
         x, y = self._x, self._y
         transforms = self._TRANSFORMS
@@ -1961,6 +1967,8 @@ class MatrixRainEngine(_BaseEngine):
 
     def _init_columns(self, params: AnimParams) -> None:
         w, h = _safe_dims(params)
+        # Size may have changed — clear stale trail pixels out of the old bounds.
+        self._trail._heat.clear()
         speed_factor = 1.0 + params.heat * 3.0
         n_cols = max(4, w // 6)
         if params.particle_count > 60:

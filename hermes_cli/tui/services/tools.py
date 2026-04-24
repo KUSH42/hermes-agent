@@ -42,6 +42,7 @@ class ToolRenderingService(AppService):
         self._turn_tool_calls: dict = {}
         self._agent_stack: list = []
         self._subagent_panels: dict = {}
+        self._open_tool_count: int = 0  # A1: tracks concurrent open tool blocks
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -280,6 +281,10 @@ class ToolRenderingService(AppService):
             self.app._active_streaming_blocks[tool_call_id] = block
             self.app._streaming_tool_count = len(self.app._active_streaming_blocks)
             self.app._active_tool_name = tool_name or ""
+            # A1: increment open tool count and set TOOL_EXEC phase
+            self._open_tool_count += 1
+            from hermes_cli.tui.agent_phase import Phase as _Phase
+            self.app.status_phase = _Phase.TOOL_EXEC
             try:
                 from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO
                 self.app.query_one(_DO).signal("tool")
@@ -327,6 +332,14 @@ class ToolRenderingService(AppService):
         if tool_call_id in self._agent_stack:
             self._agent_stack.remove(tool_call_id)
         self.app._active_tool_name = ""
+        # A1: decrement open tool count; revert phase when last tool closes
+        self._open_tool_count = max(0, self._open_tool_count - 1)
+        if self._open_tool_count == 0:
+            from hermes_cli.tui.agent_phase import Phase as _Phase
+            if getattr(self.app, "agent_running", False):
+                self.app.status_phase = _Phase.REASONING
+            else:
+                self.app.status_phase = _Phase.IDLE
         self.app._update_anim_hint()
         rec = self._turn_tool_calls.get(tool_call_id)
         if rec is not None:
@@ -371,6 +384,14 @@ class ToolRenderingService(AppService):
                 panel.set_result_summary_v4(summary)
         if tool_call_id in self._agent_stack:
             self._agent_stack.remove(tool_call_id)
+        # A1: decrement open tool count; revert phase when last tool closes
+        self._open_tool_count = max(0, self._open_tool_count - 1)
+        if self._open_tool_count == 0:
+            from hermes_cli.tui.agent_phase import Phase as _Phase
+            if getattr(self.app, "agent_running", False):
+                self.app.status_phase = _Phase.REASONING
+            else:
+                self.app.status_phase = _Phase.IDLE
         rec = self._turn_tool_calls.get(tool_call_id)
         if rec is not None:
             try:

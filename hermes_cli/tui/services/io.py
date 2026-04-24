@@ -64,6 +64,12 @@ class IOService(AppService):
                     if getattr(app, "status_compaction_progress", 0.0) > 0.0:
                         app.status_compaction_progress = 0.0
                     app.hooks.fire("on_streaming_end")
+                    # A1: revert to REASONING (or IDLE if turn already ended)
+                    from hermes_cli.tui.agent_phase import Phase as _Phase
+                    if getattr(app, "agent_running", False):
+                        app.status_phase = _Phase.REASONING
+                    else:
+                        app.status_phase = _Phase.IDLE
                 try:
                     panel = app.query_one(OutputPanel)
                     panel.flush_live()
@@ -74,6 +80,9 @@ class IOService(AppService):
                 continue
             if _first_chunk_in_turn:
                 _first_chunk_in_turn = False
+                # A1: mark STREAMING phase on first token
+                from hermes_cli.tui.agent_phase import Phase as _Phase
+                app.status_phase = _Phase.STREAMING
                 app.hooks.fire("on_streaming_start")
                 try:
                     app.query_one(ThinkingWidget).deactivate()

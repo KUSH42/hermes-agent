@@ -24,6 +24,7 @@ import re
 import threading
 
 from hermes_cli.tui._app_constants import KNOWN_SLASH_COMMANDS as _KNOWN_SLASH_COMMANDS
+from hermes_cli.tui.agent_phase import Phase as _Phase
 
 # File-touching tool names — used by watch_spinner_label to extract active file
 _FILE_TOOLS: frozenset[str] = frozenset({
@@ -393,6 +394,9 @@ class HermesApp(App):
 
     # S0-D/S0-E: True while assistant is actively streaming tokens
     status_streaming: reactive[bool] = reactive(False)
+
+    # A1: coarse phase within an agent turn — widgets subscribe via cross-widget watch()
+    status_phase: reactive[str] = reactive(_Phase.IDLE)
 
     # S0-A: verbose mode — show ctx_label in StatusBar alongside bar
     status_verbose: reactive[bool] = reactive(False)
@@ -1303,6 +1307,8 @@ class HermesApp(App):
         self._flash_hint(msg, 2.0)
 
     def watch_agent_running(self, value: bool) -> None:
+        # A1: coarse phase transition on turn start/end
+        self.status_phase = _Phase.REASONING if value else _Phase.IDLE
         self._drawbraille_show_hide(value)
         if value:
             # Signal thinking when agent starts
@@ -1525,6 +1531,7 @@ class HermesApp(App):
     def _lc_reset_turn_state(self) -> None:
         self._svc_tools._turn_tool_calls = {}
         self._svc_tools._agent_stack = []
+        self._svc_tools._open_tool_count = 0  # A1: reset concurrent tool count
         self._turn_start_monotonic = None
         self._current_turn_tool_count = 0
         self._turn_start_time = _time.monotonic()
@@ -2667,6 +2674,11 @@ class HermesApp(App):
 
     def watch_status_error(self, value: str) -> None:
         self._svc_watchers.on_status_error(value)
+
+    def watch_status_phase(self, old: str, new: str) -> None:
+        if old:
+            self.remove_class(f"--phase-{old}")
+        self.add_class(f"--phase-{new}")
 
     def _auto_clear_status_error(self, expected: str) -> None:  # DEPRECATED
         self._svc_watchers.auto_clear_status_error(expected)

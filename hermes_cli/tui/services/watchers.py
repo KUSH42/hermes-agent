@@ -20,6 +20,7 @@ class WatchersService(AppService):
 
     def __init__(self, app: "HermesApp") -> None:
         super().__init__(app)
+        self._phase_before_error: str = ""  # A1: phase saved before ERROR overlay
 
     # ------------------------------------------------------------------
     # Input change watchers
@@ -427,9 +428,16 @@ class WatchersService(AppService):
         except NoMatches:
             pass
         self.app._set_hint_phase(self.app._compute_hint_phase())
+        # A1: ERROR phase is orthogonal — save/restore previous phase
+        from hermes_cli.tui.agent_phase import Phase as _Phase
         if value:
+            if getattr(self.app, "status_phase", _Phase.IDLE) != _Phase.ERROR:
+                self._phase_before_error = getattr(self.app, "status_phase", _Phase.IDLE)
+            self.app.status_phase = _Phase.ERROR
             self.app.hooks.fire("on_error_set", error=value)
         else:
+            self.app.status_phase = self._phase_before_error or _Phase.IDLE
+            self._phase_before_error = ""
             self.app.hooks.fire("on_error_clear")
         # E-1: propagate error text to HermesInput error_state
         try:

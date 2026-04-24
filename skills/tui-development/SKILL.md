@@ -1290,6 +1290,40 @@ if 0 < w < 100: return ThinkingMode.COMPACT
 
 ---
 
+### 2026-04-24 — Audit 1 Error Prominence (commit f688ba5f, merged feat/textual-migration)
+
+A3/A7 — 20 tests in `tests/tui/test_audit1_error_prominence.py`.
+
+**A3-1 — Nameplate error freeze:**
+- `AssistantNameplate` registers `on_error_set`/`on_error_clear` lifecycle hooks in `on_mount` (try/except guard; `unregister_owner(self)` in `on_unmount`).
+- `_on_error_set(**_)`: `_pulse_stop()` → `remove_class("--active", "--idle")` → `add_class("--error")` → `refresh()`.
+- `_on_error_clear(**_)`: `remove_class("--error")` → `_activate_idle_phase()`.
+- `_activate_idle_phase()`: sets `_state = _NPState.IDLE`, calls `_set_timer_rate(6)` only if `_timer is None`.
+- `_error_color_hex` read from `css_vars.get("status-error-color", "#ef5350")` in `on_mount` try block; fallback `"#ef5350"` in `__init__`.
+- CSS: `AssistantNameplate.--error { color: $status-error-color; }` — static red, no animation.
+
+**A3-2 — HintBar auto-route on error:**
+- In `WatchersService.on_status_error`, after `inp.error_state` line: flash `⚠ {value}` with `priority=10, duration=9999` (persistent); cancel `"hint-bar"` on clear.
+
+**A3-3 — StatusBar error left-anchor:**
+- At top of `StatusBar.render()` (before browse check): if `status_error` non-empty, return `⚠ {error[:40]}  {model}` immediately — all other segments bypassed.
+
+**A7-0 — Named compaction constants:**
+- Module-level in `status_bar.py`: `_COMPACT_COLOR_MID=0.50`, `_COMPACT_COLOR_WARN=0.85`, `_COMPACT_COLOR_CRIT=0.91`, `_COMPACT_BADGE_CRIT=0.95`. Replace bare literals in `_compaction_color()`.
+- Runtime config reads: `_compact_warn = float(_display_cfg.get("compact_warn_threshold", _COMPACT_COLOR_WARN))`, `_compact_crit = float(_display_cfg.get("compact_badge_threshold", _COMPACT_BADGE_CRIT))` in `render()`.
+
+**A7-1 — One-shot warn flash:**
+- `WatchersService.__init__`: `self._compact_warn_flashed: bool = False`.
+- `on_status_compaction_progress`: reads `_warn`/`_crit` from `app.config`. Fires `feedback.flash("hint-bar", f"Context {int(_warn*100)}% full — /compact available", duration=8.0, priority=5)` once per climb. Resets `_compact_warn_flashed = False` when drops below `_warn`. Old `_flash_hint` + `_compaction_warned` references removed.
+
+**A7-2 — `[!]` critical badge:**
+- In `StatusBar.render()`, `width >= 60` + `if enabled:` branch, BEFORE bar construction: `if progress >= _compact_crit: t.append("[!] ", style="bold red blink")`.
+
+**Key gotchas:**
+- Hooks registration in nameplate `on_mount` must be outside the `if not self._effects_enabled: return` guard — error handling is independent of effects.
+- `_activate_idle_phase` only restarts timer when `_timer is None` — avoids double-timer if already running.
+- `WatchersService.on_status_compaction_progress` uses `getattr(self.app, "config", {})` (not `self.app.config` directly) — safe for test contexts where app is a mock without `config` attr.
+
 ### 2026-04-24 — Audit 1 Quick Wins (commit 827e6036, merged feat/textual-migration)
 
 A6/A8/A10/A11/A12/A13/A14/A15 — 23 tests in `tests/tui/test_audit1_quick_wins.py`.

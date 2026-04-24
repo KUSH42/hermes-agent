@@ -1,7 +1,7 @@
 """Tool category taxonomy, ToolSpec registry, and icon resolution.
 
 Phase 1 of the Tool Panel v4 architecture.  Additive on v2 — all existing
-public symbols (ToolCategory, CategoryDefaults, classify_tool, _TOOL_CATEGORY)
+public symbols (ToolCategory, CategoryDefaults, classify_tool)
 are preserved with unchanged semantics.
 """
 
@@ -484,37 +484,6 @@ def _install_seed_specs() -> None:
 
 
 _install_seed_specs()
-
-
-# ---------------------------------------------------------------------------
-# Deprecated static dict — kept for legacy imports (v4 §8.3)
-# ---------------------------------------------------------------------------
-
-# DEPRECATED: use classify_tool() or spec_for() instead of direct dict access.
-_TOOL_CATEGORY: dict[str, ToolCategory] = {
-    "read_file":          ToolCategory.FILE,
-    "write_file":         ToolCategory.FILE,
-    "create_file":        ToolCategory.FILE,
-    "edit_file":          ToolCategory.FILE,
-    "str_replace_editor": ToolCategory.FILE,
-    "patch":              ToolCategory.FILE,
-    "view":               ToolCategory.FILE,
-    "terminal":           ToolCategory.SHELL,
-    "bash":               ToolCategory.SHELL,
-    "execute_code":       ToolCategory.CODE,
-    "web_search":         ToolCategory.SEARCH,
-    "search_files":       ToolCategory.SEARCH,
-    "grep":               ToolCategory.SEARCH,
-    "glob":               ToolCategory.SEARCH,
-    "web_extract":        ToolCategory.WEB,
-    "fetch":              ToolCategory.WEB,
-    "http":               ToolCategory.WEB,
-    "think":              ToolCategory.AGENT,
-    "plan":               ToolCategory.AGENT,
-    "delegate":           ToolCategory.AGENT,
-    "vision":             ToolCategory.VISION,
-    "vision_analyze":     ToolCategory.VISION,
-}
 
 
 # ---------------------------------------------------------------------------

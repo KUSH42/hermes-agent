@@ -269,6 +269,7 @@ _LabelLine   { height: 1;   width: 1fr; }
     _substate: str | None = None          # STARTED / WORKING / LONG_WAIT / ABOUT_TO_STREAM
     _activate_time: float | None = None
     _current_mode: ThinkingMode | None = None
+    _reserve_fallback_timer: object | None = None  # A14: 2s safety clear for --reserved
 
     # Config cache (loaded once at first activate)
     _cfg_loaded: bool = False
@@ -485,14 +486,25 @@ _LabelLine   { height: 1;   width: 1fr; }
                 pass
             self._label_line = None
 
-        # D-4: hold 1-row reserve until first live-line token clears it
+        # D-4: hold 1-row reserve until first live-line token clears it (A14: 2s fallback)
         self._substate = "--reserved"
         self.add_class("--reserved")
-        if self.app.__class__.__name__ == "HermesApp":
+        self._reserve_fallback_timer = self.set_timer(2.0, self._clear_reserve_fallback)
+
+    def _clear_reserve_fallback(self) -> None:
+        """A14: safety clear if no prose chunk fires within 2s of deactivate."""
+        self._reserve_fallback_timer = None
+        if self.has_class("--reserved"):
             self.clear_reserve()
 
     def clear_reserve(self) -> None:
         """Called by output system on first streamed chunk to collapse the held row (D-4)."""
+        if self._reserve_fallback_timer is not None:
+            try:
+                self._reserve_fallback_timer.stop()
+            except Exception:
+                pass
+            self._reserve_fallback_timer = None
         if self._substate == "--reserved":
             self.remove_class("--reserved")
             self._substate = None

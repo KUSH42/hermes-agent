@@ -535,7 +535,6 @@ class PlanPanel(Vertical):
     """
 
     _collapsed: reactive[bool] = reactive(True)
-    _budget_hide_timer: Any = None
     _active_hide_timer: Any = None
 
     def compose(self) -> ComposeResult:
@@ -691,28 +690,17 @@ class PlanPanel(Vertical):
             pass
 
     def _refresh_budget_visibility(self, has_active: bool, calls: list) -> None:
+        # A13: show budget when idle+expanded+non-zero; no timer race
+        app = self.app
+        cost_usd = getattr(app, "turn_cost_usd", 0.0)
+        tokens_in = getattr(app, "turn_tokens_in", 0)
+        budget_non_zero = cost_usd > 0 or tokens_in > 0
+        show = (
+            not has_active
+            and not self._collapsed
+            and budget_non_zero
+        )
         try:
-            budget = self.query_one(_BudgetSection)
-        except (NoMatches, Exception):
-            return
-        if has_active:
-            # Hide during active turn; cancel any pending show-timer
-            if self._budget_hide_timer is not None:
-                try:
-                    self._budget_hide_timer.stop()
-                except Exception:
-                    pass
-                self._budget_hide_timer = None
-            budget.set_class(False, "--visible")
-        else:
-            # Show for 5s after turn ends, then hide
-            budget.set_class(not self._collapsed, "--visible")
-            if self._budget_hide_timer is None:
-                self._budget_hide_timer = self.set_timer(5.0, self._hide_budget_after_turn)
-
-    def _hide_budget_after_turn(self) -> None:
-        self._budget_hide_timer = None
-        try:
-            self.query_one(_BudgetSection).set_class(False, "--visible")
+            self.query_one(_BudgetSection).set_class(show, "--visible")
         except (NoMatches, Exception):
             pass

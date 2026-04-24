@@ -221,6 +221,22 @@ class CopyableRichLog(RichLog, can_focus=False):
         """Plain text for clipboard — no ANSI, no markup."""
         return "\n".join(self._plain_lines)
 
+    @staticmethod
+    def _filter_non_copyable(text: "Text") -> str:
+        """Return plain text with non-copyable spans removed."""
+        result: list[str] = []
+        prev_end = 0
+        for span in text._spans:  # type: ignore[attr-defined]
+            if span.start > prev_end:
+                result.append(text.plain[prev_end:span.start])
+            meta = getattr(span.style, "meta", None) or {}
+            if meta.get("copyable", True) is not False:
+                result.append(text.plain[span.start:span.end])
+            prev_end = max(prev_end, span.end)
+        if prev_end < len(text.plain):
+            result.append(text.plain[prev_end:])
+        return "".join(result)
+
     def clear(self) -> "CopyableRichLog":
         self._plain_lines.clear()
         self._line_links.clear()

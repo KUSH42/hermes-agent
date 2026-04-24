@@ -1064,6 +1064,25 @@ Quick facts for TUI work:
 
 ## Changelog
 
+### 2026-04-24 — DiffRenderer overhaul (branch feat/render-diff-overhaul)
+
+R-D1/R-D2/R-D3/R-D4/R-D5 — 26 tests in `tests/tui/test_render_diff_overhaul.py`.
+
+**DiffRenderer (`body_renderers/diff.py`):**
+- `build_widget()` now returns `_DiffContainer(*children)` and uses `_HunkHeader(Vertical, can_focus=True)` for collapsed hunks after the first one when `total_lines > 40 or hunk_count > 3` and `tui.diff.auto_collapse` is enabled.
+- `_word_diff()` now tokenizes with `_TOK = re.compile(r"\s+|\w+|[^\w\s]")` and preserves exact whitespace/punctuation round-trips (`Text.plain` stays byte-for-byte equal to the input strings).
+- Per-file headers now use `_parse_file_stats()` + `build_path_header(path, right_meta=Text(...), colors=colors)` so diff files render `▸ path  · +A -B` with success/error-colored counts.
+- Diff lines now route through `_line_text()` + `_render_word_diff_pair()` and use `SkinColors.diff_add_bg` / `diff_del_bg` instead of hardcoded dark hex backgrounds.
+
+**Shared grammar / copy path:**
+- `body_renderers/_grammar.py` gained `diff_gutter(sign, *, colors)` returning a fixed-width 2-char non-copyable gutter span (`meta={"copyable": False}`), and `build_path_header()` now accepts `right_meta: str | Text` so callers can preserve per-span coloring.
+- `widgets/renderers.py` gained `CopyableRichLog._filter_non_copyable(text)` for stripping non-copyable spans from copied plain text; diff gutter tests call this directly.
+
+**Key gotchas:**
+- `_HunkHeader` must assign `_summary` and `_body` in `__init__`, not just in `compose()`, because tests toggle it directly before mount.
+- `_DiffContainer` uses `@on(_HunkHeader.DiffHunkExpanded)` — define `_HunkHeader` before `_DiffContainer` or the decorator will fail at class body evaluation time.
+- Avoid tracking `docs/project-memory.md` from this branch if the main worktree already has it as an untracked local file; merging a tracked version over that path will fail with an untracked-overwrite error.
+
 ### 2026-04-24 — SearchRenderer + VirtualSearchList overhaul (commit c1454a88, branch feat/render-search-overhaul)
 
 R-Sr1/Sr2/Sr3/Sr4/Sr5 — 32 tests in `tests/tui/test_render_search_overhaul.py`.

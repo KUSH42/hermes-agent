@@ -3,6 +3,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from rich.style import Style
+from rich.text import Text
+
 # ---------------------------------------------------------------------------
 # Glyphs
 # ---------------------------------------------------------------------------
@@ -101,11 +104,13 @@ class SkinColors:
 # Header / gutter / rule builders
 # ---------------------------------------------------------------------------
 
-def build_path_header(path: str, *, right_meta: str = "", colors: "SkinColors | None" = None) -> "object":
+def build_path_header(
+    path: str,
+    *,
+    right_meta: "str | Text" = "",
+    colors: "SkinColors | None" = None,
+) -> "object":
     """Render '▸ path/to/file.py  · N' with accent ▸, bold path, dim meta."""
-    from rich.text import Text
-    from rich.style import Style
-
     d = SkinColors.default()
     accent = colors.accent if colors else d.accent
     muted  = colors.muted  if colors else d.muted
@@ -115,15 +120,15 @@ def build_path_header(path: str, *, right_meta: str = "", colors: "SkinColors | 
     t.append(path, style=Style(bold=True))
     if right_meta:
         t.append(f"  {glyph('·')} ", style=Style(color=muted))
-        t.append(right_meta, style=Style(color=muted))
+        if isinstance(right_meta, str):
+            t.append(right_meta, style=Style(color=muted))
+        else:
+            t.append_text(right_meta)
     return t
 
 
 def build_gutter_line_num(line_num: int, *, colors: "SkinColors | None" = None) -> "object":
     """Render `    42 │ ` right-padded to 6 chars + gutter glyph."""
-    from rich.text import Text
-    from rich.style import Style
-
     muted = colors.muted if colors else SkinColors.default().muted
 
     t = Text()
@@ -134,9 +139,6 @@ def build_gutter_line_num(line_num: int, *, colors: "SkinColors | None" = None) 
 
 def build_rule(label: str = "", *, colors: "SkinColors | None" = None) -> "object":
     """Render '── label ──' as a dim horizontal rule; empty label → just '──'."""
-    from rich.text import Text
-    from rich.style import Style
-
     muted = colors.muted if colors else SkinColors.default().muted
 
     t = Text(style=Style(color=muted))
@@ -157,6 +159,16 @@ def truncation_footer(
     """'── 47 lines hidden · expand ──' — single wording, dim muted."""
     label = f"{hidden_n} {unit} hidden {glyph('·')} {action}"
     return build_rule(label, colors=colors)
+
+
+def diff_gutter(sign: str, *, colors: SkinColors) -> Text:
+    """Return a fixed-width non-copyable diff gutter."""
+    if sign not in ("+", "-", " "):
+        raise ValueError(f"diff_gutter: sign must be '+', '-', or ' ', got {sign!r}")
+    color = {"+": colors.success, "-": colors.error, " ": colors.muted}[sign]
+    t = Text()
+    t.append(sign + " ", style=Style(color=color, meta={"copyable": False}))
+    return t
 
 
 # ---------------------------------------------------------------------------
@@ -190,9 +202,6 @@ BodyFooter {
         self.refresh()
 
     def render(self) -> "object":
-        from rich.text import Text
-        from rich.style import Style
-
         colors = self._colors if self._colors is not None else SkinColors.default()
         sep = glyph("·")
         t = Text()

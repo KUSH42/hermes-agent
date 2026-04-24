@@ -62,6 +62,7 @@ $chevron-error: #E06C75;
 $fps-hud-bg: #1a1a2e;
 $scrollbar: #5f87d7;
 $drawbraille-canvas-color: #00d7ff;
+$status-error-color: #ef5350;
 
 /* Screen is the actual DOM root — transparent widgets inherit from it, not from
  * HermesApp. Both must be set so every widget in the tree shows $app-bg. */
@@ -913,6 +914,10 @@ AssistantNameplate {
     width: 1fr;
     padding: 0 1;
     background: transparent;
+}
+
+AssistantNameplate.--error {
+    color: $status-error-color;
 }
 
 /* MinSizeBackdrop — full-screen dim shown when terminal is too small */

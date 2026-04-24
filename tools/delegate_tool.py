@@ -159,9 +159,9 @@ def _build_child_progress_callback(task_index: int, parent_agent, task_count: in
         # tool.started — display and batch for parent relay
         if spinner:
             short = (preview[:35] + "...") if preview and len(preview) > 35 else (preview or "")
-            from agent.display import get_tool_emoji
-            emoji = get_tool_emoji(tool_name or "")
-            line = f" {prefix}├─ {emoji} {tool_name}"
+            from agent.display import get_tool_icon
+            icon = get_tool_icon(tool_name or "")
+            line = f" {prefix}├─ {icon} {tool_name}"
             if short:
                 line += f"  \"{short}\""
             try:

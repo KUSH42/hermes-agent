@@ -41,9 +41,26 @@ colors:
   session_label: "#DAA520"        # Session label
   session_border: "#8B8682"       # Session ID dim color
 
+  # TitledRule / PlainRule gradient tones (CLI + TUI)
+  rule_start: "#555555"           # Gradient bright end
+  rule_end: "#2A2A2A"             # Gradient dim end (should match app-bg)
+
+  # Prompt_toolkit status bar (ANSI mode only — TUI uses component_vars)
+  statusbar_bg: "#1a1a2e"         # Status bar background
+
+  # Context bar / TUI indicators
+  error_color: "#E06C75"          # Critical indicator
+  warning_color: "#FFA726"        # Warning indicator
+  caution_color: "#FFBF00"        # Caution indicator
+
 # ── Spinner ─────────────────────────────────────────────────────────────────
 # Customize the animated spinner shown during API calls and tool execution.
 spinner:
+  # TUI prompt spinner animation style.
+  # Options: dots|bounce|grow|arrows|star|moon|pulse|clock|none
+  # Omit or leave empty to use the display.spinner_style config value.
+  style: dots
+
   # Faces shown while waiting for the API response
   waiting_faces:
     - "(｡◕‿◕｡)"
@@ -87,3 +104,170 @@ branding:
 #   "│" (box drawing light vertical)
 #   "┃" (box drawing heavy vertical)
 tool_prefix: "┊"
+
+# ── Tool Icons ──────────────────────────────────────────────────────────────
+# Per-tool glyph overrides. Nerd font glyphs preferred.
+# tool_icons:
+#   terminal: ""
+#   web_search: ""
+#   read_file: ""
+
+# ── Banner Art ──────────────────────────────────────────────────────────────
+# Rich-markup ASCII art. Lines must be padded to equal length with spaces
+# before the closing [/] tag. Use |2- YAML block scalar for complex art.
+# banner_logo: |
+#   [bold #FFD700]MY LOGO[/]
+# banner_hero: |
+#   [bold #FFD700]  /\  [/]
+#   [bold #FFBF00] /  \ [/]
+
+# ── Stream Effect ───────────────────────────────────────────────────────────
+# Token reveal animation for streaming output in the TUI.
+# Skin-level value overrides display.terminal.stream_effect in config.yaml.
+#
+# Shorthand (effect name only):
+#   stream_effect: cascade
+#
+# Full config (override any tuning key):
+# stream_effect:
+#   enabled: cascade        # Effect name — see VALID_EFFECTS below
+#   cascade_ticks: 2        # cascade: ticks of delay per char index (wave speed)
+#   morph_steps: 10         # glitch_morph: total countdown steps before reveal
+#   zalgo_marks: 5          # zalgo: max combining diacritics per char
+#   fade_frames: 8          # cosmic: ticks from ghost→real char
+#   scramble_frames: 12     # nier/decrypt: scramble duration in ticks
+#   settle_frames: 6        # glow_settle: ticks to settle from accent→text color
+#   length: 16              # gradient_tail: gradient window width in chars
+#   period: 0.75            # breathe: pulse period in seconds
+#
+# Available effects:
+#   none          — plain text (default)
+#   flash         — latest token highlighted in accent color
+#   gradient_tail — text→accent gradient on last N chars
+#   glow_settle   — tokens glow accent on arrival, settle to text color
+#   decrypt       — words scramble then resolve char-by-char
+#   shimmer       — bright wave sweeps across text
+#   breathe       — text pulses between text and accent color
+#   glitch_morph  — each char descends through symbol ladder: _ → symbol → \ → # → real
+#   cascade       — left-to-right wave: _ → \ → # → real char, index-delayed
+#   nier          — Katakana scramble then snap-reveal (NieR:Automata style)
+#   zalgo         — stacked combining diacritics that decay per tick
+#   cosmic        — ghost glyph (·•✦⋆) materialises into real char
+
+# ── Syntax Highlighting ─────────────────────────────────────────────────────
+# Named color scheme applied to fenced code blocks, inline code, and tool
+# output highlights. The scheme controls the Pygments token → color mapping
+# used by the Rich renderer.
+#
+# Built-in options:
+#   hermes        — default Hermes palette (warm amber/gold truecolor)
+#   monokai       — Wimer Hazenberg's Monokai (pink/green/yellow)
+#   dracula       — Zeno Rocha's Dracula (purple/pink/green)
+#   one-dark      — Atom One Dark / One Dark Pro
+#   github-dark   — GitHub Primer dark theme
+#   nord          — Arctic Ice Studio Nord (cool blues)
+#   catppuccin    — Catppuccin Mocha (pastel)
+#   tokyo-night   — enkia/tokyo-night-vscode-theme
+#   gruvbox       — morhetz/gruvbox (warm retro)
+#   solarized-dark — Ethan Schoonover's Solarized dark
+syntax_scheme: monokai
+
+# Optional per-token overrides on top of the named scheme.
+# Token names: keyword, keyword_type, name, name_builtin, name_class,
+#   name_function, name_function_magic, name_decorator, name_exception,
+#   comment, string, string_doc, string_escape, string_regex, number,
+#   operator, operator_word, error, diff_deleted, diff_inserted
+# syntax:
+#   keyword: "bold #FF79C6"
+#   comment: "italic #6272A4"
+
+# ── Diff Renderer Colors ────────────────────────────────────────────────────
+# Background/foreground colors for git diff display. All *_bg/*_fg values
+# MUST be 6-digit hex (#RRGGBB). Style keys accept Rich style strings.
+# diff:
+#   deletion_bg: "#781414"
+#   addition_bg: "#145a14"
+#   deletion_fg: "#ffffff"
+#   addition_fg: "#ffffff"
+#   intra_del_bg: "#9b1c1c"
+#   intra_add_bg: "#166534"
+#   intra_del_fg: "#ff8080"
+#   intra_add_fg: "#80ff80"
+#   line_number: "dim"
+#   hunk_header: "bold cyan"
+#   filename: "bold bright_white"
+#   file_path_fg: "#B4A0FF"        # inline diff only
+#   hunk_fg: "#787882"             # inline diff only
+#   context_fg: "#969696"          # inline diff only
+
+# ── Markdown Rendering Styles ───────────────────────────────────────────────
+# Rich style strings for rendered markdown elements.
+# markdown:
+#   link: "#58A6FF underline"
+#   code_span: "bright_white"
+#   heading_1: "bold bright_white"
+#   heading_2: "bold white"
+#   heading_3: "bold"
+#   heading_4_6: "bold dim"
+#   blockquote: "dim"
+#   blockquote_marker: "▌"         # Unicode character, not a style
+#   hr: "dim"
+#   task_checked: "bold #4caf50"
+#   task_unchecked: "dim"
+#   strike: "strike"
+#   image_alt: "dim"
+#   bullets: ["•", "◦", "▸", "·"] # List of bullet characters
+#   ol_numeral: "dim"
+
+# ── Extended UI Colors ──────────────────────────────────────────────────────
+# ui_ext:
+#   context_bar_normal: "#5f87d7"
+#   context_bar_warn: "#ffa726"
+#   context_bar_crit: "#ef5350"
+#   tool_error_prefix: "red"
+#   tool_disabled: "red"
+#   tool_lazy: "yellow"
+#   menu_cursor: ["fg_green", "bold"]
+#   menu_highlight: ["fg_green"]
+#   table_header: "bold"
+#   table_col_accent: "bold cyan"
+#   table_col_dim: "dim"
+#   panel_border: "cyan"
+
+# ── TUI Component Variables ─────────────────────────────────────────────────
+# Textual CSS variable overrides for the TUI mode. These inject into
+# hermes.tcss via ThemeManager. Omitted keys use defaults from
+# theme_manager.py COMPONENT_VAR_DEFAULTS.
+#
+# The key variable: rule-bg-color MUST match app-bg so rules fade to background.
+# component_vars:
+#   app-bg: "#1E1E1E"
+#   cursor-color: "#FFF8DC"
+#   cursor-selection-bg: "#3A5A8C"
+#   cursor-placeholder: "#555555"
+#   ghost-text-color: "#555555"
+#   chevron-base: "#FFF8DC"
+#   chevron-file: "#FFBF00"
+#   chevron-stream: "#6EA8D4"
+#   chevron-shell: "#A8D46E"
+#   chevron-done: "#4CAF50"
+#   chevron-error: "#E06C75"
+#   fuzzy-match-color: "#FFD866"
+#   status-running-color: "#FFBF00"
+#   status-error-color: "#ef5350"
+#   status-warn-color: "#FFA726"
+#   status-context-color: "#5f87d7"
+#   running-indicator-hi-color: "#FFA726"
+#   user-echo-bullet-color: "#FFBF00"
+#   completion-empty-bg: "#2A2A2A"
+#   rule-dim-color: "#888888"
+#   rule-bg-color: "#1E1E1E"
+#   rule-accent-color: "#FFD700"
+#   rule-accent-dim-color: "#CC9920"
+#   primary-darken-3: "#4a7aaa"
+#   fps-hud-bg: "#1a1a2e"
+#   drawille-canvas-color: "#00d7ff"   # braille animation overlay base color
+#                                      # (overridden per-frame when multi_color
+#                                      #  or gradient mode is active)
+#   scrollbar: "#5f87d7"               # Textual scrollbar thumb color
+#   brand-glyph-color: "#FFD700"       # Agent glyph / logo accent in TUI chrome

@@ -100,6 +100,7 @@ from agent.display import (
     get_cute_tool_message as _get_cute_tool_message_impl,
     _detect_tool_failure,
     get_tool_emoji as _get_tool_emoji,
+    get_tool_display_tier as _get_tool_display_tier,
 )
 from agent.trajectory import (
     convert_scratchpad_to_think, has_incomplete_scratchpad,
@@ -496,7 +497,10 @@ class AIAgent:
         step_callback: callable = None,
         stream_delta_callback: callable = None,
         tool_gen_callback: callable = None,
+        tool_gen_args_delta_callback: callable = None,
         status_callback: callable = None,
+        tool_batch_callback: callable = None,
+        usage_callback: callable = None,
         max_tokens: int = None,
         reasoning_config: Dict[str, Any] = None,
         prefill_messages: List[Dict[str, Any]] = None,
@@ -629,8 +633,10 @@ class AIAgent:
         self.stream_delta_callback = stream_delta_callback
         self.status_callback = status_callback
         self.tool_gen_callback = tool_gen_callback
+        self.tool_gen_args_delta_callback = tool_gen_args_delta_callback
+        self.tool_batch_callback = tool_batch_callback
+        self.usage_callback = usage_callback
 
-        
         # Tool execution state — allows _vprint during tool execution
         # even when stream consumers are registered (no tokens streaming then)
         self._executing_tools = False
@@ -4334,7 +4340,7 @@ class AIAgent:
             except Exception:
                 pass
 
-    def _fire_tool_gen_started(self, tool_name: str) -> None:
+    def _fire_tool_gen_started(self, idx: int, tool_name: str) -> None:
         """Notify display layer that the model is generating tool call arguments.
 
         Fires once per tool name when the streaming response begins producing
@@ -4345,7 +4351,21 @@ class AIAgent:
         cb = self.tool_gen_callback
         if cb is not None:
             try:
-                cb(tool_name)
+                cb(idx, tool_name)
+            except Exception:
+                pass
+
+    def _fire_tool_gen_args_delta(self, idx: int, tool_name: str, delta: str, accumulated: str) -> None:
+        """Notify display layer of a partial tool-call argument chunk.
+
+        Fires once per streaming delta while tool-call arguments are being generated.
+        idx is the tool-call slot index (1:1 with _fire_tool_gen_started's ordering).
+        Callback errors are swallowed so a TUI bug can't kill the agent loop.
+        """
+        cb = getattr(self, "tool_gen_args_delta_callback", None)
+        if cb is not None:
+            try:
+                cb(idx, tool_name, delta, accumulated)
             except Exception:
                 pass
 
@@ -4540,6 +4560,14 @@ class AIAgent:
                                 entry["function"]["name"] += tc_delta.function.name
                             if tc_delta.function.arguments:
                                 entry["function"]["arguments"] += tc_delta.function.arguments
+                                # Fire args delta only after gen_start has fired for this idx
+                                if idx in tool_gen_notified:
+                                    self._fire_tool_gen_args_delta(
+                                        idx,
+                                        entry["function"]["name"],
+                                        tc_delta.function.arguments,
+                                        entry["function"]["arguments"],
+                                    )
                         extra = getattr(tc_delta, "extra_content", None)
                         if extra is None and hasattr(tc_delta, "model_extra"):
                             extra = (tc_delta.model_extra or {}).get("extra_content")
@@ -4552,7 +4580,11 @@ class AIAgent:
                         if name and idx not in tool_gen_notified:
                             tool_gen_notified.add(idx)
                             _fire_first_delta()
-                            self._fire_tool_gen_started(name)
+                            self._fire_tool_gen_started(idx, name)
+                            # Replay accumulated args so deltas pre-name aren't lost
+                            args_so_far = entry["function"]["arguments"]
+                            if args_so_far:
+                                self._fire_tool_gen_args_delta(idx, name, args_so_far, args_so_far)
 
                 if chunk.choices[0].finish_reason:
                     finish_reason = chunk.choices[0].finish_reason
@@ -4607,6 +4639,8 @@ class AIAgent:
             """
             has_tool_use = False
             self._reasoning_deltas_fired = False
+            # Per-content-block argument accumulation for tool_use blocks
+            _tool_blocks_by_idx: dict[int, dict] = {}
 
             # Reset stale-stream timer for this attempt
             last_chunk_time["t"] = time.time()
@@ -4620,18 +4654,33 @@ class AIAgent:
 
                     if event_type == "content_block_start":
                         block = getattr(event, "content_block", None)
+                        block_idx = getattr(event, "index", None)
                         if block and getattr(block, "type", None) == "tool_use":
                             has_tool_use = True
-                            tool_name = getattr(block, "name", None)
+                            tool_name = getattr(block, "name", "") or ""
+                            if block_idx is not None:
+                                _tool_blocks_by_idx[block_idx] = {"name": tool_name, "args": ""}
                             if tool_name:
                                 _fire_first_delta()
-                                self._fire_tool_gen_started(tool_name)
+                                self._fire_tool_gen_started(
+                                    block_idx if block_idx is not None else 0,
+                                    tool_name,
+                                )
 
                     elif event_type == "content_block_delta":
                         delta = getattr(event, "delta", None)
+                        block_idx = getattr(event, "index", None)
                         if delta:
                             delta_type = getattr(delta, "type", None)
-                            if delta_type == "text_delta":
+                            if delta_type == "input_json_delta":
+                                partial = getattr(delta, "partial_json", "") or ""
+                                if partial and block_idx is not None and block_idx in _tool_blocks_by_idx:
+                                    entry = _tool_blocks_by_idx[block_idx]
+                                    entry["args"] += partial
+                                    self._fire_tool_gen_args_delta(
+                                        block_idx, entry["name"], partial, entry["args"],
+                                    )
+                            elif delta_type == "text_delta":
                                 text = getattr(delta, "text", "")
                                 if text and not has_tool_use:
                                     _fire_first_delta()
@@ -6277,6 +6326,14 @@ class AIAgent:
 
             parsed_calls.append((tool_call, function_name, function_args))
 
+        # ── Batch callback (fires before any per-tool callbacks) ─────────
+        if self.tool_batch_callback:
+            try:
+                batch_payload = [(tc.id, name, args) for tc, name, args in parsed_calls]
+                self.tool_batch_callback(batch_payload)
+            except Exception as cb_err:
+                logging.debug(f"Tool batch callback error: {cb_err}")
+
         # ── Logging / callbacks ──────────────────────────────────────────
         tool_names_str = ", ".join(name for _, name, _ in parsed_calls)
         if not self.quiet_mode:
@@ -6441,6 +6498,22 @@ class AIAgent:
 
     def _execute_tool_calls_sequential(self, assistant_message, messages: list, effective_task_id: str, api_call_count: int = 0) -> None:
         """Execute tool calls sequentially (original behavior). Used for single calls or interactive tools."""
+        # Fire batch callback once before the loop — full batch is known at entry.
+        if self.tool_batch_callback:
+            try:
+                batch_payload = []
+                for tc in assistant_message.tool_calls:
+                    try:
+                        args = json.loads(tc.function.arguments)
+                    except Exception:
+                        args = {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    batch_payload.append((tc.id, tc.function.name, args))
+                self.tool_batch_callback(batch_payload)
+            except Exception as cb_err:
+                logging.debug(f"Tool batch callback error: {cb_err}")
+
         for i, tool_call in enumerate(assistant_message.tool_calls, 1):
             # SAFETY: check interrupt BEFORE starting each tool.
             # If the user sent "stop" during a previous tool's execution,
@@ -6535,7 +6608,10 @@ class AIAgent:
                 )
                 tool_duration = time.time() - tool_start_time
                 if self.quiet_mode:
-                    self._vprint(f"  {_get_cute_tool_message_impl('todo', function_args, tool_duration, result=function_result)}")
+                    _tier = _get_tool_display_tier('todo')
+                    _is_fail, _ = _detect_tool_failure('todo', function_result)
+                    if _tier != "silent" or _is_fail:
+                        self._vprint(f"  {_get_cute_tool_message_impl('todo', function_args, tool_duration, result=function_result)}")
             elif function_name == "session_search":
                 if not self._session_db:
                     function_result = json.dumps({"success": False, "error": "Session database not available."})
@@ -6550,7 +6626,10 @@ class AIAgent:
                     )
                 tool_duration = time.time() - tool_start_time
                 if self.quiet_mode:
-                    self._vprint(f"  {_get_cute_tool_message_impl('session_search', function_args, tool_duration, result=function_result)}")
+                    _tier = _get_tool_display_tier('session_search')
+                    _is_fail, _ = _detect_tool_failure('session_search', function_result)
+                    if _tier != "silent" or _is_fail:
+                        self._vprint(f"  {_get_cute_tool_message_impl('session_search', function_args, tool_duration, result=function_result)}")
             elif function_name == "memory":
                 target = function_args.get("target", "memory")
                 from tools.memory_tool import memory_tool as _memory_tool
@@ -6563,7 +6642,10 @@ class AIAgent:
                 )
                 tool_duration = time.time() - tool_start_time
                 if self.quiet_mode:
-                    self._vprint(f"  {_get_cute_tool_message_impl('memory', function_args, tool_duration, result=function_result)}")
+                    _tier = _get_tool_display_tier('memory')
+                    _is_fail, _ = _detect_tool_failure('memory', function_result)
+                    if _tier != "silent" or _is_fail:
+                        self._vprint(f"  {_get_cute_tool_message_impl('memory', function_args, tool_duration, result=function_result)}")
             elif function_name == "clarify":
                 from tools.clarify_tool import clarify_tool as _clarify_tool
                 function_result = _clarify_tool(
@@ -6573,7 +6655,10 @@ class AIAgent:
                 )
                 tool_duration = time.time() - tool_start_time
                 if self.quiet_mode:
-                    self._vprint(f"  {_get_cute_tool_message_impl('clarify', function_args, tool_duration, result=function_result)}")
+                    _tier = _get_tool_display_tier('clarify')
+                    _is_fail, _ = _detect_tool_failure('clarify', function_result)
+                    if _tier != "silent" or _is_fail:
+                        self._vprint(f"  {_get_cute_tool_message_impl('clarify', function_args, tool_duration, result=function_result)}")
             elif function_name == "delegate_task":
                 from tools.delegate_tool import delegate_task as _delegate_task
                 tasks_arg = function_args.get("tasks")
@@ -7901,6 +7986,7 @@ class AIAgent:
                         self.session_api_calls += 1
                         self.session_input_tokens += canonical_usage.input_tokens
                         self.session_output_tokens += canonical_usage.output_tokens
+                        self._last_turn_output_tokens = canonical_usage.output_tokens
                         self.session_cache_read_tokens += canonical_usage.cache_read_tokens
                         self.session_cache_write_tokens += canonical_usage.cache_write_tokens
                         self.session_reasoning_tokens += canonical_usage.reasoning_tokens
@@ -7927,6 +8013,17 @@ class AIAgent:
                             self.session_estimated_cost_usd += float(cost_result.amount_usd)
                         self.session_cost_status = cost_result.status
                         self.session_cost_source = cost_result.source
+
+                        # Fire usage_callback per API call — TUI accumulates per-turn.
+                        if self.usage_callback:
+                            try:
+                                self.usage_callback(
+                                    canonical_usage.input_tokens,
+                                    canonical_usage.output_tokens,
+                                    float(cost_result.amount_usd) if cost_result.amount_usd is not None else 0.0,
+                                )
+                            except Exception as cb_err:
+                                logging.debug(f"Usage callback error: {cb_err}")
 
                         # Persist token counts to session DB for /insights.
                         # Do this for every platform with a session_id so non-CLI

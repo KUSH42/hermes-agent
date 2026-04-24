@@ -1,0 +1,1088 @@
+/*
+ * hermes_cli/tui/hermes.tcss
+ *
+ * VISUAL properties (colours, margins, padding) only.
+ * Structural properties (height, overflow, display, dock) belong in
+ * each widget's DEFAULT_CSS — see CSS precedence rule in spec §4.13.
+ *
+ * Precedence: DEFAULT_CSS < CSS class var < external .tcss < inline styles.
+ * Keep structural properties in DEFAULT_CSS and visual properties here
+ * to avoid precedence surprises.
+ *
+ * Component Part variables — ThemeManager overrides at runtime via
+ * App.get_css_variables().  Defaults here are authoritative for first render.
+ * Override in your skin file's component_vars section:
+ *
+ *   component_vars:
+ *     cursor-color:        "#FFD700"
+ *     cursor-selection-bg: "#1E4080"
+ *     cursor-placeholder:  "#666666"
+ */
+/* All $var defaults live in COMPONENT_VAR_DEFAULTS (theme_manager.py).
+   Local declarations here block runtime skin overrides. */
+
+/* Component variable declarations — must be present for Textual to parse $var refs */
+$plan-now-fg: #ffb454;
+$plan-pending-fg: #888888;
+$panel-border: #333333;
+/* Pane layout variables — v2 three-pane layout */
+$pane-border: #333333;
+$pane-border-focused: #5f87d7;
+$pane-title-fg: #888888;
+$pane-divider: #2a2a2a;
+$footnote-ref-color: #888888;
+/* Citation chip colors */
+$cite-chip-bg: #1a2030;
+$cite-chip-fg: #8899bb;
+$tool-glyph-mcp: "󰡨";
+$tool-vision-accent: #00bcd4;
+$error-timeout: #f59e0b;
+/* Browse mode visual marker colors */
+$browse-turn: #d4a017;
+$browse-code: #4caf50;
+$browse-tool: #2196f3;
+$browse-diff: #e040fb;
+$browse-media: #00bcd4;
+$error-critical: #ef4444;
+$error-auth: #eab308;
+$error-network: #f97316;
+/* RX3 drift cleanup — $-referenced defaults now declared here to satisfy
+   Textual parse-time variable resolution. Values mirror COMPONENT_VAR_DEFAULTS. */
+$app-bg: #1E1E1E;
+$cursor-color: #FFF8DC;
+$cursor-selection-bg: #3A5A8C;
+$cursor-placeholder: #555555;
+$ghost-text-color: #555555;
+$chevron-base: #FFF8DC;
+$chevron-file: #FFBF00;
+$chevron-stream: #6EA8D4;
+$chevron-shell: #A8D46E;
+$chevron-done: #4CAF50;
+$chevron-error: #E06C75;
+$chevron-rev-search: #FFBF00;
+$chevron-completion: #5F9FD7;
+$chevron-locked: #666666;
+$fps-hud-bg: #1a1a2e;
+$scrollbar: #5f87d7;
+$drawbraille-canvas-color: #00d7ff;
+$status-error-color: #ef5350;
+/* Body renderer visual grammar vars */
+$diff-add-bg: #0e2a16;
+$diff-del-bg: #2a0e0e;
+$info: #58A6FF;
+
+/* Screen is the actual DOM root — transparent widgets inherit from it, not from
+ * HermesApp. Both must be set so every widget in the tree shows $app-bg. */
+Screen {
+    background: $app-bg;
+    layers: base overlay interrupt tooltip;
+}
+
+HermesApp {
+    background: $app-bg;
+}
+
+* {
+    scrollbar-size-vertical: 0;
+    scrollbar-size-horizontal: 0;
+    scrollbar-background: $app-bg;
+    scrollbar-background-hover: $app-bg;
+    scrollbar-background-active: $app-bg;
+    scrollbar-corner-color: $app-bg;
+}
+
+OutputPanel {
+    scrollbar-size-vertical: 1;
+    scrollbar-color: $scrollbar 60%;
+}
+
+/* F2: restore slim scrollbars on overlay scroll areas so users can tell
+   they contain more content than is currently visible. */
+HelpOverlay > #help-content,
+SessionOverlay > #sess-scroll,
+WorkspaceOverlay > #ws-scroll,
+CommandsOverlay > #commands-content {
+    scrollbar-size-vertical: 1;
+    scrollbar-color: $text-muted 30%;
+}
+
+/* --- Message turns --- */
+
+MessagePanel {
+    margin: 1 0 0 0;
+    transition: opacity 0.3s in_out_cubic;
+}
+
+/* RichLog.DEFAULT_CSS sets background: $surface.  Override both response-text
+ * and reasoning log to $app-bg so all content areas share the same background
+ * as the chrome widgets above (HermesApp, StatusBar, #input-row, HermesInput).
+ * Users can shift the whole-app tone by setting app-bg in component_vars. */
+CopyableRichLog {
+    background: $app-bg;
+}
+
+ToolBodyContainer .--microcopy.--secondary-args {
+    display: block;
+    color: $text-muted;
+    opacity: 0.6;
+}
+
+WriteFileBlock .--wfb-writing-hint {
+    color: $text-muted;
+    opacity: 0.5;
+    text-style: italic;
+    height: 1;
+}
+
+BodyPane.--body-degraded {
+    border-left: solid $warning;
+}
+
+StreamingCodeBlock {
+    background: $app-bg;
+}
+
+CodeBlockFooter {
+    color: $text-muted;
+    background: $app-bg;
+}
+
+CodeBlockFooter:hover {
+    color: $accent;
+    background: $accent 8%;
+}
+
+
+MessagePanel.--entering {
+    opacity: 0.0;
+}
+
+/* --- Reasoning panel ---
+ * border-left: vkey draws the vertical gutter character on EVERY visual row
+ * (including line-wrap continuations), fixing the alignment bug that text-
+ * prepended ▌ had — it only appeared on the first row of wrapped lines. */
+
+ReasoningPanel {
+    margin: 0 2;
+    border-left: vkey $primary 40%;
+}
+
+/* Hover affordance on closeable reasoning panels */
+ReasoningPanel.--closeable:hover {
+    background: $accent 5%;
+}
+
+/* Reasoning panel code blocks — dimmed to match reasoning prose */
+ReasoningPanel StreamingCodeBlock {
+    opacity: 0.7;
+    border: round $surface-darken-2;
+    margin: 0 0 1 2;
+}
+
+ReasoningPanel StreamingCodeBlock .code-block-footer {
+    color: $text-muted;
+}
+
+/* --- Input rule separator ---
+ * TitledRule manages all its own colors via _live_colors() + inline Rich styles.
+ * No CSS color override needed here — it would conflict with the inline styles. */
+
+/* --- Hint bar ---
+ * Always 1 line tall (no display:none toggling) to prevent layout reflow
+ * jitter when hints appear/disappear during streaming.  Empty hint renders
+ * as a blank line — visually invisible, zero layout cost to show/hide.
+ */
+HintBar {
+    color: $text-muted;
+    padding: 0 1;
+}
+
+/* --- Status bar --- */
+
+StatusBar {
+    background: $app-bg;
+    color: $text-muted;
+    padding: 0 1;
+}
+
+/* --- PlanPanel (R1) --- */
+
+PlanPanel {
+    background: $app-bg;
+    color: $text-muted;
+    padding: 0 1;
+    border-top: solid $panel-border;
+}
+
+PlanPanel.--collapsed {
+    height: 1;
+    max-height: 1;
+    overflow: hidden;
+}
+
+PlanPanel _NowSection {
+    color: $plan-now-fg;
+}
+
+PlanPanel _NextSection {
+    color: $plan-pending-fg;
+    opacity: 0.8;
+}
+
+PlanPanel _BudgetSection {
+    color: $text-muted;
+}
+
+/* When the app has an active plan, force ThinkingWidget to LINE mode */
+HermesApp.plan-active ThinkingWidget.--active {
+    height: 1;
+}
+
+/* D-3: fade-out transition — opacity start state declared so Textual can animate */
+ThinkingWidget.--active {
+    opacity: 1;
+}
+ThinkingWidget.--fading {
+    opacity: 0.0;
+    transition: opacity 150ms in_out_cubic;
+}
+
+/* D-4: layout reserve row — holds 1 row while first live token arrives */
+ThinkingWidget.--reserved {
+    height: 1;
+    display: block;
+    opacity: 0;
+}
+
+/* --- Overlay widgets --- */
+
+ClarifyWidget,
+ApprovalWidget,
+SudoWidget,
+SecretWidget,
+UndoConfirmOverlay {
+    margin: 0 1;
+    padding: 1 2;
+}
+
+/* Overlay layer — stacks overlays vertically, hidden unless children are visible */
+#overlay-layer {
+    height: auto;
+}
+
+/* --- Input area --- */
+
+#input-row {
+    height: auto;
+    padding: 0 1;
+    background: $app-bg;
+}
+
+#input-chevron {
+    color: $chevron-base;
+    width: 2;
+    height: auto;
+    min-height: 1;
+    content-align: left top;
+    transition: color 0.2s in_out_cubic;
+}
+
+/* Chevron phase colours — set by _set_chevron_phase() */
+#input-chevron.--phase-file   { color: $chevron-file; }
+#input-chevron.--phase-stream { color: $chevron-stream; }
+#input-chevron.--phase-shell  { color: $chevron-shell; }
+#input-chevron.--phase-done   { color: $chevron-done; }
+#input-chevron.--phase-error  { color: $chevron-error; }
+/* Yolo mode — persistent warning tint; coexists with phase classes */
+#input-chevron.--yolo-active  { color: $chevron-error; }
+/* Bash-passthrough mode indicator */
+HermesInput.--bash-mode #input-chevron { color: $chevron-shell; }
+HermesInput.--bash-mode { outline: tall $chevron-shell 40%; }
+HermesInput.--bash-mode:focus { outline: tall $chevron-shell 70%; }
+
+HermesInput.--locked {
+    outline: tall $panel-lighten-1 30%;
+    color: $text-muted 60%;
+}
+HermesInput.--locked:focus {
+    outline: tall $panel-lighten-1 40%;
+}
+HermesApp.density-compact InputLegendBar { display: none !important; }
+
+#spinner-overlay {
+    display: none;
+    height: 1;
+    width: 1fr;
+    color: $text-muted;
+}
+
+HermesInput {
+    background: $app-bg;
+    border: none;
+    padding: 0;
+    height: auto;
+    max-height: 3;
+    width: 1fr;
+    scrollbar-size: 1 1;
+}
+
+/* Prevent Textual's TextArea:focus tint from creating a contrast stripe */
+HermesInput:focus {
+    background: $app-bg;
+    outline: tall $primary 30%;
+}
+
+/* Component Part variables — themed via ThemeManager.component_vars.
+ * Defaults are defined in theme_manager.COMPONENT_VAR_DEFAULTS and
+ * injected through HermesApp.get_css_variables().  Override by adding
+ * a component_vars section to your skin JSON/YAML:
+ *
+ *   component_vars:
+ *     cursor-color:        "#FFD700"
+ *     cursor-selection-bg: "#1E4080"
+ *     cursor-placeholder:  "#666666"
+ */
+HermesInput > .text-area--cursor {
+    color: $cursor-color;
+    background: $cursor-color;
+}
+
+HermesInput > .text-area--selection {
+    background: $cursor-selection-bg;
+}
+
+HermesInput > .text-area--placeholder {
+    color: $cursor-placeholder;
+    text-style: italic;
+}
+
+/* Ghost text styling — scoped to HermesInput only.
+ * $ghost-text-color (#555555) gives ~2.5:1 contrast — dim but readable. */
+HermesInput > .text-area--suggestion {
+    color: $ghost-text-color;
+    text-style: italic;
+}
+
+/* --- Image bar --- */
+
+ImageBar {
+    color: $text-muted;
+    padding: 0 1;
+}
+
+/* --- TTE startup effect widget ---
+ * Structural CSS (height, display) is in TTEWidget.DEFAULT_CSS.
+ * Only visual overrides here. */
+
+TTEWidget {
+    background: $app-bg;
+}
+
+/* --- Voice status bar --- */
+
+VoiceStatusBar {
+    padding: 0 1;
+}
+
+/* --- Completion overlay: elevated panel design ---
+ *
+ * Depth is achieved through brightness hierarchy, not alpha:
+ *   $app-bg  #1E1E1E  output pane (deepest)
+ *   $panel   #252526  preview panel (mid)
+ *   $surface #2D2D30  list panel (closest, brightest)
+ *
+ * The accent top stripe spans the full overlay width and acts as the
+ * primary elevation signal — like a light catch on a raised surface.
+ * No opacity hacks; Textual composites against parent bg, not content. */
+
+CompletionOverlay {
+    border-top: hkey $accent 60%;
+}
+
+/* E1: Hide preview and expand list when nothing is highlighted */
+CompletionOverlay.--no-preview PreviewPanel {
+    display: none;
+}
+CompletionOverlay.--no-preview VirtualCompletionList {
+    width: 1fr;
+}
+
+VirtualCompletionList {
+    background: $surface-lighten-1;
+    color: $text;
+}
+
+/* Selected row — accent fill + bold; no border needed */
+VirtualCompletionList > .completion--row-selected {
+    background: $accent 18%;
+    text-style: bold;
+}
+
+/* Preview panel — one step darker than list, reads as "behind" */
+PreviewPanel {
+    border-left: vkey $primary 40%;
+    background: $surface;
+    padding: 0 1;
+}
+
+/* --- Clipboard warning indicator --- */
+
+#status-clipboard-warning {
+    color: $warning;
+    background: transparent;
+    display: none;
+}
+
+#status-clipboard-warning.--active {
+    display: block;
+}
+
+/* --- ToolBlock widgets --- */
+
+/* ToolHeader: structural height:1 is in DEFAULT_CSS */
+ToolHeader {
+    margin-left: 0;
+    transition: background 0.4s in_out_cubic;
+}
+
+/* ToolHeader — hover affordance */
+ToolHeader:hover {
+    background: $accent 8%;
+}
+
+ToolHeader.--flash-success {
+    background: $success 35%;
+    transition: background 400ms out_cubic;
+}
+ToolHeader.--flash-error {
+    background: $error 35%;
+    transition: background 400ms out_cubic;
+}
+
+/* Browse mode — unified anchor highlight */
+.--browse-focused {
+    border: tall $accent 40%;
+    background: $accent 8%;
+}
+StreamingCodeBlock.--browse-focused {
+    border: tall $success 40%;
+    background: $success 8%;
+}
+UserMessagePanel.--browse-focused {
+    border: tall $warning 40%;
+    background: $warning 8%;
+}
+
+/* Browse mode — turn boundary rule (always-on, subtle) */
+UserMessagePanel {
+    border-top: hkey $surface-darken-2;
+}
+/* Browse-mode promotion */
+HermesApp.--browse-active UserMessagePanel {
+    border-top: hkey $browse-turn;
+}
+/* Config: turn_boundary_always=False — suppress both rules */
+HermesApp.--no-turn-boundary UserMessagePanel {
+    border-top: none;
+}
+HermesApp.--no-turn-boundary.--browse-active UserMessagePanel {
+    border-top: none;
+}
+
+/* Browse mode — anchor gutter pips (border-left = 1-cell pip) */
+.--anchor-pip-turn {
+    border-left: outer $browse-turn;
+}
+.--anchor-pip-code {
+    border-left: outer $browse-code;
+}
+StreamingCodeBlock.--anchor-pip-code {
+    border-left: outer $browse-code;
+    border-top: tall $browse-code 25%;
+}
+.--anchor-pip-tool {
+    border-left: outer $browse-tool;
+}
+.--anchor-pip-diff {
+    border-left: outer $browse-diff;
+}
+.--anchor-pip-media {
+    border-left: outer $browse-media;
+}
+
+/* Browse mode — streaming→ready flash */
+StreamingCodeBlock.--browse-newly-anchored {
+    border: tall $browse-code 60%;
+    background: $browse-code 15%;
+}
+
+/* ToolBodyContainer inside ToolPanel is always visible — ToolPanel's
+ * watch_collapsed controls BodyPane visibility, not ToolBodyContainer directly.
+ * App TCSS overrides widget DEFAULT_CSS (display:none), so STB inner collapse
+ * assignments have no visual effect and are cleaned up in Phase B. */
+ToolPanel ToolBodyContainer {
+    display: block;
+}
+
+/* ToolBodyContainer body lines — no individual scroll.
+ * Content flows into OutputPanel (the single scroll container).
+ * overflow: hidden prevents nested scroll from creating stale offsets
+ * that corrupt dirty-rect renders when the mouse moves after scrolling. */
+ToolBodyContainer CopyableRichLog {
+    padding-left: 0;
+    height: auto;
+    overflow-y: hidden;
+    overflow-x: hidden;
+}
+
+/* --- ExecuteCodeBlock layout ---
+ * CodeSection and OutputSection body text aligned to header label column 6
+ * (gutter 3 + space 1 + icon 1 + space 1 = 6 for single-cell icons).
+ * ToolBodyContainer CopyableRichLog rule above sets padding-left:0 on the
+ * RichLog; the padding here is on the Section widget container. */
+CodeSection { padding-left: 6; }
+OutputSection { padding-left: 6; }
+
+OutputSeparator .output-sep-label {
+    color: $text-muted;
+}
+
+/* --- Context menu ---
+ * Hover uses $accent at low opacity — $primary can be near-black in dark
+ * themes, making $primary 30% nearly invisible against $panel background. */
+ContextMenu { background: $panel; }
+ContextMenu > _ContextItem:hover { background: $accent 15%; }
+ContextMenu > _ContextSep { color: $text-muted; }
+
+/* --- History search overlay (SPEC-B) --- */
+
+#history-search-input {
+    border: none;
+    background: $surface;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+#history-result-list {
+    height: auto;
+    max-height: 1fr;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+#history-status {
+    color: $text-muted;
+    text-align: right;
+    padding: 0 1;
+}
+
+TurnResultItem {
+    height: auto;
+    min-height: 2;
+    max-height: 4;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+/* Use $cursor-selection-bg for consistent selection style with VirtualCompletionList
+ * and HermesInput text selection — all three represent "selected item". */
+TurnResultItem.--selected {
+    background: $cursor-selection-bg;
+}
+
+TurnResultItem:hover {
+    background: $accent 10%;
+}
+
+/* History jump highlight — 0.5s is fast enough for expert users who chain
+ * multiple jumps; was 1.5s which caused visible lag between jumps. */
+MessagePanel.--highlighted {
+    background: $accent 15%;
+    transition: background 0.5s in_out_cubic;
+}
+
+/* --- Overlay focus rings (§2.6) --- */
+
+ClarifyWidget:focus,
+ApprovalWidget:focus {
+    outline: tall $accent 50%;
+}
+
+/* --- Write-approval diff panel (M3) --- */
+
+ApprovalWidget > CopyableRichLog#approval-diff {
+    display: none;
+    max-height: 20;
+    overflow-y: auto;
+    border: hkey $panel-lighten-1 20%;
+    margin: 0 2;
+}
+
+/* --- Reduced motion (HERMES_REDUCED_MOTION=1) --- */
+
+HermesApp.reduced-motion MessagePanel           { transition: none; }
+HermesApp.reduced-motion MessagePanel.--highlighted { transition: none; }
+HermesApp.reduced-motion #input-chevron         { transition: none; }
+HermesApp.reduced-motion ToolHeader             { transition: none; }
+
+/* P0-A: Disable transitions on all overlay widgets under reduced-motion.
+ * Countdown color lerp continues (color change, not positional motion). */
+HermesApp.reduced-motion ClarifyWidget,
+HermesApp.reduced-motion ApprovalWidget,
+HermesApp.reduced-motion SudoWidget,
+HermesApp.reduced-motion SecretWidget,
+HermesApp.reduced-motion UndoConfirmOverlay,
+HermesApp.reduced-motion KeymapOverlay,
+HermesApp.reduced-motion HistorySearchOverlay   { transition: none; }
+
+/* --- FPS HUD overlay --- */
+
+FPSCounter {
+    background: $fps-hud-bg;
+    color: $accent;
+    padding: 0 1;
+}
+
+/* --- Density: compact mode (§2.9) --- */
+
+HermesApp.density-compact MessagePanel          { margin: 0; }
+HermesApp.density-compact ReasoningPanel        { margin: 0; }
+HermesApp.density-compact CopyableBlock         { margin: 0; }
+HermesApp.density-compact UserMessagePanel         { margin: 0; padding: 0 1; }
+HermesApp.density-compact StatusBar             { padding: 0 1; }
+HermesApp.density-compact HintBar               { padding: 0 1; }
+HermesApp.density-compact ImageBar              { padding: 0 1; }
+HermesApp.density-compact VoiceStatusBar        { padding: 0 1; }
+HermesApp.density-compact #input-row            { padding: 0; }
+/* Overlays: trim extra padding to match standard 0 1 in compact mode */
+HermesApp.density-compact ClarifyWidget,
+HermesApp.density-compact ApprovalWidget,
+HermesApp.density-compact SudoWidget,
+HermesApp.density-compact SecretWidget          { padding: 0 1; }
+HermesApp.density-compact UndoConfirmOverlay    { padding: 0 1; }
+
+/* Phase B1: hide non-critical chrome */
+HermesApp.density-compact AssistantNameplate   { display: none; }
+HermesApp.density-compact SourcesBar           { display: none; }
+HermesApp.density-compact BrowseMinimap        { display: none; }
+
+
+
+/* Phase B2: input area tightening */
+HermesApp.density-compact HermesInput          { max-height: 3; }
+HermesApp.density-compact HermesInput:focus    { outline: none; }
+HermesApp.density-compact #input-chevron       { width: 1; }
+
+/* Phase B3: tool panel / header tightening */
+/* A1: ToolHeaderBar deleted — duration/line-count compact rules removed */
+HermesApp.density-compact ToolAccent                   { display: none; }
+HermesApp.density-compact ToolPanel FooterPane                   { display: none; }
+HermesApp.density-compact ToolPanel:focus FooterPane             { display: block; }
+HermesApp.density-compact ToolPanel.tool-panel--error FooterPane { display: block; }
+
+/* A1: ToolHeaderBar deleted — compact label rules moved to density-compact selectors above */
+
+/* ── Drawbraille Overlay ──────────────────────────────────────── */
+/* layer: overlay lives here (not DEFAULT_CSS) to avoid CSS parse issues
+   when drawbraille_overlay.py is imported before HermesApp CSS loads. */
+
+DrawbrailleOverlay {
+    layer: overlay;
+    position: absolute;
+    background: $surface 0%;
+}
+
+DrawbrailleOverlay.-show-border {
+    border: round $accent;
+}
+
+/* Declaration required at parse time so ThemeManager injection works. */
+DrawbrailleOverlay > .drawbraille-overlay--canvas {
+    color: $drawbraille-canvas-color;
+}
+
+
+/* ── OmissionBar — dual top/bottom scroll controls for line cap ───────── */
+
+OmissionBar .--ob-label {
+    width: 1fr;
+    color: $text-muted;
+}
+
+OmissionBar Button {
+    height: 1;
+    min-height: 1;
+    width: auto;
+    padding: 0 1;
+    background: transparent;
+    border: none;
+    color: $primary;
+}
+
+OmissionBar Button:hover { background: $primary 20%; }
+OmissionBar Button:disabled { color: $text-disabled; }
+/* E-1: [reset] at default state — dim but still clickable (never disabled) */
+OmissionBar Button.--at-default { color: $text-muted 50%; }
+
+.--omission-bar-top {
+    margin-bottom: 0;
+    border-bottom: dashed $accent 20%;
+}
+
+.--omission-bar-bottom {
+    margin-top: 0;
+    border-top: dashed $accent 20%;
+}
+
+/* --- Tool Panel v3 Phase A (tui-tool-panel-v3-spec.md §5.1) ---
+ * ToolAccent widget replaces v2 border-left AND inline ┊ from ToolHeader.
+ * Only Textual built-in design tokens — component vars fail silently for
+ * background: at TCSS parse time. */
+
+ToolAccent              { background: $primary 15%; }
+ToolAccent.-streaming   { background: $accent; }
+ToolAccent.-ok          { background: $success; }
+ToolAccent.-error       { background: $error; }
+ToolAccent.-warning     { background: $warning; }
+ToolAccent.-muted       { background: $primary 8%; }
+
+/* B-2: completing flash — subtle accent border signals result has landed */
+ToolPanel.--completing > ToolAccent {
+    background: $primary 25%;
+}
+
+ToolPanel.tool-panel--accent                 { border-left: vkey $accent 30%; }
+ToolPanel.category-file.tool-panel--accent   { border-left: vkey $accent 80%; }
+ToolPanel.category-shell.tool-panel--accent  { border-left: vkey $warning 80%; }
+ToolPanel.category-code.tool-panel--accent   { border-left: vkey $primary 80%; }
+ToolPanel.category-search.tool-panel--accent { border-left: vkey $primary 60%; }
+ToolPanel.category-web.tool-panel--accent    { border-left: vkey $success 80%; }
+ToolPanel.category-agent.tool-panel--accent  { border-left: vkey $accent 40%; }
+ToolPanel.category-mcp.tool-panel--accent    { border-left: vkey #9b59b6 80%; }
+ToolPanel.category-vision.tool-panel--accent { border-left: vkey $tool-vision-accent 80%; }
+ToolPanel.tool-panel--error                  { border-left: vkey $error 80%; }
+/* D2: more visible focus indicator */
+ToolPanel:focus                              { background: $accent 10%; border-left: vkey $accent 60%; }
+ToolPanel:hover                              { background: $accent 5%; }
+/* A6: first-in-turn correlation badge */
+ToolPanel.first-in-turn                      { border-top: solid $accent 30%; }
+/* A2: empty result header color */
+ToolHeader.result-empty                      { color: $text-muted; }
+/* C1: heavier error banner — covers both static ToolBlock and StreamingToolBlock */
+.error-banner {
+    color: $error;
+    background: $error 10%;
+    border-left: vkey #cc3333 80%;
+    padding: 0 1;
+    height: auto;
+    max-height: 3;
+    overflow: hidden;
+}
+/* B3: cap label hidden by default, shown when --visible class added */
+OmissionBar .--cap-label                     { color: $warning; display: none; }
+OmissionBar .--cap-label.--visible           { display: block; }
+
+/* A1: ToolHeaderBar deleted — rules removed */
+/* E2: --minified shows 1-line stub (not hidden) */
+ToolPanel.--minified { height: 1; }
+ToolPanel.--minified BodyPane,
+ToolPanel.--minified FooterPane,
+ToolPanel.--minified .hint-row { display: none; }
+/* E2: ToolPanelMini deleted */
+
+/* --- Tool grouping --- */
+/* H1: v2 CSS classes (tool-panel--grouped, group-id-*) removed; v4 ToolGroup widget is the sole path */
+ToolPanel.group-hidden           { display: none; }
+ToolPanel.tool-panel--child-diff { margin-left: 2; }
+
+/* --- MathBlockWidget (math_renderer.py) --- */
+MathBlockWidget {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+    border-left: vkey $accent 40%;
+    margin: 1 0;
+}
+MathBlockWidget .--math-label {
+    color: $text-muted;
+}
+
+/* --- ToolGroup widget (v4) --- */
+ToolGroup {
+    height: auto;
+    layout: vertical;
+    margin: 0 0 1 0;
+    border-left: vkey $accent 20%;
+}
+/* H1/D2: ToolPanel inside SubAgentBody ToolGroup gets no extra left padding */
+SubAgentBody ToolGroup > ToolPanel { padding-left: 0; }
+
+ToolGroup:focus {
+    background: $accent 8%;
+    border-left: vkey $accent 60%;
+}
+
+ToolGroup.--collapsed GroupBody {
+    display: none;
+}
+
+ToolGroup.--narrow GroupBody {
+    padding-left: 0;
+}
+
+GroupHeader {
+    height: 1;
+    color: $text-muted;
+    background: $surface;
+    padding: 0 1 0 0;
+}
+
+GroupHeader:hover {
+    background: $boost;
+}
+
+GroupHeader:focus { background: $accent 10%; }
+
+/* E4: group header with one or more child errors */
+GroupHeader.--group-has-error {
+    color: $error;
+    background: $error 10%;
+}
+
+GroupBody {
+    height: auto;
+    padding-left: 2;
+    layout: vertical;
+}
+
+/* --- P6 focused-panel hint row --- */
+ToolPanel .--focus-hint {
+    height: auto;
+    color: $text-muted;
+    padding: 0 2;
+}
+
+ToolPanel > .--focus-hint {
+    /* D1: no border-top unless --has-hint class present; avoids phantom line on unfocused panels */
+    padding: 0 2;
+    color: $text-muted;
+}
+
+ToolPanel > .--focus-hint.--has-hint {
+    border-top: solid $boost;
+}
+
+/* --- P7 /tools timeline overlay (ToolsScreen CSS also embedded in DEFAULT_CSS) --- */
+ToolsScreen {
+    layout: vertical;
+    background: $surface;
+}
+ToolsScreen > #tools-header {
+    height: 1;
+    background: $primary 20%;
+    padding: 0 1;
+}
+ToolsScreen > #tools-list {
+    height: 1fr;
+    scrollbar-size: 1 1;
+}
+ToolsScreen > #filter-row {
+    height: 1;
+    padding: 0 1;
+    background: $surface-darken-1;
+}
+ToolsScreen > #filter-row > #filter-input {
+    width: 1fr;
+    border: none;
+    background: transparent;
+}
+ToolsScreen > #tools-footer {
+    height: 1;
+    padding: 0 1;
+    background: $primary 10%;
+    color: $text-muted;
+}
+
+SourcesBar {
+    margin-top: 1;
+}
+
+/* NOTE: $nameplate-idle-color is NOT runtime-read by Python (C-2 fix uses _lerp_hex at mount).
+   Left here as a documentation hint for skin authors only. */
+$nameplate-idle-color: #888888;
+/* NOTE: $nameplate-active-color is NOT runtime-read by Python (C-5 fix uses accent hex at mount).
+   Left here as a documentation hint for skin authors only. */
+$nameplate-active-color: #7b68ee;
+$nameplate-decrypt-color: #00ff41;
+$accent-interactive: #00bcd4;
+
+AssistantNameplate {
+    height: 1;
+    width: 1fr;
+    padding: 0 1;
+    background: transparent;
+}
+
+AssistantNameplate.--error {
+    color: $status-error-color;
+}
+
+/* MinSizeBackdrop — full-screen dim shown when terminal is too small */
+MinSizeBackdrop {
+    layer: overlay;
+    width: 100%;
+    height: 100%;
+    background: $surface 70%;
+    align: center middle;
+}
+
+MinSizeBackdrop MinSizeBox {
+    width: auto;
+    height: auto;
+    min-width: 26;
+    min-height: 4;
+    border: round $warning;
+    padding: 0 2;
+    background: $surface;
+}
+
+MinSizeBackdrop .min-size-warning {
+    color: $warning;
+    text-style: bold;
+}
+
+MinSizeBackdrop .min-size-hint {
+    color: $text-muted;
+}
+
+/* --- v3-C: body renderers --- */
+.empty-state { color: $text-muted; padding: 0 2; height: 1; }
+InlineCodeFence { padding: 0 0 0 2; border-left: vkey $primary 30%; margin: 0 0 1 0; height: auto; }
+VirtualSearchList {
+    scrollbar-size-vertical: 1;
+    scrollbar-color: $text-muted 30%;
+    height: 1fr;
+    overflow-y: auto;
+}
+
+/* --- v3-D: detail level tint --- */
+ToolPanel.-l3 { background: $accent 8%; }
+/* ToolPanel:focus background already declared above.
+   A border: tall rule here would add 2 rows of structural height and break
+   sibling click hit-testing in async pilot tests. */
+
+/* --- v3-D: InputSection --- */
+InputSection { height: auto; padding: 0 0 0 2; margin-bottom: 1; display: none; }
+InputSection.-has-input { display: block; }
+InputSection > #input-content { padding: 0 0 0 1; color: $text-muted; }
+
+/* --- v3-D: SectionDivider --- */
+SectionDivider { height: 1; color: $text-muted; }
+
+/* --- v3-D: TurnPhase containers --- */
+AgentThought { height: auto; }
+ToolSequence { height: auto; }
+AgentFinalResponse { height: auto; }
+
+/* === Nested Agent Tool Tree === */
+
+SubAgentPanel { margin-bottom: 1; height: auto; }
+
+SubAgentPanel.--depth-1 { padding-left: 2; }
+SubAgentPanel.--depth-2 { padding-left: 4; }
+SubAgentPanel.--depth-3 { padding-left: 6; }
+
+/* NOTE: the following two rules have equal specificity (0,1,1).
+   CSS ordering is load-bearing: --collapsed MUST appear AFTER --has-children. */
+SubAgentBody {
+    border-left: vkey #666666 60%;
+    margin-left: 2;
+    padding-left: 1;
+    display: none;
+}
+SubAgentPanel.--has-children SubAgentBody { display: block; }
+SubAgentPanel.--collapsed SubAgentBody    { display: none; }
+
+/* Child compact: hide body */
+ChildPanel.--compact ToolBodyContainer { display: none; }
+
+/* Accessibility: replace border with padding */
+SubAgentBody.-accessible {
+    border-left: none;
+    padding-left: 2;
+}
+
+/* Badges hidden until first child */
+SubAgentHeader .--badges { display: none; }
+SubAgentPanel.--has-children SubAgentHeader .--badges { display: block; }
+
+/* Error/done badge coloring */
+SubAgentHeader .--badges.--has-errors { color: $error; }
+SubAgentPanel.--has-children SubAgentHeader .--badges.--done { color: $success; }
+
+/* Depth warning */
+.--depth-warning { color: $text-muted; padding-left: 4; }
+
+/* Focus styling */
+SubAgentPanel:focus SubAgentHeader { background: $boost; }
+
+/* ── R2 pane layout ───────────────────────────────────────────── */
+#pane-row {
+    display: none;
+}
+HermesApp.layout-v2 #pane-row {
+    display: block;
+    layout: horizontal;
+    height: 1fr;
+}
+HermesApp.layout-v2 #input-row {
+    dock: bottom;
+}
+HermesApp.layout-v2 #input-rule-bottom {
+    dock: bottom;
+}
+HermesApp.layout-v2 VoiceStatusBar {
+    dock: bottom;
+}
+HermesApp.layout-v2 StatusBar {
+    dock: bottom;
+}
+/* Center pane split: 2/3 top (OutputPanel), 1/3 bottom (SplitTargetStub) */
+HermesApp.layout-v2 PaneContainer#pane-center.--split {
+    layout: vertical;
+}
+HermesApp.layout-v2 PaneContainer#pane-center.--split OutputPanel {
+    height: 2fr;
+}
+HermesApp.layout-v2 PaneContainer#pane-center.--split SplitTargetStub {
+    display: block;
+    height: 1fr;
+}
+HermesApp.layout-v2 #pane-left PlanPanel {
+    dock: none;
+    height: 1fr;
+    max-height: 100%;
+}
+/* SplitTargetStub hidden by default outside split context */
+SplitTargetStub {
+    display: none;
+}
+
+
+/* S0-E: calm during streaming — bars dim to reduce peripheral competition */
+StatusBar.--streaming {
+    opacity: 0.55;
+}
+HintBar.--streaming {
+    opacity: 0.55;
+}
+
+/* BodyFooter — sticky per-panel affordance footer */
+BodyFooter {
+    dock: bottom;
+    height: 1;
+    color: $text-muted 70%;
+    padding: 0 1;
+}
+HermesApp.density-compact BodyFooter { display: none; }
+ToolPanel.--streaming BodyFooter { display: none; }

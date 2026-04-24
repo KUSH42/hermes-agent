@@ -1,0 +1,2497 @@
+"""HermesApp — Textual App subclass for the Hermes TUI.
+
+Replaces the prompt_toolkit Application with a reactive, CSS-themed Textual
+app. Thread → App communication uses two mechanisms:
+
+A. ``call_from_thread(fn, *args)`` for scalar reactive mutations.
+B. Bounded ``asyncio.Queue`` for high-throughput streaming output.
+
+Module-level ``_hermes_app`` reference is set in ``cli.py:run()`` and cleared
+in its ``finally`` block — replaces all ``hasattr(self, "_app")`` guards.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import collections
+import dataclasses
+import enum
+import logging
+import math
+import platform
+import queue
+import re
+import threading
+
+from hermes_cli.tui._app_constants import KNOWN_SLASH_COMMANDS as _KNOWN_SLASH_COMMANDS
+from hermes_cli.tui.agent_phase import Phase as _Phase
+
+# File-touching tool names — used by watch_spinner_label to extract active file
+_FILE_TOOLS: frozenset[str] = frozenset({
+    "read_file", "write_file", "edit_file", "create_file",
+    "view", "str_replace_editor", "patch",
+})
+
+_SHELL_TOOLS: frozenset[str] = frozenset({
+    "bash", "run_command", "execute_command", "shell", "run_bash",
+})
+
+_PATH_EXTRACT_RE = re.compile(
+    r'["\']?(/[\w./\-]+|[\w./\-]+\.[\w]{1,6})["\']?'
+)
+
+
+def _looks_like_slash_command(text: str) -> bool:
+    """Return True if text looks like a slash command, not a file path."""
+    if not text or not text.startswith("/"):
+        return False
+    first_word = text.split()[0]
+    return "/" not in first_word[1:]
+
+
+import time as _time
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from rich.text import Text
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical
+from textual.content import Content
+from textual.css.query import NoMatches
+from textual.reactive import reactive
+from textual.screen import Screen
+from textual.widgets import Static, TextArea
+from textual import events, work
+
+from hermes_cli.file_drop import classify_dropped_file, format_link_token
+from hermes_cli.tui.state import (
+    ChoiceOverlayState,
+    OverlayState,
+    SecretOverlayState,
+    UndoOverlayState,
+)
+from hermes_cli.tui.widgets import (
+    CopyableRichLog,
+    FPSCounter,
+    HistorySearchOverlay,
+    HintBar,
+    KeymapOverlay,
+    ImageBar,
+    InlineImageBar,
+    LiveLineWidget,
+    MessagePanel,
+    OutputPanel,
+    PlainRule,
+    ReasoningPanel,
+    StartupBannerWidget,
+    StatusBar,
+    StreamingCodeBlock,
+    TTEWidget,
+    ThinkingWidget,
+    TitledRule,
+    UserMessagePanel,
+    VoiceStatusBar,
+    AssistantNameplate,
+    _fps_hud_enabled,
+    _safe_widget_call,
+)
+
+from hermes_cli.tui.overlays import (
+    CommandsOverlay,
+    ConfigOverlay,
+    HelpOverlay,
+    SessionOverlay,
+    UsageOverlay,
+    WorkspaceOverlay,
+    _SessionResumedBanner,
+)
+from hermes_cli.tui.session_widgets import (
+    SessionBar,
+    _SessionNotification,
+)
+from hermes_cli.tui.workspace_tracker import (
+    GitPoller,
+    GitSnapshot,
+    WorkspaceTracker,
+    WorkspaceUpdated,
+    analyze_complexity,
+)
+from hermes_cli.tool_icons import get_display_name
+from hermes_cli.tui.tool_category import (
+    MCPServerInfo,
+    ToolSpec,
+    register_mcp_server,
+    register_tool,
+)
+from hermes_cli.tui.constants import ICON_COPY
+from hermes_cli.tui.animation import AnimationClock, shimmer_text
+from hermes_cli.tui.perf import (
+    EventLoopLatencyProbe,
+    FrameRateProbe,
+    SuspicionDetector,
+    WorkerWatcher,
+)
+from hermes_cli.tui.theme_manager import ThemeManager
+from wcwidth import wcswidth
+
+
+if TYPE_CHECKING:
+    from hermes_cli.tui.input_widget import HermesInput
+    from hermes_cli.tui.path_search import Candidate, PathCandidate
+    from hermes_cli.tui.tool_blocks import ToolHeader
+    from hermes_cli.tui.tool_result_parse import ResultSummaryV4
+
+logger = logging.getLogger(__name__)
+
+import os as _os_mod
+
+from hermes_cli.tui._app_utils import (
+    _CPYTHON_FAST_PATH,
+    _HELIX_DELAY_S,
+    _HELIX_FRAME_COUNT,
+    _HELIX_MIN_CELLS,
+    _animations_enabled_check,
+    _log_lag,
+    _run_effect_sync,
+)
+from hermes_cli.tui._browse_types import (
+    BrowseAnchor,
+    BrowseAnchorType,
+    _BROWSE_TYPE_GLYPH,
+    _is_in_reasoning,
+)
+
+# CSS file path — relative to this module
+_CSS_PATH = Path(__file__).parent / "hermes.tcss"
+
+
+class _HermesScreen(Screen):
+    """Custom Screen that prevents focus stealing on right-click.
+
+    Textual's default Screen._forward_event calls set_focus() on ANY
+    MouseDown, including right-click (button=3).  This steals focus from
+    the input bar and loses text selection before the context menu appears.
+    Override: skip the focus change for right-click.
+    """
+
+    def _forward_event(self, event: events.Event) -> None:
+        if (
+            isinstance(event, events.MouseDown)
+            and getattr(event, "button", None) == 3
+            and not self.app.mouse_captured
+        ):
+            # Right-click: forward the event but skip Textual's focus-on-click.
+            # Reproduce the non-focus parts of Screen._forward_event.
+            if event.is_forwarded:
+                return
+            event._set_forwarded()
+            try:
+                widget, region = self.get_widget_at(event.x, event.y)
+            except Exception:
+                return
+            event.style = self.get_style_at(event.screen_x, event.screen_y)
+            if widget.loading:
+                return
+            if widget is self:
+                event._set_forwarded()
+                self.post_message(event)
+            else:
+                widget._forward_event(event._apply_offset(-region.x, -region.y))
+            return
+        super()._forward_event(event)
+
+
+# ---------------------------------------------------------------------------
+# MCP event messages (v4 sub-spec A §3)
+# ---------------------------------------------------------------------------
+
+from textual.message import Message as _TxtMessage
+
+
+class MCPServerRegistered(_TxtMessage):
+    """Posted when an MCP server connects and registers its tool list.
+
+    Consumed by HermesApp._on_mcp_server_registered to update the tool registry.
+    """
+    def __init__(
+        self,
+        server: str,
+        icon_nf: str | None,
+        icon_ascii: str,
+        tools: tuple[dict, ...],
+    ) -> None:
+        super().__init__()
+        self.server = server
+        self.icon_nf = icon_nf
+        self.icon_ascii = icon_ascii
+        self.tools: tuple[dict, ...] = tools
+
+
+class MCPServerDisconnected(_TxtMessage):
+    """Posted when an MCP server disconnects. Specs stay registered."""
+    def __init__(self, server: str) -> None:
+        super().__init__()
+        self.server = server
+
+
+# ---------------------------------------------------------------------------
+
+
+# BrowseAnchorType, BrowseAnchor, _BROWSE_TYPE_GLYPH, _is_in_reasoning
+# moved to _browse_types.py — imported above
+
+
+class HermesApp(App):
+    """Main Textual application for the Hermes Agent TUI.
+
+    Holds all reactive state that drives widget updates. The agent thread
+    (and other background threads) mutate these reactives via
+    ``call_from_thread``, and Textual's watch system handles re-rendering.
+    """
+
+    CSS_PATH = "hermes.tcss"
+
+    # Layer declaration — required before any widget uses ``layer: overlay``
+    # in CSS.  Draw order: default → overlay.
+    LAYERS = ("default", "overlay")
+
+    def get_default_screen(self) -> Screen:
+        """Use custom Screen that prevents focus stealing on right-click."""
+        return _HermesScreen(id="_default")
+
+    BINDINGS = [
+        Binding("ctrl+f", "open_history_search", "History search", show=False, priority=True),
+        Binding("f1", "show_help", "Keyboard shortcuts", show=False),
+        Binding("f2", "show_usage", "Usage stats", show=False),  # C5: usage overlay shortcut
+        Binding("f3", "show_commands", "Commands", show=False),
+        Binding("f4", "toggle_workspace", "Workspace", show=False),
+        Binding("f8", "toggle_fps_hud", "FPS HUD", show=False),
+        Binding("f12", "debug_hooks_snapshot", "Hooks debug", show=False),
+        Binding("alt+up",   "jump_turn_prev", "Previous turn", show=False),
+        Binding("alt+down", "jump_turn_next", "Next turn",     show=False),
+        Binding("ctrl+shift+a", "open_anim_config", "Animation config", show=True, priority=True),
+        Binding("ctrl+b", "toggle_browse_mode", "Browse", show=True, priority=True),
+        Binding("ctrl+shift+h", "open_sessions", show=False),
+        Binding("ctrl+w+n", "new_worktree_session", show=False),
+        Binding("o", "focus_output", "Output", show=False),
+        Binding("i", "focus_input_from_output", "Input", show=False),
+        Binding("ctrl+alt+up",   "jump_subagent_prev", "Prev agent", show=False),
+        Binding("ctrl+alt+down", "jump_subagent_next", "Next agent", show=False),
+        # R2 pane layout bindings (no-ops when pane manager disabled / v1 mode)
+        Binding("f5", "focus_left_pane", "Left pane", show=False),
+        Binding("f6", "focus_center_pane", "Center pane", show=False),
+        Binding("f7", "focus_right_pane", "Right pane", show=False),
+        Binding("f9", "cycle_pane_forward", "Next pane", show=False),
+        Binding("shift+f9", "cycle_pane_backward", "Prev pane", show=False),
+        Binding("ctrl+[", "collapse_left_pane", "Collapse left", show=False),
+        Binding("ctrl+]", "collapse_right_pane", "Collapse right", show=False),
+        Binding("alt+[", "collapse_left_pane", "Collapse left", show=False),
+        Binding("alt+]", "collapse_right_pane", "Collapse right", show=False),
+        Binding("ctrl+\\", "toggle_center_split", "Split center", show=False),
+    ]
+
+    _CHEVRON_PHASE_CLASSES: frozenset[str] = frozenset({
+        "--phase-file", "--phase-stream", "--phase-shell",
+        "--phase-done", "--phase-error",
+    })
+
+    # --- Reactive state (replaces flag + _invalidate() pattern) ---
+    agent_running: reactive[bool] = reactive(False)
+    command_running: reactive[bool] = reactive(False)
+    voice_mode: reactive[bool] = reactive(False)
+    voice_recording: reactive[bool] = reactive(False)
+
+    # Overlay states — typed dataclasses, not raw dicts
+    clarify_state: reactive[ChoiceOverlayState | None] = reactive(None)
+    approval_state: reactive[ChoiceOverlayState | None] = reactive(None)
+    sudo_state: reactive[SecretOverlayState | None] = reactive(None)
+    secret_state: reactive[SecretOverlayState | None] = reactive(None)
+    undo_state: reactive[UndoOverlayState | None] = reactive(None)
+
+    # Status bar data — display-only, read directly by StatusBar (no watcher needed)
+    status_model: reactive[str] = reactive("")
+    status_context_tokens: reactive[int] = reactive(0)
+    status_context_max: reactive[int] = reactive(0)
+
+    # Compaction state — display-only (status_compaction_progress has a watcher; enabled does not)
+    status_compaction_progress: reactive[float] = reactive(0.0)  # 0.0–1.0
+    status_compaction_enabled: reactive[bool] = reactive(True)  # display-only
+
+    # Tok/s throughput (last turn) — display-only
+    status_tok_s: reactive[float] = reactive(0.0)
+
+    # Browse mode — keyboard-driven navigation through ToolBlock widgets
+    browse_mode: reactive[bool] = reactive(False)
+    browse_index: reactive[int] = reactive(0)
+    # Memoized count of mounted ToolHeaders — display-only, read by StatusBar.render()
+    _browse_total: reactive[int] = reactive(0)
+    # Unified anchor list hint shown in StatusBar during []/{}/ Alt+↑↓ navigation — display-only
+    _browse_hint: reactive[str] = reactive("")
+
+    # Completion overlay hint shown in StatusBar while overlay is visible — display-only
+    _completion_hint: reactive[str] = reactive("")
+
+    # Animation force state — overrides trigger-based show/hide logic
+    # None = normal; "on" = always show; "off" = always hide
+    _anim_force: "str | None" = None
+
+    # Compact layout — True = density-compact CSS class active
+    compact: reactive[bool] = reactive(False)
+    _compact_manual: "bool | None" = None  # None = auto; True/False = user override
+
+    # Animation hint for StatusBar — display-only
+    _anim_hint: reactive[str] = reactive("")
+
+    # Active tool name — set/cleared by _on_tool_start/_on_tool_complete (C1)
+    _active_tool_name: str = ""
+
+    # Detail level of currently focused ToolPanel in browse mode — display-only
+    browse_detail_level: reactive[int] = reactive(0)
+
+
+    # Output dropped flag — display-only; shown in StatusBar until next successful write
+    status_output_dropped: reactive[bool] = reactive(False)
+
+    # D5: count of currently-streaming tool blocks (shows badge in StatusBar)
+    _streaming_tool_count: reactive[int] = reactive(0, repaint=False)
+
+    # Image attachments — reactive(list) uses factory form to avoid shared mutable default
+    attached_images: reactive[list] = reactive(list)
+
+    # --- PlanPanel (R1) ---
+    # planned_calls: list of PlannedCall (frozen dataclass); factory form avoids shared mutable.
+    # repaint=False — PlanPanel registers its own watch_planned_calls watcher.
+    planned_calls: reactive[list] = reactive(list, repaint=False)
+    turn_cost_usd: reactive[float] = reactive(0.0, repaint=False)
+    turn_tokens_in: reactive[int] = reactive(0, repaint=False)
+    turn_tokens_out: reactive[int] = reactive(0, repaint=False)
+    plan_panel_collapsed: reactive[bool] = reactive(True)
+
+    # Spinner label — text shown beside the spinner frame (e.g. "Calling tool…")
+    spinner_label: reactive[str] = reactive("")
+
+    # Active file path — display-only; drives the 📄 breadcrumb in StatusBar
+    status_active_file: reactive[str] = reactive("")
+
+    # Persistent error message shown in StatusBar until cleared.
+    # repaint=False: StatusBar registers its own watch() in on_mount.
+    status_error: reactive[str] = reactive("", repaint=False)
+
+    # Highlighted completion candidate — drives PreviewPanel via watch_highlighted_candidate.
+    # Uses reactive(None) (no type param) to avoid import cycle at class-definition time.
+    highlighted_candidate: reactive = reactive(None)
+
+    # FPS HUD visibility — toggled via Ctrl+\ or display.fps_hud config
+    fps_hud_visible: reactive[bool] = reactive(False)
+
+    # Context-window % meter (Feature A)
+    context_pct: reactive[float] = reactive(0.0, repaint=False)
+
+    # Yolo mode — mirrors HERMES_YOLO_MODE env var; toggled at runtime via /yolo
+    yolo_mode: reactive[bool] = reactive(False, repaint=False)
+
+    # Current session label — display-only; shown in StatusBar chip
+    session_label: reactive[str] = reactive("")
+
+    # S0-D/S0-E: True while assistant is actively streaming tokens
+    status_streaming: reactive[bool] = reactive(False)
+
+    # A1: coarse phase within an agent turn — widgets subscribe via cross-widget watch()
+    status_phase: reactive[str] = reactive(_Phase.IDLE)
+
+    # S0-A: verbose mode — show ctx_label in StatusBar alongside bar
+    status_verbose: reactive[bool] = reactive(False)
+
+    # S1-B: True when the active-file tool block has scrolled off the viewport
+    status_active_file_offscreen: reactive[bool] = reactive(False)
+
+    # S1-D: number of live parallel sessions (1 = single-session, hide label)
+    session_count: reactive[int] = reactive(1)
+
+    # hint_text is NOT on HermesApp — HintBar.hint is the single source of truth.
+
+    def __init__(
+        self,
+        cli: Any,
+        startup_fn=None,
+        clipboard_available: bool = True,
+        xclip_cmd: list[str] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        # Some pure unit tests monkey-patch AssistantNameplate.app on the class
+        # without restoring it. A real app must use Textual's inherited app
+        # descriptor, not a stale test mock.
+        try:
+            if "app" in AssistantNameplate.__dict__:
+                delattr(AssistantNameplate, "app")
+        except Exception:
+            pass
+        self.cli = cli
+        self._startup_fn = startup_fn
+        self._clipboard_available: bool = clipboard_available
+        self._xclip_cmd: list[str] | None = xclip_cmd
+
+        # Bounded queue: prevents unbounded memory growth when agent produces
+        # faster than UI renders. 4096 chunks ≈ ~1MB of text at ~256 bytes/chunk.
+        self._output_queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=4096)
+        self._spinner_idx = 0
+        self._shimmer_tick = 0  # monotonic; never wraps — decoupled from spinner frame count
+        self._cached_input_area = None  # cached DOM ref — avoids per-tick query_one
+        self._cached_spinner_overlay = None  # cached DOM ref — avoids per-tick query_one
+        self._event_loop: asyncio.AbstractEventLoop | None = None
+
+        # ThemeManager handles skin loading, component vars, and hot reload.
+        # Must be constructed after super().__init__() so App internals exist.
+        self._theme_manager = ThemeManager(self)
+        # Diagnostic probes — initialised in on_mount once the event loop runs.
+        self._worker_watcher: WorkerWatcher | None = None
+        self._event_loop_probe: EventLoopLatencyProbe | None = None
+        self._frame_probe: FrameRateProbe | None = None
+        self._spinner_perf_alarm: SuspicionDetector | None = None
+        self._duration_perf_alarm: SuspicionDetector | None = None
+        self._workspace_poll_perf_alarm: SuspicionDetector | None = None
+        self._workspace_apply_perf_alarm: SuspicionDetector | None = None
+        self._fps_hud_update_every: int = 1  # refined in on_mount once MAX_FPS is known
+
+        # Spinner frames — read from module-level _COMMAND_SPINNER_FRAMES in cli.py
+        self._spinner_frames: tuple[str, ...] = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+        self._helix_frame_cache: dict[int, tuple[str, ...]] = {}
+
+        # Elapsed time for the current tool call — reset whenever spinner_label changes
+        self._tool_start_time: float = 0.0
+
+        # Whether to use HermesInput (step 5) or interim TextArea
+        self._use_hermes_input = True
+        # Lines scrolled per mouse wheel tick — overridden from config in cli.py
+        self._scroll_lines: int = 3
+        # C4: path search ignore set — None means use walker's built-in default
+        self._path_search_ignore: "frozenset[str] | None" = None
+
+        # Browse-mode visit counter — first 3 visits show full hint, then compact
+        self._browse_uses: int = 0
+        # Unified anchor list for []/{}/ Alt+↑↓ navigation
+        self._browse_anchors: list[BrowseAnchor] = []
+        self._browse_cursor: int = 0
+        # Browse mode visual markers config (wired from cli.py)
+        self._browse_markers_enabled: bool = True
+        self._browse_reasoning_markers: bool = True
+        self._browse_minimap_default: bool = False
+        self._browse_streaming_flash: bool = True
+        self._browse_turn_boundary_always: bool = True
+        self._browse_minimap: bool = False
+        # Widgets that have a _browse_badge set — tracked for cleanup
+        self._browse_badge_widgets: list = []
+
+        # Active StreamingToolBlocks keyed by tool_call_id
+        self._active_streaming_blocks: dict[str, Any] = {}
+        # P7 — per-turn tool call tracking: now owned by ToolRenderingService (_svc_tools)
+        # _turn_tool_calls / _agent_stack remain here only until _svc_tools is constructed below.
+        # After construction the compat property (defined at class level) delegates to the service.
+        self._turn_start_monotonic: float | None = None
+        self._response_metrics_active: bool = False
+        self._response_wall_start_time: float | None = None
+        self._response_segment_start_time: float | None = None
+        self._response_token_window: collections.deque[tuple[float, int]] = collections.deque()
+
+        # Undo/retry state
+        self._undo_in_progress: bool = False
+        self._last_user_input: str = ""
+        # Panel/args to act on when undo/rollback overlay is confirmed
+        self._pending_undo_panel: "MessagePanel | None" = None
+        self._pending_rollback_n: int = 0
+        # Animation feature flag — checked by all shimmer/pulse paths
+        self._animations_enabled: bool = _animations_enabled_check()
+        # F2: reduced-motion — disable shimmer/pulse; set from config or env var
+        import os as _os
+        self._reduced_motion: bool = bool(_os.environ.get("HERMES_REDUCED_MOTION"))
+        # Current hint phase — tracks what the user is doing
+        self._hint_phase: str = "idle"
+        # RX1 Phase C: _flash_hint_expires/_flash_hint_timer/_flash_hint_prior removed.
+        # FeedbackService owns all flash timer state. E3 guard replaced by on_agent_idle().
+        # Compaction warning state — reset when progress returns to 0
+        self._compaction_warned: bool = False
+        # Clear animation guard — prevents re-entry while fade is running
+        self._clear_animation_in_progress: bool = False
+        # InlineImageBar enabled state — set from cli.py before app launch
+        self._inline_image_bar_enabled: bool = True
+        # Active media player count — enforces max_concurrent limit (event-loop only)
+        self._active_media_count: int = 0
+        # Auto-title: fire once per session on first turn completion
+        self._auto_title_done: bool = False
+        # Session DB reference (wired from cli.py if available)
+        self._session_db: object = None
+        # Parallel worktree sessions
+        self._own_session_id: str = ""          # set from --worktree-session-id CLI arg
+        self._session_mgr: "object | None" = None
+        self._notify_listener: "object | None" = None
+        self._sessions_poll_timer: "object | None" = None
+        self._session_records_cache: list = []
+        self._session_active_id: str = ""
+        self._sessions_enabled_override: bool | None = None  # set by tests
+        # P1-7: one-shot "press o to open file" hint when path is clickable
+        self._path_open_hint_shown: bool = False
+        # Workspace overlay state
+        self._last_git_snapshot: GitSnapshot | None = None
+        self._git_poll_h: object | None = None  # textual.timer.Timer
+        self._workspace_hint_shown: bool = False
+        self._workspace_tracker = None
+        self._git_poller = None
+        self._git_poll_in_flight: bool = False
+        self._git_poll_retrigger: bool = False
+        # Resize debounce — coalesces rapid resize events before app-level work
+        self._pending_resize: "object | None" = None
+        self._resize_timer: "object | None" = None  # textual Timer
+        # Panel-ready gate: cli.py waits on this Event before starting chat() so
+        # streaming only begins after the new MessagePanel and its engine are
+        # mounted.  Eliminates the multi-line-chunk race where lines arrive on the
+        # old panel before watch_agent_running(True) fires.
+        self._panel_ready_event: "threading.Event | None" = None
+        # F4: track last keypress time for desktop notify active-user gate
+        self._last_keypress_time: float = 0.0
+
+        # R2 pane layout — read from display.layout in cli config
+        _display_cfg = (getattr(self.cli, "_cfg", None) or {}).get("display", {})
+        self._display_layout: str = _display_cfg.get("layout", "v1")
+        # Pre-construct OutputPanel so v2 can re-parent it into the center pane
+        self._output_panel: OutputPanel = OutputPanel(id="output-panel")
+        # PaneManager — owns layout mode, pane-width math, state persistence
+        from hermes_cli.tui.pane_manager import PaneManager
+        self._pane_manager = PaneManager(cfg=_display_cfg)
+
+        # RX1: FeedbackService — centralised flash coordinator.
+        # Constructed early so other services and widgets can register channels.
+        from hermes_cli.tui.services.feedback import (
+            AppScheduler,
+            FeedbackService,
+            HintBarAdapter,
+        )
+        self.feedback: FeedbackService = FeedbackService(AppScheduler(self))
+        self.feedback.register_channel(
+            "hint-bar",
+            HintBarAdapter(self),
+            lifecycle_aware=True,
+        )
+
+        # RX4: AgentLifecycleHooks — priority-ordered transition callback registry.
+        from hermes_cli.tui.services.lifecycle_hooks import AgentLifecycleHooks
+        self.hooks: AgentLifecycleHooks = AgentLifecycleHooks(self)
+        # RX2: suspend-busy guard — prevents concurrent App.suspend() calls
+        self._suspend_busy: bool = False
+        # Interrupt source tag — set by interrupt handler before agent_running→False
+        self._interrupt_source: str | None = None
+
+        # ── R4 services (plain objects; init order is load-bearing — see services/) ──
+        from hermes_cli.tui.services import (
+            ThemeService, SpinnerService, IOService, ToolRenderingService,
+            BrowseService, SessionsService, ContextMenuService, CommandsService,
+            WatchersService, KeyDispatchService, BashService,
+        )
+        self._svc_theme    = ThemeService(self)
+        self._svc_spinner  = SpinnerService(self)
+        self._svc_io       = IOService(self)
+        self._svc_tools    = ToolRenderingService(self)
+        self._svc_browse   = BrowseService(self)
+        self._svc_sessions = SessionsService(self)
+        self._svc_context  = ContextMenuService(self)
+        self._svc_commands = CommandsService(self)
+        self._svc_bash     = BashService(self)
+        self._svc_watchers = WatchersService(self)
+        self._svc_keys     = KeyDispatchService(self)
+
+    # --- Compose ---
+
+    def compose(self) -> ComposeResult:
+        if self._display_layout == "v2":
+            from hermes_cli.tui.widgets.pane_container import PaneContainer
+            from hermes_cli.tui.widgets.split_target_stub import SplitTargetStub
+            from hermes_cli.tui.pane_manager import PaneId
+            with Horizontal(id="pane-row"):
+                yield PaneContainer(pane_id=PaneId.LEFT, id="pane-left")
+                yield PaneContainer(pane_id=PaneId.CENTER, id="pane-center")
+                yield PaneContainer(pane_id=PaneId.RIGHT, id="pane-right")
+            yield SplitTargetStub(id="split-target-stub")
+        else:
+            yield self._output_panel
+        # PlanPanel: bottom-docked strip above StatusBar (non-v2 layout only).
+        if self._display_layout != "v2":
+            from hermes_cli.tui.widgets.plan_panel import PlanPanel as _PP
+            yield _PP(id="plan-panel")
+        # TTEWidget uses layer: overlay + dock: top in its DEFAULT_CSS so it
+        # floats over the banner area when active.  Banner content is already
+        # in OutputPanel underneath; when effect ends the overlay hides and
+        # the static caduceus is visible in-place.
+        yield TTEWidget(id="tte-effect")
+        with Vertical(id="overlay-layer"):
+            from hermes_cli.tui.overlays import InterruptOverlay as _IO
+            yield _IO(id="interrupt-overlay")
+        yield AssistantNameplate(
+            id="nameplate",
+            name=getattr(self, "_nameplate_name", "Hermes"),
+            effects_enabled=getattr(self, "_nameplate_effects", True),
+            idle_effect=getattr(self, "_nameplate_idle_effect", "breathe"),
+            morph_speed=getattr(self, "_nameplate_morph_speed", 1.0),
+            glitch_enabled=getattr(self, "_nameplate_glitch", True),
+        )
+        yield HintBar(id="hint-bar")
+        yield SessionBar(id="session-bar")
+        yield _SessionNotification(id="session-notification")
+        yield InlineImageBar(id="inline-image-bar")
+        yield ImageBar(id="image-bar")
+        yield TitledRule(id="input-rule", show_state=True)
+
+        if self._use_hermes_input:
+            from hermes_cli.tui.input_widget import HermesInput as _HI
+            from hermes_cli.tui.completion_overlay import CompletionOverlay as _CO
+            from hermes_cli.tui.path_search import PathSearchProvider as _PSP
+            # CompletionOverlay must be composed BEFORE HermesInput so it sits
+            # directly above the input in the natural layout flow (no dock/offset).
+            yield _CO(id="completion-overlay")
+            yield HistorySearchOverlay(id="history-search")
+            yield KeymapOverlay(id="keymap-help")
+            yield HelpOverlay(id="help-overlay")
+            yield UsageOverlay(id="usage-overlay")
+            yield CommandsOverlay(id="commands-overlay")
+            yield WorkspaceOverlay(id="workspace-overlay")
+            yield SessionOverlay(id="session-overlay")
+            yield ConfigOverlay(id="config-overlay")
+            # C1: pre-mount ToolPanelHelpOverlay at screen level so layer: overlay
+            # resolves against Screen (not a child ToolPanel).
+            from hermes_cli.tui.overlays import ToolPanelHelpOverlay as _TPHO
+            yield _TPHO(id="tool-panel-help-overlay")
+            from hermes_cli.tui.widgets.input_legend_bar import InputLegendBar as _ILB
+            yield _ILB(id="input-legend-bar")
+            with Horizontal(id="input-row"):
+                yield Static("❯ ", id="input-chevron")
+                yield _HI(id="input-area")
+                yield Static("", id="spinner-overlay")
+            # PathSearchProvider is invisible — position is irrelevant.
+            yield _PSP(id="path-search-provider")
+        else:
+            yield TextArea(id="input-area")
+
+        yield PlainRule(id="input-rule-bottom")
+        yield VoiceStatusBar(id="voice-status")
+        yield StatusBar(id="status-bar")
+        # Drawbraille animation overlay — before FPSCounter so FPS HUD stays above.
+        from hermes_cli.tui.drawbraille_overlay import (
+            DrawbrailleOverlay as _DO,
+            AnimConfigPanel as _ACP,
+            AnimGalleryOverlay as _AGA,
+        )
+        yield _DO(id="drawbraille-overlay")
+        yield _ACP(id="anim-config-panel")
+        yield _AGA(id="anim-gallery-overlay")
+        # FPS HUD — overlay layer, docked top; display:none by default.
+        # Must be before ContextMenu so ContextMenu stays topmost in overlay layer.
+        yield FPSCounter(id="fps-counter")
+        # ContextMenu must be last so it renders above all other widgets
+        # within the overlay layer (DOM order = paint order within a layer).
+        from hermes_cli.tui.context_menu import ContextMenu as _CM
+        yield _CM(id="context-menu")
+
+    # --- Lifecycle ---
+
+    def on_mount(self) -> None:
+        self._event_loop = asyncio.get_running_loop()
+        self._worker_watcher = WorkerWatcher(self)
+        self._event_loop_probe = EventLoopLatencyProbe()
+        self._spinner_perf_alarm = SuspicionDetector(
+            "spinner-tick",
+            budget_ms=16.0,
+            severe_ms=50.0,
+            burst_window=5,
+            burst_count=2,
+            streak_count=2,
+            cooldown_s=10.0,
+        )
+        self._duration_perf_alarm = SuspicionDetector(
+            "duration-tick",
+            budget_ms=16.0,
+            severe_ms=50.0,
+            burst_window=5,
+            burst_count=2,
+            streak_count=2,
+            cooldown_s=10.0,
+        )
+        self._workspace_poll_perf_alarm = SuspicionDetector(
+            "workspace-git-poll",
+            budget_ms=250.0,
+            severe_ms=1500.0,
+            burst_window=4,
+            burst_count=2,
+            streak_count=2,
+            cooldown_s=20.0,
+        )
+        self._workspace_apply_perf_alarm = SuspicionDetector(
+            "workspace-apply",
+            budget_ms=16.0,
+            severe_ms=80.0,
+            burst_window=5,
+            burst_count=2,
+            streak_count=2,
+            cooldown_s=10.0,
+        )
+        self._theme_manager.start_hot_reload()
+        from textual import constants as _tc
+        _frame_interval = 1.0 / _tc.MAX_FPS  # matches Screen._update_timer cadence
+        # window=MAX_FPS → 1 s of rolling history; log every MAX_FPS ticks → 1 log/s
+        self._frame_probe = FrameRateProbe(window=_tc.MAX_FPS, log_every=_tc.MAX_FPS)
+        self._fps_hud_update_every = max(1, _tc.MAX_FPS // 4)  # update display at ~4 Hz
+        self._consume_output()  # starts the @work consumer
+        self._anim_clock = AnimationClock()
+        self._anim_clock_h = self.set_interval(1 / 15, self._anim_clock.tick)
+        self._spinner_h = self.set_interval(0.14, self._svc_spinner.tick_spinner)  # ~7Hz — smooth enough, 30% less event-loop pressure vs 10Hz
+        self._fps_h = self.set_interval(_frame_interval, self._svc_spinner.tick_fps)
+        self._duration_h = self.set_interval(1.0, self._svc_spinner.tick_duration)
+        # Restore FPS HUD state from config (runtime toggle overrides this)
+        if _fps_hud_enabled():
+            self.fps_hud_visible = True
+        # Focus the input bar so the user can type immediately
+        try:
+            self.query_one("#input-area").focus()
+        except NoMatches:
+            pass
+        if not self._clipboard_available and not self._xclip_cmd:
+            try:
+                self.query_one("#status-clipboard-warning").add_class("--active")
+            except NoMatches:
+                pass
+        if self._startup_fn is not None:
+            threading.Thread(target=self._startup_fn, daemon=True).start()
+        import os as _os
+        if _os.environ.get("HERMES_DENSITY", "").lower() == "compact":
+            self._compact_manual = True
+            self.compact = True  # triggers watch_compact → adds "density-compact"
+        elif self._compact_manual is None:
+            try:
+                w, h = self.size.width, self.size.height
+                if w > 0 and h > 0:
+                    self.compact = w <= 120 or h <= 30
+            except Exception:
+                pass
+        if _os.environ.get("HERMES_REDUCED_MOTION", "").lower() in ("1", "true", "yes"):
+            self.add_class("reduced-motion")
+        # G-1: also read tui.reduced_motion from config file
+        try:
+            from hermes_cli.config import read_raw_config
+            if read_raw_config().get("tui", {}).get("reduced_motion"):
+                self.add_class("reduced-motion")
+        except Exception:
+            pass
+        # Wire slash commands from COMMAND_REGISTRY into the autocomplete engine
+        if self._use_hermes_input:
+            self._populate_slash_commands()
+        # Initialize hint bar to idle phase — shows key-badge hints immediately
+        self._svc_spinner.set_hint_phase("idle")
+        # Apply InlineImageBar enabled state from config
+        try:
+            self.query_one(InlineImageBar)._enabled = self._inline_image_bar_enabled
+        except NoMatches:
+            pass
+        # Initialize workspace tracker in background thread (subprocess call)
+        self._init_workspace_tracker()
+        # Apply --no-turn-boundary class if config disables turn boundary rule
+        if not self._browse_turn_boundary_always:
+            self.add_class("--no-turn-boundary")
+        # Yolo mode: sync reactive with env var state at startup
+        import os as _os2
+        self.yolo_mode = _os2.environ.get("HERMES_YOLO_MODE") == "1"
+        # Desktop notify: track turn start time
+        self._turn_start_time: float = 0.0
+        self._last_assistant_text: str = ""
+        # Initialize parallel worktree sessions (feature-gated)
+        self._svc_sessions.init_sessions()
+        # R2 v2 pane layout wiring
+        if self._display_layout == "v2":
+            self.add_class("layout-v2")
+            try:
+                from hermes_cli.tui.widgets.plan_panel import PlanPanel as _PP
+                from hermes_cli.tui.widgets.context_panel_stub import ContextPanelStub
+                pane_center = self.query_one("#pane-center")
+                pane_left = self.query_one("#pane-left")
+                pane_right = self.query_one("#pane-right")
+                pane_center.set_content(self._output_panel)
+                pane_left.set_content(_PP(id="plan-panel"))
+                pane_right.set_content(ContextPanelStub())
+            except Exception:
+                logger.exception("v2 pane wiring failed")
+        # Restore pane layout blob from previous session (worktree sessions only)
+        try:
+            if (
+                getattr(self, "_pane_manager", None) is not None
+                and self._own_session_id
+                and self._session_mgr is not None
+            ):
+                _layout_blob = self._session_mgr.load_layout_blob(self._own_session_id)
+                if _layout_blob:
+                    self._pane_manager.load_state(_layout_blob)
+                    if self._pane_manager.enabled:
+                        self._pane_manager._apply_layout(self)
+                        if self._pane_manager._center_split:
+                            self._pane_manager.apply_center_split(self)
+        except Exception:
+            pass
+        # RX4: register lifecycle hooks then drain any events queued before is_running
+        self._register_lifecycle_hooks()
+        self.hooks.drain_deferred()
+
+    _RESIZE_DEBOUNCE_S: float = 0.06  # 60 ms
+
+    def on_resize(self, event: "events.Resize") -> None:
+        """Debounce rapid resize events; flush once idle for 60 ms."""
+        self._pending_resize = event
+        if self._resize_timer is not None:
+            self._resize_timer.stop()
+        self._resize_timer = self.set_timer(self._RESIZE_DEBOUNCE_S, self._flush_resize)
+
+    def _maybe_reload_emoji(self, event: "events.Resize") -> None:
+        """Re-normalize emoji images when the terminal cell pixel size changes."""
+        registry = getattr(self, "_emoji_registry", None)
+        if registry is None or registry.is_empty():
+            return
+        try:
+            from hermes_cli.tui.emoji_registry import _cell_px
+            cpw, cph = _cell_px()
+        except Exception:
+            return
+        cur = getattr(self, "_emoji_cell_px", None)
+        if cur == (cpw, cph):
+            return
+        self._emoji_cell_px = (cpw, cph)
+        self.run_worker(lambda: registry.reload_normalized(cpw, cph), thread=True)
+
+    def _flush_resize(self) -> None:
+        """Run app-level resize work after the debounce window expires."""
+        event = self._pending_resize
+        if event is None:
+            return
+        self._pending_resize = None
+        self._resize_timer = None
+        self._maybe_reload_emoji(event)
+        try:
+            w = event.size.width  # type: ignore[union-attr]
+            h = event.size.height  # type: ignore[union-attr]
+        except AttributeError:
+            return
+        self._apply_min_size_overlay(w, h)
+        # Auto compact-mode detection (debounced here, not in watch_size)
+        if self._compact_manual is None:
+            should = w <= 120 or h <= 30
+            if self.compact != should:
+                self.compact = should
+        # Hard floor: w < 30 forces compact regardless of manual override
+        if w < 30 and not self.compact:
+            self.compact = True
+        # R2 pane layout — recalculate mode on every resize
+        if getattr(self, "_pane_manager", None) and self._pane_manager.enabled:
+            changed = self._pane_manager.on_resize(w, h)
+            if changed:
+                self._pane_manager._apply_layout(self)
+
+    def _apply_min_size_overlay(self, w: int, h: int) -> None:
+        """Mount or dismiss the MinSizeBackdrop based on current terminal dimensions."""
+        if not self.screen_stack:
+            return
+        from hermes_cli.tui.min_size_overlay import MinSizeBackdrop
+        from hermes_cli.tui.resize_utils import THRESHOLD_ULTRA_NARROW, THRESHOLD_MIN_HEIGHT
+        from textual.app import ScreenStackError
+        too_small = w < THRESHOLD_ULTRA_NARROW or h < THRESHOLD_MIN_HEIGHT
+        try:
+            existing = self.screen.query("MinSizeBackdrop")
+        except ScreenStackError:
+            return
+        if too_small and not existing:
+            self.screen.mount(MinSizeBackdrop(w, h))
+        elif too_small and existing:
+            existing.first(MinSizeBackdrop).update_size(w, h)
+        elif not too_small and existing:
+            existing.first(MinSizeBackdrop).remove()
+
+    def on_unmount(self) -> None:
+        """Stop background helpers tied to app lifetime."""
+        from hermes_cli.tui.io_boundary import cancel_all
+        cancel_all(self)
+        self._svc_bash.kill()
+        self.hooks.shutdown()
+        self._theme_manager.stop_hot_reload()
+        for _attr in ("_anim_clock_h", "_spinner_h", "_fps_h", "_duration_h",
+                      "_sessions_poll_timer", "_git_poll_h", "_resize_timer"):
+            _h = getattr(self, _attr, None)
+            if _h is not None:
+                try:
+                    _h.stop()
+                except Exception:
+                    pass
+        # Safety-net: stop any lingering media players
+        try:
+            from hermes_cli.tui.widgets import InlineMediaWidget as _IMW
+            for _w in self.query(_IMW):
+                try:
+                    if _w._poller:
+                        _w._poller.stop()
+                    if _w._ctrl:
+                        _w._ctrl.stop()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        # Safety-net delete-all: removes any TGP placements that leaked (e.g. crash path)
+        try:
+            import sys as _sys
+            from hermes_cli.tui.kitty_graphics import get_caps, GraphicsCap, _get_renderer
+            if get_caps() == GraphicsCap.TGP:
+                _sys.stdout.write(_get_renderer().delete_all_sequence())
+                _sys.stdout.flush()
+        except Exception:
+            pass
+        # Persist pane layout blob for the current worktree session
+        try:
+            if (
+                getattr(self, "_pane_manager", None) is not None
+                and self._own_session_id
+                and self._session_mgr is not None
+            ):
+                self._session_mgr.save_layout_blob(
+                    self._own_session_id, self._pane_manager.dump_state()
+                )
+        except Exception:
+            pass
+        # Session switch: fire deferred exec (set by _svc_sessions.switch_to_session)
+        _exec = getattr(self, "_pending_exec", None)
+        if _exec is not None:
+            self._pending_exec = None
+            try:
+                _exec()
+            except Exception:
+                pass
+
+    # --- Bash passthrough ---
+
+    @work(thread=True, exclusive=True, group="bash")
+    def _start_bash_worker(self, cmd: str, block: "Any") -> None:
+        """Thread adapter for BashService. exclusive=True serialises within group.
+        NOTE: exclusive cancels the Worker object only — does NOT kill the OS
+        subprocess. The is_running guard in BashService.run() is the real gate."""
+        self._svc_bash._exec_sync(cmd, block)
+
+    def _mount_bash_block(self, cmd: str) -> "Any":
+        """Mount a BashOutputBlock into OutputPanel before the ThinkingWidget sentinel."""
+        from hermes_cli.tui.widgets.bash_output_block import BashOutputBlock
+        from hermes_cli.tui.widgets.thinking import ThinkingWidget
+        block = BashOutputBlock(cmd)
+        output = self._output_panel
+        output.mount(block, before=output.query_one(ThinkingWidget))
+        return block
+
+    # --- Workspace tracker ---
+
+    @work(thread=True)
+    def _init_workspace_tracker(self) -> None:
+        """Resolve repo root in a worker thread, then set tracker on event loop."""
+        import os as _os
+        import subprocess as _sp
+        try:
+            root = _sp.check_output(
+                ["git", "rev-parse", "--show-toplevel"],
+                stderr=_sp.DEVNULL,
+                timeout=5,
+            ).decode().strip()
+            is_git_repo = True
+        except Exception:
+            root = _os.getcwd()
+            is_git_repo = False
+        tracker = WorkspaceTracker(root, is_git_repo=is_git_repo)
+        poller = GitPoller(root, is_git_repo=is_git_repo)
+        self.call_from_thread(self._set_workspace_tracker, tracker, poller)
+
+    def _set_workspace_tracker(self, tracker: WorkspaceTracker, poller: GitPoller) -> None:
+        self._workspace_tracker = tracker
+        self._git_poller = poller
+        if not poller.is_git_repo:
+            self._last_git_snapshot = GitSnapshot(
+                branch="",
+                dirty_count=0,
+                entries=[],
+                staged_count=0,
+                untracked_count=0,
+                modified_count=0,
+                deleted_count=0,
+                renamed_count=0,
+                conflicted_count=0,
+                is_git_repo=False,
+            )
+
+    def _trigger_git_poll(self) -> None:
+        poller = getattr(self, "_git_poller", None)
+        if poller is None or not getattr(poller, "is_git_repo", False):
+            return
+        if self._git_poll_in_flight:
+            self._git_poll_retrigger = True
+            return
+        self._git_poll_in_flight = True
+        self._run_git_poll()
+
+    @work(thread=True, group="git-poll")
+    def _run_git_poll(self) -> None:
+        import time as _t
+        poller = getattr(self, "_git_poller", None)
+        if poller is None:
+            return
+        _t0 = _t.perf_counter()
+        snapshot = poller.poll()
+        elapsed_ms = (_t.perf_counter() - _t0) * 1000.0
+        self.post_message(WorkspaceUpdated(snapshot, poll_elapsed_ms=elapsed_ms))
+
+    def _workspace_polling_desired(self) -> bool:
+        poller = getattr(self, "_git_poller", None)
+        if poller is None or not getattr(poller, "is_git_repo", False):
+            return False
+        overlay_visible = False
+        try:
+            overlay_visible = self.query_one(WorkspaceOverlay).has_class("--visible")
+        except NoMatches:
+            pass
+        return overlay_visible or bool(self.agent_running)
+
+    def _sync_workspace_polling_state(self) -> None:
+        desired = self._workspace_polling_desired()
+        if desired:
+            if self._git_poll_h is None:
+                self._git_poll_h = self.set_interval(5.0, self._trigger_git_poll)
+        else:
+            if self._git_poll_h is not None:
+                self._git_poll_h.stop()
+                self._git_poll_h = None
+
+    @work(thread=True, group="complexity")
+    def _analyze_complexity(self, path: str) -> None:
+        tracker = getattr(self, "_workspace_tracker", None)
+        if tracker is None:
+            return
+        warning = analyze_complexity(path)
+        self.call_from_thread(tracker.set_complexity, path, warning)
+        self.call_from_thread(self._refresh_workspace_overlay)
+
+    def _refresh_workspace_overlay(self) -> None:
+        """Refresh WorkspaceOverlay content if visible. Must run on event loop."""
+        tracker = getattr(self, "_workspace_tracker", None)
+        if tracker is None:
+            return
+        try:
+            ov = self.query_one(WorkspaceOverlay)
+            if ov.has_class("--visible"):
+                ov.refresh_data(tracker, self._last_git_snapshot)
+        except NoMatches:
+            pass
+
+    def on_workspace_updated(self, event: WorkspaceUpdated) -> None:
+        import time as _t
+
+        self._git_poll_in_flight = False
+        self._last_git_snapshot = event.snapshot
+        tracker = getattr(self, "_workspace_tracker", None)
+        if tracker is None:
+            return
+        if event.poll_elapsed_ms is not None and self._workspace_poll_perf_alarm is not None:
+            self._workspace_poll_perf_alarm.observe(
+                event.poll_elapsed_ms,
+                detail=f"entries={len(event.snapshot.entries)}",
+            )
+        _t0 = _t.perf_counter()
+        tracker.apply_snapshot(event.snapshot)
+        try:
+            ov = self.query_one(WorkspaceOverlay)
+            if ov.has_class("--visible"):
+                ov.refresh_data(tracker, event.snapshot)
+        except NoMatches:
+            pass
+        apply_ms = (_t.perf_counter() - _t0) * 1000.0
+        if self._workspace_apply_perf_alarm is not None:
+            self._workspace_apply_perf_alarm.observe(
+                apply_ms,
+                detail=f"entries={len(event.snapshot.entries)} overlay_visible={ov.has_class('--visible') if 'ov' in locals() else False}",
+            )
+        if not self._workspace_hint_shown and tracker.entries():
+            self._workspace_hint_shown = True
+            self._flash_hint("w  workspace changes", 3.0)
+        if self._git_poll_retrigger and self._workspace_polling_desired():
+            self._git_poll_retrigger = False
+            self._trigger_git_poll()
+        else:
+            self._git_poll_retrigger = False
+
+    # ---------------------------------------------------------------------------
+    # MCP registry handlers (v4 P1 — sub-spec B §5.3)
+    # ---------------------------------------------------------------------------
+
+    def on_mcp_server_registered(self, msg: MCPServerRegistered) -> None:
+        """Consume MCPServerRegistered: update tool registry."""
+        kw: dict = {"icon_ascii": msg.icon_ascii}
+        if msg.icon_nf:
+            kw["icon_nf"] = msg.icon_nf
+        try:
+            register_mcp_server(msg.server, **kw)
+        except ValueError:
+            logger.warning("register_mcp_server failed for %r", msg.server)
+            return
+        for tool_meta in msg.tools:
+            try:
+                register_tool(
+                    ToolSpec.from_mcp_meta(tool_meta, server=msg.server),
+                    overwrite=True,
+                )
+            except Exception:
+                logger.debug("Failed to register MCP tool %r from %r", tool_meta.get("name"), msg.server)
+
+    def on_mcp_server_disconnected(self, msg: MCPServerDisconnected) -> None:
+        """Consume MCPServerDisconnected: specs stay — panels may still be on screen."""
+        pass  # deliberate no-op; MCPServerRegistry entry stays for in-flight renders
+
+    def action_toggle_workspace(self) -> None:
+        try:
+            ov = self.query_one(WorkspaceOverlay)
+        except NoMatches:
+            return
+        if ov.has_class("--visible"):
+            ov.action_dismiss()
+        else:
+            # Don't cover focus-trapping overlays like AnimConfigPanel —
+            # stacking workspace on top strands the underlying modal and
+            # pulls focus into unreachable territory.
+            if self._focus_blocking_overlay_visible():
+                return
+            self._dismiss_all_info_overlays()
+            tracker = getattr(self, "_workspace_tracker", None)
+            if tracker is not None:
+                ov.refresh_data(tracker, self._last_git_snapshot)
+            ov.show_overlay()
+            self._sync_workspace_polling_state()
+            self._trigger_git_poll()
+
+    def action_dismiss_all_error_banners(self) -> None:
+        """E5: query all .error-banner widgets in the screen and remove each."""
+        try:
+            banners = list(self.screen.query(".error-banner"))
+            for banner in banners:
+                try:
+                    banner.remove()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    # --- InlineImageBar handlers ---
+
+    def on_image_mounted(self, event: Any) -> None:
+        """Bubble from StreamingToolBlock.ImageMounted → add thumbnail to InlineImageBar."""
+        try:
+            self.query_one(InlineImageBar).add_image(event.path)
+        except NoMatches:
+            pass
+
+    async def on_inline_image_bar_thumbnail_clicked(self, event: Any) -> None:
+        """Scroll OutputPanel to the InlineImage matching the clicked thumbnail."""
+        from hermes_cli.tui.widgets import InlineImage
+        for widget in self.query(InlineImage):
+            if getattr(widget, "_src_path", "") == event.path:
+                try:
+                    self.query_one(OutputPanel).scroll_to_widget(widget, animate=True)
+                except NoMatches:
+                    pass
+                break
+
+    def _mount_inline_media_widget(self, kind: str, url: str) -> None:
+        """Mount InlineMediaWidget in output panel. Event-loop only."""
+        from hermes_cli.tui.media_player import _inline_media_config
+        from hermes_cli.tui.widgets import InlineMediaWidget
+        cfg = _inline_media_config()
+        if not cfg.enabled:
+            return
+        try:
+            from hermes_cli.tui.tool_blocks import ToolPendingLine
+            output = self.query_one(OutputPanel)
+            widget = InlineMediaWidget(url=url, kind=kind)
+            try:
+                tool_pending = output.query_one(ToolPendingLine)
+                output.mount(widget, before=tool_pending)
+            except NoMatches:
+                output.mount(widget)
+        except Exception:
+            pass
+
+    # IO methods extracted → _app_io.py
+
+    # Spinner + hint bar methods extracted → _app_spinner.py
+
+    # --- User message echo ---
+
+    def echo_user_message(self, text: str, images: int = 0) -> None:
+        """Mount a UserMessagePanel showing the user's submitted message.
+
+        Called from the agent thread via ``call_from_thread`` before
+        ``agent_running`` is set to True (which creates the new MessagePanel).
+        """
+        try:
+            panel = self.query_one(OutputPanel)
+            # D4: remove empty-state hint (if present from /clear) before mounting user message
+            for hint in panel.query(".--empty-state-hint"):
+                try:
+                    hint.remove()
+                except Exception:
+                    pass
+            ump = UserMessagePanel(text, images=images)
+            panel.mount(ump, before=panel.query_one(ThinkingWidget))
+            # Always scroll to show the user's own message regardless of scroll
+            # position — the user just submitted, they expect to see the exchange.
+            # Re-engage auto-scroll for the upcoming assistant response.
+            panel._user_scrolled_up = False
+            self.call_after_refresh(panel.scroll_end, animate=False)
+        except NoMatches:
+            pass
+
+    def _resolve_user_emoji(self, text: str, panel: "UserMessagePanel") -> None:
+        """Mount custom emoji images for :name: tokens found in the user's message.
+
+        Runs on the event-loop thread (called directly from echo_user_message).
+        """
+        # User echo is a lightweight transcript row, not rich response prose.
+        # Mounting image widgets into it after first paint can perturb turn
+        # layout and visually corrupt adjacent status lines. Keep raw :name:
+        # text in the echo panel; custom emoji remain enabled in assistant
+        # responses where the richer layout path is designed for it.
+        return
+        from hermes_cli.tui.response_flow import _EMOJI_RE
+        from hermes_cli.tui.kitty_graphics import get_caps, GraphicsCap
+        registry = getattr(self, "_emoji_registry", None)
+        if registry is None or not getattr(self, "_emoji_images_enabled", True):
+            return
+        cap = get_caps()
+        use_images = cap in (GraphicsCap.TGP, GraphicsCap.SIXEL)
+        seen: set[str] = set()
+        for m in _EMOJI_RE.finditer(text):
+            name = m.group(1).lower()
+            if name in seen:
+                continue
+            entry = registry.get(name)
+            if entry is None:
+                continue
+            seen.add(name)
+            try:
+                if entry.n_frames > 1 and use_images and entry.pil_image is not None:
+                    from hermes_cli.tui.emoji_registry import get_animated_emoji_widget_class
+                    cls = get_animated_emoji_widget_class()
+                    panel.mount(cls(entry))
+                elif use_images and entry.pil_image is not None:
+                    from hermes_cli.tui.widgets import InlineImage
+                    img = InlineImage(max_rows=entry.cell_height)
+                    img.image = entry.pil_image
+                    panel.mount(img)
+            except Exception:
+                pass
+
+    # Hint phase + drawbraille methods extracted → _app_spinner.py
+
+    def watch_yolo_mode(self, old: bool, value: bool) -> None:
+        """Update #input-chevron CSS class to reflect yolo state."""
+        try:
+            chevron = self.query_one("#input-chevron", Static)
+            if value:
+                chevron.add_class("--yolo-active")
+            else:
+                chevron.remove_class("--yolo-active")
+        except Exception:
+            pass
+        # E5: flash confirmation — skip initial reactive fire (old == value at init)
+        if old == value:
+            return
+        msg = "YOLO mode ON — auto-approving all tool calls" if value else "YOLO mode OFF"
+        self._flash_hint(msg, 2.0)
+
+    def watch_agent_running(self, value: bool) -> None:
+        # A1: coarse phase transition on turn start/end
+        self.status_phase = _Phase.REASONING if value else _Phase.IDLE
+        self._svc_spinner.drawbraille_show_hide(value)
+        if value:
+            # Signal thinking when agent starts
+            try:
+                from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO
+                self.query_one(_DO).signal("thinking")
+            except Exception:
+                pass
+            self._svc_commands.update_anim_hint()
+            self._svc_spinner.set_chevron_phase("--phase-stream")
+            self._svc_spinner.set_hint_phase("stream")
+            try:
+                output = self.query_one(OutputPanel)
+                output.reset_turn_capture()
+                try:
+                    from hermes_cli.tui.widgets.message_panel import ThinkingWidget as _TW
+                    output.query_one(_TW).activate()
+                except NoMatches:
+                    pass
+            except NoMatches:
+                pass
+            self._sync_workspace_polling_state()
+            # RX4: lifecycle hooks for turn start
+            self.hooks.fire("on_turn_start")
+        else:
+            # Signal complete when agent stops
+            try:
+                from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO
+                self.query_one(_DO).signal("complete")
+            except Exception:
+                pass
+            self._svc_commands.update_anim_hint()
+            self._sync_workspace_polling_state()
+            # Safety net: flush live buffer + stop all per-turn timers.
+            # flush_output() is never called from cli.py so the None sentinel
+            # that drives flush_live() via _consume_output never arrives.
+            # flush_live() handles: (1) ThinkingWidget.deactivate(),
+            # (2) LiveLineWidget.flush() → stops blink timer + resets
+            #     _blink_visible, (3) commits any partial _buf to MessagePanel.
+            try:
+                output = self.query_one(OutputPanel)
+                output.flush_live()
+                # Evict old turns at idle to prevent compositor cache thrash
+                # (Textual LRU maxsize=16 can't cope with 300+ children).
+                output.evict_old_turns()
+            except NoMatches:
+                pass
+            # v2 heat injection: signal turn complete
+            try:
+                from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
+                ov = self.query_one(DrawbrailleOverlay)
+                ov.signal("complete")
+            except Exception:
+                pass
+            # Rebuild unified browse anchor list now that all blocks are mounted
+            if self.browse_mode:
+                self._svc_browse.rebuild_browse_anchors()
+            # Live-refresh history search index if overlay is open
+            try:
+                hs = self.query_one(HistorySearchOverlay)
+                if hs.has_class("--visible"):
+                    hs.post_message(HistorySearchOverlay.TurnCompleted())
+            except NoMatches:
+                pass
+            # RX4: fire lifecycle hooks for turn end
+            self.hooks.fire("on_turn_end_any")
+            if getattr(self, "status_error", ""):
+                self.hooks.fire("on_turn_end_error")
+            else:
+                self.hooks.fire("on_turn_end_success")
+            _interrupt_src = getattr(self, "_interrupt_source", None)
+            if _interrupt_src is not None:
+                self.hooks.fire("on_interrupt", source=_interrupt_src)
+                self._interrupt_source = None
+
+        # --- nameplate ---
+        try:
+            np = self.query_one("#nameplate", AssistantNameplate)
+            if value:
+                np.transition_to_active(label=self.spinner_label or "● thinking")
+            else:
+                np.transition_to_idle()
+        except NoMatches:
+            pass
+
+        # --- undo safety guard ---
+        if value and self.undo_state is not None:
+            # Agent started while undo overlay was open — auto-cancel for safety
+            self.undo_state = None
+            self._pending_undo_panel = None
+            self._flash_hint("⚠  Agent started, undo cancelled", 2.0)
+
+        try:
+            widget = self.query_one("#input-area")
+            # Input stays enabled when agent is running — user can submit
+            # to interrupt + send new message.  Only overlays disable input.
+            if not value:
+                if hasattr(widget, "spinner_text"):
+                    widget.spinner_text = ""
+                # Restore input visibility (safety guard) and clear spinner placeholder
+                widget.display = True
+                try:
+                    self.query_one("#spinner-overlay", Static).display = False
+                except NoMatches:
+                    pass
+                # Clear the HintBar spinner when the agent stops.
+                # E3 fix: FeedbackService.on_agent_idle() leaves active flashes
+                # untouched and only calls restore() when no flash is active.
+                self.feedback.on_agent_idle()
+                # GAP-17: restore focus so the user can type immediately without clicking
+                self.call_after_refresh(widget.focus)
+        except NoMatches:
+            pass
+        # New turn starting — create a new MessagePanel with the last user input
+        if value:
+            try:
+                output = self.query_one(OutputPanel)
+                # Migrate any setext/table lookahead content buffered in the
+                # previous panel's engine to the new panel.
+                #
+                # Race: the agent starts streaming before watch_agent_running(True)
+                # fires on the event loop.  The first response line (e.g. "Wake up
+                # Neo") may arrive via _commit_lines() while current_message is
+                # still the old (startup/previous-turn) panel, causing it to be
+                # held in that panel's _block_buf._pending.  When new_message()
+                # creates the new panel, the old panel is never flushed again →
+                # content disappears.
+                #
+                # Fix: steal _pending from the old engine and re-process it
+                # through the new engine after new_message(), so the content
+                # lands in the correct panel rather than being flushed to the
+                # wrong one or lost.
+                prev_msg = output.current_message
+                stolen_pending: str | None = None
+                stolen_partial: str | None = None
+                if prev_msg is not None:
+                    prev_engine = getattr(prev_msg, "_response_engine", None)
+                    if prev_engine is not None:
+                        try:
+                            p = prev_engine._block_buf._pending
+                            if p:  # non-None and non-empty string
+                                prev_engine._block_buf._pending = None
+                                stolen_pending = p
+                            elif p is not None:
+                                # empty string sentinel — just clear it
+                                prev_engine._block_buf._pending = None
+                        except Exception:
+                            pass
+                        try:
+                            # Also steal any partial chunk (no \n yet) buffered by feed()
+                            frag = prev_engine._partial
+                            if frag:
+                                prev_engine._partial = ""
+                                stolen_partial = frag
+                        except Exception:
+                            pass
+                new_msg = output.new_message(user_text=self._last_user_input)
+                # Engine isn't ready yet (on_mount fires next cycle); use
+                # _carry_pending/_carry_partial so on_mount processes them once engine exists.
+                if stolen_pending and new_msg is not None:
+                    new_msg._carry_pending = stolen_pending
+                if stolen_partial and new_msg is not None:
+                    new_msg._carry_partial = stolen_partial
+            except NoMatches:
+                pass
+        # Recompute hint phase when agent stops
+        if not value:
+            self._svc_spinner.set_hint_phase(self._svc_spinner.compute_hint_phase())
+
+    def _osc_progress_update(self, running: bool) -> None:
+        """Emit OSC 9;4 sequence when config flag is set."""
+        try:
+            from hermes_cli.tui.osc_progress import osc_progress_start, osc_progress_end
+            cfg = getattr(self.cli, "_cfg", {}) if self.cli else {}
+            if (cfg.get("display", {}) if isinstance(cfg, dict) else {}).get("osc_progress", True):
+                if running:
+                    osc_progress_start()
+                else:
+                    osc_progress_end()
+        except Exception:
+            pass
+
+    # ── RX4: lifecycle hook registry + callbacks ──────────────────────────────
+
+    def _register_lifecycle_hooks(self) -> None:
+        """Register cleanup callbacks on agent lifecycle transitions (RX4)."""
+        h = self.hooks
+        # ── on_turn_start ─────────────────────────────────────────────────
+        h.register("on_turn_start", self._lc_reset_turn_state, owner=self, priority=100, name="reset_turn_state")
+        h.register("on_turn_start", self._lc_osc_progress_start, owner=self, priority=10, name="osc_progress_start")
+        h.register("on_turn_start", self._lc_dismiss_info_overlays, owner=self, priority=50, name="dismiss_info_overlays")
+        # ── on_turn_end_any ───────────────────────────────────────────────
+        h.register("on_turn_end_any", self._lc_osc_progress_end, owner=self, priority=10, name="osc_progress_end")
+        h.register("on_turn_end_any", self._lc_clear_output_dropped, owner=self, priority=100, name="clear_output_dropped_flag")
+        h.register("on_turn_end_any", self._lc_clear_spinner_label, owner=self, priority=100, name="clear_spinner_label")
+        h.register("on_turn_end_any", self._lc_clear_active_file, owner=self, priority=100, name="clear_active_file")
+        h.register("on_turn_end_any", self._lc_reset_response_metrics, owner=self, priority=100, name="reset_response_metrics")
+        h.register("on_turn_end_any", self._lc_clear_streaming_blocks, owner=self, priority=100, name="clear_streaming_blocks")
+        h.register("on_turn_end_any", self._lc_drain_gen_queue, owner=self, priority=100, name="drain_gen_queue")
+        h.register("on_turn_end_any", self._lc_desktop_notify, owner=self, priority=10, name="desktop_notify")
+        h.register("on_turn_end_any", self._lc_restore_input_placeholder, owner=self, priority=900, name="restore_input_placeholder")
+        # ── on_turn_end_success ───────────────────────────────────────────
+        h.register("on_turn_end_success", self._lc_chevron_done_pulse, owner=self, priority=500, name="chevron_done_pulse")
+        h.register("on_turn_end_success", self._lc_auto_title, owner=self, priority=100, name="auto_title_first_turn")
+        # ── on_interrupt ──────────────────────────────────────────────────
+        h.register("on_interrupt", self._lc_osc_progress_end, owner=self, priority=10, name="osc_progress_end_interrupt")
+        # ── on_compact_complete ───────────────────────────────────────────
+        h.register("on_compact_complete", self._lc_reset_compact_flags, owner=self, priority=100, name="reset_compaction_warn_flags")
+        # ── on_error_set / on_error_clear ─────────────────────────────────
+        h.register("on_error_set", self._lc_schedule_error_autoclear, owner=self, priority=100, name="schedule_status_error_autoclear")
+        h.register("on_error_clear", self._lc_cancel_error_timer, owner=self, priority=100, name="cancel_status_error_timer")
+        # ── on_session_switch / on_session_resume ─────────────────────────
+        h.register("on_session_switch", self._lc_session_switch_cleanup, owner=self, priority=100, name="session_switch_cleanup")
+        h.register("on_session_resume", self._lc_session_resume_reset, owner=self, priority=100, name="session_resume_reset")
+        # ── on_streaming_start / on_streaming_end ─────────────────────────
+        h.register("on_streaming_start", self._on_streaming_start, owner=self, priority=100, name="streaming_start")
+        h.register("on_streaming_end", self._on_streaming_end, owner=self, priority=100, name="streaming_end")
+        h.register("on_turn_end_any", self._on_streaming_end, owner=self, priority=50, name="streaming_end_safety")
+
+    def _lc_reset_turn_state(self) -> None:
+        self._svc_tools._turn_tool_calls = {}
+        self._svc_tools._agent_stack = []
+        self._svc_tools._open_tool_count = 0  # A1: reset concurrent tool count
+        self._turn_start_monotonic = None
+        self._current_turn_tool_count = 0
+        self._turn_start_time = _time.monotonic()
+        self._response_metrics_active = False
+        self._response_wall_start_time = None
+        self._response_segment_start_time = None
+        self._response_token_window.clear()
+
+    def _lc_osc_progress_start(self) -> None:
+        self._osc_progress_update(True)
+
+    def _lc_osc_progress_end(self, **_: object) -> None:
+        self._osc_progress_update(False)
+
+    def _lc_clear_output_dropped(self, **_: object) -> None:
+        self.status_output_dropped = False
+
+    def _lc_clear_spinner_label(self, **_: object) -> None:
+        self.spinner_label = ""
+
+    def _lc_clear_active_file(self, **_: object) -> None:
+        self.status_active_file = ""
+        self.status_active_file_offscreen = False  # S1-B
+
+    def _lc_reset_response_metrics(self, **_: object) -> None:
+        self._response_metrics_active = False
+        self._response_wall_start_time = None
+        self._response_segment_start_time = None
+        self._response_token_window.clear()
+
+    def _lc_clear_streaming_blocks(self, **_: object) -> None:
+        self._active_streaming_blocks.clear()
+        try:
+            msg = self.query_one(OutputPanel).current_message
+            if msg is not None:
+                msg._last_file_tool_block = None
+        except Exception:
+            pass
+
+    def _lc_drain_gen_queue(self, **_: object) -> None:
+        pending = getattr(self.cli, "_pending_gen_queue", None)
+        if pending:
+            for block in pending:
+                try:
+                    block.remove()
+                except Exception:
+                    pass
+            pending.clear()
+
+    def _lc_desktop_notify(self, **_: object) -> None:
+        self._maybe_notify()
+
+    def _lc_restore_input_placeholder(self, **_: object) -> None:
+        try:
+            widget = self.query_one("#input-area")
+            if hasattr(widget, "placeholder"):
+                if self.status_error:
+                    err_snippet = self.status_error[:60]
+                    widget.placeholder = f"Error: {err_snippet}…  (Esc to clear)"
+                else:
+                    widget.placeholder = getattr(widget, "_idle_placeholder", "")
+        except Exception:
+            pass
+
+    def _lc_chevron_done_pulse(self, **_: object) -> None:
+        try:
+            from textual.widgets import Static as _Static
+            chevron = self.query_one("#input-chevron", _Static)
+            if not chevron.has_class("--phase-error"):
+                self._svc_spinner.set_chevron_phase("--phase-done")
+                self.set_timer(0.4, lambda: self._svc_spinner.set_chevron_phase(""))
+        except Exception:
+            pass
+
+    def _lc_auto_title(self, **_: object) -> None:
+        if not self._auto_title_done:
+            self._svc_commands.try_auto_title()
+
+    def _lc_reset_compact_flags(self, **_: object) -> None:
+        self.context_pct = 0.0
+        self._compaction_warned = False
+        self._compaction_warn_99 = False
+
+    def _lc_schedule_error_autoclear(self, error: str = "", **_: object) -> None:
+        _timer = getattr(self, "_status_error_timer", None)
+        if _timer is not None:
+            try:
+                _timer.stop()
+            except Exception:
+                pass
+            self._status_error_timer = None
+        if error:
+            self._status_error_timer = self.set_timer(
+                10.0, lambda v=error: self._svc_watchers.auto_clear_status_error(v)
+            )
+
+    def _lc_cancel_error_timer(self, **_: object) -> None:
+        _timer = getattr(self, "_status_error_timer", None)
+        if _timer is not None:
+            try:
+                _timer.stop()
+            except Exception:
+                pass
+            self._status_error_timer = None
+
+    def _lc_dismiss_info_overlays(self, **_: object) -> None:
+        self._dismiss_all_info_overlays()
+
+    def _lc_session_switch_cleanup(self, target_id: str = "", **_: object) -> None:
+        """Release blocking queues before execvp so agent threads don't hang."""
+        for attr, sentinel in (
+            ("approval_state", None),
+            ("clarify_state", None),
+            ("sudo_state", ""),
+            ("secret_state", ""),
+            ("undo_state", None),
+        ):
+            state = getattr(self, attr, None)
+            if state is not None:
+                q = getattr(state, "response_queue", None)
+                if q is not None:
+                    try:
+                        q.put_nowait(sentinel)
+                    except Exception:
+                        pass
+        if getattr(self, "agent_running", False):
+            try:
+                if hasattr(self.cli, "agent") and self.cli.agent:
+                    self.cli.agent.interrupt()
+            except Exception:
+                pass
+
+    def _lc_session_resume_reset(self, session_id: str = "", turn_count: int = 0, **_: object) -> None:
+        """Reset per-session ephemeral state on session load."""
+        _timer = getattr(self, "_status_error_timer", None)
+        if _timer is not None:
+            try:
+                _timer.stop()
+            except Exception:
+                pass
+            self._status_error_timer = None
+        try:
+            self.status_error = ""
+        except Exception:
+            pass
+
+    def _on_streaming_start(self, **_: object) -> None:
+        """S0-D: mark that assistant tokens are actively flowing."""
+        self.status_streaming = True
+
+    def _on_streaming_end(self, **_: object) -> None:
+        """S0-D: clear streaming flag when tokens stop (or turn ends)."""
+        self.status_streaming = False
+
+    def action_debug_hooks_snapshot(self) -> None:
+        """Log lifecycle hook registrations for debugging (F12)."""
+        snap = self.hooks.snapshot()
+        lines = ["=== AgentLifecycleHooks snapshot ==="]
+        for transition, names in sorted(snap.items()):
+            lines.append(f"  {transition}: {', '.join(names)}")
+        self.log.info("\n".join(lines))
+        self._flash_hint("Hooks snapshot logged", 2.0)
+
+    # ── End RX4 ───────────────────────────────────────────────────────────────
+
+    def _maybe_notify(self) -> None:
+        """Fire desktop notification when turn exceeds threshold."""
+        try:
+            cfg = getattr(self.cli, "_cfg", {}) if self.cli else {}
+            display = (cfg.get("display", {}) if isinstance(cfg, dict) else {})
+            if not display.get("desktop_notify", False):
+                return
+            import time as _time2
+            elapsed = _time2.monotonic() - getattr(self, "_turn_start_time", 0.0)
+            min_s = float(display.get("notify_min_seconds", 10.0))
+            if elapsed < min_s:
+                return
+            # F4: skip notification when user is actively watching the TUI
+            # (last keypress < 5 s ago means they are present)
+            since_key = _time2.monotonic() - getattr(self, "_last_keypress_time", 0.0)
+            if since_key < 5.0:
+                return
+            from hermes_cli.tui.desktop_notify import notify as _notify
+            body = (getattr(self, "_last_assistant_text", "") or "").strip()
+            if body:
+                body = body.splitlines()[0][:120]
+            else:
+                body = "Task complete"
+            _notify(
+                "Hermes",
+                body,
+                caller=self,
+                sound=bool(display.get("notify_sound", False)),
+                sound_name=str(display.get("notify_sound_name", "Glass")),
+            )
+        except Exception:
+            pass
+
+    def _refresh_live_response_metrics(self) -> None:
+        """Refresh current message header while a streamed response is active."""
+        if not self._response_metrics_active:
+            return
+        try:
+            output = self.query_one(OutputPanel)
+        except NoMatches:
+            return
+        msg = output.current_message
+        if msg is None:
+            return
+        wall_start = self._response_wall_start_time
+        if wall_start is None:
+            return
+        now = _time.monotonic()
+        elapsed = max(0.0, now - wall_start)
+        window_s = 2.0
+        while self._response_token_window and now - self._response_token_window[0][0] > window_s:
+            self._response_token_window.popleft()
+        live_tok_s = 0.0
+        if self._response_token_window:
+            token_sum = sum(tokens for _, tokens in self._response_token_window)
+            # Floor span at 0.2s to prevent initial spike from tiny windows
+            span = max(now - self._response_token_window[0][0], 0.2)
+            live_tok_s = token_sum / span
+        msg.set_response_metrics(tok_s=live_tok_s, elapsed_s=elapsed, streaming=True)
+
+    def mark_response_stream_started(self) -> None:
+        """Start live response timing for current assistant turn."""
+        if not self._response_metrics_active:
+            self._response_metrics_active = True
+            self._response_wall_start_time = _time.monotonic()
+            self._response_token_window.clear()
+            self.hooks.fire("on_streaming_start")
+        if self._response_segment_start_time is None:
+            self._response_segment_start_time = _time.monotonic()
+        self._refresh_live_response_metrics()
+
+    def mark_response_stream_delta(self, text: str) -> None:
+        """Record streamed response text for rolling live tok/s."""
+        if self._response_segment_start_time is None or not text:
+            return
+        from agent.model_metadata import estimate_tokens_rough
+        est_tokens = estimate_tokens_rough(text)
+        if est_tokens <= 0:
+            return
+        self._response_token_window.append((_time.monotonic(), est_tokens))
+        # v2 heat injection: bump heat on each streaming token chunk
+        try:
+            from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
+            ov = self.query_one(DrawbrailleOverlay)
+            ov.signal("token")
+        except Exception:
+            pass
+        self._refresh_live_response_metrics()
+
+    def pause_response_stream(self) -> None:
+        """Pause live message timing while agent waits on tool execution."""
+        self._response_segment_start_time = None
+        # Don't clear token_window — preserves recent tok/s for display
+
+    def finalize_response_metrics(self, tok_s: float, elapsed_s: float) -> None:
+        """Freeze tok/s + elapsed on current assistant message header."""
+        self.pause_response_stream()
+        self._response_metrics_active = False
+        self._response_wall_start_time = None
+        self._response_token_window.clear()
+        self.hooks.fire("on_streaming_end")
+        try:
+            output = self.query_one(OutputPanel)
+        except NoMatches:
+            return
+        msg = output.current_message
+        if msg is None:
+            return
+        msg.set_response_metrics(tok_s=tok_s, elapsed_s=elapsed_s, streaming=False)
+
+    def watch_spinner_label(self, value: str) -> None:
+        """Reset per-tool elapsed timer and extract active file path."""
+        self._tool_start_time = _time.monotonic() if value else 0.0
+        if value and isinstance(value, str):
+            # Labels are already prefix-stripped by _build_hint_text.
+            # Split on "(" (args form) and " · " (elapsed-time form) to isolate tool name.
+            tool_name = value.split("(")[0].split(" · ")[0].strip()
+            if tool_name in _FILE_TOOLS:
+                m = _PATH_EXTRACT_RE.search(value)
+                self.status_active_file = m.group(1) if m else ""
+                self._svc_spinner.set_chevron_phase("--phase-file")
+                self._svc_spinner.set_hint_phase("file")
+            elif tool_name in _SHELL_TOOLS:
+                self.status_active_file = ""
+                self.status_active_file_offscreen = False  # S1-B
+                self._svc_spinner.set_chevron_phase("--phase-shell")
+                self._svc_spinner.set_hint_phase("stream")
+            else:
+                self.status_active_file = ""
+                self.status_active_file_offscreen = False  # S1-B
+                self._svc_spinner.set_chevron_phase("--phase-stream")
+                self._svc_spinner.set_hint_phase("stream")
+        else:
+            self.status_active_file = ""
+            self.status_active_file_offscreen = False  # S1-B
+            if self.agent_running:
+                self._svc_spinner.set_chevron_phase("--phase-stream")
+        # nameplate: glitch + label update on non-empty spinner_label
+        if value:
+            try:
+                np = self.query_one("#nameplate", AssistantNameplate)
+                np.glitch()
+                np.set_active_label(f"▸ {value[:16]}")
+            except NoMatches:
+                pass
+
+    @property
+    def choice_overlay_active(self) -> bool:
+        """True when an interactive choice overlay (clarify/approval) is up.
+
+        Used by HermesInput._update_autocomplete to suppress completion while
+        the user is answering an approval prompt.
+        """
+        return self.clarify_state is not None or self.approval_state is not None
+
+    def _hide_completion_overlay_if_present(self) -> None:
+        """Hide the completion overlay when a choice overlay activates."""
+        try:
+            from hermes_cli.tui.completion_overlay import CompletionOverlay as _CO
+            self.query_one(_CO).remove_class("--visible")
+        except NoMatches:
+            pass
+
+    def action_open_history_search(self) -> None:
+        """Open (or close) the history search overlay."""
+        from hermes_cli.tui.completion_overlay import CompletionOverlay as _CO
+        try:
+            if self.query_one(_CO).has_class("--visible"):
+                return
+        except NoMatches:
+            pass
+        try:
+            hs = self.query_one(HistorySearchOverlay)
+            if hs.has_class("--visible"):
+                hs.action_dismiss()
+            else:
+                hs.open_search()
+        except NoMatches:
+            pass
+
+    def action_show_commands(self) -> None:
+        """F3: Show the slash commands reference overlay."""
+        try:
+            self.query_one(CommandsOverlay).show_overlay()
+        except NoMatches:
+            pass
+
+    def action_show_help(self) -> None:
+        """Toggle the keyboard-shortcut reference overlay."""
+        try:
+            overlay = self.query_one(KeymapOverlay)
+            if overlay.has_class("--visible"):
+                overlay.remove_class("--visible")
+            else:
+                overlay.add_class("--visible")
+        except NoMatches:
+            pass
+
+    def show_model_switch_result(self, new_model: str) -> None:
+        """C3: Flash confirmation when model switch completes. Call via call_from_thread."""
+        self._flash_hint(f"Model: {new_model}", 2.0)
+
+    def action_show_usage(self) -> None:
+        """C5: Show the usage/cost overlay (F2 key)."""
+        self._dismiss_all_info_overlays()
+        try:
+            ov = self.query_one(UsageOverlay)
+            agent = getattr(self.cli, "agent", None) if self.cli else None
+            if agent is None:
+                agent = self.cli
+            if agent is not None:
+                ov.refresh_data(agent)
+            ov.add_class("--visible")
+        except NoMatches:
+            pass
+
+    def action_jump_turn_prev(self) -> None:
+        """Jump to the previous TURN_START anchor. No-op while agent is running."""
+        if self.agent_running:
+            self._flash_hint("Navigation paused while agent is running", 1.5)
+            return
+        self._svc_browse.jump_anchor(-1, BrowseAnchorType.TURN_START)
+
+
+    def action_jump_turn_next(self) -> None:
+        """Jump to the next TURN_START anchor. No-op while agent is running."""
+        if self.agent_running:
+            self._flash_hint("Navigation paused while agent is running", 1.5)
+            return
+        self._svc_browse.jump_anchor(+1, BrowseAnchorType.TURN_START)
+
+
+    def action_focus_output(self) -> None:
+        """o: move focus to OutputPanel."""
+        try:
+            self.query_one(OutputPanel).focus()
+        except Exception:
+            pass
+
+    def action_focus_input_from_output(self) -> None:
+        """i: move focus back to HermesInput from output area."""
+        try:
+            from hermes_cli.tui.input_widget import HermesInput
+            self.query_one(HermesInput).focus()
+        except Exception:
+            pass
+
+    def action_toggle_density(self) -> None:
+        """Toggle compact / normal density mode."""
+        if self._compact_manual is None or not self.compact:
+            self._compact_manual = True
+            self.compact = True
+            self._flash_hint("Compact ON  (/density to toggle)", 1.5)
+        else:
+            self._compact_manual = None  # restore auto
+            w, h = self.size.width, self.size.height
+            self.compact = w <= 120 or h <= 30
+            self._flash_hint("Compact auto", 1.5)
+
+    def action_enable_auto_mini(self) -> None:
+        """E2: /density auto-mini — enable opt-in mini-mode (height:1 stub for trivial SHELL calls)."""
+        try:
+            cfg = getattr(self.cli, "_cfg", None) or {}
+            if isinstance(cfg, dict):
+                cfg.setdefault("display", {})["auto_mini_mode"] = True
+        except Exception:
+            pass
+        self._flash_hint("Auto-mini ON  (/density full to disable)", 2.0)
+
+    def _disable_auto_mini(self) -> None:
+        """E2: Disable auto-mini mode (called by /density full or /density compact)."""
+        try:
+            cfg = getattr(self.cli, "_cfg", None) or {}
+            if isinstance(cfg, dict):
+                cfg.setdefault("display", {})["auto_mini_mode"] = False
+            # Remove --minified from any existing panels
+            from hermes_cli.tui.tool_panel import ToolPanel
+            for panel in self.query(ToolPanel):
+                panel.remove_class("--minified")
+        except Exception:
+            pass
+
+    def _dismiss_floating_panels(self) -> None:
+        """Dismiss HistorySearchOverlay and KeymapOverlay (P0-B stacking).
+
+        Called whenever an agent-triggered overlay becomes active so that the
+        reference/navigation panels do not compete for screen space.
+        """
+        try:
+            hs = self.query_one(HistorySearchOverlay)
+            if hs.has_class("--visible"):
+                hs.action_dismiss()
+        except NoMatches:
+            pass
+        try:
+            ko = self.query_one(KeymapOverlay)
+            if ko.has_class("--visible"):
+                ko.remove_class("--visible")
+        except NoMatches:
+            pass
+
+    def handle_session_resume(self, session_id: str, session_title: str, turn_count: int) -> None:
+        """Clear OutputPanel and show resumed-session banner. Event-loop only."""
+        try:
+            panel = self.query_one(OutputPanel)
+        except NoMatches:
+            return
+        panel.remove_children()
+        banner = _SessionResumedBanner(session_title or session_id[-8:], turn_count)
+        panel.mount(banner)
+        self.session_label = session_title or session_id[-8:]
+        self._auto_title_done = False
+        # D3: reset browse anchor state so old indices do not point to removed widgets
+        self._browse_anchors = []
+        self._browse_cursor = 0
+        self._browse_total = 0
+        try:
+            from hermes_cli.tui.input_widget import HermesInput
+            self.query_one(HermesInput).focus()
+        except (NoMatches, ImportError):
+            pass
+        # RX4: let services reset per-session state on resume
+        self.hooks.fire("on_session_resume", session_id=session_id, turn_count=turn_count)
+
+        # --- Input/size/compaction/voice/image/file-drop watchers: in _app_watchers.py ---
+
+        # --- Reasoning panel helpers (called via call_from_thread) ---
+
+    # --- Tool rendering: in _app_tool_rendering.py ---
+
+
+    # --- Browse mode: in _app_browse.py ---
+
+        # --- Theme / skin system ---
+
+    # --- Theme/skin/slash/flash: in _app_theme.py ---
+
+    # --- Context menu + clipboard: in _app_context_menu.py ---
+
+    
+    # --- TUI commands + anim + undo/retry: in _app_commands.py ---
+
+    # --- Key handler + input submission: in _app_key_handler.py ---
+
+    # --- R2 pane layout actions ---
+
+    def action_focus_left_pane(self) -> None:
+        """F5: focus left pane."""
+        if getattr(self, "_pane_manager", None) and self._pane_manager.enabled:
+            from hermes_cli.tui.pane_manager import PaneId
+            self._pane_manager.focus_pane_widget(PaneId.LEFT, self)
+
+    def action_focus_center_pane(self) -> None:
+        """F6: focus center pane."""
+        if getattr(self, "_pane_manager", None) and self._pane_manager.enabled:
+            from hermes_cli.tui.pane_manager import PaneId
+            self._pane_manager.focus_pane_widget(PaneId.CENTER, self)
+
+    def action_focus_right_pane(self) -> None:
+        """F7: focus right pane."""
+        if getattr(self, "_pane_manager", None) and self._pane_manager.enabled:
+            from hermes_cli.tui.pane_manager import PaneId
+            self._pane_manager.focus_pane_widget(PaneId.RIGHT, self)
+
+    def action_cycle_pane_forward(self) -> None:
+        """F9: cycle focus to next visible pane."""
+        if getattr(self, "_pane_manager", None) and self._pane_manager.enabled:
+            next_pane = self._pane_manager.next_visible_pane(reverse=False)
+            self._pane_manager.focus_pane_widget(next_pane, self)
+
+    def action_cycle_pane_backward(self) -> None:
+        """Shift+F9: cycle focus to previous visible pane."""
+        if getattr(self, "_pane_manager", None) and self._pane_manager.enabled:
+            prev_pane = self._pane_manager.next_visible_pane(reverse=True)
+            self._pane_manager.focus_pane_widget(prev_pane, self)
+
+    def action_collapse_left_pane(self) -> None:
+        """Ctrl+[ / Alt+[: toggle left pane collapsed."""
+        if not (getattr(self, "_pane_manager", None) and self._pane_manager.enabled):
+            return
+        self._pane_manager.toggle_left_collapsed()
+        self._pane_manager._apply_layout(self)
+
+    def action_collapse_right_pane(self) -> None:
+        """Ctrl+] / Alt+]: toggle right pane collapsed."""
+        if not (getattr(self, "_pane_manager", None) and self._pane_manager.enabled):
+            return
+        self._pane_manager.toggle_right_collapsed()
+        self._pane_manager._apply_layout(self)
+
+    def action_toggle_center_split(self) -> None:
+        """Ctrl+\\: toggle center-pane split between output and stub."""
+        if not (getattr(self, "_pane_manager", None) and self._pane_manager.enabled):
+            return
+        self._pane_manager.toggle_center_split()
+        self._pane_manager.apply_center_split(self)
+
+    # ── Adapter forwarders (R4 Phase 4 — mixin logic now in services/) ──────
+
+    # --- from _app_io.py ---
+
+    @work(exclusive=True)
+    async def _consume_output(self) -> None:
+        """Async worker — delegates body to IOService.consume_output."""
+        await self._svc_io.consume_output()
+
+    def write_output(self, text: str) -> None:
+        """Thread-safe: enqueue text for the output consumer."""
+        return self._svc_io.write_output(text)
+
+    def flush_output(self) -> None:
+        """Thread-safe: send flush sentinel to commit any trailing partial line."""
+        return self._svc_io.flush_output()
+
+    async def _play_effects_async(
+        self,
+        effect_name: str,
+        text: str,
+        params: "dict[str, object] | None" = None,
+    ) -> bool:
+        return await self._svc_io.play_effects_async(effect_name, text, params)
+
+    @work
+    async def _play_effects(
+        self,
+        effect_name: str,
+        text: str,
+        params: "dict[str, object] | None" = None,
+    ) -> None:
+        """Suspend Textual, run a TTE animation, then resume."""
+        await self._svc_io.play_effects_async(effect_name, text, params)
+
+    def play_effects_blocking(
+        self,
+        effect_name: str,
+        text: str,
+        params: "dict[str, object] | None" = None,
+    ) -> bool:
+        """Run a TTE animation and block caller until it completes."""
+        return self._svc_io.play_effects_blocking(effect_name, text, params)
+
+    def get_working_directory(self) -> Path:
+        """Return TUI workspace root used for path completion and file-drop links."""
+        return self._svc_io.get_working_directory()
+
+    def _play_tte_main(
+        self,
+        effect_name: str,
+        text: str,
+        params: "dict[str, object] | None" = None,
+        done_event: "threading.Event | None" = None,
+    ) -> bool:
+        return self._svc_io.play_tte_main(effect_name, text, params, done_event)
+
+    def play_tte(
+        self,
+        effect_name: str,
+        text: str,
+        params: "dict[str, object] | None" = None,
+        done_event: "threading.Event | None" = None,
+    ) -> bool:
+        """Play a TTE animation inline in TUI."""
+        return self._svc_io.play_tte(effect_name, text, params, done_event)
+
+    def play_tte_blocking(
+        self,
+        effect_name: str,
+        text: str,
+        params: "dict[str, object] | None" = None,
+        timeout_s: float = 15.0,
+    ) -> bool:
+        """Play a TTE animation inline and wait for completion."""
+        return self._svc_io.play_tte_blocking(effect_name, text, params, timeout_s)
+
+    def _stop_tte_main(self) -> None:
+        return self._svc_io.stop_tte_main()
+
+    def stop_tte(self) -> None:
+        """Stop any running inline TTE animation."""
+        return self._svc_io.stop_tte()
+
+    # --- from _app_spinner.py ---
+
+    def watch_fps_hud_visible(self, value: bool) -> None:
+        self._svc_spinner.on_fps_hud_visible(value)
+
+    def action_toggle_fps_hud(self) -> None:
+        self.fps_hud_visible = not self.fps_hud_visible
+
+    # --- from _app_tool_rendering.py ---
+
+    def open_reasoning(self, title: str = "Reasoning") -> None:
+        return self._svc_tools.open_reasoning(title)
+
+    def append_reasoning(self, delta: str) -> None:
+        return self._svc_tools.append_reasoning(delta)
+
+    def close_reasoning(self) -> None:
+        return self._svc_tools.close_reasoning()
+
+    def mount_tool_block(
+        self,
+        label: str,
+        lines: "list[str]",
+        plain_lines: "list[str]",
+        rerender_fn: Any = None,
+        header_stats: Any = None,
+        tool_name: "str | None" = None,
+        parent_id: "str | None" = None,
+        is_error: bool = False,
+    ) -> "Widget | None":
+        return self._svc_tools.mount_tool_block(
+            label, lines, plain_lines,
+            rerender_fn=rerender_fn, header_stats=header_stats,
+            tool_name=tool_name, parent_id=parent_id,
+            is_error=is_error,
+        )
+
+    def open_streaming_tool_block(self, tool_call_id: str, label: str, tool_name: "str | None" = None) -> None:
+        return self._svc_tools.open_streaming_tool_block(tool_call_id, label, tool_name=tool_name)
+
+    def append_streaming_line(self, tool_call_id: str, line: str) -> None:
+        return self._svc_tools.append_streaming_line(tool_call_id, line)
+
+    def close_streaming_tool_block(
+        self,
+        tool_call_id: str,
+        duration: str,
+        is_error: bool = False,
+        summary: "Any | None" = None,
+        result_lines: "list[str] | None" = None,
+    ) -> None:
+        return self._svc_tools.close_streaming_tool_block(
+            tool_call_id, duration, is_error=is_error, summary=summary, result_lines=result_lines
+        )
+
+    def close_streaming_tool_block_with_diff(
+        self,
+        tool_call_id: str,
+        duration: str,
+        is_error: bool,
+        diff_lines: "list[str]",
+        header_stats: object,
+        summary: "Any | None" = None,
+    ) -> None:
+        return self._svc_tools.close_streaming_tool_block_with_diff(
+            tool_call_id, duration, is_error, diff_lines, header_stats, summary=summary
+        )
+
+    def remove_streaming_tool_block(self, tool_call_id: str) -> None:
+        return self._svc_tools.remove_streaming_tool_block(tool_call_id)
+
+    def set_plan_batch(self, batch: "list[tuple[str, str, str, dict]]") -> None:
+        return self._svc_tools.set_plan_batch(batch)
+
+    def mark_plan_running(self, tool_call_id: str) -> None:
+        return self._svc_tools.mark_plan_running(tool_call_id)
+
+    def mark_plan_done(self, tool_call_id: str, is_error: bool, dur_ms: int) -> None:
+        return self._svc_tools.mark_plan_done(tool_call_id, is_error, dur_ms)
+
+    def current_turn_tool_calls(self) -> "list[dict]":
+        return self._svc_tools.current_turn_tool_calls()
+
+    # --- from _app_browse.py ---
+
+    def watch_browse_mode(self, value: bool) -> None:
+        self._svc_browse.on_browse_mode(value)
+
+    async def action_toggle_minimap(self) -> None:
+        await self._svc_browse.action_toggle_minimap()
+
+    def action_toggle_browse_mode(self) -> None:
+        self.browse_mode = not self.browse_mode
+
+    def watch_browse_index(self, _value: int) -> None:
+        self._svc_browse.on_browse_index(_value)
+
+    def action_jump_subagent_prev(self) -> None:
+        self._svc_browse.action_jump_subagent_prev()
+
+    def action_jump_subagent_next(self) -> None:
+        self._svc_browse.action_jump_subagent_next()
+
+    # --- from _app_context_menu.py ---
+
+    async def on_click(self, event: Any) -> None:
+        return await self._svc_context.handle_click(event)
+
+    async def _show_context_menu_for_focused(self) -> None:
+        return await self._svc_context.show_context_menu_for_focused()
+
+    async def _show_context_menu_at(self, items: list, x: int, y: int) -> None:
+        return await self._svc_context.show_context_menu_at(items, x, y)
+
+    def on_path_search_provider_batch(self, message: Any) -> None:
+        return self._svc_context.on_path_search_provider_batch(message)
+
+    def _build_context_items(self, event: Any) -> list:
+        return self._svc_context.build_context_items(event)
+
+    def _copy_code_block(self, block: Any) -> None:
+        return self._svc_context.copy_code_block(block)
+
+    def _copy_tool_output(self, block: Any) -> None:
+        return self._svc_context.copy_tool_output(block)
+
+    def _build_tool_block_menu_items(self, block: Any) -> list:
+        return self._svc_context.build_tool_block_menu_items(block)
+
+    def _copy_path_action(self, header: Any, path: str) -> None:
+        return self._svc_context.copy_path_action(header, path)
+
+    def _open_external_url(self, url: str) -> None:
+        return self._svc_context.open_external_url(url)
+
+    def on_copyable_rich_log_link_clicked(self, event: Any) -> None:
+        return self._svc_context.on_copyable_rich_log_link_clicked(event)
+
+    def _open_path_action(self, header: Any, path: str, opener: str, folder: bool) -> None:
+        return self._svc_context.open_path_action(header, path, opener, folder)
+
+    def _copy_all_output(self) -> None:
+        return self._svc_context.copy_all_output()
+
+    def _copy_panel(self, panel: Any) -> None:
+        return self._svc_context.copy_panel(panel)
+
+    def _copy_text(self, text: str) -> None:
+        return self._svc_context.copy_text(text)
+
+    def _paste_into_input(self) -> None:
+        return self._svc_context.paste_into_input()
+
+    def _clear_input(self) -> None:
+        return self._svc_context.clear_input()
+
+    def on_tool_panel_path_focused(self, event: Any) -> None:
+        return self._svc_context.on_tool_panel_path_focused(event)
+
+    def _dismiss_all_info_overlays(self) -> None:
+        return self._svc_context.dismiss_all_info_overlays()
+
+    def _focus_blocking_overlay_visible(self) -> bool:
+        """True when an overlay is visible that traps input focus.
+
+        Used to suppress stacking new info overlays (workspace, help, etc.)
+        over modals like AnimConfigPanel that would be orphaned.
+        """
+        try:
+            from hermes_cli.tui.drawbraille_overlay import (
+                AnimConfigPanel as _ACP,
+                AnimGalleryOverlay as _AGO,
+            )
+        except Exception:
+            return False
+        for cls in (_ACP, _AGO):
+            try:
+                w = self.query_one(cls)
+            except Exception:
+                continue
+            if w.has_class("--visible"):
+                return True
+        return False
+
+    # --- from _app_sessions.py ---
+
+    @property
+    def _sessions_enabled(self) -> bool:
+        return self._svc_sessions._sessions_enabled
+
+    @_sessions_enabled.setter
+    def _sessions_enabled(self, value: bool) -> None:
+        self._svc_sessions._sessions_enabled = value
+
+    def action_new_worktree_session(self) -> None:
+        """Ctrl+W N — open new session overlay."""
+        return self._svc_sessions.new_worktree_session()
+
+    def action_resume_session(self, session_id: str) -> None:
+        """Resume a session by ID."""
+        return self._svc_sessions.resume_session(session_id)
+
+    def action_open_sessions(self) -> None:
+        """Open the session browser overlay."""
+        return self._svc_sessions.open_sessions()
+
+    # --- from _app_theme.py ---
+
+    def get_css_variables(self) -> "dict[str, str]":
+        """Merge ThemeManager overrides into Textual's CSS variable resolution."""
+        base = super().get_css_variables()
+        tm = getattr(self, "_theme_manager", None)
+        if tm is not None:
+            overrides = tm.css_variables
+        else:
+            from hermes_cli.tui.theme_manager import COMPONENT_VAR_DEFAULTS
+            overrides = COMPONENT_VAR_DEFAULTS
+        return {**base, **overrides}
+
+    def apply_skin(self, skin_vars: "dict[str, str] | Path") -> None:
+        return self._svc_theme.apply_skin(skin_vars)
+
+    def _apply_override_dict(self, overrides: dict) -> None:
+        return self._svc_theme._apply_override_dict(overrides)
+
+    def refresh_slash_commands(self, extra: "list[str] | None" = None) -> None:
+        return self._svc_theme.refresh_slash_commands(extra)
+
+    def _get_selected_text(self) -> "str | None":
+        return self._svc_theme.get_selected_text()
+
+    def _populate_slash_commands(self) -> None:
+        return self._svc_theme.populate_slash_commands()
+
+    def _flash_hint(self, text: str, duration: float = 1.5) -> None:
+        self.feedback.flash("hint-bar", text, duration=duration)
+
+    def set_status_error(self, msg: str, auto_clear_s: float = 0.0) -> None:
+        return self._svc_theme.set_status_error(msg, auto_clear_s)
+
+    def _copy_text_with_hint(self, text: str) -> None:
+        return self._svc_theme.copy_text_with_hint(text)
+
+    # --- from _app_commands.py ---
+
+    def action_open_anim_config(self) -> None:
+        self._svc_commands.open_anim_config()
+
+    # --- from _app_watchers.py ---
+
+    def on_text_area_changed(self, event: Any) -> None:
+        self._svc_watchers.on_text_area_changed(event)
+
+    def on_input_changed(self, event: Any) -> None:
+        self._svc_watchers.on_input_changed(event)
+
+    def watch_size(self, size: Any) -> None:
+        self._svc_watchers.on_size(size)
+
+    def watch_compact(self, value: bool) -> None:
+        self._svc_watchers.on_compact(value)
+
+    def watch_status_compaction_progress(self, value: float) -> None:
+        self._svc_watchers.on_status_compaction_progress(value)
+
+    def watch_voice_mode(self, value: bool) -> None:
+        self._svc_watchers.on_voice_mode(value)
+
+    def watch_voice_recording(self, value: bool) -> None:
+        self._svc_watchers.on_voice_recording(value)
+
+    def watch_attached_images(self, value: list) -> None:
+        self._svc_watchers.on_attached_images(value)
+
+    def handle_file_drop(self, paths: "list[Path]") -> None:
+        """Route terminal drag-and-drop pasted paths into input bar."""
+        self._svc_watchers.handle_file_drop(paths)
+
+    def watch_clarify_state(self, value: Any) -> None:
+        self._svc_watchers.on_clarify_state(value)
+
+    def watch_approval_state(self, value: Any) -> None:
+        self._svc_watchers.on_approval_state(value)
+
+    def watch_highlighted_candidate(self, c: Any) -> None:
+        self._svc_watchers.on_highlighted_candidate(c)
+
+    def watch_sudo_state(self, value: Any) -> None:
+        self._svc_watchers.on_sudo_state(value)
+
+    def watch_secret_state(self, value: Any) -> None:
+        self._svc_watchers.on_secret_state(value)
+
+    def watch_status_error(self, value: str) -> None:
+        self._svc_watchers.on_status_error(value)
+
+    def watch_status_phase(self, old: str, new: str) -> None:
+        if old:
+            self.remove_class(f"--phase-{old}")
+        self.add_class(f"--phase-{new}")
+
+    def watch_undo_state(self, value: Any) -> None:
+        self._svc_watchers.on_undo_state(value)
+
+    # --- from _app_key_handler.py ---
+
+    def on_key(self, event: Any) -> None:
+        self._svc_keys.dispatch_key(event)
+
+    def on_hermes_input_submitted(self, event: Any) -> None:
+        self._svc_keys.dispatch_input_submitted(event)
+
+    def on_hermes_input_files_dropped(self, event: Any) -> None:
+        self._svc_watchers.handle_file_drop(event.paths)

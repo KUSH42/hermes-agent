@@ -19,6 +19,15 @@ from gateway.run import GatewayRunner
 from gateway.session import SessionSource
 
 
+@pytest.fixture(autouse=True)
+def _no_tirith_download(monkeypatch):
+    """Prevent GatewayRunner.__init__ from downloading the tirith binary."""
+    monkeypatch.setattr(
+        "tools.tirith_security.ensure_installed",
+        lambda *a, **kw: None,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -128,12 +137,17 @@ async def test_internal_event_bypasses_authorization(monkeypatch, tmp_path):
 
     monkeypatch.setattr(GatewayRunner, "_is_user_authorized", tracking_auth)
 
-    # _handle_message will proceed past auth check and eventually fail on
-    # downstream logic. We just need to verify auth is skipped.
+    # Stub out the full agent pipeline — the test only cares that auth is
+    # skipped; we don't want to hang waiting for a real agent run.
+    monkeypatch.setattr(
+        GatewayRunner, "_handle_message_with_agent",
+        AsyncMock(side_effect=RuntimeError("stub: downstream not needed")),
+    )
+
     try:
         await runner._handle_message(event)
     except Exception:
-        pass  # Expected — downstream code needs more setup
+        pass  # Expected — downstream stub raises
 
     assert not auth_called, (
         "_is_user_authorized should NOT be called for internal events"
@@ -175,10 +189,16 @@ async def test_internal_event_does_not_trigger_pairing(monkeypatch, tmp_path):
 
     runner.pairing_store.generate_code = tracking_generate
 
+    # Stub out the agent pipeline — this test only cares that pairing is skipped.
+    monkeypatch.setattr(
+        GatewayRunner, "_handle_message_with_agent",
+        AsyncMock(side_effect=RuntimeError("stub: downstream not needed")),
+    )
+
     try:
         await runner._handle_message(event)
     except Exception:
-        pass  # Expected — downstream code needs more setup
+        pass  # Expected — downstream stub raises
 
     assert not generate_called, (
         "Pairing code should NOT be generated for internal events"

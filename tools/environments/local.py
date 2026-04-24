@@ -5,6 +5,8 @@ import platform
 import shutil
 import signal
 import subprocess
+import threading
+import time
 
 from tools.environments.base import BaseEnvironment, _pipe_stdin
 
@@ -262,6 +264,93 @@ class LocalEnvironment(BaseEnvironment):
 
         # Still strip the marker from output so it's not visible
         self._extract_cwd_from_output(result)
+
+    def execute_streaming(
+        self,
+        command: str,
+        cwd: str = "",
+        *,
+        timeout: int | None = None,
+        on_line=None,
+    ) -> dict:
+        """Execute with incremental line callbacks via Popen + reader thread.
+
+        Each output line is delivered to ``on_line(line)`` as soon as it
+        arrives (before the command finishes).  Returns the same
+        ``{"output": str, "returncode": int}`` dict as ``execute()``.
+        """
+        from tools.interrupt import is_interrupted
+
+        self._before_execute()
+
+        exec_command, sudo_stdin = self._prepare_command(command)
+        effective_timeout = timeout or self.timeout
+        effective_cwd = cwd or self.cwd
+
+        if sudo_stdin is not None and self._stdin_mode == "heredoc":
+            exec_command = self._embed_stdin_heredoc(exec_command, sudo_stdin)
+            sudo_stdin = None
+
+        wrapped = self._wrap_command(exec_command, effective_cwd)
+        login = not self._snapshot_ready
+        proc = self._run_bash(
+            wrapped, login=login, timeout=effective_timeout, stdin_data=sudo_stdin
+        )
+
+        output_chunks: list[str] = []
+
+        def _reader():
+            try:
+                for raw_line in proc.stdout:
+                    output_chunks.append(raw_line)
+                    if on_line:
+                        on_line(raw_line.rstrip("\n"))
+            except (ValueError, OSError):
+                pass
+
+        reader = threading.Thread(target=_reader, daemon=True)
+        reader.start()
+
+        deadline = time.monotonic() + effective_timeout
+        while True:
+            try:
+                proc.wait(timeout=0.05)
+                break
+            except subprocess.TimeoutExpired:
+                pass
+            if is_interrupted():
+                self._kill_process(proc)
+                reader.join(timeout=2)
+                result = {
+                    "output": "".join(output_chunks) + "\n[Command interrupted]",
+                    "returncode": 130,
+                }
+                self._update_cwd(result)
+                return result
+            if time.monotonic() > deadline:
+                self._kill_process(proc)
+                reader.join(timeout=2)
+                partial = "".join(output_chunks)
+                result = {
+                    "output": partial
+                    + f"\n[Command timed out after {effective_timeout}s]",
+                    "returncode": 124,
+                }
+                self._update_cwd(result)
+                return result
+
+        reader.join(timeout=2)
+        try:
+            proc.stdout.close()
+        except Exception:
+            pass
+
+        result = {
+            "output": "".join(output_chunks),
+            "returncode": proc.wait(),
+        }
+        self._update_cwd(result)
+        return result
 
     def cleanup(self):
         """Clean up temp files."""

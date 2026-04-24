@@ -841,6 +841,9 @@ def load_soul_md() -> Optional[str]:
     Used as the agent identity (slot #1 in the system prompt).  When this
     returns content, ``build_context_files_prompt`` should be called with
     ``skip_soul=True`` so SOUL.md isn't injected twice.
+
+    Optional persona overlays (sections after the ``---`` separator) are
+    only included when ``agent.persona`` in config matches the overlay name.
     """
     try:
         from hermes_cli.config import ensure_hermes_home
@@ -855,6 +858,25 @@ def load_soul_md() -> Optional[str]:
         content = soul_path.read_text(encoding="utf-8").strip()
         if not content:
             return None
+
+        # Strip optional persona overlays unless the config activates one.
+        # The separator is a line containing only "---" followed by a
+        # "# Optional Persona" heading.
+        _PERSONA_SEP = "\n---\n"
+        if _PERSONA_SEP in content:
+            base, _, overlay = content.partition(_PERSONA_SEP)
+            try:
+                import yaml as _yaml
+                _cfg_path = get_hermes_home() / "config.yaml"
+                _raw = _yaml.safe_load(_cfg_path.read_text(encoding="utf-8")) or {}
+                _active_persona = str(_raw.get("agent", {}).get("persona", "default"))
+            except Exception:
+                _active_persona = "default"
+            if _active_persona and _active_persona.lower() != "default":
+                content = base.rstrip() + _PERSONA_SEP + overlay
+            else:
+                content = base.strip()
+
         content = _scan_context_content(content, "SOUL.md")
         content = _truncate_content(content, "SOUL.md")
         return content

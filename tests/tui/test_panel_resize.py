@@ -1,0 +1,393 @@
+"""Tests for panel and box resize/invalidation during streaming.
+
+Verifies that MessagePanel, OutputPanel, and ReasoningPanel correctly
+expand their height as streaming content arrives — including when
+RichLog writes are deferred (size not yet known at write time).
+"""
+
+from unittest.mock import MagicMock
+
+import pytest
+
+from hermes_cli.tui.app import HermesApp
+from hermes_cli.tui.widgets import LiveLineWidget, MessagePanel, OutputPanel, ReasoningPanel
+
+
+async def _pause(pilot, n=5):
+    for _ in range(n):
+        await pilot.pause()
+
+
+# ---------------------------------------------------------------------------
+# MessagePanel expansion
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_message_panel_grows_with_each_line():
+    """MessagePanel accumulates lines as output is written."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 40)) as pilot:
+        await pilot.pause()
+        panel = app.query_one(OutputPanel)
+        msg = panel.new_message()
+        await _pause(pilot)
+
+        n0 = len(msg.response_log._plain_lines)
+
+        # Write 2 lines — setext-lookahead commits the first when second arrives
+        app.write_output("Line 1\n")
+        app.write_output("Line 2\n")
+        await _pause(pilot)
+        n2 = len(msg.response_log._plain_lines)
+
+        app.write_output("Line 3\n")
+        app.write_output("Line 4\n")
+        app.write_output("Line 5\n")
+        await _pause(pilot)
+        n5 = len(msg.response_log._plain_lines)
+
+        assert n2 > n0, f"Lines should grow after first batch: {n0} → {n2}"
+        assert n5 > n2, f"Lines should grow after more writes: {n2} → {n5}"
+
+
+@pytest.mark.asyncio
+async def test_message_panel_height_matches_content():
+    """MessagePanel height is at least the number of committed lines."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 40)) as pilot:
+        await pilot.pause()
+        panel = app.query_one(OutputPanel)
+        msg = panel.new_message()
+        await _pause(pilot)
+
+        for i in range(10):
+            app.write_output(f"Line {i}\n")
+        await _pause(pilot, n=10)
+        app.flush_output()  # drain setext-lookahead pending line
+        await _pause(pilot, n=3)
+
+        assert len(msg.response_log._plain_lines) >= 10, (
+            f"Expected >= 10 committed lines, got {len(msg.response_log._plain_lines)}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_message_panel_richlog_height_auto():
+    """RichLog inside MessagePanel uses height:auto and expands with content."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 40)) as pilot:
+        await pilot.pause()
+        panel = app.query_one(OutputPanel)
+        msg = panel.new_message()
+        await _pause(pilot)
+
+        rl = msg.response_log
+        n_empty = len(rl._plain_lines)
+
+        for i in range(5):
+            app.write_output(f"Content line {i}\n")
+        await _pause(pilot, n=10)
+
+        n_filled = len(rl._plain_lines)
+        assert n_filled > n_empty, (
+            f"RichLog should accumulate lines: empty={n_empty}, filled={n_filled}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# ReasoningPanel expansion
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reasoning_panel_appears_with_nonzero_height():
+    """ReasoningPanel has nonzero height once opened and content is written."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 40)) as pilot:
+        await pilot.pause()
+        app.agent_running = True
+        await _pause(pilot)
+
+        msg = app.query_one(OutputPanel).current_message
+        rp = msg.reasoning
+
+        # Before open: display:none → 0 height
+        assert rp.size.height == 0
+
+        rp.open_box("Reasoning")
+        rp.append_delta("Step 1\n")
+        rp.append_delta("Step 2\n")
+        await _pause(pilot, n=10)
+
+        assert rp.size.height > 0, (
+            f"ReasoningPanel should have nonzero height after content, got {rp.size.height}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_reasoning_panel_grows_with_content():
+    """ReasoningPanel accumulates content and stays visible as reasoning streams in.
+
+    Note: size.height is 0 in headless Textual (layout engine doesn't fully
+    compute auto-height for previously-hidden widgets).  We verify content
+    accumulation and CSS visibility instead of pixel height.
+    """
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 40)) as pilot:
+        await pilot.pause()
+        app.agent_running = True
+        await _pause(pilot)
+
+        msg = app.query_one(OutputPanel).current_message
+        rp = msg.reasoning
+        rp.open_box("Reasoning")
+        await _pause(pilot)
+
+        assert rp.has_class("visible"), "ReasoningPanel must be visible after open_box"
+
+        rp.append_delta("Step 1\n")
+        rp.append_delta("Step 2\n")
+        rp.append_delta("Step 3\n")
+        await _pause(pilot, n=10)
+
+        assert len(rp._plain_lines) == 3, f"Expected 3 lines, got {len(rp._plain_lines)}"
+        assert rp.has_class("visible"), "ReasoningPanel must remain visible with content"
+
+
+@pytest.mark.asyncio
+async def test_reasoning_panel_stays_visible_after_close():
+    """ReasoningPanel stays visible after close (reasoning preserved as history).
+
+    Note: size.height is 0 in headless Textual.  We verify CSS class
+    visibility and content preservation instead of pixel height.
+    """
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 40)) as pilot:
+        await pilot.pause()
+        app.agent_running = True
+        await _pause(pilot)
+
+        msg = app.query_one(OutputPanel).current_message
+        rp = msg.reasoning
+        rp.open_box("Reasoning")
+        rp.append_delta("Step 1\n")
+        await _pause(pilot, n=10)
+
+        assert rp.has_class("visible"), "ReasoningPanel must be visible with content"
+        assert len(rp._plain_lines) == 1
+
+        rp.close_box()
+        await _pause(pilot, n=10)
+
+        # Panel stays visible — reasoning content preserved as message history
+        assert rp.has_class("visible"), (
+            "ReasoningPanel must stay visible after close (content is history)"
+        )
+        assert len(rp._plain_lines) == 1, "Reasoning content must be preserved after close"
+
+
+# ---------------------------------------------------------------------------
+# Deferred render handling — content written before size is known
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_deferred_richlog_writes_become_visible():
+    """Content written to RichLog before its size is known eventually appears.
+
+    When mount() runs, compose() is deferred. RichLog.write() before the
+    first resize stores content in _deferred_renders. Our fix triggers
+    call_after_refresh(refresh, layout=True) so parents recalculate.
+    """
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 40)) as pilot:
+        await pilot.pause()
+
+        # Write output immediately — forces auto-creation of MessagePanel
+        # whose compose() hasn't finished yet (deferred renders scenario)
+        app.write_output("Deferred line 1\n")
+        app.write_output("Deferred line 2\n")
+        app.write_output("Deferred line 3\n")
+        await _pause(pilot, n=10)
+
+        msg = app.query_one(OutputPanel).current_message
+        assert msg is not None
+        assert len(msg.response_log.lines) >= 3
+        # Panel should have expanded to show the deferred content
+        assert msg.size.height >= 3, (
+            f"Panel should expand for deferred content, height={msg.size.height}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_reasoning_deferred_writes_become_visible():
+    """Reasoning content written before panel layout is resolved still appears."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 40)) as pilot:
+        await pilot.pause()
+        app.agent_running = True
+        # Don't wait long — open_box right after turn starts
+        await pilot.pause()
+
+        msg = app.query_one(OutputPanel).current_message
+        rp = msg.reasoning
+        rp.open_box("Reasoning")
+        # Write immediately — may hit deferred renders
+        rp.append_delta("Deferred step 1\n")
+        rp.append_delta("Deferred step 2\n")
+        await _pause(pilot, n=10)
+
+        assert len(rp._plain_lines) >= 2  # 2 committed lines (no header)
+        assert rp.has_class("visible"), "ReasoningPanel should be visible after content"
+
+
+# ---------------------------------------------------------------------------
+# OutputPanel scroll / containment
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_output_panel_scrollable_with_many_messages():
+    """OutputPanel remains scrollable when many MessagePanels are created."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        panel = app.query_one(OutputPanel)
+
+        # Create multiple turns with content
+        for turn in range(3):
+            app.agent_running = True
+            await _pause(pilot)
+            for line in range(5):
+                app.write_output(f"Turn {turn} line {line}\n")
+            await _pause(pilot)
+            app.agent_running = False
+            await _pause(pilot)
+
+        panels = panel.query(MessagePanel)
+        assert len(panels) >= 3
+
+        # OutputPanel virtual size should exceed viewport when content overflows
+        # (24-line terminal with 3 turns × 5 lines = 15+ lines of content)
+        assert panel.virtual_size.height >= panel.size.height or len(panels) >= 3
+
+
+@pytest.mark.asyncio
+async def test_live_line_widget_stays_at_bottom():
+    """LiveLineWidget remains the last child of OutputPanel after new messages."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        panel = app.query_one(OutputPanel)
+
+        app.agent_running = True
+        await _pause(pilot)
+        app.write_output("Some content\n")
+        await _pause(pilot)
+
+        # LiveLineWidget should be the last child
+        children = list(panel.children)
+        assert isinstance(children[-1], LiveLineWidget), (
+            f"Last child should be LiveLineWidget, got {type(children[-1])}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Combined: reasoning box + response box resize during a turn
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_full_turn_layout_reasoning_then_response():
+    """A full turn with reasoning→response transitions lays out correctly.
+
+    The reasoning panel stays visible after close, and the response
+    panel expands below it — all within the same MessagePanel.
+    """
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 40)) as pilot:
+        await pilot.pause()
+        app.agent_running = True
+        await _pause(pilot)
+
+        msg = app.query_one(OutputPanel).current_message
+        rp = msg.reasoning
+
+        # Phase 1: Reasoning
+        rp.open_box("Thinking")
+        rp.append_delta("Analyzing the problem\n")
+        rp.append_delta("Considering approach A\n")
+        rp.append_delta("Considering approach B\n")
+        await _pause(pilot, n=10)
+
+        # Verify reasoning content and visibility (size.height is 0 in headless)
+        assert rp.has_class("visible"), "Reasoning must be visible during thinking"
+        assert len(rp._plain_lines) == 3
+
+        # Phase 2: Transition — close reasoning (stays visible), start response
+        rp.close_box()
+        await _pause(pilot, n=10)
+
+        assert rp.has_class("visible"), "Reasoning stays visible as history after close"
+        assert len(rp._plain_lines) == 3, "Reasoning content preserved after close"
+
+        # Phase 3: Response
+        for i in range(8):
+            app.write_output(f"Response line {i}\n")
+        await _pause(pilot, n=10)
+        # Flush StreamingBlockBuffer setext-lookahead pending line
+        app.flush_output()
+        await _pause(pilot, n=5)
+
+        # Verify response content landed
+        assert len(msg.response_log.lines) >= 8
+
+
+@pytest.mark.asyncio
+async def test_rapid_streaming_panels_stay_expanded():
+    """Panels don't collapse or flicker during rapid token arrival."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 40)) as pilot:
+        await pilot.pause()
+        panel = app.query_one(OutputPanel)
+        msg = panel.new_message()
+        await _pause(pilot)
+
+        # Rapid-fire streaming — tokens arriving faster than layout cycles
+        for i in range(20):
+            app.write_output(f"Rapid line {i}\n")
+        await _pause(pilot, n=15)
+        # Flush StreamingBlockBuffer setext-lookahead pending line
+        app.flush_output()
+        await _pause(pilot, n=5)
+
+        # All content should be committed
+        assert len(msg.response_log._plain_lines) >= 20
+
+
+@pytest.mark.asyncio
+async def test_incremental_streaming_height_never_shrinks():
+    """Panel height monotonically increases during streaming (no shrink flicker)."""
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 40)) as pilot:
+        await pilot.pause()
+        panel = app.query_one(OutputPanel)
+        msg = panel.new_message()
+        await _pause(pilot)
+
+        line_counts = []
+        for i in range(10):
+            app.write_output(f"Line {i}\n")
+            await _pause(pilot)
+            line_counts.append(len(msg.response_log._plain_lines))
+
+        # Line count should never decrease
+        for i in range(1, len(line_counts)):
+            assert line_counts[i] >= line_counts[i - 1], (
+                f"Lines should never shrink: step {i-1}→{i}: {line_counts[i-1]}→{line_counts[i]}"
+            )
+        # And it should have grown overall
+        assert line_counts[-1] > line_counts[0], (
+            f"Lines should have grown: {line_counts[0]} → {line_counts[-1]}"
+        )

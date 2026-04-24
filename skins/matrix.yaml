@@ -1,0 +1,178 @@
+banner_hero: "              /\\                \n             /#\\\\             \
+  \   \n            /###\\\\               \n           /#####\\\\              \n\
+  \          /#######\\\\             \n         /#########\\\\            \n    \
+  \    /####/\\\\####\\\\           \n       /####/  \\\\####\\\\          \n    \
+  \  /####/    \\\\####\\\\         \n     /####/      \\\\####\\\\        \n    /####/\
+  \        \\\\####\\\\       \n   /####/          \\\\####\\\\      \n  /####/____________\\\
+  \\####\\\\     \n /#########################\\\\    \n/###########################\\\
+  \\   \n"
+banner_logo: "___  ___  ___ ___________ _______   __       ___  _____  _____ _   _\
+  \ _____ \n|  \\/  | / _ \\_   _| ___ \\_   _\\ \\ / /      / _ \\|  __ \\|  ___|\
+  \ \\ | |_   _|\n| .  . |/ /_\\ \\| | | |_/ / | |  \\ V /______/ /_\\ \\ |  \\/|\
+  \ |__ |  \\| | | |  \n| |\\/| ||  _  || | |    /  | |  /   \\______|  _  | | __\
+  \ |  __|| . ` | | |  \n| |  | || | | || | | |\\ \\ _| |_/ /^\\ \\     | | | | |_\\\
+  \ \\| |___| |\\  | | |  \n\\_|  |_/\\_| |_/\\_/ \\_| \\_|\\___/\\/   \\/     \\\
+  _| |_/\\____/\\____/\\_| \\_/ \\_/  \n"
+branding:
+  agent_name: Morpheus
+  goodbye: "Remember... all I'm offering is the truth. \u27C1"
+  help_header: "(\u27C1) Available Commands"
+  prompt_symbol: "\u276F "
+  response_label: " \u27C1 Matrix"
+  welcome: Wake up, Neo...
+colors:
+  banner_accent: '#00ff41'
+  banner_border: '#00a839'
+  banner_dim: '#00a839'
+  banner_text: '#00d849'
+  banner_title: '#aaffc8'
+  input_rule: '#00ff41'
+  prompt: '#00ff9f'
+  response_border: '#00a839'
+  rule_end: '#1e1e1e'
+  rule_start: '#00ff41'
+  session_border: '#004d15'
+  session_label: '#00c14d'
+  ui_accent: '#00ff9f'
+  ui_error: '#ff3333'
+  ui_label: '#00e54a'
+  ui_ok: '#00ff41'
+  ui_warn: '#ffb000'
+component_vars:
+  app-bg: '#0a0f0a'
+  brand-glyph-color: '#aaffc8'
+  chevron-base: '#00a839'
+  chevron-done: '#00ff41'
+  chevron-error: '#ff3333'
+  chevron-rev-search: '#FFBF00'
+  chevron-completion: '#5F9FD7'
+  chevron-locked: '#666666'
+  chevron-file: '#00d849'
+  chevron-shell: '#00a839'
+  chevron-stream: '#aaffc8'
+  completion-empty-bg: '#0f1a0f'
+  cursor-color: '#aaffc8'
+  cursor-placeholder: '#2a6b33'
+  cursor-selection-bg: '#00471c'
+  fps-hud-bg: '#0f1a0f'
+  fuzzy-match-color: '#aaffc8'
+  ghost-text-color: '#2a6b33'
+  primary-darken-3: '#005a1a'
+  rule-accent-color: '#00ff41'
+  rule-accent-dim-color: '#005a1a'
+  rule-bg-color: '#0a0f0a'
+  rule-dim-color: '#00471c'
+  running-indicator-dim-color: '#005a1a'
+  running-indicator-hi-color: '#aaffc8'
+  scrollbar: '#00ff41'
+  status-context-color: '#00e54a'
+  status-error-color: '#ff3333'
+  status-running-color: '#00ff9f'
+  status-warn-color: '#ffb000'
+  user-echo-bullet-color: '#00d849'
+  drawbraille-canvas-color: '#00ff41'
+  browse-code: '#aaffc8'
+  browse-diff: '#ffb000'
+  browse-media: '#00c14d'
+  browse-tool: '#00d849'
+  browse-turn: '#00ff41'
+  cite-chip-bg: '#0f1a0f'
+  cite-chip-fg: '#00d849'
+  diff-add-bg: '#0a2a14'
+  diff-del-bg: '#2a0a0a'
+  info: '#58A6FF'
+  syntax-theme: 'ansi_dark'
+  footnote-ref-color: '#2a6b33'
+  nameplate-active-color: '#00ff41'
+  nameplate-decrypt-color: '#aaffc8'
+  nameplate-idle-color: '#2a6b33'
+  panel-border: '#004d15'
+  spinner-shimmer-dim: '#005a1a'
+  spinner-shimmer-peak: '#aaffc8'
+  accent-interactive: '#00ff41'
+  tool-mcp-accent: '#00d849'
+  tool-vision-accent: '#aaffc8'
+  plan-now-fg: '#00ff41'
+  plan-pending-fg: '#2a6b33'
+  pane-border: '#1a2f1a'
+  pane-border-focused: '#00ff41'
+  pane-title-fg: '#008f11'
+  pane-divider: '#0d1f0d'
+  error-auth: '#eab308'
+  error-critical: '#ef4444'
+  error-network: '#f97316'
+  error-timeout: '#f59e0b'
+  tool-glyph-mcp: '#9b59b6'
+description: "The Matrix \u2014 dark void and hacker green phosphor"
+diff:
+  addition_bg: '#0a2a14'
+  addition_fg: '#00ff41'
+  context_fg: '#6a8a6a'
+  deletion_bg: '#2a0a0a'
+  deletion_fg: '#ff6666'
+  file_path_fg: '#00c14d'
+  filename: 'bold #00ff9f'
+  hunk_fg: '#00a839'
+  hunk_header: 'bold #aaffc8'
+  intra_add_bg: '#0f3d1c'
+  intra_add_fg: '#aaffc8'
+  intra_del_bg: '#3d0f0f'
+  intra_del_fg: '#ff9999'
+  line_number: '#00a839'
+markdown:
+  blockquote_marker: "\u258C"
+  bullets:
+  - "\u2022"
+  - "\u25E6"
+  - "\u25B8"
+  - "\xB7"
+  code_span: '#00ff41'
+  heading_1: 'bold #00ff9f'
+  link: '#00ff9f underline'
+  strike: strike
+name: matrix
+spinner:
+  style: pulse
+  thinking_faces:
+  - "(\u26A1)"
+  - "(\u2301)"
+  - "(\u27C1)"
+  - "(\u25C7)"
+  thinking_verbs:
+  - decrypting
+  - tracing
+  - jacking in
+  - bending spoon
+  - following white rabbit
+  - dodging bullets
+  - seeing through code
+  - freeing mind
+  waiting_faces:
+  - (01)
+  - (10)
+  - (11)
+  - (00)
+  wings:
+  - - "\u27E8"
+    - "\u27E9"
+  - - "\u27E80"
+    - "1\u27E9"
+  - - "\u27E8\u27C1"
+    - "\u27C1\u27E9"
+syntax:
+  comment: 'italic #4a8a5a'
+  keyword: 'bold #00ff41'
+  keyword_type: '#00d849'
+  name: '#00ff41'
+  name_function: '#aaffc8'
+  number: '#aaffc8'
+  operator: '#00ff9f'
+  string: '#00d849'
+stream_effect:
+  enabled: cascade
+  cascade_ticks: 3
+syntax_scheme: monokai
+tool_icons:
+  search_files: "\u2315"
+  web_search: "\u2315"
+tool_prefix: "\u2502"

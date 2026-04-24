@@ -69,6 +69,68 @@ def prompt_for_secret(cli, var_name: str, prompt: str, metadata=None) -> dict:
     Returns a dict with keys: success, stored_as, validated, skipped, message.
     The secret is stored in ~/.hermes/.env and never exposed to the model.
     """
+    # Check if Textual TUI is active
+    try:
+        from cli import _hermes_app as _tui
+    except ImportError:
+        _tui = None
+
+    if _tui is not None:
+        # Textual path: SecretWidget handles the prompt
+        from hermes_cli.tui.state import SecretOverlayState as _SOS
+        timeout = 120
+        response_queue = queue.Queue()
+        state = _SOS(
+            deadline=_time.monotonic() + timeout,
+            response_queue=response_queue,
+            prompt=prompt,
+        )
+        try:
+            _tui.call_from_thread(setattr, _tui, "secret_state", state)
+        except Exception:
+            pass
+        while True:
+            try:
+                value = response_queue.get(timeout=1)
+                try:
+                    _tui.call_from_thread(setattr, _tui, "secret_state", None)
+                except Exception:
+                    pass
+                if not value:
+                    cprint(f"\n{_DIM}  ⏭ Secret entry cancelled{_RST}")
+                    return {
+                        "success": True,
+                        "reason": "cancelled",
+                        "stored_as": var_name,
+                        "validated": False,
+                        "skipped": True,
+                        "message": "Secret setup was skipped.",
+                    }
+                stored = save_env_value_secure(var_name, value)
+                _dhh = display_hermes_home()
+                cprint(f"\n{_DIM}  ✓ Stored secret in {_dhh}/.env as {var_name}{_RST}")
+                return {
+                    **stored,
+                    "skipped": False,
+                    "message": "Secret stored securely. The secret value was not exposed to the model.",
+                }
+            except queue.Empty:
+                if state.expired:
+                    try:
+                        _tui.call_from_thread(setattr, _tui, "secret_state", None)
+                    except Exception:
+                        pass
+                    cprint(f"\n{_DIM}  ⏱ Timeout — secret capture cancelled{_RST}")
+                    return {
+                        "success": True,
+                        "reason": "timeout",
+                        "stored_as": var_name,
+                        "validated": False,
+                        "skipped": True,
+                        "message": "Secret setup timed out and was skipped.",
+                    }
+        # unreachable
+
     if not getattr(cli, "_app", None):
         if not hasattr(cli, "_secret_state"):
             cli._secret_state = None

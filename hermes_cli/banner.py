@@ -6,6 +6,7 @@ Pure display functions with no HermesCLI state dependency.
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -14,10 +15,13 @@ from pathlib import Path
 from hermes_constants import get_hermes_home
 from typing import Dict, List, Optional
 
-from rich.console import Console
+from rich.align import Align
+from rich.console import Console, Group
 from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
+from hermes_cli.tui.animation import lerp_color
 from prompt_toolkit import print_formatted_text as _pt_print
 from prompt_toolkit.formatted_text import ANSI as _PT_ANSI
 
@@ -34,9 +38,16 @@ _DIM = "\033[2m"
 _RST = "\033[0m"
 
 
+def _normalize_ansi_c1(text: str) -> str:
+    """Normalize 8-bit C1 CSI controls to standard ESC-prefixed ANSI."""
+    if "\x9b" not in text:
+        return text
+    return text.replace("\x9b", "\x1b[")
+
+
 def cprint(text: str):
     """Print ANSI-colored text through prompt_toolkit's renderer."""
-    _pt_print(_PT_ANSI(text))
+    _pt_print(_PT_ANSI(_normalize_ansi_c1(text)))
 
 
 # =========================================================================
@@ -96,6 +107,131 @@ COMPACT_BANNER = """
 [bold #FFD700]║[/]  [#CD7F32]Messenger of the Digital Gods[/]    [dim #B8860B]Nous Research[/]   [bold #FFD700]║[/]
 [bold #FFD700]╚══════════════════════════════════════════════════════════════╝[/]
 """
+
+
+def resolve_banner_logo_assets() -> tuple[str, str]:
+    """Return startup banner logo as (Rich-markup text, plain text)."""
+    try:
+        from hermes_cli.skin_engine import get_active_skin, get_active_skin_name
+        skin = get_active_skin()
+        markup_logo = (
+            skin.banner_logo
+            if hasattr(skin, "banner_logo") and skin.banner_logo
+            else HERMES_AGENT_LOGO
+        )
+        markup_logo = _recover_multiline_user_skin_art(
+            get_active_skin_name(), "banner_logo", markup_logo
+        )
+    except Exception:
+        markup_logo = HERMES_AGENT_LOGO
+    try:
+        plain_logo = Text.from_markup(markup_logo).plain
+    except Exception:
+        plain_logo = markup_logo
+    return markup_logo, plain_logo
+
+
+def resolve_banner_hero_assets() -> tuple[str, str]:
+    """Return caduceus hero art as (Rich-markup text, plain text).
+
+    The hero is the animated target for startup_text_effect.
+    Falls back to skin's banner_hero if set.
+    """
+    try:
+        from hermes_cli.skin_engine import get_active_skin, get_active_skin_name
+        skin = get_active_skin()
+        markup_hero = (
+            skin.banner_hero
+            if hasattr(skin, "banner_hero") and skin.banner_hero
+            else HERMES_CADUCEUS
+        )
+        markup_hero = _recover_multiline_user_skin_art(
+            get_active_skin_name(), "banner_hero", markup_hero
+        )
+    except Exception:
+        markup_hero = HERMES_CADUCEUS
+    try:
+        plain_hero = Text.from_markup(markup_hero).plain
+    except Exception:
+        plain_hero = markup_hero
+    return markup_hero, plain_hero
+
+
+def render_banner_hero_text(markup_hero: str) -> Text:
+    """Render banner hero markup, tinting plain text with the skin hero color."""
+    try:
+        hero_text = Text.from_markup(markup_hero)
+    except Exception:
+        hero_text = Text(markup_hero)
+    if hero_text.style or hero_text.spans:
+        return hero_text
+    hero_color = _skin_color("banner_text", "#FFF8DC")
+    return Text(hero_text.plain, style=hero_color)
+
+
+def render_banner_logo_text(markup_logo: str) -> Text:
+    """Render banner logo markup, tinting plain ASCII with an accent→dim gradient."""
+    try:
+        logo_text = Text.from_markup(markup_logo)
+    except Exception:
+        logo_text = Text(markup_logo)
+    if logo_text.style or logo_text.spans:
+        return logo_text
+
+    accent = _skin_color("banner_accent", "#FFBF00")
+    dim = _skin_color("banner_dim", "#B8860B")
+    lines = logo_text.plain.splitlines() or [logo_text.plain]
+    out = Text()
+    total = len(lines)
+    for idx, line in enumerate(lines):
+        t = 0.0 if total <= 1 else idx / (total - 1)
+        out.append(line, style=lerp_color(accent, dim, t))
+        if idx != total - 1:
+            out.append("\n")
+    return out
+
+
+def _recover_multiline_user_skin_art(skin_name: str, key: str, value: str) -> str:
+    """Recover multiline user-skin ASCII art when YAML folded it into one line."""
+    if not isinstance(value, str) or "\n" in value:
+        return value
+
+    try:
+        from hermes_cli.skin_engine import _skins_dir
+
+        skin_file = _skins_dir() / f"{skin_name}.yaml"
+        if not skin_file.is_file():
+            return value
+        raw_lines = skin_file.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return value
+
+    pattern = re.compile(rf"^{re.escape(key)}:(.*)$")
+    for idx, line in enumerate(raw_lines):
+        match = pattern.match(line)
+        if not match:
+            continue
+
+        inline = match.group(1)
+        if inline.lstrip().startswith(("|", ">")):
+            return value
+
+        recovered: list[str] = []
+        if inline:
+            recovered.append(inline[1:] if inline.startswith(" ") else inline)
+
+        for next_line in raw_lines[idx + 1 :]:
+            if next_line and not next_line.startswith((" ", "\t")):
+                break
+            if next_line == "":
+                break
+            recovered.append(next_line)
+
+        if len(recovered) > 1:
+            return "\n".join(recovered).rstrip()
+        return value
+
+    return value
 
 
 # =========================================================================
@@ -324,7 +460,11 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
                          enabled_toolsets: List[str] = None,
                          session_id: str = None,
                          get_toolset_for_tool=None,
-                         context_length: int = None):
+                         context_length: int = None,
+                         print_logo: bool = True,
+                         print_hero: bool = True,
+                         hero_text: str = "",
+                         hero_renderable=None):
     """Build and print a welcome banner with caduceus on left and info on right.
 
     Args:
@@ -336,6 +476,14 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
         session_id: Session identifier.
         get_toolset_for_tool: Callable to map tool name -> toolset name.
         context_length: Model's context window size in tokens.
+        print_logo: Whether to print the agent logo text art above the panel.
+        print_hero: Whether to print the caduceus hero art in the panel left column.
+                    Set False when startup_text_effect already rendered the hero.
+        hero_text: If set, used as the hero content in the left column instead
+                   of the default caduceus.
+        hero_renderable: Optional Rich renderable for the hero slot. Used by
+                         TUI startup animation so ANSI TTE frames aren't
+                         inserted as plain strings.
     """
     from model_tools import check_tool_availability, TOOLSET_REQUIREMENTS
     if get_toolset_for_tool is None:
@@ -360,7 +508,12 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
             disabled_tools.update(tools_in_ts)
 
     layout_table = Table.grid(padding=(0, 2))
-    layout_table.add_column("left", justify="center")
+    try:
+        _, _plain_hero = resolve_banner_hero_assets()
+        _hero_width = max((len(line) for line in _plain_hero.splitlines()), default=30)
+    except Exception:
+        _hero_width = 30
+    layout_table.add_column("left", justify="center", width=_hero_width, no_wrap=True)
     layout_table.add_column("right", justify="left")
 
     # Resolve skin colors once for the entire banner
@@ -369,26 +522,31 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     text = _skin_color("banner_text", "#FFF8DC")
     session_color = _skin_color("session_border", "#8B8682")
 
-    # Use skin's custom caduceus art if provided
-    try:
-        from hermes_cli.skin_engine import get_active_skin
-        _bskin = get_active_skin()
-        _hero = _bskin.banner_hero if hasattr(_bskin, 'banner_hero') and _bskin.banner_hero else HERMES_CADUCEUS
-    except Exception:
-        _bskin = None
-        _hero = HERMES_CADUCEUS
-    left_lines = ["", _hero, ""]
+    # Build left column: hero (caduceus) + model/cwd/session
+    left_renderables = []
+    if hero_renderable is not None:
+        left_renderables.extend([Text(""), hero_renderable, Text("")])
+    elif hero_text:
+        left_renderables.extend([Text(""), render_banner_hero_text(hero_text), Text("")])
+    elif print_hero:
+        try:
+            from hermes_cli.skin_engine import get_active_skin
+            _bskin = get_active_skin()
+            _hero = _bskin.banner_hero if hasattr(_bskin, 'banner_hero') and _bskin.banner_hero else HERMES_CADUCEUS
+        except Exception:
+            _hero = HERMES_CADUCEUS
+        left_renderables.extend([Text(""), render_banner_hero_text(_hero), Text("")])
     model_short = model.split("/")[-1] if "/" in model else model
     if model_short.endswith(".gguf"):
         model_short = model_short[:-5]
     if len(model_short) > 28:
         model_short = model_short[:25] + "..."
     ctx_str = f" [dim {dim}]·[/] [dim {dim}]{_format_context_length(context_length)} context[/]" if context_length else ""
-    left_lines.append(f"[{accent}]{model_short}[/]{ctx_str} [dim {dim}]·[/] [dim {dim}]Nous Research[/]")
-    left_lines.append(f"[dim {dim}]{cwd}[/]")
+    left_renderables.append(Text.from_markup(f"[{accent}]{model_short}[/]{ctx_str} [dim {dim}]·[/] [dim {dim}]Nous Research[/]"))
+    left_renderables.append(Text.from_markup(f"[dim {dim}]{cwd}[/]"))
     if session_id:
-        left_lines.append(f"[dim {session_color}]Session: {session_id}[/]")
-    left_content = "\n".join(left_lines)
+        left_renderables.append(Text.from_markup(f"[dim {session_color}]Session: {session_id}[/]"))
+    left_content = Group(*left_renderables)
 
     right_lines = [f"[bold {accent}]Available Tools[/]"]
     toolsets_dict: Dict[str, list] = {}
@@ -531,12 +689,13 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
         title=f"[bold {title_color}]{format_banner_version_label()}[/]",
         border_style=border_color,
         padding=(0, 2),
+        expand=True,
     )
 
     console.print()
     term_width = shutil.get_terminal_size().columns
-    if term_width >= 95:
-        _logo = _bskin.banner_logo if _bskin and hasattr(_bskin, 'banner_logo') and _bskin.banner_logo else HERMES_AGENT_LOGO
-        console.print(_logo)
+    if print_logo and term_width >= 95:
+        markup_logo, _ = resolve_banner_logo_assets()
+        console.print(Align.center(render_banner_logo_text(markup_logo)))
         console.print()
     console.print(outer_panel)

@@ -185,11 +185,17 @@ class ToolBlock(Widget):
                 if lang:
                     try:
                         from rich.syntax import Syntax
+                        theme = "monokai"
+                        try:
+                            css = self.app.get_css_variables()
+                            theme = css.get("preview-syntax-theme") or css.get("syntax-theme") or theme
+                        except Exception:
+                            pass
                         rl.write(Syntax(
                             "\n".join(self._plain_lines),
                             lang,
                             line_numbers=True,
-                            theme="monokai",
+                            theme=theme,
                         ))
                         return
                     except Exception:

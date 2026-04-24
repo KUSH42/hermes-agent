@@ -45,9 +45,9 @@ def _trim_tail_segments(
     result = list(segments)
     total_w = sum(s.cell_len for _, s in result)
     names = {name for name, _ in result}
-    if total_w > budget and names <= {"hero", "flash"} and "flash" in names:
+    if total_w > budget and names <= {"hero", "flash"} and "hero" in names:
         for i in reversed(range(len(result))):
-            if result[i][0] == "flash":
+            if result[i][0] == "hero":
                 total_w -= result[i][1].cell_len
                 result.pop(i)
                 break

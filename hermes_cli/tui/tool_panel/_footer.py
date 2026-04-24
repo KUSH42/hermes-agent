@@ -41,6 +41,19 @@ _IMPLEMENTED_ACTIONS: frozenset[str] = frozenset({
     "edit_cmd", "open_url",
 })
 
+# Maps every implemented action kind to the ToolPanel method name it calls.
+ACTION_KIND_TO_PANEL_METHOD: dict[str, str] = {
+    "retry": "action_retry",
+    "copy_err": "action_copy_err",
+    "open_first": "action_open_primary",
+    "copy_body": "action_copy_body",
+    "copy_paths": "action_copy_paths",
+    "copy_invocation": "action_copy_invocation",
+    "copy_urls": "action_copy_urls",
+    "edit_cmd": "action_edit_cmd",
+    "open_url": "action_open_url",
+}
+
 
 class _ArtifactButton(TooltipMixin, Button):
     """Artifact chip button with tooltip support for full path/URL."""
@@ -54,7 +67,7 @@ def _build_collapsed_actions_map() -> "dict":
     from hermes_cli.tui.tool_category import ToolCategory
     return {
         ToolCategory.SHELL:  [("r", "retry"), ("e", "err"), ("y", "copy"), ("?", "keys")],
-        ToolCategory.FILE:   [("o", "open"), ("y", "copy"), ("c", "diff"), ("?", "keys")],
+        ToolCategory.FILE:   [("o", "open"), ("y", "copy"), ("c", "copy"), ("?", "keys")],
         ToolCategory.SEARCH: [("y", "copy"), ("o", "open"), ("?", "keys")],
         ToolCategory.WEB:    [("o", "open"), ("y", "copy"), ("?", "keys")],
         ToolCategory.CODE:   [("y", "copy"), ("r", "retry"), ("?", "keys")],
@@ -426,18 +439,22 @@ class FooterPane(Widget):
             kind = event.button.name
             panel = self.parent
             if panel is not None:
-                _CHIP_ACTION_MAP = {
-                    "retry":      getattr(panel, "action_retry", None),
-                    "copy_err":   getattr(panel, "action_copy_err", None),
-                    "open_first": getattr(panel, "action_open_primary", None),
-                    "copy_body":  getattr(panel, "action_copy_body", None),
-                }
-                handler = _CHIP_ACTION_MAP.get(kind)
-                if handler is not None:
-                    try:
-                        handler()
-                    except Exception:
-                        pass
+                method_name = ACTION_KIND_TO_PANEL_METHOD.get(kind)
+                if method_name is None:
+                    if getattr(panel, "is_mounted", False):
+                        panel._flash_header("Action unavailable", tone="error")
+                else:
+                    handler = getattr(panel, method_name, None)
+                    if handler is None:
+                        if getattr(panel, "is_mounted", False):
+                            panel._flash_header("Action unavailable", tone="error")
+                    else:
+                        try:
+                            handler()
+                        except Exception:
+                            if getattr(panel, "is_mounted", False):
+                                panel._flash_header("Action failed", tone="error")
+                            raise
             event.stop()
             return
         if "--artifact-overflow" in event.button.classes:

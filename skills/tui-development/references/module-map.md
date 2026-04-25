@@ -134,7 +134,7 @@ High-signal flow:
 
 - **`hermes_cli/tui/resize_utils.py`** (NEW)
   Shared resize constants: `THRESHOLD_ULTRA_NARROW=40`, `THRESHOLD_NARROW=60`, `THRESHOLD_TOOL_NARROW=80`,
-  `THRESHOLD_COMP_NARROW=100`, `THRESHOLD_MIN_HEIGHT=8`, `THRESHOLD_BAR_HIDE=12`, `HYSTERESIS=2`.
+  `THRESHOLD_COMP_NARROW=100`, `THRESHOLD_MIN_HEIGHT=8`, `HYSTERESIS=2`.
   `crosses_threshold(old, new, threshold, hyst=HYSTERESIS) -> bool` — fires only on clean crossing through
   dead-band `[threshold-hyst, threshold+hyst)`. Returns True when `old=0` and `new` is above hi (initial-state).
 
@@ -269,7 +269,7 @@ High-signal flow:
 - **`hermes_cli/tui/skin_loader.py`** — semantic color fan-out from skin files into CSS vars.
 - **`hermes_cli/tui/animation.py`** — `PulseMixin`, `lerp_color`, `shimmer_text`, `AnimationClock`.
 - **`hermes_cli/tui/perf.py`** — `PerfRegistry` singleton, `measure_v3()`, `TOOL_PANEL_V3_COUNTERS`,
-  `measure()`, `measure_perf()`, `SuspicionDetector`, `WorkerWatcher`,
+  `measure()`, `SuspicionDetector`, `WorkerWatcher`,
   `EventLoopLatencyProbe`, `FrameRateProbe`.
 
 - **`hermes_cli/tui/workspace_tracker.py`**

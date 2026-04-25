@@ -175,7 +175,6 @@ ActionKind = Literal[
 ArtifactKind = Literal["file", "url", "image"]
 
 _PAYLOAD_CAP = 65536  # 64 KiB
-_ARTIFACT_CAP = 5        # legacy alias
 _ARTIFACT_DISPLAY_CAP = 5  # B3: render-time display cap; parse stores ALL
 
 

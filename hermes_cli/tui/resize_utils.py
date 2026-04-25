@@ -10,7 +10,6 @@ THRESHOLD_COMP_NARROW  = 80   # CompletionOverlay --narrow (lowered from 100: 80
 
 # Row thresholds
 THRESHOLD_MIN_HEIGHT   = 8    # below: show MinSizeOverlay
-THRESHOLD_BAR_HIDE     = 12   # below: hide bottom bar widgets (legacy — watch_size uses 8/9/10)
 
 # Dead-band ± cols around each threshold; prevents class flip-flop on drag
 HYSTERESIS             = 2

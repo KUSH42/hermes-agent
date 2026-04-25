@@ -743,27 +743,3 @@ class StreamJitterProbe:
 
 
 _stream_probe = StreamJitterProbe()
-
-
-@contextmanager
-def measure_perf(
-    label: str,
-    budget_ms: float = 16.67,
-    *,
-    silent: bool = False,
-) -> Generator[PerfResult, None, None]:
-    """Like ``measure()`` but also records into the module-level ``_registry``."""
-    result = PerfResult(label=label)
-    t0 = time.perf_counter()
-    try:
-        yield result
-    finally:
-        result.elapsed_ms = (time.perf_counter() - t0) * 1000
-        result.over_budget = result.elapsed_ms > budget_ms
-        _registry.record(label, result.elapsed_ms)
-        if not silent:
-            msg = f"[PERF] {label}: {result.elapsed_ms:.2f}ms"
-            if result.over_budget:
-                log.warning(f"{msg} ⚠ OVER {budget_ms:.0f}ms budget")
-            else:
-                log(msg)

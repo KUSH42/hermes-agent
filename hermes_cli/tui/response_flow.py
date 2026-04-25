@@ -28,6 +28,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
@@ -148,6 +149,12 @@ def _replace_ansi_literals(text: str) -> str:
 _NUMBERED_LINE_RE = re.compile(r"^\s*\d{1,3}\s*\|\s+\S")
 
 _ORPHANED_CSI_RE = re.compile(r"(?<!\x1b)\[[0-9;]+[A-Za-z]")
+
+_ANSI_STRIP_RE = re.compile(
+    r"\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]"
+)
+_STRIP_ORPHAN_RE = re.compile(r"(?<!\x1b)(?:;[0-9;]+[A-Za-z]|\[[0-9;]*m)")
+_NORM_ORPHAN_RE = re.compile(r"(?<![\x1b0-9;])(?:;[0-9;]+[A-Za-z]|\[[0-9;]*m)")
 
 logger = logging.getLogger(__name__)
 
@@ -285,29 +292,19 @@ def _strip_ansi(text: str) -> str:
     Also strips bare `;digits...m` or `[digits...m` fragments that result from
     interceptors stripping the ESC byte but leaving the rest of the sequence.
     """
-    import re as _re
-    _ANSI_RE = _re.compile(r"\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]")
-    text = _ANSI_RE.sub("", text)
-    # Strip orphaned CSI residuals: bare `;N;N...m` or `[N;N...m` sequences at
-    # start of line or after whitespace (hallmarks of a stripped ESC byte).
-    _ORPHAN_RE = _re.compile(r"(?<!\x1b)(?:;[0-9;]+[A-Za-z]|\[[0-9;]*m)")
-    return _ORPHAN_RE.sub("", text)
+    text = _ANSI_STRIP_RE.sub("", text)
+    return _STRIP_ORPHAN_RE.sub("", text)
 
 
 def _normalize_ansi_for_render(text: str) -> str:
     """Normalize ANSI-like text before passing it to Rich."""
-    import re as _re
     if not text:
         return ""
     if "\x9b" in text:
         text = text.replace("\x9b", "\x1b[")
     # (?<![\x1b0-9;]) prevents matching `;37m` inside `\x1b[1;37m` — the `;`
-    # there is preceded by a digit, not a true orphan.  Plain (?<!\x1b) was too
-    # narrow: it only checked for the ESC byte, so `;37m` in a multi-param
-    # sequence (CSI param1;param2m) was incorrectly stripped, leaving `\x1b[1`
-    # which Rich parses as CSI+digit and consumes the next content character.
-    _ORPHAN_RE = _re.compile(r"(?<![\x1b0-9;])(?:;[0-9;]+[A-Za-z]|\[[0-9;]*m)")
-    return _ORPHAN_RE.sub("", text)
+    # there is preceded by a digit, not a true orphan.
+    return _NORM_ORPHAN_RE.sub("", text)
 
 
 def _looks_like_source_line(raw: str) -> bool:
@@ -372,14 +369,12 @@ def _apply_cont_indent(line: str, indent: str, width: int = _LIST_WRAP_WIDTH) ->
     out_lines: list[str] = []
     cur = ""
     cur_vis = 0
-    is_first = True
-    limit = first_width if is_first else rest_width
+    limit = first_width
     for word in words:
         wlen = len(word)
         if cur:
             if cur_vis + 1 + wlen > limit:
                 out_lines.append(cur)
-                is_first = False
                 limit = rest_width
                 cur = indent + word
                 cur_vis = len(indent) + wlen
@@ -419,10 +414,7 @@ class _DimRichLogProxy:
 
     def write(self, renderable, **kw) -> None:
         # Forwards without dim wrap and without _plain_list update.
-        # Callers that need copy-source MUST use write_with_source.
-        # Documented exception: rule emission goes through
-        # ReasoningFlowEngine._emit_rule which writes to _reasoning_log
-        # directly and appends to _plain_lines explicitly.
+        # Callers that need copy-source MUST use write_with_source instead.
         self._log.write(renderable, **kw)
 
     def write_inline(self, spans) -> None:
@@ -591,9 +583,13 @@ class ResponseFlowEngine:
         self._prose_log: "CopyableRichLog" = (
             panel.current_prose_log() if callable(getter) else panel.response_log
         )
-        self._skin_vars: dict[str, str] = panel.app.get_css_variables()
-        self._pygments_theme: str = self._skin_vars.get("preview-syntax-theme", "monokai")
         _app = getattr(panel, "app", None)
+        self._skin_vars: dict[str, str] = (
+            _app.get_css_variables()
+            if _app is not None and hasattr(_app, "get_css_variables")
+            else {}
+        )
+        self._pygments_theme: str = self._skin_vars.get("preview-syntax-theme", "monokai")
         self._math_enabled = getattr(_app, "_math_enabled", True)
         self._math_renderer_mode = getattr(_app, "_math_renderer", "auto")
         self._math_dpi = getattr(_app, "_math_dpi", 150)
@@ -707,6 +703,7 @@ class ResponseFlowEngine:
                 and not _LIST_PREFIX_RE.match(raw)
                 and not stripped.endswith(":")
             ):
+                self._flush_code_fence_buffer()
                 self._flush_block_buf()
                 self._emit_complete_code_block([raw])
                 return True
@@ -715,6 +712,7 @@ class ResponseFlowEngine:
 
         if self._pending_source_line is not None:
             if self._clf.looks_like_source_line(raw):
+                self._flush_code_fence_buffer()
                 self._flush_block_buf()
                 self._state = "IN_SOURCE_LIKE"
                 self._list_cont_indent = ""
@@ -739,10 +737,12 @@ class ResponseFlowEngine:
         if self._math_enabled:
             oneline = self._clf.is_block_math_oneline(raw)
             if oneline is not None:
+                self._flush_code_fence_buffer()
                 self._flush_block_buf()
                 self._flush_math_block(oneline)
                 return True
             if self._clf.is_block_math_open(raw):
+                self._flush_code_fence_buffer()
                 self._flush_block_buf()
                 self._math_lines = []
                 self._math_env = stripped
@@ -752,6 +752,7 @@ class ResponseFlowEngine:
         fence = self._clf.is_fence_open(raw)
         if fence is not None:
             lang, fchar, fdepth = fence
+            self._flush_code_fence_buffer()
             self._flush_block_buf()
             self._state = "IN_CODE"
             self._fence_char = fchar
@@ -762,6 +763,7 @@ class ResponseFlowEngine:
 
         indent_content = self._clf.is_indented_code(raw)
         if indent_content is not None:
+            self._flush_code_fence_buffer()
             self._flush_block_buf()
             self._state = "IN_INDENTED_CODE"
             self._list_cont_indent = ""
@@ -773,6 +775,7 @@ class ResponseFlowEngine:
         if inline_label is not None:
             value = inline_label[1].strip()
             if value and not stripped.endswith(":"):
+                self._flush_code_fence_buffer()
                 self._flush_block_buf()
                 label = f"{inline_label[0]}:"
                 block_ansi = apply_block_line(label)
@@ -922,6 +925,7 @@ class ResponseFlowEngine:
                 # unconditionally here would clear _pending_source_line before
                 # _dispatch_normal_state's source-like lookahead, breaking
                 # IN_SOURCE_LIKE detection.
+                self._flush_code_fence_buffer()  # drain before footnote footer
                 self._drain_pending_source()
                 return
             if self._dispatch_normal_state(raw, intro_candidate):
@@ -1076,11 +1080,12 @@ class ResponseFlowEngine:
                 # No text fallback — :name: token was stripped from the prose
                 # line in process_line before write_with_source was called.
             except Exception:
-                # Mount may fail if panel is removed between call_from_thread scheduling
-                # and execution; treat as a no-op, not an error.
-                pass
+                # Panel may be removed between call_from_thread scheduling and execution;
+                # treat as a no-op. Log at debug so programming errors are still visible.
+                logger.debug(
+                    "ResponseFlowEngine._mount_emoji: mount failed for '%s'", name, exc_info=True
+                )
 
-        import threading
         if threading.get_ident() == getattr(app, "_thread_id", None):
             # Already on the event-loop thread (async worker path) — call directly.
             _do_mount()
@@ -1109,6 +1114,16 @@ class ResponseFlowEngine:
         elif self._active_block is not None and self._state in ("IN_INDENTED_CODE", "IN_SOURCE_LIKE"):
             self._active_block.complete(self._skin_vars)
             self._active_block = None
+            self._state = "NORMAL"
+        # Orphaned state: _active_block was already cleared by dispatch but
+        # _state was not reset.  Reset BEFORE _flush_block_buf below so any
+        # state-sensitive buffer logic sees NORMAL.  IN_MATH is handled by the
+        # explicit branch above — exclude it here to avoid second-order interference.
+        if self._state not in ("NORMAL", "IN_MATH"):
+            logger.debug(
+                "ResponseFlowEngine.flush: unexpected state=%r with no active block; resetting",
+                self._state,
+            )
             self._state = "NORMAL"
         # Drain any _block_buf state from process_line(_partial) above so
         # _emit_prose_line starts with an empty buffer (see R-18).
@@ -1208,24 +1223,32 @@ class ResponseFlowEngine:
             return
 
         # Async image path — dispatch to worker thread
+        _app = getattr(self._panel, "app", None)
+        if _app is None or not hasattr(_app, "run_worker"):
+            # Panel detached / app missing — fall back to synchronous unicode write.
+            unicode_repr = _get_math_renderer().render_unicode(latex)
+            self._sync_prose_log()
+            t = Text(f"  {unicode_repr}  ", style="italic")
+            self._prose_log.write_with_source(t, unicode_repr)
+            return
+
         dpi = self._math_dpi
         max_rows = self._math_max_rows
         latex_copy = latex  # avoid closure over mutable
 
         def _render_worker() -> None:
             path = _get_math_renderer().render_block(latex_copy, dpi=dpi)
+            _app2 = getattr(self._panel, "app", None)
+            if _app2 is None:
+                return  # panel disappeared mid-render; drop result
             if path is None:
                 # Fallback: write unicode on the app thread
                 unicode_repr = _get_math_renderer().render_unicode(latex_copy)
-                self._panel.app.call_from_thread(
-                    self._mount_math_unicode, unicode_repr
-                )
+                _app2.call_from_thread(self._mount_math_unicode, unicode_repr)
             else:
-                self._panel.app.call_from_thread(
-                    self._mount_math_image, path, max_rows
-                )
+                _app2.call_from_thread(self._mount_math_image, path, max_rows)
 
-        self._panel.app.run_worker(_render_worker, thread=True)
+        _app.run_worker(_render_worker, thread=True)
 
     def _mount_math_unicode(self, unicode_repr: str) -> None:
         """App-thread: write unicode math fallback to prose log."""
@@ -1472,7 +1495,8 @@ class ReasoningFlowEngine(ResponseFlowEngine):
         self._panel.mount(block, before=self._panel._live_line)
 
     def _render_footnote_section(self) -> None:
-        if not getattr(self._panel.app, "_reasoning_rich_prose", True):
+        _app = getattr(self._panel, "app", None)
+        if not getattr(_app, "_reasoning_rich_prose", True):
             return
         super()._render_footnote_section()
 

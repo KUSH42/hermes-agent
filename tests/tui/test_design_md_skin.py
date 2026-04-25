@@ -509,5 +509,99 @@ def test_yaml_deprecated_since_set_phase4():
     assert _YAML_DEPRECATED_SINCE  # non-empty
 
 
+# ---------------------------------------------------------------------------
+# Phase 5a — DM-F TCSS generator + scanner + syntax-string guard
+# ---------------------------------------------------------------------------
+
+
+class TestDmF1TcssGenerator:
+    def test_design_md_tcss_generator_uses_literal_hex(self):
+        from hermes_cli.tui.build_skin_vars import render_design_md_tcss_block
+        from hermes_cli.tui.theme_manager import COMPONENT_VAR_DEFAULTS, _default_of
+        block = render_design_md_tcss_block(COMPONENT_VAR_DEFAULTS)
+        for line in block.splitlines():
+            line = line.strip()
+            if not line.startswith("$"):
+                continue
+            _, rhs = line.split(":", 1)
+            rhs = rhs.rstrip(";").strip()
+            assert "$" not in rhs, f"$ ref in {line!r}"
+            assert "{" not in rhs, f"token ref in {line!r}"
+
+    def test_design_md_tcss_generator_includes_referenced_defaults(self):
+        from hermes_cli.tui.build_skin_vars import render_design_md_tcss_block
+        from hermes_cli.tui.theme_manager import COMPONENT_VAR_DEFAULTS
+        block = render_design_md_tcss_block(COMPONENT_VAR_DEFAULTS)
+        for k in COMPONENT_VAR_DEFAULTS:
+            assert f"${k}:" in block, f"missing ${k} declaration"
+
+    def test_design_md_tcss_generator_rejects_non_hex_defaults(self):
+        from hermes_cli.tui.build_skin_vars import render_design_md_tcss_block, GeneratorError
+        bad = {"app-bg": "catppuccin"}
+        with pytest.raises(GeneratorError):
+            render_design_md_tcss_block(bad)
+
+    def test_design_md_tcss_generator_preserves_insertion_order(self):
+        from hermes_cli.tui.build_skin_vars import render_design_md_tcss_block
+        ordered = {"a-color": "#111111", "z-color": "#222222", "m-color": "#333333"}
+        block = render_design_md_tcss_block(ordered)
+        i_a = block.index("$a-color:")
+        i_z = block.index("$z-color:")
+        i_m = block.index("$m-color:")
+        assert i_a < i_z < i_m
+
+
+class TestDmF2Scanner:
+    def test_scan_skin_keys_reads_design_md_component_vars(self):
+        from hermes_cli.tui.build_skin_vars import scan_skin_keys
+        keys = scan_skin_keys(REPO_ROOT / "skins" / "catppuccin" / "DESIGN.md")
+        assert "app-bg" in keys
+        assert "syntax-scheme" in keys
+
+    def test_scan_bundled_skins_uses_dm_b_precedence(self, tmp_path):
+        from hermes_cli.tui.build_skin_vars import scan_bundled_skins
+        # Both forms exist: <name>.yaml + <name>/DESIGN.md → DESIGN.md wins
+        (tmp_path / "demo.yaml").write_text(
+            "name: demo\ncomponent_vars:\n  yaml-only: '#111111'\n", encoding="utf-8"
+        )
+        (tmp_path / "demo").mkdir()
+        (tmp_path / "demo" / "DESIGN.md").write_text(dedent("""
+            ---
+            name: demo
+            description: x
+            colors:
+              foreground: "#cdd6f4"
+              background: "#1e1e2e"
+              accent: "#cba6f7"
+            x-hermes:
+              component-vars:
+                design-only: "#222222"
+            ---
+            """).lstrip(), encoding="utf-8")
+        out = scan_bundled_skins(tmp_path)
+        assert "design-only" in out["demo"]
+        assert "yaml-only" not in out["demo"]
+
+    def test_scan_bundled_skins_malformed_design_md_fails_loud(self, tmp_path):
+        from hermes_cli.tui.build_skin_vars import scan_bundled_skins
+        (tmp_path / "demo").mkdir()
+        (tmp_path / "demo" / "DESIGN.md").write_text("not yaml fronted\n", encoding="utf-8")
+        with pytest.raises(SkinError):
+            scan_bundled_skins(tmp_path)
+
+
+class TestDmF3SyntaxStringsExcluded:
+    def test_syntax_strings_not_in_component_defaults(self):
+        from hermes_cli.tui.theme_manager import COMPONENT_VAR_DEFAULTS
+        assert "syntax-theme" not in COMPONENT_VAR_DEFAULTS
+        assert "syntax-scheme" not in COMPONENT_VAR_DEFAULTS
+
+    def test_syntax_strings_not_declared_in_tcss(self):
+        from hermes_cli.tui.build_skin_vars import scan_tcss_declarations
+        decls = scan_tcss_declarations()
+        assert "syntax-theme" not in decls
+        assert "syntax-scheme" not in decls
+
+
 def test_bundled_skin_names_constant():
     assert set(BUNDLED_SKIN_NAMES) == {"matrix", "catppuccin", "solarized-dark", "tokyo-night"}

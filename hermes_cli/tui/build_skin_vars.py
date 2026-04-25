@@ -168,13 +168,35 @@ def scan_default_css_references(tui_dir: Path = TUI_DIR) -> dict[str, set[Path]]
 
 
 def scan_skin_keys(skin_path: Path) -> set[str]:
-    """Keys under `component_vars:` in a bundled/user skin YAML."""
+    """Keys under `component_vars:` (legacy YAML) or `x-hermes.component-vars`
+    (DESIGN.md) in a bundled/user skin file. DM-F2.
+    """
     try:
         import yaml  # type: ignore
     except ImportError:
         return set()
     try:
-        data = yaml.safe_load(skin_path.read_text(encoding="utf-8")) or {}
+        text = skin_path.read_text(encoding="utf-8")
+    except OSError:
+        return set()
+
+    # DESIGN.md: parse YAML front matter
+    if skin_path.name == "DESIGN.md":
+        from hermes_cli.skin_engine import _parse_frontmatter, SkinError as _SE
+        try:
+            data = _parse_frontmatter(text, str(skin_path))
+        except _SE:
+            # Malformed → propagate via empty so resolver/test can detect
+            raise
+        x_hermes = data.get("x-hermes", {}) if isinstance(data, dict) else {}
+        cv = x_hermes.get("component-vars", {}) if isinstance(x_hermes, dict) else {}
+        if not isinstance(cv, dict):
+            return set()
+        return {str(k) for k in cv.keys()}
+
+    # Legacy YAML
+    try:
+        data = yaml.safe_load(text) or {}
     except Exception:
         return set()
     cv = data.get("component_vars", {}) if isinstance(data, dict) else {}
@@ -183,13 +205,41 @@ def scan_skin_keys(skin_path: Path) -> set[str]:
     return {str(k) for k in cv.keys()}
 
 
+def _resolve_bundled_skin_file(skins_dir: Path, name: str) -> Path | None:
+    """DM-B precedence resolver shared by scanner + runtime.
+
+    Returns <skins_dir>/<name>/DESIGN.md when present, else <skins_dir>/<name>.yaml.
+    """
+    dm = skins_dir / name / "DESIGN.md"
+    if dm.is_file():
+        return dm
+    yaml_path = skins_dir / f"{name}.yaml"
+    if yaml_path.is_file():
+        return yaml_path
+    return None
+
+
 def scan_bundled_skins(skins_dir: Path = SKINS_DIR) -> dict[str, set[str]]:
-    """{skin_name: {component_var_keys}} for each bundled YAML."""
+    """{skin_name: {component_var_keys}} for each bundled skin.
+
+    Uses the DM-B resolver (_resolve_bundled_skin_file) so DESIGN.md wins over
+    the legacy YAML when both exist.
+    """
     out: dict[str, set[str]] = {}
     if not skins_dir.exists():
         return out
-    for yf in sorted(skins_dir.glob("*.yaml")):
-        out[yf.stem] = scan_skin_keys(yf)
+    # Names: union of <stem>.yaml and <name>/DESIGN.md directories.
+    names: set[str] = set()
+    for yf in skins_dir.glob("*.yaml"):
+        names.add(yf.stem)
+    for sub in skins_dir.iterdir():
+        if sub.is_dir() and (sub / "DESIGN.md").is_file():
+            names.add(sub.name)
+    for name in sorted(names):
+        path = _resolve_bundled_skin_file(skins_dir, name)
+        if path is None:
+            continue
+        out[name] = scan_skin_keys(path)
     return out
 
 
@@ -343,6 +393,43 @@ def _compute_hash(specs: dict[str, VarSpec]) -> str:
             f"{s.category}|{name}|{s.default}|{s.description}|{s.since}|{s.optional_in_skin}\n".encode()
         )
     return h.hexdigest()
+
+
+_HEX_HASH_RE = re.compile(r"^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$")
+_FORBIDDEN_GENERATOR_KEYS: frozenset[str] = frozenset({"syntax-theme", "syntax-scheme"})
+
+
+class GeneratorError(ValueError):
+    """Raised when DESIGN.md TCSS generator inputs are invalid."""
+
+
+def render_design_md_tcss_block(defaults: dict[str, "str | VarSpec"]) -> str:
+    """DM-F1 generator: emit ``$name: #hex;`` declarations only.
+
+    - Right-hand side must be a literal hex value; no ``$``, no ``{`` refs.
+    - Insertion order preserved (DM-F decision, not alphabetical).
+    - syntax-theme / syntax-scheme are rejected (DM-F3): they live in
+      x-hermes runtime config, not in TCSS.
+    """
+    lines = [_TCSS_BEGIN, "/* DESIGN.md generator (DM-F1): literal hex only */"]
+    for name, raw in defaults.items():
+        value = _default_of(raw)
+        if name in _FORBIDDEN_GENERATOR_KEYS:
+            raise GeneratorError(
+                f"{name}: syntax-theme/syntax-scheme are non-hex string config; "
+                f"do not add to COMPONENT_VAR_DEFAULTS (DM-F3)"
+            )
+        if "$" in value or "{" in value:
+            raise GeneratorError(
+                f"{name}: TCSS declaration RHS must be a literal hex, got {value!r}"
+            )
+        if not _HEX_HASH_RE.match(value):
+            raise GeneratorError(
+                f"{name}: non-hex default {value!r} cannot become a TCSS declaration"
+            )
+        lines.append(f"${name}: {value};")
+    lines.append(_TCSS_END)
+    return "\n".join(lines) + "\n"
 
 
 def render_tcss_block(defaults: dict[str, "str | VarSpec"]) -> str:

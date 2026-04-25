@@ -8260,9 +8260,14 @@ class HermesCLI:
                 selected=0,
                 diff_text=diff_text or None,
             )
+            import logging as _wlog
+            _wcblog = _wlog.getLogger("hermes_cli.write_approval")
+            _wcblog.warning("write_approval ENTER path=%s tui=%r", path, type(tui).__name__)
             try:
                 tui.call_from_thread(setattr, tui, "approval_state", state)
+                _wcblog.warning("write_approval SET-OK approval_state=%r", type(getattr(tui, "approval_state", None)).__name__)
             except Exception:
+                _wcblog.exception("write_approval SET-FAIL")
                 return "allow"
 
             while True:

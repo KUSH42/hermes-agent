@@ -1,6 +1,7 @@
 """ToolHeader, ToolBodyContainer widgets."""
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
@@ -29,6 +30,8 @@ from ._shared import (
     OmissionBar,
 )
 
+_log = logging.getLogger(__name__)
+
 MIN_LABEL_CELLS = 12
 
 # VN-2 fallback for tool-header label→stats gap when skin var unavailable.
@@ -40,7 +43,7 @@ def _resolve_max_header_gap(widget) -> int:
         v = widget.app.get_css_variables().get("tool-header-max-gap")
         if v is not None:
             return max(0, int(v))
-    except (LookupError, ValueError, TypeError, Exception):
+    except Exception:
         # Three known failure modes, all recovered by falling back to the constant:
         #   1. NoActiveAppError / LookupError — widget.app accessed pre-mount, before
         #      the App ContextVar is set. NoActiveAppError lives at the private
@@ -48,7 +51,7 @@ def _resolve_max_header_gap(widget) -> int:
         #      rather than import a private symbol.
         #   2. ValueError — skin var present but not coercible to int (e.g. "garbage").
         #   3. TypeError — skin var resolves to a non-stringable object.
-        pass
+        _log.debug("max-header-gap resolve failed; using fallback", exc_info=True)
     return MAX_HEADER_GAP_CELLS_FALLBACK
 
 _DROP_ORDER: list[str] = [

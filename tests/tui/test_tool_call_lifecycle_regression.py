@@ -410,6 +410,7 @@ class TestRendererExceptionLogging:
         inst._tool_args = {}
         inst._result_summary_v4 = None
         inst.app = MagicMock()
+        inst._lookup_view_state = lambda: None
         return inst
 
     def test_classifier_exception_logs_debug_exc_info(self, caplog):

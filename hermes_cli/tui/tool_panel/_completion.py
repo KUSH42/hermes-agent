@@ -255,7 +255,7 @@ class _ToolPanelCompletionMixin:
                 return
             self._swap_renderer(renderer_cls, payload, result)
         except Exception:
-            _log.exception("Tool body renderer swap failed")
+            _log.debug("Tool body renderer swap failed", exc_info=True)
 
     def _maybe_activate_mini(self, summary: "ResultSummaryV4") -> None:
         try:

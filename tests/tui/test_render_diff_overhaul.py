@@ -180,7 +180,7 @@ class TestSkinBackgrounds:
         assert any(getattr(span.style, "bgcolor", None) and "#fedcba" in str(span.style.bgcolor).lower() for span in spans)
 
     def test_no_hex_literals_in_diff_py(self):
-        source = Path("/tmp/hermes-render-diff-overhaul/hermes_cli/tui/body_renderers/diff.py").read_text(encoding="utf-8")
+        source = Path("hermes_cli/tui/body_renderers/diff.py").read_text(encoding="utf-8")
         tree = ast.parse(source)
         banned = {0x1A3A1A, 0x3A1A1A}
         for node in ast.walk(tree):

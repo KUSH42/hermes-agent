@@ -335,8 +335,8 @@ HermesInput {
 
 /* Prevent Textual's TextArea:focus tint from creating a contrast stripe */
 HermesInput:focus {
-    background: $app-bg;
-    outline: tall $primary 30%;
+    background: $surface 20%;
+    outline: none;
 }
 
 /* Component Part variables — themed via ThemeManager.component_vars.

@@ -693,8 +693,12 @@ class ToolRenderingService(AppService):
                 if dur_ms is not None:
                     rec.dur_ms = dur_ms
 
-        # Step 9: write terminal state via axis bus (fires watchers exactly once)
+        # Step 9: write terminal state via axis bus (fires watchers exactly once).
+        # Mirror is_error onto the view BEFORE the state write so any watcher
+        # reading view.is_error during the state-change callback sees the
+        # terminal value, not the in-flight value (R3-AXIS-03).
         if view is not None:
+            view.is_error = is_error
             set_axis(view, "state", terminal_state)
 
         # Step 10: remove visual
@@ -789,17 +793,26 @@ class ToolRenderingService(AppService):
         return None
 
     def _cancel_first_pending_gen(self, tool_name: str) -> None:
-        """Cancel the oldest GENERATED record for tool_name (e.g. background terminal)."""
+        """Cancel the oldest GENERATED record for tool_name (e.g. background terminal).
+
+        R3-AXIS-02: routes through _terminalize_tool_view so the GENERATED→
+        CANCELLED transition fires axis watchers and visual-remove failures
+        log instead of being silently swallowed. mark_plan=False because a
+        GENERATED view never produced an active Plan row.
+        """
         for gen_idx in sorted(self._tool_views_by_gen_index):
             v = self._tool_views_by_gen_index[gen_idx]
             if v.state == ToolCallState.GENERATED and v.tool_name == tool_name:
-                v.state = ToolCallState.CANCELLED
-                del self._tool_views_by_gen_index[gen_idx]
-                if v.block is not None:
-                    try:
-                        v.block.remove()
-                    except Exception:
-                        pass
+                self._terminalize_tool_view(
+                    tool_call_id=v.tool_call_id,
+                    terminal_state=ToolCallState.CANCELLED,
+                    is_error=False,
+                    mark_plan=False,
+                    remove_visual=True,
+                    delete_view=False,
+                    view=v,
+                    gen_index=gen_idx,
+                )
                 return
 
     def _compute_parent_depth(self, tool_call_id: str) -> "tuple[str | None, int]":
@@ -1147,8 +1160,11 @@ class ToolRenderingService(AppService):
         if view.state in (ToolCallState.DONE, ToolCallState.ERROR,
                           ToolCallState.CANCELLED, ToolCallState.REMOVED):
             return
+        # R3-AXIS-01: route STARTED→STREAMING through the axis bus so watchers
+        # see the most common state transition in the system. set_axis is a
+        # no-op when old == new, so re-entry from STREAMING is safe.
         if view.state == ToolCallState.STARTED:
-            view.state = ToolCallState.STREAMING
+            set_axis(view, "state", ToolCallState.STREAMING)
         self.append_streaming_line(tool_call_id, line)
 
     def complete_tool_call(
@@ -1229,13 +1245,8 @@ class ToolRenderingService(AppService):
         from hermes_cli.tui.perf import _tool_probe
         _tool_probe.record(tool_name, tool_call_id, dur_ms_float, is_error=is_error)
 
-        # Update view state to terminal
-        if view is not None:
-            view.state = ToolCallState.ERROR if is_error else ToolCallState.DONE
-            view.is_error = is_error
-            # Remove from active indexes but retain as immutable snapshot
-            self._tool_views_by_id.pop(tool_call_id, None)
-            # Note: we do NOT re-insert — snapshot is accessible via _turn_tool_calls
+        # R3-AXIS-03: terminal write + index pop already done by
+        # _terminalize_tool_view inside close_streaming_tool_block (Step 9 + Step 11).
 
     def cancel_tool_call(
         self,

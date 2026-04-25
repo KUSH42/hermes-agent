@@ -151,7 +151,7 @@ def _validate_hex(path: str, value: Any) -> str:
 
 # Component vars whose values are non-hex string config (Pygments theme names,
 # scheme keys), not colors. Skipped by hex validation. See SYN-1 / DM-E.
-_NON_HEX_COMPONENT_VARS: frozenset[str] = frozenset({"syntax-theme", "syntax-scheme"})
+_NON_HEX_COMPONENT_VARS: frozenset[str] = frozenset({"syntax-theme", "syntax-scheme", "tool-header-max-gap"})
 
 
 def validate_skin_payload(
@@ -330,6 +330,9 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     "error-critical":       "#ef4444",
     "error-auth":           "#eab308",
     "error-network":        "#f97316",
+    # Tool header label→stats max gap in cells (VN-2). Caps padding so stats
+    # don't fly to the far edge on wide terminals. Integer cell count, not hex.
+    "tool-header-max-gap":  "8",
 }
 
 

@@ -683,7 +683,7 @@ HermesApp.density-compact #input-chevron       { width: 1; }
 /* Phase B3: tool panel / header tightening */
 /* A1: ToolHeaderBar deleted — duration/line-count compact rules removed */
 HermesApp.density-compact ToolPanel FooterPane                   { display: none; }
-HermesApp.density-compact ToolPanel:focus FooterPane             { display: block; }
+HermesApp.density-compact ToolPanel:focus-within FooterPane      { display: block; }
 HermesApp.density-compact ToolPanel.tool-panel--error FooterPane { display: block; }
 
 /* A1: ToolHeaderBar deleted — compact label rules moved to density-compact selectors above */
@@ -760,6 +760,15 @@ _CollapsedActionStrip { color: $text-muted 50%; }
 ToolPanel:focus _CollapsedActionStrip { color: $text-muted 85%; }
 /* D2: more visible focus indicator */
 ToolPanel:focus                              { background: $accent 10%; border-left: vkey $accent 60%; }
+/* VN-1: action chips visible only when ToolPanel or any descendant has focus.
+ * The empty-effect ToolPanel:focus-within rule is intentional — it puts
+ * "focus-within" into ToolPanel's pseudo-class set so Textual's screen-level
+ * focus-style refresh walks the panel subtree and re-evaluates the row rule
+ * below.  Without it, Textual only refreshes the focused widget's ancestors,
+ * so the .action-row (a descendant) never re-applies on panel.focus(). The
+ * `offset: 0 0` is the panel's default — visually no-op. */
+ToolPanel:focus-within { offset: 0 0; }
+ToolPanel:focus-within FooterPane.has-actions > .action-row { display: block; }
 ToolPanel:hover                              { background: $accent 5%; }
 /* A6: first-in-turn correlation badge */
 ToolPanel.first-in-turn                      { border-top: solid $accent 30%; }

@@ -235,7 +235,7 @@ class FooterPane(Widget):
         layout: horizontal;
         display: none;
     }
-    FooterPane.has-actions > .action-row { display: block; }
+    /* visibility now gated by ToolPanel:focus-within (see hermes.tcss) */
     FooterPane > .action-row > .--action-chip {
         height: 1;
         border: none;

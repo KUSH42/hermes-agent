@@ -230,3 +230,32 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
             header.refresh()
 
         self._refresh_collapsed_strip()
+
+    # ------------------------------------------------------------------
+    # AXIS-5: density mirror helpers
+    # ------------------------------------------------------------------
+
+    def _lookup_view_state(self) -> "Any | None":
+        """Return the ToolCallViewState for this panel's tool_call_id, or None."""
+        tool_call_id = getattr(self, "_plan_tool_call_id", None)
+        if tool_call_id is None:
+            return None
+        try:
+            svc = self.app._svc_tools
+            return svc._tool_views_by_id.get(tool_call_id)
+        except Exception:
+            return None
+
+    def _mirror_density_to_view_state(self) -> None:
+        """AXIS-5: keep view-state.density in sync with self.collapsed.
+
+        Move 1 replaces this with the DensityResolver. Best-effort: silent if
+        view lookup fails — UI keeps working, watchers just miss this update.
+        """
+        from hermes_cli.tui.tool_panel.density import DensityTier
+        from hermes_cli.tui.services.tools import set_axis
+        view = self._lookup_view_state()
+        if view is None:
+            return
+        tier = DensityTier.COMPACT if self.collapsed else DensityTier.DEFAULT
+        set_axis(view, "density", tier)

@@ -86,11 +86,10 @@ def trim_tail_for_tier(
     tail_budget: int,
     tier: "object",
 ) -> "list[tuple[str, Text]]":
-    """Tier-aware wrapper around _trim_tail_segments.
-
-    COMPACT and DEFAULT both use width-budget trimming only in this spec.
-    HERO / TRACE extensions: add tier-specific segment caps here.
-    """
+    """Tier-aware wrapper around _trim_tail_segments."""
+    from hermes_cli.tui.tool_panel.density import DensityTier
+    if tier == DensityTier.TRACE:
+        return list(tail_segments)  # no trim under TRACE
     return _trim_tail_segments(tail_segments, tail_budget)
 
 
@@ -180,6 +179,9 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         self._is_child: bool = False
         # C-2: remediation hint for collapsed+error header
         self._remediation_hint: str | None = None
+        # DT-4: density tier mirror — set by ToolPanel._on_tier_change
+        from hermes_cli.tui.tool_panel.density import DensityTier
+        self._density_tier: DensityTier = DensityTier.DEFAULT
 
     def on_mount(self) -> None:
         self._refresh_gutter_color()
@@ -383,8 +385,14 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 lc_text = ">99K" if self._line_count > 99999 else f"{self._line_count}L"
                 tail_segments.append(("linecount", Text(f"  {lc_text}", style="dim")))
             if self._has_affordances:
-                is_collapsed = _safe_collapsed(self)
-                tail_segments.append(("chevron", Text("  ▸" if is_collapsed else "  ▾", style="dim")))
+                from hermes_cli.tui.tool_panel.density import DensityTier as _DT
+                if self._density_tier == _DT.HERO:
+                    glyph = "  ★"
+                elif _safe_collapsed(self):
+                    glyph = "  ▸"
+                else:
+                    glyph = "  ▾"
+                tail_segments.append(("chevron", Text(glyph, style="dim")))
             else:
                 # B-1: non-interactive signal — always fill chevron slot
                 tail_segments.append(("chevron", Text("  ·", style=f"dim {self._colors().separator_dim}")))

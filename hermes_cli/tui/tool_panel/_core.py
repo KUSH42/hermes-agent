@@ -81,6 +81,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         Binding("+",     "expand_lines",     "Expand lines",     show=False),
         Binding("-",     "collapse_lines",   "Collapse lines",   show=False),
         Binding("*",     "expand_all_lines", "Expand all",       show=False),
+        Binding("T",     "density_trace",    "Trace tier",       show=False),
         Binding("r",     "retry",            "Retry",            show=False),
         Binding("t",     "cycle_kind",       "Render as",        show=False),
         Binding("E",     "edit_cmd",         "Edit cmd",         show=False),
@@ -261,6 +262,11 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         self._auto_collapsed = (tier == DensityTier.COMPACT) and not self._user_collapse_override
         if self._footer_pane is not None:
             self._footer_pane.set_density(tier)
+        # Mirror density tier to header so chevron glyph reflects HERO state.
+        header = getattr(self._block, "_header", None)
+        if header is not None:
+            header._density_tier = tier
+            header.refresh()
         # DR-5: mirror to view-state for cross-subsystem readers.
         vs = self._view_state or self._lookup_view_state()
         if vs is not None:

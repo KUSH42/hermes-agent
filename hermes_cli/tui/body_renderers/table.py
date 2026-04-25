@@ -78,6 +78,13 @@ class TableRenderer(BodyRenderer):
     supports_streaming: ClassVar[bool] = False
 
     @classmethod
+    def accepts(cls, phase: "ToolCallState", density: "DensityTier") -> bool:
+        from hermes_cli.tui.tool_panel.density import DensityTier as _DT
+        if density == _DT.COMPACT:
+            return False
+        return super().accepts(phase, density)
+
+    @classmethod
     def can_render(cls, cls_result: "ClassificationResult", payload: "ToolPayload") -> bool:
         from hermes_cli.tui.tool_payload import ResultKind
         return cls_result.kind == ResultKind.TABLE

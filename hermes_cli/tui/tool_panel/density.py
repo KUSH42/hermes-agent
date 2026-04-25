@@ -6,20 +6,25 @@ collapse-decision boundary.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Callable
+
+from hermes_cli.tui.tool_payload import ResultKind
 
 if TYPE_CHECKING:
     from hermes_cli.tui.services.tools import ToolCallState
 
+_HERO_MAX_LINES = 8
+_HERO_KINDS = frozenset({ResultKind.DIFF, ResultKind.JSON, ResultKind.TABLE})
+
 
 class DensityTier(str, Enum):
     """Tier ordering: HERO < DEFAULT < COMPACT < TRACE (more → tighter)."""
-    HERO    = "hero"     # reserved; used by Move 1 follow-up
+    HERO    = "hero"     # short eligible payload — promoted full-width view
     DEFAULT = "default"  # current expanded ToolPanel
     COMPACT = "compact"  # current `collapsed=True` ToolPanel
-    TRACE   = "trace"    # reserved; used by Move 1 follow-up
+    TRACE   = "trace"    # user explicit: show everything, no row clamp
 
     @property
     def rank(self) -> int:
@@ -46,6 +51,7 @@ class DensityInputs:
     body_line_count: int
     threshold: int                # category default_collapsed_lines (possibly diff-overridden)
     row_budget: "int | None"      # viewport row clamp; None = unbounded (reserved, not yet read)
+    kind: "ResultKind | None" = None  # result kind — required for HERO eligibility
 
 
 class DensityResolver:
@@ -77,20 +83,40 @@ class DensityResolver:
     @staticmethod
     def _compute(inp: DensityInputs) -> DensityTier:
         from hermes_cli.tui.services.tools import ToolCallState
-        # Modal overrides first — these win regardless of body size.
+
+        # Modal overrides — these win regardless of body size or override.
         if inp.is_error:
-            return DensityTier.DEFAULT  # errors must remain readable
+            return DensityTier.DEFAULT
         if inp.phase in (ToolCallState.STREAMING, ToolCallState.STARTED):
-            return DensityTier.DEFAULT  # never compact while running
+            return DensityTier.DEFAULT
         if inp.has_focus:
-            return DensityTier.DEFAULT  # focused block stays expanded
+            return DensityTier.DEFAULT
+
+        # User override path — HERO eligibility gate before generic branch.
+        if inp.user_override and inp.user_override_tier == DensityTier.HERO:
+            if (
+                inp.kind not in _HERO_KINDS
+                or inp.body_line_count == 0
+                or inp.body_line_count > _HERO_MAX_LINES
+            ):
+                return DensityTier.DEFAULT
+            return DensityTier.HERO
         if inp.user_override and inp.user_override_tier is not None:
             return inp.user_override_tier
+
+        # Scroll protection — never yank content from a user mid-scroll.
         if inp.user_scrolled_up:
-            # Match today's behavior: don't yank content out from under the user.
             return DensityTier.DEFAULT
-        # Auto-collapse rule: post-completion + body exceeds category threshold.
+
+        # HERO auto-clause — only reached when not error / not streaming /
+        # not focused / not overridden / not scrolled.
         if inp.phase in (ToolCallState.COMPLETING, ToolCallState.DONE):
+            if (
+                inp.body_line_count > 0
+                and inp.body_line_count <= _HERO_MAX_LINES
+                and inp.kind in _HERO_KINDS
+            ):
+                return DensityTier.HERO
             if inp.body_line_count > inp.threshold:
                 return DensityTier.COMPACT
         return DensityTier.DEFAULT

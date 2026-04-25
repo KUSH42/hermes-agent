@@ -1610,9 +1610,13 @@ def load_design_md_payload(path: Path, *, source: Optional[str] = None) -> SkinP
         if isinstance(v, str):
             css_vars.setdefault(gk, v)
 
-    # Banner / ui / prompt / etc colors: hyphen→underscore for SkinConfig.colors
+    # Banner / ui / prompt / etc colors: hyphen→underscore for SkinConfig.colors.
+    # Skip pure semantic / glass tokens — those are CSS-var-only (parity with
+    # legacy YAML which keeps banner_*/ui_*/prompt under `colors:` and the
+    # semantic keys at top level).
+    _SEMANTIC_COLOR_KEYS = set(semantic_keys.keys()) | set(_GLASS_KEYS)
     for k, v in std_colors.items():
-        if not isinstance(v, str):
+        if not isinstance(v, str) or k in _SEMANTIC_COLOR_KEYS:
             continue
         underscore_key = k.replace("-", "_")
         skin_colors[underscore_key] = v
@@ -1620,6 +1624,11 @@ def load_design_md_payload(path: Path, *, source: Optional[str] = None) -> SkinP
     for k, v in (x_hermes.get("colors", {}) or {}).items():
         if isinstance(v, str):
             skin_colors[k.replace("-", "_")] = v
+
+    # ---- x-hermes.vars → css_vars passthrough (parity with legacy `vars:`) ----
+    for k, v in (x_hermes.get("vars", {}) or {}).items():
+        if isinstance(v, (str, int, float)):
+            css_vars.setdefault(str(k), str(v))
 
     # ---- component_vars from x-hermes.component-vars ----
     component_vars: Dict[str, str] = {}

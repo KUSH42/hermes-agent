@@ -260,5 +260,40 @@ class TestDesignMdDiscoveryFlag:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Phase 2 — bundled catppuccin DESIGN.md
+# ---------------------------------------------------------------------------
+
+
+class TestCatppuccinDesignMd:
+    PATH = REPO_ROOT / "skins" / "catppuccin" / "DESIGN.md"
+    LINT = REPO_ROOT / "skins" / "catppuccin" / "lint-report.md"
+    YAML = REPO_ROOT / "skins" / "catppuccin.yaml"
+
+    def test_design_md_file_exists(self):
+        assert self.PATH.exists(), f"missing {self.PATH}"
+
+    def test_lint_report_exists(self):
+        assert self.LINT.exists(), f"missing {self.LINT}"
+
+    def test_design_md_loads_through_load_skin_payload(self):
+        payload = load_skin_payload(self.PATH)
+        assert payload.name == "catppuccin"
+        assert payload.syntax_scheme == "catppuccin"
+
+    def test_design_md_payload_matches_yaml_runtime_surfaces(self):
+        # css_vars + component_vars must be byte-equivalent to the legacy YAML
+        # (parent DM-G test_design_md_and_yaml_payloads_equivalent_except_scheme,
+        # narrowed to catppuccin for Phase 2).
+        dp = load_design_md_payload(self.PATH)
+        yp = load_legacy_skin_payload(self.YAML)
+        assert dp.css_vars == yp.css_vars
+        assert dp.component_vars == yp.component_vars
+        assert dp.colors == yp.colors
+        # syntax_scheme is the intentional field; both YAML+DESIGN.md now
+        # use the named scheme (Phase 0 ported the YAML).
+        assert dp.syntax_scheme == yp.syntax_scheme == "catppuccin"
+
+
 def test_bundled_skin_names_constant():
     assert set(BUNDLED_SKIN_NAMES) == {"matrix", "catppuccin", "solarized-dark", "tokyo-night"}

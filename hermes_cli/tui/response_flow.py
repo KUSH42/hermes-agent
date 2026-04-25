@@ -25,6 +25,7 @@ MessagePanel.on_mount() imports it fresh each time it runs.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from pathlib import Path
@@ -145,6 +146,10 @@ def _replace_ansi_literals(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 _NUMBERED_LINE_RE = re.compile(r"^\s*\d{1,3}\s*\|\s+\S")
+
+_ORPHANED_CSI_RE = re.compile(r"(?<!\x1b)\[[0-9;]+[A-Za-z]")
+
+logger = logging.getLogger(__name__)
 
 
 class InlineCodeFence(Widget):
@@ -533,6 +538,8 @@ class ResponseFlowEngine:
     Wraps apply_inline_markdown() and apply_block_line() for line-level prose.
     """
 
+    _MAX_EMOJI_MOUNTS: int = 50
+
     def _init_fields(self) -> None:
         """Initialise all app-independent instance fields.
 
@@ -562,6 +569,8 @@ class ResponseFlowEngine:
         self._footnote_order: list[str] = []
         self._footnote_def_open: str | None = None
         self._partial: str = ""
+        self._detached: bool = False
+        self._emoji_mounts: int = 0
         self._cite_entries: dict[int, tuple[str, str]] = {}
         self._cite_order: list[int] = []
         self._citations_enabled: bool = True
@@ -623,13 +632,17 @@ class ResponseFlowEngine:
         complete lines — that remains _commit_lines() → process_line().
         Manages _partial so flush() can drain it at end-of-turn.
         """
+        if self._detached:
+            return
         if "\n" in chunk:
             self._clear_partial_preview()
             self._partial = chunk.rsplit("\n", 1)[1]
         else:
             self._partial += chunk
         if self._partial:
-            self._route_partial(self._partial)
+            clean = _ORPHANED_CSI_RE.sub("", self._partial)
+            if clean:
+                self._route_partial(clean)
 
     def _route_partial(self, fragment: str) -> None:
         if self._state in ("IN_CODE", "IN_INDENTED_CODE", "IN_SOURCE_LIKE"):
@@ -883,6 +896,8 @@ class ResponseFlowEngine:
 
     def process_line(self, raw: str) -> None:
         """Process one complete line (no trailing newline)."""
+        if self._detached:
+            return
         if self._state == "NORMAL" and self._mount_media_callback is not None:
             self._scan_media_urls(raw)
         intro_candidate = _is_code_intro_label(raw)
@@ -1033,6 +1048,13 @@ class ResponseFlowEngine:
         use_images = self._has_image_support() and entry.pil_image is not None
 
         def _do_mount() -> None:
+            if self._emoji_mounts >= self._MAX_EMOJI_MOUNTS:
+                logger.debug(
+                    "ResponseFlowEngine._mount_emoji: cap reached (%d), skipping '%s'",
+                    self._MAX_EMOJI_MOUNTS, name,
+                )
+                return
+            self._emoji_mounts += 1
             try:
                 if entry.n_frames > 1 and use_images:
                     from hermes_cli.tui.emoji_registry import get_animated_emoji_widget_class
@@ -1048,6 +1070,8 @@ class ResponseFlowEngine:
                 # No text fallback — :name: token was stripped from the prose
                 # line in process_line before write_with_source was called.
             except Exception:
+                # Mount may fail if panel is removed between call_from_thread scheduling
+                # and execution; treat as a no-op, not an error.
                 pass
 
         import threading
@@ -1097,6 +1121,7 @@ class ResponseFlowEngine:
         self._cite_entries.clear()
         self._cite_order.clear()
         self._emitted_media_urls.clear()
+        self._emoji_mounts = 0
 
     def _mount_sources_bar(self) -> None:
         """Mount SourcesBar below the panel after the next refresh."""
@@ -1329,6 +1354,12 @@ class ResponseFlowEngine:
 
     def _mount_code_block(self, block: "StreamingCodeBlock") -> None:
         """Mount block into output DOM. Override in subclasses."""
+        if not getattr(self._panel, "is_mounted", False):
+            logger.debug(
+                "ResponseFlowEngine._mount_code_block: panel unmounted, skipping block mount"
+            )
+            self._detached = True
+            return
         self._panel._mount_nonprose_block(block)
 
     def _open_code_block(self, lang: str) -> "StreamingCodeBlock":
@@ -1414,6 +1445,12 @@ class ReasoningFlowEngine(ResponseFlowEngine):
 
     def _mount_code_block(self, block: "StreamingCodeBlock") -> None:
         """Mount dim code block inside ReasoningPanel, above the live line."""
+        if not getattr(self._panel, "is_mounted", False):
+            logger.debug(
+                "ReasoningFlowEngine._mount_code_block: panel unmounted, skipping block mount"
+            )
+            self._detached = True
+            return
         block.add_class("reasoning-code-block")
         self._panel.mount(block, before=self._panel._live_line)
 

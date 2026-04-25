@@ -332,6 +332,8 @@ class _ToolPanelCompletionMixin:
 
         _vs = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
         phase = _vs.state if _vs is not None else ToolCallState.DONE
+        _vs_kind = getattr(_vs, "kind", None) if _vs is not None else None
+        kind = _vs_kind.kind if _vs_kind is not None else None
 
         inputs = DensityInputs(
             phase=phase,
@@ -343,6 +345,7 @@ class _ToolPanelCompletionMixin:
             body_line_count=self._body_line_count(),
             threshold=threshold,
             row_budget=None,
+            kind=kind,
         )
         prev_tier = self._resolver.tier  # type: ignore[attr-defined]
         self._resolver.resolve(inputs)  # type: ignore[attr-defined]

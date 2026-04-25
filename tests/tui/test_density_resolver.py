@@ -340,11 +340,13 @@ class TestDR2PanelIntegration:
             panel._resolver._tier = DensityTier.COMPACT
             panel._on_tier_change(DensityTier.COMPACT)
             await pilot.pause()
-            # Toggle to DEFAULT (user explicitly expands)
+            # Cycle COMPACT → HERO (HERO ineligible, no kind) → resolver at DEFAULT
             panel.action_toggle_collapse()
             await pilot.pause()
-            assert panel.collapsed is False
-            assert panel._user_override_tier == DensityTier.DEFAULT
+            assert panel.collapsed is False  # panel expanded despite HERO being denied
+            # _user_override_tier is HERO (the requested next tier in the cycle);
+            # the resolver returned DEFAULT because kind=None fails the eligibility gate.
+            assert panel._resolver.tier == DensityTier.DEFAULT
 
     @pytest.mark.asyncio
     async def test_focus_defers_collapse_sets_should_auto_collapse(self):

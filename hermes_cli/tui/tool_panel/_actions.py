@@ -18,6 +18,17 @@ if TYPE_CHECKING:
 class _ToolPanelActionsMixin:
     """Keyboard action handlers and their private helpers."""
 
+    @staticmethod
+    def _next_tier_in_cycle(current: "object") -> "object":
+        from hermes_cli.tui.tool_panel.density import DensityTier
+        cycle = (DensityTier.DEFAULT, DensityTier.COMPACT, DensityTier.HERO)
+        try:
+            idx = cycle.index(current)  # type: ignore[arg-type]
+        except ValueError:
+            # TRACE or any future tier outside the cycle: reset to DEFAULT.
+            return DensityTier.DEFAULT
+        return cycle[(idx + 1) % len(cycle)]
+
     def action_toggle_collapse(self) -> None:
         block = getattr(self, "_block", None)
         tail = getattr(block, "_tail", None) if block is not None else None
@@ -28,16 +39,15 @@ class _ToolPanelActionsMixin:
             return
         from hermes_cli.tui.tool_panel.density import DensityInputs, DensityTier
         from hermes_cli.tui.services.tools import ToolCallState
-        new_tier = (
-            DensityTier.DEFAULT
-            if self._resolver.tier == DensityTier.COMPACT  # type: ignore[attr-defined]
-            else DensityTier.COMPACT
-        )
+
+        requested_tier = self._next_tier_in_cycle(self._resolver.tier)  # type: ignore[attr-defined]
         self._user_collapse_override = True  # type: ignore[attr-defined]
-        self._user_override_tier = new_tier  # type: ignore[attr-defined]
+        self._user_override_tier = requested_tier  # type: ignore[attr-defined]
         self._auto_collapsed = False  # type: ignore[attr-defined]
         _vs = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
         phase = _vs.state if _vs is not None else ToolCallState.DONE
+        _vs_kind = getattr(_vs, "kind", None) if _vs is not None else None
+        kind = _vs_kind.kind if _vs_kind is not None else None
         inputs = DensityInputs(
             phase=phase,
             is_error=bool(
@@ -47,12 +57,56 @@ class _ToolPanelActionsMixin:
             has_focus=False,
             user_scrolled_up=False,
             user_override=True,
-            user_override_tier=new_tier,
+            user_override_tier=requested_tier,  # type: ignore[arg-type]
             body_line_count=self._body_line_count(),  # type: ignore[attr-defined]
             threshold=0,  # irrelevant; override wins
             row_budget=None,
+            kind=kind,
         )
         self._resolver.resolve(inputs)  # type: ignore[attr-defined]
+        if requested_tier == DensityTier.HERO and self._resolver.tier != DensityTier.HERO:  # type: ignore[attr-defined]
+            self._flash_header("hero unavailable", tone="warning")
+
+    def action_density_trace(self) -> None:
+        """Force TRACE tier — show everything, no row clamp."""
+        from hermes_cli.tui.tool_panel.density import DensityInputs, DensityTier
+        from hermes_cli.tui.services.tools import ToolCallState
+
+        self._user_collapse_override = True  # type: ignore[attr-defined]
+        self._user_override_tier = DensityTier.TRACE  # type: ignore[attr-defined]
+        self._auto_collapsed = False  # type: ignore[attr-defined]
+        _vs = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
+        phase = _vs.state if _vs is not None else ToolCallState.DONE
+        _vs_kind = getattr(_vs, "kind", None) if _vs is not None else None
+        kind = _vs_kind.kind if _vs_kind is not None else None
+        inputs = DensityInputs(
+            phase=phase,
+            is_error=bool(
+                getattr(self._result_summary_v4, "is_error", False)  # type: ignore[attr-defined]
+                if self._result_summary_v4 else False  # type: ignore[attr-defined]
+            ),
+            has_focus=False,
+            user_scrolled_up=False,
+            user_override=True,
+            user_override_tier=DensityTier.TRACE,
+            body_line_count=self._body_line_count(),  # type: ignore[attr-defined]
+            threshold=0,  # irrelevant; override wins
+            row_budget=None,
+            kind=kind,
+        )
+        self._resolver.resolve(inputs)  # type: ignore[attr-defined]
+        if self._resolver.tier != DensityTier.TRACE:  # type: ignore[attr-defined]
+            if inputs.is_error:
+                self._flash_header("trace unavailable — block errored", tone="warning")
+                self._user_collapse_override = False  # type: ignore[attr-defined]
+                self._user_override_tier = None  # type: ignore[attr-defined]
+            elif inputs.phase in (ToolCallState.STREAMING, ToolCallState.STARTED):
+                self._flash_header("trace pending — block still streaming", tone="warning")
+                # Flags stay set; post-completion resolve will promote to TRACE.
+            else:
+                self._flash_header("trace unavailable", tone="warning")
+                self._user_collapse_override = False  # type: ignore[attr-defined]
+                self._user_override_tier = None  # type: ignore[attr-defined]
 
     def action_open_primary(self) -> None:
         import os

@@ -279,6 +279,12 @@ class FooterPane(Widget):
 
     def _refresh_visibility(self) -> None:
         from hermes_cli.tui.tool_panel.density import DensityTier
+        if self._density == DensityTier.TRACE:
+            if not self._show_all_artifacts:
+                self._show_all_artifacts = True
+                self._rebuild_chips()
+            self.styles.display = "block" if self._has_footer_content() else "none"
+            return
         if self._density == DensityTier.COMPACT:
             self.styles.display = "none"
             return

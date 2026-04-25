@@ -382,6 +382,7 @@ class WatchersService(AppService):
     def on_approval_state(self, value: "ChoiceOverlayState | None") -> None:
         from hermes_cli.tui.overlays import InterruptKind
         from hermes_cli.tui.overlays._adapters import make_approval_payload
+        _log.warning("on_approval_state ENTER value_set=%s", value is not None)
         try:
             from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
             self.app.query_one(DrawbrailleOverlay).signal("waiting" if value is not None else "thinking")
@@ -401,6 +402,19 @@ class WatchersService(AppService):
             self.app._hide_completion_overlay_if_present()
             self.app._dismiss_floating_panels()
             self.app.call_after_refresh(ov.focus)
+            try:
+                region = getattr(ov, "region", None)
+                _log.warning(
+                    "on_approval_state: present returned display=%s visible_cls=%s region=%s "
+                    "current_kind=%s queue_len=%s",
+                    getattr(ov, "display", "?"),
+                    ov.has_class("--visible"),
+                    region,
+                    getattr(ov, "current_kind", "?"),
+                    len(getattr(ov, "_queue", []) or []),
+                )
+            except Exception:
+                _log.exception("on_approval_state: post-present diagnostic failed")
         else:
             ov.hide_if_kind(InterruptKind.APPROVAL)
             self._post_interrupt_focus()

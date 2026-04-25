@@ -199,7 +199,7 @@ class ToolRenderingService(AppService):
             from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO
             self.app.query_one(_DO).signal("reasoning")
         except Exception:
-            pass
+            logger.debug("DrawbrailleOverlay.signal('reasoning') failed", exc_info=True)
 
     def append_reasoning(self, delta: str) -> None:
         """Append reasoning delta. Safe to call from any thread via call_from_thread."""
@@ -217,7 +217,7 @@ class ToolRenderingService(AppService):
                 from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO
                 self.app.query_one(_DO).signal("thinking")
             except Exception:
-                pass
+                logger.debug("DrawbrailleOverlay.signal('thinking') failed", exc_info=True)
 
     # ------------------------------------------------------------------
     # ToolBlock mounting
@@ -329,8 +329,8 @@ class ToolRenderingService(AppService):
             base_panel_id = f"tool-{tool_call_id}"
             try:
                 self.app.query_one(f"#{base_panel_id}")
-                panel_id: "str | None" = None
-            except Exception:
+                panel_id: "str | None" = None  # collision: caller will skip suffix
+            except NoMatches:  # vocab-2: ID free → use base
                 panel_id = base_panel_id
             _turn_count = getattr(self.app, "_current_turn_tool_count", 0) + 1
             self.app._current_turn_tool_count = _turn_count
@@ -343,12 +343,8 @@ class ToolRenderingService(AppService):
 
             # Depth computation
             from hermes_cli.tui.tool_category import classify_tool, ToolCategory
-            try:
-                cat_enum = classify_tool(tool_name or "")
-                cat = cat_enum.value
-            except Exception:
-                cat_enum = None
-                cat = "unknown"
+            cat_enum = classify_tool(tool_name or "")
+            cat = cat_enum.value
 
             parent_rec = self._turn_tool_calls.get(parent_tool_call_id) if parent_tool_call_id else None
             computed_depth = (parent_rec.depth + 1) if parent_rec else 0
@@ -390,7 +386,7 @@ class ToolRenderingService(AppService):
                             _Static("… further nesting suppressed (depth limit reached)", classes="--depth-warning")
                         )
                     except Exception:
-                        pass
+                        logger.debug("depth-warning _Static mount on ancestor panel failed", exc_info=True)
 
             block = msg.open_streaming_tool_block(
                 label=label, tool_name=tool_name, panel_id=panel_id,
@@ -407,7 +403,7 @@ class ToolRenderingService(AppService):
                 if panel is not None:
                     panel.add_class("--streaming")
             except Exception:
-                pass
+                logger.debug("panel.add_class('--streaming') failed", exc_info=True)
             # A1: increment open tool count and set TOOL_EXEC phase
             self._open_tool_count += 1
             from hermes_cli.tui.agent_phase import Phase as _Phase
@@ -416,7 +412,7 @@ class ToolRenderingService(AppService):
                 from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO
                 self.app.query_one(_DO).signal("tool")
             except Exception:
-                pass
+                logger.debug("DrawbrailleOverlay.signal('tool') failed", exc_info=True)
             self.app._svc_commands.update_anim_hint()
             msg.refresh(layout=True)
             self.app._browse_total += 1
@@ -539,18 +535,15 @@ class ToolRenderingService(AppService):
         current: list = list(getattr(self.app, "planned_calls", []))
         kept = [c for c in current if c.state in (PlanState.DONE, PlanState.ERROR, PlanState.CANCELLED, PlanState.SKIPPED)]
         new_entries = []
+        import json as _json
+        from hermes_cli.tui.tool_category import classify_tool
         for tool_call_id, tool_name, label, args in batch:
             try:
-                import json as _json
                 raw = _json.dumps(args, ensure_ascii=False)
                 preview = raw[:60] + ("…" if len(raw) > 60 else "")
-            except Exception:
+            except (TypeError, ValueError):  # vocab-2: non-serializable args → empty preview
                 preview = ""
-            try:
-                from hermes_cli.tui.tool_category import classify_tool
-                cat = classify_tool(tool_name).value
-            except Exception:
-                cat = "unknown"
+            cat = classify_tool(tool_name).value
             new_entries.append(PlannedCall(
                 tool_call_id=tool_call_id,
                 tool_name=tool_name,
@@ -756,11 +749,8 @@ class ToolRenderingService(AppService):
         return None
 
     def _make_view_category(self, tool_name: str) -> str:
-        try:
-            from hermes_cli.tui.tool_category import classify_tool
-            return classify_tool(tool_name).value
-        except Exception:
-            return "unknown"
+        from hermes_cli.tui.tool_category import classify_tool
+        return classify_tool(tool_name).value
 
     def _wire_args(self, view: ToolCallViewState, args: "dict[str, Any]") -> None:
         """SM-03: attach invocation args to block and panel."""
@@ -775,7 +765,7 @@ class ToolRenderingService(AppService):
                 try:
                     header.refresh()
                 except Exception:
-                    pass
+                    logger.debug("header.refresh() post-arg-wire failed", exc_info=True)
 
     def _pop_pending_gen_for(self, tool_name: str) -> "ToolCallViewState | None":
         """Pop the oldest GENERATED record matching tool_name, or any GENERATED if none match."""
@@ -907,13 +897,17 @@ class ToolRenderingService(AppService):
                 try:
                     written = len(accumulated.encode("utf-8", errors="replace"))
                     total = 0
+                    import json as _json
                     try:
-                        import json as _json
                         parsed = _json.loads(accumulated)
+                    except _json.JSONDecodeError:  # vocab-2: partial JSON during stream → skip total
+                        logger.debug("partial JSON during stream — skipping total update", exc_info=True)
+                    else:
                         if isinstance(parsed, dict):
-                            total = int(parsed.get("total_size") or parsed.get("bytes_written") or 0)
-                    except Exception:
-                        pass
+                            try:
+                                total = int(parsed.get("total_size") or parsed.get("bytes_written") or 0)
+                            except (TypeError, ValueError):  # vocab-2: non-numeric total → skip
+                                logger.debug("non-numeric total in stream payload — skipping total update", exc_info=True)
                     block.update_progress(written, total)
                 except Exception:
                     logger.debug("update_progress failed for %s", tool_name, exc_info=True)
@@ -996,10 +990,7 @@ class ToolRenderingService(AppService):
 
             # Backward-compat _ToolCallRecord
             from hermes_cli.tui.tool_category import classify_tool as _ct
-            try:
-                cat = _ct(tool_name).value
-            except Exception:
-                cat = view.category
+            cat = _ct(tool_name).value
             rec = _ToolCallRecord(
                 tool_call_id=tool_call_id,
                 parent_tool_call_id=parent_id,
@@ -1105,6 +1096,10 @@ class ToolRenderingService(AppService):
         output = self._get_output_panel()
         block: "Any | None" = None
         panel: "Any | None" = None
+        # classify_tool is total; hoist out of the outer try so the AST sweep
+        # can verify no try/except Exception wraps it (R3-VOCAB-2 invariant).
+        from hermes_cli.tui.tool_category import classify_tool as _ct
+        cat = _ct(tool_name).value
         try:
             from hermes_cli.tui.write_file_block import WriteFileBlock
             from hermes_cli.tui.tool_panel import ToolPanel as _ToolPanel
@@ -1124,11 +1119,6 @@ class ToolRenderingService(AppService):
             from hermes_cli.tui.agent_phase import Phase as _Phase
             self.app.status_phase = _Phase.TOOL_EXEC
             # Backward-compat record
-            from hermes_cli.tui.tool_category import classify_tool as _ct
-            try:
-                cat = _ct(tool_name).value
-            except Exception:
-                cat = "file_tools"
             now = _time.monotonic()
             turn_start = getattr(self.app, "_turn_start_monotonic", None) or now
             rec = _ToolCallRecord(

@@ -40,14 +40,16 @@ def glyph(g: str) -> str:
 
 @dataclass(frozen=True)
 class SkinColors:
-    accent:       str  # hex, e.g. "#0178D4"
-    muted:        str  # hex text-muted
-    success:      str  # hex success fg
-    error:        str  # hex error fg
-    warning:      str  # hex warning fg
-    info:         str  # hex info fg (distinct from accent)
-    diff_add_bg:  str  # low-saturation add background
-    diff_del_bg:  str  # low-saturation del background
+    accent:        str  # hex, e.g. "#0178D4"
+    muted:         str  # hex text-muted
+    success:       str  # hex success fg
+    error:         str  # hex error fg
+    warning:       str  # hex warning fg
+    info:          str  # hex info fg (distinct from accent)
+    icon_dim:      str  # spinner low-end / dimmed tool icon
+    separator_dim: str  # header tail separators (chevron slot, meta sep)
+    diff_add_bg:   str  # low-saturation add background
+    diff_del_bg:   str  # low-saturation del background
     syntax_theme:  str  # pygments theme name
     syntax_scheme: str  # SYNTAX_SCHEMES key (logical token palette)
 
@@ -81,6 +83,8 @@ class SkinColors:
             error=_get("error",           d.error),
             warning=_get("warning",       d.warning),
             info=_get("info",             d.info),
+            icon_dim=_get("icon-dim",           d.icon_dim),
+            separator_dim=_get("separator-dim", d.separator_dim),
             diff_add_bg=_get("diff-add-bg", d.diff_add_bg),
             diff_del_bg=_get("diff-del-bg", d.diff_del_bg),
             syntax_theme=_get("syntax-theme",   d.syntax_theme),
@@ -97,6 +101,8 @@ class SkinColors:
             error="#E06C75",
             warning="#FEA62B",
             info="#58A6FF",
+            icon_dim="#6e6e6e",
+            separator_dim="#444444",
             diff_add_bg="#0e2a16",
             diff_del_bg="#2a0e0e",
             syntax_theme="ansi_dark",

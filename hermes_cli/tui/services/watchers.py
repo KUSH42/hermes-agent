@@ -25,6 +25,7 @@ class WatchersService(AppService):
         super().__init__(app)
         self._phase_before_error: str = ""  # A1: phase saved before ERROR overlay
         self._compact_warn_flashed: bool = False  # A7-1: guard single warn flash per cycle
+        self._last_compact_value: bool | None = None  # PERF-3: dedup guard (None forces first call through)
 
     # ------------------------------------------------------------------
     # Input change watchers
@@ -97,6 +98,14 @@ class WatchersService(AppService):
             pass
 
     def on_compact(self, value: bool) -> None:
+        # PERF-3: dedupe against last-seen value. The reactive descriptor on
+        # HermesApp is already updated to `value` by the time this runs, so
+        # we cannot compare against `self.app.compact` here — that would
+        # short-circuit every call. Compare against our own cached prior value.
+        if self._last_compact_value == value:
+            return
+        self._last_compact_value = value
+
         from hermes_cli.tui.tool_panel import ToolPanel
         from textual.widgets import Static
 

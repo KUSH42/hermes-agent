@@ -380,6 +380,7 @@ ToolsScreen > #tools-footer {
                 task.cancel()
         if self._stale_timer is not None:
             self._stale_timer.stop()
+            self._stale_timer = None  # PERF-2: null after stop, symmetric with _refresh_timer
         if self._refresh_timer is not None:
             self._refresh_timer.stop()
             self._refresh_timer = None

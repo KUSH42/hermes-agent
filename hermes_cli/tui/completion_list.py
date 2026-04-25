@@ -114,6 +114,13 @@ class VirtualCompletionList(ScrollView, can_focus=True):
         self._fuzzy_match_style: str = "bold #FFD866"
         # Default matches $cursor-selection-bg; overridden by skin via _refresh_fuzzy_color()
         self._selected_style: Style = Style(bgcolor="#3A5A8C")
+        # PERF-1 caches: pre-built Style objects to avoid per-render allocation.
+        self._style_text_normal: Style = Style(dim=True)
+        self._style_text_selected: Style = Style()
+        # No color literal — spec D / CSS-2 resolves path-suffix-color via css var;
+        # _refresh_fuzzy_color() populates this at mount/theme-reload.
+        self._style_path_suffix: Style = Style(dim=True)
+        self._style_empty: Style = Style(bgcolor="#2A2000")
         self._shimmer_timer: object | None = None
         self._auto_close_timer: object | None = None
         # Current query fragment — set by _push_to_list; used in empty-state label.
@@ -140,6 +147,9 @@ class VirtualCompletionList(ScrollView, can_focus=True):
             self._selected_style = Style(bgcolor=sel)
             empty_bg = css.get("completion-empty-bg", "#2A2000")
             self._completion_empty_bg: str = empty_bg
+            self._style_empty = Style(bgcolor=empty_bg)  # PERF-1: refresh empty-bg cache
+            path_color = css.get("path-suffix-color", "#888888")
+            self._style_path_suffix = Style(dim=True, color=path_color)  # PERF-1: refresh path-suffix cache
         except Exception:
             _log.debug("VirtualCompletionList._refresh_fuzzy_color: css var lookup failed", exc_info=True)
 
@@ -355,8 +365,7 @@ class VirtualCompletionList(ScrollView, can_focus=True):
                 segs = _normalize_segments(list(t.render(self.app.console)))
                 strip = Strip(segs, t.cell_len)
                 strip = strip.extend_cell_length(self.size.width)
-                empty_bg = getattr(self, "_completion_empty_bg", "#2A2000")
-                strip = strip.apply_style(Style(bgcolor=empty_bg))
+                strip = strip.apply_style(self._style_empty)  # PERF-1: cached
                 return strip
             return Strip.blank(self.size.width)
 
@@ -382,7 +391,7 @@ class VirtualCompletionList(ScrollView, can_focus=True):
 
     def _styled_candidate(self, c: "Candidate", selected: bool) -> Text:
         from .path_search import PathCandidate
-        base_style = Style() if selected else Style(dim=True)
+        base_style = self._style_text_selected if selected else self._style_text_normal  # PERF-1: cached
         t = Text(overflow="ellipsis", no_wrap=True)
         last = 0
         for start, end in c.match_spans:
@@ -399,9 +408,5 @@ class VirtualCompletionList(ScrollView, can_focus=True):
             and c.insert_text
             and c.insert_text != c.display
         ):
-            # text-muted is a Textual built-in; always present at runtime.
-            # Silent fallback is correct — absence implies corrupted theme, not
-            # a recoverable state worth logging.
-            muted = self.app.get_css_variables().get("text-muted", "#888888")
-            t.append(f"  →  {c.insert_text}", style=Style(dim=True, color=muted))
+            t.append(f"  →  {c.insert_text}", style=self._style_path_suffix)  # PERF-1: cached
         return t

@@ -4,7 +4,10 @@ from __future__ import annotations
 import logging
 import time
 from collections import deque
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from textual.timer import Timer
 
 import re
 
@@ -129,6 +132,8 @@ class StreamingToolBlock(ToolBlock):
         self._omission_bar_bottom_mounted: bool = False
         self._spinner_frame: int = 0
         self._completed: bool = False
+        self._is_unmounted: bool = False  # PERF-4: guard timer resurrection after unmount
+        self._render_timer: "Timer | None" = None  # PERF-4: pre-init; on_mount overwrites with live handle
         self._tail = ToolTail()
         self._bytes_received: int = 0
         self._last_line_time: float = 0.0
@@ -251,8 +256,11 @@ class StreamingToolBlock(ToolBlock):
             self._last_http_status = m.group(1).strip()
         if self._flush_slow:
             self._flush_slow = False
-            self._render_timer.stop()
-            self._render_timer = self.set_interval(1 / 60, self._flush_pending)
+            if self._render_timer is not None:
+                self._render_timer.stop()
+                self._render_timer = None
+            if not self._is_unmounted:  # PERF-4: don't resurrect timer after unmount
+                self._render_timer = self.set_interval(1 / 60, self._flush_pending)
 
     def inject_diff(self, diff_lines: list[str], header_stats: "ToolHeaderStats | None") -> None:
         for raw in diff_lines:
@@ -262,6 +270,7 @@ class StreamingToolBlock(ToolBlock):
         self._header.add_class("--diff-header")
 
     def on_unmount(self) -> None:
+        self._is_unmounted = True  # PERF-4: block timer resurrection at both reassign sites
         try:
             self._render_timer.stop()
         except Exception:
@@ -457,8 +466,11 @@ class StreamingToolBlock(ToolBlock):
             now = time.monotonic()
             if now - self._last_line_time > 2.0:
                 self._flush_slow = True
-                self._render_timer.stop()
-                self._render_timer = self.set_interval(1 / 10, self._flush_pending)
+                if self._render_timer is not None:
+                    self._render_timer.stop()
+                    self._render_timer = None
+                if not self._is_unmounted:  # PERF-4: don't resurrect timer after unmount
+                    self._render_timer = self.set_interval(1 / 10, self._flush_pending)
 
         self._microcopy_tick = (self._microcopy_tick + 1) % 6
         do_microcopy = self._microcopy_tick == 0

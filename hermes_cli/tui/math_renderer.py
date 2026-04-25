@@ -7,9 +7,12 @@ render_mermaid: render a mermaid diagram to PNG via the mmdc CLI (optional).
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+_log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Unicode symbol table
@@ -151,10 +154,12 @@ class MathRenderer:
                 Path(tmp.name).unlink(missing_ok=True)
                 return None
             except Exception:
+                _log.debug("MathRenderer: figure save failed", exc_info=True)
                 plt.close(fig)
                 Path(tmp.name).unlink(missing_ok=True)
                 return None
         except Exception:
+            _log.debug("MathRenderer: LaTeX render failed", exc_info=True)
             return None
 
 
@@ -209,11 +214,11 @@ def render_mermaid(src: str) -> Path | None:
         if proc_result.returncode == 0 and png_tmp.stat().st_size > 0:
             return png_tmp
     except Exception:
-        pass
+        _log.debug("render_mermaid: mmdc subprocess failed", exc_info=True)
     finally:
         mmd_tmp.unlink(missing_ok=True)
     try:
         png_tmp.unlink(missing_ok=True)
     except Exception:
-        pass
+        _log.debug("render_mermaid: png cleanup failed", exc_info=True)
     return None

@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import threading
 import time
 from pathlib import Path
 from typing import Optional
+
+_log = logging.getLogger(__name__)
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -69,6 +72,7 @@ class SessionBar(Widget):
         try:
             inner = self.query_one("#session-bar-inner", Horizontal)
         except Exception:
+            _log.debug("SessionBar._rebuild: query_one failed", exc_info=True)
             return
         records = self._sessions_data
         widgets = []
@@ -107,12 +111,12 @@ class SessionBar(Widget):
                 try:
                     self.app._svc_sessions.open_new_session_overlay()
                 except Exception:
-                    pass
+                    _log.warning("SessionBar: open_new_session_overlay failed", exc_info=True)
             else:
                 try:
                     self.app._svc_sessions.flash_sessions_max()
                 except Exception:
-                    pass
+                    _log.warning("SessionBar: flash_sessions_max failed", exc_info=True)
             return
         if btn_id.startswith("sess-btn-"):
             idx = int(btn_id.split("-")[-1])
@@ -123,7 +127,7 @@ class SessionBar(Widget):
                     try:
                         self.app._svc_sessions.switch_to_session(target_id)
                     except Exception:
-                        pass
+                        _log.warning("SessionBar: switch_to_session failed", exc_info=True)
             event.stop()
 
 
@@ -194,6 +198,7 @@ class _SessionsTab(Widget):
         try:
             lst = self.query_one("#sess-tab-list", Vertical)
         except Exception:
+            _log.debug("_SessionsTab.refresh_sessions: query_one failed", exc_info=True)
             return
         lst.remove_children()
         rows = []
@@ -213,42 +218,42 @@ class _SessionsTab(Widget):
             try:
                 app._svc_sessions.open_new_session_overlay()
             except Exception:
-                pass
+                _log.warning("_SessionsTab: open_new_session_overlay failed", exc_info=True)
         elif btn_id.startswith("switch-"):
             sid = btn_id[len("switch-"):]
             event.stop()
             try:
                 app._svc_sessions.switch_to_session(sid)
             except Exception:
-                pass
+                _log.warning("_SessionsTab: switch_to_session failed", exc_info=True)
         elif btn_id.startswith("kill-"):
             sid = btn_id[len("kill-"):]
             event.stop()
             try:
                 app._svc_sessions.kill_session_prompt(sid)
             except Exception:
-                pass
+                _log.warning("_SessionsTab: kill_session_prompt failed", exc_info=True)
         elif btn_id.startswith("merge-"):
             sid = btn_id[len("merge-"):]
             event.stop()
             try:
                 app._svc_sessions.open_merge_overlay(sid)
             except Exception:
-                pass
+                _log.warning("_SessionsTab: open_merge_overlay failed", exc_info=True)
         elif btn_id.startswith("reopen-"):
             sid = btn_id[len("reopen-"):]
             event.stop()
             try:
                 app._svc_sessions.reopen_orphan_session(sid)
             except Exception:
-                pass
+                _log.warning("_SessionsTab: reopen_orphan_session failed", exc_info=True)
         elif btn_id.startswith("delete-"):
             sid = btn_id[len("delete-"):]
             event.stop()
             try:
                 app._svc_sessions.delete_orphan_session(sid)
             except Exception:
-                pass
+                _log.warning("_SessionsTab: delete_orphan_session failed", exc_info=True)
 
 
 # R3 Phase B: NewSessionOverlay / MergeConfirmOverlay class bodies deleted;
@@ -307,13 +312,13 @@ class _SessionNotification(Horizontal):
         try:
             self.query_one("#sn-message", Static).update(f"{self._current_session_id}: {msg}")
         except Exception:
-            pass
+            _log.debug("_SessionNotification._show_next: update failed", exc_info=True)
         self.add_class("--visible")
         if self._timer:
             try:
                 self._timer.stop()
             except Exception:
-                pass
+                _log.debug("_SessionNotification._show_next: timer stop failed", exc_info=True)
         self._timer = self.set_timer(5.0, self._auto_dismiss)
 
     def _auto_dismiss(self) -> None:
@@ -331,7 +336,7 @@ class _SessionNotification(Horizontal):
                 try:
                     self.app._svc_sessions.switch_to_session(sid)
                 except Exception:
-                    pass
+                    _log.warning("_SessionNotification: switch_to_session failed", exc_info=True)
 
 
 class HistoryPanel(Widget):
@@ -358,6 +363,7 @@ class HistoryPanel(Widget):
         try:
             log = self.query_one("#hp-log", RichLog)
         except Exception:
+            _log.debug("HistoryPanel.load: query_one failed", exc_info=True)
             return
         log.clear()
         for entry in lines:

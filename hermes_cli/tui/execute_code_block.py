@@ -10,8 +10,11 @@ Extends StreamingToolBlock with:
 """
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -133,7 +136,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
             from hermes_cli.config import read_raw_config
             cps = int(read_raw_config().get("display", {}).get("execute_code_typewriter_cps", 0))
         except Exception:
-            pass
+            _log.debug("ExecuteCodeBlock: config read failed", exc_info=True)
 
         # Reduced-motion check
         try:
@@ -141,7 +144,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
             if css_vars.get("reduced-motion", "0") not in ("0", "", None):
                 cps = 0
         except Exception:
-            pass
+            _log.debug("ExecuteCodeBlock: css var lookup failed", exc_info=True)
 
         self._pacer = CharacterPacer(
             cps=cps,
@@ -154,7 +157,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
             code_section = self.query_one(CodeSection)
             code_section.mount(Static("", id="code-live-cursor"))
         except Exception:
-            pass
+            _log.debug("ExecuteCodeBlock: cursor widget mount failed", exc_info=True)
 
         # Start cursor blink
         self._start_cursor()
@@ -174,11 +177,11 @@ class ExecuteCodeBlock(StreamingToolBlock):
         try:
             self._cached_code_log = self.query_one(CodeSection).query_one(CopyableRichLog)
         except Exception:
-            pass
+            _log.debug("ExecuteCodeBlock: code log cache failed", exc_info=True)
         try:
             self._cached_cursor = self.query_one("#code-live-cursor", Static)
         except Exception:
-            pass
+            _log.debug("ExecuteCodeBlock: cursor cache failed", exc_info=True)
 
         # Pre-mount both omission bars on OutputSection so they exist in DOM
         # immediately; _refresh_omission_bars() hides them until cap is reached.
@@ -209,7 +212,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
             if css_vars.get("reduced-motion", "0") not in ("0", "", None):
                 return
         except Exception:
-            pass
+            _log.debug("ExecuteCodeBlock._start_cursor: css var lookup failed", exc_info=True)
         self._cursor_timer = self.set_interval(0.5, self._tick_cursor)
 
     def _tick_cursor(self) -> None:
@@ -286,7 +289,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
             css_vars = self.app.get_css_variables()
             theme = css_vars.get("preview-syntax-theme", theme)
         except Exception:
-            pass
+            _log.debug("ExecuteCodeBlock._highlight_line: css var lookup failed", exc_info=True)
         from hermes_cli.tui.body_renderers import pick_renderer, _STREAMING_EMPTY_CLS, StreamingCodeRenderer
         from hermes_cli.tui.tool_payload import ToolPayload
         from hermes_cli.tui.tool_category import ToolCategory
@@ -315,7 +318,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
             try:
                 self._cursor_timer.stop()
             except Exception:
-                pass
+                _log.debug("ExecuteCodeBlock.finalize_code: cursor timer stop failed", exc_info=True)
             self._cursor_timer = None
 
         # Flush and stop pacer (canonical code supersedes streamed per-line output)
@@ -413,13 +416,14 @@ class ExecuteCodeBlock(StreamingToolBlock):
             try:
                 scrolled_up = getattr(self.app.query_one("#output-panel"), "_user_scrolled_up", False)
             except Exception:
+                _log.debug("ExecuteCodeBlock._flush_pending: output-panel query failed", exc_info=True)
                 scrolled_up = False
             if scrolled_up:
                 new_total = self._tail._new_line_count + lines_written
                 try:
                     self._tail.update_count(new_total)
                 except Exception:
-                    pass
+                    _log.debug("ExecuteCodeBlock._flush_pending: tail update_count failed", exc_info=True)
 
     def complete(self, duration: str, is_error: bool = False) -> None:
         """Override: add flash_success/flash_error, use code+output for collapse threshold."""
@@ -437,7 +441,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
             self._spinner_timer.stop()
             self._duration_timer.stop()
         except Exception:
-            pass
+            _log.debug("ExecuteCodeBlock.complete: timer stop failed", exc_info=True)
 
         self._header._pulse_stop()
         self._header.set_error(is_error)
@@ -498,7 +502,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
             try:
                 self._try_mount_media()
             except Exception:
-                pass
+                _log.debug("ExecuteCodeBlock.complete: _try_mount_media failed", exc_info=True)
 
         self._code_state = _STATE_COMPLETED
 
@@ -515,7 +519,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
             try:
                 self._cursor_timer.stop()
             except Exception:
-                pass
+                _log.debug("ExecuteCodeBlock.on_unmount: cursor timer stop failed", exc_info=True)
 
     def _get_output_log(self) -> CopyableRichLog:
         if self._cached_output_log is not None:

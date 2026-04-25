@@ -10,7 +10,10 @@ Usage (inside App.suspend()):
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Effect catalogue
@@ -133,6 +136,7 @@ def iter_frames(effect_name: str, text: str, skin=None, params: dict[str, object
         color_mod = importlib.import_module("terminaltexteffects.utils.graphics")
         color_cls = getattr(color_mod, "Color")
     except Exception:
+        _log.debug("tte_runner: terminaltexteffects.utils.graphics import failed", exc_info=True)
         color_mod = None
 
     has_colors_override = _apply_effect_params(effect_name, effect, color_cls, params)
@@ -154,7 +158,7 @@ def iter_frames(effect_name: str, text: str, skin=None, params: dict[str, object
             from textual.constants import MAX_FPS
             tc.frame_rate = MAX_FPS
     except Exception:
-        pass
+        _log.debug("tte_runner: skin/gradient apply failed", exc_info=True)
 
     for frame in effect:
         yield frame
@@ -281,6 +285,7 @@ def run_effect(effect_name: str, text: str, skin=None, params: dict[str, object]
         color_mod = importlib.import_module("terminaltexteffects.utils.graphics")
         color_cls = getattr(color_mod, "Color")
     except Exception:
+        _log.debug("tte_runner.run_effect_inline: terminaltexteffects.utils.graphics import failed", exc_info=True)
         color_mod = None
 
     has_colors_override = _apply_effect_params(effect_name, effect, color_cls, params)
@@ -309,7 +314,8 @@ def run_effect(effect_name: str, text: str, skin=None, params: dict[str, object]
             from textual.constants import MAX_FPS
             tc.frame_rate = MAX_FPS
     except Exception:
-        pass  # skin failure is non-fatal; default TTE colours apply
+        _log.debug("tte_runner.run_effect_inline: skin/gradient apply failed", exc_info=True)
+        # skin failure is non-fatal; default TTE colours apply
 
     with effect.terminal_output() as terminal:
         for frame in effect:

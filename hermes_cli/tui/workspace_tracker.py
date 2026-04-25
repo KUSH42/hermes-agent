@@ -12,12 +12,15 @@ Textual event loop thread. Blocking I/O (subprocess, file reads) runs in
 from __future__ import annotations
 
 import ast
+import logging
 import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from textual.message import Message
+
+_log = logging.getLogger(__name__)
 
 
 _CONFLICT_XY: frozenset[str] = frozenset({"DD", "AU", "UD", "UA", "DU", "AA", "UU"})
@@ -291,7 +294,7 @@ class GitPoller:
                 timeout=5,
             ).decode().strip()
         except Exception:
-            pass
+            _log.debug("WorkspaceTracker: git rev-parse for branch failed", exc_info=True)
 
         try:
             raw = subprocess.check_output(  # allow-sync-io: dispatched from run_worker context, not event loop
@@ -301,6 +304,7 @@ class GitPoller:
                 timeout=5,
             )
         except Exception:
+            _log.debug("WorkspaceTracker: git status failed", exc_info=True)
             raw = b""
 
         tokens = [t for t in raw.split(b"\0") if t]
@@ -407,6 +411,7 @@ def analyze_complexity(path: str) -> str | None:
         src = Path(path).read_text(encoding="utf-8", errors="ignore")
         tree = ast.parse(src)
     except Exception:
+        _log.debug("analyze_complexity: file read/parse failed for %s", path, exc_info=True)
         return None
 
     worst_class: tuple[int, str] | None = None

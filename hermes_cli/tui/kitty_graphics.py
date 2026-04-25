@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import fcntl
 import io
+import logging
 import math
 import os
 import struct
@@ -17,6 +18,8 @@ import threading
 from enum import Enum, auto
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+_log = logging.getLogger(__name__)
 
 import rich.color
 from rich.segment import Segment
@@ -183,13 +186,14 @@ def _apc_probe() -> bool:
             rlist, _, _ = select.select([sys.stdin], [], [], 0.01)
         return ";OK" in response
     except Exception:
+        _log.debug("kitty_graphics: kitty probe failed", exc_info=True)
         return False
     finally:
         if old_settings is not None:
             try:
                 termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
             except Exception:
-                pass
+                _log.debug("kitty_graphics: tcsetattr restore failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -219,13 +223,14 @@ def _sixel_probe() -> bool:
             rlist, _, _ = select.select([sys.stdin], [], [], 0.01)
         return ";4;" in resp or resp.startswith("\x1b[?4;") or ";4c" in resp
     except Exception:
+        _log.debug("kitty_graphics: sixel probe failed", exc_info=True)
         return False
     finally:
         if old is not None:
             try:
                 termios.tcsetattr(fd, termios.TCSADRAIN, old)
             except Exception:
-                pass
+                _log.debug("kitty_graphics: sixel tcsetattr restore failed", exc_info=True)
 
 
 def _to_sixel(image: "PILImage.Image", max_cols: int = 80, max_rows: int = 24) -> str:
@@ -309,7 +314,7 @@ def _cell_px() -> tuple[int, int]:
         if ws_col > 0 and ws_row > 0 and ws_xpixel > 0 and ws_ypixel > 0:
             return ws_xpixel // ws_col, ws_ypixel // ws_row
     except Exception:
-        pass
+        _log.debug("kitty_graphics._cell_px: TIOCGWINSZ ioctl failed", exc_info=True)
 
     env = os.environ.get("HERMES_CELL_PX", "")
     if env:
@@ -577,6 +582,7 @@ def _load_image(
         img.load()  # force decode so errors surface here, not later
         return img
     except Exception:
+        _log.debug("kitty_graphics: image load failed", exc_info=True)
         return None
 
 

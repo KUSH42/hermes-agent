@@ -7,10 +7,13 @@ are preserved with unchanged semantics.
 
 from __future__ import annotations
 
+import logging
 import re
 import threading
 from dataclasses import dataclass
 from enum import Enum
+
+_log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -366,7 +369,7 @@ def resolve_icon_final(spec: ToolSpec, nerd_font: bool) -> str:
         if mode == "ascii":
             return spec.icon_ascii or _CATEGORY_DEFAULTS[spec.category].ascii_fallback
     except Exception:
-        pass
+        _log.debug("icon_for: get_tool_icon_mode failed", exc_info=True)
     if spec.provenance and spec.provenance.startswith("mcp:"):
         if not (nerd_font and spec.icon_nf) and not (not nerd_font and spec.icon_ascii):
             server = spec.provenance.split(":", 1)[1]

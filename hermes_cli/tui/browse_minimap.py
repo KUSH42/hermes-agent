@@ -6,10 +6,14 @@ viewport row. Toggle with \\ while browse mode is active.
 
 from __future__ import annotations
 
+import logging
+
 from rich.segment import Segment
 from rich.style import Style
 from textual.strip import Strip
 from textual.widget import Widget
+
+_log = logging.getLogger(__name__)
 
 # Glyph per anchor type (single-width Unicode; matches _BROWSE_TYPE_GLYPH in app.py)
 _TYPE_GLYPH: dict[str, str] = {
@@ -50,6 +54,7 @@ class BrowseMinimap(Widget):
             output = app.query_one(_OP)
             virtual_h = output.virtual_size.height or vh
         except Exception:
+            _log.debug("BrowseMinimap.render_line: output panel query failed", exc_info=True)
             virtual_h = vh
 
         if virtual_h == 0:
@@ -62,6 +67,7 @@ class BrowseMinimap(Widget):
             try:
                 wy = anchor.widget.virtual_region.y
             except Exception:
+                _log.debug("BrowseMinimap.render_line: virtual_region lookup failed", exc_info=True)
                 continue
             if content_y <= wy < content_y + band:
                 glyph = _TYPE_GLYPH.get(
@@ -72,7 +78,7 @@ class BrowseMinimap(Widget):
                 try:
                     _accent = self.app.get_css_variables().get("accent", "cyan")
                 except Exception:
-                    pass
+                    _log.debug("BrowseMinimap.render_line: css var lookup failed", exc_info=True)
                 style = Style(reverse=True) if i == cursor else Style(color=_accent)
                 return Strip([Segment(glyph, style)])
 

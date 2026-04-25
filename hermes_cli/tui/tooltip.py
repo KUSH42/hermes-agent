@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from textual.widget import Widget
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     pass
@@ -79,7 +82,7 @@ class TooltipMixin:
             t.styles.offset = (x, y)
             self._tooltip_widget = t
         except Exception:
-            pass
+            _log.debug("TooltipMixin._show_tooltip: tooltip mount failed", exc_info=True)
 
     def _dismiss_tooltip(self) -> None:
         if self._tooltip_widget is not None and self._tooltip_widget.is_mounted:

@@ -294,6 +294,7 @@ class PaneManager:
         try:
             app.query_one("#pane-row")
         except Exception:
+            _log.debug("PaneManager._apply_layout: #pane-row not mounted", exc_info=True)
             return
 
         _, left_w, center_w, right_w = self.compute_layout(
@@ -338,7 +339,7 @@ class PaneManager:
             else:
                 pane.focus()
         except Exception:
-            pass
+            _log.debug("PaneManager.focus_active_pane: child focus failed", exc_info=True)
         # Show "Esc → input" hint when a side pane gets focus
         if pane_id != PaneId.CENTER:
             try:
@@ -346,7 +347,7 @@ class PaneManager:
                 app.query_one(HintBar).hint = "Esc → input"
                 app.set_timer(3.0, lambda: _clear_hint_if_side_pane(app, pane_id))
             except Exception:
-                pass
+                _log.debug("PaneManager.focus_active_pane: hint update failed", exc_info=True)
 
     # ------------------------------------------------------------------
     # Width overrides (from /layout command)
@@ -405,4 +406,4 @@ def _clear_hint_if_side_pane(app: Any, pane_id: "PaneId") -> None:
         if pm is not None and pm._focused_pane == pane_id:
             app.query_one(HintBar).hint = ""
     except Exception:
-        pass
+        _log.debug("_clear_hint_if_side_pane: hint clear failed", exc_info=True)

@@ -7,10 +7,13 @@ v4 parsers: `parse(ctx: ParseContext) -> ResultSummaryV4` (pure, frozen, all 8 c
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
+
+_log = logging.getLogger(__name__)
 
 from hermes_cli.tui.tool_category import ToolCategory as _TC
 
@@ -320,6 +323,7 @@ def _raw_str(raw) -> str:
     try:
         return json.dumps(raw, ensure_ascii=False)
     except Exception:
+        _log.debug("tool_result_parse._raw_str: json.dumps failed", exc_info=True)
         return str(raw)
 
 
@@ -664,6 +668,7 @@ def _extract_search_artifacts(result: str) -> tuple[Artifact, ...]:
                     from urllib.parse import urlparse
                     host = urlparse(url).hostname or url[:40]
                 except Exception:
+                    _log.debug("tool_result_parse: urlparse failed", exc_info=True)
                     host = url[:40]
                 arts.append(Artifact(label=host, path_or_url=url, kind="url"))
                 seen.add(url)
@@ -710,6 +715,7 @@ def search_result_v4(ctx: ParseContext) -> ResultSummaryV4:
             _web = _parsed.get("data", {}).get("web", [])
             match_count = len(_web) if isinstance(_web, list) else len(lines)
         except Exception:
+            _log.debug("tool_result_parse: web search JSON parse failed", exc_info=True)
             match_count = len(lines)
     artifacts = _extract_search_artifacts(raw)
     artifacts_truncated = len(artifacts) > _ARTIFACT_DISPLAY_CAP  # B3
@@ -788,6 +794,7 @@ def web_result_v4(ctx: ParseContext) -> ResultSummaryV4:
         from urllib.parse import urlparse
         host = urlparse(url).hostname or url[:40]
     except Exception:
+        _log.debug("tool_result_parse: url parse failed", exc_info=True)
         host = url[:40]
 
     artifacts = (Artifact(label=host or url[:40], path_or_url=url, kind="url"),) if url else ()
@@ -1016,6 +1023,7 @@ def _parse_mcp_content(raw) -> tuple[list, bool]:
         try:
             data = json.loads(str(raw))
         except Exception:
+            _log.debug("tool_result_parse._parse_mcp_content: json.loads failed", exc_info=True)
             return [{"type": "text", "text": str(raw)}], False
     is_err = bool(data.get("isError", False))
     content = data.get("content", [])
@@ -1058,6 +1066,7 @@ def _uri_to_artifact(uri: str, idx: int) -> Artifact:
             from urllib.parse import urlparse
             host = urlparse(uri).hostname or uri[:40]
         except Exception:
+            _log.debug("tool_result_parse._extract_mcp_artifact: urlparse failed", exc_info=True)
             host = uri[:40]
         return Artifact(label=host, path_or_url=uri, kind="url")
     if uri.startswith("data:image/"):
@@ -1148,6 +1157,7 @@ def parse(ctx: ParseContext) -> ResultSummaryV4:
     try:
         cat = ctx.spec.category.value
     except Exception:
+        _log.debug("tool_result_parse.parse: spec.category.value failed", exc_info=True)
         cat = "unknown"
     parsers = _get_v4_parsers()
     parser_fn = parsers.get(cat, generic_result_v4)

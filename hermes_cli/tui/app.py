@@ -1004,6 +1004,10 @@ class HermesApp(App):
             ).decode().strip()
             is_git_repo = True
         except Exception:
+            logger.debug(
+                "_init_workspace_tracker: git rev-parse failed; falling back to cwd",
+                exc_info=True,
+            )
             root = _os.getcwd()
             is_git_repo = False
         tracker = WorkspaceTracker(root, is_git_repo=is_git_repo)

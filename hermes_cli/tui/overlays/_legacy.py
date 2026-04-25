@@ -7,10 +7,13 @@ SessionOverlay and ToolPanelHelpOverlay.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from textual import work
 from textual.app import ComposeResult
+
+_log = logging.getLogger(__name__)
 from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.css.query import NoMatches
@@ -139,6 +142,7 @@ class SessionOverlay(Widget):
             else:
                 sessions = db.list_sessions_rich(limit=20)
         except Exception:
+            _log.warning("_load_sessions: session DB read failed", exc_info=True)
             sessions = []
         self.call_from_thread(self._render_rows, sessions)
 
@@ -179,6 +183,7 @@ class SessionOverlay(Widget):
         try:
             rows = list(self.query(_SessionRow))
         except Exception:
+            _log.debug("SessionOverlay._update_selection: query failed", exc_info=True)
             return
         for i, row in enumerate(rows):
             row.set_class(i == self._selected_idx, "--selected")
@@ -214,14 +219,14 @@ class SessionOverlay(Widget):
         try:
             self.app.action_resume_session(sid)
         except Exception:
-            pass
+            _log.warning("SessionOverlay.action_select: action_resume_session failed", exc_info=True)
 
     def action_new_session(self) -> None:
         self.action_dismiss()
         try:
             self.app._svc_commands.handle_tui_command("/new")
         except Exception:
-            pass
+            _log.warning("SessionOverlay.action_new_session: handle_tui_command failed", exc_info=True)
 
     def action_dismiss(self) -> None:
         self.remove_class("--visible")
@@ -330,7 +335,7 @@ class ToolPanelHelpOverlay(Widget):
             from hermes_cli.tui.input_widget import HermesInput
             self.app.query_one(HermesInput).focus()
         except Exception:
-            pass
+            _log.debug("ToolPanelHelpOverlay.action_dismiss: focus restore failed", exc_info=True)
 
     def on_key(self, event: "object") -> None:
         key = getattr(event, "key", None)

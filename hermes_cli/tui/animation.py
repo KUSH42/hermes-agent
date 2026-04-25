@@ -6,12 +6,15 @@ PulseMixin and AnimationClock use duck-typed Textual APIs (set_interval, refresh
 """
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from rich.style import Style
 from rich.text import Text
+
+_log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +246,7 @@ class AnimationClock:
         try:
             self._sub_names[sub_id] = getattr(callback, "__qualname__", repr(callback))
         except Exception:
+            _log.debug("AnimationClock.subscribe: qualname lookup failed", exc_info=True)
             self._sub_names[sub_id] = repr(callback)
         return _ClockSubscription(self, sub_id)
 
@@ -277,7 +281,7 @@ class AnimationClock:
                     detail = ""
                 _log_lag(f"anim_clock.tick took {_dt:.1f}ms ({n_subs} subs){detail}")
             except Exception:
-                pass
+                _log.debug("AnimationClock.tick: _log_lag import/call failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------

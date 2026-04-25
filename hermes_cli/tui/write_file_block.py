@@ -9,9 +9,12 @@ Extends StreamingToolBlock with:
 """
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 from rich.text import Text
 from textual.css.query import NoMatches
@@ -86,13 +89,13 @@ class WriteFileBlock(StreamingToolBlock):
                 "write_file_typewriter_cps", 0
             ))
         except Exception:
-            pass
+            _log.debug("WriteFileBlock: config read failed", exc_info=True)
         try:
             css_vars = self.app.get_css_variables()
             if css_vars.get("reduced-motion", "0") not in ("0", "", None):
                 cps = 0
         except Exception:
-            pass
+            _log.debug("WriteFileBlock: css var lookup failed", exc_info=True)
 
         self._pacer = CharacterPacer(
             cps=cps,
@@ -133,6 +136,7 @@ class WriteFileBlock(StreamingToolBlock):
                 msg += f" / {_human_size(total)}"
             widget.update(msg)
         except Exception:
+            _log.debug("WriteFileBlock.update_progress: _human_size failed", exc_info=True)
             widget.update(f"writing · {written}B")
 
     def set_final_path(self, path: str) -> None:
@@ -199,6 +203,7 @@ class WriteFileBlock(StreamingToolBlock):
             renderable = renderer.render_stream_line(line, line, lang=lang)
             log.write_with_source(renderable, line)
         except Exception:
+            _log.debug("WriteFileBlock._emit_content_line: renderer failed", exc_info=True)
             log.write_with_source(Text(line), line)
 
     # ------------------------------------------------------------------
@@ -225,7 +230,7 @@ class WriteFileBlock(StreamingToolBlock):
             try:
                 self._progress.remove()
             except Exception:
-                pass
+                _log.debug("WriteFileBlock.complete: progress widget remove failed", exc_info=True)
             self._progress = None
             self._writing_hint = None
             self._progress_label = None
@@ -240,7 +245,7 @@ class WriteFileBlock(StreamingToolBlock):
             self._spinner_timer.stop()
             self._duration_timer.stop()
         except Exception:
-            pass
+            _log.debug("WriteFileBlock.complete: timer stop failed", exc_info=True)
         self._header._pulse_stop()
         self._header.set_error(is_error)
         self._flush_pending()  # no-op (we never use _pending)
@@ -301,7 +306,7 @@ class WriteFileBlock(StreamingToolBlock):
                 full_content = "\n".join(self._content_lines)
                 log.write_with_source(renderable, full_content)
         except Exception:
-            pass
+            _log.debug("WriteFileBlock._rehighlight_body: re-highlight failed", exc_info=True)
 
     # ------------------------------------------------------------------
     # Copy override — return all content lines (no display cap)

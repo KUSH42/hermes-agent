@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
+
+_log = logging.getLogger(__name__)
 
 from hermes_cli.tui.resize_utils import THRESHOLD_MIN_HEIGHT, THRESHOLD_ULTRA_NARROW
 
@@ -47,7 +51,7 @@ class MinSizeBox(Widget):
                 f"⚠  Terminal too small ({w}×{h})"
             )
         except Exception:
-            pass
+            _log.debug("MinSizeBox.update_size: widget update failed", exc_info=True)
 
 
 class MinSizeBackdrop(Widget):

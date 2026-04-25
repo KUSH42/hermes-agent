@@ -1,8 +1,11 @@
 """SubAgentPanel — collapsible tree container for AGENT-category tool calls."""
 from __future__ import annotations
 
+import logging
 import time as _time
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 from textual import events
 from textual.app import ComposeResult
@@ -58,6 +61,7 @@ class SubAgentHeader(Widget):
                 try:
                     warn_color = self.app.get_css_variables().get("status-warn-color", "#FFA726")
                 except Exception:
+                    _log.debug("SubAgentPanel: css var lookup failed", exc_info=True)
                     warn_color = "#FFA726"
                 segments.append(("errors", _Text(f"  {error_count} {err_word}", style=f"bold {warn_color}")))
                 # D-2: show up to 3 distinct error_kind glyphs
@@ -70,6 +74,7 @@ class SubAgentHeader(Widget):
             try:
                 w = self.app.size.width if self.app else 80
             except Exception:
+                _log.debug("SubAgentPanel: app.size.width failed", exc_info=True)
                 w = 80
             budget = max(0, w - 20)
             from hermes_cli.tui.tool_blocks._header import _trim_tail_segments

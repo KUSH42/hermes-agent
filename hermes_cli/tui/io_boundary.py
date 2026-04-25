@@ -33,6 +33,7 @@ Scanner limitations
 from __future__ import annotations
 
 import ast
+import logging
 import os
 import re
 import shlex
@@ -49,6 +50,8 @@ if TYPE_CHECKING:
     from textual.app import App
     from textual.widget import Widget
     from textual.worker import Worker
+
+_log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Shared constants
@@ -225,7 +228,7 @@ def _safe_callback(app: "App", cb: "Callable | None", *args: object) -> None:
     except RuntimeError:
         raise  # called from event loop — programming bug
     except Exception:
-        pass  # swallow broken callback logic
+        _log.debug("_safe_callback: broken callback logic", exc_info=True)
 
 
 def _is_gui_editor(cmd_argv: "list[str]") -> bool:
@@ -557,6 +560,7 @@ def scan_sync_io(paths: "Iterable[Path]") -> "list[tuple[Path, int, str]]":
         try:
             return p.read_text(encoding="utf-8", errors="replace").splitlines()
         except Exception:
+            _log.debug("io_boundary._lines_of: file read failed", exc_info=True)
             return []
 
     def _is_exempted(lines: list[str], lineno: int) -> bool:
@@ -639,6 +643,7 @@ def scan_sync_io(paths: "Iterable[Path]") -> "list[tuple[Path, int, str]]":
             source = filepath.read_text(encoding="utf-8", errors="replace")
             tree = ast.parse(source, filename=str(filepath))
         except Exception:
+            _log.debug("io_boundary.scan_sync_io: file parse failed for %s", filepath, exc_info=True)
             continue
 
         lines = source.splitlines()

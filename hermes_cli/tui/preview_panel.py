@@ -18,6 +18,7 @@ of reading potentially huge blobs into the TUI.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from rich.syntax import Syntax
@@ -28,6 +29,8 @@ from textual.widgets import RichLog
 from textual.worker import get_current_worker
 
 from .path_search import PathCandidate
+
+_log = logging.getLogger(__name__)
 
 _MAX_PREVIEW_LINES = 80
 _MAX_PREVIEW_BYTES = 128 * 1024
@@ -127,6 +130,7 @@ class PreviewPanel(RichLog):
             if not theme:
                 theme = "monokai" if _hex_luminance(background) < 128 else "default"
         except Exception:
+            _log.debug("PreviewPanel: css var lookup failed", exc_info=True)
             theme = "monokai"
             background = "#1e1e1e"
         syntax = Syntax(

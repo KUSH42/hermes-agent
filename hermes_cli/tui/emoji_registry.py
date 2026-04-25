@@ -7,11 +7,14 @@ response and user-message rendering.
 """
 from __future__ import annotations
 
+import logging
 import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     pass
@@ -79,6 +82,7 @@ def normalize_emoji(
         img = img.resize(target_px, Image.LANCZOS)
         return img, cell_w, cell_h
     except Exception:
+        _log.debug("normalize_emoji: image resize failed", exc_info=True)
         return None
 
 
@@ -88,6 +92,7 @@ def _cell_px() -> "tuple[int, int]":
         from hermes_cli.tui.kitty_graphics import _cell_px as _kgcpx
         return _kgcpx()
     except Exception:
+        _log.debug("_cell_px: kitty_graphics import failed", exc_info=True)
         return (8, 16)
 
 
@@ -120,7 +125,7 @@ class EmojiRegistry:
                     if m:
                         descriptions[m.group(1).lower()] = m.group(2).strip()
             except Exception:
-                pass
+                _log.debug("EmojiRegistry.load: failed to parse emojis.md", exc_info=True)
 
         # Scan directory
         if not self._emojis_dir.exists():
@@ -132,6 +137,7 @@ class EmojiRegistry:
                     key = p.stem.lower()
                     files[key] = p
         except Exception:
+            _log.debug("EmojiRegistry.load: failed to iterate emojis_dir", exc_info=True)
             return
 
         max_cw = int(self._cfg.get("max_cell_width", 4))
@@ -155,7 +161,7 @@ class EmojiRegistry:
                     n_frames = getattr(_g, "n_frames", 1)
                     _g.close()
                 except Exception:
-                    pass
+                    _log.debug("EmojiRegistry.load: GIF frame count failed", exc_info=True)
 
             # Normalize (disk cache check)
             norm_result = None
@@ -172,7 +178,7 @@ class EmojiRegistry:
                         _ch = max(1, round(_ci.height / cph))
                         norm_result = (_ci, _cw, _ch)
                     except Exception:
-                        pass
+                        _log.debug("EmojiRegistry.load: disk cache read failed", exc_info=True)
 
             if norm_result is None:
                 norm_result = normalize_emoji(path, max_cw, max_ch, cpw, cph)
@@ -185,7 +191,7 @@ class EmojiRegistry:
                         cache_dir.mkdir(parents=True, exist_ok=True)
                         norm_result[0].save(str(cache_path2), format="PNG")
                     except Exception:
-                        pass
+                        _log.debug("EmojiRegistry.load: disk cache write failed", exc_info=True)
 
             if norm_result is not None:
                 pil_image, cell_w, cell_h = norm_result
@@ -211,9 +217,9 @@ class EmojiRegistry:
                         try:
                             cp.unlink()
                         except Exception:
-                            pass
+                            _log.debug("EmojiRegistry.load: orphan cache unlink failed", exc_info=True)
             except Exception:
-                pass
+                _log.debug("EmojiRegistry.load: cache cleanup failed", exc_info=True)
 
     def reload_normalized(self, cell_px_w: int, cell_px_h: int) -> None:
         """Re-normalize all entries for new cell pixel dimensions. Call from worker thread."""
@@ -230,7 +236,7 @@ class EmojiRegistry:
                         cache_dir.mkdir(parents=True, exist_ok=True)
                         entry.pil_image.save(str(cache_dir / cache_name), format="PNG")
                     except Exception:
-                        pass
+                        _log.debug("EmojiRegistry.reload_normalized: cache write failed", exc_info=True)
 
     def get(self, name: str) -> "EmojiEntry | None":
         return self._entries.get(name.lower())
@@ -301,7 +307,8 @@ def _build_animated_emoji_widget() -> "type":
                     delays.append(max(0.02, delay_ms / 1000.0))
                 gif.close()
             except Exception:
-                pass
+                _log.exception("EmojiWidget on_mount: GIF frame decode failed")
+                # frames/delays remain whatever was decoded so far; fall through
             self._frames = frames
             self._delays = delays
             self.call_from_thread(self._start_animation)

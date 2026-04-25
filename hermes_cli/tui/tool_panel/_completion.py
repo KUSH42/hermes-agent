@@ -1,8 +1,11 @@
 """_ToolPanelCompletionMixin — completion path and body-line helpers."""
 from __future__ import annotations
 
+import logging
 import time
 from typing import TYPE_CHECKING, Any
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from hermes_cli.tui.tool_result_parse import ResultSummaryV4
@@ -200,23 +203,27 @@ class _ToolPanelCompletionMixin:
     ) -> None:
         if self._body_pane is None:  # type: ignore[attr-defined]
             return
+        renderer = new_renderer_cls(payload, cls_result, app=self.app)  # type: ignore[attr-defined]
         try:
-            renderer = new_renderer_cls(payload, cls_result, app=self.app)  # type: ignore[attr-defined]
             new_widget = renderer.build_widget()
-            old_block = self._block  # type: ignore[attr-defined]
+        except Exception:
+            _log.exception("renderer.build_widget() failed; keeping original body")
+            return
+        plain_text = renderer.copy_text() if hasattr(renderer, "copy_text") else payload.output_raw
+        old_block = self._block  # type: ignore[attr-defined]
+        if old_block is not None and hasattr(old_block, "replace_body_widget"):
+            try:
+                old_block.replace_body_widget(new_widget, plain_text=plain_text)
+            except Exception:
+                _log.exception("replace_body_widget() failed; keeping original body")
+                return
+            self._block = old_block  # type: ignore[attr-defined]
+            self._body_pane._block = old_block  # type: ignore[attr-defined]
+        else:
+            # Fallback: no ToolBlock wrapper present — mount directly and update refs.
             self._body_pane.mount(new_widget)  # type: ignore[attr-defined]
-            if old_block is not None and old_block.is_attached:
-                old_block.remove()
             self._block = new_widget  # type: ignore[attr-defined]
             self._body_pane._block = new_widget  # type: ignore[attr-defined]
-            from hermes_cli.tui.tool_payload import ResultKind
-            from hermes_cli.tui.body_renderers._grammar import BodyFooter
-            if getattr(cls_result, "kind", None) != ResultKind.EMPTY:
-                for old_footer in self._body_pane.query(BodyFooter):  # type: ignore[attr-defined]
-                    old_footer.remove()
-                self._body_pane.mount(BodyFooter())  # type: ignore[attr-defined]
-        except Exception:
-            pass
 
     def _maybe_swap_renderer(
         self,

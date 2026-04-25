@@ -606,7 +606,22 @@ class StreamingToolBlock(ToolBlock):
     # ------------------------------------------------------------------
 
     def copy_content(self) -> str:
+        rendered = getattr(self, "_rendered_plain_text", "")
+        if rendered:
+            return rendered
         return "\n".join(self._all_plain)
+
+    def replace_body_widget(self, widget, *, plain_text: str = "") -> None:
+        # Regression guard: stop live timers before body replacement.
+        # complete() already handles this in the normal completion flow.
+        if not self._completed:
+            try:
+                self._render_timer.stop()
+                self._spinner_timer.stop()
+                self._duration_timer.stop()
+            except Exception:
+                pass
+        super().replace_body_widget(widget, plain_text=plain_text)
 
     def refresh_skin(self) -> None:
         """Refresh header cosmetics only — skip body re-render."""

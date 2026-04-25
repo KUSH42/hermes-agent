@@ -1135,6 +1135,10 @@ _RST = "\033[0m"
 # waiting for a full \\n, improving perceived streaming responsiveness.
 _PARTIAL_FLUSH_CHARS = 12
 
+# Hard cap on partial-line accumulation: force-flush the whole buffer when a
+# single line (no \n) exceeds this length (e.g. base64 blobs, very long code).
+_STREAM_BUF_MAX_CHARS = 65_536
+
 def _accent_hex() -> str:
     """Return the active skin accent color for legacy CLI output lines."""
     try:
@@ -2723,6 +2727,16 @@ class HermesCLI:
         _tc = getattr(self, "_stream_text_ansi", "")
 
         self._stream_buf += text
+
+        if len(self._stream_buf) > _STREAM_BUF_MAX_CHARS:
+            # No word boundary or newline found after 64 KB — force-flush the
+            # entire buffer as a single chunk to prevent unbounded growth.
+            chunk = self._stream_buf
+            self._stream_buf = ""
+            if _hermes_app is not None and _hermes_app._event_loop is not None:
+                _hermes_app.write_output(chunk)
+            else:
+                _cprint(f"{_tc}{chunk}{_RST}" if _tc else chunk)
 
         while "\n" in self._stream_buf:
             line, self._stream_buf = self._stream_buf.split("\n", 1)

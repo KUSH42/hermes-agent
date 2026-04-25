@@ -43,6 +43,7 @@ from .utils import (
     _skin_branding,
     _skin_color,
     _strip_ansi,
+    _TW_CHAR_QUEUE_MAX,
     _typewriter_burst_threshold,
     _typewriter_cursor_enabled,
     _typewriter_delay_s,
@@ -339,7 +340,7 @@ class LiveLineWidget(Widget):
         self._tw_burst: int = _w._typewriter_burst_threshold()
         self._tw_cursor: bool = _w._typewriter_cursor_enabled()
         if self._tw_enabled:
-            self._char_queue: asyncio.Queue[str] = asyncio.Queue()
+            self._char_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=_TW_CHAR_QUEUE_MAX)
             self._drain_chars()
         # Non-typewriter blink state — initialized here (not __init__) to avoid
         # event-loop resource issues on Python ≤ 3.9.
@@ -435,11 +436,23 @@ class LiveLineWidget(Widget):
         pos = 0
         for m in _ANSI_SEQ_RE.finditer(chunk):
             for ch in chunk[pos:m.start()]:
-                self._char_queue.put_nowait(ch)
-            self._char_queue.put_nowait(m.group(0))
+                self._enqueue_char(ch)
+            self._enqueue_char(m.group(0))
             pos = m.end()
         for ch in chunk[pos:]:
-            self._char_queue.put_nowait(ch)
+            self._enqueue_char(ch)
+
+    def _enqueue_char(self, item: str) -> None:
+        """Enqueue one char or ANSI token; flush+commit on queue full."""
+        try:
+            self._char_queue.put_nowait(item)
+        except asyncio.QueueFull:
+            # Drain queued chars in order first, then commit new item directly,
+            # preserving character ordering without dropping any content.
+            self.flush()
+            self._buf += item
+            if "\n" in self._buf:
+                self._commit_lines()
 
     @work(exclusive=False)
     async def _drain_chars(self) -> None:

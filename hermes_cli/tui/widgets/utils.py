@@ -254,6 +254,10 @@ def _typewriter_delay_s() -> float:
     return 1.0 / speed
 
 
+# Hard cap on LiveLineWidget._char_queue depth; overflow falls back to flush().
+_TW_CHAR_QUEUE_MAX = 4096
+
+
 def _typewriter_burst_threshold() -> int:
     try:
         from hermes_cli.config import read_raw_config

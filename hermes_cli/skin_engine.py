@@ -1751,7 +1751,14 @@ def load_legacy_skin_payload(path: Path) -> SkinPayload:
 
     Uses the existing skin_loader.load_skin_full for css_vars/component_vars
     parity, and reads the raw dict for SkinConfig fields (spinner, diff, etc.).
+
+    Raises SkinError when DM-K3 removal mode is active (legacy YAML is gone).
     """
+    if _DESIGN_MD_REMOVAL_ACTIVE:
+        raise SkinError(
+            f"{path}: legacy YAML/JSON skin loading was removed in the DESIGN.md migration "
+            f"(see docs/migration-yaml-to-design-md.md)"
+        )
     from hermes_cli.tui.skin_loader import load_skin_full
     css_vars, component_vars = load_skin_full(path)
 
@@ -1812,6 +1819,51 @@ def load_skin_payload(path: Path) -> SkinPayload:
         return load_legacy_skin_payload(path)
     # Fallback: treat unknown extensions as legacy if they parse
     return load_legacy_skin_payload(path)
+
+
+_DESIGN_MD_REMOVAL_ACTIVE: bool = False  # DM-K3 — flips when legacy YAML is removed
+
+
+def _yaml_removal_unblocked(current_version: str, *, repo_root: Optional[Path] = None) -> Tuple[bool, List[str]]:
+    """DM-K2 deprecation gate.
+
+    Returns (allowed, reasons). Removal is allowed iff every gate passes.
+    """
+    reasons: List[str] = []
+    repo = repo_root or Path(__file__).resolve().parents[1]
+
+    # 1) Strict version greater-than the deprecation marker.
+    try:
+        from packaging.version import Version  # type: ignore
+        if not _YAML_DEPRECATED_SINCE:
+            reasons.append("warning release not shipped (_YAML_DEPRECATED_SINCE unset)")
+        elif not (Version(current_version) > Version(_YAML_DEPRECATED_SINCE)):
+            reasons.append(
+                f"warning release not yet superseded "
+                f"(current={current_version} <= since={_YAML_DEPRECATED_SINCE}; strict greater-than required)"
+            )
+    except ImportError:
+        # packaging always present in the project but be defensive
+        reasons.append("packaging.version unavailable; cannot verify release marker")
+
+    # 2) Bundled DESIGN.md complete.
+    missing = [n for n in BUNDLED_SKIN_NAMES if not (repo / "skins" / n / "DESIGN.md").exists()]
+    if missing:
+        reasons.append(f"bundled DESIGN.md missing for: {missing}")
+
+    # 3) Default discovery flipped.
+    if not _DESIGN_MD_DISCOVERY_DEFAULT:
+        reasons.append("_DESIGN_MD_DISCOVERY_DEFAULT must be True")
+
+    # 4) Authoring docs migrated.
+    if not _AUTHORING_DOCS_PRIMARY_DESIGN_MD:
+        reasons.append("_AUTHORING_DOCS_PRIMARY_DESIGN_MD must be True")
+
+    # 5) Migration notes present.
+    if not (repo / "docs" / "migration-yaml-to-design-md.md").exists():
+        reasons.append("docs/migration-yaml-to-design-md.md missing")
+
+    return (not reasons, reasons)
 
 
 def design_md_lint_argv(design_md_path: Path) -> List[str]:

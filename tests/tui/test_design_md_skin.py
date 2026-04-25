@@ -700,5 +700,89 @@ class TestDmJ3LintReport:
         assert isinstance(baseline, int) and baseline >= 0
 
 
+# ---------------------------------------------------------------------------
+# Phase 5c — DM-K2 removal gate + DM-K3 removal scope
+# ---------------------------------------------------------------------------
+
+
+class TestDmK2RemovalGate:
+    def test_deprecation_gate_blocks_when_version_equals_deprecated_since(self):
+        from hermes_cli.skin_engine import _yaml_removal_unblocked, _YAML_DEPRECATED_SINCE
+        ok, reasons = _yaml_removal_unblocked(_YAML_DEPRECATED_SINCE)
+        assert ok is False
+        assert any("strict" in r for r in reasons)
+
+    def test_deprecation_gate_passes_with_all_markers(self):
+        from hermes_cli.skin_engine import _yaml_removal_unblocked
+        # All bundled DESIGN.md exist (Phase 3), discovery default is True,
+        # authoring docs marker is True, migration doc was added in Phase 5c.
+        # A future version "0.99.0" satisfies the strict version gate.
+        ok, reasons = _yaml_removal_unblocked("0.99.0")
+        assert ok is True, reasons
+        assert reasons == []
+
+    def test_deprecation_gate_blocks_when_each_gate_item_missing(self, tmp_path, monkeypatch):
+        # Run 5 cases mirroring DM-K2's 5 gates.
+        from hermes_cli import skin_engine as se
+
+        # Build a fake repo root with all gates satisfied first
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "migration-yaml-to-design-md.md").write_text("x", encoding="utf-8")
+        (tmp_path / "skins").mkdir()
+        for n in se.BUNDLED_SKIN_NAMES:
+            (tmp_path / "skins" / n).mkdir()
+            (tmp_path / "skins" / n / "DESIGN.md").write_text("---\nname: x\n---\n", encoding="utf-8")
+
+        # Cases:
+        # 1) version equals → fails (already covered above; assert here too)
+        ok, reasons = se._yaml_removal_unblocked(se._YAML_DEPRECATED_SINCE, repo_root=tmp_path)
+        assert ok is False and any("strict" in r for r in reasons)
+
+        # 2) missing bundled DESIGN.md
+        (tmp_path / "skins" / "matrix" / "DESIGN.md").unlink()
+        ok, reasons = se._yaml_removal_unblocked("0.99.0", repo_root=tmp_path)
+        assert ok is False and any("matrix" in r for r in reasons)
+        (tmp_path / "skins" / "matrix" / "DESIGN.md").write_text("---\nname: x\n---\n", encoding="utf-8")
+
+        # 3) discovery default off
+        monkeypatch.setattr(se, "_DESIGN_MD_DISCOVERY_DEFAULT", False)
+        ok, reasons = se._yaml_removal_unblocked("0.99.0", repo_root=tmp_path)
+        assert ok is False and any("DISCOVERY" in r for r in reasons)
+        monkeypatch.setattr(se, "_DESIGN_MD_DISCOVERY_DEFAULT", True)
+
+        # 4) authoring docs flag off
+        monkeypatch.setattr(se, "_AUTHORING_DOCS_PRIMARY_DESIGN_MD", False)
+        ok, reasons = se._yaml_removal_unblocked("0.99.0", repo_root=tmp_path)
+        assert ok is False and any("AUTHORING" in r for r in reasons)
+        monkeypatch.setattr(se, "_AUTHORING_DOCS_PRIMARY_DESIGN_MD", True)
+
+        # 5) migration doc missing
+        (tmp_path / "docs" / "migration-yaml-to-design-md.md").unlink()
+        ok, reasons = se._yaml_removal_unblocked("0.99.0", repo_root=tmp_path)
+        assert ok is False and any("migration" in r for r in reasons)
+
+
+class TestDmK3RemovalScope:
+    def test_legacy_yaml_loader_removed_after_gate(self, tmp_path, monkeypatch):
+        from hermes_cli import skin_engine as se
+        yaml_path = tmp_path / "x.yaml"
+        yaml_path.write_text("name: x\nfg: '#abcdef'\n", encoding="utf-8")
+        monkeypatch.setattr(se, "_DESIGN_MD_REMOVAL_ACTIVE", True)
+        with pytest.raises(SkinError):
+            se.load_legacy_skin_payload(yaml_path)
+
+    def test_after_removal_no_bundled_flat_yaml(self):
+        from hermes_cli import skin_engine as se
+        if not se._DESIGN_MD_REMOVAL_ACTIVE:
+            pytest.skip("removal mode not active in current branch")
+        leftover = list((REPO_ROOT / "skins").glob("*.yaml"))
+        assert leftover == [], f"expected no flat YAML files, got {leftover}"
+
+    def test_pyyaml_dependency_not_removed_by_skin_spec(self):
+        text = (REPO_ROOT / "pyproject.toml").read_text()
+        # Either listed in [project.dependencies] or via package "pyyaml"
+        assert "pyyaml" in text.lower() or "PyYAML" in text
+
+
 def test_bundled_skin_names_constant():
     assert set(BUNDLED_SKIN_NAMES) == {"matrix", "catppuccin", "solarized-dark", "tokyo-night"}

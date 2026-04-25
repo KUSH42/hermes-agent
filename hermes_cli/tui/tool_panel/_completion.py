@@ -193,7 +193,7 @@ class _ToolPanelCompletionMixin:
             result = classify_content(payload)
             self._maybe_swap_renderer(result, payload)
         except Exception:
-            pass
+            _log.debug("Tool output classification failed", exc_info=True)
 
     def _swap_renderer(
         self,
@@ -248,7 +248,7 @@ class _ToolPanelCompletionMixin:
                 return
             self._swap_renderer(renderer_cls, payload, result)
         except Exception:
-            pass
+            _log.debug("Tool body renderer swap failed", exc_info=True)
 
     def _maybe_activate_mini(self, summary: "ResultSummaryV4") -> None:
         try:

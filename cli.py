@@ -7146,7 +7146,7 @@ class HermesCLI:
                 from tools.terminal_tool import set_streaming_callback as _set_cb
                 token = _set_cb(
                     lambda line, _tid=tool_call_id: tui.call_from_thread(
-                        tui.append_streaming_line, _tid, line
+                        tui.append_tool_output, _tid, line
                     )
                 )
                 self._stream_callback_tokens[tool_call_id] = token
@@ -7245,7 +7245,6 @@ class HermesCLI:
 
         _TOOL_PREFIX = "  ┊ "
         tui = _hermes_app
-        _will_mount_preview = False
         if tui is not None:
             from hermes_cli.tui.widgets import _strip_ansi
             def _plain_lines(display_lines: list[str]) -> list[str]:
@@ -7286,7 +7285,6 @@ class HermesCLI:
                 display_lines: list[str] = []
                 render_captured_diff_preview(diff_text, print_fn=display_lines.append, prefix=_TOOL_PREFIX)
                 if display_lines:
-                    _will_mount_preview = True
                     plain = _plain_lines(display_lines)
                     # Strip the CLI-only "review diff" header — not useful in TUI.
                     if plain and plain[0].strip() == "review diff":
@@ -7409,7 +7407,7 @@ class HermesCLI:
 
             # For SEARCH/WEB tools the result arrives as a single blob (no
             # streaming callback), so compute result lines before closing.
-            if _was_streaming and not _will_mount_preview:
+            if _was_streaming and not _diff_display_lines:
                 try:
                     from hermes_cli.tui.tool_category import classify_tool as _classify, ToolCategory as _TC
                     _cat = _classify(function_name)

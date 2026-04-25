@@ -551,6 +551,30 @@ class ToolRenderingService(AppService):
     # SM-01/02/03/05/06: Unified state-machine lifecycle methods
     # ------------------------------------------------------------------
 
+    _PANEL_CLASS_NAMES = frozenset({"ToolPanel", "ChildPanel", "SubAgentPanel"})
+
+    def _panel_for_block(self, block: "Any | None") -> "Any | None":
+        """TCL-MED-01: Return the enclosing panel for a block.
+
+        Checks _tool_panel attr first, then walks block.parent and
+        block.parent.parent for a ToolPanel/ChildPanel/SubAgentPanel.
+        Returns None without logging if block is unmounted.
+        """
+        if block is None:
+            return None
+        attr = getattr(block, "_tool_panel", None)
+        if attr is not None:
+            return attr
+        parent = getattr(block, "parent", None)
+        if parent is None:
+            return None
+        if type(parent).__name__ in self._PANEL_CLASS_NAMES:
+            return parent
+        grandparent = getattr(parent, "parent", None)
+        if grandparent is not None and type(grandparent).__name__ in self._PANEL_CLASS_NAMES:
+            return grandparent
+        return None
+
     def _make_view_category(self, tool_name: str) -> str:
         try:
             from hermes_cli.tui.tool_category import classify_tool
@@ -650,8 +674,8 @@ class ToolRenderingService(AppService):
         # Skill tools intentionally get no gen block — deferred to start_tool_call
 
         view.block = block
-        # SM-MED-01: capture panel back-reference from block
-        view.panel = getattr(block, "_tool_panel", None) if block is not None else None
+        # TCL-MED-01: capture panel back-reference via helper (attr or parent walk)
+        view.panel = self._panel_for_block(block)
         self._tool_views_by_gen_index[gen_index] = view
 
         # SM-HIGH-02: drain any buffered arg deltas that arrived before the view
@@ -802,9 +826,9 @@ class ToolRenderingService(AppService):
             )
             self._turn_tool_calls[tool_call_id] = rec
 
-            # SM-MED-01: populate view.panel from block back-ref now that ID is known
+            # TCL-MED-01: populate view.panel via helper now that ID is known
             if view.panel is None and view.block is not None:
-                view.panel = getattr(view.block, "_tool_panel", None)
+                view.panel = self._panel_for_block(view.block)
             if view.panel is not None and hasattr(view.panel, "_plan_tool_call_id"):
                 view.panel._plan_tool_call_id = tool_call_id
 
@@ -831,8 +855,8 @@ class ToolRenderingService(AppService):
                 label = get_display_name(tool_name)
                 self.open_streaming_tool_block(tool_call_id, label, tool_name=tool_name)
                 block = self.app._active_streaming_blocks.get(tool_call_id)
-                # SM-MED-01: capture panel back-ref from block
-                panel = getattr(block, "_tool_panel", None) if block is not None else None
+                # TCL-MED-01: capture panel back-ref via helper
+                panel = self._panel_for_block(block)
 
             cat = self._make_view_category(tool_name)
             view = ToolCallViewState(

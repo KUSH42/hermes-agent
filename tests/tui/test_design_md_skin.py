@@ -295,5 +295,49 @@ class TestCatppuccinDesignMd:
         assert dp.syntax_scheme == yp.syntax_scheme == "catppuccin"
 
 
+# ---------------------------------------------------------------------------
+# Phase 3 — bundled DM-G + DM-I authoring docs
+# ---------------------------------------------------------------------------
+
+
+class TestBundledDesignMdSkins:
+    @pytest.mark.parametrize("name", list(BUNDLED_SKIN_NAMES))
+    def test_all_four_requested_skins_have_design_md(self, name):
+        path = REPO_ROOT / "skins" / name / "DESIGN.md"
+        assert path.exists(), f"missing {path}"
+
+    @pytest.mark.parametrize("name", list(BUNDLED_SKIN_NAMES))
+    def test_all_bundled_design_md_have_lint_reports(self, name):
+        path = REPO_ROOT / "skins" / name / "lint-report.md"
+        assert path.exists(), f"missing {path}"
+
+    @pytest.mark.parametrize("name", list(BUNDLED_SKIN_NAMES))
+    def test_all_bundled_design_md_schemes_are_known(self, name):
+        from hermes_cli.skin_engine import SYNTAX_SCHEMES
+        payload = load_design_md_payload(REPO_ROOT / "skins" / name / "DESIGN.md")
+        assert payload.syntax_scheme in SYNTAX_SCHEMES
+
+    @pytest.mark.parametrize("name", list(BUNDLED_SKIN_NAMES))
+    def test_design_md_and_yaml_payloads_equivalent(self, name):
+        dp = load_design_md_payload(REPO_ROOT / "skins" / name / "DESIGN.md")
+        yp = load_legacy_skin_payload(REPO_ROOT / "skins" / f"{name}.yaml")
+        assert dp.css_vars == yp.css_vars, name
+        assert dp.component_vars == yp.component_vars, name
+        assert dp.colors == yp.colors, name
+
+
+class TestSkinAuthoringDocs:
+    SKILL = Path("/home/xush/.claude/skills/hermes-skin/SKILL.md")
+    REFERENCE = Path("/home/xush/.claude/skills/tui-development/skin-reference.md")
+
+    def test_hermes_skin_skill_mentions_design_md_primary_path(self):
+        text = self.SKILL.read_text()
+        assert "~/.hermes/skins/<name>/DESIGN.md" in text
+
+    def test_skin_reference_lists_x_hermes_component_vars(self):
+        text = self.REFERENCE.read_text()
+        assert "x-hermes.component-vars" in text or "x-hermes:\n      component-vars" in text
+
+
 def test_bundled_skin_names_constant():
     assert set(BUNDLED_SKIN_NAMES) == {"matrix", "catppuccin", "solarized-dark", "tokyo-night"}

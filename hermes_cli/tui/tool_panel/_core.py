@@ -21,11 +21,13 @@ from ._footer import (
     FooterPane,
     _CollapsedActionStrip,
 )
+from hermes_cli.tui.tool_panel.density import DensityResolver, DensityTier
 
 if TYPE_CHECKING:
     from hermes_cli.tui.tool_result_parse import ResultSummaryV4
     from hermes_cli.tui.tool_category import ToolCategory
     from hermes_cli.tui.tool_payload import ResultKind
+    from hermes_cli.tui.services.tools import ToolCallViewState
 
 
 class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
@@ -96,6 +98,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
     ]
 
     collapsed: reactive[bool] = reactive(False, layout=False)
+    density: reactive[DensityTier] = reactive(DensityTier.DEFAULT, layout=False)
 
     @property
     def detail_level(self) -> int:
@@ -137,6 +140,11 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         self._hint_row: Static | None = None
 
         self._discovery_shown: bool = False
+
+        self._view_state: "ToolCallViewState | None" = None  # wired by service after mount
+        self._resolver = DensityResolver()
+        self._resolver.subscribe(self._on_tier_change)
+        self._user_override_tier: DensityTier | None = None
 
         from hermes_cli.tui.tool_category import ToolCategory
         if self._category == ToolCategory.SHELL and hasattr(block, "_should_strip_cwd"):
@@ -232,7 +240,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         self._refresh_collapsed_strip()
 
     # ------------------------------------------------------------------
-    # AXIS-5: density mirror helpers
+    # Density resolver callback and view-state mirror
     # ------------------------------------------------------------------
 
     def _lookup_view_state(self) -> "Any | None":
@@ -246,16 +254,15 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         except Exception:
             return None
 
-    def _mirror_density_to_view_state(self) -> None:
-        """AXIS-5: keep view-state.density in sync with self.collapsed.
-
-        Move 1 replaces this with the DensityResolver. Best-effort: silent if
-        view lookup fails — UI keeps working, watchers just miss this update.
-        """
-        from hermes_cli.tui.tool_panel.density import DensityTier
-        from hermes_cli.tui.services.tools import set_axis
-        view = self._lookup_view_state()
-        if view is None:
-            return
-        tier = DensityTier.COMPACT if self.collapsed else DensityTier.DEFAULT
-        set_axis(view, "density", tier)
+    def _on_tier_change(self, tier: DensityTier) -> None:
+        """Resolver subscriber — apply tier change to all consumers."""
+        self.density = tier
+        self.collapsed = (tier == DensityTier.COMPACT)
+        self._auto_collapsed = (tier == DensityTier.COMPACT) and not self._user_collapse_override
+        if self._footer_pane is not None:
+            self._footer_pane.set_density(tier)
+        # DR-5: mirror to view-state for cross-subsystem readers.
+        vs = self._view_state or self._lookup_view_state()
+        if vs is not None:
+            from hermes_cli.tui.services.tools import set_axis
+            set_axis(vs, "density", tier)

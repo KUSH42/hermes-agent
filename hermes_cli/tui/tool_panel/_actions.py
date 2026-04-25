@@ -26,10 +26,33 @@ class _ToolPanelActionsMixin:
             if hasattr(tail, "dismiss"):
                 tail.dismiss()
             return
-        self.collapsed = not self.collapsed  # type: ignore[attr-defined]
+        from hermes_cli.tui.tool_panel.density import DensityInputs, DensityTier
+        from hermes_cli.tui.services.tools import ToolCallState
+        new_tier = (
+            DensityTier.DEFAULT
+            if self._resolver.tier == DensityTier.COMPACT  # type: ignore[attr-defined]
+            else DensityTier.COMPACT
+        )
         self._user_collapse_override = True  # type: ignore[attr-defined]
+        self._user_override_tier = new_tier  # type: ignore[attr-defined]
         self._auto_collapsed = False  # type: ignore[attr-defined]
-        self._mirror_density_to_view_state()  # type: ignore[attr-defined]
+        _vs = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
+        phase = _vs.state if _vs is not None else ToolCallState.DONE
+        inputs = DensityInputs(
+            phase=phase,
+            is_error=bool(
+                getattr(self._result_summary_v4, "is_error", False)  # type: ignore[attr-defined]
+                if self._result_summary_v4 else False  # type: ignore[attr-defined]
+            ),
+            has_focus=False,
+            user_scrolled_up=False,
+            user_override=True,
+            user_override_tier=new_tier,
+            body_line_count=self._body_line_count(),  # type: ignore[attr-defined]
+            threshold=0,  # irrelevant; override wins
+            row_budget=None,
+        )
+        self._resolver.resolve(inputs)  # type: ignore[attr-defined]
 
     def action_open_primary(self) -> None:
         import os

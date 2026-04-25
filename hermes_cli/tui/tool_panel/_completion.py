@@ -288,46 +288,62 @@ class _ToolPanelCompletionMixin:
 
     def _apply_complete_auto_collapse(self) -> None:
         from hermes_cli.tui.tool_category import _CATEGORY_DEFAULTS
-        if getattr(self, "_user_collapse_override", False):
+        from hermes_cli.tui.tool_panel.density import DensityInputs, DensityTier
+        from hermes_cli.tui.services.tools import ToolCallState
+
+        # Only run after completion; no-op during live streaming.
+        if self._result_summary_v4 is None:  # type: ignore[attr-defined]
             return
-        if self.has_focus or bool(list(self.query("*:focus"))):  # type: ignore[attr-defined]
-            self._should_auto_collapse = True  # type: ignore[attr-defined]
-            return
+
+        threshold = _CATEGORY_DEFAULTS[self._category].default_collapsed_lines  # type: ignore[attr-defined]
         try:
+            from hermes_cli.tui.tool_category import spec_for as _spec_for
+            spec = _spec_for(self._tool_name or "")  # type: ignore[attr-defined]
+            if spec.primary_result == "diff":
+                threshold = 20
+        except Exception:
+            _log.debug("spec_for failed for %r", self._tool_name, exc_info=True)  # type: ignore[attr-defined]
+
+        user_scrolled_up = False
+        try:
+            from textual.css.query import NoMatches
             output = self.app.query_one("#output-panel")  # type: ignore[attr-defined]
             if getattr(output, "_user_scrolled_up", False):
-                block = getattr(self, "_block", None)
-                if block is not None:
-                    vs = getattr(block, "_visible_start", 0)
-                    vc = getattr(block, "_visible_count", 0)
-                    total_lines = len(getattr(block, "_all_plain", []))
-                    if total_lines > 0 and (vs + vc) < total_lines:
-                        self._should_auto_collapse = True  # type: ignore[attr-defined]
-                        return
+                user_scrolled_up = True
         except Exception:
             pass
-        self._should_auto_collapse = False  # type: ignore[attr-defined]
-        rs = self._result_summary_v4  # type: ignore[attr-defined]
-        total = self._body_line_count()
-        threshold = _CATEGORY_DEFAULTS[self._category].default_collapsed_lines  # type: ignore[attr-defined]
-        if rs is not None:
-            try:
-                from hermes_cli.tui.tool_category import spec_for as _spec_for
-                spec = _spec_for(self._tool_name or "")  # type: ignore[attr-defined]
-                if spec.primary_result == "diff":
-                    threshold = 20
-            except Exception:
-                pass
-        should_collapse = total > threshold
-        if should_collapse:
+
+        has_focus = self.has_focus or bool(list(self.query("*:focus")))  # type: ignore[attr-defined]
+        if has_focus:
+            self._should_auto_collapse = True  # type: ignore[attr-defined]
+            return
+
+        _vs = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
+        phase = _vs.state if _vs is not None else ToolCallState.DONE
+
+        inputs = DensityInputs(
+            phase=phase,
+            is_error=bool(self._result_summary_v4.is_error),  # type: ignore[attr-defined]
+            has_focus=False,  # focus check done above
+            user_scrolled_up=user_scrolled_up,
+            user_override=self._user_collapse_override,  # type: ignore[attr-defined]
+            user_override_tier=self._user_override_tier,  # type: ignore[attr-defined]
+            body_line_count=self._body_line_count(),
+            threshold=threshold,
+            row_budget=None,
+        )
+        prev_tier = self._resolver.tier  # type: ignore[attr-defined]
+        self._resolver.resolve(inputs)  # type: ignore[attr-defined]
+
+        # Flash only on auto-collapse transitions, not on user-driven resolves.
+        if (not self._user_collapse_override  # type: ignore[attr-defined]
+                and self._resolver.tier == DensityTier.COMPACT  # type: ignore[attr-defined]
+                and prev_tier != DensityTier.COMPACT):
+            line_count = self._body_line_count()
             if self._saved_visible_start is None and self._block is not None:  # type: ignore[attr-defined]
                 visible_cap = int(getattr(self._block, "_visible_cap", 200) or 200)  # type: ignore[attr-defined]
-                self._saved_visible_start = max(0, total - visible_cap)  # type: ignore[attr-defined]
-        self.collapsed = should_collapse  # type: ignore[attr-defined]
-        self._auto_collapsed = should_collapse  # type: ignore[attr-defined]
-        self._mirror_density_to_view_state()  # type: ignore[attr-defined]
-        if should_collapse:
-            self._flash_header(f"▾ auto-collapsed ({total} lines)", tone="success")  # type: ignore[attr-defined]
+                self._saved_visible_start = max(0, line_count - visible_cap)  # type: ignore[attr-defined]
+            self._flash_header(f"▾ auto-collapsed ({line_count} lines)", tone="success")  # type: ignore[attr-defined]
 
     # ------------------------------------------------------------------
     # Main completion entry point
@@ -462,5 +478,4 @@ class _ToolPanelCompletionMixin:
         self._maybe_activate_mini(summary)
 
         if self._footer_pane is not None:  # type: ignore[attr-defined]
-            show = self._has_footer_content() and not self.collapsed  # type: ignore[attr-defined]
-            self._footer_pane.styles.display = "block" if show else "none"  # type: ignore[attr-defined]
+            self._footer_pane._refresh_visibility()  # type: ignore[attr-defined]

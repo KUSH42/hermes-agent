@@ -58,6 +58,19 @@ def _remap_spans(seg: Text, strip_n: int) -> list:
     ]
 
 
+def trim_tail_for_tier(
+    tail_segments: "list[tuple[str, Text]]",
+    tail_budget: int,
+    tier: "object",
+) -> "list[tuple[str, Text]]":
+    """Tier-aware wrapper around _trim_tail_segments.
+
+    COMPACT and DEFAULT both use width-budget trimming only in this spec.
+    HERO / TRACE extensions: add tier-specific segment caps here.
+    """
+    return _trim_tail_segments(tail_segments, tail_budget)
+
+
 def _trim_tail_segments(
     segments: "list[tuple[str, Text]]",
     budget: int,
@@ -391,7 +404,9 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         term_w = self.size.width
         FIXED_PREFIX_W = gutter_w + icon_cell_w + space_after_icon
         tail_budget = max(0, term_w - FIXED_PREFIX_W - MIN_LABEL_CELLS - 2) if term_w > 0 else 80
-        tail_segments = _trim_tail_segments(tail_segments, tail_budget)
+        from hermes_cli.tui.tool_panel.density import DensityTier as _DT
+        _tier = getattr(self._panel, "density", _DT.DEFAULT) if self._panel else _DT.DEFAULT
+        tail_segments = trim_tail_for_tier(tail_segments, tail_budget, _tier)
         from hermes_cli.tui.body_renderers._grammar import GLYPH_META_SEP, glyph as _glyph
         _sep = Text(f" {_glyph(GLYPH_META_SEP)} ", style="dim #555555")
         tail = Text()

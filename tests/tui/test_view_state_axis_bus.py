@@ -327,13 +327,15 @@ class TestDensityMirrorFromCollapse:
 
             # Manually wire the panel to a view state via _plan_tool_call_id
             tool_call_id = "density-test-tc"
+            # Move 1: resolver blocks toggle during STARTED/STREAMING.
+            # Use DONE state so the user override path is exercised.
             view = ToolCallViewState(
                 tool_call_id=tool_call_id,
                 gen_index=None,
                 tool_name="terminal",
                 label="Terminal",
                 args={},
-                state=ToolCallState.STARTED,
+                state=ToolCallState.DONE,
                 block=panel._block,
                 panel=panel,
                 parent_tool_call_id=None,
@@ -352,7 +354,8 @@ class TestDensityMirrorFromCollapse:
             for _ in range(3):
                 await pilot.pause()
 
-            # First toggle: collapsed=False → True
+            # First toggle: DEFAULT → COMPACT (user override, body < threshold → would stay DEFAULT
+            # but user_override=True forces COMPACT)
             await pilot.press("enter")
             for _ in range(3):
                 await pilot.pause()
@@ -362,7 +365,7 @@ class TestDensityMirrorFromCollapse:
             assert density_calls[0][1] == DensityTier.DEFAULT  # old
             assert density_calls[0][2] == DensityTier.COMPACT  # new
 
-            # Second toggle: collapsed=True → False
+            # Second toggle: COMPACT → DEFAULT
             watcher_calls.clear()
             await pilot.press("enter")
             for _ in range(3):

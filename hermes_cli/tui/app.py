@@ -353,6 +353,9 @@ class HermesApp(App):
     # Output dropped flag — display-only; shown in StatusBar until next successful write
     status_output_dropped: reactive[bool] = reactive(False)
 
+    # Output pressure flag — set when queue depth ≥ 75% capacity; cleared below 50%
+    status_output_pressure: reactive[bool] = reactive(False)
+
     # D5: count of currently-streaming tool blocks (shows badge in StatusBar)
     _streaming_tool_count: reactive[int] = reactive(0, repaint=False)
 

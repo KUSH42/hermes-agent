@@ -1814,6 +1814,20 @@ def load_skin_payload(path: Path) -> SkinPayload:
     return load_legacy_skin_payload(path)
 
 
+def design_md_lint_argv(design_md_path: Path) -> List[str]:
+    """DM-J1 CI lint argv. Pure builder — does NOT spawn subprocess."""
+    return ["npx", "-y", "@google/design.md", "lint", "--format", "json", str(design_md_path)]
+
+
+def design_md_dtcg_export_path(skin_dir: Path) -> Path:
+    """DM-J2 DTCG export artifact path: <skin_dir>/tokens.dtcg.json.
+
+    Hermes runtime never reads this artifact. Future docs/site consumers
+    require a separate spec.
+    """
+    return skin_dir / "tokens.dtcg.json"
+
+
 def skin_config_from_payload(payload: SkinPayload) -> SkinConfig:
     """Materialize a SkinConfig from a SkinPayload (used for DESIGN.md path)."""
     # Validate / coerce syntax_scheme

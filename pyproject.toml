@@ -122,5 +122,6 @@ markers = [
     "integration: marks tests requiring external services (API keys, Modal, etc.)",
     "slow: marks performance microbench tests (skipped in unit-test job; run with -m slow)",
     "flaky: marks tests with known async timing races that pass on retry",
+    "requires_npx: marks tests that invoke `npx @google/design.md`; auto-skip when npx is absent (DM-J)",
 ]
 addopts = "-m 'not integration' -n auto --timeout=10"

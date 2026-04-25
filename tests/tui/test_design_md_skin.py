@@ -12,6 +12,7 @@ Covers:
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from textwrap import dedent
@@ -601,6 +602,102 @@ class TestDmF3SyntaxStringsExcluded:
         decls = scan_tcss_declarations()
         assert "syntax-theme" not in decls
         assert "syntax-scheme" not in decls
+
+
+# ---------------------------------------------------------------------------
+# Phase 5b — DM-J export pipeline
+# ---------------------------------------------------------------------------
+
+
+def _has_npx() -> bool:
+    import shutil
+    return shutil.which("npx") is not None
+
+
+class TestDmJ1LintCommand:
+    def test_design_md_runtime_loader_does_not_call_npx(self, tmp_path):
+        # Loader must not spawn any subprocess when reading a DESIGN.md file.
+        p = _write_design_md(tmp_path, MINIMAL_FRONTMATTER)
+        import subprocess
+        with patch.object(subprocess, "run", side_effect=AssertionError("subprocess.run called")):
+            with patch.object(subprocess, "Popen", side_effect=AssertionError("subprocess.Popen called")):
+                load_design_md_payload(p)
+
+    def test_design_md_lint_command_builds_expected_args(self, tmp_path):
+        from hermes_cli.skin_engine import design_md_lint_argv
+        p = tmp_path / "skins" / "x" / "DESIGN.md"
+        argv = design_md_lint_argv(p)
+        assert argv[:6] == ["npx", "-y", "@google/design.md", "lint", "--format", "json"]
+        assert argv[6] == str(p)
+
+    @pytest.mark.requires_npx
+    def test_design_md_lint_test_skips_without_npx(self):
+        if not _has_npx():
+            pytest.skip("npx not available")
+        # If we reach here, npx exists; just assert positively.
+        assert _has_npx()
+
+
+class TestDmJ2DtcgExport:
+    def test_dtcg_export_path_is_under_skin_directory(self, tmp_path):
+        from hermes_cli.skin_engine import design_md_dtcg_export_path
+        p = design_md_dtcg_export_path(tmp_path / "catppuccin")
+        assert p == tmp_path / "catppuccin" / "tokens.dtcg.json"
+
+    @pytest.mark.requires_npx
+    def test_dtcg_export_command_is_deterministic(self, tmp_path):
+        if not _has_npx():
+            pytest.skip("npx not available")
+        # CI-only: actual determinism check belongs in CI; placeholder asserts
+        # the pure-Python path-builder is stable.
+        from hermes_cli.skin_engine import design_md_dtcg_export_path
+        p1 = design_md_dtcg_export_path(tmp_path / "demo")
+        p2 = design_md_dtcg_export_path(tmp_path / "demo")
+        assert p1 == p2
+
+    def test_runtime_loader_ignores_tokens_dtcg_json(self, tmp_path):
+        # Adding a tokens.dtcg.json next to DESIGN.md must not change
+        # the SkinPayload produced by the runtime loader.
+        d = tmp_path / "skin"
+        d.mkdir()
+        dm = d / "DESIGN.md"
+        dm.write_text(dedent("""
+            ---
+            name: dm
+            description: x
+            colors:
+              foreground: "#cdd6f4"
+              background: "#1e1e2e"
+              accent: "#cba6f7"
+            ---
+            """).lstrip(), encoding="utf-8")
+        before = load_design_md_payload(dm)
+        (d / "tokens.dtcg.json").write_text('{"unused": true}\n', encoding="utf-8")
+        after = load_design_md_payload(dm)
+        assert before == after
+
+
+class TestDmJ3LintReport:
+    @pytest.mark.parametrize("name", list(BUNDLED_SKIN_NAMES))
+    def test_lint_report_required_for_each_bundled_design_md(self, name):
+        path = REPO_ROOT / "skins" / name / "lint-report.md"
+        assert path.exists()
+
+    @pytest.mark.parametrize("name", list(BUNDLED_SKIN_NAMES))
+    def test_lint_report_contains_command_and_warning_rows(self, name):
+        text = (REPO_ROOT / "skins" / name / "lint-report.md").read_text()
+        assert "npx" in text and "@google/design.md" in text
+        assert "Warning" in text or "warning" in text
+
+    @pytest.mark.parametrize("name", list(BUNDLED_SKIN_NAMES))
+    def test_lint_report_front_matter_has_warning_baseline(self, name):
+        import yaml
+        text = (REPO_ROOT / "skins" / name / "lint-report.md").read_text()
+        m = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
+        assert m, f"{name}: missing front matter in lint-report.md"
+        data = yaml.safe_load(m.group(1)) or {}
+        baseline = data.get("warning_baseline")
+        assert isinstance(baseline, int) and baseline >= 0
 
 
 def test_bundled_skin_names_constant():

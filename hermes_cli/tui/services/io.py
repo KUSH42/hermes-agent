@@ -129,26 +129,49 @@ class IOService(AppService):
                 )
             if app.status_output_dropped:
                 app.status_output_dropped = False
+            qsize = app._output_queue.qsize()
+            maxsize = app._output_queue.maxsize
+            if not app.status_output_pressure and qsize >= maxsize * 3 // 4:
+                app.status_output_pressure = True
+            elif app.status_output_pressure and qsize < maxsize // 2:
+                app.status_output_pressure = False
         except asyncio.QueueFull:
             from hermes_cli.tui.perf import _queue_probe
             _queue_probe.record_drop()
+            if not app.status_output_dropped:
+                logger.warning(
+                    "IOService.write_output: output queue full (maxsize=%d); "
+                    "chunks will be dropped until consumer catches up",
+                    app._output_queue.maxsize,
+                )
             app.status_output_dropped = True
         except RuntimeError:
             pass
 
     def flush_output(self) -> None:
-        """Thread-safe: send flush sentinel to commit any trailing partial line."""
+        """Thread-safe: send flush sentinel; retries once if queue is transiently full."""
         app = self.app
         if app._event_loop is None:
             return
-        try:
-            if _CPYTHON_FAST_PATH:
+
+        async def _send_flush() -> None:
+            try:
                 app._output_queue.put_nowait(None)
-            else:
-                app._event_loop.call_soon_threadsafe(
-                    app._output_queue.put_nowait, None
-                )
-        except (asyncio.QueueFull, RuntimeError):
+            except asyncio.QueueFull:
+                # Consumer is behind — yield one tick, then retry.
+                await asyncio.sleep(0)
+                try:
+                    app._output_queue.put_nowait(None)
+                except asyncio.QueueFull:
+                    logger.warning(
+                        "IOService.flush_output: sentinel dropped after retry "
+                        "(queue maxsize=%d); turn flush will be skipped",
+                        app._output_queue.maxsize,
+                    )
+
+        try:
+            asyncio.run_coroutine_threadsafe(_send_flush(), app._event_loop)
+        except RuntimeError:
             pass
 
     # --- TTE effects (suspend-based, not TTEWidget) ---

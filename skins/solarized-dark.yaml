@@ -89,6 +89,7 @@ component_vars:
   diff-del-bg: '#2a0a08'
   info: '#268bd2'
   syntax-theme: 'solarized-dark'
+  syntax-scheme: 'solarized-dark'
   drawbraille-canvas-color: '#2aa198'
   footnote-ref-color: '#586e75'
   fps-hud-bg: '#073642'

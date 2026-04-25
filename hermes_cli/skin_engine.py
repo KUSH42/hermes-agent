@@ -1158,10 +1158,43 @@ def _build_skin_config(data: Dict[str, Any]) -> SkinConfig:
     )
 
 
+def _resolve_user_skin_path(name: str) -> Optional[Path]:
+    """Return the on-disk path for a user skin, preferring DESIGN.md.
+
+    Order (DM-B precedence):
+    1. <HERMES_HOME>/skins/<name>/DESIGN.md (if discovery enabled and present)
+    2. <HERMES_HOME>/skins/<name>.yaml
+    """
+    skins_path = _skins_dir()
+    if _design_md_discovery_enabled():
+        dm = skins_path / name / "DESIGN.md"
+        if dm.is_file():
+            return dm
+    yaml_path = skins_path / f"{name}.yaml"
+    if yaml_path.is_file():
+        return yaml_path
+    return None
+
+
+def _emit_yaml_deprecation_warning(path: Path, name: str, *, source_kind: str) -> None:
+    """DM-K1 warning: user YAML-only loads after Phase 4 release."""
+    if source_kind != "user":
+        return
+    if not _YAML_DEPRECATED_SINCE:
+        return
+    target_dir = path.parent / name
+    msg = (
+        f"{path} is deprecated; move it to {target_dir / 'DESIGN.md'}."
+    )
+    import warnings as _warnings
+    _warnings.warn(msg, DeprecationWarning, stacklevel=3)
+
+
 def list_skins() -> List[Dict[str, str]]:
     """List all available skins (built-in + user-installed).
 
     Returns list of {"name": ..., "description": ..., "source": "builtin"|"user"}.
+    Includes user DESIGN.md directories when discovery is enabled.
     """
     result = []
     for name, data in _BUILTIN_SKINS.items():
@@ -1172,38 +1205,77 @@ def list_skins() -> List[Dict[str, str]]:
         })
 
     skins_path = _skins_dir()
-    if skins_path.is_dir():
-        for f in sorted(skins_path.glob("*.yaml")):
-            data = _load_skin_from_yaml(f)
-            if data:
-                skin_name = data.get("name", f.stem)
-                # Skip if it shadows a built-in
-                if any(s["name"] == skin_name for s in result):
-                    continue
-                result.append({
-                    "name": skin_name,
-                    "description": data.get("description", ""),
-                    "source": "user",
-                })
+    if not skins_path.is_dir():
+        return result
+
+    seen: set = {s["name"] for s in result}
+
+    # 1) DESIGN.md directories (preferred, when discovery enabled)
+    if _design_md_discovery_enabled():
+        for sub in sorted(skins_path.iterdir()):
+            if not sub.is_dir():
+                continue
+            dm = sub / "DESIGN.md"
+            if not dm.is_file():
+                continue
+            try:
+                payload = load_design_md_payload(dm)
+            except SkinError as exc:
+                logger.warning("skin: failed to read %s: %s", dm, exc)
+                continue
+            if payload.name in seen:
+                continue
+            seen.add(payload.name)
+            result.append({
+                "name": payload.name,
+                "description": payload.description,
+                "source": "user",
+            })
+
+    # 2) Legacy YAML user skins
+    for f in sorted(skins_path.glob("*.yaml")):
+        data = _load_skin_from_yaml(f)
+        if not data:
+            continue
+        skin_name = data.get("name", f.stem)
+        if skin_name in seen:
+            continue
+        seen.add(skin_name)
+        result.append({
+            "name": skin_name,
+            "description": data.get("description", ""),
+            "source": "user",
+        })
 
     return result
 
 
 def load_skin(name: str) -> SkinConfig:
-    """Load a skin by name. Checks user skins first, then built-in."""
-    # Check user skins directory
-    skins_path = _skins_dir()
-    user_file = skins_path / f"{name}.yaml"
-    if user_file.is_file():
-        data = _load_skin_from_yaml(user_file)
+    """Load a skin by name with DESIGN.md precedence.
+
+    Resolution order:
+    1. <HERMES_HOME>/skins/<name>/DESIGN.md  (if discovery enabled)
+    2. <HERMES_HOME>/skins/<name>.yaml       (emits DeprecationWarning post-Phase-4)
+    3. Built-in dict from _BUILTIN_SKINS
+    4. Built-in default
+
+    Malformed DESIGN.md raises and does **not** silently fall through to YAML
+    (DM-B precedence rule).
+    """
+    user_path = _resolve_user_skin_path(name)
+    if user_path is not None:
+        if user_path.name == "DESIGN.md":
+            payload = load_design_md_payload(user_path)
+            return skin_config_from_payload(payload)
+        # Legacy YAML path
+        _emit_yaml_deprecation_warning(user_path, name, source_kind="user")
+        data = _load_skin_from_yaml(user_path)
         if data:
             return _build_skin_config(data)
 
-    # Check built-in skins
     if name in _BUILTIN_SKINS:
         return _build_skin_config(_BUILTIN_SKINS[name])
 
-    # Fallback to default
     logger.warning("Skin '%s' not found, using default", name)
     return _build_skin_config(_BUILTIN_SKINS["default"])
 
@@ -1341,3 +1413,494 @@ def get_prompt_toolkit_style_overrides() -> Dict[str, str]:
         "approval-choice": dim,
         "approval-selected": f"{title} bold",
     }
+
+
+# =============================================================================
+# DESIGN.md skin payload (DM-A / DM-C)
+# =============================================================================
+
+import re as _re_dm
+import os as _os_dm
+from dataclasses import dataclass as _dataclass_dm
+
+# Re-export SkinError so DESIGN.md loader callers can catch from skin_engine.
+from hermes_cli.tui.skin_loader import SkinError  # noqa: E402
+
+# Standard DESIGN.md top-level keys we accept (anything else under root is rejected
+# by validate_design_md_payload as Hermes-foreign — must move under x-hermes).
+_DESIGN_MD_STANDARD_TOP_KEYS: frozenset = frozenset({
+    "version", "name", "description", "colors", "typography", "rounded",
+    "spacing", "components", "x-hermes",
+})
+
+# Keys allowed directly under x-hermes (the Hermes namespace).
+_X_HERMES_ALLOWED_KEYS: frozenset = frozenset({
+    "schema", "semantic", "component-vars", "syntax", "diff", "markdown",
+    "spinner", "branding", "tool_prefix", "tool_icons", "banner_logo",
+    "banner_hero", "vars", "stream_effect", "colors",
+})
+
+# Whether DESIGN.md directory discovery is on by default. Phase 4 flipped this
+# from False → True. Env var HERMES_DESIGN_MD_SKINS=0 still disables.
+_DESIGN_MD_DISCOVERY_DEFAULT: bool = True
+
+# Phase 4 release marker for DM-K2 deprecation gate. Set to the version that ships
+# the YAML deprecation warning. Used by _yaml_removal_unblocked().
+_YAML_DEPRECATED_SINCE: str = "0.8.0"
+
+# Whether authoring docs primarily reference DESIGN.md (Phase 3 set this to True
+# alongside the skill/skin-reference doc updates). DM-K2 gate item.
+_AUTHORING_DOCS_PRIMARY_DESIGN_MD: bool = True
+
+BUNDLED_SKIN_NAMES: Tuple[str, ...] = ("matrix", "catppuccin", "solarized-dark", "tokyo-night")
+
+
+def _design_md_discovery_enabled() -> bool:
+    """True if DESIGN.md directory discovery is active (env var or default)."""
+    raw = _os_dm.environ.get("HERMES_DESIGN_MD_SKINS")
+    if raw is None:
+        return _DESIGN_MD_DISCOVERY_DEFAULT
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+@_dataclass_dm(frozen=True)
+class SkinPayload:
+    """Normalized skin data shared by both DESIGN.md and legacy YAML loaders.
+
+    The runtime materializes this into a SkinConfig (skin_engine) and a
+    (css_vars, component_vars) tuple (theme_manager) without touching the
+    on-disk format again.
+    """
+    name: str
+    description: str
+    css_vars: Dict[str, str]
+    component_vars: Dict[str, str]
+    colors: Dict[str, str]
+    spinner: Dict[str, Any]
+    branding: Dict[str, str]
+    syntax_scheme: str
+    syntax: Dict[str, str]
+    diff: Dict[str, str]
+    markdown: Dict[str, Any]
+    tool_prefix: str
+    tool_icons: Dict[str, str]
+    banner_logo: str
+    banner_hero: str
+
+    def to_loader_tuple(self) -> Tuple[Dict[str, str], Dict[str, str]]:
+        """Compatibility tuple for ThemeManager._load_path()."""
+        return dict(self.css_vars), dict(self.component_vars)
+
+
+# ---- DESIGN.md front-matter parsing ----------------------------------------
+
+
+_FRONTMATTER_RE = _re_dm.compile(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", _re_dm.DOTALL)
+_TOKEN_REF_RE = _re_dm.compile(r"\{([a-zA-Z0-9._-]+)\}")
+
+
+def _parse_frontmatter(text: str, source: str) -> Dict[str, Any]:
+    """Extract YAML front matter from a DESIGN.md text body."""
+    m = _FRONTMATTER_RE.match(text)
+    if not m:
+        raise SkinError(f"{source}: missing YAML front matter (--- ... ---)")
+    import yaml
+    try:
+        data = yaml.safe_load(m.group(1)) or {}
+    except yaml.YAMLError as exc:
+        raise SkinError(f"{source}: invalid YAML front matter: {exc}") from exc
+    if not isinstance(data, dict):
+        raise SkinError(f"{source}: front matter must be a mapping")
+    return data
+
+
+def _resolve_token_ref(value: Any, refs: Dict[str, Any], source: str, path_label: str) -> Any:
+    """Resolve {dotted.path} refs in a string value against the merged refs dict.
+
+    Refs may chain (e.g. banner-title: "{colors.accent}", colors.accent: "#abc").
+    Limited to 8 expansion passes to catch cycles.
+    """
+    if not isinstance(value, str):
+        return value
+    seen: set = set()
+    cur = value
+    for _ in range(8):
+        m = _TOKEN_REF_RE.search(cur)
+        if not m:
+            return cur
+        full = m.group(0)
+        if full in seen:
+            raise SkinError(f"{source}.{path_label}: cyclic token reference {full!r}")
+        seen.add(full)
+        ref_path = m.group(1)
+        target = _lookup_ref(refs, ref_path)
+        if target is None:
+            raise SkinError(
+                f"{source}.{path_label}: unresolved token reference {full!r}"
+            )
+        if not isinstance(target, str):
+            raise SkinError(
+                f"{source}.{path_label}: token {full!r} points to non-string"
+            )
+        cur = cur.replace(full, target)
+    raise SkinError(f"{source}.{path_label}: token reference expansion exceeded depth limit")
+
+
+def _lookup_ref(refs: Dict[str, Any], dotted: str) -> Any:
+    parts = dotted.split(".")
+    node: Any = refs
+    for p in parts:
+        if isinstance(node, dict) and p in node:
+            node = node[p]
+        else:
+            return None
+    return node
+
+
+def validate_design_md_payload(frontmatter: Dict[str, Any], *, source: str = "<DESIGN.md>") -> None:
+    """In-process Hermes validator for DESIGN.md front matter.
+
+    Rejects:
+    - non-mapping top level
+    - unknown top-level keys outside DESIGN.md standard set
+    - non-string color values (after token-ref resolution skipped here — caller
+      runs separate stage)
+    - lists under components.* (Hermes arrays must move to x-hermes.*)
+    - unknown keys directly under x-hermes
+    - duplicate color keys appearing under both colors.* and x-hermes.colors.*
+      (DM-G fan-out rule)
+    """
+    if not isinstance(frontmatter, dict):
+        raise SkinError(f"{source}: front matter must be a mapping")
+
+    for k in frontmatter:
+        if k not in _DESIGN_MD_STANDARD_TOP_KEYS:
+            raise SkinError(
+                f"{source}: unknown top-level key {k!r} (must move under x-hermes.*)"
+            )
+
+    components = frontmatter.get("components", {}) or {}
+    if not isinstance(components, dict):
+        raise SkinError(f"{source}.components: must be a mapping")
+    for comp_name, comp_val in components.items():
+        if not isinstance(comp_val, dict):
+            raise SkinError(
+                f"{source}.components.{comp_name}: must be a mapping, got {type(comp_val).__name__}"
+            )
+        for prop, prop_val in comp_val.items():
+            if isinstance(prop_val, list):
+                raise SkinError(
+                    f"{source}.components.{comp_name}: array values are Hermes-only; "
+                    f"move to x-hermes.{comp_name}"
+                )
+
+    x_hermes = frontmatter.get("x-hermes", {}) or {}
+    if not isinstance(x_hermes, dict):
+        raise SkinError(f"{source}.x-hermes: must be a mapping")
+    for k in x_hermes:
+        if k not in _X_HERMES_ALLOWED_KEYS:
+            raise SkinError(f"{source}.x-hermes.{k}: unknown extension key")
+
+    # Duplicate-color check (DM-G fan-out rule)
+    std_colors = frontmatter.get("colors", {}) or {}
+    xh_colors = x_hermes.get("colors", {}) or {}
+    if isinstance(std_colors, dict) and isinstance(xh_colors, dict):
+        dups = set(std_colors.keys()) & set(xh_colors.keys())
+        if dups:
+            raise SkinError(
+                f"{source}: duplicate color keys across colors.* and x-hermes.colors.*: "
+                f"{sorted(dups)}"
+            )
+
+
+def _resolve_all_refs(value: Any, refs: Dict[str, Any], source: str, label: str) -> Any:
+    """Recursively resolve token refs in nested dict/list/str."""
+    if isinstance(value, str):
+        return _resolve_token_ref(value, refs, source, label)
+    if isinstance(value, dict):
+        return {k: _resolve_all_refs(v, refs, source, f"{label}.{k}") for k, v in value.items()}
+    if isinstance(value, list):
+        return [_resolve_all_refs(v, refs, source, f"{label}[{i}]") for i, v in enumerate(value)]
+    return value
+
+
+def load_design_md_payload(path: Path, *, source: Optional[str] = None) -> SkinPayload:
+    """Parse a DESIGN.md file into a SkinPayload.
+
+    Steps: read text → extract YAML front matter → validate structure →
+    resolve token refs → fan colors out to css_vars → emit component_vars
+    from x-hermes.component-vars → assemble SkinPayload.
+
+    Raises SkinError on any structural or reference failure.
+    """
+    src = source or str(path)
+    text = path.read_text(encoding="utf-8")
+    fm = _parse_frontmatter(text, src)
+    validate_design_md_payload(fm, source=src)
+
+    # Build resolution context (colors only — refs target colors.*)
+    refs: Dict[str, Any] = {"colors": dict(fm.get("colors", {}) or {})}
+    fm = _resolve_all_refs(fm, refs, src, "")
+
+    name = str(fm.get("name", "") or "")
+    if not name:
+        raise SkinError(f"{src}: 'name' is required")
+    description = str(fm.get("description", "") or "")
+
+    std_colors: Dict[str, Any] = fm.get("colors", {}) or {}
+    x_hermes: Dict[str, Any] = fm.get("x-hermes", {}) or {}
+
+    # ---- semantic fan-out (parent DM-A mapping) ----
+    # Defer to skin_loader._SEMANTIC_MAP for the canonical fan-out list.
+    from hermes_cli.tui.skin_loader import _SEMANTIC_MAP, _GLASS_KEYS
+
+    css_vars: Dict[str, str] = {}
+    skin_colors: Dict[str, str] = {}
+
+    semantic_keys = {
+        "foreground": "fg", "background": "bg", "accent": "accent",
+        "accent-dim": "accent-dim", "success": "success", "warning": "warning",
+        "error": "error", "muted": "muted", "border": "border",
+        "selection": "selection",
+    }
+
+    # x-hermes.semantic overrides standard colors mapping
+    semantic_overrides: Dict[str, str] = {}
+    for k, v in (x_hermes.get("semantic", {}) or {}).items():
+        if isinstance(v, str):
+            semantic_overrides[str(k)] = v
+
+    for design_key, semantic_key in semantic_keys.items():
+        v = semantic_overrides.get(semantic_key, std_colors.get(design_key))
+        if not isinstance(v, str):
+            continue
+        for target in _SEMANTIC_MAP.get(semantic_key, ()):
+            css_vars.setdefault(target, v)
+
+    # Glass keys (hyphenated identical names)
+    for gk in _GLASS_KEYS:
+        v = std_colors.get(gk) or semantic_overrides.get(gk)
+        if isinstance(v, str):
+            css_vars.setdefault(gk, v)
+
+    # Banner / ui / prompt / etc colors: hyphen→underscore for SkinConfig.colors.
+    # Skip pure semantic / glass tokens — those are CSS-var-only (parity with
+    # legacy YAML which keeps banner_*/ui_*/prompt under `colors:` and the
+    # semantic keys at top level).
+    _SEMANTIC_COLOR_KEYS = set(semantic_keys.keys()) | set(_GLASS_KEYS)
+    for k, v in std_colors.items():
+        if not isinstance(v, str) or k in _SEMANTIC_COLOR_KEYS:
+            continue
+        underscore_key = k.replace("-", "_")
+        skin_colors[underscore_key] = v
+    # x-hermes.colors merges in (validated non-duplicate above)
+    for k, v in (x_hermes.get("colors", {}) or {}).items():
+        if isinstance(v, str):
+            skin_colors[k.replace("-", "_")] = v
+
+    # ---- x-hermes.vars → css_vars passthrough (parity with legacy `vars:`) ----
+    for k, v in (x_hermes.get("vars", {}) or {}).items():
+        if isinstance(v, (str, int, float)):
+            css_vars.setdefault(str(k), str(v))
+
+    # ---- component_vars from x-hermes.component-vars ----
+    component_vars: Dict[str, str] = {}
+    for k, v in (x_hermes.get("component-vars", {}) or {}).items():
+        component_vars[str(k)] = "" if v is None else str(v)
+
+    # ---- syntax / diff / markdown / spinner / branding ----
+    syntax_block: Dict[str, Any] = x_hermes.get("syntax", {}) or {}
+    syntax_scheme = str(syntax_block.get("scheme", "hermes") or "hermes")
+    syntax_overrides = {
+        str(k): str(v) for k, v in (syntax_block.get("overrides", {}) or {}).items()
+        if isinstance(v, (str, int, float))
+    }
+    # Mirror syntax_scheme into component_vars (DM-D)
+    component_vars.setdefault("syntax-scheme", syntax_scheme)
+
+    diff = {str(k): "" if v is None else str(v) for k, v in (x_hermes.get("diff", {}) or {}).items()}
+    markdown = dict(x_hermes.get("markdown", {}) or {})
+    spinner = dict(x_hermes.get("spinner", {}) or {})
+    branding = {str(k): "" if v is None else str(v) for k, v in (x_hermes.get("branding", {}) or {}).items()}
+    tool_prefix = str(x_hermes.get("tool_prefix", "┊") or "┊")
+    tool_icons = {str(k): "" if v is None else str(v) for k, v in (x_hermes.get("tool_icons", {}) or {}).items()}
+    banner_logo = str(x_hermes.get("banner_logo", "") or "")
+    banner_hero = str(x_hermes.get("banner_hero", "") or "")
+
+    return SkinPayload(
+        name=name,
+        description=description,
+        css_vars=css_vars,
+        component_vars=component_vars,
+        colors=skin_colors,
+        spinner=spinner,
+        branding=branding,
+        syntax_scheme=syntax_scheme,
+        syntax=syntax_overrides,
+        diff=diff,
+        markdown=markdown,
+        tool_prefix=tool_prefix,
+        tool_icons=tool_icons,
+        banner_logo=banner_logo,
+        banner_hero=banner_hero,
+    )
+
+
+def load_legacy_skin_payload(path: Path) -> SkinPayload:
+    """Wrap legacy YAML/JSON skin loaders into a SkinPayload.
+
+    Uses the existing skin_loader.load_skin_full for css_vars/component_vars
+    parity, and reads the raw dict for SkinConfig fields (spinner, diff, etc.).
+
+    Raises SkinError when DM-K3 removal mode is active (legacy YAML is gone).
+    """
+    if _DESIGN_MD_REMOVAL_ACTIVE:
+        raise SkinError(
+            f"{path}: legacy YAML/JSON skin loading was removed in the DESIGN.md migration "
+            f"(see docs/migration-yaml-to-design-md.md)"
+        )
+    from hermes_cli.tui.skin_loader import load_skin_full
+    css_vars, component_vars = load_skin_full(path)
+
+    # Read the raw dict for the rest of the fields
+    text = path.read_text(encoding="utf-8")
+    if path.suffix in (".yml", ".yaml"):
+        import yaml
+        data = yaml.safe_load(text) or {}
+    else:
+        import json
+        data = json.loads(text)
+    if not isinstance(data, dict):
+        raise SkinError(f"{path}: top level must be a mapping")
+
+    name = str(data.get("name", path.stem))
+    description = str(data.get("description", ""))
+    skin_colors: Dict[str, str] = {}
+    for k, v in (data.get("colors", {}) or {}).items():
+        if isinstance(v, str):
+            skin_colors[str(k)] = v
+
+    spinner = dict(data.get("spinner", {}) or {})
+    branding = {str(k): str(v) for k, v in (data.get("branding", {}) or {}).items()}
+    syntax_scheme = str(data.get("syntax_scheme", "hermes") or "hermes")
+    syntax = {str(k): str(v) for k, v in (data.get("syntax", {}) or {}).items() if isinstance(v, (str, int, float))}
+    diff = {str(k): str(v) for k, v in (data.get("diff", {}) or {}).items() if v is not None}
+    markdown = dict(data.get("markdown", {}) or {})
+    tool_prefix = str(data.get("tool_prefix", "┊") or "┊")
+    tool_icons = {str(k): str(v) for k, v in (data.get("tool_icons", {}) or {}).items()}
+    banner_logo = str(data.get("banner_logo", "") or "")
+    banner_hero = str(data.get("banner_hero", "") or "")
+
+    return SkinPayload(
+        name=name,
+        description=description,
+        css_vars=css_vars,
+        component_vars=component_vars,
+        colors=skin_colors,
+        spinner=spinner,
+        branding=branding,
+        syntax_scheme=syntax_scheme,
+        syntax=syntax,
+        diff=diff,
+        markdown=markdown,
+        tool_prefix=tool_prefix,
+        tool_icons=tool_icons,
+        banner_logo=banner_logo,
+        banner_hero=banner_hero,
+    )
+
+
+def load_skin_payload(path: Path) -> SkinPayload:
+    """Dispatch to DESIGN.md or legacy YAML/JSON loader by file shape."""
+    if path.name == "DESIGN.md":
+        return load_design_md_payload(path)
+    suffix = path.suffix.lower()
+    if suffix in (".yml", ".yaml", ".json"):
+        return load_legacy_skin_payload(path)
+    # Fallback: treat unknown extensions as legacy if they parse
+    return load_legacy_skin_payload(path)
+
+
+_DESIGN_MD_REMOVAL_ACTIVE: bool = False  # DM-K3 — flips when legacy YAML is removed
+
+
+def _yaml_removal_unblocked(current_version: str, *, repo_root: Optional[Path] = None) -> Tuple[bool, List[str]]:
+    """DM-K2 deprecation gate.
+
+    Returns (allowed, reasons). Removal is allowed iff every gate passes.
+    """
+    reasons: List[str] = []
+    repo = repo_root or Path(__file__).resolve().parents[1]
+
+    # 1) Strict version greater-than the deprecation marker.
+    try:
+        from packaging.version import Version  # type: ignore
+        if not _YAML_DEPRECATED_SINCE:
+            reasons.append("warning release not shipped (_YAML_DEPRECATED_SINCE unset)")
+        elif not (Version(current_version) > Version(_YAML_DEPRECATED_SINCE)):
+            reasons.append(
+                f"warning release not yet superseded "
+                f"(current={current_version} <= since={_YAML_DEPRECATED_SINCE}; strict greater-than required)"
+            )
+    except ImportError:
+        # packaging always present in the project but be defensive
+        reasons.append("packaging.version unavailable; cannot verify release marker")
+
+    # 2) Bundled DESIGN.md complete.
+    missing = [n for n in BUNDLED_SKIN_NAMES if not (repo / "skins" / n / "DESIGN.md").exists()]
+    if missing:
+        reasons.append(f"bundled DESIGN.md missing for: {missing}")
+
+    # 3) Default discovery flipped.
+    if not _DESIGN_MD_DISCOVERY_DEFAULT:
+        reasons.append("_DESIGN_MD_DISCOVERY_DEFAULT must be True")
+
+    # 4) Authoring docs migrated.
+    if not _AUTHORING_DOCS_PRIMARY_DESIGN_MD:
+        reasons.append("_AUTHORING_DOCS_PRIMARY_DESIGN_MD must be True")
+
+    # 5) Migration notes present.
+    if not (repo / "docs" / "migration-yaml-to-design-md.md").exists():
+        reasons.append("docs/migration-yaml-to-design-md.md missing")
+
+    return (not reasons, reasons)
+
+
+def design_md_lint_argv(design_md_path: Path) -> List[str]:
+    """DM-J1 CI lint argv. Pure builder — does NOT spawn subprocess."""
+    return ["npx", "-y", "@google/design.md", "lint", "--format", "json", str(design_md_path)]
+
+
+def design_md_dtcg_export_path(skin_dir: Path) -> Path:
+    """DM-J2 DTCG export artifact path: <skin_dir>/tokens.dtcg.json.
+
+    Hermes runtime never reads this artifact. Future docs/site consumers
+    require a separate spec.
+    """
+    return skin_dir / "tokens.dtcg.json"
+
+
+def skin_config_from_payload(payload: SkinPayload) -> SkinConfig:
+    """Materialize a SkinConfig from a SkinPayload (used for DESIGN.md path)."""
+    # Validate / coerce syntax_scheme
+    scheme = payload.syntax_scheme
+    if scheme not in SYNTAX_SCHEMES:
+        logger.warning("skin: unknown syntax_scheme=%r, falling back to 'hermes'", scheme)
+        scheme = "hermes"
+    return SkinConfig(
+        name=payload.name,
+        description=payload.description,
+        colors=dict(payload.colors),
+        spinner=dict(payload.spinner),
+        branding=dict(payload.branding),
+        tool_prefix=payload.tool_prefix,
+        tool_icons=dict(payload.tool_icons),
+        banner_logo=payload.banner_logo,
+        banner_hero=payload.banner_hero,
+        syntax_scheme=scheme,
+        syntax=dict(payload.syntax),
+        diff=dict(payload.diff),
+        markdown=dict(payload.markdown),
+        ui_ext={},
+        component_vars=dict(payload.component_vars),
+    )

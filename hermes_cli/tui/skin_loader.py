@@ -48,7 +48,13 @@ def load_skin_full(path: Path) -> tuple[dict[str, str], dict[str, str]]:
     * ``component_vars``  — raw dict from the ``component_vars`` key in the
                             skin file; empty dict if absent.  Callers
                             (``ThemeManager``) apply their own defaults on top.
+
+    DESIGN.md inputs delegate to ``hermes_cli.skin_engine.load_design_md_payload``
+    (parent DM-C). Legacy YAML/JSON keep the in-module parser below.
     """
+    if path.name == "DESIGN.md":
+        from hermes_cli.skin_engine import load_design_md_payload
+        return load_design_md_payload(path).to_loader_tuple()
     data = _read_structured(path)
     if not isinstance(data, dict):
         raise SkinError(f"{path}: top level must be a mapping")

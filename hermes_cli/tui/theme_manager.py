@@ -149,6 +149,11 @@ def _validate_hex(path: str, value: Any) -> str:
     return value
 
 
+# Component vars whose values are non-hex string config (Pygments theme names,
+# scheme keys), not colors. Skipped by hex validation. See SYN-1 / DM-E.
+_NON_HEX_COMPONENT_VARS: frozenset[str] = frozenset({"syntax-theme", "syntax-scheme"})
+
+
 def validate_skin_payload(
     payload: "dict[str, Any]",
     *,
@@ -172,6 +177,12 @@ def validate_skin_payload(
             f"{source}.component_vars: must be a mapping, got {type(cv).__name__}"
         )
     for name, value in cv.items():
+        if name in _NON_HEX_COMPONENT_VARS:
+            if not isinstance(value, str):
+                raise SkinValidationError(
+                    f"{source}.component_vars.{name}: expected string, got {type(value).__name__}"
+                )
+            continue
         _validate_hex(f"{source}.component_vars.{name}", value)
 
     # vars block — also hex-valued when present
@@ -182,7 +193,9 @@ def validate_skin_payload(
         )
 
     if warn_missing:
-        known = set(COMPONENT_VAR_DEFAULTS.keys())
+        # syntax-theme/syntax-scheme are valid keys but live outside
+        # COMPONENT_VAR_DEFAULTS by design (DM-F3); count them as "known".
+        known = set(COMPONENT_VAR_DEFAULTS.keys()) | _NON_HEX_COMPONENT_VARS
         present = {str(k) for k in cv.keys()}
         required = {
             k for k, v in COMPONENT_VAR_DEFAULTS.items()
@@ -603,6 +616,10 @@ class ThemeManager:
         self._component_vars.update(overrides.get("component_vars", {}))
 
     def _load_path(self, path: Path) -> None:
+        # DM-H: when given a skin directory, watch <dir>/DESIGN.md only.
+        # lint-report.md and tokens.dtcg.json edits do not retrigger reload.
+        if path.is_dir():
+            path = path / "DESIGN.md"
         css_vars, component_vars = load_skin_full(path)
         # Validate against COMPONENT_VAR_DEFAULTS — §8.1
         validate_skin_payload(

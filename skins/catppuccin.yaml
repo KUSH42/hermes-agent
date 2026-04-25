@@ -52,7 +52,7 @@ spinner:
   - simmering
   - steeping
   - contemplating
-syntax_scheme: monokai
+syntax_scheme: catppuccin
 diff:
   deletion_bg: '#2a1420'
   addition_bg: '#142a1a'
@@ -88,6 +88,7 @@ component_vars:
   diff-del-bg: '#2a1420'
   info: '#89b4fa'
   syntax-theme: 'catppuccin'
+  syntax-scheme: 'catppuccin'
   drawbraille-canvas-color: '#89dceb'
   footnote-ref-color: '#6c7086'
   fps-hud-bg: '#181825'

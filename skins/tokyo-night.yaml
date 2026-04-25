@@ -52,7 +52,7 @@ spinner:
   - analyzing
   - computing
   - reasoning
-syntax_scheme: monokai
+syntax_scheme: tokyo-night
 diff:
   deletion_bg: '#2a1020'
   addition_bg: '#0f2a1a'
@@ -88,6 +88,7 @@ component_vars:
   diff-del-bg: '#2a1020'
   info: '#7aa2f7'
   syntax-theme: 'tokyo-night'
+  syntax-scheme: 'tokyo-night'
   drawbraille-canvas-color: '#7aa2f7'
   footnote-ref-color: '#565f89'
   fps-hud-bg: '#16161e'

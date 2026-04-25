@@ -124,6 +124,10 @@ class IOService(AppService):
             if _CPYTHON_FAST_PATH:
                 app._output_queue.put_nowait(text)
             else:
+                # `put_nowait` is sync; `call_soon_threadsafe` is correct for thread →
+                # loop scheduling here. If `_output_queue` ever becomes an async-producer
+                # (e.g. `await put(...)`), switch to
+                # `asyncio.run_coroutine_threadsafe(...)` instead.
                 app._event_loop.call_soon_threadsafe(
                     app._output_queue.put_nowait, text
                 )

@@ -219,8 +219,9 @@ class InlineMediaWidget(Widget):
         from hermes_cli.tui.media_player import MpvPoller
         self._poller = MpvPoller(
             self._ctrl,
-            on_tick=lambda pos, dur: app.call_from_thread(self._on_tick, pos, dur),
-            on_end=lambda: app.call_from_thread(self._on_end),
+            app,
+            on_tick=self._on_tick,
+            on_end=self._on_end,
         )
         self._poller.start()
         app._active_media_count = getattr(app, "_active_media_count", 0) + 1

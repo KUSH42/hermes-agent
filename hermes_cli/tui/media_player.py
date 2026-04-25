@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from typing import Callable
 from urllib.parse import parse_qs, urlparse
 
+from textual.app import App
+
 logger = logging.getLogger(__name__)
 
 # ── URL detection patterns ─────────────────────────────────────────────────────
@@ -197,17 +199,24 @@ class MpvController:
 # ── MpvPoller ──────────────────────────────────────────────────────────────────
 
 class MpvPoller:
-    """Daemon thread polling mpv position/duration at 4 Hz."""
+    """Daemon thread polling mpv position/duration at 4 Hz.
+
+    All callbacks are marshalled through ``app.call_from_thread`` so they
+    execute on the Textual event-loop thread. Callers must NOT wrap callbacks
+    in ``call_from_thread`` themselves — the poller owns that boundary.
+    """
 
     POLL_HZ = 4
 
     def __init__(
         self,
         ctrl: MpvController,
+        app: App,
         on_tick: Callable[[float, float], None],
         on_end: Callable[[], None],
     ) -> None:
         self._ctrl = ctrl
+        self._app = app
         self._on_tick = on_tick
         self._on_end = on_end
         self._stop_event = threading.Event()
@@ -220,15 +229,29 @@ class MpvPoller:
     def stop(self) -> None:
         self._stop_event.set()
 
-    def _run(self) -> None:
-        while not self._stop_event.is_set():
+    def _poll_once(self) -> bool:
+        """One iteration of the poll loop. Returns False to stop."""
+        try:
             if not self._ctrl.is_alive():
-                self._on_end()
-                return
+                self._app.call_from_thread(self._on_end)
+                return False
             pos = self._ctrl.get_position()
             dur = self._ctrl.get_duration()
             if pos is not None and dur is not None:
-                self._on_tick(pos, dur)
+                self._app.call_from_thread(self._on_tick, pos, dur)
+        except RuntimeError:
+            # App not running (shutdown race) or called from app thread —
+            # poller is shutting down; exit cleanly.
+            logger.debug(
+                "MpvPoller._poll_once: call_from_thread failed", exc_info=True
+            )
+            return False
+        return True
+
+    def _run(self) -> None:
+        while not self._stop_event.is_set():
+            if not self._poll_once():
+                return
             self._stop_event.wait(1.0 / self.POLL_HZ)
 
 

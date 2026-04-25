@@ -215,9 +215,18 @@ class _NotifyListener:
 
     Calls on_event(event_dict) on receipt. Socket is created fresh on start(),
     closed on stop(). Messages are newline-delimited JSON.
+
+    Threading contract: ``on_event`` is invoked from a worker thread. Callers
+    MUST marshal any UI mutation via ``app.call_from_thread(...)`` — do NOT
+    touch widget state directly. Direct mutation is a Textual contract
+    violation and will silently corrupt the UI under load.
     """
 
-    def __init__(self, socket_path: str, on_event: Callable[[dict], None]) -> None:
+    def __init__(
+        self,
+        socket_path: str,
+        on_event: Callable[[dict], None],  # invoked off-thread, see docstring
+    ) -> None:
         self._socket_path = socket_path
         self._on_event = on_event
         self._thread: Optional[threading.Thread] = None

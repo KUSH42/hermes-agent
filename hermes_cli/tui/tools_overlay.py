@@ -7,6 +7,7 @@ browse mode.  Snapshot is frozen at construction; no live-reactive updates.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -106,6 +107,7 @@ def render_tool_row(
     turn_total_s: float,
     term_w: int,
     spinner_frame: int = 0,
+    app=None,
 ) -> Text:
     """Compose one Rich Text timeline row.
 
@@ -213,7 +215,9 @@ def render_tool_row(
     row.append(" ", style="")
 
     if cursor:
-        row.stylize("bold on #333399", 0, len(row))
+        css_vars = app.get_css_variables() if app is not None else {}
+        bg = css_vars.get("overlay-selection-bg", "#333399")
+        row.stylize(f"bold on {bg}", 0, len(row))
 
     return row
 
@@ -340,6 +344,8 @@ ToolsScreen > #tools-footer {
         self._refresh_timer: object | None = None
         self._spinner_frame: int = 0
         self._rebuild_in_flight: bool = False
+        self._rebuild_task: asyncio.Task | None = None
+        self._filter_task: asyncio.Task | None = None
 
     def compose(self) -> ComposeResult:
         yield Static("", id="tools-header")
@@ -369,6 +375,9 @@ ToolsScreen > #tools-footer {
             self._refresh_timer = self.set_interval(2.0, self._auto_refresh)
 
     def on_unmount(self) -> None:
+        for task in (self._rebuild_task, self._filter_task):
+            if task and not task.done():
+                task.cancel()
         if self._stale_timer is not None:
             self._stale_timer.stop()
         if self._refresh_timer is not None:
@@ -413,8 +422,9 @@ ToolsScreen > #tools-footer {
             self._spinner_frame = (self._spinner_frame + 1) % len(self._GANTT_SPINNER)
             if not self._rebuild_in_flight:
                 self._rebuild_in_flight = True
-                import asyncio
-                asyncio.ensure_future(self._rebuild())
+                self._rebuild_task = asyncio.create_task(
+                    self._rebuild(), name="tools_overlay.rebuild"
+                )
 
     async def _auto_refresh(self) -> None:
         """Refresh snapshot from app state while in-progress tools exist."""
@@ -462,6 +472,7 @@ ToolsScreen > #tools-footer {
                 turn_total_s=self._turn_total_s,
                 term_w=self._term_w,
                 spinner_frame=self._spinner_frame,
+                app=self.app,
             )
             if display_depth > 0 and self._tree_view:
                 # Build tree indent prefix based on depth
@@ -517,8 +528,11 @@ ToolsScreen > #tools-footer {
         btn_id = event.button.id or ""
         if btn_id == "pill-errors":
             self._errors_only = not self._errors_only
-            import asyncio
-            asyncio.ensure_future(self._apply_filter())
+            if self._filter_task and not self._filter_task.done():
+                self._filter_task.cancel()
+            self._filter_task = asyncio.create_task(
+                self._apply_filter(), name="tools_overlay.filter"
+            )
             event.stop()
             return
         if btn_id.startswith("pill-"):
@@ -527,8 +541,11 @@ ToolsScreen > #tools-footer {
                 self._active_categories.discard(cat)
             else:
                 self._active_categories.add(cat)
-            import asyncio
-            asyncio.ensure_future(self._apply_filter())
+            if self._filter_task and not self._filter_task.done():
+                self._filter_task.cancel()
+            self._filter_task = asyncio.create_task(
+                self._apply_filter(), name="tools_overlay.filter"
+            )
             event.stop()
 
     async def on_key(self, event) -> None:

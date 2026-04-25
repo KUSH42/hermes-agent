@@ -133,11 +133,18 @@ class TestMpvPoller(unittest.TestCase):
         ctrl.get_duration.return_value = dur
         return ctrl
 
+    def _make_app_mock(self):
+        from textual.app import App
+        app = MagicMock(spec=App)
+        app.call_from_thread = MagicMock(side_effect=lambda fn, *a: fn(*a))
+        return app
+
     def test_poller_calls_on_tick(self):
         from hermes_cli.tui.media_player import MpvPoller
         ticks = []
         ctrl = self._make_ctrl(alive=True)
-        poller = MpvPoller(ctrl, on_tick=lambda p, d: ticks.append((p, d)), on_end=lambda: None)
+        app = self._make_app_mock()
+        poller = MpvPoller(ctrl, app, on_tick=lambda p, d: ticks.append((p, d)), on_end=lambda: None)
         poller.start()
         time.sleep(0.4)
         poller.stop()
@@ -149,7 +156,8 @@ class TestMpvPoller(unittest.TestCase):
         ended = threading.Event()
         ctrl = MagicMock()
         ctrl.is_alive.return_value = False
-        poller = MpvPoller(ctrl, on_tick=lambda p, d: None, on_end=lambda: ended.set())
+        app = self._make_app_mock()
+        poller = MpvPoller(ctrl, app, on_tick=lambda p, d: None, on_end=lambda: ended.set())
         poller.start()
         self.assertTrue(ended.wait(timeout=2.0))
 
@@ -157,7 +165,8 @@ class TestMpvPoller(unittest.TestCase):
         from hermes_cli.tui.media_player import MpvPoller
         ctrl = self._make_ctrl(alive=True)
         tick_count = []
-        poller = MpvPoller(ctrl, on_tick=lambda p, d: tick_count.append(1), on_end=lambda: None)
+        app = self._make_app_mock()
+        poller = MpvPoller(ctrl, app, on_tick=lambda p, d: tick_count.append(1), on_end=lambda: None)
         poller.start()
         time.sleep(0.3)
         poller.stop()

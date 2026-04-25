@@ -378,9 +378,11 @@ class TestPickRendererShell:
         from hermes_cli.tui.body_renderers.diff import DiffRenderer
         from hermes_cli.tui.tool_payload import ResultKind
         from hermes_cli.tui.tool_category import ToolCategory
+        from hermes_cli.tui.services.tools import ToolCallState
+        from hermes_cli.tui.tool_panel.density import DensityTier
         payload = _make_payload(category=ToolCategory.SHELL)
         cls = _make_cls(ResultKind.DIFF, confidence=0.9)
-        assert pick_renderer(cls, payload) is DiffRenderer
+        assert pick_renderer(cls, payload, phase=ToolCallState.DONE, density=DensityTier.DEFAULT) is DiffRenderer
 
     def test_shell_low_conf_diff_uses_shell(self):
         """SHELL + DIFF + 0.7 → ShellOutputRenderer (low confidence)."""
@@ -388,9 +390,11 @@ class TestPickRendererShell:
         from hermes_cli.tui.body_renderers.shell import ShellOutputRenderer
         from hermes_cli.tui.tool_payload import ResultKind
         from hermes_cli.tui.tool_category import ToolCategory
+        from hermes_cli.tui.services.tools import ToolCallState
+        from hermes_cli.tui.tool_panel.density import DensityTier
         payload = _make_payload(category=ToolCategory.SHELL)
         cls = _make_cls(ResultKind.DIFF, confidence=0.7)
-        assert pick_renderer(cls, payload) is ShellOutputRenderer
+        assert pick_renderer(cls, payload, phase=ToolCallState.DONE, density=DensityTier.DEFAULT) is ShellOutputRenderer
 
     def test_non_shell_category_unchanged(self):
         """FILE + CODE + 0.9 → CodeRenderer (unchanged)."""
@@ -398,9 +402,11 @@ class TestPickRendererShell:
         from hermes_cli.tui.body_renderers.code import CodeRenderer
         from hermes_cli.tui.tool_payload import ResultKind
         from hermes_cli.tui.tool_category import ToolCategory
+        from hermes_cli.tui.services.tools import ToolCallState
+        from hermes_cli.tui.tool_panel.density import DensityTier
         payload = _make_payload(category=ToolCategory.FILE)
         cls = _make_cls(ResultKind.CODE, confidence=0.9)
-        assert pick_renderer(cls, payload) is CodeRenderer
+        assert pick_renderer(cls, payload, phase=ToolCallState.DONE, density=DensityTier.DEFAULT) is CodeRenderer
 
     def test_shell_empty_still_empty_state(self):
         """SHELL + EMPTY → EmptyStateRenderer."""
@@ -408,9 +414,11 @@ class TestPickRendererShell:
         from hermes_cli.tui.body_renderers.empty import EmptyStateRenderer
         from hermes_cli.tui.tool_payload import ResultKind
         from hermes_cli.tui.tool_category import ToolCategory
+        from hermes_cli.tui.services.tools import ToolCallState
+        from hermes_cli.tui.tool_panel.density import DensityTier
         payload = _make_payload(category=ToolCategory.SHELL)
         cls = _make_cls(ResultKind.EMPTY, confidence=0.9)
-        assert pick_renderer(cls, payload) is EmptyStateRenderer
+        assert pick_renderer(cls, payload, phase=ToolCallState.DONE, density=DensityTier.DEFAULT) is EmptyStateRenderer
 
 
 # ---------------------------------------------------------------------------
@@ -424,9 +432,11 @@ class TestPickRendererLowConf:
         from hermes_cli.tui.body_renderers.search import SearchRenderer
         from hermes_cli.tui.tool_payload import ResultKind
         from hermes_cli.tui.tool_category import ToolCategory
+        from hermes_cli.tui.services.tools import ToolCallState
+        from hermes_cli.tui.tool_panel.density import DensityTier
         payload = _make_payload(category=ToolCategory.SEARCH, output_raw="foo:1:bar")
         cls = _make_cls(ResultKind.SEARCH, confidence=0.6)
-        result = pick_renderer(cls, payload)
+        result = pick_renderer(cls, payload, phase=ToolCallState.DONE, density=DensityTier.DEFAULT)
         assert result is SearchRenderer
 
     def test_low_conf_disclosure_header(self):

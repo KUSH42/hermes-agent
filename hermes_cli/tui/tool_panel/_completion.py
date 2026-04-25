@@ -238,17 +238,24 @@ class _ToolPanelCompletionMixin:
             from hermes_cli.tui.tool_payload import ResultKind
             from hermes_cli.tui.tool_category import ToolCategory
             from hermes_cli.tui.body_renderers import pick_renderer, FallbackRenderer
+            from hermes_cli.tui.tool_panel.density import DensityTier
+            from hermes_cli.tui.services.tools import ToolCallState
 
             if result.kind in (ResultKind.TEXT, ResultKind.EMPTY):
                 return
             if self._category == ToolCategory.SHELL:  # type: ignore[attr-defined]
                 return
-            renderer_cls = pick_renderer(result, payload)
+
+            view = self._lookup_view_state()  # type: ignore[attr-defined]
+            phase = view.state if view is not None else ToolCallState.COMPLETING
+            density = view.density if view is not None else DensityTier.DEFAULT
+
+            renderer_cls = pick_renderer(result, payload, phase=phase, density=density)
             if renderer_cls is FallbackRenderer:
                 return
             self._swap_renderer(renderer_cls, payload, result)
         except Exception:
-            _log.debug("Tool body renderer swap failed", exc_info=True)
+            _log.exception("Tool body renderer swap failed")
 
     def _maybe_activate_mini(self, summary: "ResultSummaryV4") -> None:
         try:

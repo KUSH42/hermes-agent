@@ -46,36 +46,44 @@ async def _pause(pilot, n: int = 3) -> None:
 def test_pick_renderer_empty_always_empty_state():
     """EMPTY kind always returns EmptyStateRenderer."""
     from hermes_cli.tui.body_renderers import pick_renderer, EmptyStateRenderer
+    from hermes_cli.tui.services.tools import ToolCallState
+    from hermes_cli.tui.tool_panel.density import DensityTier
     payload = _payload(category=ToolCategory.FILE)
     cls_result = _cls(ResultKind.EMPTY, confidence=1.0)
-    result = pick_renderer(cls_result, payload)
+    result = pick_renderer(cls_result, payload, phase=ToolCallState.DONE, density=DensityTier.DEFAULT)
     assert result is EmptyStateRenderer
 
 
 def test_pick_renderer_search_high_confidence():
     """SEARCH kind with high confidence returns SearchRenderer."""
     from hermes_cli.tui.body_renderers import pick_renderer, SearchRenderer
+    from hermes_cli.tui.services.tools import ToolCallState
+    from hermes_cli.tui.tool_panel.density import DensityTier
     payload = _payload(category=ToolCategory.SEARCH)
     cls_result = _cls(ResultKind.SEARCH, confidence=0.85)
-    result = pick_renderer(cls_result, payload)
+    result = pick_renderer(cls_result, payload, phase=ToolCallState.DONE, density=DensityTier.DEFAULT)
     assert result is SearchRenderer
 
 
 def test_pick_renderer_low_confidence_fallback():
     """Low confidence (≤ 0.7) returns FallbackRenderer for non-SHELL."""
     from hermes_cli.tui.body_renderers import pick_renderer, FallbackRenderer
+    from hermes_cli.tui.services.tools import ToolCallState
+    from hermes_cli.tui.tool_panel.density import DensityTier
     payload = _payload(category=ToolCategory.FILE)
     cls_result = _cls(ResultKind.JSON, confidence=0.5)
-    result = pick_renderer(cls_result, payload)
+    result = pick_renderer(cls_result, payload, phase=ToolCallState.DONE, density=DensityTier.DEFAULT)
     assert result is FallbackRenderer
 
 
 def test_pick_renderer_text_fallback():
     """TEXT kind always falls through to FallbackRenderer."""
     from hermes_cli.tui.body_renderers import pick_renderer, FallbackRenderer
+    from hermes_cli.tui.services.tools import ToolCallState
+    from hermes_cli.tui.tool_panel.density import DensityTier
     payload = _payload(category=ToolCategory.UNKNOWN)
     cls_result = _cls(ResultKind.TEXT, confidence=1.0)
-    result = pick_renderer(cls_result, payload)
+    result = pick_renderer(cls_result, payload, phase=ToolCallState.DONE, density=DensityTier.DEFAULT)
     assert result is FallbackRenderer
 
 

@@ -403,23 +403,29 @@ class TestShellSelectionPolicy:
     def test_pick_renderer_shell_text_stays_shell(self):
         """Shell TEXT always returns ShellOutputRenderer."""
         from hermes_cli.tui.body_renderers import pick_renderer, ShellOutputRenderer
+        from hermes_cli.tui.services.tools import ToolCallState
+        from hermes_cli.tui.tool_panel.density import DensityTier
         payload = _payload(category=ToolCategory.SHELL)
         cls_result = _cls(ResultKind.TEXT, confidence=1.0)
-        assert pick_renderer(cls_result, payload) is ShellOutputRenderer
+        assert pick_renderer(cls_result, payload, phase=ToolCallState.DONE, density=DensityTier.DEFAULT) is ShellOutputRenderer
 
     def test_pick_renderer_shell_low_confidence_json_stays_shell(self):
         """Shell JSON with confidence 0.79 returns ShellOutputRenderer."""
         from hermes_cli.tui.body_renderers import pick_renderer, ShellOutputRenderer
+        from hermes_cli.tui.services.tools import ToolCallState
+        from hermes_cli.tui.tool_panel.density import DensityTier
         payload = _payload(category=ToolCategory.SHELL)
         cls_result = _cls(ResultKind.JSON, confidence=0.79)
-        assert pick_renderer(cls_result, payload) is ShellOutputRenderer
+        assert pick_renderer(cls_result, payload, phase=ToolCallState.DONE, density=DensityTier.DEFAULT) is ShellOutputRenderer
 
     def test_pick_renderer_shell_high_confidence_json_uses_json_renderer(self):
         """Shell JSON with confidence >= 0.8 routes to JsonRenderer."""
         from hermes_cli.tui.body_renderers import pick_renderer, JsonRenderer
+        from hermes_cli.tui.services.tools import ToolCallState
+        from hermes_cli.tui.tool_panel.density import DensityTier
         payload = _payload(category=ToolCategory.SHELL)
         cls_result = _cls(ResultKind.JSON, confidence=0.95)
-        assert pick_renderer(cls_result, payload) is JsonRenderer
+        assert pick_renderer(cls_result, payload, phase=ToolCallState.DONE, density=DensityTier.DEFAULT) is JsonRenderer
 
 
 # ---------------------------------------------------------------------------

@@ -1,11 +1,14 @@
 """_ToolPanelActionsMixin — all keyboard action handlers for ToolPanel."""
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from hermes_cli.tui.io_boundary import safe_open_url, safe_edit_cmd
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from hermes_cli.tui.tool_result_parse import ResultSummaryV4
@@ -615,6 +618,8 @@ class _ToolPanelActionsMixin:
         try:
             from hermes_cli.tui.body_renderers import pick_renderer
             from hermes_cli.tui.tool_payload import ToolPayload, ClassificationResult
+            from hermes_cli.tui.tool_panel.density import DensityTier
+            from hermes_cli.tui.services.tools import ToolCallState
 
             output_raw = self.copy_content()  # type: ignore[attr-defined]
             payload = ToolPayload(
@@ -626,10 +631,15 @@ class _ToolPanelActionsMixin:
                 line_count=self._body_line_count(),  # type: ignore[attr-defined]
             )
             cls_result = ClassificationResult(kind=kind, confidence=1.0)
-            renderer_cls = pick_renderer(cls_result, payload)
+
+            view = self._lookup_view_state()  # type: ignore[attr-defined]
+            phase = view.state if view is not None else ToolCallState.DONE
+            density = view.density if view is not None else DensityTier.DEFAULT
+
+            renderer_cls = pick_renderer(cls_result, payload, phase=phase, density=density)
             self._swap_renderer(renderer_cls, payload, cls_result)  # type: ignore[attr-defined]
         except Exception:
-            pass
+            _log.exception("force_renderer failed for kind=%s", kind)
 
     def on_tool_header_clicked(self, event: "object") -> None:
         getattr(event, "stop", lambda: None)()

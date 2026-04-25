@@ -8,11 +8,28 @@ if TYPE_CHECKING:
     from hermes_cli.tui.tool_payload import ResultKind, ClassificationResult, ToolPayload
     from textual.widget import Widget
     from hermes_cli.tui.body_renderers._grammar import SkinColors
+    from hermes_cli.tui.services.tools import ToolCallState
+    from hermes_cli.tui.tool_panel.density import DensityTier
 
 
 class BodyRenderer(ABC):
     kind: ClassVar["ResultKind"]
     supports_streaming: ClassVar[bool] = False  # only ShellOutputRenderer = True
+
+    # Phases at which this renderer is willing to be picked. Subclasses may
+    # override to narrow further; empty frozenset means {COMPLETING, DONE}.
+    accepted_phases: ClassVar[frozenset["ToolCallState"]] = frozenset()
+
+    @classmethod
+    def accepts(cls, phase: "ToolCallState", density: "DensityTier") -> bool:
+        """Return True iff this renderer is willing to render at (phase, density).
+
+        Default policy: accept any phase in {COMPLETING, DONE} at any density.
+        Override accepted_phases to widen; override accepts() to add density logic.
+        """
+        from hermes_cli.tui.services.tools import ToolCallState
+        allowed = cls.accepted_phases or frozenset({ToolCallState.COMPLETING, ToolCallState.DONE})
+        return phase in allowed
 
     def __init__(
         self,

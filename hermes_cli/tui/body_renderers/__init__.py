@@ -38,6 +38,8 @@ from hermes_cli.tui.body_renderers.streaming import (
 
 if TYPE_CHECKING:
     from hermes_cli.tui.tool_payload import ClassificationResult, ToolPayload
+    from hermes_cli.tui.services.tools import ToolCallState
+    from hermes_cli.tui.tool_panel.density import DensityTier
 
 REGISTRY: list[type[BodyRenderer]] = [
     DiffRenderer,
@@ -55,27 +57,32 @@ REGISTRY: list[type[BodyRenderer]] = [
 def pick_renderer(
     cls_result: "ClassificationResult",
     payload: "ToolPayload",
+    *,
+    phase: "ToolCallState",
+    density: "DensityTier",
 ) -> type[BodyRenderer]:
-    """Select best renderer for cls_result + payload.
+    """Select best renderer for (cls_result, payload, phase, density).
 
     Rules (in order):
-    1. SHELL category: TEXT kind or confidence < 0.8 → ShellOutputRenderer.
-       High-confidence non-TEXT shell output falls through to specialized REGISTRY.
-    2. EMPTY → EmptyStateRenderer.
-    3. confidence > 0.5 AND non-TEXT/EMPTY → try specialized renderer.
+    1. SHELL category: TEXT kind or confidence < 0.8 → ShellOutputRenderer (when accepted).
+    2. EMPTY → EmptyStateRenderer (when accepted).
+    3. confidence > 0.5 AND non-TEXT/EMPTY → try specialized renderer through accepts() filter.
        0.5–0.7 band: stamp _low_confidence_disclosed flag for renderer notice.
-    4. TEXT, low-confidence (≤0.5), or no registry match → FallbackRenderer.
+    4. TEXT, low-confidence, or no match → FallbackRenderer.
     """
     from hermes_cli.tui.tool_category import ToolCategory
     from hermes_cli.tui.tool_payload import ResultKind
+    from hermes_cli.tui.services.tools import ToolCallState
+    from hermes_cli.tui.tool_panel.density import DensityTier
 
     # Rule 1: SHELL — TEXT always stays; non-TEXT with low confidence stays too
     if payload.category == ToolCategory.SHELL and cls_result.kind != ResultKind.EMPTY:
         if cls_result.kind == ResultKind.TEXT or cls_result.confidence < 0.8:
-            return ShellOutputRenderer
+            if ShellOutputRenderer.accepts(phase, density):
+                return ShellOutputRenderer
 
     # Rule 2: EMPTY → EmptyStateRenderer
-    if cls_result.kind == ResultKind.EMPTY:
+    if cls_result.kind == ResultKind.EMPTY and EmptyStateRenderer.accepts(phase, density):
         return EmptyStateRenderer
 
     # Rule 3: confidence > 0.5 AND non-TEXT/EMPTY → try specialized renderer
@@ -84,6 +91,8 @@ def pick_renderer(
             # Stamp disclosure flag — object.__setattr__ bypasses frozen=True
             object.__setattr__(cls_result, "_low_confidence_disclosed", True)
         for r in REGISTRY:
+            if not r.accepts(phase, density):
+                continue
             if r.can_render(cls_result, payload):
                 return r
 

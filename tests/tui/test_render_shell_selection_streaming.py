@@ -515,6 +515,7 @@ class TestTruncationFooter:
             diff_add_bg="#000000",
             diff_del_bg="#000000",
             syntax_theme="ansi_dark",
+            syntax_scheme="hermes",
         )
         result = truncation_footer(hidden_n=10, colors=colors)
         # build_rule sets the style at Text level (not span level)

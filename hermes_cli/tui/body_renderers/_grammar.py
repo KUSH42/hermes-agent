@@ -48,7 +48,8 @@ class SkinColors:
     info:         str  # hex info fg (distinct from accent)
     diff_add_bg:  str  # low-saturation add background
     diff_del_bg:  str  # low-saturation del background
-    syntax_theme: str  # pygments theme name
+    syntax_theme:  str  # pygments theme name
+    syntax_scheme: str  # SYNTAX_SCHEMES key (logical token palette)
 
     @classmethod
     def from_app(cls, app) -> "SkinColors":
@@ -62,13 +63,14 @@ class SkinColors:
         d = cls.default()
 
         _hex_re = __import__("re").compile(r"^#[0-9a-fA-F]{6}$")
+        _NON_HEX_KEYS = {"syntax-theme", "syntax-scheme"}
 
         def _get(key: str, fallback: str) -> str:
             v = css_vars.get(key, "").strip()
             if not v:
                 return fallback
-            # Accept plain theme names for syntax-theme; require hex for color fields
-            if fallback == "ansi_dark" or key == "syntax-theme":
+            # Non-hex string keys (syntax-theme, syntax-scheme) bypass hex validation.
+            if key in _NON_HEX_KEYS or fallback == "ansi_dark":
                 return v
             return v if _hex_re.match(v) else fallback
 
@@ -81,7 +83,8 @@ class SkinColors:
             info=_get("info",             d.info),
             diff_add_bg=_get("diff-add-bg", d.diff_add_bg),
             diff_del_bg=_get("diff-del-bg", d.diff_del_bg),
-            syntax_theme=_get("syntax-theme", d.syntax_theme),
+            syntax_theme=_get("syntax-theme",   d.syntax_theme),
+            syntax_scheme=_get("syntax-scheme", d.syntax_scheme),
         )
 
     @classmethod
@@ -97,7 +100,22 @@ class SkinColors:
             diff_add_bg="#0e2a16",
             diff_del_bg="#2a0e0e",
             syntax_theme="ansi_dark",
+            syntax_scheme="hermes",
         )
+
+    def resolve_syntax_palette(
+        self, overrides: "dict[str, str] | None" = None
+    ) -> "dict[str, str]":
+        """Return SYNTAX_SCHEMES[self.syntax_scheme] merged with optional overrides.
+
+        Unknown scheme → empty dict (caller falls back). Returned dict is a
+        fresh copy; mutating it does not affect SYNTAX_SCHEMES.
+        """
+        from hermes_cli.skin_engine import SYNTAX_SCHEMES
+        base = dict(SYNTAX_SCHEMES.get(self.syntax_scheme, {}))
+        if overrides:
+            base.update({k: v for k, v in overrides.items() if isinstance(v, str)})
+        return base
 
 
 # ---------------------------------------------------------------------------

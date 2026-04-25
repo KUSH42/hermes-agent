@@ -82,6 +82,7 @@ component_vars:
   diff-del-bg: '#2a0a0a'
   info: '#58A6FF'
   syntax-theme: 'ansi_dark'
+  syntax-scheme: 'hermes'
   footnote-ref-color: '#2a6b33'
   nameplate-active-color: '#00ff41'
   nameplate-decrypt-color: '#aaffc8'
@@ -171,7 +172,7 @@ syntax:
 stream_effect:
   enabled: cascade
   cascade_ticks: 3
-syntax_scheme: monokai
+syntax_scheme: hermes
 tool_icons:
   search_files: "\u2315"
   web_search: "\u2315"

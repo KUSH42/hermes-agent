@@ -194,15 +194,15 @@ def test_T_NTS_06_render_active_pulse_uses_pi_over_n_offset():
     assert len(result_3) == 3
 
 
-def test_T_NTS_07_tick_active_idle_increments_by_028():
-    """T-NTS-07: _tick_active_idle increments _active_phase by 0.28."""
+def test_T_NTS_07_tick_active_idle_increments_by_011():
+    """T-NTS-07: _tick_active_idle increments _active_phase by 0.11."""
     np = _make_np()
     np._active_phase = 0.0
     # Mock app without reduced-motion
     app_mock = _make_app_mock()
     type(np).app = property(lambda self: app_mock)
     np._tick_active_idle()
-    assert abs(np._active_phase - 0.28) < 1e-9
+    assert abs(np._active_phase - 0.11) < 1e-9
 
 
 def test_T_NTS_08_glitch_resets_active_phase():

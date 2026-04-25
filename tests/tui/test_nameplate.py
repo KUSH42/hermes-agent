@@ -141,7 +141,11 @@ class TestDecryptReveal:
 
     def test_decrypt_completes_within_max_ticks(self):
         np = _make_np_effects()
-        max_ticks = 15  # base_delay + (len-1)*step + jitter_max + buffer = 2+5*2+1+2=15
+        # _DECRYPT_TICKS=150, "Hermes"=6 chars → step=30, max lock_at≈150+jitter
+        # Use deterministic jitter=0 and generous ceiling
+        with patch("hermes_cli.tui.widgets._random.randint", return_value=0):
+            np._init_decrypt()  # re-init with deterministic lock_at values
+        max_ticks = 155  # ceil(150) + buffer
         for tick in range(max_ticks):
             np._tick = tick + 1
             np._tick_startup()

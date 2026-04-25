@@ -736,6 +736,10 @@ class AssistantNameplate(Widget):
         self._morph_dissolve: list[int] = []  # ticks remaining per position
         self._canvas_width: int = 80
         self._last_nameplate_w: int = 0
+        # minimum animation duration gate (toolcall must animate >= 5s)
+        self._MIN_ANIM_S: float = 5.0
+        self._anim_min_end: float = 0.0  # monotonic deadline; 0 = no gate
+        self._pending_idle: bool = False
 
     def on_mount(self) -> None:
         try:
@@ -809,6 +813,7 @@ class AssistantNameplate(Widget):
         self._state = _NPState.MORPH_TO_ACTIVE
         self._init_morph(self._target_name, self._active_label)
         self._set_timer_rate(30)
+        self._anim_min_end = time.monotonic() + self._MIN_ANIM_S
 
     def transition_to_idle(self) -> None:
         if self._last_was_error:
@@ -817,6 +822,13 @@ class AssistantNameplate(Widget):
             self._error_frame = 0
             self._set_timer_rate(30)
             return
+        # gate: don't end animation before minimum duration elapsed
+        remaining = self._anim_min_end - time.monotonic()
+        if remaining > 0:
+            self._pending_idle = True
+            self._set_timer_rate(30)
+            return
+        self._pending_idle = False
         if self._state == _NPState.MORPH_TO_ACTIVE:
             self._snap_to_active()
         self._state = _NPState.MORPH_TO_IDLE
@@ -829,6 +841,7 @@ class AssistantNameplate(Widget):
         self._state = _NPState.GLITCH
         self._glitch_frame = 0
         self._set_timer_rate(30)
+        self._anim_min_end = time.monotonic() + self._MIN_ANIM_S
 
     def set_active_label(self, label: str) -> None:
         self._active_label = label
@@ -876,6 +889,14 @@ class AssistantNameplate(Widget):
 
     def _advance(self) -> None:
         self._tick += 1
+        # fire pending idle if minimum anim duration has elapsed
+        if self._pending_idle and time.monotonic() >= self._anim_min_end:
+            self._pending_idle = False
+            if self._state == _NPState.MORPH_TO_ACTIVE:
+                self._snap_to_active()
+            self._state = _NPState.MORPH_TO_IDLE
+            self._init_morph(self._active_label, self._target_name)
+            # stay at 30fps
         if self._state == _NPState.STARTUP:
             self._tick_startup()
         elif self._state == _NPState.IDLE:

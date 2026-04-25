@@ -84,7 +84,7 @@ def test_a3_nameplate_activate_idle_phase_sets_state():
     np._timer = None
     np._activate_idle_phase()
     assert np._state == _NPState.IDLE
-    np._set_timer_rate.assert_called_once_with(6)
+    np._set_timer_rate.assert_called_once_with(30)
 
 
 def test_a3_nameplate_activate_idle_no_op_when_effects_disabled():

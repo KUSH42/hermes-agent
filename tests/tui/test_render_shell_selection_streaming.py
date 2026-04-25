@@ -512,6 +512,8 @@ class TestTruncationFooter:
             error="#000000",
             warning="#000000",
             info="#000000",
+            icon_dim="#000000",
+            separator_dim="#000000",
             diff_add_bg="#000000",
             diff_del_bg="#000000",
             syntax_theme="ansi_dark",

@@ -54,7 +54,9 @@ class TestSkinColorsDesignMdSyntax:
     def test_resolve_syntax_palette_with_overrides(self):
         sc = SkinColors.default()._replace_syntax_scheme("catppuccin") if False else SkinColors(
             accent="#000000", muted="#000000", success="#000000", error="#000000",
-            warning="#000000", info="#000000", diff_add_bg="#000000",
+            warning="#000000", info="#000000",
+            icon_dim="#000000", separator_dim="#000000",
+            diff_add_bg="#000000",
             diff_del_bg="#000000", syntax_theme="ansi_dark", syntax_scheme="catppuccin",
         )
         original = dict(SYNTAX_SCHEMES["catppuccin"])
@@ -68,7 +70,9 @@ class TestSkinColorsDesignMdSyntax:
     def test_resolve_syntax_palette_unknown_scheme_returns_empty(self):
         sc = SkinColors(
             accent="#000000", muted="#000000", success="#000000", error="#000000",
-            warning="#000000", info="#000000", diff_add_bg="#000000",
+            warning="#000000", info="#000000",
+            icon_dim="#000000", separator_dim="#000000",
+            diff_add_bg="#000000",
             diff_del_bg="#000000", syntax_theme="ansi_dark",
             syntax_scheme="does-not-exist",
         )

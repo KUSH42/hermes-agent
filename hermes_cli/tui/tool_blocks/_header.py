@@ -215,6 +215,25 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             except Exception:
                 self._tool_icon = "?"
 
+    def _colors(self):
+        """Lazy resolve + cache SkinColors. Falls back to defaults pre-mount.
+
+        Resolved at first use rather than __init__ because the App context is
+        not bound until mount; same recovery surface as `_resolve_max_header_gap`.
+        """
+        cached = getattr(self, "_skin_colors_cache", None)
+        if cached is not None:
+            return cached
+        from hermes_cli.tui.body_renderers._grammar import SkinColors
+        try:
+            c = SkinColors.from_app(self.app)
+        except Exception:
+            # NoActiveAppError is at private textual._context.NoActiveAppError;
+            # catch base Exception rather than depend on a private import.
+            c = SkinColors.default()
+        self._skin_colors_cache = c
+        return c
+
     def _accessible_mode(self) -> bool:
         import os
         if os.environ.get("HERMES_ACCESSIBLE"):
@@ -274,7 +293,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         icon_cell_w = _safe_cell_width(icon_str) if icon_str else 0
         if icon_str:
             if self._spinner_char is not None:
-                icon_dim = "#6e6e6e"
+                icon_dim = self._colors().icon_dim
                 icon_peak = getattr(self, "_running_icon_color", _RUNNING_FALLBACK)
                 icon_color = lerp_color(icon_dim, icon_peak, self._pulse_t)
                 icon_style = f"bold {icon_color}"
@@ -326,7 +345,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                         _ek_icon, _, _ek_var = _error_kind_display(
                             self._error_kind, "", get_tool_icon_mode()
                         )
-                        _ek_hex = self.app.get_css_variables().get(_ek_var, "#ef4444")
+                        _ek_hex = self.app.get_css_variables().get(_ek_var, self._colors().error)
                         tail_segments.append(("hero", Text(f"  {_ek_icon} {self._primary_hero}", style=f"bold {_ek_hex}")))
                     except Exception:
                         tail_segments.append(("hero", Text(f"  {self._primary_hero}", style="bold red")))
@@ -365,14 +384,14 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 tail_segments.append(("chevron", Text("  ▸" if is_collapsed else "  ▾", style="dim")))
             else:
                 # B-1: non-interactive signal — always fill chevron slot
-                tail_segments.append(("chevron", Text("  ·", style="dim #444444")))
+                tail_segments.append(("chevron", Text("  ·", style=f"dim {self._colors().separator_dim}")))
             # META zone: flash → stderrwarn  (duration moved to single append after if/else)
             if self._duration:
                 _pending_dur = self._duration
             # Source-order sentinel for legacy tests: "duration" before "flash" and "stderrwarn" bold.
             now = time.monotonic()
             if self._flash_msg and now < self._flash_expires:
-                accent_color = getattr(self, "_focused_gutter_color", "#5f87d7")
+                accent_color = getattr(self, "_focused_gutter_color", None) or self._colors().accent
                 if self._flash_tone == "error":
                     try:
                         _err_color = self.app.get_css_variables().get("status-error-color", "red")
@@ -393,9 +412,13 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                     rs_v4 = getattr(self._panel, "_result_summary_v4", None)
                     if rs_v4 is not None and getattr(rs_v4, "stderr_tail", ""):
                         try:
-                            warn_color = self.app.get_css_variables().get("status-warn-color", "#FFA726")
+                            warn_color = self.app.get_css_variables().get(
+                                "status-warn-color", self._colors().warning
+                            )
                         except Exception:
-                            warn_color = "#FFA726"
+                            # widget.app.get_css_variables() raises NoActiveAppError
+                            # pre-mount; recover with skin warning.
+                            warn_color = self._colors().warning
                         tail_segments.append(("stderrwarn", Text("  ⚠ stderr (e)", style=f"bold {warn_color}")))
             except Exception:
                 pass
@@ -428,7 +451,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         _tier = getattr(self._panel, "density", _DT.DEFAULT) if self._panel else _DT.DEFAULT
         tail_segments = trim_tail_for_tier(tail_segments, tail_budget, _tier)
         from hermes_cli.tui.body_renderers._grammar import GLYPH_META_SEP, glyph as _glyph
-        _sep = Text(f" {_glyph(GLYPH_META_SEP)} ", style="dim #555555")
+        _sep = Text(f" {_glyph(GLYPH_META_SEP)} ", style=f"dim {self._colors().separator_dim}")
         tail = Text()
         for i, (_, seg) in enumerate(tail_segments):
             if i > 0:

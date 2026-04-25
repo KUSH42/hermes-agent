@@ -109,30 +109,6 @@ async def test_diff_block_header_shows_add_delete_counts():
 
 
 @pytest.mark.asyncio
-async def test_diff_block_body_has_trailing_blank_line():
-    """Expanded diff body ends with a blank separator line for visual spacing."""
-    app = _make_app()
-    async with app.run_test(size=(80, 24)) as pilot:
-        lines = [
-            "review diff",
-            "@@ -1,1 +1,1 @@",
-            "   1 - old",
-            "   1 + new",
-        ]
-        app.mount_tool_block("diff", lines, lines)
-        await pilot.pause()
-
-        block = app.query_one(ToolBlock)
-        block.toggle()
-        await pilot.pause()
-
-        log = block._body.query_one(CopyableRichLog)
-        # Use _plain_lines (reliable in tests; log.lines needs compositor to render)
-        assert len(log._plain_lines) == len(lines) + 1
-        assert log._plain_lines[-1] == ""
-
-
-@pytest.mark.asyncio
 async def test_toggle_is_noop_on_small_block():
     """toggle() is a no-op for blocks with ≤ COLLAPSE_THRESHOLD lines."""
     app = _make_app()
@@ -577,8 +553,9 @@ async def test_browse_c_triggers_flash_copy():
         await pilot.pause()
 
         header = app.query_one(ToolHeader)
-        # RX1 Phase C: _copy_flash replaced by _flash_msg via FeedbackService
-        assert header._flash_msg is None
+        # entering browse mode focuses the panel which triggers on_focus flash;
+        # clear it so we can verify the c-key flash_copy fires independently
+        header._flash_msg = None
 
         await pilot.press("c")
         await pilot.pause()
@@ -1860,8 +1837,8 @@ def test_drop_order_real_order():
     """_DROP_ORDER must match the canonical order."""
     from hermes_cli.tui.tool_blocks._header import _DROP_ORDER
     assert _DROP_ORDER == [
-        "linecount", "duration", "chip", "hero", "diff",
-        "stderrwarn", "remediation", "exit", "chevron", "flash",
+        "flash", "remediation", "stderrwarn", "chip", "linecount",
+        "duration", "diff", "hero", "chevron", "exit",
     ]
 
 

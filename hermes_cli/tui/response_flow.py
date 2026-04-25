@@ -193,13 +193,13 @@ def _resolve_log_width(log_widget: "Any") -> int:
     try:
         region_w = log_widget.scrollable_content_region.width
     except Exception:
-        region_w = 0
+        region_w = 0  # widget not yet laid out — dimension unavailable
     if region_w > 0:
         return region_w
     try:
         size_w = log_widget.size.width
     except Exception:
-        size_w = 0
+        size_w = 0  # widget not yet laid out — dimension unavailable
     if size_w > 0:
         return size_w
     try:
@@ -207,7 +207,7 @@ def _resolve_log_width(log_widget: "Any") -> int:
         # app width minus scrollbar + prose margins.
         return max(log_widget.app.size.width - 5, 20)
     except Exception:
-        return 80
+        return 80  # app not available pre-mount — use safe default
 
 
 def _make_rule(log_widget: "Any") -> "Text":
@@ -223,12 +223,12 @@ def _make_rule(log_widget: "Any") -> "Text":
         try:
             w = log_widget.app.size.width
         except Exception:
-            w = 80
+            w = 80  # app not available pre-mount
     try:
         app_cap = max(log_widget.app.size.width - 5, 20)
         w = min(w, app_cap)
     except Exception:
-        pass
+        pass  # app size unavailable; skip cap — rule may overflow by ≤5 cells
     return Text("─" * w, style="dim")
 
 
@@ -275,6 +275,7 @@ def _detect_lang(code: str) -> str:
         lexer = guess_lexer(code)
         return lexer.aliases[0] if lexer.aliases else "text"
     except Exception:
+        # pygments.ClassNotFound / any lexer detection failure — plain text is the safe fallback
         return "text"
 
 
@@ -609,8 +610,8 @@ class ResponseFlowEngine:
             try:
                 self._prose_callback(plain)
             except Exception:
-                pass
-
+                # prose_callback is optional; failures must not interrupt the streaming pipeline
+                logger.debug("ResponseFlowEngine: prose_callback raised", exc_info=True)
 
     def _sync_prose_log(self) -> None:
         """Refresh the active prose destination from the owning message panel."""
@@ -790,12 +791,18 @@ class ResponseFlowEngine:
 
     def _handle_unknown_state(self, raw: str) -> bool:
         """Recover from an unknown _state. Logs once and falls through to prose."""
-        try:
-            self._panel.app.log.warning(
-                f"response_flow: unknown _state={self._state!r}; resetting to NORMAL"
-            )
-        except Exception:
-            pass
+        logger.warning(
+            "response_flow: unknown _state=%r; resetting to NORMAL", self._state
+        )
+        if self._active_block is not None:
+            try:
+                self._active_block.flush()
+            except Exception:
+                # flush on an orphaned block may fail if the widget was already removed
+                logger.debug(
+                    "response_flow: _handle_unknown_state: flush on orphaned block failed",
+                    exc_info=True,
+                )
         self._state = "NORMAL"
         self._active_block = None
         return False  # caller falls through to NORMAL classification + prose
@@ -1027,7 +1034,8 @@ class ResponseFlowEngine:
             try:
                 self._prose_callback(plain)
             except Exception:
-                pass
+                # prose_callback is optional; failures must not interrupt the streaming pipeline
+                logger.debug("ResponseFlowEngine: prose_callback raised (inline-emoji path)", exc_info=True)
         return True
 
     def _mount_emoji(self, name: str) -> None:
@@ -1083,6 +1091,9 @@ class ResponseFlowEngine:
 
     def flush(self) -> None:
         """Turn ended — close any open code block; flush StreamingBlockBuffer pending state."""
+        if self._detached:
+            # Panel is gone; discard any pending partial — no widget to write to
+            return
         if self._partial:
             pending = self._partial
             self._clear_partial_preview()
@@ -1133,7 +1144,7 @@ class ResponseFlowEngine:
             try:
                 panel.mount(SourcesBar(entries))
             except Exception:
-                pass
+                logger.warning("_mount_sources_bar: failed to mount SourcesBar", exc_info=True)
 
         panel.call_after_refresh(_do_mount)
 
@@ -1231,7 +1242,9 @@ class ResponseFlowEngine:
             widget = MathBlockWidget(image_path=path, max_rows=max_rows)
             self._panel._mount_nonprose_block(widget)
         except Exception:
-            pass
+            logger.warning(
+                "ResponseFlowEngine._mount_math_image: mount failed (path=%s)", path, exc_info=True
+            )
 
 
     def refresh_skin(self, css_vars: dict[str, str]) -> None:
@@ -1279,6 +1292,12 @@ class ResponseFlowEngine:
                 self._panel._mount_nonprose_block(fence)
                 self._sync_prose_log()
             except Exception:
+                logger.debug(
+                    "ResponseFlowEngine._flush_code_fence_buffer: InlineCodeFence mount failed;"
+                    " falling back to prose (%d lines)",
+                    len(buf),
+                    exc_info=True,
+                )
                 # Fallback: write as plain prose
                 for line in buf:
                     self._prose_log.write_with_source(Text.from_ansi(line), line)
@@ -1415,11 +1434,11 @@ class ReasoningFlowEngine(ResponseFlowEngine):
         self._math_renderer_mode = "unicode"
         self._mermaid_enabled = False
         # Citations gated on BOTH app flag AND _reasoning_rich_prose
-        _rp = getattr(panel.app, "_reasoning_rich_prose", True)
-        self._citations_enabled = getattr(panel.app, "_citations_enabled", True) and _rp
+        _rp = getattr(_app_b1, "_reasoning_rich_prose", True)
+        self._citations_enabled = getattr(_app_b1, "_citations_enabled", True) and _rp
         # Emoji gated on _emoji_reasoning
-        _rp_emoji = getattr(panel.app, "_emoji_reasoning", True)
-        _app = getattr(panel, "app", None)
+        _rp_emoji = getattr(_app_b1, "_emoji_reasoning", True)
+        _app = _app_b1
         self._emoji_registry = getattr(_app, "_emoji_registry", None) if _rp_emoji else None
         self._emoji_images_enabled = getattr(_app, "_emoji_images_enabled", True) and _rp_emoji
 

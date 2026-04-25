@@ -1,8 +1,11 @@
 """_ToolPanelCompletionMixin — completion path and body-line helpers."""
 from __future__ import annotations
 
+import logging
 import time
 from typing import TYPE_CHECKING, Any
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from hermes_cli.tui.tool_result_parse import ResultSummaryV4
@@ -190,7 +193,7 @@ class _ToolPanelCompletionMixin:
             result = classify_content(payload)
             self._maybe_swap_renderer(result, payload)
         except Exception:
-            pass
+            logger.debug("Tool output classification failed", exc_info=True)
 
     def _swap_renderer(
         self,
@@ -216,7 +219,12 @@ class _ToolPanelCompletionMixin:
                     old_footer.remove()
                 self._body_pane.mount(BodyFooter())  # type: ignore[attr-defined]
         except Exception:
-            pass
+            logger.debug(
+                "Tool body renderer swap failed for renderer=%r kind=%r",
+                new_renderer_cls,
+                getattr(cls_result, "kind", None),
+                exc_info=True,
+            )
 
     def _maybe_swap_renderer(
         self,

@@ -12,7 +12,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 # Matches orphaned CSI tails (missing leading ESC): e.g. "[38;2;...m" or "[0m"
 _ORPHANED_CSI_RE = re.compile(r"\[[0-9;]+[A-Za-z]")
@@ -52,6 +52,9 @@ from .utils import (
 
 if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
+
+import logging
+logger = logging.getLogger(__name__)
 
 
 class CopyableRichLog(RichLog, can_focus=False):
@@ -333,7 +336,15 @@ class LiveLineWidget(Widget):
     _buf: reactive[str] = reactive("", repaint=True)
     _animating: reactive[bool] = reactive(False, repaint=True)
 
+    _PRE_ENGINE_CAP: ClassVar[int] = 2000
+    # Memory math: 2000 lines × ~512 B/line typical ≈ 1 MiB; ANSI-heavy
+    # worst case ~5 MiB. Pre-engine window is normally zero lines and at most
+    # a handful before mount completes; 2000 bounds pathological scenarios
+    # without truncating any realistic stream.
+
     def on_mount(self) -> None:
+        self._pre_engine_lines: list[str] = []
+        self._pre_engine_warned: bool = False  # one-shot warning latch
         import hermes_cli.tui.widgets as _w
         self._tw_enabled: bool = _w._typewriter_enabled()
         self._tw_delay: float = _w._typewriter_delay_s()
@@ -387,14 +398,42 @@ class LiveLineWidget(Widget):
             msg.show_response_rule()
             for committed in lines[:-1]:
                 engine = getattr(msg, "_response_engine", None)
-                if engine is not None:
-                    engine.process_line(committed)  # engine routes to prose log or code block
-                else:
+                if engine is None:
+                    # Existing fallback — preserve visible output. Lines remain visible
+                    # in the prose log regardless of replay outcome.
                     plain = _strip_ansi(committed)
                     if isinstance(rl, CopyableRichLog):
                         rl.write_with_source(Text.from_ansi(committed), plain)
                     else:
                         rl.write(Text.from_ansi(committed))
+                    # Also buffer for replay through the engine when it attaches, so
+                    # mid-stream Code/Markdown blocks recover their structural routing.
+                    # Replay through engine.process_line will re-emit prose to the same
+                    # log — duplicate prose output is an acceptable cost of structural
+                    # recovery and is preferable to losing CodeBlock/Markdown widget mounts.
+                    buf = getattr(self, "_pre_engine_lines", None)
+                    if buf is None:
+                        buf = self._pre_engine_lines = []
+                        self._pre_engine_warned = False
+                    if len(buf) < self._PRE_ENGINE_CAP:
+                        buf.append(committed)
+                    # else: cap hit — drop replay candidate; line is still visible
+                    # via the direct write above. Capped silently after the one-shot
+                    # warning below already fired.
+                    if not self._pre_engine_warned:
+                        logger.warning(
+                            "LiveLineWidget._commit_lines: engine missing; line "
+                            "rendered direct + buffered for replay (one-shot warning)"
+                        )
+                        self._pre_engine_warned = True
+                    continue
+                # Engine attached. Drain any buffered lines first, in arrival order.
+                buf = getattr(self, "_pre_engine_lines", None)
+                if buf:
+                    for buffered in buf:
+                        engine.process_line(buffered)
+                    buf.clear()
+                engine.process_line(committed)
             if rl._deferred_renders:
                 self.call_after_refresh(msg.refresh, layout=True)
         except NoMatches:

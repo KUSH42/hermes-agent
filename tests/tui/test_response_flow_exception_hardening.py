@@ -43,7 +43,7 @@ def _make_engine(*, prose_callback=None):
 
 class TestH1ProseCallbackSwallow:
     def test_h1_prose_callback_exception_does_not_propagate(self):
-        """Raising prose_callback must not crash process_line; debug log fired."""
+        """Raising prose_callback must not crash process_line; exception log fired (Spec A H3)."""
         bad_callback = MagicMock(side_effect=RuntimeError("boom"))
         engine, log, _ = _make_engine(prose_callback=bad_callback)
 
@@ -53,12 +53,9 @@ class TestH1ProseCallbackSwallow:
 
         # prose was still written
         assert log.write_with_source.called
-        # debug was fired with exc_info=True
-        mock_log.debug.assert_called_once()
-        call_kwargs = mock_log.debug.call_args
-        assert call_kwargs.kwargs.get("exc_info") is True or (
-            len(call_kwargs.args) >= 1 and call_kwargs[1].get("exc_info") is True
-        )
+        # logger.exception fired with site label
+        mock_log.exception.assert_called_once()
+        assert "_write_prose" in mock_log.exception.call_args.args[0]
 
     def test_h1_inline_emoji_callback_exception_does_not_propagate(self):
         """Raising prose_callback in _write_prose_inline_emojis must not crash."""
@@ -81,11 +78,8 @@ class TestH1ProseCallbackSwallow:
             with patch.object(engine, "_has_image_support", return_value=True):
                 engine._write_prose_inline_emojis(rich_text, plain)
 
-        mock_log.debug.assert_called_once()
-        call_kwargs = mock_log.debug.call_args
-        assert call_kwargs.kwargs.get("exc_info") is True or (
-            len(call_kwargs.args) >= 1 and call_kwargs[1].get("exc_info") is True
-        )
+        mock_log.exception.assert_called_once()
+        assert "_write_prose_inline_emojis" in mock_log.exception.call_args.args[0]
 
 
 # ---------------------------------------------------------------------------

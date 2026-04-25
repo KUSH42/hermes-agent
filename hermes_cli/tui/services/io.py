@@ -105,7 +105,12 @@ class IOService(AppService):
                         if engine is not None:
                             engine.feed(chunk)
                 except Exception:
-                    pass
+                    # Suppress per-chunk record_raw / engine.feed failures so the stream stays alive;
+                    # log full traceback so the failure is recoverable from the log.
+                    logger.warning(
+                        "io.consume: per-chunk msg.record_raw / engine.feed failed: chunk_len=%d head=%r",
+                        len(chunk), chunk[:80], exc_info=True,
+                    )
                 panel.refresh(layout=True)
                 if not panel._user_scrolled_up:
                     app.call_after_refresh(panel.scroll_end, animate=False)

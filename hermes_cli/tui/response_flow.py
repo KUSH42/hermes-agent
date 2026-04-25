@@ -610,8 +610,7 @@ class ResponseFlowEngine:
             try:
                 self._prose_callback(plain)
             except Exception:
-                # prose_callback is optional; failures must not interrupt the streaming pipeline
-                logger.debug("ResponseFlowEngine: prose_callback raised", exc_info=True)
+                logger.exception("prose callback failed in _write_prose")
 
     def _sync_prose_log(self) -> None:
         """Refresh the active prose destination from the owning message panel."""
@@ -1034,8 +1033,7 @@ class ResponseFlowEngine:
             try:
                 self._prose_callback(plain)
             except Exception:
-                # prose_callback is optional; failures must not interrupt the streaming pipeline
-                logger.debug("ResponseFlowEngine: prose_callback raised (inline-emoji path)", exc_info=True)
+                logger.exception("prose callback failed in _write_prose_inline_emojis")
         return True
 
     def _mount_emoji(self, name: str) -> None:

@@ -83,20 +83,14 @@ def test_watch_collapsed_noop():
 # ---------------------------------------------------------------------------
 
 def test_child_panel_no_tool_accent():
-    """D1: ChildPanel.compose() yields no ToolAccent — only BodyPane, FooterPane, hint row."""
-    from hermes_cli.tui.tool_accent import ToolAccent
+    """D1: ChildPanel.compose() yields BodyPane + FooterPane (no rail widget)."""
     from hermes_cli.tui.tool_panel import BodyPane, FooterPane
-    from textual.widgets import Static
 
     panel = _make_panel()
-
-    # Intercept compose() to collect yielded widget types (not mounting)
     composed = list(panel.compose())
 
     type_names = [type(w).__name__ for w in composed]
-    assert "ToolAccent" not in type_names, f"ToolAccent found in ChildPanel compose: {type_names}"
-
-    # Verify expected structure
+    assert "ToolAccent" not in type_names, f"Removed ToolAccent reappeared: {type_names}"
     assert any(isinstance(w, BodyPane) for w in composed), "BodyPane missing"
     assert any(isinstance(w, FooterPane) for w in composed), "FooterPane missing"
 
@@ -124,21 +118,6 @@ def test_child_panel_header_is_child_attribute_exists():
     header = ToolHeader(label="bash", line_count=0, tool_name="bash")
     assert hasattr(header, "_is_child")
     assert header._is_child is False
-
-
-def test_tool_panel_compose_has_tool_accent():
-    """Verify base ToolPanel.compose() DOES yield ToolAccent (baseline contrast)."""
-    from hermes_cli.tui.tool_panel import ToolPanel
-    from hermes_cli.tui.tool_accent import ToolAccent
-
-    block = MagicMock()
-    block._total_received = 0
-    block._all_plain = []
-    panel = ToolPanel(block=block, tool_name="bash")
-
-    composed = list(panel.compose())
-    type_names = [type(w).__name__ for w in composed]
-    assert "ToolAccent" in type_names, f"Expected ToolAccent in base ToolPanel; got {type_names}"
 
 
 # ---------------------------------------------------------------------------

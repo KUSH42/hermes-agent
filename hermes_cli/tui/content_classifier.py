@@ -57,8 +57,8 @@ def _cached_classify(output_raw: str, tool_name: str, arg_query: str | None) -> 
     if s and s[0] in "{[" and (len(text) > 20 or "\n" in text):
         try:
             parsed = json.loads(text)
-            # JSON-format search result: {matches:[{path,line,content}], ...}
             if isinstance(parsed, dict):
+                # rg-style search: {matches:[{path,line,content}], ...}
                 matches = parsed.get("matches")
                 if isinstance(matches, list) and matches and isinstance(matches[0], dict) \
                         and ("path" in matches[0] or "file" in matches[0]):
@@ -66,6 +66,30 @@ def _cached_classify(output_raw: str, tool_name: str, arg_query: str | None) -> 
                         ResultKind.SEARCH, 0.9,
                         {"hit_count": len(matches), "query": arg_query, "json": True},
                     )
+                # Web/news search: {"data": {"web": [...]} or {"news": [...]}}
+                data_inner = parsed.get("data")
+                if isinstance(data_inner, dict):
+                    web = data_inner.get("web")
+                    if isinstance(web, list) and web and isinstance(web[0], dict):
+                        return ClassificationResult(
+                            ResultKind.SEARCH, 0.9,
+                            {"hit_count": len(web), "query": arg_query, "json": True, "source": "web"},
+                        )
+                    news = data_inner.get("news")
+                    if isinstance(news, list) and news and isinstance(news[0], dict):
+                        return ClassificationResult(
+                            ResultKind.SEARCH, 0.9,
+                            {"hit_count": len(news), "query": arg_query, "json": True, "source": "news"},
+                        )
+                # Extraction results: {"results": [{url, title, content}]}
+                results = parsed.get("results")
+                if isinstance(results, list) and results and isinstance(results[0], dict):
+                    first = results[0]
+                    if any(k in first for k in ("url", "title", "content")):
+                        return ClassificationResult(
+                            ResultKind.SEARCH, 0.9,
+                            {"hit_count": len(results), "query": arg_query, "json": True, "source": "extract"},
+                        )
             return ClassificationResult(ResultKind.JSON, 0.95)
         except (json.JSONDecodeError, MemoryError):
             pass

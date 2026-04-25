@@ -111,6 +111,7 @@ class ToolBlock(Widget):
         if tool_name in _FILE_TOOL_NAMES and label not in ("diff", "code", "output"):
             self._header.set_path(label)
 
+        self._rendered_plain_text: str = ""
         self._diff_file_path: str | None = None
         if label == "diff":
             _fallback: str | None = None
@@ -277,7 +278,32 @@ class ToolBlock(Widget):
         self._header.refresh()
 
     def copy_content(self) -> str:
+        if self._rendered_plain_text:
+            return self._rendered_plain_text
         return "\n".join(self._plain_lines)
+
+    def replace_body_widget(self, widget: Widget, *, plain_text: str = "") -> None:
+        """Replace only the body content widget, preserving header and footer.
+
+        Called by _swap_renderer after post-completion classification so that
+        the ToolBlock chrome (header, collapse, copy surface) is retained.
+        """
+        from hermes_cli.tui.body_renderers._grammar import BodyFooter  # deferred — avoids circular import
+        prev = getattr(self, "_rendered_body_widget", None)
+        if prev is not None and getattr(prev, "is_attached", False):
+            prev.remove()
+        for old_log in self._body.query(CopyableRichLog):
+            old_log.remove()
+        for old_footer in self._body.query(BodyFooter):
+            old_footer.remove()
+        self._body.mount(widget)
+        self._rendered_body_widget = widget
+        if plain_text:
+            self._body.mount(BodyFooter())
+        self._rendered_plain_text = plain_text
+        line_count = len(plain_text.splitlines())
+        self._header._line_count = line_count
+        self._header._has_affordances = line_count > 0
 
     def refresh_skin(self) -> None:
         if self._rerender_fn is not None:

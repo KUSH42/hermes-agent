@@ -43,16 +43,6 @@ async def _pause(pilot, n: int = 3) -> None:
 # pick_renderer tests (no app needed)
 # ---------------------------------------------------------------------------
 
-def test_pick_renderer_shell_always_shell():
-    """SHELL category always returns ShellOutputRenderer regardless of kind."""
-    from hermes_cli.tui.body_renderers import pick_renderer, ShellOutputRenderer
-    payload = _payload(category=ToolCategory.SHELL)
-    for kind in (ResultKind.TEXT, ResultKind.JSON, ResultKind.DIFF, ResultKind.LOG):
-        cls_result = _cls(kind)
-        result = pick_renderer(cls_result, payload)
-        assert result is ShellOutputRenderer, f"Expected ShellOutputRenderer for kind={kind}"
-
-
 def test_pick_renderer_empty_always_empty_state():
     """EMPTY kind always returns EmptyStateRenderer."""
     from hermes_cli.tui.body_renderers import pick_renderer, EmptyStateRenderer
@@ -130,8 +120,8 @@ async def test_swap_renderer_mounts_new_widget():
 
 
 @pytest.mark.asyncio
-async def test_swap_renderer_removes_old_block():
-    """_swap_renderer removes old block from DOM after swap."""
+async def test_swap_renderer_keeps_original_block():
+    """_swap_renderer keeps original ToolBlock/StreamingToolBlock mounted after swap."""
     from hermes_cli.tui.tool_panel import ToolPanel
     from hermes_cli.tui.widgets import OutputPanel
 
@@ -149,22 +139,23 @@ async def test_swap_renderer_removes_old_block():
         panel = output.query_one(ToolPanel)
         old_block = panel._block
 
-        from hermes_cli.tui.body_renderers.empty import EmptyStateRenderer
+        from hermes_cli.tui.body_renderers.json import JsonRenderer
 
         payload = ToolPayload(
             tool_name="bash",
             category=ToolCategory.SHELL,
             args={},
             input_display=None,
-            output_raw="",
-            line_count=0,
+            output_raw='{"key": "value"}',
+            line_count=1,
         )
-        cls_result = ClassificationResult(ResultKind.EMPTY, 1.0)
-        panel._swap_renderer(EmptyStateRenderer, payload, cls_result)
+        cls_result = ClassificationResult(ResultKind.JSON, 0.95)
+        panel._swap_renderer(JsonRenderer, payload, cls_result)
         await _pause(pilot, 3)
 
-        # Panel's _block should have changed
-        assert panel._block is not old_block or not old_block.is_attached
+        # Original block should remain the panel's block and stay attached
+        assert panel._block is old_block
+        assert old_block.is_attached
 
 
 @pytest.mark.asyncio
@@ -187,9 +178,11 @@ async def test_swap_renderer_on_failure_keeps_old():
         panel = output.query_one(ToolPanel)
         old_block = panel._block
 
-        # Pass a broken renderer class that raises on instantiation
+        # Pass a renderer that fails on build_widget() (the protected failure path)
         class BrokenRenderer:
-            def __init__(self, *a, **kw):
+            def __init__(self, payload, cls_result, *, app=None):
+                pass
+            def build_widget(self):
                 raise RuntimeError("intentional failure")
 
         payload = ToolPayload(

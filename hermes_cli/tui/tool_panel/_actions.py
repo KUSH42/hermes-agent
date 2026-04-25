@@ -301,7 +301,8 @@ class _ToolPanelActionsMixin:
             console.print(t, highlight=False)
         html = console.export_html(inline_styles=True)
         try:
-            bg_hex = self.app.get_css_variables().get("base", "#1e1e2e")  # type: ignore[attr-defined]
+            css = self.app.get_css_variables()  # type: ignore[attr-defined]
+            bg_hex = css.get("app-bg") or css.get("background") or "#1e1e2e"
         except Exception:
             bg_hex = "#1e1e2e"
         html = html.replace('<pre style="', f'<pre style="background:{bg_hex}; ', 1)

@@ -233,6 +233,8 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     "cursor-color":         "#FFF8DC",
     # HermesInput text selection highlight
     "cursor-selection-bg":  "#3A5A8C",
+    # Tools overlay row selection background (tools_overlay.py highlighted row)
+    "overlay-selection-bg": "#333399",
     # HermesInput placeholder text
     "cursor-placeholder":   "#555555",
     # Ghost text color — used for inline ghost/suggestion text
@@ -332,7 +334,10 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     "error-network":        "#f97316",
     # Tool header label→stats max gap in cells (VN-2). Caps padding so stats
     # don't fly to the far edge on wide terminals. Integer cell count, not hex.
-    "tool-header-max-gap":  "8",
+    # optional_in_skin=True: non-colour layout knobs need not appear in every
+    # skin's component_vars block; the default ("8") is always applied.
+    "tool-header-max-gap":  VarSpec(default="8", optional_in_skin=True,
+                                    description="Tool header label→stats max gap (cells)"),
 }
 
 

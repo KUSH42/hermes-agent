@@ -18,6 +18,7 @@ Correctness invariants (all load-bearing — do not remove):
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from rich.console import Segment
@@ -30,6 +31,8 @@ from textual.scroll_view import ScrollView
 from textual.strip import Strip
 
 from .animation import AnimationClock, lerp_color
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .path_search import Candidate
@@ -138,7 +141,7 @@ class VirtualCompletionList(ScrollView, can_focus=True):
             empty_bg = css.get("completion-empty-bg", "#2A2000")
             self._completion_empty_bg: str = empty_bg
         except Exception:
-            pass
+            _log.debug("VirtualCompletionList._refresh_fuzzy_color: css var lookup failed", exc_info=True)
 
     def refresh_theme(self) -> None:
         """Called by HermesApp.apply_skin() after a hot-reload.
@@ -206,6 +209,7 @@ class VirtualCompletionList(ScrollView, can_focus=True):
             v = self.app.get_css_variables()
             app_bg = v.get("app-bg", "#1E1E1E")
         except Exception:
+            _log.debug("VirtualCompletionList._render_shimmer_row: css var lookup failed", exc_info=True)
             app_bg = "#1E1E1E"
         trough = lerp_color(app_bg, "#000000", 0.3)
         peak   = lerp_color(app_bg, "#888888", 0.35)
@@ -395,5 +399,9 @@ class VirtualCompletionList(ScrollView, can_focus=True):
             and c.insert_text
             and c.insert_text != c.display
         ):
-            t.append(f"  →  {c.insert_text}", style=Style(dim=True, color="#888888"))
+            # text-muted is a Textual built-in; always present at runtime.
+            # Silent fallback is correct — absence implies corrupted theme, not
+            # a recoverable state worth logging.
+            muted = self.app.get_css_variables().get("text-muted", "#888888")
+            t.append(f"  →  {c.insert_text}", style=Style(dim=True, color=muted))
         return t

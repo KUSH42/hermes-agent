@@ -131,6 +131,7 @@ x-hermes:
     error-network: "#f97316"
     error-timeout: "#f59e0b"
     tool-glyph-mcp: "#9b59b6"
+    overlay-selection-bg: "#45475a"
 ---
 
 # Catppuccin

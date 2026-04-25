@@ -1,10 +1,13 @@
 """Shared visual grammar for all body renderers — glyphs, colors, header/gutter builders."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from rich.style import Style
 from rich.text import Text
+
+_log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Glyphs
@@ -61,6 +64,7 @@ class SkinColors:
         try:
             css_vars: dict[str, str] = app.get_css_variables()
         except Exception:
+            _log.debug("SkinColors.from_app: get_css_variables failed", exc_info=True)
             return cls.default()
         d = cls.default()
 
@@ -103,8 +107,8 @@ class SkinColors:
             info="#58A6FF",
             icon_dim="#6e6e6e",
             separator_dim="#444444",
-            diff_add_bg="#0e2a16",
-            diff_del_bg="#2a0e0e",
+            diff_add_bg="#1a3a1a",  # aligned with COMPONENT_VAR_DEFAULTS["diff-add-bg"]
+            diff_del_bg="#3a1a1a",  # aligned with COMPONENT_VAR_DEFAULTS["diff-del-bg"]
             syntax_theme="ansi_dark",
             syntax_scheme="hermes",
         )
@@ -222,6 +226,7 @@ BodyFooter {
         try:
             self._colors = SkinColors.from_app(self.app)
         except Exception:
+            _log.debug("BodyFooter.on_mount: SkinColors.from_app failed", exc_info=True)
             self._colors = SkinColors.default()
         self.refresh()
 

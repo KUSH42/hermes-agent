@@ -116,12 +116,16 @@ class TestPickRendererSignature:
         ) is SearchRenderer
 
     def test_pick_renderer_phase_streaming_falls_back(self):
-        from hermes_cli.tui.body_renderers import pick_renderer, FallbackRenderer
-        # JSON payload at STREAMING phase → FallbackRenderer (default accepts rejects STREAMING)
-        payload = _payload(output_raw='{"key": "val"}')
+        from hermes_cli.tui.body_renderers import pick_renderer, PlainBodyRenderer
+        from hermes_cli.tui.body_renderers.json import JsonRenderer
+        # Phase-C-only renderers (default accepts rejects STREAMING) must not be
+        # selected at STREAMING. With no category match, streaming branch falls
+        # back to PlainBodyRenderer rather than a Phase-C renderer like JSON.
+        payload = _payload(category="__no_match__", output_raw='{"key": "val"}')
         cls = _cls(ResultKind.JSON, confidence=0.95)
         result = pick_renderer(cls, payload, phase=ToolCallState.STREAMING, density=DensityTier.DEFAULT)
-        assert result is FallbackRenderer
+        assert result is PlainBodyRenderer
+        assert result is not JsonRenderer
 
     def test_pick_renderer_filters_by_accepts_skips_to_next(self):
         from hermes_cli.tui.body_renderers import pick_renderer, REGISTRY
@@ -441,23 +445,35 @@ class TestForceRendererCallSite:
 class TestExistingTestSweep:
 
     def test_no_remaining_positional_pick_renderer_in_tests(self):
-        """Ensure no pick_renderer calls in tests are missing phase= kwarg."""
-        import subprocess
-        result = subprocess.run(
-            ["grep", "-RIn", "pick_renderer(", "tests/tui/"],
-            capture_output=True, text=True,
-            cwd="/home/xush/.hermes/hermes-agent",
-        )
-        lines = result.stdout.strip().splitlines()
-        # Filter to lines that have pick_renderer( but NOT phase=
-        # Exclude this spec compliance file itself (it has intentional bad calls for TypeError tests)
-        bad = [
-            l for l in lines
-            if "pick_renderer(" in l
-            and "phase=" not in l
-            and "test_renderer_registry_context.py" not in l
-        ]
-        assert bad == [], f"Bare pick_renderer() calls without phase= found:\n" + "\n".join(bad)
+        """AST-scan tests/tui/ for pick_renderer() calls missing phase= kwarg."""
+        import ast
+        import pathlib
+
+        root = pathlib.Path("/home/xush/.hermes/hermes-agent/tests/tui")
+        bad: list[str] = []
+        for path in root.rglob("*.py"):
+            # Self-exclude: this file has intentional bad calls for TypeError tests
+            if path.name == "test_renderer_registry_context.py":
+                continue
+            try:
+                tree = ast.parse(path.read_text(), filename=str(path))
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                # Match `pick_renderer(...)` and `mod.pick_renderer(...)`
+                name = (
+                    func.id if isinstance(func, ast.Name)
+                    else func.attr if isinstance(func, ast.Attribute)
+                    else None
+                )
+                if name != "pick_renderer":
+                    continue
+                if not any(kw.arg == "phase" for kw in node.keywords):
+                    bad.append(f"{path.relative_to(root.parent.parent)}:{node.lineno}")
+        assert bad == [], "pick_renderer() calls without phase= kwarg:\n" + "\n".join(bad)
 
     def test_existing_render_shell_selection_tests_pass(self):
         """Smoke: import the shell selection test module without errors."""

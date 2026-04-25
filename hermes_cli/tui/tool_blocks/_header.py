@@ -31,6 +31,26 @@ from ._shared import (
 
 MIN_LABEL_CELLS = 12
 
+# VN-2 fallback for tool-header label→stats gap when skin var unavailable.
+MAX_HEADER_GAP_CELLS_FALLBACK = 8
+
+
+def _resolve_max_header_gap(widget) -> int:
+    try:
+        v = widget.app.get_css_variables().get("tool-header-max-gap")
+        if v is not None:
+            return max(0, int(v))
+    except (LookupError, ValueError, TypeError, Exception):
+        # Three known failure modes, all recovered by falling back to the constant:
+        #   1. NoActiveAppError / LookupError — widget.app accessed pre-mount, before
+        #      the App ContextVar is set. NoActiveAppError lives at the private
+        #      textual._context.NoActiveAppError, so we catch the base Exception
+        #      rather than import a private symbol.
+        #   2. ValueError — skin var present but not coercible to int (e.g. "garbage").
+        #   3. TypeError — skin var resolves to a non-stringable object.
+        pass
+    return MAX_HEADER_GAP_CELLS_FALLBACK
+
 _DROP_ORDER: list[str] = [
     "flash",         # ephemeral visual, losing it is fine
     "remediation",   # long hint text; tolerable loss at narrow widths
@@ -437,7 +457,8 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         t.append_text(label_text)
         if term_w > 0:
             label_used = label_text.cell_len
-            pad = max(0, available - label_used)
+            _gap_cap = _resolve_max_header_gap(self)
+            pad = min(max(0, available - label_used), _gap_cap)
             t.append(" " * pad)
         t.append_text(tail)
         return t

@@ -336,8 +336,9 @@ def test_T_NTS_15_label_at_130s():
 # ── Phase 6 ──────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_T_NTS_17_activate_creates_flash_label_line():
+async def test_T_NTS_17_activate_creates_flash_label_line(monkeypatch):
     """T-NTS-17: activate() creates _label_line with effect='flash'."""
+    monkeypatch.delenv("HERMES_DETERMINISTIC", raising=False)
     async with _ThinkingApp().run_test() as pilot:
         tw = pilot.app.query_one(ThinkingWidget)
         tw.activate()
@@ -504,8 +505,9 @@ async def test_T_NTS_28_reduced_motion_tick_noop():
 # ── Phase 8 ──────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_T_NTS_29_set_mode_calls_refresh_colors():
+async def test_T_NTS_29_set_mode_calls_refresh_colors(monkeypatch):
     """T-NTS-29: set_mode() calls _refresh_colors()."""
+    monkeypatch.delenv("HERMES_DETERMINISTIC", raising=False)
     async with _ThinkingApp().run_test() as pilot:
         tw = pilot.app.query_one(ThinkingWidget)
         tw.activate()

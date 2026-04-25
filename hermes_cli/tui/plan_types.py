@@ -82,3 +82,18 @@ class PlannedCall:
             parent_tool_call_id=self.parent_tool_call_id,
             depth=self.depth,
         )
+
+    def as_cancelled(self) -> "PlannedCall":
+        """Return a new instance in CANCELLED state."""
+        return PlannedCall(
+            tool_call_id=self.tool_call_id,
+            tool_name=self.tool_name,
+            label=self.label,
+            category=self.category,
+            args_preview=self.args_preview,
+            state=PlanState.CANCELLED,
+            started_at=self.started_at,
+            ended_at=_time.monotonic(),
+            parent_tool_call_id=self.parent_tool_call_id,
+            depth=self.depth,
+        )

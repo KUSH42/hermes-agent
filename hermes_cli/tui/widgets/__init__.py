@@ -999,7 +999,8 @@ class AssistantNameplate(Widget):
 
     # --- helpers ---
 
-    _DECRYPT_TICKS = 150  # 5s @ 30fps
+    _DECRYPT_TICKS = 150  # 5s @ 30fps — startup splash only
+    _MORPH_TICKS = 8      # ~267ms @ 30fps — active/idle transitions
 
     def _init_decrypt(self) -> None:
         self._frame = []
@@ -1020,7 +1021,7 @@ class AssistantNameplate(Widget):
         self._morph_src = src
         self._morph_dst = dst
         length = max(len(src), len(dst))
-        ticks_base = max(1, int(round(150 * self._morph_speed)))
+        ticks_base = max(1, int(round(self._MORPH_TICKS * self._morph_speed)))
         self._frame = []
         self._morph_dissolve = []
         for i in range(length):
@@ -1093,12 +1094,12 @@ class AssistantNameplate(Widget):
     def _on_error_set(self, **_) -> None:
         """A3-1: switch nameplate into error state."""
         try:
-            self._pulse_stop()
+            self._stop_timer()
             self.remove_class("--active", "--idle")
             self.add_class("--error")
             self.refresh()
         except Exception:
-            pass
+            _LOG.debug("nameplate _on_error_set failed", exc_info=True)
 
     def _on_error_clear(self, **_) -> None:
         """A3-1: restore nameplate after error is cleared."""
@@ -1106,4 +1107,4 @@ class AssistantNameplate(Widget):
             self.remove_class("--error")
             self._activate_idle_phase()
         except Exception:
-            pass
+            _LOG.debug("nameplate _on_error_clear failed", exc_info=True)

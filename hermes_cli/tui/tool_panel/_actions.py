@@ -520,6 +520,9 @@ class _ToolPanelActionsMixin:
                 contextual.append(("E", "edit"))
             if rs.is_error and not any(h[0] == "Enter" and h[1] == "retry" for h in primary):
                 contextual.insert(0, ("r", "retry"))
+            # KO-4: Render-as cycle hint, post-streaming non-error blocks only.
+            if not _block_streaming and not rs.is_error:
+                contextual.insert(0, ("t", "render as"))
 
         _power_keys_exist = bool(rs is not None)
 
@@ -636,13 +639,22 @@ class _ToolPanelActionsMixin:
         except Exception:
             pass
 
-    def force_renderer(self, kind: "ResultKind") -> None:
-        self._forced_renderer_kind = kind  # type: ignore[attr-defined]
+    def force_renderer(self, kind: "ResultKind | None") -> None:
+        """Set the user KIND override on this panel's view-state and re-render.
+
+        KO-4: writes view.user_kind_override (single source of truth). Legacy
+        self._forced_renderer_kind slot is gone. Passing kind=None clears the
+        override (cycle returns to classifier verdict).
+        """
         try:
             from hermes_cli.tui.body_renderers import pick_renderer
-            from hermes_cli.tui.tool_payload import ToolPayload, ClassificationResult
+            from hermes_cli.tui.tool_payload import ToolPayload, ClassificationResult, ResultKind
             from hermes_cli.tui.tool_panel.density import DensityTier
             from hermes_cli.tui.services.tools import ToolCallState
+
+            view = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
+            if view is not None:
+                view.user_kind_override = kind
 
             output_raw = self.copy_content()  # type: ignore[attr-defined]
             payload = ToolPayload(
@@ -653,16 +665,67 @@ class _ToolPanelActionsMixin:
                 output_raw=output_raw,
                 line_count=self._body_line_count(),  # type: ignore[attr-defined]
             )
-            cls_result = ClassificationResult(kind=kind, confidence=1.0)
+            if kind is not None:
+                cls_result = ClassificationResult(kind=kind, confidence=1.0)
+            else:
+                stamped = view.kind if view is not None else None
+                cls_result = stamped or ClassificationResult(kind=ResultKind.TEXT, confidence=0.0)
 
-            view = self._lookup_view_state()  # type: ignore[attr-defined]
             phase = view.state if view is not None else ToolCallState.DONE
             density = view.density if view is not None else DensityTier.DEFAULT
 
-            renderer_cls = pick_renderer(cls_result, payload, phase=phase, density=density)
+            renderer_cls = pick_renderer(
+                cls_result, payload,
+                phase=phase, density=density,
+                user_kind_override=kind,
+            )
+            # force_renderer is the ACTIVE entry point; replay the swap even
+            # when the result is FallbackRenderer so a "clear override" cycle
+            # produces an observable mount.
             self._swap_renderer(renderer_cls, payload, cls_result)  # type: ignore[attr-defined]
         except Exception:
             _log.exception("force_renderer failed for kind=%s", kind)
+
+    def action_cycle_kind(self) -> None:
+        """KO-4: cycle user KIND override on focused, post-streaming block."""
+        from hermes_cli.tui.tool_payload import ResultKind
+        from hermes_cli.tui.services.tools import ToolCallState
+
+        cycle: tuple["ResultKind | None", ...] = (
+            None,
+            ResultKind.CODE,
+            ResultKind.JSON,
+            ResultKind.DIFF,
+            ResultKind.TABLE,
+            ResultKind.LOG,
+            ResultKind.SEARCH,
+            ResultKind.TEXT,
+        )
+
+        view = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
+        if view is None:
+            self._flash_header("no block focused", tone="warning")
+            return
+        _RENDERABLE = {
+            ToolCallState.COMPLETING,
+            ToolCallState.DONE,
+            ToolCallState.ERROR,
+            ToolCallState.CANCELLED,
+        }
+        if view.state not in _RENDERABLE:
+            return
+
+        current = view.user_kind_override
+        try:
+            idx = cycle.index(current)
+        except ValueError:
+            _log.debug("user_kind_override=%r not in cycle; snapping to None", current)
+            idx = -1
+        next_kind = cycle[(idx + 1) % len(cycle)]
+
+        self.force_renderer(next_kind)  # type: ignore[attr-defined]
+        label = next_kind.value if next_kind is not None else "auto"
+        self._flash_header(f"render as: {label}", tone="accent")
 
     def on_tool_header_clicked(self, event: "object") -> None:
         getattr(event, "stop", lambda: None)()

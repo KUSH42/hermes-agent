@@ -241,17 +241,29 @@ class _ToolPanelCompletionMixin:
             from hermes_cli.tui.tool_panel.density import DensityTier
             from hermes_cli.tui.services.tools import ToolCallState
 
-            if result.kind in (ResultKind.TEXT, ResultKind.EMPTY):
-                return
-            if self._category == ToolCategory.SHELL:  # type: ignore[attr-defined]
-                return
+            view = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
+            override = view.user_kind_override if view is not None else None
 
-            view = self._lookup_view_state()  # type: ignore[attr-defined]
+            # KO-3-A: only honor TEXT/EMPTY/SHELL early-returns when no override.
+            if override is None:
+                if result.kind in (ResultKind.TEXT, ResultKind.EMPTY):
+                    return
+                if self._category == ToolCategory.SHELL:  # type: ignore[attr-defined]
+                    return
+
             phase = view.state if view is not None else ToolCallState.COMPLETING
             density = view.density if view is not None else DensityTier.DEFAULT
 
-            renderer_cls = pick_renderer(result, payload, phase=phase, density=density)
-            if renderer_cls is FallbackRenderer:
+            renderer_cls = pick_renderer(
+                result, payload,
+                phase=phase, density=density,
+                user_kind_override=override,
+            )
+            # When override is set and pick_renderer returns Fallback, that IS
+            # the user's choice — swap to it. When override is None and
+            # pick_renderer returns Fallback, fall back to existing "no swap"
+            # behavior so the default plain body stays.
+            if override is None and renderer_cls is FallbackRenderer:
                 return
             self._swap_renderer(renderer_cls, payload, result)
         except Exception:

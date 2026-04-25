@@ -41,14 +41,22 @@ def test_tool_rerun_requested_has_panel():
 
 def test_force_renderer_stores_forced_kind():
     """force_renderer stores the kind even when body swap fails."""
+    from types import SimpleNamespace
     from hermes_cli.tui.tool_panel import ToolPanel
     from hermes_cli.tui.tool_payload import ResultKind
+    from hermes_cli.tui.tool_panel.density import DensityTier
+    from hermes_cli.tui.services.tools import ToolCallState
 
     block_mock = MagicMock()
     block_mock._total_received = 0
 
     panel = ToolPanel(block=block_mock, tool_name="bash")
-    panel._forced_renderer_kind = None
+    panel._view_state = SimpleNamespace(
+        state=ToolCallState.DONE,
+        kind=None,
+        density=DensityTier.DEFAULT,
+        user_kind_override=None,
+    )
     # _header_bar may be None pre-compose; force_renderer should not crash
     panel._header_bar = None
     panel._body_pane = None
@@ -56,18 +64,27 @@ def test_force_renderer_stores_forced_kind():
     panel._block = block_mock
 
     panel.force_renderer(ResultKind.CODE)
-    assert panel._forced_renderer_kind == ResultKind.CODE
+    assert panel._view_state.user_kind_override == ResultKind.CODE
 
 
 def test_force_renderer_unknown_kind_no_crash():
     """force_renderer with any ResultKind never raises."""
+    from types import SimpleNamespace
     from hermes_cli.tui.tool_panel import ToolPanel
     from hermes_cli.tui.tool_payload import ResultKind
+    from hermes_cli.tui.tool_panel.density import DensityTier
+    from hermes_cli.tui.services.tools import ToolCallState
 
     block_mock = MagicMock()
     block_mock._total_received = 0
 
     panel = ToolPanel(block=block_mock, tool_name="bash")
+    panel._view_state = SimpleNamespace(
+        state=ToolCallState.DONE,
+        kind=None,
+        density=DensityTier.DEFAULT,
+        user_kind_override=None,
+    )
     panel._header_bar = None
     panel._body_pane = None
     panel._tool_args = {}
@@ -78,13 +95,22 @@ def test_force_renderer_unknown_kind_no_crash():
 
 def test_force_renderer_fallback_on_error():
     """force_renderer swallows all exceptions gracefully."""
+    from types import SimpleNamespace
     from hermes_cli.tui.tool_panel import ToolPanel
     from hermes_cli.tui.tool_payload import ResultKind
+    from hermes_cli.tui.tool_panel.density import DensityTier
+    from hermes_cli.tui.services.tools import ToolCallState
 
     block_mock = MagicMock()
     block_mock._total_received = 0
 
     panel = ToolPanel(block=block_mock, tool_name="bash")
+    panel._view_state = SimpleNamespace(
+        state=ToolCallState.DONE,
+        kind=None,
+        density=DensityTier.DEFAULT,
+        user_kind_override=None,
+    )
     panel._header_bar = MagicMock()
     panel._body_pane = None  # will cause AttributeError in _swap_renderer
     panel._tool_args = {}
@@ -93,4 +119,4 @@ def test_force_renderer_fallback_on_error():
 
     # Should not raise
     panel.force_renderer(ResultKind.DIFF)
-    assert panel._forced_renderer_kind == ResultKind.DIFF
+    assert panel._view_state.user_kind_override == ResultKind.DIFF

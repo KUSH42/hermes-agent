@@ -97,6 +97,7 @@ def pick_renderer(
     *,
     phase: "ToolCallState",
     density: "DensityTier",
+    user_kind_override: "ResultKind | None" = None,
 ) -> type[BodyRenderer]:
     """Select best renderer for (cls_result, payload, phase, density).
 
@@ -117,12 +118,21 @@ def pick_renderer(
     3. confidence > 0.5 AND non-TEXT/EMPTY → try specialized renderer via accepts().
        0.5–0.7 band: stamp _low_confidence_disclosed flag for renderer notice.
     4. TEXT, low-confidence, or no match → FallbackRenderer.
+
+    KO-2: when ``user_kind_override`` is set and ``phase`` is post-streaming,
+    a synthetic high-confidence ClassificationResult replaces ``cls_result``
+    for dispatch, AND Rules 1–2 (SHELL / EMPTY short-circuits) are bypassed
+    so override→TEXT, override→CODE-on-SHELL, etc. are observable. The
+    original ``cls_result`` (and the classifier's verdict on ``view.kind``)
+    is left untouched.
     """
     from hermes_cli.tui.tool_category import ToolCategory
-    from hermes_cli.tui.tool_payload import ResultKind
+    from hermes_cli.tui.tool_payload import ResultKind, ClassificationResult
 
     # Streaming branch — runs when phase says we are still receiving lines.
     # Classification is typically empty/UNKNOWN here; key on category instead.
+    # Override has no effect here — renderer swap mid-stream would race the
+    # render loop; takes effect once phase reaches COMPLETING/DONE.
     if phase in _STREAMING_PHASES:
         for r in REGISTRY:
             if not r.accepts(phase, density):
@@ -131,6 +141,32 @@ def pick_renderer(
                 return r
         # Exhausted: no streaming renderer matched this category.
         return PlainBodyRenderer
+
+    # KO-2: override path — synthesize high-confidence cls_eff, skip Rules 1–2,
+    # walk REGISTRY for specialized renderer; fall through to Fallback for
+    # TEXT/EMPTY (intentional) or unmatched kinds.
+    if user_kind_override is not None:
+        cls_eff = ClassificationResult(
+            kind=user_kind_override,
+            confidence=1.0,
+        )
+        # TEXT and EMPTY short-circuit to FallbackRenderer — TEXT because
+        # Fallback is the only legitimate plain-text target; EMPTY because
+        # rendering an empty-state placeholder over real output on user
+        # request would silently overwrite content.
+        if cls_eff.kind not in (ResultKind.TEXT, ResultKind.EMPTY):
+            for r in REGISTRY:
+                # Skip both terminator renderers: FallbackRenderer.can_render
+                # always returns True, and ShellOutputRenderer matches any
+                # SHELL-category payload. Without this filter, override would
+                # be silently caught by one of them.
+                if r is FallbackRenderer or r is ShellOutputRenderer:
+                    continue
+                if not r.accepts(phase, density):
+                    continue
+                if r.can_render(cls_eff, payload):
+                    return r
+        return FallbackRenderer
 
     # Phase C branch — existing R-2A-2 logic, unchanged.
     from hermes_cli.tui.tool_panel.density import DensityTier  # noqa: F401

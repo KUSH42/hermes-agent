@@ -235,6 +235,7 @@ def _make_completion_mixin(view_state=None):
         _body_pane = None
         _tool_name = "test_tool"
         _tool_args = {}
+        _view_state = None  # KO-3: _maybe_swap_renderer reads this
 
         def _lookup_view_state(self):
             return view_state
@@ -256,7 +257,7 @@ class TestCompletionCallSite:
         stub = _make_completion_mixin()
         captured: list[dict] = []
 
-        def _fake_pick(cls_result, payload, *, phase, density):
+        def _fake_pick(cls_result, payload, *, phase, density, user_kind_override=None):
             captured.append({"phase": phase, "density": density})
             from hermes_cli.tui.body_renderers import FallbackRenderer
             return FallbackRenderer
@@ -278,7 +279,7 @@ class TestCompletionCallSite:
         stub = _make_completion_mixin(view_state=view)
         captured: list[dict] = []
 
-        def _fake_pick(cls_result, payload, *, phase, density):
+        def _fake_pick(cls_result, payload, *, phase, density, user_kind_override=None):
             captured.append({"phase": phase, "density": density})
             from hermes_cli.tui.body_renderers import FallbackRenderer
             return FallbackRenderer
@@ -295,7 +296,7 @@ class TestCompletionCallSite:
         stub = _make_completion_mixin(view_state=None)
         captured: list[dict] = []
 
-        def _fake_pick(cls_result, payload, *, phase, density):
+        def _fake_pick(cls_result, payload, *, phase, density, user_kind_override=None):
             captured.append({"phase": phase, "density": density})
             from hermes_cli.tui.body_renderers import FallbackRenderer
             return FallbackRenderer
@@ -313,7 +314,7 @@ class TestCompletionCallSite:
         import logging
         stub = _make_completion_mixin()
 
-        def _boom(cls_result, payload, *, phase, density):
+        def _boom(cls_result, payload, *, phase, density, user_kind_override=None):
             raise RuntimeError("pick_renderer exploded")
 
         payload = _payload()
@@ -329,7 +330,7 @@ class TestCompletionCallSite:
         stub = _make_completion_mixin()
         pick_called = []
 
-        def _fake_pick(cls_result, payload, *, phase, density):
+        def _fake_pick(cls_result, payload, *, phase, density, user_kind_override=None):
             pick_called.append(True)
             from hermes_cli.tui.body_renderers import FallbackRenderer
             return FallbackRenderer
@@ -355,7 +356,7 @@ def _make_actions_mixin(view_state=None):
         _block = None
         _tool_name = "test_tool"
         _tool_args = {}
-        _forced_renderer_kind = None
+        _view_state = None  # KO-4: force_renderer reads this
 
         def _lookup_view_state(self):
             return view_state
@@ -378,7 +379,7 @@ class TestForceRendererCallSite:
         stub = _make_actions_mixin(view_state=None)
         captured: list[dict] = []
 
-        def _fake_pick(cls_result, payload, *, phase, density):
+        def _fake_pick(cls_result, payload, *, phase, density, user_kind_override=None):
             captured.append({"phase": phase, "density": density})
             from hermes_cli.tui.body_renderers import FallbackRenderer
             return FallbackRenderer
@@ -396,7 +397,7 @@ class TestForceRendererCallSite:
         stub = _make_actions_mixin(view_state=view)
         captured: list[dict] = []
 
-        def _fake_pick(cls_result, payload, *, phase, density):
+        def _fake_pick(cls_result, payload, *, phase, density, user_kind_override=None):
             captured.append({"phase": phase, "density": density})
             from hermes_cli.tui.body_renderers import FallbackRenderer
             return FallbackRenderer
@@ -414,7 +415,7 @@ class TestForceRendererCallSite:
         stub = _make_actions_mixin(view_state=view)
         captured: list[dict] = []
 
-        def _fake_pick(cls_result, payload, *, phase, density):
+        def _fake_pick(cls_result, payload, *, phase, density, user_kind_override=None):
             captured.append({"phase": phase, "density": density})
             from hermes_cli.tui.body_renderers import FallbackRenderer
             return FallbackRenderer
@@ -428,7 +429,7 @@ class TestForceRendererCallSite:
         import logging
         stub = _make_actions_mixin(view_state=None)
 
-        def _boom(cls_result, payload, *, phase, density):
+        def _boom(cls_result, payload, *, phase, density, user_kind_override=None):
             raise RuntimeError("pick_renderer exploded")
 
         with patch("hermes_cli.tui.body_renderers.pick_renderer", side_effect=_boom):

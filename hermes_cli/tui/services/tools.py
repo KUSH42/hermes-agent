@@ -15,7 +15,7 @@ from .base import AppService
 
 if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
-    from hermes_cli.tui.tool_payload import ClassificationResult
+    from hermes_cli.tui.tool_payload import ClassificationResult, ResultKind
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,9 @@ class ToolCallViewState:
     children: "list[str]" = _field(default_factory=list)
     # AXIS-2: KIND axis — stamped once at COMPLETING by the classifier.
     kind: "ClassificationResult | None" = None
+    # KO-1: user override on resolved KIND. Set via `t` keybind, consumed by
+    # pick_renderer ahead of `kind`. None = use classifier result.
+    user_kind_override: "ResultKind | None" = None
     # AXIS-2: DENSITY axis — Move 1 replaces this mirror with the resolver.
     density: DensityTier = _field(default=DensityTier.DEFAULT)
     # AXIS-3: per-instance watcher list.

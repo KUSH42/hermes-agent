@@ -82,6 +82,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         Binding("-",     "collapse_lines",   "Collapse lines",   show=False),
         Binding("*",     "expand_all_lines", "Expand all",       show=False),
         Binding("r",     "retry",            "Retry",            show=False),
+        Binding("t",     "cycle_kind",       "Render as",        show=False),
         Binding("E",     "edit_cmd",         "Edit cmd",         show=False),
         Binding("O",     "open_url",         "Open URL",         show=False),
         Binding("f",     "toggle_tail_follow", "tail", show=False),
@@ -129,7 +130,6 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         self._toggle_hint_shown: bool = False
         self._hint_visible: bool = False
 
-        self._forced_renderer_kind: "ResultKind | None" = None
         self._tool_args: dict | None = None
 
         self._plan_tool_call_id: str | None = None

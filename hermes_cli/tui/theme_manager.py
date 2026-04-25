@@ -193,7 +193,9 @@ def validate_skin_payload(
         )
 
     if warn_missing:
-        known = set(COMPONENT_VAR_DEFAULTS.keys())
+        # syntax-theme/syntax-scheme are valid keys but live outside
+        # COMPONENT_VAR_DEFAULTS by design (DM-F3); count them as "known".
+        known = set(COMPONENT_VAR_DEFAULTS.keys()) | _NON_HEX_COMPONENT_VARS
         present = {str(k) for k in cv.keys()}
         required = {
             k for k, v in COMPONENT_VAR_DEFAULTS.items()
@@ -614,6 +616,10 @@ class ThemeManager:
         self._component_vars.update(overrides.get("component_vars", {}))
 
     def _load_path(self, path: Path) -> None:
+        # DM-H: when given a skin directory, watch <dir>/DESIGN.md only.
+        # lint-report.md and tokens.dtcg.json edits do not retrigger reload.
+        if path.is_dir():
+            path = path / "DESIGN.md"
         css_vars, component_vars = load_skin_full(path)
         # Validate against COMPONENT_VAR_DEFAULTS — §8.1
         validate_skin_payload(

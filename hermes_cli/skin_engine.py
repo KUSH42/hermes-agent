@@ -1158,10 +1158,43 @@ def _build_skin_config(data: Dict[str, Any]) -> SkinConfig:
     )
 
 
+def _resolve_user_skin_path(name: str) -> Optional[Path]:
+    """Return the on-disk path for a user skin, preferring DESIGN.md.
+
+    Order (DM-B precedence):
+    1. <HERMES_HOME>/skins/<name>/DESIGN.md (if discovery enabled and present)
+    2. <HERMES_HOME>/skins/<name>.yaml
+    """
+    skins_path = _skins_dir()
+    if _design_md_discovery_enabled():
+        dm = skins_path / name / "DESIGN.md"
+        if dm.is_file():
+            return dm
+    yaml_path = skins_path / f"{name}.yaml"
+    if yaml_path.is_file():
+        return yaml_path
+    return None
+
+
+def _emit_yaml_deprecation_warning(path: Path, name: str, *, source_kind: str) -> None:
+    """DM-K1 warning: user YAML-only loads after Phase 4 release."""
+    if source_kind != "user":
+        return
+    if not _YAML_DEPRECATED_SINCE:
+        return
+    target_dir = path.parent / name
+    msg = (
+        f"{path} is deprecated; move it to {target_dir / 'DESIGN.md'}."
+    )
+    import warnings as _warnings
+    _warnings.warn(msg, DeprecationWarning, stacklevel=3)
+
+
 def list_skins() -> List[Dict[str, str]]:
     """List all available skins (built-in + user-installed).
 
     Returns list of {"name": ..., "description": ..., "source": "builtin"|"user"}.
+    Includes user DESIGN.md directories when discovery is enabled.
     """
     result = []
     for name, data in _BUILTIN_SKINS.items():
@@ -1172,38 +1205,77 @@ def list_skins() -> List[Dict[str, str]]:
         })
 
     skins_path = _skins_dir()
-    if skins_path.is_dir():
-        for f in sorted(skins_path.glob("*.yaml")):
-            data = _load_skin_from_yaml(f)
-            if data:
-                skin_name = data.get("name", f.stem)
-                # Skip if it shadows a built-in
-                if any(s["name"] == skin_name for s in result):
-                    continue
-                result.append({
-                    "name": skin_name,
-                    "description": data.get("description", ""),
-                    "source": "user",
-                })
+    if not skins_path.is_dir():
+        return result
+
+    seen: set = {s["name"] for s in result}
+
+    # 1) DESIGN.md directories (preferred, when discovery enabled)
+    if _design_md_discovery_enabled():
+        for sub in sorted(skins_path.iterdir()):
+            if not sub.is_dir():
+                continue
+            dm = sub / "DESIGN.md"
+            if not dm.is_file():
+                continue
+            try:
+                payload = load_design_md_payload(dm)
+            except SkinError as exc:
+                logger.warning("skin: failed to read %s: %s", dm, exc)
+                continue
+            if payload.name in seen:
+                continue
+            seen.add(payload.name)
+            result.append({
+                "name": payload.name,
+                "description": payload.description,
+                "source": "user",
+            })
+
+    # 2) Legacy YAML user skins
+    for f in sorted(skins_path.glob("*.yaml")):
+        data = _load_skin_from_yaml(f)
+        if not data:
+            continue
+        skin_name = data.get("name", f.stem)
+        if skin_name in seen:
+            continue
+        seen.add(skin_name)
+        result.append({
+            "name": skin_name,
+            "description": data.get("description", ""),
+            "source": "user",
+        })
 
     return result
 
 
 def load_skin(name: str) -> SkinConfig:
-    """Load a skin by name. Checks user skins first, then built-in."""
-    # Check user skins directory
-    skins_path = _skins_dir()
-    user_file = skins_path / f"{name}.yaml"
-    if user_file.is_file():
-        data = _load_skin_from_yaml(user_file)
+    """Load a skin by name with DESIGN.md precedence.
+
+    Resolution order:
+    1. <HERMES_HOME>/skins/<name>/DESIGN.md  (if discovery enabled)
+    2. <HERMES_HOME>/skins/<name>.yaml       (emits DeprecationWarning post-Phase-4)
+    3. Built-in dict from _BUILTIN_SKINS
+    4. Built-in default
+
+    Malformed DESIGN.md raises and does **not** silently fall through to YAML
+    (DM-B precedence rule).
+    """
+    user_path = _resolve_user_skin_path(name)
+    if user_path is not None:
+        if user_path.name == "DESIGN.md":
+            payload = load_design_md_payload(user_path)
+            return skin_config_from_payload(payload)
+        # Legacy YAML path
+        _emit_yaml_deprecation_warning(user_path, name, source_kind="user")
+        data = _load_skin_from_yaml(user_path)
         if data:
             return _build_skin_config(data)
 
-    # Check built-in skins
     if name in _BUILTIN_SKINS:
         return _build_skin_config(_BUILTIN_SKINS[name])
 
-    # Fallback to default
     logger.warning("Skin '%s' not found, using default", name)
     return _build_skin_config(_BUILTIN_SKINS["default"])
 
@@ -1368,16 +1440,17 @@ _X_HERMES_ALLOWED_KEYS: frozenset = frozenset({
     "banner_hero", "vars", "stream_effect", "colors",
 })
 
-# Whether DESIGN.md directory discovery is on by default. Phase 4 flips this
-# (and the env var still wins). Phase 1 keeps it off so existing tests pass.
-_DESIGN_MD_DISCOVERY_DEFAULT: bool = False
+# Whether DESIGN.md directory discovery is on by default. Phase 4 flipped this
+# from False → True. Env var HERMES_DESIGN_MD_SKINS=0 still disables.
+_DESIGN_MD_DISCOVERY_DEFAULT: bool = True
 
-# Phase 4 release marker for DM-K2 deprecation gate. Set the version that ships
+# Phase 4 release marker for DM-K2 deprecation gate. Set to the version that ships
 # the YAML deprecation warning. Used by _yaml_removal_unblocked().
-_YAML_DEPRECATED_SINCE: str = ""
+_YAML_DEPRECATED_SINCE: str = "0.8.0"
 
-# Whether authoring docs primarily reference DESIGN.md (Phase 3+). DM-K2 gate item.
-_AUTHORING_DOCS_PRIMARY_DESIGN_MD: bool = False
+# Whether authoring docs primarily reference DESIGN.md (Phase 3 set this to True
+# alongside the skill/skin-reference doc updates). DM-K2 gate item.
+_AUTHORING_DOCS_PRIMARY_DESIGN_MD: bool = True
 
 BUNDLED_SKIN_NAMES: Tuple[str, ...] = ("matrix", "catppuccin", "solarized-dark", "tokyo-night")
 

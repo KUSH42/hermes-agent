@@ -339,5 +339,175 @@ class TestSkinAuthoringDocs:
         assert "x-hermes.component-vars" in text or "x-hermes:\n      component-vars" in text
 
 
+# ---------------------------------------------------------------------------
+# Phase 4 — DM-B precedence + DM-H hot reload + DM-K1 deprecation warning
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def hermes_home(tmp_path, monkeypatch):
+    """Isolated HERMES_HOME for skin discovery tests."""
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    # invalidate any cached skin
+    import hermes_cli.skin_engine as se
+    se._active_skin = None
+    return tmp_path
+
+
+def _user_skin_yaml(home: Path, name: str) -> Path:
+    p = home / "skins" / f"{name}.yaml"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(f"name: {name}\ndescription: yaml-only\nfg: '#abcdef'\n", encoding="utf-8")
+    return p
+
+
+def _user_skin_design_md(home: Path, name: str, *, body: str | None = None) -> Path:
+    p = home / "skins" / name / "DESIGN.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(body or dedent(f"""
+        ---
+        version: alpha
+        name: {name}
+        description: design.md only
+        colors:
+          foreground: "#cdd6f4"
+          background: "#1e1e2e"
+          accent: "#cba6f7"
+        ---
+        # {name}
+        """).lstrip(), encoding="utf-8")
+    return p
+
+
+class TestDesignMdLocationDmB:
+    def test_user_design_md_path_wins_over_yaml(self, hermes_home):
+        from hermes_cli.skin_engine import _resolve_user_skin_path
+        _user_skin_yaml(hermes_home, "demo")
+        dm = _user_skin_design_md(hermes_home, "demo")
+        resolved = _resolve_user_skin_path("demo")
+        assert resolved == dm
+
+    def test_invalid_design_md_blocks_adjacent_yaml_fallback(self, hermes_home):
+        _user_skin_yaml(hermes_home, "demo")
+        # Write a malformed DESIGN.md — missing front matter
+        bad = hermes_home / "skins" / "demo" / "DESIGN.md"
+        bad.parent.mkdir(parents=True, exist_ok=True)
+        bad.write_text("not a design.md file\n", encoding="utf-8")
+        from hermes_cli.skin_engine import load_skin
+        with pytest.raises(SkinError):
+            load_skin("demo")
+
+    def test_yaml_only_load_silent_pre_phase4(self, hermes_home, monkeypatch):
+        # Force _YAML_DEPRECATED_SINCE empty to simulate Phase 0–3
+        import hermes_cli.skin_engine as se
+        monkeypatch.setattr(se, "_YAML_DEPRECATED_SINCE", "")
+        _user_skin_yaml(hermes_home, "demo")
+        import warnings as w
+        with w.catch_warnings(record=True) as caught:
+            w.simplefilter("always")
+            se.load_skin("demo")
+        assert not any(issubclass(c.category, DeprecationWarning) for c in caught), [
+            (c.category, str(c.message)) for c in caught
+        ]
+
+    def test_list_skins_includes_design_md_directories(self, hermes_home):
+        _user_skin_design_md(hermes_home, "from_dir")
+        from hermes_cli.skin_engine import list_skins
+        names = {s["name"] for s in list_skins()}
+        assert "from_dir" in names
+
+
+class TestDesignMdHotReloadDmH:
+    def test_directory_load_watches_design_md_only(self, hermes_home):
+        # ThemeManager._load_path normalizes a directory to <dir>/DESIGN.md
+        skin_dir = hermes_home / "skins" / "demo"
+        _user_skin_design_md(hermes_home, "demo")
+        from hermes_cli.tui.theme_manager import ThemeManager
+        tm = ThemeManager.__new__(ThemeManager)
+        tm._app = None
+        tm._css_vars = {}
+        tm._component_vars = {}
+        tm._source_path = None
+        tm._source_mtime = 0.0
+        tm._watcher_thread = None
+        import threading as _t
+        tm._watcher_stop = _t.Event()
+        tm._watcher_interval_s = 1.0
+        tm._pending_reload_mtime = 0.0
+        tm._load_path(skin_dir)
+        assert tm._source_path is not None
+        assert tm._source_path.name == "DESIGN.md"
+
+    def test_lint_report_mtime_change_does_not_reload(self, hermes_home):
+        _user_skin_design_md(hermes_home, "demo")
+        lint = hermes_home / "skins" / "demo" / "lint-report.md"
+        lint.write_text("---\nwarning_baseline: 0\n---\n", encoding="utf-8")
+        from hermes_cli.tui.theme_manager import ThemeManager
+        tm = ThemeManager.__new__(ThemeManager)
+        tm._app = None
+        tm._css_vars = {}
+        tm._component_vars = {}
+        tm._source_path = None
+        tm._source_mtime = 0.0
+        tm._watcher_thread = None
+        import threading as _t
+        tm._watcher_stop = _t.Event()
+        tm._watcher_interval_s = 1.0
+        tm._pending_reload_mtime = 0.0
+        tm._load_path(hermes_home / "skins" / "demo")
+        baseline = tm._source_mtime
+        # Bump only the lint report mtime
+        import time
+        time.sleep(0.01)
+        lint.write_text(lint.read_text() + "\n", encoding="utf-8")
+        # Source path mtime unchanged
+        assert tm._source_path.stat().st_mtime == baseline
+
+
+class TestDesignMdDeprecationDmK1:
+    def test_user_yaml_only_emits_deprecation_warning(self, hermes_home):
+        path = _user_skin_yaml(hermes_home, "legacy_only")
+        from hermes_cli.skin_engine import load_skin
+        import warnings as w
+        with w.catch_warnings(record=True) as caught:
+            w.simplefilter("always")
+            load_skin("legacy_only")
+        deps = [c for c in caught if issubclass(c.category, DeprecationWarning)]
+        assert deps, "expected DeprecationWarning"
+        msg = str(deps[0].message)
+        assert "legacy_only.yaml" in msg
+        assert "legacy_only/DESIGN.md" in msg
+
+    def test_user_design_md_only_no_warning(self, hermes_home):
+        _user_skin_design_md(hermes_home, "newshine")
+        from hermes_cli.skin_engine import load_skin
+        import warnings as w
+        with w.catch_warnings(record=True) as caught:
+            w.simplefilter("always")
+            load_skin("newshine")
+        assert not any(issubclass(c.category, DeprecationWarning) for c in caught)
+
+    def test_user_both_formats_design_md_wins_no_warning(self, hermes_home):
+        _user_skin_yaml(hermes_home, "both")
+        _user_skin_design_md(hermes_home, "both")
+        from hermes_cli.skin_engine import load_skin
+        import warnings as w
+        with w.catch_warnings(record=True) as caught:
+            w.simplefilter("always")
+            cfg = load_skin("both")
+        assert cfg.description == "design.md only"
+        assert not any(issubclass(c.category, DeprecationWarning) for c in caught)
+
+
+def test_design_md_discovery_default_is_on_phase4():
+    from hermes_cli.skin_engine import _DESIGN_MD_DISCOVERY_DEFAULT
+    assert _DESIGN_MD_DISCOVERY_DEFAULT is True
+
+
+def test_yaml_deprecated_since_set_phase4():
+    from hermes_cli.skin_engine import _YAML_DEPRECATED_SINCE
+    assert _YAML_DEPRECATED_SINCE  # non-empty
+
+
 def test_bundled_skin_names_constant():
     assert set(BUNDLED_SKIN_NAMES) == {"matrix", "catppuccin", "solarized-dark", "tokyo-night"}

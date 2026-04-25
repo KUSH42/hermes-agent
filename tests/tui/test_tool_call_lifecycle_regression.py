@@ -263,7 +263,9 @@ class TestCompletionLifecycle:
         svc.app._active_streaming_blocks["tid-done"] = mock_block
         svc.app.query_one = MagicMock(return_value=MagicMock(_user_scrolled_up=False))
 
-        with patch.object(svc, "close_streaming_tool_block"), \
+        # R3-AXIS-03: removal happens in _terminalize_tool_view (called by real
+        # close_streaming_tool_block). Don't patch close — let helper run.
+        with patch.object(svc, "_get_output_panel", return_value=None), \
              patch.object(svc, "mark_plan_done"):
             svc.complete_tool_call(
                 "tid-done", "terminal", {}, "result",

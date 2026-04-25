@@ -489,12 +489,14 @@ class TestCompletionModes:
             self._setup_started_view(svc, tool_call_id="tc-terminal")
             expected = ToolCallState.ERROR if is_error else ToolCallState.DONE
 
-            with patch.object(svc, "close_streaming_tool_block"):
-                with patch.object(svc, "mark_plan_done"):
-                    svc.complete_tool_call(
-                        "tc-terminal", "web_search", {}, "result",
-                        is_error=is_error, summary=None,
-                    )
+            # R3-AXIS-03: view-removal is the helper's responsibility; let real
+            # close_streaming_tool_block run so _terminalize_tool_view fires.
+            with patch.object(svc, "_get_output_panel", return_value=None), \
+                 patch.object(svc, "mark_plan_done"):
+                svc.complete_tool_call(
+                    "tc-terminal", "web_search", {}, "result",
+                    is_error=is_error, summary=None,
+                )
 
             # View removed from active index (terminal state)
             assert "tc-terminal" not in svc._tool_views_by_id
@@ -1018,12 +1020,13 @@ class TestProductionCompletionRouting:
         )
         svc._tool_views_by_id["tid-r"] = view
 
-        with patch.object(svc, "close_streaming_tool_block"):
-            with patch.object(svc, "mark_plan_done"):
-                svc.complete_tool_call(
-                    "tid-r", "bash", {}, "result",
-                    is_error=False, summary=None,
-                )
+        # R3-AXIS-03: removal is the helper's responsibility — real close path runs.
+        with patch.object(svc, "_get_output_panel", return_value=None), \
+             patch.object(svc, "mark_plan_done"):
+            svc.complete_tool_call(
+                "tid-r", "bash", {}, "result",
+                is_error=False, summary=None,
+            )
 
         assert "tid-r" not in svc._tool_views_by_id
 

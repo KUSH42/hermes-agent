@@ -273,7 +273,8 @@ class TestKindStampOnCompleting:
         svc._tool_views_by_id["tc4"] = view
         svc.app._active_streaming_blocks["tc4"] = MagicMock()
 
-        with patch.object(svc, "close_streaming_tool_block"), \
+        # R3-AXIS-03: terminal state reached via real close path → helper.
+        with patch.object(svc, "_get_output_panel", return_value=None), \
              patch.object(svc, "mark_plan_done"), \
              patch("hermes_cli.tui.perf._tool_probe") as mock_probe, \
              patch("hermes_cli.tui.content_classifier.classify_content",

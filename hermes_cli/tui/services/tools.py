@@ -5,15 +5,17 @@ import logging
 import time as _time
 from dataclasses import dataclass, field as _field
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from textual.css.query import NoMatches
 
 from hermes_cli.tool_icons import get_display_name
+from hermes_cli.tui.tool_panel.density import DensityTier
 from .base import AppService
 
 if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
+    from hermes_cli.tui.tool_payload import ClassificationResult
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,50 @@ class ToolCallViewState:
     is_error: bool = False
     error_kind: "str | None" = None
     children: "list[str]" = _field(default_factory=list)
+    # AXIS-2: KIND axis — stamped once at COMPLETING by the classifier.
+    kind: "ClassificationResult | None" = None
+    # AXIS-2: DENSITY axis — Move 1 replaces this mirror with the resolver.
+    density: DensityTier = _field(default=DensityTier.DEFAULT)
+    # AXIS-3: per-instance watcher list.
+    _watchers: "list[_AxisWatcher]" = _field(default_factory=list, repr=False, compare=False)
+
+
+# ---------------------------------------------------------------------------
+# AXIS-3: Observer hook
+# ---------------------------------------------------------------------------
+
+AxisName = Literal["state", "kind", "density"]
+_AxisWatcher = Callable[["ToolCallViewState", AxisName, Any, Any], None]
+
+
+def add_axis_watcher(view: "ToolCallViewState", watcher: "_AxisWatcher") -> None:
+    """Register a watcher. Called as watcher(view, axis, old, new) after each set_axis."""
+    view._watchers.append(watcher)
+
+
+def remove_axis_watcher(view: "ToolCallViewState", watcher: "_AxisWatcher") -> None:
+    """Best-effort remove; silent if absent."""
+    try:
+        view._watchers.remove(watcher)
+    except ValueError:
+        pass  # already gone — safe
+
+
+def set_axis(view: "ToolCallViewState", axis: "AxisName", value: Any) -> None:
+    """Single mutation entry point that fires watchers.
+
+    Direct field assignment still works (existing call sites unchanged); only
+    callers that want change notifications must route through set_axis.
+    """
+    old = getattr(view, axis)
+    if old == value:
+        return
+    setattr(view, axis, value)
+    for w in list(view._watchers):
+        try:
+            w(view, axis, old, value)
+        except Exception:
+            logger.exception("axis watcher failed (axis=%s); continuing", axis)
 
 
 @dataclass
@@ -985,7 +1031,8 @@ class ToolRenderingService(AppService):
             return
 
         if view is not None:
-            view.state = ToolCallState.COMPLETING
+            set_axis(view, "state", ToolCallState.COMPLETING)
+            self._stamp_kind_on_completing(view, result_lines)
 
         # Compute duration string for UI display
         dur_ms_float: float = 0.0
@@ -1110,3 +1157,32 @@ class ToolRenderingService(AppService):
         if msg is None:
             return None
         return getattr(msg, "_reasoning_panel", None)
+
+    def _stamp_kind_on_completing(
+        self,
+        view: "ToolCallViewState",
+        result_lines: "list[str] | None",
+    ) -> None:
+        """AXIS-4: classify once at COMPLETING and stamp onto view-state.
+
+        Idempotent: only writes when view.kind is None. Exceptions are logged
+        and swallowed — classifier failure must never break completion.
+        """
+        if view.kind is not None:
+            return  # already stamped (defensive — shouldn't happen)
+        try:
+            from hermes_cli.tui.content_classifier import classify_content
+            from hermes_cli.tui.tool_payload import ToolPayload
+            output_raw = "\n".join(result_lines) if result_lines else ""
+            payload = ToolPayload(
+                tool_name=view.tool_name,
+                category=view.category,
+                args=view.args or {},
+                input_display=None,
+                output_raw=output_raw,
+            )
+            result = classify_content(payload)
+        except Exception:
+            logger.exception("AXIS-4: classifier failed during COMPLETING; leaving kind=None")
+            return
+        set_axis(view, "kind", result)

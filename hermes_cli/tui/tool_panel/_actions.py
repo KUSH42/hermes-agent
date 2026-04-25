@@ -26,6 +26,7 @@ class _ToolPanelActionsMixin:
         self.collapsed = not self.collapsed  # type: ignore[attr-defined]
         self._user_collapse_override = True  # type: ignore[attr-defined]
         self._auto_collapsed = False  # type: ignore[attr-defined]
+        self._mirror_density_to_view_state()  # type: ignore[attr-defined]
 
     def action_open_primary(self) -> None:
         import os

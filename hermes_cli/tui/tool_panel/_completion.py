@@ -318,6 +318,7 @@ class _ToolPanelCompletionMixin:
                 self._saved_visible_start = max(0, total - visible_cap)  # type: ignore[attr-defined]
         self.collapsed = should_collapse  # type: ignore[attr-defined]
         self._auto_collapsed = should_collapse  # type: ignore[attr-defined]
+        self._mirror_density_to_view_state()  # type: ignore[attr-defined]
         if should_collapse:
             self._flash_header(f"▾ auto-collapsed ({total} lines)", tone="success")  # type: ignore[attr-defined]
 

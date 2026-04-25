@@ -322,7 +322,7 @@ class InlineProseLog(CopyableRichLog):
         width = self.scrollable_content_region.width or 80
         plan_rows = self._inline_paint.get(owner_index, [])
         if row_in_line >= len(plan_rows):
-            return Strip.blank(width)
+            return Strip.blank(width).apply_style(self.rich_style)
 
         spans = self._inline_lines[owner_index]
         mode = self._current_render_mode()
@@ -348,7 +348,7 @@ class InlineProseLog(CopyableRichLog):
                     seg_text = alt[:op.width].ljust(op.width)
                     segments.append(Segment(seg_text))
 
-        strip = Strip(segments).simplify().adjust_cell_length(width)
+        strip = Strip(segments).simplify().adjust_cell_length(width).apply_style(self.rich_style)
 
         selection = self.text_selection
         if selection is not None:

@@ -1,9 +1,12 @@
 """ToolBlock widget — collapsible tool output block."""
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable
 
 from rich.text import Text
+
+_log = logging.getLogger(__name__)
 from textual.app import ComposeResult
 from textual.css.query import NoMatches
 from textual.widget import Widget
@@ -154,10 +157,34 @@ class ToolBlock(Widget):
 
     def _render_diff_line(self, plain: str) -> "Text | None":
         try:
-            from hermes_cli.tui.body_renderers.streaming import StreamingBodyRenderer
+            from hermes_cli.tui.body_renderers import (
+                pick_renderer,
+                _STREAMING_EMPTY_CLS,
+                FileRenderer,
+            )
+            from hermes_cli.tui.tool_payload import ToolPayload
             from hermes_cli.tui.tool_category import ToolCategory
-            return StreamingBodyRenderer.for_category(ToolCategory.FILE).render_diff_line(plain)
+            from hermes_cli.tui.services.tools import ToolCallState
+            from hermes_cli.tui.tool_panel.density import DensityTier
+
+            payload = ToolPayload(
+                tool_name="",
+                category=ToolCategory.FILE,
+                args={},
+                input_display=None,
+                output_raw="",
+                line_count=0,
+            )
+            renderer_cls = pick_renderer(
+                _STREAMING_EMPTY_CLS, payload,
+                phase=ToolCallState.STREAMING,
+                density=DensityTier.DEFAULT,
+            )
+            if not isinstance(renderer_cls, type) or not issubclass(renderer_cls, FileRenderer):
+                return None
+            return renderer_cls(payload, _STREAMING_EMPTY_CLS).render_diff_line(plain)
         except Exception:
+            _log.exception("diff-line render failed")
             return None
 
     def _diff_bg_colors(self) -> tuple[str, str]:

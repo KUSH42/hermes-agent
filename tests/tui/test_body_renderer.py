@@ -14,11 +14,18 @@ from hermes_cli.tui.tool_category import ToolCategory
 
 
 def test_mcp_body_renderer_registered():
-    """BodyRenderer.for_category(ToolCategory.MCP) returns non-None without raising."""
-    from hermes_cli.tui.body_renderers.streaming import StreamingBodyRenderer as BodyRenderer
+    """pick_renderer with MCP category returns MCPBodyRenderer without raising."""
+    from hermes_cli.tui.body_renderers import pick_renderer, _STREAMING_EMPTY_CLS
+    from hermes_cli.tui.body_renderers.streaming import MCPBodyRenderer
+    from hermes_cli.tui.tool_payload import ToolPayload
+    from hermes_cli.tui.services.tools import ToolCallState
+    from hermes_cli.tui.tool_panel.density import DensityTier
 
-    renderer = BodyRenderer.for_category(ToolCategory.MCP)
-    assert renderer is not None
+    payload = ToolPayload(tool_name="", category=ToolCategory.MCP, args={},
+                          input_display=None, output_raw="", line_count=0)
+    renderer_cls = pick_renderer(_STREAMING_EMPTY_CLS, payload,
+                                 phase=ToolCallState.STREAMING, density=DensityTier.DEFAULT)
+    assert renderer_cls is MCPBodyRenderer
 
 
 def test_mcp_finalize_extracts_text_content():
@@ -91,7 +98,7 @@ def test_mcp_render_stream_line_passthrough():
 def test_search_renderer_web_search_json_renders_title():
     """web_search JSON with data.web → Text containing result titles."""
     import json
-    from hermes_cli.tui.body_renderers.streaming import SearchRenderer
+    from hermes_cli.tui.body_renderers.streaming import StreamingSearchRenderer as SearchRenderer
 
     renderer = SearchRenderer()
     payload = json.dumps({
@@ -112,7 +119,7 @@ def test_search_renderer_web_search_json_renders_title():
 def test_search_renderer_web_search_json_renders_url():
     """web_search JSON result includes URLs."""
     import json
-    from hermes_cli.tui.body_renderers.streaming import SearchRenderer
+    from hermes_cli.tui.body_renderers.streaming import StreamingSearchRenderer as SearchRenderer
 
     renderer = SearchRenderer()
     payload = json.dumps({
@@ -127,7 +134,7 @@ def test_search_renderer_web_search_json_renders_url():
 def test_search_renderer_web_search_json_truncates_long_description():
     """Descriptions > 120 chars are truncated with ellipsis."""
     import json
-    from hermes_cli.tui.body_renderers.streaming import SearchRenderer
+    from hermes_cli.tui.body_renderers.streaming import StreamingSearchRenderer as SearchRenderer
 
     renderer = SearchRenderer()
     long_desc = "x" * 200
@@ -142,7 +149,7 @@ def test_search_renderer_web_search_json_truncates_long_description():
 
 def test_search_renderer_non_json_falls_back():
     """Plain grep output (non-JSON) → fallback text rendering."""
-    from hermes_cli.tui.body_renderers.streaming import SearchRenderer
+    from hermes_cli.tui.body_renderers.streaming import StreamingSearchRenderer as SearchRenderer
 
     renderer = SearchRenderer()
     result = renderer.finalize(["src/a.py:10: match", "src/b.py:20: match"])
@@ -152,7 +159,7 @@ def test_search_renderer_non_json_falls_back():
 
 def test_search_renderer_empty_returns_none():
     """Empty input → None."""
-    from hermes_cli.tui.body_renderers.streaming import SearchRenderer
+    from hermes_cli.tui.body_renderers.streaming import StreamingSearchRenderer as SearchRenderer
 
     renderer = SearchRenderer()
     result = renderer.finalize([])

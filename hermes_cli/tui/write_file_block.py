@@ -165,6 +165,10 @@ class WriteFileBlock(StreamingToolBlock):
             line, self._line_scratch = self._line_scratch.split("\n", 1)
             self._emit_content_line(line)
 
+    def _lookup_view_state(self) -> "Any | None":
+        """Return the ToolCallViewState for this block, or None (no view-state context)."""
+        return None
+
     def _emit_content_line(self, line: str) -> None:
         """Append a single decoded content line to the body with per-line highlight."""
         self._content_lines.append(line)
@@ -174,9 +178,23 @@ class WriteFileBlock(StreamingToolBlock):
         except NoMatches:
             return
         try:
-            from hermes_cli.tui.body_renderers.streaming import StreamingBodyRenderer
+            from hermes_cli.tui.body_renderers import pick_renderer, _STREAMING_EMPTY_CLS
+            from hermes_cli.tui.tool_payload import ToolPayload
             from hermes_cli.tui.tool_category import ToolCategory
-            renderer = StreamingBodyRenderer.for_category(ToolCategory.FILE)
+            from hermes_cli.tui.services.tools import ToolCallState
+            from hermes_cli.tui.tool_panel.density import DensityTier
+
+            view = self._lookup_view_state()
+            density = view.density if view is not None else DensityTier.DEFAULT
+            _payload = ToolPayload(
+                tool_name="write_file", category=ToolCategory.FILE,
+                args={}, input_display=None, output_raw="", line_count=0,
+            )
+            renderer_cls = pick_renderer(
+                _STREAMING_EMPTY_CLS, _payload,
+                phase=ToolCallState.STREAMING, density=density,
+            )
+            renderer = renderer_cls(_payload, _STREAMING_EMPTY_CLS)
             lang = _lang_for_path(self._path)
             renderable = renderer.render_stream_line(line, line, lang=lang)
             log.write_with_source(renderable, line)
@@ -260,9 +278,23 @@ class WriteFileBlock(StreamingToolBlock):
         try:
             log = self._body.query_one(CopyableRichLog)
             log.clear()
-            from hermes_cli.tui.body_renderers.streaming import StreamingBodyRenderer
+            from hermes_cli.tui.body_renderers import pick_renderer, _STREAMING_EMPTY_CLS
+            from hermes_cli.tui.tool_payload import ToolPayload
             from hermes_cli.tui.tool_category import ToolCategory
-            renderer = StreamingBodyRenderer.for_category(ToolCategory.FILE)
+            from hermes_cli.tui.services.tools import ToolCallState
+            from hermes_cli.tui.tool_panel.density import DensityTier
+
+            view = self._lookup_view_state()
+            density = view.density if view is not None else DensityTier.DEFAULT
+            _payload = ToolPayload(
+                tool_name="write_file", category=ToolCategory.FILE,
+                args={}, input_display=None, output_raw="", line_count=0,
+            )
+            renderer_cls = pick_renderer(
+                _STREAMING_EMPTY_CLS, _payload,
+                phase=ToolCallState.STREAMING, density=density,
+            )
+            renderer = renderer_cls(_payload, _STREAMING_EMPTY_CLS)
             lang = _lang_for_path(self._path)
             renderable = renderer.finalize(self._content_lines, lang=lang)
             if renderable is not None:

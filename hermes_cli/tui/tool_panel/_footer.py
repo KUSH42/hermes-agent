@@ -128,8 +128,28 @@ class BodyPane(Widget):
         self._renderer_degraded: bool = False
         if category is not None:
             try:
-                from hermes_cli.tui.body_renderers.streaming import StreamingBodyRenderer
-                self._renderer = StreamingBodyRenderer.for_category(category)
+                from hermes_cli.tui.body_renderers import (
+                    pick_renderer,
+                    _STREAMING_EMPTY_CLS,
+                )
+                from hermes_cli.tui.tool_payload import ToolPayload
+                from hermes_cli.tui.services.tools import ToolCallState
+                from hermes_cli.tui.tool_panel.density import DensityTier
+
+                _payload = ToolPayload(
+                    tool_name="",
+                    category=category,
+                    args={},
+                    input_display=None,
+                    output_raw="",
+                    line_count=0,
+                )
+                renderer_cls = pick_renderer(
+                    _STREAMING_EMPTY_CLS, _payload,
+                    phase=ToolCallState.STREAMING,
+                    density=DensityTier.DEFAULT,
+                )
+                self._renderer = renderer_cls(_payload, _STREAMING_EMPTY_CLS)
             except Exception:
                 import logging
                 logging.getLogger(__name__).debug(

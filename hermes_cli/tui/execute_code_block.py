@@ -287,10 +287,21 @@ class ExecuteCodeBlock(StreamingToolBlock):
             theme = css_vars.get("preview-syntax-theme", theme)
         except Exception:
             pass
-        from hermes_cli.tui.body_renderers.streaming import StreamingBodyRenderer
+        from hermes_cli.tui.body_renderers import pick_renderer, _STREAMING_EMPTY_CLS, StreamingCodeRenderer
+        from hermes_cli.tui.tool_payload import ToolPayload
         from hermes_cli.tui.tool_category import ToolCategory
-        renderer = StreamingBodyRenderer.for_category(ToolCategory.CODE)
-        return renderer.highlight_line(line, theme)
+        from hermes_cli.tui.services.tools import ToolCallState
+        from hermes_cli.tui.tool_panel.density import DensityTier
+
+        payload = ToolPayload(
+            tool_name="execute_code", category=ToolCategory.CODE,
+            args={}, input_display=None, output_raw="", line_count=0,
+        )
+        renderer_cls = pick_renderer(
+            _STREAMING_EMPTY_CLS, payload,
+            phase=ToolCallState.STREAMING, density=DensityTier.DEFAULT,
+        )
+        return renderer_cls(payload, _STREAMING_EMPTY_CLS).highlight_line(line, theme)
 
     def finalize_code(self, code: str) -> None:
         """Replace streamed per-line render with canonical rich.Syntax. Event-loop only."""
@@ -338,9 +349,21 @@ class ExecuteCodeBlock(StreamingToolBlock):
                 except Exception:
                     theme = "monokai"
                     bg = None
-                from hermes_cli.tui.body_renderers.streaming import StreamingBodyRenderer
+                from hermes_cli.tui.body_renderers import pick_renderer, _STREAMING_EMPTY_CLS
+                from hermes_cli.tui.tool_payload import ToolPayload
                 from hermes_cli.tui.tool_category import ToolCategory
-                renderer = StreamingBodyRenderer.for_category(ToolCategory.CODE)
+                from hermes_cli.tui.services.tools import ToolCallState
+                from hermes_cli.tui.tool_panel.density import DensityTier
+
+                _code_payload = ToolPayload(
+                    tool_name="execute_code", category=ToolCategory.CODE,
+                    args={}, input_display=None, output_raw="", line_count=0,
+                )
+                renderer_cls = pick_renderer(
+                    _STREAMING_EMPTY_CLS, _code_payload,
+                    phase=ToolCallState.STREAMING, density=DensityTier.DEFAULT,
+                )
+                renderer = renderer_cls(_code_payload, _STREAMING_EMPTY_CLS)
                 renderable = renderer.finalize_code(code, theme=theme, bg=bg)
                 if renderable is not None:
                     code_log.write(renderable)

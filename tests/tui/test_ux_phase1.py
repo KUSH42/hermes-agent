@@ -105,12 +105,12 @@ async def test_render_fallback_when_v4_returns_none():
 
 
 def test_body_pane_renderer_falls_back_to_plain_on_error():
-    """BodyPane uses PlainBodyRenderer when BodyRenderer.for_category raises."""
+    """BodyPane uses PlainBodyRenderer when pick_renderer raises."""
     from hermes_cli.tui.tool_panel import BodyPane
     from hermes_cli.tui.body_renderers.streaming import PlainBodyRenderer
     from hermes_cli.tui.tool_category import ToolCategory
 
-    with patch("hermes_cli.tui.body_renderers.streaming.StreamingBodyRenderer.for_category", side_effect=RuntimeError("fail")):
+    with patch("hermes_cli.tui.body_renderers.pick_renderer", side_effect=RuntimeError("fail")):
         pane = BodyPane(block=None, category=ToolCategory.SHELL)
     assert isinstance(pane._renderer, PlainBodyRenderer), (
         f"Expected PlainBodyRenderer fallback, got {type(pane._renderer)}"

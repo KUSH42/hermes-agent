@@ -7,19 +7,23 @@ existing body-render paths. The streaming state machines in
 ExecuteCodeBlock, WriteFileBlock, and StreamingToolBlock are untouched;
 they delegate per-line formatting here.
 
-Seven concrete renderers (§5.3):
-    ShellRenderer   — ANSI passthrough, no finalize
-    CodeRenderer    — per-line Pygments + rich.Syntax finalize; extends with
-                       render_code_line / render_output_line / finalize_code
-                       for the two-section ExecuteCodeBlock layout (§5.3.1)
-    FileRenderer    — write-file per-line Syntax, full-body rehighlight,
-                       diff-line path formatting
-    SearchRenderer  — plain stream; structured finalize + extract_sidecar
-    WebRenderer     — ANSI passthrough; JSON/text finalize
-    AgentRenderer   — ANSI passthrough; no finalize
-    TextRenderer    — ANSI passthrough fallback; no finalize
+Nine concrete renderers (§5.3):
+    ShellRenderer          — ANSI passthrough, no finalize
+    StreamingCodeRenderer  — per-line Pygments + rich.Syntax finalize; extends with
+                             render_code_line / render_output_line / finalize_code
+                             for the two-section ExecuteCodeBlock layout (§5.3.1)
+    FileRenderer           — write-file per-line Syntax, full-body rehighlight,
+                             diff-line path formatting
+    StreamingSearchRenderer — plain stream; structured finalize + extract_sidecar
+    WebRenderer            — ANSI passthrough; JSON/text finalize
+    AgentRenderer          — ANSI passthrough; no finalize
+    TextRenderer           — ANSI passthrough fallback; no finalize
+    MCPBodyRenderer        — ANSI passthrough; MCP JSON content extraction
+    PlainBodyRenderer      — catch-all fallback; can_render always False
 
-Registry + factory live on StreamingBodyRenderer.for_category (§5.2).
+R-2B-2: all nine inherit from BodyRenderer (ABC tier). R-2B-5 deleted
+the legacy selection machinery; StreamingBodyRenderer is now aliased to
+BodyRenderer for backward compatibility.
 """
 
 from __future__ import annotations
@@ -29,71 +33,29 @@ from typing import TYPE_CHECKING
 
 from rich.text import Text
 
+from hermes_cli.tui.body_renderers.base import BodyRenderer
+from hermes_cli.tui.services.tools import ToolCallState
+from hermes_cli.tui.tool_payload import ResultKind
+
 if TYPE_CHECKING:
     from rich.console import ConsoleRenderable
     from hermes_cli.tui.tool_category import ToolCategory
 
 
+# Phases accepted by all streaming-tier renderers.
+_STREAMING_PHASES: frozenset[ToolCallState] = frozenset({
+    ToolCallState.STARTED,
+    ToolCallState.STREAMING,
+})
+
+
 # ---------------------------------------------------------------------------
-# Base class
+# StreamingBodyRenderer — BodyRenderer alias for backward compatibility.
+# R-2B-5: legacy selection machinery deleted; alias lets out-of-tree importers
+# of StreamingBodyRenderer survive until they migrate to BodyRenderer directly.
 # ---------------------------------------------------------------------------
 
-
-class StreamingBodyRenderer:
-    """Stateless base renderer. Concrete subclasses override 1–3 methods.
-
-    Renderers are stateless singletons (§5.2) — per-panel state lives on
-    the ToolCall and the streaming block. One instance per category is
-    reused across all ToolPanels.
-
-    Signature conventions
-    ---------------------
-    render_stream_line(raw, plain)
-        raw   — original ANSI-encoded string from the tool
-        plain — stripped plain-text version (for copy buffers)
-        Returns a Rich ConsoleRenderable (typically Text).
-
-    finalize(all_plain, **kw)
-        Optional. Called once at tool_complete. Return None to skip
-        (shell-style ANSI passthrough stays as-streamed).
-
-    preview(all_plain, max_lines)
-        Lightweight L1 preview; must not call rich.Syntax.
-
-    extract_sidecar(tool_call, all_plain)
-        Optional post-finalize hook to mutate ToolCall fields.
-        Only SearchRenderer overrides this in Phase 2.
-    """
-
-    _CACHE: dict["ToolCategory", "StreamingBodyRenderer"] = {}
-
-    # ------------------------------------------------------------------
-    # Factory
-    # ------------------------------------------------------------------
-
-    @classmethod
-    def for_category(cls, category: "ToolCategory") -> "StreamingBodyRenderer":
-        """Return the stateless singleton renderer for *category*."""
-        if category not in cls._CACHE:
-            cls._CACHE[category] = _RENDERERS[category]()
-        return cls._CACHE[category]
-
-    # ------------------------------------------------------------------
-    # Interface — override in subclasses
-    # ------------------------------------------------------------------
-
-    def render_stream_line(self, raw: str, plain: str) -> "ConsoleRenderable":
-        raise NotImplementedError
-
-    def finalize(self, all_plain: list[str], **kwargs: object) -> "ConsoleRenderable | None":
-        return None
-
-    def preview(self, all_plain: list[str], max_lines: int) -> "ConsoleRenderable":
-        tail = all_plain[-max_lines:] if all_plain else []
-        return Text("\n".join(tail), style="dim")
-
-    def extract_sidecar(self, tool_call: object, all_plain: list[str]) -> None:
-        return
+StreamingBodyRenderer = BodyRenderer
 
 
 # ---------------------------------------------------------------------------
@@ -101,8 +63,21 @@ class StreamingBodyRenderer:
 # ---------------------------------------------------------------------------
 
 
-class ShellRenderer(StreamingBodyRenderer):
+class ShellRenderer(BodyRenderer):
     """Shell stdout: Text.from_ansi; JSON/YAML finalize on completion."""
+
+    kind = ResultKind.TEXT
+    supports_streaming = True
+    accepted_phases = _STREAMING_PHASES
+
+    @classmethod
+    def can_render(cls, cls_result: object, payload: object) -> bool:
+        from hermes_cli.tui.tool_category import ToolCategory
+        return getattr(payload, "category", None) == ToolCategory.SHELL
+
+    def build(self) -> "ConsoleRenderable":
+        text = (self.payload.output_raw or "").strip() if self.payload else ""
+        return Text(text, style="dim")
 
     def render_stream_line(self, raw: str, plain: str) -> "ConsoleRenderable":
         return Text.from_ansi(raw)
@@ -168,11 +143,11 @@ class ShellRenderer(StreamingBodyRenderer):
 
 
 # ---------------------------------------------------------------------------
-# CodeRenderer — execute_code
+# StreamingCodeRenderer — execute_code
 # ---------------------------------------------------------------------------
 
 
-class CodeRenderer(StreamingBodyRenderer):
+class StreamingCodeRenderer(BodyRenderer):
     """execute_code: per-line Pygments during streaming, rich.Syntax on finalize.
 
     Extends the base interface with three specialised methods (§5.3.1):
@@ -180,6 +155,19 @@ class CodeRenderer(StreamingBodyRenderer):
         render_output_line — stdout line → Text.from_ansi (EXEC_STREAMING)
         finalize_code      — full-body rich.Syntax for CodeSection at TOOL_START
     """
+
+    kind = ResultKind.CODE
+    supports_streaming = True
+    accepted_phases = _STREAMING_PHASES
+
+    @classmethod
+    def can_render(cls, cls_result: object, payload: object) -> bool:
+        from hermes_cli.tui.tool_category import ToolCategory
+        return getattr(payload, "category", None) == ToolCategory.CODE
+
+    def build(self) -> "ConsoleRenderable":
+        text = (self.payload.output_raw or "").strip() if self.payload else ""
+        return Text(text, style="dim")
 
     def render_stream_line(self, raw: str, plain: str) -> "ConsoleRenderable":
         """Generic StreamingBodyRenderer contract: delegate stdout to render_output_line."""
@@ -275,7 +263,7 @@ def _lang_for_path(path: str) -> str:
     return _LANG_MAP.get(suffix, "text")
 
 
-class FileRenderer(StreamingBodyRenderer):
+class FileRenderer(BodyRenderer):
     """read_file / write_file / patch / diff rendering.
 
     render_stream_line — per-line Syntax (write_file streaming path)
@@ -283,6 +271,19 @@ class FileRenderer(StreamingBodyRenderer):
     render_diff_line   — styled Text for diff ---/+++ and "old → new" headers
     preview            — last N lines, dim
     """
+
+    kind = ResultKind.DIFF
+    supports_streaming = True
+    accepted_phases = _STREAMING_PHASES
+
+    @classmethod
+    def can_render(cls, cls_result: object, payload: object) -> bool:
+        from hermes_cli.tui.tool_category import ToolCategory
+        return getattr(payload, "category", None) == ToolCategory.FILE
+
+    def build(self) -> "ConsoleRenderable":
+        text = (self.payload.output_raw or "").strip() if self.payload else ""
+        return Text(text, style="dim")
 
     def render_stream_line(
         self, raw: str, plain: str, lang: str = "text"
@@ -430,7 +431,7 @@ class FileRenderer(StreamingBodyRenderer):
 
 
 # ---------------------------------------------------------------------------
-# SearchRenderer — web_search / grep / glob
+# StreamingSearchRenderer — web_search / grep / glob
 # ---------------------------------------------------------------------------
 
 
@@ -460,15 +461,29 @@ def _render_web_search_results(items: list) -> "ConsoleRenderable":
 _RG_LINE_RE = _re.compile(r"^([^:]+):(\d+):")
 
 
-class SearchRenderer(StreamingBodyRenderer):
+class StreamingSearchRenderer(BodyRenderer):
     """Search results: plain stream with path headers, structured finalize, sidecar path extraction.
 
     R-X2: emits grammar path headers when the file path changes between lines,
     matching the layout of the post-hoc SearchRenderer (minus hit-count and virtual-scroll).
     """
 
-    def __init__(self) -> None:
+    kind = ResultKind.SEARCH
+    supports_streaming = True
+    accepted_phases = _STREAMING_PHASES
+
+    @classmethod
+    def can_render(cls, cls_result: object, payload: object) -> bool:
+        from hermes_cli.tui.tool_category import ToolCategory
+        return getattr(payload, "category", None) == ToolCategory.SEARCH
+
+    def __init__(self, payload: object = None, cls_result: object = None, *, app: object = None) -> None:
+        super().__init__(payload, cls_result, app=app)  # type: ignore[arg-type]
         self._last_emitted_path: str | None = None
+
+    def build(self) -> "ConsoleRenderable":
+        text = (self.payload.output_raw or "").strip() if self.payload else ""
+        return Text(text, style="dim")
 
     def render_stream_line(self, raw: str, plain: str) -> "ConsoleRenderable":
         from hermes_cli.tui.body_renderers._grammar import build_path_header
@@ -536,8 +551,21 @@ class SearchRenderer(StreamingBodyRenderer):
 # ---------------------------------------------------------------------------
 
 
-class WebRenderer(StreamingBodyRenderer):
+class WebRenderer(BodyRenderer):
     """Web content: ANSI passthrough; JSON finalize when content looks like JSON."""
+
+    kind = ResultKind.TEXT
+    supports_streaming = True
+    accepted_phases = _STREAMING_PHASES
+
+    @classmethod
+    def can_render(cls, cls_result: object, payload: object) -> bool:
+        from hermes_cli.tui.tool_category import ToolCategory
+        return getattr(payload, "category", None) == ToolCategory.WEB
+
+    def build(self) -> "ConsoleRenderable":
+        text = (self.payload.output_raw or "").strip() if self.payload else ""
+        return Text(text, style="dim")
 
     def render_stream_line(self, raw: str, plain: str) -> "ConsoleRenderable":
         return Text.from_ansi(raw)
@@ -568,13 +596,26 @@ class WebRenderer(StreamingBodyRenderer):
 # ---------------------------------------------------------------------------
 
 
-class AgentRenderer(StreamingBodyRenderer):
+class AgentRenderer(BodyRenderer):
     """Agent reasoning output: ANSI passthrough, no finalize."""
+
+    kind = ResultKind.TEXT
+    supports_streaming = True
+    accepted_phases = _STREAMING_PHASES
+
+    @classmethod
+    def can_render(cls, cls_result: object, payload: object) -> bool:
+        from hermes_cli.tui.tool_category import ToolCategory
+        return getattr(payload, "category", None) == ToolCategory.AGENT
+
+    def build(self) -> "ConsoleRenderable":
+        text = (self.payload.output_raw or "").strip() if self.payload else ""
+        return Text(text, style="dim")
 
     def render_stream_line(self, raw: str, plain: str) -> "ConsoleRenderable":
         return Text.from_ansi(raw)
 
-    # finalize: None (inherited default)
+    # finalize: None (inherited default from BodyRenderer)
 
     def preview(self, all_plain: list[str], max_lines: int) -> "ConsoleRenderable":
         if not all_plain:
@@ -588,21 +629,47 @@ class AgentRenderer(StreamingBodyRenderer):
 # ---------------------------------------------------------------------------
 
 
-class TextRenderer(StreamingBodyRenderer):
+class TextRenderer(BodyRenderer):
     """Generic fallback: ANSI passthrough, no finalize, no diff intercept."""
+
+    kind = ResultKind.TEXT
+    supports_streaming = True
+    accepted_phases = _STREAMING_PHASES
+
+    @classmethod
+    def can_render(cls, cls_result: object, payload: object) -> bool:
+        from hermes_cli.tui.tool_category import ToolCategory
+        return getattr(payload, "category", None) == ToolCategory.UNKNOWN
+
+    def build(self) -> "ConsoleRenderable":
+        text = (self.payload.output_raw or "").strip() if self.payload else ""
+        return Text(text, style="dim")
 
     def render_stream_line(self, raw: str, plain: str) -> "ConsoleRenderable":
         return Text.from_ansi(raw)
 
-    # finalize: None (inherited default)
+    # finalize: None (inherited default from BodyRenderer)
 
     def preview(self, all_plain: list[str], max_lines: int) -> "ConsoleRenderable":
         tail = all_plain[-max_lines:] if all_plain else []
         return Text("\n".join(tail), style="dim")
 
 
-class MCPBodyRenderer(StreamingBodyRenderer):
+class MCPBodyRenderer(BodyRenderer):
     """MCP tool body — ANSI passthrough while streaming; finalize extracts text content."""
+
+    kind = ResultKind.TEXT
+    supports_streaming = True
+    accepted_phases = _STREAMING_PHASES
+
+    @classmethod
+    def can_render(cls, cls_result: object, payload: object) -> bool:
+        from hermes_cli.tui.tool_category import ToolCategory
+        return getattr(payload, "category", None) == ToolCategory.MCP
+
+    def build(self) -> "ConsoleRenderable":
+        text = (self.payload.output_raw or "").strip() if self.payload else ""
+        return Text(text, style="dim")
 
     def render_stream_line(self, raw: str, plain: str) -> "ConsoleRenderable":
         return Text.from_ansi(raw)
@@ -624,50 +691,24 @@ class MCPBodyRenderer(StreamingBodyRenderer):
         return None
 
 
-# ---------------------------------------------------------------------------
-# Registry (must come after all concrete classes)
-# ---------------------------------------------------------------------------
+class PlainBodyRenderer(BodyRenderer):
+    """Streaming-tier catch-all fallback — passes lines through unstyled.
 
+    can_render always returns False; reachable only via the force-return
+    in pick_renderer's streaming branch after the REGISTRY walk exhausts.
+    """
 
-def _build_renderers() -> "dict[ToolCategory, type[StreamingBodyRenderer]]":
-    from hermes_cli.tui.tool_category import ToolCategory
-    return {
-        ToolCategory.FILE:    FileRenderer,
-        ToolCategory.SHELL:   ShellRenderer,
-        ToolCategory.CODE:    CodeRenderer,
-        ToolCategory.SEARCH:  SearchRenderer,
-        ToolCategory.WEB:     WebRenderer,
-        ToolCategory.AGENT:   AgentRenderer,
-        ToolCategory.MCP:     MCPBodyRenderer,
-        ToolCategory.UNKNOWN: TextRenderer,
-    }
+    kind = ResultKind.TEXT
+    supports_streaming = True
+    accepted_phases = _STREAMING_PHASES
 
+    @classmethod
+    def can_render(cls, cls_result: object, payload: object) -> bool:
+        return False
 
-_RENDERERS: "dict[ToolCategory, type[StreamingBodyRenderer]]" = {}
+    def build(self) -> "ConsoleRenderable":
+        text = (self.payload.output_raw or "").strip() if self.payload else ""
+        return Text(text, style="dim")
 
-
-def _ensure_renderers() -> "dict[ToolCategory, type[StreamingBodyRenderer]]":
-    global _RENDERERS
-    if not _RENDERERS:
-        _RENDERERS = _build_renderers()
-    return _RENDERERS
-
-
-# Patch for_category to use lazy registry (avoids circular import at module load)
-_orig_for_category = StreamingBodyRenderer.for_category.__func__  # type: ignore[attr-defined]
-
-
-@classmethod  # type: ignore[misc]
-def _lazy_for_category(cls, category: "ToolCategory") -> "StreamingBodyRenderer":
-    _ensure_renderers()
-    if category not in cls._CACHE:
-        cls._CACHE[category] = _RENDERERS[category]()
-    return cls._CACHE[category]
-
-
-StreamingBodyRenderer.for_category = _lazy_for_category  # type: ignore[method-assign]
-
-
-class PlainBodyRenderer(StreamingBodyRenderer):
-    """Fallback renderer — passes lines through unstyled."""
-    pass
+    def render_stream_line(self, raw: str, plain: str) -> "ConsoleRenderable":
+        return Text.from_ansi(raw)

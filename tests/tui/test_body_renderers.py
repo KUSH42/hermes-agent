@@ -20,9 +20,11 @@ from rich.syntax import Syntax
 from hermes_cli.tui.body_renderers.streaming import (
     StreamingBodyRenderer as BodyRenderer,
     ShellRenderer,
-    CodeRenderer,
+    StreamingCodeRenderer,
+    StreamingCodeRenderer as CodeRenderer,  # backward-compat alias for existing tests
     FileRenderer,
-    SearchRenderer,
+    StreamingSearchRenderer,
+    StreamingSearchRenderer as SearchRenderer,  # backward-compat alias for existing tests
     WebRenderer,
     AgentRenderer,
     TextRenderer,
@@ -77,10 +79,16 @@ def test_br3_file_render_stream_line():
 
 
 def test_br4_search_render_stream_line():
-    """SearchRenderer.render_stream_line returns ANSI passthrough Text."""
+    """SearchRenderer.render_stream_line returns a ConsoleRenderable (Text or Group)."""
+    from rich.console import ConsoleRenderable
     r = SearchRenderer()
-    result = r.render_stream_line("src/foo.py:12: def bar()", "src/foo.py:12: def bar()")
+    # Plain text with no rg-style "file:line:" prefix → returns Text directly
+    result = r.render_stream_line("grep result line", "grep result line")
     assert isinstance(result, Text)
+    # rg-style path line → returns Group (path header + line text)
+    from rich.console import Group
+    result2 = r.render_stream_line("src/foo.py:12: def bar()", "src/foo.py:12: def bar()")
+    assert isinstance(result2, (Text, Group))
 
 
 # ---------------------------------------------------------------------------
@@ -162,12 +170,13 @@ def test_br9b_code_renderer_finalize_code_single_line_returns_none():
 
 
 def test_br10_file_renderer_finalize():
-    """FileRenderer.finalize returns Syntax for non-empty content."""
+    """FileRenderer.finalize returns a non-None renderable (Group with rule + Syntax) for non-empty content."""
+    from rich.console import Group
     r = FileRenderer()
     lines = ["def hello():", "    pass"]
     result = r.finalize(lines, lang="python")
     assert result is not None
-    assert isinstance(result, Syntax)
+    assert isinstance(result, Group)
 
 
 def test_br10b_file_renderer_finalize_empty_returns_none():
@@ -317,36 +326,35 @@ def test_br19_text_renderer_preview():
 
 
 # ---------------------------------------------------------------------------
-# T-BR20: BodyRenderer.for_category factory + cache
+# T-BR20: pick_renderer streaming-tier routing per category
 # ---------------------------------------------------------------------------
 
 
-def test_br20_for_category_factory_and_cache():
-    """BodyRenderer.for_category returns a singleton per category."""
-    r1 = BodyRenderer.for_category(ToolCategory.CODE)
-    r2 = BodyRenderer.for_category(ToolCategory.CODE)
-    assert r1 is r2, "for_category must return the same instance (singleton)"
+def test_br20_pick_renderer_returns_streaming_tier_per_category():
+    """pick_renderer with STREAMING phase returns the right streaming renderer per category."""
+    from hermes_cli.tui.body_renderers import pick_renderer, _STREAMING_EMPTY_CLS
+    from hermes_cli.tui.tool_payload import ToolPayload
+    from hermes_cli.tui.services.tools import ToolCallState
+    from hermes_cli.tui.tool_panel.density import DensityTier
 
-    shell = BodyRenderer.for_category(ToolCategory.SHELL)
-    assert isinstance(shell, ShellRenderer)
+    def _payload(cat):
+        return ToolPayload(tool_name="", category=cat, args={},
+                           input_display=None, output_raw="", line_count=0)
 
-    code = BodyRenderer.for_category(ToolCategory.CODE)
-    assert isinstance(code, CodeRenderer)
-
-    file_ = BodyRenderer.for_category(ToolCategory.FILE)
-    assert isinstance(file_, FileRenderer)
-
-    search = BodyRenderer.for_category(ToolCategory.SEARCH)
-    assert isinstance(search, SearchRenderer)
-
-    web = BodyRenderer.for_category(ToolCategory.WEB)
-    assert isinstance(web, WebRenderer)
-
-    agent = BodyRenderer.for_category(ToolCategory.AGENT)
-    assert isinstance(agent, AgentRenderer)
-
-    unknown = BodyRenderer.for_category(ToolCategory.UNKNOWN)
-    assert isinstance(unknown, TextRenderer)
+    assert pick_renderer(_STREAMING_EMPTY_CLS, _payload(ToolCategory.SHELL),
+                         phase=ToolCallState.STREAMING, density=DensityTier.DEFAULT) is ShellRenderer
+    assert pick_renderer(_STREAMING_EMPTY_CLS, _payload(ToolCategory.CODE),
+                         phase=ToolCallState.STREAMING, density=DensityTier.DEFAULT) is StreamingCodeRenderer
+    assert pick_renderer(_STREAMING_EMPTY_CLS, _payload(ToolCategory.FILE),
+                         phase=ToolCallState.STREAMING, density=DensityTier.DEFAULT) is FileRenderer
+    assert pick_renderer(_STREAMING_EMPTY_CLS, _payload(ToolCategory.SEARCH),
+                         phase=ToolCallState.STREAMING, density=DensityTier.DEFAULT) is StreamingSearchRenderer
+    assert pick_renderer(_STREAMING_EMPTY_CLS, _payload(ToolCategory.WEB),
+                         phase=ToolCallState.STREAMING, density=DensityTier.DEFAULT) is WebRenderer
+    assert pick_renderer(_STREAMING_EMPTY_CLS, _payload(ToolCategory.AGENT),
+                         phase=ToolCallState.STREAMING, density=DensityTier.DEFAULT) is AgentRenderer
+    assert pick_renderer(_STREAMING_EMPTY_CLS, _payload(ToolCategory.UNKNOWN),
+                         phase=ToolCallState.STREAMING, density=DensityTier.DEFAULT) is TextRenderer
 
 
 # ---------------------------------------------------------------------------
@@ -354,20 +362,25 @@ def test_br20_for_category_factory_and_cache():
 # ---------------------------------------------------------------------------
 
 def _make_empty_renderer(category):
-    """Build an EmptyStateRenderer with a payload mock for the given category."""
-    from unittest.mock import MagicMock
+    """Build an EmptyStateRenderer with a ToolPayload for the given category."""
     from hermes_cli.tui.body_renderers.empty import EmptyStateRenderer
-    renderer = EmptyStateRenderer.__new__(EmptyStateRenderer)
-    payload = MagicMock()
-    payload.category = category
-    renderer.payload = payload
-    return renderer
+    from hermes_cli.tui.tool_payload import ToolPayload, ClassificationResult, ResultKind
+    payload = ToolPayload(
+        tool_name="",
+        category=category,
+        args={},
+        input_display=None,
+        output_raw="",
+        line_count=0,
+    )
+    cls_result = ClassificationResult(kind=ResultKind.EMPTY, confidence=1.0)
+    return EmptyStateRenderer(payload, cls_result)
 
 
 def test_empty_renderer_shell_message():
     from hermes_cli.tui.tool_category import ToolCategory
     r = _make_empty_renderer(ToolCategory.SHELL)
-    assert r.build().plain == "(no output)"
+    assert r.build().plain == "No output"
 
 
 def test_empty_renderer_search_message():
@@ -390,4 +403,4 @@ def test_empty_renderer_web_message():
 
 def test_empty_renderer_unknown_fallback():
     r = _make_empty_renderer(None)
-    assert r.build().plain == "(no output)"
+    assert r.build().plain == "No output"

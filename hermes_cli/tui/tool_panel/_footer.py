@@ -240,11 +240,38 @@ class FooterPane(Widget):
         self._last_resize_w: int = 0
         self._diff_kind: str = ""
         self._narrow_diff_glyph: str = "±"
+        from hermes_cli.tui.tool_panel.density import DensityTier as _DT
+        self._density: "_DT" = _DT.DEFAULT
 
     def on_mount(self) -> None:
         if getattr(self, "_mounted_once", False):
             raise RuntimeError("FooterPane is not re-mountable; create a new instance")
         self._mounted_once = True
+
+    # ------------------------------------------------------------------
+    # DR-3: tier-aware visibility
+    # ------------------------------------------------------------------
+
+    def set_density(self, tier: "object") -> None:
+        """Update the density tier and refresh visibility accordingly."""
+        self._density = tier  # type: ignore[assignment]
+        self._refresh_visibility()
+
+    def _refresh_visibility(self) -> None:
+        from hermes_cli.tui.tool_panel.density import DensityTier
+        if self._density == DensityTier.COMPACT:
+            self.styles.display = "none"
+            return
+        self.styles.display = "block" if self._has_footer_content() else "none"
+
+    def _has_footer_content(self) -> bool:
+        rs = self._last_summary
+        if rs is None:
+            return False
+        return bool(
+            rs.chips or rs.stderr_tail or rs.actions or rs.artifacts
+            or (rs.exit_code not in (None, 0))
+        )
 
     def compose(self) -> ComposeResult:
         self._content = Static("", classes="footer-main")

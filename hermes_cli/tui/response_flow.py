@@ -39,6 +39,8 @@ from textual.app import ComposeResult
 if TYPE_CHECKING:
     from hermes_cli.tui.widgets import CopyableBlock, CopyableRichLog, MathBlockWidget, MessagePanel, ReasoningPanel, StreamingCodeBlock
 
+_log = logging.getLogger(__name__)
+
 # ---------------------------------------------------------------------------
 # Module-level configuration
 # ---------------------------------------------------------------------------
@@ -160,8 +162,6 @@ _ANSI_STRIP_RE = re.compile(
 )
 _STRIP_ORPHAN_RE = re.compile(r"(?<!\x1b)(?:;[0-9;]+[A-Za-z]|\[[0-9;]*m)")
 _NORM_ORPHAN_RE = re.compile(r"(?<![\x1b0-9;])(?:;[0-9;]+[A-Za-z]|\[[0-9;]*m)")
-
-logger = logging.getLogger(__name__)
 
 
 class InlineCodeFence(Widget):
@@ -534,6 +534,11 @@ class ResponseFlowEngine:
 
     Wraps agent.rich_output.StreamingBlockBuffer for block-level state.
     Wraps apply_inline_markdown() and apply_block_line() for line-level prose.
+
+    Threading: this class is single-consumer. `feed`, `process_line`,
+    `_mount_code_block`, and the `_detached` flag are all owned by exactly one
+    thread (the IOService consumer). If multi-thread access is ever introduced,
+    add explicit locking — current code is **not** thread-safe.
     """
 
     _MAX_EMOJI_MOUNTS: int = 50
@@ -611,7 +616,7 @@ class ResponseFlowEngine:
             try:
                 self._prose_callback(plain)
             except Exception:
-                logger.exception("prose callback failed in _write_prose")
+                _log.exception("prose callback failed in _write_prose")
 
     def _sync_prose_log(self) -> None:
         """Refresh the active prose destination from the owning message panel."""
@@ -667,7 +672,7 @@ class ResponseFlowEngine:
             label, body = fn
             if label not in self._footnote_defs:
                 if len(self._footnote_defs) >= _MAX_FOOTNOTES:
-                    logger.warning(
+                    _log.warning(
                         "footnote buffer cap (%d entries) reached; dropping new entry %r",
                         _MAX_FOOTNOTES, label,
                     )
@@ -688,7 +693,7 @@ class ResponseFlowEngine:
         if cite is not None:
             _n, title, url = cite
             if _n not in self._cite_entries and len(self._cite_entries) >= _MAX_CITATIONS:
-                logger.warning(
+                _log.warning(
                     "citation buffer cap (%d entries) reached; dropping citation %d",
                     _MAX_CITATIONS, _n,
                 )
@@ -810,7 +815,7 @@ class ResponseFlowEngine:
 
     def _handle_unknown_state(self, raw: str) -> bool:
         """Recover from an unknown _state. Logs once and falls through to prose."""
-        logger.warning(
+        _log.warning(
             "response_flow: unknown _state=%r; resetting to NORMAL", self._state
         )
         if self._active_block is not None:
@@ -818,7 +823,7 @@ class ResponseFlowEngine:
                 self._active_block.flush()
             except Exception:
                 # flush on an orphaned block may fail if the widget was already removed
-                logger.debug(
+                _log.debug(
                     "response_flow: _handle_unknown_state: flush on orphaned block failed",
                     exc_info=True,
                 )
@@ -881,7 +886,7 @@ class ResponseFlowEngine:
                 self._state = "NORMAL"
             else:
                 if len(self._math_lines) >= _MAX_MATH_LINES:
-                    logger.warning(
+                    _log.warning(
                         "math block exceeded %d lines; aborting math state",
                         _MAX_MATH_LINES,
                     )
@@ -1062,7 +1067,7 @@ class ResponseFlowEngine:
             try:
                 self._prose_callback(plain)
             except Exception:
-                logger.exception("prose callback failed in _write_prose_inline_emojis")
+                _log.exception("prose callback failed in _write_prose_inline_emojis")
         return True
 
     def _mount_emoji(self, name: str) -> None:
@@ -1084,7 +1089,7 @@ class ResponseFlowEngine:
 
         def _do_mount() -> None:
             if self._emoji_mounts >= self._MAX_EMOJI_MOUNTS:
-                logger.debug(
+                _log.debug(
                     "ResponseFlowEngine._mount_emoji: cap reached (%d), skipping '%s'",
                     self._MAX_EMOJI_MOUNTS, name,
                 )
@@ -1107,7 +1112,7 @@ class ResponseFlowEngine:
             except Exception:
                 # Panel may be removed between call_from_thread scheduling and execution;
                 # treat as a no-op. Log at debug so programming errors are still visible.
-                logger.debug(
+                _log.debug(
                     "ResponseFlowEngine._mount_emoji: mount failed for '%s'", name, exc_info=True
                 )
 
@@ -1145,7 +1150,7 @@ class ResponseFlowEngine:
         # state-sensitive buffer logic sees NORMAL.  IN_MATH is handled by the
         # explicit branch above — exclude it here to avoid second-order interference.
         if self._state not in ("NORMAL", "IN_MATH"):
-            logger.debug(
+            _log.debug(
                 "ResponseFlowEngine.flush: unexpected state=%r with no active block; resetting",
                 self._state,
             )
@@ -1182,7 +1187,7 @@ class ResponseFlowEngine:
             try:
                 panel.mount(SourcesBar(entries))
             except Exception:
-                logger.warning("_mount_sources_bar: failed to mount SourcesBar", exc_info=True)
+                _log.warning("_mount_sources_bar: failed to mount SourcesBar", exc_info=True)
 
         panel.call_after_refresh(_do_mount)
 
@@ -1288,7 +1293,7 @@ class ResponseFlowEngine:
             widget = MathBlockWidget(image_path=path, max_rows=max_rows)
             self._panel._mount_nonprose_block(widget)
         except Exception:
-            logger.warning(
+            _log.warning(
                 "ResponseFlowEngine._mount_math_image: mount failed (path=%s)", path, exc_info=True
             )
 
@@ -1319,7 +1324,7 @@ class ResponseFlowEngine:
             if len(self._code_fence_buffer) < _MAX_CODE_FENCE_BUFFER:
                 self._code_fence_buffer.append(plain)
             else:
-                logger.debug(
+                _log.debug(
                     "code fence buffer cap (%d lines) reached; dropping overflow line",
                     _MAX_CODE_FENCE_BUFFER,
                 )
@@ -1344,7 +1349,7 @@ class ResponseFlowEngine:
                 self._panel._mount_nonprose_block(fence)
                 self._sync_prose_log()
             except Exception:
-                logger.debug(
+                _log.debug(
                     "ResponseFlowEngine._flush_code_fence_buffer: InlineCodeFence mount failed;"
                     " falling back to prose (%d lines)",
                     len(buf),
@@ -1426,7 +1431,7 @@ class ResponseFlowEngine:
     def _mount_code_block(self, block: "StreamingCodeBlock") -> None:
         """Mount block into output DOM. Override in subclasses."""
         if not getattr(self._panel, "is_mounted", False):
-            logger.debug(
+            _log.debug(
                 "ResponseFlowEngine._mount_code_block: panel unmounted, skipping block mount"
             )
             self._detached = True
@@ -1517,7 +1522,7 @@ class ReasoningFlowEngine(ResponseFlowEngine):
     def _mount_code_block(self, block: "StreamingCodeBlock") -> None:
         """Mount dim code block inside ReasoningPanel, above the live line."""
         if not getattr(self._panel, "is_mounted", False):
-            logger.debug(
+            _log.debug(
                 "ReasoningFlowEngine._mount_code_block: panel unmounted, skipping block mount"
             )
             self._detached = True

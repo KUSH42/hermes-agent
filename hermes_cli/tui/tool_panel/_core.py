@@ -166,7 +166,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         self._last_resize_w: int = 0
         self._saved_visible_start: int | None = None
 
-        self._toggle_hint_shown: bool = False
+        self._toggle_hint_shown_at: float = 0.0
         self._hint_visible: bool = False
 
         self._tool_args: dict | None = None

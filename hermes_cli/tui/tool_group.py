@@ -28,17 +28,18 @@ import os
 import re
 import time
 import uuid
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
 
 from hermes_cli.tui.resize_utils import THRESHOLD_TOOL_NARROW, crosses_threshold
-
-from hermes_cli.tui.resize_utils import THRESHOLD_TOOL_NARROW, crosses_threshold
+from hermes_cli.tui.services.tools import ToolCallState
 
 if TYPE_CHECKING:
     pass
@@ -59,6 +60,11 @@ _PIPELINE_OPS_RE = re.compile(r"(?:&&|\|\||;|(?<!\|)\|(?!\|))")
 # H3: tool name sets for file-edit pairing
 _FILE_WRITE_TOOLS = frozenset({"patch", "write_file", "create_file", "edit_file", "str_replace_editor"})
 _FILE_READ_TOOLS  = frozenset({"read_file", "view"})
+
+# PG-3: heuristic regex for streaming error lines (advisory; overwritten at terminal)
+_STREAMING_ERR_RE = re.compile(
+    r"^(Error|error|Traceback \(most recent call last\)|FATAL|Exception)[:( ]"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +235,47 @@ class GroupHeader(Widget):
 
 
 # ---------------------------------------------------------------------------
+# PG-4: ToolGroupState + helper
+# ---------------------------------------------------------------------------
+
+
+class ToolGroupState(StrEnum):
+    PENDING   = "pending"
+    RUNNING   = "running"
+    DONE      = "done"       # all children DONE
+    PARTIAL   = "partial"    # mix of DONE and ERROR children
+    ERROR     = "error"      # any child ERROR, none DONE yet
+    CANCELLED = "cancelled"  # all children CANCELLED
+
+
+def _recompute_group_state(children: list) -> ToolGroupState:
+    """Derive group terminal state from child _view_state values."""
+    raw_states = [
+        getattr(getattr(c, "_view_state", None), "state", None)
+        for c in children
+    ]
+    states = {s for s in raw_states if s is not None}
+    if not states:
+        return ToolGroupState.PENDING
+    terminal = {ToolCallState.DONE, ToolCallState.ERROR, ToolCallState.CANCELLED}
+    if not states <= terminal:
+        if any(s in (ToolCallState.STARTED, ToolCallState.STREAMING,
+                     ToolCallState.COMPLETING) for s in states):
+            return ToolGroupState.RUNNING
+        return ToolGroupState.PENDING
+    done = ToolCallState.DONE in states
+    err  = ToolCallState.ERROR in states
+    canc = ToolCallState.CANCELLED in states
+    if canc and not done and not err:
+        return ToolGroupState.CANCELLED
+    if err and done:
+        return ToolGroupState.PARTIAL
+    if err:
+        return ToolGroupState.ERROR
+    return ToolGroupState.DONE
+
+
+# ---------------------------------------------------------------------------
 # ToolGroup
 # ---------------------------------------------------------------------------
 
@@ -269,6 +316,19 @@ class ToolGroup(Widget):
         Binding("shift+enter", "peek_focused", "peek focused", show=False),
     ]
 
+    # PG-3: message posted by StreamingToolBlock per appended line
+    class StreamingLineAppended(Message):
+        def __init__(self, line: str) -> None:
+            super().__init__()
+            self.line = line
+
+    # PG-3: message posted by DiffRenderer per diff-stat line
+    class DiffStatUpdate(Message):
+        def __init__(self, add: int, del_: int) -> None:
+            super().__init__()
+            self.add = add
+            self.del_ = del_
+
     def __init__(
         self,
         group_id: str,
@@ -282,6 +342,14 @@ class ToolGroup(Widget):
         self._header: GroupHeader | None = None
         self._body: GroupBody | None = None
         self._last_resize_w: int = 0
+        # PG-3: incremental aggregate counters
+        self._streaming_err_count: int = 0  # sum across currently-streaming children
+        self._terminal_err_count: int = 0   # count of children that completed as ERROR
+        self._running_diff_add: int = 0
+        self._running_diff_del: int = 0
+        self._last_header_kwargs: dict = {}
+        # PG-4: group-level terminal state
+        self._group_state: ToolGroupState = ToolGroupState.PENDING
 
     def compose(self) -> ComposeResult:
         header = GroupHeader()
@@ -445,25 +513,84 @@ class ToolGroup(Widget):
         except Exception:
             pass
 
-        self._header.update(
+        # PG-3: authoritative terminal values replace running diff totals
+        self._running_diff_add = 0
+        self._running_diff_del = 0
+
+        kwargs = dict(
             summary_text=summary_text,
             diff_add=diff_add,
             diff_del=diff_del,
             duration_ms=duration_ms,
             child_count=len(children),
             collapsed=self.collapsed,
-            error_count=error_count,  # B2: pass error count for chip rendering
+            error_count=error_count + self._terminal_err_count,  # B2 + PG-3
         )
+        # PG-3: save for _refresh_header_counts partial updates
+        self._last_header_kwargs = dict(kwargs)
+        self._header.update(**kwargs)
+
+    def _refresh_header_counts(self) -> None:
+        """PG-3: partial header update with live streaming counters."""
+        if not self._last_header_kwargs or self._header is None:
+            return
+        merged = {
+            **self._last_header_kwargs,
+            "error_count": self._streaming_err_count + self._terminal_err_count,
+            "diff_add": self._running_diff_add,
+            "diff_del": self._running_diff_del,
+        }
+        self._header.update(**merged)
+
+    def on_tool_group_streaming_line_appended(
+        self, event: "ToolGroup.StreamingLineAppended"
+    ) -> None:
+        """PG-3: update streaming error count per line."""
+        event.stop()
+        if _STREAMING_ERR_RE.match(event.line):
+            block = event.control
+            current = getattr(block, "_line_err_count", 0)
+            try:
+                block._line_err_count = current + 1
+            except AttributeError:
+                pass
+            self._streaming_err_count += 1
+            self._refresh_header_counts()
+
+    def on_tool_group_diff_stat_update(
+        self, event: "ToolGroup.DiffStatUpdate"
+    ) -> None:
+        """PG-3: accumulate incremental diff stats from DiffRenderer."""
+        event.stop()
+        self._running_diff_add += event.add
+        self._running_diff_del += event.del_
+        self._refresh_header_counts()
 
     def on_tool_panel_completed(self, event: object) -> None:
-        """Re-aggregate when any child ToolPanel completes."""
+        """Re-aggregate when any child ToolPanel completes (PG-3 + PG-4)."""
         try:
             from hermes_cli.tui.tool_panel import ToolPanel as _TP
-            if isinstance(event, _TP.Completed):
-                event.stop()
-                self.recompute_aggregate()
+            if not isinstance(event, _TP.Completed):
+                return
+            event.stop()
+            # PG-3: reconcile streaming error count for this child
+            panel = event.control
+            block = getattr(panel, "_block", None)
+            child_errs = getattr(block, "_line_err_count", 0)
+            self._streaming_err_count = max(0, self._streaming_err_count - child_errs)
+            vs = getattr(panel, "_view_state", None)
+            if vs is not None and vs.state == ToolCallState.ERROR:
+                self._terminal_err_count += 1
+            # Build children list once for both recompute and group-state
+            children = (
+                [c for c in self._body.children if isinstance(c, _TP)]
+                if self._body is not None else []
+            )
+            self.recompute_aggregate()
+            # PG-4: recompute group terminal state
+            self._group_state = _recompute_group_state(children)
         except Exception:
-            pass
+            _log.exception("toolgroup: on_tool_panel_completed failed")
 
 
 # ---------------------------------------------------------------------------

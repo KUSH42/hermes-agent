@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time as _time
 from dataclasses import dataclass, field as _field
 from enum import Enum
@@ -161,6 +162,24 @@ class ToolRenderingService(AppService):
         self._tool_views_by_gen_index: "dict[int, ToolCallViewState]" = {}
         # SM-HIGH-02: buffered arg deltas keyed by gen_index
         self._pending_gen_arg_deltas: "dict[int, list[tuple[str, str]]]" = {}
+        # PG-1/PG-2: plan sync broker + atomicity lock
+        from hermes_cli.tui.services.plan_sync import PlanSyncBroker
+        self._plan_broker: "PlanSyncBroker | None" = PlanSyncBroker(self)
+        self._state_lock = threading.RLock()
+
+    # ------------------------------------------------------------------
+    # PG-1/PG-2: single choke-point for view state changes
+    # ------------------------------------------------------------------
+
+    def _set_view_state(self, view: "ToolCallViewState", new: "ToolCallState") -> None:
+        """Single choke-point for all view state changes.  Thread-safe via RLock."""
+        with self._state_lock:
+            old = view.state
+            if old == new:
+                return
+            set_axis(view, "state", new)
+            if self._plan_broker is not None:
+                self._plan_broker.on_view_state(view, old, new)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -690,13 +709,8 @@ class ToolRenderingService(AppService):
             else:
                 self.app.status_phase = _Phase.IDLE
 
-        # Step 7: dispatch plan transition
-        if mark_plan and tool_call_id:
-            if terminal_state in (ToolCallState.DONE, ToolCallState.ERROR):
-                self.mark_plan_done(tool_call_id, is_error=is_error, dur_ms=dur_ms or 0)
-            elif terminal_state == ToolCallState.CANCELLED:
-                self.mark_plan_cancelled(tool_call_id)
-            # REMOVED: no plan mutation; visual-only cleanup
+        # Step 7: plan transitions now handled by PlanSyncBroker via _set_view_state
+        # (PG-1: explicit mark_plan_* calls deleted; broker fires atomically at Step 9)
 
         # Step 8: update _ToolCallRecord
         if tool_call_id:
@@ -706,14 +720,15 @@ class ToolRenderingService(AppService):
                 if dur_ms is not None:
                     rec.dur_ms = dur_ms
 
-        # Step 9: write terminal state via axis bus (fires watchers exactly once).
-        # Mirror is_error onto the view BEFORE the state write so any watcher
-        # reading view.is_error during the state-change callback sees the
-        # terminal value, not the in-flight value (R3-AXIS-03).
+        # Step 9: write terminal state via axis bus (fires watchers + PlanSyncBroker).
+        # Mirror is_error and dur_ms onto view BEFORE the state write so the broker
+        # reads the final values when dispatching mark_plan_done/cancelled (R3-AXIS-03).
         if view is not None:
             view.is_error = is_error
-            set_axis(view, "state", terminal_state)
-            view.is_error = is_error
+            if dur_ms is not None:
+                view.dur_ms = dur_ms
+            self._set_view_state(view, terminal_state)
+            view.is_error = is_error  # double-write kept from original for safety
 
         # Step 10: remove visual
         if remove_visual and view is not None and view.block is not None:
@@ -970,7 +985,8 @@ class ToolRenderingService(AppService):
         if view is not None:
             # ── Adopted path ──────────────────────────────────────────────
             view.tool_call_id = tool_call_id
-            view.state = ToolCallState.STARTED
+            # PG-1: route through _set_view_state so broker fires for GENERATED→STARTED
+            self._set_view_state(view, ToolCallState.STARTED)
             view.parent_tool_call_id = parent_id
             view.depth = depth
             view.started_at = _time.monotonic()  # reset from gen-block creation time to actual tool start
@@ -1100,9 +1116,12 @@ class ToolRenderingService(AppService):
             # Wire args (SM-03) — for the existing open_streaming_tool_block path,
             # _wire_args also stores on the block.
             self._wire_args(view, args_clean)
+            # PG-1 Step C: fresh-start view was constructed with state=STARTED; fire broker
+            # manually (constructor bypass — cannot use _set_view_state pre-construction).
+            if self._plan_broker is not None:
+                self._plan_broker.on_view_state(view, ToolCallState.GENERATED, ToolCallState.STARTED)
 
-        # PlanPanel: transition PENDING → RUNNING
-        self.mark_plan_running(tool_call_id)
+        # PG-1: mark_plan_running now handled by PlanSyncBroker via _set_view_state / broker fire
 
     def _create_write_fallback(
         self, tool_call_id: str, tool_name: str, args: "dict[str, Any]"
@@ -1171,11 +1190,11 @@ class ToolRenderingService(AppService):
         if view.state in (ToolCallState.DONE, ToolCallState.ERROR,
                           ToolCallState.CANCELLED, ToolCallState.REMOVED):
             return
-        # R3-AXIS-01: route STARTED→STREAMING through the axis bus so watchers
-        # see the most common state transition in the system. set_axis is a
-        # no-op when old == new, so re-entry from STREAMING is safe.
+        # R3-AXIS-01 / PG-1: route STARTED→STREAMING through _set_view_state so the
+        # broker fires.  _set_view_state is a no-op when old == new, so re-entry
+        # from STREAMING is safe.
         if view.state == ToolCallState.STARTED:
-            set_axis(view, "state", ToolCallState.STREAMING)
+            self._set_view_state(view, ToolCallState.STREAMING)
         self.append_streaming_line(tool_call_id, line)
 
     def complete_tool_call(
@@ -1210,7 +1229,8 @@ class ToolRenderingService(AppService):
             return
 
         if view is not None:
-            set_axis(view, "state", ToolCallState.COMPLETING)
+            # PG-1: COMPLETING is a no-op in broker (falls through to pass case)
+            self._set_view_state(view, ToolCallState.COMPLETING)
             self._stamp_kind_on_completing(view, result_lines)
 
         # Compute duration string for UI display
@@ -1248,11 +1268,11 @@ class ToolRenderingService(AppService):
                 tool_call_id, duration, is_error, summary, result_lines
             )
 
-        # SM-05: always mark plan done regardless of tool_progress mode
-        dur_ms_int = int(dur_ms_float)
-        self.mark_plan_done(tool_call_id, is_error=is_error, dur_ms=dur_ms_int)
+        # PG-1: mark_plan_done now fired by PlanSyncBroker when _set_view_state(DONE/ERROR)
+        # is called inside _terminalize_tool_view (Step 9) via close_streaming_tool_block.
 
         # Record tool call latency into perf probe
+        dur_ms_int = int(dur_ms_float)
         from hermes_cli.tui.perf import _tool_probe
         _tool_probe.record(tool_name, tool_call_id, dur_ms_float, is_error=is_error)
 

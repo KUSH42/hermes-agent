@@ -152,6 +152,8 @@ class StreamingToolBlock(ToolBlock):
         self._truncated_line_count: int = 0
         self._should_strip_cwd: bool = False
         self._detected_cwd: str | None = None
+        # PG-3: streaming error line count; reset to 0 in complete()
+        self._line_err_count: int = 0
         self._body._omission_parent_block = self
 
     def compose(self) -> ComposeResult:
@@ -261,6 +263,9 @@ class StreamingToolBlock(ToolBlock):
                 self._render_timer = None
             if not self._is_unmounted:  # PERF-4: don't resurrect timer after unmount
                 self._render_timer = self.set_interval(1 / 60, self._flush_pending)
+        # PG-3: notify ToolGroup ancestor for live error-count tracking
+        from hermes_cli.tui.tool_group import ToolGroup as _TG
+        self.post_message(_TG.StreamingLineAppended(plain))
 
     def inject_diff(self, diff_lines: list[str], header_stats: "ToolHeaderStats | None") -> None:
         for raw in diff_lines:
@@ -289,6 +294,7 @@ class StreamingToolBlock(ToolBlock):
             return
         self._completed = True
         self._follow_tail = False
+        self._line_err_count = 0  # PG-3: reset; on_tool_panel_completed reconciles group counter
         try:
             self._render_timer.stop()
             self._spinner_timer.stop()

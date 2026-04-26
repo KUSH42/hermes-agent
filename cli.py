@@ -1458,9 +1458,6 @@ from agent.skill_commands import (
 )
 
 _skill_commands = scan_skill_commands()
-# Names that have already had a deprecation warning emitted in this process lifetime.
-# Process-lifetime scope = session-scoped; no cross-session persistence.
-_deprecated_slash_warned: set[str] = set()
 
 
 def _get_plugin_cmd_handler_names() -> set:
@@ -4241,21 +4238,14 @@ class HermesCLI:
         _cprint(f"{_BOLD}|{header:^{inner_width}}|{_RST}")
         _cprint(f"{_BOLD}+{'-' * inner_width}+{_RST}")
 
-        _sns_phase = CLI_CONFIG["display"].get("skill_namespace_phase", 2)
-        if _sns_phase >= 2:
-            _cprint(f"\n  {_BOLD}── Slash commands ──{_RST}")
+        _cprint(f"\n  {_BOLD}── Slash commands ──{_RST}")
         for category, commands in COMMANDS_BY_CATEGORY.items():
-            if _sns_phase < 2:
-                _cprint(f"\n  {_BOLD}── {category} ──{_RST}")
             for cmd, desc in commands.items():
                 ChatConsole().print(f"    [bold {_accent_hex()}]{cmd:<15}[/] [dim]-[/] {_escape(desc)}")
 
         if _skill_commands:
             _cprint(f"\n  ⚡ {_BOLD}Skills{_RST} ({len(_skill_commands)} installed):")
-            if _sns_phase >= 2:
-                _cprint(f"  {_DIM}$name to invoke (Alt+$ for picker){_RST}")
-            else:
-                _cprint(f"  {_DIM}Invoke with $name (or /name in CLI/gateway mode):{_RST}")
+            _cprint(f"  {_DIM}$name to invoke (Alt+$ for picker){_RST}")
             for cmd, info in sorted(_skill_commands.items()):
                 dollar_cmd = f"${cmd.lstrip('/')}"
                 ChatConsole().print(
@@ -5917,27 +5907,10 @@ class HermesCLI:
                             _cprint(str(result))
                     except Exception as e:
                         _cprint(f"\033[1;31mPlugin command error: {e}{_RST}")
-            # Check for skill slash commands (/gif-search, /axolotl, etc.)
+            # /skill-name is no longer accepted — reject with a clear error
             elif base_cmd in _skill_commands:
-                _sns_phase = CLI_CONFIG["display"].get("skill_namespace_phase", 2)
-                _bare_skill = base_cmd.lstrip("/")
-                if _sns_phase >= 3:
-                    _cprint(f"/{_bare_skill} is no longer accepted — use ${_bare_skill} (Alt+$ for picker)")
-                    return
-                if _sns_phase >= 2 and _bare_skill not in _deprecated_slash_warned:
-                    _deprecated_slash_warned.add(_bare_skill)
-                    _cprint(f"/{_bare_skill} is deprecated — use ${_bare_skill} (Alt+$ for picker)")
-                user_instruction = cmd_original[len(base_cmd):].strip()
-                msg = build_skill_invocation_message(
-                    base_cmd, user_instruction, task_id=self.session_id
-                )
-                if msg:
-                    skill_name = _skill_commands[base_cmd]["name"]
-                    print(f"\n⚡ Loading skill: {skill_name}")
-                    if hasattr(self, '_pending_input'):
-                        self._pending_input.put(msg)
-                else:
-                    ChatConsole().print(f"[bold red]Failed to load skill for {base_cmd}[/]")
+                name = base_cmd.lstrip("/")
+                _cprint(f"/{name} no longer invokes skills — use ${name} (Alt+$ for picker)")
             else:
                 # Prefix matching: if input uniquely identifies one command, execute it.
                 # Matches against both built-in COMMANDS and installed skill commands so

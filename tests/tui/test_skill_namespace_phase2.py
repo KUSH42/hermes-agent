@@ -195,12 +195,3 @@ class TestPhaseFlag:
         result = _run_slash_dispatch("/review-pr", skill_commands, phase=2, warned_set=warned)
         assert result["dispatched"]
         assert any("deprecated" in s for s in result["cprint"])
-
-    def test_phase3_flag_rejects_slash_skill(self):
-        """phase=3 + /review-pr → error, no dispatch (forward-compat stub)."""
-        skill_commands = {"/review-pr": {"name": "review-pr", "description": "Review PR"}}
-        warned: set = set()
-        result = _run_slash_dispatch("/review-pr", skill_commands, phase=3, warned_set=warned)
-        assert result["rejected"]
-        assert not result["dispatched"]
-        assert any("no longer accepted" in s for s in result["cprint"])

@@ -23,6 +23,8 @@ from textual.strip import Strip
 from textual.widget import Widget
 from textual.widgets import Static
 
+from hermes_cli.tui.managed_timer_mixin import ManagedTimerMixin
+
 if TYPE_CHECKING:
     from hermes_cli.tui.anim_engines import AnimEngine, AnimParams
 
@@ -245,7 +247,7 @@ _LabelLine {
 
 # ── ThinkingWidget ────────────────────────────────────────────────────────────
 
-class ThinkingWidget(Widget):
+class ThinkingWidget(ManagedTimerMixin, Widget):
     """Animated placeholder shown while agent is thinking.
 
     Composed of _AnimSurface (braille animation) + _LabelLine (stream effect).
@@ -270,6 +272,7 @@ _LabelLine   { height: 1;   width: 1fr; }
     _activate_time: float | None = None
     _current_mode: ThinkingMode | None = None
     _reserve_fallback_timer: object | None = None  # A14: 2s safety clear for --reserved
+    _effects_lock: "threading.Lock | None" = None  # H10: single lock reused across _LabelLine redraws
 
     # Config cache (loaded once at first activate)
     _cfg_loaded: bool = False
@@ -305,16 +308,11 @@ _LabelLine   { height: 1;   width: 1fr; }
         self._load_config()
 
     def on_unmount(self) -> None:
-        if self._timer is not None:
-            try:
-                self._timer.stop()
-            except Exception:
-                pass
-            self._timer = None
         self._substate = None
         self._activate_time = None
         self._anim_surface = None
         self._label_line = None
+        super().on_unmount()  # ManagedTimerMixin.on_unmount → _stop_all_managed
 
     def _load_config(self) -> None:
         if self._cfg_loaded:
@@ -416,13 +414,16 @@ _LabelLine   { height: 1;   width: 1fr; }
             self._substate = "WORKING"
             self._activate_time = time.monotonic()
             if self._label_line is None:
-                self._label_line = _LabelLine("breathe", id="thinking-label", _lock=threading.Lock())
+                if self._effects_lock is None:
+                    self._effects_lock = threading.Lock()
+                self._label_line = _LabelLine("breathe", id="thinking-label", _lock=self._effects_lock)
                 _schedule_awaitable(self.mount(self._label_line))
                 self._label_line.update_static("Thinking…")
             return  # no timer started — deterministic
 
-        if self._timer is not None:
-            return  # already active — no-op
+        # M8: stop any orphaned timer from a prior activate-without-deactivate cycle
+        self._stop_all_managed()
+        self._timer = None
 
         resolved_mode = self._resolve_mode(mode)
         if resolved_mode == ThinkingMode.OFF:
@@ -444,8 +445,11 @@ _LabelLine   { height: 1;   width: 1fr; }
         else:
             self._anim_surface = None
 
-        # D-2/E-3: create with flash effect for STARTED phase; pass thread-safe lock
-        self._label_line = _LabelLine("flash", id="thinking-label", _lock=threading.Lock())
+        # H10: allocate lock once per widget lifecycle, reuse for all _LabelLine redraws
+        if self._effects_lock is None:
+            self._effects_lock = threading.Lock()
+        # D-2/E-3: create with flash effect for STARTED phase; pass shared thread-safe lock
+        self._label_line = _LabelLine("flash", id="thinking-label", _lock=self._effects_lock)
         _schedule_awaitable(self.mount(self._label_line))
 
         # Apply CSS classes
@@ -457,13 +461,17 @@ _LabelLine   { height: 1;   width: 1fr; }
         self._activate_time = time.monotonic()
         self._substate = "STARTED"
 
-        # Start single timer
+        # Start single timer — registered through mixin so on_unmount stops it automatically
         self._load_config()
         hz = max(1.0, self._cfg_tick_hz)
-        self._timer = self.set_interval(1.0 / hz, self._tick)
+        self._timer = self._register_timer(self.set_interval(1.0 / hz, self._tick))
 
     def deactivate(self) -> None:
-        """Begin two-phase fade-out (150ms) then hide."""
+        """Stop animation timer immediately; schedule 150ms visual fade-out."""
+        # L9: stop managed timers synchronously so flush_live can proceed without
+        # racing against a still-running animation tick.
+        self._stop_all_managed()
+        self._timer = None
         if self._substate == "ABOUT_TO_STREAM":
             return  # already fading
         self._substate = "ABOUT_TO_STREAM"
@@ -473,8 +481,10 @@ _LabelLine   { height: 1;   width: 1fr; }
     def _do_hide(self) -> None:
         if not self.is_attached:
             return
+        # _stop_all_managed was already called in deactivate; _timer is None here.
+        # Defensive: stop if somehow still set (e.g. double-deactivate race).
         if self._timer is not None:
-            self._timer.stop()
+            self._stop_all_managed()
             self._timer = None
         self.remove_class("--active", "--fading", *_ALL_MODE_CLASSES)  # D-3: include --fading
         self.app.remove_class("thinking-active")

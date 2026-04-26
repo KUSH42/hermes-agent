@@ -42,6 +42,7 @@ from ._shared import (
     ToolHeaderStats,
 )
 from ._block import ToolBlock, COLLAPSE_THRESHOLD
+from hermes_cli.tui.managed_timer_mixin import ManagedTimerMixin
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +89,7 @@ class ToolTail(Static):
 # StreamingToolBlock — live output during tool execution
 # ---------------------------------------------------------------------------
 
-class StreamingToolBlock(ToolBlock):
+class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
     """ToolBlock with IDLE → STREAMING → COMPLETED lifecycle.
 
     LL-4: `t` cycles renderer kind; `Shift+T` reverts to auto.
@@ -179,9 +180,9 @@ class StreamingToolBlock(ToolBlock):
         self._stream_started_at = time.monotonic()
         self._last_line_time = self._stream_started_at
         self._header._duration = "0.0s"
-        self._render_timer = self.set_interval(1 / 60, self._flush_pending)
-        self._spinner_timer = self.set_interval(0.25, self._tick_spinner)
-        self._duration_timer = self.set_interval(0.1, self._tick_duration)
+        self._render_timer = self._register_timer(self.set_interval(1 / 60, self._flush_pending))
+        self._spinner_timer = self._register_timer(self.set_interval(0.25, self._tick_spinner))
+        self._duration_timer = self._register_timer(self.set_interval(0.1, self._tick_duration))
         try:
             display_cfg = self.app.cfg.get("display", {})  # type: ignore[attr-defined]
             self._visible_cap: int = int(display_cfg.get("tool_visible_cap", _VISIBLE_CAP))
@@ -272,7 +273,7 @@ class StreamingToolBlock(ToolBlock):
                 self._render_timer.stop()
                 self._render_timer = None
             if not self._is_unmounted:  # PERF-4: don't resurrect timer after unmount
-                self._render_timer = self.set_interval(1 / 60, self._flush_pending)
+                self._render_timer = self._register_timer(self.set_interval(1 / 60, self._flush_pending))
         # PG-3: notify ToolGroup ancestor for live error-count tracking
         from hermes_cli.tui.tool_group import ToolGroup as _TG
         self.post_message(_TG.StreamingLineAppended(plain))
@@ -286,18 +287,6 @@ class StreamingToolBlock(ToolBlock):
 
     def on_unmount(self) -> None:
         self._is_unmounted = True  # PERF-4: block timer resurrection at both reassign sites
-        try:
-            self._render_timer.stop()
-        except Exception:
-            pass
-        try:
-            self._spinner_timer.stop()
-        except Exception:
-            pass
-        try:
-            self._duration_timer.stop()
-        except Exception:
-            pass
         if self._remove_adopted_timer is not None:
             self._remove_adopted_timer.stop()
         # LL-4: clear kind chip directly — post_message unavailable after message loop closes
@@ -307,6 +296,7 @@ class StreamingToolBlock(ToolBlock):
             pass
         except Exception:
             logger.debug("clear_kind_override on unmount failed", exc_info=True)
+        super().on_unmount()  # ManagedTimerMixin.on_unmount → _stop_all_managed
 
     def complete(self, duration: str, is_error: bool = False) -> None:
         if self._completed:
@@ -314,12 +304,8 @@ class StreamingToolBlock(ToolBlock):
         self._completed = True
         self._follow_tail = False
         self._line_err_count = 0  # PG-3: reset; on_tool_panel_completed reconciles group counter
-        try:
-            self._render_timer.stop()
-            self._spinner_timer.stop()
-            self._duration_timer.stop()
-        except Exception:
-            pass
+        # L4: use mixin — marks entries stopped=True so on_unmount skips them (no double-stop)
+        self._stop_all_managed()
         self._header._pulse_stop()
         self._header.set_error(is_error)
         self._flush_pending()
@@ -495,7 +481,7 @@ class StreamingToolBlock(ToolBlock):
                     self._render_timer.stop()
                     self._render_timer = None
                 if not self._is_unmounted:  # PERF-4: don't resurrect timer after unmount
-                    self._render_timer = self.set_interval(1 / 10, self._flush_pending)
+                    self._render_timer = self._register_timer(self.set_interval(1 / 10, self._flush_pending))
 
         self._microcopy_tick = (self._microcopy_tick + 1) % 6
         do_microcopy = self._microcopy_tick == 0
@@ -742,12 +728,8 @@ class StreamingToolBlock(ToolBlock):
         # Regression guard: stop live timers before body replacement.
         # complete() already handles this in the normal completion flow.
         if not self._completed:
-            try:
-                self._render_timer.stop()
-                self._spinner_timer.stop()
-                self._duration_timer.stop()
-            except Exception:
-                pass
+            # L4: use mixin — marks entries stopped=True so on_unmount skips them
+            self._stop_all_managed()
         super().replace_body_widget(widget, plain_text=plain_text)
 
     def refresh_skin(self) -> None:

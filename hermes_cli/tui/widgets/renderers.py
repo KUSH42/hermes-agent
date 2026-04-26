@@ -32,6 +32,7 @@ from textual.widget import Widget
 from textual.widgets import RichLog, Static
 
 from hermes_cli.tui.tooltip import TooltipMixin
+from hermes_cli.tui.managed_timer_mixin import ManagedTimerMixin
 
 from hermes_cli.tui.animation import AnimationClock, PulseMixin, lerp_color
 from hermes_cli.tui.messages import ReducedMotionChanged
@@ -321,7 +322,7 @@ class CopyableBlock(Widget):
             self.mount(Static(ICON_COPY, id="copy-btn"))
 
 
-class LiveLineWidget(Widget):
+class LiveLineWidget(ManagedTimerMixin, Widget):
     """Renders the current in-progress streaming chunk before it is committed.
 
     Accumulates text via :meth:`append` (direct) or :meth:`feed` (typewriter).
@@ -374,10 +375,7 @@ class LiveLineWidget(Widget):
 
     def on_unmount(self) -> None:
         self._animating = False
-        # Cancel blink timer if active
-        if getattr(self, "_blink_timer", None) is not None:
-            self._blink_timer.stop()
-            self._blink_timer = None
+        super().on_unmount()  # ManagedTimerMixin.on_unmount → _stop_all_managed
 
     def render(self) -> RenderResult:
         if not self._buf and not self._animating:
@@ -480,9 +478,9 @@ class LiveLineWidget(Widget):
                     getattr(self, "app", None), "_anim_clock", None
                 )
                 if clock is not None:
-                    self._blink_timer = clock.subscribe(8, self._toggle_blink)
+                    self._blink_timer = self._register_timer(clock.subscribe(8, self._toggle_blink))
                 else:
-                    self._blink_timer = self.set_interval(0.5, self._toggle_blink)
+                    self._blink_timer = self._register_timer(self.set_interval(0.5, self._toggle_blink))
             self.append(chunk)
             return
         pos = 0

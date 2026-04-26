@@ -14,7 +14,7 @@ class _H:
     """Thin stand-in for ToolHeader that exercises _render_v4 rendering logic."""
 
     def __init__(self, *, tool_name="bash", collapsed=True, is_complete=True,
-                 exit_code=None, primary_hero=None, spinner_char=None,
+                 exit_code=None, primary_hero=None,
                  panel_collapsed=None, is_child=False, width=80):
         # attrs mirroring ToolHeader.__init__
         self._tool_name = tool_name
@@ -24,7 +24,6 @@ class _H:
         self._has_affordances = False
         self._flash_msg = None
         self._flash_expires = 0.0
-        self._spinner_char = spinner_char
         self._duration = ""
         self._is_complete = is_complete
         self._tool_icon = ""
@@ -86,27 +85,25 @@ class _H:
 
         tail_segments = []
 
-        if self._spinner_char is None:
-            # primary hero
-            if self._primary_hero:
-                tail_segments.append(("hero", Text(f"  {self._primary_hero}", style="dim green")))
+        # primary hero
+        if self._primary_hero:
+            tail_segments.append(("hero", Text(f"  {self._primary_hero}", style="dim green")))
 
-            # R10 exit segment
-            is_collapsed = self._panel.collapsed if self._panel is not None else self.collapsed
-            if is_collapsed and self._is_complete:
-                code = getattr(self, "_exit_code", None)
-                if code is not None:
-                    if code == 0:
-                        if not self._primary_hero:
-                            tail_segments.append(("exit", Text("  ok", style="dim green")))
-                    else:
-                        tail_segments.append(("exit", Text(f"  exit {code}", style="bold red")))
+        # R10 exit segment
+        is_collapsed = self._panel.collapsed if self._panel is not None else self.collapsed
+        if is_collapsed and self._is_complete:
+            code = getattr(self, "_exit_code", None)
+            if code is not None:
+                if code == 0:
+                    if not self._primary_hero:
+                        tail_segments.append(("exit", Text("  ok", style="dim green")))
+                else:
+                    tail_segments.append(("exit", Text(f"  exit {code}", style="bold red")))
 
-
-            # chevron
-            is_col = self._panel.collapsed if self._panel is not None else self.collapsed
-            if self._has_affordances:
-                tail_segments.append(("chevron", Text("  ▸" if is_col else "  ▾", style="dim")))
+        # chevron
+        is_col = self._panel.collapsed if self._panel is not None else self.collapsed
+        if self._has_affordances:
+            tail_segments.append(("chevron", Text("  ▸" if is_col else "  ▾", style="dim")))
 
         budget = max(0, self._width - 20) if self._width > 0 else 80
         tail_segments = _trim_tail_segments(tail_segments, budget)

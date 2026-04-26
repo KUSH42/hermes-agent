@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
 from rich.style import Style
@@ -75,69 +74,6 @@ def _fnv1a_32(s: str) -> int:
         h = (h * 16777619) & 0xFFFFFFFF  # FNV prime, masked to 32 bits
     return h
 
-
-_SPINNER_FRAME_SETS: tuple[tuple[str, ...], ...] = (
-    # 0 — standard CCW sweep (current default, used as accessibility fallback)
-    ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"),
-    # 1 — CW arc with intentional bounce-back at apex (⠾⠿⠾)
-    ("⠈", "⠘", "⠸", "⠼", "⠾", "⠿", "⠾", "⠼", "⠸", "⠘"),
-    # 2 — heavy bounce (fills then empties)
-    ("⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷", "⣿", "⣶"),
-    # 3 — diagonal sweep
-    ("⠁", "⠃", "⠇", "⠧", "⠷", "⠿", "⠾", "⠼", "⠸", "⠰"),
-)
-
-_SPINNER_COLOR_PAIRS: tuple[tuple[str, str], ...] = (
-    # (dim_end, bright_peak) — lerp_color(a, b, t) at t=0 gives dim_end
-    ("#1565c0", "#00bcd4"),  # 0 deep-blue → cyan
-    ("#00695c", "#43a047"),  # 1 teal → green
-    ("#e65100", "#f9a825"),  # 2 deep-orange → amber
-    ("#6a1b9a", "#e91e63"),  # 3 purple → pink
-    ("#283593", "#7e57c2"),  # 4 indigo → violet
-    ("#b71c1c", "#f06292"),  # 5 deep-red → light-pink
-    ("#006064", "#26c6da"),  # 6 dark-cyan → aqua
-    ("#f57f17", "#ffd54f"),  # 7 gold → yellow
-)
-
-
-@dataclass(frozen=True, slots=True)
-class SpinnerIdentity:
-    """Deterministic per-block spinner appearance seeded from tool_call_id."""
-    frames: tuple[str, ...]
-    color_a: str   # gradient dim end (t=0)
-    color_b: str   # gradient bright peak (t=1)
-    phase_offset: float  # ∈ [0, 1) — shifts sine phase so concurrent blocks cycle out of sync
-
-
-def make_spinner_identity(tool_call_id: str, category: "Any | None" = None) -> SpinnerIdentity:
-    """Return a skin-driven SpinnerIdentity for the icon pulse.
-
-    When category is provided, pulse colors are resolved from SkinColors.tier_accents
-    so all active calls in the same category pulse in unison (phase_offset=0).
-    When category is None, falls back to default accent colors.
-
-    The frames field is kept for icon-glyph cycling; spinner segment was removed (CL-1).
-    """
-    from hermes_cli.tui.body_renderers._grammar import SkinColors
-    skin = SkinColors.default()
-    if category is None:
-        return SpinnerIdentity(
-            frames=_SPINNER_FRAME_SETS[0],
-            color_a=skin.icon_dim,
-            color_b=skin.accent,
-            phase_offset=0.0,
-        )
-    try:
-        from hermes_cli.tui.tool_category import display_tier_for
-        accent = skin.tier_accents.get(display_tier_for(category), skin.accent)
-    except Exception:
-        accent = skin.accent
-    return SpinnerIdentity(
-        frames=_SPINNER_FRAME_SETS[0],
-        color_a=skin.icon_dim,
-        color_b=accent,
-        phase_offset=0.0,
-    )
 
 
 # Precomputed sine tables for common animation periods.

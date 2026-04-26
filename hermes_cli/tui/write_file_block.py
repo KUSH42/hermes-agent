@@ -264,7 +264,6 @@ class WriteFileBlock(StreamingToolBlock):
         self._header.set_error(is_error)
         self._flush_pending()  # no-op (we never use _pending)
         self._tail.dismiss()
-        self._header._spinner_char = None
         started = getattr(self, "_stream_started_at", None)
         if started is not None:
             elapsed_ms = (time.monotonic() - started) * 1000.0

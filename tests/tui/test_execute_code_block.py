@@ -58,8 +58,6 @@ async def test_phase_gen_start():
         block = await _mount_execute_block(pilot, app)
 
         from hermes_cli.tui.execute_code_block import CodeSection, OutputSection
-        # Spinner running
-        assert block._header._spinner_char is not None
         # CodeSection present, OutputSection hidden
         code_sec = block.query_one(CodeSection)
         out_sec = block.query_one(OutputSection)
@@ -270,8 +268,6 @@ async def test_phase_completed_success():
 
         # Duration set
         assert block._header._duration == "1.2s"
-        # Spinner cleared
-        assert block._header._spinner_char is None
         # Flash success applied (class added; removed after 450ms timer — just check it was set once)
         assert not block._header._tool_icon_error
 
@@ -418,7 +414,6 @@ def test_header_right_align():
     header = ToolHeader(label="x" * 80, line_count=5)
     header._duration = "2.3s"
     header._has_affordances = True
-    header._spinner_char = None
 
     # Patch size.width to return 80
     mock_region = Region(0, 0, 80, 1)
@@ -438,7 +433,6 @@ def test_header_label_normal_color():
     from textual.geometry import Size
     header = ToolHeader(label="my_tool", line_count=5)
     header._duration = "1.0s"
-    header._spinner_char = None  # completed
     header._tool_icon_error = False
     header._size = Size(80, 1)
 
@@ -589,7 +583,6 @@ def test_right_align_narrow_terminal():
     header = ToolHeader(label="import yaml and do stuff with paths", line_count=2)
     header._duration = "1.5s"
     header._has_affordances = True
-    header._spinner_char = None
 
     with patch.object(type(header), "size", new_callable=PropertyMock, return_value=Size(40, 1)):
         from rich.text import Text

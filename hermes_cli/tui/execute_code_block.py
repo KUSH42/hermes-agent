@@ -108,6 +108,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
         # Initialized post-mount with app reference
         self._pacer = None
         self._extractor = None
+        self._pre_mount_chunks: list[str] = []  # H9: buffer raw deltas before mount
         self._cached_code_log: "CopyableRichLog | None" = None
         self._cached_output_log: "CopyableRichLog | None" = None
         self._cached_cursor: "Static | None" = None
@@ -146,11 +147,20 @@ class ExecuteCodeBlock(StreamingToolBlock):
         except Exception:
             _log.debug("ExecuteCodeBlock: css var lookup failed", exc_info=True)
 
-        self._pacer = CharacterPacer(
+        pacer = CharacterPacer(
             cps=cps,
             on_reveal=self.append_code_chars,
             app=self.app,
         )
+        self._pacer = self._register_pacer(pacer)
+
+        # H9: drain any deltas that arrived before mount completed
+        if self._pre_mount_chunks:
+            for raw in self._pre_mount_chunks:
+                chunk = self._extractor.feed(raw)
+                if chunk:
+                    self._pacer.feed(chunk)
+            self._pre_mount_chunks.clear()
 
         # Mount cursor Static inside CodeSection
         try:
@@ -213,7 +223,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
                 return
         except Exception:
             _log.debug("ExecuteCodeBlock._start_cursor: css var lookup failed", exc_info=True)
-        self._cursor_timer = self.set_interval(0.5, self._tick_cursor)
+        self._cursor_timer = self._register_timer(self.set_interval(0.5, self._tick_cursor))
 
     def _tick_cursor(self) -> None:
         if self._code_state == _STATE_FINALIZED:
@@ -239,10 +249,12 @@ class ExecuteCodeBlock(StreamingToolBlock):
         """Process a streaming JSON args chunk. Event-loop only."""
         if self._code_state == _STATE_FINALIZED:
             return
-        if self._extractor is None:
+        if self._extractor is None or self._pacer is None:
+            # H9: before mount — buffer raw delta for drain in on_mount
+            self._pre_mount_chunks.append(delta)
             return
         decoded = self._extractor.feed(delta)
-        if decoded and self._pacer is not None:
+        if decoded:
             self._pacer.feed(decoded)
 
     def append_code_chars(self, chars: str) -> None:
@@ -512,14 +524,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
         super().toggle()
 
     def on_unmount(self) -> None:
-        super().on_unmount()
-        if self._pacer is not None:
-            self._pacer.stop()
-        if self._cursor_timer is not None:
-            try:
-                self._cursor_timer.stop()
-            except Exception:
-                _log.debug("ExecuteCodeBlock.on_unmount: cursor timer stop failed", exc_info=True)
+        super().on_unmount()  # ManagedTimerMixin.on_unmount → _stop_all_managed
 
     def _get_output_log(self) -> CopyableRichLog:
         if self._cached_output_log is not None:
@@ -530,6 +535,10 @@ class ExecuteCodeBlock(StreamingToolBlock):
 
     def reveal_lines(self, start: int, end: int) -> None:
         """Append output _all_plain[start:end] to OutputSection's RichLog."""
+        if not self.is_mounted:
+            # L10: guard against writes during collapse/expand cycles on unmounted block
+            _log.debug("reveal_lines on unmounted block; dropping %d lines", end - start)
+            return
         log = self._get_output_log()
         for plain in self._all_plain[start:end]:
             log.write_with_source(Text(plain), plain)

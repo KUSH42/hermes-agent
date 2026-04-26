@@ -63,6 +63,7 @@ class WriteFileBlock(StreamingToolBlock):
         self._content_lines: list[str] = []
         self._pacer = None
         self._extractor = None
+        self._pre_mount_chunks: list[str] = []  # H9: buffer raw deltas before mount
         self._progress: Static | None = None  # J2: single widget — starts "writing…", updates to "writing · NKB"
         # Legacy aliases kept for any external callers
         self._writing_hint: Static | None = None
@@ -97,11 +98,20 @@ class WriteFileBlock(StreamingToolBlock):
         except Exception:
             _log.debug("WriteFileBlock: css var lookup failed", exc_info=True)
 
-        self._pacer = CharacterPacer(
+        pacer = CharacterPacer(
             cps=cps,
             on_reveal=self.append_content_chars,
             app=self.app,
         )
+        self._pacer = self._register_pacer(pacer)
+
+        # H9: drain any deltas that arrived before mount completed
+        if self._pre_mount_chunks:
+            for raw in self._pre_mount_chunks:
+                chunk = self._extractor.feed(raw)
+                if chunk:
+                    self._pacer.feed(chunk)
+            self._pre_mount_chunks.clear()
 
         if cps == 0:
             # J2: single progress widget — text transitions from "writing…" to "writing · NKB"
@@ -154,10 +164,14 @@ class WriteFileBlock(StreamingToolBlock):
 
     def feed_delta(self, delta: str) -> None:
         """Feed JSON streaming delta through content extractor to pacer."""
-        if self._extractor is None or self._completed:
+        if self._completed:
+            return
+        if self._extractor is None or self._pacer is None:
+            # H9: before mount — buffer raw delta for drain in on_mount
+            self._pre_mount_chunks.append(delta)
             return
         chunk = self._extractor.feed(delta)
-        if chunk and self._pacer is not None:
+        if chunk:
             self._pacer.feed(chunk)
 
     def append_content_chars(self, chars: str) -> None:
@@ -316,6 +330,4 @@ class WriteFileBlock(StreamingToolBlock):
         return "\n".join(self._content_lines)
 
     def on_unmount(self) -> None:
-        if self._pacer is not None:
-            self._pacer.stop()
-        super().on_unmount()
+        super().on_unmount()  # ManagedTimerMixin.on_unmount → _stop_all_managed

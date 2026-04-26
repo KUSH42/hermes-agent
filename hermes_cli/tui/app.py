@@ -404,6 +404,9 @@ class HermesApp(App):
     # A1: coarse phase within an agent turn — widgets subscribe via cross-widget watch()
     status_phase: reactive[str] = reactive(_Phase.IDLE)
 
+    # TCS-MED-02: projected phase for visual widgets; prioritizes blockers over tool/reasoning
+    ui_phase: reactive[str] = reactive("idle")
+
     # S0-A: verbose mode — show ctx_label in StatusBar alongside bar
     status_verbose: reactive[bool] = reactive(False)
 
@@ -2568,9 +2571,11 @@ class HermesApp(App):
 
     def watch_clarify_state(self, value: Any) -> None:
         self._svc_watchers.on_clarify_state(value)
+        self._update_ui_phase()
 
     def watch_approval_state(self, value: Any) -> None:
         self._svc_watchers.on_approval_state(value)
+        self._update_ui_phase()
 
     def watch_highlighted_candidate(self, c: Any) -> None:
         self._svc_watchers.on_highlighted_candidate(c)
@@ -2584,13 +2589,42 @@ class HermesApp(App):
     def watch_status_error(self, value: str) -> None:
         self._svc_watchers.on_status_error(value)
 
+    def _update_ui_phase(self) -> None:
+        """TCS-MED-02: Compute and update ui_phase from blocker visibility and status_phase."""
+        from hermes_cli.tui.agent_phase import Phase as _Phase
+        _blocker_attrs = ("approval_state", "clarify_state", "undo_state")
+        _has_blocker = any(getattr(self, a, None) is not None for a in _blocker_attrs)
+        if not _has_blocker:
+            try:
+                from hermes_cli.tui.overlays.interrupt import InterruptOverlay as _IO
+                _io = self.query_one(_IO)
+                _has_blocker = _io.has_class("--visible")
+            except Exception:
+                pass
+        if _has_blocker:
+            self.ui_phase = "blocker"
+            self.add_class("--blocker-active")
+        else:
+            self.remove_class("--blocker-active")
+            _sp = self.status_phase
+            if _sp == _Phase.TOOL_EXEC:
+                self.ui_phase = "tool_exec"
+            elif _sp == _Phase.REASONING:
+                self.ui_phase = "reasoning"
+            elif _sp == _Phase.STREAMING:
+                self.ui_phase = "streaming"
+            else:
+                self.ui_phase = "idle"
+
     def watch_status_phase(self, old: str, new: str) -> None:
         if old:
             self.remove_class(f"--phase-{old}")
         self.add_class(f"--phase-{new}")
+        self._update_ui_phase()
 
     def watch_undo_state(self, value: Any) -> None:
         self._svc_watchers.on_undo_state(value)
+        self._update_ui_phase()
 
     # --- from _app_key_handler.py ---
 

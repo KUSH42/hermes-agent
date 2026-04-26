@@ -1295,6 +1295,10 @@ class ToolRenderingService(AppService):
 
         # PG-1: mark_plan_done now fired by PlanSyncBroker when _set_view_state(DONE/ERROR)
         # is called inside _terminalize_tool_view (Step 9) via close_streaming_tool_block.
+        # Fallback: if there was no view at all, _terminalize_tool_view was never reached,
+        # so fire mark_plan_done directly to keep the PlanPanel consistent.
+        if view is None:
+            self.mark_plan_done(tool_call_id, is_error=is_error, dur_ms=int(dur_ms_float))
 
         # Record tool call latency into perf probe
         dur_ms_int = int(dur_ms_float)

@@ -94,7 +94,17 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
             super().__init__()
             self.panel = panel
 
-    DEFAULT_CSS = "ToolPanel { height: auto; layout: vertical; }"
+    DEFAULT_CSS = """
+    ToolPanel { height: auto; layout: vertical; }
+    ToolPanel FooterPane.has-actions > .action-row { display: none; }
+    ToolPanel:focus FooterPane.has-actions > .action-row { display: block; }
+    ToolPanel.--browsed FooterPane.has-actions > .action-row { display: block; }
+    ToolPanel.--expanded FooterPane.has-actions > .action-row { display: block; }
+    ToolPanel StreamingToolBlock.--compact-success ToolBodyContainer.expanded { display: none; }
+    ToolPanel:focus StreamingToolBlock.--compact-success ToolBodyContainer.expanded { display: block; }
+    ToolPanel.--browsed StreamingToolBlock.--compact-success ToolBodyContainer.expanded { display: block; }
+    ToolPanel.--expanded StreamingToolBlock.--compact-success ToolBodyContainer.expanded { display: block; }
+    """
     _content_type: str = "tool"
     can_focus = True
 

@@ -708,6 +708,8 @@ class _NPState(enum.Enum):
 class AssistantNameplate(Widget):
     """Animated assistant name above the input bar."""
 
+    _MORPH_TICKS: int = 8  # ≈267 ms at 30 fps; controls active/idle morph speed only
+
     DEFAULT_CSS = """
     AssistantNameplate {
         height: 1;
@@ -949,7 +951,7 @@ class AssistantNameplate(Widget):
                 all_locked = False
         if all_locked and self._frame:
             self._state = _NPState.IDLE
-            self._set_timer_rate(30)
+            self._enter_idle_timer()
 
     def _tick_idle(self) -> None:
         if self._idle_fx is not None:
@@ -988,7 +990,7 @@ class AssistantNameplate(Widget):
                 self._set_timer_rate(30)
             else:
                 self._state = _NPState.IDLE
-                self._set_timer_rate(30)
+                self._enter_idle_timer()
 
     def _tick_glitch(self) -> None:
         self._glitch_frame += 1
@@ -1085,6 +1087,13 @@ class AssistantNameplate(Widget):
             self._timer.stop()
             self._timer = None
 
+    def _enter_idle_timer(self) -> None:
+        """Start idle timer only when an animated effect needs per-frame updates."""
+        if not self._effects_enabled or self._idle_fx is None:
+            self._stop_timer()
+        else:
+            self._set_timer_rate(30)
+
     def _pause_pulse(self) -> None:
         """Stop animation timer; --active stays so the turn-in-progress color persists."""
         self._stop_timer()
@@ -1108,11 +1117,8 @@ class AssistantNameplate(Widget):
 
     def _activate_idle_phase(self) -> None:
         """Resume idle animation after error cleared."""
-        if not self._effects_enabled:
-            return
         self._state = _NPState.IDLE
-        if self._timer is None:
-            self._set_timer_rate(30)
+        self._enter_idle_timer()
 
     def _on_error_set(self, **_) -> None:
         """A3-1: switch nameplate into error state."""

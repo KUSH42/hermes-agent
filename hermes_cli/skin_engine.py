@@ -162,6 +162,23 @@ All fields are optional. Missing values inherit from the ``default`` skin.
       rule-accent-dim-color: "#CC9920"    # Rule accent dim variant
       primary-darken-3: "#4a7aaa"         # TitledRule idle glyph (dimmer than $primary)
       fps-hud-bg: "#1a1a2e"               # FPS counter background
+      # SC-1 dim variants (tool-call render path)
+      error-dim: "#8B2020"                # Exit-code / accessible error marker (dim)
+      success-dim: "#1E5C1E"             # Exit-code ok chip (dim)
+      warning-dim: "#5C4A00"             # Remediation hint text (dim)
+      text-muted-dim: "#3A3A3A"          # Chevron placeholder / parse-fail context (double-dim)
+      # SC-4 focused ToolPanel gutter
+      tool-header-gutter-color: "#00bcd4" # Focused ToolPanel left gutter (cascade: $accent-interactive)
+      # SC-2 per-tier tool header icon accents
+      tool-tier-read-accent: "#0178D4"   # Read-category tool icon accent
+      tool-tier-write-accent: "#0178D4"  # Write-category tool icon accent
+      tool-tier-exec-accent: "#81C784"   # Exec-category tool icon accent (green)
+      tool-tier-search-accent: "#0178D4" # Search-category tool icon accent
+      tool-tier-shell-accent: "#81C784"  # Shell-category tool icon accent (green)
+      tool-tier-browse-accent: "#0178D4" # Browse-category tool icon accent
+      tool-tier-mcp-accent: "#9b59b6"    # MCP tool icon accent (purple)
+      tool-tier-thinking-accent: "#0178D4" # Reasoning/thinking block accent
+      tool-tier-tooling-accent: "#0178D4"  # Meta/sub-agent call block accent
 
 USAGE
 =====

@@ -382,6 +382,20 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                     style=f"dim italic {self._colors().accent}",
                 )))
 
+        # P-2: trace-armed chip — visible while TRACE is queued but block still streaming
+        if self._panel is not None and not self._is_complete:
+            _p = self._panel
+            _user_armed_trace = (
+                getattr(_p, "_user_collapse_override", False)
+                and getattr(_p, "_user_override_tier", None) is not None
+                and getattr(getattr(_p, "_user_override_tier", None), "value", "") == "trace"
+            )
+            if _user_armed_trace:
+                tail_segments.append(("trace_pending", Text(
+                    "  trace queued",
+                    style=f"dim italic {self._colors().warning_dim}",
+                )))
+
         term_w = self.size.width
         FIXED_PREFIX_W = gutter_w + icon_cell_w + space_after_icon
         tail_budget = max(0, term_w - FIXED_PREFIX_W - MIN_LABEL_CELLS - 2) if term_w > 0 else 80

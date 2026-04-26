@@ -31,6 +31,15 @@ class _ToolPanelActionsMixin:
 
     @staticmethod
     def _next_tier_in_cycle(current: "object") -> "object":
+        """Advance to the next tier in the user-facing density cycle.
+
+        Cycle: DEFAULT → COMPACT → HERO → DEFAULT.
+
+        TRACE is intentionally excluded — it is a diagnostic tier reachable
+        only via `alt+t` (action_density_trace). Adding it to the cycle would
+        expose unbounded row counts to users who just want a slightly tighter
+        layout. See action_density_trace for the explicit-opt-in path.
+        """
         from hermes_cli.tui.tool_panel.density import DensityTier
         cycle = (DensityTier.DEFAULT, DensityTier.COMPACT, DensityTier.HERO)
         try:
@@ -74,10 +83,34 @@ class _ToolPanelActionsMixin:
             row_budget=None,
             kind=kind,
             parent_clamp=self._parent_clamp_tier,  # type: ignore[attr-defined]
+            width=self.size.width,  # type: ignore[attr-defined]
         )
         self._resolver.resolve(inputs)  # type: ignore[attr-defined]
         if requested_tier == DensityTier.HERO and self._resolver.tier != DensityTier.HERO:  # type: ignore[attr-defined]
-            self._flash_header("hero unavailable", tone="warning")
+            msg = self._hero_rejection_reason(inputs)
+            self._flash_header(f"hero unavailable — {msg}", tone="warning")
+        else:
+            # P-3: flash destination tier so cycle position is visible.
+            self._flash_header(self._resolver.tier.value, tone="info")  # type: ignore[attr-defined]
+
+    def _hero_rejection_reason(self, inp: "object") -> str:
+        """Explain why a HERO tier request was downgraded."""
+        from hermes_cli.tui.tool_panel.layout_resolver import _HERO_KINDS, _HERO_MAX_LINES
+        _kind = getattr(inp, "kind", None)
+        if _kind not in _HERO_KINDS:
+            kind_name = _kind.value if _kind is not None else "unclassified"
+            return f"kind {kind_name} not eligible"
+        _body = getattr(inp, "body_line_count", 0)
+        if _body == 0:
+            return "no body content"
+        if _body > _HERO_MAX_LINES:
+            return f"body too long ({_body} > {_HERO_MAX_LINES})"
+        _w = getattr(inp, "width", 0)
+        _resolver = getattr(self, "_resolver", None)  # type: ignore[attr-defined]
+        _hero_min = getattr(_resolver, "hero_min_width", 0) if _resolver is not None else 0
+        if _w and _hero_min and _w < _hero_min:
+            return f"terminal too narrow ({_w} < {_hero_min})"
+        return "ineligible"
 
     def action_density_trace(self) -> None:
         """Force TRACE tier — show everything, no row clamp."""
@@ -106,6 +139,7 @@ class _ToolPanelActionsMixin:
             row_budget=None,
             kind=kind,
             parent_clamp=self._parent_clamp_tier,  # type: ignore[attr-defined]
+            width=self.size.width,  # type: ignore[attr-defined]
         )
         self._resolver.resolve(inputs)  # type: ignore[attr-defined]
         if self._resolver.tier != DensityTier.TRACE:  # type: ignore[attr-defined]
@@ -539,9 +573,9 @@ class _ToolPanelActionsMixin:
             return 80
 
     def _is_error(self) -> bool:
-        """True when the panel is in a completed error state (non-zero exit code)."""
-        rs = getattr(self, "_result_summary_v4", None)  # type: ignore[attr-defined]
-        return rs is not None and rs.exit_code not in (None, 0)
+        """True when the panel is in a completed error state."""
+        vs = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
+        return vs.is_error_for_ui if vs is not None else False
 
     def _format(self, hints: tuple[str, ...]) -> str:
         """Join hints with ·-separators, dropping lowest-priority items to fit width."""

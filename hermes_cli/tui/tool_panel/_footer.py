@@ -351,24 +351,9 @@ class FooterPane(Widget):
         if any(getattr(a, "payload_truncated", False) for a in summary.actions):
             parts.append(" ⚠ payload truncated ", style="bold " + _TONE_STYLES["warning"])
 
+        # P-4: recovery actions are injected at parse time (inject_recovery_actions in
+        # tool_result_parse.py); render uses summary.actions directly without mutation.
         actions_to_render = list(summary.actions)
-        if summary.is_error and not any(a.kind == "retry" for a in actions_to_render):
-            from hermes_cli.tui.tool_result_parse import Action as _Action
-            actions_to_render.insert(0, _Action(
-                label="retry",
-                hotkey="r",
-                kind="retry",
-                payload=None,
-            ))
-
-        if summary.stderr_tail and not any(a.kind == "copy_err" for a in actions_to_render):
-            from hermes_cli.tui.tool_result_parse import Action as _Action
-            actions_to_render.append(_Action(
-                label="copy err",
-                hotkey="e",
-                kind="copy_err",
-                payload=None,
-            ))
 
         self._content.update(parts)
 

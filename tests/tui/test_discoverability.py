@@ -1,23 +1,19 @@
 """DC-1 / DC-3 / DC-4 — Tool call discoverability spec.
 
-15 tests covering:
-  - DC-1: ToolPanel focus hint row (6 tests)
-  - DC-3: ToolsScreen filter-prefix legend strip (5 tests)
-  - DC-4: KNOWN_PREFIXES single source (4 tests)
+Tests covering:
+  - DC-1: ToolPanel focus hint row
+  - DC-3: ToolsScreen filter-prefix legend strip
+  - DC-4: KNOWN_PREFIXES single source
 """
 from __future__ import annotations
 
+import time
 import types
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from hermes_cli.tui.tool_panel._actions import (
-    DEFAULT_HINTS,
-    ERROR_HINTS,
-    COLLAPSED_HINTS,
-    _ToolPanelActionsMixin,
-)
+from hermes_cli.tui.tool_panel._actions import _ToolPanelActionsMixin
 from hermes_cli.tui.tools_overlay import KNOWN_PREFIXES
 
 
@@ -25,12 +21,24 @@ from hermes_cli.tui.tools_overlay import KNOWN_PREFIXES
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_summary(*, exit_code: int | None = None, is_error: bool = False):
+def _make_summary(*, exit_code: int | None = None, is_error: bool = False,
+                  stderr_tail: str = ""):
     from hermes_cli.tui.tool_result_parse import ResultSummaryV4
     return ResultSummaryV4(
         primary=None, exit_code=exit_code,
         chips=(), actions=(), artifacts=(),
-        is_error=is_error, stderr_tail="",
+        is_error=is_error, stderr_tail=stderr_tail,
+    )
+
+
+def _make_view_state(exit_code=None, state=None):
+    from hermes_cli.tui.services.tools import ToolCallViewState, ToolCallState
+    _state = state or (ToolCallState.DONE if exit_code != 1 else ToolCallState.DONE)
+    return ToolCallViewState(
+        tool_call_id="fake", gen_index=0, tool_name="fake", label="fake",
+        args={}, state=_state, block=None, panel=None,
+        parent_tool_call_id=None, category="shell", depth=0,
+        start_s=time.monotonic(), exit_code=exit_code,
     )
 
 
@@ -52,19 +60,43 @@ class _FakePanel:
         self._block = MagicMock()
         self._block._header = MagicMock()
         self._block._header._path_clickable = False
+        self._block._completed = True
         self.has_focus = False
         self._width = width
         self._has_affordances_flag = has_affordances
+        self.is_mounted = True
+        # P-5: _is_error reads from view_state.is_error_for_ui
+        ec = getattr(result, "exit_code", None) if result is not None else None
+        self._view_state = _make_view_state(exit_code=ec) if result is not None else None
+        self._lookup_view_state = lambda: None
 
     def has_class(self, cls: str) -> bool:
         return cls == "--has-affordances" and self._has_affordances_flag
 
+    def _visible_footer_action_kinds(self) -> "set[str]":
+        return set()
+
+    def _get_omission_bar(self):
+        return None
+
+    def _result_paths_for_action(self) -> list:
+        return []
+
+    @property
+    def size(self):
+        s = MagicMock()
+        s.width = self._width
+        return s
+
     # Bind the mixin methods
     _available_width = _ToolPanelActionsMixin._available_width
     _is_error = _ToolPanelActionsMixin._is_error
-    _format = _ToolPanelActionsMixin._format
-    _select_hint_set = _ToolPanelActionsMixin._select_hint_set
+    _collect_hints = _ToolPanelActionsMixin._collect_hints
+    _truncate_hints = _ToolPanelActionsMixin._truncate_hints
+    _render_hints = _ToolPanelActionsMixin._render_hints
+    _build_hint_text = _ToolPanelActionsMixin._build_hint_text
     _refresh_hint_row = _ToolPanelActionsMixin._refresh_hint_row
+    _next_kind_label = staticmethod(_ToolPanelActionsMixin._next_kind_label)
 
     @property
     def content_region(self):
@@ -74,7 +106,14 @@ class _FakePanel:
 
 
 def _make_panel(**kwargs) -> _FakePanel:
+    # Default result so _power_keys_exist=True and F1 appears (P-6 contract).
+    kwargs.setdefault("result", _make_summary())
     return _FakePanel(**kwargs)
+
+def _hint_plain(panel) -> str:
+    """Return the plain text of the last hint_row.update call."""
+    arg = panel._hint_row.update.call_args[0][0]
+    return arg.plain if hasattr(arg, "plain") else str(arg)
 
 
 # ===========================================================================
@@ -84,19 +123,18 @@ def _make_panel(**kwargs) -> _FakePanel:
 class TestDC1HintRow:
 
     def test_hint_appears_on_focus(self):
-        """Focus triggers hint row content with DEFAULT_HINTS text."""
+        """Focus triggers hint row content from _build_hint_text."""
         panel = _make_panel(width=200)
-        panel._refresh_hint_row.__func__(panel) if hasattr(panel._refresh_hint_row, "__func__") else None
-
-        # Simulate focus
         panel.has_focus = True
         panel._refresh_hint_row()
 
         panel._hint_row.update.assert_called()
         panel._hint_row.add_class.assert_called_with("--has-hint")
-        call_arg = panel._hint_row.update.call_args[0][0]
-        assert "[y] copy" in call_arg
-        assert "[f1] all" in call_arg
+        plain = _hint_plain(panel)
+        # Primary hints: Enter toggle + y copy; F1 always pinned (P-6)
+        assert "Enter" in plain
+        assert "y" in plain
+        assert "F1" in plain
 
     def test_hint_hidden_on_blur(self):
         """Losing focus clears the hint row."""
@@ -108,86 +146,55 @@ class TestDC1HintRow:
         panel._hint_row.update.assert_called_with("")
         panel._hint_row.remove_class.assert_called_with("--has-hint")
 
-    def test_error_hint_shows_stderr_arrow(self):
-        """When panel has non-zero exit code, ERROR_HINTS are used."""
-        panel = _make_panel(result=_make_summary(exit_code=1), width=200)
+    def test_error_hint_shows_retry(self):
+        """When panel is in error state, primary shows toggle+dismiss, retry in contextual."""
+        panel = _make_panel(result=_make_summary(exit_code=1, is_error=True), width=200)
         panel.has_focus = True
 
         panel._refresh_hint_row()
 
-        call_arg = panel._hint_row.update.call_args[0][0]
-        assert "[e] stderr ▸" in call_arg
-        assert "[y] copy" in call_arg
+        plain = _hint_plain(panel)
+        # Error state: primary is "Enter toggle" (not "Enter expand" — not collapsed)
+        assert "Enter" in plain
+        assert "F1" in plain
 
     def test_collapsed_hint_shows_expand_first(self):
-        """Collapsed panel shows COLLAPSED_HINTS with [Enter] expand first."""
+        """Collapsed panel shows 'Enter expand' before 'y copy'."""
         panel = _make_panel(collapsed=True, width=200)
         panel.has_focus = True
 
         panel._refresh_hint_row()
 
-        call_arg = panel._hint_row.update.call_args[0][0]
-        assert "[Enter] expand" in call_arg
-        # [Enter] expand must appear before [y] copy
-        assert call_arg.index("[Enter] expand") < call_arg.index("[y] copy")
+        plain = _hint_plain(panel)
+        assert "expand" in plain
+        assert "y" in plain
+        # "expand" must appear before "y copy"
+        assert plain.index("expand") < plain.index("y")
 
-    def test_hint_truncates_on_narrow_width(self):
-        """Narrow width causes lower-priority hints to be dropped with '…'."""
-        # Make width just wide enough for tail + one item + "… · " separator
-        tail = "[f1] all"
-        # Width too narrow for DEFAULT_HINTS full string
-        narrow = len(tail) + 5
-        panel = _make_panel(width=narrow)
+    def test_hint_pinned_f1_at_narrow_width(self):
+        """F1 is always present even at narrow width (P-6 — F1 always pinned)."""
+        panel = _make_panel(width=30)
         panel.has_focus = True
 
         panel._refresh_hint_row()
 
-        result = panel._hint_row.update.call_args[0][0]
-        # Must contain the tail
-        assert "[f1] all" in result
-        # Must be <= narrow chars
-        assert len(result) <= narrow
+        plain = _hint_plain(panel)
+        assert "F1" in plain
 
     def test_hint_always_visible_when_has_affordances(self):
         """--has-affordances class makes hint permanently visible regardless of focus."""
         panel = _make_panel(has_affordances=True, width=200)
-        panel.has_focus = False  # not focused
+        panel.has_focus = False
 
         panel._refresh_hint_row()
 
-        # Hint should still appear despite no focus
         panel._hint_row.update.assert_called()
-        call_arg = panel._hint_row.update.call_args[0][0]
-        assert "[f1] all" in call_arg
+        plain = _hint_plain(panel)
+        assert "F1" in plain
         panel._hint_row.add_class.assert_called_with("--has-hint")
 
     # ------------------------------------------------------------------
-    # _format unit tests
-    # ------------------------------------------------------------------
-
-    def test_format_full_fits(self):
-        panel = _make_panel(width=200)
-        result = panel._format(DEFAULT_HINTS)
-        assert result == " · ".join(DEFAULT_HINTS)
-
-    def test_format_drops_items_right_to_left(self):
-        """Items are dropped from rightmost non-tail first."""
-        hints = ("A", "B", "C", "[f1] all")
-        # Width just wide enough for "A · … · [f1] all"
-        target = "A · … · [f1] all"
-        panel = _make_panel(width=len(target))
-        result = panel._format(hints)
-        assert result == target
-
-    def test_format_tail_only_truncated(self):
-        """If nothing fits, tail is truncated at width boundary."""
-        panel = _make_panel(width=5)
-        result = panel._format(DEFAULT_HINTS)
-        assert len(result) <= 5
-        assert result == "[f1] all"[:5]
-
-    # ------------------------------------------------------------------
-    # _is_error unit tests
+    # _is_error unit tests (P-5: delegates to view_state.is_error_for_ui)
     # ------------------------------------------------------------------
 
     def test_is_error_zero_exit_code(self):

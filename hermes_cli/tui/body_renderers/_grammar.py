@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import Final
 
 from rich.style import Style
 from rich.text import Text
@@ -38,6 +40,19 @@ def glyph(g: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Tier keys — canonical set for tool-tier-{k}-accent skin vars
+# ---------------------------------------------------------------------------
+
+TIER_KEYS: Final[frozenset[str]] = frozenset({
+    "read", "write", "exec", "search", "shell", "browse", "mcp",
+    # pseudo-tiers: not tool categories but rendered as tier-accented blocks
+    "thinking",  # ReasoningPanel / extended-thinking blocks
+    "tooling",   # meta/sub-agent call blocks
+})
+
+_TIER_ACCENTS_EMPTY: MappingProxyType[str, str] = MappingProxyType({})
+
+# ---------------------------------------------------------------------------
 # SkinColors — resolved at widget-mount time, passed into builders
 # ---------------------------------------------------------------------------
 
@@ -55,6 +70,21 @@ class SkinColors:
     diff_del_bg:   str  # low-saturation del background
     syntax_theme:  str  # pygments theme name
     syntax_scheme: str  # SYNTAX_SCHEMES key (logical token palette)
+    # SC-1: dim variants for exit-code ok, remediation hints
+    error_dim:          str = "#8B2020"   # $error-dim
+    success_dim:        str = "#1E5C1E"   # $success-dim
+    warning_dim:        str = "#5C4A00"   # $warning-dim
+    # SC-3: double-dim muted for parse-failure / chevron / meta contexts
+    text_muted_dim:     str = "#3A3A3A"   # $text-muted-dim
+    # SC-4: independently-themable gutter for focused ToolPanel
+    tool_header_gutter: str = "#00bcd4"   # $tool-header-gutter-color (default = $accent-interactive)
+    # SC-2: per-tier completion icon accents — immutable mapping, excluded from hash/compare
+    tier_accents: MappingProxyType = field(
+        default_factory=lambda: _TIER_ACCENTS_EMPTY,
+        hash=False,
+        compare=False,
+        repr=False,
+    )
 
     @classmethod
     def from_app(cls, app) -> "SkinColors":
@@ -80,8 +110,12 @@ class SkinColors:
                 return v
             return v if _hex_re.match(v) else fallback
 
+        accent = _get("primary", d.accent)
+        # SC-4: gutter fallback chain: tool-header-gutter-color → accent-interactive → hex default
+        _ai = css_vars.get("accent-interactive", "").strip()
+        _gutter_fb = _ai if _hex_re.match(_ai) else d.tool_header_gutter
         return cls(
-            accent=_get("primary",        d.accent),
+            accent=accent,
             muted=_get("text-muted",      d.muted),
             success=_get("success",       d.success),
             error=_get("error",           d.error),
@@ -93,13 +127,27 @@ class SkinColors:
             diff_del_bg=_get("diff-del-bg", d.diff_del_bg),
             syntax_theme=_get("syntax-theme",   d.syntax_theme),
             syntax_scheme=_get("syntax-scheme", d.syntax_scheme),
+            # SC-1 dim variants
+            error_dim=_get("error-dim",         d.error_dim),
+            success_dim=_get("success-dim",     d.success_dim),
+            warning_dim=_get("warning-dim",     d.warning_dim),
+            # SC-3 double-dim muted
+            text_muted_dim=_get("text-muted-dim", d.text_muted_dim),
+            # SC-4 gutter
+            tool_header_gutter=_get("tool-header-gutter-color", _gutter_fb),
+            # SC-2 tier accents — TIER_KEYS plus legacy display-tier keys (file/exec/query/agent)
+            tier_accents=MappingProxyType({
+                k: _get(f"tool-tier-{k}-accent", accent)
+                for k in TIER_KEYS | frozenset({"file", "exec", "query", "agent"})
+            }),
         )
 
     @classmethod
     def default(cls) -> "SkinColors":
         """Hex defaults used when no app is available."""
+        accent = "#0178D4"
         return cls(
-            accent="#0178D4",
+            accent=accent,
             muted="#888888",
             success="#4CAF50",
             error="#E06C75",
@@ -111,6 +159,12 @@ class SkinColors:
             diff_del_bg="#3a1a1a",  # aligned with COMPONENT_VAR_DEFAULTS["diff-del-bg"]
             syntax_theme="ansi_dark",
             syntax_scheme="hermes",
+            error_dim="#8B2020",
+            success_dim="#1E5C1E",
+            warning_dim="#5C4A00",
+            text_muted_dim="#3A3A3A",
+            tool_header_gutter="#00bcd4",
+            tier_accents=MappingProxyType({k: accent for k in TIER_KEYS}),
         )
 
     def resolve_syntax_palette(

@@ -326,6 +326,7 @@ class TestAlwaysVisibleExit:
         panel.collapsed = False
         panel._block = MagicMock()
         panel._result_summary_v4 = None
+        panel._resolver = None
         return panel
 
     def test_exit_ok_visible_expanded(self):

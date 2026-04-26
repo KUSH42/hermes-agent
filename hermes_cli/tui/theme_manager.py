@@ -338,6 +338,24 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     # skin's component_vars block; the default ("8") is always applied.
     "tool-header-max-gap":  VarSpec(default="8", optional_in_skin=True,
                                     description="Tool header label→stats max gap (cells)"),
+    # SC-1: dim variants for exit-code ok, accessible markers, remediation hints
+    "error-dim":    "#8B2020",   # desaturated dim-red
+    "success-dim":  "#1E5C1E",   # desaturated dim-green
+    "warning-dim":  "#5C4A00",   # desaturated dim-yellow
+    # SC-3: double-dim muted for parse-failure / meta-separator contexts
+    "text-muted-dim": "#3A3A3A",
+    # SC-4: independently-themable focused-tool-block gutter (default = $accent-interactive)
+    "tool-header-gutter-color": "#00bcd4",
+    # SC-2: per-tier completion icon accents — one concrete entry per TIER_KEY
+    "tool-tier-read-accent":    "#0178D4",
+    "tool-tier-write-accent":   "#0178D4",
+    "tool-tier-exec-accent":    "#81C784",  # keep existing green for exec
+    "tool-tier-search-accent":  "#0178D4",
+    "tool-tier-shell-accent":   "#81C784",
+    "tool-tier-browse-accent":  "#0178D4",
+    "tool-tier-mcp-accent":     "#9b59b6",
+    "tool-tier-thinking-accent": "#0178D4",  # pseudo-tier: reasoning blocks
+    "tool-tier-tooling-accent":  "#0178D4",  # pseudo-tier: meta/sub-agent calls
 }
 
 

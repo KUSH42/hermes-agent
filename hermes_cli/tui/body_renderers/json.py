@@ -94,7 +94,7 @@ class JsonRenderer(BodyRenderer):
         line = getattr(exc, "lineno", "?")
         col = getattr(exc, "colno", "?")
         msg = getattr(exc, "msg", str(exc))
-        hint = Text(f"JSON parse failed at line {line}:{col} · {msg}", style="dim")
+        hint = Text(f"JSON parse failed at line {line}:{col} · {msg}", style=self.colors.muted)
         body = Text()
         for ln in raw.splitlines():
             body.append(ln)

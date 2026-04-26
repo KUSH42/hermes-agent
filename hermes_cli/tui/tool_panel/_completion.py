@@ -429,8 +429,10 @@ class _ToolPanelCompletionMixin:
                 else:
                     remediation_text = f"{icon} {kind_label}"
                 from rich.text import Text as _RText
+                from hermes_cli.tui.body_renderers._grammar import SkinColors as _SC
+                _err = _SC.from_app(getattr(self, "app", None)).error
                 rem_rich = _RText()
-                rem_rich.append(remediation_text, style="bold red")
+                rem_rich.append(remediation_text, style=f"bold {_err}")
                 self._footer_pane._remediation_row.update(rem_rich)  # type: ignore[attr-defined]
                 self._footer_pane._remediation_row.add_class("footer-remediation--error")  # type: ignore[attr-defined]
                 self._footer_pane.add_class("has-remediation")  # type: ignore[attr-defined]

@@ -64,6 +64,8 @@ from hermes_cli.tui.tool_panel.layout_resolver import (  # noqa: F401
     trim_tail_for_tier,
     _trim_tail_segments,
 )
+# Legacy single-list alias (pre-DU callers and tests use _DROP_ORDER).
+_DROP_ORDER = _DROP_ORDER_DEFAULT
 
 
 def _safe_collapsed(header: "ToolHeader") -> bool:
@@ -150,19 +152,14 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         self._refresh_tool_icon()
 
     def _refresh_gutter_color(self) -> None:
+        # SC-4: gutter resolved through SkinColors.tool_header_gutter (→ $tool-header-gutter-color)
+        self._focused_gutter_color = self._colors().tool_header_gutter
         try:
             css = self.app.get_css_variables()
-            # F-3: prefer $accent-interactive → $primary → fallback
-            self._focused_gutter_color = (
-                css.get("accent-interactive") or
-                css.get("primary") or
-                _GUTTER_FALLBACK
-            )
             self._diff_add_color = css.get("addition-marker-fg", _DIFF_ADD_FALLBACK)
             self._diff_del_color = css.get("deletion-marker-fg", _DIFF_DEL_FALLBACK)
             self._running_icon_color = css.get("status-running-color", _RUNNING_FALLBACK)
         except Exception:
-            self._focused_gutter_color = _GUTTER_FALLBACK
             self._diff_add_color = _DIFF_ADD_FALLBACK
             self._diff_del_color = _DIFF_DEL_FALLBACK
             self._running_icon_color = _RUNNING_FALLBACK
@@ -228,9 +225,9 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             if self._spinner_char is not None:
                 t.append("[>] ", style="bold")
             elif self._tool_icon_error:
-                t.append("[!] ", style="bold red")
+                t.append("[!] ", style=f"bold {self._colors().error}")
             elif self._is_complete:
-                t.append("[✓] ", style="bold green")
+                t.append("[✓] ", style=f"bold {self._colors().success}")
 
         if self._is_child:
             # D2: ChildPanel — 4-cell gutter (was 1) for column alignment
@@ -269,14 +266,13 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 icon_style = f"bold {err_color}"
             elif self._is_complete or self._duration:
                 ok_color = getattr(self, "_diff_add_color", _DIFF_ADD_FALLBACK)
-                _cat_accent = ok_color
                 try:
                     from hermes_cli.tui.tool_category import display_tier_for
-                    _tier = display_tier_for(spec.category)
-                    _cv = self.app.get_css_variables()
-                    _cat_accent = _cv.get(f"tool-tier-{_tier}-accent") or ok_color
-                except Exception:  # CSS vars or app context unavailable pre-mount; ok_color fallback is correct
-                    pass
+                    _tier_key = display_tier_for(spec.category)
+                    # SC-2: resolved through SkinColors.tier_accents (→ $tool-tier-{k}-accent)
+                    _cat_accent = self._colors().tier_accents.get(_tier_key, ok_color)
+                except Exception:
+                    _cat_accent = ok_color
                 icon_style = f"bold {_cat_accent}"
             else:
                 icon_style = "dim"
@@ -315,9 +311,9 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                         _ek_hex = self.app.get_css_variables().get(_ek_var, self._colors().error)
                         tail_segments.append(("hero", Text(f"  {_ek_icon} {self._primary_hero}", style=f"bold {_ek_hex}")))
                     except Exception:
-                        tail_segments.append(("hero", Text(f"  {self._primary_hero}", style="bold red")))
+                        tail_segments.append(("hero", Text(f"  {self._primary_hero}", style=f"bold {self._colors().error}")))
                 elif self._tool_icon_error:
-                    tail_segments.append(("hero", Text(f"  {self._primary_hero}", style="bold red")))
+                    tail_segments.append(("hero", Text(f"  {self._primary_hero}", style=f"bold {self._colors().error}")))
                 else:
                     tail_segments.append(("hero", Text(f"  {self._primary_hero}", style="dim")))
             elif self._is_complete and not self._tool_icon_error and not self._line_count:
@@ -400,18 +396,19 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             if self._is_complete:
                 code = getattr(self, "_exit_code", None)
                 if code is not None:
+                    _c = self._colors()
                     if code == 0:
                         if not self._primary_hero:
-                            tail_segments.append(("exit", Text("  ok", style="dim green")))
+                            tail_segments.append(("exit", Text("  ok", style=_c.success_dim)))
                     else:
-                        tail_segments.append(("exit", Text(f"  exit {code}", style="bold red")))
+                        tail_segments.append(("exit", Text(f"  exit {code}", style=f"bold {_c.error}")))
 
             # C-2: remediation hint when collapsed+error
             is_collapsed = _safe_collapsed(self)
             if is_collapsed and self._is_complete and self._tool_icon_error:
                 _rh = getattr(self, "_remediation_hint", None)
                 if _rh:
-                    tail_segments.append(("remediation", Text(f"  hint:{_rh}", style="dim yellow")))
+                    tail_segments.append(("remediation", Text(f"  hint:{_rh}", style=self._colors().warning_dim)))
 
         # F-2: single duration append point — outside both branches
         if _pending_dur:
@@ -422,7 +419,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         tail_budget = max(0, term_w - FIXED_PREFIX_W - MIN_LABEL_CELLS - 2) if term_w > 0 else 80
         from hermes_cli.tui.tool_panel.density import DensityTier as _DT
         _tier = getattr(self._panel, "density", _DT.DEFAULT) if self._panel else _DT.DEFAULT
-        if self._panel is not None and hasattr(self._panel, "_resolver"):
+        if self._panel is not None and getattr(self._panel, "_resolver", None) is not None:
             _resolver = self._panel._resolver
         else:
             from hermes_cli.tui.tool_panel.layout_resolver import default_resolver

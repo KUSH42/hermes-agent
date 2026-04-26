@@ -560,6 +560,9 @@ DEFAULT_CONFIG = {
             "minimap_default": False,     # \ toggles; this controls initial state
             "streaming_flash": True,      # CSS class flash on STREAMING -> ready transition
         },
+        # Skill namespace migration phase: 1=no warning, 2=deprecation warning for /skill-name,
+        # 3=reject /skill-name (Phase 3). Rollback: set to 1 to restore Phase 1 behaviour.
+        "skill_namespace_phase": 2,
     },
 
     # Privacy settings

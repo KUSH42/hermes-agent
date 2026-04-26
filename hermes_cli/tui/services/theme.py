@@ -106,20 +106,10 @@ class ThemeService(AppService):
         tm._apply_overrides(overrides)
         tm.apply()
 
-    def refresh_slash_commands(self, extra: "list[str] | None" = None) -> None:
+    def refresh_slash_commands(self) -> None:
         """Update the slash command list after plugins are loaded."""
         self.populate_slash_commands()
         app = self.app
-        if extra:
-            try:
-                from hermes_cli.tui.input_widget import HermesInput as _HI
-                inp = app.query_one(_HI)
-                combined = sorted(set(inp._slash_commands) | {
-                    n if n.startswith("/") else f"/{n}" for n in extra
-                })
-                inp.set_slash_commands(combined)
-            except (NoMatches, Exception):
-                pass
         try:
             from hermes_cli.tui.overlays import HelpOverlay as _HO
             app.query_one(_HO)._refresh_commands_cache()

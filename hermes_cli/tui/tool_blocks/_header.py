@@ -795,3 +795,111 @@ class ToolBodyContainer(Widget):
         mc.remove_class("--active")
         mc.remove_class("--secondary-args")
         mc.update("")
+
+
+# ---------------------------------------------------------------------------
+# ToolCallHeader — phase chip widget for LL-2/LL-3/LL-6
+# ---------------------------------------------------------------------------
+
+class ToolCallHeader(Widget):
+    """Header overlay chips for the tool-call lifecycle (LL-2/LL-3/LL-6).
+
+    Receives state changes via set_state() — never queries the DOM for density
+    data; reads view.density_reason directly.
+
+    Chip slots (per spec header layout):
+      _phase_chip      — STARTED "…starting", CANCELLED "cancelled"
+      _finalizing_chip — COMPLETING "…finalizing" after 250ms guard
+    """
+
+    DEFAULT_CSS = "ToolCallHeader { height: 1; display: none; }"
+
+    def __init__(self, view: "Any") -> None:
+        super().__init__()
+        self._view = view
+        self._phase_chip_timer: "Any | None" = None
+        self._completing_chip_timer: "Any | None" = None
+
+    def compose(self) -> ComposeResult:
+        yield Static("", classes="phase-chip")
+        yield Static("", classes="finalizing-chip")
+
+    def on_mount(self) -> None:
+        self._phase_chip = self.query_one(".phase-chip", Static)
+        self._finalizing_chip = self.query_one(".finalizing-chip", Static)
+        self._phase_chip.display = False
+        self._finalizing_chip.display = False
+
+    def on_unmount(self) -> None:
+        if self._phase_chip_timer is not None:
+            self._phase_chip_timer.stop()
+        if self._completing_chip_timer is not None:
+            self._completing_chip_timer.stop()
+
+    def set_state(self, new_state: "Any") -> None:
+        """Entry point called by StreamingToolBlock on each state transition."""
+        from hermes_cli.tui.services.tools import ToolCallState
+
+        # Exit logic for previous view state
+        prev = self._view.state
+        if prev == ToolCallState.STARTED:
+            if self._phase_chip_timer is not None:
+                self._phase_chip_timer.stop()
+                self._phase_chip_timer = None
+        elif prev == ToolCallState.COMPLETING:
+            if self._completing_chip_timer is not None:
+                self._completing_chip_timer.stop()
+                self._completing_chip_timer = None
+            if self.is_attached:
+                self._finalizing_chip.display = False
+
+        self._view.state = new_state
+
+        # Entry logic for new state
+        if new_state == ToolCallState.STARTED:
+            if self.is_attached:
+                self._phase_chip_timer = self.set_timer(0.8, self._clear_phase_chip)
+        elif new_state == ToolCallState.COMPLETING:
+            # 0.251 guarantees elapsed > 0.250 when callback fires
+            if self.is_attached:
+                self._completing_chip_timer = self.set_timer(0.251, self._render_phase_chip)
+
+        self._render_phase_chip()
+
+    def _clear_phase_chip(self) -> None:
+        if self.is_attached:
+            self._phase_chip.display = False
+        self._phase_chip_timer = None
+
+    def _render_phase_chip(self) -> None:
+        if not self.is_attached:
+            return
+        from hermes_cli.tui.services.tools import ToolCallState
+
+        state = self._view.state
+
+        if state == ToolCallState.STARTED:
+            self._phase_chip.display = True
+            self._phase_chip.update("[dim]…starting[/dim]")
+            self._finalizing_chip.display = False
+
+        elif state == ToolCallState.COMPLETING:
+            self._phase_chip.display = False  # clear any lingering STARTED chip
+            started_at = self._view.completing_started_at
+            if started_at is None:
+                return
+            elapsed = time.monotonic() - started_at
+            show = elapsed > 0.250
+            self._finalizing_chip.display = show
+            if show:
+                self._finalizing_chip.update("[dim]…finalizing[/dim]")
+
+        elif state == ToolCallState.CANCELLED:
+            self._phase_chip.display = True
+            self._phase_chip.update("[dim]cancelled[/dim]")
+            self._finalizing_chip.display = False
+
+        else:
+            # PENDING, GENERATED, STREAMING, DONE, ERROR: hide both
+            self._phase_chip.display = False
+            self._finalizing_chip.display = False

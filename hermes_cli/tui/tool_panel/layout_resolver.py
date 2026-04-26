@@ -171,6 +171,18 @@ class LayoutInputs:
 DensityInputs = LayoutInputs
 
 
+@dataclass
+class DensityResult:
+    """Lightweight result from a density resolver call — tier + reason only.
+
+    Used by panels to track last-seen tier and post flash messages (LL-1).
+    Compare .tier directly; two DensityResult instances with the same tier but
+    different reason are not equal (dataclass eq=True hashes all fields).
+    """
+    tier: DensityTier
+    reason: Literal["auto", "user", "error_override", "initial"]
+
+
 @dataclass(frozen=True)
 class LayoutDecision:
     tier: DensityTier

@@ -62,6 +62,7 @@ class _ToolPanelActionsMixin:
             threshold=0,  # irrelevant; override wins
             row_budget=None,
             kind=kind,
+            parent_clamp=self._parent_clamp_tier,  # type: ignore[attr-defined]
         )
         self._resolver.resolve(inputs)  # type: ignore[attr-defined]
         if requested_tier == DensityTier.HERO and self._resolver.tier != DensityTier.HERO:  # type: ignore[attr-defined]
@@ -93,6 +94,7 @@ class _ToolPanelActionsMixin:
             threshold=0,  # irrelevant; override wins
             row_budget=None,
             kind=kind,
+            parent_clamp=self._parent_clamp_tier,  # type: ignore[attr-defined]
         )
         self._resolver.resolve(inputs)  # type: ignore[attr-defined]
         if self._resolver.tier != DensityTier.TRACE:  # type: ignore[attr-defined]

@@ -52,6 +52,7 @@ class DensityInputs:
     threshold: int                # category default_collapsed_lines (possibly diff-overridden)
     row_budget: "int | None"      # viewport row clamp; None = unbounded (reserved, not yet read)
     kind: "ResultKind | None" = None  # result kind — required for HERO eligibility
+    parent_clamp: "DensityTier | None" = None  # tightest tier a parent allows
 
 
 class DensityResolver:
@@ -86,37 +87,44 @@ class DensityResolver:
 
         # Modal overrides — these win regardless of body size or override.
         if inp.is_error:
-            return DensityTier.DEFAULT
-        if inp.phase in (ToolCallState.STREAMING, ToolCallState.STARTED):
-            return DensityTier.DEFAULT
-        if inp.has_focus:
-            return DensityTier.DEFAULT
-
+            _base = DensityTier.DEFAULT
+        elif inp.phase in (ToolCallState.STREAMING, ToolCallState.STARTED):
+            _base = DensityTier.DEFAULT
+        elif inp.has_focus:
+            _base = DensityTier.DEFAULT
         # User override path — HERO eligibility gate before generic branch.
-        if inp.user_override and inp.user_override_tier == DensityTier.HERO:
+        elif inp.user_override and inp.user_override_tier == DensityTier.HERO:
             if (
                 inp.kind not in _HERO_KINDS
                 or inp.body_line_count == 0
                 or inp.body_line_count > _HERO_MAX_LINES
             ):
-                return DensityTier.DEFAULT
-            return DensityTier.HERO
-        if inp.user_override and inp.user_override_tier is not None:
-            return inp.user_override_tier
-
+                _base = DensityTier.DEFAULT
+            else:
+                _base = DensityTier.HERO
+        elif inp.user_override and inp.user_override_tier is not None:
+            _base = inp.user_override_tier
         # Scroll protection — never yank content from a user mid-scroll.
-        if inp.user_scrolled_up:
-            return DensityTier.DEFAULT
-
+        elif inp.user_scrolled_up:
+            _base = DensityTier.DEFAULT
         # HERO auto-clause — only reached when not error / not streaming /
         # not focused / not overridden / not scrolled.
-        if inp.phase in (ToolCallState.COMPLETING, ToolCallState.DONE):
+        elif inp.phase in (ToolCallState.COMPLETING, ToolCallState.DONE):
             if (
                 inp.body_line_count > 0
                 and inp.body_line_count <= _HERO_MAX_LINES
                 and inp.kind in _HERO_KINDS
             ):
-                return DensityTier.HERO
-            if inp.body_line_count > inp.threshold:
-                return DensityTier.COMPACT
-        return DensityTier.DEFAULT
+                _base = DensityTier.HERO
+            elif inp.body_line_count > inp.threshold:
+                _base = DensityTier.COMPACT
+            else:
+                _base = DensityTier.DEFAULT
+        else:
+            _base = DensityTier.DEFAULT
+
+        # Parent clamp: tightest tier wins (higher rank = tighter).
+        # is_error exemption: error blocks always expand regardless of parent state.
+        if inp.parent_clamp is not None and not inp.is_error and inp.parent_clamp.rank > _base.rank:
+            return inp.parent_clamp
+        return _base

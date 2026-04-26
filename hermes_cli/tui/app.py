@@ -2495,6 +2495,33 @@ class HermesApp(App):
     def _populate_slash_commands(self) -> None:
         return self._svc_theme.populate_slash_commands()
 
+    def _populate_skills(self) -> None:
+        return self._svc_theme.populate_skills()
+
+    def _open_skill_picker(
+        self,
+        seed_filter: str = "",
+        trigger_source: str = "prefix",
+    ) -> None:
+        """Mount SkillPickerOverlay or update its filter if already mounted.
+
+        Idempotent: calling twice with different seeds updates the live overlay
+        rather than mounting a duplicate.  Detection uses query_one(SkillPickerOverlay)
+        wrapped in NoMatches; no stale-ref caching.
+        """
+        from textual.css.query import NoMatches as _NM
+        from hermes_cli.tui.overlays.skill_picker import SkillPickerOverlay
+        try:
+            existing = self.query_one(SkillPickerOverlay)
+            existing.set_filter(seed_filter)
+        except _NM:
+            self.mount(
+                SkillPickerOverlay(
+                    seed_filter=seed_filter,
+                    trigger_source=trigger_source,
+                )
+            )
+
     def _flash_hint(self, text: str, duration: float = 1.5) -> None:
         self.feedback.flash("hint-bar", text, duration=duration)
 

@@ -106,6 +106,13 @@ class _HistoryMixin:
         """Set the available slash commands for autocomplete."""
         self._slash_commands = sorted(commands)
 
+    def set_skills(self, candidates: "list") -> None:
+        """Set the available skill candidates (for picker + KNOWN_SKILLS).
+
+        Separated from _slash_commands so built-in list stays pure.
+        """
+        self._skills: list = list(candidates)
+
     def set_slash_descriptions(self, descriptions: dict[str, str]) -> None:
         self._slash_descriptions: dict[str, str] = descriptions
 

@@ -4245,9 +4245,11 @@ class HermesCLI:
 
         if _skill_commands:
             _cprint(f"\n  ⚡ {_BOLD}Skill Commands{_RST} ({len(_skill_commands)} installed):")
+            _cprint(f"  {_DIM}Invoke with $name (or /name in CLI/gateway mode):{_RST}")
             for cmd, info in sorted(_skill_commands.items()):
+                dollar_cmd = f"${cmd.lstrip('/')}"
                 ChatConsole().print(
-                    f"    [bold {_accent_hex()}]{cmd:<22}[/] [dim]-[/] {_escape(info['description'])}"
+                    f"    [bold {_accent_hex()}]{dollar_cmd:<22}[/] [dim]-[/] {_escape(info['description'])}"
                 )
 
         _cprint(f"\n  {_DIM}Tip: Just type your message to chat with Hermes!{_RST}")
@@ -5858,6 +5860,41 @@ class HermesCLI:
                         self.console.print(f"[bold red]Quick command '{base_cmd}' has no target defined[/]")
                 else:
                     self.console.print(f"[bold red]Quick command '{base_cmd}' has unsupported type (supported: 'exec', 'alias')[/]")
+            # $-branch: skill invocation via $name — reserved for skills only.
+            # Plugins remain /-only. Sits above plugin handlers so $foo never
+            # accidentally dispatches to a plugin named "foo".
+            elif cmd_original.lstrip().startswith("$"):
+                _bare = cmd_original.lstrip()[1:]  # strip leading "$"
+                _parts = _bare.split(None, 1)
+                if _parts:
+                    _cmd_key = f"/{_parts[0].replace('_', '-')}"
+                    _user_instr = _parts[1] if len(_parts) > 1 else ""
+                    if _cmd_key in _skill_commands:
+                        msg = build_skill_invocation_message(
+                            _cmd_key, _user_instr, task_id=self.session_id
+                        )
+                        if msg:
+                            skill_name = _skill_commands[_cmd_key]["name"]
+                            print(f"\n⚡ Loading skill: {skill_name}")
+                            if hasattr(self, '_pending_input'):
+                                self._pending_input.put(msg)
+                        else:
+                            ChatConsole().print(f"[bold red]Failed to load skill for ${_parts[0]}[/]")
+                    else:
+                        _cprint(f"no such skill: {_parts[0]}")
+                        # Fuzzy suggestions — $-form only, no cross-prefix bleed
+                        _dollar_candidates = {f"${n.lstrip('/')}" for n in _skill_commands}
+                        _typed_dollar = f"${_parts[0]}"
+                        _dollar_matches = [c for c in _dollar_candidates if c.startswith(_typed_dollar)]
+                        if not _dollar_matches and len(_parts[0]) >= 2:
+                            _dollar_matches = [
+                                c for c in _dollar_candidates
+                                if c[1:].startswith(_parts[0][:min(len(_parts[0]), 4)])
+                            ]
+                        if _dollar_matches:
+                            _cprint(f"  Did you mean: {', '.join(sorted(_dollar_matches)[:3])}?")
+                else:
+                    _cprint("no such skill: (empty)")
             # Check for plugin-registered slash commands
             elif base_cmd.lstrip("/") in _get_plugin_cmd_handler_names():
                 from hermes_cli.plugins import get_plugin_command_handler
@@ -5887,9 +5924,15 @@ class HermesCLI:
                 # Prefix matching: if input uniquely identifies one command, execute it.
                 # Matches against both built-in COMMANDS and installed skill commands so
                 # that execution-time resolution agrees with tab-completion.
+                # $-prefixed input is handled by the $-branch above; the typed_base guard
+                # below is defensive (e.g. if $-input somehow bypasses that branch).
                 from hermes_cli.commands import COMMANDS
                 typed_base = cmd_lower.split()[0]
-                all_known = set(COMMANDS) | set(_skill_commands)
+                if typed_base.startswith("$"):
+                    # $ is skill-only — suggest $-form only, no cross-prefix bleed
+                    all_known = {f"${n.lstrip('/')}" for n in _skill_commands}
+                else:
+                    all_known = set(COMMANDS) | set(_skill_commands)
                 matches = [c for c in all_known if c.startswith(typed_base)]
                 if len(matches) > 1:
                     # Prefer an exact match (typed the full command name)

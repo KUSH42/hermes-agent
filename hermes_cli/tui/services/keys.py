@@ -8,7 +8,10 @@ from textual.css.query import NoMatches
 from rich.text import Text
 
 from hermes_cli.tui._browse_types import BrowseAnchorType
-from hermes_cli.tui._app_constants import KNOWN_SLASH_COMMANDS as _KNOWN_SLASH_COMMANDS
+from hermes_cli.tui._app_constants import (
+    KNOWN_SLASH_COMMANDS as _KNOWN_SLASH_COMMANDS,
+    KNOWN_SKILLS as _KNOWN_SKILLS,
+)
 from .base import AppService
 
 if TYPE_CHECKING:
@@ -61,6 +64,24 @@ class KeyDispatchService(AppService):
             except (NoMatches, Exception):
                 pass
             event.prevent_default()
+            return
+
+        # --- Alt+$ → open skill picker (agent mode only; suppressed in BASH mode) ---
+        # Use event.character == "$" for terminal-agnostic detection: the chord
+        # may be encoded as alt+4 (Shift implicit), alt+dollar_sign, or alt+$.
+        if getattr(event, "character", None) == "$" and key.startswith("alt+"):
+            from hermes_cli.tui.input._mode import InputMode
+            try:
+                from hermes_cli.tui.input_widget import HermesInput as _HI
+                inp = self.app.query_one(_HI)
+                if inp._mode is InputMode.BASH:
+                    # BASH mode: Alt+$ has no meaning; do NOT stop the event
+                    # so that Textual's Input widget can ignore it naturally.
+                    return
+            except (NoMatches, Exception):
+                pass
+            event.stop()  # swallow — $ must NOT land in the input buffer
+            self.app._open_skill_picker(seed_filter="", trigger_source="chord")
             return
 
         # --- Alt+1–9 → switch parallel session by index ---
@@ -573,6 +594,12 @@ class KeyDispatchService(AppService):
             cmd = text.split()[0].lower()
             if cmd not in _KNOWN_SLASH_COMMANDS:
                 self.app._flash_hint(f"Unknown command: {cmd}  (F1 for help)", 3.0)
+                return
+
+        if isinstance(text, str) and text.startswith("$"):
+            name = text.lstrip("$").split()[0].lower() if len(text) > 1 else ""
+            if not name or name not in _KNOWN_SKILLS:
+                self.app._flash_hint(f"Unknown skill: ${name}  (Alt+$ for picker)", 3.0)
                 return
 
         images = list(self.app.attached_images)

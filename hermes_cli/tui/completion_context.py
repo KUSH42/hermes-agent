@@ -11,6 +11,11 @@ Trigger rules
                  match during typing.  ``foo /h`` does NOT trigger — the slash
                  must be at position 0.
 
+``$fragment``  → ``SKILL_INVOKE`` when the entire input is a dollar sign
+                 followed by ``[\\w-]*``, and the input mode is not BASH.
+                 The skill picker IS the completion surface; the inline
+                 completion overlay does not mount for this context.
+
 ``@fragment``  → ``PATH_REF`` when ``@`` appears at a token boundary
                  (start-of-string or preceded by whitespace).  ``foo@bar``
                  does NOT trigger; ``@bar`` or ``hello @bar`` do.
@@ -33,6 +38,7 @@ class CompletionContext(Enum):
     PLAIN_PATH_REF = 4 # triggered by ./fragment, ../fragment, ~/fragment
     ABSOLUTE_PATH_REF = 5 # triggered by /abs/path after whitespace
     SLASH_SUBCOMMAND = 6  # triggered by "/cmd fragment" — arg completion
+    SKILL_INVOKE = 7   # triggered by $fragment in non-BASH mode; picker is the completion surface
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +55,9 @@ _SLASH_RE = re.compile(r"^/([\w-]*)$")
 # Subcommand context: exactly one space after command, then optional fragment.
 # Must be checked before _SLASH_RE since it is a strict superset when space is present.
 _SLASH_SUBCMD_RE = re.compile(r"^/([\w-]+)\s+([\w-]*)$")
+# Skill invocation: $fragment — anchored so "echo $re" does NOT trigger.
+# Space after the name breaks the match (e.g. "$foo " → no longer matches).
+_SKILL_RE = re.compile(r"^\$([\w-]*)$")
 _PATH_RE = re.compile(r"(?:^|\s)@([\w./\-]*)$")     # anchored to cursor head
 _PLAIN_PATH_RE = re.compile(r"(?:^|\s)((?:\.\.?|~)(?:/[\w./\-]*)?)$")  # ./x, ../x, ~/x, ., ..
 _ABS_PATH_RE = re.compile(r"(?:^|\s)(/[\w.\-]+(?:/[\w./\-]*)?)$")
@@ -56,12 +65,15 @@ _ABS_PATH_RE = re.compile(r"(?:^|\s)(/[\w.\-]+(?:/[\w./\-]*)?)$")
 _SLASH_CMD_INVOCATION_RE = re.compile(r"^/[\w-]+\s")
 
 
-def detect_context(value: str, cursor: int) -> CompletionTrigger:
+def detect_context(value: str, cursor: int, *, bash_mode: bool = False) -> CompletionTrigger:
     """Return the ``CompletionTrigger`` active at *cursor* in *value*.
 
     Only the text to the left of the cursor is inspected so mid-word
     completions work correctly (e.g. ``detect_context("hello @s world", 8)``
     picks up the ``@s`` fragment even though more text follows).
+
+    ``bash_mode=True`` suppresses ``SKILL_INVOKE`` (``$`` is a shell variable
+    prefix in BASH mode and must not trigger the skill picker).
     """
     head = value[:cursor]
 
@@ -80,6 +92,12 @@ def detect_context(value: str, cursor: int) -> CompletionTrigger:
     m = _SLASH_RE.match(head)
     if m:
         return CompletionTrigger(CompletionContext.SLASH_COMMAND, m.group(1), 1)
+
+    # SKILL_INVOKE: $fragment at column 0, suppressed in BASH mode.
+    if not bash_mode:
+        m = _SKILL_RE.match(head)
+        if m:
+            return CompletionTrigger(CompletionContext.SKILL_INVOKE, m.group(1), 1)
 
     m = _PATH_RE.search(head)
     if m:

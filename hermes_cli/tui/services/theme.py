@@ -179,6 +179,37 @@ class ThemeService(AppService):
         except Exception:
             pass
 
+    # --- Skill wiring ---
+
+    def populate_skills(self) -> None:
+        """Scan installed skills and push SkillCandidate list to HermesInput + KNOWN_SKILLS."""
+        app = self.app
+        try:
+            from hermes_cli.tui.input_widget import HermesInput as _HI
+            inp = app.query_one(_HI)
+        except NoMatches:
+            # NoMatches is expected in headless/gateway mode where HermesInput
+            # is not mounted. populate_skills is a no-op in that case.
+            logger.debug("populate_skills: HermesInput not mounted, skipping")
+            return
+        try:
+            from agent.skill_commands import get_skill_commands
+            from hermes_cli.tui.types.skill_candidate import SkillCandidate
+            from hermes_cli.tui._app_constants import refresh_known_skills
+            skill_cmds = get_skill_commands()
+            candidates = []
+            for cmd_key, info in skill_cmds.items():
+                bare_name = cmd_key.lstrip("/")
+                try:
+                    candidate = SkillCandidate.from_skill_info(bare_name, info)
+                    candidates.append(candidate)
+                except Exception:
+                    logger.debug("populate_skills: failed to build candidate for %s", cmd_key, exc_info=True)
+            inp.set_skills(candidates)
+            refresh_known_skills(c.name for c in candidates)
+        except Exception:
+            logger.debug("populate_skills: failed", exc_info=True)
+
     # --- Copy/paste feedback ---
 
     def flash_hint(self, text: str, duration: float = 1.5) -> None:

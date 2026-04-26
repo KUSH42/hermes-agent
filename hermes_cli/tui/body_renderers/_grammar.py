@@ -159,7 +159,7 @@ class SkinColors:
             warning="#FEA62B",
             info="#58A6FF",
             icon_dim="#6e6e6e",
-            separator_dim="#444444",
+            separator_dim="#555555",  # visible mid-gray; drop dim SGR at call sites
             diff_add_bg="#1a3a1a",  # aligned with COMPONENT_VAR_DEFAULTS["diff-add-bg"]
             diff_del_bg="#3a1a1a",  # aligned with COMPONENT_VAR_DEFAULTS["diff-del-bg"]
             syntax_theme="ansi_dark",

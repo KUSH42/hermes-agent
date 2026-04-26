@@ -18,19 +18,21 @@ def test_no_trim_when_fits():
 
 
 def test_drops_flash_first():
+    # When only {hero, flash} present and over budget, hero demotion invariant
+    # fires before the drop-order loop and drops hero (not flash).
     segs = [
         _seg("hero", "  " + "x" * 20),
         _seg("flash", "  ✓ done"),
     ]
     total_w = sum(s.cell_len for _, s in segs)
-    # budget that forces one drop
     result = _trim_tail_segments(segs, budget=total_w - 1)
     names = [n for n, _ in result]
-    assert "flash" not in names
-    assert "hero" in names
+    assert "hero" not in names
+    assert "flash" in names
 
 
-def test_drops_stderrwarn_before_chevron():
+def test_drops_chevron_before_stderrwarn():
+    # HW-1: stderrwarn is a recovery affordance; chevron is cosmetic — chevron drops first.
     segs = [
         _seg("chevron", "  ▾"),
         _seg("stderrwarn", "  ⚠ stderr (e)"),
@@ -38,8 +40,8 @@ def test_drops_stderrwarn_before_chevron():
     total_w = sum(s.cell_len for _, s in segs)
     result = _trim_tail_segments(segs, budget=total_w - 1)
     names = [n for n, _ in result]
-    assert "stderrwarn" not in names
-    assert "chevron" in names
+    assert "chevron" not in names
+    assert "stderrwarn" in names
 
 
 def test_drops_linecount_before_chevron():

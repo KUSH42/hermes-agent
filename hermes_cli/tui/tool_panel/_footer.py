@@ -1,9 +1,12 @@
 """Standalone footer/body widget classes for ToolPanel."""
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+_log = logging.getLogger(__name__)
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal
@@ -59,10 +62,7 @@ class _ArtifactButton(TooltipMixin, Button):
     """Artifact chip button with tooltip support for full path/URL."""
 
 
-# Per-category collapsed action strip definitions (lazy-init to avoid import cycle).
-_COLLAPSED_ACTIONS: "dict | None" = None
-
-
+# Per-category collapsed action strip definitions.
 def _build_collapsed_actions_map() -> "dict":
     from hermes_cli.tui.tool_category import ToolCategory
     return {
@@ -77,13 +77,13 @@ def _build_collapsed_actions_map() -> "dict":
 
 
 def _get_collapsed_actions(category: "object") -> "list[tuple[str, str]]":
-    global _COLLAPSED_ACTIONS
-    if _COLLAPSED_ACTIONS is None:
-        try:
-            _COLLAPSED_ACTIONS = _build_collapsed_actions_map()
-        except Exception:
-            _COLLAPSED_ACTIONS = {}
-    return _COLLAPSED_ACTIONS.get(category, [("?", "keys")])  # type: ignore[arg-type]
+    # Built per-call (not cached) so newly-registered tool categories
+    # (MCP, dynamic) pick up affordances without invalidation hooks.
+    try:
+        return _build_collapsed_actions_map().get(category, [("?", "keys")])  # type: ignore[arg-type]
+    except Exception:
+        _log.exception("collapsed-action map build failed for %r", category)
+        return [("?", "keys")]
 
 
 class _CollapsedActionStrip(Static):
@@ -210,7 +210,12 @@ class FooterPane(Widget):
         padding: 0;
     }
     FooterPane.has-stderr > .footer-stderr { display: block; }
-    FooterPane.compact > .footer-stderr { display: none; }
+    FooterPane.compact > .artifact-row { display: none; }
+    FooterPane.compact > .footer-stderr {
+        max-height: 1;
+        overflow: hidden;
+        color: $error 80%;
+    }
     FooterPane > .footer-remediation {
         height: auto;
         display: none;
@@ -321,6 +326,11 @@ class FooterPane(Widget):
         _err = _SC.from_app(getattr(self, "app", None)).error
         lines = tail.strip().splitlines()
         result = Text()
+        if not lines:
+            return result
+        if self.has_class("compact"):
+            result.append(f"  {lines[-1]}  (e for full)", style=f"dim {_err}")
+            return result
         for i, line in enumerate(lines[-8:]):
             if i > 0:
                 result.append("\n")

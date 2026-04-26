@@ -130,6 +130,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         Binding("-",     "collapse_lines",   "Collapse lines",   show=False),
         Binding("*",     "expand_all_lines", "Expand all",       show=False),
         Binding("alt+t", "density_trace",    "Trace tier",       show=False),
+        Binding("D",     "density_cycle",   "Density cycle",    show=False),
         Binding("r",     "retry",            "Retry",            show=False),
         Binding("t",     "cycle_kind",       "Render as",        show=False),
         Binding("E",     "edit_cmd",         "Edit cmd",         show=False),

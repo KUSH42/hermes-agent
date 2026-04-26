@@ -343,16 +343,13 @@ class TestIsErrorForUi:
 
 
 # ---------------------------------------------------------------------------
-# P-6: F1 pinned at narrow width (depends on H-3 _render_hints)
+# P-6: F1 pinned at narrow width
 # ---------------------------------------------------------------------------
 
 class TestF1Pinned:
-    @pytest.mark.skip(reason="P-6: depends on hint-pipeline H-3 F1 pinning at narrow widths; "
-                             "current _build_hint_text hides F1 when narrow=True (width<50)")
     def test_f1_pinned_at_width_30(self):
-        """F1 hint pinned even when budget forces all contextual hints out."""
+        """F1 hint pinned even when budget forces all contextual hints out (P-6)."""
         from hermes_cli.tui.tool_panel._actions import _ToolPanelActionsMixin
-        from hermes_cli.tui.tool_result_parse import ResultSummaryV4
         mixin = _ToolPanelActionsMixin.__new__(_ToolPanelActionsMixin)
         rs = _make_summary(is_error=False)
         mixin._result_summary_v4 = rs
@@ -360,6 +357,10 @@ class TestF1Pinned:
         mixin._block._completed = True
         mixin._view_state = None
         mixin._lookup_view_state = lambda: None
+        mixin.collapsed = False
+        mixin._visible_footer_action_kinds = lambda: set()
+        mixin._get_omission_bar = lambda: None
+        mixin._result_paths_for_action = lambda: []
         from textual.geometry import Size
         mixin.size = Size(width=30, height=20)
         mixin.is_mounted = True
@@ -368,15 +369,66 @@ class TestF1Pinned:
 
 
 # ---------------------------------------------------------------------------
-# P-7: Truncation marker count matches dropped (depends on H-3)
+# P-7: Truncation marker count matches dropped
 # ---------------------------------------------------------------------------
 
 class TestTruncationMarker:
-    @pytest.mark.skip(reason="P-7: depends on hint-pipeline H-3 _truncate_hints +N more marker; "
-                             "not yet implemented in current _build_hint_text path")
+    def _make_mixin_with_contextual(self, n_contextual=5, width=40):
+        """Build a mixin that will produce n_contextual hints."""
+        from hermes_cli.tui.tool_panel._actions import _ToolPanelActionsMixin
+        from hermes_cli.tui.tool_result_parse import ResultSummaryV4, Action, Artifact
+        mixin = _ToolPanelActionsMixin.__new__(_ToolPanelActionsMixin)
+
+        # Build a summary that will trigger many contextual hints:
+        # stderr_tail → copy_err hint; paths → open hint; urls → urls hint
+        acts = (Action(label="copy err", hotkey="e", kind="copy_err", payload="x"),)
+        arts = tuple(
+            Artifact(label=f"u{i}", path_or_url=f"https://x.com/{i}", kind="url")
+            for i in range(n_contextual - 2)
+        ) if n_contextual > 2 else ()
+        rs = ResultSummaryV4(
+            primary=None, exit_code=None, chips=(), stderr_tail="err",
+            actions=acts, artifacts=arts, is_error=False,
+        )
+        mixin._result_summary_v4 = rs
+        mixin._block = MagicMock()
+        mixin._block._completed = True
+        mixin._view_state = None
+        mixin._lookup_view_state = lambda: None
+        mixin.collapsed = False
+        mixin._visible_footer_action_kinds = lambda: set()
+        mixin._get_omission_bar = lambda: None
+        mixin._result_paths_for_action = lambda: []
+        from textual.geometry import Size
+        mixin.size = Size(width=width, height=20)
+        mixin.is_mounted = True
+        return mixin
+
     def test_truncation_marker_count_matches_dropped(self):
         """Across widths 30..120, +N matches actual dropped contextual hints."""
-        pass
+        import re
+
+        # Setup produces 4 contextual: [t as code, e stderr, u urls, alt+t trace]
+        # (copy_err action triggers "e stderr"; 2 URL artifacts → "u urls";
+        #  ML-3 → "t as code"; H-2 → "alt+t trace" always for complete+expanded)
+
+        # At narrow width (30): 0 shown, +4 dropped
+        mixin = self._make_mixin_with_contextual(n_contextual=4, width=30)
+        text = mixin._build_hint_text()
+        plain = text.plain
+        assert "F1" in plain
+        m = re.search(r"\+(\d+)\s+more", plain)
+        assert m is not None, f"expected +N more at narrow width: {plain!r}"
+        assert int(m.group(1)) >= 1
+
+        # At wide width (120): 2 shown from 4 total → +2 dropped
+        mixin2 = self._make_mixin_with_contextual(n_contextual=4, width=120)
+        text2 = mixin2._build_hint_text()
+        plain2 = text2.plain
+        assert "F1" in plain2
+        m2 = re.search(r"\+(\d+)\s+more", plain2)
+        assert m2 is not None, f"expected +N more at wide width with overflow: {plain2!r}"
+        assert int(m2.group(1)) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -417,10 +469,8 @@ class TestLegacyAliasMigration:
             if tier != DensityTier.TRACE:
                 assert "trace_pending" in order, f"trace_pending missing from {tier} drop order"
 
-    @pytest.mark.skip(reason="P-9: depends on hint-pipeline H-1 deleting _select_hint_set; "
-                             "function still exists in current codebase (H-1 added new path "
-                             "but did not delete the old one)")
     def test_select_hint_set_removed(self):
-        """Once H-1 deletion lands, _select_hint_set must be gone."""
+        """_select_hint_set and _format deleted in this polish pass."""
         from hermes_cli.tui.tool_panel import _actions as _mod
         assert not hasattr(_mod._ToolPanelActionsMixin, "_select_hint_set")
+        assert not hasattr(_mod._ToolPanelActionsMixin, "_format")

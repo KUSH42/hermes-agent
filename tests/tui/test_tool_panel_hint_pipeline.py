@@ -75,6 +75,9 @@ def _make_panel(
         method = getattr(_ToolPanelActionsMixin, name)
         setattr(panel, name, method.__get__(panel))
 
+    # Static method — assign directly (no self binding)
+    panel._next_kind_label = _ToolPanelActionsMixin._next_kind_label
+
     return panel
 
 

@@ -345,9 +345,10 @@ class DiffRenderer(BodyRenderer):
         cls_result: "ClassificationResult",
         *,
         app=None,
+        decision=None,
         **kwargs,
     ) -> None:
-        super().__init__(payload, cls_result, app=app)
+        super().__init__(payload, cls_result, app=app, decision=decision)
         self._collapsed_hunks: set[int] = set()
         try:
             from hermes_cli.config import read_raw_config

@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from hermes_cli.tui.body_renderers._grammar import SkinColors
     from hermes_cli.tui.services.tools import ToolCallState
     from hermes_cli.tui.tool_panel.density import DensityTier
+    from hermes_cli.tui.tool_panel.layout_resolver import LayoutDecision
     from rich.console import ConsoleRenderable
 
 
@@ -38,10 +39,12 @@ class BodyRenderer(ABC):
         cls_result: "ClassificationResult | None" = None,
         *,
         app=None,
+        decision: "LayoutDecision | None" = None,
     ) -> None:
         self.payload = payload  # type: ignore[assignment]
         self.cls_result = cls_result  # type: ignore[assignment]
         self._app = app
+        self._decision = decision
         self._colors: "SkinColors | None" = None
 
     @property
@@ -50,6 +53,24 @@ class BodyRenderer(ABC):
             from hermes_cli.tui.body_renderers._grammar import SkinColors
             self._colors = SkinColors.from_app(self._app) if self._app else SkinColors.default()
         return self._colors
+
+    def decision_or_default(
+        self,
+        *,
+        phase: "ToolCallState",
+        density: "DensityTier",
+        width: int,
+    ) -> "LayoutDecision":
+        """Return the stored decision, or synthesise one from explicit args."""
+        if self._decision is not None:
+            return self._decision
+        from hermes_cli.tui.tool_panel.layout_resolver import LayoutDecision, DensityTier as _DT
+        return LayoutDecision(
+            tier=density,
+            footer_visible=(density != _DT.COMPACT),
+            width=width,
+            reason="initial",
+        )
 
     @classmethod
     @abstractmethod

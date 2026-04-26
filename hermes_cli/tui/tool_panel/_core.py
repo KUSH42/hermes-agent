@@ -4,6 +4,7 @@ Architecture: tui-tool-panel-spec-binary-collapse.md
 """
 from __future__ import annotations
 
+import threading
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -21,7 +22,11 @@ from ._footer import (
     FooterPane,
     _CollapsedActionStrip,
 )
-from hermes_cli.tui.tool_panel.density import DensityResolver, DensityTier
+from hermes_cli.tui.tool_panel.layout_resolver import (
+    ToolBlockLayoutResolver,
+    LayoutDecision,
+    DensityTier,
+)
 
 if TYPE_CHECKING:
     from hermes_cli.tui.tool_result_parse import ResultSummaryV4
@@ -81,7 +86,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         Binding("+",     "expand_lines",     "Expand lines",     show=False),
         Binding("-",     "collapse_lines",   "Collapse lines",   show=False),
         Binding("*",     "expand_all_lines", "Expand all",       show=False),
-        Binding("T",     "density_trace",    "Trace tier",       show=False),
+        Binding("alt+t", "density_trace",    "Trace tier",       show=False),
         Binding("r",     "retry",            "Retry",            show=False),
         Binding("t",     "cycle_kind",       "Render as",        show=False),
         Binding("E",     "edit_cmd",         "Edit cmd",         show=False),
@@ -143,7 +148,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         self._discovery_shown: bool = False
 
         self._view_state: "ToolCallViewState | None" = None  # wired by service after mount
-        self._resolver = DensityResolver()
+        self._resolver = ToolBlockLayoutResolver()
         self._resolver.subscribe(self._on_tier_change)
         self._user_override_tier: DensityTier | None = None
         self._parent_clamp_tier: "DensityTier | None" = None  # set by ChildPanel via subscription
@@ -216,18 +221,6 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         if body_container is not None:
             body_container.styles.display = "none" if new else "block"
 
-        fp = self._footer_pane
-        if fp is None:
-            return
-
-        if new and fp._show_all_artifacts:
-            fp._show_all_artifacts = False
-            fp._rebuild_chips()
-
-        want_fp = (not new) and self._has_footer_content()
-        if fp.display != want_fp:
-            fp.styles.display = "block" if want_fp else "none"
-
         if old != new:
             try:
                 self.remove_class(f"-l{old}")
@@ -257,22 +250,60 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
             return None
 
     def _on_tier_change(self, tier: DensityTier) -> None:
-        """Resolver subscriber — apply tier change to all consumers."""
-        # Two separate writes: `self.density` drives CSS/layout; `set_axis(vs, "density", ...)`
-        # notifies cross-subsystem watchers. Both must stay; view-state is not the source of
-        # truth for `self.density` (resolver is). Sub-tick gap is intentional.
-        self.density = tier
-        self.collapsed = (tier == DensityTier.COMPACT)
-        self._auto_collapsed = (tier == DensityTier.COMPACT) and not self._user_collapse_override
-        if self._footer_pane is not None:
-            self._footer_pane.set_density(tier)
-        # Mirror density tier to header so chevron glyph reflects HERO state.
-        header = getattr(self._block, "_header", None)
-        if header is not None:
-            header._density_tier = tier
-            header.refresh()
-        # DR-5: mirror to view-state for cross-subsystem readers.
+        """Resolver subscriber — synthesise a LayoutDecision and delegate."""
+        footer_visible = (
+            tier != DensityTier.COMPACT
+            and not self._user_collapse_override
+            and self._has_footer_content()
+        )
+        decision = LayoutDecision(
+            tier=tier,
+            footer_visible=footer_visible,
+            width=self.size.width,
+            reason="auto",
+        )
+        self._apply_layout(decision)
+
+    def _apply_layout(self, decision: LayoutDecision) -> None:
+        """Apply a resolved LayoutDecision atomically (view-state axis first).
+
+        Must run on the Textual message thread. Axis watchers fire synchronously
+        before the Reactive watcher chain, so cross-subsystem readers always see
+        the new tier when they are invoked.
+        """
+        try:
+            app = self.app
+            thread_id = getattr(app, "_thread_id", None)
+        except Exception:
+            app = None
+            thread_id = None
+        if thread_id is not None and threading.get_ident() != thread_id:
+            raise RuntimeError("_apply_layout must run on Textual message thread")
+
+        # 1. Axis-bus write FIRST — fires synchronous watchers.
         vs = self._view_state or self._lookup_view_state()
         if vs is not None:
             from hermes_cli.tui.services.tools import set_axis
-            set_axis(vs, "density", tier)
+            set_axis(vs, "density", decision.tier)
+
+        # 2. Reactives — Textual schedules watcher dispatch after this returns.
+        self.density = decision.tier
+        self.collapsed = (decision.tier == DensityTier.COMPACT)
+        self._auto_collapsed = (
+            decision.tier == DensityTier.COMPACT and not self._user_collapse_override
+        )
+
+        # 3. Footer visibility — sole owner; watch_collapsed no longer toggles it.
+        if self._footer_pane is not None:
+            fp = self._footer_pane
+            if decision.tier == DensityTier.COMPACT and fp._show_all_artifacts:
+                fp._show_all_artifacts = False
+                fp._rebuild_chips()
+            self._footer_pane.set_density(decision.tier)
+            self._footer_pane.display = decision.footer_visible
+
+        # 4. Header tier mirror.
+        header = getattr(self._block, "_header", None)
+        if header is not None:
+            header._density_tier = decision.tier
+            header.refresh()

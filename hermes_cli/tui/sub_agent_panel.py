@@ -78,8 +78,8 @@ class SubAgentHeader(Widget):
                 _log.debug("SubAgentPanel: app.size.width failed", exc_info=True)
                 w = 80
             budget = max(0, w - 20)
-            from hermes_cli.tui.tool_blocks._header import _trim_tail_segments
-            trimmed = _trim_tail_segments(segments, budget)
+            from hermes_cli.tui.tool_panel.layout_resolver import default_resolver, DensityTier as _DT
+            trimmed = default_resolver().trim_header_tail(segments, budget, _DT.DEFAULT)
             tail = _Text()
             for _, seg in trimmed:
                 tail.append_text(seg)

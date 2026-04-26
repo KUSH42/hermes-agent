@@ -55,52 +55,15 @@ def _resolve_max_header_gap(widget) -> int:
         _log.debug("max-header-gap resolve failed; using fallback", exc_info=True)
     return MAX_HEADER_GAP_CELLS_FALLBACK
 
-# Tier-specific drop order — earlier entries are dropped first at narrow widths.
-_DROP_ORDER_DEFAULT: list[str] = [
-    "flash",       # ephemeral — fine to lose
-    "remediation", # long hint, tolerable
-    "stderrwarn",  # redundant with exit
-    "chip",        # browse badge, lowest signal
-    "linecount",   # nice-to-have
-    "duration",    # age microcopy covers it
-    "diff",        # structural
-    "hero",        # primary summary
-    "chevron",     # collapse hint
-    "exit",        # highest signal — keep last
-]
-
-_DROP_ORDER_HERO: list[str] = [
-    "flash",       # ephemeral
-    "remediation", # long hint
-    "stderrwarn",  # redundant
-    "chip",        # browse badge
-    "linecount",   # size context
-    "duration",    # timing
-    "diff",        # secondary vs hero payload
-    "chevron",     # collapse hint (block is expanded)
-    # "hero" omitted — protected via protect_hero=True; must never be dropped in HERO tier
-    "exit",        # keeps last (hero blocks rarely have exit)
-]
-
-_DROP_ORDER_COMPACT: list[str] = [
-    "flash",       # ephemeral
-    "remediation", # long hint — primary collapsed signal is exit
-    "linecount",   # size context irrelevant when collapsed
-    "diff",        # structural — collapsed blocks hide body anyway
-    "hero",        # body hidden — hero chip not useful
-    "chevron",     # collapse hint still useful but low-priority
-    "duration",    # timing
-    "stderrwarn",  # still useful alongside exit
-    "chip",        # browse badge — keep: tells user what happened
-    "exit",        # keep last — most informative when collapsed
-]
-
-_DROP_ORDER_BY_TIER: dict[DensityTier, list[str]] = {
-    DensityTier.HERO:    _DROP_ORDER_HERO,
-    DensityTier.DEFAULT: _DROP_ORDER_DEFAULT,
-    DensityTier.COMPACT: _DROP_ORDER_COMPACT,
-    DensityTier.TRACE:   [],  # never drop under TRACE (handled in trim_tail_for_tier)
-}
+# Re-export shims — drop-order constants and trim functions moved to layout_resolver (DU-3).
+from hermes_cli.tui.tool_panel.layout_resolver import (  # noqa: F401
+    _DROP_ORDER_DEFAULT,
+    _DROP_ORDER_HERO,
+    _DROP_ORDER_COMPACT,
+    _DROP_ORDER_BY_TIER,
+    trim_tail_for_tier,
+    _trim_tail_segments,
+)
 
 
 def _safe_collapsed(header: "ToolHeader") -> bool:
@@ -115,51 +78,6 @@ def _remap_spans(seg: Text, strip_n: int) -> list:
         if s.end > strip_n
     ]
 
-
-def trim_tail_for_tier(
-    tail_segments: "list[tuple[str, Text]]",
-    tail_budget: int,
-    tier: "object",
-) -> "list[tuple[str, Text]]":
-    """Tier-aware wrapper around _trim_tail_segments."""
-    if tier == DensityTier.TRACE:
-        return list(tail_segments)  # no trim under TRACE
-    order = _DROP_ORDER_BY_TIER.get(tier, _DROP_ORDER_DEFAULT)  # type: ignore[arg-type]
-    protect = (tier == DensityTier.HERO)
-    return _trim_tail_segments(tail_segments, tail_budget, drop_order=order, protect_hero=protect)
-
-
-def _trim_tail_segments(
-    segments: "list[tuple[str, Text]]",
-    budget: int,
-    drop_order: "list[str] | None" = None,
-    protect_hero: bool = False,
-) -> "list[tuple[str, Text]]":
-    if drop_order is None:
-        drop_order = _DROP_ORDER_DEFAULT
-    result = list(segments)
-    total_w = sum(s.cell_len for _, s in result)
-    names = {name for name, _ in result}
-    # Special case: when only hero+flash remain and still over budget, drop hero as last
-    # resort — EXCEPT in HERO tier where hero must never be dropped.
-    if (not protect_hero
-            and total_w > budget
-            and names <= {"hero", "flash"}
-            and "hero" in names):
-        for i in reversed(range(len(result))):
-            if result[i][0] == "hero":
-                total_w -= result[i][1].cell_len
-                result.pop(i)
-                break
-    for name in drop_order:
-        if total_w <= budget:
-            break
-        for i in reversed(range(len(result))):
-            if result[i][0] == name:
-                total_w -= result[i][1].cell_len
-                result.pop(i)
-                break
-    return result
 
 
 class ToolHeader(TooltipMixin, PulseMixin, Widget):
@@ -504,7 +422,12 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         tail_budget = max(0, term_w - FIXED_PREFIX_W - MIN_LABEL_CELLS - 2) if term_w > 0 else 80
         from hermes_cli.tui.tool_panel.density import DensityTier as _DT
         _tier = getattr(self._panel, "density", _DT.DEFAULT) if self._panel else _DT.DEFAULT
-        tail_segments = trim_tail_for_tier(tail_segments, tail_budget, _tier)
+        if self._panel is not None and hasattr(self._panel, "_resolver"):
+            _resolver = self._panel._resolver
+        else:
+            from hermes_cli.tui.tool_panel.layout_resolver import default_resolver
+            _resolver = default_resolver()
+        tail_segments = _resolver.trim_header_tail(tail_segments, tail_budget, _tier)
         from hermes_cli.tui.body_renderers._grammar import GLYPH_META_SEP, glyph as _glyph
         _sep = Text(f" {_glyph(GLYPH_META_SEP)} ", style=f"dim {self._colors().separator_dim}")
         tail = Text()

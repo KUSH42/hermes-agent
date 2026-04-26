@@ -637,6 +637,23 @@ class ToolRenderingService(AppService):
         _terminal = (ToolCallState.DONE, ToolCallState.ERROR,
                      ToolCallState.CANCELLED, ToolCallState.REMOVED)
         if view is not None and prev_state in _terminal:
+            if prev_state != terminal_state:
+                logger.debug(
+                    "terminalize race: view already %s, ignoring %s",
+                    prev_state, terminal_state,
+                )
+                if terminal_state == ToolCallState.CANCELLED and prev_state in (
+                    ToolCallState.DONE, ToolCallState.ERROR
+                ):
+                    panel = (
+                        self._panel_for_block(view.block)
+                        if view.block is not None else None
+                    )
+                    if panel is not None and getattr(panel, "is_mounted", False):
+                        panel._flash_header(
+                            f"cancel ignored: tool already {prev_state.value}",
+                            tone="warning",
+                        )
             return view
 
         # Step 2: pop active streaming block + refresh count

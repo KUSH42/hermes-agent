@@ -180,6 +180,7 @@ class _ToolPanelActionsMixin:
     def action_copy_body(self) -> None:
         text = self.copy_content()  # type: ignore[attr-defined]
         if not text:
+            self._flash_header("body: nothing to copy", tone="warning")
             return
         self.app._copy_text_with_hint(text)  # type: ignore[attr-defined]
         from hermes_cli.tui.streaming_microcopy import _human_size
@@ -201,6 +202,7 @@ class _ToolPanelActionsMixin:
                         url = artifact.path_or_url
                         break
         if not url:
+            self._flash_header("no URL in result", tone="warning")
             return
         self._flash_header("opening…")
         safe_open_url(
@@ -248,6 +250,7 @@ class _ToolPanelActionsMixin:
                     payload = action.payload
                     break
         if not payload:
+            self._flash_header("stderr: nothing to copy", tone="warning")
             return
         self.app._copy_text_with_hint(payload)  # type: ignore[attr-defined]
         self._flash_header("copied stderr")
@@ -255,6 +258,7 @@ class _ToolPanelActionsMixin:
     def action_copy_paths(self) -> None:
         paths = self._result_paths_for_action()
         if not paths:
+            self._flash_header("paths: nothing to copy", tone="warning")
             return
         self.app._copy_text_with_hint("\n".join(paths))  # type: ignore[attr-defined]
         self._flash_header(f"copied paths ({len(paths)})")
@@ -266,6 +270,7 @@ class _ToolPanelActionsMixin:
             return
         try:
             self.app._svc_commands.initiate_retry()  # type: ignore[attr-defined]
+            self._flash_header("retrying…")
         except Exception:
             self._flash_header("retry failed")
 
@@ -351,6 +356,7 @@ class _ToolPanelActionsMixin:
             except Exception:
                 pass
         if not all_rich:
+            self._flash_header("HTML: nothing to copy", tone="warning")
             return
         console = Console(record=True, width=terminal_width)
         for t in all_rich:
@@ -380,6 +386,7 @@ class _ToolPanelActionsMixin:
             return
         urls = [a.path_or_url for a in rs.artifacts if a.kind == "url"]
         if not urls:
+            self._flash_header("URLs: nothing to copy", tone="warning")
             return
         self.app._copy_text_with_hint("\n".join(urls))  # type: ignore[attr-defined]
         self._flash_header(f"copied URLs ({len(urls)})")
@@ -390,6 +397,7 @@ class _ToolPanelActionsMixin:
             return
         path = getattr(header, "_full_path", None)
         if not path:
+            self._flash_header("path: nothing to copy", tone="warning")
             return
         self.app._copy_text_with_hint(path)  # type: ignore[attr-defined]
         self._flash_header("copied path")

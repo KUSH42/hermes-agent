@@ -133,6 +133,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         Binding("D",     "density_cycle",   "Density cycle",    show=False),
         Binding("r",     "retry",            "Retry",            show=False),
         Binding("t",     "cycle_kind",       "Render as",        show=False),
+        Binding("T",     "kind_revert",      "Revert kind",      show=False),
         Binding("E",     "edit_cmd",         "Edit cmd",         show=False),
         Binding("O",     "open_url",         "Open URL",         show=False),
         Binding("f",     "toggle_tail_follow", "tail", show=False),

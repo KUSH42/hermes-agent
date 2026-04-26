@@ -371,6 +371,17 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         if _pending_dur:
             tail_segments.append(("duration", Text(f"  {_pending_dur}", style="dim")))
 
+        # ML-1: kind override caption — visible only when user_kind_override is set
+        if self._panel is not None:
+            _view = getattr(self._panel, "_view_state", None)
+            _override = getattr(_view, "user_kind_override", None) if _view else None
+            if _override is not None:
+                kind_label = _override.value.lower()
+                tail_segments.append(("kind", Text(
+                    f"  as {kind_label}",
+                    style=f"dim italic {self._colors().accent}",
+                )))
+
         term_w = self.size.width
         FIXED_PREFIX_W = gutter_w + icon_cell_w + space_after_icon
         tail_budget = max(0, term_w - FIXED_PREFIX_W - MIN_LABEL_CELLS - 2) if term_w > 0 else 80

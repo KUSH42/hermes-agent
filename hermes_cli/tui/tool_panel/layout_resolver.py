@@ -57,6 +57,7 @@ _DROP_ORDER_DEFAULT: list[str] = [
     "chip",          # browse-badge — purely contextual, lowest signal
     "linecount",     # size context, derivable
     "duration",      # often available via age microcopy in footer
+    "kind",          # kind override label — drop before flash; invisible when no override
     "flash",         # ephemeral — accept loss when space is tight
     "chevron",       # collapse hint — preserve mid-priority
     "diff",          # structural — preserve
@@ -68,6 +69,7 @@ _DROP_ORDER_HERO: list[str] = [
     "chip",
     "linecount",
     "duration",
+    "kind",          # kind override — drop after duration, before flash
     "flash",
     "diff",
     "chevron",
@@ -78,6 +80,7 @@ _DROP_ORDER_COMPACT: list[str] = [
     "chip",
     "linecount",
     "flash",
+    "kind",          # kind override — after flash, before chevron
     "diff",
     "hero",
     "chevron",

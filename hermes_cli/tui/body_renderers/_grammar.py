@@ -332,3 +332,13 @@ def build_parse_failure(
         t.append("\n")
     t.append(f"Parse error: {err}", style=Style(color=error_color))
     return t
+
+
+def user_forced_caption(kind: "object") -> Text:
+    """'  rendering as JSON (manual override — press t to cycle)' dim italic."""
+    from hermes_cli.tui.tool_payload import ResultKind
+    kind_val = kind.value if isinstance(kind, ResultKind) else str(kind)
+    return Text(
+        f"  rendering as {kind_val} (manual override — press t to cycle)",
+        style=f"dim italic {SkinColors.default().muted}",
+    )

@@ -428,6 +428,9 @@ DEFAULT_CONFIG = {
         "syntax_bold": True,      # Keep bold emphasis on syntax-highlighted token styles
         "spinner_style": "",      # TUI spinner animation: dots|bounce|grow|arrows|star|moon|pulse|clock|none (empty = skin default)
         "show_cost": False,       # Show $ cost in the status bar (off by default)
+        "feedback": {
+            "bell_on_preempt": False,
+        },
         "inline_media": {
             "enabled": False,
             "audio": True,

@@ -19,10 +19,13 @@ Internal (not exported)
 """
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Callable, Protocol, runtime_checkable
+
+_log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Priority constants
@@ -276,6 +279,11 @@ class FeedbackService:
                 self._stop_flash_internal(channel, existing)
             else:
                 # Lower priority — blocked
+                _log.debug(
+                    "flash preempted: incoming=%r (p=%s) blocked by current=%r (p=%s)",
+                    message, priority,
+                    existing.message, existing.priority,
+                )
                 return FlashHandle(displayed=False)
 
         # --- Create new state ---
@@ -352,6 +360,18 @@ class FeedbackService:
     def peek(self, channel: str) -> FlashState | None:
         """Return the active FlashState for a channel, or None."""
         return self._active.get(channel)
+
+    def would_flash(self, channel: str, priority: int) -> bool:
+        """Return True if flash(channel, priority=priority) would be applied (not blocked).
+
+        Raises KeyError if the channel is not registered (same contract as flash()).
+        """
+        if channel not in self._channels:
+            raise KeyError(f"FeedbackService: channel {channel!r} not registered")
+        if channel not in self._active:
+            return True
+        existing = self._active[channel]
+        return priority >= existing.priority
 
     # ------------------------------------------------------------------
     # Lifecycle hooks

@@ -10,6 +10,7 @@ import logging
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from rich.style import Style
 from rich.text import Text
@@ -108,23 +109,35 @@ class SpinnerIdentity:
     phase_offset: float  # ∈ [0, 1) — shifts sine phase so concurrent blocks cycle out of sync
 
 
-def make_spinner_identity(tool_call_id: str) -> SpinnerIdentity:
-    """Hash tool_call_id to a deterministic SpinnerIdentity.
+def make_spinner_identity(tool_call_id: str, category: "Any | None" = None) -> SpinnerIdentity:
+    """Return a skin-driven SpinnerIdentity for the icon pulse.
 
-    Bit ranges are non-overlapping so each selector is independent:
-      bits 0–1  → frame set index  (4 sets)
-      bits 4–6  → color pair index (8 pairs)
-      bits 8–15 → phase offset     (256 values ∈ [0, 0.996))
+    When category is provided, pulse colors are resolved from SkinColors.tier_accents
+    so all active calls in the same category pulse in unison (phase_offset=0).
+    When category is None, falls back to default accent colors.
+
+    The frames field is kept for icon-glyph cycling; spinner segment was removed (CL-1).
     """
-    from hermes_cli.tui.constants import accessibility_mode
-    n = _fnv1a_32(tool_call_id)
-    frames_idx = n % len(_SPINNER_FRAME_SETS)           # bits 0–1
-    color_idx = (n >> 4) % len(_SPINNER_COLOR_PAIRS)    # bits 4–6
-    phase_offset = ((n >> 8) & 0xFF) / 256.0            # bits 8–15
-    if accessibility_mode():
-        frames_idx = 0  # always CCW Braille in accessible environments
-    color_a, color_b = _SPINNER_COLOR_PAIRS[color_idx]
-    return SpinnerIdentity(_SPINNER_FRAME_SETS[frames_idx], color_a, color_b, phase_offset)
+    from hermes_cli.tui.body_renderers._grammar import SkinColors
+    skin = SkinColors.default()
+    if category is None:
+        return SpinnerIdentity(
+            frames=_SPINNER_FRAME_SETS[0],
+            color_a=skin.icon_dim,
+            color_b=skin.accent,
+            phase_offset=0.0,
+        )
+    try:
+        from hermes_cli.tui.tool_category import display_tier_for
+        accent = skin.tier_accents.get(display_tier_for(category), skin.accent)
+    except Exception:
+        accent = skin.accent
+    return SpinnerIdentity(
+        frames=_SPINNER_FRAME_SETS[0],
+        color_a=skin.icon_dim,
+        color_b=accent,
+        phase_offset=0.0,
+    )
 
 
 # Precomputed sine tables for common animation periods.
@@ -362,6 +375,8 @@ class PulseMixin:
 
     def _pulse_step(self) -> None:
         """15Hz timer callback — must be plain def."""
+        if getattr(self, "_pulse_paused", False):
+            return
         self._pulse_tick += 1
         self._pulse_t = pulse_phase(self._pulse_tick, period=30)
         self.refresh()  # type: ignore[attr-defined]

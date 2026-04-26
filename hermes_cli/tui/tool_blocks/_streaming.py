@@ -179,14 +179,10 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
 
     def on_mount(self) -> None:
         self._header._has_affordances = False
-        self._header._spinner_identity = self._spinner_identity
-        frames = self._spinner_identity.frames if self._spinner_identity else _SPINNER_FRAMES
-        self._header._spinner_char = frames[0]
         self._stream_started_at = time.monotonic()
         self._last_line_time = self._stream_started_at
         self._header._duration = "0.0s"
         self._render_timer = self._register_timer(self.set_interval(1 / 60, self._flush_pending))
-        self._spinner_timer = self._register_timer(self.set_interval(0.25, self._tick_spinner))
         self._duration_timer = self._register_timer(self.set_interval(0.1, self._tick_duration))
         try:
             display_cfg = self.app.cfg.get("display", {})  # type: ignore[attr-defined]
@@ -209,6 +205,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             self._omission_bar_bottom.display = False
         # Compose pre-mounts bars and sets _omission_bar_bottom_mounted = True.
         self._header._pulse_start()
+        self._header._streaming_phase = True
         try:
             from hermes_cli.tui.tool_category import spec_for as _spec_for
             _spec = _spec_for(self._tool_name or "")
@@ -216,6 +213,11 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             if _sec:
                 self._body.update_secondary_args(_sec)
                 self._secondary_args_snapshot = _sec
+            # CL-6: update spinner identity with category-aware skin-driven pulse colors
+            self._header._spinner_identity = (
+                make_spinner_identity(self._tool_call_id, category=_spec.category)
+                if self._tool_call_id else None
+            )
         except Exception:
             pass
         if self._is_first_in_turn:
@@ -315,10 +317,10 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         # L4: use mixin — marks entries stopped=True so on_unmount skips them (no double-stop)
         self._stop_all_managed()
         self._header._pulse_stop()
+        self._header._streaming_phase = False
         self._header.set_error(is_error)
         self._flush_pending()
         self._tail.dismiss()
-        self._header._spinner_char = None
         self._header._is_complete = True
         started = getattr(self, "_stream_started_at", None)
         if started is not None:
@@ -415,14 +417,6 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
     # Internal timers
     # ------------------------------------------------------------------
 
-    def _tick_spinner(self) -> None:
-        if self._completed:
-            return
-        frames = self._spinner_identity.frames if self._spinner_identity is not None else _SPINNER_FRAMES
-        self._spinner_frame = (self._spinner_frame + 1) % len(frames)
-        self._header._spinner_char = frames[self._spinner_frame]
-        self._header.refresh()
-
     def _tick_duration(self) -> None:
         if self._completed:
             return
@@ -476,6 +470,11 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             and self._last_line_time > 0.0
             and (time.monotonic() - self._last_line_time) > 5.0
         )
+        # CL-4: freeze pulse when stalled; resume on next line (lags up to one tick ~100ms)
+        if stalled and not self._header._pulse_paused:
+            self._header._pulse_paused = True
+        elif not stalled and self._header._pulse_paused:
+            self._header._pulse_paused = False
         text = microcopy_line(spec, state, reduced_motion=reduced_motion, shimmer_phase=self._shimmer_phase, stalled=stalled)
         if text:
             self._body.set_microcopy(text)

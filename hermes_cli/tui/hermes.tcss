@@ -42,6 +42,22 @@ $tool-tier-file-accent:  #4DB6AC;
 $tool-tier-exec-accent:  #81C784;
 $tool-tier-query-accent: #64B5F6;
 $tool-tier-agent-accent: #CE93D8;
+/* SC-1: dim tone variants for exit-code, accessible markers, remediation hints */
+$error-dim: #8B2020;
+$success-dim: #1E5C1E;
+$warning-dim: #5C4A00;
+/* SC-3: double-dim muted for parse-failure / meta contexts */
+$text-muted-dim: #3A3A3A;
+/* SC-4: focused tool-block gutter (default mirrors $accent-interactive) */
+$tool-header-gutter-color: #00bcd4;
+/* SC-2: per-tier completion icon accents (TIER_KEYS set) */
+$tool-tier-read-accent:     #0178D4;
+$tool-tier-write-accent:    #0178D4;
+$tool-tier-search-accent:   #0178D4;
+$tool-tier-shell-accent:    #81C784;
+$tool-tier-browse-accent:   #0178D4;
+$tool-tier-thinking-accent: #0178D4;
+$tool-tier-tooling-accent:  #0178D4;
 $error-timeout: #f59e0b;
 /* Browse mode visual marker colors */
 $browse-turn: #d4a017;

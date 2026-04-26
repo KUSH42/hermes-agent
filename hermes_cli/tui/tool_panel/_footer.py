@@ -317,12 +317,14 @@ class FooterPane(Widget):
 
     def _render_stderr(self, tail: str) -> "Any":
         from rich.text import Text
+        from hermes_cli.tui.body_renderers._grammar import SkinColors as _SC
+        _err = _SC.from_app(getattr(self, "app", None)).error
         lines = tail.strip().splitlines()
         result = Text()
         for i, line in enumerate(lines[-8:]):
             if i > 0:
                 result.append("\n")
-            result.append(f"  {line}", style="dim red")
+            result.append(f"  {line}", style=f"dim {_err}")
         return result
 
     def update_summary_v4(

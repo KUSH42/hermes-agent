@@ -216,14 +216,16 @@ class TestC3:
 # ---------------------------------------------------------------------------
 
 class TestF1:
-    def test_flash_is_last_in_drop_order(self) -> None:
+    def test_flash_is_first_in_drop_order(self) -> None:
+        # Spec A (tool-pipeline) changed semantics: flash drops first so permanent
+        # state (exit code, chevron) is never hidden by a transient notification.
         from hermes_cli.tui.tool_blocks._header import _DROP_ORDER
-        assert _DROP_ORDER[-1] == "flash"
+        assert _DROP_ORDER[0] == "flash"
 
-    def test_flash_survives_when_linecount_and_chevron_trimmed(self) -> None:
+    def test_flash_drops_before_linecount_on_tight_budget(self) -> None:
         future = time.monotonic() + 60
-        # has_affordances=False → placeholder "·" (3 cells); linecount=5 → "  5L" (5 cells)
-        # flash "  ✓ Copied" = 10 cells; budget=10 drops linecount+chevron, keeps flash
+        # flash "  ✓ Copied" = 10 cells; linecount "  5L" = 5 cells; chevron "  ·" = 3 cells
+        # total=18; budget=10; flash drops first (8 cells freed → 10 ≤ 10)
         h = _H(
             has_affordances=False,
             line_count=5,
@@ -232,8 +234,8 @@ class TestF1:
             width=80,
         )
         names = h._tail_names(budget=10)
-        assert "flash" in names
-        assert "linecount" not in names
+        assert "flash" not in names
+        assert "linecount" in names
 
     def test_narrow_flash_message_capped_at_14_chars(self) -> None:
         future = time.monotonic() + 60
@@ -315,24 +317,32 @@ class TestF3:
         assert h._focused_gutter_color == "#00bcd4"
 
     def test_falls_back_to_primary_when_accent_interactive_absent(self) -> None:
+        # SC-4: gutter now resolved through SkinColors.tool_header_gutter.
+        # When accent-interactive absent, falls back to tool-header-gutter-color
+        # default (#00bcd4), not $primary. primary fallback was removed.
         from unittest.mock import PropertyMock, patch
-        from hermes_cli.tui.tool_blocks._header import ToolHeader, _GUTTER_FALLBACK
+        from hermes_cli.tui.tool_blocks._header import ToolHeader
+        from hermes_cli.tui.body_renderers._grammar import SkinColors
         h = self._make_header()
         mock_app = MagicMock()
         mock_app.get_css_variables.return_value = {"primary": "#7C3AED"}
         with patch.object(type(h), "app", new_callable=PropertyMock, return_value=mock_app):
             ToolHeader._refresh_gutter_color(h)
-        assert h._focused_gutter_color == "#7C3AED"
+        # accent-interactive absent → falls back to SkinColors.default().tool_header_gutter
+        assert h._focused_gutter_color == SkinColors.default().tool_header_gutter
 
     def test_falls_back_to_gutter_fallback_when_both_absent(self) -> None:
+        # SC-4: when both accent-interactive and tool-header-gutter-color absent,
+        # falls back to SkinColors.default().tool_header_gutter (not _GUTTER_FALLBACK).
         from unittest.mock import PropertyMock, patch
-        from hermes_cli.tui.tool_blocks._header import ToolHeader, _GUTTER_FALLBACK
+        from hermes_cli.tui.tool_blocks._header import ToolHeader
+        from hermes_cli.tui.body_renderers._grammar import SkinColors
         h = self._make_header()
         mock_app = MagicMock()
         mock_app.get_css_variables.return_value = {}
         with patch.object(type(h), "app", new_callable=PropertyMock, return_value=mock_app):
             ToolHeader._refresh_gutter_color(h)
-        assert h._focused_gutter_color == _GUTTER_FALLBACK
+        assert h._focused_gutter_color == SkinColors.default().tool_header_gutter
 
     def test_footer_pane_accent_chip_not_bold_cyan(self) -> None:
         from hermes_cli.tui.tool_panel import _TONE_STYLES

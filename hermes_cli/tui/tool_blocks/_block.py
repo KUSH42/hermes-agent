@@ -27,11 +27,17 @@ from ._shared import (
 from ._header import ToolHeader, ToolBodyContainer
 
 
+_DIFF_DEL_FG_FALLBACK = "#ef5350"
+_DIFF_ADD_FG_FALLBACK = "#5fd75f"
+
+
 def _render_diff_chunk(
     removed: "list[str]",
     added: "list[str]",
     del_bg: str,
     add_bg: str,
+    del_fg: str = _DIFF_DEL_FG_FALLBACK,
+    add_fg: str = _DIFF_ADD_FG_FALLBACK,
 ) -> "list[Text]":
     """N:M word-level diff for accumulated removal/addition chunks.
 
@@ -44,18 +50,18 @@ def _render_diff_chunk(
     pairs = min(len(removed), len(added))
     for i in range(pairs):
         rem_t, add_t = _word_diff(removed[i], added[i])
-        rt = Text("-", style="red")
+        rt = Text("-", style=del_fg)
         rt.append_text(rem_t)
         result.append(rt)
-        at = Text("+", style="green")
+        at = Text("+", style=add_fg)
         at.append_text(add_t)
         result.append(at)
     for r in removed[pairs:]:
-        t = Text("-", style="red")
+        t = Text("-", style=del_fg)
         t.append(r, style=f"on {del_bg}")
         result.append(t)
     for a in added[pairs:]:
-        t = Text("+", style="green")
+        t = Text("+", style=add_fg)
         t.append(a, style=f"on {add_bg}")
         result.append(t)
     return result
@@ -197,6 +203,15 @@ class ToolBlock(Widget):
             pass
         return "#1a3a1a", "#3a1a1a"
 
+    def _diff_fg_colors(self) -> tuple[str, str]:
+        """Return (add_fg, del_fg) from skin error/success vars."""
+        try:
+            from hermes_cli.tui.body_renderers._grammar import SkinColors
+            c = SkinColors.from_app(self.app)
+            return c.success, c.error
+        except Exception:
+            return _DIFF_ADD_FG_FALLBACK, _DIFF_DEL_FG_FALLBACK
+
     def _render_body(self) -> None:
         try:
             rl = self._body.query_one(CopyableRichLog)
@@ -229,13 +244,14 @@ class ToolBlock(Widget):
 
             if self._label == "diff":
                 add_bg, del_bg = self._diff_bg_colors()
+                add_fg, del_fg = self._diff_fg_colors()
                 _pending_removed: list[str] = []
                 _pending_added: list[str] = []
                 for styled, plain in zip(self._lines, self._plain_lines):
                     rich_line = self._render_diff_line(plain)
                     if rich_line is not None:
                         if _pending_removed or _pending_added:
-                            for _dl in _render_diff_chunk(_pending_removed, _pending_added, del_bg, add_bg):
+                            for _dl in _render_diff_chunk(_pending_removed, _pending_added, del_bg, add_bg, del_fg, add_fg):
                                 rl.write(_dl)
                             _pending_removed.clear()
                             _pending_added.clear()
@@ -244,7 +260,7 @@ class ToolBlock(Widget):
                     stripped = plain.rstrip("\n")
                     if stripped.startswith("-") and not stripped.startswith("---"):
                         if _pending_added:
-                            for _dl in _render_diff_chunk(_pending_removed, _pending_added, del_bg, add_bg):
+                            for _dl in _render_diff_chunk(_pending_removed, _pending_added, del_bg, add_bg, del_fg, add_fg):
                                 rl.write(_dl)
                             _pending_removed.clear()
                             _pending_added.clear()
@@ -253,13 +269,13 @@ class ToolBlock(Widget):
                         _pending_added.append(stripped[1:])
                     else:
                         if _pending_removed or _pending_added:
-                            for _dl in _render_diff_chunk(_pending_removed, _pending_added, del_bg, add_bg):
+                            for _dl in _render_diff_chunk(_pending_removed, _pending_added, del_bg, add_bg, del_fg, add_fg):
                                 rl.write(_dl)
                             _pending_removed.clear()
                             _pending_added.clear()
                         rl.write_with_source(Text.from_ansi(styled), plain)
                 if _pending_removed or _pending_added:
-                    for _dl in _render_diff_chunk(_pending_removed, _pending_added, del_bg, add_bg):
+                    for _dl in _render_diff_chunk(_pending_removed, _pending_added, del_bg, add_bg, del_fg, add_fg):
                         rl.write(_dl)
                 if self._header_stats and self._header_stats.has_diff_counts and self._lines:
                     rl.write_with_source(Text(""), "")

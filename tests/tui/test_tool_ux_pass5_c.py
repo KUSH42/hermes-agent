@@ -14,7 +14,7 @@ def _bare_header(**kwargs):
     h = ToolHeader.__new__(ToolHeader)
     defaults = dict(
         _label="test", _tool_name="bash", _line_count=5, _panel=None,
-        _spinner_char=None, _is_complete=True, _tool_icon_error=False,
+        _is_complete=True, _tool_icon_error=False,
         _primary_hero=None, _header_chips=[], _stats=None, _duration="1s",
         _has_affordances=False, _label_rich=None, _is_child_diff=False,
         _header_args={}, _flash_msg=None, _flash_expires=0.0, _flash_tone="success",

@@ -37,6 +37,10 @@ _ASCII_GLYPHS: dict[str, str] = {
     "·": "-",
     "──": "--",
     "…": "...",
+    # CU-2: gutter glyphs added by GV-1
+    "┃": "|",
+    "┊": ":",
+    "╰─": "\\-",
 }
 
 

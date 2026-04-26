@@ -472,9 +472,6 @@ class ExecuteCodeBlock(StreamingToolBlock):
         self._flush_pending()
         # Hide tail badge
         self._tail.dismiss()
-
-        # Update header
-        self._header._spinner_char = None
         self._header._duration = duration
 
         # E5: compute line count; J1: label stays constant, line count shown as arg-summary suffix

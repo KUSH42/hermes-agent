@@ -54,8 +54,6 @@ async def test_block_starts_expanded():
         block = await _new_app_with_block(pilot)
         # Body should be expanded
         assert block._body.has_class("expanded")
-        # Header should show a spinner char
-        assert block._header._spinner_char is not None
         # Timer starts immediately
         assert block._header._duration.endswith("s")
 
@@ -102,8 +100,6 @@ async def test_append_10_lines_then_complete():
         assert block._header._has_affordances is True
         # Duration is set in header (v4 format: actual elapsed, not passed string)
         assert isinstance(block._header._duration, str)
-        # No spinner
-        assert block._header._spinner_char is None
         # Total received count
         assert block._total_received == 10
 

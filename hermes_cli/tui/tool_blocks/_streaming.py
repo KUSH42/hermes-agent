@@ -22,7 +22,6 @@ from textual.widgets import Button, Static
 from hermes_cli.tui.body_renderers import RendererKind
 from hermes_cli.tui.widgets import CopyableRichLog, FlashMessage, HintBar, KindOverrideChanged, _strip_ansi
 
-from hermes_cli.tui.animation import make_spinner_identity, SpinnerIdentity
 
 from ._shared import (
     _VISIBLE_CAP,
@@ -126,9 +125,6 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         self._tool_input = tool_input
         self._is_first_in_turn: bool = is_first_in_turn
         self._tool_call_id: str | None = tool_call_id
-        self._spinner_identity: "SpinnerIdentity | None" = (
-            make_spinner_identity(tool_call_id) if tool_call_id else None
-        )
         self._pending: list[tuple[Text, str]] = []
         self._flush_retry: int = 0
         self._broken: bool = False
@@ -141,7 +137,6 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         self._omission_bar_bottom: OmissionBar | None = None
         self._omission_bar_top_mounted: bool = False
         self._omission_bar_bottom_mounted: bool = False
-        self._spinner_frame: int = 0
         self._completed: bool = False
         self._is_unmounted: bool = False  # PERF-4: guard timer resurrection after unmount
         self._render_timer: "Timer | None" = None  # PERF-4: pre-init; on_mount overwrites with live handle
@@ -213,11 +208,6 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             if _sec:
                 self._body.update_secondary_args(_sec)
                 self._secondary_args_snapshot = _sec
-            # CL-6: update spinner identity with category-aware skin-driven pulse colors
-            self._header._spinner_identity = (
-                make_spinner_identity(self._tool_call_id, category=_spec.category)
-                if self._tool_call_id else None
-            )
         except Exception:
             pass
         if self._is_first_in_turn:

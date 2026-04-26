@@ -240,7 +240,6 @@ class TestRightClickContextMenu:
         header._header_args = {}
         header._label = "test"
         header._tool_name = "bash"
-        header._spinner_char = None
         # The condition check
         has_path = header._path_clickable or (header._diff_file_path is not None)
         assert not has_path

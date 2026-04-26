@@ -26,3 +26,11 @@ class PathClicked(Message):
         super().__init__()
         self.path = path
         self.absolute = absolute
+
+
+class ReducedMotionChanged(Message):
+    """Posted on app when the reduced-motion state changes at runtime."""
+
+    def __init__(self, enabled: bool) -> None:
+        super().__init__()
+        self.enabled = enabled

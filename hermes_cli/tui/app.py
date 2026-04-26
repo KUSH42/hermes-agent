@@ -25,6 +25,7 @@ import threading
 
 from hermes_cli.tui._app_constants import KNOWN_SLASH_COMMANDS as _KNOWN_SLASH_COMMANDS
 from hermes_cli.tui.agent_phase import Phase as _Phase
+from hermes_cli.tui.messages import ReducedMotionChanged
 
 # File-touching tool names — used by watch_spinner_label to extract active file
 _FILE_TOOLS: frozenset[str] = frozenset({
@@ -507,9 +508,10 @@ class HermesApp(App):
         self._pending_rollback_n: int = 0
         # Animation feature flag — checked by all shimmer/pulse paths
         self._animations_enabled: bool = _animations_enabled_check()
-        # F2: reduced-motion — disable shimmer/pulse; set from config or env var
-        import os as _os
-        self._reduced_motion: bool = bool(_os.environ.get("HERMES_REDUCED_MOTION"))
+        # F2: reduced-motion — resolved once in __init__ (config > env > False)
+        self._reduced_motion: bool = self._resolve_reduced_motion()
+        if self._reduced_motion:
+            self.add_class("reduced-motion")
         # Current hint phase — tracks what the user is doing
         self._hint_phase: str = "idle"
         # RX1 Phase C: _flash_hint_expires/_flash_hint_timer/_flash_hint_prior removed.
@@ -605,6 +607,33 @@ class HermesApp(App):
         self._svc_bash     = BashService(self)
         self._svc_watchers = WatchersService(self)
         self._svc_keys     = KeyDispatchService(self)
+
+    # --- Reduced-motion API ---
+
+    def _resolve_reduced_motion(self) -> bool:
+        import os as _os
+        try:
+            from hermes_cli.config import read_raw_config
+            cfg = read_raw_config().get("tui", {}).get("reduced_motion")
+            if cfg is not None:
+                return bool(cfg)
+        except Exception:
+            logger.warning("_resolve_reduced_motion: failed to read config", exc_info=True)
+        env = _os.environ.get("HERMES_REDUCED_MOTION")
+        if env is not None:
+            return env.lower() in ("1", "true", "yes")
+        return False
+
+    def is_reduced_motion(self) -> bool:
+        return self._reduced_motion
+
+    def set_reduced_motion(self, enabled: bool) -> None:
+        self._reduced_motion = enabled
+        if enabled:
+            self.add_class("reduced-motion")
+        else:
+            self.remove_class("reduced-motion")
+        self.post_message(ReducedMotionChanged(enabled))
 
     # --- Compose ---
 
@@ -777,15 +806,6 @@ class HermesApp(App):
                     self.compact = w <= 120 or h <= 30
             except Exception:
                 pass
-        if _os.environ.get("HERMES_REDUCED_MOTION", "").lower() in ("1", "true", "yes"):
-            self.add_class("reduced-motion")
-        # G-1: also read tui.reduced_motion from config file
-        try:
-            from hermes_cli.config import read_raw_config
-            if read_raw_config().get("tui", {}).get("reduced_motion"):
-                self.add_class("reduced-motion")
-        except Exception:
-            pass
         # Wire slash commands from COMMAND_REGISTRY into the autocomplete engine
         if self._use_hermes_input:
             self._populate_slash_commands()

@@ -34,6 +34,7 @@ from textual.widgets import RichLog, Static
 from hermes_cli.tui.tooltip import TooltipMixin
 
 from hermes_cli.tui.animation import AnimationClock, PulseMixin, lerp_color
+from hermes_cli.tui.messages import ReducedMotionChanged
 from .utils import (
     _ANSI_SEQ_RE,
     _apply_span_style,
@@ -358,6 +359,18 @@ class LiveLineWidget(Widget):
         self._blink_visible: bool = True
         self._blink_timer: object | None = None
         self._blink_enabled: bool = _cursor_blink_enabled()
+        # Suppress blink entirely when app requests reduced motion.
+        if self._blink_enabled and getattr(self.app, "is_reduced_motion", lambda: False)():
+            self._blink_enabled = False
+
+    def on_reduced_motion_changed(self, message: ReducedMotionChanged) -> None:
+        if message.enabled:
+            self._blink_enabled = False
+            if getattr(self, "_blink_timer", None) is not None:
+                self._blink_timer.stop()
+                self._blink_timer = None
+        else:
+            self._blink_enabled = _cursor_blink_enabled()
 
     def on_unmount(self) -> None:
         self._animating = False

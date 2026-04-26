@@ -62,6 +62,7 @@ _DROP_ORDER_DEFAULT: list[str] = [
     "chevron",       # collapse hint — preserve mid-priority
     "diff",          # structural — preserve
     "hero",          # primary summary — preserve
+    "trace_pending", # state indicator — preserve longer than decorative segments
     "exit",          # highest signal: always keep
 ]
 
@@ -73,6 +74,7 @@ _DROP_ORDER_HERO: list[str] = [
     "flash",
     "diff",
     "chevron",
+    "trace_pending", # state indicator — preserve
     "exit",
 ]
 
@@ -85,6 +87,7 @@ _DROP_ORDER_COMPACT: list[str] = [
     "hero",
     "chevron",
     "duration",
+    "trace_pending", # state indicator — preserve
     "exit",
 ]
 

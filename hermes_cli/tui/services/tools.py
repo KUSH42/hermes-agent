@@ -79,6 +79,25 @@ class ToolCallViewState:
     completing_started_at: "float | None" = None
     # LL-1/LL-3: density reason mirror written by panel after every resolve() call.
     density_reason: "Literal['auto', 'user', 'error_override', 'initial'] | None" = None
+    # P-5: set by _terminalize_tool_view alongside is_error; None until terminal.
+    exit_code: "int | None" = None
+
+    @property
+    def is_error_for_ui(self) -> bool:
+        """Single source of truth for 'should this block be styled as errored?'
+
+        True when:
+          - state == ERROR, OR
+          - exit_code is set and non-zero (DONE with non-zero exit)
+        False when:
+          - state == CANCELLED
+          - state in {GENERATED, STARTED, STREAMING, COMPLETING, DONE} with no non-zero exit
+        """
+        if self.state == ToolCallState.ERROR:
+            return True
+        if self.state == ToolCallState.CANCELLED:
+            return False
+        return self.exit_code not in (None, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -497,7 +516,8 @@ class ToolRenderingService(AppService):
         if summary is not None:
             panel = getattr(block, "_tool_panel", None)
             if panel is not None:
-                panel.set_result_summary_v4(summary)
+                from hermes_cli.tui.tool_result_parse import inject_recovery_actions
+                panel.set_result_summary_v4(inject_recovery_actions(summary))
         # R2-HIGH-01: route counters/phase/active-name/agent-stack/record-update
         # through the unified helper. mark_plan=False — complete_tool_call calls
         # mark_plan_done explicitly after this method returns.
@@ -540,7 +560,8 @@ class ToolRenderingService(AppService):
         if summary is not None:
             panel = getattr(block, "_tool_panel", None)
             if panel is not None:
-                panel.set_result_summary_v4(summary)
+                from hermes_cli.tui.tool_result_parse import inject_recovery_actions
+                panel.set_result_summary_v4(inject_recovery_actions(summary))
         # R2-HIGH-01: unified cleanup; symmetric with non-diff path.
         self._terminalize_tool_view(
             tool_call_id,
@@ -752,6 +773,13 @@ class ToolRenderingService(AppService):
             view.is_error = is_error
             if dur_ms is not None:
                 view.dur_ms = dur_ms
+            # P-5: populate exit_code from the panel's result summary if available.
+            panel = (
+                self._panel_for_block(view.block)
+                if view.block is not None else None
+            )
+            rs = getattr(panel, "_result_summary_v4", None) if panel is not None else None
+            view.exit_code = getattr(rs, "exit_code", None) if rs is not None else None
             self._set_view_state(view, terminal_state)
             view.is_error = is_error  # double-write kept from original for safety
 

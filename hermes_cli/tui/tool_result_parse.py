@@ -6,6 +6,7 @@ v4 parsers: `parse(ctx: ParseContext) -> ResultSummaryV4` (pure, frozen, all 8 c
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import os
@@ -256,6 +257,25 @@ class ResultSummaryV4:
                     f"{prior!r} and {action.kind!r}"
                 )
             seen[action.hotkey] = action.kind
+
+
+def inject_recovery_actions(summary: "ResultSummaryV4") -> "ResultSummaryV4":
+    """Ensure retry + copy_err are present on error summaries. Idempotent.
+
+    Call once, at hand-off to the panel (services/tools.py), not at each
+    per-category construction site.
+    """
+    actions = list(summary.actions)
+    changed = False
+    if summary.is_error and not any(a.kind == "retry" for a in actions):
+        actions.insert(0, Action(label="retry", hotkey="r", kind="retry", payload=None))
+        changed = True
+    if summary.stderr_tail and not any(a.kind == "copy_err" for a in actions):
+        actions.append(Action(label="copy err", hotkey="e", kind="copy_err", payload=None))
+        changed = True
+    if not changed:
+        return summary
+    return dataclasses.replace(summary, actions=tuple(actions))
 
 
 # ---------------------------------------------------------------------------

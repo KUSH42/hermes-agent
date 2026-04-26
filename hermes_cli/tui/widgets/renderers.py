@@ -20,7 +20,7 @@ _ORPHANED_CSI_RE = re.compile(r"\[[0-9;]+[A-Za-z]")
 from rich.segment import Segment
 from rich.style import Style
 from rich.text import Text
-from textual import work
+from textual import events, work
 from textual.app import ComposeResult, RenderResult
 from textual.containers import Horizontal
 from textual.css.query import NoMatches
@@ -99,6 +99,19 @@ class CopyableRichLog(RichLog, can_focus=False):
         _boost_layout_caches(self)
         self._plain_lines: list[str] = []
         self._line_links: list[str] = []
+        self._render_width: int | None = None
+
+    def on_mount(self) -> None:
+        # Best-effort pre-warm only; on_resize is authoritative.
+        self.call_after_refresh(self._capture_width)
+
+    def _capture_width(self) -> None:
+        if self.size.width > 0:
+            self._render_width = self.size.width
+
+    def on_resize(self, event: events.Resize) -> None:
+        # Authoritative: always set, always > 0 at this point.
+        self._render_width = event.size.width
 
     def render_line(self, y: int) -> Strip:
         """Override to add offset metadata and selection highlighting.
@@ -142,32 +155,41 @@ class CopyableRichLog(RichLog, can_focus=False):
         scroll_end: "bool | None" = None,
         animate: bool = False,
         link: "str | None" = None,
+        *,
+        _deferred: bool = False,
     ) -> "CopyableRichLog":
         """Override to use the full widget width regardless of layout timing.
 
         RichLog.write(expand=True) computes: max(scrollable_content_region.width, 0).
         When the first streaming token arrives before layout completes,
         scrollable_content_region.width is 0, collapsing text to ~1-14 chars.
-        Fix: resolve the target width here and pass it explicitly, falling back
-        to self.size.width (post-layout) or app.width - scrollbar (pre-layout).
+        Fix: resolve the target width here and pass it explicitly. _render_width
+        (set authoritatively by on_resize) is preferred; pre-layout writes are
+        deferred once via call_after_refresh so on_resize fires first.
         """
         if width is None:
-            region_w = self.scrollable_content_region.width
-            if region_w > 0:
-                width = region_w
-            elif self.size.width > 0:
-                # Post-layout: widget size accounts for parent scrollbar + margins
-                width = self.size.width
+            if self._render_width is not None:
+                width = self._render_width
             else:
-                # Pre-layout fallback: subtract OutputPanel scrollbar (1 col)
-                # AND CopyableBlock margins (2 left + 2 right = 4).  Without
-                # the margin deduction, text wraps 4 cols too wide and the
-                # rightmost characters spill under the scrollbar / outside
-                # the viewport.
-                try:
-                    width = max(self.app.size.width - 5, 20)
-                except Exception:
-                    width = 80
+                region_w = self.scrollable_content_region.width
+                if region_w > 0:
+                    width = region_w
+                elif self.size.width > 0:
+                    # Post-layout: widget size accounts for parent scrollbar + margins
+                    width = self.size.width
+                else:
+                    if not _deferred:
+                        # One-shot defer; capture content now to avoid mutation races.
+                        self.call_after_refresh(
+                            lambda c=content: self.write(c, _deferred=True)
+                        )
+                        return self
+                    # Second attempt: fall through to app-width fallback; do not
+                    # defer again to avoid indefinite queuing if layout never fires.
+                    try:
+                        width = max(self.app.size.width - 5, 20)
+                    except Exception:
+                        width = 80
         return super().write(  # type: ignore[return-value]
             content,
             width=width,

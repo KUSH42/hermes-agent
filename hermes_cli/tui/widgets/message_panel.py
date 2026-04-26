@@ -210,7 +210,10 @@ class ReasoningPanel(Widget):
         else:
             self._live_line.styles.display = "none"
             self._live_line.update("")
-        self.refresh(layout=True)
+        if self._reasoning_log._deferred_renders:
+            self.refresh(layout=True)
+        else:
+            self.refresh()
 
     def close_box(self) -> None:
         """Flush remaining buffer and activate collapse affordance."""

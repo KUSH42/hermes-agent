@@ -505,6 +505,7 @@ class StreamingSearchRenderer(BodyRenderer):
         return Group(*lines)
 
     def finalize(self, all_plain: list[str], **kwargs: object) -> "ConsoleRenderable | None":
+        self._last_emitted_path = None
         if not all_plain:
             return None
         joined = "\n".join(all_plain).strip()

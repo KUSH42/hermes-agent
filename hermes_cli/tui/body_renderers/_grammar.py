@@ -21,6 +21,13 @@ GLYPH_META_SEP = "·"
 GLYPH_RULE     = "──"
 GLYPH_ELLIPSIS = "…"
 
+GLYPH_GUTTER_FOCUSED     = "┃"    # focused panel left bar
+GLYPH_GUTTER_GROUP       = "┊"    # group container left bar
+GLYPH_GUTTER_CHILD_DIFF  = "╰─"   # child diff lead-in
+GLYPH_GUTTER_CHILD_PLAIN = "    " # child / default 4-cell pad
+GLYPH_CHIP_OPEN          = "["    # chip key bracket open
+GLYPH_CHIP_CLOSE         = "]"    # chip key bracket close
+
 GUTTER_LINE_NUM_WIDTH = 6
 GUTTER_SIGN_WIDTH     = 2
 
@@ -37,6 +44,19 @@ def glyph(g: str) -> str:
     """Return ASCII fallback when accessibility_mode() is on."""
     from hermes_cli.tui.constants import accessibility_mode
     return _ASCII_GLYPHS[g] if accessibility_mode() and g in _ASCII_GLYPHS else g
+
+
+def chip(key: str, label: str, *, bracketed: bool = True) -> "Text":
+    """Render a `[key] label` chip. Bracket pair and dim/bold styling are vocabulary."""
+    out = Text()
+    if bracketed:
+        out.append(GLYPH_CHIP_OPEN, style="dim")
+        out.append(key, style="bold")
+        out.append(GLYPH_CHIP_CLOSE, style="dim")
+    else:
+        out.append(key, style="bold")
+    out.append(f" {label}", style="dim")
+    return out
 
 
 # ---------------------------------------------------------------------------

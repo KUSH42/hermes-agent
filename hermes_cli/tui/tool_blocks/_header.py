@@ -212,19 +212,24 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             elif self._is_complete:
                 t.append("[✓] ", style=f"bold {self._colors().success}")
 
+        from hermes_cli.tui.body_renderers._grammar import (
+            GLYPH_GUTTER_FOCUSED,
+            GLYPH_GUTTER_CHILD_DIFF,
+            GLYPH_GUTTER_CHILD_PLAIN,
+        )
         if self._is_child:
             # D2: ChildPanel — 4-cell gutter (was 1) for column alignment
-            gutter_text = Text("    ", style="dim")
+            gutter_text = Text(GLYPH_GUTTER_CHILD_PLAIN, style="dim")
             gutter_w = 4
         elif self._is_child_diff:
-            gutter_text = Text("  ╰─", style="dim")
+            gutter_text = Text(f"  {GLYPH_GUTTER_CHILD_DIFF}", style="dim")
             gutter_w = 4
         elif focused:
             color = getattr(self, "_focused_gutter_color", _GUTTER_FALLBACK)
-            gutter_text = Text("  ┃ ", style=f"bold {color}")
+            gutter_text = Text(f"  {GLYPH_GUTTER_FOCUSED} ", style=f"bold {color}")
             gutter_w = 4
         else:
-            gutter_text = Text("    ", style="")
+            gutter_text = Text(GLYPH_GUTTER_CHILD_PLAIN, style="")
             gutter_w = 4
         t.append_text(gutter_text)
 

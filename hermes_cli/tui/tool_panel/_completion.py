@@ -90,10 +90,13 @@ class _ToolPanelCompletionMixin:
             strip.remove_class("--visible")
             return
         from rich.text import Text
+        from hermes_cli.tui.body_renderers._grammar import chip as _chip, GLYPH_META_SEP, glyph as _glyph
         t = Text()
-        for hotkey, label in filtered:
-            t.append(f"[{hotkey}]", style="dim bold")
-            t.append(f" {label}  ", style="dim")
+        sep = f" {_glyph(GLYPH_META_SEP)} "
+        for i, (hotkey, label) in enumerate(filtered):
+            if i > 0:
+                t.append(sep, style="dim")
+            t.append_text(_chip(hotkey, label, bracketed=True))
         strip.update(t)
         strip.add_class("--visible")
 
@@ -425,7 +428,9 @@ class _ToolPanelCompletionMixin:
                     None
                 )
                 if remediation:
-                    remediation_text = f"{icon} {kind_label}  ·  {remediation}"
+                    from hermes_cli.tui.body_renderers._grammar import GLYPH_META_SEP, glyph as _glyph
+                    _sep = _glyph(GLYPH_META_SEP)
+                    remediation_text = f"{icon} {kind_label}  {_sep}  {remediation}"
                 else:
                     remediation_text = f"{icon} {kind_label}"
                 from rich.text import Text as _RText

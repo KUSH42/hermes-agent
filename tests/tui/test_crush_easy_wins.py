@@ -511,6 +511,42 @@ class TestYoloIndicator:
         from hermes_cli.tui.app import HermesApp
         assert "--yolo-active" not in HermesApp._CHEVRON_PHASE_CLASSES
 
+    def test_toggle_yolo_syncs_tui_reactive(self):
+        """_toggle_yolo must call call_from_thread to sync yolo_mode reactive on TUI."""
+        from unittest.mock import MagicMock, patch
+        import os
+
+        class FakeCli:
+            _tui = MagicMock()
+            def __init__(self):
+                self._tui.call_from_thread = MagicMock()
+
+        cli = FakeCli()
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("HERMES_YOLO_MODE", None)
+            # Toggle ON
+            from hermes_cli.tui.app import HermesApp
+            # Call _toggle_yolo directly via unbound method
+            import types
+            # Bind the method to the fake cli instance
+            method = None
+            # Find _toggle_yolo from cli.py's CognitiveCoder or similar class
+            # Use direct function lookup
+            import cli as cli_module
+            for name, obj in vars(cli_module).items():
+                if isinstance(obj, type) and hasattr(obj, "_toggle_yolo"):
+                    method = obj._toggle_yolo
+                    break
+            if method is None:
+                pytest.skip("_toggle_yolo not found on a class in cli.py")
+            method(cli)
+            cli._tui.call_from_thread.assert_called_once()
+            args = cli._tui.call_from_thread.call_args[0]
+            assert args[0] is setattr
+            assert args[1] is cli._tui
+            assert args[2] == "yolo_mode"
+            assert args[3] is True
+
 
 # ===========================================================================
 # Feature C — prose callback wiring

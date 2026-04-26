@@ -257,6 +257,9 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
 
     def _on_tier_change(self, tier: DensityTier) -> None:
         """Resolver subscriber — apply tier change to all consumers."""
+        # Two separate writes: `self.density` drives CSS/layout; `set_axis(vs, "density", ...)`
+        # notifies cross-subsystem watchers. Both must stay; view-state is not the source of
+        # truth for `self.density` (resolver is). Sub-tick gap is intentional.
         self.density = tier
         self.collapsed = (tier == DensityTier.COMPACT)
         self._auto_collapsed = (tier == DensityTier.COMPACT) and not self._user_collapse_override

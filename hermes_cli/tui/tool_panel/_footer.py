@@ -144,6 +144,7 @@ class BodyPane(Widget):
                     output_raw="",
                     line_count=0,
                 )
+                # Initial phase is STREAMING; pick_renderer is re-invoked on first append_tool_output.
                 renderer_cls = pick_renderer(
                     _STREAMING_EMPTY_CLS, _payload,
                     phase=ToolCallState.STREAMING,

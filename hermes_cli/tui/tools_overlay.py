@@ -310,7 +310,7 @@ ToolsScreen > #tools-footer {
         Binding("enter", "jump_to_panel", "Jump", show=False),
         Binding("r", "refresh", "Refresh snapshot", show=False),
         Binding("s", "cycle_sort", "Sort", show=True),  # D5
-        Binding("t", "toggle_view", "Tree/Timeline", show=True),
+        Binding("shift+t", "toggle_view", "Tree/Timeline", show=True),
     ]
 
     # Gantt spinner frames for in-progress tool rows
@@ -357,7 +357,7 @@ ToolsScreen > #tools-footer {
             id="filter-row",
         )
         yield Static(
-            "[Enter] jump  [Esc] close  [/] filter  [C] clear  [s] sort  [t] tree/timeline  [x] export  [r] refresh",
+            "[Enter] jump  [Esc] close  [/] filter  [C] clear  [s] sort  [Shift+T] tree/timeline  [x] export  [r] refresh",
             id="tools-footer",
         )  # B5/D2: include all active key bindings
 
@@ -369,6 +369,13 @@ ToolsScreen > #tools-footer {
             return
         self.query_one("#filter-input", Input).display = False
         self._stale_timer = self.set_interval(1.0, self._update_staleness_pip)
+        # DU-6: one-time per-process hint that `t`→`Shift+T` was rebound.
+        if not getattr(self.app, "_t_rebind_hint_shown", False):
+            self.app._t_rebind_hint_shown = True
+            try:
+                self.app._flash_hint("tree/timeline now [Shift+T]", 1.5)
+            except Exception:
+                pass
         await self._rebuild()
         # Start auto-refresh if any tool is still in-progress
         if any(e.get("dur_ms") is None for e in self._snapshot):
@@ -726,6 +733,11 @@ ToolsScreen > #tools-footer {
 
     def action_toggle_view(self) -> None:
         """Toggle between tree and timeline (flat chronological) view."""
+        # DU-6: explicit Shift+T press also suppresses the rebind hint.
+        try:
+            self.app._t_rebind_hint_shown = True
+        except Exception:
+            pass
         self._tree_view = not self._tree_view
         self.call_after_refresh(self._rebuild)
         label = "tree" if self._tree_view else "timeline"

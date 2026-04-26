@@ -19,6 +19,7 @@ from ._completion import _ToolPanelCompletionMixin, _DISCOVERY_SHOWN_CATEGORIES
 from ._actions import _ToolPanelActionsMixin
 from ._core import ToolPanel
 from ._child import ChildPanel
+from .layout_resolver import DensityTier
 
 # Also expose DiffAffordance here as it was previously importable via tool_panel
 from hermes_cli.tui.diff_affordance import DiffAffordance
@@ -40,4 +41,5 @@ __all__ = [
     "_ToolPanelCompletionMixin",
     "_ToolPanelActionsMixin",
     "_DISCOVERY_SHOWN_CATEGORIES",
+    "DensityTier",
 ]

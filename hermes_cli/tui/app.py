@@ -516,6 +516,8 @@ class HermesApp(App):
         # FeedbackService owns all flash timer state. E3 guard replaced by on_agent_idle().
         # Compaction warning state — reset when progress returns to 0
         self._compaction_warned: bool = False
+        # DU-6: one-shot per-process flag for the t→Shift+T rebind learning hint.
+        self._t_rebind_hint_shown: bool = False
         # Clear animation guard — prevents re-entry while fade is running
         self._clear_animation_in_progress: bool = False
         # InlineImageBar enabled state — set from cli.py before app launch

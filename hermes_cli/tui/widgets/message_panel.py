@@ -106,7 +106,7 @@ class ReasoningPanel(Widget):
 
     def _update_collapsed_stub(self) -> None:
         """Rebuild the one-line collapsed summary using shared ToolHeader segment anatomy."""
-        from hermes_cli.tui.tool_blocks._header import _trim_tail_segments
+        from hermes_cli.tui.tool_panel.layout_resolver import default_resolver, DensityTier as _DT
         from hermes_cli.tui.widgets.utils import _nf_or_text
         n = len(self._plain_lines)
         gutter = Text("  ┊ ", style="dim")
@@ -119,7 +119,7 @@ class ReasoningPanel(Widget):
         ]
         w = self.size.width or 80
         budget = max(0, w - 4 - 2 - len(" Reasoning") - 2)
-        trimmed = _trim_tail_segments(segments, budget)
+        trimmed = default_resolver().trim_header_tail(segments, budget, _DT.DEFAULT)
         tail = Text()
         for _, seg in trimmed:
             tail.append_text(seg)

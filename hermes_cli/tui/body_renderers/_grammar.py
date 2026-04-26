@@ -78,6 +78,11 @@ class SkinColors:
     text_muted_dim:     str = "#3A3A3A"   # $text-muted-dim
     # SC-4: independently-themable gutter for focused ToolPanel
     tool_header_gutter: str = "#00bcd4"   # $tool-header-gutter-color (default = $accent-interactive)
+    # PG-4: group terminal state glyphs
+    group_done:      str = "✓"
+    group_partial:   str = "~"
+    group_error:     str = "✗"
+    group_cancelled: str = "-"
     # SC-2: per-tier completion icon accents — immutable mapping, excluded from hash/compare
     tier_accents: MappingProxyType = field(
         default_factory=lambda: _TIER_ACCENTS_EMPTY,

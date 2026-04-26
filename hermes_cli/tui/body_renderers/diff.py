@@ -381,14 +381,19 @@ class DiffRenderer(BodyRenderer):
                 result.append("\n")
         return result
 
-    def build_widget(self) -> Widget:
-        raw = self.payload.output_raw or ""
-        lines = raw.splitlines()
+    def _count_changed_files(self, lines: list[str]) -> int:
+        """Count distinct changed files from diff --git or --- anchors."""
+        count = 0
+        i = 0
+        while i < len(lines):
+            if lines[i].startswith("--- ") and i + 1 < len(lines) and lines[i + 1].startswith("+++ "):
+                count += 1
+            i += 1
+        return max(count, 1) if any(l.startswith("@@") for l in lines) else count
+
+    def _build_diff_container(self, lines: list[str], auto_collapse: bool) -> Widget:
         file_stats = _parse_file_stats(lines)
         stat_map = {path: (added, removed) for path, added, removed in file_stats}
-        total_lines = len(lines)
-        hunk_count = sum(1 for line in lines if line.startswith("@@"))
-        auto_collapse = (total_lines > 40 or hunk_count > 3) and self._cfg_auto_collapse
 
         children: list[Widget] = []
         hunk_idx = 0
@@ -479,6 +484,27 @@ class DiffRenderer(BodyRenderer):
             children.append(Static(_line_text("-" + pending_removed, self.colors)))
 
         return _DiffContainer(*children)
+
+    def build_widget(self, density=None) -> Widget:
+        from hermes_cli.tui.body_renderers._grammar import BodyFooter
+        from hermes_cli.tui.body_renderers._frame import BodyFrame
+
+        raw = self.payload.output_raw or ""
+        lines = raw.splitlines()
+        total_lines = len(lines)
+        hunk_count = sum(1 for line in lines if line.startswith("@@"))
+        auto_collapse = (total_lines > 40 or hunk_count > 3) and self._cfg_auto_collapse
+
+        n_files = self._count_changed_files(lines)
+        header = build_rule(f"{n_files} file(s) changed", colors=self.colors)
+        body_widget = self._build_diff_container(lines, auto_collapse)
+
+        return BodyFrame(
+            header=header,
+            body=body_widget,
+            footer=BodyFooter(("y", "copy")),
+            density=density,
+        )
 
 
 def _set_kind() -> None:

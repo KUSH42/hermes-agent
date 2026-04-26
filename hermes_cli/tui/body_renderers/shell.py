@@ -22,12 +22,47 @@ class ShellOutputRenderer(BodyRenderer):
     def can_render(cls, cls_result: "ClassificationResult", payload: "ToolPayload") -> bool:
         return True  # always renderable; selection handled by pick_renderer
 
+    def _build_body(self, cleaned: str) -> "object":
+        """Build body renderable from pre-stripped shell output (no cwd rule)."""
+        from rich.text import Text
+        from rich.style import Style as _Style
+        from hermes_cli.tui.body_renderers._grammar import build_rule, glyph
+
+        result = Text()
+
+        for line in cleaned.splitlines():
+            result.append_text(Text.from_ansi(line))
+            result.append("\n")
+
+        # Exit code rule (non-zero or non-None shows rule; zero skipped)
+        exit_code = getattr(self.payload, "exit_code", None)
+        if exit_code is not None and exit_code != 0:
+            error_color = self.colors.error if self.colors else "#E06C75"
+            exit_line = Text()
+            exit_line.append(glyph("──") + " ", style=_Style(color=error_color))
+            exit_line.append(f"exit {exit_code}", style=_Style(color=error_color))
+            exit_line.append(" " + glyph("──"), style=_Style(color=error_color))
+            result.append_text(exit_line)
+            result.append("\n")
+
+        # Stderr lines with "! " gutter
+        stderr_raw = getattr(self.payload, "stderr_raw", None)
+        if stderr_raw:
+            error_color = self.colors.error if self.colors else "#E06C75"
+            for line in stderr_raw.splitlines():
+                stderr_line = Text()
+                stderr_line.append("! ", style=_Style(color=error_color))
+                stderr_line.append(line)
+                result.append_text(stderr_line)
+                result.append("\n")
+
+        return result
+
     def build(self):
         """Build Rich renderable from shell output, stripping CWD tokens."""
         from rich.text import Text
-        from rich.style import Style
         from hermes_cli.tui.cwd_strip import strip_cwd
-        from hermes_cli.tui.body_renderers._grammar import build_rule, glyph
+        from hermes_cli.tui.body_renderers._grammar import build_rule
 
         raw = self.payload.output_raw or ""
         cleaned, cwd = strip_cwd(raw)
@@ -41,39 +76,28 @@ class ShellOutputRenderer(BodyRenderer):
             result.append_text(cwd_rule)
             result.append("\n")
 
-        for line in cleaned.splitlines():
-            result.append_text(Text.from_ansi(line))
-            result.append("\n")
-
-        # Exit code rule (non-zero or non-None shows rule; zero skipped)
-        exit_code = getattr(self.payload, "exit_code", None)
-        if exit_code is not None and exit_code != 0:
-            rule = build_rule(f"exit {exit_code}", colors=self.colors)
-            # Recolour the label span to error color
-            error_color = self.colors.error if self.colors else "#E06C75"
-            # build_rule returns a Text; find the label span and recolour
-            from rich.style import Style as _Style
-            # Append a separate error-colored exit line alongside the rule
-            exit_line = Text()
-            exit_line.append(glyph("──") + " ", style=_Style(color=error_color))
-            exit_line.append(f"exit {exit_code}", style=_Style(color=error_color))
-            exit_line.append(" " + glyph("──"), style=_Style(color=error_color))
-            result.append_text(exit_line)
-            result.append("\n")
-
-        # Stderr lines with "! " gutter
-        stderr_raw = getattr(self.payload, "stderr_raw", None)
-        if stderr_raw:
-            error_color = self.colors.error if self.colors else "#E06C75"
-            from rich.style import Style as _Style
-            for line in stderr_raw.splitlines():
-                stderr_line = Text()
-                stderr_line.append("! ", style=_Style(color=error_color))
-                stderr_line.append(line)
-                result.append_text(stderr_line)
-                result.append("\n")
-
+        result.append_text(self._build_body(cleaned))
         return result
+
+    def build_widget(self, density=None):
+        from hermes_cli.tui.cwd_strip import strip_cwd
+        from hermes_cli.tui.body_renderers._grammar import build_path_header, BodyFooter
+        from hermes_cli.tui.body_renderers._frame import BodyFrame
+
+        raw = self.payload.output_raw or ""
+        cleaned, cwd = strip_cwd(raw)
+
+        header_has_cwd = getattr(self.payload, "header_has_cwd", False)
+        header = (
+            build_path_header(cwd, colors=self.colors)
+            if cwd and not header_has_cwd else None
+        )
+        return BodyFrame(
+            header=header,
+            body=self._build_body(cleaned),
+            footer=BodyFooter(("y", "copy")),
+            density=density,
+        )
 
     def refresh_incremental(self, chunk: str) -> None:
         """Append a new chunk to the live log widget."""

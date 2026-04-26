@@ -28,6 +28,7 @@ BodyRenderer for backward compatibility.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -35,11 +36,14 @@ from rich.text import Text
 
 from hermes_cli.tui.body_renderers.base import BodyRenderer
 from hermes_cli.tui.services.tools import ToolCallState
+from hermes_cli.tui.tool_blocks._shared import _DIFF_ARROW_RE, _DIFF_HEADER_RE
 from hermes_cli.tui.tool_payload import ResultKind
 
 if TYPE_CHECKING:
     from rich.console import ConsoleRenderable
     from hermes_cli.tui.tool_category import ToolCategory
+
+_log = logging.getLogger(__name__)
 
 
 # Phases accepted by all streaming-tier renderers.
@@ -241,12 +245,6 @@ class StreamingCodeRenderer(BodyRenderer):
 
 import re as _re
 
-# Matches existing tool_blocks.py regexes exactly for snapshot equivalence.
-# Group 1 = "--- " / "+++ " prefix (with space), Group 2 = path (a/ b/ already stripped).
-_DIFF_HEADER_RE = _re.compile(r"^((?:---|\+\+\+)\s+)(?:[ab]/)?(.+)$")
-# Group 1 = old path, Group 2 = new path (may still have "b/" prefix)
-_DIFF_ARROW_RE = _re.compile(r"^(.+?)\s+→\s+(.+)$")
-
 _LANG_MAP: dict[str, str] = {
     "py": "python", "js": "javascript", "ts": "typescript",
     "tsx": "tsx", "jsx": "jsx", "rs": "rust", "go": "go",
@@ -299,7 +297,9 @@ class FileRenderer(BodyRenderer):
                 line_numbers=False,
             )
         except Exception:
-            return Text(plain)
+            _log.debug("syntax render failed for lang=%s line=%r", lang, plain[:80],
+                       exc_info=True)
+            return Text(plain, style="dim")
 
     def finalize(
         self,

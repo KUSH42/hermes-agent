@@ -56,7 +56,7 @@ if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
 
 import logging
-logger = logging.getLogger(__name__)
+_log = logging.getLogger(__name__)
 
 
 class CopyableRichLog(RichLog, can_focus=False):
@@ -367,6 +367,7 @@ class LiveLineWidget(ManagedTimerMixin, Widget):
     # without truncating any realistic stream.
 
     def on_mount(self) -> None:
+        self._blink_visible: bool = True  # reset on every mount/remount
         self._pre_engine_lines: list[str] = []
         self._pre_engine_warned: bool = False  # one-shot warning latch
         import hermes_cli.tui.widgets as _w
@@ -379,7 +380,6 @@ class LiveLineWidget(ManagedTimerMixin, Widget):
             self._drain_chars()
         # Non-typewriter blink state — initialized here (not __init__) to avoid
         # event-loop resource issues on Python ≤ 3.9.
-        self._blink_visible: bool = True
         self._blink_timer: object | None = None
         self._blink_enabled: bool = _cursor_blink_enabled()
         # Suppress blink entirely when app requests reduced motion.
@@ -402,7 +402,9 @@ class LiveLineWidget(ManagedTimerMixin, Widget):
     def render(self) -> RenderResult:
         if not self._buf and not self._animating:
             return Text("")
-        buf = _ORPHANED_CSI_RE.sub("", self._buf) if self._buf else ""
+        buf, _n = _ORPHANED_CSI_RE.subn("", self._buf) if self._buf else ("", 0)
+        if _n:
+            _log.debug("stripped %d orphaned CSI sequences from chunk", _n)
         t = Text.from_ansi(buf) if buf else Text("")
         # Typewriter cursor (existing path — typewriter on):
         if self._animating and getattr(self, "_tw_cursor", True):
@@ -454,7 +456,7 @@ class LiveLineWidget(ManagedTimerMixin, Widget):
                     # via the direct write above. Capped silently after the one-shot
                     # warning below already fired.
                     if not self._pre_engine_warned:
-                        logger.warning(
+                        _log.warning(
                             "LiveLineWidget._commit_lines: engine missing; line "
                             "rendered direct + buffered for replay (one-shot warning)"
                         )

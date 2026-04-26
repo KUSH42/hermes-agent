@@ -15,6 +15,13 @@ if TYPE_CHECKING:
     from hermes_cli.tui.tool_payload import ResultKind
 
 
+# DC-1: three static hint sets — lowest priority first (rightmost in tuple = lowest).
+# [f1] all is always the last item and is never dropped by _format.
+DEFAULT_HINTS: tuple[str, ...] = ("[y] copy", "[t] kind", "[r] retry", "[e] stderr", "[f1] all")
+ERROR_HINTS: tuple[str, ...] = ("[y] copy", "[e] stderr ▸", "[r] retry", "[f1] all")
+COLLAPSED_HINTS: tuple[str, ...] = ("[Enter] expand", "[y] copy", "[f1] all")
+
+
 class _ToolPanelActionsMixin:
     """Keyboard action handlers and their private helpers."""
 
@@ -517,28 +524,72 @@ class _ToolPanelActionsMixin:
     def on_blur(self) -> None:
         self._refresh_collapsed_strip()  # type: ignore[attr-defined]
 
+    def _available_width(self) -> int:
+        """Return the content area width in terminal cells."""
+        try:
+            return self.content_region.width  # type: ignore[attr-defined]
+        except Exception:
+            return 80
+
+    def _is_error(self) -> bool:
+        """True when the panel is in a completed error state (non-zero exit code)."""
+        rs = getattr(self, "_result_summary_v4", None)  # type: ignore[attr-defined]
+        return rs is not None and rs.exit_code not in (None, 0)
+
+    def _format(self, hints: tuple[str, ...]) -> str:
+        """Join hints with ·-separators, dropping lowest-priority items to fit width."""
+        full = " · ".join(hints)
+        w = self._available_width()
+        if w >= len(full):
+            return full
+        body = list(hints[:-1])
+        tail = hints[-1]
+        while body:
+            body.pop()
+            candidate = " · ".join(body + ["…", tail])
+            if w >= len(candidate):
+                return candidate
+        return tail[:w]
+
+    def _select_hint_set(self) -> tuple[str, ...]:
+        if getattr(self, "collapsed", False):  # type: ignore[attr-defined]
+            return COLLAPSED_HINTS
+        if self._is_error():
+            return ERROR_HINTS
+        return DEFAULT_HINTS
+
+    def _refresh_hint_row(self) -> None:
+        """Recompute and apply hint row content based on focus and affordances state."""
+        hint_row = getattr(self, "_hint_row", None)  # type: ignore[attr-defined]
+        if hint_row is None:
+            return
+        show = getattr(self, "has_focus", False) or self.has_class("--has-affordances")  # type: ignore[attr-defined]
+        if show:
+            hint_row.update(self._format(self._select_hint_set()))
+            hint_row.add_class("--has-hint")
+        else:
+            hint_row.update("")
+            hint_row.remove_class("--has-hint")
+
     def watch_has_focus(self, value: bool) -> None:
         if self._hint_row is None:  # type: ignore[attr-defined]
             return
         self._hint_visible = value  # type: ignore[attr-defined]
+        self._refresh_hint_row()
         if value:
-            self._hint_row.update(self._build_hint_text())  # type: ignore[attr-defined]
-            self._hint_row.add_class("--has-hint")  # type: ignore[attr-defined]
             try:
                 block = self._block  # type: ignore[attr-defined]
                 if block is not None and getattr(block._header, "_path_clickable", False):
                     self.post_message(self.__class__.PathFocused(self))  # type: ignore[attr-defined]
             except Exception:
                 pass
-        else:
-            self._hint_row.update("")  # type: ignore[attr-defined]
-            self._hint_row.remove_class("--has-hint")  # type: ignore[attr-defined]
 
     def on_resize(self, event: object) -> None:
         width = getattr(getattr(event, "size", None), "width", 80)
         self._last_resize_w = width  # type: ignore[attr-defined]
-        if self._hint_visible and self._hint_row is not None:  # type: ignore[attr-defined]
-            self._hint_row.update(self._build_hint_text())  # type: ignore[attr-defined]
+        always_visible = self.has_class("--has-affordances")  # type: ignore[attr-defined]
+        if (self._hint_visible or always_visible) and self._hint_row is not None:  # type: ignore[attr-defined]
+            self._hint_row.update(self._format(self._select_hint_set()))  # type: ignore[attr-defined]
 
     def _build_hint_text(self) -> "Any":
         from rich.text import Text

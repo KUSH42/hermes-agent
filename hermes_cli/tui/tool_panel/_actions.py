@@ -689,9 +689,14 @@ class _ToolPanelActionsMixin:
             if any(a.kind == "edit_cmd" and a.payload for a in (rs.actions or ())):
                 contextual.append(("E", "edit"))
 
-        # Mode / kind — post-streaming, non-error only
+        # Mode / kind — post-streaming, non-error only (ML-2 / ML-3)
         if not streaming and not is_error and rs is not None:
-            contextual.append(("t", "render as"))
+            _view = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
+            _current_kind = getattr(_view, "user_kind_override", None) if _view else None
+            _next_label = self._next_kind_label(_current_kind)
+            contextual.append(("t", f"as {_next_label}"))
+            if _current_kind is not None:
+                contextual.append(("T", "auto"))  # revert hint when override active
 
         # Power copy variants — available when there's a result body
         if rs is not None and not streaming:
@@ -1004,6 +1009,42 @@ class _ToolPanelActionsMixin:
         self.force_renderer(next_kind)  # type: ignore[attr-defined]
         label = next_kind.value if next_kind is not None else "auto"
         self._flash_header(f"render as: {label}", tone="accent")
+
+    # ML-3: canonical cycle order (mirrors action_cycle_kind — keep in sync)
+    _KIND_CYCLE: "tuple[Any, ...]" = ()  # populated lazily after ResultKind import
+
+    @staticmethod
+    def _next_kind_label(current: "Any") -> str:
+        """Return the lowercase label of the kind `t` would advance to."""
+        from hermes_cli.tui.tool_payload import ResultKind as _RK
+        cycle = (
+            None,
+            _RK.CODE,
+            _RK.JSON,
+            _RK.DIFF,
+            _RK.TABLE,
+            _RK.LOG,
+            _RK.SEARCH,
+        )
+        try:
+            idx = cycle.index(current)
+        except ValueError:
+            idx = -1
+        nxt = cycle[(idx + 1) % len(cycle)]
+        return nxt.value.lower() if nxt is not None else "auto"
+
+    def action_kind_revert(self) -> None:
+        """ML-2: clear user_kind_override and flash confirmation."""
+        view = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
+        if view is None:
+            self._flash_header("no block focused", tone="warning")
+            return
+        if view.user_kind_override is None:
+            self._flash_header("render as: no override", tone="warning")
+            return
+        view.user_kind_override = None
+        self.force_renderer(None)  # type: ignore[attr-defined]
+        self._flash_header("render as: auto", tone="accent")
 
     def on_tool_header_clicked(self, event: "object") -> None:
         getattr(event, "stop", lambda: None)()

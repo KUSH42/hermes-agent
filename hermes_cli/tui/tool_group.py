@@ -314,7 +314,8 @@ class ToolGroup(Widget):
     collapsed: reactive[bool] = reactive(False, layout=True)
 
     BINDINGS = [
-        Binding("shift+enter", "peek_focused", "peek focused", show=False),
+        Binding("enter",       "toggle_collapse", "Toggle group", show=False),
+        Binding("shift+enter", "peek_focused",    "Peek focused", show=False),
     ]
 
     # PG-3: message posted by StreamingToolBlock per appended line
@@ -398,6 +399,19 @@ class ToolGroup(Widget):
         self.collapsed = self._user_collapsed
         if hasattr(event, "stop"):
             event.stop()
+
+    def action_toggle_collapse(self) -> None:
+        """Toggle group collapse via keyboard (parity with on_click)."""
+        self._user_collapsed = not self.collapsed
+        self.collapsed = self._user_collapsed
+
+    def on_descendant_focus(self, event: object) -> None:
+        """Prevent focus from entering a collapsed group's body."""
+        widget = getattr(event, "widget", None)
+        if self.collapsed and widget is not self:
+            self.focus()
+            if hasattr(event, "stop"):
+                event.stop()
 
     def on_resize(self, event: object) -> None:
         width = getattr(getattr(event, "size", None), "width", 80)

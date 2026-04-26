@@ -696,6 +696,7 @@ class ToolRenderingService(AppService):
         if view is not None:
             view.is_error = is_error
             set_axis(view, "state", terminal_state)
+            view.is_error = is_error
 
         # Step 10: remove visual
         if remove_visual and view is not None and view.block is not None:

@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from hermes_cli.tui.tool_panel.density import DensityTier
     from hermes_cli.tui.tool_panel.layout_resolver import LayoutDecision
     from rich.console import ConsoleRenderable
+    from rich.text import Text
 
 
 class BodyRenderer(ABC):
@@ -83,11 +84,21 @@ class BodyRenderer(ABC):
         """Returns Rich renderable. Called in worker for >200 lines."""
         ...
 
+    def _user_forced_caption_renderable(self) -> "Text | None":
+        """Return caption Text if this render was manually forced by the user, else None."""
+        if not getattr(self.cls_result, "_user_forced", False):
+            return None
+        from hermes_cli.tui.body_renderers._grammar import user_forced_caption
+        return user_forced_caption(self.cls_result.kind)
+
     def build_widget(self, density: "DensityTier | None" = None) -> "Widget":
         """Override for renderers needing custom Widget (e.g. VirtualSearchList).
         Default: wraps build() in CopyableRichLog."""
         from hermes_cli.tui.widgets import CopyableRichLog
         rl = CopyableRichLog(highlight=False, markup=False)
+        caption = self._user_forced_caption_renderable()
+        if caption is not None:
+            rl.write(caption)
         rl.write(self.build())
         return rl
 

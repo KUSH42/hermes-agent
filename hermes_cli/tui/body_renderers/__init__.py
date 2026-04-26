@@ -161,6 +161,8 @@ def pick_renderer(
             kind=user_kind_override,
             confidence=1.0,
         )
+        # KO-C: annotate user-forced renders so renderers can show disclosure caption
+        object.__setattr__(cls_eff, "_user_forced", True)
         # TEXT and EMPTY short-circuit to FallbackRenderer — TEXT because
         # Fallback is the only legitimate plain-text target; EMPTY because
         # rendering an empty-state placeholder over real output on user

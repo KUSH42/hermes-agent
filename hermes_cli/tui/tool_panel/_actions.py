@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -815,6 +816,8 @@ class _ToolPanelActionsMixin:
             )
             if kind is not None:
                 cls_result = ClassificationResult(kind=kind, confidence=1.0)
+                # KO-C: annotate user-forced renders so renderers can disclose them
+                object.__setattr__(cls_result, "_user_forced", True)
             else:
                 stamped = view.kind if view is not None else None
                 cls_result = stamped or ClassificationResult(kind=ResultKind.TEXT, confidence=0.0)
@@ -836,9 +839,20 @@ class _ToolPanelActionsMixin:
 
     def action_cycle_kind(self) -> None:
         """KO-4: cycle user KIND override on focused, post-streaming block."""
+        # KO-D: 150 ms debounce — rapid presses on slow terminals cause flicker
+        now = time.monotonic()
+        last = getattr(self, "_cycle_kind_last_fired", 0.0)
+        if now - last < 0.15:
+            return
+        self._cycle_kind_last_fired: float = now
+
         from hermes_cli.tui.tool_payload import ResultKind
         from hermes_cli.tui.services.tools import ToolCallState
 
+        # KO-B: TEXT intentionally absent — pick_renderer routes both None (auto)
+        # and TEXT (override) to FallbackRenderer for typical payloads, so the
+        # two stops produce identical output.  Every stop in this cycle is visually
+        # distinct.
         cycle: tuple["ResultKind | None", ...] = (
             None,
             ResultKind.CODE,
@@ -847,7 +861,6 @@ class _ToolPanelActionsMixin:
             ResultKind.TABLE,
             ResultKind.LOG,
             ResultKind.SEARCH,
-            ResultKind.TEXT,
         )
 
         view = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
@@ -860,7 +873,14 @@ class _ToolPanelActionsMixin:
             ToolCallState.ERROR,
             ToolCallState.CANCELLED,
         }
+        # KO-A: flash on every no-op path instead of silently returning
         if view.state not in _RENDERABLE:
+            if view.state in (ToolCallState.STREAMING, ToolCallState.STARTED):
+                self._flash_header("render-as: wait for completion", tone="warning")
+            else:
+                self._flash_header(
+                    f"render-as N/A (state={view.state.value})", tone="warning"
+                )
             return
 
         current = view.user_kind_override

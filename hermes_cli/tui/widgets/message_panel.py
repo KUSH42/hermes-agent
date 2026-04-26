@@ -583,7 +583,15 @@ class MessagePanel(Widget):
             block._tool_panel = panel
             if tool_call_id:
                 self._subagent_panels[tool_call_id] = panel
+                pending = self._child_buffer.pop(tool_call_id, [])
+                self._flush_scheduled.discard(tool_call_id)
+            else:
+                pending = []
             self._mount_nonprose_block(panel, parent_tool_call_id=parent_tool_call_id)
+            # Drain after mount — add_child_panel needs self._body in the DOM for
+            # correct sibling-gutter styling.
+            for child in pending:
+                panel.add_child_panel(child)
         elif parent_tool_call_id is not None:
             from hermes_cli.tui.child_panel import ChildPanel
             parent_sap = self._subagent_panels.get(parent_tool_call_id)

@@ -43,6 +43,8 @@ from ._shared import (
 )
 from ._block import ToolBlock, COLLAPSE_THRESHOLD
 
+_FLUSH_MAX_RETRIES = 32
+
 
 # ---------------------------------------------------------------------------
 # ToolTail — scroll-lock badge shown when auto-scroll is disengaged
@@ -122,10 +124,13 @@ class StreamingToolBlock(ToolBlock):
         self._stream_label = label
         self._tool_input = tool_input
         self._is_first_in_turn: bool = is_first_in_turn
+        self._tool_call_id: str | None = tool_call_id
         self._spinner_identity: "SpinnerIdentity | None" = (
             make_spinner_identity(tool_call_id) if tool_call_id else None
         )
         self._pending: list[tuple[Text, str]] = []
+        self._flush_retry: int = 0
+        self._broken: bool = False
         self._all_plain: list[str] = []
         self._all_rich: list[Text] = []
         self._visible_start: int = 0
@@ -230,6 +235,9 @@ class StreamingToolBlock(ToolBlock):
     _EVICT_CHUNK: int = 500
 
     def append_line(self, raw: str) -> None:
+        if self._broken:
+            logger.debug("dropping line on broken block (call_id=%s)", self._tool_call_id)
+            return
         if self._completed:
             return
         line_byte_cap = getattr(self, "_line_byte_cap", _LINE_BYTE_CAP)
@@ -512,7 +520,23 @@ class StreamingToolBlock(ToolBlock):
             try:
                 log = self._body.query_one(CopyableRichLog)
                 self._cached_body_log = log
+                self._flush_retry = 0
             except NoMatches:
+                self._flush_retry += 1
+                if self._flush_retry >= _FLUSH_MAX_RETRIES:
+                    logger.exception(
+                        "body log never appeared after %d retries; marking block broken",
+                        self._flush_retry,
+                    )
+                    self._broken = True
+                    self._pending.clear()
+                    return
+                # Body log not yet mounted — re-prepend batch and retry next tick.
+                # Bounded by _FLUSH_MAX_RETRIES; loud log on exhaustion above.
+                logger.debug(
+                    "body log not mounted; retry %d/%d", self._flush_retry, _FLUSH_MAX_RETRIES
+                )
+                self._pending = batch + self._pending
                 return
 
         lines_written = 0
@@ -553,6 +577,8 @@ class StreamingToolBlock(ToolBlock):
     # ------------------------------------------------------------------
 
     def rerender_window(self, start: int, end: int) -> None:
+        if self._broken:
+            return
         log = self._cached_body_log
         if log is None:
             try:
@@ -568,6 +594,8 @@ class StreamingToolBlock(ToolBlock):
         self._refresh_omission_bars()
 
     def reveal_lines(self, start: int, end: int) -> None:
+        if self._broken:
+            return
         try:
             log = self._body.query_one(CopyableRichLog)
         except NoMatches:
@@ -578,6 +606,8 @@ class StreamingToolBlock(ToolBlock):
         self._refresh_omission_bars()
 
     def collapse_to(self, new_end: int) -> None:
+        if self._broken:
+            return
         try:
             log = self._body.query_one(CopyableRichLog)
         except NoMatches:

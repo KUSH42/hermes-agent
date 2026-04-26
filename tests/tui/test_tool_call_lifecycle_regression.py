@@ -253,7 +253,7 @@ class TestCompletionLifecycle:
         assert complete_kwargs.get("result_lines") == result_blob.splitlines()
 
     def test_complete_tool_call_removes_active_view_and_records_turn_metadata(self):
-        """complete_tool_call() removes active view from _tool_views_by_id."""
+        """complete_tool_call() removes active view from _tool_views_by_id via _terminalize_tool_view."""
         svc = _make_service()
         view = _started_view("tid-done")
         view.state = ToolCallState.STREAMING
@@ -263,8 +263,7 @@ class TestCompletionLifecycle:
         svc.app._active_streaming_blocks["tid-done"] = mock_block
         svc.app.query_one = MagicMock(return_value=MagicMock(_user_scrolled_up=False))
 
-        with patch.object(svc, "close_streaming_tool_block"), \
-             patch.object(svc, "mark_plan_done"):
+        with patch.object(svc, "mark_plan_done"):
             svc.complete_tool_call(
                 "tid-done", "terminal", {}, "result",
                 is_error=False, summary=None,

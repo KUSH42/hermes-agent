@@ -696,6 +696,7 @@ class ToolRenderingService(AppService):
         # Step 9: write terminal state via axis bus (fires watchers exactly once)
         if view is not None:
             set_axis(view, "state", terminal_state)
+            view.is_error = is_error
 
         # Step 10: remove visual
         if remove_visual and view is not None and view.block is not None:
@@ -793,13 +794,13 @@ class ToolRenderingService(AppService):
         for gen_idx in sorted(self._tool_views_by_gen_index):
             v = self._tool_views_by_gen_index[gen_idx]
             if v.state == ToolCallState.GENERATED and v.tool_name == tool_name:
-                v.state = ToolCallState.CANCELLED
-                del self._tool_views_by_gen_index[gen_idx]
-                if v.block is not None:
-                    try:
-                        v.block.remove()
-                    except Exception:
-                        pass
+                self._terminalize_tool_view(
+                    None,
+                    terminal_state=ToolCallState.CANCELLED,
+                    mark_plan=False,
+                    remove_visual=True,
+                    view=v,
+                )
                 return
 
     def _compute_parent_depth(self, tool_call_id: str) -> "tuple[str | None, int]":
@@ -1148,7 +1149,7 @@ class ToolRenderingService(AppService):
                           ToolCallState.CANCELLED, ToolCallState.REMOVED):
             return
         if view.state == ToolCallState.STARTED:
-            view.state = ToolCallState.STREAMING
+            set_axis(view, "state", ToolCallState.STREAMING)
         self.append_streaming_line(tool_call_id, line)
 
     def complete_tool_call(
@@ -1228,14 +1229,6 @@ class ToolRenderingService(AppService):
         # Record tool call latency into perf probe
         from hermes_cli.tui.perf import _tool_probe
         _tool_probe.record(tool_name, tool_call_id, dur_ms_float, is_error=is_error)
-
-        # Update view state to terminal
-        if view is not None:
-            view.state = ToolCallState.ERROR if is_error else ToolCallState.DONE
-            view.is_error = is_error
-            # Remove from active indexes but retain as immutable snapshot
-            self._tool_views_by_id.pop(tool_call_id, None)
-            # Note: we do NOT re-insert — snapshot is accessible via _turn_tool_calls
 
     def cancel_tool_call(
         self,

@@ -531,17 +531,30 @@ class SearchRenderer(BodyRenderer):
                 lines.append(content)
         return "\n".join(lines)
 
-    def build_widget(self):
-        """Return VirtualSearchList for >100 hits, else base CopyableRichLog."""
+    def build_widget(self, density=None):
+        """Return BodyFrame wrapping VirtualSearchList (>100 hits) or CopyableRichLog."""
+        from hermes_cli.tui.body_renderers._grammar import BodyFooter
+        from hermes_cli.tui.body_renderers._frame import BodyFrame
+
         hit_count = 0
         if self.cls_result.metadata:
             hit_count = int(self.cls_result.metadata.get("hit_count", 0))
 
         if hit_count > 100:
             lines = self._build_lines_list()
-            return VirtualSearchList(lines=lines)
+            body_widget = VirtualSearchList(lines=lines)
+        else:
+            from hermes_cli.tui.widgets import CopyableRichLog
+            rl = CopyableRichLog(highlight=False, markup=False)
+            rl.write(self.build())
+            body_widget = rl
 
-        return super().build_widget()
+        return BodyFrame(
+            header=None,
+            body=body_widget,
+            footer=BodyFooter(("y", "copy")),
+            density=density,
+        )
 
 
 def _set_kind() -> None:

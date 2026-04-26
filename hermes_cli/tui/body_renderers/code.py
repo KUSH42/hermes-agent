@@ -47,14 +47,11 @@ class CodeRenderer(BodyRenderer):
         from hermes_cli.tui.tool_payload import ResultKind
         return cls_result.kind == ResultKind.CODE
 
-    def build(self):
-        """Build a Rich Group(header, Syntax) renderable."""
+    def _parse_code(self):
+        """Return (code, lexer, origin_path, start_line, show_line_numbers)."""
         from rich.syntax import Syntax
-        from rich.console import Group
-        from hermes_cli.tui.body_renderers._grammar import build_path_header
 
         raw = self.payload.output_raw or ""
-
         fence_lang, code = _detect_lang_from_fence(raw)
 
         if fence_lang:
@@ -67,13 +64,24 @@ class CodeRenderer(BodyRenderer):
             if not lexer:
                 lexer = "text"
 
-        lines = code.splitlines()
         args = self.payload.args or {}
         try:
             start_line = int(args.get("start_line") or 1)
         except (ValueError, TypeError):
             start_line = 1
+        lines = code.splitlines()
         show_line_numbers = len(lines) >= 6 or "start_line" in args
+        origin_path = str(args.get("path", ""))
+        return code, lexer, origin_path, start_line, show_line_numbers
+
+    def build(self):
+        """Build a Rich Group(header, Syntax) renderable."""
+        from rich.syntax import Syntax
+        from rich.console import Group
+        from hermes_cli.tui.body_renderers._grammar import build_path_header
+
+        code, lexer, origin_path, start_line, show_line_numbers = self._parse_code()
+        lines = code.splitlines()
 
         syntax = Syntax(
             code, lexer,
@@ -83,7 +91,6 @@ class CodeRenderer(BodyRenderer):
             background_color="default",
         )
 
-        origin_path = str(args.get("path", ""))
         right_meta = f"{lexer or 'text'}  ·  {len(lines)} lines"
         header = build_path_header(
             origin_path or f"({lexer or 'text'})",
@@ -91,6 +98,35 @@ class CodeRenderer(BodyRenderer):
             colors=self.colors,
         )
         return Group(header, syntax)
+
+    def build_widget(self, density=None):
+        from rich.syntax import Syntax
+        from hermes_cli.tui.body_renderers._grammar import build_path_header, BodyFooter
+        from hermes_cli.tui.body_renderers._frame import BodyFrame
+
+        code, lexer, origin_path, start_line, show_line_numbers = self._parse_code()
+        lines = code.splitlines()
+
+        syntax = Syntax(
+            code, lexer,
+            line_numbers=show_line_numbers,
+            start_line=start_line if show_line_numbers else 1,
+            theme=self.colors.syntax_theme,
+            background_color="default",
+        )
+
+        right_meta = f"{lexer or 'text'}  ·  {len(lines)} lines"
+        header = build_path_header(
+            origin_path or f"({lexer or 'text'})",
+            right_meta=right_meta,
+            colors=self.colors,
+        )
+        return BodyFrame(
+            header=header,
+            body=syntax,
+            footer=BodyFooter(("y", "copy")),
+            density=density,
+        )
 
 
 def _set_kind() -> None:

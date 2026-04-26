@@ -128,14 +128,22 @@ class JsonRenderer(BodyRenderer):
             word_wrap=False,
         )
 
-    def build_widget(self) -> "object":
+    def build_widget(self, density=None) -> "object":
         from rich.syntax import Syntax
+        from hermes_cli.tui.body_renderers._grammar import build_rule, build_parse_failure, BodyFooter
+        from hermes_cli.tui.body_renderers._frame import BodyFrame
 
         raw = self.payload.output_raw or ""
         try:
             data, pretty = self._parse_and_pretty(raw)
-        except (json.JSONDecodeError, MemoryError, ValueError):
-            return super().build_widget()
+        except (json.JSONDecodeError, MemoryError, ValueError) as e:
+            body = build_parse_failure(raw, e, colors=self.colors)
+            return BodyFrame(
+                header=build_rule("json", colors=self.colors),
+                body=body,
+                footer=BodyFooter(("y", "copy")),
+                density=density,
+            )
 
         threshold = _get_collapse_threshold(self._app)
         if pretty.count("\n") + 1 > threshold:
@@ -146,9 +154,21 @@ class JsonRenderer(BodyRenderer):
                 background_color="default",
                 word_wrap=False,
             )
-            return _JsonCollapseWidget(summary_text, syntax, pretty)
+            body = _JsonCollapseWidget(summary_text, syntax, pretty)
+        else:
+            body = Syntax(
+                pretty, "json",
+                theme=self.colors.syntax_theme,
+                background_color="default",
+                word_wrap=False,
+            )
 
-        return super().build_widget()
+        return BodyFrame(
+            header=build_rule("json", colors=self.colors),
+            body=body,
+            footer=BodyFooter(("y", "copy")),
+            density=density,
+        )
 
 
 def _set_kind() -> None:

@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 class BodyRenderer(ABC):
     kind: ClassVar["ResultKind"]
     supports_streaming: ClassVar[bool] = False  # only ShellOutputRenderer = True
+    footer_entries: ClassVar[tuple] = (("y", "copy"),)
 
     # Phases at which this renderer is willing to be picked. Subclasses may
     # override to narrow further; empty frozenset means {COMPLETING, DONE}.
@@ -82,7 +83,7 @@ class BodyRenderer(ABC):
         """Returns Rich renderable. Called in worker for >200 lines."""
         ...
 
-    def build_widget(self) -> "Widget":
+    def build_widget(self, density: "DensityTier | None" = None) -> "Widget":
         """Override for renderers needing custom Widget (e.g. VirtualSearchList).
         Default: wraps build() in CopyableRichLog."""
         from hermes_cli.tui.widgets import CopyableRichLog

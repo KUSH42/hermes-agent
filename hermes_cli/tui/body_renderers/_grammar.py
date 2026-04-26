@@ -207,7 +207,11 @@ from textual.widgets import Static
 
 
 class BodyFooter(Static):
-    """Sticky single-line footer advertising [c] copy · [o] open in $EDITOR."""
+    """Sticky single-line footer advertising key affordances.
+
+    Each entry: either plain str or (key, label) tuple.
+    Entries separated by ' · ' (GLYPH_META_SEP).
+    """
 
     DEFAULT_CSS = """
 BodyFooter {
@@ -218,8 +222,13 @@ BodyFooter {
 }
 """
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(
+        self,
+        *entries: "str | tuple[str, str]",
+        **kwargs,
+    ) -> None:
         super().__init__("", **kwargs)
+        self._entries = entries
         self._colors: SkinColors | None = None
 
     def on_mount(self) -> None:
@@ -232,8 +241,35 @@ BodyFooter {
 
     def render(self) -> "object":
         colors = self._colors if self._colors is not None else SkinColors.default()
-        sep = glyph("·")
+        sep = f" {glyph('·')} "
         t = Text()
-        t.append("[y]", style=Style(color=colors.muted, bold=True))
-        t.append(" copy", style=Style(color=colors.muted))
+        for i, entry in enumerate(self._entries):
+            if i:
+                t.append(sep, style=Style(color=colors.separator_dim))
+            if isinstance(entry, tuple):
+                key, label = entry
+                t.append(f"[{key}]", style=Style(color=colors.muted, bold=True))
+                t.append(f" {label}", style=Style(color=colors.muted))
+            else:
+                t.append(entry, style=Style(color=colors.muted))
         return t
+
+
+# ---------------------------------------------------------------------------
+# build_parse_failure — body for parse-error states
+# ---------------------------------------------------------------------------
+
+def build_parse_failure(
+    text: str,
+    err: Exception,
+    *,
+    colors: "SkinColors | None" = None,
+) -> "object":
+    """Return a Rich Text renderable for a parse-failure body."""
+    error_color = (colors.error if colors else None) or "#E06C75"
+    t = Text()
+    for line in text.splitlines():
+        t.append(line, style=Style(dim=True))
+        t.append("\n")
+    t.append(f"Parse error: {err}", style=Style(color=error_color))
+    return t

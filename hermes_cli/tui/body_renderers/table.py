@@ -100,11 +100,15 @@ class TableRenderer(BodyRenderer):
         lines = [l for l in raw.splitlines() if l.strip()]
 
         if not lines:
+            self._row_count = 0
+            self._col_count = 0
             return Text("(empty table)")
 
         delim = _detect_delimiter(lines)
 
         if not _looks_like_table(lines, delim):
+            self._row_count = 0
+            self._col_count = 0
             from hermes_cli.tui.body_renderers.fallback import FallbackRenderer
             return FallbackRenderer(self.payload, self.cls_result, app=self._app).build()
 
@@ -131,6 +135,8 @@ class TableRenderer(BodyRenderer):
             ncols = len(_split_row(lines[0], delim)) if lines else 0
 
         if ncols == 0:
+            self._row_count = 0
+            self._col_count = 0
             return Text(raw)
 
         data_rows = [_split_row(l, delim) for l in lines[data_start:]]
@@ -163,7 +169,23 @@ class TableRenderer(BodyRenderer):
                     styled.append(cell)
             table.add_row(*styled)
 
+        self._row_count = len(data_rows)
+        self._col_count = ncols
         return table
+
+    def build_widget(self, density=None):
+        from hermes_cli.tui.body_renderers._grammar import build_rule, BodyFooter
+        from hermes_cli.tui.body_renderers._frame import BodyFrame
+
+        renderable = self.build()
+        rows = getattr(self, "_row_count", 0)
+        cols = getattr(self, "_col_count", 0)
+        return BodyFrame(
+            header=build_rule(f"{rows} rows · {cols} cols", colors=self.colors),
+            body=renderable,
+            footer=BodyFooter(("y", "copy"), ("c", "csv")),
+            density=density,
+        )
 
 
 def _set_kind() -> None:

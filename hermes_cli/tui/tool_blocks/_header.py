@@ -98,6 +98,8 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         self._flash_msg: str | None = None
         self._flash_expires: float = 0.0
         self._spinner_char: str | None = None
+        self._streaming_phase: bool = False
+        self._pulse_paused: bool = False
         self._duration: str = ""
         self._is_complete: bool = False
         self._tool_icon: str = ""
@@ -203,7 +205,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         t = Text()
 
         if self._accessible_mode():
-            if self._spinner_char is not None:
+            if self._streaming_phase:
                 t.append("[>] ", style="bold")
             elif self._tool_icon_error:
                 t.append("[!] ", style=f"bold {self._colors().error}")
@@ -237,7 +239,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 pass
         icon_cell_w = _safe_cell_width(icon_str) if icon_str else 0
         if icon_str:
-            if self._spinner_char is not None:
+            if self._streaming_phase:
                 icon_dim = self._colors().icon_dim
                 icon_peak = getattr(self, "_running_icon_color", _RUNNING_FALLBACK)
                 icon_color = lerp_color(icon_dim, icon_peak, self._pulse_t)
@@ -267,129 +269,115 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         if getattr(self, '_browse_badge', ""):
             tail_segments.append(("badge", Text(f" {self._browse_badge} ", style="bold dim")))
 
-        if self._spinner_char is not None:
-            if self._spinner_identity is not None:
-                _phase = pulse_phase_offset(self._pulse_tick, self._spinner_identity.phase_offset)
-                spin_color = lerp_color(
-                    self._spinner_identity.color_a,
-                    self._spinner_identity.color_b,
-                    _phase,
-                )
-                tail_segments.append(("spinner", Text(f"  {self._spinner_char}", style=spin_color)))
-            else:
-                tail_segments.append(("spinner", Text(f"  {self._spinner_char}", style="dim")))
-            if self._duration:
-                _pending_dur = self._duration
-        else:
-            if self._primary_hero:
-                if self._tool_icon_error and self._error_kind:
-                    try:
-                        from hermes_cli.tui.tool_result_parse import _error_kind_display
-                        from agent.display import get_tool_icon_mode
-                        _ek_icon, _, _ek_var = _error_kind_display(
-                            self._error_kind, "", get_tool_icon_mode()
-                        )
-                        _ek_hex = self.app.get_css_variables().get(_ek_var, self._colors().error)
-                        tail_segments.append(("hero", Text(f"  {_ek_icon} {self._primary_hero}", style=f"bold {_ek_hex}")))
-                    except Exception:
-                        tail_segments.append(("hero", Text(f"  {self._primary_hero}", style=f"bold {self._colors().error}")))
-                elif self._tool_icon_error:
-                    tail_segments.append(("hero", Text(f"  {self._primary_hero}", style=f"bold {self._colors().error}")))
-                else:
-                    tail_segments.append(("hero", Text(f"  {self._primary_hero}", style="dim")))
-            elif self._is_complete and not self._tool_icon_error and not self._line_count:
-                tail_segments.append(("hero", Text("  —", style="dim")))
-            # A2: chips removed from header; always served by FooterPane only
-            if self._stats and self._stats.has_diff_counts:
-                add_color = getattr(self, "_diff_add_color", _DIFF_ADD_FALLBACK)
-                del_color = getattr(self, "_diff_del_color", _DIFF_DEL_FALLBACK)
-                diff_seg = Text()
-                if self._stats.additions:
-                    diff_seg.append(f"  +{self._stats.additions}", style=f"bold {add_color}")
-                if self._stats.deletions:
-                    diff_seg.append(f"  -{self._stats.deletions}", style=f"bold {del_color}")
+        if self._primary_hero:
+            if self._tool_icon_error and self._error_kind:
                 try:
-                    if (self._panel is not None and
-                            hasattr(self._panel._block, "_visible_count") and
-                            self._panel._block._visible_count < len(self._panel._block._all_plain)):
-                        diff_seg.append(" (partial)", style="dim")
+                    from hermes_cli.tui.tool_result_parse import _error_kind_display
+                    from agent.display import get_tool_icon_mode
+                    _ek_icon, _, _ek_var = _error_kind_display(
+                        self._error_kind, "", get_tool_icon_mode()
+                    )
+                    _ek_hex = self.app.get_css_variables().get(_ek_var, self._colors().error)
+                    tail_segments.append(("hero", Text(f"  {_ek_icon} {self._primary_hero}", style=f"bold {_ek_hex}")))
                 except Exception:
-                    pass
-                if diff_seg.cell_len > 0:
-                    tail_segments.append(("diff", diff_seg))
-            # A1: line count rendered here (ToolHeaderBar deleted)
-            # Suppress line count when diff stats are shown (avoids redundant info)
-            _has_diff_in_tail = any(name == "diff" for name, _ in tail_segments)
-            if self._line_count and not _has_diff_in_tail and not self._primary_hero:
-                lc_text = ">99K" if self._line_count > 99999 else f"{self._line_count}L"
-                tail_segments.append(("linecount", Text(f"  {lc_text}", style="dim")))
-            if self._has_affordances:
-                from hermes_cli.tui.tool_panel.density import DensityTier as _DT
-                if self._density_tier == _DT.HERO:
-                    glyph = "  ★"
-                elif _safe_collapsed(self):
-                    glyph = "  ▸"
-                else:
-                    glyph = "  ▾"
-                tail_segments.append(("chevron", Text(glyph, style="dim")))
+                    tail_segments.append(("hero", Text(f"  {self._primary_hero}", style=f"bold {self._colors().error}")))
+            elif self._tool_icon_error:
+                tail_segments.append(("hero", Text(f"  {self._primary_hero}", style=f"bold {self._colors().error}")))
             else:
-                # B-1: non-interactive signal — always fill chevron slot
-                tail_segments.append(("chevron", Text("  ·", style=self._colors().separator_dim)))
-            # META zone: flash → stderrwarn  (duration moved to single append after if/else)
-            if self._duration:
-                _pending_dur = self._duration
-            # Source-order sentinel for legacy tests: "duration" before "flash" and "stderrwarn" bold.
-            now = time.monotonic()
-            if self._flash_msg and now < self._flash_expires:
-                accent_color = getattr(self, "_focused_gutter_color", None) or self._colors().accent
-                if self._flash_tone == "error":
-                    try:
-                        _err_color = self.app.get_css_variables().get("status-error-color", "red")
-                    except Exception:
-                        _err_color = "red"
-                    _flash_style = f"dim {_err_color}"
-                else:
-                    _flash_style = f"dim {accent_color}"
-                _msg = self._flash_msg
-                _tw = self.size.width
-                if _tw > 0 and _tw < 80:
-                    _msg = _msg[:14] + "…" if len(_msg) > 14 else _msg
-                tail_segments.append(("flash", Text(f"  ✓ {_msg}", style=_flash_style)))
+                tail_segments.append(("hero", Text(f"  {self._primary_hero}", style="dim")))
+        elif self._is_complete and not self._tool_icon_error and not self._line_count:
+            tail_segments.append(("hero", Text("  —", style="dim")))
+        # A2: chips removed from header; always served by FooterPane only
+        if self._stats and self._stats.has_diff_counts:
+            add_color = getattr(self, "_diff_add_color", _DIFF_ADD_FALLBACK)
+            del_color = getattr(self, "_diff_del_color", _DIFF_DEL_FALLBACK)
+            diff_seg = Text()
+            if self._stats.additions:
+                diff_seg.append(f"  +{self._stats.additions}", style=f"bold {add_color}")
+            if self._stats.deletions:
+                diff_seg.append(f"  -{self._stats.deletions}", style=f"bold {del_color}")
             try:
                 if (self._panel is not None and
-                        self._panel.collapsed and
-                        self._tool_icon_error):
-                    rs_v4 = getattr(self._panel, "_result_summary_v4", None)
-                    if rs_v4 is not None and getattr(rs_v4, "stderr_tail", ""):
-                        try:
-                            warn_color = self.app.get_css_variables().get(
-                                "status-warn-color", self._colors().warning
-                            )
-                        except Exception:
-                            # widget.app.get_css_variables() raises NoActiveAppError
-                            # pre-mount; recover with skin warning.
-                            warn_color = self._colors().warning
-                        tail_segments.append(("stderrwarn", Text("  ⚠ stderr (e)", style=f"bold {warn_color}")))
+                        hasattr(self._panel._block, "_visible_count") and
+                        self._panel._block._visible_count < len(self._panel._block._all_plain)):
+                    diff_seg.append(" (partial)", style="dim")
             except Exception:
                 pass
+            if diff_seg.cell_len > 0:
+                tail_segments.append(("diff", diff_seg))
+        # A1: line count rendered here (ToolHeaderBar deleted)
+        # Suppress line count when diff stats are shown (avoids redundant info)
+        _has_diff_in_tail = any(name == "diff" for name, _ in tail_segments)
+        if self._line_count and not _has_diff_in_tail and not self._primary_hero:
+            lc_text = ">99K" if self._line_count > 99999 else f"{self._line_count}L"
+            tail_segments.append(("linecount", Text(f"  {lc_text}", style="dim")))
+        if self._has_affordances:
+            from hermes_cli.tui.tool_panel.density import DensityTier as _DT
+            if self._density_tier == _DT.HERO:
+                glyph = "  ★"
+            elif _safe_collapsed(self):
+                glyph = "  ▸"
+            else:
+                glyph = "  ▾"
+            tail_segments.append(("chevron", Text(glyph, style="dim")))
+        else:
+            # B-1: non-interactive signal — always fill chevron slot
+            tail_segments.append(("chevron", Text("  ·", style=self._colors().separator_dim)))
+        # META zone: flash → stderrwarn  (duration moved to single append after if/else)
+        if self._duration:
+            _pending_dur = self._duration
+        # Source-order sentinel for legacy tests: "duration" before "flash" and "stderrwarn" bold.
+        now = time.monotonic()
+        if self._flash_msg and now < self._flash_expires:
+            accent_color = getattr(self, "_focused_gutter_color", None) or self._colors().accent
+            if self._flash_tone == "error":
+                try:
+                    _err_color = self.app.get_css_variables().get("status-error-color", "red")
+                except Exception:
+                    _err_color = "red"
+                _flash_style = f"dim {_err_color}"
+            else:
+                _flash_style = f"dim {accent_color}"
+            _msg = self._flash_msg
+            _tw = self.size.width
+            if _tw > 0 and _tw < 80:
+                _msg = _msg[:14] + "…" if len(_msg) > 14 else _msg
+            tail_segments.append(("flash", Text(f"  ✓ {_msg}", style=_flash_style)))
+        try:
+            if (self._panel is not None and
+                    self._panel.collapsed and
+                    self._tool_icon_error):
+                rs_v4 = getattr(self._panel, "_result_summary_v4", None)
+                if rs_v4 is not None and getattr(rs_v4, "stderr_tail", ""):
+                    try:
+                        warn_color = self.app.get_css_variables().get(
+                            "status-warn-color", self._colors().warning
+                        )
+                    except Exception:
+                        # widget.app.get_css_variables() raises NoActiveAppError
+                        # pre-mount; recover with skin warning.
+                        warn_color = self._colors().warning
+                    tail_segments.append(("stderrwarn", Text("  ⚠ stderr (e)", style=f"bold {warn_color}")))
+        except Exception:
+            pass
 
-            # A-5: exit code visible regardless of collapsed state
-            if self._is_complete:
-                code = getattr(self, "_exit_code", None)
-                if code is not None:
-                    _c = self._colors()
-                    if code == 0:
-                        if not self._primary_hero:
-                            tail_segments.append(("exit", Text("  ok", style=_c.success_dim)))
-                    else:
-                        tail_segments.append(("exit", Text(f"  exit {code}", style=f"bold {_c.error}")))
+        # A-5: exit code visible regardless of collapsed state
+        if self._is_complete:
+            code = getattr(self, "_exit_code", None)
+            if code is not None:
+                _c = self._colors()
+                if code == 0:
+                    if not self._primary_hero:
+                        tail_segments.append(("exit", Text("  ok", style=_c.success_dim)))
+                else:
+                    tail_segments.append(("exit", Text(f"  exit {code}", style=f"bold {_c.error}")))
 
-            # C-2: remediation hint when collapsed+error
-            is_collapsed = _safe_collapsed(self)
-            if is_collapsed and self._is_complete and self._tool_icon_error:
-                _rh = getattr(self, "_remediation_hint", None)
-                if _rh:
-                    tail_segments.append(("remediation", Text(f"  hint:{_rh}", style=self._colors().warning_dim)))
+        # C-2: remediation hint when collapsed+error
+        is_collapsed = _safe_collapsed(self)
+        if is_collapsed and self._is_complete and self._tool_icon_error:
+            _rh = getattr(self, "_remediation_hint", None)
+            if _rh:
+                tail_segments.append(("remediation", Text(f"  hint:{_rh}", style=self._colors().warning_dim)))
 
         # F-2: single duration append point — outside both branches
         if _pending_dur:
@@ -524,7 +512,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             return
         if event.button != 1:
             return
-        if self._spinner_char is not None:
+        if self._streaming_phase:
             return
         if self._path_clickable and self._full_path:
             event.prevent_default()
@@ -536,7 +524,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             except Exception:
                 pass
             return
-        if getattr(event, "chain", 1) == 2 and self._spinner_char is None and not self._path_clickable:
+        if getattr(event, "chain", 1) == 2 and not self._streaming_phase and not self._path_clickable:
             try:
                 parent = self.parent
                 summary = getattr(parent, "_result_summary", None) or self._label
@@ -839,6 +827,10 @@ class ToolCallHeader(Widget):
         if new_state == ToolCallState.STARTED:
             if self.is_attached:
                 self._phase_chip_timer = self.set_timer(0.8, self._clear_phase_chip)
+        elif new_state == ToolCallState.STREAMING:
+            # STREAMING owns liveness (pulse + microcopy); clear any lingering …starting chip.
+            if self.is_attached:
+                self._phase_chip.display = False
         elif new_state == ToolCallState.COMPLETING:
             # 0.251 guarantees elapsed > 0.250 when callback fires
             if self.is_attached:

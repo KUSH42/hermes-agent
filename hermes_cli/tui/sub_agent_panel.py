@@ -16,6 +16,7 @@ from textual.widget import Widget
 from textual.widgets import Static
 
 from hermes_cli.tui.widgets.utils import _format_elapsed_compact
+from hermes_cli.tui.tool_panel.density import DensityTier
 
 
 class SubAgentBody(Vertical):
@@ -125,11 +126,12 @@ class SubAgentPanel(Widget):
         Binding("ctrl+x",       "collapse_subtree", show=False),
     ]
 
-    child_count:  reactive[int]  = reactive(0)
-    error_count:  reactive[int]  = reactive(0)
-    elapsed_ms:   reactive[int]  = reactive(0)
-    subtree_done: reactive[bool] = reactive(False)
-    collapsed:    reactive[bool] = reactive(False)
+    child_count:  reactive[int]        = reactive(0)
+    error_count:  reactive[int]        = reactive(0)
+    elapsed_ms:   reactive[int]        = reactive(0)
+    subtree_done: reactive[bool]       = reactive(False)
+    collapsed:    reactive[bool]       = reactive(False)
+    density_tier: reactive[DensityTier] = reactive(DensityTier.DEFAULT, layout=False)
 
     def __init__(self, depth: int = 0, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -180,6 +182,7 @@ class SubAgentPanel(Widget):
         else:
             self.remove_class("--collapsed")
         self._body.display = (not v) and self._has_children
+        self.density_tier = DensityTier.COMPACT if v else DensityTier.DEFAULT
 
     # --- Child management ---
 
@@ -246,14 +249,20 @@ class SubAgentPanel(Widget):
 
     def action_expand_all(self) -> None:
         from hermes_cli.tui.child_panel import ChildPanel
-        for child in self._body.children:
-            if isinstance(child, ChildPanel):
+        for child in self.query(ChildPanel):
+            child._parent_clamp_tier = None
+            if child._result_summary_v4 is not None:  # type: ignore[attr-defined]
+                child._apply_complete_auto_collapse()  # type: ignore[attr-defined]
+            else:
                 child.set_compact(False)
 
     def action_compact_all(self) -> None:
         from hermes_cli.tui.child_panel import ChildPanel
-        for child in self._body.children:
-            if isinstance(child, ChildPanel):
+        for child in self.query(ChildPanel):
+            child._parent_clamp_tier = DensityTier.COMPACT
+            if child._result_summary_v4 is not None:  # type: ignore[attr-defined]
+                child._apply_complete_auto_collapse()  # type: ignore[attr-defined]
+            else:
                 child.set_compact(True)
 
     def action_collapse_subtree(self) -> None:

@@ -146,6 +146,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         self._resolver = DensityResolver()
         self._resolver.subscribe(self._on_tier_change)
         self._user_override_tier: DensityTier | None = None
+        self._parent_clamp_tier: "DensityTier | None" = None  # set by ChildPanel via subscription
 
         from hermes_cli.tui.tool_category import ToolCategory
         if self._category == ToolCategory.SHELL and hasattr(block, "_should_strip_cwd"):

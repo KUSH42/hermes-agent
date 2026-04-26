@@ -45,6 +45,10 @@ class ChildPanel(ToolPanel):
         if header is not None:
             header._is_child = True
             header.refresh()
+        from hermes_cli.tui.sub_agent_panel import SubAgentPanel
+        if isinstance(self._parent_subagent, SubAgentPanel):
+            self.watch(self._parent_subagent, "density_tier", self._on_parent_density_change)
+            self._on_parent_density_change(self._parent_subagent.density_tier)
 
     @property
     def _tool_header(self) -> Any:
@@ -65,6 +69,18 @@ class ChildPanel(ToolPanel):
 
     def action_toggle_collapse(self) -> None:
         self.collapsed = not self.collapsed
+
+    def _on_parent_density_change(self, tier: "Any") -> None:
+        from hermes_cli.tui.tool_panel.density import DensityTier
+        clamp = tier if tier != DensityTier.DEFAULT else None
+        self._parent_clamp_tier = clamp
+        if self._result_summary_v4 is not None:  # type: ignore[attr-defined]
+            self._apply_complete_auto_collapse()  # type: ignore[attr-defined]
+        else:
+            if clamp is not None:
+                self.set_compact(True)
+            else:
+                self.set_compact(False)
 
     def watch_collapsed(self, old: Any, new: Any) -> None:
         from textual.css.query import NoMatches

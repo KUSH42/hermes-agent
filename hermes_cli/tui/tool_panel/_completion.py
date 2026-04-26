@@ -346,6 +346,7 @@ class _ToolPanelCompletionMixin:
             threshold=threshold,
             row_budget=None,
             kind=kind,
+            parent_clamp=self._parent_clamp_tier,  # type: ignore[attr-defined]
         )
         prev_tier = self._resolver.tier  # type: ignore[attr-defined]
         self._resolver.resolve(inputs)  # type: ignore[attr-defined]

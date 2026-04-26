@@ -126,6 +126,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         self._history_idx: int = -1
         self._history_loading: bool = False
         self._slash_commands: list[str] = []
+        self._skills: list = []  # SkillCandidate list populated by theme.populate_skills
         self._slash_descriptions: dict[str, str] = {}
         self._slash_args_hints: dict[str, str] = {}
         self._slash_keybind_hints: dict[str, str] = {}

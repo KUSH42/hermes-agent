@@ -48,6 +48,8 @@ from hermes_cli.tui.overlays.interrupt import (  # noqa: E402
     InterruptPayload,
 )
 
+from hermes_cli.tui.overlays.skill_picker import SkillPickerOverlay  # noqa: E402
+
 # Aliases — these take precedence over the same-named classes in _legacy.
 # Importers like `from hermes_cli.tui.overlays import ModelPickerOverlay`
 # now get the alias (which resolves to ConfigOverlay at runtime).
@@ -86,6 +88,7 @@ __all__ = [
     "ReferenceModal",
     "SecretWidget",
     "SessionOverlay",
+    "SkillPickerOverlay",
     "SkinPickerOverlay",
     "SudoWidget",
     "TabbedSkinOverlay",

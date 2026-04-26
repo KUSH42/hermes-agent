@@ -5,7 +5,7 @@ from typing import Any
 
 from textual.css.query import NoMatches
 
-from hermes_cli.tui.completion_context import CompletionContext, CompletionTrigger, detect_context
+from hermes_cli.tui.completion_context import CompletionContext, CompletionTrigger, detect_context, _SKILL_RE
 from hermes_cli.tui.completion_list import VirtualCompletionList
 from hermes_cli.tui.fuzzy import fuzzy_rank
 from hermes_cli.tui.path_search import PathCandidate, SlashCandidate
@@ -55,12 +55,38 @@ class _AutocompleteMixin:
                 self._show_slash_completions(fragment)
                 return
 
-            trigger = detect_context(self.value, self.cursor_position)  # type: ignore[attr-defined]
+            from hermes_cli.tui.input._mode import InputMode
+            _bash_mode = getattr(self, "_mode", None) is InputMode.BASH  # type: ignore[attr-defined]
+            trigger = detect_context(self.value, self.cursor_position, bash_mode=_bash_mode)  # type: ignore[attr-defined]
             # Guard: prevents re-entry loop on unchanged trigger.
             if trigger == self._current_trigger:
                 return
             self._current_trigger = trigger
             self._raw_candidates = []
+
+            if trigger.context is CompletionContext.SKILL_INVOKE:
+                # $-typed path: open (or update) the skill picker.
+                # Do NOT mount the inline completion overlay — the picker IS
+                # the completion surface for $-prefixed input.
+                try:
+                    self.app._open_skill_picker(  # type: ignore[attr-defined]
+                        seed_filter=trigger.fragment,
+                        trigger_source="prefix",
+                    )
+                except Exception:
+                    pass
+                return
+
+            # Auto-dismiss a prefix-triggered picker when the regex no longer matches.
+            if not _bash_mode and not _SKILL_RE.match(self.value):  # type: ignore[attr-defined]
+                try:
+                    from hermes_cli.tui.overlays.skill_picker import SkillPickerOverlay
+                    picker = self.app.query_one(SkillPickerOverlay)  # type: ignore[attr-defined]
+                    if getattr(picker, "_trigger", None) == "prefix":
+                        picker.dismiss()
+                except Exception:
+                    # NoMatches or SkillPickerOverlay not yet imported — fine
+                    pass
 
             if trigger.context is CompletionContext.SLASH_COMMAND:
                 self._show_slash_completions(trigger.fragment)

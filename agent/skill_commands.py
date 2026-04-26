@@ -269,6 +269,22 @@ def get_skill_commands() -> Dict[str, Dict[str, Any]]:
     return _skill_commands
 
 
+def normalize_skill_invocation(typed: str) -> Optional[str]:
+    """Convert a user-typed ``/name`` or ``$name`` into the canonical ``/name`` storage key.
+
+    Returns None if input doesn't start with one of the accepted prefixes OR
+    is a bare prefix with no name.  The ``.replace("_", "-")`` operates only on
+    the command token, never on trailing args.
+    """
+    s = typed.lstrip()
+    if not s or s[0] not in ("/", "$"):
+        return None
+    parts = s[1:].split()
+    if not parts:
+        return None  # bare "$" or "/" with no name → not a lookup
+    return "/" + parts[0].replace("_", "-")
+
+
 def resolve_skill_command_key(command: str) -> Optional[str]:
     """Resolve a user-typed /command to its canonical skill_cmds key.
 

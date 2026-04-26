@@ -44,6 +44,10 @@ _IMPLEMENTED_ACTIONS: frozenset[str] = frozenset({
     "edit_cmd", "open_url",
 })
 
+# Recovery action kinds — sorted first in the action row (ER-3).
+_RECOVERY_KINDS: tuple[str, ...] = ("retry", "copy_err")
+_RECOVERY_ORDER: dict[str, int] = {k: i for i, k in enumerate(_RECOVERY_KINDS)}
+
 # Maps every implemented action kind to the ToolPanel method name it calls.
 ACTION_KIND_TO_PANEL_METHOD: dict[str, str] = {
     "retry": "action_retry",
@@ -202,27 +206,7 @@ class FooterPane(Widget):
         layout: vertical;
     }
     FooterPane > .footer-main { height: 1; }
-    FooterPane > .footer-stderr {
-        height: auto;
-        max-height: 4;
-        display: none;
-        color: $error 80%;
-        padding: 0;
-    }
-    FooterPane.has-stderr > .footer-stderr { display: block; }
     FooterPane.compact > .artifact-row { display: none; }
-    FooterPane.compact > .footer-stderr {
-        max-height: 1;
-        overflow: hidden;
-        color: $error 80%;
-    }
-    FooterPane > .footer-remediation {
-        height: auto;
-        display: none;
-        color: $text-muted;
-        padding: 0;
-    }
-    FooterPane.has-remediation > .footer-remediation { display: block; }
     FooterPane > .artifact-row {
         height: auto;
         layout: horizontal;
@@ -253,6 +237,14 @@ class FooterPane(Widget):
     FooterPane > .action-row > .--action-chip:hover {
         color: $accent;
         background: $accent 10%;
+    }
+    FooterPane > .action-row > .--action-chip.--recovery-action {
+        color: $accent;
+        text-style: bold;
+    }
+    FooterPane > .action-row > .--action-chip.--recovery-action:hover {
+        color: $accent;
+        background: $accent 20%;
     }
     """
 
@@ -301,41 +293,20 @@ class FooterPane(Widget):
         if rs is None:
             return False
         return bool(
-            rs.chips or rs.stderr_tail or rs.actions or rs.artifacts
+            rs.chips or rs.actions or rs.artifacts
             or (rs.exit_code not in (None, 0))
         )
 
     def compose(self) -> ComposeResult:
         self._content = Static("", classes="footer-main")
-        self._stderr_row = Static("", classes="footer-stderr")
-        self._remediation_row = Static("", classes="footer-remediation")
         self._artifact_row = Horizontal(classes="artifact-row")
         self._action_row = Horizontal(classes="action-row")
         from hermes_cli.tui.diff_affordance import DiffAffordance
         self._diff_affordance = DiffAffordance()
         yield self._content
-        yield self._stderr_row
-        yield self._remediation_row
         yield self._artifact_row
         yield self._action_row
         yield self._diff_affordance
-
-    def _render_stderr(self, tail: str) -> "Any":
-        from rich.text import Text
-        from hermes_cli.tui.body_renderers._grammar import SkinColors as _SC
-        _err = _SC.from_app(getattr(self, "app", None)).error
-        lines = tail.strip().splitlines()
-        result = Text()
-        if not lines:
-            return result
-        if self.has_class("compact"):
-            result.append(f"  {lines[-1]}  (e for full)", style=f"dim {_err}")
-            return result
-        for i, line in enumerate(lines[-8:]):
-            if i > 0:
-                result.append("\n")
-            result.append(f"  {line}", style=f"dim {_err}")
-        return result
 
     def update_summary_v4(
         self,
@@ -404,16 +375,6 @@ class FooterPane(Widget):
         self._rebuild_action_buttons(summary, actions_to_render if not _is_streaming else [])
         self._rebuild_artifact_buttons(summary)
 
-        if summary.stderr_tail:
-            self._stderr_row.update(self._render_stderr(summary.stderr_tail))
-            self.add_class("has-stderr")
-        else:
-            self._stderr_row.update("")
-            self.remove_class("has-stderr")
-
-        self._remediation_row.update("")
-        self.remove_class("has-remediation")
-
     def _rebuild_chips(self) -> None:
         if self._last_summary is not None:
             self._render_footer(self._last_summary, self._last_promoted)
@@ -477,24 +438,31 @@ class FooterPane(Widget):
             self._artifact_row.mount(*buttons)
         self.add_class("has-artifacts")
 
+
     def _rebuild_action_buttons(self, summary: "ResultSummaryV4", actions_to_render: list) -> None:
         from rich.text import Text as RichText
+        from textual.css.query import NoMatches
         action_row = getattr(self, "_action_row", None)
         if action_row is None:
             return
         try:
             for btn in list(action_row.query(".--action-chip")):
                 btn.remove()
-        except Exception:
-            pass
+        except NoMatches:
+            pass  # no chips mounted yet — expected on first call
         filtered = [a for a in actions_to_render if a.kind in _IMPLEMENTED_ACTIONS]
+        # Recovery actions first (retry before copy_err), then stable by kind name
+        filtered.sort(key=lambda a: (_RECOVERY_ORDER.get(a.kind, len(_RECOVERY_KINDS)), a.kind))
         if not filtered:
             self.remove_class("has-actions")
             return
         buttons = []
         for action in filtered:
             label = RichText(f"[{action.hotkey}] {action.label}", no_wrap=True)
-            btn = Button(label, classes="--action-chip", name=action.kind)
+            cls = "--action-chip"
+            if action.kind in _RECOVERY_KINDS:
+                cls += " --recovery-action"
+            btn = Button(label, classes=cls, name=action.kind)
             buttons.append(btn)
         if buttons:
             action_row.mount(*buttons)

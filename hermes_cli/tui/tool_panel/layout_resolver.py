@@ -61,8 +61,6 @@ _DROP_ORDER_DEFAULT: list[str] = [
     "chevron",       # collapse hint — preserve mid-priority
     "diff",          # structural — preserve
     "hero",          # primary summary — preserve
-    "stderrwarn",    # "press e for stderr" — recovery affordance
-    "remediation",   # error explanation — recovery affordance
     "exit",          # highest signal: always keep
 ]
 
@@ -73,8 +71,6 @@ _DROP_ORDER_HERO: list[str] = [
     "flash",
     "diff",
     "chevron",
-    "stderrwarn",    # recovery affordance — preserve
-    "remediation",   # recovery affordance — preserve
     "exit",
 ]
 
@@ -86,8 +82,6 @@ _DROP_ORDER_COMPACT: list[str] = [
     "hero",
     "chevron",
     "duration",
-    "stderrwarn",    # recovery affordance — preserve
-    "remediation",   # moved from 1 → 8: recovery affordance now preserved
     "exit",
 ]
 

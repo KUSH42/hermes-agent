@@ -335,10 +335,10 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             else:
                 # B-1: non-interactive signal — always fill chevron slot
                 tail_segments.append(("chevron", Text("  ·", style=self._colors().separator_dim)))
-            # META zone: flash → stderrwarn  (duration moved to single append after if/else)
+            # META zone: flash → duration (header owns category only, not evidence)
             if self._duration:
                 _pending_dur = self._duration
-            # Source-order sentinel for legacy tests: "duration" before "flash" and "stderrwarn" bold.
+            # Source-order sentinel for legacy tests: "duration" before "flash".
             now = time.monotonic()
             if self._flash_msg and now < self._flash_expires:
                 accent_color = getattr(self, "_focused_gutter_color", None) or self._colors().accent
@@ -355,23 +355,6 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 if _tw > 0 and _tw < 80:
                     _msg = _msg[:14] + "…" if len(_msg) > 14 else _msg
                 tail_segments.append(("flash", Text(f"  ✓ {_msg}", style=_flash_style)))
-            try:
-                if (self._panel is not None and
-                        self._panel.collapsed and
-                        self._tool_icon_error):
-                    rs_v4 = getattr(self._panel, "_result_summary_v4", None)
-                    if rs_v4 is not None and getattr(rs_v4, "stderr_tail", ""):
-                        try:
-                            warn_color = self.app.get_css_variables().get(
-                                "status-warn-color", self._colors().warning
-                            )
-                        except Exception:
-                            # widget.app.get_css_variables() raises NoActiveAppError
-                            # pre-mount; recover with skin warning.
-                            warn_color = self._colors().warning
-                        tail_segments.append(("stderrwarn", Text("  ⚠ stderr (e)", style=f"bold {warn_color}")))
-            except Exception:
-                pass
 
             # A-5: exit code visible regardless of collapsed state
             if self._is_complete:
@@ -383,13 +366,6 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                             tail_segments.append(("exit", Text("  ok", style=_c.success_dim)))
                     else:
                         tail_segments.append(("exit", Text(f"  exit {code}", style=f"bold {_c.error}")))
-
-            # C-2: remediation hint when collapsed+error
-            is_collapsed = _safe_collapsed(self)
-            if is_collapsed and self._is_complete and self._tool_icon_error:
-                _rh = getattr(self, "_remediation_hint", None)
-                if _rh:
-                    tail_segments.append(("remediation", Text(f"  hint:{_rh}", style=self._colors().warning_dim)))
 
         # F-2: single duration append point — outside both branches
         if _pending_dur:
@@ -694,6 +670,14 @@ class ToolBodyContainer(Widget):
     ToolBodyContainer .--microcopy.--active { display: block; }
     ToolBodyContainer .--args-row { height: auto; max-height: 2; padding: 0 2; display: none; color: $text-muted; }
     ToolBodyContainer .--args-row.--active { display: block; }
+    ToolBodyContainer .--stderr-tail {
+        height: auto;
+        max-height: 8;
+        display: none;
+        color: $error 80%;
+        padding: 0 2;
+    }
+    ToolBodyContainer .--stderr-tail.--active { display: block; }
     """
 
     def __init__(self, **kwargs: Any) -> None:
@@ -714,6 +698,7 @@ class ToolBodyContainer(Widget):
             yield top
         yield Static("", classes="--microcopy")
         yield CopyableRichLog(markup=False, highlight=False, wrap=False)
+        yield Static("", classes="--stderr-tail")
         if parent_block is not None:
             bottom = OmissionBar(parent_block=parent_block, position="bottom", classes="--omission-bar-bottom")
             bottom.display = False
@@ -775,6 +760,32 @@ class ToolBodyContainer(Widget):
         mc.remove_class("--active")
         mc.remove_class("--secondary-args")
         mc.update("")
+
+    def set_stderr_tail(self, tail: "str | None") -> None:
+        """Show/hide the stderr-tail strip below the body widget (ER-1)."""
+        from textual.css.query import NoMatches
+        try:
+            w = self.query_one(".--stderr-tail", Static)
+        except NoMatches:
+            return
+        if not tail:
+            w.remove_class("--active")
+            w.update("")
+            return
+        from rich.text import Text
+        from hermes_cli.tui.body_renderers._grammar import SkinColors
+        try:
+            _app = self.app
+        except Exception:
+            _app = None
+        err = SkinColors.from_app(_app).error
+        out = Text()
+        for i, line in enumerate(tail.splitlines()[-8:]):
+            if i > 0:
+                out.append("\n")
+            out.append(line, style=f"dim {err}")
+        w.update(out)
+        w.add_class("--active")
 
 
 # ---------------------------------------------------------------------------

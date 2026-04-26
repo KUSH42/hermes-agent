@@ -647,6 +647,9 @@ class _ToolPanelActionsMixin:
             has_copy_err = rs.stderr_tail or any(
                 a.kind == "copy_err" and a.payload for a in (rs.actions or ())
             )
+            # Recovery contract (ER-4): dedup against visible footer chips. When the footer is
+            # hidden (HERO tier, user_collapsed), the hint row provides the only keyboard surface
+            # for recovery, so we always add the hint in that case.
             if has_copy_err and "copy_err" not in visible_action_kinds:
                 contextual.append(("e", "stderr"))
             if self._result_paths_for_action() and "open_first" not in visible_action_kinds:

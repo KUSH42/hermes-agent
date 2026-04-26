@@ -27,7 +27,7 @@ class _ToolPanelCompletionMixin:
         if rs is None:
             return False
         return bool(
-            rs.chips or rs.stderr_tail or rs.actions or rs.artifacts
+            rs.chips or rs.actions or rs.artifacts
             or (rs.exit_code not in (None, 0))
         )
 
@@ -409,38 +409,13 @@ class _ToolPanelCompletionMixin:
 
         self._update_kind_from_classifier(line_count)
 
-        if self._footer_pane is not None and summary.is_error and summary.error_kind is not None:  # type: ignore[attr-defined]
-            try:
-                _ICON_MAP = {
-                    "timeout": "⏱",
-                    "signal": "💀",
-                    "auth": "🔒",
-                    "exit": "✗",
-                    "network": "🌐",
-                }
-                icon = _ICON_MAP.get(summary.error_kind, "✗")
-                kind_label = summary.error_kind.replace("_", " ").title()
-                remediation = next(
-                    (c.remediation for c in (summary.chips or ()) if c.remediation),
-                    None
-                )
-                if remediation:
-                    remediation_text = f"{icon} {kind_label}  ·  {remediation}"
-                else:
-                    remediation_text = f"{icon} {kind_label}"
-                from rich.text import Text as _RText
-                from hermes_cli.tui.body_renderers._grammar import SkinColors as _SC
-                _err = _SC.from_app(getattr(self, "app", None)).error
-                rem_rich = _RText()
-                rem_rich.append(remediation_text, style=f"bold {_err}")
-                self._footer_pane._remediation_row.update(rem_rich)  # type: ignore[attr-defined]
-                self._footer_pane._remediation_row.add_class("footer-remediation--error")  # type: ignore[attr-defined]
-                self._footer_pane.add_class("has-remediation")  # type: ignore[attr-defined]
-            except Exception:
-                pass
-
         if self._footer_pane is not None:  # type: ignore[attr-defined]
             self._footer_pane.update_summary_v4(summary, promoted_chip_texts=frozenset())  # type: ignore[attr-defined]
+
+        # ER-1: body owns stderr evidence — propagate stderr_tail to ToolBodyContainer
+        body = getattr(self._block, "_body", None)  # type: ignore[attr-defined]
+        if body is not None and hasattr(body, "set_stderr_tail"):
+            body.set_stderr_tail(summary.stderr_tail or None)
 
         if getattr(self, '_footer_pane', None) is not None:
             show = self._has_footer_content()
@@ -449,22 +424,6 @@ class _ToolPanelCompletionMixin:
         self.post_message(self.__class__.Completed())  # type: ignore[attr-defined]
 
         self._schedule_age_ticks()
-
-        if summary.is_error and summary.error_kind is not None:
-            _remediation = next(
-                (c.remediation for c in (summary.chips or ()) if c.remediation),
-                None,
-            )
-            if _remediation:
-                _short = _remediation.split(";")[0].split(".")[0].strip()
-                self._header_remediation_hint = _short[:28] + ("…" if len(_short) > 28 else "")  # type: ignore[attr-defined]
-            else:
-                self._header_remediation_hint = None  # type: ignore[attr-defined]
-            _hdr = getattr(self._block, "_header", None)  # type: ignore[attr-defined]
-            if _hdr is not None:
-                _hdr._remediation_hint = self._header_remediation_hint  # type: ignore[attr-defined]
-        else:
-            self._header_remediation_hint = None  # type: ignore[attr-defined]
 
         import os as _os
         if _os.environ.get("HERMES_DETERMINISTIC"):

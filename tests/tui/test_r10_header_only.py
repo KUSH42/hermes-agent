@@ -102,13 +102,6 @@ class _H:
                     else:
                         tail_segments.append(("exit", Text(f"  exit {code}", style="bold red")))
 
-            # stderrwarn stub (for T09/T10)
-            if (self._panel is not None and
-                    self._panel.collapsed and
-                    self._tool_icon_error):
-                rs_v4 = getattr(self._panel, "_result_summary_v4", None)
-                if rs_v4 is not None and getattr(rs_v4, "stderr_tail", ""):
-                    tail_segments.append(("stderrwarn", Text("  ⚠ stderr (e)", style="bold #FFA726")))
 
             # chevron
             is_col = self._panel.collapsed if self._panel is not None else self.collapsed
@@ -178,31 +171,30 @@ def test_t07_not_complete_no_exit_segment():
 
 
 # ---------------------------------------------------------------------------
-# T08: narrow terminal — stderrwarn drops before exit
+# T08: stderrwarn removed from drop order (ER-2)
 # ---------------------------------------------------------------------------
 
-def test_t08_narrow_stderrwarn_drops_before_exit():
+def test_t08_stderrwarn_not_in_drop_order():
     from hermes_cli.tui.tool_blocks._header import _DROP_ORDER
-    assert _DROP_ORDER.index("stderrwarn") < _DROP_ORDER.index("exit"), (
-        "stderrwarn must appear before exit in _DROP_ORDER so it drops first"
-    )
+    assert "stderrwarn" not in _DROP_ORDER, "stderrwarn removed from header per ER-2"
+    assert "exit" in _DROP_ORDER
 
 
 # ---------------------------------------------------------------------------
-# T09/T10: stderrwarn co-existence
+# T09/T10: stderr evidence lives in body, not header (ER-1)
 # ---------------------------------------------------------------------------
 
-def test_t09_stderrwarn_still_appended_error_with_stderr():
+def test_t09_no_stderrwarn_segment_on_error_with_stderr():
     h = _H(exit_code=1, panel_collapsed=True)
     h._tool_icon_error = True
     rs = MagicMock()
     rs.stderr_tail = "error output"
     h._panel._result_summary_v4 = rs
     names = _seg_names(h)
-    assert "stderrwarn" in names
+    assert "stderrwarn" not in names
 
 
-def test_t10_exit_and_stderrwarn_both_present():
+def test_t10_exit_present_stderrwarn_absent():
     h = _H(exit_code=2, panel_collapsed=True)
     h._tool_icon_error = True
     rs = MagicMock()
@@ -210,7 +202,7 @@ def test_t10_exit_and_stderrwarn_both_present():
     h._panel._result_summary_v4 = rs
     names = _seg_names(h)
     assert "exit" in names
-    assert "stderrwarn" in names
+    assert "stderrwarn" not in names
 
 
 # ---------------------------------------------------------------------------
@@ -273,11 +265,10 @@ def test_t15_exit_code_init_attribute_exists():
     assert "_exit_code" in src
 
 
-def test_t16_action_toggle_collapse_flips_state():
+def test_t16_action_toggle_collapse_has_auto_collapsed():
     import inspect
     from hermes_cli.tui.tool_panel import ToolPanel
     src = inspect.getsource(ToolPanel.action_toggle_collapse)
-    assert "not self.collapsed" in src
     assert "_auto_collapsed" in src
 
 

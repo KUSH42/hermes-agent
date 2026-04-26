@@ -191,50 +191,51 @@ class TestDropOrderTiers:
     def test_hero_tier_never_drops_hero_segment(self):
         _trim, trim, DT = self._import()
         # Extreme budget — forces everything to drop
-        segs = self._segs(["flash", "remediation", "stderrwarn", "chip", "linecount",
+        segs = self._segs(["flash", "chip", "linecount",
                             "duration", "diff", "hero", "chevron", "exit"])
         result = trim(segs, tail_budget=1, tier=DT.HERO)
         names = [n for n, _ in result]
         assert "hero" in names, f"HERO tier must never drop 'hero', got: {names}"
 
-    def test_hero_tier_drops_remediation_before_diff(self):
+    def test_hero_tier_drops_flash_before_diff(self):
         _trim, trim, DT = self._import()
-        # Budget that forces dropping remediation but not diff
-        segs = self._segs(["remediation", "diff", "hero"], width=10)
+        # Budget that forces dropping flash but not diff (ER-2: remediation/stderrwarn removed)
+        segs = self._segs(["flash", "diff", "hero"], width=10)
         # Total = 30; budget = 15 → need to drop 1 segment (10 chars)
         result = trim(segs, tail_budget=15, tier=DT.HERO)
         names = [n for n, _ in result]
-        assert "remediation" not in names, f"HERO should drop 'remediation' first, got: {names}"
+        assert "flash" not in names, f"HERO should drop 'flash' first, got: {names}"
         assert "diff" in names or "hero" in names, f"Should keep diff/hero, got: {names}"
 
-    def test_compact_tier_keeps_chip_and_exit(self):
+    def test_compact_tier_keeps_duration_and_exit(self):
         _trim, trim, DT = self._import()
-        segs = self._segs(["flash", "remediation", "linecount", "diff",
-                            "hero", "chevron", "duration", "stderrwarn", "chip", "exit"])
+        segs = self._segs(["flash", "linecount", "diff",
+                            "hero", "chevron", "duration", "chip", "exit"])
         # Very narrow budget — only 2 segments (20 chars) survive
+        # COMPACT order: chip first, then linecount, flash, diff, hero, chevron, duration, exit
         result = trim(segs, tail_budget=20, tier=DT.COMPACT)
         names = [n for n, _ in result]
         assert "exit" in names, f"COMPACT must keep 'exit', got: {names}"
-        assert "chip" in names, f"COMPACT must keep 'chip', got: {names}"
+        assert "duration" in names, f"COMPACT must keep 'duration' before 'exit', got: {names}"
 
-    def test_compact_tier_drops_remediation_early(self):
+    def test_compact_tier_drops_chip_before_exit(self):
         _trim, trim, DT = self._import()
-        # Budget that removes remediation but not exit/chip/stderrwarn
-        segs = self._segs(["remediation", "exit", "chip", "stderrwarn"], width=10)
-        # Total=40; budget=25 → drop 1 (remediation is first in COMPACT order)
-        result = trim(segs, tail_budget=25, tier=DT.COMPACT)
+        # Budget that removes chip but not exit (chip is first in COMPACT order)
+        segs = self._segs(["chip", "exit"], width=10)
+        # Total=20; budget=15 → drop 1 (chip is first in COMPACT order)
+        result = trim(segs, tail_budget=15, tier=DT.COMPACT)
         names = [n for n, _ in result]
-        assert "remediation" not in names, f"COMPACT should drop 'remediation' early, got: {names}"
+        assert "chip" not in names, f"COMPACT should drop 'chip' early, got: {names}"
         assert "exit" in names, f"COMPACT must keep 'exit', got: {names}"
 
     def test_default_tier_uses_default_order(self):
         _trim, trim, DT = self._import()
-        # DEFAULT: flash dropped before remediation, hero dropped before chevron/exit
-        segs = self._segs(["flash", "remediation", "hero", "chevron", "exit"], width=10)
+        # DEFAULT: chip dropped first, then linecount, then duration
+        segs = self._segs(["chip", "linecount", "duration", "hero", "exit"], width=10)
         # Total=50; budget=35 → drop 1
         result = trim(segs, tail_budget=35, tier=DT.DEFAULT)
         names = [n for n, _ in result]
-        assert "flash" not in names, f"DEFAULT should drop 'flash' first, got: {names}"
+        assert "chip" not in names, f"DEFAULT should drop 'chip' first, got: {names}"
         assert "exit" in names, f"DEFAULT should keep 'exit', got: {names}"
 
     def test_default_tier_drops_hero_at_extreme_width(self):
@@ -247,7 +248,7 @@ class TestDropOrderTiers:
 
     def test_trace_tier_drops_nothing(self):
         _trim, trim, DT = self._import()
-        all_names = ["flash", "remediation", "stderrwarn", "chip", "linecount",
+        all_names = ["flash", "chip", "linecount",
                      "duration", "diff", "hero", "chevron", "exit"]
         segs = self._segs(all_names, width=10)
         # Arbitrarily narrow budget

@@ -114,23 +114,20 @@ class TestDropOrder:
         assert "exit" in names
         assert "chevron" in names
 
-    def test_remediation_drops_before_stderrwarn(self):
-        """When budget forces one drop, remediation goes before stderrwarn."""
+    def test_chip_drops_before_exit(self):
+        """When budget forces one drop, chip drops before exit (ER-2: remediation/stderrwarn removed)."""
         segs = [
-            _seg("remediation", "  hint:foo", "dim yellow"),
-            _seg("stderrwarn", "  ⚠ stderr", "bold #FFA726"),
+            _seg("chip", "  TOOL", "dim"),
             _seg("exit", "  ok", "dim green"),
         ]
-        # Budget tight enough to drop one of remediation/stderrwarn but not both
-        rem_w = segs[0][1].cell_len
-        sw_w = segs[1][1].cell_len
-        ex_w = segs[2][1].cell_len
-        # Keep exit + stderrwarn (drop remediation first)
-        budget = sw_w + ex_w + 1
+        chip_w = segs[0][1].cell_len
+        ex_w = segs[1][1].cell_len
+        # Budget only fits exit
+        budget = ex_w + 1
         result = self._trim(segs, budget)
         names = [n for n, _ in result]
-        assert "remediation" not in names
-        assert "stderrwarn" in names
+        assert "chip" not in names
+        assert "exit" in names
 
     def test_chevron_drops_before_exit(self):
         """Sub-chevron budget: chevron absent, exit present."""

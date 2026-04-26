@@ -842,6 +842,12 @@ class HermesApp(App):
         # RX4: register lifecycle hooks then drain any events queued before is_running
         self._register_lifecycle_hooks()
         self.hooks.drain_deferred()
+        # HF-E: prune stale HTML clipboard cache entries from previous sessions
+        try:
+            from hermes_cli.tui.clipboard_cache import prune_expired as _prune_clipboard
+            _prune_clipboard()
+        except Exception:
+            pass
 
     _RESIZE_DEBOUNCE_S: float = 0.06  # 60 ms
 

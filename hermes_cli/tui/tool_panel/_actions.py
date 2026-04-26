@@ -21,6 +21,9 @@ DEFAULT_HINTS: tuple[str, ...] = ("[y] copy", "[t] kind", "[r] retry", "[e] stde
 ERROR_HINTS: tuple[str, ...] = ("[y] copy", "[e] stderr ▸", "[r] retry", "[f1] all")
 COLLAPSED_HINTS: tuple[str, ...] = ("[Enter] expand", "[y] copy", "[f1] all")
 
+# HF-B: re-show toggle hint after this many seconds of unfocus
+TOGGLE_HINT_RESHOW_SECONDS = 300
+
 
 class _ToolPanelActionsMixin:
     """Keyboard action handlers and their private helpers."""
@@ -122,12 +125,12 @@ class _ToolPanelActionsMixin:
         import shlex
         header = getattr(self._block, "_header", None)  # type: ignore[attr-defined]
         if header is not None and getattr(header, "_path_clickable", False) and header._full_path:
+            self._flash_header("opening…")  # flash before the blocking call
             opener = "open" if sys.platform == "darwin" else "xdg-open"
             try:
                 self.app._open_path_action(header, header._full_path, opener, False)  # type: ignore[attr-defined]
-                self._flash_header("opening…")
             except Exception:
-                pass
+                self._flash_header("open failed", tone="error")
             return
         paths = self._result_paths_for_action()
         if not paths:
@@ -347,7 +350,6 @@ class _ToolPanelActionsMixin:
         self._flash_header(f"copied ANSI{size_suffix}")
 
     def action_copy_html(self) -> None:
-        import time as _time
         from rich.console import Console
         terminal_width = getattr(self.app, "size", None)  # type: ignore[attr-defined]
         terminal_width = terminal_width.width if terminal_width else 80
@@ -375,15 +377,14 @@ class _ToolPanelActionsMixin:
         except Exception:
             bg_hex = "#1e1e2e"
         html = html.replace('<pre style="', f'<pre style="background:{bg_hex}; ', 1)
-        tmp_path = f"/tmp/hermes_copy_{int(_time.time())}.html"
         self.app._copy_text_with_hint(html)  # type: ignore[attr-defined]
         from hermes_cli.tui.streaming_microcopy import _human_size as _hs
         _html_size = len(html.encode("utf-8"))
         _size_suffix = f" ({_hs(_html_size)})" if _html_size >= 1024 else ""
         try:
-            with open(tmp_path, "w") as f:  # allow-sync-io: tempfile under 4KB, fallback path for pbcopy
-                f.write(html)
-            self._flash_header(f"copied HTML{_size_suffix}  (saved {tmp_path})")
+            from hermes_cli.tui.clipboard_cache import write_html as _write_html
+            cache_path = _write_html(html)
+            self._flash_header(f"copied HTML{_size_suffix}  (saved {cache_path})")
         except Exception:
             self._flash_header(f"copied HTML{_size_suffix}")
 
@@ -492,33 +493,38 @@ class _ToolPanelActionsMixin:
             pass
 
     def action_show_help(self) -> None:
-        # Mark all categories as discovered when help is explicitly opened
-        from . import _completion as _comp_mod
-        from hermes_cli.tui.tool_category import ToolCategory
-        for _cat in ToolCategory:
-            _comp_mod._DISCOVERY_SHOWN_CATEGORIES.add(_cat)
         from hermes_cli.tui.overlays import ToolPanelHelpOverlay
         from textual.css.query import NoMatches
         try:
             overlay = self.app.query_one(ToolPanelHelpOverlay)  # type: ignore[attr-defined]
-            if overlay.has_class("--visible"):
-                overlay.remove_class("--visible")
-            else:
-                overlay.add_class("--visible")
-        except (NoMatches, Exception):
-            pass
+        except NoMatches:
+            # overlay not yet mounted; action is a no-op before TUI is fully composed
+            return
+        is_opening = not overlay.has_class("--visible")
+        if is_opening:
+            overlay.add_class("--visible")
+            # Only mark categories discovered when actually opening, not closing
+            from . import _completion as _comp_mod
+            from hermes_cli.tui.tool_category import ToolCategory
+            for _cat in ToolCategory:
+                _comp_mod._DISCOVERY_SHOWN_CATEGORIES.add(_cat)
+        else:
+            overlay.remove_class("--visible")
 
     def on_focus(self) -> None:
+        import time as _time
         self._maybe_show_discovery_hint()  # type: ignore[attr-defined]
         self._refresh_collapsed_strip()  # type: ignore[attr-defined]
-        if getattr(self, "_toggle_hint_shown", False):
+        now = _time.monotonic()
+        last_shown = getattr(self, "_toggle_hint_shown_at", 0.0)
+        if now - last_shown < TOGGLE_HINT_RESHOW_SECONDS:
             return
         block = getattr(self, "_block", None)
         if block is not None:
             header = getattr(block, "_header", None)
             if not getattr(header, "_has_affordances", False):
                 return
-        self._toggle_hint_shown = True  # type: ignore[attr-defined]
+        self._toggle_hint_shown_at = now  # type: ignore[attr-defined]
         self._flash_header("(Enter) toggle", tone="accent")
 
     def on_blur(self) -> None:
@@ -591,6 +597,19 @@ class _ToolPanelActionsMixin:
         if (self._hint_visible or always_visible) and self._hint_row is not None:  # type: ignore[attr-defined]
             self._hint_row.update(self._format(self._select_hint_set()))  # type: ignore[attr-defined]
 
+    def _visible_footer_action_kinds(self) -> "set[str]":
+        """Return the set of action kind names currently visible as chips in the footer."""
+        fp = getattr(self, "_footer_pane", None)
+        if fp is None or fp.styles.display == "none":
+            return set()
+        try:
+            return {
+                getattr(b, "name", "") for b in fp._action_row.query(".--action-chip")
+            } - {""}
+        except Exception:
+            # Best-effort DOM query during layout; partial DOM is expected at startup
+            return set()
+
     def _build_hint_text(self) -> "Any":
         from rich.text import Text
         _mounted = getattr(self, "is_mounted", True)
@@ -614,6 +633,9 @@ class _ToolPanelActionsMixin:
             primary.append(("Enter", "toggle"))
             primary.append(("y", "copy"))
 
+        # HF-A: consult visible footer chips to suppress duplicate hints
+        visible_action_kinds = self._visible_footer_action_kinds()
+
         contextual: list[tuple[str, str]] = []
         if _block_streaming:
             contextual.append(("f", "tail"))
@@ -624,9 +646,9 @@ class _ToolPanelActionsMixin:
             has_copy_err = rs.stderr_tail or any(
                 a.kind == "copy_err" and a.payload for a in (rs.actions or ())
             )
-            if has_copy_err:
+            if has_copy_err and "copy_err" not in visible_action_kinds:
                 contextual.append(("e", "stderr"))
-            if self._result_paths_for_action():
+            if self._result_paths_for_action() and "open_first" not in visible_action_kinds:
                 contextual.append(("o", "open"))
             has_urls = any(a.kind == "url" for a in (rs.artifacts or ()))
             if has_urls:
@@ -634,7 +656,7 @@ class _ToolPanelActionsMixin:
             has_edit = any(a.kind == "edit_cmd" and a.payload for a in (rs.actions or ()))
             if has_edit:
                 contextual.append(("E", "edit"))
-            if rs.is_error and not any(h[0] == "Enter" and h[1] == "retry" for h in primary):
+            if rs.is_error and "retry" not in visible_action_kinds:
                 contextual.insert(0, ("r", "retry"))
             # KO-4: Render-as cycle hint, post-streaming non-error blocks only.
             if not _block_streaming and not rs.is_error:
@@ -654,8 +676,18 @@ class _ToolPanelActionsMixin:
             t.append(key, style="bold")
             t.append(f" {label}", style="dim")
 
-        if _power_keys_exist:
-            t.append("  F1", style="bold dim")
+        # HF-C: label F1 and only show at wide widths
+        if _power_keys_exist and not narrow:
+            t.append("  F1 ", style="bold dim")
+            t.append("help", style="dim")
+
+        # HF-G: append rotating power-key tip when wide and block is complete
+        if not narrow and rs is not None and not _block_streaming:
+            from hermes_cli.tui.services import tool_tips
+            tip_key, tip_label = tool_tips.current_tip()
+            t.append("  ", style="dim")
+            t.append(tip_key, style="bold dim italic")
+            t.append(f" {tip_label}", style="dim italic")
 
         return t
 

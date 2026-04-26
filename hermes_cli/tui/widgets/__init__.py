@@ -363,6 +363,20 @@ class OutputPanel(ScrollableContainer):
         panels = self.query(MessagePanel)
         return panels.last() if panels else None
 
+    def _live_anchor(self) -> "Widget | None":
+        """Return the first-present live-output member, or None if neither composed.
+
+        Order: ThinkingWidget then LiveLineWidget. Returning the *first present*
+        member means new mounts land before both, preserving the suffix invariant
+        [ThinkingWidget, LiveLineWidget].
+        """
+        for cls in (ThinkingWidget, LiveLineWidget):
+            try:
+                return self.query_one(cls)
+            except NoMatches:
+                continue
+        return None
+
     def new_message(self, user_text: str = "", show_header: bool = True) -> MessagePanel:
         """Create and mount a new MessagePanel for a new turn.
 
@@ -373,7 +387,13 @@ class OutputPanel(ScrollableContainer):
         """
         panel = MessagePanel(user_text=user_text, show_header=show_header)
         panel.add_class("--entering")
-        self.mount(panel, before=self.query_one(ThinkingWidget))
+        anchor = self._live_anchor()
+        if anchor is not None:
+            self.mount(panel, before=anchor)
+        elif self.children:
+            self.mount(panel, before=self.children[-1])
+        else:
+            self.mount(panel)
         # Remove --entering after the first render so the CSS opacity transition
         # plays: opacity 0 → 1 (fade-in).  call_after_refresh fires in the next
         # event loop pass — fast enough to keep the initial "black flash" invisible

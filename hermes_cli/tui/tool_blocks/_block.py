@@ -335,9 +335,9 @@ class ToolBlock(Widget):
         prev = getattr(self, "_rendered_body_widget", None)
         if prev is not None and getattr(prev, "is_attached", False):
             prev.remove()
-        for old_log in self._body.query(CopyableRichLog):
+        for old_log in list(self._body.query(CopyableRichLog)):
             old_log.remove()
-        for old_footer in self._body.query(BodyFooter):
+        for old_footer in list(self._body.query(BodyFooter)):
             old_footer.remove()
         self._body.mount(widget)
         self._rendered_body_widget = widget

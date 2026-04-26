@@ -38,6 +38,14 @@ class ToolCallState(str, Enum):
     REMOVED    = "removed"
 
 
+_TERMINAL_STATES = (
+    ToolCallState.DONE,
+    ToolCallState.ERROR,
+    ToolCallState.CANCELLED,
+    ToolCallState.REMOVED,
+)
+
+
 @dataclass
 class ToolCallViewState:
     """Per-tool-call view state owned by ToolRenderingService."""
@@ -445,9 +453,23 @@ class ToolRenderingService(AppService):
         except NoMatches:
             pass
 
+    def _live_block_for_streaming(self, tool_call_id: str):
+        """Return the live StreamingToolBlock if the view is non-terminal, else None.
+
+        Terminal set matches append_tool_output gate exactly: DONE, ERROR,
+        CANCELLED, REMOVED.
+        """
+        view = self._tool_views_by_id.get(tool_call_id)
+        block = self.app._active_streaming_blocks.get(tool_call_id)
+        if view is None or block is None:
+            return None
+        if view.state in _TERMINAL_STATES:
+            return None
+        return block
+
     def append_streaming_line(self, tool_call_id: str, line: str) -> None:
         """Append a line to the named streaming block. Event-loop only."""
-        block = self.app._active_streaming_blocks.get(tool_call_id)
+        block = self._live_block_for_streaming(tool_call_id)
         if block is None:
             return
         block.append_line(line)
@@ -658,9 +680,7 @@ class ToolRenderingService(AppService):
 
         prev_state = view.state if view is not None else None
 
-        _terminal = (ToolCallState.DONE, ToolCallState.ERROR,
-                     ToolCallState.CANCELLED, ToolCallState.REMOVED)
-        if view is not None and prev_state in _terminal:
+        if view is not None and prev_state in _TERMINAL_STATES:
             if prev_state != terminal_state:
                 logger.debug(
                     "terminalize race: view already %s, ignoring %s",
@@ -1192,14 +1212,16 @@ class ToolRenderingService(AppService):
         if view is None:
             logger.warning("append_tool_output: unknown tool_call_id=%s", tool_call_id)
             return
-        if view.state in (ToolCallState.DONE, ToolCallState.ERROR,
-                          ToolCallState.CANCELLED, ToolCallState.REMOVED):
+        if view.state in _TERMINAL_STATES:
             return
         # R3-AXIS-01 / PG-1: route STARTED→STREAMING through _set_view_state so the
         # broker fires.  _set_view_state is a no-op when old == new, so re-entry
         # from STREAMING is safe.
         if view.state == ToolCallState.STARTED:
             self._set_view_state(view, ToolCallState.STREAMING)
+        if self._live_block_for_streaming(tool_call_id) is None:
+            logger.debug("append_tool_output: block gone post-axis for id=%s", tool_call_id)
+            return
         self.append_streaming_line(tool_call_id, line)
 
     def complete_tool_call(
@@ -1228,9 +1250,7 @@ class ToolRenderingService(AppService):
         view = self._tool_views_by_id.get(tool_call_id)
 
         # Idempotent if already terminal (or unknown — still complete plan)
-        _terminal = (ToolCallState.DONE, ToolCallState.ERROR,
-                     ToolCallState.CANCELLED, ToolCallState.REMOVED)
-        if view is not None and view.state in _terminal:
+        if view is not None and view.state in _TERMINAL_STATES:
             return
 
         if view is not None:

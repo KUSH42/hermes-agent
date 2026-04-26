@@ -715,22 +715,20 @@ class _ToolPanelActionsMixin:
     ) -> "Any":
         """Render the hint row: primary · contextual · +N more · F1 help [tip]."""
         from rich.text import Text
-        from hermes_cli.tui.body_renderers._grammar import GLYPH_META_SEP, glyph as _glyph
+        from hermes_cli.tui.body_renderers._grammar import (
+            GLYPH_META_SEP, glyph as _glyph, chip as _chip,
+        )
         from rich.cells import cell_len as _cell_len
 
         sep = f" {_glyph(GLYPH_META_SEP)} "
         sep_w = _cell_len(sep)
         _HINT_ROW_MARGIN = 4  # Reserve space for gaps between primary/contextual/F1 regions
 
-        def _chip(t: "Text", key: str, label: str) -> None:
-            t.append(key, style="bold")
-            t.append(f" {label}", style="dim")
-
         primary_t = Text()
         for i, (k, l) in enumerate(primary[:2]):
             if i > 0:
                 primary_t.append(sep, style="dim")
-            _chip(primary_t, k, l)
+            primary_t.append_text(_chip(k, l, bracketed=False))
 
         # F1 always rendered as the trailing pinned slot
         f1_t = Text()
@@ -777,7 +775,9 @@ class _ToolPanelActionsMixin:
     ) -> "tuple[Any, int]":
         """Return (rendered_text, dropped_count). Drops right-to-left to fit budget."""
         from rich.text import Text
-        from hermes_cli.tui.body_renderers._grammar import GLYPH_META_SEP, glyph as _glyph
+        from hermes_cli.tui.body_renderers._grammar import (
+            GLYPH_META_SEP, glyph as _glyph, chip as _chip,
+        )
         from rich.cells import cell_len as _cell_len
 
         sep = f" {_glyph(GLYPH_META_SEP)} "
@@ -797,8 +797,7 @@ class _ToolPanelActionsMixin:
         for i, (k, l) in enumerate(fitted):
             if i > 0:
                 out.append(sep, style="dim")
-            out.append(k, style="bold")
-            out.append(f" {l}", style="dim")
+            out.append_text(_chip(k, l, bracketed=False))
 
         dropped = len(contextual) - len(fitted)
         return out, dropped

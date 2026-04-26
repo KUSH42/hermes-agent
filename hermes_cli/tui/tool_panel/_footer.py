@@ -478,7 +478,7 @@ class FooterPane(Widget):
         self.add_class("has-artifacts")
 
     def _rebuild_action_buttons(self, summary: "ResultSummaryV4", actions_to_render: list) -> None:
-        from rich.text import Text as RichText
+        from hermes_cli.tui.body_renderers._grammar import chip as _chip
         action_row = getattr(self, "_action_row", None)
         if action_row is None:
             return
@@ -493,7 +493,8 @@ class FooterPane(Widget):
             return
         buttons = []
         for action in filtered:
-            label = RichText(f"[{action.hotkey}] {action.label}", no_wrap=True)
+            label = _chip(action.hotkey, action.label, bracketed=True)
+            label._no_wrap = True
             btn = Button(label, classes="--action-chip", name=action.kind)
             buttons.append(btn)
         if buttons:

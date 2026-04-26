@@ -191,8 +191,9 @@ class GroupHeader(Widget):
         self.refresh()
 
     def render(self) -> Text:
+        from hermes_cli.tui.body_renderers._grammar import GLYPH_GUTTER_GROUP
         t = Text()
-        t.append("  ┊ ", style="dim")
+        t.append(f"  {GLYPH_GUTTER_GROUP} ", style="dim")
         toggle = "▸" if self._collapsed else "▾"
         t.append(toggle + " ", style="bold")
 

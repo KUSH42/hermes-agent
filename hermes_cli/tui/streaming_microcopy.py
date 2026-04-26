@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Union
 
 from rich.text import Text
 
+from hermes_cli.tui.body_renderers._grammar import GLYPH_META_SEP, glyph as _glyph
+
 if TYPE_CHECKING:
     from hermes_cli.tui.tool_category import ToolSpec
 
@@ -71,11 +73,12 @@ def microcopy_line(
 
     cat = spec.category
     elapsed_s = state.elapsed_s
+    _SEP = _glyph(GLYPH_META_SEP)
 
     def _elapsed_suffix() -> str:
-        """D3: append · N.Ns when elapsed > 2s."""
+        """D3: append separator + N.Ns when elapsed > 2s."""
         if elapsed_s > 2.0:
-            return f" · {elapsed_s:.1f}s"
+            return f" {_SEP} {elapsed_s:.1f}s"
         return ""
 
     def _stall_suffix() -> str:
@@ -83,16 +86,16 @@ def microcopy_line(
         return " ⚠ stalled?" if stalled else ""
 
     if cat == ToolCategory.SHELL:
-        base = f"▸ {state.lines_received} lines · {_human_size(state.bytes_received)}"
+        base = f"▸ {state.lines_received} lines {_SEP} {_human_size(state.bytes_received)}"
         if state.rate_bps is not None and state.rate_bps > 0:
-            base += f" · {state.rate_bps / 1024:.0f} kB/s"
+            base += f" {_SEP} {state.rate_bps / 1024:.0f} kB/s"
         return base + _elapsed_suffix() + _stall_suffix()
 
     if cat == ToolCategory.FILE:
         if spec.primary_result in ("lines", "bytes"):
-            base = f"▸ {state.lines_received} lines · {_human_size(state.bytes_received)}"
+            base = f"▸ {state.lines_received} lines {_SEP} {_human_size(state.bytes_received)}"
             if state.rate_bps is not None and state.rate_bps > 0:
-                base += f" · {state.rate_bps / 1024:.0f} kB/s"
+                base += f" {_SEP} {state.rate_bps / 1024:.0f} kB/s"
             return base + _elapsed_suffix() + _stall_suffix()
         return f"▸ {state.lines_received} lines written" + _elapsed_suffix() + _stall_suffix()
 
@@ -106,7 +109,7 @@ def microcopy_line(
 
     if cat == ToolCategory.WEB:
         status = state.last_status or "connecting"
-        return f"▸ {status} · {_human_size(state.bytes_received)}" + _elapsed_suffix() + _stall_suffix()
+        return f"▸ {status} {_SEP} {_human_size(state.bytes_received)}" + _elapsed_suffix() + _stall_suffix()
 
     if cat == ToolCategory.MCP:
         prov = spec.provenance or ""
@@ -116,13 +119,13 @@ def microcopy_line(
             server = parts[1] if len(parts) >= 3 else parts[-1]
         if not server:
             server = spec.name or "?"
-        return f"▸ mcp · {server} server" + _elapsed_suffix() + _stall_suffix()
+        return f"▸ mcp {_SEP} {server} server" + _elapsed_suffix() + _stall_suffix()
 
     if cat == ToolCategory.CODE:
         # B1: match SHELL/FILE rate display for consistency
-        base = f"▸ {state.lines_received} lines · {_human_size(state.bytes_received)}"
+        base = f"▸ {state.lines_received} lines {_SEP} {_human_size(state.bytes_received)}"
         if state.rate_bps is not None and state.rate_bps > 0:
-            base += f" · {state.rate_bps / 1024:.0f} kB/s"
+            base += f" {_SEP} {state.rate_bps / 1024:.0f} kB/s"
         return base + _elapsed_suffix() + _stall_suffix()
 
     if cat == ToolCategory.AGENT:

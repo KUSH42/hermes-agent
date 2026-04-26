@@ -31,6 +31,13 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
+# DC-4: Single source for user-facing filter prefixes
+# ---------------------------------------------------------------------------
+
+KNOWN_PREFIXES: tuple[str, ...] = ("file:", "shell:", "error:")
+
+
+# ---------------------------------------------------------------------------
 # Layout helpers
 # ---------------------------------------------------------------------------
 
@@ -298,6 +305,15 @@ ToolsScreen > #tools-footer {
     background: $primary 10%;
     color: $text-muted;
 }
+ToolsScreen > #prefix-legend {
+    height: 1;
+    padding: 0 1;
+    color: $text-muted;
+    text-style: dim;
+}
+ToolsScreen > #prefix-legend.--hidden {
+    display: none;
+}
 """
 
     BINDINGS = [
@@ -347,14 +363,36 @@ ToolsScreen > #tools-footer {
         self._rebuild_task: asyncio.Task | None = None
         self._filter_task: asyncio.Task | None = None
 
+        # DC-3: per-open instance flag (not the persistent session flag).
+        self._prefix_used: bool = False
+        from hermes_cli.tui.services.session_state import load_discoverability_state
+        self._disc_state = load_discoverability_state()
+
+    def _legend_text(self) -> str:
+        """Build legend strip text from KNOWN_PREFIXES."""
+        chips = "  ".join(f"[{p}]" for p in KNOWN_PREFIXES if p != "error:")
+        examples = "  ".join(
+            f"{p}src/" if p == "file:" else f"{p}git" if p == "shell:" else p.rstrip(":")
+            for p in KNOWN_PREFIXES if p != "error:"
+        )
+        return f"prefixes: {chips}   examples: {examples}"
+
     def compose(self) -> ComposeResult:
         yield Static("", id="tools-header")
         yield Static("", id="gantt-scale")
         yield ListView(id="tools-list")
+        _prefix_hint = " ".join(KNOWN_PREFIXES)
         yield Horizontal(
             Horizontal(id="filter-pills-row"),
-            Input(id="filter-input", placeholder="filter… (prefix: file: shell: error:)"),
+            Input(id="filter-input", placeholder=f"filter… (prefix: {_prefix_hint})"),
             id="filter-row",
+        )
+        # DC-3: legend strip — auto-hide after first successful prefix use.
+        _legend_hidden = self._disc_state.tools_filter_first_use
+        yield Static(
+            self._legend_text(),
+            id="prefix-legend",
+            classes="--hidden" if _legend_hidden else "",
         )
         yield Static(
             "[Enter] jump  [Esc] close  [/] filter  [C] clear  [s] sort  [Shift+T] tree/timeline  [x] export  [r] refresh",
@@ -570,6 +608,7 @@ ToolsScreen > #tools-footer {
         if event.input.id == "filter-input":
             self._filter_text = event.value
             await self._apply_filter()
+            self._update_legend_visibility(event.value)
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "filter-input":
@@ -577,7 +616,39 @@ ToolsScreen > #tools-footer {
             fi.display = False
             await self.action_jump_to_panel()
 
+    def _update_legend_visibility(self, filter_value: str) -> None:
+        """DC-3: show/hide the prefix legend strip based on filter input state."""
+        if self._disc_state.tools_filter_first_use:
+            return
+        try:
+            legend = self.query_one("#prefix-legend", Static)
+        except Exception:
+            return
+        value = filter_value.lower()
+        if not value:
+            # Empty filter — reset _prefix_used and reshow strip.
+            self._prefix_used = False
+            legend.remove_class("--hidden")
+            return
+        # Check for a successful filter: recognized prefix + non-whitespace remainder + non-empty results.
+        for prefix in KNOWN_PREFIXES:
+            if value.startswith(prefix):
+                remainder = value[len(prefix):].strip()
+                if remainder and self._filtered:
+                    self._prefix_used = True
+                    legend.add_class("--hidden")
+                    return
+                break
+
     async def action_dismiss_overlay(self) -> None:
+        # DC-3: deferred write — persist first-use flag if a prefix was used this session.
+        if self._prefix_used and not self._disc_state.tools_filter_first_use:
+            self._disc_state.tools_filter_first_use = True
+            try:
+                from hermes_cli.tui.services.session_state import save_discoverability_state
+                save_discoverability_state(self._disc_state)
+            except Exception:
+                _log.debug("action_dismiss_overlay: could not save discoverability state", exc_info=True)
         # M9: persist filter state for same-turn reopens
         _tools_state.filter_text = getattr(self, "_filter_text", "")
         _tools_state.active_categories = frozenset(getattr(self, "_active_categories", set()))
@@ -775,11 +846,10 @@ ToolsScreen > #tools-footer {
         cat_filter = self._active_categories
 
         # D5: detect and strip prefix filters from text
-        _KNOWN_PREFIXES = ("file:", "shell:", "mcp:", "code:", "web:", "search:", "agent:", "error:")
         category_prefix: str | None = None
         errors_prefix: bool = False
         remaining_text = text
-        for prefix in _KNOWN_PREFIXES:
+        for prefix in KNOWN_PREFIXES:
             if text.startswith(prefix):
                 if prefix == "error:":
                     errors_prefix = True

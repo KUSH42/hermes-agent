@@ -51,6 +51,11 @@ MARKDOWN_ENABLED: bool = (
 # Module-level constants
 # ---------------------------------------------------------------------------
 
+_MAX_FOOTNOTES: int = 500
+_MAX_CITATIONS: int = 500
+_MAX_MATH_LINES: int = 10_000
+_MAX_CODE_FENCE_BUFFER: int = 500
+
 # Matches opening fence: ```lang or ~~~lang (3+ backticks or tildes)
 # Group 1: fence chars (length = fence depth)
 # Group 2: language specifier (may be empty string)
@@ -661,6 +666,12 @@ class ResponseFlowEngine:
         if fn is not None:
             label, body = fn
             if label not in self._footnote_defs:
+                if len(self._footnote_defs) >= _MAX_FOOTNOTES:
+                    logger.warning(
+                        "footnote buffer cap (%d entries) reached; dropping new entry %r",
+                        _MAX_FOOTNOTES, label,
+                    )
+                    return True
                 self._footnote_order.append(label)
             self._footnote_defs[label] = body
             self._footnote_def_open = label
@@ -676,6 +687,12 @@ class ResponseFlowEngine:
         cite = self._clf.is_citation(raw)
         if cite is not None:
             _n, title, url = cite
+            if _n not in self._cite_entries and len(self._cite_entries) >= _MAX_CITATIONS:
+                logger.warning(
+                    "citation buffer cap (%d entries) reached; dropping citation %d",
+                    _MAX_CITATIONS, _n,
+                )
+                return True
             self._cite_entries[_n] = (title, url)
             if _n not in self._cite_order:
                 self._cite_order.append(_n)
@@ -863,6 +880,14 @@ class ResponseFlowEngine:
                 self._math_env = ""
                 self._state = "NORMAL"
             else:
+                if len(self._math_lines) >= _MAX_MATH_LINES:
+                    logger.warning(
+                        "math block exceeded %d lines; aborting math state",
+                        _MAX_MATH_LINES,
+                    )
+                    self._state = "NORMAL"
+                    self._math_lines.clear()
+                    return True
                 self._math_lines.append(raw)
             return True
 
@@ -1291,7 +1316,13 @@ class ResponseFlowEngine:
         to normal prose path.
         """
         if _NUMBERED_LINE_RE.match(plain):
-            self._code_fence_buffer.append(plain)
+            if len(self._code_fence_buffer) < _MAX_CODE_FENCE_BUFFER:
+                self._code_fence_buffer.append(plain)
+            else:
+                logger.debug(
+                    "code fence buffer cap (%d lines) reached; dropping overflow line",
+                    _MAX_CODE_FENCE_BUFFER,
+                )
         else:
             self._flush_code_fence_buffer()
             self._write_prose(Text.from_ansi(_normalize_ansi_for_render(inline_ansi)), plain)

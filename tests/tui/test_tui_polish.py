@@ -166,7 +166,11 @@ class TestGutterUnification:
 
     def test_drop_order_updated(self):
         from hermes_cli.tui.tool_blocks._header import _DROP_ORDER
-        assert _DROP_ORDER == ["linecount", "duration", "chip", "hero", "diff", "stderrwarn", "remediation", "exit", "chevron", "flash"]
+        # ER-2: stderrwarn + remediation removed; drop order now has 8 entries
+        assert "stderrwarn" not in _DROP_ORDER
+        assert "remediation" not in _DROP_ORDER
+        assert "exit" in _DROP_ORDER
+        assert "chip" in _DROP_ORDER
 
 
 # ---------------------------------------------------------------------------
@@ -557,39 +561,41 @@ class TestFlashColor:
 class TestTailZoneOrdering:
     def test_drop_order_flash_first(self):
         from hermes_cli.tui.tool_blocks._header import _DROP_ORDER
-        assert _DROP_ORDER[0] == "linecount"
+        # ER-2: chip is now first (lowest priority); stderrwarn/remediation removed
+        assert _DROP_ORDER[0] == "chip"
 
     def test_drop_order_linecount_before_diff(self):
         from hermes_cli.tui.tool_blocks._header import _DROP_ORDER
         assert _DROP_ORDER.index("linecount") < _DROP_ORDER.index("diff")
 
-    def test_drop_order_stderrwarn_after_diff(self):
+    def test_drop_order_exit_last(self):
+        """exit must be the last (highest-priority) segment in the drop order."""
         from hermes_cli.tui.tool_blocks._header import _DROP_ORDER
-        assert _DROP_ORDER.index("diff") < _DROP_ORDER.index("stderrwarn")
+        assert _DROP_ORDER[-1] == "exit"
 
     def test_drop_order_chevron_last(self):
+        """chevron drops before exit."""
         from hermes_cli.tui.tool_blocks._header import _DROP_ORDER
-        assert _DROP_ORDER[-1] == "flash"
+        assert _DROP_ORDER.index("chevron") < _DROP_ORDER.index("exit")
 
-    def test_trim_drops_linecount_before_stderrwarn(self):
+    def test_trim_drops_linecount_before_chevron(self):
         from hermes_cli.tui.tool_blocks._header import _trim_tail_segments
         segments = [
             ("linecount", Text("  5L")),
-            ("stderrwarn", Text("  ⚠ stderr (e)")),
             ("chevron", Text("  ▸")),
         ]
-        # Budget that allows only stderrwarn + chevron (dropping linecount first)
-        budget = Text("  ⚠ stderr (e)").cell_len + Text("  ▸").cell_len + 1
+        # Budget that allows only chevron (dropping linecount first)
+        budget = Text("  ▸").cell_len + 1
         result = _trim_tail_segments(segments, budget)
         names = [n for n, _ in result]
         assert "linecount" not in names
-        assert "stderrwarn" in names
+        assert "chevron" in names
 
     def test_trim_preserves_chevron_longest(self):
         from hermes_cli.tui.tool_blocks._header import _trim_tail_segments
         segments = [
             ("linecount", Text("  5L")),
-            ("stderrwarn", Text("  ⚠ stderr (e)")),
+            ("duration", Text("  1.2s")),
             ("chevron", Text("  ▸")),
         ]
         budget = Text("  ▸").cell_len + 1
@@ -606,24 +612,12 @@ class TestTailZoneOrdering:
         # duration append comes before flash in source
         assert dur_pos < flash_pos
 
-    def test_stderrwarn_after_duration_in_source(self):
+    def test_stderrwarn_removed_from_source(self):
+        """ER-2: 'stderrwarn' segment construction must not appear in _render_v4 source."""
         import inspect
         from hermes_cli.tui.tool_blocks import _header as m
         src = inspect.getsource(m.ToolHeader._render_v4)
-        dur_pos = src.find('"duration"')
-        stderr_pos = src.find('"stderrwarn"')
-        # stderrwarn append comes after duration in source
-        assert dur_pos < stderr_pos
-
-    def test_stderrwarn_style_is_bold(self):
-        import inspect
-        from hermes_cli.tui.tool_blocks import _header as m
-        src = inspect.getsource(m.ToolHeader._render_v4)
-        # stderrwarn style should use bold warn_color not dim red
-        stderr_idx = src.find('"stderrwarn"')
-        # the text.append after it should contain bold
-        local_src = src[stderr_idx:stderr_idx+200]
-        assert "bold" in local_src
+        assert '"stderrwarn"' not in src, "stderrwarn segment still present in _render_v4"
 
     def test_trim_all_segments_in_large_budget(self):
         from hermes_cli.tui.tool_blocks._header import _trim_tail_segments
@@ -632,7 +626,7 @@ class TestTailZoneOrdering:
             ("chevron", Text("  ▸")),
             ("duration", Text("  1.2s")),
             ("flash", Text("  ✓ saved")),
-            ("stderrwarn", Text("  ⚠ stderr (e)")),
+            ("exit", Text("  exit 1")),
         ]
         result = _trim_tail_segments(segments, 9999)
         assert len(result) == 5

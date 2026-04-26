@@ -31,17 +31,17 @@ def test_drops_flash_first():
     assert "flash" in names
 
 
-def test_drops_chevron_before_stderrwarn():
-    # HW-1: stderrwarn is a recovery affordance; chevron is cosmetic — chevron drops first.
+def test_drops_chevron_before_exit():
+    # ER-2: stderrwarn removed; chevron still drops before exit.
     segs = [
         _seg("chevron", "  ▾"),
-        _seg("stderrwarn", "  ⚠ stderr (e)"),
+        _seg("exit", "  exit 1"),
     ]
     total_w = sum(s.cell_len for _, s in segs)
     result = _trim_tail_segments(segs, budget=total_w - 1)
     names = [n for n, _ in result]
     assert "chevron" not in names
-    assert "stderrwarn" in names
+    assert "exit" in names
 
 
 def test_drops_linecount_before_chevron():
@@ -63,7 +63,7 @@ def test_trim_preserves_budget(width: int):
         _seg("diff", "  +100 -50"),
         _seg("chevron", "  ▾"),
         _seg("flash", "  ✓ completed"),
-        _seg("stderrwarn", "  ⚠ stderr (e)"),
+        _seg("exit", "  exit 1"),
     ]
     budget = max(0, width - MIN_LABEL_CELLS - 5)  # 5 = fake prefix
     result = _trim_tail_segments(segs, budget=budget)

@@ -50,26 +50,25 @@ class TestDropOrder:
     def _segs_all(self) -> list:
         """One 3-cell segment per slot in DEFAULT order."""
         names = ["chip", "linecount", "duration", "flash", "chevron",
-                 "diff", "hero", "stderrwarn", "remediation", "exit"]
+                 "diff", "hero", "exit"]
         return [_seg(n, 3) for n in names]
 
-    def test_narrow_keeps_remediation_over_chip(self):
+    def test_narrow_keeps_exit_over_chip(self):
         segs = self._segs_all()
         total = sum(s.cell_len for _, s in segs)
         # budget: drop chip + linecount + duration (3 cosmetics × 3 cells each)
         result = _trim_tail_segments(segs, budget=total - 9, drop_order=_DROP_ORDER_DEFAULT)
         names = _names(result)
-        assert "remediation" in names
+        assert "exit" in names
         assert "chip" not in names
 
-    def test_narrow_keeps_stderrwarn_over_duration(self):
+    def test_narrow_keeps_hero_over_duration(self):
         segs = self._segs_all()
         total = sum(s.cell_len for _, s in segs)
-        # drop chip + linecount + duration → next candidate is flash
-        # force budget where duration is still gone but stderrwarn stays
+        # drop chip + linecount + duration → hero stays
         result = _trim_tail_segments(segs, budget=total - 9, drop_order=_DROP_ORDER_DEFAULT)
         names = _names(result)
-        assert "stderrwarn" in names
+        assert "hero" in names
         assert "duration" not in names
 
     def test_very_narrow_keeps_only_exit(self):
@@ -172,50 +171,23 @@ class TestCollapsedActionsCache:
 
 class TestFooterCompactRows:
 
-    def _make_footer(self, *, compact: bool = False) -> FooterPane:
-        fp = FooterPane()
-        if compact:
-            fp._classes.add("compact")  # type: ignore[attr-defined]
-        return fp
-
-    def _render(self, fp: FooterPane, tail: str):
-        """Call _render_stderr with .app property mocked to None."""
-        with patch.object(type(fp), "app", new_callable=PropertyMock, return_value=None):
-            return fp._render_stderr(tail)
-
-    def test_compact_keeps_stderr_one_line(self):
-        fp = self._make_footer(compact=True)
-        rendered = self._render(fp, "line1\nline2\nline3\nline4\nline5")
-        assert "\n" not in rendered.plain
-        assert "line5" in rendered.plain
-        assert "(e for full)" in rendered.plain
-
-    def test_wide_shows_all(self):
-        fp = self._make_footer(compact=False)
-        rendered = self._render(fp, "line1\nline2\nline3")
-        assert "line1" in rendered.plain
-        assert "line3" in rendered.plain
-        assert "(e for full)" not in rendered.plain
-
-    def test_compact_empty_stderr_no_crash(self):
-        fp = self._make_footer(compact=True)
-        rendered = self._render(fp, "")
-        assert rendered.plain == ""
-
     def test_compact_hides_artifact_row_css(self):
         css = FooterPane.DEFAULT_CSS
         assert "compact > .artifact-row" in css and "display: none" in css
 
-    def test_compact_keeps_stderr_visible_css(self):
-        # compact CSS must NOT hide footer-stderr
-        import re
+    def test_footer_no_render_stderr_method(self):
+        # ER-1: stderr evidence moved to body; footer no longer has _render_stderr
+        assert not hasattr(FooterPane, "_render_stderr")
+
+    def test_footer_no_footer_stderr_css_class(self):
+        # ER-1: footer-stderr CSS class removed; stderr lives in body .--stderr-tail
         css = FooterPane.DEFAULT_CSS
-        # Check compact rule does not include display:none on footer-stderr
-        # (the has-stderr rule still shows it; compact adds max-height constraint only)
-        compact_hide_stderr = re.search(
-            r"compact\s*>?\s*\.footer-stderr\s*\{[^}]*display:\s*none", css
-        )
-        assert compact_hide_stderr is None
+        assert "footer-stderr" not in css
+
+    def test_footer_no_has_stderr_css_class(self):
+        # ER-1: has-stderr state class removed from footer
+        css = FooterPane.DEFAULT_CSS
+        assert "has-stderr" not in css
 
 
 # ---------------------------------------------------------------------------
@@ -272,16 +244,16 @@ class TestSeparatorPalette:
 
 def _check_drop_order_invariants(order: list[str], label: str) -> None:
     assert order[-1] == "exit", f"{label}: exit must be last (got {order[-1]!r})"
-    for recovery in ("remediation", "stderrwarn"):
-        if recovery not in order:
-            continue  # defensive: future tier lists may omit segments
-        for cosmetic in ("chip", "linecount", "duration"):
-            if cosmetic not in order:
-                continue
-            assert order.index(cosmetic) < order.index(recovery), (
-                f"{label}: {cosmetic!r} must drop before {recovery!r} "
-                f"(indices {order.index(cosmetic)} vs {order.index(recovery)})"
-            )
+    # ER-2: stderrwarn and remediation removed from header drop orders
+    for removed in ("remediation", "stderrwarn"):
+        assert removed not in order, f"{label}: {removed!r} must not appear (removed per ER-2)"
+    for cosmetic in ("chip", "linecount", "duration"):
+        if cosmetic not in order:
+            continue
+        assert order.index(cosmetic) < order.index("exit"), (
+            f"{label}: {cosmetic!r} must drop before exit "
+            f"(indices {order.index(cosmetic)} vs {order.index('exit')})"
+        )
 
 
 class TestDropOrderInvariants:

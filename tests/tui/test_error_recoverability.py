@@ -41,10 +41,8 @@ class _FakePanel:
     def __init__(self) -> None:
         self._classes: set[str] = set()
         self._result_summary_v4 = None
-        self._header_remediation_hint: str | None = None
         self._block = MagicMock()
         self._block._header = MagicMock()
-        self._block._header._remediation_hint = None
         self._footer_pane = None
         self._accent = None
         self._start_time = 0.0
@@ -84,26 +82,8 @@ class _FakePanel:
 
     # We pull in the real logic from ToolPanel for the parts we care about
     def _run_remediation_and_schedule(self, summary: Any) -> None:
-        """Replicate the C-2 + B-2 block from set_result_summary."""
+        """Replicate the B-2 block from set_result_summary (ER-2: C-2 remediation removed)."""
         import os as _os
-        from hermes_cli.tui.tool_panel import ToolPanel
-
-        # C-2: store short remediation hint
-        if summary.is_error and summary.error_kind is not None:
-            _remediation = next(
-                (c.remediation for c in (summary.chips or ()) if c.remediation),
-                None,
-            )
-            if _remediation:
-                _short = _remediation.split(";")[0].split(".")[0].strip()
-                self._header_remediation_hint = _short[:28] + ("…" if len(_short) > 28 else "")
-            else:
-                self._header_remediation_hint = None
-            _hdr = getattr(self._block, "_header", None)
-            if _hdr is not None:
-                _hdr._remediation_hint = self._header_remediation_hint
-        else:
-            self._header_remediation_hint = None
 
         # B-2 schedule
         if _os.environ.get("HERMES_DETERMINISTIC"):
@@ -228,14 +208,6 @@ class _H:
         else:
             tail_segments.append(("chevron", Text("  ·", style="dim #444444")))
 
-        # stderrwarn stub for coexistence
-        if (self._panel is not None and
-                self._panel.collapsed and
-                self._tool_icon_error):
-            rs_v4 = getattr(self._panel, "_result_summary_v4", None)
-            if rs_v4 is not None and getattr(rs_v4, "stderr_tail", ""):
-                tail_segments.append(("stderrwarn", Text("  ⚠ stderr (e)", style="bold #FFA726")))
-
         # R10 exit code
         if is_collapsed and self._is_complete:
             code = getattr(self, "_exit_code", None)
@@ -245,12 +217,6 @@ class _H:
                         tail_segments.append(("exit", Text("  ok", style="dim green")))
                 else:
                     tail_segments.append(("exit", Text(f"  exit {code}", style="bold red")))
-
-        # C-2 remediation
-        if is_collapsed and self._is_complete and self._tool_icon_error:
-            _rh = getattr(self, "_remediation_hint", None)
-            if _rh:
-                tail_segments.append(("remediation", Text(f"  hint:{_rh}", style="dim yellow")))
 
         return _trim_tail_segments(tail_segments, budget)
 
@@ -383,82 +349,47 @@ class TestC1CopyErrInjection:
 
 
 # ---------------------------------------------------------------------------
-# C-2 tests — remediation hint storage and header tail segment
+# ER-2 tests — header has no stderrwarn/remediation segments (moved to body/footer)
 # ---------------------------------------------------------------------------
 
-def _make_chip(remediation: str | None = None) -> Any:
-    chip = MagicMock()
-    chip.remediation = remediation
-    chip.text = "chip"
-    chip.tone = "error"
-    return chip
-
-
-class TestC2RemediationHint:
-    def test_er_c2_01_hint_set_on_panel_when_error_with_remediation(self) -> None:
-        chip = _make_chip(remediation="increase timeout_sec value")
-        summary = _make_summary(is_error=True, error_kind="timeout", chips=(chip,))
-        panel = _FakePanel()
-        with _non_deterministic():
-            panel._run_remediation_and_schedule(summary)
-        assert panel._header_remediation_hint is not None
-        assert "timeout" in panel._header_remediation_hint or "increase" in panel._header_remediation_hint
-
-    def test_er_c2_02_header_hint_matches_panel_hint(self) -> None:
-        chip = _make_chip(remediation="check auth credentials")
-        summary = _make_summary(is_error=True, error_kind="auth", chips=(chip,))
-        panel = _FakePanel()
-        with _non_deterministic():
-            panel._run_remediation_and_schedule(summary)
-        assert panel._block._header._remediation_hint == panel._header_remediation_hint
-
-    def test_er_c2_03_hint_truncated_at_28_chars(self) -> None:
-        long_remediation = "increase timeout_sec parameter to at least 120 seconds"
-        chip = _make_chip(remediation=long_remediation)
-        summary = _make_summary(is_error=True, error_kind="timeout", chips=(chip,))
-        panel = _FakePanel()
-        with _non_deterministic():
-            panel._run_remediation_and_schedule(summary)
-        hint = panel._header_remediation_hint
-        assert hint is not None
-        assert len(hint) <= 29  # 28 chars + optional ellipsis
-
-    def test_er_c2_04_collapsed_error_with_hint_has_remediation_segment(self) -> None:
-        h = _H(
-            is_complete=True,
-            tool_icon_error=True,
-            collapsed=True,
-            remediation_hint="increase timeout",
-            panel_collapsed=True,
-        )
-        assert "remediation" in h._tail_names()
-
-    def test_er_c2_05_not_collapsed_no_remediation_segment(self) -> None:
-        h = _H(
-            is_complete=True,
-            tool_icon_error=True,
-            collapsed=False,
-            remediation_hint="increase timeout",
-            panel_collapsed=False,
-        )
-        assert "remediation" not in h._tail_names()
-
-    def test_er_c2_06_no_error_no_remediation_segment(self) -> None:
-        h = _H(
-            is_complete=True,
-            tool_icon_error=False,
-            collapsed=True,
-            remediation_hint="increase timeout",
-            panel_collapsed=True,
-        )
-        assert "remediation" not in h._tail_names()
-
-    def test_er_c2_07_drop_order_position_and_length(self) -> None:
+class TestER2HeaderNoEvidence:
+    def test_er2_01_stderrwarn_absent_from_drop_order(self) -> None:
         from hermes_cli.tui.tool_blocks._header import _DROP_ORDER
-        assert "remediation" in _DROP_ORDER
-        assert _DROP_ORDER.index("stderrwarn") < _DROP_ORDER.index("remediation")
-        assert _DROP_ORDER.index("remediation") < _DROP_ORDER.index("exit")
-        assert len(_DROP_ORDER) == 10  # was 9, now 10
+        assert "stderrwarn" not in _DROP_ORDER
+
+    def test_er2_02_remediation_absent_from_drop_order(self) -> None:
+        from hermes_cli.tui.tool_blocks._header import _DROP_ORDER
+        assert "remediation" not in _DROP_ORDER
+
+    def test_er2_03_drop_order_length_is_8(self) -> None:
+        from hermes_cli.tui.tool_blocks._header import _DROP_ORDER
+        assert len(_DROP_ORDER) == 8
+
+    def test_er2_04_no_stderrwarn_segment_on_error(self) -> None:
+        h = _H(is_complete=True, tool_icon_error=True, collapsed=True, panel_collapsed=True)
+        assert "stderrwarn" not in h._tail_names()
+
+    def test_er2_05_no_remediation_segment_even_with_hint(self) -> None:
+        h = _H(
+            is_complete=True,
+            tool_icon_error=True,
+            collapsed=True,
+            remediation_hint="increase timeout",
+            panel_collapsed=True,
+        )
+        assert "remediation" not in h._tail_names()
+
+    def test_er2_06_exit_still_present_on_error(self) -> None:
+        h = _H(is_complete=True, tool_icon_error=True, collapsed=True,
+               exit_code=1, panel_collapsed=True)
+        assert "exit" in h._tail_names()
+
+    def test_er2_07_no_remediation_hint_written_to_header(self) -> None:
+        """ER-2: _completion.py no longer writes _remediation_hint to header."""
+        import inspect
+        from hermes_cli.tui.tool_panel import _completion
+        src = inspect.getsource(_completion)
+        assert "_remediation_hint" not in src
 
 
 # ---------------------------------------------------------------------------

@@ -16,6 +16,12 @@ if TYPE_CHECKING:
     from hermes_cli.tui.tool_payload import ResultKind
 
 
+# DC-1: three static hint sets — lowest priority first (rightmost in tuple = lowest).
+# [f1] all is always the last item and is never dropped by _format.
+DEFAULT_HINTS: tuple[str, ...] = ("[y] copy", "[t] kind", "[r] retry", "[e] stderr", "[f1] all")
+ERROR_HINTS: tuple[str, ...] = ("[y] copy", "[e] stderr ▸", "[r] retry", "[f1] all")
+COLLAPSED_HINTS: tuple[str, ...] = ("[Enter] expand", "[y] copy", "[f1] all")
+
 # HF-B: re-show toggle hint after this many seconds of unfocus
 TOGGLE_HINT_RESHOW_SECONDS = 300
 
@@ -114,42 +120,6 @@ class _ToolPanelActionsMixin:
                 self._flash_header("trace unavailable", tone="warning")
                 self._user_collapse_override = False  # type: ignore[attr-defined]
                 self._user_override_tier = None  # type: ignore[attr-defined]
-
-    def action_density_cycle(self) -> None:
-        """Cycle density DEFAULT → COMPACT → HERO → DEFAULT via explicit D key."""
-        from hermes_cli.tui.tool_panel.density import DensityInputs, DensityTier
-        from hermes_cli.tui.services.tools import ToolCallState
-
-        requested = self._next_tier_in_cycle(self._resolver.tier)  # type: ignore[attr-defined]
-        self._user_collapse_override = True  # type: ignore[attr-defined]
-        self._user_override_tier = requested  # type: ignore[attr-defined]
-        self._auto_collapsed = False  # type: ignore[attr-defined]
-        _vs = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
-        phase = _vs.state if _vs is not None else ToolCallState.DONE
-        _vs_kind = getattr(_vs, "kind", None) if _vs is not None else None
-        kind = _vs_kind.kind if _vs_kind is not None else None
-        inputs = DensityInputs(
-            phase=phase,
-            is_error=self._is_error(),
-            has_focus=False,
-            user_scrolled_up=False,
-            user_override=True,
-            user_override_tier=requested,  # type: ignore[arg-type]
-            body_line_count=self._body_line_count(),  # type: ignore[attr-defined]
-            threshold=0,
-            row_budget=None,
-            kind=kind,
-            parent_clamp=self._parent_clamp_tier,  # type: ignore[attr-defined]
-        )
-        self._resolver.resolve(inputs)  # type: ignore[attr-defined]
-        if self._resolver.tier != requested:  # type: ignore[attr-defined]
-            # Resolver rejected the target tier (e.g. HERO ineligible for short output)
-            self._flash_header(
-                f"{requested.value} → {self._resolver.tier.value}",  # type: ignore[attr-defined]
-                tone="warning",
-            )
-        else:
-            self._flash_header(f"density: {self._resolver.tier.value}")  # type: ignore[attr-defined]
 
     def action_open_primary(self) -> None:
         import os
@@ -561,19 +531,48 @@ class _ToolPanelActionsMixin:
     def on_blur(self) -> None:
         self._refresh_collapsed_strip()  # type: ignore[attr-defined]
 
+    def _available_width(self) -> int:
+        """Return the content area width in terminal cells."""
+        try:
+            return self.content_region.width  # type: ignore[attr-defined]
+        except Exception:
+            return 80
+
     def _is_error(self) -> bool:
         """True when the panel is in a completed error state (non-zero exit code)."""
         rs = getattr(self, "_result_summary_v4", None)  # type: ignore[attr-defined]
         return rs is not None and rs.exit_code not in (None, 0)
 
+    def _format(self, hints: tuple[str, ...]) -> str:
+        """Join hints with ·-separators, dropping lowest-priority items to fit width."""
+        full = " · ".join(hints)
+        w = self._available_width()
+        if w >= len(full):
+            return full
+        body = list(hints[:-1])
+        tail = hints[-1]
+        while body:
+            body.pop()
+            candidate = " · ".join(body + ["…", tail])
+            if w >= len(candidate):
+                return candidate
+        return tail[:w]
+
+    def _select_hint_set(self) -> tuple[str, ...]:
+        if getattr(self, "collapsed", False):  # type: ignore[attr-defined]
+            return COLLAPSED_HINTS
+        if self._is_error():
+            return ERROR_HINTS
+        return DEFAULT_HINTS
+
     def _refresh_hint_row(self) -> None:
-        """Recompute hint row content from the dynamic builder."""
+        """Recompute and apply hint row content based on focus and affordances state."""
         hint_row = getattr(self, "_hint_row", None)  # type: ignore[attr-defined]
         if hint_row is None:
             return
         show = getattr(self, "has_focus", False) or self.has_class("--has-affordances")  # type: ignore[attr-defined]
         if show:
-            hint_row.update(self._build_hint_text())
+            hint_row.update(self._format(self._select_hint_set()))
             hint_row.add_class("--has-hint")
         else:
             hint_row.update("")
@@ -597,7 +596,7 @@ class _ToolPanelActionsMixin:
         self._last_resize_w = width  # type: ignore[attr-defined]
         always_visible = self.has_class("--has-affordances")  # type: ignore[attr-defined]
         if (self._hint_visible or always_visible) and self._hint_row is not None:  # type: ignore[attr-defined]
-            self._hint_row.update(self._build_hint_text())  # type: ignore[attr-defined]
+            self._hint_row.update(self._format(self._select_hint_set()))  # type: ignore[attr-defined]
 
     def _visible_footer_action_kinds(self) -> "set[str]":
         """Return the set of action kind names currently visible as chips in the footer."""
@@ -613,194 +612,88 @@ class _ToolPanelActionsMixin:
             return set()
 
     def _build_hint_text(self) -> "Any":
-        """Render hint row as a width-aware list of capability-bound keys.
-
-        Order: primary (always shown) → contextual (visible when capable) →
-        discovery (rotating tip + F1). Truncator pins F1 and primary; drops
-        contextual right-to-left with explicit '+N more' marker (see _truncate_hints).
-        """
-        from rich.text import Text  # noqa: F401 (used by _render_hints return type)
-
+        from rich.text import Text
         _mounted = getattr(self, "is_mounted", True)
         _size = getattr(self, "size", None)
-        if not _mounted or _size is None:
-            width = 80
-        else:
-            width = _size.width or 80
+        width = ((_size.width if _size is not None else 0) or 80) if _mounted else 80
+        narrow = width < 50
 
-        primary, contextual = self._collect_hints()
-        return self._render_hints(primary, contextual, width)
-
-    def _collect_hints(self) -> "tuple[list[tuple[str, str]], list[tuple[str, str]]]":
-        """Compute (primary, contextual) hint pairs from current panel state."""
         rs = self._result_summary_v4  # type: ignore[attr-defined]
-        block = self._block  # type: ignore[attr-defined]
-        streaming = (
-            block is not None
-            and hasattr(block, "_completed")
-            and not block._completed
+        _block_streaming = (
+            hasattr(self._block, "_completed") and  # type: ignore[attr-defined]
+            not self._block._completed  # type: ignore[attr-defined]
         )
-        is_error = self._is_error()
-        is_collapsed = bool(getattr(self, "collapsed", False))  # type: ignore[attr-defined]
 
-        # PRIMARY — always shown, max 2 entries.
         primary: list[tuple[str, str]] = []
-        if streaming:
+        if _block_streaming:
             primary.append(("Enter", "follow"))
-            primary.append(("f",     "tail"))
-        elif is_collapsed:
-            # "expand" (not "toggle") so the label is unambiguous about direction
-            primary.append(("Enter", "expand"))
-            primary.append(("y",     "copy"))
-        elif is_error:
-            # Replaces old ("x", "dismiss"): retry is the primary recovery action.
+        elif rs is not None and rs.is_error:
             primary.append(("Enter", "toggle"))
-            primary.append(("r",     "retry"))
+            primary.append(("x", "dismiss"))
         else:
             primary.append(("Enter", "toggle"))
-            primary.append(("y",     "copy"))
+            primary.append(("y", "copy"))
 
-        # CONTEXTUAL — capability-gated, dedup against visible footer chips.
-        visible = self._visible_footer_action_kinds()
+        # HF-A: consult visible footer chips to suppress duplicate hints
+        visible_action_kinds = self._visible_footer_action_kinds()
+
         contextual: list[tuple[str, str]] = []
-
-        # Body / pagination
-        if self._get_omission_bar() is not None:
-            contextual.append(("+", "more"))
+        if _block_streaming:
+            contextual.append(("f", "tail"))
+        bar = self._get_omission_bar()
+        if bar is not None:
             contextual.append(("*", "all"))
-
-        # Recovery (skip when footer already shows the chip)
         if rs is not None:
-            has_stderr = bool(rs.stderr_tail) or any(
+            has_copy_err = rs.stderr_tail or any(
                 a.kind == "copy_err" and a.payload for a in (rs.actions or ())
             )
-            if has_stderr and "copy_err" not in visible:
+            # Recovery contract (ER-4): dedup against visible footer chips. When the footer is
+            # hidden (HERO tier, user_collapsed), the hint row provides the only keyboard surface
+            # for recovery, so we always add the hint in that case.
+            if has_copy_err and "copy_err" not in visible_action_kinds:
                 contextual.append(("e", "stderr"))
-            # Skip retry in contextual when it already appears in the primary bucket (error state)
-            if is_error and "retry" not in visible and not streaming and ("r", "retry") not in primary:
-                contextual.append(("r", "retry"))
-
-        # Artifacts
-        if rs is not None:
-            if self._result_paths_for_action() and "open_first" not in visible:
+            if self._result_paths_for_action() and "open_first" not in visible_action_kinds:
                 contextual.append(("o", "open"))
-            if any(a.kind == "url" for a in (rs.artifacts or ())):
+            has_urls = any(a.kind == "url" for a in (rs.artifacts or ()))
+            if has_urls:
                 contextual.append(("u", "urls"))
-            if any(a.kind == "edit_cmd" and a.payload for a in (rs.actions or ())):
+            has_edit = any(a.kind == "edit_cmd" and a.payload for a in (rs.actions or ()))
+            if has_edit:
                 contextual.append(("E", "edit"))
+            if rs.is_error and "retry" not in visible_action_kinds:
+                contextual.insert(0, ("r", "retry"))
+            # KO-4: Render-as cycle hint, post-streaming non-error blocks only.
+            if not _block_streaming and not rs.is_error:
+                contextual.insert(0, ("t", "render as"))
 
-        # Mode / kind — post-streaming, non-error only
-        if not streaming and not is_error and rs is not None:
-            contextual.append(("t", "render as"))
+        _power_keys_exist = bool(rs is not None)
 
-        # Power copy variants — available when there's a result body
-        if rs is not None and not streaming:
-            contextual.append(("I", "copy cmd"))
+        primary = primary[:2]
+        shown = list(primary)
+        if not narrow:
+            shown += contextual[:2]
 
-        # Density TRACE — diagnostic; surface only post-completion
-        if rs is not None and not streaming and not is_collapsed:
-            contextual.append(("alt+t", "trace"))
-
-        # Density cycle — explicit D key; surface post-completion (H-4)
-        if rs is not None and not streaming and not is_collapsed:
-            contextual.append(("D", "density"))
-
-        return primary, contextual
-
-    def _render_hints(
-        self,
-        primary: "list[tuple[str, str]]",
-        contextual: "list[tuple[str, str]]",
-        width: int,
-    ) -> "Any":
-        """Render the hint row: primary · contextual · +N more · F1 help [tip]."""
-        from rich.text import Text
-        from hermes_cli.tui.body_renderers._grammar import (
-            GLYPH_META_SEP, glyph as _glyph, chip as _chip,
-        )
-        from rich.cells import cell_len as _cell_len
-
-        sep = f" {_glyph(GLYPH_META_SEP)} "
-        sep_w = _cell_len(sep)
-        _HINT_ROW_MARGIN = 4  # Reserve space for gaps between primary/contextual/F1 regions
-
-        primary_t = Text()
-        for i, (k, l) in enumerate(primary[:2]):
+        t = Text()
+        for i, (key, label) in enumerate(shown):
             if i > 0:
-                primary_t.append(sep, style="dim")
-            primary_t.append_text(_chip(k, l, bracketed=False))
+                t.append("  ", style="dim")
+            t.append(key, style="bold")
+            t.append(f" {label}", style="dim")
 
-        # F1 always rendered as the trailing pinned slot
-        f1_t = Text()
-        f1_t.append("F1", style="bold dim")
-        f1_t.append(" help", style="dim")
+        # HF-C: label F1 and only show at wide widths
+        if _power_keys_exist and not narrow:
+            t.append("  F1 ", style="bold dim")
+            t.append("help", style="dim")
 
-        # Truncate contextual to fit budget (F1 and primary are reserved)
-        rendered_contextual, dropped_count = self._truncate_hints(
-            contextual,
-            budget=max(0, width - primary_t.cell_len - f1_t.cell_len - 2 * sep_w - _HINT_ROW_MARGIN),
-        )
-
-        out = Text()
-        out.append_text(primary_t)
-        if rendered_contextual.cell_len > 0:
-            out.append(sep, style="dim")
-            out.append_text(rendered_contextual)
-        if dropped_count > 0:
-            out.append(sep, style="dim")
-            out.append(f"+{dropped_count} more", style="dim italic")
-        out.append(sep, style="dim")
-        out.append_text(f1_t)
-
-        # Rotating power-key tip — wide widths only, post-streaming, non-error.
-        rs = self._result_summary_v4  # type: ignore[attr-defined]
-        streaming = (
-            self._block is not None  # type: ignore[attr-defined]
-            and hasattr(self._block, "_completed")  # type: ignore[attr-defined]
-            and not self._block._completed  # type: ignore[attr-defined]
-        )
-        if width >= 80 and rs is not None and not streaming and not rs.is_error:
+        # HF-G: append rotating power-key tip when wide and block is complete
+        if not narrow and rs is not None and not _block_streaming:
             from hermes_cli.tui.services import tool_tips
             tip_key, tip_label = tool_tips.current_tip()
-            out.append("  ", style="dim")
-            out.append(tip_key, style="bold dim italic")
-            out.append(f" {tip_label}", style="dim italic")
+            t.append("  ", style="dim")
+            t.append(tip_key, style="bold dim italic")
+            t.append(f" {tip_label}", style="dim italic")
 
-        return out
-
-    def _truncate_hints(
-        self,
-        contextual: "list[tuple[str, str]]",
-        budget: int,
-    ) -> "tuple[Any, int]":
-        """Return (rendered_text, dropped_count). Drops right-to-left to fit budget."""
-        from rich.text import Text
-        from hermes_cli.tui.body_renderers._grammar import (
-            GLYPH_META_SEP, glyph as _glyph, chip as _chip,
-        )
-        from rich.cells import cell_len as _cell_len
-
-        sep = f" {_glyph(GLYPH_META_SEP)} "
-        sep_w = _cell_len(sep)
-
-        fitted: list[tuple[str, str]] = []
-        used = 0
-        for k, l in contextual:
-            chip_w = _cell_len(k) + 1 + _cell_len(l)
-            next_w = used + (sep_w if fitted else 0) + chip_w
-            if next_w > budget:
-                break
-            fitted.append((k, l))
-            used = next_w
-
-        out = Text()
-        for i, (k, l) in enumerate(fitted):
-            if i > 0:
-                out.append(sep, style="dim")
-            out.append_text(_chip(k, l, bracketed=False))
-
-        dropped = len(contextual) - len(fitted)
-        return out, dropped
+        return t
 
     def _get_omission_bar(self) -> "Any | None":
         try:

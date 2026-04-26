@@ -1834,12 +1834,13 @@ def test_drop_order_is_plain_list():
 
 
 def test_drop_order_real_order():
-    """_DROP_ORDER must match the canonical order."""
+    """_DROP_ORDER must match the canonical order (stderrwarn+remediation removed per ER-2)."""
     from hermes_cli.tui.tool_blocks._header import _DROP_ORDER
     assert _DROP_ORDER == [
-        "flash", "remediation", "stderrwarn", "chip", "linecount",
-        "duration", "diff", "hero", "chevron", "exit",
+        "chip", "linecount", "duration", "flash", "chevron", "diff", "hero", "exit",
     ]
+    assert "stderrwarn" not in _DROP_ORDER
+    assert "remediation" not in _DROP_ORDER
 
 
 # ---------------------------------------------------------------------------

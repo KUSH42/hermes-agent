@@ -289,24 +289,23 @@ class TestQW05DropOrderKeepsExit:
         from hermes_cli.tui.tool_blocks._header import _DROP_ORDER
         assert _DROP_ORDER[-1] == "exit"
 
-    def test_flash_drops_first_under_pressure(self):
-        """flash is removed before linecount."""
+    def test_flash_drops_before_chevron(self):
+        """flash is removed before chevron."""
         from hermes_cli.tui.tool_blocks._header import _DROP_ORDER
         flash_idx = _DROP_ORDER.index("flash")
-        linecount_idx = _DROP_ORDER.index("linecount")
-        assert flash_idx < linecount_idx
+        chevron_idx = _DROP_ORDER.index("chevron")
+        assert flash_idx < chevron_idx
 
-    def test_remediation_drops_before_exit(self):
-        """remediation is dropped before exit."""
+    def test_no_stderrwarn_or_remediation_in_drop_order(self):
+        """ER-2: stderrwarn and remediation removed from drop order."""
         from hermes_cli.tui.tool_blocks._header import _DROP_ORDER
-        rem_idx = _DROP_ORDER.index("remediation")
-        exit_idx = _DROP_ORDER.index("exit")
-        assert rem_idx < exit_idx
+        assert "stderrwarn" not in _DROP_ORDER
+        assert "remediation" not in _DROP_ORDER
 
     def test_full_drop_order_length(self):
-        """_DROP_ORDER has exactly 10 entries (all segments accounted for)."""
+        """_DROP_ORDER has exactly 8 entries (stderrwarn+remediation removed per ER-2)."""
         from hermes_cli.tui.tool_blocks._header import _DROP_ORDER
-        assert len(_DROP_ORDER) == 10
+        assert len(_DROP_ORDER) == 8
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 """Backward-compat re-export shim — all symbols moved to layout_resolver.py (DU-3)."""
 from hermes_cli.tui.tool_panel.layout_resolver import (  # noqa: F401
     DensityTier,
+    DensityResult,
     LayoutInputs,
     LayoutInputs as DensityInputs,
     LayoutDecision,

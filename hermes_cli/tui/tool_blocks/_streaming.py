@@ -15,10 +15,12 @@ logger = logging.getLogger(__name__)
 
 from rich.text import Text
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 
-from hermes_cli.tui.widgets import CopyableRichLog, _strip_ansi
+from hermes_cli.tui.body_renderers import RendererKind
+from hermes_cli.tui.widgets import CopyableRichLog, FlashMessage, HintBar, KindOverrideChanged, _strip_ansi
 
 from hermes_cli.tui.animation import make_spinner_identity, SpinnerIdentity
 
@@ -89,24 +91,27 @@ class ToolTail(Static):
 class StreamingToolBlock(ToolBlock):
     """ToolBlock with IDLE → STREAMING → COMPLETED lifecycle.
 
-    Lines arrive via ``append_line()`` (called from the event loop via
-    ``call_from_thread``).  A 60 fps flush timer drains the pending-line
-    buffer into the RichLog.  Back-pressure is handled by:
-
-    * **Render throttle** — the flush timer batches all lines that arrived
-      between ticks into a single render pass.
-    * **Visible cap** — at most ``_VISIBLE_CAP`` (200) lines are written to
-      the RichLog.  Additional lines are tracked only in plain-text storage.
-    * **Byte cap** — lines longer than ``_LINE_BYTE_CAP`` (2000 chars) are
-      truncated before rendering and before plain-text storage.
-
-    Used for real-time output during tool execution (terminal, execute_code).
-    Content is written directly to the RichLog via ``_flush_pending()`` — the
-    inherited ``self._lines`` / ``self._plain_lines`` are always empty.
-
-    For post-completion summaries with full skin-refresh support, see
-    ``ToolBlock`` (static).
+    LL-4: `t` cycles renderer kind; `Shift+T` reverts to auto.
+    LL-5: adoption flash on GENERATED→STARTED transition.
     """
+
+    BINDINGS = [
+        Binding("t", "cycle_kind", "Cycle renderer kind"),
+        Binding("T", "kind_revert", "Revert to auto kind"),
+    ]
+
+    # ------------------------------------------------------------------
+    # docstring continued (not a second docstring — just a comment block)
+    # Lines arrive via ``append_line()`` (called from the event loop via
+    # ``call_from_thread``).  A 60 fps flush timer drains the pending-line
+    # buffer into the RichLog.  Back-pressure is handled by:
+    #
+    # * **Render throttle** — the flush timer batches all lines that arrived
+    #   between ticks into a single render pass.
+    # * **Visible cap** — at most ``_VISIBLE_CAP`` (200) lines are written to
+    #   the RichLog.  Additional lines are tracked only in plain-text storage.
+    # * **Byte cap** — lines longer than ``_LINE_BYTE_CAP`` (2000 chars) are
+    #   truncated before rendering and before plain-text storage.
 
     DEFAULT_CSS = "StreamingToolBlock { height: auto; }"
 
@@ -154,6 +159,11 @@ class StreamingToolBlock(ToolBlock):
         self._detected_cwd: str | None = None
         # PG-3: streaming error line count; reset to 0 in complete()
         self._line_err_count: int = 0
+        # LL-5: adoption flash — True on GENERATED entry, False on terminal states.
+        self._was_generated: bool = False
+        self._remove_adopted_timer: "Timer | None" = None
+        # LL-4: renderer kind override cycling
+        self._kind_override: "RendererKind | None" = None
         self._body._omission_parent_block = self
 
     def compose(self) -> ComposeResult:
@@ -288,6 +298,15 @@ class StreamingToolBlock(ToolBlock):
             self._duration_timer.stop()
         except Exception:
             pass
+        if self._remove_adopted_timer is not None:
+            self._remove_adopted_timer.stop()
+        # LL-4: clear kind chip directly — post_message unavailable after message loop closes
+        try:
+            self.app.query_one(HintBar).clear_kind_override()
+        except NoMatches:
+            pass
+        except Exception:
+            logger.debug("clear_kind_override on unmount failed", exc_info=True)
 
     def complete(self, duration: str, is_error: bool = False) -> None:
         if self._completed:
@@ -618,6 +637,96 @@ class StreamingToolBlock(ToolBlock):
                 cap_msg=cap_msg,
                 visible_cap=visible_cap,  # H1
             )
+
+    # ------------------------------------------------------------------
+    # LL-5: adoption state — GENERATED → STARTED flash + CSS class
+    # ------------------------------------------------------------------
+
+    def set_block_state(self, new_state: "Any") -> None:
+        """Notify the block of a state transition for lifecycle legibility.
+
+        Called by external service/code when the tool-call state changes.
+        Handles LL-5 adoption flash and _was_generated tracking.
+        """
+        from hermes_cli.tui.services.tools import ToolCallState
+
+        if new_state == ToolCallState.GENERATED:
+            self._was_generated = True
+
+        elif new_state == ToolCallState.STARTED:
+            if self._was_generated:
+                if self.is_attached:
+                    self.post_message(FlashMessage("started", duration=1.2))
+                try:
+                    self.add_class("adopted")
+                except Exception:
+                    logger.warning("failed to add adopted class", exc_info=True)
+                self._remove_adopted_timer = self.set_timer(0.6, self._remove_adopted)
+
+        elif new_state in (ToolCallState.DONE, ToolCallState.ERROR, ToolCallState.CANCELLED):
+            self._was_generated = False
+
+    def _remove_adopted(self) -> None:
+        if self.is_attached:
+            try:
+                self.remove_class("adopted")
+            except Exception:
+                logger.warning("failed to remove adopted class", exc_info=True)
+        self._remove_adopted_timer = None
+
+    # ------------------------------------------------------------------
+    # LL-4: renderer kind override cycling via `t` / `Shift+T`
+    # ------------------------------------------------------------------
+
+    def _do_cycle_kind(self) -> None:
+        kinds = list(RendererKind)
+        if self._kind_override is None:
+            next_kind = kinds[0]
+        else:
+            idx = kinds.index(self._kind_override)
+            next_kind = kinds[(idx + 1) % len(kinds)]
+        self._kind_override = next_kind
+        if self.is_attached:
+            self.post_message(KindOverrideChanged(
+                override=next_kind,
+                cycle_callback=self._do_cycle_kind,
+            ))
+
+    def action_cycle_kind(self) -> None:
+        self._do_cycle_kind()
+
+    def action_kind_revert(self) -> None:
+        if self._kind_override is None:
+            if self.is_attached:
+                self.post_message(FlashMessage("no override", duration=1.0))
+            return
+        self._kind_override = None
+        auto_kind = self._auto_renderer_kind()
+        if self.is_attached:
+            self.post_message(KindOverrideChanged(override=None, cycle_callback=None))
+            self.post_message(FlashMessage(f"kind: auto ({auto_kind.value.lower()})", duration=1.2))
+
+    def _auto_renderer_kind(self) -> RendererKind:
+        """Return the renderer kind the classifier would choose without an override."""
+        try:
+            from hermes_cli.tui.body_renderers import pick_renderer
+            from hermes_cli.tui.services.tools import ToolCallState
+            view = getattr(self, "_view", None)
+            if view is not None and view.kind is not None:
+                from hermes_cli.tui.tool_panel.layout_resolver import DensityTier
+                renderer_cls = pick_renderer(
+                    view.kind,
+                    view.args,  # type: ignore[arg-type]
+                    phase=ToolCallState.DONE,
+                    density=DensityTier.DEFAULT,
+                )
+                name = renderer_cls.__name__.lower()
+                for rk in RendererKind:
+                    if rk.value in name:
+                        return rk
+        except Exception:
+            logger.debug("_auto_renderer_kind failed", exc_info=True)
+        return RendererKind.PLAIN
 
     # ------------------------------------------------------------------
     # Override copy_content / refresh_skin

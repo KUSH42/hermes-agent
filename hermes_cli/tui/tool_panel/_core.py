@@ -25,6 +25,7 @@ from ._footer import (
 from hermes_cli.tui.tool_panel.layout_resolver import (
     ToolBlockLayoutResolver,
     LayoutDecision,
+    DensityResult,
     DensityTier,
 )
 
@@ -33,6 +34,38 @@ if TYPE_CHECKING:
     from hermes_cli.tui.tool_category import ToolCategory
     from hermes_cli.tui.tool_payload import ResultKind
     from hermes_cli.tui.services.tools import ToolCallViewState
+
+
+# LL-1: pure helper — testable without Textual machinery.
+_LL1_FLASH_TEXT: dict["DensityTier", str] = {}  # populated lazily to avoid import cycle
+
+
+def density_flash_text(
+    last: "DensityResult | None",
+    new_tier: "DensityTier",
+    reason: str,
+) -> str:
+    """Return flash text for an auto tier change, or '' if suppressed.
+
+    Suppression rules (first match wins):
+      1. last is None → initial resolve, no flash
+      2. last.tier == new_tier → same tier, no flash
+      3. reason != "auto" → user/error_override/initial, no flash
+      4. Otherwise → flash with tier-specific text
+    """
+    if last is None:
+        return ""
+    if last.tier == new_tier:
+        return ""
+    if reason != "auto":
+        return ""
+    _map = {
+        DensityTier.HERO:    "★ hero view",
+        DensityTier.COMPACT: "▤ compact view",
+        DensityTier.TRACE:   "≡ trace view",
+        DensityTier.DEFAULT: "default view",
+    }
+    return _map.get(new_tier, "")
 
 
 class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
@@ -150,6 +183,8 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         self._view_state: "ToolCallViewState | None" = None  # wired by service after mount
         self._resolver = ToolBlockLayoutResolver()
         self._resolver.subscribe(self._on_tier_change)
+        # LL-1: track last density result to suppress redundant flashes
+        self._last_density_result: DensityResult | None = None
         self._user_override_tier: DensityTier | None = None
         self._parent_clamp_tier: "DensityTier | None" = None  # set by ChildPanel via subscription
 
@@ -285,6 +320,21 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         if vs is not None:
             from hermes_cli.tui.services.tools import set_axis
             set_axis(vs, "density", decision.tier)
+            # LL-1/LL-3: write density_reason to view so header can read it.
+            # Map "parent_clamp" → "user" for the 4-value density_reason type.
+            dr = decision.reason
+            if dr == "parent_clamp":
+                dr = "user"
+            vs.density_reason = dr  # type: ignore[assignment]
+
+        # LL-1: flash on auto tier change.
+        _reason = decision.reason if decision.reason != "parent_clamp" else "user"
+        new_result = DensityResult(tier=decision.tier, reason=_reason)  # type: ignore[arg-type]
+        flash_text = density_flash_text(self._last_density_result, decision.tier, decision.reason)
+        self._last_density_result = new_result
+        if flash_text and self.is_attached:
+            from hermes_cli.tui.widgets.status_bar import FlashMessage
+            self.post_message(FlashMessage(flash_text, duration=1.2))
 
         # 2. Reactives — Textual schedules watcher dispatch after this returns.
         self.density = decision.tier

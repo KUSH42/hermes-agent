@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import sys
 import time as _time  # S1-C: module top — not inside render() or callbacks
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from rich.style import Style
 from rich.text import Text
 from textual.app import ComposeResult, RenderResult
 from textual.css.query import NoMatches
 from textual.reactive import reactive
+from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Label, Static
 
@@ -30,6 +31,7 @@ from .utils import (
 
 if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
+    from hermes_cli.tui.body_renderers import RendererKind
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +171,42 @@ _BAR_WIDTH = 10
 
 
 # ---------------------------------------------------------------------------
+# LL-spec messages
+# ---------------------------------------------------------------------------
+
+class FlashMessage(Message):
+    """Post to flash a text string in the HintBar for a given duration (LL-1/LL-5)."""
+    def __init__(self, text: str, duration: float = 1.0) -> None:
+        super().__init__()
+        self.text = text
+        self.duration = duration
+
+
+class KindOverrideChanged(Message):
+    """Bubbles from StreamingToolBlock to HintBar to show/hide kind chip (LL-4)."""
+    def __init__(
+        self,
+        override: "RendererKind | None",
+        cycle_callback: "Callable[[], None] | None" = None,
+    ) -> None:
+        super().__init__()
+        self.override = override
+        self.cycle_callback = cycle_callback
+
+
+class KindOverrideChip(Static, can_focus=False):
+    """Clickable chip in HintBar showing active renderer kind override (LL-4)."""
+
+    def __init__(self, hintbar: "HintBar") -> None:
+        super().__init__("")
+        self._hintbar: HintBar = hintbar
+
+    def on_click(self, event: "Any") -> None:
+        if self._hintbar._cycle_kind is not None:
+            self._hintbar._cycle_kind()
+
+
+# ---------------------------------------------------------------------------
 # HintBar
 # ---------------------------------------------------------------------------
 
@@ -202,6 +240,15 @@ class HintBar(Widget):
         self._shimmer_timer: object | None = None
         self._shimmer_base: "Text | None" = None
         self._shimmer_skip: list[tuple[int, int]] = []
+        # LL-4: kind override chip state
+        self._cycle_kind: "Callable[[], None] | None" = None
+        self._kind_chip: "KindOverrideChip | None" = None
+        # LL-1/LL-5: flash timer
+        self._flash_timer: object | None = None
+        self._flash_text: str = ""
+
+    def compose(self) -> "ComposeResult":
+        yield KindOverrideChip(hintbar=self)
 
     def watch_hint(self, value: str) -> None:
         # Trigger repaint — render() picks up hint directly
@@ -217,6 +264,37 @@ class HintBar(Widget):
 
     def on_mount(self) -> None:
         self.watch(self.app, "status_streaming", self._on_streaming_change)
+        self._kind_chip = self.query_one(KindOverrideChip)
+        self._kind_chip.display = False
+
+    def on_kind_override_changed(self, event: KindOverrideChanged) -> None:
+        """LL-4: show/hide kind chip and store cycle callback."""
+        self._cycle_kind = event.cycle_callback
+        if self._kind_chip is not None:
+            if event.override is not None:
+                self._kind_chip.update(f"[t:{event.override.value.lower()}]")
+                self._kind_chip.display = True
+            else:
+                self._kind_chip.display = False
+
+    def clear_kind_override(self) -> None:
+        """LL-4: called directly from StreamingToolBlock.on_unmount."""
+        self._cycle_kind = None
+        if self._kind_chip is not None:
+            self._kind_chip.display = False
+
+    def on_flash_message(self, event: FlashMessage) -> None:
+        """LL-1/LL-5: flash text in hint bar for duration seconds."""
+        self._flash_text = event.text
+        self.hint = event.text
+        if self._flash_timer is not None:
+            self._flash_timer.stop()
+        self._flash_timer = self.set_timer(event.duration, self._clear_flash)
+
+    def _clear_flash(self) -> None:
+        self._flash_text = ""
+        self.hint = ""
+        self._flash_timer = None
 
     def on_unmount(self) -> None:
         self._shimmer_stop()

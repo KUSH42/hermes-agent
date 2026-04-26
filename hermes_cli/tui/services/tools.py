@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 class ToolCallState(str, Enum):
     """Lifecycle states for a single tool call."""
+    PENDING    = "pending"     # allocated but not yet materialised by the service
     GENERATED  = "generated"   # model is still generating tool args
     STARTED    = "started"     # tool handler has started
     STREAMING  = "streaming"   # output body is receiving lines
@@ -66,6 +67,10 @@ class ToolCallViewState:
     density: DensityTier = _field(default=DensityTier.DEFAULT)
     # AXIS-3: per-instance watcher list.
     _watchers: "list[_AxisWatcher]" = _field(default_factory=list, repr=False, compare=False)
+    # LL-2: set by service at COMPLETING entry; cleared at DONE/ERROR/CANCELLED.
+    completing_started_at: "float | None" = None
+    # LL-1/LL-3: density reason mirror written by panel after every resolve() call.
+    density_reason: "Literal['auto', 'user', 'error_override', 'initial'] | None" = None
 
 
 # ---------------------------------------------------------------------------

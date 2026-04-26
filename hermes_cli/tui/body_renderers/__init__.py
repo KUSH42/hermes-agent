@@ -20,7 +20,18 @@ should pass phase=STREAMING to stay in the streaming tier.
 """
 from __future__ import annotations
 
+from enum import Enum
 from typing import TYPE_CHECKING
+
+class RendererKind(str, Enum):
+    """User-selectable renderer kind for `t` / `Shift+T` keybinds (LL-4).
+
+    Definition order determines cycle order for _do_cycle_kind: DIFF → CODE → PLAIN → DIFF.
+    """
+    DIFF  = "diff"
+    CODE  = "code"
+    PLAIN = "plain"
+
 
 from hermes_cli.tui.body_renderers.base import BodyRenderer
 from hermes_cli.tui.body_renderers.search import SearchRenderer
@@ -210,6 +221,7 @@ __all__ = [
     "FallbackRenderer",
     "REGISTRY",
     "pick_renderer",
+    "RendererKind",
     "_STREAMING_EMPTY_CLS",
     # Streaming-tier renderers
     "StreamingBodyRenderer",

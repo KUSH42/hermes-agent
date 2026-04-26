@@ -371,6 +371,8 @@ class _ToolPanelCompletionMixin:
         final_state = "error" if summary.is_error else "ok"
         if summary.is_error:
             self.add_class("tool-panel--error")  # type: ignore[attr-defined]
+            # Eager uncollapse — resolver (_apply_complete_auto_collapse) is never called for
+            # error completions (_post_complete_tidy returns early). This write is the sole owner.
             self.collapsed = False  # type: ignore[attr-defined]
         else:
             self.remove_class("tool-panel--error")  # type: ignore[attr-defined]
@@ -481,7 +483,6 @@ class _ToolPanelCompletionMixin:
             pass
 
         if summary.is_error:
-            self.collapsed = False  # type: ignore[attr-defined]
             return
 
         did_collapse = False

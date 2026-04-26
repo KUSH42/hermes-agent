@@ -54,40 +54,40 @@ _RANKS = {
 # ---------------------------------------------------------------------------
 
 _DROP_ORDER_DEFAULT: list[str] = [
-    "flash",
-    "remediation",
-    "stderrwarn",
-    "chip",
-    "linecount",
-    "duration",
-    "diff",
-    "hero",
-    "chevron",
-    "exit",
+    "chip",          # browse-badge — purely contextual, lowest signal
+    "linecount",     # size context, derivable
+    "duration",      # often available via age microcopy in footer
+    "flash",         # ephemeral — accept loss when space is tight
+    "chevron",       # collapse hint — preserve mid-priority
+    "diff",          # structural — preserve
+    "hero",          # primary summary — preserve
+    "stderrwarn",    # "press e for stderr" — recovery affordance
+    "remediation",   # error explanation — recovery affordance
+    "exit",          # highest signal: always keep
 ]
 
 _DROP_ORDER_HERO: list[str] = [
-    "flash",
-    "remediation",
-    "stderrwarn",
     "chip",
     "linecount",
     "duration",
+    "flash",
     "diff",
     "chevron",
+    "stderrwarn",    # recovery affordance — preserve
+    "remediation",   # recovery affordance — preserve
     "exit",
 ]
 
 _DROP_ORDER_COMPACT: list[str] = [
-    "flash",
-    "remediation",
+    "chip",
     "linecount",
+    "flash",
     "diff",
     "hero",
     "chevron",
     "duration",
-    "stderrwarn",
-    "chip",
+    "stderrwarn",    # recovery affordance — preserve
+    "remediation",   # moved from 1 → 8: recovery affordance now preserved
     "exit",
 ]
 

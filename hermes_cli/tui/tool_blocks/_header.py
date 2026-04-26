@@ -35,25 +35,6 @@ _log = logging.getLogger(__name__)
 
 MIN_LABEL_CELLS = 12
 
-# VN-2 fallback for tool-header label→stats gap when skin var unavailable.
-MAX_HEADER_GAP_CELLS_FALLBACK = 8
-
-
-def _resolve_max_header_gap(widget) -> int:
-    try:
-        v = widget.app.get_css_variables().get("tool-header-max-gap")
-        if v is not None:
-            return max(0, int(v))
-    except Exception:
-        # Three known failure modes, all recovered by falling back to the constant:
-        #   1. NoActiveAppError / LookupError — widget.app accessed pre-mount, before
-        #      the App ContextVar is set. NoActiveAppError lives at the private
-        #      textual._context.NoActiveAppError, so we catch the base Exception
-        #      rather than import a private symbol.
-        #   2. ValueError — skin var present but not coercible to int (e.g. "garbage").
-        #   3. TypeError — skin var resolves to a non-stringable object.
-        _log.debug("max-header-gap resolve failed; using fallback", exc_info=True)
-    return MAX_HEADER_GAP_CELLS_FALLBACK
 
 # Re-export shims — drop-order constants and trim functions moved to layout_resolver (DU-3).
 from hermes_cli.tui.tool_panel.layout_resolver import (  # noqa: F401
@@ -353,7 +334,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 tail_segments.append(("chevron", Text(glyph, style="dim")))
             else:
                 # B-1: non-interactive signal — always fill chevron slot
-                tail_segments.append(("chevron", Text("  ·", style=f"dim {self._colors().separator_dim}")))
+                tail_segments.append(("chevron", Text("  ·", style=self._colors().separator_dim)))
             # META zone: flash → stderrwarn  (duration moved to single append after if/else)
             if self._duration:
                 _pending_dur = self._duration
@@ -426,7 +407,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             _resolver = default_resolver()
         tail_segments = _resolver.trim_header_tail(tail_segments, tail_budget, _tier)
         from hermes_cli.tui.body_renderers._grammar import GLYPH_META_SEP, glyph as _glyph
-        _sep = Text(f" {_glyph(GLYPH_META_SEP)} ", style=f"dim {self._colors().separator_dim}")
+        _sep = Text(f" {_glyph(GLYPH_META_SEP)} ", style=self._colors().separator_dim)
         tail = Text()
         for i, (_, seg) in enumerate(tail_segments):
             if i > 0:
@@ -455,8 +436,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         t.append_text(label_text)
         if term_w > 0:
             label_used = label_text.cell_len
-            _gap_cap = _resolve_max_header_gap(self)
-            pad = min(max(0, available - label_used), _gap_cap)
+            pad = max(0, available - label_used)
             t.append(" " * pad)
         t.append_text(tail)
         return t

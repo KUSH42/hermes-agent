@@ -100,7 +100,7 @@ class TestSkinColorsNewFields:
     def test_skincolors_default_has_icon_dim_and_separator_dim(self):
         d = SkinColors.default()
         assert d.icon_dim == "#6e6e6e"
-        assert d.separator_dim == "#444444"
+        assert d.separator_dim == "#555555"
 
     def test_skincolors_from_app_reads_new_vars(self):
         mock_app = MagicMock()

@@ -225,6 +225,24 @@ ReasoningPanel StreamingCodeBlock .code-block-footer {
  * TitledRule manages all its own colors via _live_colors() + inline Rich styles.
  * No CSS color override needed here — it would conflict with the inline styles. */
 
+/* --- Nameplate + HintBar row (BD-1) ---
+ * Merged into one Horizontal row to save 1 chrome line.
+ * AssistantNameplate is pinned at 24 cols; HintBar takes the remainder.
+ */
+#nameplate-hint-row {
+    height: 1;
+    width: 1fr;
+}
+#nameplate-hint-row AssistantNameplate {
+    width: 24;
+    min-width: 12;
+    padding: 0 1;
+}
+#nameplate-hint-row HintBar {
+    width: 1fr;
+    padding: 0 0;
+}
+
 /* --- Hint bar ---
  * Always 1 line tall (no display:none toggling) to prevent layout reflow
  * jitter when hints appear/disappear during streaming.  Empty hint renders
@@ -234,6 +252,9 @@ HintBar {
     color: $text-muted;
     padding: 0 1;
 }
+
+/* --- SessionBar hidden (BD-2): indicator folded into StatusBar; use S key for session panel --- */
+SessionBar { display: none !important; }
 
 /* --- Status bar --- */
 
@@ -703,6 +724,7 @@ HermesApp.density-compact UndoConfirmOverlay    { padding: 0 1; }
 
 /* Phase B1: hide non-critical chrome */
 HermesApp.density-compact AssistantNameplate   { display: none; }
+HermesApp.density-compact #nameplate-hint-row AssistantNameplate { display: none; }
 HermesApp.density-compact SourcesBar           { display: none; }
 HermesApp.density-compact BrowseMinimap        { display: none; }
 

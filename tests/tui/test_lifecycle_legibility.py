@@ -117,6 +117,11 @@ class _StreamingBlockStub:
         self.set_timer = _fake_set_timer
         self._timers = timers
 
+        # FS-3: settled state attrs
+        self._settled = False
+        self._settled_timer = None
+        self._cancel_settled_timer = lambda: None
+
         # Bind real methods
         self.set_block_state = StreamingToolBlock.set_block_state.__get__(self)
         self._remove_adopted = StreamingToolBlock._remove_adopted.__get__(self)
@@ -124,6 +129,9 @@ class _StreamingBlockStub:
         self.action_cycle_kind = StreamingToolBlock.action_cycle_kind.__get__(self)
         self.action_kind_revert = StreamingToolBlock.action_kind_revert.__get__(self)
         self._auto_renderer_kind = StreamingToolBlock._auto_renderer_kind.__get__(self)
+        self._clear_settled = StreamingToolBlock._clear_settled.__get__(self)
+        self._arm_settled_timer = StreamingToolBlock._arm_settled_timer.__get__(self)
+        self._on_settled_timer = StreamingToolBlock._on_settled_timer.__get__(self)
 
 
 # ---------------------------------------------------------------------------
@@ -219,7 +227,7 @@ class TestLL2CompletingChip:
             header._render_phase_chip()
 
         assert header._finalizing_chip.display is True
-        header._finalizing_chip.update.assert_called_with("[dim]…finalizing[/dim]")
+        header._finalizing_chip.update.assert_called_with("[dim]…FINALIZING[/dim]")
 
     def test_chip_removed_on_done(self):
         """Transition COMPLETING → DONE hides the finalizing chip."""
@@ -291,7 +299,10 @@ class TestLL3ErrorMarker:
         panel._footer_pane = None
         panel._user_collapse_override = False
         panel._auto_collapsed = False
+        panel._body_pane = None
+        panel._hint_row = None
         panel.post_message = MagicMock()
+        panel._classes = set()  # Textual internal needed by remove_class/add_class
 
         decision = LayoutDecision(
             tier=DensityTier.DEFAULT,
@@ -300,7 +311,7 @@ class TestLL3ErrorMarker:
             reason="error_override",
         )
 
-        fake_app = SimpleNamespace(_thread_id=1)
+        fake_app = SimpleNamespace(_thread_id=1, update_styles=MagicMock())
         with patch("threading.get_ident", return_value=1), \
              patch.object(type(panel), "app", new_callable=PropertyMock, return_value=fake_app), \
              patch.object(type(panel), "is_attached", new_callable=PropertyMock, return_value=True), \
@@ -563,7 +574,7 @@ class TestLL6PhaseChip:
         header.set_state(ToolCallState.STARTED)
 
         assert header._phase_chip.display is True
-        header._phase_chip.update.assert_called_with("[dim]…starting[/dim]")
+        header._phase_chip.update.assert_called_with("[dim]…STARTING[/dim]")
 
         header._clear_phase_chip()
         assert header._phase_chip.display is False
@@ -611,7 +622,7 @@ class TestLL6PhaseChip:
             header._render_phase_chip()
 
         assert header._finalizing_chip.display is True
-        header._finalizing_chip.update.assert_called_with("[dim]…finalizing[/dim]")
+        header._finalizing_chip.update.assert_called_with("[dim]…FINALIZING[/dim]")
         assert header._phase_chip.display is False
 
     def test_done_no_phase_chip(self):
@@ -638,7 +649,7 @@ class TestLL6PhaseChip:
         header.set_state(ToolCallState.CANCELLED)
 
         assert header._phase_chip.display is True
-        header._phase_chip.update.assert_called_with("[dim]cancelled[/dim]")
+        header._phase_chip.update.assert_called_with("[dim]CANCELLED[/dim]")
         # No timer set for CANCELLED
         assert header._phase_chip_timer is None
 

@@ -55,6 +55,7 @@ def _make_panel(
     panel.app.feedback = MagicMock()
     panel.id = "test-panel-id"
     panel.is_mounted = True
+    panel._cycle_kind_last_fired = 0.0  # debounce attr; MagicMock default breaks comparison
 
     # block / header stubs
     block = MagicMock()
@@ -323,6 +324,7 @@ class _FakeScheduler:
 class _FakeAdapter:
     def __init__(self) -> None:
         self.calls: list[Any] = []
+        self.widget = None  # FS-3: settled suppression checks adapter.widget
 
     def apply(self, state: Any) -> None:
         self.calls.append(state.message)

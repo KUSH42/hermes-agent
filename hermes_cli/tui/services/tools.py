@@ -466,6 +466,18 @@ class ToolRenderingService(AppService):
             self.app._active_streaming_blocks[tool_call_id] = block
             self.app._streaming_tool_count = len(self.app._active_streaming_blocks)
             self.app._active_tool_name = tool_name or ""
+            # Ensure _live_block_for_streaming can find the block by seeding a minimal view
+            if tool_call_id not in self._tool_views_by_id:
+                panel_ref = getattr(block, "_tool_panel", None)
+                view = ToolCallViewState(
+                    tool_call_id=tool_call_id, gen_index=None,
+                    tool_name=tool_name or "", label=label,
+                    args={}, state=ToolCallState.STREAMING,
+                    block=block, panel=panel_ref,
+                    parent_tool_call_id=parent_tool_call_id,
+                    category=cat, depth=depth, start_s=0.0,
+                )
+                self._tool_views_by_id[tool_call_id] = view
             try:
                 panel = getattr(block, "_tool_panel", None)
                 if panel is not None:

@@ -19,29 +19,89 @@ if TYPE_CHECKING:
 # HF-B: re-show toggle hint after this many seconds of unfocus
 TOGGLE_HINT_RESHOW_SECONDS = 300
 
+# DC-1: concept §Block-level keys H5 — full 4-tier cycle.
+# Tuple is populated lazily on first use to avoid import-time circular deps.
+_DENSITY_CYCLE: "tuple | None" = None
+
+
+def _density_cycle() -> "tuple":
+    global _DENSITY_CYCLE
+    if _DENSITY_CYCLE is None:
+        from hermes_cli.tui.tool_panel.density import DensityTier
+        _DENSITY_CYCLE = (
+            DensityTier.DEFAULT,
+            DensityTier.COMPACT,
+            DensityTier.TRACE,
+            DensityTier.HERO,
+        )
+    return _DENSITY_CYCLE
+
+
+# DC-3: concept §H5 threshold — HERO requires at least this many body rows.
+_HERO_MIN_BODY_ROWS: int = 5
+
+
+def _is_hero_row_legal(body_lines: int) -> bool:
+    return body_lines >= _HERO_MIN_BODY_ROWS
+
+
+def _next_legal_tier_static(
+    start: "object",
+    direction: int,
+    body_lines: int,
+) -> "object":
+    """Skip HERO if row-budget forbids it; return nearest legal tier.
+
+    direction: +1 = forward, -1 = reverse.
+    Returns start if no legal tier found (all cycled without a legal candidate).
+    Caller is responsible for the post-resolve pressure flash.
+    """
+    from hermes_cli.tui.tool_panel.density import DensityTier
+    cycle = _density_cycle()
+    try:
+        idx = cycle.index(start)  # type: ignore[arg-type]
+    except ValueError:
+        return DensityTier.DEFAULT
+    for _ in range(len(cycle)):
+        idx = (idx + direction) % len(cycle)
+        candidate = cycle[idx]
+        if candidate != DensityTier.HERO or _is_hero_row_legal(body_lines):
+            return candidate
+        # HERO row-budget forbidden: skip and continue
+    return start
+
 
 class _ToolPanelActionsMixin:
     """Keyboard action handlers and their private helpers."""
 
     @staticmethod
     def _next_tier_in_cycle(current: "object") -> "object":
-        """Advance to the next tier in the user-facing density cycle.
+        """Advance to the next tier in the forward density cycle.
 
-        Cycle: DEFAULT → COMPACT → HERO → DEFAULT.
-
-        TRACE is intentionally excluded — it is a diagnostic tier reachable
-        only via `alt+t` (action_density_trace). Adding it to the cycle would
-        expose unbounded row counts to users who just want a slightly tighter
-        layout. See action_density_trace for the explicit-opt-in path.
+        Cycle: DEFAULT → COMPACT → TRACE → HERO → DEFAULT (concept §H5).
+        Any tier outside the cycle resets to DEFAULT.
         """
         from hermes_cli.tui.tool_panel.density import DensityTier
-        cycle = (DensityTier.DEFAULT, DensityTier.COMPACT, DensityTier.HERO)
+        cycle = _density_cycle()
         try:
             idx = cycle.index(current)  # type: ignore[arg-type]
         except ValueError:
-            # TRACE or any future tier outside the cycle: reset to DEFAULT.
             return DensityTier.DEFAULT
         return cycle[(idx + 1) % len(cycle)]
+
+    @staticmethod
+    def _prev_tier_in_cycle(current: "object") -> "object":
+        """Retreat one step in the density cycle (reverse of _next_tier_in_cycle).
+
+        Any tier outside the cycle resets to DEFAULT.
+        """
+        from hermes_cli.tui.tool_panel.density import DensityTier
+        cycle = _density_cycle()
+        try:
+            idx = cycle.index(current)  # type: ignore[arg-type]
+        except ValueError:
+            return DensityTier.DEFAULT
+        return cycle[(idx - 1) % len(cycle)]
 
     def action_toggle_collapse(self) -> None:
         # Dismiss a visible tail panel first; Enter has no density effect while tail is open.
@@ -153,11 +213,52 @@ class _ToolPanelActionsMixin:
                 self._user_override_tier = None  # type: ignore[attr-defined]
 
     def action_density_cycle(self) -> None:
-        """H-4: D key — advance density tier in cycle (DEFAULT→COMPACT→HERO→DEFAULT)."""
+        """D key — advance density tier in cycle (concept §H5)."""
         from hermes_cli.tui.tool_panel.density import DensityInputs, DensityTier
         from hermes_cli.tui.services.tools import ToolCallState
 
-        requested_tier = self._next_tier_in_cycle(self._resolver.tier)  # type: ignore[attr-defined]
+        requested_tier = _next_legal_tier_static(
+            self._resolver.tier, direction=+1,  # type: ignore[attr-defined]
+            body_lines=self._body_line_count(),  # type: ignore[attr-defined]
+        )
+        self._user_collapse_override = True  # type: ignore[attr-defined]
+        self._user_override_tier = requested_tier  # type: ignore[attr-defined]
+        self._auto_collapsed = False  # type: ignore[attr-defined]
+        _vs = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
+        phase = _vs.state if _vs is not None else ToolCallState.DONE
+        _vs_kind = getattr(_vs, "kind", None) if _vs is not None else None
+        kind = _vs_kind.kind if _vs_kind is not None else None
+        _size = getattr(self, "size", None)
+        width = _size.width if _size is not None else 0
+        inputs = DensityInputs(
+            phase=phase,
+            is_error=self._is_error(),
+            has_focus=False,
+            user_scrolled_up=False,
+            user_override=True,
+            user_override_tier=requested_tier,  # type: ignore[arg-type]
+            body_line_count=self._body_line_count(),  # type: ignore[attr-defined]
+            threshold=0,
+            row_budget=None,
+            kind=kind,
+            parent_clamp=self._parent_clamp_tier,  # type: ignore[attr-defined]
+            width=width,
+        )
+        self._resolver.resolve(inputs)  # type: ignore[attr-defined]
+        if requested_tier == DensityTier.HERO and self._resolver.tier != DensityTier.HERO:  # type: ignore[attr-defined]
+            self._flash_header("hero mode unavailable", tone="warning")
+        else:
+            self._flash_header(self._resolver.tier.value, tone="info")  # type: ignore[attr-defined]
+
+    def action_density_cycle_reverse(self) -> None:
+        """Shift+D — reverse density tier in cycle (concept §H5)."""
+        from hermes_cli.tui.tool_panel.density import DensityInputs, DensityTier
+        from hermes_cli.tui.services.tools import ToolCallState
+
+        requested_tier = _next_legal_tier_static(
+            self._resolver.tier, direction=-1,  # type: ignore[attr-defined]
+            body_lines=self._body_line_count(),  # type: ignore[attr-defined]
+        )
         self._user_collapse_override = True  # type: ignore[attr-defined]
         self._user_override_tier = requested_tier  # type: ignore[attr-defined]
         self._auto_collapsed = False  # type: ignore[attr-defined]
@@ -726,9 +827,10 @@ class _ToolPanelActionsMixin:
                     if _current_kind is not None:
                         contextual.insert(1, ("T", "auto"))  # ML-2: revert hint when override active
 
-        # H-2: alt+t trace hint for complete, expanded blocks
+        # DC-4: density cycle hints (D forward, Shift+D reverse) for complete blocks
         if not _block_streaming and not getattr(self, "collapsed", False):
-            contextual.append(("alt+t", "trace"))
+            contextual.append(("D", "density-cycle"))
+            contextual.append(("shift+d", "density-back"))
 
         return primary, contextual
 

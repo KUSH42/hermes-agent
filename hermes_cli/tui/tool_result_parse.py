@@ -1006,6 +1006,19 @@ def _error_kind_display(kind: str, detail: str, icon_mode: str) -> tuple[str, st
     return (icon, detail, entry[3])
 
 
+def error_glyph(kind: str, icon_mode: str | None = None) -> str:
+    """Return the icon-only column from _ERROR_DISPLAY for `kind`.
+
+    icon_mode=None → resolve via agent.display.get_tool_icon_mode().
+    Unknown kind → 'network' fallback (matches _error_kind_display).
+    """
+    if icon_mode is None:
+        from agent.display import get_tool_icon_mode
+        icon_mode = get_tool_icon_mode()
+    entry = _ERROR_DISPLAY.get(kind, _ERROR_DISPLAY["network"])
+    return entry[_MODE_IDX.get(icon_mode, 2)]
+
+
 # ---------------------------------------------------------------------------
 # v4 dispatch
 # ---------------------------------------------------------------------------

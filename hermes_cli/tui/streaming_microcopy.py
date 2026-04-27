@@ -7,10 +7,15 @@ from typing import TYPE_CHECKING, Union
 
 from rich.text import Text
 
-from hermes_cli.tui.body_renderers._grammar import GLYPH_META_SEP, glyph as _glyph
+from hermes_cli.tui.body_renderers._grammar import (
+    GLYPH_META_SEP,
+    GLYPH_WARNING,
+    glyph as _glyph,
+)
 
 if TYPE_CHECKING:
     from hermes_cli.tui.tool_category import ToolSpec
+    from hermes_cli.tui.body_renderers._grammar import SkinColors
 
 
 @dataclass
@@ -63,11 +68,14 @@ def microcopy_line(
     reduced_motion: bool = False,
     shimmer_phase: float = 0.0,
     stalled: bool = False,
+    colors: "SkinColors | None" = None,
 ) -> "Union[str, Text]":
     """Return microcopy for current streaming state, or '' for no line.
 
     D2: reduced_motion=True → static text for AGENT category.
     D3: all categories append elapsed when state.elapsed_s > 2.0.
+    SCT-1: when stalled or colors is provided, returns Text with skin warning style.
+    Non-stall + colors=None branches return str fast-path (preserves existing == assertions).
     """
     from hermes_cli.tui.tool_category import ToolCategory
 
@@ -75,29 +83,42 @@ def microcopy_line(
     elapsed_s = state.elapsed_s
     _SEP = _glyph(GLYPH_META_SEP)
 
+    warn_style = f"bold {colors.warning}" if colors is not None else "bold yellow"
+    warn_glyph = _glyph(GLYPH_WARNING)
+    stall_text = f" {warn_glyph} stalled?"
+
     def _elapsed_suffix() -> str:
         """D3: append separator + N.Ns when elapsed > 2s."""
         if elapsed_s > 2.0:
             return f" {_SEP} {elapsed_s:.1f}s"
         return ""
 
-    def _stall_suffix() -> str:
-        """A4: append stall indicator when no output for 5+ seconds."""
-        return " ⚠ stalled?" if stalled else ""
+    def _apply_stall(base: str) -> "Union[str, Text]":
+        """SCT-1: str fast-path when not stalled and no colors; Text otherwise."""
+        if not stalled and colors is None:
+            return base
+        if stalled and colors is None:
+            # legacy str behaviour: warning baked unstyled into return string
+            return base + stall_text
+        # colors provided → Text with styled warning span (only when stalled)
+        t = Text(base)
+        if stalled:
+            t.append(stall_text, style=warn_style)
+        return t
 
     if cat == ToolCategory.SHELL:
         base = f"▸ {state.lines_received} lines {_SEP} {_human_size(state.bytes_received)}"
         if state.rate_bps is not None and state.rate_bps > 0:
             base += f" {_SEP} {state.rate_bps / 1024:.0f} kB/s"
-        return base + _elapsed_suffix() + _stall_suffix()
+        return _apply_stall(base + _elapsed_suffix())
 
     if cat == ToolCategory.FILE:
         if spec.primary_result in ("lines", "bytes"):
             base = f"▸ {state.lines_received} lines {_SEP} {_human_size(state.bytes_received)}"
             if state.rate_bps is not None and state.rate_bps > 0:
                 base += f" {_SEP} {state.rate_bps / 1024:.0f} kB/s"
-            return base + _elapsed_suffix() + _stall_suffix()
-        return f"▸ {state.lines_received} lines written" + _elapsed_suffix() + _stall_suffix()
+            return _apply_stall(base + _elapsed_suffix())
+        return _apply_stall(f"▸ {state.lines_received} lines written" + _elapsed_suffix())
 
     if cat == ToolCategory.SEARCH:
         count = (
@@ -105,11 +126,11 @@ def microcopy_line(
             if state.matches_so_far is not None
             else state.lines_received
         )
-        return f"▸ {count} matches so far…" + _elapsed_suffix() + _stall_suffix()
+        return _apply_stall(f"▸ {count} matches so far…" + _elapsed_suffix())
 
     if cat == ToolCategory.WEB:
         status = state.last_status or "connecting"
-        return f"▸ {status} {_SEP} {_human_size(state.bytes_received)}" + _elapsed_suffix() + _stall_suffix()
+        return _apply_stall(f"▸ {status} {_SEP} {_human_size(state.bytes_received)}" + _elapsed_suffix())
 
     if cat == ToolCategory.MCP:
         prov = spec.provenance or ""
@@ -119,31 +140,26 @@ def microcopy_line(
             server = parts[1] if len(parts) >= 3 else parts[-1]
         if not server:
             server = spec.name or "?"
-        return f"▸ mcp {_SEP} {server} server" + _elapsed_suffix() + _stall_suffix()
+        return _apply_stall(f"▸ mcp {_SEP} {server} server" + _elapsed_suffix())
 
     if cat == ToolCategory.CODE:
         # B1: match SHELL/FILE rate display for consistency
         base = f"▸ {state.lines_received} lines {_SEP} {_human_size(state.bytes_received)}"
         if state.rate_bps is not None and state.rate_bps > 0:
             base += f" {_SEP} {state.rate_bps / 1024:.0f} kB/s"
-        return base + _elapsed_suffix() + _stall_suffix()
+        return _apply_stall(base + _elapsed_suffix())
 
     if cat == ToolCategory.AGENT:
-        # D2: static text when reduced_motion
+        # AGENT branch always returns Text (shimmer or static label).
         if reduced_motion:
             result = Text("▸ thinking…")
-            if stalled:
-                result.append(" ⚠ stalled?", style="bold yellow")
-            return result
-        result = _thinking_shimmer(shimmer_phase, state.elapsed_s)
+        else:
+            result = _thinking_shimmer(shimmer_phase, state.elapsed_s)
         if stalled:
-            result.append(" ⚠ stalled?", style="bold yellow")
+            result.append(stall_text, style=warn_style)
         return result
 
     if cat == ToolCategory.UNKNOWN:
-        base = f"▸ {state.lines_received} lines" + _elapsed_suffix()
-        if stalled:
-            return base + " ⚠ stalled?"
-        return base
+        return _apply_stall(f"▸ {state.lines_received} lines" + _elapsed_suffix())
 
     return ""

@@ -1,142 +1,20 @@
 """Tool block — Visual Noise Cleanup spec.
 
-Two unrelated polish fixes verified together:
-
 * VN-1 — action chip row is hidden unless ``ToolPanel`` (or any descendant) has
   focus. Driven by a ``:focus-within`` rule in ``hermes.tcss``; the per-widget
   ``has-actions`` class still toggles to gate the rule.
-* VN-2 — header label→stats gap is capped to a configurable cell count
-  (``tool-header-max-gap`` skin var, fallback 8) so on wide terminals stats no
-  longer fly to the far right.
+
+Note: VN-2 (header gap cap) tests removed — ``_resolve_max_header_gap`` and
+``MAX_HEADER_GAP_CELLS_FALLBACK`` were deleted by HW-1..HW-6.
 """
 from __future__ import annotations
 
-from types import SimpleNamespace
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-from rich.text import Text
 
 from hermes_cli.tui.app import HermesApp
-from hermes_cli.tui.tool_blocks._header import (
-    MAX_HEADER_GAP_CELLS_FALLBACK,
-    ToolHeader,
-)
 
-
-# ---------------------------------------------------------------------------
-# VN-2: header gap cap
-# ---------------------------------------------------------------------------
-
-
-def _make_header(label: str = "tt") -> ToolHeader:
-    """Build an unmounted ToolHeader with safe defaults for ``_render_v4``."""
-    h = ToolHeader(label=label, line_count=0, tool_name=None)
-    h._label_rich = Text(label)
-    h._stats = None
-    h._is_complete = False
-    h._spinner_char = None
-    h._tool_icon = ""
-    h._has_affordances = False
-    return h
-
-
-def _make_app_mock(css_vars: dict | None = None) -> SimpleNamespace:
-    """Mock for ``Widget.app`` exposing ``get_css_variables`` and ``console``."""
-    cv = dict(css_vars or {})
-    return SimpleNamespace(
-        get_css_variables=lambda: cv,
-        console=SimpleNamespace(color_system="truecolor"),
-    )
-
-
-def _pad_cells(t: Text, label_cells: int, tail_cells: int) -> int:
-    """Padding cells between label and tail in ``_render_v4`` output.
-
-    Plain layout: 4-cell gutter + label + N spaces + tail.
-    """
-    GUTTER_W = 4
-    return len(t.plain) - GUTTER_W - label_cells - tail_cells
-
-
-class TestVN2HeaderGapCap:
-    @patch.object(ToolHeader, "size", new_callable=PropertyMock)
-    @patch.object(ToolHeader, "app", new_callable=PropertyMock)
-    def test_header_gap_capped_on_wide_term(self, mock_app, mock_size):
-        mock_app.return_value = _make_app_mock()
-        mock_size.return_value = SimpleNamespace(width=200)
-        h = _make_header(label="tt")
-        t = h._render_v4()
-        assert t is not None
-        # tail = "·" (1 cell), label = 2 cells; uncapped pad would be ~190.
-        assert _pad_cells(t, label_cells=2, tail_cells=1) == 8
-
-    @patch.object(ToolHeader, "size", new_callable=PropertyMock)
-    @patch.object(ToolHeader, "app", new_callable=PropertyMock)
-    def test_header_gap_uncapped_when_already_smaller(self, mock_app, mock_size):
-        mock_app.return_value = _make_app_mock()
-        mock_size.return_value = SimpleNamespace(width=80)
-        # Pick label_cells s.t. (available - label_cells) < 8.
-        # available = max(12, 80 - 5 - 1 - 2) = 72; choose 70 → uncapped pad = 2.
-        label = "x" * 70
-        h = _make_header(label=label)
-        t = h._render_v4()
-        assert t is not None
-        pad = _pad_cells(t, label_cells=70, tail_cells=1)
-        assert 0 < pad < 8
-
-    @patch.object(ToolHeader, "size", new_callable=PropertyMock)
-    @patch.object(ToolHeader, "app", new_callable=PropertyMock)
-    def test_header_gap_zero_when_label_fills(self, mock_app, mock_size):
-        mock_app.return_value = _make_app_mock()
-        mock_size.return_value = SimpleNamespace(width=80)
-        # available = 72; label > available triggers truncate→divide+ellipsis →
-        # label_text.cell_len ≥ available, so pad = 0.
-        h = _make_header(label="x" * 200)
-        t = h._render_v4()
-        assert t is not None
-        # Label is truncated to fit, then ellipsis appended; recover real label
-        # cell_len from t.plain by subtracting gutter and tail.
-        plain = t.plain
-        assert plain.endswith("·")
-        gutter = "    "
-        assert plain.startswith(gutter)
-        body = plain[len(gutter):-1]  # strip gutter + tail "·"
-        # Body is label + pad spaces. Label uses ellipsis "…" at end.
-        assert "…" in body
-        # Pad must be 0: body has no trailing run of spaces.
-        assert not body.endswith(" ")
-
-    @patch.object(ToolHeader, "size", new_callable=PropertyMock)
-    @patch.object(ToolHeader, "app", new_callable=PropertyMock)
-    def test_header_gap_skin_var_override(self, mock_app, mock_size):
-        mock_app.return_value = _make_app_mock({"tool-header-max-gap": "4"})
-        mock_size.return_value = SimpleNamespace(width=200)
-        h = _make_header(label="tt")
-        t = h._render_v4()
-        assert t is not None
-        assert _pad_cells(t, label_cells=2, tail_cells=1) == 4
-
-    @patch.object(ToolHeader, "size", new_callable=PropertyMock)
-    @patch.object(ToolHeader, "app", new_callable=PropertyMock)
-    def test_header_gap_skin_var_invalid_fallback(self, mock_app, mock_size):
-        mock_app.return_value = _make_app_mock({"tool-header-max-gap": "garbage"})
-        mock_size.return_value = SimpleNamespace(width=200)
-        h = _make_header(label="tt")
-        t = h._render_v4()
-        assert t is not None
-        # int("garbage") raises ValueError → caught → fallback (8).
-        assert _pad_cells(t, label_cells=2, tail_cells=1) == MAX_HEADER_GAP_CELLS_FALLBACK
-
-    @patch.object(ToolHeader, "size", new_callable=PropertyMock)
-    @patch.object(ToolHeader, "app", new_callable=PropertyMock)
-    def test_header_gap_skin_var_missing_fallback(self, mock_app, mock_size):
-        mock_app.return_value = _make_app_mock({})  # key absent → v is None
-        mock_size.return_value = SimpleNamespace(width=200)
-        h = _make_header(label="tt")
-        t = h._render_v4()
-        assert t is not None
-        assert _pad_cells(t, label_cells=2, tail_cells=1) == MAX_HEADER_GAP_CELLS_FALLBACK
 
 
 # ---------------------------------------------------------------------------

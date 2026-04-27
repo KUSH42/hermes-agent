@@ -505,8 +505,9 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             stripped = Text(seg.plain.lstrip(), style=seg.style)
             stripped._spans.extend(_remap_spans(seg, strip_n))
             tail.append_text(stripped)
-        tail_w = tail.cell_len
-        available = max(MIN_LABEL_CELLS, term_w - FIXED_PREFIX_W - tail_w - 2) if term_w > 0 else 50
+        # FH-7: re-read tail width after the loop in case a future edit adds a post-loop segment.
+        final_tail_w = tail.cell_len
+        available = max(MIN_LABEL_CELLS, term_w - FIXED_PREFIX_W - final_tail_w - 2) if term_w > 0 else 50
         if self._label_rich is not None:
             label_text = self._label_rich
             if label_text.cell_len > available:

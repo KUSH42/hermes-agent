@@ -340,9 +340,7 @@ class DiffRenderer(BodyRenderer):
 
     @classmethod
     def accepts(cls, phase: "ToolCallState", density: "DensityTier") -> bool:
-        from hermes_cli.tui.tool_panel.density import DensityTier as _DT
-        if density == _DT.COMPACT:
-            return False
+        # FH-6: COMPACT now accepted; summary_line provides the one-line surface.
         return super().accepts(phase, density)
 
     def __init__(

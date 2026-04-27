@@ -256,9 +256,6 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             return
         if self._completed:
             return
-        # SK-1: first chunk dismisses the skeleton (covers <100ms and ≥100ms paths).
-        if self._skeleton_widget is not None or self._skeleton_timer is not None:
-            self._dismiss_skeleton()
         line_byte_cap = getattr(self, "_line_byte_cap", _LINE_BYTE_CAP)
         if len(raw) > line_byte_cap:
             over = len(raw) - line_byte_cap
@@ -646,6 +643,11 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
                 self._visible_count += 1
                 lines_written += 1
 
+        # FH-2: dismiss skeleton after first successful write — content and dismissal
+        # land in the same flush tick so the compositor paints them together.
+        if lines_written and (self._skeleton_widget is not None or self._skeleton_timer is not None):
+            self._dismiss_skeleton()
+
         if self._omission_bar_bottom_mounted or self._omission_bar_top_mounted:
             self._refresh_omission_bars()
 
@@ -741,6 +743,10 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
                 line_cap_str = f"{getattr(self, '_line_byte_cap', _LINE_BYTE_CAP)}b"
             cap_msg = f"⚠ {self._truncated_line_count} lines truncated ({line_cap_str} cap)"
 
+        # FH-8: transient cap warnings drop after the 600 ms settled quiesce window.
+        if self._settled:
+            cap_msg = None
+
         if self._omission_bar_top_mounted and self._omission_bar_top is not None:
             show_top = visible_start > 0
             if self._omission_bar_top.display != show_top:
@@ -830,6 +836,10 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
     def _on_settled_timer(self) -> None:
         self._settled = True
         self._settled_timer = None
+        # FH-8: re-evaluate omission bars now that _settled flipped so any
+        # in-flight cap warning is suppressed at the 600 ms boundary.
+        if self._omission_bar_top_mounted or self._omission_bar_bottom_mounted:
+            self._refresh_omission_bars()
 
     def _clear_settled(self) -> None:
         """Reset settled on non-terminal transition (retry path)."""

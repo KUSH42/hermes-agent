@@ -165,7 +165,10 @@ class StreamingCodeRenderer(BodyRenderer):
     kind = ResultKind.CODE
     supports_streaming = True
     accepted_phases = _STREAMING_PHASES
-    truncation_bias = "head"
+    # FH-4: streaming live tail is the recognition signal; bias differs from Phase-C
+    # CodeRenderer ("head"). Latent today (_apply_clamp not reached during streaming)
+    # but defensive against future clamp paths.
+    truncation_bias = "tail"
     kind_icon = "<>"
 
     @classmethod

@@ -158,6 +158,7 @@ class _ToolPanelActionsMixin:
             kind=kind,
             parent_clamp=self._parent_clamp_tier,  # type: ignore[attr-defined]
             width=width,
+            is_streaming=(phase in (ToolCallState.STARTED, ToolCallState.STREAMING)),
         )
         self._resolver.resolve(inputs)  # type: ignore[attr-defined]
         self._flash_header(flash_label, tone="info")
@@ -209,6 +210,7 @@ class _ToolPanelActionsMixin:
             kind=kind,
             parent_clamp=self._parent_clamp_tier,  # type: ignore[attr-defined]
             width=self.size.width,  # type: ignore[attr-defined]
+            is_streaming=(phase in (ToolCallState.STARTED, ToolCallState.STREAMING)),
         )
         self._resolver.resolve(inputs)  # type: ignore[attr-defined]
         if self._resolver.tier != DensityTier.TRACE:  # type: ignore[attr-defined]
@@ -255,6 +257,7 @@ class _ToolPanelActionsMixin:
             kind=kind,
             parent_clamp=self._parent_clamp_tier,  # type: ignore[attr-defined]
             width=width,
+            is_streaming=(phase in (ToolCallState.STARTED, ToolCallState.STREAMING)),
         )
         self._resolver.resolve(inputs)  # type: ignore[attr-defined]
         if requested_tier == DensityTier.HERO and self._resolver.tier != DensityTier.HERO:  # type: ignore[attr-defined]
@@ -293,6 +296,7 @@ class _ToolPanelActionsMixin:
             kind=kind,
             parent_clamp=self._parent_clamp_tier,  # type: ignore[attr-defined]
             width=width,
+            is_streaming=(phase in (ToolCallState.STARTED, ToolCallState.STREAMING)),
         )
         self._resolver.resolve(inputs)  # type: ignore[attr-defined]
         if requested_tier == DensityTier.HERO and self._resolver.tier != DensityTier.HERO:  # type: ignore[attr-defined]
@@ -852,6 +856,9 @@ class _ToolPanelActionsMixin:
             contextual.append(("D", "density-cycle"))
             contextual.append(("shift+d", "density-back"))
 
+        # FH-1: final-pass dedup keyed on (key, label). Primary always wins.
+        seen_in_primary = set(primary)
+        contextual = [t for t in contextual if t not in seen_in_primary]
         return primary, contextual
 
     def _truncate_hints(

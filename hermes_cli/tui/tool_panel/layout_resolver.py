@@ -262,6 +262,11 @@ class ToolBlockLayoutResolver:
     ) -> "list[tuple[str, Text]]":
         return trim_tail_for_tier(segments, budget, tier)
 
+    @staticmethod
+    def _compute(inp: "LayoutInputs") -> "DensityTier":
+        """Shim for tests: returns just the tier from a fresh resolver instance."""
+        return ToolBlockLayoutResolver()._compute_tier(inp)[0]
+
     def _compute_tier(
         self, inp: LayoutInputs
     ) -> "tuple[DensityTier, Literal['auto', 'user', 'error_override', 'initial', 'parent_clamp']]":

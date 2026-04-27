@@ -86,6 +86,8 @@ class InlineProseLog(CopyableRichLog):
         shrink: bool = True,
         scroll_end: "bool | None" = None,
         animate: bool = False,
+        *,
+        _deferred: bool = False,
     ) -> "InlineProseLog":
         """Track visual row count for each logical line, then delegate."""
         idx = self._logical_count
@@ -97,6 +99,7 @@ class InlineProseLog(CopyableRichLog):
             shrink=shrink,
             scroll_end=scroll_end,
             animate=animate,
+            _deferred=_deferred,
         )
         after = len(self.lines)
         delta = after - before

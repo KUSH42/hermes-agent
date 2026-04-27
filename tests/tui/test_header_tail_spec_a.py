@@ -40,8 +40,12 @@ def _bare_header(**kwargs):
         _focused_gutter_color="#5f87d7",
         _diff_add_color="#4caf50", _diff_del_color="#ef4444",
         _running_icon_color="#82aaff", _remediation_hint=None,
-        _pulse_t=0.0, _pulse_tick=0,
+        _pulse_t=0.0, _pulse_tick=0, _pulse_paused=False,
+        _streaming_kind_hint=None, _streaming_phase=False,
     )
+    if "_density_tier" not in defaults:
+        from hermes_cli.tui.tool_panel.density import DensityTier
+        defaults["_density_tier"] = DensityTier.DEFAULT
     defaults.update(kwargs)
     for k, v in defaults.items():
         setattr(h, k, v)
@@ -291,8 +295,8 @@ class TestHeroStyling:
             f"Expected a 'dim' span covering hero; got: {[s.style for s in hero_spans]}"
         )
 
-    def test_error_hero_still_red(self):
-        """Error hero — span style contains 'red' or a hex color."""
+    def test_error_hero_shows_err_chip(self):
+        """Error state — ER-2 ERR cell pin: tail shows error category + ERR chip, not hero text."""
         h = _bare_header(
             _tool_name="bash",
             _primary_hero="Permission denied",
@@ -302,15 +306,8 @@ class TestHeroStyling:
         result = _render(h, width=120)
         assert result is not None
         plain = result.plain
-        pos = plain.find("Permission denied")
-        assert pos != -1, "Error hero text not found"
-        hero_text = "Permission denied"
-        hero_spans = [s for s in result._spans
-                      if s.start <= pos and s.end >= pos + len(hero_text)]
-        styles = [str(s.style) for s in hero_spans]
-        assert any("red" in st or "#" in st for st in styles), (
-            f"Error hero must have red/hex style; got: {styles}"
-        )
+        # ER-2: hero text replaced by error category chips; ERR chip must appear
+        assert "ERR" in plain, f"ERR chip must appear in error tail; got: {plain!r}"
 
 
 # ---------------------------------------------------------------------------

@@ -193,6 +193,8 @@ class TestTraceResolution:
         mixin._user_collapse_override = False
         mixin._user_override_tier = None
         mixin._auto_collapsed = False
+        mixin._parent_clamp_tier = None
+        mixin.size = MagicMock(width=80)
         mixin._view_state = None
         mixin._result_summary_v4 = None
         mixin._body_line_count = lambda: 50
@@ -220,6 +222,8 @@ class TestTraceResolution:
         mixin._user_collapse_override = False
         mixin._user_override_tier = None
         mixin._auto_collapsed = False
+        mixin._parent_clamp_tier = None
+        mixin.size = MagicMock(width=80)
         mixin._result_summary_v4 = None
         mixin._body_line_count = lambda: 10
 
@@ -249,6 +253,8 @@ class TestTraceResolution:
         mixin._user_collapse_override = False
         mixin._user_override_tier = None
         mixin._auto_collapsed = False
+        mixin._parent_clamp_tier = None
+        mixin.size = MagicMock(width=80)
         mixin._body_line_count = lambda: 5
 
         summary = MagicMock()
@@ -394,23 +400,22 @@ class TestToggleCycle:
         result = _ToolPanelActionsMixin._next_tier_in_cycle(DensityTier.DEFAULT)
         assert result == DensityTier.COMPACT
 
-    def test_toggle_compact_to_hero(self):
+    def test_toggle_compact_to_trace(self):
         from hermes_cli.tui.tool_panel.density import DensityTier
         from hermes_cli.tui.tool_panel._actions import _ToolPanelActionsMixin
         result = _ToolPanelActionsMixin._next_tier_in_cycle(DensityTier.COMPACT)
+        assert result == DensityTier.TRACE
+
+    def test_toggle_trace_to_hero(self):
+        from hermes_cli.tui.tool_panel.density import DensityTier
+        from hermes_cli.tui.tool_panel._actions import _ToolPanelActionsMixin
+        result = _ToolPanelActionsMixin._next_tier_in_cycle(DensityTier.TRACE)
         assert result == DensityTier.HERO
 
     def test_toggle_hero_to_default(self):
         from hermes_cli.tui.tool_panel.density import DensityTier
         from hermes_cli.tui.tool_panel._actions import _ToolPanelActionsMixin
         result = _ToolPanelActionsMixin._next_tier_in_cycle(DensityTier.HERO)
-        assert result == DensityTier.DEFAULT
-
-    def test_toggle_from_trace_returns_default(self):
-        """TRACE is outside the cycle → resets to DEFAULT."""
-        from hermes_cli.tui.tool_panel.density import DensityTier
-        from hermes_cli.tui.tool_panel._actions import _ToolPanelActionsMixin
-        result = _ToolPanelActionsMixin._next_tier_in_cycle(DensityTier.TRACE)
         assert result == DensityTier.DEFAULT
 
     def test_toggle_hero_unavailable_flashes(self):
@@ -425,11 +430,14 @@ class TestToggleCycle:
         mixin._user_collapse_override = False
         mixin._user_override_tier = None
         mixin._auto_collapsed = False
+        mixin._parent_clamp_tier = None
+        mixin.size = MagicMock(width=80)
         mixin._result_summary_v4 = None
         mixin._body_line_count = lambda: 4
 
         vs = MagicMock()
         vs.state = ToolCallState.DONE
+        vs.is_error_for_ui = False
         # TEXT kind — not in _HERO_KINDS
         cls_result = MagicMock()
         cls_result.kind = ResultKind.TEXT
@@ -443,12 +451,11 @@ class TestToggleCycle:
         # Stub _block and tail to None so action skips the tail-dismiss path
         mixin._block = None
 
-        # First toggle: DEFAULT → COMPACT (succeeds)
+        # First toggle: DEFAULT → COMPACT (binary toggle)
         mixin.action_toggle_collapse()
         assert mixin._resolver.tier == DensityTier.COMPACT
-        assert not any("hero" in f[0] for f in flashed)
 
-        # Second toggle: COMPACT → HERO (HERO gate: TEXT kind → rejected)
+        # Second toggle: COMPACT → DEFAULT (binary toggle back)
+        flashed.clear()
         mixin.action_toggle_collapse()
-        assert mixin._resolver.tier == DensityTier.DEFAULT  # gate returned DEFAULT
-        assert any("hero unavailable" in f[0] for f in flashed)
+        assert mixin._resolver.tier == DensityTier.DEFAULT

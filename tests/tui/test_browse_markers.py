@@ -88,7 +88,7 @@ async def test_has_pip_added_on_browse_enter():
         w.has_class = MagicMock(return_value=False)
         w.add_class = MagicMock()
         app._browse_anchors = [_make_anchor(BrowseAnchorType.TURN_START, w)]
-        app._apply_browse_pips()
+        app._svc_browse.apply_browse_pips()
         w.add_class.assert_called()
         call_args = [str(c) for c in w.add_class.call_args_list]
         assert any("--has-pip" in a for a in call_args)
@@ -114,7 +114,7 @@ async def test_correct_pip_class_per_type():
             added = []
             w.add_class = MagicMock(side_effect=lambda *args: added.extend(args))
             app._browse_anchors = [_make_anchor(anchor_type, w)]
-            app._apply_browse_pips()
+            app._svc_browse.apply_browse_pips()
             assert expected_cls in added, f"Expected {expected_cls} for {anchor_type}"
 
 
@@ -139,7 +139,7 @@ async def test_pip_cleared_on_browse_exit():
         )
         app._browse_anchors = [anchor]
         panel.add_class("--has-pip", "--anchor-pip-turn")
-        app._clear_browse_pips()
+        app._svc_browse.clear_browse_pips()
         assert not panel.has_class("--has-pip")
         assert not panel.has_class("--anchor-pip-turn")
 
@@ -157,7 +157,7 @@ async def test_diff_tool_header_gets_anchor_pip_diff():
         added = []
         w.add_class = MagicMock(side_effect=lambda *args: added.extend(args))
         app._browse_anchors = [_make_anchor(BrowseAnchorType.TOOL_BLOCK, w)]
-        app._apply_browse_pips()
+        app._svc_browse.apply_browse_pips()
         assert "--anchor-pip-diff" in added
 
 
@@ -197,7 +197,7 @@ async def test_enabled_false_skips_pips():
         w.has_class = MagicMock(return_value=False)
         w.add_class = MagicMock()
         app._browse_anchors = [_make_anchor(BrowseAnchorType.TURN_START, w)]
-        app._apply_browse_pips()
+        app._svc_browse.apply_browse_pips()
         w.add_class.assert_not_called()
 
 
@@ -219,7 +219,7 @@ async def test_badge_set_on_code_anchor():
         w._lang = "python"
         w._browse_badge = ""
         app._browse_anchors = [_make_anchor(BrowseAnchorType.CODE_BLOCK, w)]
-        app._apply_browse_pips()
+        app._svc_browse.apply_browse_pips()
         assert w._browse_badge == "python \u00b7 1/1"
 
 
@@ -236,7 +236,7 @@ async def test_badge_set_on_diff_tool_header():
         w.add_class = MagicMock()
         w._browse_badge = ""
         app._browse_anchors = [_make_anchor(BrowseAnchorType.TOOL_BLOCK, w)]
-        app._apply_browse_pips()
+        app._svc_browse.apply_browse_pips()
         assert w._browse_badge == "\u00b1 diff"
 
 
@@ -254,9 +254,9 @@ async def test_badge_cleared_on_browse_exit():
         w._lang = "python"
         w._browse_badge = ""
         app._browse_anchors = [_make_anchor(BrowseAnchorType.CODE_BLOCK, w)]
-        app._apply_browse_pips()
+        app._svc_browse.apply_browse_pips()
         assert w._browse_badge == "python \u00b7 1/1"
-        app._clear_browse_pips()
+        app._svc_browse.clear_browse_pips()
         assert w._browse_badge == ""
 
 
@@ -279,7 +279,7 @@ async def test_badge_sequence_number_correct():
             widgets.append(w)
             anchors.append(_make_anchor(BrowseAnchorType.CODE_BLOCK, w))
         app._browse_anchors = anchors
-        app._apply_browse_pips()
+        app._svc_browse.apply_browse_pips()
         assert widgets[0]._browse_badge == "js \u00b7 1/3"
         assert widgets[1]._browse_badge == "js \u00b7 2/3"
         assert widgets[2]._browse_badge == "js \u00b7 3/3"
@@ -299,8 +299,8 @@ async def test_badge_not_set_for_turn_start():
             w.add_class = MagicMock()
             w._browse_badge = ""
             app._browse_anchors = [_make_anchor(anchor_type, w)]
-            app._clear_browse_pips()
-            app._apply_browse_pips()
+            app._svc_browse.clear_browse_pips()
+            app._svc_browse.apply_browse_pips()
             assert w._browse_badge == "", f"Expected no badge for {anchor_type}"
 
 
@@ -375,7 +375,7 @@ async def test_browse_hint_includes_type_glyph():
         w = MagicMock()
         anchor = _make_anchor(BrowseAnchorType.CODE_BLOCK, w, "Code · python", 1)
         app._browse_anchors = [anchor]
-        app._update_browse_status(anchor)
+        app._svc_browse.update_browse_status(anchor)
         # ‹› glyph (first char) should be in hint
         assert "\u2039" in app._browse_hint or "\u203a" in app._browse_hint or "‹›" in app._browse_hint
 
@@ -390,7 +390,7 @@ async def test_browse_hint_includes_map_hint():
         w = MagicMock()
         anchor = _make_anchor(BrowseAnchorType.TURN_START, w, "Turn 1", 1)
         app._browse_anchors = [anchor]
-        app._update_browse_status(anchor)
+        app._svc_browse.update_browse_status(anchor)
         assert "\\ map" in app._browse_hint
 
 
@@ -410,7 +410,7 @@ async def test_config_enabled_false_skips_all_pips():
         w.has_class = MagicMock(return_value=False)
         w.add_class = MagicMock()
         app._browse_anchors = [_make_anchor(BrowseAnchorType.TURN_START, w)]
-        app._apply_browse_pips()
+        app._svc_browse.apply_browse_pips()
         w.add_class.assert_not_called()
 
 
@@ -459,5 +459,5 @@ async def test_config_reasoning_false_skips_pip_in_reasoning():
         app._browse_anchors = [anchor]
         # Patch _is_in_reasoning at the call site (browse service uses it directly)
         with patch.object(_browse_mod, "_is_in_reasoning", return_value=True):
-            app._apply_browse_pips()
+            app._svc_browse.apply_browse_pips()
         w.add_class.assert_not_called()

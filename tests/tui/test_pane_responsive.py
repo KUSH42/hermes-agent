@@ -22,11 +22,13 @@ from hermes_cli.tui.pane_manager import PaneManager, PaneId, LayoutMode
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _pm(enabled: bool = True, cfg: dict | None = None) -> PaneManager:
+def _pm(enabled: bool = True, cfg: dict | None = None, right_collapsed: bool = False) -> PaneManager:
     c: dict = {"layout": "v2" if enabled else "v1"}
     if cfg:
         c.update(cfg)
-    return PaneManager(c)
+    pm = PaneManager(c)
+    pm._right_collapsed = right_collapsed  # override flag-driven default
+    return pm
 
 
 def _make_app(layout: str = "v2") -> "HermesApp":
@@ -262,8 +264,9 @@ async def test_v2_apply_layout_three_at_wide_width() -> None:
     async with app.run_test(size=(140, 40)) as pilot:
         await pilot.pause()
         await pilot.pause()
-        # Force THREE mode and apply
+        # Force THREE mode and apply (_right_collapsed starts True due to flag; override)
         app._pane_manager._mode = LayoutMode.THREE
+        app._pane_manager._right_collapsed = False
         app._pane_manager._apply_layout(app)
         await pilot.pause()
         pane_left = app.query_one("#pane-left")
@@ -280,6 +283,7 @@ async def test_v2_apply_layout_three_wide_at_160() -> None:
         await pilot.pause()
         await pilot.pause()
         app._pane_manager._mode = LayoutMode.THREE_WIDE
+        app._pane_manager._right_collapsed = False
         app._pane_manager._apply_layout(app)
         await pilot.pause()
         assert app.query_one("#pane-left").display
@@ -294,6 +298,7 @@ async def test_v2_side_panes_hidden_when_collapsed() -> None:
         await pilot.pause()
         await pilot.pause()
         app._pane_manager._mode = LayoutMode.THREE
+        app._pane_manager._right_collapsed = False  # ensure right starts visible
         app._pane_manager.toggle_left_collapsed()
         app._pane_manager._apply_layout(app)
         await pilot.pause()
@@ -311,7 +316,8 @@ async def test_v2_right_collapse_toggle() -> None:
         await pilot.pause()
         await pilot.pause()
         app._pane_manager._mode = LayoutMode.THREE
-        app._pane_manager.toggle_right_collapsed()
+        app._pane_manager._right_collapsed = False  # ensure right starts visible
+        app._pane_manager.toggle_right_collapsed()  # False → True (collapsed)
         app._pane_manager._apply_layout(app)
         await pilot.pause()
         pane_right = app.query_one("#pane-right")
@@ -358,6 +364,7 @@ async def test_v2_action_collapse_right_pane() -> None:
         await pilot.pause()
         await pilot.pause()
         app._pane_manager._mode = LayoutMode.THREE
+        app._pane_manager._right_collapsed = False  # start visible before collapsing
         app.action_collapse_right_pane()
         await pilot.pause()
         assert app._pane_manager._right_collapsed

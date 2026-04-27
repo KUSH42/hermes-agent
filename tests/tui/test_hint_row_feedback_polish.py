@@ -65,11 +65,19 @@ def _make_panel(*, rs=None, width: int = 100, footer_chip_names: "set[str] | Non
     block = types.SimpleNamespace(_completed=block_completed)
     panel._block = block
 
-    # Wire _build_hint_text, _visible_footer_action_kinds, _result_paths_for_action, _get_omission_bar
+    # Wire _build_hint_text, _collect_hints, _visible_footer_action_kinds, etc.
     panel._build_hint_text = ToolPanel._build_hint_text.__get__(panel)
+    panel._collect_hints = ToolPanel._collect_hints.__get__(panel)
     panel._visible_footer_action_kinds = ToolPanel._visible_footer_action_kinds.__get__(panel)
     panel._result_paths_for_action = lambda: []
     panel._get_omission_bar = lambda: None
+    # Attrs/methods accessed by _collect_hints / _is_error
+    panel.collapsed = False
+    panel._view_state = None
+    panel._lookup_view_state = lambda: None
+    panel._is_error = ToolPanel._is_error.__get__(panel)
+    panel._render_hints = ToolPanel._render_hints.__get__(panel)
+    panel._truncate_hints = ToolPanel._truncate_hints.__get__(panel)
 
     # Footer pane mock
     if footer_chip_names is not None:
@@ -190,12 +198,12 @@ class TestF1HintLabel:
         assert "F1" in t.plain
         assert "help" in t.plain
 
-    def test_f1_hint_omitted_at_narrow_width(self):
-        """width 40 → no F1 in hint text."""
+    def test_f1_hint_present_at_narrow_width(self):
+        """width 40 — F1 always pinned (P-6/HF-C); contextual hints suppressed."""
         rs = _make_summary()
         panel = _make_panel(rs=rs, width=40)
         t = panel._build_hint_text()
-        assert "F1" not in t.plain
+        assert "F1" in t.plain  # P-6: F1 always shown regardless of width
 
 
 # ---------------------------------------------------------------------------

@@ -197,10 +197,19 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         add_axis_watcher(view, self._on_axis_change)
 
     def _on_axis_change(self, view: "Any", axis: str, old: "Any", new: "Any") -> None:
+        # AB-3: density not relevant: header display does not change with density tier; ToolPanel owns layout
         if axis == "streaming_kind_hint":
             self._streaming_kind_hint = new
             if self.is_attached:
                 self.refresh()
+            return
+        if axis == "kind":
+            # AB-1: classifier resolution invalidates the pre-classification hint.
+            # user-authority-on-KIND: once `kind` arrives, the streaming hint yields.
+            if self._streaming_kind_hint is not None:
+                self._streaming_kind_hint = None
+                if self.is_attached:
+                    self.refresh()
             return
         if axis == "state":
             # SK-2: streaming hint is a STREAMING-only signal. Defensive clear on

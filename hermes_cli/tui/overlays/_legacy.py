@@ -292,6 +292,8 @@ class ToolPanelHelpOverlay(Widget):
         border-title-align: left;
         border-title-color: $accent;
         dock: right;
+        overflow-y: auto;
+        scrollbar-gutter: stable;
     }
     ToolPanelHelpOverlay.--visible { display: block; }
     ToolPanelHelpOverlay > Static { height: auto; }
@@ -317,6 +319,20 @@ class ToolPanelHelpOverlay(Widget):
 [bold]r[/bold]       retry on error
 [bold]+/-/*[/bold]   expand/collapse/all lines
 [bold]?[/bold]       this help
+
+[bold]Header chips[/bold]
+
+…STARTING    tool is initialising
+STREAMING    output arriving
+…FINALIZING  wrapping up
+DONE         completed successfully
+CANCELLED    cancelled by user
+ERR          exited with error
+2m 3s        elapsed time after finish
+✓            action confirmed (copy/retry)
+HERO         full detail view
+TRACE        condensed view
+COMPACT      minimal view
 """
 
     def compose(self) -> ComposeResult:

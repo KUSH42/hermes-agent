@@ -46,9 +46,11 @@ def _is_enabled() -> bool:
     try:
         import tomllib  # Python 3.11+
     except ImportError:
+        # ImportError expected on Python < 3.11; fall back to tomli
         try:
             import tomli as tomllib  # type: ignore[no-redef]
         except ImportError:
+            # ImportError expected when neither tomllib nor tomli is installed
             return False
     cfg_path = Path.home() / ".hermes" / "config.toml"
     if not cfg_path.exists():
@@ -78,7 +80,8 @@ def _rotate_if_needed(path: Path) -> None:
             rotated = path.with_suffix(".jsonl.1")
             path.rename(rotated)
     except FileNotFoundError:
-        pass  # file doesn't exist yet — nothing to rotate
+        # FileNotFoundError expected when log file doesn't exist yet
+        pass
     except Exception:
         _log.warning("keystroke_log: rotation failed", exc_info=True)
 

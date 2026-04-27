@@ -536,7 +536,14 @@ class SearchRenderer(BodyRenderer):
         return "\n".join(lines)
 
     def hit_count(self) -> int:
-        return getattr(self, "_hit_count", 0)
+        _hc = getattr(self, "_hit_count", 0)
+        if _hc:
+            return _hc
+        # Phase C (non-streaming): _hit_count is only set on VirtualSearchList.
+        # Fall back to classifier metadata stamped at COMPLETING.
+        if self.cls_result and self.cls_result.metadata:
+            return int(self.cls_result.metadata.get("hit_count", 0))
+        return 0
 
     def summary_line(self, *, density=None, cls_result=None) -> str:
         from hermes_cli.tui.tool_panel.layout_resolver import DensityTier

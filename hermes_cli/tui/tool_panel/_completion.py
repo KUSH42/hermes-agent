@@ -223,6 +223,9 @@ class _ToolPanelCompletionMixin:
         if self._body_pane is None:  # type: ignore[attr-defined]
             return
         renderer = new_renderer_cls(payload, cls_result, app=self.app)  # type: ignore[attr-defined]
+        # Update BodyPane renderer FIRST so apply_density() (fired later by the resolver
+        # on tier-change) uses real content instead of the initial empty renderer.
+        self._body_pane._renderer = renderer  # type: ignore[attr-defined]
         try:
             new_widget = renderer.build_widget()
         except Exception:

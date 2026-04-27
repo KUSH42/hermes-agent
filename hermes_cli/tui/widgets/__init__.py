@@ -1108,7 +1108,8 @@ class AssistantNameplate(Widget):
                     self._active_phase = 0.0
                     self._set_timer_rate(30)
             elif phase in (Phase.STREAMING, Phase.TOOL_EXEC):
-                self._pause_pulse()
+                if self._state != _NPState.STARTUP:  # don't interrupt decrypt
+                    self._pause_pulse()
             elif phase == Phase.IDLE:
                 pass  # transition_to_idle() drives IDLE transitions
             # Phase.ERROR handled by A3 (error-prominence spec)
@@ -1123,6 +1124,10 @@ class AssistantNameplate(Widget):
     def _on_error_set(self, **_) -> None:
         """A3-1: switch nameplate into error state."""
         try:
+            if self._state == _NPState.STARTUP:
+                # Abort decrypt early so garbled chars don't freeze on screen.
+                self._state = _NPState.IDLE
+                self._init_frame_for(self._target_name, active_style=False)
             self._stop_timer()
             self.remove_class("--active", "--idle")
             self.add_class("--error")

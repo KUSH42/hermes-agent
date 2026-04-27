@@ -3492,7 +3492,7 @@ class HermesCLI:
 
         from hermes_cli.tui.tte_runner import iter_frames
         MAX_FRAMES = 3000
-        MAX_WALL_S = 6.0
+        MAX_WALL_S = 30.0  # long effects (decrypt=15s, matrix=21s) must run to completion
         rendered_any = False
         state_lock = _threading.Lock()
         latest_frame: Text | None = None

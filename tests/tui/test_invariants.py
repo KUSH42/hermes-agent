@@ -978,3 +978,53 @@ class TestIL8ExceptHandling:
             assert found is expect_violation, (
                 f"meta-test failed: expect_violation={expect_violation}, got {found}"
             )
+
+
+# ---------------------------------------------------------------------------
+# IL-9 — view-mirror-field ordering (SC-3): view.dur_ms and view.is_error must
+#         be written BEFORE any terminal _set_view_state call in the same function.
+# ---------------------------------------------------------------------------
+
+
+_IL9_TERMINAL_STATES = {"DONE", "ERROR", "CANCELLED", "REMOVED"}
+_TOOLS_PY_PATH = pathlib.Path(__file__).parent.parent.parent / "hermes_cli" / "tui" / "services" / "tools.py"
+
+
+class TestIL9ViewMirrorOrdering:
+    def test_il9_no_post_state_view_mirror_writes(self) -> None:
+        """In services/tools.py, no view.dur_ms/is_error write appears after terminal _set_view_state."""
+        src = _TOOLS_PY_PATH.read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        violations: list[str] = []
+
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            all_nodes = list(ast.walk(node))
+            terminal_lines: list[int] = []
+            for n in all_nodes:
+                if not isinstance(n, ast.Call):
+                    continue
+                fn = n.func
+                if not (isinstance(fn, ast.Attribute) and fn.attr == "_set_view_state"):
+                    continue
+                if len(n.args) < 2:
+                    continue
+                state_arg = n.args[1]
+                if isinstance(state_arg, ast.Attribute) and state_arg.attr in _IL9_TERMINAL_STATES:
+                    terminal_lines.append(n.lineno)
+
+            if not terminal_lines:
+                continue
+            max_terminal = max(terminal_lines)
+            _MIRROR_ATTRS = {"dur_ms", "is_error"}
+            for n in all_nodes:
+                if isinstance(n, ast.Assign):
+                    for t in n.targets:
+                        if isinstance(t, ast.Attribute) and t.attr in _MIRROR_ATTRS:
+                            if n.lineno > max_terminal:
+                                violations.append(
+                                    f"{node.name}:L{n.lineno} {t.attr} write after terminal state write at L{max_terminal}"
+                                )
+
+        assert violations == [], f"IL-9 violations — post-terminal mirror writes: {violations}"

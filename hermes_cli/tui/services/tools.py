@@ -1,6 +1,7 @@
 """Tool block mounting, streaming, reasoning, plan-call tracking service extracted from _app_tool_rendering.py."""
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import threading
 import time as _time
@@ -19,6 +20,32 @@ if TYPE_CHECKING:
     from hermes_cli.tui.tool_payload import ClassificationResult, ResultKind
 
 logger = logging.getLogger(__name__)
+
+# SC-4: singleton executor for classifier timeout — shared across calls to
+# avoid per-call thread-pool overhead; max_workers=2 prevents pile-up under burst.
+_CLASSIFIER_TIMEOUT_S: float = 0.050
+_CLASSIFIER_EXECUTOR: concurrent.futures.ThreadPoolExecutor = (
+    concurrent.futures.ThreadPoolExecutor(
+        max_workers=2,
+        thread_name_prefix="hermes-classifier",
+    )
+)
+
+
+def _classify_with_timeout(payload: "Any") -> "Any":
+    """Submit classify_content to bounded executor; fall back to TEXT on timeout."""
+    from hermes_cli.tui.content_classifier import classify_content
+    fut = _CLASSIFIER_EXECUTOR.submit(classify_content, payload)
+    try:
+        return fut.result(timeout=_CLASSIFIER_TIMEOUT_S)
+    except concurrent.futures.TimeoutError:
+        # Concept §perception-budgets: classifier ≤50ms; on overrun treat as TEXT.
+        # Worker thread keeps running until classify returns; output discarded.
+        # Acceptable: classifier holds no locks, payload data is read-only.
+        logger.warning("classifier exceeded 50ms budget; falling back to TEXT", exc_info=True)
+        from hermes_cli.tui.content_classifier import ClassificationResult
+        from hermes_cli.tui.tool_payload import ResultKind
+        return ClassificationResult(kind=ResultKind.TEXT, confidence=0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -1507,7 +1534,6 @@ class ToolRenderingService(AppService):
         if view.kind is not None:
             return  # already stamped (defensive — shouldn't happen)
         try:
-            from hermes_cli.tui.content_classifier import classify_content
             from hermes_cli.tui.tool_payload import ToolPayload
             output_raw = "\n".join(result_lines) if result_lines else ""
             payload = ToolPayload(
@@ -1517,7 +1543,7 @@ class ToolRenderingService(AppService):
                 input_display=None,
                 output_raw=output_raw,
             )
-            result = classify_content(payload)
+            result = _classify_with_timeout(payload)
         except Exception:
             logger.exception("AXIS-4: classifier failed during COMPLETING; leaving kind=None")
             return

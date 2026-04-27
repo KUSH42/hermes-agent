@@ -195,6 +195,25 @@ class _ToolPanelCompletionMixin:
         except Exception:
             _log.debug("Tool output classification failed", exc_info=True)
 
+    def _emit_diff_stat_for_renderer(self, renderer: "Any") -> None:
+        """PG-3 / SC-1: iterate renderer.diff_lines and post per-line DiffStatUpdate.
+
+        Renderer purity (concept §renderer-purity rule 5) requires that build()
+        not post messages. The panel owns the bus; it calls this after build_widget().
+        """
+        try:
+            from hermes_cli.tui.tool_group import ToolGroup as _TG
+            app = getattr(self, "app", None)  # type: ignore[attr-defined]
+            if app is None:
+                return
+            for line in renderer.diff_lines:
+                if line.startswith("+") and not line.startswith("+++"):
+                    app.post_message(_TG.DiffStatUpdate(add=1, del_=0))
+                elif line.startswith("-") and not line.startswith("---"):
+                    app.post_message(_TG.DiffStatUpdate(add=0, del_=1))
+        except Exception:
+            _log.debug("_emit_diff_stat_for_renderer failed", exc_info=True)
+
     def _swap_renderer(
         self,
         new_renderer_cls: type,
@@ -209,6 +228,8 @@ class _ToolPanelCompletionMixin:
         except Exception:
             _log.exception("renderer.build_widget() failed; keeping original body")
             return
+        if hasattr(renderer, "diff_lines"):
+            self._emit_diff_stat_for_renderer(renderer)
         plain_text = renderer.copy_text() if hasattr(renderer, "copy_text") else payload.output_raw
         old_block = self._block  # type: ignore[attr-defined]
         if old_block is not None and hasattr(old_block, "replace_body_widget"):

@@ -106,7 +106,15 @@ def _trim_tail_segments(
     drop_order: "list[str] | None" = None,
     protect_hero: bool = False,
 ) -> "list[tuple[str, Text]]":
-    """Drop tail chips by name until total cell width ≤ budget."""
+    """Drop tail chips by name until total cell width ≤ budget.
+
+    Note: PHASE=ERR is *not* handled here. The ERR cell rule (concept
+    §ER-cell-rule, ER-1..ER-5) is enforced at the header level
+    (`tool_blocks/_header.py::_render_v4`) which bypasses this trim
+    entirely and emits a fixed 2-chip pinned tail (category + ERR) plus
+    optional remediation hint. This resolver only governs density-driven
+    trimming on non-ERR phases.
+    """
     if drop_order is None:
         drop_order = _DROP_ORDER_DEFAULT
     result = list(segments)

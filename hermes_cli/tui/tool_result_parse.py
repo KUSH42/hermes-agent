@@ -127,6 +127,8 @@ def _allowed_recovery(cat: "Any") -> "frozenset[str]":
             _RECOVERY_BY_CATEGORY = {
                 _EC.ENOENT:      frozenset({"retry", "edit_args"}),
                 _EC.EACCES:      frozenset({"edit_args"}),
+                _EC.ENOTDIR:     frozenset({"edit_args", "retry"}),
+                _EC.EINVAL:      frozenset({"edit_args", "retry"}),
                 _EC.TIMEOUT:     frozenset({"retry"}),
                 _EC.ENETUNREACH: frozenset({"retry"}),
                 _EC.SIGNAL:      frozenset({"retry", "edit_args"}),

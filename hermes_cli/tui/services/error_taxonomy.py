@@ -8,6 +8,8 @@ from enum import Enum
 class ErrorCategory(str, Enum):
     ENOENT      = "ENOENT"
     EACCES      = "EACCES"
+    ENOTDIR     = "ENOTDIR"      # not a directory — user-fixable via edit_args
+    EINVAL      = "EINVAL"       # invalid argument / unrecognized option
     ENETUNREACH = "ENETUNREACH"
     SIGNAL      = "signal"
     USAGE       = "usage"
@@ -22,6 +24,9 @@ _STDERR_RULES: tuple[tuple[re.Pattern[str], ErrorCategory], ...] = (
     (re.compile(r"fatal: ambiguous argument", re.I), ErrorCategory.ENOENT),
     (re.compile(r"(?:command )?not found",    re.I), ErrorCategory.ENOENT),
     (re.compile(r"permission denied",         re.I), ErrorCategory.EACCES),
+    (re.compile(r"not a directory",           re.I), ErrorCategory.ENOTDIR),
+    (re.compile(r"invalid argument",          re.I), ErrorCategory.EINVAL),
+    (re.compile(r"unrecognized option",       re.I), ErrorCategory.EINVAL),
     (re.compile(r"connection refused",        re.I), ErrorCategory.ENETUNREACH),
     (re.compile(r"timed out|timeout",         re.I), ErrorCategory.TIMEOUT),
 )

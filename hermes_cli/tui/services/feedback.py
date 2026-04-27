@@ -263,6 +263,11 @@ class FeedbackService:
 
         Returns FlashHandle with .displayed=True if applied, False if blocked.
         Raises KeyError if channel is not registered.
+
+        Convention: called from the event loop only — workers should marshal via
+        App.call_from_thread. The settled-suppression check and preemption-lock
+        sequence rely on this single-threaded convention; multi-threaded use is
+        undefined behavior and would need an explicit contract bump.
         """
         if channel not in self._channels:
             raise KeyError(f"FeedbackService: channel {channel!r} not registered")

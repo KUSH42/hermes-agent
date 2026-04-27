@@ -108,6 +108,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         self._is_complete: bool = False
         self._tool_icon: str = ""
         self._tool_icon_error: bool = False
+        self._stall_glyph_active: bool = False
         self._label_rich: "Text | None" = None
         self._compact_tail: bool = False
         self._is_child_diff: bool = False
@@ -292,6 +293,10 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 # ERR overrides to heavy gutter for redundant-signal (shape encodes error)
                 from hermes_cli.tui.body_renderers._grammar import GLYPH_GUTTER_FOCUSED
                 raw_glyph = GLYPH_GUTTER_FOCUSED
+            elif self._stall_glyph_active:
+                # SC-2: reduced-motion stall signal — static ◌ so stall is observable
+                # without relying on animation (concept §motion-intensity stall-honest-caveat)
+                raw_glyph = "◌"
             if focused:
                 glyph_color = self._colors().accent
             else:

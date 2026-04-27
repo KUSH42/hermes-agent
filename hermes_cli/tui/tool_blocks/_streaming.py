@@ -564,10 +564,14 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             and (time.monotonic() - self._last_line_time) > 5.0
         )
         # CL-4: freeze pulse when stalled; resume on next line (lags up to one tick ~100ms)
+        # SC-2: also set ◌ glyph under reduced-motion so stall is observable without animation.
         if stalled and not self._header._pulse_paused:
             self._header._pulse_paused = True
+            if reduced_motion:
+                self._header._stall_glyph_active = True
         elif not stalled and self._header._pulse_paused:
             self._header._pulse_paused = False
+            self._header._stall_glyph_active = False
         # SCT-1: route stall warning through SkinColors so theme overrides apply.
         try:
             from hermes_cli.tui.body_renderers._grammar import SkinColors

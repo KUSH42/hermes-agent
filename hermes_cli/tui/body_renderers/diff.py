@@ -383,21 +383,20 @@ class DiffRenderer(BodyRenderer):
             return ResultKind.DIFF
         return None
 
+    @property
+    def diff_lines(self) -> "list[str]":
+        """Parsed diff lines, available after build(). Panel/owner iterates
+        to emit incremental DiffStatUpdate (PG-3); renderer no longer posts
+        messages (concept §renderer-purity rule 5)."""
+        return list(getattr(self, "_diff_lines", []))
+
     def build(self):
         raw = self.payload.output_raw or ""
         lines = raw.splitlines()
+        self._diff_lines: "list[str]" = list(lines)
         total_lines = len(lines)
         hunk_count = sum(1 for line in lines if line.startswith("@@"))
         auto_collapse = (total_lines > 40 or hunk_count > 3) and self._cfg_auto_collapse
-
-        # PG-3: post incremental DiffStatUpdate per +/- line for ToolGroup header
-        if self._app is not None:
-            from hermes_cli.tui.tool_group import ToolGroup as _TG
-            for line in lines:
-                if line.startswith("+") and not line.startswith("+++"):
-                    self._app.post_message(_TG.DiffStatUpdate(add=1, del_=0))
-                elif line.startswith("-") and not line.startswith("---"):
-                    self._app.post_message(_TG.DiffStatUpdate(add=0, del_=1))
 
         result = Text()
         rendered_lines = _render_diff_lines(lines, self.colors, collapse=auto_collapse)

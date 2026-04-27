@@ -315,6 +315,8 @@ class HermesApp(App):
     status_model: reactive[str] = reactive("")
     status_context_tokens: reactive[int] = reactive(0)
     status_context_max: reactive[int] = reactive(0)
+    # CWD-1: current working directory — updated by BashService after each command
+    status_cwd: reactive[str] = reactive("")
 
     # Compaction state — display-only (status_compaction_progress has a watcher; enabled does not)
     status_compaction_progress: reactive[float] = reactive(0.0)  # 0.0–1.0
@@ -1050,6 +1052,8 @@ class HermesApp(App):
     def _set_workspace_tracker(self, tracker: WorkspaceTracker, poller: GitPoller) -> None:
         self._workspace_tracker = tracker
         self._git_poller = poller
+        import os as _os
+        self.status_cwd = _os.getcwd()
         if not poller.is_git_repo:
             self._last_git_snapshot = GitSnapshot(
                 branch="",

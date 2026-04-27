@@ -3,7 +3,6 @@ output to a BashOutputBlock widget."""
 from __future__ import annotations
 
 import os
-import shlex
 import signal
 import subprocess
 import time as _time
@@ -14,6 +13,10 @@ from .base import AppService
 if TYPE_CHECKING:
     from hermes_cli.tui.widgets.bash_output_block import BashOutputBlock
 
+# CWD-2b: sentinel printed by the shell wrapper after every command to report
+# the final working directory. Chosen to be long/unique — collision negligible.
+_CWD_SENTINEL = "HERMES_CWD_8f7e2a1b="
+
 
 class BashService(AppService):
     """Manages one-at-a-time shell command execution for bash-passthrough mode."""
@@ -22,6 +25,8 @@ class BashService(AppService):
         super().__init__(app)
         self._proc: subprocess.Popen | None = None
         self._running: bool = False
+        # CWD-2a: persistent CWD across consecutive bash commands
+        self._bash_cwd: str = os.getcwd()
 
     @property
     def is_running(self) -> bool:
@@ -51,52 +56,60 @@ class BashService(AppService):
         start = _time.monotonic()
         exit_code = 1
 
-        # Split before the Popen try so shlex ValueError (malformed quote) is
-        # caught by the explicit except ValueError block here, not buried in the
-        # Popen block. cmd0 captured here for FileNotFoundError display.
-        try:
-            args = shlex.split(cmd)
-        except ValueError as exc:
-            self.app.call_from_thread(block.push_line, f"[parse error] {exc}")
-            self.app.call_from_thread(
-                self._finalize, block, 1, _time.monotonic() - start
-            )
-            return
-        cmd0 = args[0] if args else cmd
+        # CWD-2c: wrap command in sh -c so that:
+        #   1. Shell features (pipes, redirects, &&) work correctly
+        #   2. We append a pwd probe to capture the final CWD after any cd
+        wrapped = (
+            f"{{ {cmd}; }}; "
+            f"__ex=$?; "
+            f"printf '%s%s\\n' '{_CWD_SENTINEL}' \"$(pwd)\"; "
+            f"exit \"$__ex\""
+        )
 
+        _extracted_cwd: str | None = None
         try:
             self._proc = subprocess.Popen(  # allow-sync-io: long-lived Popen in @work(thread=True, group='bash'), off event loop
-                args,
+                ["sh", "-c", wrapped],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
                 start_new_session=True,  # own process group → killpg works
+                cwd=self._bash_cwd,      # CWD-2c: persistent CWD
             )
+            # CWD-2d: strip the sentinel line from display; capture the CWD it carries
             for line in self._proc.stdout:
-                self.app.call_from_thread(block.push_line, line.rstrip("\n"))
+                raw = line.rstrip("\n")
+                if raw.startswith(_CWD_SENTINEL):
+                    _extracted_cwd = raw[len(_CWD_SENTINEL):]
+                    continue  # do NOT push sentinel to display
+                self.app.call_from_thread(block.push_line, raw)
             self._proc.wait()
             exit_code = self._proc.returncode
         except FileNotFoundError:
-            # cmd0 captured before try — no second shlex.split call
-            self.app.call_from_thread(
-                block.push_line, f"bash: {cmd0}: command not found"
-            )
+            self.app.call_from_thread(block.push_line, "[error] sh not found")
         except Exception as exc:
             self.app.call_from_thread(block.push_line, f"[error] {exc}")
         finally:
             self._proc = None
 
         elapsed = _time.monotonic() - start
-        # Clear _running only after mark_done is dispatched to avoid TOCTOU:
-        # a new !cmd submitted after _running=False but before mark_done would
-        # mount a new block before the old one finishes its --done transition.
-        self.app.call_from_thread(self._finalize, block, exit_code, elapsed)
+        # CWD-2e: pass extracted CWD to _finalize so it can update status_cwd
+        self.app.call_from_thread(
+            self._finalize, block, exit_code, elapsed, _extracted_cwd
+        )
 
     def _finalize(
-        self, block: "BashOutputBlock", exit_code: int, elapsed: float
+        self,
+        block: "BashOutputBlock",
+        exit_code: int,
+        elapsed: float,
+        new_cwd: str | None = None,
     ) -> None:
         """Called on event loop via call_from_thread. Clears state + marks block done."""
         self._running = False
+        if new_cwd:
+            self._bash_cwd = new_cwd
+            self.app.status_cwd = new_cwd  # reactive → triggers StatusBar refresh
         block.mark_done(exit_code, elapsed)

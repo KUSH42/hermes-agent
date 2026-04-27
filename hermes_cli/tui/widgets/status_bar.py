@@ -6,6 +6,7 @@ SourcesBar, plus their helper functions and cache variables.
 
 from __future__ import annotations
 
+import os
 import sys
 import time as _time  # S1-C: module top — not inside render() or callbacks
 from typing import TYPE_CHECKING, Any, Callable
@@ -474,6 +475,9 @@ class StatusBar(PulseMixin, Widget):
         # S1-C: track model change time for flash-then-dim behaviour
         self._model_changed_at: float = 0.0
         self.watch(app, "status_model", self._on_model_change)
+        # CWD-4: track CWD change time for flash-then-dim behaviour
+        self._cwd_changed_at: float = 0.0
+        self.watch(app, "status_cwd", self._on_cwd_change)
 
     def _on_status_change(self, _value: object = None) -> None:
         self.refresh()
@@ -523,6 +527,12 @@ class StatusBar(PulseMixin, Widget):
     def _on_model_change(self, _model: str = "") -> None:
         """S1-C: record the time of the most recent model change."""
         self._model_changed_at = _time.monotonic()
+        self.refresh()
+        self.set_timer(2.1, self.refresh)  # re-dim after 2s
+
+    def _on_cwd_change(self, _cwd: str = "") -> None:
+        """CWD-4: record the time of the most recent CWD change."""
+        self._cwd_changed_at = _time.monotonic()
         self.refresh()
         self.set_timer(2.1, self.refresh)  # re-dim after 2s
 
@@ -631,6 +641,13 @@ class StatusBar(PulseMixin, Widget):
         _model_age = _time.monotonic() - getattr(self, "_model_changed_at", 0.0)
         _model_style = "bold" if _model_age < 2.0 else "dim"
 
+        # CWD-3: basename of current working directory
+        _raw_cwd = str(getattr(app, "status_cwd", ""))
+        cwd_basename = os.path.basename(_raw_cwd) or _raw_cwd  # fallback for root "/"
+        # CWD-4: bold for 2s after change, then dim
+        _cwd_age = _time.monotonic() - getattr(self, "_cwd_changed_at", 0.0)
+        _cwd_style = "bold" if _cwd_age < 2.0 else "dim"
+
         # S1-E: check whether HintBar is actively flashing (suppress idle tips if so)
         _feedback = getattr(app, "feedback", None)
         _flash_state = None
@@ -672,7 +689,10 @@ class StatusBar(PulseMixin, Widget):
                 t.append(" \u00b7 ", style="dim")
                 _append_status_segment(t, ctx_label, "dim", streaming=_status_streaming)
         elif width < 60:
-            # Narrow (40\u201359 cols): model \u00b7 \u25b0 glyph \u00b7 verbose ctx_label
+            # Narrow (40\u201359 cols): cwd \u00b7 model \u00b7 \u25f0 glyph \u00b7 verbose ctx_label
+            if cwd_basename:
+                t.append(cwd_basename, style=_cwd_style)
+                t.append(" \u00b7 ", style="dim")
             if not model:
                 t.append("connecting\u2026", style="dim")
             else:
@@ -686,7 +706,10 @@ class StatusBar(PulseMixin, Widget):
                 t.append(" \u00b7 ", style="dim")
                 _append_status_segment(t, ctx_label, "dim", streaming=_status_streaming)
         else:
-            # Full (>=60 cols): model \u00b7 bar \u00b7 pct \u00b7 ctx \u00b7 session  (A11: model anchored left)
+            # Full (>=60 cols): cwd \u00b7 model \u00b7 bar \u00b7 pct \u00b7 ctx \u00b7 session  (A11: model anchored left)
+            if cwd_basename:
+                t.append(cwd_basename, style=_cwd_style)
+                t.append(" \u00b7 ", style="dim")
             if not model:
                 t.append("connecting\u2026", style="dim")
             else:

@@ -149,6 +149,23 @@ class WriteFileBlock(StreamingToolBlock):
             _log.debug("WriteFileBlock.update_progress: _human_size failed", exc_info=True)
             widget.update(f"writing · {written}B")
 
+    def reset_partial_state(self) -> None:
+        """L13: Reset progress counters accumulated during the gen/delta window.
+
+        Called on adoption before _wire_args applies the final clean args so
+        progress bars reflect the real totals rather than partial-stream values.
+        """
+        self._bytes_written = 0
+        self._bytes_total = 0
+        self._line_scratch = ""
+        self._content_lines.clear()
+        self._pre_mount_chunks.clear()
+        if self._extractor is not None and hasattr(self._extractor, "reset"):
+            try:
+                self._extractor.reset()
+            except Exception:
+                _log.debug("WriteFileBlock.reset_partial_state: extractor.reset() failed", exc_info=True)
+
     def set_final_path(self, path: str) -> None:
         """Update path from tool_start function_args. Event-loop only."""
         if not path:

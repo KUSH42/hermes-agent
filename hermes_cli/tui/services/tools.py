@@ -233,6 +233,12 @@ class ToolRenderingService(AppService):
         # PG-1/PG-2: plan sync broker + atomicity lock
         from hermes_cli.tui.services.plan_sync import PlanSyncBroker
         self._plan_broker: "PlanSyncBroker | None" = PlanSyncBroker(self)
+        # H8: Held during any mutation of _tool_views_by_id, _tool_views_by_gen_index,
+        # _turn_tool_calls, or any view-state field. Worker threads MUST acquire
+        # this lock before reading these maps. Event-loop code does NOT need to hold
+        # the lock for reads (the event loop is sequential; no concurrent mutation is
+        # possible from the same thread). RLock allows re-entrant acquisition from
+        # within _set_view_state callbacks on the event-loop side.
         self._state_lock = threading.RLock()
 
     # ------------------------------------------------------------------
@@ -256,6 +262,11 @@ class ToolRenderingService(AppService):
             set_axis(view, "state", new)
             if self._plan_broker is not None:
                 self._plan_broker.on_view_state(view, old, new)
+
+    def _snapshot_turn_tool_calls(self) -> "list[Any]":
+        """Return an immutable snapshot of _turn_tool_calls records. Safe to call from worker threads."""
+        with self._state_lock:
+            return list(self._turn_tool_calls.values())
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -867,6 +878,8 @@ class ToolRenderingService(AppService):
         if tool_call_id:
             self._tool_views_by_id.pop(tool_call_id, None)
         if view is not None and view.gen_index is not None:
+            # H7: adopted views have gen_index=None after adoption; this branch
+            # fires only for never-adopted GENERATED records cancelled directly.
             self._tool_views_by_gen_index.pop(view.gen_index, None)
 
         # Step 12: optional _turn_tool_calls deletion
@@ -923,17 +936,26 @@ class ToolRenderingService(AppService):
                     logger.debug("header.refresh() post-arg-wire failed", exc_info=True)
 
     def _pop_pending_gen_for(self, tool_name: str) -> "ToolCallViewState | None":
-        """Pop the oldest GENERATED record matching tool_name, or any GENERATED if none match."""
+        """Pop the newest GENERATED record matching tool_name, or any GENERATED if none match.
+
+        H6: LIFO (newest-first) order matches provider semantics — when multiple
+        gen-start events arrive before the first start_tool_call, the newest
+        generation is the one whose args were just completed.
+
+        NOTE: _cancel_first_pending_gen (below) intentionally stays FIFO (oldest-
+        first) for background-terminal cleanup. Do NOT flip that method when
+        updating this one.
+        """
         if not self._tool_views_by_gen_index:
             return None
-        # First pass: match by tool_name
-        for gen_idx in sorted(self._tool_views_by_gen_index):
+        # First pass: match by tool_name, newest first (LIFO)
+        for gen_idx in sorted(self._tool_views_by_gen_index, reverse=True):
             v = self._tool_views_by_gen_index[gen_idx]
             if v.state == ToolCallState.GENERATED and v.tool_name == tool_name:
                 del self._tool_views_by_gen_index[gen_idx]
                 return v
-        # Second pass: any GENERATED (FIFO fallback — handles provider skipping gen-start)
-        for gen_idx in sorted(self._tool_views_by_gen_index):
+        # Second pass: any GENERATED, newest first (LIFO fallback — handles provider skipping gen-start)
+        for gen_idx in sorted(self._tool_views_by_gen_index, reverse=True):
             v = self._tool_views_by_gen_index[gen_idx]
             if v.state == ToolCallState.GENERATED:
                 del self._tool_views_by_gen_index[gen_idx]
@@ -982,6 +1004,19 @@ class ToolRenderingService(AppService):
         cat = self._make_view_category(tool_name)
         now = _time.monotonic()
         turn_start = getattr(self.app, "_turn_start_monotonic", None) or now
+
+        # M21: derive depth from agent stack at gen-open time.
+        # tool_call_id is unknown at this point; parent comes from _agent_stack only
+        # (no _explicit_parent_map lookup — that map is keyed by tool_call_id).
+        # Adoption in start_tool_call re-runs _compute_parent_depth with the real
+        # tool_call_id and overwrites view.depth, so any racy gap is corrected.
+        gen_parent_id: "str | None" = None
+        gen_depth = 0
+        if self._agent_stack:
+            gen_parent_id = self._agent_stack[-1]
+            parent_rec = self._turn_tool_calls.get(gen_parent_id)
+            gen_depth = min((parent_rec.depth + 1) if parent_rec else 0, 3)
+
         view = ToolCallViewState(
             tool_call_id=None,
             gen_index=gen_index,
@@ -991,9 +1026,9 @@ class ToolRenderingService(AppService):
             state=ToolCallState.GENERATED,
             block=None,
             panel=None,
-            parent_tool_call_id=None,
+            parent_tool_call_id=gen_parent_id,
             category=cat,
-            depth=0,
+            depth=gen_depth,
             start_s=round(now - turn_start, 4),
         )
 
@@ -1113,6 +1148,7 @@ class ToolRenderingService(AppService):
             view.depth = depth
             view.started_at = _time.monotonic()  # reset from gen-block creation time to actual tool start
             self._tool_views_by_id[tool_call_id] = view
+            view.gen_index = None  # H7: invariant — gen_index is set iff view ∈ _tool_views_by_gen_index
 
             # Register the pre-created block in the active map
             if view.block is not None:
@@ -1180,13 +1216,22 @@ class ToolRenderingService(AppService):
                 current_id = getattr(view.panel, "id", None)
                 if current_id != new_id:
                     try:
-                        existing = self.app.query(f"#{new_id}")
-                        if not list(existing):
-                            view.panel.id = new_id
-                        else:
-                            logger.debug("DOM id %s already present; keeping panel id=%s", new_id, current_id)
+                        view.panel.id = new_id
                     except Exception:
-                        logger.debug("R2-HIGH-02 DOM id update failed", exc_info=True)
+                        # M19: id collision or Textual internal error; keep current id.
+                        logger.debug(
+                            "M19: id %s collision during adoption; keeping panel id=%s",
+                            new_id, current_id, exc_info=True,
+                        )
+
+            # L13: clear any partial-stream state captured during gen so _wire_args
+            # starts from a clean slate. Called unconditionally for all adoptions;
+            # no-op for blocks without buffered state (default ToolBlock.reset_partial_state).
+            if view.block is not None and hasattr(view.block, "reset_partial_state"):
+                try:
+                    view.block.reset_partial_state()
+                except Exception:
+                    logger.debug("L13: reset_partial_state failed", exc_info=True)
 
             # Wire args (SM-03)
             self._wire_args(view, args_clean)
@@ -1309,12 +1354,13 @@ class ToolRenderingService(AppService):
         if view is None:
             logger.warning("append_tool_output: unknown tool_call_id=%s", tool_call_id)
             return
-        if view.state in _TERMINAL_STATES:
+        state = view.state  # M17: single read; branch deterministically to close re-entry risk
+        if state in _TERMINAL_STATES:
             return
         # R3-AXIS-01 / PG-1: route STARTED→STREAMING through _set_view_state so the
         # broker fires.  _set_view_state is a no-op when old == new, so re-entry
         # from STREAMING is safe.
-        if view.state == ToolCallState.STARTED:
+        if state == ToolCallState.STARTED:
             self._set_view_state(view, ToolCallState.STREAMING)
             # SLR-3: register header axis watcher exactly once, at STREAMING entry.
             self._register_header_hint_watcher(view)
@@ -1400,9 +1446,11 @@ class ToolRenderingService(AppService):
             return
 
         if view is not None:
+            # H9: stamp kind BEFORE COMPLETING transition so phase-axis watchers
+            # see the final kind on first notification.
+            self._stamp_kind_on_completing(view, result_lines)
             # PG-1: COMPLETING is a no-op in broker (falls through to pass case)
             self._set_view_state(view, ToolCallState.COMPLETING)
-            self._stamp_kind_on_completing(view, result_lines)
 
         # Compute duration string for UI display
         dur_ms_float: float = 0.0
@@ -1495,7 +1543,9 @@ class ToolRenderingService(AppService):
     def current_turn_tool_calls(self) -> list[dict]:
         """Return a list of per-turn tool call records (P7 /tools overlay).
 
-        Thread-safe: builds a fresh list of dicts from _ToolCallRecord values.
+        Thread-safe: uses _snapshot_turn_tool_calls to avoid RuntimeError from
+        concurrent dict mutation (H8 — worker threads may call this via the
+        /tools overlay reload path).
         """
         return [
             {
@@ -1511,7 +1561,7 @@ class ToolRenderingService(AppService):
                 "error_kind": r.error_kind,
                 "mcp_server": r.mcp_server,
             }
-            for r in self._turn_tool_calls.values()
+            for r in self._snapshot_turn_tool_calls()
         ]
 
     def get_reasoning_panel(self) -> "Any | None":

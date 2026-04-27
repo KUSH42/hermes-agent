@@ -331,6 +331,14 @@ class ToolBlock(Widget):
         """
         return False
 
+    def reset_partial_state(self) -> None:
+        """L13: Reset any partial-stream state accumulated during the gen window.
+
+        Called on adoption (start_tool_call) before _wire_args overwrites args.
+        Default is a no-op; WriteFileBlock and similar accumulate progress counters
+        that must be cleared so the final args reflect the real total.
+        """
+
     def copy_content(self) -> str:
         if self._rendered_plain_text:
             return self._rendered_plain_text

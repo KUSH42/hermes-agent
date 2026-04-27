@@ -178,6 +178,8 @@ The user must always know whether work is happening, finished, or broken — wit
 
 **Settled state.** A block enters `settled` 600ms after PHASE reaches DONE with no further events on it. Settled blocks suppress all motion-channel signal *except* focus changes and ERR transitions (errors always re-loud). This is what keeps incidental events — skin hot-reload, viewport resize, a sibling block flashing — from rippling motion across stable scrollback history. Settled is per-block widget-local; CANCEL and ERR also enter settled on the same 600ms timer. A new event on a settled block (e.g. `r` retry) clears settled before any new motion fires.
 
+**Implemented in** `tool_blocks/_streaming.py::StreamingToolBlock._arm_settled_timer`; flash suppression in `services/feedback.py::FeedbackService.flash` via `tone="focus"` / `tone="err-enter"` exemption (FS-3, commit 64086b808).
+
 **Stall is motion-only, not a PHASE node.** When STREAMING produces no chunks for ≥1.5s, the motion channel switches the pulse from "active" to "frozen" cadence; PHASE *stays* `STREAMING`. We deliberately did not add a `STALLED` node — stall is a UI affordance for the user, not a lifecycle fact for subscribers. Renderers, classifiers, and the broker continue to see `STREAMING` and behave identically. When the next chunk arrives, motion silently resumes the active cadence with no PHASE transition.
 
 **Live-tail scroll behaviour.** A STREAMING block is sticky-bottom by default — newly appended chunks scroll the live tail to keep the most recent row in view. Three exits from sticky mode:
@@ -255,6 +257,8 @@ The focus ring is a single contract across tiers: the block's left border swaps 
 | TRACE | `·` (dim) | `·` (accent) | `› ` before category |
 
 This is the visual + glyph encoding of the focus signal in the redundant-signal table. Skins recolor "accent" but cannot remove the prefix glyph — focus must survive monochrome terminals. A TRACE block looks like a TRACE block whether focused or not; only the tint and the prefix change. The geometric stability is what makes "no surprise re-flow" hold across focus movement: tab-cycling through 30 blocks shifts only colour and a single glyph per block, never row counts.
+
+**Implemented in** `body_renderers/_grammar.py::FOCUS_PREFIX`, `body_renderers/_grammar.py::get_tier_gutter_glyphs`, and `_header.py::_render_v4` (FS-1/FS-2, commit 64086b808).
 
 ---
 

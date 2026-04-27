@@ -628,7 +628,7 @@ class KeyDispatchService(AppService):
 
         try:
             self.app.query_one(ThinkingWidget).activate()
-        except NoMatches:
+        except (NoMatches, Exception):
             pass
         # Reset per-turn plan/budget state before starting a new agent turn.
         if hasattr(self.app, "cli") and self.app.cli is not None:

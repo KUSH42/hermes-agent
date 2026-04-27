@@ -416,7 +416,7 @@ _LabelLine   { height: 1;   width: 1fr; }
             if self._label_line is None:
                 if self._effects_lock is None:
                     self._effects_lock = threading.Lock()
-                self._label_line = _LabelLine("breathe", id="thinking-label", _lock=self._effects_lock)
+                self._label_line = _LabelLine("breathe", _lock=self._effects_lock)
                 _schedule_awaitable(self.mount(self._label_line))
                 self._label_line.update_static("Thinking…")
             return  # no timer started — deterministic
@@ -440,7 +440,9 @@ _LabelLine   { height: 1;   width: 1fr; }
         # Create and mount children
         anim_rows = _MODE_DIMS[resolved_mode][1]
         if anim_rows > 0:
-            self._anim_surface = _AnimSurface(resolved_engine, id="thinking-anim")
+            # No fixed id — avoids DuplicateIds when deactivate's 150ms fade-out
+            # timer hasn't fired yet and activate() is called for the next turn.
+            self._anim_surface = _AnimSurface(resolved_engine)
             _schedule_awaitable(self.mount(self._anim_surface))
         else:
             self._anim_surface = None
@@ -449,7 +451,7 @@ _LabelLine   { height: 1;   width: 1fr; }
         if self._effects_lock is None:
             self._effects_lock = threading.Lock()
         # D-2/E-3: create with flash effect for STARTED phase; pass shared thread-safe lock
-        self._label_line = _LabelLine("flash", id="thinking-label", _lock=self._effects_lock)
+        self._label_line = _LabelLine("flash", _lock=self._effects_lock)
         _schedule_awaitable(self.mount(self._label_line))
 
         # Apply CSS classes

@@ -387,13 +387,31 @@ class OutputPanel(ScrollableContainer):
         """
         panel = MessagePanel(user_text=user_text, show_header=show_header)
         panel.add_class("--entering")
-        anchor = self._live_anchor()
-        if anchor is not None:
-            self.mount(panel, before=anchor)
-        elif self.children:
-            self.mount(panel, before=self.children[-1])
-        else:
-            self.mount(panel)
+        # Bug-2 fix: mount AFTER the most recent UserMessagePanel so the user
+        # echo always precedes the assistant response regardless of call_from_thread
+        # scheduling order between echo_user_message and watch_agent_running(True).
+        try:
+            last_ump = self.query(UserMessagePanel).last()
+            _LOG.debug(
+                "new_message: mounting MP after UMP (id=%s children_count=%d)",
+                getattr(last_ump, "id", None),
+                len(self.children),
+            )
+            self.mount(panel, after=last_ump)
+        except NoMatches:
+            # No UMP yet — fall back to before ThinkingWidget/LiveLineWidget.
+            anchor = self._live_anchor()
+            _LOG.debug(
+                "new_message: no UMP found, mounting MP before anchor=%s children_count=%d",
+                type(anchor).__name__ if anchor else "None",
+                len(self.children),
+            )
+            if anchor is not None:
+                self.mount(panel, before=anchor)
+            elif self.children:
+                self.mount(panel, before=self.children[-1])
+            else:
+                self.mount(panel)
         # Remove --entering after the first render so the CSS opacity transition
         # plays: opacity 0 → 1 (fade-in).  call_after_refresh fires in the next
         # event loop pass — fast enough to keep the initial "black flash" invisible

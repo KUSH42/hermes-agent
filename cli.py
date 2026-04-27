@@ -10858,8 +10858,19 @@ _TUI_LOG_MAX_BYTES = 1 * 1024 * 1024  # 1 MB
 _tui_log_installed: bool = False
 
 
+class _HermesDebugFilter(logging.Filter):
+    """Pass DEBUG records only for hermes_cli.* and __main__; WARNING+ for everything else."""
+
+    _DEBUG_PREFIXES = ("hermes_cli.", "hermes_logging", "__main__", "cli")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno >= logging.WARNING:
+            return True
+        return any(record.name.startswith(p) for p in self._DEBUG_PREFIXES)
+
+
 def _install_tui_file_log() -> None:
-    """Attach a WARNING-level FileHandler to the root Python logger.
+    """Attach a DEBUG-level FileHandler to the root Python logger (hermes_cli.* only at DEBUG).
 
     Captures logger.warning() / logger.error() / logger.exception() from
     hermes_cli.* and cli — but not Textual's internal log() calls (fps ticks,
@@ -10880,13 +10891,15 @@ def _install_tui_file_log() -> None:
         import logging as _logging
 
         handler = _logging.FileHandler(_TUI_LOG_PATH, mode="w", encoding="utf-8")
-        handler.setLevel(_logging.WARNING)
+        handler.setLevel(_logging.DEBUG)
+        handler.addFilter(_HermesDebugFilter())
         handler.setFormatter(_logging.Formatter(
             "%(asctime)s %(levelname)s %(name)s: %(message)s",
             datefmt="%H:%M:%S",
         ))
 
         root = _logging.getLogger()
+        root.setLevel(_logging.DEBUG)
         root.addHandler(handler)
 
         def _truncate_if_large() -> None:

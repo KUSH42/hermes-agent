@@ -1283,6 +1283,9 @@ class HermesApp(App):
                 except Exception:
                     pass
             ump = UserMessagePanel(text, images=images)
+            logger.debug(
+                "echo_user_message: mounting UMP (children_before=%d)", len(panel.children)
+            )
             panel.mount(ump, before=panel.query_one(ThinkingWidget))
             # Always scroll to show the user's own message regardless of scroll
             # position — the user just submitted, they expect to see the exchange.
@@ -1370,7 +1373,7 @@ class HermesApp(App):
                 try:
                     from hermes_cli.tui.widgets.message_panel import ThinkingWidget as _TW
                     output.query_one(_TW).activate()
-                except NoMatches:
+                except (NoMatches, Exception):
                     pass
             except NoMatches:
                 pass
@@ -1509,6 +1512,15 @@ class HermesApp(App):
                                 stolen_partial = frag
                         except Exception:
                             pass
+                    logger.debug(
+                        "watch_agent_running: stolen_pending=%r stolen_partial=%r",
+                        stolen_pending,
+                        stolen_partial,
+                    )
+                logger.debug(
+                    "watch_agent_running(True): calling new_message (output children=%d)",
+                    len(output.children),
+                )
                 new_msg = output.new_message(user_text=self._last_user_input)
                 # Engine isn't ready yet (on_mount fires next cycle); use
                 # _carry_pending/_carry_partial so on_mount processes them once engine exists.

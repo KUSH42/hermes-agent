@@ -5,7 +5,10 @@ Contains: MessagePanel, ThinkingWidget, _EchoBullet, UserMessagePanel, Reasoning
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
+
+_log = logging.getLogger(__name__)
 
 from rich.segment import Segment
 from rich.style import Style
@@ -350,12 +353,18 @@ class MessagePanel(Widget):
         )
         if self._response_engine is not None:
             if self._carry_pending is not None:
+                _log.debug(
+                    "MessagePanel.on_mount: replaying carry_pending=%r", self._carry_pending
+                )
                 try:
                     self._response_engine.process_line(self._carry_pending)
                 except Exception:
                     pass
                 self._carry_pending = None
             if self._carry_partial is not None:
+                _log.debug(
+                    "MessagePanel.on_mount: replaying carry_partial=%r", self._carry_partial
+                )
                 try:
                     self._response_engine.feed(self._carry_partial)
                 except Exception:

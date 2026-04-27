@@ -611,6 +611,13 @@ class ResponseFlowEngine:
 
     def _write_prose(self, rich_text: "Text", plain: str) -> None:
         """Write a prose line and optionally fire the prose callback."""
+        # Bug-1 debug: detect repeated lines emitted in the same turn.
+        if plain.strip():
+            prev = getattr(self, "_last_prose_plain", None)
+            if prev == plain.strip():
+                _log.debug("_write_prose: DOUBLE-EMIT detected plain=%r", plain)
+            self._last_prose_plain = plain.strip()
+        _log.debug("_write_prose: plain=%r", plain[:120] if len(plain) > 120 else plain)
         self._prose_log.write_with_source(rich_text, plain)
         if self._prose_callback is not None and plain.strip():
             try:

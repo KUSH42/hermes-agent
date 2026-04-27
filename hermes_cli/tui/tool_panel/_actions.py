@@ -1057,14 +1057,10 @@ class _ToolPanelActionsMixin:
             from hermes_cli.tui.body_renderers import pick_renderer
             from hermes_cli.tui.tool_payload import ToolPayload, ClassificationResult, ResultKind
             from hermes_cli.tui.tool_panel.density import DensityTier
-            from hermes_cli.tui.services.tools import ToolCallState, set_axis
+            from hermes_cli.tui.services.tools import ToolCallState
 
             view = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
             if view is not None:
-                # AB-1: clear stale classifier-driven hint BEFORE override write so the
-                # existing streaming_kind_hint watcher branch refreshes the header first.
-                if getattr(view, "streaming_kind_hint", None) is not None:
-                    set_axis(view, "streaming_kind_hint", None)
                 view.user_kind_override = kind
 
             output_raw = self.copy_content()  # type: ignore[attr-defined]
@@ -1189,10 +1185,6 @@ class _ToolPanelActionsMixin:
         if view.user_kind_override is None:
             self._flash_header("render as: no override", tone="warning")
             return
-        # AB-1: clear stale hint BEFORE override write so the watcher fires first.
-        from hermes_cli.tui.services.tools import set_axis
-        if getattr(view, "streaming_kind_hint", None) is not None:
-            set_axis(view, "streaming_kind_hint", None)
         view.user_kind_override = None
         self.force_renderer(None)  # type: ignore[attr-defined]
         self._flash_header("render as: auto", tone="accent")

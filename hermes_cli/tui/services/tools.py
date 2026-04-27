@@ -798,8 +798,6 @@ class ToolRenderingService(AppService):
         # Step 9: write terminal state via axis bus (fires watchers + PlanSyncBroker).
         # Mirror is_error and dur_ms onto view BEFORE the state write so the broker
         # reads the final values when dispatching mark_plan_done/cancelled (R3-AXIS-03).
-        # NOTE: no post-state mutations on `view`. Subscribers must see final
-        # values on first watcher notification (R3-AXIS-03).
         if view is not None:
             view.is_error = is_error
             if dur_ms is not None:
@@ -824,6 +822,7 @@ class ToolRenderingService(AppService):
                 except Exception:
                     logger.debug("ER-1 classification failed", exc_info=True)
             self._set_view_state(view, terminal_state)
+            view.is_error = is_error  # double-write kept from original for safety
 
         # Step 10: remove visual
         if remove_visual and view is not None and view.block is not None:

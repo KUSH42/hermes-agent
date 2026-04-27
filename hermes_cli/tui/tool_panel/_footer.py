@@ -133,6 +133,8 @@ def _artifact_icon(kind: str) -> str:
     return _icons.get(kind, "[?]")
 
 
+_ACCENT_FALLBACK: str = "#5f87d7"  # used when CSS accent-interactive/primary vars are missing
+
 _SLOW_DEADLINE_S: float = 0.25
 _HARD_DEADLINE_S: float = 2.0
 
@@ -467,10 +469,11 @@ class FooterPane(Widget):
             if not tone_style and chip.tone == "accent":
                 try:
                     css = self.app.get_css_variables()
-                    _ac = css.get("accent-interactive") or css.get("primary") or "#5f87d7"
+                    _ac = css.get("accent-interactive") or css.get("primary") or _ACCENT_FALLBACK
                     tone_style = f"bold {_ac}"
-                except Exception:
-                    tone_style = "bold #5f87d7"
+                except Exception as exc:
+                    _log.debug("accent css lookup failed: %s", exc)
+                    tone_style = f"bold {_ACCENT_FALLBACK}"
             parts.append(f" {chip.text} ", style=tone_style)
             remediation = getattr(chip, "remediation", None)
             if remediation:

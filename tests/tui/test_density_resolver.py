@@ -181,7 +181,7 @@ class TestDR1Resolver:
         r.subscribe(fired.append)
         inp = _make_inputs(phase=ToolCallState.DONE, body_line_count=30, threshold=5)
         r.resolve(inp)
-        assert fired == [DensityTier.COMPACT]
+        assert len(fired) == 1 and fired[0].tier == DensityTier.COMPACT
 
     def test_listener_does_not_fire_when_tier_unchanged(self):
         from hermes_cli.tui.tool_panel.density import DensityResolver

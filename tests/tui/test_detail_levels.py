@@ -138,6 +138,7 @@ def test_user_toggle_clears_auto_collapsed():
     block = MagicMock()
     block._total_received = 0
     block._all_plain = []
+    block._tail = None  # prevent MagicMock truthy check from causing early return
     panel = ToolPanel(block=block, tool_name="bash")
     panel._auto_collapsed = True
     panel._body_pane = MagicMock()

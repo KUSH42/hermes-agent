@@ -305,13 +305,15 @@ async def test_paste_fires_hint():
         bar = app.query_one(HintBar)
         input_area = app.query_one("#input-area")
 
-        input_area.post_message(Paste("clipboard content"))
+        # Must be > 80 chars to trigger the paste hint
+        long_paste = "clipboard content " * 5  # 90 chars
+        input_area.post_message(Paste(long_paste))
         await pilot.pause()
         await asyncio.sleep(0.05)
         await pilot.pause()
 
         assert "⎘" in bar.hint, f"Expected copy icon in hint after paste, got: {bar.hint!r}"
-        assert "17" in bar.hint, f"Expected char count '17' in hint, got: {bar.hint!r}"
+        assert str(len(long_paste)) in bar.hint, f"Expected char count in hint, got: {bar.hint!r}"
 
 
 # ---------------------------------------------------------------------------

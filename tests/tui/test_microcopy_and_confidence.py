@@ -21,48 +21,7 @@ def _src(path: pathlib.Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-# ---------------------------------------------------------------------------
-# MC-1: Status chip casing
-# ---------------------------------------------------------------------------
-
-class TestStatusChipCasing:
-    """MC-1 — chip text must be uppercase per concept §Microcopy rule 5."""
-
-    def test_starting_chip_uppercase(self) -> None:
-        """Module exports _CHIP_STARTING == '…STARTING'."""
-        from hermes_cli.tui.tool_blocks._header import _CHIP_STARTING
-        assert _CHIP_STARTING == "…STARTING"
-
-    def test_finalizing_chip_uppercase(self) -> None:
-        """Module exports _CHIP_FINALIZING == '…FINALIZING'."""
-        from hermes_cli.tui.tool_blocks._header import _CHIP_FINALIZING
-        assert _CHIP_FINALIZING == "…FINALIZING"
-
-    def test_cancelled_chip_uppercase(self) -> None:
-        """Module exports _CHIP_CANCELLED == 'CANCELLED'."""
-        from hermes_cli.tui.tool_blocks._header import _CHIP_CANCELLED
-        assert _CHIP_CANCELLED == "CANCELLED"
-
-    def test_no_lowercase_status_chips_in_module(self) -> None:
-        """Meta-test: no inline lowercase chip strings in _header.py."""
-        src = _src(_HEADER_PY)
-        # Lines that are constant definitions — e.g. _CHIP_CANCELLED  = "CANCELLED"
-        # — are excluded by checking that the surrounding context is the assignment.
-        # We grep for the lowercase forms as string literals, excluding the
-        # constant assignment lines themselves.
-        bad_patterns = [
-            r'(?<![A-Z_])"…starting"',
-            r'(?<![A-Z_])"…finalizing"',
-            r'(?<![A-Z_])"cancelled"(?!\s*#)',
-        ]
-        for pat in bad_patterns:
-            lines = [
-                line for line in src.splitlines()
-                if re.search(pat, line) and "_CHIP_" not in line
-            ]
-            assert lines == [], (
-                f"Found forbidden lowercase chip string matching {pat!r}: {lines}"
-            )
+# MC-1 (TestStatusChipCasing) migrated to test_invariants.py::TestIL5StatusChipCasing.
 
 
 # ---------------------------------------------------------------------------

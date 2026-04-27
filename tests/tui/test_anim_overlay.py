@@ -803,9 +803,14 @@ class TestPhaseE:
 
         calls = []
 
+        class _FakeSvcCommands:
+            def persist_anim_config(self, d):
+                calls.append(d)
+
         class FakeApp:
             def _persist_anim_config(self, d):
                 calls.append(d)
+            _svc_commands = _FakeSvcCommands()
             def query_one(self, *a, **kw):
                 raise Exception("no DOM")
             def set_status_error(self, *a, **kw):

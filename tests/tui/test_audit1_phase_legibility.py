@@ -237,11 +237,12 @@ class TestToolExecPhase(unittest.TestCase):
         self.assertEqual(mock_app.status_phase, Phase.REASONING)
 
     def test_close_with_diff_also_decrements_count(self):
-        """close_streaming_tool_block_with_diff also tracks open count."""
+        """close_streaming_tool_block_with_diff also tracks streaming tool count."""
         import inspect
         from hermes_cli.tui.services.tools import ToolRenderingService
         src = inspect.getsource(ToolRenderingService.close_streaming_tool_block_with_diff)
-        self.assertIn("_open_tool_count", src)
+        # Attribute was renamed to _streaming_tool_count; either name is acceptable
+        assert "_streaming_tool_count" in src or "_open_tool_count" in src
 
 
 # ---------------------------------------------------------------------------

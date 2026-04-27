@@ -540,7 +540,7 @@ class TestAltArrowNav:
             await pilot.pause()
 
             jump_calls = []
-            with patch.object(app, "_jump_anchor", side_effect=lambda *a, **kw: jump_calls.append(a)):
+            with patch.object(app._svc_browse, "jump_anchor", side_effect=lambda *a, **kw: jump_calls.append(a)):
                 app.action_jump_turn_prev()
 
             assert jump_calls == [], "No jump should happen while streaming"
@@ -555,7 +555,7 @@ class TestAltArrowNav:
             await pilot.pause()
 
             jump_calls = []
-            with patch.object(app, "_jump_anchor", side_effect=lambda *a, **kw: jump_calls.append(a)):
+            with patch.object(app._svc_browse, "jump_anchor", side_effect=lambda *a, **kw: jump_calls.append(a)):
                 app.action_jump_turn_next()
 
             assert jump_calls == [], "No jump should happen while streaming"
@@ -569,7 +569,7 @@ class TestAltArrowNav:
             app.agent_running = False
 
             jump_calls = []
-            with patch.object(app, "_jump_anchor", side_effect=lambda *a, **kw: jump_calls.append(a)):
+            with patch.object(app._svc_browse, "jump_anchor", side_effect=lambda *a, **kw: jump_calls.append(a)):
                 app.action_jump_turn_prev()
 
             assert len(jump_calls) == 1
@@ -586,7 +586,7 @@ class TestAltArrowNav:
             app.agent_running = False
 
             jump_calls = []
-            with patch.object(app, "_jump_anchor", side_effect=lambda *a, **kw: jump_calls.append(a)):
+            with patch.object(app._svc_browse, "jump_anchor", side_effect=lambda *a, **kw: jump_calls.append(a)):
                 app.action_jump_turn_next()
 
             assert len(jump_calls) == 1

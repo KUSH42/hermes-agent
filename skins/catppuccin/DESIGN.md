@@ -132,6 +132,20 @@ x-hermes:
     error-timeout: "#f59e0b"
     tool-glyph-mcp: "#9b59b6"
     overlay-selection-bg: "#45475a"
+    error-dim: "#8B2020"
+    success-dim: "#1E5C1E"
+    warning-dim: "#5C4A00"
+    text-muted-dim: "#3A3A3A"
+    tool-header-gutter-color: "#89b4fa"
+    tool-tier-read-accent: "#89b4fa"
+    tool-tier-write-accent: "#a6e3a1"
+    tool-tier-exec-accent: "#a6e3a1"
+    tool-tier-search-accent: "#89b4fa"
+    tool-tier-shell-accent: "#a6e3a1"
+    tool-tier-browse-accent: "#89b4fa"
+    tool-tier-mcp-accent: "#cba6f7"
+    tool-tier-thinking-accent: "#89b4fa"
+    tool-tier-tooling-accent: "#89b4fa"
 ---
 
 # Catppuccin

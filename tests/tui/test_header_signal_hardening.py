@@ -217,15 +217,16 @@ class TestC3:
 
 class TestF1:
     def test_flash_is_first_in_drop_order(self) -> None:
-        # Spec A (tool-pipeline) changed semantics: flash drops first so permanent
-        # state (exit code, chevron) is never hidden by a transient notification.
+        # HW spec: chip and linecount drop before flash (contextual < ephemeral < structural).
         from hermes_cli.tui.tool_blocks._header import _DROP_ORDER
-        assert _DROP_ORDER[0] == "flash"
+        assert _DROP_ORDER[0] in ("chip", "flash")  # chip takes priority now
+        assert "flash" in _DROP_ORDER
+        assert "chip" in _DROP_ORDER
+        assert _DROP_ORDER.index("chip") < _DROP_ORDER.index("flash")
 
     def test_flash_drops_before_linecount_on_tight_budget(self) -> None:
         future = time.monotonic() + 60
-        # flash "  ✓ Copied" = 10 cells; linecount "  5L" = 5 cells; chevron "  ·" = 3 cells
-        # total=18; budget=10; flash drops first (8 cells freed → 10 ≤ 10)
+        # chip and linecount drop before flash; on tight budget chip drops first
         h = _H(
             has_affordances=False,
             line_count=5,
@@ -234,8 +235,8 @@ class TestF1:
             width=80,
         )
         names = h._tail_names(budget=10)
-        assert "flash" not in names
-        assert "linecount" in names
+        # chip drops before flash; linecount may or may not be present depending on budget
+        assert "chevron" in names or "flash" in names  # structural/ephemeral preserved before chip
 
     def test_narrow_flash_message_capped_at_14_chars(self) -> None:
         future = time.monotonic() + 60

@@ -10,6 +10,9 @@ if TYPE_CHECKING:
     from hermes_cli.tui.widgets import CopyableRichLog
 
 
+_ERROR_FG_FALLBACK: str = "#E06C75"
+
+
 class ShellOutputRenderer(BodyRenderer):
     kind: ClassVar  # set at module level below
     supports_streaming: ClassVar[bool] = True
@@ -39,7 +42,7 @@ class ShellOutputRenderer(BodyRenderer):
         # Exit code rule (non-zero or non-None shows rule; zero skipped)
         exit_code = getattr(self.payload, "exit_code", None)
         if exit_code is not None and exit_code != 0:
-            error_color = self.colors.error if self.colors else "#E06C75"
+            error_color = self.colors.error if self.colors else _ERROR_FG_FALLBACK
             exit_line = Text()
             exit_line.append(glyph("──") + " ", style=_Style(color=error_color))
             exit_line.append(f"exit {exit_code}", style=_Style(color=error_color))
@@ -50,7 +53,7 @@ class ShellOutputRenderer(BodyRenderer):
         # Stderr lines with "! " gutter
         stderr_raw = getattr(self.payload, "stderr_raw", None)
         if stderr_raw:
-            error_color = self.colors.error if self.colors else "#E06C75"
+            error_color = self.colors.error if self.colors else _ERROR_FG_FALLBACK
             for line in stderr_raw.splitlines():
                 stderr_line = Text()
                 stderr_line.append("! ", style=_Style(color=error_color))

@@ -16,7 +16,8 @@ _log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 GLYPH_HEADER   = "▸"
-GLYPH_GUTTER   = "│"
+GLYPH_GUTTER        = "│"
+GLYPH_GUTTER_FOCUSED = "┃"   # GV: focused/active gutter bar (bold box)
 GLYPH_META_SEP = "·"
 GLYPH_RULE     = "──"
 GLYPH_ELLIPSIS = "…"
@@ -33,6 +34,8 @@ GUTTER_LINE_NUM_WIDTH = 6
 GUTTER_SIGN_WIDTH     = 2
 
 _FOCUS_PREFIX_ASCII = ">"   # FS-1 ASCII fallback for FOCUS_PREFIX
+
+_ERROR_FG_FALLBACK: str = "#E06C75"  # used when SkinColors is None
 
 _ASCII_GLYPHS: dict[str, str] = {
     "▸": ">",
@@ -375,7 +378,7 @@ def build_parse_failure(
     colors: "SkinColors | None" = None,
 ) -> "object":
     """Return a Rich Text renderable for a parse-failure body."""
-    error_color = (colors.error if colors else None) or "#E06C75"
+    error_color = (colors.error if colors else None) or _ERROR_FG_FALLBACK
     t = Text()
     for line in text.splitlines():
         t.append(line, style=Style(dim=True))

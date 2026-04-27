@@ -346,6 +346,9 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             return header_icon
         return "▸"
 
+    def has_partial_visible_lines(self) -> bool:
+        return self._visible_count < len(self._all_plain)
+
     def _toggle_skeleton_pulse(self) -> None:
         if self._skeleton_widget is None or not self._skeleton_widget.is_mounted:
             return

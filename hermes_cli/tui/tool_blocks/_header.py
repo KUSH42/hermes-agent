@@ -362,12 +362,11 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             if self._stats.deletions:
                 diff_seg.append(f"  -{self._stats.deletions}", style=f"bold {del_color}")
             try:
-                if (self._panel is not None and
-                        hasattr(self._panel._block, "_visible_count") and
-                        self._panel._block._visible_count < len(self._panel._block._all_plain)):
+                _block = getattr(self._panel, "_block", None) if self._panel else None
+                if _block is not None and _block.has_partial_visible_lines():
                     diff_seg.append(" (partial)", style="dim")
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.debug("partial-visible probe failed: %s", exc)
             if diff_seg.cell_len > 0:
                 tail_segments.append(("diff", diff_seg))
         # A1: line count rendered here (ToolHeaderBar deleted)

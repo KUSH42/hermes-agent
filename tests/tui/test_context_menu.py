@@ -63,20 +63,21 @@ async def test_flash_hint_restores_after_duration():
 
 @pytest.mark.asyncio
 async def test_paste_flashes_hint():
-    """Pasting into HermesInput flashes '📋 N chars' in HintBar."""
+    """Pasting >80 chars into HermesInput flashes 'N chars pasted' in HintBar."""
     from textual.events import Paste
 
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         inp = app.query_one("#input-area")
-        # Post a Paste event directly to the input widget
-        paste_event = Paste("hello world")
+        # Must be > 80 chars to trigger the hint
+        long_text = "x" * 90
+        paste_event = Paste(long_text)
         inp.post_message(paste_event)
         await pilot.pause()
         bar = app.query_one(HintBar)
-        assert "11" in bar.hint  # len("hello world") == 11
-        assert "⎘" in bar.hint  # ICON_COPY replaces 📋
+        assert "90" in bar.hint  # len(long_text) == 90
+        assert "⎘" in bar.hint  # ICON_COPY
 
 
 # ---------------------------------------------------------------------------

@@ -148,7 +148,7 @@ def test_neural_pulse_edge_steps_cached():
 def test_render_multi_color_divisor_hoisted():
     """_render_multi_color returns Text with non-zero spans (smoke for hoist correctness)."""
     from rich.text import Text
-    from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
+    from hermes_cli.tui.drawbraille_renderer import DrawbrailleRenderer as DrawbrailleOverlay
     from hermes_cli.tui.animation import _parse_rgb
 
     # Build a minimal stub that has just the attributes the method reads
@@ -161,7 +161,7 @@ def test_render_multi_color_divisor_hoisted():
     stub = _Stub()
     # Call the unbound method with our stub
     frame = "abc\ndef"
-    result = DrawbrailleOverlay._render_multi_color(stub, frame, 0.0)  # type: ignore[arg-type]
+    result = DrawbrailleOverlay._render_multi_color(stub, frame, 0.0, stub.hue_shift_speed)  # type: ignore[arg-type]
     assert isinstance(result, Text)
     assert len(result._spans) > 0
 
@@ -249,25 +249,25 @@ def _make_multi_color_stub(colors, hue_shift_speed=0.3):
 
 def test_render_multi_color_buffer_reuse():
     """Same list object should be reused on second call with same row width."""
-    from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
+    from hermes_cli.tui.drawbraille_renderer import DrawbrailleRenderer as DrawbrailleOverlay
 
     stub = _make_multi_color_stub(["#ff0000", "#0000ff"])
     frame = "abcde\nfghij"
-    DrawbrailleOverlay._render_multi_color(stub, frame, 0.0)  # type: ignore[arg-type]
+    DrawbrailleOverlay._render_multi_color(stub, frame, 0.0, stub.hue_shift_speed)  # type: ignore[arg-type]
     buf_id = id(stub._multi_color_row_buf)
 
-    DrawbrailleOverlay._render_multi_color(stub, frame, 0.1)  # type: ignore[arg-type]
+    DrawbrailleOverlay._render_multi_color(stub, frame, 0.1, stub.hue_shift_speed)  # type: ignore[arg-type]
     assert id(stub._multi_color_row_buf) == buf_id, "Buffer list was reallocated"
 
 
 def test_render_multi_color_correct_output():
     """Regression: output Text has the right number of characters."""
     from rich.text import Text
-    from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
+    from hermes_cli.tui.drawbraille_renderer import DrawbrailleRenderer as DrawbrailleOverlay
 
     stub = _make_multi_color_stub(["#ff0000", "#00ff00"], hue_shift_speed=0.0)
     frame = "hello"
-    result = DrawbrailleOverlay._render_multi_color(stub, frame, 0.0)  # type: ignore[arg-type]
+    result = DrawbrailleOverlay._render_multi_color(stub, frame, 0.0, stub.hue_shift_speed)  # type: ignore[arg-type]
     assert isinstance(result, Text)
     plain = result.plain
     assert "hello" in plain

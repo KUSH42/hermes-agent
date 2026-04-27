@@ -161,6 +161,20 @@ x-hermes:
     error-timeout: '#f59e0b'
     tool-glyph-mcp: '#9b59b6'
     overlay-selection-bg: '#003300'
+    error-dim: '#4a1a1a'
+    success-dim: '#0a2a0a'
+    warning-dim: '#2a1e00'
+    text-muted-dim: '#1a2a1a'
+    tool-header-gutter-color: '#00ff41'
+    tool-tier-read-accent: '#00d849'
+    tool-tier-write-accent: '#00a839'
+    tool-tier-exec-accent: '#aaffc8'
+    tool-tier-search-accent: '#00d849'
+    tool-tier-shell-accent: '#aaffc8'
+    tool-tier-browse-accent: '#00d849'
+    tool-tier-mcp-accent: '#9b59b6'
+    tool-tier-thinking-accent: '#00d849'
+    tool-tier-tooling-accent: '#00d849'
   tool_prefix: │
   tool_icons:
     search_files: ⌕

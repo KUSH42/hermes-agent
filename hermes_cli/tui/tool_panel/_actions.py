@@ -50,6 +50,8 @@ def _density_cycle() -> "tuple":
 # DC-3: concept §H5 threshold — HERO requires at least this many body rows.
 _HERO_MIN_BODY_ROWS: int = 5
 
+_APP_BG_FALLBACK: str = "#1e1e2e"  # used when app-bg / background CSS vars are missing
+
 
 def _is_hero_row_legal(body_lines: int) -> bool:
     return body_lines >= _HERO_MIN_BODY_ROWS
@@ -558,9 +560,10 @@ class _ToolPanelActionsMixin:
         html = console.export_html(inline_styles=True)
         try:
             css = self.app.get_css_variables()  # type: ignore[attr-defined]
-            bg_hex = css.get("app-bg") or css.get("background") or "#1e1e2e"
-        except Exception:
-            bg_hex = "#1e1e2e"
+            bg_hex = css.get("app-bg") or css.get("background") or _APP_BG_FALLBACK
+        except Exception as exc:
+            _log.debug("app-bg css lookup failed: %s", exc)
+            bg_hex = _APP_BG_FALLBACK
         html = html.replace('<pre style="', f'<pre style="background:{bg_hex}; ', 1)
         self.app._copy_text_with_hint(html)  # type: ignore[attr-defined]
         from hermes_cli.tui.streaming_microcopy import _human_size as _hs

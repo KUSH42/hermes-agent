@@ -29,6 +29,8 @@ from ._header import ToolHeader, ToolBodyContainer
 
 _DIFF_DEL_FG_FALLBACK = "#ef5350"
 _DIFF_ADD_FG_FALLBACK = "#5fd75f"
+_DIFF_ADD_BG_FALLBACK = "#1a3a1a"
+_DIFF_DEL_BG_FALLBACK = "#3a1a1a"
 
 
 def _render_diff_chunk(
@@ -198,10 +200,11 @@ class ToolBlock(Widget):
             tm = getattr(self.app, "_theme_manager", None)
             if tm is not None:
                 cvars: dict[str, str] = getattr(tm, "_component_vars", {})
-                return cvars.get("diff-add-bg", "#1a3a1a"), cvars.get("diff-del-bg", "#3a1a1a")
-        except Exception:
-            pass
-        return "#1a3a1a", "#3a1a1a"
+                return (cvars.get("diff-add-bg", _DIFF_ADD_BG_FALLBACK),
+                        cvars.get("diff-del-bg", _DIFF_DEL_BG_FALLBACK))
+        except Exception as exc:
+            _log.debug("diff-bg theme lookup failed: %s", exc)
+        return _DIFF_ADD_BG_FALLBACK, _DIFF_DEL_BG_FALLBACK
 
     def _diff_fg_colors(self) -> tuple[str, str]:
         """Return (add_fg, del_fg) from skin error/success vars."""
@@ -319,6 +322,14 @@ class ToolBlock(Widget):
         else:
             self._body.add_class("expanded")
         self._header.refresh()
+
+    def has_partial_visible_lines(self) -> bool:
+        """Whether output is partially visible (subset of total lines shown).
+
+        Default: False. StreamingToolBlock overrides to return True when its
+        visible-line window is smaller than the full received history.
+        """
+        return False
 
     def copy_content(self) -> str:
         if self._rendered_plain_text:

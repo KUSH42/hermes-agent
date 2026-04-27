@@ -62,7 +62,8 @@ def test_a3_nameplate_pulse_stopped_on_error():
     np = _make_nameplate()
     np._on_error_set = AssistantNameplate._on_error_set.__get__(np)
     np._on_error_set()
-    np._pulse_stop.assert_called_once()
+    # _on_error_set calls _stop_timer (renamed from _pulse_stop)
+    np._stop_timer.assert_called_once()
 
 
 def test_a3_nameplate_restores_idle_on_error_clear():

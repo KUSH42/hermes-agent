@@ -138,6 +138,20 @@ x-hermes:
     error-timeout: '#f59e0b'
     tool-glyph-mcp: '#9b59b6'
     overlay-selection-bg: '#3d4863'
+    error-dim: '#8B2020'
+    success-dim: '#1E5C1E'
+    warning-dim: '#5C4A00'
+    text-muted-dim: '#3A3A3A'
+    tool-header-gutter-color: '#7aa2f7'
+    tool-tier-read-accent: '#7aa2f7'
+    tool-tier-write-accent: '#9ece6a'
+    tool-tier-exec-accent: '#9ece6a'
+    tool-tier-search-accent: '#7aa2f7'
+    tool-tier-shell-accent: '#9ece6a'
+    tool-tier-browse-accent: '#7aa2f7'
+    tool-tier-mcp-accent: '#bb9af7'
+    tool-tier-thinking-accent: '#7aa2f7'
+    tool-tier-tooling-accent: '#7aa2f7'
 ---
 
 # Tokyo-Night

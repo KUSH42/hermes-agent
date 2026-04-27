@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from hermes_cli.tui.tool_category import ToolCategory
     from hermes_cli.tui.tool_payload import ResultKind
     from hermes_cli.tui.services.tools import ToolCallViewState
+    from textual.events import Key, Click, MouseScrollUp, MouseScrollDown
 
 
 # ER-3: thin Static subclasses for ERR-phase body; never enter the renderer pipeline.
@@ -439,3 +440,93 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
                         self._body_pane.apply_density(decision.tier)
                 else:
                     self._body_pane.apply_density(decision.tier)
+
+    # ------------------------------------------------------------------
+    # KL-2 + KL-6: Keystroke / mouse recorder hooks
+    # ------------------------------------------------------------------
+
+    def _ks_context(self) -> "tuple[str, str, str | None]":
+        """Return (block_id, phase, kind_val) for keystroke/mouse logging."""
+        vs = self._view_state or self._lookup_view_state()
+        if vs is not None:
+            block_id = vs.tool_call_id or (
+                f"gen-{vs.gen_index}" if vs.gen_index is not None else "unknown"
+            )
+            phase = vs.state.value
+            kind_val = vs.kind.kind.value if vs.kind is not None else None
+        else:
+            block_id = "unknown"
+            phase = "unknown"
+            kind_val = None
+        return block_id, phase, kind_val
+
+    def on_key(self, event: "Key") -> None:
+        """KL-2: Keystroke recorder hook — fires before BINDINGS dispatch."""
+        from ._keystroke_log import record, ENABLED
+        if not ENABLED:
+            return
+        block_id, phase, kind_val = self._ks_context()
+        record(
+            key=event.key,
+            block_id=block_id,
+            phase=phase,
+            kind=kind_val,
+            density=self.density.value,
+            focused=self.has_focus,
+        )
+
+    def on_click(self, event: "Click") -> None:
+        """KL-6a: Mouse click recorder."""
+        from ._keystroke_log import record_mouse, ENABLED
+        if not ENABLED:
+            return
+        block_id, phase, kind_val = self._ks_context()
+        btn = event.button
+        button = "left" if btn == 1 else "middle" if btn == 2 else "right" if btn == 3 else "unknown"
+        record_mouse(
+            button=button,
+            x=event.x,
+            y=event.y,
+            widget=type(event.widget).__name__ if event.widget is not None else "unknown",
+            block_id=block_id,
+            phase=phase,
+            kind=kind_val,
+            density=self.density.value,
+            focused=self.has_focus,
+        )
+
+    def on_mouse_scroll_up(self, event: "MouseScrollUp") -> None:
+        """KL-6b: Scroll-up recorder."""
+        from ._keystroke_log import record_mouse, ENABLED
+        if not ENABLED:
+            return
+        block_id, phase, kind_val = self._ks_context()
+        record_mouse(
+            button="scroll_up",
+            x=event.x,
+            y=event.y,
+            widget=type(event.widget).__name__ if event.widget is not None else "unknown",
+            block_id=block_id,
+            phase=phase,
+            kind=kind_val,
+            density=self.density.value,
+            focused=self.has_focus,
+        )
+
+    def on_mouse_scroll_down(self, event: "MouseScrollDown") -> None:
+        """KL-6c: Scroll-down recorder."""
+        from ._keystroke_log import record_mouse, ENABLED
+        if not ENABLED:
+            return
+        block_id, phase, kind_val = self._ks_context()
+        record_mouse(
+            button="scroll_down",
+            x=event.x,
+            y=event.y,
+            widget=type(event.widget).__name__ if event.widget is not None else "unknown",
+            block_id=block_id,
+            phase=phase,
+            kind=kind_val,
+            density=self.density.value,
+            focused=self.has_focus,
+        )

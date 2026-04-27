@@ -162,6 +162,19 @@ class _ToolPanelActionsMixin:
         )
         self._resolver.resolve(inputs)  # type: ignore[attr-defined]
         self._flash_header(flash_label, tone="info")
+        from ._keystroke_log import record_component, ENABLED  # KL-7
+        if ENABLED:
+            _block_id, _phase, _kind_val = self._ks_context()  # type: ignore[attr-defined]
+            record_component(
+                action="expand_toggle",
+                widget=type(self).__name__,
+                block_id=_block_id,
+                phase=_phase,
+                kind=_kind_val,
+                density=self.density.value,  # type: ignore[attr-defined]
+                focused=self.has_focus,  # type: ignore[attr-defined]
+                extra={"expanded": target == DensityTier.DEFAULT},
+            )
 
     def _hero_rejection_reason(self, inp: "object") -> str:
         """Explain why a HERO tier request was downgraded."""
@@ -231,6 +244,7 @@ class _ToolPanelActionsMixin:
         from hermes_cli.tui.tool_panel.density import DensityInputs, DensityTier
         from hermes_cli.tui.services.tools import ToolCallState
 
+        _old_tier = self._resolver.tier.value  # type: ignore[attr-defined]  # KL-7: capture before resolve
         requested_tier = _next_legal_tier_static(
             self._resolver.tier, direction=+1,  # type: ignore[attr-defined]
             body_lines=self._body_line_count(),  # type: ignore[attr-defined]
@@ -264,12 +278,26 @@ class _ToolPanelActionsMixin:
             self._flash_header("hero mode unavailable", tone="warning")
         else:
             self._flash_header(self._resolver.tier.value, tone="info")  # type: ignore[attr-defined]
+        from ._keystroke_log import record_component, ENABLED  # KL-7
+        if ENABLED:
+            _block_id, _phase, _kind_val = self._ks_context()  # type: ignore[attr-defined]
+            record_component(
+                action="density_toggle",
+                widget=type(self).__name__,
+                block_id=_block_id,
+                phase=_phase,
+                kind=_kind_val,
+                density=self.density.value,  # type: ignore[attr-defined]
+                focused=self.has_focus,  # type: ignore[attr-defined]
+                extra={"from": _old_tier, "to": self.density.value},  # type: ignore[attr-defined]
+            )
 
     def action_density_cycle_reverse(self) -> None:
         """Shift+D — reverse density tier in cycle (concept §H5)."""
         from hermes_cli.tui.tool_panel.density import DensityInputs, DensityTier
         from hermes_cli.tui.services.tools import ToolCallState
 
+        _old_tier = self._resolver.tier.value  # type: ignore[attr-defined]  # KL-7: capture before resolve
         requested_tier = _next_legal_tier_static(
             self._resolver.tier, direction=-1,  # type: ignore[attr-defined]
             body_lines=self._body_line_count(),  # type: ignore[attr-defined]
@@ -303,6 +331,19 @@ class _ToolPanelActionsMixin:
             self._flash_header("hero mode unavailable", tone="warning")
         else:
             self._flash_header(self._resolver.tier.value, tone="info")  # type: ignore[attr-defined]
+        from ._keystroke_log import record_component, ENABLED  # KL-7
+        if ENABLED:
+            _block_id, _phase, _kind_val = self._ks_context()  # type: ignore[attr-defined]
+            record_component(
+                action="density_toggle",
+                widget=type(self).__name__,
+                block_id=_block_id,
+                phase=_phase,
+                kind=_kind_val,
+                density=self.density.value,  # type: ignore[attr-defined]
+                focused=self.has_focus,  # type: ignore[attr-defined]
+                extra={"from": _old_tier, "to": self.density.value},  # type: ignore[attr-defined]
+            )
 
     def action_open_primary(self) -> None:
         import os
@@ -1163,6 +1204,21 @@ class _ToolPanelActionsMixin:
         self.force_renderer(next_kind)  # type: ignore[attr-defined]
         label = next_kind.value if next_kind is not None else "auto"
         self._flash_header(f"render as: {label}", tone="accent")
+        from ._keystroke_log import record_component, ENABLED  # KL-7
+        if ENABLED:
+            _block_id, _phase, _kind_val = self._ks_context()  # type: ignore[attr-defined]
+            _old_kind = current.value if current is not None else "auto"
+            _new_kind = next_kind.value if next_kind is not None else "auto"
+            record_component(
+                action="kind_override",
+                widget=type(self).__name__,
+                block_id=_block_id,
+                phase=_phase,
+                kind=_kind_val,
+                density=self.density.value,  # type: ignore[attr-defined]
+                focused=self.has_focus,  # type: ignore[attr-defined]
+                extra={"from": _old_kind, "to": _new_kind},
+            )
 
     # ML-3: canonical cycle order (mirrors action_cycle_kind — keep in sync)
     _KIND_CYCLE: "tuple[Any, ...]" = ()  # populated lazily after ResultKind import

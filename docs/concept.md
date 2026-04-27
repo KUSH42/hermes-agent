@@ -1,10 +1,26 @@
 # Tool Block Concept: Three Axes, One Pipeline
 
-**Status:** concept note (not a spec)
+**Status:** FROZEN through 2026-05-11 (concept note, not a spec)
 **Version:** 3.6
 **Last updated:** 2026-04-27
+**Freeze rationale:** code catch-up cycle. Concept evolved v3.0 → v3.6 in three days, faster than implementation can converge. Audits keep producing findings against doc-deltas rather than code regressions. Freeze gives the lint-gate + scaffolding-sweep work (see `/home/xush/.hermes/tool_block_convergence_plan.md`) a stable target.
 **Scope:** the visual representation of a single tool call in the TUI — header, live tail, body, footer.
 **Audience:** anyone touching `tool_blocks/`, `tool_panel/` (including `layout_resolver.py`), `body_renderers/`, `services/tools.py`, `services/plan_sync.py`, `services/feedback.py`, or the renderer registry.
+
+---
+
+## Freeze policy (active 2026-04-27 → 2026-05-11)
+
+During the freeze window:
+
+- **Allowed:** bug-fix edits to existing clauses (typo, broken cross-reference, factual error in a contract already documented).
+- **Allowed:** changelog entries describing implementation work that closes existing clauses.
+- **Rejected:** new clauses, new contract surfaces, new perception budgets, new channel rules, new axis values, new role catalogue entries, new redundant-signal rows.
+- **Rejected:** version bump to v3.7 or higher.
+
+Resume policy: after 2026-05-11, v3.7 may open *only if* the convergence plan's Step 5 criteria are green (all invariant gates passing, targeted tests passing on owner paths, audit produces ≤3 MED + 0 HIGH). If not green, extend freeze by another 14 days and continue catch-up.
+
+Reviewers: a PR proposing a new clause during freeze is a review block, not a style nit. Direct it to the convergence plan instead.
 
 ---
 

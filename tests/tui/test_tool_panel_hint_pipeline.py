@@ -152,23 +152,25 @@ class TestDynamicHintCollection:
         primary, _ = panel._collect_hints()
         assert primary == [("Enter", "expand"), ("y", "copy")]
 
-    def test_error_primary_is_enter_toggle_and_r_retry(self):
-        """is_error=True terminal → primary == [('Enter','toggle'), ('r','retry')];
+    def test_error_primary_is_enter_collapse_and_r_retry(self):
+        """is_error=True terminal (expanded) → primary == [('Enter','collapse'), ('r','retry')];
         ('r','retry') NOT duplicated in contextual."""
         panel = _make_panel(rs=_make_rs(is_error=True, exit_code=1))
         primary, contextual = panel._collect_hints()
-        assert primary == [("Enter", "toggle"), ("r", "retry")]
+        assert primary == [("Enter", "collapse"), ("r", "retry")]
         assert ("r", "retry") not in contextual, "r retry must not appear twice"
 
-    def test_contextual_includes_alt_t_trace_when_complete_expanded(self):
-        """Terminal ok expanded block → ('alt+t','trace') in contextual."""
+    def test_contextual_includes_density_cycle_hints_when_complete_expanded(self):
+        """Complete expanded block → D density-cycle and shift+d density-back in contextual."""
         panel = _make_panel(
             rs=_make_rs(),
             block=_make_block(completed=True),
             collapsed=False,
         )
         _, contextual = panel._collect_hints()
-        assert ("alt+t", "trace") in contextual
+        assert ("D", "density-cycle") in contextual
+        assert ("shift+d", "density-back") in contextual
+        assert ("alt+t", "trace") not in contextual
 
     def test_contextual_dedups_against_footer_chips(self):
         """If footer already shows copy_err chip, ('e','stderr') absent from contextual."""
@@ -240,12 +242,11 @@ class TestDensityCycleBinding:
         assert keys["D"] == "density_cycle", f"Expected density_cycle, got {keys['D']}"
 
     def test_action_density_cycle_advances_tier(self):
-        """DEFAULT → COMPACT → HERO → DEFAULT (resolver accepts every tier)."""
+        """DEFAULT → COMPACT → TRACE → HERO → DEFAULT (4-tier; resolver accepts every tier)."""
         from hermes_cli.tui.tool_panel._actions import _ToolPanelActionsMixin
         from hermes_cli.tui.tool_panel.density import DensityTier
 
         panel = types.SimpleNamespace()
-        panel._next_tier_in_cycle = _ToolPanelActionsMixin._next_tier_in_cycle
 
         # Resolver that always accepts the requested tier
         resolver = MagicMock()
@@ -273,25 +274,31 @@ class TestDensityCycleBinding:
         assert resolver.tier == DensityTier.COMPACT
 
         panel.action_density_cycle()
+        assert resolver.tier == DensityTier.TRACE
+
+        panel.action_density_cycle()
         assert resolver.tier == DensityTier.HERO
 
         panel.action_density_cycle()
         assert resolver.tier == DensityTier.DEFAULT
 
     def test_action_density_cycle_hero_ineligible(self):
-        """When resolver rejects HERO, _flash_header called with tone='warning'."""
+        """When resolver rejects HERO (pressure gate), _flash_header called with tone='warning'.
+
+        Row-budget check passes (body_lines=10) so _next_legal_tier_static returns HERO;
+        resolver then rejects it (simulates pressure gate), triggering the warning flash.
+        """
         from hermes_cli.tui.tool_panel._actions import _ToolPanelActionsMixin
         from hermes_cli.tui.tool_panel.density import DensityTier
 
         panel = types.SimpleNamespace()
-        panel._next_tier_in_cycle = _ToolPanelActionsMixin._next_tier_in_cycle
 
         resolver = MagicMock()
-        resolver.tier = DensityTier.COMPACT  # start at COMPACT so next is HERO
+        resolver.tier = DensityTier.TRACE  # start at TRACE so next (row-legal) is HERO
 
         def rejecting_hero_resolve(inputs):
             if inputs.user_override_tier == DensityTier.HERO:
-                resolver.tier = DensityTier.DEFAULT  # resolver rejects, stays at DEFAULT
+                resolver.tier = DensityTier.DEFAULT  # resolver rejects HERO (pressure)
             else:
                 resolver.tier = inputs.user_override_tier
 
@@ -304,14 +311,14 @@ class TestDensityCycleBinding:
         panel._view_state = None
         panel._lookup_view_state = lambda: None
         panel._is_error = lambda: False
-        panel._body_line_count = lambda: 1  # too few lines → HERO rejected
+        panel._body_line_count = lambda: 10  # row-legal; HERO pre-skip does NOT fire
         panel._parent_clamp_tier = None
         flash_mock = MagicMock()
         panel._flash_header = flash_mock
 
         panel.action_density_cycle = _ToolPanelActionsMixin.action_density_cycle.__get__(panel)
 
-        panel.action_density_cycle()  # COMPACT → HERO (rejected)
+        panel.action_density_cycle()  # TRACE → HERO (row-legal, but resolver rejects)
         call_kwargs = flash_mock.call_args
         assert call_kwargs is not None
         assert call_kwargs[1].get("tone") == "warning" or (

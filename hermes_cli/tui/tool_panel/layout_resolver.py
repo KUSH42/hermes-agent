@@ -174,6 +174,7 @@ class LayoutInputs:
     width: int = 0
     user_collapsed: bool = False
     has_footer_content: bool = False
+    is_streaming: bool = False
 
 
 # Backward-compat alias used by DU-3 shim layer.
@@ -249,11 +250,15 @@ class ToolBlockLayoutResolver:
 
     def resolve_full(self, inputs: LayoutInputs) -> LayoutDecision:
         tier, reason = self._compute_tier(inputs)
-        footer_visible = (
-            tier != DensityTier.COMPACT
-            and not inputs.user_collapsed
-            and inputs.has_footer_content
-        )
+        if inputs.is_streaming:
+            # FH-3: during streaming the footer earns no space (concept §multi-block-rhythm).
+            footer_visible = False
+        else:
+            # FH-5: COMPACT no longer force-hides; has_footer_content is sole content gate.
+            footer_visible = (
+                not inputs.user_collapsed
+                and inputs.has_footer_content
+            )
         return LayoutDecision(
             tier=tier,
             footer_visible=footer_visible,

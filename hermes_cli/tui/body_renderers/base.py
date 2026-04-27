@@ -64,14 +64,16 @@ class BodyRenderer(ABC):
         phase: "ToolCallState",
         density: "DensityTier",
         width: int,
+        has_footer_content: bool = False,
     ) -> "LayoutDecision":
         """Return the stored decision, or synthesise one from explicit args."""
         if self._decision is not None:
             return self._decision
-        from hermes_cli.tui.tool_panel.layout_resolver import LayoutDecision, DensityTier as _DT
+        from hermes_cli.tui.tool_panel.layout_resolver import LayoutDecision
+        # FH-5: mirrors resolver semantics — has_footer_content is sole content gate.
         return LayoutDecision(
             tier=density,
-            footer_visible=(density != _DT.COMPACT),
+            footer_visible=has_footer_content,
             width=width,
             reason="initial",
             clamp_rows=None,

@@ -368,6 +368,7 @@ class _ToolPanelCompletionMixin:
             row_budget=None,
             kind=kind,
             parent_clamp=self._parent_clamp_tier,  # type: ignore[attr-defined]
+            is_streaming=(phase in (ToolCallState.STARTED, ToolCallState.STREAMING)),
         )
         prev_tier = self._resolver.tier  # type: ignore[attr-defined]
         self._resolver.resolve(inputs)  # type: ignore[attr-defined]

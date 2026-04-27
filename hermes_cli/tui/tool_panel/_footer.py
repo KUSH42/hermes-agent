@@ -410,6 +410,11 @@ class FooterPane(Widget):
 
     def _refresh_visibility(self) -> None:
         from hermes_cli.tui.tool_panel.density import DensityTier
+        # FH-3: streaming gate — parallel to resolver. Mirror traversal at _render_footer:461.
+        _block = getattr(getattr(self, "parent", None), "_block", None)
+        if _block is not None and getattr(_block, "_completed", True) is False:
+            self.styles.display = "none"
+            return
         if self._density == DensityTier.TRACE:
             if not self._show_all_artifacts:
                 self._show_all_artifacts = True

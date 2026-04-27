@@ -1143,3 +1143,15 @@ BodyFooter {
 }
 HermesApp.density-compact BodyFooter { display: none; }
 ToolPanel.--streaming BodyFooter { display: none; }
+
+/* SK-1: pre-first-chunk skeleton row in StreamingToolBlock.
+   .tool-skeleton--dim is toggled by a 400ms set_interval on the block;
+   reduced-motion path leaves the class permanently set so the row stays dim. */
+.tool-skeleton {
+    color: $text-muted;
+    height: 1;
+    padding: 0 1;
+}
+.tool-skeleton--dim {
+    opacity: 0.5;
+}

@@ -73,6 +73,8 @@ class ShellRenderer(BodyRenderer):
     kind = ResultKind.TEXT
     supports_streaming = True
     accepted_phases = _STREAMING_PHASES
+    truncation_bias = "tail"
+    kind_icon = "$"
 
     @classmethod
     def can_render(cls, cls_result: object, payload: object) -> bool:
@@ -163,6 +165,8 @@ class StreamingCodeRenderer(BodyRenderer):
     kind = ResultKind.CODE
     supports_streaming = True
     accepted_phases = _STREAMING_PHASES
+    truncation_bias = "head"
+    kind_icon = "<>"
 
     @classmethod
     def can_render(cls, cls_result: object, payload: object) -> bool:
@@ -273,6 +277,8 @@ class FileRenderer(BodyRenderer):
     kind = ResultKind.DIFF
     supports_streaming = True
     accepted_phases = _STREAMING_PHASES
+    truncation_bias = "tail"
+    kind_icon = "📄"
 
     @classmethod
     def can_render(cls, cls_result: object, payload: object) -> bool:
@@ -471,6 +477,8 @@ class StreamingSearchRenderer(BodyRenderer):
     kind = ResultKind.SEARCH
     supports_streaming = True
     accepted_phases = _STREAMING_PHASES
+    truncation_bias = "priority"
+    kind_icon = "🔍"
 
     @classmethod
     def can_render(cls, cls_result: object, payload: object) -> bool:
@@ -558,6 +566,8 @@ class WebRenderer(BodyRenderer):
     kind = ResultKind.TEXT
     supports_streaming = True
     accepted_phases = _STREAMING_PHASES
+    truncation_bias = "tail"
+    kind_icon = "🌐"
 
     @classmethod
     def can_render(cls, cls_result: object, payload: object) -> bool:
@@ -603,6 +613,8 @@ class AgentRenderer(BodyRenderer):
     kind = ResultKind.TEXT
     supports_streaming = True
     accepted_phases = _STREAMING_PHASES
+    truncation_bias = "tail"
+    kind_icon = "🤖"
 
     @classmethod
     def can_render(cls, cls_result: object, payload: object) -> bool:
@@ -636,6 +648,8 @@ class TextRenderer(BodyRenderer):
     kind = ResultKind.TEXT
     supports_streaming = True
     accepted_phases = _STREAMING_PHASES
+    truncation_bias = "tail"
+    kind_icon = "¶"
 
     @classmethod
     def can_render(cls, cls_result: object, payload: object) -> bool:
@@ -662,6 +676,8 @@ class MCPBodyRenderer(BodyRenderer):
     kind = ResultKind.TEXT
     supports_streaming = True
     accepted_phases = _STREAMING_PHASES
+    truncation_bias = "tail"
+    kind_icon = "⬜"
 
     @classmethod
     def can_render(cls, cls_result: object, payload: object) -> bool:

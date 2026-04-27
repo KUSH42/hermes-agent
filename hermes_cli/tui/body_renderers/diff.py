@@ -331,6 +331,8 @@ class _DiffContainer(Vertical):
 class DiffRenderer(BodyRenderer):
     kind: ClassVar  # set at module level below
     supports_streaming: ClassVar[bool] = False
+    truncation_bias: ClassVar = "hunk-aware"
+    kind_icon: ClassVar[str] = "±"
 
     @classmethod
     def accepts(cls, phase: "ToolCallState", density: "DensityTier") -> bool:
@@ -504,7 +506,18 @@ class DiffRenderer(BodyRenderer):
 
         return _DiffContainer(*children)
 
-    def build_widget(self, density=None) -> Widget:
+    def _diff_stats(self) -> "tuple[int, int, int]":
+        stats = _parse_file_stats((self.payload.output_raw or "").splitlines())
+        files = len(stats)
+        plus  = sum(s[1] for s in stats)
+        minus = sum(s[2] for s in stats)
+        return files, plus, minus
+
+    def summary_line(self) -> str:
+        files, plus, minus = self._diff_stats()
+        return f"{files} file(s) · +{plus} −{minus}"
+
+    def build_widget(self, density=None, clamp_rows=None) -> Widget:
         from hermes_cli.tui.body_renderers._grammar import BodyFooter
         from hermes_cli.tui.body_renderers._frame import BodyFrame
 

@@ -12,6 +12,8 @@ if TYPE_CHECKING:
 class FallbackRenderer(BodyRenderer):
     kind: ClassVar  # set at module level below
     supports_streaming: ClassVar[bool] = False
+    truncation_bias: ClassVar = "tail"
+    kind_icon: ClassVar[str] = "⬜"
 
     @classmethod
     def can_render(cls, cls_result: "ClassificationResult", payload: "ToolPayload") -> bool:

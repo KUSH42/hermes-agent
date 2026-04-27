@@ -371,3 +371,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         if header is not None:
             header._density_tier = decision.tier
             header.refresh()
+
+        # 5. Body pane density delegation.
+        if self._body_pane is not None:
+            self._body_pane.apply_density(decision.tier)

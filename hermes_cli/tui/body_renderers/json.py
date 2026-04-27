@@ -81,6 +81,8 @@ except ImportError:
 class JsonRenderer(BodyRenderer):
     kind: ClassVar  # set at module level below
     supports_streaming: ClassVar[bool] = False
+    truncation_bias: ClassVar = "head"
+    kind_icon: ClassVar[str] = "{}"
 
     @classmethod
     def can_render(cls, cls_result: "ClassificationResult", payload: "ToolPayload") -> bool:
@@ -136,7 +138,19 @@ class JsonRenderer(BodyRenderer):
             word_wrap=False,
         )
 
-    def build_widget(self, density=None) -> "object":
+    def _json_top_keys(self) -> str:
+        import json as _json_mod
+        try:
+            obj = _json_mod.loads(self.payload.output_raw or "{}")
+            keys = list(obj.keys())[:4] if isinstance(obj, dict) else []
+            return ", ".join(keys) if keys else "…"
+        except Exception:
+            return "…"
+
+    def summary_line(self) -> str:
+        return f"{{ {self._json_top_keys()} }}"
+
+    def build_widget(self, density=None, clamp_rows=None) -> "object":
         from rich.syntax import Syntax
         from hermes_cli.tui.body_renderers._grammar import build_rule, build_parse_failure, BodyFooter
         from hermes_cli.tui.body_renderers._frame import BodyFrame

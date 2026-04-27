@@ -76,6 +76,8 @@ def _column_numeric_stats(rows: list[list[str]], j: int) -> tuple[int, int, bool
 class TableRenderer(BodyRenderer):
     kind: ClassVar  # set at module level below
     supports_streaming: ClassVar[bool] = False
+    truncation_bias: ClassVar = "head"
+    kind_icon: ClassVar[str] = "⊞"
 
     @classmethod
     def accepts(cls, phase: "ToolCallState", density: "DensityTier") -> bool:
@@ -173,7 +175,16 @@ class TableRenderer(BodyRenderer):
         self._col_count = ncols
         return table
 
-    def build_widget(self, density=None):
+    def row_count(self) -> int:
+        return getattr(self, "_row_count", 0)
+
+    def col_count(self) -> int:
+        return getattr(self, "_col_count", 0)
+
+    def summary_line(self) -> str:
+        return f"{self.row_count()} rows × {self.col_count()} cols"
+
+    def build_widget(self, density=None, clamp_rows=None):
         from hermes_cli.tui.body_renderers._grammar import build_rule, BodyFooter
         from hermes_cli.tui.body_renderers._frame import BodyFrame
 

@@ -22,6 +22,7 @@ _log = logging.getLogger(__name__)
 
 _HERO_MAX_LINES = 8
 _HERO_KINDS = frozenset({ResultKind.DIFF, ResultKind.JSON, ResultKind.TABLE})
+_DEFAULT_BODY_CLAMP: int = 12
 
 # DU-4: width gate for HERO promotion. Default 100 cells. Read once from
 # `display.tool_hero_min_width` at resolver construction.
@@ -189,6 +190,17 @@ class LayoutDecision:
     footer_visible: bool
     width: int
     reason: Literal["auto", "user", "error_override", "initial", "parent_clamp"]
+    clamp_rows: "int | None" = None  # None = no clamp; 0 = body suppressed (TRACE)
+
+
+def _clamp_for_tier(tier: "DensityTier") -> "int | None":
+    """Module-level helper so BodyPane can import without circular LayoutDecision dep."""
+    return {
+        DensityTier.HERO:    None,
+        DensityTier.DEFAULT: _DEFAULT_BODY_CLAMP,
+        DensityTier.COMPACT: None,  # COMPACT uses summary_line(), not clamp
+        DensityTier.TRACE:   0,
+    }[tier]
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +251,7 @@ class ToolBlockLayoutResolver:
             footer_visible=footer_visible,
             width=inputs.width,
             reason=reason,
+            clamp_rows=_clamp_for_tier(tier),
         )
 
     def trim_header_tail(

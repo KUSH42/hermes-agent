@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import ClassVar, TYPE_CHECKING
+from typing import ClassVar, Literal, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from hermes_cli.tui.tool_payload import ResultKind, ClassificationResult, ToolPayload
@@ -19,6 +19,8 @@ class BodyRenderer(ABC):
     kind: ClassVar["ResultKind"]
     supports_streaming: ClassVar[bool] = False  # only ShellOutputRenderer = True
     footer_entries: ClassVar[tuple] = (("y", "copy"),)
+    truncation_bias: ClassVar[Literal["head", "tail", "priority", "hunk-aware"]] = "tail"
+    kind_icon: ClassVar[str] = "⬜"
 
     # Phases at which this renderer is willing to be picked. Subclasses may
     # override to narrow further; empty frozenset means {COMPLETING, DONE}.
@@ -72,6 +74,7 @@ class BodyRenderer(ABC):
             footer_visible=(density != _DT.COMPACT),
             width=width,
             reason="initial",
+            clamp_rows=None,
         )
 
     @classmethod
@@ -91,17 +94,84 @@ class BodyRenderer(ABC):
         from hermes_cli.tui.body_renderers._grammar import user_forced_caption
         return user_forced_caption(self.cls_result.kind)
 
-    def build_widget(self, density: "DensityTier | None" = None) -> "Widget":
+    def payload_row_count(self) -> int:
+        """Line count of payload.output_raw, or 0 if empty."""
+        return len((self.payload.output_raw or "").splitlines())
+
+    def summary_line(self) -> str:
+        """One-line COMPACT summary. Override per kind for richer signal."""
+        rows = self.payload_row_count()
+        return f"({rows} rows)" if rows else "(no output)"
+
+    def _earlier_chip(self, n: int) -> str:
+        return f"[muted]…{n} earlier[/muted]"
+
+    def _later_chip(self, n: int) -> str:
+        return f"[muted]…+{n} more[/muted]"
+
+    def _apply_clamp(self, rows: "list[str]", clamp: int) -> "list[str]":
+        if len(rows) <= clamp:
+            return rows
+        bias = self.truncation_bias
+        if bias == "tail":
+            kept = rows[-(clamp - 1):]
+            return [self._earlier_chip(len(rows) - len(kept))] + kept
+        if bias == "head":
+            kept = rows[: clamp - 1]
+            return kept + [self._later_chip(len(rows) - len(kept))]
+        if bias == "hunk-aware":
+            return self._hunk_aware_clamp(rows, clamp)
+        if bias == "priority":
+            return self._priority_clamp(rows, clamp)
+        return rows
+
+    def _tail_clamp(self, rows: "list[str]", clamp: int) -> "list[str]":
+        kept = rows[-(clamp - 1):]
+        return [self._earlier_chip(len(rows) - len(kept))] + kept
+
+    def _hunk_aware_clamp(self, rows: "list[str]", clamp: int) -> "list[str]":
+        hunk_starts = [i for i, r in enumerate(rows) if r.startswith("@@")]
+        if not hunk_starts:
+            return self._tail_clamp(rows, clamp)
+        kept_from = len(rows)
+        for hi in reversed(hunk_starts):
+            candidate = rows[hi:]
+            if len(candidate) + 1 <= clamp:
+                kept_from = hi
+            else:
+                break
+        elided_rows = rows[:kept_from]
+        elided_hunks = sum(1 for r in elided_rows if r.startswith("@@"))
+        chip = f"[muted]…+{elided_hunks} hunks (+{len(elided_rows)} lines)[/muted]"
+        return [chip] + rows[kept_from:]
+
+    def _priority_clamp(self, rows: "list[str]", clamp: int) -> "list[str]":
+        scores = getattr(self, "_hit_scores", None) or list(range(len(rows) - 1, -1, -1))
+        keep_n = clamp - 1
+        indexed = sorted(enumerate(rows), key=lambda x: scores[x[0]], reverse=True)
+        kept_indexed = sorted(indexed[:keep_n], key=lambda x: x[0])
+        kept = [r for _, r in kept_indexed]
+        suppressed = len(rows) - keep_n
+        chip = f"[muted]…+{suppressed} hits[/muted]"
+        return kept + [chip]
+
+    def build_widget(self, density: "DensityTier | None" = None, clamp_rows: "int | None" = None) -> "Widget":
         """Override for renderers needing custom Widget (e.g. VirtualSearchList).
         Default: wraps build() in CopyableRichLog."""
         from hermes_cli.tui.widgets import CopyableRichLog
-        rl = CopyableRichLog(highlight=False, markup=False)
+        rl = CopyableRichLog(highlight=False, markup=True)
         caption = self._user_forced_caption_renderable()
         if caption is not None:
             rl.write(caption)
         if getattr(self.cls_result, "_low_confidence_disclosed", False):
             rl.write(self._low_confidence_caption())
-        rl.write(self.build())
+        if clamp_rows is not None:
+            rows = (self.payload.output_raw or "").splitlines()
+            clamped = self._apply_clamp(rows, clamp_rows)
+            from rich.text import Text
+            rl.write(Text("\n".join(clamped)))
+        else:
+            rl.write(self.build())
         return rl
 
     def _low_confidence_caption(self) -> "Text":

@@ -13,6 +13,8 @@ if TYPE_CHECKING:
 class ShellOutputRenderer(BodyRenderer):
     kind: ClassVar  # set at module level below
     supports_streaming: ClassVar[bool] = True
+    truncation_bias: ClassVar = "tail"
+    kind_icon: ClassVar[str] = "$"
 
     def __init__(self, payload: "ToolPayload", cls_result: "ClassificationResult", **kwargs) -> None:
         super().__init__(payload, cls_result, **kwargs)
@@ -79,7 +81,7 @@ class ShellOutputRenderer(BodyRenderer):
         result.append_text(self._build_body(cleaned))
         return result
 
-    def build_widget(self, density=None):
+    def build_widget(self, density=None, clamp_rows=None):
         from hermes_cli.tui.cwd_strip import strip_cwd
         from hermes_cli.tui.body_renderers._grammar import build_path_header, BodyFooter
         from hermes_cli.tui.body_renderers._frame import BodyFrame

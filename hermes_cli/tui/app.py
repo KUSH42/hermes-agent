@@ -274,6 +274,7 @@ class HermesApp(App):
         Binding("ctrl+shift+a", "open_anim_config", "Animation config", show=True, priority=True),
         Binding("ctrl+b", "toggle_browse_mode", "Browse", show=True, priority=True),
         Binding("ctrl+shift+h", "open_sessions", show=False),
+        Binding("S", "open_sessions", "Sessions", show=False),
         Binding("ctrl+w+n", "new_worktree_session", show=False),
         Binding("o", "focus_output", "Output", show=False),
         Binding("i", "focus_input_from_output", "Input", show=False),
@@ -664,15 +665,16 @@ class HermesApp(App):
         with Vertical(id="overlay-layer"):
             from hermes_cli.tui.overlays import InterruptOverlay as _IO
             yield _IO(id="interrupt-overlay")
-        yield AssistantNameplate(
-            id="nameplate",
-            name=getattr(self, "_nameplate_name", "Hermes"),
-            effects_enabled=getattr(self, "_nameplate_effects", True),
-            idle_effect=getattr(self, "_nameplate_idle_effect", "breathe"),
-            morph_speed=getattr(self, "_nameplate_morph_speed", 1.0),
-            glitch_enabled=getattr(self, "_nameplate_glitch", True),
-        )
-        yield HintBar(id="hint-bar")
+        with Horizontal(id="nameplate-hint-row"):
+            yield AssistantNameplate(
+                id="nameplate",
+                name=getattr(self, "_nameplate_name", "Hermes"),
+                effects_enabled=getattr(self, "_nameplate_effects", True),
+                idle_effect=getattr(self, "_nameplate_idle_effect", "breathe"),
+                morph_speed=getattr(self, "_nameplate_morph_speed", 1.0),
+                glitch_enabled=getattr(self, "_nameplate_glitch", True),
+            )
+            yield HintBar(id="hint-bar")
         yield SessionBar(id="session-bar")
         yield _SessionNotification(id="session-notification")
         yield InlineImageBar(id="inline-image-bar")

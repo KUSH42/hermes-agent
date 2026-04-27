@@ -62,6 +62,7 @@ class SessionsService(AppService):
         self.app._session_records_cache = self.app._session_mgr.index.get_sessions()
         self.app._session_active_id = self.app._session_mgr.index.get_active_id()
         self.app.session_count = len(self.app._session_records_cache)  # S1-D
+        self._update_session_label()
         self.app._svc_watchers.sync_compact_visibility()
         try:
             bar = self.app.query_one(SessionBar)
@@ -86,6 +87,22 @@ class SessionsService(AppService):
                 _log.warning("init_sessions: notify listener failed to start", exc_info=True)
         self.app._sessions_poll_timer = self.app.set_interval(2.0, self.poll_session_index)
 
+    def _update_session_label(self) -> None:
+        """Sync app.session_label with current cache state. Event-loop only."""
+        records = self.app._session_records_cache
+        active_id = self.app._session_active_id
+        session_count = len(records)
+        if session_count > 1:
+            try:
+                active_idx = next(
+                    i + 1 for i, r in enumerate(records) if getattr(r, "id", None) == active_id
+                )
+            except StopIteration:
+                active_idx = 1
+            self.app.session_label = f"[{active_idx}/{session_count}]"
+        else:
+            self.app.session_label = ""
+
     def get_session_records(self) -> list:
         """Return cached session records. Event-loop safe."""
         return list(self.app._session_records_cache)
@@ -99,6 +116,7 @@ class SessionsService(AppService):
         from hermes_cli.tui.session_widgets import SessionBar
         if not self._sessions_enabled:
             return
+        self._update_session_label()
         try:
             bar = self.app.query_one(SessionBar)
             max_s = self.app._session_mgr._max_sessions if self.app._session_mgr else 8
@@ -121,6 +139,7 @@ class SessionsService(AppService):
                 self.app._session_records_cache = records
                 self.app._session_active_id = active_id
                 self.app.session_count = len(records)  # S1-D
+                self._update_session_label()
                 self.refresh_session_bar()
                 self.app._svc_watchers.sync_compact_visibility()
         except Exception as exc:

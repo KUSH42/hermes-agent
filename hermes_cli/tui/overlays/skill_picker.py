@@ -176,9 +176,10 @@ class SkillPickerOverlay(Widget):
                 label = _SOURCE_LABELS.get(src, src.title())
                 option_list.add_option(Option(f"── {label} ──", disabled=True))
             disabled_badge = "  [d]" if not candidate.enabled else ""
+            _desc = candidate.description[:40] if candidate.description else "—"
             option_list.add_option(
                 Option(
-                    f"${candidate.name}{disabled_badge}  {candidate.description[:40]}",
+                    f"${candidate.name}{disabled_badge}  [dim]{_desc}[/dim]",
                     id=candidate.name,
                 )
             )
@@ -195,8 +196,8 @@ class SkillPickerOverlay(Widget):
             return
         widgets = []
         widgets.append(Static(f"[bold]${selected.name}[/bold]", classes="detail-section-header"))
-        if selected.description:
-            widgets.append(Static(selected.description))
+        desc_text = selected.description or "[dim](no description)[/dim]"
+        widgets.append(Static(desc_text, markup=True))
         if selected.trigger_phrases:
             widgets.append(Static("", classes="detail-spacer"))
             widgets.append(Static("TRIGGER when:", classes="detail-section-header"))

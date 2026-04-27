@@ -5,6 +5,7 @@ in ToolRenderingService.open_streaming_tool_block / close_*.
 """
 from __future__ import annotations
 
+import threading
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
 
@@ -43,6 +44,13 @@ def _make_svc():
     svc._turn_tool_calls = {}
     svc._agent_stack = []
     svc._subagent_panels = {}
+    svc._open_tool_count = 0
+    svc._tool_views_by_id = {}
+    svc._tool_views_by_gen_index = {}
+    svc._pending_gen_arg_deltas = {}
+    svc._state_lock = threading.RLock()
+    from hermes_cli.tui.services.plan_sync import PlanSyncBroker
+    svc._plan_broker = PlanSyncBroker(svc)
     return svc
 
 

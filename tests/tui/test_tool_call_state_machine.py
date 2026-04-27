@@ -14,6 +14,7 @@ tests, and mocks DOM-dependent helpers to stay fast.
 from __future__ import annotations
 
 import concurrent.futures
+import threading
 import time
 import types
 from dataclasses import dataclass, field
@@ -63,6 +64,9 @@ def _make_service(app=None, **app_kwargs):
     svc._tool_views_by_id = {}
     svc._tool_views_by_gen_index = {}
     svc._pending_gen_arg_deltas = {}
+    svc._state_lock = threading.RLock()
+    from hermes_cli.tui.services.plan_sync import PlanSyncBroker
+    svc._plan_broker = PlanSyncBroker(svc)
     return svc
 
 
@@ -444,18 +448,18 @@ class TestCompletionModes:
         return view
 
     def test_tool_progress_off_still_marks_plan_done(self):
-        """Off mode cannot leave a running plan row — mark_plan_done is always called."""
+        """Plan row must reach DONE after complete_tool_call regardless of streaming path."""
         from hermes_cli.tui.plan_types import PlanState
         svc = _make_service()
         self._setup_started_view(svc)
         svc.app.planned_calls = [_fake_plan_call("tc-mode", PlanState.RUNNING)]
 
-        with patch.object(svc, "close_streaming_tool_block"):
-            with patch.object(svc, "close_streaming_tool_block_with_diff"):
-                svc.complete_tool_call(
-                    "tc-mode", "web_search", {}, "result",
-                    is_error=False, summary=None,
-                )
+        # Post-PG-1: plan update flows through PlanSyncBroker inside
+        # _terminalize_tool_view; close_streaming_tool_block must run for that to fire.
+        svc.complete_tool_call(
+            "tc-mode", "web_search", {}, "result",
+            is_error=False, summary=None,
+        )
 
         # plan must be DONE
         assert svc.app.planned_calls[0].state == PlanState.DONE

@@ -280,6 +280,7 @@ class PulseMixin:
     _pulse_t: float = 0.0
     _pulse_tick: int = 0
     _pulse_timer: object | None = None
+    _pulse_paused: bool = False
 
     def _pulse_start(self) -> None:
         """Start the pulse. Safe to call multiple times (idempotent)."""

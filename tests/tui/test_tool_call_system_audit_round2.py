@@ -9,6 +9,7 @@ See spec: 2026-04-25-tool-call-system-audit-followup-round2-spec.md
 """
 from __future__ import annotations
 
+import threading
 import time
 from unittest.mock import MagicMock, patch
 
@@ -57,6 +58,9 @@ def _make_service(app=None, **app_kwargs):
     svc._tool_views_by_id = {}
     svc._tool_views_by_gen_index = {}
     svc._pending_gen_arg_deltas = {}
+    svc._state_lock = threading.RLock()
+    from hermes_cli.tui.services.plan_sync import PlanSyncBroker
+    svc._plan_broker = PlanSyncBroker(svc)
     return svc
 
 

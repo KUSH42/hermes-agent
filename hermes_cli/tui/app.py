@@ -2479,8 +2479,8 @@ class HermesApp(App):
         if tm is not None:
             overrides = tm.css_variables
         else:
-            from hermes_cli.tui.theme_manager import COMPONENT_VAR_DEFAULTS
-            overrides = COMPONENT_VAR_DEFAULTS
+            from hermes_cli.tui.theme_manager import _defaults_as_strs
+            overrides = _defaults_as_strs()
         return {**base, **overrides}
 
     def apply_skin(self, skin_vars: "dict[str, str] | Path") -> None:

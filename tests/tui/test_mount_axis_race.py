@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import random
+import threading
 import time
 from dataclasses import dataclass, field as _field
 from unittest.mock import MagicMock, patch, PropertyMock
@@ -71,6 +72,9 @@ def _make_service(app=None, **app_kwargs):
     svc._tool_views_by_id = {}
     svc._tool_views_by_gen_index = {}
     svc._pending_gen_arg_deltas = {}
+    svc._state_lock = threading.RLock()
+    from hermes_cli.tui.services.plan_sync import PlanSyncBroker
+    svc._plan_broker = PlanSyncBroker(svc)
     return svc
 
 

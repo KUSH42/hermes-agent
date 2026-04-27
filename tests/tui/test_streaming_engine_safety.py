@@ -161,7 +161,7 @@ class TestPanelUnmountRace:
         panel.is_mounted = False
         block = MagicMock()
 
-        with patch("hermes_cli.tui.response_flow.logger") as mock_log:
+        with patch("hermes_cli.tui.response_flow._log") as mock_log:
             engine._mount_code_block(block)
             mock_log.debug.assert_called_once()
             assert "panel unmounted" in mock_log.debug.call_args[0][0]
@@ -227,7 +227,7 @@ class TestEmojiMountCap:
         panel.app._thread_id = threading.get_ident()
         engine._emoji_mounts = 50  # already at cap
 
-        with patch("hermes_cli.tui.response_flow.logger") as mock_log:
+        with patch("hermes_cli.tui.response_flow._log") as mock_log:
             with patch.object(engine, "_has_image_support", return_value=False):
                 engine._mount_emoji("smile")
 

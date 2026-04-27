@@ -267,16 +267,6 @@ class TestStreamingPhaseFlag:
             "_streaming_phase = False must appear after _pulse_stop()"
         )
 
-    def test_on_click_uses_streaming_phase_not_spinner_char(self):
-        """on_click guard uses _streaming_phase, not _spinner_char."""
-        import inspect
-        from hermes_cli.tui.tool_blocks._header import ToolHeader
-        src = inspect.getsource(ToolHeader.on_click)
-        assert "_streaming_phase" in src, "on_click must reference _streaming_phase"
-        # The old guard `_spinner_char is not None` must be gone from on_click
-        assert "_spinner_char is not None" not in src, (
-            "on_click must not use _spinner_char is not None (replaced by _streaming_phase)"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -342,28 +332,4 @@ class TestMicrocopyTerminalCleanup:
 
 
 # ---------------------------------------------------------------------------
-# TestSpinnerIdentitySkinDriven — CL-6
-# ---------------------------------------------------------------------------
-
-class TestSpinnerIdentitySkinDriven:
-    """CL-6: make_spinner_identity uses SkinColors.tier_accents for category-keyed pulse colors."""
-
-    def test_spinner_identity_uses_skin_tier_accent_for_category(self):
-        """make_spinner_identity(id, category=SHELL) returns identity with tier accent as color_b."""
-        from hermes_cli.tui.animation import make_spinner_identity
-        from hermes_cli.tui.tool_category import ToolCategory
-
-        mock_skin = MagicMock()
-        mock_skin.icon_dim = "#111111"
-        mock_skin.accent = "#ffffff"
-        mock_skin.tier_accents = {"tier1": "#aabbcc", "tier2": "#ddeeff"}
-
-        # SkinColors and display_tier_for are local imports inside make_spinner_identity
-        with patch("hermes_cli.tui.body_renderers._grammar.SkinColors") as mock_skin_cls, \
-             patch("hermes_cli.tui.tool_category.display_tier_for", return_value="tier1"):
-            mock_skin_cls.default.return_value = mock_skin
-            identity = make_spinner_identity("tool-1", category=ToolCategory.SHELL)
-
-        assert identity.color_a == "#111111"
-        assert identity.color_b == "#aabbcc"
-        assert identity.phase_offset == 0.0, "All calls must pulse in unison (phase_offset=0)"
+# TestSpinnerIdentitySkinDriven — CL-6 (deleted: make_spinner_identity removed in CU-1/CU-2)

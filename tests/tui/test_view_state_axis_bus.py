@@ -5,6 +5,7 @@ Spec: /home/xush/.hermes/2026-04-25-axis-bus-view-state-spec.md
 """
 from __future__ import annotations
 
+import threading
 import types
 import pytest
 from unittest.mock import MagicMock, patch, call
@@ -191,12 +192,17 @@ class TestKindStampOnCompleting:
         app._user_scrolled_up = False
         svc = ToolRenderingService.__new__(ToolRenderingService)
         svc.app = app
+        svc._streaming_map = {}
+        svc._subagent_panels = {}
         svc._tool_views_by_id = {}
         svc._tool_views_by_gen_index = {}
         svc._pending_gen_arg_deltas = {}
         svc._turn_tool_calls = {}
         svc._agent_stack = []
         svc._open_tool_count = 0
+        svc._state_lock = threading.RLock()
+        from hermes_cli.tui.services.plan_sync import PlanSyncBroker
+        svc._plan_broker = PlanSyncBroker(svc)
         return svc
 
     def _make_view(self):

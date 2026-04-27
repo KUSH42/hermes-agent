@@ -55,7 +55,7 @@ class TestM1BufferCaps:
         from hermes_cli.tui.response_flow import _MAX_FOOTNOTES
         eng = _make_engine()
 
-        with patch("hermes_cli.tui.response_flow.logger") as mock_log:
+        with patch("hermes_cli.tui.response_flow._log") as mock_log:
             for i in range(600):
                 eng._handle_footnote(f"[^{i}]: body {i}")
 
@@ -70,7 +70,7 @@ class TestM1BufferCaps:
         from hermes_cli.tui.response_flow import _MAX_CITATIONS
         eng = _make_engine()
 
-        with patch("hermes_cli.tui.response_flow.logger") as mock_log:
+        with patch("hermes_cli.tui.response_flow._log") as mock_log:
             for i in range(1, 601):
                 # CITE format: [CITE:N Title — https://url]
                 eng._handle_citation_line(
@@ -88,7 +88,7 @@ class TestM1BufferCaps:
         eng = _make_engine()
         eng._state = "IN_MATH"
 
-        with patch("hermes_cli.tui.response_flow.logger") as mock_log:
+        with patch("hermes_cli.tui.response_flow._log") as mock_log:
             for i in range(_MAX_MATH_LINES + 1):
                 eng._dispatch_non_normal_state(f"x_{i} = {i}")
 
@@ -103,7 +103,7 @@ class TestM1BufferCaps:
         from hermes_cli.tui.response_flow import _MAX_CODE_FENCE_BUFFER
         eng = _make_engine()
 
-        with patch("hermes_cli.tui.response_flow.logger") as mock_log:
+        with patch("hermes_cli.tui.response_flow._log") as mock_log:
             for i in range(1, 601):
                 # Pattern must match _NUMBERED_LINE_RE: r"^\s*\d{1,3}\s*\|\s+\S"
                 line = f"  {i % 1000} | code line {i}"

@@ -47,7 +47,7 @@ class TestH1ProseCallbackSwallow:
         bad_callback = MagicMock(side_effect=RuntimeError("boom"))
         engine, log, _ = _make_engine(prose_callback=bad_callback)
 
-        with patch("hermes_cli.tui.response_flow.logger") as mock_log:
+        with patch("hermes_cli.tui.response_flow._log") as mock_log:
             engine.process_line("hello world")
             engine.flush()
 
@@ -74,7 +74,7 @@ class TestH1ProseCallbackSwallow:
         plain = "hello :smile: world"
         rich_text = Text(plain)
 
-        with patch("hermes_cli.tui.response_flow.logger") as mock_log:
+        with patch("hermes_cli.tui.response_flow._log") as mock_log:
             with patch.object(engine, "_has_image_support", return_value=True):
                 engine._write_prose_inline_emojis(rich_text, plain)
 
@@ -113,7 +113,7 @@ class TestH2MountSourcesBarLogging:
 
         assert captured_fn is not None
         panel.mount.side_effect = RuntimeError("mount failed")
-        with patch("hermes_cli.tui.response_flow.logger") as mock_log:
+        with patch("hermes_cli.tui.response_flow._log") as mock_log:
             with patch("hermes_cli.tui.widgets.SourcesBar", MagicMock()):
                 captured_fn()
         mock_log.warning.assert_called_once()
@@ -125,7 +125,7 @@ class TestH2MountSourcesBarLogging:
 
         assert captured_fn is not None
         panel.mount.side_effect = None
-        with patch("hermes_cli.tui.response_flow.logger") as mock_log:
+        with patch("hermes_cli.tui.response_flow._log") as mock_log:
             with patch("hermes_cli.tui.widgets.SourcesBar", MagicMock()):
                 captured_fn()
         mock_log.warning.assert_not_called()
@@ -144,7 +144,7 @@ class TestH3MountMathImageLogging:
         path = Path("/tmp/math.png")
 
         # MathBlockWidget is imported inline inside _mount_math_image — patch at source
-        with patch("hermes_cli.tui.response_flow.logger") as mock_log:
+        with patch("hermes_cli.tui.response_flow._log") as mock_log:
             with patch("hermes_cli.tui.widgets.MathBlockWidget", MagicMock()):
                 engine._mount_math_image(path, max_rows=10)
 
@@ -160,7 +160,7 @@ class TestH3MountMathImageLogging:
         path = Path("/tmp/math2.png")
 
         # Make the inline import raise
-        with patch("hermes_cli.tui.response_flow.logger") as mock_log:
+        with patch("hermes_cli.tui.response_flow._log") as mock_log:
             with patch.dict("sys.modules", {"hermes_cli.tui.widgets": None}):
                 engine._mount_math_image(path, max_rows=5)
 
@@ -177,7 +177,7 @@ class TestM1UnknownStateUsesLogger:
         engine, log, panel = _make_engine()
         engine._state = "BOGUS"
 
-        with patch("hermes_cli.tui.response_flow.logger") as mock_log:
+        with patch("hermes_cli.tui.response_flow._log") as mock_log:
             engine._handle_unknown_state("some line")
 
         mock_log.warning.assert_called_once()
@@ -191,7 +191,7 @@ class TestM1UnknownStateUsesLogger:
         engine._state = "BOGUS"
         engine._active_block = None
 
-        with patch("hermes_cli.tui.response_flow.logger"):
+        with patch("hermes_cli.tui.response_flow._log"):
             engine._handle_unknown_state("x")
 
         # panel.app.log.warning must never be called
@@ -209,7 +209,7 @@ class TestM2UnknownStateFlushesBlock:
         mock_block = MagicMock()
         engine._active_block = mock_block
 
-        with patch("hermes_cli.tui.response_flow.logger"):
+        with patch("hermes_cli.tui.response_flow._log"):
             engine._handle_unknown_state("x")
 
         mock_block.flush.assert_called_once()
@@ -222,7 +222,7 @@ class TestM2UnknownStateFlushesBlock:
         mock_block.flush.side_effect = RuntimeError("already removed")
         engine._active_block = mock_block
 
-        with patch("hermes_cli.tui.response_flow.logger") as mock_log:
+        with patch("hermes_cli.tui.response_flow._log") as mock_log:
             engine._handle_unknown_state("x")
 
         mock_log.debug.assert_called_once()
@@ -362,7 +362,7 @@ class TestL2CodeFenceBufferFallback:
         # Seed two numbered lines into the buffer
         engine._code_fence_buffer = ["  1  foo", "  2  bar"]
 
-        with patch("hermes_cli.tui.response_flow.logger") as mock_log:
+        with patch("hermes_cli.tui.response_flow._log") as mock_log:
             engine._flush_code_fence_buffer()
 
         mock_log.debug.assert_called_once()

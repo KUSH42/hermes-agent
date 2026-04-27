@@ -7,6 +7,7 @@ Pure-unit — no run_test / async needed.
 from __future__ import annotations
 
 import os
+import threading
 import time
 import types
 import unittest
@@ -77,6 +78,12 @@ class TestAgentRunningPhase(unittest.TestCase):
         svc._agent_stack = []
         svc._subagent_panels = {}
         svc._open_tool_count = 0
+        svc._tool_views_by_id = {}
+        svc._tool_views_by_gen_index = {}
+        svc._pending_gen_arg_deltas = {}
+        svc._state_lock = threading.RLock()
+        from hermes_cli.tui.services.plan_sync import PlanSyncBroker
+        svc._plan_broker = PlanSyncBroker(svc)
         return svc
 
     def test_phase_reasoning_on_turn_start(self):
@@ -157,6 +164,12 @@ class TestToolExecPhase(unittest.TestCase):
         svc._agent_stack = []
         svc._subagent_panels = {}
         svc._open_tool_count = 0
+        svc._tool_views_by_id = {}
+        svc._tool_views_by_gen_index = {}
+        svc._pending_gen_arg_deltas = {}
+        svc._state_lock = threading.RLock()
+        from hermes_cli.tui.services.plan_sync import PlanSyncBroker
+        svc._plan_broker = PlanSyncBroker(svc)
         return svc
 
     def test_open_tool_count_initialized_to_zero(self):

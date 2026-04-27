@@ -158,7 +158,7 @@ class TestMed2OrphanStateReset:
         engine, log, panel = _make_engine()
         engine._state = "IN_CODE"
         engine._active_block = None
-        with patch("hermes_cli.tui.response_flow.logger") as mock_log:
+        with patch("hermes_cli.tui.response_flow._log") as mock_log:
             engine.flush()
         assert engine._state == "NORMAL"
         mock_log.debug.assert_called()
@@ -215,7 +215,7 @@ class TestMed4MountEmojiLogging:
             with patch("hermes_cli.tui.response_flow.threading.get_ident", return_value=None):
                 # mount raises
                 panel.mount = MagicMock(side_effect=RuntimeError("gone"))
-                with patch("hermes_cli.tui.response_flow.logger") as mock_log:
+                with patch("hermes_cli.tui.response_flow._log") as mock_log:
                     with patch("hermes_cli.tui.widgets.InlineImage", MagicMock()):
                         engine._mount_emoji("smile")
         mock_log.debug.assert_called()

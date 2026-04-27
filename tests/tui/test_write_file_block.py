@@ -268,7 +268,7 @@ async def test_T41_complete_no_collapse_when_few_lines():
 # ---------------------------------------------------------------------------
 
 def test_T42_gen_blocks_by_idx_set_on_gen_start():
-    """_gen_blocks_by_idx[idx] is set to WriteFileBlock on gen_start for write_file."""
+    """_on_tool_gen_start delegates to tui.open_tool_generation via call_from_thread."""
     import cli as cli_module
     from cli import HermesCLI
 
@@ -279,23 +279,23 @@ def test_T42_gen_blocks_by_idx_set_on_gen_start():
     cli_obj._pending_gen_queue = []
 
     mock_tui = MagicMock()
-    mock_block = WriteFileBlock(path="")
-    call_results = []
+    call_args = []
 
-    def fake_call_from_thread(fn):
-        fn()
-        call_results.append(fn)
+    def fake_call_from_thread(fn, *args):
+        call_args.append((fn, args))
 
     mock_tui.call_from_thread = fake_call_from_thread
-    mock_tui._open_write_file_block.return_value = mock_block
 
     with patch.object(cli_module, "_hermes_app", mock_tui), \
          patch.object(cli_obj, "_flush_stream", lambda: None, create=True), \
          patch.object(cli_obj, "_close_reasoning_box", lambda: None, create=True):
         cli_obj._on_tool_gen_start(42, "write_file")
 
-    assert 42 in cli_obj._gen_blocks_by_idx
-    assert isinstance(cli_obj._gen_blocks_by_idx[42], WriteFileBlock)
+    # SM-02: CLI delegates to tui.open_tool_generation; no longer sets _gen_blocks_by_idx
+    assert len(call_args) == 1
+    fn, args = call_args[0]
+    assert fn is mock_tui.open_tool_generation
+    assert args == (42, "write_file")
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +303,7 @@ def test_T42_gen_blocks_by_idx_set_on_gen_start():
 # ---------------------------------------------------------------------------
 
 def test_T43_write_file_and_create_file_route_to_write_file_block():
-    """write_file and create_file both create WriteFileBlock (not plain StreamingToolBlock)."""
+    """write_file and create_file both call tui.open_tool_generation via call_from_thread."""
     import cli as cli_module
     from cli import HermesCLI
 
@@ -315,22 +315,23 @@ def test_T43_write_file_and_create_file_route_to_write_file_block():
         cli_obj._pending_gen_queue = []
 
         mock_tui = MagicMock()
-        mock_block = WriteFileBlock(path="")
+        call_args = []
 
-        def fake_call_from_thread(fn):
-            fn()
+        def fake_call_from_thread(fn, *args):
+            call_args.append((fn, args))
 
         mock_tui.call_from_thread = fake_call_from_thread
-        mock_tui._open_write_file_block.return_value = mock_block
 
         with patch.object(cli_module, "_hermes_app", mock_tui), \
              patch.object(cli_obj, "_flush_stream", lambda: None, create=True), \
              patch.object(cli_obj, "_close_reasoning_box", lambda: None, create=True):
             cli_obj._on_tool_gen_start(0, tool_name)
 
-        found_block = cli_obj._gen_blocks_by_idx.get(0)
-        assert isinstance(found_block, WriteFileBlock), \
-            f"{tool_name} should create WriteFileBlock, got {type(found_block)}"
+        # SM-02: CLI now delegates to tui.open_tool_generation for all tool names
+        assert len(call_args) == 1, f"{tool_name}: expected 1 call_from_thread"
+        fn, args = call_args[0]
+        assert fn is mock_tui.open_tool_generation, f"{tool_name}: wrong fn"
+        assert args == (0, tool_name), f"{tool_name}: wrong args"
 
 
 # ---------------------------------------------------------------------------

@@ -111,11 +111,14 @@ class TestRendererBodySwapContract:
             panel._swap_renderer(JsonRenderer, payload, cls_result)
             await _pause(pilot, 3)
 
-            # The block's _body should contain a CopyableRichLog (JsonRenderer output)
+            # The block's _body should contain a renderer widget (BodyFrame from JsonRenderer)
+            from hermes_cli.tui.body_renderers._frame import BodyFrame
+            from textual.widget import Widget
             body = panel._block._body
             assert body.is_attached
-            logs = list(body.query(CopyableRichLog))
-            assert len(logs) > 0, "Renderer widget not mounted inside block body"
+            # After swap, body contains a BodyFrame (wrapping the JSON renderer)
+            frames = list(body.query(BodyFrame))
+            assert len(frames) > 0, "Renderer widget (BodyFrame) not mounted inside block body"
 
             # panel._block must still be an actual block (not a CopyableRichLog)
             from hermes_cli.tui.tool_blocks._streaming import StreamingToolBlock
@@ -460,8 +463,17 @@ class TestRendererLocalFooter:
             panel._swap_renderer(JsonRenderer, payload, cls_result)
             await _pause(pilot, 3)
 
-            # BodyFooter should be inside panel._block._body, not BodyPane
+            # BodyFooter should be a descendant of panel._block._body, not BodyPane
             body = panel._block._body
             footers = list(body.query(BodyFooter))
             assert len(footers) > 0, "BodyFooter not mounted inside block body"
-            assert footers[0].parent is body
+            # BodyFooter is inside BodyFrame which is inside body — check ancestor chain
+            footer = footers[0]
+            parent = footer.parent
+            found = False
+            while parent is not None:
+                if parent is body:
+                    found = True
+                    break
+                parent = parent.parent
+            assert found, "BodyFooter must be a descendant of block body"

@@ -32,7 +32,7 @@ def test_virtual_search_list_is_widget():
     from textual.widget import Widget
     from hermes_cli.tui.body_renderers.search import VirtualSearchList
     lines = ["header line", "  1 │ match one", "  2 │ match two"]
-    vsl = VirtualSearchList(lines_text=lines)
+    vsl = VirtualSearchList(lines=lines)
     assert isinstance(vsl, Widget)
 
 
@@ -42,7 +42,7 @@ def test_virtual_search_list_render_line_returns_strip():
     from textual.strip import Strip
 
     lines = ["header", "  1 │ match one", "  2 │ match two"]
-    vsl = VirtualSearchList(lines_text=lines)
+    vsl = VirtualSearchList(lines=lines)
     # Before on_mount, _strips is empty; render_line should still return Strip
     result = vsl.render_line(0)
     assert isinstance(result, Strip)
@@ -61,12 +61,13 @@ def test_virtual_search_list_100_hits_uses_virtual():
     payload = _search_payload(output, hit_count=105)
     cls_result = _cls(hit_count=105)
     renderer = SearchRenderer(payload, cls_result)
-    widget = renderer.build_widget()
-    assert isinstance(widget, VirtualSearchList)
+    frame = renderer.build_widget()
+    body = getattr(frame, "_body", frame)
+    assert isinstance(body, VirtualSearchList)
 
 
 def test_virtual_search_list_few_hits_uses_normal_build():
-    """SearchRenderer.build_widget returns CopyableRichLog when hit_count <= 100."""
+    """SearchRenderer.build_widget body is CopyableRichLog when hit_count <= 100."""
     from hermes_cli.tui.body_renderers.search import SearchRenderer
     from hermes_cli.tui.widgets import CopyableRichLog
 
@@ -74,8 +75,9 @@ def test_virtual_search_list_few_hits_uses_normal_build():
     payload = _search_payload(output, hit_count=3)
     cls_result = _cls(hit_count=3)
     renderer = SearchRenderer(payload, cls_result)
-    widget = renderer.build_widget()
-    assert isinstance(widget, CopyableRichLog)
+    frame = renderer.build_widget()
+    body = getattr(frame, "_body", frame)
+    assert isinstance(body, CopyableRichLog)
 
 
 def test_virtual_search_list_scroll_offset_clamps():
@@ -83,7 +85,7 @@ def test_virtual_search_list_scroll_offset_clamps():
     from hermes_cli.tui.body_renderers.search import VirtualSearchList
 
     lines = ["line1", "line2", "line3"]
-    vsl = VirtualSearchList(lines_text=lines)
+    vsl = VirtualSearchList(lines=lines)
     vsl._scroll_offset = 0
 
     # Simulate j key to go down
@@ -104,8 +106,8 @@ def test_virtual_search_list_lines_count_correct():
     from hermes_cli.tui.body_renderers.search import VirtualSearchList
 
     lines = [f"line {i}" for i in range(10)]
-    vsl = VirtualSearchList(lines_text=lines)
-    assert len(vsl._lines_text) == 10
+    vsl = VirtualSearchList(lines=lines)
+    assert len(vsl._lines) == 10
 
 
 def test_virtual_search_list_file_headers_present():
@@ -126,6 +128,6 @@ def test_virtual_search_list_empty_search_handled():
     from hermes_cli.tui.body_renderers.search import VirtualSearchList
     from textual.strip import Strip
 
-    vsl = VirtualSearchList(lines_text=[])
+    vsl = VirtualSearchList(lines=[])
     assert vsl.render_line(0) == Strip([])
     assert vsl.render_line(5) == Strip([])

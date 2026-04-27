@@ -4,6 +4,10 @@ Architecture: tui-tool-panel-spec-binary-collapse.md
 """
 from __future__ import annotations
 
+import logging
+
+_log = logging.getLogger(__name__)
+
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -278,7 +282,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
                     f"tool-header::{self.id}",
                     ToolHeaderAdapter(header),
                 )
-            except Exception:
+            except Exception:  # noqa: bare-except
                 pass
 
         self.collapsed = False
@@ -289,7 +293,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
     def on_unmount(self) -> None:
         try:
             self.app.feedback.deregister_channel(f"tool-header::{self.id}")
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
 
     def watch_collapsed(self, old: bool, new: bool) -> None:
@@ -308,7 +312,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
                     visible_cap = int(getattr(self._block, "_visible_cap", 200) or 200)
                     end = min(total, saved + visible_cap)
                     self._block.rerender_window(saved, end)
-                except Exception:
+                except Exception:  # noqa: bare-except
                     pass
 
         body_container = getattr(self._block, "_body", None)
@@ -319,7 +323,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
             try:
                 self.remove_class(f"-l{old}")
                 self.add_class(f"-l{new}")
-            except AttributeError:
+            except AttributeError:  # noqa: bare-except
                 pass
 
         header = getattr(self._block, "_header", None)
@@ -340,7 +344,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         try:
             svc = self.app._svc_tools
             return svc._tool_views_by_id.get(tool_call_id)
-        except Exception:
+        except Exception:  # noqa: bare-except
             return None
 
     def _on_tier_change(self, decision: LayoutDecision) -> None:
@@ -357,7 +361,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         try:
             app = self.app
             thread_id = getattr(app, "_thread_id", None)
-        except Exception:
+        except Exception:  # noqa: bare-except
             app = None
             thread_id = None
         if thread_id is not None and threading.get_ident() != thread_id:

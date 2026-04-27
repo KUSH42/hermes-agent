@@ -397,6 +397,8 @@ def _compute_hash(specs: dict[str, VarSpec]) -> str:
 
 _HEX_HASH_RE = re.compile(r"^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$")
 _FORBIDDEN_GENERATOR_KEYS: frozenset[str] = frozenset({"syntax-theme", "syntax-scheme"})
+# Non-color vars that are skipped silently in the TCSS hex-only generator
+_SKIP_GENERATOR_KEYS: frozenset[str] = frozenset({"tool-header-max-gap"})
 
 
 class GeneratorError(ValueError):
@@ -419,6 +421,8 @@ def render_design_md_tcss_block(defaults: dict[str, "str | VarSpec"]) -> str:
                 f"{name}: syntax-theme/syntax-scheme are non-hex string config; "
                 f"do not add to COMPONENT_VAR_DEFAULTS (DM-F3)"
             )
+        if name in _SKIP_GENERATOR_KEYS:
+            continue
         if "$" in value or "{" in value:
             raise GeneratorError(
                 f"{name}: TCSS declaration RHS must be a literal hex, got {value!r}"

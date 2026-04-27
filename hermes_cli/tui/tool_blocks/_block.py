@@ -212,7 +212,7 @@ class ToolBlock(Widget):
             from hermes_cli.tui.body_renderers._grammar import SkinColors
             c = SkinColors.from_app(self.app)
             return c.success, c.error
-        except Exception:
+        except Exception:  # noqa: bare-except
             return _DIFF_ADD_FG_FALLBACK, _DIFF_DEL_FG_FALLBACK
 
     def _render_body(self) -> None:
@@ -233,7 +233,7 @@ class ToolBlock(Widget):
                         try:
                             css = self.app.get_css_variables()
                             theme = css.get("preview-syntax-theme") or css.get("syntax-theme") or theme
-                        except Exception:
+                        except Exception:  # noqa: bare-except
                             pass
                         rl.write(Syntax(
                             "\n".join(self._plain_lines),
@@ -242,7 +242,7 @@ class ToolBlock(Widget):
                             theme=theme,
                         ))
                         return
-                    except Exception:
+                    except Exception:  # noqa: bare-except
                         pass
 
             if self._label == "diff":

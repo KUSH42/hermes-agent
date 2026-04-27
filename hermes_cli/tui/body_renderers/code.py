@@ -1,6 +1,10 @@
 """CodeRenderer — syntax-highlighted code display using rich.syntax.Syntax."""
 from __future__ import annotations
 
+import logging
+
+_log = logging.getLogger(__name__)
+
 import os
 import re
 from typing import TYPE_CHECKING, ClassVar
@@ -83,7 +87,7 @@ class CodeRenderer(BodyRenderer):
         args = self.payload.args or {}
         try:
             start_line = int(args.get("start_line") or 1)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError):  # noqa: bare-except
             start_line = 1
         lines = code.splitlines()
         show_line_numbers = len(lines) >= 6 or "start_line" in args

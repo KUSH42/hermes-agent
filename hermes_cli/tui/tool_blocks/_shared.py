@@ -8,6 +8,10 @@ Moving OmissionBar here lets _block.py and _streaming.py both import from _share
 """
 from __future__ import annotations
 
+import logging
+
+_log = logging.getLogger(__name__)
+
 import re
 import time
 from dataclasses import dataclass
@@ -199,7 +203,7 @@ def _safe_cell_width(s: str) -> int:
         from wcwidth import wcswidth
         w = wcswidth(s)
         return w if w >= 0 else len(s)
-    except ImportError:
+    except ImportError:  # noqa: bare-except
         return len(s)
 
 
@@ -294,7 +298,7 @@ def _secondary_args_text(category: "Any", tool_input: "dict | None") -> str:
                 return "args: " + ", ".join(f"{k}: {v}" for k, v in pairs)
             return ""
 
-    except Exception:
+    except Exception:  # noqa: bare-except
         pass
     return ""
 
@@ -407,7 +411,7 @@ def header_label_v4(
                 label_str = label_str[:max(1, available - 1)] + "…"
             t.append(f" {label_str}")
             return t
-    except Exception:
+    except Exception:  # noqa: bare-except
         pass
 
     if primary == "path":
@@ -432,7 +436,7 @@ def header_label_v4(
         try:
             from hermes_cli.tui.tool_category import ToolCategory as _TC
             _is_shell = cat == _TC.SHELL
-        except Exception:
+        except Exception:  # noqa: bare-except
             _is_shell = False
         if accent_color and _is_shell:
             t.append(" $", style=f"bold {accent_color}")
@@ -657,13 +661,13 @@ class OmissionBar(TooltipMixin, Widget):
                     if at_default:
                         try:
                             reset_btn.add_class("--at-default")
-                        except AttributeError:
+                        except AttributeError:  # noqa: bare-except
                             pass
                         self._tooltip_text = "Already at default view"
                     else:
                         try:
                             reset_btn.remove_class("--at-default")
-                        except AttributeError:
+                        except AttributeError:  # noqa: bare-except
                             pass
                         self._tooltip_text = "Scroll output window"
                     # G1: advanced [↑] button
@@ -707,7 +711,7 @@ class OmissionBar(TooltipMixin, Widget):
                 if "--at-default" in btn.classes:
                     event.stop()
                     return
-            except Exception:
+            except Exception:  # noqa: bare-except
                 pass
             pb.rerender_window(0, _VISIBLE_CAP)
         elif "--ob-up" in classes:

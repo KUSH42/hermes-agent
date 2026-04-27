@@ -21,6 +21,12 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _make_decision(tier, *, reason="auto", footer_visible=False, width=80):
+    """Wrap a DensityTier in a LayoutDecision (subscriber now receives full decisions)."""
+    from hermes_cli.tui.tool_panel.layout_resolver import LayoutDecision
+    return LayoutDecision(tier=tier, footer_visible=footer_visible, width=width, reason=reason)
+
+
 def _make_inputs(**overrides):
     """Return a DensityInputs with safe defaults, overridable by keyword."""
     from hermes_cli.tui.tool_panel.density import DensityInputs
@@ -229,7 +235,7 @@ class TestDR2PanelIntegration:
 
         async with _App().run_test() as pilot:
             panel = pilot.app.query_one(ToolPanel)
-            panel._on_tier_change(DensityTier.COMPACT)
+            panel._on_tier_change(_make_decision(DensityTier.COMPACT))
             await pilot.pause()
             assert panel.collapsed is True
 
@@ -247,9 +253,9 @@ class TestDR2PanelIntegration:
         async with _App().run_test() as pilot:
             panel = pilot.app.query_one(ToolPanel)
             # First force compact, then resolve back to default
-            panel._on_tier_change(DensityTier.COMPACT)
+            panel._on_tier_change(_make_decision(DensityTier.COMPACT))
             await pilot.pause()
-            panel._on_tier_change(DensityTier.DEFAULT)
+            panel._on_tier_change(_make_decision(DensityTier.DEFAULT))
             await pilot.pause()
             assert panel.collapsed is False
 
@@ -266,7 +272,7 @@ class TestDR2PanelIntegration:
 
         async with _App().run_test() as pilot:
             panel = pilot.app.query_one(ToolPanel)
-            panel._on_tier_change(DensityTier.COMPACT)
+            panel._on_tier_change(_make_decision(DensityTier.COMPACT))
             await pilot.pause()
             assert panel.density == DensityTier.COMPACT
 
@@ -338,7 +344,7 @@ class TestDR2PanelIntegration:
             panel._result_summary_v4 = _make_summary()
             # Start collapsed
             panel._resolver._tier = DensityTier.COMPACT
-            panel._on_tier_change(DensityTier.COMPACT)
+            panel._on_tier_change(_make_decision(DensityTier.COMPACT))
             await pilot.pause()
             # Cycle COMPACT → HERO (HERO ineligible, no kind) → resolver at DEFAULT
             panel.action_toggle_collapse()
@@ -585,7 +591,7 @@ class TestDR3FooterTier:
             assert panel._footer_pane is not None
             called = []
             panel._footer_pane.set_density = lambda t: called.append(t)
-            panel._on_tier_change(DensityTier.COMPACT)
+            panel._on_tier_change(_make_decision(DensityTier.COMPACT))
             await pilot.pause()
             assert called == [DensityTier.COMPACT]
 
@@ -661,7 +667,7 @@ class TestDR5ViewStateMirror:
                 start_s=0.0,
             )
             panel._view_state = vs
-            panel._on_tier_change(DensityTier.COMPACT)
+            panel._on_tier_change(_make_decision(DensityTier.COMPACT))
             await pilot.pause()
             assert vs.density == DensityTier.COMPACT
 
@@ -680,7 +686,7 @@ class TestDR5ViewStateMirror:
             panel = pilot.app.query_one(ToolPanel)
             assert panel._view_state is None
             # Should not raise even with no view state and no _plan_tool_call_id
-            panel._on_tier_change(DensityTier.COMPACT)
+            panel._on_tier_change(_make_decision(DensityTier.COMPACT))
             await pilot.pause()
             assert panel.collapsed is True
 
@@ -715,7 +721,7 @@ class TestDR5ViewStateMirror:
             )
             panel._view_state = vs
             # Force resolver to COMPACT so that second COMPACT resolve is a no-op
-            panel._on_tier_change(DensityTier.COMPACT)
+            panel._on_tier_change(_make_decision(DensityTier.COMPACT))
             await pilot.pause()
             assert vs.density == DensityTier.COMPACT
             # Now resolve again with same inputs → resolver doesn't fire listener → vs unchanged

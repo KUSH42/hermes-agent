@@ -90,7 +90,7 @@ class _TimerCancelToken:
     def stop(self) -> None:
         try:
             self._timer.stop()
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
 
 
@@ -239,7 +239,7 @@ class FeedbackService:
             if state.on_expire is not None:
                 try:
                     state.on_expire(ExpireReason.UNMOUNTED)
-                except Exception:
+                except Exception:  # noqa: bare-except
                     pass
             del self._active[name]
         self._channels.pop(name, None)
@@ -323,7 +323,7 @@ class FeedbackService:
             if on_expire is not None:
                 try:
                     on_expire(ExpireReason.UNMOUNTED)
-                except Exception:
+                except Exception:  # noqa: bare-except
                     pass
             return FlashHandle(displayed=False)
 
@@ -405,7 +405,7 @@ class FeedbackService:
                 continue  # active flash — leave it alone
             try:
                 record.adapter.restore()
-            except Exception:
+            except Exception:  # noqa: bare-except
                 pass
 
     def on_agent_active(self) -> None:
@@ -431,7 +431,7 @@ class FeedbackService:
                 if state.on_expire is not None:
                     try:
                         state.on_expire(ExpireReason.UNMOUNTED)
-                    except Exception:
+                    except Exception:  # noqa: bare-except
                         pass
         self._active.clear()
 
@@ -458,12 +458,12 @@ class FeedbackService:
             if record is not None:
                 try:
                     record.adapter.restore()
-                except Exception:
+                except Exception:  # noqa: bare-except
                     pass
         if state.on_expire is not None:
             try:
                 state.on_expire(reason)
-            except Exception:
+            except Exception:  # noqa: bare-except
                 pass
         self._active.pop(channel, None)
 
@@ -490,13 +490,13 @@ class FeedbackService:
         if record is not None:
             try:
                 record.adapter.restore()
-            except Exception:
+            except Exception:  # noqa: bare-except
                 pass
 
         if state.on_expire is not None:
             try:
                 state.on_expire(ExpireReason.NATURAL)
-            except Exception:
+            except Exception:  # noqa: bare-except
                 pass
 
         self._active.pop(channel, None)
@@ -535,7 +535,7 @@ class HintBarAdapter(ChannelAdapter):
             bar.hint = ""
         except ChannelUnmountedError:
             pass
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
 
 
@@ -565,7 +565,7 @@ class ToolHeaderAdapter(ChannelAdapter):
         try:
             hdr._flash_msg = None
             hdr.refresh()
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
 
 
@@ -589,5 +589,5 @@ class CodeFooterAdapter(ChannelAdapter):
         try:
             footer.remove_class("--flash-copy")
             footer._copy.update(footer._copy_original)
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass

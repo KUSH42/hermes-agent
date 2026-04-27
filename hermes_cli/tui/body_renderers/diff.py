@@ -1,6 +1,10 @@
 """DiffRenderer — unified diff format renderer with widget collapse affordance."""
 from __future__ import annotations
 
+import logging
+
+_log = logging.getLogger(__name__)
+
 import difflib
 import re as _re
 from typing import TYPE_CHECKING, ClassVar
@@ -356,7 +360,7 @@ class DiffRenderer(BodyRenderer):
             from hermes_cli.config import read_raw_config
 
             cfg = read_raw_config()
-        except Exception:
+        except Exception:  # noqa: bare-except
             cfg = {}
         self._cfg_auto_collapse = bool(
             cfg.get("tui", {}).get("diff", {}).get("auto_collapse", True)

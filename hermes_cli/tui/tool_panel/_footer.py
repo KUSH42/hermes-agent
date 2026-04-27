@@ -182,7 +182,7 @@ class BodyPane(Widget):
                     density=DensityTier.DEFAULT,
                 )
                 self._renderer = renderer_cls(_payload, _STREAMING_EMPTY_CLS)
-            except Exception:
+            except Exception:  # noqa: bare-except
                 import logging
                 logging.getLogger(__name__).debug(
                     "BodyPane renderer init failed for %r", category, exc_info=True
@@ -213,7 +213,7 @@ class BodyPane(Widget):
             from rich.text import Text
             t = Text("\n".join(tail))
             preview_widget.update(t)
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
 
     def compose(self) -> ComposeResult:
@@ -500,17 +500,17 @@ class FooterPane(Widget):
         try:
             for btn in list(self._artifact_row.query(".--artifact-chip")):
                 btn.remove()
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
         try:
             for btn in list(self._artifact_row.query(".--artifact-overflow")):
                 btn.remove()
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
         try:
             for btn in list(self._artifact_row.query(".--artifact-collapse")):
                 btn.remove()
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
 
         if not summary.artifacts:

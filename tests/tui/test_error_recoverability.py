@@ -361,9 +361,9 @@ class TestER2HeaderNoEvidence:
         from hermes_cli.tui.tool_blocks._header import _DROP_ORDER
         assert "remediation" not in _DROP_ORDER
 
-    def test_er2_03_drop_order_length_is_8(self) -> None:
+    def test_er2_03_drop_order_length_is_10(self) -> None:
         from hermes_cli.tui.tool_blocks._header import _DROP_ORDER
-        assert len(_DROP_ORDER) == 8
+        assert len(_DROP_ORDER) == 10
 
     def test_er2_04_no_stderrwarn_segment_on_error(self) -> None:
         h = _H(is_complete=True, tool_icon_error=True, collapsed=True, panel_collapsed=True)

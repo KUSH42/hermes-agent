@@ -199,8 +199,11 @@ class TestToolExecPhase(unittest.TestCase):
         import inspect
         from hermes_cli.tui.services.tools import ToolRenderingService
         src = inspect.getsource(ToolRenderingService.close_streaming_tool_block)
-        self.assertIn("_open_tool_count", src)
-        self.assertIn("REASONING", src)
+        # _open_tool_count is tracked on the service; _streaming_tool_count is mirrored on app
+        assert "_streaming_tool_count" in src or "_open_tool_count" in src
+        # REASONING transition may be in close_streaming_tool_block or delegated to _terminalize_tool_view
+        helper_src = inspect.getsource(ToolRenderingService._terminalize_tool_view)
+        assert "REASONING" in src or "REASONING" in helper_src
 
     def test_phase_stays_tool_exec_with_two_open(self):
         """With two open tools, closing one leaves TOOL_EXEC (count > 0)."""

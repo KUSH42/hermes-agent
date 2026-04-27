@@ -81,23 +81,29 @@ def test_a3_nameplate_activate_idle_phase_sets_state():
     np = _make_nameplate()
     # restore real methods
     np._activate_idle_phase = AssistantNameplate._activate_idle_phase.__get__(np)
+    np._enter_idle_timer = AssistantNameplate._enter_idle_timer.__get__(np)
     np._set_timer_rate = MagicMock()
+    np._stop_timer = MagicMock()
     np._timer = None
+    np._idle_fx = MagicMock()  # truthy → _enter_idle_timer calls _set_timer_rate(30)
     np._activate_idle_phase()
     assert np._state == _NPState.IDLE
     np._set_timer_rate.assert_called_once_with(30)
 
 
-def test_a3_nameplate_activate_idle_no_op_when_effects_disabled():
+def test_a3_nameplate_activate_idle_no_timer_when_effects_disabled():
     from hermes_cli.tui.widgets import AssistantNameplate, _NPState
     np = _make_nameplate()
     np._effects_enabled = False
+    np._idle_fx = None
     np._state = "error_state"
     np._activate_idle_phase = AssistantNameplate._activate_idle_phase.__get__(np)
+    np._enter_idle_timer = AssistantNameplate._enter_idle_timer.__get__(np)
     np._set_timer_rate = MagicMock()
+    np._stop_timer = MagicMock()
     np._activate_idle_phase()
-    # state should NOT change when effects disabled
-    assert np._state == "error_state"
+    # state always becomes IDLE; timer does NOT start when effects disabled
+    assert np._state == _NPState.IDLE
     np._set_timer_rate.assert_not_called()
 
 

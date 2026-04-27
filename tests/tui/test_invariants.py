@@ -894,7 +894,7 @@ def _il8_violations(path: pathlib.Path) -> list[tuple[int, str]]:
 
 
 def _il8_module_has_logger(path: pathlib.Path) -> bool:
-    """Return True if module imports logging and assigns _log."""
+    """Return True if module imports logging and assigns a module-level logger."""
     src = _src(path)
     tree = ast.parse(src, filename=str(path))
     has_import = False
@@ -906,7 +906,7 @@ def _il8_module_has_logger(path: pathlib.Path) -> bool:
                     has_import = True
         elif isinstance(node, ast.Assign):
             for tgt in node.targets:
-                if isinstance(tgt, ast.Name) and tgt.id == "_log":
+                if isinstance(tgt, ast.Name) and tgt.id in _IL8_LOG_RECEIVERS:
                     has_log = True
     return has_import and has_log
 

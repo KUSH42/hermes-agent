@@ -17,7 +17,7 @@ def _summary(primary: str, chip_text: str) -> ResultSummaryV4:
     return ResultSummaryV4(
         primary=primary,
         exit_code=0,
-        chips=(Chip(text=chip_text, kind="exit", tone="ok"),),
+        chips=(Chip(text=chip_text, kind="exit", tone="success"),),
         stderr_tail="",
         actions=(),
         artifacts=(),

@@ -1,6 +1,10 @@
 """LogRenderer — log line formatter with level token colorization."""
 from __future__ import annotations
 
+import logging
+
+_log = logging.getLogger(__name__)
+
 import re
 from typing import TYPE_CHECKING, ClassVar
 
@@ -88,7 +92,7 @@ class LogRenderer(BodyRenderer):
                         frac = float("0." + frac_m.group(1)) if frac_m else 0.0
                         first_ts_dt = dt.timestamp() + frac
                         break
-                    except Exception:
+                    except Exception:  # noqa: bare-except
                         pass
 
         prev_had_signal = False
@@ -122,7 +126,7 @@ class LogRenderer(BodyRenderer):
                         elapsed = dt.timestamp() + frac - first_ts_dt
                         line_t.append(f"+{elapsed:.3f}s", style=Style(dim=True))
                         line_t.append(" ")
-                    except Exception:
+                    except Exception:  # noqa: bare-except
                         pass
                 # "none" mode: skip timestamp entirely
                 rest = rest[len(ts_m.group(0)):].lstrip()

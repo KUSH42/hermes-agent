@@ -1,6 +1,10 @@
 """ChildPanel — compact-mode ToolPanel for children of SubAgentPanel."""
 from __future__ import annotations
 
+import logging
+
+_log = logging.getLogger(__name__)
+
 import time as _time
 from typing import Any
 

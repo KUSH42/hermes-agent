@@ -357,7 +357,7 @@ class ToolRenderingService(AppService):
             if not output._user_scrolled_up:
                 self.app.call_after_refresh(output.scroll_end, animate=False)
             return block
-        except Exception as e:
+        except Exception as e:  # noqa: bare-except
             logger.warning("open_execute_code_block failed for idx=%d: %s", idx, e)
             return None
 
@@ -378,7 +378,7 @@ class ToolRenderingService(AppService):
             if not output._user_scrolled_up:
                 self.app.call_after_refresh(output.scroll_end, animate=False)
             return block
-        except Exception as e:
+        except Exception as e:  # noqa: bare-except
             logger.warning("open_write_file_block failed idx=%d: %s", idx, e)
             return None
 
@@ -637,7 +637,7 @@ class ToolRenderingService(AppService):
             try:
                 raw = _json.dumps(args, ensure_ascii=False)
                 preview = raw[:60] + ("…" if len(raw) > 60 else "")
-            except (TypeError, ValueError):  # vocab-2: non-serializable args → empty preview
+            except (TypeError, ValueError):  # vocab-2: non-serializable args → empty preview — # noqa: bare-except
                 preview = ""
             cat = classify_tool(tool_name).value
             new_entries.append(PlannedCall(

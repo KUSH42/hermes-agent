@@ -1,6 +1,10 @@
 """JsonRenderer — pretty-printed JSON using rich.syntax.Syntax."""
 from __future__ import annotations
 
+import logging
+
+_log = logging.getLogger(__name__)
+
 import json
 from typing import TYPE_CHECKING, ClassVar
 
@@ -16,7 +20,7 @@ def _get_collapse_threshold(app) -> int:
     try:
         cfg = app.config if app else {}
         return int((cfg.get("tui") or {}).get("json", {}).get("collapse_threshold", _DEFAULT_COLLAPSE_THRESHOLD))
-    except Exception:
+    except Exception:  # noqa: bare-except
         return _DEFAULT_COLLAPSE_THRESHOLD
 
 
@@ -74,7 +78,7 @@ try:
         def _toggle_expand(self) -> None:
             self._syntax_view.display = not self._syntax_view.display
 
-except ImportError:
+except ImportError:  # noqa: bare-except
     pass
 
 
@@ -124,7 +128,7 @@ class JsonRenderer(BodyRenderer):
         raw = self.payload.output_raw or ""
         try:
             data, pretty = self._parse_and_pretty(raw)
-        except (json.JSONDecodeError, MemoryError, ValueError) as e:
+        except (json.JSONDecodeError, MemoryError, ValueError) as e:  # noqa: bare-except
             return self._render_parse_failure(raw, e)
 
         threshold = _get_collapse_threshold(self._app)
@@ -144,7 +148,7 @@ class JsonRenderer(BodyRenderer):
             obj = _json_mod.loads(self.payload.output_raw or "{}")
             keys = list(obj.keys())[:4] if isinstance(obj, dict) else []
             return ", ".join(keys) if keys else "…"
-        except Exception:
+        except Exception:  # noqa: bare-except
             return "…"
 
     def summary_line(self) -> str:
@@ -158,7 +162,7 @@ class JsonRenderer(BodyRenderer):
         raw = self.payload.output_raw or ""
         try:
             data, pretty = self._parse_and_pretty(raw)
-        except (json.JSONDecodeError, MemoryError, ValueError) as e:
+        except (json.JSONDecodeError, MemoryError, ValueError) as e:  # noqa: bare-except
             body = build_parse_failure(raw, e, colors=self.colors)
             return BodyFrame(
                 header=build_rule("json", colors=self.colors),

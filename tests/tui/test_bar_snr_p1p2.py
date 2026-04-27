@@ -349,12 +349,13 @@ class TestCrossBarFlash:
         assert len(text) > 0
 
     def test_T18_feedback_peek_none_not_flashing(self):
-        """T18: feedback.peek("hint-bar") returning None → not flashing."""
+        """T18: feedback.peek("hint-bar") returning None → not flashing (F1 is HintBar's job per A8)."""
         feedback = MagicMock()
         feedback.peek.return_value = None
         app = _make_mock_app(feedback=feedback, agent_running=False, status_error="")
         text = _render_sb(app, width=80)
-        assert "F1" in text
+        # F1 affordance moved to HintBar; status bar just shows model + context
+        assert len(text) > 0
 
     def test_T19_feedback_peek_not_none_flashing(self):
         """T19: feedback.peek("hint-bar") returning a FlashState → flashing."""

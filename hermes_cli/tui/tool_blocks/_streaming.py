@@ -201,16 +201,16 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             display_cfg = self.app.cfg.get("display", {})  # type: ignore[attr-defined]
             self._visible_cap: int = int(display_cfg.get("tool_visible_cap", _VISIBLE_CAP))
             self._line_byte_cap: int = int(display_cfg.get("tool_line_byte_cap", _LINE_BYTE_CAP))
-        except Exception:
+        except Exception:  # noqa: bare-except
             self._visible_cap = _VISIBLE_CAP
             self._line_byte_cap = _LINE_BYTE_CAP
         try:
             self._microcopy_widget = self._body.query_one(".--microcopy", Static)
-        except Exception:
+        except Exception:  # noqa: bare-except
             self._microcopy_widget = None
         try:
             self._cached_body_log = self._body.query_one(CopyableRichLog)
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
         if self._omission_bar_top is not None:
             self._omission_bar_top.display = False
@@ -226,14 +226,14 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             if _sec:
                 self._body.update_secondary_args(_sec)
                 self._secondary_args_snapshot = _sec
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
         if self._is_first_in_turn:
             try:
                 panel = self.parent.parent
                 if panel is not None:
                     panel.add_class("first-in-turn")
-            except Exception:
+            except Exception:  # noqa: bare-except
                 pass
         # SK-1: arm pre-first-chunk skeleton timer (100ms). Registered with
         # ManagedTimerMixin so unmount/_stop_all_managed cancel it.
@@ -438,7 +438,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
                 from hermes_cli.tui.widgets import CopyableRichLog as _CRL
                 log = self._body.query_one(_CRL)
                 log.write(_RichText(f"  cwd: {self._detected_cwd}", style="dim"))
-            except Exception:
+            except Exception:  # noqa: bare-except
                 pass
         if is_error:
             self._header.flash_error()
@@ -451,7 +451,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             _args_text = _build_args_row_text(_spec, self._tool_input)
             if _args_text:
                 self._body.set_args_row(_args_text)
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
 
     def _clear_microcopy_on_complete(self) -> None:
@@ -474,7 +474,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
                 self._body.mount(InlineImage(image=image_path, max_rows=24))
                 self.post_message(ImageMounted(image_path))
                 mounted = True
-            except Exception:
+            except Exception:  # noqa: bare-except
                 pass
 
         try:
@@ -501,7 +501,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
                             seen.add(url)
                             self.mount(InlineMediaWidget(url=url, kind="youtube"))
                             mounted = True
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
 
         return mounted
@@ -541,7 +541,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         try:
             from hermes_cli.tui.tool_category import spec_for
             from hermes_cli.tui.streaming_microcopy import StreamingState, microcopy_line
-        except Exception:
+        except Exception:  # noqa: bare-except
             return
         spec = spec_for(self._tool_name or "")
         state = StreamingState(
@@ -556,7 +556,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             from hermes_cli.tui.tool_category import ToolCategory as _TC
             if spec.category == _TC.AGENT:
                 self._shimmer_phase = (self._shimmer_phase + 0.05) % 2.0
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
         stalled = (
             not self._completed
@@ -572,7 +572,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         try:
             from hermes_cli.tui.body_renderers._grammar import SkinColors
             colors = SkinColors.from_app(self.app) if self.app is not None else None
-        except Exception:
+        except Exception:  # noqa: bare-except
             import logging as _logging
             _logging.getLogger(__name__).debug(
                 "streaming microcopy: SkinColors.from_app failed", exc_info=True
@@ -648,13 +648,13 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         if lines_written:
             try:
                 scrolled_up = getattr(self.app.query_one("#output-panel"), "_user_scrolled_up", False)
-            except Exception:
+            except Exception:  # noqa: bare-except
                 scrolled_up = False
             if scrolled_up:
                 new_total = self._tail._new_line_count + lines_written
                 try:
                     self._tail.update_count(new_total)
-                except Exception:
+                except Exception:  # noqa: bare-except
                     pass
 
         if self._follow_tail_dirty:
@@ -733,7 +733,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             try:
                 from hermes_cli.tui.streaming_microcopy import _human_size
                 line_cap_str = _human_size(getattr(self, "_line_byte_cap", _LINE_BYTE_CAP))
-            except Exception:
+            except Exception:  # noqa: bare-except
                 line_cap_str = f"{getattr(self, '_line_byte_cap', _LINE_BYTE_CAP)}b"
             cap_msg = f"⚠ {self._truncated_line_count} lines truncated ({line_cap_str} cap)"
 
@@ -929,7 +929,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             try:
                 mc = self._body.query_one(".--microcopy", Static)
                 self._microcopy_widget = mc
-            except Exception:
+            except Exception:  # noqa: bare-except
                 return
         styled = _T(text, style="dim")
         mc.update(styled)

@@ -72,7 +72,7 @@ def _next_legal_tier_static(
     cycle = _density_cycle()
     try:
         idx = cycle.index(start)  # type: ignore[arg-type]
-    except ValueError:
+    except ValueError:  # noqa: bare-except
         return DensityTier.DEFAULT
     for _ in range(len(cycle)):
         idx = (idx + direction) % len(cycle)
@@ -97,7 +97,7 @@ class _ToolPanelActionsMixin:
         cycle = _density_cycle()
         try:
             idx = cycle.index(current)  # type: ignore[arg-type]
-        except ValueError:
+        except ValueError:  # noqa: bare-except
             return DensityTier.DEFAULT
         return cycle[(idx + 1) % len(cycle)]
 
@@ -111,7 +111,7 @@ class _ToolPanelActionsMixin:
         cycle = _density_cycle()
         try:
             idx = cycle.index(current)  # type: ignore[arg-type]
-        except ValueError:
+        except ValueError:  # noqa: bare-except
             return DensityTier.DEFAULT
         return cycle[(idx - 1) % len(cycle)]
 
@@ -309,7 +309,7 @@ class _ToolPanelActionsMixin:
             opener = "open" if sys.platform == "darwin" else "xdg-open"
             try:
                 self.app._open_path_action(header, header._full_path, opener, False)  # type: ignore[attr-defined]
-            except Exception:
+            except Exception:  # noqa: bare-except
                 self._flash_header("open failed", tone="error")
             return
         paths = self._result_paths_for_action()
@@ -364,7 +364,7 @@ class _ToolPanelActionsMixin:
                 tone=tone,
                 priority=NORMAL,
             )
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
 
     def action_copy_body(self) -> None:
@@ -421,12 +421,12 @@ class _ToolPanelActionsMixin:
             if existing:
                 try:
                     inp._save_to_history(existing)
-                except Exception:
+                except Exception:  # noqa: bare-except
                     pass
             inp.value = payload
             inp.focus()
             self._flash_header("edit cmd")
-        except Exception:
+        except Exception:  # noqa: bare-except
             self._flash_header("edit unavailable")
 
     def action_copy_err(self) -> None:
@@ -461,7 +461,7 @@ class _ToolPanelActionsMixin:
         try:
             self.app._svc_commands.initiate_retry()  # type: ignore[attr-defined]
             self._flash_header("retrying…")
-        except Exception:
+        except Exception:  # noqa: bare-except
             self._flash_header("retry failed")
 
     def action_edit_args(self) -> None:
@@ -479,7 +479,7 @@ class _ToolPanelActionsMixin:
             spec = spec_for(self._tool_name or "")  # type: ignore[attr-defined]
             is_shell = spec.category == ToolCategory.SHELL
             cat_name = spec.category.value
-        except Exception:
+        except Exception:  # noqa: bare-except
             is_shell = False
             cat_name = "tool"
         label = self._tool_name or "tool"  # type: ignore[attr-defined]
@@ -520,7 +520,7 @@ class _ToolPanelActionsMixin:
                 from hermes_cli.tui.widgets import CopyableRichLog
                 rl = block._body.query_one(CopyableRichLog)
                 all_rich = getattr(rl, "_all_rich", None)
-            except Exception:
+            except Exception:  # noqa: bare-except
                 pass
         if not all_rich:
             self.action_copy_body()
@@ -549,7 +549,7 @@ class _ToolPanelActionsMixin:
                 from hermes_cli.tui.widgets import CopyableRichLog
                 rl = block._body.query_one(CopyableRichLog)
                 all_rich = getattr(rl, "_all_rich", None)
-            except Exception:
+            except Exception:  # noqa: bare-except
                 pass
         if not all_rich:
             self._flash_header("HTML: nothing to copy", tone="warning")
@@ -573,7 +573,7 @@ class _ToolPanelActionsMixin:
             from hermes_cli.tui.clipboard_cache import write_html as _write_html
             cache_path = _write_html(html)
             self._flash_header(f"copied HTML{_size_suffix}  (saved {cache_path})")
-        except Exception:
+        except Exception:  # noqa: bare-except
             self._flash_header(f"copied HTML{_size_suffix}")
 
     def action_copy_urls(self) -> None:
@@ -604,7 +604,7 @@ class _ToolPanelActionsMixin:
                 self._footer_pane._remediation_row.update("")  # type: ignore[attr-defined]
                 self._footer_pane._remediation_row.remove_class("footer-remediation--error")  # type: ignore[attr-defined]
                 self._footer_pane.remove_class("has-remediation")  # type: ignore[attr-defined]
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
 
     def action_show_context_menu(self) -> None:
@@ -613,7 +613,7 @@ class _ToolPanelActionsMixin:
             return
         try:
             header._show_context_menu_at_center()
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
 
     def action_scroll_body_down(self) -> None:
@@ -623,7 +623,7 @@ class _ToolPanelActionsMixin:
             from hermes_cli.tui.widgets import CopyableRichLog
             log = self._block._body.query_one(CopyableRichLog)  # type: ignore[attr-defined]
             log.scroll_down(animate=False)
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
 
     def action_scroll_body_up(self) -> None:
@@ -633,7 +633,7 @@ class _ToolPanelActionsMixin:
             from hermes_cli.tui.widgets import CopyableRichLog
             log = self._block._body.query_one(CopyableRichLog)  # type: ignore[attr-defined]
             log.scroll_up(animate=False)
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
 
     def action_scroll_body_page_down(self) -> None:
@@ -645,7 +645,7 @@ class _ToolPanelActionsMixin:
             page = max(5, (self.size.height or 20) // 2)  # type: ignore[attr-defined]
             for _ in range(page):
                 log.scroll_down(animate=False)
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
 
     def action_scroll_body_page_up(self) -> None:
@@ -657,7 +657,7 @@ class _ToolPanelActionsMixin:
             page = max(5, (self.size.height or 20) // 2)  # type: ignore[attr-defined]
             for _ in range(page):
                 log.scroll_up(animate=False)
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
 
     def action_scroll_body_top(self) -> None:
@@ -667,7 +667,7 @@ class _ToolPanelActionsMixin:
             from hermes_cli.tui.widgets import CopyableRichLog
             log = self._block._body.query_one(CopyableRichLog)  # type: ignore[attr-defined]
             log.scroll_home(animate=False)
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
 
     def action_scroll_body_bottom(self) -> None:
@@ -677,7 +677,7 @@ class _ToolPanelActionsMixin:
             from hermes_cli.tui.widgets import CopyableRichLog
             log = self._block._body.query_one(CopyableRichLog)  # type: ignore[attr-defined]
             log.scroll_end(animate=False)
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
 
     def action_show_help(self) -> None:
@@ -722,7 +722,7 @@ class _ToolPanelActionsMixin:
         """Return the content area width in terminal cells."""
         try:
             return self.content_region.width  # type: ignore[attr-defined]
-        except Exception:
+        except Exception:  # noqa: bare-except
             return 80
 
     def _is_error(self) -> bool:
@@ -753,7 +753,7 @@ class _ToolPanelActionsMixin:
                 block = self._block  # type: ignore[attr-defined]
                 if block is not None and getattr(block._header, "_path_clickable", False):
                     self.post_message(self.__class__.PathFocused(self))  # type: ignore[attr-defined]
-            except Exception:
+            except Exception:  # noqa: bare-except
                 pass
 
     def on_resize(self, event: object) -> None:
@@ -957,7 +957,7 @@ class _ToolPanelActionsMixin:
             bar = getattr(block, "_omission_bar_bottom", None)
             if isinstance(bar, _OB) and getattr(block, "_omission_bar_bottom_mounted", False):
                 return bar
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
         return None
 
@@ -1005,7 +1005,7 @@ class _ToolPanelActionsMixin:
                 import pyperclip
                 pyperclip.copy(text)
                 self.app.notify("Copied output", timeout=1.5)  # type: ignore[attr-defined]
-            except Exception:
+            except Exception:  # noqa: bare-except
                 self.app.notify("Copy failed — use mouse select", timeout=3)  # type: ignore[attr-defined]
 
     def action_copy_input(self) -> None:
@@ -1015,7 +1015,7 @@ class _ToolPanelActionsMixin:
                 import pyperclip
                 pyperclip.copy(text)
                 self.app.notify("Copied input", timeout=1.5)  # type: ignore[attr-defined]
-            except Exception:
+            except Exception:  # noqa: bare-except
                 self.app.notify("Copy failed", timeout=3)  # type: ignore[attr-defined]
 
     def action_rerun(self) -> None:
@@ -1025,7 +1025,7 @@ class _ToolPanelActionsMixin:
             header = getattr(self._block, "_header", None)  # type: ignore[attr-defined]
             if header is not None:
                 header.flash_success()
-        except Exception:
+        except Exception:  # noqa: bare-except
             self.app.notify("Rerun not available", timeout=2)  # type: ignore[attr-defined]
 
     def action_omission_expand(self) -> None:
@@ -1034,7 +1034,7 @@ class _ToolPanelActionsMixin:
             bar = next(iter(self.query(OmissionBar)), None)  # type: ignore[attr-defined]
             if bar is not None:
                 bar._do_expand_one()
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
 
     def action_omission_collapse(self) -> None:
@@ -1043,7 +1043,7 @@ class _ToolPanelActionsMixin:
             bar = next(iter(self.query(OmissionBar)), None)  # type: ignore[attr-defined]
             if bar is not None:
                 bar._do_collapse_one()
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
 
     def force_renderer(self, kind: "ResultKind | None") -> None:
@@ -1171,7 +1171,7 @@ class _ToolPanelActionsMixin:
         )
         try:
             idx = cycle.index(current)
-        except ValueError:
+        except ValueError:  # noqa: bare-except
             idx = -1
         nxt = cycle[(idx + 1) % len(cycle)]
         return nxt.value.lower() if nxt is not None else "auto"

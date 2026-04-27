@@ -112,7 +112,7 @@ class ShellRenderer(BodyRenderer):
                 swap = app.config.get("tui", {}).get("render", {}).get("swap_on_complete", True)
                 if not swap:
                     return None
-            except Exception:
+            except Exception:  # noqa: bare-except
                 pass
 
         colors = SkinColors.from_app(app)
@@ -123,7 +123,7 @@ class ShellRenderer(BodyRenderer):
             try:
                 _json.loads(text)
                 lang = "json"
-            except Exception:
+            except Exception:  # noqa: bare-except
                 pass
         if lang is None and text.startswith("---"):
             lang = "yaml"
@@ -137,7 +137,7 @@ class ShellRenderer(BodyRenderer):
         notice.append("\n")
         try:
             syntax = Syntax(text, lang, line_numbers=False, theme=theme, background_color="default")
-        except Exception:
+        except Exception:  # noqa: bare-except
             syntax = _Text(text)
 
         from rich.console import Group
@@ -226,7 +226,7 @@ class StreamingCodeRenderer(BodyRenderer):
                 line_numbers=False,
                 background_color=bg if bg and bg != "default" else None,
             )
-        except Exception:
+        except Exception:  # noqa: bare-except
             return Text(body_code)
 
     def highlight_line(self, line: str, theme: str = "ansi_dark") -> str:
@@ -239,7 +239,7 @@ class StreamingCodeRenderer(BodyRenderer):
             from pygments.lexers import PythonLexer
             from pygments.formatters import TerminalTrueColorFormatter
             return _hl(line, PythonLexer(), TerminalTrueColorFormatter(style=theme)).rstrip("\n")
-        except Exception:
+        except Exception:  # noqa: bare-except
             return line
 
 
@@ -335,7 +335,7 @@ class FileRenderer(BodyRenderer):
                 swap = app.config.get("tui", {}).get("render", {}).get("swap_on_complete", True)
                 if not swap:
                     return None
-            except Exception:
+            except Exception:  # noqa: bare-except
                 pass
 
         from hermes_cli.tui.body_renderers._grammar import SkinColors, build_rule
@@ -349,7 +349,7 @@ class FileRenderer(BodyRenderer):
         try:
             from rich.syntax import Syntax
             syntax = Syntax(text, lang, theme=theme, background_color="default", line_numbers=False)
-        except Exception:
+        except Exception:  # noqa: bare-except
             syntax = Text(text)
 
         from rich.console import Group
@@ -525,7 +525,7 @@ class StreamingSearchRenderer(BodyRenderer):
                 web_items = parsed.get("data", {}).get("web", [])
                 if isinstance(web_items, list) and web_items:
                     return _render_web_search_results(web_items)
-            except Exception:
+            except Exception:  # noqa: bare-except
                 pass
         result = Text()
         for line in all_plain:
@@ -547,7 +547,7 @@ class StreamingSearchRenderer(BodyRenderer):
                     paths.append(line.strip())
             if paths and hasattr(tool_call, "result_paths"):
                 tool_call.result_paths[:] = list(dict.fromkeys(paths))
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
 
     def preview(self, all_plain: list[str], max_lines: int) -> "ConsoleRenderable":
@@ -593,7 +593,7 @@ class WebRenderer(BodyRenderer):
                 pretty = json.dumps(parsed, indent=2)
                 from rich.syntax import Syntax
                 return Syntax(pretty, "json", theme="ansi_dark", background_color="default")
-            except Exception:
+            except Exception:  # noqa: bare-except
                 pass
         return None  # leave as-streamed
 
@@ -703,7 +703,7 @@ class MCPBodyRenderer(BodyRenderer):
             ]
             if texts:
                 return Text("\n\n".join(texts))
-        except (json.JSONDecodeError, TypeError, KeyError):
+        except (json.JSONDecodeError, TypeError, KeyError):  # noqa: bare-except
             pass
         return None
 

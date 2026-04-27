@@ -51,7 +51,7 @@ class _ToolPanelCompletionMixin:
         if fn is not None:
             try:
                 return str(fn())
-            except Exception:
+            except Exception:  # noqa: bare-except
                 pass
         for attr in ("_all_plain", "_content_lines", "_plain_lines"):
             lines = getattr(self._block, attr, None)  # type: ignore[attr-defined]
@@ -120,7 +120,7 @@ class _ToolPanelCompletionMixin:
                 priority=_fb_mod.LOW,
                 key="tool-discovery",
             )
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
 
     # ------------------------------------------------------------------
@@ -232,7 +232,7 @@ class _ToolPanelCompletionMixin:
     ) -> None:
         try:
             self.remove_class("--streaming")  # type: ignore[attr-defined]
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
         try:
             from hermes_cli.tui.tool_payload import ResultKind
@@ -291,7 +291,7 @@ class _ToolPanelCompletionMixin:
             if stderr_raw:
                 return
             self.add_class("--minified")  # type: ignore[attr-defined]
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
 
     # ------------------------------------------------------------------
@@ -322,7 +322,7 @@ class _ToolPanelCompletionMixin:
             output = self.app.query_one("#output-panel")  # type: ignore[attr-defined]
             if getattr(output, "_user_scrolled_up", False):
                 user_scrolled_up = True
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass
 
         has_focus = self.has_focus or bool(list(self.query("*:focus")))  # type: ignore[attr-defined]
@@ -404,7 +404,7 @@ class _ToolPanelCompletionMixin:
                         duration=0.5,
                         tone="success",
                     )
-                except Exception:
+                except Exception:  # noqa: bare-except
                     pass
 
         self._update_kind_from_classifier(line_count)
@@ -431,7 +431,7 @@ class _ToolPanelCompletionMixin:
         else:
             try:
                 self.add_class("--completing")  # type: ignore[attr-defined]
-            except AttributeError:
+            except AttributeError:  # noqa: bare-except
                 pass
             self.call_after_refresh(self._post_complete_tidy, summary)  # type: ignore[attr-defined]
 
@@ -441,7 +441,7 @@ class _ToolPanelCompletionMixin:
     def _post_complete_tidy(self, summary: "ResultSummaryV4") -> None:
         try:
             self.remove_class("--completing")  # type: ignore[attr-defined]
-        except AttributeError:
+        except AttributeError:  # noqa: bare-except
             pass
 
         if summary.is_error:

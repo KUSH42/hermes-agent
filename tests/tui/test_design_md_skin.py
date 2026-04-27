@@ -530,10 +530,13 @@ class TestDmF1TcssGenerator:
             assert "{" not in rhs, f"token ref in {line!r}"
 
     def test_design_md_tcss_generator_includes_referenced_defaults(self):
-        from hermes_cli.tui.build_skin_vars import render_design_md_tcss_block
+        from hermes_cli.tui.build_skin_vars import render_design_md_tcss_block, _SKIP_GENERATOR_KEYS, _FORBIDDEN_GENERATOR_KEYS
         from hermes_cli.tui.theme_manager import COMPONENT_VAR_DEFAULTS
         block = render_design_md_tcss_block(COMPONENT_VAR_DEFAULTS)
+        skip = _SKIP_GENERATOR_KEYS | _FORBIDDEN_GENERATOR_KEYS
         for k in COMPONENT_VAR_DEFAULTS:
+            if k in skip:
+                continue
             assert f"${k}:" in block, f"missing ${k} declaration"
 
     def test_design_md_tcss_generator_rejects_non_hex_defaults(self):

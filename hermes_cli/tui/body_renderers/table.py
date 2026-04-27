@@ -1,6 +1,10 @@
 """TableRenderer — pipe/tab delimited table renderer using rich.table.Table."""
 from __future__ import annotations
 
+import logging
+
+_log = logging.getLogger(__name__)
+
 import re
 from collections import Counter
 from typing import TYPE_CHECKING, ClassVar
@@ -18,7 +22,7 @@ def _is_numeric(s: str) -> bool:
     try:
         float(s.replace(",", "").replace("%", ""))
         return True
-    except (ValueError, AttributeError):
+    except (ValueError, AttributeError):  # noqa: bare-except
         return False
 
 

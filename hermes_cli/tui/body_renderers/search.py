@@ -8,6 +8,10 @@ R-Sr5: sticky group header past 100 hits
 """
 from __future__ import annotations
 
+import logging
+
+_log = logging.getLogger(__name__)
+
 import json
 import os
 import re
@@ -61,7 +65,7 @@ def _ansi_highlight(text: str, query: str) -> str:
             text,
             flags=re.IGNORECASE,
         )
-    except re.error:
+    except re.error:  # noqa: bare-except
         return text  # re.escape() should never produce invalid regex; defensive fallback
 
 
@@ -118,7 +122,7 @@ def _parse_search_json(
         return None
     try:
         data = json.loads(text)
-    except (ValueError, MemoryError):
+    except (ValueError, MemoryError):  # noqa: bare-except
         return None
     if not isinstance(data, dict):
         return None
@@ -136,7 +140,7 @@ def _parse_search_json(
             line_no = m.get("line") or m.get("line_number") or 0
             try:
                 line_no = int(line_no)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError):  # noqa: bare-except
                 line_no = 0
             content = str(m.get("content") or m.get("text") or "").rstrip("\n")
             # JSON "type":"context" marks surrounding lines; everything else is a hit
@@ -301,7 +305,7 @@ class VirtualSearchList(Widget, can_focus=True):
     def _safe_refresh(self) -> None:
         try:
             self.refresh()
-        except AttributeError:
+        except AttributeError:  # noqa: bare-except
             pass  # __new__-constructed test objects lack Textual's internal state
 
     def action_cursor_down(self) -> None:
@@ -409,7 +413,7 @@ class VirtualSearchList(Widget, can_focus=True):
         text = f"{hint} {sep} {pos}/{total} lines {sep} {self._hit_count} hits"
         try:
             self.query_one(_SearchFooter).update(text)
-        except Exception:
+        except Exception:  # noqa: bare-except
             pass  # not yet mounted; on_mount guarantees children exist when called there
 
 
@@ -476,7 +480,7 @@ class SearchRenderer(BodyRenderer):
                     if query:
                         try:
                             content_t.highlight_regex(re.escape(query), style="bold")
-                        except re.error:
+                        except re.error:  # noqa: bare-except
                             pass
                 else:
                     content_t = Text(content, style=Style(color=colors.muted, italic=True))

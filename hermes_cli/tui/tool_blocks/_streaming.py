@@ -13,6 +13,9 @@ import re
 
 logger = logging.getLogger(__name__)
 
+# MC-2: canonical live-tail chip text (concept §Microcopy contract + line 185).
+_MORE_ROWS_CHIP = "↓ {n} more-rows"
+
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -51,7 +54,7 @@ _FLUSH_MAX_RETRIES = 32
 # ---------------------------------------------------------------------------
 
 class ToolTail(Static):
-    """Single-line badge: '  ↓ N new lines' — right-aligned, dim.
+    """Single-line badge: '↓ N more-rows' — right-aligned, dim.
 
     Hidden (``display: none``) when auto-scroll is active or the tool has
     completed.  Clicking it re-engages auto-scroll.
@@ -73,7 +76,7 @@ class ToolTail(Static):
     def update_count(self, n: int) -> None:
         self._new_line_count = n
         if n > 0:
-            self.update(f"  ↓ {n} new lines  ")
+            self.update(_MORE_ROWS_CHIP.format(n=n))
             self.display = True
             self.add_class("--visible")
         else:

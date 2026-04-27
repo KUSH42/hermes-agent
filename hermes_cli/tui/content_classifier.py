@@ -16,6 +16,14 @@ _CODE_EXTS = (".py", ".js", ".ts", ".tsx", ".rs", ".go", ".java", ".c", ".cpp",
               ".h", ".rb", ".php", ".swift", ".kt", ".scala", ".sh", ".bash",
               ".zsh", ".json", ".yaml", ".yml", ".toml", ".sql", ".html", ".css", ".md")
 
+# MC-5: named confidence thresholds — single source of truth for body_renderers dispatch.
+THRESHOLDS: dict[str, float] = {
+    "KIND_MIN_CONFIDENCE":       0.5,  # <= this → fall to FallbackRenderer (existing: strict >)
+    "KIND_DISCLOSURE_BAND_LOW":  0.5,  # band is conf > 0.5 and conf < 0.7 (strict bounds)
+    "KIND_DISCLOSURE_BAND_HIGH": 0.7,
+    "KIND_HIGH_CONFIDENCE":      0.8,  # above this → strict-rule overrides relaxed
+}
+
 
 def _is_table(lines: list[str]) -> bool:
     delim = "|" if sum(1 for l in lines if "|" in l) > sum(1 for l in lines if "\t" in l) else "\t"

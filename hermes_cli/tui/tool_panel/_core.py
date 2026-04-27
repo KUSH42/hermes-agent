@@ -304,19 +304,8 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         except Exception:
             return None
 
-    def _on_tier_change(self, tier: DensityTier) -> None:
-        """Resolver subscriber — synthesise a LayoutDecision and delegate."""
-        footer_visible = (
-            tier != DensityTier.COMPACT
-            and not self._user_collapse_override
-            and self._has_footer_content()
-        )
-        decision = LayoutDecision(
-            tier=tier,
-            footer_visible=footer_visible,
-            width=self.size.width,
-            reason="auto",
-        )
+    def _on_tier_change(self, decision: LayoutDecision) -> None:
+        """Resolver subscriber — receives full LayoutDecision; delegate directly."""
         self._apply_layout(decision)
 
     def _apply_layout(self, decision: LayoutDecision) -> None:

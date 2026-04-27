@@ -36,6 +36,14 @@ _log = logging.getLogger(__name__)
 
 MIN_LABEL_CELLS = 12
 
+# MC-1: Status chip text — uppercase short forms per concept §Microcopy rule 5.
+_CHIP_STARTING   = "…STARTING"
+_CHIP_FINALIZING = "…FINALIZING"
+_CHIP_CANCELLED  = "CANCELLED"
+_CHIP_DONE       = "DONE"
+_CHIP_ERR        = "ERR"
+_CHIP_STREAMING  = "STREAMING"
+
 
 # Re-export shims — drop-order constants and trim functions moved to layout_resolver (DU-3).
 from hermes_cli.tui.tool_panel.layout_resolver import (  # noqa: F401
@@ -509,7 +517,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         panel_id = self._panel.id if self._panel is not None else self.id
         return f"tool-header::{panel_id}"
 
-    def flash_copy(self, flash_label: str = "✓ Copied", duration: float = 1.5) -> None:
+    def flash_copy(self, flash_label: str = "✓ copied", duration: float = 1.5) -> None:
         """RX1 Phase B: forward to FeedbackService tool-header channel."""
         try:
             from hermes_cli.tui.services.feedback import NORMAL
@@ -870,8 +878,8 @@ class ToolCallHeader(Widget):
     data; reads view.density_reason directly.
 
     Chip slots (per spec header layout):
-      _phase_chip      — STARTED "…starting", CANCELLED "cancelled"
-      _finalizing_chip — COMPLETING "…finalizing" after 250ms guard
+      _phase_chip      — STARTED "…STARTING", CANCELLED "CANCELLED"
+      _finalizing_chip — COMPLETING "…FINALIZING" after 250ms guard
     """
 
     DEFAULT_CSS = "ToolCallHeader { height: 1; display: none; }"
@@ -942,7 +950,7 @@ class ToolCallHeader(Widget):
 
         if state == ToolCallState.STARTED:
             self._phase_chip.display = True
-            self._phase_chip.update("[dim]…starting[/dim]")
+            self._phase_chip.update(f"[dim]{_CHIP_STARTING}[/dim]")
             self._finalizing_chip.display = False
 
         elif state == ToolCallState.COMPLETING:
@@ -954,11 +962,11 @@ class ToolCallHeader(Widget):
             show = elapsed > 0.250
             self._finalizing_chip.display = show
             if show:
-                self._finalizing_chip.update("[dim]…finalizing[/dim]")
+                self._finalizing_chip.update(f"[dim]{_CHIP_FINALIZING}[/dim]")
 
         elif state == ToolCallState.CANCELLED:
             self._phase_chip.display = True
-            self._phase_chip.update("[dim]cancelled[/dim]")
+            self._phase_chip.update(f"[dim]{_CHIP_CANCELLED}[/dim]")
             self._finalizing_chip.display = False
 
         else:

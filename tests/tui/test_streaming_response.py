@@ -171,10 +171,8 @@ async def test_thinking_widget_deactivates_on_first_token():
 
         thinking = app.query_one(OutputPanel).query_one(ThinkingWidget)
 
-        # Manually activate the thinking widget
+        # Activate via agent_running watcher (which calls thinking.activate() internally)
         app.agent_running = True
-        await pilot.pause()
-        thinking.activate()
         await pilot.pause()
 
         # ThinkingWidget v2: activate() is functional — widget shows when running

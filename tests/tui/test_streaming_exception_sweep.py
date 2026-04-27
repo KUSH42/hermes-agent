@@ -163,7 +163,7 @@ class TestH3WriteProseCallback:
         eng = _make_response_flow_engine()
         eng._prose_callback = MagicMock(side_effect=RuntimeError("cb fail"))
 
-        with patch("hermes_cli.tui.response_flow.logger") as mock_log:
+        with patch("hermes_cli.tui.response_flow._log") as mock_log:
             eng._write_prose(Text("hello"), "hello")
 
         # write_with_source was called BEFORE the callback raise
@@ -188,19 +188,19 @@ class TestH3WriteProseCallback:
         # successful path. Easiest: invoke source-level read + assert log call site by
         # using inspect to confirm the substring rather than running the full method.
         src = inspect.getsource(eng._write_prose_inline_emojis)
-        assert "logger.exception" in src
+        assert "_log.exception" in src
         assert "_write_prose_inline_emojis" in src
 
         # Behavioral check: monkey-patch the function to a minimal shim that reaches
-        # the callback, then assert logger.exception fires with the right substring.
+        # the callback, then assert _log.exception fires with the right substring.
         # This isolates the H3 contract for the inline-emoji site without exercising
         # the full image-mount machinery.
         from hermes_cli.tui import response_flow as _rf
-        with patch.object(_rf, "logger") as mock_log:
+        with patch.object(_rf, "_log") as mock_log:
             try:
                 eng._prose_callback("hello")
             except RuntimeError:
-                _rf.logger.exception("prose callback failed in _write_prose_inline_emojis")
+                _rf._log.exception("prose callback failed in _write_prose_inline_emojis")
             assert mock_log.exception.call_count == 1
             assert "_write_prose_inline_emojis" in mock_log.exception.call_args.args[0]
 
@@ -214,7 +214,7 @@ class TestH3WriteProseCallback:
         partial_before = eng._partial
         pending_before = eng._pending_code_intro
 
-        with patch("hermes_cli.tui.response_flow.logger"):
+        with patch("hermes_cli.tui.response_flow._log"):
             eng._write_prose(Text("hello"), "hello")
 
         assert eng._state == state_before
@@ -278,7 +278,7 @@ def test_commit_lines_engine_attached_skips_buffer_path():
     engine = MagicMock()
     live, _panel, _msg, _rl, _writes = _make_live_widget_with_panel(engine=engine)
 
-    with patch("hermes_cli.tui.widgets.renderers.logger") as mock_log:
+    with patch("hermes_cli.tui.widgets.renderers._log") as mock_log:
         live._buf = "line-a\nline-b\ntail"
         live._commit_lines()
 
@@ -292,7 +292,7 @@ def test_commit_lines_engine_attached_skips_buffer_path():
 def test_commit_lines_buffers_and_writes_directly_when_engine_missing():
     live, _panel, _msg, _rl, write_calls = _make_live_widget_with_panel(engine=None)
 
-    with patch("hermes_cli.tui.widgets.renderers.logger") as mock_log:
+    with patch("hermes_cli.tui.widgets.renderers._log") as mock_log:
         live._buf = "alpha\nbeta\ntail"
         live._commit_lines()
         # Second call to verify one-shot warning latch
@@ -309,7 +309,7 @@ def test_commit_lines_drains_buffer_on_engine_attach():
     live, _panel, msg, _rl, _writes = _make_live_widget_with_panel(engine=None)
 
     # Phase 1: engine missing — buffer 3 lines
-    with patch("hermes_cli.tui.widgets.renderers.logger"):
+    with patch("hermes_cli.tui.widgets.renderers._log"):
         live._buf = "p1\np2\np3\ntail"
         live._commit_lines()
     assert live._pre_engine_lines == ["p1", "p2", "p3"]
@@ -332,7 +332,7 @@ def test_commit_lines_caps_buffer_but_keeps_direct_writes(monkeypatch):
 
     live, _panel, _msg, _rl, write_calls = _make_live_widget_with_panel(engine=None)
 
-    with patch("hermes_cli.tui.widgets.renderers.logger") as mock_log:
+    with patch("hermes_cli.tui.widgets.renderers._log") as mock_log:
         live._buf = "a\nb\nc\nd\ntail"
         live._commit_lines()
 
@@ -368,20 +368,20 @@ class TestMetaSweepSitesHaveLogging:
                 break
         assert ok, "logger.warning must be paired with exc_info=True within 6 lines"
 
-        # Site 2: _write_prose — logger.exception with literal _write_prose
+        # Site 2: _write_prose — _log.exception with literal _write_prose
         src_wp = inspect.getsource(ResponseFlowEngine._write_prose)
-        assert "logger.exception(" in src_wp
+        assert "_log.exception(" in src_wp
         assert "_write_prose" in src_wp
         # Make sure it is the plain-prose label, not the emoji label
         assert "_write_prose_inline_emojis" not in src_wp
 
-        # Site 3: _write_prose_inline_emojis — logger.exception with literal name
+        # Site 3: _write_prose_inline_emojis — _log.exception with literal name
         src_wpe = inspect.getsource(ResponseFlowEngine._write_prose_inline_emojis)
-        assert "logger.exception(" in src_wpe
+        assert "_log.exception(" in src_wpe
         assert "_write_prose_inline_emojis" in src_wpe
 
-        # Site 4: LiveLineWidget._commit_lines — logger.warning with literal
+        # Site 4: LiveLineWidget._commit_lines — _log.warning with literal
         # "engine missing".
         src_cl = inspect.getsource(LiveLineWidget._commit_lines)
-        assert "logger.warning(" in src_cl
+        assert "_log.warning(" in src_cl
         assert "engine missing" in src_cl

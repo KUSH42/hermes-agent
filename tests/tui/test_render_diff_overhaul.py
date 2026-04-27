@@ -54,11 +54,15 @@ def _find_overlapping_spans(text: Text, snippet: str):
 
 
 class TestCollapseAffordance:
+    def _inner(self, widget):
+        """Unwrap BodyFrame → _body (inner widget)."""
+        return getattr(widget, "_body", widget)
+
     def test_no_collapse_under_thresholds(self):
         from hermes_cli.tui.body_renderers.diff import _DiffContainer, _HunkHeader
 
         diff = _collapse_diff(hunks=2, body_lines=2)
-        widget = _renderer(diff).build_widget()
+        widget = self._inner(_renderer(diff).build_widget())
         assert isinstance(widget, _DiffContainer)
         children = list(getattr(widget, "_pending_children", ()))
         assert not any(isinstance(child, _HunkHeader) for child in children)
@@ -67,7 +71,7 @@ class TestCollapseAffordance:
         from hermes_cli.tui.body_renderers.diff import _HunkHeader
 
         diff = _collapse_diff(hunks=4, body_lines=1)
-        widget = _renderer(diff).build_widget()
+        widget = self._inner(_renderer(diff).build_widget())
         children = list(getattr(widget, "_pending_children", ()))
         assert sum(isinstance(child, _HunkHeader) for child in children) == 3
 

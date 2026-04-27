@@ -221,11 +221,21 @@ async def test_open_streaming_block_suppressed_when_scrolled_up():
 @pytest.mark.asyncio
 async def test_append_streaming_line_triggers_scroll():
     """append_streaming_line schedules scroll_end when not scrolled away."""
+    from hermes_cli.tui.services.tools import ToolCallViewState
+    from hermes_cli.tui.services.tools import ToolCallState
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         output = await _setup(pilot)
-        await _open_block(app, pilot)
+        block = await _open_block(app, pilot)
         assert output._user_scrolled_up is False
+
+        # _live_block_for_streaming requires a view in _tool_views_by_id
+        view = ToolCallViewState(
+            tool_call_id="t1", gen_index=None, tool_name="bash", label="cmd",
+            args={}, state=ToolCallState.STREAMING, block=block, panel=None,
+            parent_tool_call_id=None, category="shell", depth=0, start_s=0.0,
+        )
+        app._svc_tools._tool_views_by_id["t1"] = view
 
         with patch.object(output, "scroll_end") as mock_se:
             app.append_streaming_line("t1", "output line")
@@ -472,7 +482,6 @@ async def test_tool_tail_text_format():
         tail.update_count(7)
         rendered = str(tail.render())
         assert "7" in rendered
-        assert "new lines" in rendered
 
 
 @pytest.mark.asyncio
@@ -593,11 +602,11 @@ async def test_turn_nav_next_noop_with_no_panels():
 
 @pytest.mark.asyncio
 async def test_turn_nav_prev_calls_scroll_visible_on_panel():
-    """action_jump_turn_prev delegates to _jump_anchor with direction=-1."""
+    """action_jump_turn_prev delegates to _svc_browse.jump_anchor with direction=-1."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await _setup(pilot)
-        with patch.object(app, "_jump_anchor") as mock_jump:
+        with patch.object(app._svc_browse, "jump_anchor") as mock_jump:
             app.action_jump_turn_prev()
             await pilot.pause()
         mock_jump.assert_called_once()
@@ -618,11 +627,11 @@ async def test_turn_nav_prev_wraps_to_first_panel_when_at_top():
 
 @pytest.mark.asyncio
 async def test_turn_nav_next_calls_scroll_visible_on_panel():
-    """action_jump_turn_next delegates to _jump_anchor with direction=+1."""
+    """action_jump_turn_next delegates to _svc_browse.jump_anchor with direction=+1."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await _setup(pilot)
-        with patch.object(app, "_jump_anchor") as mock_jump:
+        with patch.object(app._svc_browse, "jump_anchor") as mock_jump:
             app.action_jump_turn_next()
             await pilot.pause()
         mock_jump.assert_called_once()

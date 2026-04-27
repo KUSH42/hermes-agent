@@ -387,12 +387,13 @@ class DiffRenderer(BodyRenderer):
         auto_collapse = (total_lines > 40 or hunk_count > 3) and self._cfg_auto_collapse
 
         # PG-3: post incremental DiffStatUpdate per +/- line for ToolGroup header
-        from hermes_cli.tui.tool_group import ToolGroup as _TG
-        for line in lines:
-            if line.startswith("+") and not line.startswith("+++"):
-                self.post_message(_TG.DiffStatUpdate(add=1, del_=0))
-            elif line.startswith("-") and not line.startswith("---"):
-                self.post_message(_TG.DiffStatUpdate(add=0, del_=1))
+        if self._app is not None:
+            from hermes_cli.tui.tool_group import ToolGroup as _TG
+            for line in lines:
+                if line.startswith("+") and not line.startswith("+++"):
+                    self._app.post_message(_TG.DiffStatUpdate(add=1, del_=0))
+                elif line.startswith("-") and not line.startswith("---"):
+                    self._app.post_message(_TG.DiffStatUpdate(add=0, del_=1))
 
         result = Text()
         rendered_lines = _render_diff_lines(lines, self.colors, collapse=auto_collapse)

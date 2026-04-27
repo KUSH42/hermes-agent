@@ -193,6 +193,21 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             self._streaming_kind_hint = new
             if self.is_attached:
                 self.refresh()
+            return
+        if axis == "state":
+            # SK-2: streaming hint is a STREAMING-only signal. Defensive clear on
+            # any transition into a resolving/terminal state — guards against a
+            # late axis-write race past writer-side clear in services/tools.py.
+            from hermes_cli.tui.services.tools import ToolCallState
+            if new in (
+                ToolCallState.COMPLETING,
+                ToolCallState.DONE,
+                ToolCallState.ERROR,
+                ToolCallState.CANCELLED,
+            ) and self._streaming_kind_hint is not None:
+                self._streaming_kind_hint = None
+                if self.is_attached:
+                    self.refresh()
 
     def _colors(self):
         """Lazy resolve + cache SkinColors. Falls back to defaults pre-mount.

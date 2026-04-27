@@ -45,6 +45,11 @@ from hermes_cli.tui.managed_timer_mixin import ManagedTimerMixin
 
 _FLUSH_MAX_RETRIES = 32
 
+# SK-1: pre-first-chunk skeleton row constants
+_SKELETON_DELAY_S = 0.1
+_SKELETON_GLYPH = "· · ·"
+_SKELETON_PULSE_S = 0.4
+
 
 # ---------------------------------------------------------------------------
 # ToolTail — scroll-lock badge shown when auto-scroll is disengaged
@@ -168,6 +173,13 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         self._settled_timer: "Timer | None" = None
         # LL-4: renderer kind override cycling
         self._kind_override: "RendererKind | None" = None
+        # SK-1: skeleton row — single-use; never re-armed once dismissed.
+        # Init in __init__ so _dismiss_skeleton()/complete() are safe on a
+        # block whose on_mount never ran (unit tests).
+        self._skeleton_widget: "Static | None" = None
+        self._skeleton_timer: "Timer | None" = None
+        self._skeleton_pulse_timer: "Timer | None" = None
+        self._skeleton_dim: bool = True
         self._body._omission_parent_block = self
 
     def compose(self) -> ComposeResult:
@@ -220,6 +232,11 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
                     panel.add_class("first-in-turn")
             except Exception:
                 pass
+        # SK-1: arm pre-first-chunk skeleton timer (100ms). Registered with
+        # ManagedTimerMixin so unmount/_stop_all_managed cancel it.
+        self._skeleton_timer = self._register_timer(
+            self.set_timer(_SKELETON_DELAY_S, self._maybe_mount_skeleton)
+        )
 
     # ------------------------------------------------------------------
     # Streaming API
@@ -236,6 +253,9 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             return
         if self._completed:
             return
+        # SK-1: first chunk dismisses the skeleton (covers <100ms and ≥100ms paths).
+        if self._skeleton_widget is not None or self._skeleton_timer is not None:
+            self._dismiss_skeleton()
         line_byte_cap = getattr(self, "_line_byte_cap", _LINE_BYTE_CAP)
         if len(raw) > line_byte_cap:
             over = len(raw) - line_byte_cap
@@ -281,6 +301,73 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         from hermes_cli.tui.tool_group import ToolGroup as _TG
         self.post_message(_TG.StreamingLineAppended(plain))
 
+    # ------------------------------------------------------------------
+    # SK-1: pre-first-chunk skeleton row
+    # ------------------------------------------------------------------
+
+    def _maybe_mount_skeleton(self) -> None:
+        self._skeleton_timer = None
+        if (
+            self._total_received > 0
+            or self._completed
+            or self._is_unmounted
+            or not self.is_attached
+        ):
+            return
+        icon = self._best_kind_icon()
+        text = Text()
+        text.append(f"{icon} ", style="dim")
+        text.append(_SKELETON_GLYPH, style="dim")
+        self._skeleton_widget = Static(
+            text, classes="tool-skeleton tool-skeleton--dim"
+        )
+        # Anchor above ToolTail so the skeleton sits between body and tail.
+        self.mount(self._skeleton_widget, before=self._tail)
+        reduced_motion = getattr(getattr(self, "app", None), "_reduced_motion", False)
+        if not reduced_motion:
+            self._skeleton_pulse_timer = self._register_timer(
+                self.set_interval(_SKELETON_PULSE_S, self._toggle_skeleton_pulse)
+            )
+
+    def _best_kind_icon(self) -> str:
+        view = getattr(self, "_view", None)
+        hint = getattr(view, "streaming_kind_hint", None) if view is not None else None
+        if hint is not None:
+            from hermes_cli.tui.tool_blocks._header import ToolHeader
+            ToolHeader._build_kind_hint_maps()
+            glyph = ToolHeader._KIND_HINT_ICON.get(hint)
+            if glyph:
+                return glyph
+        header_icon = getattr(self._header, "_tool_icon", "") or ""
+        if header_icon:
+            return header_icon
+        return "▸"
+
+    def _toggle_skeleton_pulse(self) -> None:
+        if self._skeleton_widget is None or not self._skeleton_widget.is_mounted:
+            return
+        self._skeleton_dim = not self._skeleton_dim
+        if self._skeleton_dim:
+            self._skeleton_widget.add_class("tool-skeleton--dim")
+        else:
+            self._skeleton_widget.remove_class("tool-skeleton--dim")
+
+    def _dismiss_skeleton(self) -> None:
+        # getattr defaults — tests construct partially-initialized blocks via __new__
+        timer = getattr(self, "_skeleton_timer", None)
+        if timer is not None:
+            timer.stop()
+            self._skeleton_timer = None
+        pulse = getattr(self, "_skeleton_pulse_timer", None)
+        if pulse is not None:
+            pulse.stop()
+            self._skeleton_pulse_timer = None
+        widget = getattr(self, "_skeleton_widget", None)
+        if widget is not None:
+            if widget.is_mounted:
+                widget.remove()
+            self._skeleton_widget = None
+
     def inject_diff(self, diff_lines: list[str], header_stats: "ToolHeaderStats | None") -> None:
         for raw in diff_lines:
             self.append_line(raw)
@@ -311,6 +398,9 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         self._completed = True
         self._follow_tail = False
         self._line_err_count = 0  # PG-3: reset; on_tool_panel_completed reconciles group counter
+        # SK-1: drop skeleton row before stopping timers — _stop_all_managed
+        # only stops timers, doesn't unmount the widget.
+        self._dismiss_skeleton()
         # L4: use mixin — marks entries stopped=True so on_unmount skips them (no double-stop)
         self._stop_all_managed()
         self._header._pulse_stop()

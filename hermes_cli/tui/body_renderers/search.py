@@ -420,6 +420,8 @@ class VirtualSearchList(Widget, can_focus=True):
 class SearchRenderer(BodyRenderer):
     kind: ClassVar  # set at module level below
     supports_streaming: ClassVar[bool] = False
+    truncation_bias: ClassVar = "priority"
+    kind_icon: ClassVar[str] = "🔍"
 
     @classmethod
     def accepts(cls, phase: "ToolCallState", density: "DensityTier") -> bool:
@@ -531,7 +533,14 @@ class SearchRenderer(BodyRenderer):
                 lines.append(content)
         return "\n".join(lines)
 
-    def build_widget(self, density=None):
+    def hit_count(self) -> int:
+        return getattr(self, "_hit_count", 0)
+
+    def summary_line(self) -> str:
+        hits = self.hit_count()
+        return f"{hits} hit(s)" if hits else "(no matches)"
+
+    def build_widget(self, density=None, clamp_rows=None):
         """Return BodyFrame wrapping VirtualSearchList (>100 hits) or CopyableRichLog."""
         from hermes_cli.tui.body_renderers._grammar import BodyFooter
         from hermes_cli.tui.body_renderers._frame import BodyFrame

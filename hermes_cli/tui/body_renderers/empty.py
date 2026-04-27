@@ -25,6 +25,8 @@ def _get_empty_message(category) -> str:
 class EmptyStateRenderer(BodyRenderer):
     kind: ClassVar  # set at module level below
     supports_streaming: ClassVar[bool] = False
+    truncation_bias: ClassVar = "tail"
+    kind_icon: ClassVar[str] = "○"
 
     @classmethod
     def can_render(cls, cls_result: "ClassificationResult", payload: "ToolPayload") -> bool:
@@ -59,7 +61,7 @@ class EmptyStateRenderer(BodyRenderer):
         msg = self._build_message()
         return Text(msg, style="dim")
 
-    def build_widget(self):
+    def build_widget(self, density=None, clamp_rows=None):
         """Return a Static widget for empty state."""
         from textual.widgets import Static
         msg = self._build_message()

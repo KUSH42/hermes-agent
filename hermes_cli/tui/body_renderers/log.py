@@ -39,6 +39,8 @@ _CHIP_LABEL: dict[str, str] = {
 class LogRenderer(BodyRenderer):
     kind: ClassVar  # set at module level below
     supports_streaming: ClassVar[bool] = False
+    truncation_bias: ClassVar = "tail"
+    kind_icon: ClassVar[str] = "📋"
     _timestamp_mode: str = "full"
 
     @classmethod
@@ -168,7 +170,15 @@ class LogRenderer(BodyRenderer):
         result, _ = self._build_body_with_counts(raw)
         return result
 
-    def build_widget(self, density=None):
+    def last_log_line(self, maxlen: int = 60) -> str:
+        lines = [l for l in (self.payload.output_raw or "").splitlines() if l.strip()]
+        return lines[-1][:maxlen] if lines else ""
+
+    def summary_line(self) -> str:
+        last = self.last_log_line(maxlen=60)
+        return f"… {last}" if last else "(no output)"
+
+    def build_widget(self, density=None, clamp_rows=None):
         from hermes_cli.tui.body_renderers._grammar import build_rule, BodyFooter
         from hermes_cli.tui.body_renderers._frame import BodyFrame
 

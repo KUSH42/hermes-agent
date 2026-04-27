@@ -3,8 +3,12 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from textual import work
+from textual.timer import Timer
 
 _log = logging.getLogger(__name__)
 
@@ -116,6 +120,10 @@ def _artifact_icon(kind: str) -> str:
     return _icons.get(kind, "[?]")
 
 
+_SLOW_DEADLINE_S: float = 0.25
+_HARD_DEADLINE_S: float = 2.0
+
+
 class BodyPane(Widget):
     """Container for the streaming/static block body."""
 
@@ -130,6 +138,9 @@ class BodyPane(Widget):
         super().__init__(**kwargs)
         self._block = block
         self._renderer_degraded: bool = False
+        self._slow_worker_active: bool = False
+        self._hard_timer: "Timer | None" = None
+        self._last_tier: "object | None" = None
         if category is not None:
             try:
                 from hermes_cli.tui.body_renderers import (
@@ -192,6 +203,101 @@ class BodyPane(Widget):
     def compose(self) -> ComposeResult:
         if self._block is not None:
             yield self._block
+
+    def apply_density(self, tier: "object") -> None:
+        from hermes_cli.tui.tool_panel.layout_resolver import _clamp_for_tier, DensityTier
+        if self._renderer is None:
+            return
+        self._last_tier = tier
+        clamp = _clamp_for_tier(tier)  # type: ignore[arg-type]
+        if clamp == 0:
+            self.query("*").remove()
+            return
+        if tier == DensityTier.COMPACT:
+            self._render_compact_body()
+            return
+        self._mount_body_with_deadline(tier)
+
+    def _render_compact_body(self) -> None:
+        self.query("*").remove()
+        self.mount(Static(self._renderer.summary_line(), classes="compact-summary"))
+
+    def _make_slow_placeholder(self, icon: str) -> Widget:
+        w = Static(f"{icon}  rendering…")
+        w.add_class("slow-placeholder")
+        return w
+
+    def _mount_body_with_deadline(self, tier: "object") -> None:
+        from hermes_cli.tui.tool_panel.layout_resolver import _clamp_for_tier
+        renderer = self._renderer
+        clamp = _clamp_for_tier(tier)  # type: ignore[arg-type]
+        start = time.monotonic()
+        try:
+            widget = renderer.build_widget(density=tier, clamp_rows=clamp)
+        except Exception:
+            _log.exception("renderer %s raised; falling back", type(renderer).__name__)
+            from hermes_cli.tui.body_renderers.fallback import FallbackRenderer
+            from hermes_cli.tui.tool_payload import ClassificationResult, ResultKind
+            _dummy_cls = ClassificationResult(kind=ResultKind.TEXT, confidence=0.0)
+            widget = FallbackRenderer(renderer.payload, _dummy_cls).build_widget(density=tier, clamp_rows=clamp)
+        elapsed = time.monotonic() - start
+        self.query("*").remove()
+        self.mount(widget)
+        if elapsed > _SLOW_DEADLINE_S:
+            _log.warning(
+                "renderer %s exceeded %.0fms on first build; future re-renders will use worker path",
+                type(renderer).__name__, elapsed * 1000,
+            )
+
+    def _start_slow_render(self, tier: "object") -> None:
+        renderer = self._renderer
+        self.query("*").remove()
+        self.mount(self._make_slow_placeholder(renderer.kind_icon))
+        self._slow_worker_active = True
+        self._render_in_worker(tier)
+        self._hard_timer = self.set_timer(_HARD_DEADLINE_S, self._slow_kill)
+
+    def _slow_kill(self) -> None:
+        if not self._slow_worker_active:
+            return
+        self.app.workers.cancel_group(self, "slow-render")
+        self._slow_worker_active = False
+        _log.warning("renderer %s hard-deadline 2s exceeded; falling back",
+                     type(self._renderer).__name__)
+        from hermes_cli.tui.body_renderers.fallback import FallbackRenderer
+        from hermes_cli.tui.tool_panel.layout_resolver import _clamp_for_tier
+        from hermes_cli.tui.tool_payload import ClassificationResult, ResultKind
+        _dummy_cls = ClassificationResult(kind=ResultKind.TEXT, confidence=0.0)
+        fallback = FallbackRenderer(self._renderer.payload, _dummy_cls).build_widget(
+            density=self._last_tier, clamp_rows=_clamp_for_tier(self._last_tier)  # type: ignore[arg-type]
+        )
+        self._swap_in_real_widget(fallback)
+
+    @work(thread=True, exclusive=True, group="slow-render")
+    def _render_in_worker(self, tier: "object") -> None:
+        from hermes_cli.tui.tool_panel.layout_resolver import _clamp_for_tier
+        renderer = self._renderer
+        clamp = _clamp_for_tier(tier)  # type: ignore[arg-type]
+        try:
+            widget = renderer.build_widget(density=tier, clamp_rows=clamp)
+        except Exception:
+            _log.exception("worker render raised; falling back")
+            from hermes_cli.tui.body_renderers.fallback import FallbackRenderer
+            from hermes_cli.tui.tool_payload import ClassificationResult, ResultKind
+            _dummy_cls = ClassificationResult(kind=ResultKind.TEXT, confidence=0.0)
+            widget = FallbackRenderer(renderer.payload, _dummy_cls).build_widget(density=tier, clamp_rows=clamp)
+        self._slow_worker_active = False
+        self.app.call_from_thread(self._swap_in_real_widget, widget)
+
+    def _swap_in_real_widget(self, widget: Widget) -> None:
+        if not self._slow_worker_active:
+            return
+        if self._hard_timer:
+            self._hard_timer.stop()
+            self._hard_timer = None
+        self._slow_worker_active = False
+        self.query(".slow-placeholder").remove()
+        self.mount(widget)
 
 
 class FooterPane(Widget):

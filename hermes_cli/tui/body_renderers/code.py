@@ -41,6 +41,8 @@ def _detect_lang_from_fence(text: str) -> tuple[str, str]:
 class CodeRenderer(BodyRenderer):
     kind: ClassVar  # set at module level below
     supports_streaming: ClassVar[bool] = False
+    truncation_bias: ClassVar = "head"
+    kind_icon: ClassVar[str] = "<>"
 
     @classmethod
     def can_render(cls, cls_result: "ClassificationResult", payload: "ToolPayload") -> bool:
@@ -113,7 +115,7 @@ class CodeRenderer(BodyRenderer):
         )
         return Group(header, syntax)
 
-    def build_widget(self, density=None):
+    def build_widget(self, density=None, clamp_rows=None):
         from rich.syntax import Syntax
         from hermes_cli.tui.body_renderers._grammar import build_path_header, BodyFooter
         from hermes_cli.tui.body_renderers._frame import BodyFrame

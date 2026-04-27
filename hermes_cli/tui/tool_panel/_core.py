@@ -311,11 +311,13 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
             and not self._user_collapse_override
             and self._has_footer_content()
         )
+        from hermes_cli.tui.tool_panel.layout_resolver import _clamp_for_tier
         decision = LayoutDecision(
             tier=tier,
             footer_visible=footer_visible,
             width=self.size.width,
             reason="auto",
+            clamp_rows=_clamp_for_tier(tier),
         )
         self._apply_layout(decision)
 
@@ -382,3 +384,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         if header is not None:
             header._density_tier = decision.tier
             header.refresh()
+
+        # 5. Body pane density delegation.
+        if self._body_pane is not None:
+            self._body_pane.apply_density(decision.tier)

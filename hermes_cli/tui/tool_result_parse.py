@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 ChipKind = Literal["diff+", "diff-", "bytes", "count", "status", "exit", "mcp-source", "mcp-error"]
 ChipTone = Literal["success", "warning", "error", "neutral", "accent"]
 ActionKind = Literal[
-    "copy_err", "retry", "edit_cmd", "open_first", "copy_paths",
+    "copy_err", "retry", "edit_cmd", "edit_args", "open_first", "copy_paths",
     "copy_body", "copy_json", "open_url", "reconnect",
 ]
 ArtifactKind = Literal["file", "url", "image"]
@@ -115,20 +115,70 @@ class ResultSummaryV4:
             seen[action.hotkey] = action.kind
 
 
-def inject_recovery_actions(summary: "ResultSummaryV4") -> "ResultSummaryV4":
-    """Ensure retry + copy_err are present on error summaries. Idempotent.
+_RECOVERY_BY_CATEGORY: "dict" = {}  # populated lazily to avoid import-time cycle
 
-    Call once, at hand-off to the panel (services/tools.py), not at each
-    per-category construction site.
+
+def _allowed_recovery(cat: "Any") -> "frozenset[str]":
+    """ER-5: return the set of recovery action kinds allowed for the given ErrorCategory."""
+    global _RECOVERY_BY_CATEGORY
+    if not _RECOVERY_BY_CATEGORY:
+        try:
+            from hermes_cli.tui.services.error_taxonomy import ErrorCategory as _EC
+            _RECOVERY_BY_CATEGORY = {
+                _EC.ENOENT:      frozenset({"retry", "edit_args"}),
+                _EC.EACCES:      frozenset({"edit_args"}),
+                _EC.TIMEOUT:     frozenset({"retry"}),
+                _EC.ENETUNREACH: frozenset({"retry"}),
+                _EC.SIGNAL:      frozenset({"retry", "edit_args"}),
+                _EC.USAGE:       frozenset({"edit_args"}),
+                _EC.RUNTIME:     frozenset({"retry", "edit_args"}),
+                _EC.UNKNOWN:     frozenset({"retry", "edit_args"}),
+            }
+        except Exception:
+            _log.debug("_allowed_recovery: error_taxonomy import failed", exc_info=True)
+    _DEFAULT: frozenset = frozenset({"retry", "edit_args"})
+    if cat is None:
+        return _DEFAULT
+    return _RECOVERY_BY_CATEGORY.get(cat, _DEFAULT)
+
+
+def inject_recovery_actions(summary: "ResultSummaryV4") -> "ResultSummaryV4":
+    """Ensure category-gated recovery actions + copy_err are present on error summaries.
+
+    - retry / edit_args: gated by _allowed_recovery(error_category).
+    - copy_err: always injected when stderr exists, regardless of category.
+    Call once, at hand-off to the panel (services/tools.py).
     """
+    if not summary.is_error and not summary.stderr_tail:
+        return summary
+
+    # Classify from summary so callers don't need to pass error_category.
+    error_category = None
+    if summary.is_error:
+        try:
+            from hermes_cli.tui.services.error_taxonomy import classify_error
+            error_category = classify_error(summary.stderr_tail or None, summary.exit_code)
+        except Exception:
+            _log.debug("inject_recovery_actions: classify_error failed", exc_info=True)
+
+    allowed = _allowed_recovery(error_category)
     actions = list(summary.actions)
     changed = False
-    if summary.is_error and not any(a.kind == "retry" for a in actions):
-        actions.insert(0, Action(label="retry", hotkey="r", kind="retry", payload=None))
-        changed = True
+
+    if summary.is_error:
+        if "retry" in allowed and not any(a.kind == "retry" for a in actions):
+            actions.insert(0, Action(label="retry", hotkey="r", kind="retry", payload=None))
+            changed = True
+        if "edit_args" in allowed and not any(a.kind == "edit_args" for a in actions):
+            # Insert after retry if present, else at head.
+            _retry_idx = next((i for i, a in enumerate(actions) if a.kind == "retry"), -1)
+            actions.insert(_retry_idx + 1, _make_edit_args())
+            changed = True
+
     if summary.stderr_tail and not any(a.kind == "copy_err" for a in actions):
         actions.append(Action(label="copy err", hotkey="e", kind="copy_err", payload=None))
         changed = True
+
     if not changed:
         return summary
     return dataclasses.replace(summary, actions=tuple(actions))
@@ -213,6 +263,11 @@ def _make_copy_body(raw_result) -> Action:
     text = _raw_str(raw_result)
     payload, truncated = _truncate_payload(text)
     return Action("copy body", "c", "copy_body", payload, truncated)
+
+
+def _make_edit_args() -> Action:
+    """ER-5: recovery action that re-opens the user prompt with failed tool args pre-filled."""
+    return Action(label="edit args", hotkey="a", kind="edit_args", payload=None)
 
 
 def _make_copy_err(stderr_tail: str, raw_result=None) -> Action:

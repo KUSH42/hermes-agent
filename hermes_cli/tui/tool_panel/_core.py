@@ -36,6 +36,44 @@ if TYPE_CHECKING:
     from hermes_cli.tui.services.tools import ToolCallViewState
 
 
+# ER-3: thin Static subclasses for ERR-phase body; never enter the renderer pipeline.
+
+class StderrTailWidget(Static):
+    """Static display for last N stderr lines — clamp-bypassing."""
+
+    DEFAULT_CSS = "StderrTailWidget { color: $text-muted; padding: 0 2; }"
+
+    def __init__(self, lines: "tuple[str, ...]", **kwargs: Any) -> None:
+        super().__init__("\n".join(lines), **kwargs)
+
+
+class PayloadTailWidget(Static):
+    """Fallback: tail of stdout payload when no stderr tail is available."""
+
+    DEFAULT_CSS = "PayloadTailWidget { color: $text-muted; padding: 0 2; }"
+
+    def __init__(self, payload: str, **kwargs: Any) -> None:
+        super().__init__(payload, **kwargs)
+
+
+class EmptyOutputWidget(Static):
+    """Placeholder rendered when neither stderr nor payload is available."""
+
+    DEFAULT_CSS = "EmptyOutputWidget { color: $text-muted 50%; padding: 0 2; }"
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__("(no output)", classes="--err-empty", **kwargs)
+
+
+def pick_err_body_widget(view: "ToolCallViewState") -> Widget:
+    """ER-3: select the body widget for an ERR row; never calls the renderer pipeline."""
+    if getattr(view, "stderr_tail", None):
+        return StderrTailWidget(view.stderr_tail)
+    if getattr(view, "payload", None):
+        return PayloadTailWidget(view.payload)
+    return EmptyOutputWidget()
+
+
 # LL-1: pure helper — testable without Textual machinery.
 _LL1_FLASH_TEXT: dict["DensityTier", str] = {}  # populated lazily to avoid import cycle
 
@@ -143,6 +181,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         Binding("t",     "cycle_kind",       "Render as",        show=False),
         Binding("T",     "kind_revert",      "Revert kind",      show=False),
         Binding("E",     "edit_cmd",         "Edit cmd",         show=False),
+        Binding("a",     "edit_args",        "Edit args",        show=False),
         Binding("O",     "open_url",         "Open URL",         show=False),
         Binding("f",     "toggle_tail_follow", "tail", show=False),
         Binding("j",     "scroll_body_down",      "↓",    show=False),
@@ -374,4 +413,16 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
 
         # 5. Body pane density delegation.
         if self._body_pane is not None:
-            self._body_pane.apply_density(decision.tier)
+            _err_locked = getattr(self._body_pane, "_err_body_locked", False)
+            if _err_locked:
+                pass  # ER-3: ERR body mounted; never apply_density
+            else:
+                _vs = self._view_state or self._lookup_view_state()
+                if _vs is not None:
+                    from hermes_cli.tui.services.tools import ToolCallState
+                    if _vs.state == ToolCallState.ERROR:
+                        self._body_pane.mount_static(pick_err_body_widget(_vs))
+                    else:
+                        self._body_pane.apply_density(decision.tier)
+                else:
+                    self._body_pane.apply_density(decision.tier)

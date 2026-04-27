@@ -471,7 +471,16 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         else:
             from hermes_cli.tui.tool_panel.layout_resolver import default_resolver
             _resolver = default_resolver()
-        tail_segments = _resolver.trim_header_tail(tail_segments, tail_budget, _tier)
+        if self._tool_icon_error:
+            # ER-2: ERR cell pin — exactly 2 chips, no trim, no elision at any tier.
+            _err_color = getattr(self, "_diff_del_color", _DIFF_DEL_FALLBACK)
+            _cat_text = self._error_category_text()
+            tail_segments = [
+                ("error-category", Text(f"  {_cat_text}", style=f"bold {_err_color}")),
+                ("outcome",        Text(f"  {_CHIP_ERR}", style=f"bold {_err_color}")),
+            ]
+        else:
+            tail_segments = _resolver.trim_header_tail(tail_segments, tail_budget, _tier)
         from hermes_cli.tui.body_renderers._grammar import GLYPH_META_SEP, glyph as _glyph
         _sep = Text(f" {_glyph(GLYPH_META_SEP)} ", style=self._colors().separator_dim)
         tail = Text()
@@ -531,6 +540,15 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         """Resolve the tool-header channel id for this header."""
         panel_id = self._panel.id if self._panel is not None else self.id
         return f"tool-header::{panel_id}"
+
+    def _error_category_text(self) -> str:
+        """ER-2: return chip text for the error category; never blank, never raw stderr."""
+        from hermes_cli.tui.services.error_taxonomy import ErrorCategory
+        _vs = getattr(self._panel, "_view_state", None) if self._panel is not None else None
+        cat = getattr(_vs, "error_category", None) if _vs is not None else None
+        if isinstance(cat, ErrorCategory):
+            return cat.value
+        return ErrorCategory.UNKNOWN.value
 
     def flash_copy(self, flash_label: str = "✓ copied", duration: float = 1.5) -> None:
         """RX1 Phase B: forward to FeedbackService tool-header channel."""

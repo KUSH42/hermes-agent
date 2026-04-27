@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from textual.message import Message
+
 from hermes_cli.tui.io_boundary import safe_open_url, safe_edit_cmd
 
 _log = logging.getLogger(__name__)
@@ -14,6 +16,14 @@ _log = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from hermes_cli.tui.tool_result_parse import ResultSummaryV4
     from hermes_cli.tui.tool_payload import ResultKind
+
+
+class EditToolArgsRequested(Message):
+    """ER-5: emitted when the user requests to re-edit a failed tool's arguments."""
+
+    def __init__(self, tool_call_id: "str | None") -> None:
+        super().__init__()
+        self.tool_call_id = tool_call_id
 
 
 # HF-B: re-show toggle hint after this many seconds of unfocus
@@ -451,6 +461,13 @@ class _ToolPanelActionsMixin:
             self._flash_header("retrying…")
         except Exception:
             self._flash_header("retry failed")
+
+    def action_edit_args(self) -> None:
+        """ER-5: emit EditToolArgsRequested so the orchestrator can pre-fill the prompt."""
+        vs = getattr(self, "_view_state", None)  # type: ignore[attr-defined]
+        tool_call_id = getattr(vs, "tool_call_id", None) if vs is not None else None
+        self.post_message(EditToolArgsRequested(tool_call_id))  # type: ignore[attr-defined]
+        self._flash_header("edit args…")
 
     def action_copy_invocation(self) -> None:
         terminal_width = getattr(self.app, "size", None)  # type: ignore[attr-defined]

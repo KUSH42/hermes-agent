@@ -85,6 +85,11 @@ class ToolCallViewState:
     streaming_kind_hint: "ResultKind | None" = None
     # SLR-3: sniff buffer — accumulates raw chunks until threshold; None after sniff fires.
     _sniff_buffer: "str | None" = ""
+    # ER-1: closed-enum category + last-N stderr lines — set before ERROR state write.
+    error_category: "Any | None" = None       # ErrorCategory | None (lazy import avoids cycle)
+    stderr_tail: "tuple[str, ...]" = ()
+    # ER-3: fallback raw payload for error body when stderr_tail is empty.
+    payload: str = ""
 
     @property
     def is_error_for_ui(self) -> bool:
@@ -792,6 +797,18 @@ class ToolRenderingService(AppService):
             )
             rs = getattr(panel, "_result_summary_v4", None) if panel is not None else None
             view.exit_code = getattr(rs, "exit_code", None) if rs is not None else None
+            # ER-1: classify error and populate view fields BEFORE state write so
+            # any phase watcher reads the final values on first notification.
+            if is_error:
+                try:
+                    from hermes_cli.tui.services.error_taxonomy import (
+                        classify_error, split_stderr_tail,
+                    )
+                    _stderr_text = (getattr(rs, "stderr_tail", "") or "") if rs is not None else ""
+                    view.error_category = classify_error(_stderr_text, view.exit_code)
+                    view.stderr_tail = tuple(split_stderr_tail(_stderr_text))
+                except Exception:
+                    logger.debug("ER-1 classification failed", exc_info=True)
             self._set_view_state(view, terminal_state)
             view.is_error = is_error  # double-write kept from original for safety
 

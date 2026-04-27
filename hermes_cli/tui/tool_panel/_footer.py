@@ -46,10 +46,12 @@ _IMPLEMENTED_ACTIONS: frozenset[str] = frozenset({
     "copy_body", "open_first", "copy_err", "copy_paths", "retry",
     "copy_invocation", "copy_urls",
     "edit_cmd", "open_url",
+    "edit_args",
 })
 
-# Recovery action kinds — sorted first in the action row (ER-3).
-_RECOVERY_KINDS: tuple[str, ...] = ("retry", "copy_err")
+# Recovery action kinds — sorted first in the action row (ER-4).
+# edit_args between retry and copy_err per concept §Hint priority.
+_RECOVERY_KINDS: tuple[str, ...] = ("retry", "edit_args", "copy_err")
 _RECOVERY_ORDER: dict[str, int] = {k: i for i, k in enumerate(_RECOVERY_KINDS)}
 
 # Maps every implemented action kind to the ToolPanel method name it calls.
@@ -63,7 +65,18 @@ ACTION_KIND_TO_PANEL_METHOD: dict[str, str] = {
     "copy_urls": "action_copy_urls",
     "edit_cmd": "action_edit_cmd",
     "open_url": "action_open_url",
+    "edit_args": "action_edit_args",
 }
+
+
+def _sort_actions_for_render(actions: "list") -> "list":
+    """ER-4: recovery first (in _RECOVERY_ORDER), then non-F1 body, then F1 pinned last."""
+    recovery = [a for a in actions if a.kind in _RECOVERY_KINDS]
+    recovery.sort(key=lambda a: _RECOVERY_ORDER[a.kind])
+    rest  = [a for a in actions if a.kind not in _RECOVERY_KINDS]
+    f1    = [a for a in rest if a.kind == "help"]
+    body  = [a for a in rest if a.kind != "help"]
+    return recovery + body + f1
 
 
 class _ArtifactButton(TooltipMixin, Button):
@@ -141,6 +154,7 @@ class BodyPane(Widget):
         self._slow_worker_active: bool = False
         self._hard_timer: "Timer | None" = None
         self._last_tier: "object | None" = None
+        self._err_body_locked: bool = False
         if category is not None:
             try:
                 from hermes_cli.tui.body_renderers import (
@@ -204,8 +218,16 @@ class BodyPane(Widget):
         if self._block is not None:
             yield self._block
 
+    def mount_static(self, widget: Widget) -> None:
+        """ER-3: bypass renderer pipeline — unmount existing children and mount widget verbatim."""
+        self.query("*").remove()
+        self.mount(widget)
+        self._err_body_locked = True
+
     def apply_density(self, tier: "object") -> None:
         from hermes_cli.tui.tool_panel.layout_resolver import _clamp_for_tier, DensityTier
+        if self._err_body_locked:
+            return
         if self._renderer is None:
             return
         self._last_tier = tier
@@ -542,8 +564,7 @@ class FooterPane(Widget):
         except NoMatches:
             pass  # no chips mounted yet — expected on first call
         filtered = [a for a in actions_to_render if a.kind in _IMPLEMENTED_ACTIONS]
-        # Recovery actions first (retry before copy_err), then stable by kind name
-        filtered.sort(key=lambda a: (_RECOVERY_ORDER.get(a.kind, len(_RECOVERY_KINDS)), a.kind))
+        filtered = _sort_actions_for_render(filtered)
         if not filtered:
             self.remove_class("has-actions")
             return

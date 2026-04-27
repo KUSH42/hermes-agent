@@ -56,12 +56,12 @@ class TestMicrocopyShell:
     def test_shell_format(self):
         spec = _spec(ToolCategory.SHELL)
         s = _state(lines_received=42, bytes_received=2048)
-        assert microcopy_line(spec, s) == "▸ 42 lines · 2.0kB"
+        assert microcopy_line(spec, s).plain == "▸ 42 lines · 2.0kB"
 
     def test_shell_zero_bytes(self):
         spec = _spec(ToolCategory.SHELL)
         s = _state(lines_received=1, bytes_received=0)
-        assert microcopy_line(spec, s) == "▸ 1 lines · 0B"
+        assert microcopy_line(spec, s).plain == "▸ 1 lines · 0B"
 
 
 class TestMicrocopyFile:
@@ -91,48 +91,48 @@ class TestMicrocopyFile:
     def test_file_write_format(self):
         spec = _spec(ToolCategory.FILE, primary_result="done")
         s = _state(lines_received=7, bytes_received=500)
-        assert microcopy_line(spec, s) == "▸ 7 lines written"
+        assert microcopy_line(spec, s).plain == "▸ 7 lines written"
 
     def test_file_write_none_result(self):
         spec = _spec(ToolCategory.FILE, primary_result="none")
         s = _state(lines_received=3, bytes_received=100)
-        assert microcopy_line(spec, s) == "▸ 3 lines written"
+        assert microcopy_line(spec, s).plain == "▸ 3 lines written"
 
 
 class TestMicrocopySearch:
     def test_search_uses_matches_so_far(self):
         spec = _spec(ToolCategory.SEARCH)
         s = _state(lines_received=10, bytes_received=0, matches_so_far=4)
-        assert microcopy_line(spec, s) == "▸ 4 matches so far…"
+        assert microcopy_line(spec, s).plain == "▸ 4 matches so far…"
 
     def test_search_falls_back_to_lines_received(self):
         spec = _spec(ToolCategory.SEARCH)
         s = _state(lines_received=10, bytes_received=0, matches_so_far=None)
-        assert microcopy_line(spec, s) == "▸ 10 matches so far…"
+        assert microcopy_line(spec, s).plain == "▸ 10 matches so far…"
 
     def test_search_zero_matches(self):
         spec = _spec(ToolCategory.SEARCH)
         s = _state(lines_received=0, bytes_received=0, matches_so_far=0)
-        assert microcopy_line(spec, s) == "▸ 0 matches so far…"
+        assert microcopy_line(spec, s).plain == "▸ 0 matches so far…"
 
 
 class TestMicrocopyWeb:
     def test_web_with_status(self):
         spec = _spec(ToolCategory.WEB)
         s = _state(lines_received=0, bytes_received=2048, last_status="200 OK")
-        assert microcopy_line(spec, s) == "▸ 200 OK · 2.0kB"
+        assert microcopy_line(spec, s).plain == "▸ 200 OK · 2.0kB"
 
     def test_web_without_status_defaults_connecting(self):
         spec = _spec(ToolCategory.WEB)
         s = _state(lines_received=0, bytes_received=0, last_status=None)
-        assert microcopy_line(spec, s) == "▸ connecting · 0B"
+        assert microcopy_line(spec, s).plain == "▸ connecting · 0B"
 
 
 class TestMicrocopyMcp:
     def test_mcp_with_provenance(self):
         spec = _spec(ToolCategory.MCP, provenance="mcp:github")
         s = _state(lines_received=0, bytes_received=0)
-        assert microcopy_line(spec, s) == "▸ mcp · github server"
+        assert microcopy_line(spec, s).plain == "▸ mcp · github server"
 
     def test_mcp_without_provenance(self):
         # No provenance and no __ in name → bare name used as server label
@@ -152,11 +152,11 @@ class TestMicrocopyCode:
     def test_code_shows_lines_and_bytes(self):
         spec = _spec(ToolCategory.CODE)
         s = _state(lines_received=5, bytes_received=2048)
-        assert microcopy_line(spec, s) == "▸ 5 lines · 2.0kB"
+        assert microcopy_line(spec, s).plain == "▸ 5 lines · 2.0kB"
 
     def test_code_zero_state(self):
         spec = _spec(ToolCategory.CODE)
-        assert microcopy_line(spec, _state()) == "▸ 0 lines · 0B"
+        assert microcopy_line(spec, _state()).plain == "▸ 0 lines · 0B"
 
 
 class TestMicrocopyAgent:
@@ -181,11 +181,11 @@ class TestMicrocopyUnknown:
     def test_unknown_shows_line_count(self):
         spec = _spec(ToolCategory.UNKNOWN)
         s = _state(lines_received=7, bytes_received=100)
-        assert microcopy_line(spec, s) == "▸ 7 lines"
+        assert microcopy_line(spec, s).plain == "▸ 7 lines"
 
     def test_unknown_zero(self):
         spec = _spec(ToolCategory.UNKNOWN)
-        assert microcopy_line(spec, _state()) == "▸ 0 lines"
+        assert microcopy_line(spec, _state()).plain == "▸ 0 lines"
 
 
 # ---------------------------------------------------------------------------
@@ -456,4 +456,4 @@ def test_microcopy_mcp_short_name_fallback():
     spec = ToolSpec(name="mcp__toolname", category=ToolCategory.MCP)
     state = _state(elapsed_s=0.5)
     result = microcopy_line(spec, state)
-    assert "mcp" in result.lower(), f"MCP microcopy must contain 'mcp': {result!r}"
+    assert "mcp" in result.plain.lower(), f"MCP microcopy must contain 'mcp': {result!r}"

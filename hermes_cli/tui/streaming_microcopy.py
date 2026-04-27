@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING
 
 from rich.text import Text
 
@@ -62,6 +62,44 @@ def _thinking_shimmer(shimmer_phase: float, elapsed_s: float = 0.0) -> Text:
     return result
 
 
+_GUTTER = "▸ "
+_GUTTER_STYLE = "dim"
+_VALUE_STYLE = ""
+_SEP_STYLE = "dim"
+_ELAPSED_STYLE = "dim"
+_STALL_STYLE = "bold yellow"
+
+
+def _stall_text(stalled: bool, colors: "SkinColors | None" = None) -> "Text | None":
+    if not stalled:
+        return None
+    warn_style = f"bold {colors.warning}" if colors is not None else _STALL_STYLE
+    warn_glyph = _glyph(GLYPH_WARNING)
+    t = Text()
+    t.append(f" {warn_glyph} stalled?", style=warn_style)
+    return t
+
+
+def _microcopy_text(
+    segments: list[tuple[str, str]],
+    elapsed_s: float,
+    stall: "Text | None",
+) -> Text:
+    _SEP = _glyph(GLYPH_META_SEP)
+    t = Text()
+    t.append(_GUTTER, style=_GUTTER_STYLE)
+    for i, (frag, style) in enumerate(segments):
+        if i > 0:
+            t.append(f" {_SEP} ", style=_SEP_STYLE)
+        t.append(frag, style=style)
+    if elapsed_s > 2.0:
+        t.append(f" {_SEP} ", style=_SEP_STYLE)
+        t.append(f"{elapsed_s:.1f}s", style=_ELAPSED_STYLE)
+    if stall is not None:
+        t.append_text(stall)
+    return t
+
+
 def microcopy_line(
     spec: "ToolSpec",
     state: StreamingState,
@@ -69,56 +107,40 @@ def microcopy_line(
     shimmer_phase: float = 0.0,
     stalled: bool = False,
     colors: "SkinColors | None" = None,
-) -> "Union[str, Text]":
-    """Return microcopy for current streaming state, or '' for no line.
+) -> Text:
+    """Return microcopy for current streaming state, or empty Text for no line.
 
     D2: reduced_motion=True → static text for AGENT category.
     D3: all categories append elapsed when state.elapsed_s > 2.0.
-    SCT-1: when stalled or colors is provided, returns Text with skin warning style.
-    Non-stall + colors=None branches return str fast-path (preserves existing == assertions).
+    SCT-1: colors provides skin-aware warning style for stall indicator.
+    MCC-1: all branches always return Text.
     """
     from hermes_cli.tui.tool_category import ToolCategory
 
     cat = spec.category
     elapsed_s = state.elapsed_s
-    _SEP = _glyph(GLYPH_META_SEP)
-
-    warn_style = f"bold {colors.warning}" if colors is not None else "bold yellow"
-    warn_glyph = _glyph(GLYPH_WARNING)
-    stall_text = f" {warn_glyph} stalled?"
-
-    def _elapsed_suffix() -> str:
-        """D3: append separator + N.Ns when elapsed > 2s."""
-        if elapsed_s > 2.0:
-            return f" {_SEP} {elapsed_s:.1f}s"
-        return ""
-
-    def _apply_stall(base: str) -> "Union[str, Text]":
-        """SCT-1: str fast-path when not stalled and no colors; Text otherwise."""
-        if not stalled and colors is None:
-            return base
-        if stalled and colors is None:
-            # legacy str behaviour: warning baked unstyled into return string
-            return base + stall_text
-        # colors provided → Text with styled warning span (only when stalled)
-        t = Text(base)
-        if stalled:
-            t.append(stall_text, style=warn_style)
-        return t
+    stall = _stall_text(stalled, colors)
 
     if cat == ToolCategory.SHELL:
-        base = f"▸ {state.lines_received} lines {_SEP} {_human_size(state.bytes_received)}"
+        segments = [
+            (f"{state.lines_received} lines", _VALUE_STYLE),
+            (_human_size(state.bytes_received), _VALUE_STYLE),
+        ]
         if state.rate_bps is not None and state.rate_bps > 0:
-            base += f" {_SEP} {state.rate_bps / 1024:.0f} kB/s"
-        return _apply_stall(base + _elapsed_suffix())
+            segments.append((f"{state.rate_bps / 1024:.0f} kB/s", _VALUE_STYLE))
+        return _microcopy_text(segments, elapsed_s, stall)
 
     if cat == ToolCategory.FILE:
         if spec.primary_result in ("lines", "bytes"):
-            base = f"▸ {state.lines_received} lines {_SEP} {_human_size(state.bytes_received)}"
+            segments = [
+                (f"{state.lines_received} lines", _VALUE_STYLE),
+                (_human_size(state.bytes_received), _VALUE_STYLE),
+            ]
             if state.rate_bps is not None and state.rate_bps > 0:
-                base += f" {_SEP} {state.rate_bps / 1024:.0f} kB/s"
-            return _apply_stall(base + _elapsed_suffix())
-        return _apply_stall(f"▸ {state.lines_received} lines written" + _elapsed_suffix())
+                segments.append((f"{state.rate_bps / 1024:.0f} kB/s", _VALUE_STYLE))
+            return _microcopy_text(segments, elapsed_s, stall)
+        segments = [(f"{state.lines_received} lines written", _VALUE_STYLE)]
+        return _microcopy_text(segments, elapsed_s, stall)
 
     if cat == ToolCategory.SEARCH:
         count = (
@@ -126,11 +148,16 @@ def microcopy_line(
             if state.matches_so_far is not None
             else state.lines_received
         )
-        return _apply_stall(f"▸ {count} matches so far…" + _elapsed_suffix())
+        segments = [(f"{count} matches so far…", _VALUE_STYLE)]
+        return _microcopy_text(segments, elapsed_s, stall)
 
     if cat == ToolCategory.WEB:
         status = state.last_status or "connecting"
-        return _apply_stall(f"▸ {status} {_SEP} {_human_size(state.bytes_received)}" + _elapsed_suffix())
+        segments = [
+            (status, _VALUE_STYLE),
+            (_human_size(state.bytes_received), _VALUE_STYLE),
+        ]
+        return _microcopy_text(segments, elapsed_s, stall)
 
     if cat == ToolCategory.MCP:
         prov = spec.provenance or ""
@@ -140,26 +167,36 @@ def microcopy_line(
             server = parts[1] if len(parts) >= 3 else parts[-1]
         if not server:
             server = spec.name or "?"
-        return _apply_stall(f"▸ mcp {_SEP} {server} server" + _elapsed_suffix())
+        segments = [
+            ("mcp", _VALUE_STYLE),
+            (f"{server} server", _VALUE_STYLE),
+        ]
+        return _microcopy_text(segments, elapsed_s, stall)
 
     if cat == ToolCategory.CODE:
         # B1: match SHELL/FILE rate display for consistency
-        base = f"▸ {state.lines_received} lines {_SEP} {_human_size(state.bytes_received)}"
+        segments = [
+            (f"{state.lines_received} lines", _VALUE_STYLE),
+            (_human_size(state.bytes_received), _VALUE_STYLE),
+        ]
         if state.rate_bps is not None and state.rate_bps > 0:
-            base += f" {_SEP} {state.rate_bps / 1024:.0f} kB/s"
-        return _apply_stall(base + _elapsed_suffix())
+            segments.append((f"{state.rate_bps / 1024:.0f} kB/s", _VALUE_STYLE))
+        return _microcopy_text(segments, elapsed_s, stall)
 
     if cat == ToolCategory.AGENT:
-        # AGENT branch always returns Text (shimmer or static label).
+        # D2: static text when reduced_motion
         if reduced_motion:
             result = Text("▸ thinking…")
-        else:
-            result = _thinking_shimmer(shimmer_phase, state.elapsed_s)
-        if stalled:
-            result.append(stall_text, style=warn_style)
+            if (st := _stall_text(stalled, colors)) is not None:
+                result.append_text(st)
+            return result
+        result = _thinking_shimmer(shimmer_phase, state.elapsed_s)
+        if (st := _stall_text(stalled, colors)) is not None:
+            result.append_text(st)
         return result
 
     if cat == ToolCategory.UNKNOWN:
-        return _apply_stall(f"▸ {state.lines_received} lines" + _elapsed_suffix())
+        segments = [(f"{state.lines_received} lines", _VALUE_STYLE)]
+        return _microcopy_text(segments, elapsed_s, stall)
 
-    return ""
+    return Text()

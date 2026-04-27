@@ -23,6 +23,7 @@ GLYPH_RULE     = "──"
 GLYPH_ELLIPSIS = "…"
 
 FOCUS_PREFIX             = "›"    # FS-1: single-cell focus glyph before category chip
+WRAP_CONTINUATION        = "↵"    # concept v3.6 §truncation; emission deferred until column-width plumbing lands
 GLYPH_GUTTER_GROUP       = "┊"    # group container left bar
 GLYPH_GUTTER_CHILD_DIFF  = "╰─"   # child diff lead-in
 GLYPH_GUTTER_CHILD_PLAIN = "    " # child / default 4-cell pad
@@ -293,11 +294,14 @@ def truncation_footer(
     *,
     hidden_n: int,
     unit: str = "lines",
-    action: str = "expand",
+    action: str | None = "expand",
     colors: "SkinColors | None" = None,
 ) -> "object":
     """'── 47 lines hidden · expand ──' — single wording, dim muted."""
-    label = f"{hidden_n} {unit} hidden {glyph('·')} {action}"
+    if action:
+        label = f"{hidden_n} {unit} hidden {glyph('·')} {action}"
+    else:
+        label = f"{hidden_n} {unit} hidden"
     return build_rule(label, colors=colors)
 
 

@@ -178,7 +178,16 @@ class LogRenderer(BodyRenderer):
         lines = [l for l in (self.payload.output_raw or "").splitlines() if l.strip()]
         return lines[-1][:maxlen] if lines else ""
 
-    def summary_line(self) -> str:
+    def summary_line(self, *, density=None, cls_result=None) -> str:
+        from hermes_cli.tui.tool_panel.layout_resolver import DensityTier
+        if density == DensityTier.COMPACT:
+            last = self.last_log_line(maxlen=60)
+            if not last:
+                return "(no output)"
+            from hermes_cli.tui.body_renderers._grammar import GLYPH_META_SEP, glyph
+            sep = glyph(GLYPH_META_SEP)
+            n_lines = len((self.payload.output_raw or "").splitlines())
+            return f"{last} {sep} {n_lines} lines"
         last = self.last_log_line(maxlen=60)
         return f"… {last}" if last else "(no output)"
 

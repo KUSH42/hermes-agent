@@ -185,7 +185,8 @@ class TableRenderer(BodyRenderer):
     def col_count(self) -> int:
         return getattr(self, "_col_count", 0)
 
-    def summary_line(self) -> str:
+    def summary_line(self, *, density=None, cls_result=None) -> str:
+        # kept current shape — no density variant defined
         return f"{self.row_count()} rows × {self.col_count()} cols"
 
     def build_widget(self, density=None, clamp_rows=None):

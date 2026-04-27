@@ -13,8 +13,9 @@ if TYPE_CHECKING:
     from hermes_cli.tui.tool_panel.density import DensityTier
 
 _TIER_CLASS: dict[str, str] = {
-    "compact": "body-frame--compact",
     "hero":    "body-frame--hero",
+    "default": "body-frame--default",
+    "compact": "body-frame--compact",
     "trace":   "body-frame--trace",
 }
 
@@ -37,6 +38,7 @@ BodyFrame > .body-frame--header { height: auto; }
 BodyFrame > .body-frame--body   { height: auto; width: 1fr; }
 BodyFrame > .body-frame--footer { height: 1; }
 BodyFrame.body-frame--compact > BodyFooter { display: none; }
+BodyFrame.body-frame--default { margin-bottom: 1; }
 """
 
     def __init__(

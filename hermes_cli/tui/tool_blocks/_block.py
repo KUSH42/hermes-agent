@@ -98,6 +98,7 @@ class ToolBlock(Widget):
     ) -> None:
         super().__init__(**kwargs)
         _boost_layout_caches(self)
+        self._header_lifted: bool = False  # set True by ToolPanel to own header at panel level
         self._label = label
         self._tool_name = tool_name
         self._lines = list(lines)
@@ -155,7 +156,8 @@ class ToolBlock(Widget):
                 self._header.set_path(self._diff_file_path)
 
     def compose(self) -> ComposeResult:
-        yield self._header
+        if not self._header_lifted:
+            yield self._header
         yield self._body
 
     def on_mount(self) -> None:

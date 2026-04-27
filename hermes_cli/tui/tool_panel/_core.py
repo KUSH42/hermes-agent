@@ -260,10 +260,19 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         self._body_pane = BodyPane(self._block, category=self._category)
         self._footer_pane = FooterPane()
         self._hint_row = Static("", classes="--focus-hint")
+        # Lift the header out of the block so it survives apply_density block replacement.
+        header = getattr(self._block, "_header", None)
+        if header is not None:
+            self._block._header_lifted = True
+            yield header
         yield self._collapsed_strip
         yield self._body_pane
         yield self._footer_pane
         yield self._hint_row
+
+    def toggle(self) -> None:
+        """Delegate browse-mode toggle to action_toggle_collapse."""
+        self.action_toggle_collapse()
 
     def on_mount(self) -> None:
         from hermes_cli.tui.tool_category import _CATEGORY_DEFAULTS

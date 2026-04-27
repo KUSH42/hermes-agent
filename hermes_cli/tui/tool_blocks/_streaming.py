@@ -186,7 +186,8 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         self._body._omission_parent_block = self
 
     def compose(self) -> ComposeResult:
-        yield self._header
+        if not self._header_lifted:
+            yield self._header
         yield self._body
         yield self._tail
 

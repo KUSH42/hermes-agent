@@ -390,18 +390,15 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         if self._line_count and not _has_diff_in_tail and not self._primary_hero:
             lc_text = ">99K" if self._line_count > 99999 else f"{self._line_count}L"
             tail_segments.append(("linecount", Text(f"  {lc_text}", style="dim")))
-        if self._has_affordances:
-            from hermes_cli.tui.tool_panel.density import DensityTier as _DT
-            if self._density_tier == _DT.HERO:
-                glyph = "  ★"
-            elif _safe_collapsed(self):
-                glyph = "  ▸"
-            else:
-                glyph = "  ▾"
-            tail_segments.append(("chevron", Text(glyph, style="dim")))
+        from hermes_cli.tui.tool_panel.density import DensityTier as _DT
+        if self._density_tier == _DT.HERO:
+            glyph = "  ★"
+        elif _safe_collapsed(self):
+            glyph = "  ▸"
         else:
-            # B-1: non-interactive signal — always fill chevron slot
-            tail_segments.append(("chevron", Text("  ·", style=self._colors().separator_dim)))
+            glyph = "  ▾"
+        style = "dim" if self._has_affordances else self._colors().separator_dim
+        tail_segments.append(("chevron", Text(glyph, style=style)))
         # META zone: flash → duration (header owns category only, not evidence)
         if self._duration:
             _pending_dur = self._duration

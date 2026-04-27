@@ -151,7 +151,8 @@ class JsonRenderer(BodyRenderer):
         except Exception:  # noqa: bare-except
             return "…"
 
-    def summary_line(self) -> str:
+    def summary_line(self, *, density=None, cls_result=None) -> str:
+        # kept current shape — no density variant defined
         return f"{{ {self._json_top_keys()} }}"
 
     def build_widget(self, density=None, clamp_rows=None) -> "object":

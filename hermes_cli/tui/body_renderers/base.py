@@ -98,7 +98,12 @@ class BodyRenderer(ABC):
         """Line count of payload.output_raw, or 0 if empty."""
         return len((self.payload.output_raw or "").splitlines())
 
-    def summary_line(self) -> str:
+    def summary_line(
+        self,
+        *,
+        density: "DensityTier | None" = None,
+        cls_result: "ClassificationResult | None" = None,
+    ) -> str:
         """One-line COMPACT summary. Override per kind for richer signal."""
         rows = self.payload_row_count()
         return f"({rows} rows)" if rows else "(no output)"
@@ -175,10 +180,10 @@ class BodyRenderer(ABC):
         return rl
 
     def _low_confidence_caption(self) -> "Text":
-        """Return low-confidence disclosure caption (concept M6)."""
+        """Return low-confidence disclosure caption (concept M6). Event loop only."""
         from rich.text import Text
         return Text(
-            f"⚠ low-confidence: {self.cls_result.kind.value}",
+            f"⚠ low-confidence: {self.cls_result.kind.value} (press t to cycle)",
             style=self.colors.muted,
         )
 

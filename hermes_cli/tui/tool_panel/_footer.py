@@ -244,7 +244,10 @@ class BodyPane(Widget):
 
     def _render_compact_body(self) -> None:
         self.query("*").remove()
-        self.mount(Static(self._renderer.summary_line(), classes="compact-summary"))
+        self.mount(Static(self._renderer.summary_line(
+            density=DensityTier.COMPACT,
+            cls_result=self._renderer.cls_result,
+        ), classes="compact-summary"))
 
     def _make_slow_placeholder(self, icon: str) -> Widget:
         w = Static(f"{icon}  rendering…")

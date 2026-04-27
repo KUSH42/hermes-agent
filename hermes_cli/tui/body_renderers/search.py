@@ -540,7 +540,22 @@ class SearchRenderer(BodyRenderer):
     def hit_count(self) -> int:
         return getattr(self, "_hit_count", 0)
 
-    def summary_line(self) -> str:
+    def summary_line(self, *, density=None, cls_result=None) -> str:
+        from hermes_cli.tui.tool_panel.layout_resolver import DensityTier
+        if density == DensityTier.COMPACT:
+            groups = _parse_search_output(self.payload.output_raw or "")
+            top_hit_title = None
+            if groups:
+                _group_name, hits = groups[0]
+                if hits:
+                    _line_num, content, _is_hit = hits[0]
+                    top_hit_title = content.strip() or None
+            n_hits = self.hit_count()
+            if top_hit_title:
+                from hermes_cli.tui.body_renderers._grammar import GLYPH_META_SEP, glyph
+                sep = glyph(GLYPH_META_SEP)
+                return f"{top_hit_title} {sep} {n_hits} hits"
+            return f"{n_hits} hit(s)" if n_hits else "(no matches)"
         hits = self.hit_count()
         return f"{hits} hit(s)" if hits else "(no matches)"
 

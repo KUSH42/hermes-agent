@@ -517,7 +517,13 @@ class DiffRenderer(BodyRenderer):
         minus = sum(s[2] for s in stats)
         return files, plus, minus
 
-    def summary_line(self) -> str:
+    def summary_line(self, *, density=None, cls_result=None) -> str:
+        from hermes_cli.tui.tool_panel.layout_resolver import DensityTier
+        if density == DensityTier.COMPACT:
+            files, plus, minus = self._diff_stats()
+            from hermes_cli.tui.body_renderers._grammar import GLYPH_META_SEP, glyph
+            sep = glyph(GLYPH_META_SEP)
+            return f"{files} files {sep} +{plus}/-{minus}"
         files, plus, minus = self._diff_stats()
         return f"{files} file(s) · +{plus} −{minus}"
 

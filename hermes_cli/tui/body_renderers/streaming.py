@@ -42,6 +42,7 @@ from hermes_cli.tui.tool_payload import ResultKind
 if TYPE_CHECKING:
     from rich.console import ConsoleRenderable
     from hermes_cli.tui.tool_category import ToolCategory
+    from hermes_cli.tui.body_renderers._grammar import SkinColors
 
 _log = logging.getLogger(__name__)
 
@@ -441,8 +442,15 @@ class FileRenderer(BodyRenderer):
 # ---------------------------------------------------------------------------
 
 
-def _render_web_search_results(items: list) -> "ConsoleRenderable":
+def _render_web_search_results(
+    items: list,
+    *,
+    colors: "SkinColors | None" = None,
+) -> "ConsoleRenderable":
     """Render web_search JSON result list as a formatted Text block."""
+    from hermes_cli.tui.body_renderers._grammar import SkinColors
+    if colors is None:
+        colors = SkinColors.default()
     t = Text()
     for i, item in enumerate(items):
         if not isinstance(item, dict):
@@ -455,10 +463,13 @@ def _render_web_search_results(items: list) -> "ConsoleRenderable":
         if url:
             t.append(f"  {url}\n", style="cyan link " + url if url.startswith("http") else "cyan")
         if desc:
-            # Truncate long descriptions
             if len(desc) > 120:
-                desc = desc[:117] + "…"
-            t.append(f"  {desc}\n", style="dim")
+                dropped = len(desc) - 117
+                desc_main = desc[:117]
+                t.append(f"  {desc_main}", style="dim")
+                t.append(f"…+{dropped}\n", style=colors.muted)
+            else:
+                t.append(f"  {desc}\n", style="dim")
         if i < len(items) - 1:
             t.append("\n")
     return t
@@ -524,7 +535,7 @@ class StreamingSearchRenderer(BodyRenderer):
                 parsed = _json.loads(joined)
                 web_items = parsed.get("data", {}).get("web", [])
                 if isinstance(web_items, list) and web_items:
-                    return _render_web_search_results(web_items)
+                    return _render_web_search_results(web_items, colors=self.colors)
             except Exception:  # noqa: bare-except
                 pass
         result = Text()

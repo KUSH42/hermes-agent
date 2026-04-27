@@ -243,6 +243,7 @@ class BodyPane(Widget):
         self._mount_body_with_deadline(tier)
 
     def _render_compact_body(self) -> None:
+        from hermes_cli.tui.tool_panel.layout_resolver import DensityTier
         self.query("*").remove()
         self.mount(Static(self._renderer.summary_line(
             density=DensityTier.COMPACT,

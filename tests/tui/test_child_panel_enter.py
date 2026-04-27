@@ -14,15 +14,6 @@ class _App(App):
 
 
 @pytest.mark.asyncio
-async def test_toggle_collapse_flips_collapsed():
-    async with _App().run_test() as pilot:
-        panel = pilot.app.query_one(ChildPanel)
-        was = panel.collapsed
-        panel.action_toggle_collapse()
-        assert panel.collapsed != was
-
-
-@pytest.mark.asyncio
 async def test_watch_collapsed_hides_body():
     async with _App().run_test() as pilot:
         panel = pilot.app.query_one(ChildPanel)

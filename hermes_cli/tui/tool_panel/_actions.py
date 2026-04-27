@@ -44,6 +44,7 @@ class _ToolPanelActionsMixin:
         return cycle[(idx + 1) % len(cycle)]
 
     def action_toggle_collapse(self) -> None:
+        # Dismiss a visible tail panel first; Enter has no density effect while tail is open.
         block = getattr(self, "_block", None)
         tail = getattr(block, "_tail", None) if block is not None else None
         if tail is not None and tail.has_class("--visible"):
@@ -54,38 +55,40 @@ class _ToolPanelActionsMixin:
         from hermes_cli.tui.tool_panel.density import DensityInputs, DensityTier
         from hermes_cli.tui.services.tools import ToolCallState
 
-        requested_tier = self._next_tier_in_cycle(self._resolver.tier)  # type: ignore[attr-defined]
+        current = self._resolver.tier  # type: ignore[attr-defined]
+        if current == DensityTier.COMPACT:
+            target = DensityTier.DEFAULT
+            flash_label = "expanded"
+        else:
+            # DEFAULT, HERO, TRACE all collapse to COMPACT.
+            target = DensityTier.COMPACT
+            flash_label = "collapsed"
+
         self._user_collapse_override = True  # type: ignore[attr-defined]
-        self._user_override_tier = requested_tier  # type: ignore[attr-defined]
+        self._user_override_tier = target  # type: ignore[attr-defined]
         self._auto_collapsed = False  # type: ignore[attr-defined]
         _vs = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
         phase = _vs.state if _vs is not None else ToolCallState.DONE
         _vs_kind = getattr(_vs, "kind", None) if _vs is not None else None
         kind = _vs_kind.kind if _vs_kind is not None else None
+        _size = getattr(self, "size", None)
+        width = _size.width if _size is not None else 0
         inputs = DensityInputs(
             phase=phase,
-            is_error=bool(
-                getattr(self._result_summary_v4, "is_error", False)  # type: ignore[attr-defined]
-                if self._result_summary_v4 else False  # type: ignore[attr-defined]
-            ),
+            is_error=self._is_error(),
             has_focus=False,
             user_scrolled_up=False,
             user_override=True,
-            user_override_tier=requested_tier,  # type: ignore[arg-type]
+            user_override_tier=target,  # type: ignore[arg-type]
             body_line_count=self._body_line_count(),  # type: ignore[attr-defined]
-            threshold=0,  # irrelevant; override wins
+            threshold=0,
             row_budget=None,
             kind=kind,
             parent_clamp=self._parent_clamp_tier,  # type: ignore[attr-defined]
-            width=self.size.width,  # type: ignore[attr-defined]
+            width=width,
         )
         self._resolver.resolve(inputs)  # type: ignore[attr-defined]
-        if requested_tier == DensityTier.HERO and self._resolver.tier != DensityTier.HERO:  # type: ignore[attr-defined]
-            msg = self._hero_rejection_reason(inputs)
-            self._flash_header(f"hero unavailable — {msg}", tone="warning")
-        else:
-            # P-3: flash destination tier so cycle position is visible.
-            self._flash_header(self._resolver.tier.value, tone="info")  # type: ignore[attr-defined]
+        self._flash_header(flash_label, tone="info")
 
     def _hero_rejection_reason(self, inp: "object") -> str:
         """Explain why a HERO tier request was downgraded."""
@@ -674,16 +677,14 @@ class _ToolPanelActionsMixin:
             # Streaming: follow + tail are the two most important actions
             primary.append(("Enter", "follow"))
             primary.append(("f", "tail"))
-        elif getattr(self, "collapsed", False):
-            primary.append(("Enter", "expand"))
-            primary.append(("y", "copy"))
-        elif self._is_error():
-            # Error: toggle + retry as primary recoveries
-            primary.append(("Enter", "toggle"))
-            primary.append(("r", "retry"))
         else:
-            primary.append(("Enter", "toggle"))
-            primary.append(("y", "copy"))
+            # Binary: COMPACT → "expand"; everything else → "collapse".
+            enter_label = "expand" if getattr(self, "collapsed", False) else "collapse"
+            primary.append(("Enter", enter_label))
+            if self._is_error():
+                primary.append(("r", "retry"))
+            else:
+                primary.append(("y", "copy"))
 
         # HF-A: consult visible footer chips to suppress duplicate hints
         visible_action_kinds = self._visible_footer_action_kinds()

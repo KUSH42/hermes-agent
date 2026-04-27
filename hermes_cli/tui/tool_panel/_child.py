@@ -67,9 +67,6 @@ class ChildPanel(ToolPanel):
         self._user_touched_compact = True
         self.set_compact(not self._compact_mode)
 
-    def action_toggle_collapse(self) -> None:
-        self.collapsed = not self.collapsed
-
     def _on_parent_density_change(self, tier: "Any") -> None:
         from hermes_cli.tui.tool_panel.density import DensityTier
         clamp = tier if tier != DensityTier.DEFAULT else None

@@ -200,7 +200,7 @@ class ToolBlockLayoutResolver:
 
     def __init__(self, *, hero_min_width: "int | None" = None) -> None:
         self._tier: DensityTier = DensityTier.DEFAULT
-        self._listeners: list[Callable[[DensityTier], None]] = []
+        self._listeners: list[Callable[["LayoutDecision"], None]] = []
         self._hero_min_width: int = (
             hero_min_width
             if hero_min_width is not None
@@ -215,7 +215,7 @@ class ToolBlockLayoutResolver:
     def hero_min_width(self) -> int:
         return self._hero_min_width
 
-    def subscribe(self, fn: Callable[[DensityTier], None]) -> None:
+    def subscribe(self, fn: "Callable[[LayoutDecision], None]") -> None:
         self._listeners.append(fn)
 
     def resolve(self, inputs: LayoutInputs) -> DensityTier:
@@ -224,7 +224,7 @@ class ToolBlockLayoutResolver:
         if decision.tier != self._tier:
             self._tier = decision.tier
             for fn in self._listeners:
-                fn(decision.tier)
+                fn(decision)
         return decision.tier
 
     def resolve_full(self, inputs: LayoutInputs) -> LayoutDecision:

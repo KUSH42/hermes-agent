@@ -59,6 +59,8 @@ from hermes_cli.tui.body_renderers.streaming import (
     _STREAMING_PHASES,
 )
 
+from hermes_cli.tui.content_classifier import THRESHOLDS as _CONF
+
 if TYPE_CHECKING:
     from hermes_cli.tui.tool_payload import ClassificationResult, ToolPayload
     from hermes_cli.tui.services.tools import ToolCallState
@@ -124,10 +126,10 @@ def pick_renderer(
       If no match, force-return PlainBodyRenderer.
 
     Phase C branch (phase ∈ {COMPLETING, DONE}):
-    1. SHELL category: TEXT kind or confidence < 0.8 → ShellOutputRenderer.
+    1. SHELL category: TEXT kind or confidence < KIND_HIGH_CONFIDENCE → ShellOutputRenderer.
     2. EMPTY → EmptyStateRenderer.
-    3. confidence > 0.5 AND non-TEXT/EMPTY → try specialized renderer via accepts().
-       0.5–0.7 band: stamp _low_confidence_disclosed flag for renderer notice.
+    3. confidence > KIND_MIN_CONFIDENCE AND non-TEXT/EMPTY → try specialized renderer via accepts().
+       disclosure band: stamp _low_confidence_disclosed flag for renderer notice.
     4. TEXT, low-confidence, or no match → FallbackRenderer.
 
     KO-2: when ``user_kind_override`` is set and ``phase`` is post-streaming,
@@ -186,7 +188,7 @@ def pick_renderer(
 
     # Rule 1: SHELL — TEXT always stays; non-TEXT with low confidence stays too
     if payload.category == ToolCategory.SHELL and cls_result.kind != ResultKind.EMPTY:
-        if cls_result.kind == ResultKind.TEXT or cls_result.confidence < 0.8:
+        if cls_result.kind == ResultKind.TEXT or cls_result.confidence < _CONF["KIND_HIGH_CONFIDENCE"]:
             if ShellOutputRenderer.accepts(phase, density):
                 return ShellOutputRenderer
 
@@ -194,9 +196,9 @@ def pick_renderer(
     if cls_result.kind == ResultKind.EMPTY and EmptyStateRenderer.accepts(phase, density):
         return EmptyStateRenderer
 
-    # Rule 3: confidence > 0.5 AND non-TEXT/EMPTY → try specialized renderer
-    if cls_result.confidence > 0.5 and cls_result.kind not in (ResultKind.TEXT, ResultKind.EMPTY):
-        if cls_result.confidence < 0.7:
+    # Rule 3: confidence > KIND_MIN_CONFIDENCE AND non-TEXT/EMPTY → try specialized renderer
+    if cls_result.confidence > _CONF["KIND_MIN_CONFIDENCE"] and cls_result.kind not in (ResultKind.TEXT, ResultKind.EMPTY):
+        if cls_result.confidence < _CONF["KIND_DISCLOSURE_BAND_HIGH"]:
             # Stamp disclosure flag — object.__setattr__ bypasses frozen=True
             object.__setattr__(cls_result, "_low_confidence_disclosed", True)
         for r in REGISTRY:

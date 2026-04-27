@@ -101,7 +101,7 @@ class CodeBlockFooter(Widget):
             self._sep.styles.display = "none"
             self._toggle.styles.display = "none"
 
-    def flash_copy(self, flash_label: str = "✓ Copied", duration: float = 1.5) -> None:
+    def flash_copy(self, flash_label: str = "✓ copied", duration: float = 1.5) -> None:
         """Briefly swap the copy label to a success indicator.
 
         Routes through FeedbackService (RX1 Phase B).

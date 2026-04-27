@@ -478,7 +478,7 @@ Orthogonality means resolvers do not depend on each other's *state* in the stead
 | KIND → DENSITY | renderer declares min-height needs at each tier | per-tier display contract | Renderer is a *subscriber*, not a resolver — declares needs, does not set tier |
 | DENSITY → PHASE | none | — | Forbidden. A block's tier never changes its lifecycle state. |
 
-**Note on streaming KIND hint (SLR-3).** A separate, glyph-only signal — `streaming_kind_hint` — may update the header icon and category chip during STREAMING based on a first-chunk sniff. It does not mutate `view_state.kind` and does not pick a renderer; the body keeps streaming through the raw renderer. Hint clears at COMPLETING; classifier output then drives both icon and renderer as today. The hint is a guess, the classifier is resolution.
+**Note on streaming KIND hint (SLR-3).** A separate, glyph-only signal — `streaming_kind_hint` — may update the header icon and category chip during STREAMING based on a first-chunk sniff. It does not mutate `view_state.kind` and does not pick a renderer; the body keeps streaming through the raw renderer. Hint clears at COMPLETING; classifier output then drives both icon and renderer as today. The hint is a guess, the classifier is resolution. `_MIN_HINT_PREFIX_BYTES = 8` is documented inline in `services/tools.py`; full classifier window remains 256 bytes.
 
 Anything not in this table is an axis violation. Example violations seen in review:
 - A renderer reading `view_state.phase` to pick a *different renderer* — that's KIND resolution leaking into a subscriber. Fix: route through `pick_renderer` with phase as a kwarg.
@@ -523,7 +523,7 @@ Reachability is a static invariant. A resolver, classifier, or test fixture prod
 ### KIND
 - **Resolver:** `content_classifier.py::classify_content`
 - **State:** `ClassificationResult(kind, confidence, metadata)` — runs once at COMPLETING
-- **Confidence threshold:** `KIND_MIN_CONFIDENCE` (in `content_classifier.THRESHOLDS`, currently 0.6). Below threshold, `pick_renderer` falls to `RawTextRenderer` regardless of declared kind. The threshold is a single named constant, tuned per release; this doc names *that* it exists, not its numeric value.
+- **Confidence threshold:** `KIND_MIN_CONFIDENCE` (in `content_classifier.THRESHOLDS`, currently 0.5). Below threshold, `pick_renderer` falls to `FallbackRenderer` regardless of declared kind. Disclosure band 0.5–0.7: renderer surfaces `⚠ low-confidence: <kind>` caption via `_low_confidence_caption()`. The thresholds are single named constants in `THRESHOLDS`; this doc names *that* they exist, not their numeric values. `KIND_MIN_CONFIDENCE = 0.5`, disclosure band 0.5–0.7.
 - **Subscribers:** `body_renderers/__init__.py::pick_renderer` (selects renderer subclass)
 
 ### DENSITY
@@ -880,7 +880,7 @@ The footer's affordance list is generated, not authored. `tool_panel/_actions.py
 4. **No marketing voice.** "show details", not "explore your options". The harness is a console, not an onboarding flow.
 5. **Status chips mirror the rule.** `DONE`, `ERR`, `CANCEL`, `STREAMING` — uppercase short forms, never sentence-case ("Done") or long forms ("completed successfully").
 
-A label that violates the contract is a review block, not a style nit. The cumulative effect of 30 inconsistent labels per screen is what separates a console from a UI.
+A label that violates the contract is a review block, not a style nit. The cumulative effect of 30 inconsistent labels per screen is what separates a console from a UI. Enforced via meta-tests in `test_microcopy_and_confidence.py::TestStatusChipCasing` and `TestLiveTailChip`.
 
 ### User overrides
 

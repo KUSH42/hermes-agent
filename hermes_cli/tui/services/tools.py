@@ -1269,6 +1269,15 @@ class ToolRenderingService(AppService):
         self._run_sniff_buffer(view, line)
 
     # SLR-3: sniff buffer helpers
+    # SLR-3: streaming_kind_hint sniff window. 8 bytes is the smallest prefix
+    # at which the strongest format markers can be detected unambiguously
+    # (e.g. `diff --` for diff, `{` plus 1+ whitespace+key char for json,
+    # `def `/`class `/`function ` for code). Smaller windows produce
+    # false-positive hints on leading whitespace or shebang lines; larger
+    # windows delay the hint past the 100ms perceived-hang threshold on slow
+    # tools. The full classification window is 256 bytes (concept §KIND
+    # implementation map); the *hint* window is deliberately smaller to
+    # surface the icon swap before the classifier runs at COMPLETING.
     _MIN_HINT_PREFIX_BYTES: int = 8
 
     def _register_header_hint_watcher(self, view: "ToolCallViewState") -> None:

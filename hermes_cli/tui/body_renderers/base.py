@@ -99,8 +99,18 @@ class BodyRenderer(ABC):
         caption = self._user_forced_caption_renderable()
         if caption is not None:
             rl.write(caption)
+        if getattr(self.cls_result, "_low_confidence_disclosed", False):
+            rl.write(self._low_confidence_caption())
         rl.write(self.build())
         return rl
+
+    def _low_confidence_caption(self) -> "Text":
+        """Return low-confidence disclosure caption (concept M6)."""
+        from rich.text import Text
+        return Text(
+            f"⚠ low-confidence: {self.cls_result.kind.value}",
+            style=self.colors.muted,
+        )
 
     def refresh_incremental(self, chunk: str) -> None:
         raise NotImplementedError

@@ -65,11 +65,10 @@ class SubAgentHeader(Widget):
                     _log.debug("SubAgentPanel: css var lookup failed", exc_info=True)
                     warn_color = "#FFA726"
                 segments.append(("errors", _Text(f"  {error_count} {err_word}", style=f"bold {warn_color}")))
-                # D-2: show up to 3 distinct error_kind glyphs
+                # D-2: show up to 3 distinct error_kind glyphs (canonical via _ERROR_DISPLAY)
                 if error_kinds:
-                    _GLYPHS = {"timeout": "⏱", "auth": "🔒", "network": "🌐",
-                               "signal": "💀", "exit": "✗"}
-                    glyphs = "".join(_GLYPHS.get(k, "✗") for k in error_kinds[:3])
+                    from hermes_cli.tui.tool_result_parse import error_glyph
+                    glyphs = "".join(error_glyph(k) for k in error_kinds[:3])
                     segments.append(("error-kinds", _Text(f" {glyphs}", style=f"bold {warn_color}")))
             segments.append(("duration", _Text(f"  {elapsed_str}", style="dim")))
             try:

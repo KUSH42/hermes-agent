@@ -465,7 +465,23 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             self._header._pulse_paused = True
         elif not stalled and self._header._pulse_paused:
             self._header._pulse_paused = False
-        text = microcopy_line(spec, state, reduced_motion=reduced_motion, shimmer_phase=self._shimmer_phase, stalled=stalled)
+        # SCT-1: route stall warning through SkinColors so theme overrides apply.
+        try:
+            from hermes_cli.tui.body_renderers._grammar import SkinColors
+            colors = SkinColors.from_app(self.app) if self.app is not None else None
+        except Exception:
+            import logging as _logging
+            _logging.getLogger(__name__).debug(
+                "streaming microcopy: SkinColors.from_app failed", exc_info=True
+            )
+            colors = None
+        text = microcopy_line(
+            spec, state,
+            reduced_motion=reduced_motion,
+            shimmer_phase=self._shimmer_phase,
+            stalled=stalled,
+            colors=colors,
+        )
         if text:
             self._body.set_microcopy(text)
             self._microcopy_shown = True

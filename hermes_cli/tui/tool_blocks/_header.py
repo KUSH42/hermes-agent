@@ -5,6 +5,7 @@ import logging
 import time
 from typing import Any
 
+from rich.style import Style
 from rich.text import Span, Text
 from textual.app import ComposeResult
 from textual.events import Click
@@ -248,12 +249,23 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         elif self._is_child_diff:
             gutter_text = Text("  ╰─", style="dim")
             gutter_w = 4
-        elif focused:
-            color = getattr(self, "_focused_gutter_color", _GUTTER_FALLBACK)
-            gutter_text = Text("  ┃ ", style=f"bold {color}")
-            gutter_w = 4
         else:
-            gutter_text = Text("    ", style="")
+            # FS-2: tier-keyed glyph; focused = brighter accent, unfocused = border tint
+            from hermes_cli.tui.body_renderers._grammar import get_tier_gutter_glyphs
+            from hermes_cli.tui.tool_panel.density import DensityTier as _DT2
+            _tier_for_gutter = getattr(self._panel, "density", _DT2.DEFAULT) if self._panel else _DT2.DEFAULT
+            _tgg = get_tier_gutter_glyphs()
+            raw_glyph = _tgg.get(_tier_for_gutter, "▸ │")
+            if self._tool_icon_error:
+                # ERR overrides to heavy gutter for redundant-signal (shape encodes error)
+                raw_glyph = "┃"
+            if focused:
+                glyph_color = self._colors().accent
+            else:
+                glyph_color = self._colors().separator_dim
+            _glyph_str = f"  {raw_glyph} " if len(raw_glyph) == 1 else f" {raw_glyph} "
+            _glyph_style = f"bold {glyph_color}" if focused else glyph_color
+            gutter_text = Text(_glyph_str, style=_glyph_style)
             gutter_w = 4
         t.append_text(gutter_text)
 
@@ -425,7 +437,9 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 )))
 
         term_w = self.size.width
-        FIXED_PREFIX_W = gutter_w + icon_cell_w + space_after_icon
+        # FS-1: "› " is 2 cells; reserved from budget so tail trims first
+        focus_cells = 2 if focused else 0
+        FIXED_PREFIX_W = gutter_w + icon_cell_w + space_after_icon + focus_cells
         tail_budget = max(0, term_w - FIXED_PREFIX_W - MIN_LABEL_CELLS - 2) if term_w > 0 else 80
         from hermes_cli.tui.tool_panel.density import DensityTier as _DT
         _tier = getattr(self._panel, "density", _DT.DEFAULT) if self._panel else _DT.DEFAULT
@@ -462,6 +476,12 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             displayed_plain = label_text.plain.strip()
             if displayed_plain != self._full_path:
                 self._tooltip_text = self._full_path
+        # FS-1: focus prefix glyph before label — never truncated
+        if focused:
+            from hermes_cli.tui.body_renderers._grammar import FOCUS_PREFIX
+            _fp_color = (getattr(self, "_focused_gutter_color", None) or self._colors().accent)
+            focus_prefix_text = Text(f"{FOCUS_PREFIX} ", style=Style(color=_fp_color, bold=True))
+            t.append_text(focus_prefix_text)
         t.append_text(label_text)
         if term_w > 0:
             label_used = label_text.cell_len

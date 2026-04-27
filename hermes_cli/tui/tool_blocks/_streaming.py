@@ -163,6 +163,9 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         # LL-5: adoption flash — True on GENERATED entry, False on terminal states.
         self._was_generated: bool = False
         self._remove_adopted_timer: "Timer | None" = None
+        # FS-3: settled state — arms 600ms after terminal phase; suppresses incidental flashes
+        self._settled: bool = False
+        self._settled_timer: "Timer | None" = None
         # LL-4: renderer kind override cycling
         self._kind_override: "RendererKind | None" = None
         self._body._omission_parent_block = self
@@ -289,6 +292,10 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         self._is_unmounted = True  # PERF-4: block timer resurrection at both reassign sites
         if self._remove_adopted_timer is not None:
             self._remove_adopted_timer.stop()
+        # FS-3: stop settled timer; not via ManagedTimerMixin (must survive complete())
+        if self._settled_timer is not None:
+            self._settled_timer.stop()
+            self._settled_timer = None
         # LL-4: clear kind chip directly — post_message unavailable after message loop closes
         try:
             self.app.query_one(HintBar).clear_kind_override()
@@ -674,8 +681,10 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
 
         if new_state == ToolCallState.GENERATED:
             self._was_generated = True
+            self._clear_settled()  # FS-3: retry path resets settled
 
         elif new_state == ToolCallState.STARTED:
+            self._clear_settled()  # FS-3: retry path resets settled
             if self._was_generated:
                 if self.is_attached:
                     self.post_message(FlashMessage("started", duration=1.2))
@@ -687,6 +696,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
 
         elif new_state in (ToolCallState.DONE, ToolCallState.ERROR, ToolCallState.CANCELLED):
             self._was_generated = False
+            self._arm_settled_timer()  # FS-3: begin 600ms quiescence countdown
 
     def _remove_adopted(self) -> None:
         if self.is_attached:
@@ -695,6 +705,36 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             except Exception:
                 logger.warning("failed to remove adopted class", exc_info=True)
         self._remove_adopted_timer = None
+
+    # ------------------------------------------------------------------
+    # FS-3: settled state helpers
+    # ------------------------------------------------------------------
+
+    def _arm_settled_timer(self) -> None:
+        """Start 600ms quiescence timer; replaces any in-flight timer.
+
+        Clears _settled first — a retry/re-arm on an already-settled block must reset
+        the flag so flashes fire again during the new quiescence window.
+        Do NOT register via ManagedTimerMixin — complete() calls _stop_all_managed()
+        which would cancel the settled timer before it fires.
+        """
+        self._settled = False
+        self._cancel_settled_timer()
+        self._settled_timer = self.set_timer(0.6, self._on_settled_timer)
+
+    def _cancel_settled_timer(self) -> None:
+        if self._settled_timer is not None:
+            self._settled_timer.stop()
+            self._settled_timer = None
+
+    def _on_settled_timer(self) -> None:
+        self._settled = True
+        self._settled_timer = None
+
+    def _clear_settled(self) -> None:
+        """Reset settled on non-terminal transition (retry path)."""
+        self._settled = False
+        self._cancel_settled_timer()
 
     # ------------------------------------------------------------------
     # LL-4: renderer kind override cycling via `t` / `Shift+T`

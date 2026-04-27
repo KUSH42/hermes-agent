@@ -118,6 +118,11 @@ class ChannelAdapter:
     restore() is a silent no-op on unmounted widgets.
     """
 
+    @property
+    def widget(self) -> "Any | None":
+        """Return the target widget for this adapter, or None if not applicable."""
+        return None
+
     def apply(self, state: "FlashState") -> None:
         raise NotImplementedError
 
@@ -261,6 +266,16 @@ class FeedbackService:
         """
         if channel not in self._channels:
             raise KeyError(f"FeedbackService: channel {channel!r} not registered")
+
+        # FS-3: settled suppression — incidental flashes blocked on completed blocks;
+        # focus and err-enter tones are always exempt (they encode state changes, not motion).
+        _settled_tone_exempt = tone in ("focus", "err-enter")
+        if not _settled_tone_exempt:
+            _record = self._channels[channel]
+            _widget = _record.adapter.widget
+            if _widget is not None and getattr(_widget, "_settled", False):
+                _log.debug("flash suppressed: channel=%r settled block", channel)
+                return FlashHandle(displayed=False)
 
         record = self._channels[channel]
         adapter = record.adapter
@@ -529,6 +544,10 @@ class ToolHeaderAdapter(ChannelAdapter):
 
     def __init__(self, header: Any) -> None:
         self._header = header
+
+    @property
+    def widget(self) -> "Any":
+        return self._header
 
     def apply(self, state: FlashState) -> None:
         hdr = self._header

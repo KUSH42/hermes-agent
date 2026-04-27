@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Final
+from typing import Any, Final
 
 from rich.style import Style
 from rich.text import Text
@@ -21,7 +21,7 @@ GLYPH_META_SEP = "·"
 GLYPH_RULE     = "──"
 GLYPH_ELLIPSIS = "…"
 
-GLYPH_GUTTER_FOCUSED     = "┃"    # focused panel left bar
+FOCUS_PREFIX             = "›"    # FS-1: single-cell focus glyph before category chip
 GLYPH_GUTTER_GROUP       = "┊"    # group container left bar
 GLYPH_GUTTER_CHILD_DIFF  = "╰─"   # child diff lead-in
 GLYPH_GUTTER_CHILD_PLAIN = "    " # child / default 4-cell pad
@@ -31,6 +31,8 @@ GLYPH_WARNING            = "⚠"    # SCT-1: stall/warning marker
 
 GUTTER_LINE_NUM_WIDTH = 6
 GUTTER_SIGN_WIDTH     = 2
+
+_FOCUS_PREFIX_ASCII = ">"   # FS-1 ASCII fallback for FOCUS_PREFIX
 
 _ASCII_GLYPHS: dict[str, str] = {
     "▸": ">",
@@ -78,6 +80,27 @@ TIER_KEYS: Final[frozenset[str]] = frozenset({
 })
 
 _TIER_ACCENTS_EMPTY: MappingProxyType[str, str] = MappingProxyType({})
+
+# FS-2: canonical tier→gutter glyph map (same shape under focus — only tint changes)
+# Import deferred to avoid circular import with tool_panel.density at module level.
+def _build_tier_gutter_glyphs() -> "MappingProxyType[Any, str]":
+    from hermes_cli.tui.tool_panel.density import DensityTier
+    return MappingProxyType({
+        DensityTier.HERO:    "│",     # boxed surround; outer frame rendered separately
+        DensityTier.DEFAULT: "▸ │",
+        DensityTier.COMPACT: "▸",
+        DensityTier.TRACE:   "·",
+    })
+
+# Lazily populated on first use — avoids import-time circular dep.
+_TIER_GUTTER_GLYPHS_CACHE: "MappingProxyType[Any, str] | None" = None
+
+def get_tier_gutter_glyphs() -> "MappingProxyType[Any, str]":
+    """Return tier→gutter-glyph map (FS-2). Cached after first call."""
+    global _TIER_GUTTER_GLYPHS_CACHE
+    if _TIER_GUTTER_GLYPHS_CACHE is None:
+        _TIER_GUTTER_GLYPHS_CACHE = _build_tier_gutter_glyphs()
+    return _TIER_GUTTER_GLYPHS_CACHE
 
 # ---------------------------------------------------------------------------
 # SkinColors — resolved at widget-mount time, passed into builders

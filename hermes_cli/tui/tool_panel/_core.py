@@ -39,6 +39,14 @@ if TYPE_CHECKING:
 # LL-1: pure helper — testable without Textual machinery.
 _LL1_FLASH_TEXT: dict["DensityTier", str] = {}  # populated lazily to avoid import cycle
 
+# SLR-1: tier CSS class names — one active at a time, toggled in _apply_layout.
+_TIER_CLASS_NAMES: dict["DensityTier", str] = {
+    DensityTier.HERO:    "tool-panel--tier-hero",
+    DensityTier.DEFAULT: "tool-panel--tier-default",
+    DensityTier.COMPACT: "tool-panel--tier-compact",
+    DensityTier.TRACE:   "tool-panel--tier-trace",
+}
+
 
 def density_flash_text(
     last: "DensityResult | None",
@@ -338,6 +346,11 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
             if dr == "parent_clamp":
                 dr = "user"
             vs.density_reason = dr  # type: ignore[assignment]
+
+        # SLR-1: toggle tier class for CSS margin contract; mutual exclusion.
+        for _cls in _TIER_CLASS_NAMES.values():
+            self.remove_class(_cls)
+        self.add_class(_TIER_CLASS_NAMES[decision.tier])
 
         # LL-1: flash on auto tier change.
         _reason = decision.reason if decision.reason != "parent_clamp" else "user"

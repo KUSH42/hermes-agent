@@ -47,6 +47,20 @@ class CodeRenderer(BodyRenderer):
         from hermes_cli.tui.tool_payload import ResultKind
         return cls_result.kind == ResultKind.CODE
 
+    @classmethod
+    def streaming_kind_hint(cls, first_chunk: str) -> "ResultKind | None":
+        from hermes_cli.tui.tool_payload import ResultKind
+        chunk = first_chunk[:256]
+        if chunk.startswith("#!"):
+            return ResultKind.CODE
+        # triple-backtick fence with a known language tag
+        if chunk.startswith("```") and len(chunk) > 3:
+            tag_end = chunk.find("\n")
+            tag = chunk[3:tag_end].strip() if tag_end != -1 else chunk[3:].strip()
+            if tag and tag.isidentifier():
+                return ResultKind.CODE
+        return None
+
     def _parse_code(self):
         """Return (code, lexer, origin_path, start_line, show_line_numbers)."""
         from rich.syntax import Syntax

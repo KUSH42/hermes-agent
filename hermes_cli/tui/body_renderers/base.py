@@ -129,3 +129,14 @@ class BodyRenderer(ABC):
     def extract_sidecar(self, tool_call: object, all_plain: list[str]) -> None:
         """Optional post-finalize hook to mutate ToolCall fields."""
         return None
+
+    @classmethod
+    def streaming_kind_hint(cls, first_chunk: str) -> "ResultKind | None":
+        """Return a ResultKind if the first chunk is a strong signal for this renderer's kind.
+
+        Called once per block at sniff-threshold crossing or COMPLETING (whichever first).
+        Must be O(1) on chunk length — input is pre-truncated to 256 bytes by the service.
+        Must not raise (service wraps in try/except; raises are logged and treated as None).
+        Must be deterministic. Default: None (no hint).
+        """
+        return None

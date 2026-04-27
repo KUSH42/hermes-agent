@@ -1,7 +1,7 @@
 # Tool Block Concept: Three Axes, One Pipeline
 
 **Status:** concept note (not a spec)
-**Version:** 3.5
+**Version:** 3.6
 **Last updated:** 2026-04-27
 **Scope:** the visual representation of a single tool call in the TUI — header, live tail, body, footer.
 **Audience:** anyone touching `tool_blocks/`, `tool_panel/` (including `layout_resolver.py`), `body_renderers/`, `services/tools.py`, `services/plan_sync.py`, `services/feedback.py`, or the renderer registry.
@@ -63,11 +63,31 @@ Each axis has a **resolver** (decides the value) and **subscribers** (react to i
 
 > **Note on terminology.** Earlier drafts called the rendering channels "vocabularies." From v3.0 onward they are **channels** (visual / glyph / motion / a11y) — independent media through which signals reach the user. The word "vocabulary" is reserved for the *axis values themselves* (the strings PHASE/KIND/DENSITY take). This separation matters: channels carry signal redundantly; vocabularies define the signal space.
 
+### Multi-block rhythm
+
+The cube governs one block. Across blocks, a thin rhythm contract holds:
+HERO and DEFAULT blocks earn one row of vertical rest after them; COMPACT
+and TRACE pack tight (zero rows) so deep history stays dense. Group
+children never insert separators — the group header is the rhythm
+landmark for its members. ERR phase always earns the rest gap regardless
+of tier. The contract is CSS-only; no resolver decision touches it.
+
 ---
 
 ## Canonical block mocks
 
 The frame is text-rich; the four mocks below pin down what it actually looks like. Skin colors are not represented; structure and density are.
+
+<!-- coloured-mocks-start -->
+![HERO + STREAMING + focused](concept_mocks/hero_streaming.svg)
+![DEFAULT + ERR + unfocused](concept_mocks/default_err.svg)
+
+> These mocks are regenerated from the bundled default skin palette via
+> `scripts/render_concept_mocks.py`. They are illustrative — every shipped
+> skin clears the contrast gate, so a skin substitution does not change
+> recognition; only hue. If the gate ever changes (e.g. moving from 4.5:1 to
+> 7:1 for body text), regenerate and review.
+<!-- coloured-mocks-end -->
 
 **HERO (T0) — single block per viewport.** Gets full nameplate, full body, highest-priority hints fitted to width (F1 always pinned), separator below. Tie-break order when multiple candidates qualify: focused ▸ only-in-viewport ▸ first-in-viewport ▸ most-recent. Exactly one HERO per viewport at a time.
 
@@ -304,6 +324,7 @@ The a11y channel is more than ARIA strings. It has a verbosity policy and a cont
 | Focus | focus ring color | — | — | focus announce |
 | KIND change (user override) | accent flash | new icon | flash | "kind set to <X>" |
 | DONE | dim border | gutter softens | soft fade | "complete" |
+| Streaming KIND hint | `~<kind>` chip in header | kind icon override | — | "running \<kind\>" announce updated |
 
 Adding a new signal? Fill its row in this table before merging.
 
@@ -448,10 +469,12 @@ Orthogonality means resolvers do not depend on each other's *state* in the stead
 
 | From → To | Where | What flows | Constraint |
 |-----------|-------|------------|------------|
-| PHASE → KIND | `ToolPanel` invokes classifier at COMPLETING | trigger only, not state read | KIND resolves once per block, gated by PHASE entering COMPLETING |
+| PHASE → KIND | `ToolPanel` invokes classifier at COMPLETING | trigger only, not state read | KIND resolves once per block, gated by PHASE entering COMPLETING. A separate glyph-only signal (`streaming_kind_hint`) may update the header icon and chip during STREAMING — see note below. |
 | PHASE → DENSITY | ER cell rule (`PHASE=ERR` bypasses parent clamp) | phase value as resolver input | Errors override clamp; encoded in `LayoutInputs`, not ad-hoc |
 | KIND → DENSITY | renderer declares min-height needs at each tier | per-tier display contract | Renderer is a *subscriber*, not a resolver — declares needs, does not set tier |
 | DENSITY → PHASE | none | — | Forbidden. A block's tier never changes its lifecycle state. |
+
+**Note on streaming KIND hint (SLR-3).** A separate, glyph-only signal — `streaming_kind_hint` — may update the header icon and category chip during STREAMING based on a first-chunk sniff. It does not mutate `view_state.kind` and does not pick a renderer; the body keeps streaming through the raw renderer. Hint clears at COMPLETING; classifier output then drives both icon and renderer as today. The hint is a guess, the classifier is resolution.
 
 Anything not in this table is an axis violation. Example violations seen in review:
 - A renderer reading `view_state.phase` to pick a *different renderer* — that's KIND resolution leaking into a subscriber. Fix: route through `pick_renderer` with phase as a kwarg.
@@ -948,6 +971,12 @@ When this doc drifts from the code: flag it, don't silently edit. Bump the versi
 ---
 
 ## Changelog
+
+### v3.6 — 2026-04-27 — SLR-1/SLR-2/SLR-3: Streaming legibility + visual rhythm
+
+- **SLR-1 (HG-1): Multi-block rhythm contract.** HERO and DEFAULT blocks earn one row of vertical rest (margin-bottom: 1); COMPACT and TRACE pack tight (0). Group children always 0. ERR phase always earns the gap. CSS-only; no resolver change. New "Multi-block rhythm" subsection added to "The frame at a glance."
+- **SLR-2 (HG-2): Colour-rendered mocks.** `scripts/render_concept_mocks.py` generates SVG mocks from `SkinColors.default()` committed to `docs/concept_mocks/`. References inserted between sentinel comments after "## Canonical block mocks."
+- **SLR-3 (HG-3): Streaming KIND hint.** `streaming_kind_hint` classmethod on `BodyRenderer`; implemented on `DiffRenderer`, `JsonRenderer`, `CodeRenderer`. Per-view sniff buffer (threshold: 8 bytes) in `append_tool_output`. Hint written via axis bus (`set_axis(view, "streaming_kind_hint", hint)`); clears at COMPLETING/ERROR/CANCELLED/DONE. `ToolHeader` registers axis watcher and swaps icon glyph + `~<kind>` chip. No motion flash. New row in redundant-signal table; note added to PHASE→KIND coupling row.
 
 ### v3.6 — 2026-04-27 — R4-1: Enter binary toggle
 

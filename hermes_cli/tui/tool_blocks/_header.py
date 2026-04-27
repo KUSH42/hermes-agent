@@ -124,6 +124,8 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         self._remediation_hint: str | None = None
         # DT-4: density tier mirror — set by ToolPanel._on_tier_change
         self._density_tier: DensityTier = DensityTier.DEFAULT
+        # SLR-3: glyph-only streaming kind hint; None = not set.
+        self._streaming_kind_hint: "Any | None" = None
 
     def on_mount(self) -> None:
         self._refresh_gutter_color()
@@ -156,6 +158,40 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 self._tool_icon = _CATEGORY_DEFAULTS[spec.category].ascii_fallback or "?"
             except Exception:
                 self._tool_icon = "?"
+
+    # SLR-3: per-kind icon and label for streaming_kind_hint display.
+    _KIND_HINT_ICON: "dict[Any, str]" = {}   # populated lazily to avoid import cycle
+    _KIND_HINT_LABEL: "dict[Any, str]" = {}  # populated lazily to avoid import cycle
+
+    @classmethod
+    def _build_kind_hint_maps(cls) -> None:
+        if cls._KIND_HINT_ICON:
+            return
+        try:
+            from hermes_cli.tui.tool_payload import ResultKind
+            cls._KIND_HINT_ICON = {
+                ResultKind.DIFF: "±",
+                ResultKind.JSON: "{",
+                ResultKind.CODE: "#",
+            }
+            cls._KIND_HINT_LABEL = {
+                ResultKind.DIFF: "diff",
+                ResultKind.JSON: "json",
+                ResultKind.CODE: "code",
+            }
+        except Exception:
+            pass
+
+    def attach_stream_axis_watcher(self, view: "Any") -> None:
+        """Register this header as a streaming_kind_hint axis watcher on view."""
+        from hermes_cli.tui.services.tools import add_axis_watcher
+        add_axis_watcher(view, self._on_axis_change)
+
+    def _on_axis_change(self, view: "Any", axis: str, old: "Any", new: "Any") -> None:
+        if axis == "streaming_kind_hint":
+            self._streaming_kind_hint = new
+            if self.is_attached:
+                self.refresh()
 
     def _colors(self):
         """Lazy resolve + cache SkinColors. Falls back to defaults pre-mount.
@@ -230,6 +266,12 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 icon_str = err_icon or icon_str
             except Exception:
                 pass
+        # SLR-3: override icon with kind hint glyph during STREAMING.
+        if self._streaming_kind_hint is not None and not self._is_complete and not self._tool_icon_error:
+            self._build_kind_hint_maps()
+            _hint_icon = self._KIND_HINT_ICON.get(self._streaming_kind_hint)
+            if _hint_icon:
+                icon_str = _hint_icon
         icon_cell_w = _safe_cell_width(icon_str) if icon_str else 0
         if icon_str:
             if self._tool_icon_error:
@@ -356,6 +398,16 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 tail_segments.append(("kind", Text(
                     f"  as {kind_label}",
                     style=f"dim italic {self._colors().accent}",
+                )))
+
+        # SLR-3: streaming kind hint chip + icon override — glyph-only, no flash.
+        if self._streaming_kind_hint is not None and not self._is_complete:
+            self._build_kind_hint_maps()
+            _hint_label = self._KIND_HINT_LABEL.get(self._streaming_kind_hint, "")
+            if _hint_label:
+                tail_segments.append(("stream-hint", Text(
+                    f"  ~{_hint_label}",
+                    style="dim",
                 )))
 
         # P-2: trace-armed chip — visible while TRACE is queued but block still streaming

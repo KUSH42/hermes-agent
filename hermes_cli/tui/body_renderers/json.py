@@ -87,6 +87,14 @@ class JsonRenderer(BodyRenderer):
         from hermes_cli.tui.tool_payload import ResultKind
         return cls_result.kind == ResultKind.JSON
 
+    @classmethod
+    def streaming_kind_hint(cls, first_chunk: str) -> "ResultKind | None":
+        from hermes_cli.tui.tool_payload import ResultKind
+        stripped = first_chunk[:256].lstrip()
+        if stripped and stripped[0] in ("{", "["):
+            return ResultKind.JSON
+        return None
+
     def _render_parse_failure(self, raw: str, exc: Exception):
         from rich.text import Text
         from rich.console import Group

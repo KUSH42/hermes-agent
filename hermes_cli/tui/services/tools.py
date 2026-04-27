@@ -81,6 +81,10 @@ class ToolCallViewState:
     density_reason: "Literal['auto', 'user', 'error_override', 'initial'] | None" = None
     # P-5: set by _terminalize_tool_view alongside is_error; None until terminal.
     exit_code: "int | None" = None
+    # SLR-3: glyph-only signal during STREAMING; cleared on COMPLETING/ERROR/CANCELLED/DONE.
+    streaming_kind_hint: "ResultKind | None" = None
+    # SLR-3: sniff buffer — accumulates raw chunks until threshold; None after sniff fires.
+    _sniff_buffer: "str | None" = ""
 
     @property
     def is_error_for_ui(self) -> bool:
@@ -104,7 +108,7 @@ class ToolCallViewState:
 # AXIS-3: Observer hook
 # ---------------------------------------------------------------------------
 
-AxisName = Literal["state", "kind", "density"]
+AxisName = Literal["state", "kind", "density", "streaming_kind_hint"]
 _AxisWatcher = Callable[["ToolCallViewState", AxisName, Any, Any], None]
 
 
@@ -209,6 +213,14 @@ class ToolRenderingService(AppService):
             old = view.state
             if old == new:
                 return
+            # SLR-3: clear streaming_kind_hint on resolving/terminal state transitions.
+            if new in (
+                ToolCallState.COMPLETING,
+                ToolCallState.ERROR,
+                ToolCallState.CANCELLED,
+                ToolCallState.DONE,
+            ) and view.streaming_kind_hint is not None:
+                set_axis(view, "streaming_kind_hint", None)
             set_axis(view, "state", new)
             if self._plan_broker is not None:
                 self._plan_broker.on_view_state(view, old, new)
@@ -1247,10 +1259,50 @@ class ToolRenderingService(AppService):
         # from STREAMING is safe.
         if view.state == ToolCallState.STARTED:
             self._set_view_state(view, ToolCallState.STREAMING)
+            # SLR-3: register header axis watcher exactly once, at STREAMING entry.
+            self._register_header_hint_watcher(view)
         if self._live_block_for_streaming(tool_call_id) is None:
             logger.debug("append_tool_output: block gone post-axis for id=%s", tool_call_id)
             return
         self.append_streaming_line(tool_call_id, line)
+        # SLR-3: accumulate sniff buffer and fire hint once at threshold.
+        self._run_sniff_buffer(view, line)
+
+    # SLR-3: sniff buffer helpers
+    _MIN_HINT_PREFIX_BYTES: int = 8
+
+    def _register_header_hint_watcher(self, view: "ToolCallViewState") -> None:
+        """Wire ToolHeader axis watcher for streaming_kind_hint. Called once at STREAMING entry."""
+        try:
+            header = getattr(getattr(view, "block", None), "_header", None)
+            if header is not None and hasattr(header, "attach_stream_axis_watcher"):
+                header.attach_stream_axis_watcher(view)
+        except Exception:
+            logger.debug("_register_header_hint_watcher: failed for id=%s", view.tool_call_id, exc_info=True)
+
+    def _run_sniff_buffer(self, view: "ToolCallViewState", chunk: str) -> None:
+        """Accumulate sniff buffer; fire streaming_kind_hint once at threshold."""
+        if view._sniff_buffer is None:
+            return  # already fired or cleared
+        view._sniff_buffer += chunk
+        if len(view._sniff_buffer.lstrip()) < self._MIN_HINT_PREFIX_BYTES:
+            return
+        # Lstrip before passing to renderers — threshold check uses lstripped length;
+        # renderers expect content to start at the first non-whitespace char.
+        buf = view._sniff_buffer.lstrip()[:256]
+        view._sniff_buffer = None  # discard buffer — hint fires at most once
+        from hermes_cli.tui.body_renderers import REGISTRY
+        for renderer_cls in REGISTRY:
+            if not hasattr(renderer_cls, "streaming_kind_hint"):
+                continue
+            try:
+                hint = renderer_cls.streaming_kind_hint(buf)
+            except Exception:
+                logger.exception("streaming_kind_hint raised in %s", renderer_cls.__name__)
+                hint = None
+            if hint is not None:
+                set_axis(view, "streaming_kind_hint", hint)
+                return
 
     def complete_tool_call(
         self,

@@ -788,6 +788,27 @@ ToolPanel.category-agent.tool-panel--accent  { border-left: vkey $accent 40%; }
 ToolPanel.category-mcp.tool-panel--accent    { border-left: vkey $tool-mcp-accent 80%; }
 ToolPanel.category-vision.tool-panel--accent { border-left: vkey $tool-vision-accent 80%; }
 ToolPanel.tool-panel--error                  { border-left: vkey $error 80%; }
+
+/* SLR-1: multi-block rhythm contract.
+   Order is load-bearing — all rules share specificity (0,1,1).
+   Tier rules first; ChildPanel override second; error override LAST so it
+   wins for both ToolPanel and ChildPanel. */
+ToolPanel { margin-bottom: 0; }
+ToolPanel.tool-panel--tier-hero,
+ToolPanel.tool-panel--tier-default { margin-bottom: 1; }
+ToolPanel.tool-panel--tier-compact,
+ToolPanel.tool-panel--tier-trace   { margin-bottom: 0; }
+/* Group children pack tight — group header is the rhythm landmark.
+   Explicit tier overrides needed because ChildPanel extends ToolPanel and the
+   ToolPanel.tool-panel--tier-* rules (specificity 0,1,1) would otherwise win. */
+ChildPanel.tool-panel--tier-hero,
+ChildPanel.tool-panel--tier-default,
+ChildPanel.tool-panel--tier-compact,
+ChildPanel.tool-panel--tier-trace { margin-bottom: 0; }
+/* ERR override — must appear LAST so it wins for both ToolPanel and ChildPanel. */
+ToolPanel.tool-panel--error,
+ChildPanel.tool-panel--error { margin-bottom: 1; }
+
 /* QW-03: collapsed strip always visible when collapsed; dimmer when unfocused */
 _CollapsedActionStrip { color: $text-muted 50%; }
 ToolPanel:focus _CollapsedActionStrip { color: $text-muted 85%; }

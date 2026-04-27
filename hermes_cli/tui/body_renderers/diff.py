@@ -366,6 +366,17 @@ class DiffRenderer(BodyRenderer):
 
         return cls_result.kind == ResultKind.DIFF
 
+    @classmethod
+    def streaming_kind_hint(cls, first_chunk: str) -> "ResultKind | None":
+        from hermes_cli.tui.tool_payload import ResultKind
+        chunk = first_chunk[:256]
+        if chunk.startswith("diff --git ") or chunk.startswith("@@ "):
+            return ResultKind.DIFF
+        # unified header pair: "--- a/f\n+++ b/f"
+        if chunk.startswith("--- ") and "\n+++ " in chunk:
+            return ResultKind.DIFF
+        return None
+
     def build(self):
         raw = self.payload.output_raw or ""
         lines = raw.splitlines()

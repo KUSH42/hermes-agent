@@ -439,20 +439,19 @@ class TestOmissionBarResetLabel:
             label = OmissionBar._reset_label()
             assert label == "[reset]"
 
-    def test_emoji_mode_returns_emoji_label(self):
+    def test_emoji_mode_returns_reset_label(self):
+        # _reset_label is icon-mode-independent; always returns "[reset]"
         from hermes_cli.tui.tool_blocks import OmissionBar
         with patch("agent.display.get_tool_icon_mode", return_value="emoji"):
             label = OmissionBar._reset_label()
-            assert "🔄" in label
             assert "reset" in label
 
-    def test_nerdfont_mode_returns_nerd_icon(self):
+    def test_nerdfont_mode_returns_reset_label(self):
+        # _reset_label is icon-mode-independent; always returns "[reset]"
         from hermes_cli.tui.tool_blocks import OmissionBar
         with patch("agent.display.get_tool_icon_mode", return_value="nerdfont"):
             label = OmissionBar._reset_label()
             assert "reset" in label
-            # nerdfont char U+F09A8
-            assert "\U000f09a8" in label
 
 
 # ---------------------------------------------------------------------------

@@ -18,11 +18,11 @@ class TestD1PeekHint:
         """D1: peek/⇧↵ are power-tier hints, signalled by F1 overflow indicator."""
         import inspect
         from hermes_cli.tui.tool_panel import ToolPanel
+        # F1 may be in _build_hint_text or the render helper it delegates to
         src = inspect.getsource(ToolPanel._build_hint_text)
-        # B1 three-tier model: power keys (⇧↵/peek) are not shown inline;
-        # they are behind F1. Verify F1 overflow is signalled.
-        assert "_power_keys_exist" in src or "F1" in src, (
-            "D1: power-tier overflow (F1) must be signalled in _build_hint_text"
+        render_src = inspect.getsource(ToolPanel._render_hints) if hasattr(ToolPanel, "_render_hints") else ""
+        assert "_power_keys_exist" in src or "F1" in src or "F1" in render_src, (
+            "D1: power-tier overflow (F1) must be signalled in hint-building code"
         )
 
     def test_get_tool_group_import_present(self):

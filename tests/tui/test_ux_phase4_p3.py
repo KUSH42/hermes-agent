@@ -98,16 +98,22 @@ def test_follow_tail_resets_on_complete():
     stb._visible_start = 0
     stb._omission_bar_top_mounted = False
     stb._omission_bar_bottom_mounted = False
+    stb._truncated_line_count = 0
+    stb._line_err_count = 0
 
     # Mock timers so stop() doesn't fail
     stb._render_timer = MagicMock()
     stb._spinner_timer = MagicMock()
     stb._duration_timer = MagicMock()
 
-    # _flush_pending and _clear_microcopy_on_complete need body query
+    # _flush_pending and _clear_microcopy_on_complete need body query;
+    # add_class/set_class need a real Textual widget; post_message needs a running app
     with patch.object(type(stb), '_flush_pending', lambda self: None), \
          patch.object(type(stb), '_clear_microcopy_on_complete', lambda self: None), \
-         patch.object(type(stb), '_try_mount_media', lambda self: False):
+         patch.object(type(stb), '_try_mount_media', lambda self: False), \
+         patch.object(type(stb), 'add_class', lambda self, *a, **kw: None), \
+         patch.object(type(stb), 'set_class', lambda self, *a, **kw: None), \
+         patch.object(type(stb), 'post_message', lambda self, *a, **kw: None):
         stb.complete("1.0s", is_error=False)
 
     assert stb._follow_tail is False
@@ -118,6 +124,19 @@ def test_follow_tail_resets_on_complete():
 # ---------------------------------------------------------------------------
 
 
+def _extract_syntax(result):
+    """Extract the Syntax object from either a plain Syntax or a Group(notice, syntax)."""
+    from rich.syntax import Syntax
+    from rich.console import Group
+    if isinstance(result, Syntax):
+        return result
+    if isinstance(result, Group):
+        for item in result.renderables:
+            if isinstance(item, Syntax):
+                return item
+    return result
+
+
 def test_shell_renderer_finalize_json():
     """ShellRenderer.finalize returns Syntax with language 'json' for JSON output."""
     from hermes_cli.tui.body_renderers.streaming import ShellRenderer
@@ -125,11 +144,13 @@ def test_shell_renderer_finalize_json():
 
     renderer = ShellRenderer()
     result = renderer.finalize(['{"a": 1}'])
-    assert isinstance(result, Syntax)
+    assert result is not None
+    syntax = _extract_syntax(result)
+    assert isinstance(syntax, Syntax)
     # result.lexer may be a pygments lexer object or a string depending on rich version
     lexer_name = (
-        result.lexer if isinstance(result.lexer, str)
-        else type(result.lexer).__name__.lower()
+        syntax.lexer if isinstance(syntax.lexer, str)
+        else type(syntax.lexer).__name__.lower()
     )
     assert "json" in lexer_name
 
@@ -141,10 +162,12 @@ def test_shell_renderer_finalize_yaml():
 
     renderer = ShellRenderer()
     result = renderer.finalize(["---", "foo: bar"])
-    assert isinstance(result, Syntax)
+    assert result is not None
+    syntax = _extract_syntax(result)
+    assert isinstance(syntax, Syntax)
     lexer_name = (
-        result.lexer if isinstance(result.lexer, str)
-        else type(result.lexer).__name__.lower()
+        syntax.lexer if isinstance(syntax.lexer, str)
+        else type(syntax.lexer).__name__.lower()
     )
     assert "yaml" in lexer_name
 
@@ -266,10 +289,34 @@ def _make_panel_for_hint(result_summary=None) -> Any:
     panel._get_omission_bar = lambda: None
     panel._result_paths_for_action = lambda: []
 
-    # Bind the real method from ToolPanel to our namespace object
+    # Stub out state methods required by _collect_hints/_build_hint_text
+    panel._view_state = None
+    panel._lookup_view_state = lambda: None
+    panel._visible_footer_action_kinds = lambda: set()
+    panel._next_kind_label = None
+    panel._hint_visible = False
+    panel._last_resize_w = 80
+
+    # Bind the real methods from ToolPanel to our namespace object
     from hermes_cli.tui.tool_panel import ToolPanel
+    from hermes_cli.tui.tool_panel._actions import _ToolPanelActionsMixin
     import types as _types
-    panel._build_hint_text = _types.MethodType(ToolPanel._build_hint_text, panel)
+    # Bind pipeline methods needed for the hint rendering chain
+    _methods_to_bind = [
+        "_build_hint_text",
+        "_collect_hints",
+        "_is_error",
+        "_render_hints",
+        "_truncate_hints",
+        "_visible_footer_action_kinds",
+    ]
+    for name in _methods_to_bind:
+        method = getattr(_ToolPanelActionsMixin, name, None) or getattr(ToolPanel, name, None)
+        if method is not None:
+            setattr(panel, name, _types.MethodType(method, panel))
+    # Override with ToolPanel's version for _build_hint_text specifically
+    if hasattr(ToolPanel, "_build_hint_text"):
+        panel._build_hint_text = _types.MethodType(ToolPanel._build_hint_text, panel)
     return panel
 
 

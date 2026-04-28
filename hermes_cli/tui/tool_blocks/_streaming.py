@@ -59,6 +59,7 @@ try:
 except ValueError:
     logger.warning(
         "HERMES_TOOL_SKELETON_DELAY_MS is not a valid number; using 100ms default",
+        exc_info=True,
     )
     _SKELETON_DELAY_S = 0.1
 _SKELETON_GLYPH = "· · ·"
@@ -270,6 +271,10 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             return
         if self._completed:
             return
+        # SK-1: first chunk dismisses the skeleton (timer-cancel path <100ms, widget-remove path ≥100ms).
+        # _flush_pending also dismisses via FH-2 compositor path; both guards are safe to coexist.
+        if getattr(self, "_skeleton_timer", None) is not None or getattr(self, "_skeleton_widget", None) is not None:
+            self._dismiss_skeleton()
         line_byte_cap = getattr(self, "_line_byte_cap", _LINE_BYTE_CAP)
         if len(raw) > line_byte_cap:
             over = len(raw) - line_byte_cap
@@ -853,7 +858,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         self._settled_timer = None
         # FH-8: re-evaluate omission bars now that _settled flipped so any
         # in-flight cap warning is suppressed at the 600 ms boundary.
-        if self._omission_bar_top_mounted or self._omission_bar_bottom_mounted:
+        if getattr(self, "_omission_bar_top_mounted", False) or getattr(self, "_omission_bar_bottom_mounted", False):
             self._refresh_omission_bars()
 
     def _clear_settled(self) -> None:

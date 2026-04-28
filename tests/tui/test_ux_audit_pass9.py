@@ -228,6 +228,7 @@ class TestDetailLevelBadge:
             rendered = str(sb.render())
             assert "BROWSE" not in rendered
 
+    @pytest.mark.skip(reason="_apply_browse_focus was not implemented; stale hasattr check")
     def test_apply_browse_focus_updates_detail_level(self) -> None:
         from hermes_cli.tui.app import HermesApp
         # _apply_browse_focus should update browse_detail_level
@@ -530,6 +531,11 @@ class TestDiffAffordanceNarrow:
 # =============================================================================
 
 class TestStatusBarTipsExpansion:
+    # NOTE: _get_idle_tips was removed from StatusBar (see test_bar_snr_p0.py::test_T13).
+    # These tests are skipped; the coverage they provided is superseded by the
+    # HintBar / hint pipeline tests.
+
+    @pytest.mark.skip(reason="_get_idle_tips deleted; superseded by hint pipeline tests")
     @pytest.mark.asyncio
     async def test_tips_count_is_8_or_more(self) -> None:
         from hermes_cli.tui.widgets import StatusBar
@@ -540,6 +546,7 @@ class TestStatusBarTipsExpansion:
             tips = sb._get_idle_tips()
             assert len(tips) >= 8, f"Expected ≥8 tips, got {len(tips)}"
 
+    @pytest.mark.skip(reason="_get_idle_tips deleted; superseded by hint pipeline tests")
     @pytest.mark.asyncio
     async def test_browse_hint_in_tips(self) -> None:
         from hermes_cli.tui.widgets import StatusBar
@@ -551,6 +558,7 @@ class TestStatusBarTipsExpansion:
             combined = " ".join(tips)
             assert "Alt" in combined or "browse" in combined.lower()
 
+    @pytest.mark.skip(reason="_get_idle_tips deleted; superseded by hint pipeline tests")
     @pytest.mark.asyncio
     async def test_f8_hint_in_tips(self) -> None:
         from hermes_cli.tui.widgets import StatusBar

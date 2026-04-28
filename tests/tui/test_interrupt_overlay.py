@@ -245,6 +245,7 @@ async def test_countdown_expiry_cancels_clarify():
 
 @pytest.mark.asyncio
 async def test_countdown_expiry_approval():
+    """APPROVAL never auto-dismisses via countdown — only CLARIFY does."""
     async with _App().run_test() as pilot:
         ov = pilot.app.query_one(InterruptOverlay)
         p = _make_payload(
@@ -256,11 +257,12 @@ async def test_countdown_expiry_approval():
         p.deadline = time.monotonic() - 1
         ov._tick_countdown()
         await pilot.pause()
-        assert p._resolved == [""]
+        assert p._resolved == []  # APPROVAL does not auto-dismiss
 
 
 @pytest.mark.asyncio
 async def test_countdown_expiry_sudo():
+    """SUDO never auto-dismisses via countdown — only CLARIFY does."""
     async with _App().run_test() as pilot:
         ov = pilot.app.query_one(InterruptOverlay)
         p = _make_payload(InterruptKind.SUDO, countdown_s=0.001)
@@ -268,11 +270,12 @@ async def test_countdown_expiry_sudo():
         p.deadline = time.monotonic() - 1
         ov._tick_countdown()
         await pilot.pause()
-        assert p._resolved == [""]
+        assert p._resolved == []  # SUDO does not auto-dismiss
 
 
 @pytest.mark.asyncio
 async def test_countdown_expiry_secret():
+    """SECRET never auto-dismisses via countdown — only CLARIFY does."""
     async with _App().run_test() as pilot:
         ov = pilot.app.query_one(InterruptOverlay)
         p = _make_payload(InterruptKind.SECRET, countdown_s=0.001)
@@ -280,11 +283,12 @@ async def test_countdown_expiry_secret():
         p.deadline = time.monotonic() - 1
         ov._tick_countdown()
         await pilot.pause()
-        assert p._resolved == [""]
+        assert p._resolved == []  # SECRET does not auto-dismiss
 
 
 @pytest.mark.asyncio
 async def test_countdown_expiry_undo():
+    """UNDO never auto-dismisses via countdown — only CLARIFY does."""
     async with _App().run_test() as pilot:
         ov = pilot.app.query_one(InterruptOverlay)
         p = _make_payload(
@@ -295,7 +299,7 @@ async def test_countdown_expiry_undo():
         p.deadline = time.monotonic() - 1
         ov._tick_countdown()
         await pilot.pause()
-        assert p._resolved == [""]
+        assert p._resolved == []  # UNDO does not auto-dismiss
 
 
 # ──────────────────────────────────────────────────────────────────────────

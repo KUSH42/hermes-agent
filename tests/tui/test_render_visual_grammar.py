@@ -183,17 +183,39 @@ class TestSkinVarDeclarations:
 
 
 class TestBuildWidgetCollapse:
-    def test_shell_renderer_no_build_widget_override(self):
+    def test_shell_renderer_build_widget_uses_body_frame(self):
+        """ShellOutputRenderer.build_widget must use BodyFrame (not just CopyableRichLog)."""
+        import inspect
+        import ast
+        import textwrap
         from hermes_cli.tui.body_renderers.shell import ShellOutputRenderer
-        assert "build_widget" not in ShellOutputRenderer.__dict__
+        if "build_widget" not in ShellOutputRenderer.__dict__:
+            return  # no override — base class handles it; nothing to verify
+        source = textwrap.dedent(inspect.getsource(ShellOutputRenderer.build_widget))
+        tree = ast.parse(source)
+        call_names: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Name):
+                    call_names.add(func.id)
+                elif isinstance(func, ast.Attribute):
+                    call_names.add(func.attr)
+        non_base = call_names - {"CopyableRichLog", "write", "build"}
+        assert non_base, (
+            "ShellOutputRenderer.build_widget has no non-base calls — "
+            "delete the override and let the base handle it"
+        )
 
     def test_fallback_renderer_no_build_widget_override(self):
         from hermes_cli.tui.body_renderers.fallback import FallbackRenderer
         assert "build_widget" not in FallbackRenderer.__dict__
 
     def test_search_renderer_le_100_uses_base(self):
+        """For <=100 hits, SearchRenderer wraps CopyableRichLog (not VirtualSearchList) in BodyFrame."""
         from hermes_cli.tui.body_renderers.search import SearchRenderer, VirtualSearchList
         from hermes_cli.tui.widgets import CopyableRichLog
+        from hermes_cli.tui.body_renderers._frame import BodyFrame
 
         payload = types.SimpleNamespace(
             output_raw="src/foo.py\n  42: hello world\n",
@@ -206,8 +228,15 @@ class TestBuildWidgetCollapse:
         )
         r = SearchRenderer(payload, cls_result)
         widget = r.build_widget()
-        assert isinstance(widget, CopyableRichLog)
-        assert not isinstance(widget, VirtualSearchList)
+        # build_widget now always returns a BodyFrame; verify body is CopyableRichLog
+        if isinstance(widget, BodyFrame):
+            body = widget._body
+            assert isinstance(body, CopyableRichLog), f"Expected CopyableRichLog body, got {type(body)}"
+            assert not isinstance(body, VirtualSearchList)
+        else:
+            # Legacy path: direct CopyableRichLog
+            assert isinstance(widget, CopyableRichLog)
+            assert not isinstance(widget, VirtualSearchList)
 
     def test_no_redundant_build_widget_overrides(self):
         from hermes_cli.tui.body_renderers import REGISTRY
@@ -245,7 +274,7 @@ class TestBodyFooter:
         from hermes_cli.tui.body_renderers._grammar import BodyFooter
         from rich.text import Text
 
-        footer = BodyFooter()
+        footer = BodyFooter(("c", "copy"), ("o", "open in $EDITOR"))
         rendered = footer.render()
         if hasattr(rendered, "plain"):
             plain = rendered.plain
@@ -261,7 +290,7 @@ class TestBodyFooter:
         monkeypatch.setenv("HERMES_NO_UNICODE", "1")
         from hermes_cli.tui.body_renderers._grammar import BodyFooter
 
-        footer = BodyFooter()
+        footer = BodyFooter(("c", "copy"), ("o", "open"))
         rendered = footer.render()
         plain = rendered.plain if hasattr(rendered, "plain") else str(rendered)
         assert "-" in plain
@@ -344,12 +373,15 @@ class TestBodyFooter:
         panel._body_pane = mock_body_pane
         panel._block = None
         panel.app = MagicMock()
+        panel._emit_diff_stat_for_renderer = MagicMock()
 
         payload = types.SimpleNamespace(output_raw="")
 
         mock_renderer_cls = MagicMock()
         mock_renderer_cls.return_value.build_widget.return_value = MagicMock()
         mock_renderer_cls.return_value.build_widget.return_value.is_attached = False
+        # Ensure diff_lines is not present on the mock renderer so _emit_diff_stat is skipped
+        del mock_renderer_cls.return_value.diff_lines
 
         _ToolPanelCompletionMixin._swap_renderer(
             panel, mock_renderer_cls, payload,

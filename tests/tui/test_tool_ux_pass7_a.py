@@ -28,6 +28,9 @@ def _make_footer_base():
     artifact_mock.children = []
     artifact_mock.query.return_value = []
     footer._artifact_row = artifact_mock
+    action_mock = MagicMock()
+    action_mock.query.return_value = []
+    footer._action_row = action_mock
     footer.add_class = MagicMock()
     footer.remove_class = MagicMock()
     return footer, content_mock
@@ -44,6 +47,25 @@ class TestA1SuppressActionRowDuringStreaming:
             artifacts=(), is_error=False,
         )
 
+    def _action_row_text(self, footer) -> str:
+        """Collect text from all Button labels mounted to _action_row."""
+        action_mock = footer._action_row
+        if not action_mock.mount.called:
+            return ""
+        mounted_buttons = []
+        for call in action_mock.mount.call_args_list:
+            mounted_buttons.extend(call[0])
+        parts = []
+        for btn in mounted_buttons:
+            lbl = getattr(btn, "label", None)
+            if lbl is not None:
+                # Label may be Rich Text, Textual Content, or plain str
+                if hasattr(lbl, "plain"):
+                    parts.append(lbl.plain)
+                else:
+                    parts.append(str(lbl))
+        return " ".join(parts)
+
     def test_action_row_hidden_when_streaming(self):
         """A1: action row must not appear when block._completed is False."""
         footer, content_mock = _make_footer_base()
@@ -56,9 +78,8 @@ class TestA1SuppressActionRowDuringStreaming:
         with patch.object(type(footer), 'parent', new_callable=lambda: property(lambda s: parent)):
             with patch.object(footer, '_rebuild_artifact_buttons'):
                 footer._render_footer(summary, frozenset())
-        rendered_text = content_mock.update.call_args[0][0]
-        plain = rendered_text.plain if hasattr(rendered_text, 'plain') else str(rendered_text)
-        assert "[c]" not in plain, "Action row should be suppressed during streaming"
+        # When streaming, _rebuild_action_buttons is called with empty list → no mount
+        assert not footer._action_row.mount.called, "Action buttons must not be mounted during streaming"
 
     def test_action_row_shown_when_completed(self):
         """A1: action row must appear when block._completed is True."""
@@ -71,8 +92,7 @@ class TestA1SuppressActionRowDuringStreaming:
         with patch.object(type(footer), 'parent', new_callable=lambda: property(lambda s: parent)):
             with patch.object(footer, '_rebuild_artifact_buttons'):
                 footer._render_footer(summary, frozenset())
-        rendered_text = content_mock.update.call_args[0][0]
-        plain = rendered_text.plain if hasattr(rendered_text, 'plain') else str(rendered_text)
+        plain = self._action_row_text(footer)
         assert "[c]" in plain, "Action row should appear after completion"
 
     def test_action_row_shown_when_no_block(self):
@@ -84,8 +104,7 @@ class TestA1SuppressActionRowDuringStreaming:
         with patch.object(type(footer), 'parent', new_callable=lambda: property(lambda s: parent)):
             with patch.object(footer, '_rebuild_artifact_buttons'):
                 footer._render_footer(summary, frozenset())
-        rendered_text = content_mock.update.call_args[0][0]
-        plain = rendered_text.plain if hasattr(rendered_text, 'plain') else str(rendered_text)
+        plain = self._action_row_text(footer)
         assert "[c]" in plain
 
 

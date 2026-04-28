@@ -488,6 +488,14 @@ class TestRegistryOrder:
             "ShellOutputRenderer",
             "EmptyStateRenderer",
             "FallbackRenderer",
+            "ShellRenderer",
+            "StreamingCodeRenderer",
+            "FileRenderer",
+            "StreamingSearchRenderer",
+            "WebRenderer",
+            "AgentRenderer",
+            "TextRenderer",
+            "MCPBodyRenderer",
         ]
 
 

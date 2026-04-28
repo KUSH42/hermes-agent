@@ -249,37 +249,31 @@ async def test_workspace_git_tab_active_by_default():
 
 
 @pytest.mark.asyncio
-async def test_workspace_switch_to_sessions_tab():
-    """WorkspaceOverlay._switch_tab('ws-sessions-pane') activates sessions button."""
+async def test_workspace_switch_git_tab_active():
+    """WorkspaceOverlay._switch_tab('ws-git-pane') keeps git button --tab-active."""
     app = _make_app()
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
         ov = app.query_one(WorkspaceOverlay)
-        ov._switch_tab("ws-sessions-pane")
-        await pilot.pause()
-        from textual.widgets import Button
-        git_btn = ov.query_one("#ws-tab-git", Button)
-        sess_btn = ov.query_one("#ws-tab-sessions", Button)
-        assert not git_btn.has_class("--tab-active")
-        assert sess_btn.has_class("--tab-active")
-
-
-@pytest.mark.asyncio
-async def test_workspace_switch_back_to_git_tab():
-    """WorkspaceOverlay._switch_tab back to git pane restores git button active."""
-    app = _make_app()
-    async with app.run_test(size=(80, 30)) as pilot:
-        await pilot.pause()
-        ov = app.query_one(WorkspaceOverlay)
-        ov._switch_tab("ws-sessions-pane")
-        await pilot.pause()
         ov._switch_tab("ws-git-pane")
         await pilot.pause()
         from textual.widgets import Button
         git_btn = ov.query_one("#ws-tab-git", Button)
-        sess_btn = ov.query_one("#ws-tab-sessions", Button)
         assert git_btn.has_class("--tab-active")
-        assert not sess_btn.has_class("--tab-active")
+
+
+@pytest.mark.asyncio
+async def test_workspace_switch_unknown_pane_no_crash():
+    """WorkspaceOverlay._switch_tab with an unknown pane_id must not crash."""
+    app = _make_app()
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        ov = app.query_one(WorkspaceOverlay)
+        ov._switch_tab("ws-nonexistent-pane")  # must not raise
+        await pilot.pause()
+        from textual.widgets import Button
+        git_btn = ov.query_one("#ws-tab-git", Button)
+        assert git_btn.has_class("--tab-active")
 
 
 # ---------------------------------------------------------------------------

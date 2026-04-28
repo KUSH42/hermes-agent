@@ -365,7 +365,10 @@ class TestL2CodeFenceBufferFallback:
         with patch("hermes_cli.tui.response_flow._log") as mock_log:
             engine._flush_code_fence_buffer()
 
-        mock_log.debug.assert_called_once()
-        assert mock_log.debug.call_args.kwargs.get("exc_info") is True
+        # SF adds a [STREAM-BUF] debug log before the fallback; allow ≥1 debug calls.
+        assert mock_log.debug.call_count >= 1
+        # The last debug call must be the fallback log with exc_info=True
+        last_debug = mock_log.debug.call_args_list[-1]
+        assert last_debug.kwargs.get("exc_info") is True
         # Both lines written as prose fallback
         assert log.write_with_source.call_count == 2

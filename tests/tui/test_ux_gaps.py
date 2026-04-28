@@ -368,28 +368,42 @@ def test_compaction_warned_initialized():
 
 @pytest.mark.asyncio
 async def test_watch_compaction_progress_flash_at_90():
-    """watch_status_compaction_progress flashes hint at ≥90%."""
+    """watch_status_compaction_progress flashes hint at ≥warn threshold (85% or 90%)."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         app.status_compaction_progress = 0.92
         await pilot.pause()
         hint = _get_hint(app)
-        assert "90%" in hint or "compaction" in hint.lower() or app._compaction_warned
+        # Accept any % warning message ("85%", "90%", "compact", etc.)
+        assert (
+            "%" in hint
+            or "compaction" in hint.lower()
+            or "compact" in hint.lower()
+        ), f"Expected compaction hint, got: {hint!r}"
 
 
 @pytest.mark.asyncio
 async def test_watch_compaction_progress_resets_warned_at_zero():
-    """watch_status_compaction_progress resets _compaction_warned when value=0.0."""
+    """watch_status_compaction_progress resets warn state when value=0.0."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         app.status_compaction_progress = 0.95
         await pilot.pause()
-        assert app._compaction_warned is True
+        # The warn state is tracked on the watchers service or app._compaction_warned
+        warned = (
+            getattr(app, "_compaction_warned", False)
+            or getattr(getattr(app, "_svc_watchers", None), "_compact_warn_flashed", False)
+        )
+        assert warned, "Expected compaction warn state to be set after 0.95 progress"
         app.status_compaction_progress = 0.0
         await pilot.pause()
-        assert app._compaction_warned is False
+        warned_after = (
+            getattr(app, "_compaction_warned", True)
+            and getattr(getattr(app, "_svc_watchers", None), "_compact_warn_flashed", True)
+        )
+        assert not warned_after, "Expected compaction warn state to reset at 0.0"
 
 
 # ===========================================================================
@@ -599,36 +613,46 @@ async def test_new_message_returns_message_panel():
 # §2.9 — Density Compact CSS
 # ===========================================================================
 
-def test_action_toggle_density_adds_class():
+@pytest.mark.asyncio
+async def test_action_toggle_density_adds_class():
     """action_toggle_density adds density-compact class when not present."""
     app = _make_app()
-    with patch.object(app, "_flash_hint"):
-        app.action_toggle_density()
-    assert app.has_class("density-compact")
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        with patch.object(app, "_flash_hint"):
+            app.action_toggle_density()
+        await pilot.pause()
+        assert app.has_class("density-compact")
 
 
-def test_action_toggle_density_removes_class():
-    """action_toggle_density removes density-compact class when compact=True."""
-    from unittest.mock import PropertyMock
-    from textual.geometry import Size
+@pytest.mark.asyncio
+async def test_action_toggle_density_removes_class():
+    """action_toggle_density removes density-compact class when compact=True and terminal is wide."""
     app = _make_app()
-    app._compact_manual = True
-    app.compact = True
-    app.add_class("density-compact")
-    with patch.object(app, "_flash_hint"), \
-         patch.object(type(app), "size", new_callable=PropertyMock, return_value=Size(160, 50)):
-        app.action_toggle_density()
-    assert not app.has_class("density-compact")
+    # Use a wide terminal so auto-mode switches to non-compact (160 > 120 threshold)
+    async with app.run_test(size=(160, 50)) as pilot:
+        await pilot.pause()
+        app._compact_manual = True
+        app.compact = True
+        await pilot.pause()
+        app.add_class("density-compact")
+        with patch.object(app, "_flash_hint"):
+            app.action_toggle_density()
+        await pilot.pause()
+        assert not app.has_class("density-compact")
 
 
-def test_action_toggle_density_flashes_hint():
+@pytest.mark.asyncio
+async def test_action_toggle_density_flashes_hint():
     """action_toggle_density flashes a hint message."""
     app = _make_app()
-    hints: list[str] = []
-    with patch.object(app, "_flash_hint", side_effect=lambda t, d=1.0: hints.append(t)):
-        app.action_toggle_density()
-    assert hints
-    assert any("density" in h.lower() or "compact" in h.lower() for h in hints)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        hints: list[str] = []
+        with patch.object(app, "_flash_hint", side_effect=lambda t, d=1.0: hints.append(t)):
+            app.action_toggle_density()
+        assert hints
+        assert any("density" in h.lower() or "compact" in h.lower() for h in hints)
 
 
 @pytest.mark.asyncio

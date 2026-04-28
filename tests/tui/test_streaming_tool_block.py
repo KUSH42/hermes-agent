@@ -515,6 +515,11 @@ def _make_bare_streaming_block():
     block._header = MagicMock()
     block._tail = MagicMock()
     block._body = MagicMock()
+    # Attrs added since bare construction was first written
+    block._truncated_line_count = 0
+    block._omission_bar_top_mounted = False
+    block._omission_bar_bottom_mounted = False
+    block._line_err_count = 0
     # Stub out methods that require full widget tree
     block._flush_pending = MagicMock()
     block._clear_microcopy_on_complete = MagicMock()

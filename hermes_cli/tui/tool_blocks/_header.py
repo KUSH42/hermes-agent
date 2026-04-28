@@ -289,6 +289,8 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 t.append("[!] ", style=f"bold {self._colors().error}")
             elif self._is_complete:
                 t.append("[✓] ", style=f"bold {self._colors().success}")
+            else:
+                t.append("[>] ", style=f"bold {self._colors().accent}")
 
         if self._is_child:
             # D2: ChildPanel — 4-cell gutter (was 1) for column alignment
@@ -308,7 +310,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 # ERR overrides to heavy gutter for redundant-signal (shape encodes error)
                 from hermes_cli.tui.body_renderers._grammar import GLYPH_GUTTER_FOCUSED
                 raw_glyph = GLYPH_GUTTER_FOCUSED
-            elif self._stall_glyph_active:
+            elif getattr(self, "_stall_glyph_active", False):
                 # SC-2: reduced-motion stall signal — static ◌ so stall is observable
                 # without relying on animation (concept §motion-intensity stall-honest-caveat)
                 raw_glyph = "◌"
@@ -332,7 +334,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             except Exception:  # noqa: bare-except
                 pass
         # SLR-3: override icon with kind hint glyph during STREAMING.
-        if self._streaming_kind_hint is not None and not self._is_complete and not self._tool_icon_error:
+        if getattr(self, "_streaming_kind_hint", None) is not None and not self._is_complete and not self._tool_icon_error:
             self._build_kind_hint_maps()
             _hint_icon = self._KIND_HINT_ICON.get(self._streaming_kind_hint)
             if _hint_icon:
@@ -376,7 +378,8 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             else:
                 tail_segments.append(("hero", Text(f"  {self._primary_hero}", style="dim")))
         elif self._is_complete and not self._tool_icon_error and not self._line_count:
-            self.add_class("result-empty")
+            if getattr(self, "is_attached", False):  # guard: add_class needs DOM context
+                self.add_class("result-empty")
             tail_segments.append(("hero", Text("  —", style="dim")))
         # A2: chips removed from header; always served by FooterPane only
         if self._stats and self._stats.has_diff_counts:
@@ -401,7 +404,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         if self._line_count and not _has_diff_in_tail and not self._primary_hero:
             lc_text = ">99K" if self._line_count > 99999 else f"{self._line_count}L"
             # B5: append truncation badge when byte-cap dropped lines during streaming
-            if self._truncated_line_count > 0:
+            if getattr(self, "_truncated_line_count", 0) > 0:
                 _c = self._colors()
                 lc_text = f"{lc_text} [trunc:{self._truncated_line_count}]"
                 tail_segments.append(("linecount", Text(f"  {lc_text}", style=f"dim {_c.warning_dim}")))
@@ -461,7 +464,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 )))
 
         # SLR-3: streaming kind hint chip + icon override — glyph-only, no flash.
-        if self._streaming_kind_hint is not None and not self._is_complete:
+        if getattr(self, "_streaming_kind_hint", None) is not None and not self._is_complete:
             self._build_kind_hint_maps()
             _hint_label = self._KIND_HINT_LABEL.get(self._streaming_kind_hint, "")
             if _hint_label:
@@ -563,9 +566,17 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         self._tool_icon_error = is_error
 
     def _feedback_channel_id(self) -> str:
-        """Resolve the tool-header channel id for this header."""
-        panel_id = self._panel.id if self._panel is not None else self.id
-        return f"tool-header::{panel_id}"
+        """Resolve the tool-header channel id for this header.
+
+        Uses DOM id when available; falls back to object identity so panels
+        without an explicit id (e.g. created via mount_tool_block) still match
+        the channel registered in ToolPanel.on_mount.
+        """
+        if self._panel is not None:
+            panel_key = self._panel.id if self._panel.id is not None else str(id(self._panel))
+        else:
+            panel_key = self.id if self.id is not None else str(id(self))
+        return f"tool-header::{panel_key}"
 
     def _error_category_text(self) -> str:
         """ER-2: return chip text for the error category; never blank, never raw stderr."""

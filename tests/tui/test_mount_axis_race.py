@@ -126,6 +126,8 @@ def _make_streaming_block(tool_call_id="tid-1") -> StreamingToolBlock:
     block._render_timer = None
     block._is_unmounted = False
     block._microcopy_tick = 0
+    block._skeleton_widget = None
+    block._skeleton_timer = None
     block._body = MagicMock()
     return block
 

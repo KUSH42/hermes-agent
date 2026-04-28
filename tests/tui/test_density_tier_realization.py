@@ -316,11 +316,13 @@ class TestRendererCompactOptOut:
         "SearchRenderer",
     ])
     def test_diff_table_search_decline_compact(self, renderer_cls):
+        """FH-6: Diff/Table/Search now accept COMPACT (summary_line provides one-line surface)."""
         from hermes_cli.tui.tool_panel.density import DensityTier
         from hermes_cli.tui.services.tools import ToolCallState
         import hermes_cli.tui.body_renderers as br
         cls = getattr(br, renderer_cls)
-        assert cls.accepts(ToolCallState.DONE, DensityTier.COMPACT) is False
+        # FH-6 changed contract: COMPACT is now accepted by all three renderers
+        assert cls.accepts(ToolCallState.DONE, DensityTier.COMPACT) is True
 
     @pytest.mark.parametrize("renderer_cls", [
         "DiffRenderer",
@@ -335,11 +337,10 @@ class TestRendererCompactOptOut:
         assert cls.accepts(ToolCallState.DONE, DensityTier.DEFAULT) is True
 
     def test_pick_renderer_falls_through_for_compact_diff(self):
-        """DIFF kind + COMPACT density → DiffRenderer declines; REGISTRY walk skips it.
+        """DIFF kind + COMPACT density → DiffRenderer accepts (FH-6: COMPACT supported).
 
-        ShellOutputRenderer.can_render always returns True so it catches the
-        fallthrough before FallbackRenderer; the important invariant is that
-        DiffRenderer was NOT selected.
+        DiffRenderer.accepts() now returns True for COMPACT so it handles the
+        DIFF kind at compact density with its summary_line surface.
         """
         from hermes_cli.tui.body_renderers import pick_renderer, DiffRenderer
         from hermes_cli.tui.tool_payload import ToolPayload, ClassificationResult, ResultKind
@@ -361,7 +362,7 @@ class TestRendererCompactOptOut:
             phase=ToolCallState.DONE,
             density=DensityTier.COMPACT,
         )
-        assert renderer is not DiffRenderer
+        assert renderer is DiffRenderer
 
     def test_pick_renderer_diff_at_default(self):
         """DIFF kind + DEFAULT density → DiffRenderer selected."""

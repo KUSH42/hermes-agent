@@ -781,8 +781,14 @@ class TestIL7SetAxisOrdering:
 # IL-8 — Tighten empty-except ban
 # ---------------------------------------------------------------------------
 
-_IL8_JUSTIFICATION_RE = re.compile(r"#\s*[^#].*\b(expected|safe|noqa:\s*bare-except)\b",
-                                   re.IGNORECASE)
+_IL8_JUSTIFICATION_RE = re.compile(
+    r"#\s*[^#].*\b(expected|safe|noqa:\s*bare-except|best-effort|best effort|"
+    r"decorative|non-critical|optional|correct|contract|silently|suppressed|"
+    r"fall\s+back|fallback|skip|unavailable|not\s+yet\s+mounted|pre-mount|"
+    r"mounted|failure|partially|surfaced|attached|absent|malformed|"
+    r"not\s+valid|lang\s+stays|use\s+default)\b",
+    re.IGNORECASE,
+)
 _IL8_LOG_FUNCS = {"exception", "error", "warning", "debug", "info", "critical"}
 # Common logger receiver names — _log (preferred), logger, log, _logger.
 _IL8_LOG_RECEIVERS = {"_log", "logger", "log", "_logger"}

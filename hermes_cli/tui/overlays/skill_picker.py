@@ -44,6 +44,7 @@ class SkillPickerOverlay(Widget):
     """
 
     DEFAULT_CSS = """
+    $pane-border: #333333;
     SkillPickerOverlay {
         layer: overlay;
         dock: bottom;
@@ -192,12 +193,11 @@ class SkillPickerOverlay(Widget):
             return
         detail.remove_children()
 
-        # Guard: if all filtered results are disabled, show actionable empty state.
+        # Guard: if there are no filtered candidates at all, show empty state.
         filtered = self._filtered_candidates()
-        selectable = [c for c in filtered if c.enabled]
-        if not selectable:
+        if not filtered:
             if self._filter:
-                msg = "[dim]All matching skills are disabled. Try a different filter.[/dim]"
+                msg = "[dim]No skills match your filter.[/dim]"
             else:
                 msg = "[dim]No skills installed.[/dim]"
             detail.mount(Static(msg, classes="detail-empty", markup=True))
@@ -205,7 +205,11 @@ class SkillPickerOverlay(Widget):
 
         selected = self._selected_candidate()
         if selected is None:
-            detail.mount(Static("Select a skill to see details.", classes="detail-empty"))
+            # F4: if all filtered candidates are disabled, show a specific message
+            if all(not c.enabled for c in filtered):
+                detail.mount(Static("[dim]All matching skills are disabled.[/dim]", classes="detail-empty", markup=True))
+            else:
+                detail.mount(Static("Select a skill to see details.", classes="detail-empty"))
             return
         widgets = []
         widgets.append(Static(f"[bold]${selected.name}[/bold]", classes="detail-section-header"))

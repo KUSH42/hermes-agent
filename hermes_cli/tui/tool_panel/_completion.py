@@ -493,6 +493,7 @@ class _ToolPanelCompletionMixin:
             pass
 
         if summary.is_error:
+            self.collapsed = False  # type: ignore[attr-defined]
             return
 
         did_collapse = False

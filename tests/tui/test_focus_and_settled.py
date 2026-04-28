@@ -215,6 +215,8 @@ class TestSettledState:
         block._settled = False
         block._settled_timer = None
         block._is_unmounted = False
+        block._omission_bar_top_mounted = False
+        block._omission_bar_bottom_mounted = False
         return block
 
     def test_settled_armed_on_done(self):

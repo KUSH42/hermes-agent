@@ -41,6 +41,8 @@ class TestD1:
         panel = object.__new__(ToolPanel)
         panel._result_summary_v4 = None
         panel._last_resize_w = 0
+        panel._view_state = None  # _is_error() guard
+        panel._discovery_shown = False  # _collect_hints() guard
         panel._block = MagicMock()
         panel._block._header = MagicMock()
         panel._block._header._path_clickable = False
@@ -93,6 +95,8 @@ class TestD3:
         panel = object.__new__(ToolPanel)
         panel._result_summary_v4 = rs
         panel._last_resize_w = 0
+        panel._view_state = None  # _is_error() guard
+        panel._discovery_shown = False  # _collect_hints() guard
         panel._block = MagicMock()
         panel._block._header = MagicMock()
         panel._block._header._path_clickable = False

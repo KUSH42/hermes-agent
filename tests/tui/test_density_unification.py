@@ -127,7 +127,8 @@ class TestDU1LayoutResolver:
         )
         decision = r.resolve_full(inp)
         assert decision.tier == DensityTier.COMPACT
-        assert decision.footer_visible is False
+        # FH-5: COMPACT no longer force-hides footer; has_footer_content is sole gate.
+        assert decision.footer_visible is True
 
     def test_footer_hidden_when_no_content(self):
         from hermes_cli.tui.tool_panel.layout_resolver import ToolBlockLayoutResolver, DensityTier

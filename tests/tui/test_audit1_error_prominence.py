@@ -28,6 +28,12 @@ def _make_nameplate():
     np._error_frame = 0
     np._last_was_error = False
     np._active_dim_hex = "#3d3480"
+    np._idle_effect_name = "pulse"  # required by _enter_idle_timer
+    np._idle_beat_type = None
+    np._idle_beat_min_s = 5.0
+    np._idle_beat_max_s = 15.0
+    np._idle_beat_timer = None
+    np.set_timer = MagicMock()  # _schedule_next_beat calls set_timer
     np._canvas_width = 80
     np._last_nameplate_w = 0
     np._target_name = "Hermes"
@@ -82,13 +88,14 @@ def test_a3_nameplate_activate_idle_phase_sets_state():
     # restore real methods
     np._activate_idle_phase = AssistantNameplate._activate_idle_phase.__get__(np)
     np._enter_idle_timer = AssistantNameplate._enter_idle_timer.__get__(np)
+    np._schedule_next_beat = AssistantNameplate._schedule_next_beat.__get__(np)
     np._set_timer_rate = MagicMock()
     np._stop_timer = MagicMock()
     np._timer = None
-    np._idle_fx = MagicMock()  # truthy → _enter_idle_timer calls _set_timer_rate(30)
     np._activate_idle_phase()
     assert np._state == _NPState.IDLE
-    np._set_timer_rate.assert_called_once_with(30)
+    # _enter_idle_timer now calls _schedule_next_beat → set_timer (not _set_timer_rate)
+    np.set_timer.assert_called_once()
 
 
 def test_a3_nameplate_activate_idle_no_timer_when_effects_disabled():

@@ -128,7 +128,7 @@ def test_tools_overlay_timeline_toggle():
 
 
 def test_tools_overlay_footer_t_binding():
-    """ToolsScreen BINDINGS contain 't' key for toggle_view."""
+    """ToolsScreen BINDINGS contain 'shift+t' key for toggle_view."""
     binding_keys = []
     for b in ToolsScreen.BINDINGS:
         try:
@@ -138,7 +138,7 @@ def test_tools_overlay_footer_t_binding():
                 binding_keys.append(str(b[0]))
             except Exception:
                 pass
-    assert "t" in binding_keys
+    assert "shift+t" in binding_keys
 
 
 def test_tools_overlay_children_field_used():

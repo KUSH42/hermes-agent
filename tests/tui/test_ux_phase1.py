@@ -278,7 +278,7 @@ async def test_action_open_primary_falls_back_to_artifact():
         )
         panel.set_result_summary(summary)
         # No path on header — should fall back to artifact
-        with patch("hermes_cli.tui.tool_panel.safe_open_url") as mock_open:
+        with patch("hermes_cli.tui.tool_panel._actions.safe_open_url") as mock_open:
             panel.action_open_primary()
         assert mock_open.called
         assert "/tmp/test.py" in mock_open.call_args[0][1]
@@ -297,7 +297,7 @@ async def test_action_open_primary_noop_when_no_path_no_artifact():
 
     async with _App().run_test() as pilot:
         panel = pilot.app.query_one(ToolPanel)
-        with patch("hermes_cli.tui.tool_panel.safe_open_url") as mock_open:
+        with patch("hermes_cli.tui.tool_panel._actions.safe_open_url") as mock_open:
             panel.action_open_primary()
         assert not mock_open.called
 

@@ -289,11 +289,14 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         if header is not None:
             header._panel = self
 
-        if header is not None and self.id is not None:
+        if header is not None:
+            # Use panel DOM id when available; fall back to object identity so panels
+            # created without an explicit id (e.g. via mount_tool_block) still get a channel.
+            _panel_key = self.id if self.id is not None else str(id(self))
             try:
                 from hermes_cli.tui.services.feedback import ToolHeaderAdapter
                 self.app.feedback.register_channel(
-                    f"tool-header::{self.id}",
+                    f"tool-header::{_panel_key}",
                     ToolHeaderAdapter(header),
                 )
             except Exception:  # FeedbackService not yet registered; header channel optional
@@ -315,8 +318,9 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
 
     def on_unmount(self) -> None:
         try:
-            self.app.feedback.deregister_channel(f"tool-header::{self.id}")
-        except Exception:  # FeedbackService unavailable on unmount; deregistration best-effort
+            _panel_key = self.id if self.id is not None else str(id(self))
+            self.app.feedback.deregister_channel(f"tool-header::{_panel_key}")
+        except Exception:  # FeedbackService unavailable on unmount; deregistration best-effort, safe
             pass
 
     def watch_collapsed(self, old: bool, new: bool) -> None:

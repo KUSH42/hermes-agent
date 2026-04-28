@@ -601,7 +601,7 @@ class OmissionBar(TooltipMixin, Widget):
                         self._label.update("")
                 else:
                     self._label.display = True  # full-width label text is managed by set_counts
-            self.toggle_class("--narrow", now_narrow)  # B4: CSS hook for narrow layout
+            self.set_class(now_narrow, "--narrow")  # B4: CSS hook for narrow layout
         self._last_resize_w = w
 
     def _sync_narrow_layout(self) -> None:

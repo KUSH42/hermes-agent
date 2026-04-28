@@ -290,10 +290,13 @@ def test_default_of_varspec_unwrap() -> None:
 
 
 def test_defaults_as_strs_all_hex() -> None:
+    from hermes_cli.tui.theme_manager import _NON_HEX_COMPONENT_VARS
     out = _defaults_as_strs()
     assert len(out) == len(COMPONENT_VAR_DEFAULTS)
     for name, val in out.items():
         assert isinstance(val, str)
+        if name in _NON_HEX_COMPONENT_VARS:
+            continue  # non-color vars (dimensions, theme names) are not hex
         assert val.startswith("#"), f"{name} default not hex: {val}"
 
 

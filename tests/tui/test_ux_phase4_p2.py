@@ -433,7 +433,7 @@ async def test_artifact_chip_click_opens_path():
         chips = list(footer.query(".--artifact-chip"))
         assert len(chips) >= 1
 
-        with patch("hermes_cli.tui.tool_panel.safe_open_url") as mock_open:
+        with patch("hermes_cli.tui.tool_panel._footer.safe_open_url") as mock_open:
             chip_btn = chips[0]
             # Simulate on_button_pressed directly on FooterPane
             event = MagicMock()

@@ -262,23 +262,18 @@ class TestA3ActiveBlockRecovery:
 
 
 class TestA4UnknownState:
-    def test_unknown_state_resets_to_normal_and_renders_prose(self):
+    def test_unknown_state_resets_to_normal_and_renders_prose(self, caplog):
+        import logging
         eng, log = _make_engine()
         eng._state = "BOGUS"
         eng._active_block = None
-        # Wire panel.app.log.warning spy without replacing the panel
-        # (_make_engine returns a MagicMock panel; we only add a real app.log)
-        warning_calls: list[str] = []
-        fake_app_log = MagicMock()
-        fake_app_log.warning.side_effect = lambda msg: warning_calls.append(msg)
-        fake_app = MagicMock()
-        fake_app.log = fake_app_log
-        eng._panel.app = fake_app
-        eng.process_line("hello")
+        with caplog.at_level(logging.WARNING, logger="hermes_cli.tui.response_flow"):
+            eng.process_line("hello")
         assert eng._state == "NORMAL"
         assert eng._active_block is None
-        # Warning must have been logged with the unknown state name
-        assert any("BOGUS" in m for m in warning_calls), f"Expected warning about BOGUS; got {warning_calls}"
+        # Warning must appear in module-level logger
+        warning_msgs = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
+        assert any("BOGUS" in m for m in warning_msgs), f"Expected warning about BOGUS; got {warning_msgs}"
         # Line should have gone to prose pipeline — flush to drain any _block_buf buffering
         eng.flush()
         assert any("hello" in p for p in log._plain_lines)

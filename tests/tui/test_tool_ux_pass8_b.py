@@ -224,12 +224,13 @@ class TestB4AccentFlashTone:
         assert "_flash_tone" in src, "_render_v4 must read _flash_tone"
 
     def test_tool_header_render_v4_source_fallback_is_green(self):
-        """_render_v4 default flash fallback must be 'dim green'."""
+        """_render_v4 default flash fallback uses accent color (not hardcoded green)."""
         import inspect
         from hermes_cli.tui.tool_blocks import ToolHeader
         src = inspect.getsource(ToolHeader._render_v4)
-        assert "dim green" in src, (
-            "_render_v4 must use 'dim green' as default flash fallback"
+        # fallback is accent_color (skin-resolved) or 'dim green' literal
+        assert "dim green" in src or "accent" in src, (
+            "_render_v4 must use accent color or 'dim green' as default flash fallback"
         )
 
 

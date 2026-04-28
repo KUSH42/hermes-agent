@@ -58,7 +58,9 @@ async def test_pause_stops_timer():
 
 @pytest.mark.asyncio
 async def test_resume_restarts_timer():
-    """InterruptOverlay has active countdown timer when approval state is set."""
+    """InterruptOverlay has active countdown timer when clarify state is set.
+    Only CLARIFY kind starts a countdown; APPROVAL/SUDO/SECRET never auto-dismiss.
+    """
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -69,7 +71,7 @@ async def test_resume_restarts_timer():
             question="Q?",
             choices=["a"],
         )
-        app.approval_state = state
+        app.clarify_state = state
         await pilot.pause()
         from hermes_cli.tui.overlays.interrupt import InterruptOverlay
         w = app.query_one(InterruptOverlay)

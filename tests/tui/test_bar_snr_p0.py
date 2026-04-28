@@ -231,7 +231,7 @@ class TestHintBarStreaming:
             with patch.object(type(hb), "hint", new_callable=PropertyMock, return_value=""):
                 with patch.object(type(hb), "app", new_callable=PropertyMock, return_value=app):
                     result = str(hb.render())
-        assert "^C" in result
+        assert "⌃C" in result
 
     def test_T16_render_streaming_with_hint_shows_flash(self):
         app = _make_mock_app(status_streaming=True)
@@ -240,7 +240,7 @@ class TestHintBarStreaming:
             with patch.object(type(hb), "hint", new_callable=PropertyMock, return_value="File saved"):
                 with patch.object(type(hb), "app", new_callable=PropertyMock, return_value=app):
                     result = str(hb.render())
-        assert "^C" in result
+        assert "⌃C" in result
         assert "File saved" in result
 
     def test_T16b_render_streaming_hint_treats_brackets_as_plain_text(self):
@@ -251,7 +251,7 @@ class TestHintBarStreaming:
             with patch.object(type(hb), "hint", new_callable=PropertyMock, return_value=hint):
                 with patch.object(type(hb), "app", new_callable=PropertyMock, return_value=app):
                     result = str(hb.render())
-        assert "^C" in result
+        assert "⌃C" in result
         assert hint in result
 
     def test_T17_render_streaming_wide_flash_absent_when_too_long(self):
@@ -261,7 +261,7 @@ class TestHintBarStreaming:
             with patch.object(type(hb), "hint", new_callable=PropertyMock, return_value="x" * 200):
                 with patch.object(type(hb), "app", new_callable=PropertyMock, return_value=app):
                     result = str(hb.render())
-        assert "^C" in result
+        assert "⌃C" in result
         assert "x" * 10 not in result
 
     def test_T18_set_phase_stream_while_streaming_no_shimmer_start(self):

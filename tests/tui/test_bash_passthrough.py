@@ -201,6 +201,7 @@ def _make_bash_svc():
     svc.app = app
     svc._proc = None
     svc._running = False
+    svc._bash_cwd = None
     return svc, app
 
 

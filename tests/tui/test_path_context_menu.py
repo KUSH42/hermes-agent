@@ -87,11 +87,14 @@ def test_T20_render_diff_line_plus_plus():
     assert "src/" in result.plain
 
 
-def test_T21_render_diff_line_non_header_returns_none():
-    """Non-header diff line returns None from _render_diff_line."""
+def test_T21_render_diff_line_non_header_returns_styled_text():
+    """R-X3: non-header diff line renders as styled gutter text, not None."""
+    from rich.text import Text
     block = _make_diff_block(["  1 + some text"])
     result = block._render_diff_line("  1 + some text")
-    assert result is None
+    # R-X3 extended render_diff_line to handle all content lines
+    assert result is not None
+    assert isinstance(result, Text)
 
 
 # ---------------------------------------------------------------------------

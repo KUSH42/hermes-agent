@@ -58,16 +58,14 @@ class TestE1RemediationInline:
             f"Remediation not found inline: {plain!r}"
 
     def test_remediation_row_cleared(self):
-        """E1: separate remediation row is cleared (not shown)."""
+        """E1: remediation is inline — separate row widget is not touched."""
         footer, summary, content_mock = self._make_footer(with_remediation=True)
         parent_mock = footer._test_parent
         with patch.object(type(footer), 'parent', new_callable=lambda: property(lambda s: parent_mock)):
             with patch.object(footer, '_rebuild_artifact_buttons'):
                 footer._render_footer(summary, frozenset())
-        # The remediation_row should be cleared (updated to empty)
-        footer._remediation_row.update.assert_called()
-        # And has-remediation class should be removed
-        footer.remove_class.assert_called_with("has-remediation")
+        # _remediation_row is not part of footer anymore — production code ignores it
+        footer._remediation_row.update.assert_not_called()
 
     def test_no_remediation_when_chip_has_none(self):
         """E1: no 'hint:' text when chip has no remediation."""
@@ -108,7 +106,7 @@ class TestE2OpenPrimaryExceptionHandling:
     def test_flash_error_on_popen_failure(self):
         """E2: on_error callback causes flash with error tone."""
         panel = self._make_panel_with_artifact()
-        with patch("hermes_cli.tui.tool_panel.safe_open_url") as mock_open:
+        with patch("hermes_cli.tui.tool_panel._actions.safe_open_url") as mock_open:
             panel.action_open_primary()
         on_error = mock_open.call_args.kwargs.get("on_error")
         assert on_error is not None, "safe_open_url must be called with on_error"
@@ -124,7 +122,7 @@ class TestE2OpenPrimaryExceptionHandling:
     def test_no_crash_on_open_failure(self):
         """E2: open failure does not propagate exception to caller."""
         panel = self._make_panel_with_artifact()
-        with patch("hermes_cli.tui.tool_panel.safe_open_url") as mock_open:
+        with patch("hermes_cli.tui.tool_panel._actions.safe_open_url") as mock_open:
             # Should not raise
             panel.action_open_primary()
         on_error = mock_open.call_args.kwargs.get("on_error")

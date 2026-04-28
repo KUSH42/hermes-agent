@@ -112,11 +112,11 @@ class TestFooterVisibility:
             has_footer_content=has_footer,
         )
 
-    def test_footer_hidden_at_compact(self) -> None:
-        """COMPACT tier → footer_visible False."""
+    def test_footer_hidden_at_compact_no_content(self) -> None:
+        """COMPACT tier with no footer content → footer_visible False (FH-5: content gate)."""
         from hermes_cli.tui.tool_panel.layout_resolver import DensityTier
         resolver = self._make_resolver()
-        inputs = self._make_inputs(tier_override=DensityTier.COMPACT)
+        inputs = self._make_inputs(tier_override=DensityTier.COMPACT, has_footer=False)
         decision = resolver.resolve_full(inputs)
         assert decision.footer_visible is False
 

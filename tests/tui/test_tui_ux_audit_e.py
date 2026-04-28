@@ -90,14 +90,14 @@ async def test_e3_flash_hint_not_cleared_by_agent_stop() -> None:
 
 @pytest.mark.asyncio
 async def test_e4_compaction_90_warns() -> None:
-    """status_compaction_progress at 0.92 flashes a 90% warning."""
+    """status_compaction_progress at 0.87 flashes a warning (threshold is 85%)."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        app.status_compaction_progress = 0.92
+        app.status_compaction_progress = 0.87
         await pilot.pause()
         hint = app.query_one(HintBar).hint
-        assert "90%" in hint or "compaction" in hint.lower(), (
+        assert "85%" in hint or "compaction" in hint.lower() or "compact" in hint.lower(), (
             f"HintBar.hint={hint!r}"
         )
 

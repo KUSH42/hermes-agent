@@ -52,10 +52,10 @@ async def test_flash_hint_restores_after_duration():
         # Set a non-empty prior hint
         bar = app.query_one(HintBar)
         bar.hint = "prior"
-        app._flash_hint("flash text", 0.05)  # very short duration
+        app._flash_hint("flash text", 0.5)  # long enough for intermediate assert
         await pilot.pause()
         assert bar.hint == "flash text"
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(0.7)
         await pilot.pause()
         # FeedbackService restores to blank, not prior value
         assert "flash text" not in bar.hint

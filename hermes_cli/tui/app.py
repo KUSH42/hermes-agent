@@ -127,6 +127,7 @@ from hermes_cli.tui.tool_category import (
     register_tool,
 )
 from hermes_cli.tui.constants import ICON_COPY
+from hermes_cli.tui.tool_panel.density import DensityTier as _DensityTier
 from hermes_cli.tui.animation import AnimationClock, shimmer_text
 from hermes_cli.tui.perf import (
     EventLoopLatencyProbe,
@@ -412,6 +413,10 @@ class HermesApp(App):
 
     # S0-D/S0-E: True while assistant is actively streaming tokens
     status_streaming: reactive[bool] = reactive(False)
+
+    # C2: compact ghost-text affordance signals for HintBar
+    status_ghost_suggestion: reactive[bool] = reactive(False)
+    status_density_tier: reactive[str] = reactive("default")
 
     # A1: coarse phase within an agent turn — widgets subscribe via cross-widget watch()
     status_phase: reactive[str] = reactive(_Phase.IDLE)
@@ -2676,6 +2681,7 @@ class HermesApp(App):
         self._svc_watchers.on_size(size)
 
     def watch_compact(self, value: bool) -> None:
+        self.status_density_tier = _DensityTier.COMPACT.value if value else _DensityTier.DEFAULT.value
         self._svc_watchers.on_compact(value)
 
     def watch_status_compaction_progress(self, value: float) -> None:

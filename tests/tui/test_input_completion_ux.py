@@ -28,6 +28,7 @@ from unittest.mock import MagicMock, patch, AsyncMock
 import pytest
 
 from hermes_cli.tui.app import HermesApp
+from hermes_cli.tui.input._assist import AssistKind
 from hermes_cli.tui.input_widget import HermesInput
 from hermes_cli.tui.path_search import (
     PathCandidate,
@@ -272,7 +273,8 @@ class TestIdlePlaceholder:
         """HermesInput() with empty placeholder sets the default idle text."""
         inp = HermesInput()
         assert "Type a message" in inp._idle_placeholder
-        assert "/  commands" in inp._idle_placeholder or "commands" in inp._idle_placeholder
+        assert "/cmd" in inp._idle_placeholder
+        assert "!shell" in inp._idle_placeholder
 
     @pytest.mark.asyncio
     async def test_agent_stop_restores_idle_placeholder(self):
@@ -442,13 +444,13 @@ class TestTabAmbiguity:
 
     @pytest.mark.asyncio
     async def test_suggestion_cleared_when_overlay_shown(self):
-        """Ghost text suggestion is cleared when completion overlay is shown."""
+        """Assist resolver clears ghost text before showing the overlay."""
         app = _make_app()
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
             inp = app.query_one(HermesInput)
             inp.suggestion = "some ghost text"
-            inp._show_completion_overlay()
+            inp._resolve_assist(AssistKind.OVERLAY)
             await pilot.pause()
             assert inp.suggestion == ""
 
@@ -615,7 +617,7 @@ class TestAutoDismissNoThreshold:
 class TestInputExpand:
     @pytest.mark.asyncio
     async def test_ctrl_shift_up_increments_height(self):
-        """ctrl+shift+up resets max_height to 3 and syncs to content."""
+        """ctrl+shift+up increments the override height by one."""
         app = _make_app()
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
@@ -623,11 +625,11 @@ class TestInputExpand:
             assert inp._input_height_override == 3
             await pilot.press("ctrl+shift+up")
             await pilot.pause()
-            assert inp._input_height_override == 3
+            assert inp._input_height_override == 4
 
     @pytest.mark.asyncio
     async def test_ctrl_shift_down_decrements_height(self):
-        """ctrl+shift+down resets max_height to 3 and syncs to content."""
+        """ctrl+shift+down decrements the override height by one."""
         app = _make_app()
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
@@ -635,11 +637,11 @@ class TestInputExpand:
             inp._input_height_override = 5
             await pilot.press("ctrl+shift+down")
             await pilot.pause()
-            assert inp._input_height_override == 3
+            assert inp._input_height_override == 4
 
     @pytest.mark.asyncio
     async def test_height_clamped_at_10(self):
-        """ctrl+shift+up resets to 3 regardless of previous override."""
+        """ctrl+shift+up clamps the override at the max height."""
         app = _make_app()
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
@@ -647,11 +649,11 @@ class TestInputExpand:
             inp._input_height_override = 10
             await pilot.press("ctrl+shift+up")
             await pilot.pause()
-            assert inp._input_height_override == 3
+            assert inp._input_height_override == 6
 
     @pytest.mark.asyncio
     async def test_height_clamped_at_3(self):
-        """ctrl+shift+down clamps at min 3."""
+        """ctrl+shift+down clamps at min 1."""
         app = _make_app()
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
@@ -659,7 +661,7 @@ class TestInputExpand:
             inp._input_height_override = 3
             await pilot.press("ctrl+shift+down")
             await pilot.pause()
-            assert inp._input_height_override == 3
+            assert inp._input_height_override == 2
 
     @pytest.mark.asyncio
     async def test_height_resets_on_submit(self):
@@ -1009,18 +1011,6 @@ class TestOverflowBadgeViewport:
 class TestHistoryTrash:
     """Tests for three history bugs: slash-cmd pollution, file dedup, CLI/TUI merge."""
 
-    @pytest.fixture(autouse=True)
-    def _sync_safe_write(self, monkeypatch):
-        """Replace safe_write_file with a direct sync write — bare HermesInput.__new__
-        instances have no Textual app context, so _resolve_app would crash."""
-        def _write(caller, path, content, mode="w", mkdir_parents=False, **kw):
-            import os as _os
-            if mkdir_parents:
-                _os.makedirs(_os.path.dirname(str(path)), exist_ok=True)
-            with open(path, mode, encoding="utf-8") as fh:
-                fh.write(content)
-        monkeypatch.setattr("hermes_cli.tui.input._history.safe_write_file", _write)
-
     def test_slash_command_saved(self, tmp_path, monkeypatch):
         """Slash commands are saved to history so users can recall them."""
         hist_file = tmp_path / ".hermes_history"
@@ -1063,13 +1053,14 @@ class TestHistoryTrash:
         assert inp._history == ["hello", "world"]
 
     def test_load_separator_prevents_cli_tui_merge(self, tmp_path, monkeypatch):
-        """Leading newline in _save_to_history prevents merging with prompt_toolkit entries."""
+        """Rewrite format preserves prompt_toolkit entries without merging blocks."""
         hist_file = tmp_path / ".hermes_history"
         # Simulate prompt_toolkit's FileHistory format (no trailing blank line on last entry)
         hist_file.write_text("\n# 2024-01-01\n+cli command\n")
         monkeypatch.setattr("hermes_cli.tui.input._history._HISTORY_FILE", hist_file)
         inp = HermesInput.__new__(HermesInput)
         inp._history = []
+        inp._load_history()
         # Save a TUI entry — it should NOT merge with "cli command"
         inp._save_to_history("tui prompt")
         inp._history = []  # reset in-memory
@@ -1079,15 +1070,49 @@ class TestHistoryTrash:
         # The merged entry must NOT exist
         assert "cli command\ntui prompt" not in inp._history
 
-    def test_file_written_with_leading_newline(self, tmp_path, monkeypatch):
-        """_save_to_history writes a leading newline before the + lines."""
+    def test_file_written_without_leading_newline(self, tmp_path, monkeypatch):
+        """Rewrite format starts with the first +line, not a leading blank line."""
         hist_file = tmp_path / ".hermes_history"
         monkeypatch.setattr("hermes_cli.tui.input._history._HISTORY_FILE", hist_file)
         inp = HermesInput.__new__(HermesInput)
         inp._history = []
         inp._save_to_history("my prompt")
         content = hist_file.read_text()
-        assert content.startswith("\n+")
+        assert content == "+my prompt\n"
+
+    def test_save_to_history_no_duplicates_on_disk(self, tmp_path, monkeypatch):
+        hist_file = tmp_path / ".hermes_history"
+        monkeypatch.setattr("hermes_cli.tui.input._history._HISTORY_FILE", hist_file)
+        inp = HermesInput.__new__(HermesInput)
+        inp._history = []
+        inp._save_to_history("repeat me")
+        inp._save_to_history("repeat me")
+        assert hist_file.read_text() == "+repeat me\n"
+
+    def test_save_to_history_rewrite_roundtrips_through_load_history(self, tmp_path, monkeypatch):
+        hist_file = tmp_path / ".hermes_history"
+        monkeypatch.setattr("hermes_cli.tui.input._history._HISTORY_FILE", hist_file)
+        inp = HermesInput.__new__(HermesInput)
+        inp._history = ["alpha\nbeta"]
+        inp._save_to_history("gamma\ndelta")
+
+        reloaded = HermesInput.__new__(HermesInput)
+        reloaded._history = []
+        reloaded._load_history()
+
+        assert reloaded._history == ["alpha\nbeta", "gamma\ndelta"]
+
+    def test_save_to_history_single_entry_roundtrips(self, tmp_path, monkeypatch):
+        hist_file = tmp_path / ".hermes_history"
+        monkeypatch.setattr("hermes_cli.tui.input._history._HISTORY_FILE", hist_file)
+        inp = HermesInput.__new__(HermesInput)
+        inp._history = []
+        inp._save_to_history("single")
+
+        reloaded = HermesInput.__new__(HermesInput)
+        reloaded._history = []
+        reloaded._load_history()
+        assert reloaded._history == ["single"]
 
     def test_dedup_preserves_order_last_wins(self, tmp_path, monkeypatch):
         """Dedup keeps last occurrence; earlier dupes discarded; relative order preserved."""

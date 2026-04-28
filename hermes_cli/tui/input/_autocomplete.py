@@ -1,6 +1,8 @@
 """Autocomplete dispatch and accept/dismiss mixin for HermesInput."""
 from __future__ import annotations
 
+import logging
+import time
 from typing import Any
 
 from textual.css.query import NoMatches
@@ -10,7 +12,10 @@ from hermes_cli.tui.completion_list import VirtualCompletionList
 from hermes_cli.tui.fuzzy import fuzzy_rank
 from hermes_cli.tui.path_search import PathCandidate, SlashCandidate
 
+from ._assist import AssistKind, SKILL_PICKER_TRIGGER_PREFIX
 from ._constants import _SLASH_FULL_RE
+
+_log = logging.getLogger(__name__)
 
 
 class _AutocompleteMixin:
@@ -33,12 +38,15 @@ class _AutocompleteMixin:
                 self._suppress_autocomplete_once = False
                 return
             if getattr(self.app, "choice_overlay_active", False):  # type: ignore[attr-defined]
-                self._hide_completion_overlay()  # type: ignore[attr-defined]
+                self._resolve_assist(AssistKind.NONE)  # type: ignore[attr-defined]
                 return
 
             # In bash mode: @file completion is intentional (useful for !cat @path)
             # Slash-command completion is suppressed (/ is a path separator in shell)
+            from hermes_cli.tui.input._mode import InputMode
             if (
+                getattr(self, "_mode", None) is not InputMode.BASH  # type: ignore[attr-defined]
+                and
                 "\n" not in self.value  # type: ignore[attr-defined]
                 and self.value.startswith("/")  # type: ignore[attr-defined]
                 and _SLASH_FULL_RE.match(self.value)  # type: ignore[attr-defined]
@@ -55,7 +63,6 @@ class _AutocompleteMixin:
                 self._show_slash_completions(fragment)
                 return
 
-            from hermes_cli.tui.input._mode import InputMode
             _bash_mode = getattr(self, "_mode", None) is InputMode.BASH  # type: ignore[attr-defined]
             trigger = detect_context(self.value, self.cursor_position, bash_mode=_bash_mode)  # type: ignore[attr-defined]
             # Guard: prevents re-entry loop on unchanged trigger.
@@ -69,12 +76,13 @@ class _AutocompleteMixin:
                 # Do NOT mount the inline completion overlay — the picker IS
                 # the completion surface for $-prefixed input.
                 try:
-                    self.app._open_skill_picker(  # type: ignore[attr-defined]
-                        seed_filter=trigger.fragment,
-                        trigger_source="prefix",
-                    )
+                    self._resolve_assist(AssistKind.PICKER)  # type: ignore[attr-defined]
                 except Exception:
-                    pass
+                    _log.exception("skill picker open failed for fragment=%r", trigger.fragment)
+                    try:
+                        self.app._flash_hint("skill picker unavailable", 2.0)  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
                 return
 
             # Auto-dismiss a prefix-triggered picker when the regex no longer matches.
@@ -82,7 +90,7 @@ class _AutocompleteMixin:
                 try:
                     from hermes_cli.tui.overlays.skill_picker import SkillPickerOverlay
                     picker = self.app.query_one(SkillPickerOverlay)  # type: ignore[attr-defined]
-                    if getattr(picker, "_trigger", None) == "prefix":
+                    if getattr(picker, "_trigger", None) == SKILL_PICKER_TRIGGER_PREFIX:
                         picker.dismiss()
                 except Exception:
                     # NoMatches or SkillPickerOverlay not yet imported — fine
@@ -97,7 +105,8 @@ class _AutocompleteMixin:
             ):
                 self._show_path_completions(trigger.fragment)  # type: ignore[attr-defined]
             else:
-                self._hide_completion_overlay()  # type: ignore[attr-defined]
+                if self._completion_overlay_visible():  # type: ignore[attr-defined]
+                    self._resolve_assist(AssistKind.NONE)  # type: ignore[attr-defined]
 
     def _show_slash_completions(self, fragment: str) -> None:
         items = [
@@ -124,17 +133,22 @@ class _AutocompleteMixin:
             elif fragment:
                 hint = f"Unknown command: /{fragment}"
                 duration = 1.5
-            if hint and getattr(self, "_last_slash_hint_fragment", None) != fragment:
+            now = time.monotonic()
+            last_fragment = getattr(self, "_last_slash_hint_fragment", None)
+            last_time = getattr(self, "_last_slash_hint_time", 0.0)
+            if hint and not (last_fragment == fragment and now - last_time < 2.0):
                 self._last_slash_hint_fragment = fragment  # type: ignore[attr-defined]
+                self._last_slash_hint_time = now  # type: ignore[attr-defined]
                 try:
                     self.app._flash_hint(hint, duration)  # type: ignore[attr-defined]
-                except Exception:
-                    pass
-            self._hide_completion_overlay()  # type: ignore[attr-defined]
+                except AttributeError as exc:
+                    # AttributeError: test harness or early-mount context without _flash_hint.
+                    _log.debug("flash_hint unavailable: %s", exc, exc_info=True)
+            self._resolve_assist(AssistKind.NONE)  # type: ignore[attr-defined]
             return
         self._set_overlay_mode(slash_only=True)  # type: ignore[attr-defined]
         self._push_to_list(ranked)  # type: ignore[attr-defined]
-        self._show_completion_overlay()  # type: ignore[attr-defined]
+        self._resolve_assist(AssistKind.OVERLAY)  # type: ignore[attr-defined]
 
     # --- Paging ---
 
@@ -182,14 +196,6 @@ class _AutocompleteMixin:
         if not clist.items or clist.highlighted < 0:
             return
 
-        if self.cursor_position < len(self.value):  # type: ignore[attr-defined]
-            self._hide_completion_overlay()  # type: ignore[attr-defined]
-            try:
-                self.app._flash_hint("Tab: move cursor to end to accept", 2.0)  # type: ignore[attr-defined]
-            except Exception:  # app._flash_hint unavailable — hint not shown, completion continues
-                pass
-            return
-
         c = clist.items[clist.highlighted]
         trig = self._current_trigger
 
@@ -222,7 +228,7 @@ class _AutocompleteMixin:
 
         self.value = new_value  # type: ignore[attr-defined]
         self.cursor_position = new_cursor  # type: ignore[attr-defined]
-        self._hide_completion_overlay()  # type: ignore[attr-defined]
+        self._resolve_assist(AssistKind.NONE)  # type: ignore[attr-defined]
 
     def action_dismiss_autocomplete(self) -> None:
         """Dismiss completion overlay without affecting agent-interrupt semantics."""

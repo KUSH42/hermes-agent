@@ -361,6 +361,9 @@ UndoConfirmOverlay {
 HermesInput.--bash-mode #input-chevron { color: $chevron-shell; }
 HermesInput.--bash-mode { outline: tall $chevron-shell 40%; }
 HermesInput.--bash-mode:focus { outline: tall $chevron-shell 70%; }
+/* TODO(post-A-freeze): replace with $rev-search-accent per A4 tier rule. */
+HermesInput.--rev-search { border-left: wide white; }
+HermesInput.--error { border-left: wide red; }
 
 HermesInput.--locked {
     outline: tall $panel-lighten-1 30%;

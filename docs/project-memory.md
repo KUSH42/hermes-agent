@@ -8,6 +8,9 @@ Memory index links use canonical absolute targets under `~/.hermes` when availab
 ## Composer Concept G — APPROVED 2026-04-28
 - [Composer concept G](/home/xush/.hermes/project_composer_concept.md) — APPROVED v1.0; MODE×KIND×ASSIST frame for HermesInput; 16 drift items; 7 review passes (passes 6–7 met "0 HIGH + ≤2 MED" gate); basis for upcoming UX Audit G
 
+## Composer Surface Audit G1..G8 (2026-04-28)
+- [Composer surface audit](/home/xush/.hermes/project_composer_surface_audit.md) — IMPLEMENTED 2026-04-28; centralized AssistKind/_resolve_assist, _completion_overlay_active mode mirror, locked disabled-state restore, --rev-search/--error host classes, explicit-bash detection, atomic history rewrite, ghost-suggestion hardening, composer invariants + targeted composer suite
+
 ## Focus/Nav Spec H — IMPLEMENTED 2026-04-28
 - [Focus/Nav Spec H](/home/xush/.hermes/project_focus_nav_concept.md) — IMPLEMENTED; W-1..W-17; ScrollState tri-state, --modal overlays, scroll_end_if_pinned, AT-* lint tests (13 tests)
 
@@ -94,6 +97,7 @@ Memory index links use canonical absolute targets under `~/.hermes` when availab
 - [on_focus affordances guard](/home/xush/.hermes/feedback_on_focus_affordances.md) — ToolPanel.on_focus only flashes when _has_affordances=True; tests must wire _block mock
 - [Module split mutable globals](/home/xush/.hermes/feedback_module_split_mutable_globals.md) — Re-exported bool globals in __init__ are value copies; tests must target source submodule directly
 - [Textual Widget.parent/.app are read-only](/home/xush/.hermes/feedback_textual_property_mock.md) — Use PropertyMock patch; Syntax._theme is object not string — capture theme= kwarg instead
+- [Composer assist resolver + atomic history rewrite](/home/xush/.hermes/feedback_composer_assist_atomic_history.md) — HermesInput assist state is centralized in AssistKind/_resolve_assist; _compute_mode reads _completion_overlay_active; history saves now dedupe + atomically rewrite the prompt_toolkit file
 - [AST sweep over grep for kwarg compliance](/home/xush/.hermes/feedback_ast_sweep_kwarg_tests.md) — Meta-tests enforcing kwarg conventions must AST-walk; line grep flags multi-line calls + method names
 - [MagicMock _resolver attribute leak](/home/xush/.hermes/feedback_magicmock_resolver_leak.md) — hasattr(mock,"_resolver") always True; use getattr(...) is not None + set panel._resolver=None in tests
 - [Mixin MRO conflict in widget hierarchy](/home/xush/.hermes/feedback_mixin_mro_conflict.md) — Never add a mixin to both parent and subclass; Python C3 rejects; add only at highest ancestor

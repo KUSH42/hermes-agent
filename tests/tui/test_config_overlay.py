@@ -333,24 +333,28 @@ def test_alias_names_registered_in_css_types():
 
 
 @pytest.mark.asyncio
-async def test_tab_state_preserved_across_switch():
+async def test_tab_state_refreshed_across_switch():
+    """CO-H2: switching back to model tab refreshes the list (highlight → current model)."""
     app = await _app_with_overlay()
     async with app.run_test() as pilot:
         ov = app.query_one(ConfigOverlay)
-        ov.show_overlay(tab="model")
-        ov.focus()
+        fake = _fake_cfg()
+        cli = _FakeCli()  # model = "gpt-5", index 0 in the list
         with patch("hermes_cli.tui.overlays.config._cfg_read_raw_config",
-                   return_value=_fake_cfg()):
-            ov.refresh_data(_FakeCli())
+                   return_value=fake):
+            ov.show_overlay(tab="model")
+            ov.refresh_data(cli)
         from textual.widgets import OptionList
         ol = ov.query_one("#co-model-list", OptionList)
-        ol.highlighted = 2
-        # Switch away and back
-        await pilot.press("5")  # verbose
-        assert ov.active_tab == "verbose"
-        await pilot.press("1")  # back to model
-        assert ov.active_tab == "model"
-        assert ol.highlighted == 2, "highlight should be preserved"
+        # Switch away and back — tab-switch now triggers refresh
+        with patch("hermes_cli.tui.overlays.config._cfg_read_raw_config",
+                   return_value=fake):
+            await pilot.press("5")  # verbose
+            assert ov.active_tab == "verbose"
+            await pilot.press("1")  # back to model
+            assert ov.active_tab == "model"
+        # highlight refreshed to current model's position (gpt-5 is index 0)
+        assert ol.highlighted == 0, "highlight refreshed to current model after tab switch"
 
 
 # ────────────────────────────────────────────────────────────────────────────

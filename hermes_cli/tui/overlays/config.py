@@ -119,6 +119,7 @@ class ConfigOverlay(Widget):
         self._current_syntax: str = "monokai"
         self._skin_names: list[str] = []
         self._syntax_schemes: list[str] = []
+        self._last_cli: object = None  # stored for tab-switch refresh
 
     def compose(self) -> ComposeResult:
         yield Static("", id="co-tab-bar")
@@ -193,34 +194,24 @@ class ConfigOverlay(Widget):
             tab = "model"
         self.active_tab = tab
         self.add_class("--visible")
+        self._focus_active_tab()  # focus AFTER visible — deterministic
 
     def hide_overlay(self) -> None:
         self.remove_class("--visible")
 
     def refresh_data(self, cli: object) -> None:
         """Populate active tab from config/app state. Called by slash handlers."""
-        tab = self.active_tab
-        if tab == "model":
-            self._refresh_model_tab(cli)
-        elif tab == "skin":
-            self._take_skin_snapshot()
-            self._refresh_skin_tab()
-        elif tab == "syntax":
-            self._take_skin_snapshot()
-            self._refresh_syntax_tab()
-        elif tab == "reasoning":
-            self._refresh_reasoning_tab()
-        elif tab == "verbose":
-            self._refresh_verbose_tab()
-        elif tab == "yolo":
-            self._refresh_yolo_tab()
+        self._last_cli = cli
+        self._refresh_active_tab()
 
     def watch_active_tab(self, old: str, new: str) -> None:
         if not self.is_mounted:
             return
         self._update_tab_bar()
         self._update_body_visibility()
-        self._focus_active_tab()
+        if self.has_class("--visible"):
+            self._refresh_active_tab()
+            self._focus_active_tab()
 
     def _update_tab_bar(self) -> None:
         try:
@@ -257,7 +248,27 @@ class ConfigOverlay(Widget):
         try:
             self.query_one(sel).focus()
         except NoMatches:
-            pass
+            pass  # expected on first show_overlay before compose completes; focus silently skipped
+
+    def _refresh_active_tab(self) -> None:
+        """Refresh current tab's data. Safe to call with _last_cli=None."""
+        tab = self.active_tab
+        if tab == "model":
+            self._refresh_model_tab(self._last_cli)
+        elif tab == "skin":
+            if not self._snap_css_vars:   # snapshot once per session when tm is available;
+                self._take_skin_snapshot()  # when tm is None, dict stays empty and revert short-circuits
+            self._refresh_skin_tab()
+        elif tab == "syntax":
+            if not self._snap_css_vars:   # same guard
+                self._take_skin_snapshot()
+            self._refresh_syntax_tab()
+        elif tab == "reasoning":
+            self._refresh_reasoning_tab()
+        elif tab == "verbose":
+            self._refresh_verbose_tab()
+        elif tab == "yolo":
+            self._refresh_yolo_tab()
 
     # ── Bindings ──────────────────────────────────────────────────────────
 
@@ -485,7 +496,7 @@ class ConfigOverlay(Widget):
             if hasattr(tm, "refresh_css"):
                 tm.refresh_css()
         except Exception:
-            pass
+            _log.warning("_revert_skin_preview_if_any: CSS restore failed", exc_info=True)
 
     # ── Event wiring ──────────────────────────────────────────────────────
 
@@ -548,7 +559,7 @@ class ConfigOverlay(Widget):
                 return
             _cfg_save_config(cfg)
         except Exception:
-            pass
+            _log.warning("on_checkbox_changed: config write failed for %r", cb_id, exc_info=True)
 
     # ── Confirm handlers ──────────────────────────────────────────────────
 
@@ -641,7 +652,7 @@ class ConfigOverlay(Widget):
             inp.value = f"/reasoning {level}"
             inp.action_submit()
         except Exception:
-            pass
+            _log.warning("_inject_reasoning_command: command injection failed for %r", level, exc_info=True)
         _dismiss_overlay_and_focus_input(self)
 
 

@@ -139,6 +139,7 @@ class CommandsService(AppService):
             "/yolo":      "yolo",
             "/reasoning": "reasoning",
             "/skin":      "skin",
+            "/syntax":    "syntax",
         }
         if stripped in _TAB_FOR_CMD:
             app._dismiss_all_info_overlays()

@@ -89,6 +89,7 @@ class ToolCallViewState:
     depth: int
     start_s: float
     started_at: float = _field(default_factory=_time.monotonic)
+    gen_created_at: "float | None" = None   # set once at GENERATED creation; never reset
     dur_ms: "int | None" = None
     is_error: bool = False
     error_kind: "str | None" = None
@@ -1099,6 +1100,8 @@ class ToolRenderingService(AppService):
             category=cat,
             depth=gen_depth,
             start_s=round(now - turn_start, 4),
+            started_at=now,
+            gen_created_at=now,
         )
 
         # Route to appropriate block creator
@@ -1215,7 +1218,13 @@ class ToolRenderingService(AppService):
             self._set_view_state(view, ToolCallState.STARTED)
             view.parent_tool_call_id = parent_id
             view.depth = depth
-            view.started_at = _time.monotonic()  # reset from gen-block creation time to actual tool start
+            _gen_at = view.gen_created_at
+            view.started_at = now  # reuse already-captured now; reset from gen-block creation time to actual tool start
+            if _gen_at is not None:
+                _gap_ms = (now - _gen_at) * 1000.0
+                logger.debug("[TOOL-ADOPT] %s gap_ms=%.1f", view.tool_name, _gap_ms)
+                if _gap_ms > 500:
+                    logger.warning("[TOOL-ADOPT-WARN] %s slow adoption gap_ms=%.1f", view.tool_name, _gap_ms)
             self._tool_views_by_id[tool_call_id] = view
             view.gen_index = None  # H7: invariant — gen_index is set iff view ∈ _tool_views_by_gen_index
 

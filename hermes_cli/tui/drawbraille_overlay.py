@@ -1048,12 +1048,13 @@ class DrawbrailleOverlay(Static):
         if self._waiting and self._renderer._fade_state == "out":
             self._renderer.cancel_fade_out()
 
-        rich_text = self._renderer.render_frame(
-            frame_str, params.t, cfg,
-            visibility_state=self._visibility_state,
-            gradient=self.gradient,
-            hue_shift_speed=self.hue_shift_speed,
-        )
+        with measure("drawbraille_render", budget_ms=4.0, silent=True):
+            rich_text = self._renderer.render_frame(
+                frame_str, params.t, cfg,
+                visibility_state=self._visibility_state,
+                gradient=self.gradient,
+                hue_shift_speed=self.hue_shift_speed,
+            )
         if rich_text is None:
             # render_frame signals: fade-out complete — hide now
             self._do_hide()

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from textual.css.query import NoMatches
 
 from hermes_cli.tui._app_utils import _CPYTHON_FAST_PATH, _run_effect_sync
+from hermes_cli.tui.perf import measure
 
 if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
@@ -93,29 +94,32 @@ class IOService(AppService):
                     app.query_one(ThinkingWidget).clear_reserve()
                 except NoMatches:
                     pass
-            try:
-                panel = app.query_one(OutputPanel)
-                panel.record_raw_output(chunk)
-                panel.live_line.feed(chunk)
+            with measure("io.consume_chunk", budget_ms=8.0, silent=True):
                 try:
-                    msg = panel.current_message
-                    if msg is not None:
-                        msg.record_raw(chunk)
-                        engine = getattr(msg, "_response_engine", None)
-                        if engine is not None:
-                            engine.feed(chunk)
-                except Exception:
-                    # Suppress per-chunk record_raw / engine.feed failures so the stream stays alive;
-                    # log full traceback so the failure is recoverable from the log.
-                    logger.warning(
-                        "io.consume: per-chunk msg.record_raw / engine.feed failed: chunk_len=%d head=%r",
-                        len(chunk), chunk[:80], exc_info=True,
-                    )
-                panel.refresh(layout=True)
-                if not panel._user_scrolled_up:
-                    app.call_after_refresh(panel.scroll_end, animate=False)
-            except NoMatches:
-                pass
+                    panel = app.query_one(OutputPanel)
+                    panel.record_raw_output(chunk)
+                    panel.live_line.feed(chunk)
+                    try:
+                        msg = panel.current_message
+                        if msg is not None:
+                            msg.record_raw(chunk)
+                            engine = getattr(msg, "_response_engine", None)
+                            if engine is not None:
+                                with measure("io.engine_feed", budget_ms=4.0, silent=True):
+                                    engine.feed(chunk)
+                    except Exception:
+                        # Suppress per-chunk record_raw / engine.feed failures so the stream stays alive;
+                        # log full traceback so the failure is recoverable from the log.
+                        logger.warning(
+                            "io.consume: per-chunk msg.record_raw / engine.feed failed: chunk_len=%d head=%r",
+                            len(chunk), chunk[:80], exc_info=True,
+                        )
+                    with measure("io.panel_refresh", budget_ms=6.0, silent=True):
+                        panel.refresh(layout=True)
+                    if not panel._user_scrolled_up:
+                        app.call_after_refresh(panel.scroll_end, animate=False)
+                except NoMatches:
+                    pass
             await asyncio.sleep(0)
 
     # --- Thread-safe output writing ---

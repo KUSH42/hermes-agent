@@ -584,6 +584,29 @@ Affected site: `hermes_cli/tui/services/keys.py §dispatch_key` (SNS1 Phase 1, 2
 
 If you forget this distinction and the picker disappears unexpectedly on input change, check `trigger_source` was passed correctly from `_open_skill_picker`.
 
+## Ghost suggestion state and cached HintBar affordances (2026-04-28)
+
+- `HermesInput` intentionally shadows `TextArea.suggestion` with a plain string
+  class attribute. Do NOT "fix" it by making it a reactive on HermesInput:
+  TextArea itself writes `self.suggestion = ""` while the user types, and a
+  new reactive descriptor there will flicker ghost-dependent UI state off on
+  normal keystrokes.
+- Publish ghost visibility from `_resolve_assist(...)`, not from arbitrary
+  `suggestion = ...` writes. The production contract is branch-local:
+  GHOST publishes `True`, NONE/OVERLAY publish `False` after clearing
+  suggestion, and PICKER publishes `False` explicitly because it never writes
+  `self.suggestion`.
+- `_build_hints()` in `status_bar.py` is cached by `(phase, key_color)` only.
+  Any suffix that depends on viewport bucket, density tier, or live ghost
+  state must be appended in `HintBar.render()` after the cached lookup.
+- `HintBar.render()` can run before `on_mount()`, so attrs read there must be
+  seeded in `__init__`. Watchers that mirror app reactives (`status_density_tier`,
+  `status_ghost_suggestion`) still belong in `on_mount()`.
+- Reactive watchers only fire on value changes. If a collapsed-only affordance
+  must update when ERROR arrives to an already-collapsed panel, add a second
+  refresh path from the state transition itself; `watch_collapsed()` alone is
+  insufficient.
+
 ## When to expand this file
 
 Add an entry only if it is:

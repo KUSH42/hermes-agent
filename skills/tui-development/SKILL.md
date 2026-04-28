@@ -1041,6 +1041,17 @@ Compact index — each entry keeps only gotchas/patterns not obvious from the co
 - `VirtualCompletionList.size`/`_shimmer_phase` are read-only Textual props/reactives; can't be set via `__new__` shim. For source-only assertions, use `inspect.getsource(...)` and assert text/order.
 - D6 hint-text changes deferred to E4 (UX-audit freeze owns hint-composer key literals); D6 ships behavior, E4 sweeps wording.
 
+### 2026-04-28 — UX Audit C — Affordance/Discoverability C1+C2+C3+C5+C6 — 17 tests, commit `351361ec1`, branch `feat/ux-audit-c-affordance`
+
+**Spec:** `~/.hermes/2026-04-28-ux-audit-C-affordance-discoverability-spec.md`. 5 production files + 347-line test file; merged into `feat/textual-migration` by `a3191a1b0`.
+
+**Gotchas:**
+- `HermesInput.suggestion` must remain a plain string shadow over `TextArea.suggestion`; converting it to a new reactive descriptor makes ghost state flicker off on ordinary keystrokes. Publish app-level ghost state from `_resolve_assist(...)` instead.
+- `_build_hints()` in `status_bar.py` is cached by `(phase, key_color)` only. Density- or ghost-dependent affordances such as the compact `Tab` suffix must be appended in `HintBar.render()`, not baked into the cached builder.
+- `watch_collapsed` only fires when the reactive value changes. Collapsed-only error affordances on `ToolHeader` need a second refresh path from the `axis == "state"` / `ToolCallState.ERROR` branch for panels that were already collapsed before the error arrived.
+- `HintBar` app watchers belong in `on_mount`, but any attrs read by `render()` before mount (`_density_tier`, `_has_ghost_suggestion`) must be seeded in `__init__`.
+- Dynamic tooltip copy on `ToolHeader` must be computed at hover time (`_show_tooltip -> _compute_tooltip_text`), not cached once during header setup, because collapse/error/path context changes after mount.
+
 ### 2026-04-28 — UX Audit E: error/edge states (E1–E4) — commit cc428df73
 
 - **E1 `result-empty` class**: `ToolHeader._render_v4()` calls `self.add_class("result-empty")` in the empty-result branch (~line 379). This triggers `update_node_styles()` which needs a mounted app; in unit tests patch `Widget.update_node_styles` to avoid the "no `_MessagePump__parent`" crash.
@@ -2888,6 +2899,23 @@ Direct `widget.app = mock` raises `AttributeError: property 'app' of 'ThinkingWi
 **Key gotcha — `_idle_beat_timer` vs `_timer`:** `_idle_beat_timer` is only set when the state machine cycles to IDLE (`_enter_idle_timer()` at lines 1000/1042). For tests that check whether animation started, assert `_timer is not None` (set directly in `on_mount` at line 843). Asserting `_idle_beat_timer` for the visible case always fails trivially; for the hidden case, always passes trivially — neither test would validate the guard.
 
 **Skin YAML structure for component-vars:** In all 4 bundled skins, keys live under `x-hermes.component-vars` in the YAML front-matter. Test must load the front-matter via regex `^---\n(.*?)\n---` (re.DOTALL), then navigate `data["x-hermes"]["component-vars"]`.
+
+## Changelog — 2026-04-28 — UX Audit C — Affordance/Discoverability fixes (C1/C2/C3/C5/C6) — 17 tests, commit `351361ec1`
+
+**Spec:** `/home/xush/.hermes/2026-04-28-ux-audit-C-affordance-discoverability-spec.md` (Status: IMPLEMENTED).
+
+**Changes:**
+- `tool_blocks/_header.py`: `_REMEDIATION_BY_CATEGORY` + `_refresh_remediation_hint()` now derive collapsed error recovery copy from `panel._view_state.error_category`; `watch_collapsed()` and the `ToolCallState.ERROR` axis branch both refresh it so pre-collapsed panels repaint correctly.
+- `widgets/status_bar.py`: idle long hint now advertises `S` for sessions; `HintBar` owns `_density_tier` / `_has_ghost_suggestion` plain attrs, watches `status_density_tier` and `status_ghost_suggestion`, and appends the compact `Tab suggest` suffix in `render()` after the cached `_build_hints()` lookup.
+- `app.py`: `watch_compact()` now mirrors `DensityTier.COMPACT|DEFAULT` into `status_density_tier` before delegating to `WatchersService`, so HintBar state is current during the same turn.
+- `input/widget.py`: `_resolve_assist()` publishes ghost-suggestion presence to `app.status_ghost_suggestion` from each assist branch; `PICKER` forces `False` explicitly because that branch never writes `self.suggestion`.
+- `overlays/skill_picker.py`: footer copy is now user-facing action language (`Enter run`, `Tab paste`, `? view docs`, `Esc cancel`) via `_build_footer_text()`.
+- `tool_blocks/_header.py`: hover copy is now context-sensitive (`error detail` vs `expand` vs `collapse`) via `_compute_tooltip_text()`.
+
+**Test gotchas:**
+- `ToolHeader.collapsed` is a Textual reactive; `object.__new__(ToolHeader)` plus `setattr(..., "collapsed", True)` raises `ReactiveError`. Shadow it with a read-only property on an isolated subclass and inject `_test_collapsed` through `__dict__`.
+- `HintBar` helper tests can use `object.__new__(HintBar)` because `_density_tier` and `_has_ghost_suggestion` are plain attrs, not reactives.
+- `HermesApp.run_test()` still trips the VarSpec crash in minimal widget tests; use a tiny `App` subclass with only `status_ghost_suggestion` for `_resolve_assist()` integration coverage.
 
 ## Changelog — 2026-04-28 — UX Audit B — Density/Truncation fixes (B1–B5) — 14 tests, commit `af966de5a`
 

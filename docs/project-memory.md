@@ -14,6 +14,9 @@ Memory index links use canonical absolute targets under `~/.hermes` when availab
 ## Focus/Nav Spec H — IMPLEMENTED 2026-04-28
 - [Focus/Nav Spec H](/home/xush/.hermes/project_focus_nav_concept.md) — IMPLEMENTED; W-1..W-17; ScrollState tri-state, --modal overlays, scroll_end_if_pinned, AT-* lint tests (13 tests)
 
+## UX Audit C — Affordance/Discoverability (2026-04-28)
+- [UX Audit C affordance discoverability](/home/xush/.hermes/project_ux_audit_c_affordance_discoverability.md) — IMPLEMENTED 2026-04-28; C1/C2/C3/C5/C6; collapsed remediation hints, compact `Tab suggest`, SessionBar `S` hint, dynamic header tooltip, SkillPicker action copy; 17 tests; commit 351361ec1
+
 ## UX Audit D — Motion/Feedback (2026-04-28)
 - [UX Audit D motion feedback](/home/xush/.hermes/project_ux_audit_d_motion_feedback.md) — IMPLEMENTED 2026-04-28; D3 universal searching label + D5 fence-open border-top cue + D6 OutputPanel Esc/Space bindings; D1/D2/D4 cut after review (no real bug; _partial_display dead code); 8 tests; commit 823895d04
 

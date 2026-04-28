@@ -13,7 +13,7 @@ def _show_ghost_legend(widget: object) -> None:
         from hermes_cli.tui.widgets.input_legend_bar import InputLegendBar
         widget._ghost_legend_shown = True  # type: ignore[attr-defined]
         widget.screen.query_one(InputLegendBar).show_legend("ghost")  # type: ignore[attr-defined]
-    except Exception:
+    except Exception:  # InputLegendBar absent — ghost legend not shown
         pass
 
 
@@ -22,7 +22,7 @@ def _hide_ghost_legend(widget: object) -> None:
     try:
         from hermes_cli.tui.widgets.input_legend_bar import InputLegendBar
         widget.screen.query_one(InputLegendBar).hide_legend()  # type: ignore[attr-defined]
-    except Exception:
+    except Exception:  # InputLegendBar absent — ghost legend not hidden
         pass
 
 
@@ -99,7 +99,7 @@ class _HistoryMixin:
                 duration=6.0,
                 priority=WARN,
             )
-        except Exception:
+        except Exception:  # feedback service absent — warning shown only in log
             pass
 
     def set_slash_commands(self, commands: list[str]) -> None:
@@ -159,7 +159,7 @@ class _HistoryMixin:
             # Recompute mode so watch__mode handles legend/chevron
             try:
                 self._mode = self._compute_mode()  # type: ignore[attr-defined]
-            except Exception:
+            except Exception:  # _compute_mode unavailable — mode badge not updated
                 pass
         query = self._rev_query or current
         idx = self._rev_idx - 1
@@ -171,7 +171,7 @@ class _HistoryMixin:
                 try:
                     self.load_text(self._history[idx])  # type: ignore[attr-defined]
                     self.move_cursor((0, len(self._history[idx])))  # type: ignore[attr-defined]
-                except Exception:
+                except Exception:  # TextArea API unavailable — rev-search match not displayed
                     pass
                 finally:
                     self._history_loading = False  # type: ignore[attr-defined]
@@ -195,7 +195,7 @@ class _HistoryMixin:
             try:
                 self.load_text(saved)  # type: ignore[attr-defined]
                 self.move_cursor((0, len(saved)))  # type: ignore[attr-defined]
-            except Exception:
+            except Exception:  # TextArea API unavailable — rev-search match not displayed
                 pass
             finally:
                 self._history_loading = False  # type: ignore[attr-defined]
@@ -225,7 +225,7 @@ class _HistoryMixin:
         # Recompute mode so watch__mode handles legend/chevron
         try:
             self._mode = self._compute_mode()  # type: ignore[attr-defined]
-        except Exception:
+        except Exception:  # _compute_mode unavailable — mode badge not updated
             pass
 
     def _rev_search_find(self, query: str | None = None, direction: int = -1) -> str | None:
@@ -246,7 +246,7 @@ class _HistoryMixin:
                     try:
                         self.load_text(self._history[idx])  # type: ignore[attr-defined]
                         self.move_cursor((0, len(self._history[idx])))  # type: ignore[attr-defined]
-                    except Exception:
+                    except Exception:  # TextArea API unavailable — rev-search match not displayed
                         pass
                     return self._history[idx]
                 idx -= 1
@@ -257,7 +257,7 @@ class _HistoryMixin:
                     try:
                         self.load_text(self._history[idx])  # type: ignore[attr-defined]
                         self.move_cursor((0, len(self._history[idx])))  # type: ignore[attr-defined]
-                    except Exception:
+                    except Exception:  # TextArea API unavailable — rev-search match not displayed
                         pass
                     return self._history[idx]
                 idx += 1

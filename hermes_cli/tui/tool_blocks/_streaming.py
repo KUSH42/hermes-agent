@@ -202,16 +202,16 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             display_cfg = self.app.cfg.get("display", {})  # type: ignore[attr-defined]
             self._visible_cap: int = int(display_cfg.get("tool_visible_cap", _VISIBLE_CAP))
             self._line_byte_cap: int = int(display_cfg.get("tool_line_byte_cap", _LINE_BYTE_CAP))
-        except Exception:  # noqa: bare-except
+        except Exception:  # config unavailable on test mount; safe default used
             self._visible_cap = _VISIBLE_CAP
             self._line_byte_cap = _LINE_BYTE_CAP
         try:
             self._microcopy_widget = self._body.query_one(".--microcopy", Static)
-        except Exception:  # noqa: bare-except
+        except Exception:  # microcopy widget not yet mounted; None is documented contract
             self._microcopy_widget = None
         try:
             self._cached_body_log = self._body.query_one(CopyableRichLog)
-        except Exception:  # noqa: bare-except
+        except Exception:  # body log widget not yet mounted; cached ref simply absent
             pass
         if self._omission_bar_top is not None:
             self._omission_bar_top.display = False
@@ -227,7 +227,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             if _sec:
                 self._body.update_secondary_args(_sec)
                 self._secondary_args_snapshot = _sec
-        except Exception:  # noqa: bare-except
+        except Exception:  # spec_for/secondary_args_text optional; header still renders
             pass
         if self._is_first_in_turn:
             try:
@@ -436,7 +436,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
                 from hermes_cli.tui.widgets import CopyableRichLog as _CRL
                 log = self._body.query_one(_CRL)
                 log.write(_RichText(f"  cwd: {self._detected_cwd}", style="dim"))
-            except Exception:  # noqa: bare-except
+            except Exception:  # block may be completed before mount; cwd label is decorative
                 pass
         if is_error:
             self._header.flash_error()
@@ -449,7 +449,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             _args_text = _build_args_row_text(_spec, self._tool_input)
             if _args_text:
                 self._body.set_args_row(_args_text)
-        except Exception:  # noqa: bare-except
+        except Exception:  # spec_for unavailable; args row is optional decoration
             pass
 
     def _clear_microcopy_on_complete(self) -> None:
@@ -472,8 +472,8 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
                 self._body.mount(InlineImage(image=image_path, max_rows=24))
                 self.post_message(ImageMounted(image_path))
                 mounted = True
-            except Exception:  # noqa: bare-except
-                pass
+            except Exception:
+                logger.debug("InlineImage mount failed for path=%s", image_path, exc_info=True)
 
         try:
             from hermes_cli.tui.media_player import (
@@ -499,8 +499,8 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
                             seen.add(url)
                             self.mount(InlineMediaWidget(url=url, kind="youtube"))
                             mounted = True
-        except Exception:  # noqa: bare-except
-            pass
+        except Exception:
+            logger.debug("media_player mount failed", exc_info=True)
 
         return mounted
 
@@ -539,7 +539,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         try:
             from hermes_cli.tui.tool_category import spec_for
             from hermes_cli.tui.streaming_microcopy import StreamingState, microcopy_line
-        except Exception:  # noqa: bare-except
+        except Exception:  # optional import; microcopy silently suppressed
             return
         spec = spec_for(self._tool_name or "")
         state = StreamingState(
@@ -554,7 +554,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             from hermes_cli.tui.tool_category import ToolCategory as _TC
             if spec.category == _TC.AGENT:
                 self._shimmer_phase = (self._shimmer_phase + 0.05) % 2.0
-        except Exception:  # noqa: bare-except
+        except Exception:  # ToolCategory import optional; shimmer phase best-effort
             pass
         stalled = (
             not self._completed
@@ -655,13 +655,13 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         if lines_written:
             try:
                 scrolled_up = getattr(self.app.query_one("#output-panel"), "_user_scrolled_up", False)
-            except Exception:  # noqa: bare-except
+            except Exception:  # panel may not be mounted; scrolled_up defaults to False
                 scrolled_up = False
             if scrolled_up:
                 new_total = self._tail._new_line_count + lines_written
                 try:
                     self._tail.update_count(new_total)
-                except Exception:  # noqa: bare-except
+                except Exception:  # tail widget may not be mounted; chip update best-effort
                     pass
 
         if self._follow_tail_dirty:
@@ -944,7 +944,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             try:
                 mc = self._body.query_one(".--microcopy", Static)
                 self._microcopy_widget = mc
-            except Exception:  # noqa: bare-except
+            except Exception:  # widget not mounted; None return is documented contract
                 return
         styled = _T(text, style="dim")
         mc.update(styled)

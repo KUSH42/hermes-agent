@@ -205,7 +205,7 @@ class ToolBlock(Widget):
                 return (cvars.get("diff-add-bg", _DIFF_ADD_BG_FALLBACK),
                         cvars.get("diff-del-bg", _DIFF_DEL_BG_FALLBACK))
         except Exception as exc:
-            _log.debug("diff-bg theme lookup failed: %s", exc)
+            _log.debug("diff-bg theme lookup failed: %s", exc, exc_info=True)
         return _DIFF_ADD_BG_FALLBACK, _DIFF_DEL_BG_FALLBACK
 
     def _diff_fg_colors(self) -> tuple[str, str]:
@@ -214,7 +214,7 @@ class ToolBlock(Widget):
             from hermes_cli.tui.body_renderers._grammar import SkinColors
             c = SkinColors.from_app(self.app)
             return c.success, c.error
-        except Exception:  # noqa: bare-except
+        except Exception:  # SkinColors/app attr unavailable; fall back to hardcoded fg constants
             return _DIFF_ADD_FG_FALLBACK, _DIFF_DEL_FG_FALLBACK
 
     def _render_body(self) -> None:
@@ -235,7 +235,7 @@ class ToolBlock(Widget):
                         try:
                             css = self.app.get_css_variables()
                             theme = css.get("preview-syntax-theme") or css.get("syntax-theme") or theme
-                        except Exception:  # noqa: bare-except
+                        except Exception:  # get_css_variables unavailable before mount; theme defaults to "monokai"
                             pass
                         rl.write(Syntax(
                             "\n".join(self._plain_lines),
@@ -244,8 +244,8 @@ class ToolBlock(Widget):
                             theme=theme,
                         ))
                         return
-                    except Exception:  # noqa: bare-except
-                        pass
+                    except Exception:
+                        _log.debug("Syntax render fallback for lang=%s", lang, exc_info=True)
 
             if self._label == "diff":
                 add_bg, del_bg = self._diff_bg_colors()

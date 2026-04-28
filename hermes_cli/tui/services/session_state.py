@@ -42,6 +42,8 @@ def save_discoverability_state(state: DiscoverabilityState) -> None:
             try:
                 existing = json.loads(_STATE_FILE.read_text())
             except Exception:
+                # State file is corrupt or unreadable; start with empty dict to avoid
+                # propagating the corruption. The write below will overwrite it.
                 pass
         existing["discoverability"] = asdict(state)
         _STATE_FILE.write_text(json.dumps(existing, indent=2))

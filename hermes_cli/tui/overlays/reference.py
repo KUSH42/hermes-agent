@@ -10,7 +10,11 @@ When R2's PaneManager lands, subclasses flip to pane targets; external API
 
 from __future__ import annotations
 
+import logging
+
 from textual import events
+
+_log = logging.getLogger(__name__)
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
@@ -341,7 +345,7 @@ class UsageOverlay(ReferenceModal):
             try:
                 rl_state = agent.get_rate_limit_state()
             except Exception:
-                pass
+                _log.debug("get_rate_limit_state failed; omitting rate-limit row", exc_info=True)
         if rl_state and getattr(rl_state, "has_data", False):
             from agent.rate_limit_tracker import format_rate_limit_display
             lines.append("")
@@ -656,13 +660,13 @@ class WorkspaceOverlay(ReferenceModal):
             sw = self.query_one("#ws-switcher", ContentSwitcher)
             sw.current = pane_id
         except Exception:
-            pass
+            _log.debug("workspace tab switch to %r failed", pane_id, exc_info=True)
         # Update tab button active class
         try:
             git_btn = self.query_one("#ws-tab-git", Button)
             git_btn.add_class("--tab-active")
         except Exception:
-            pass
+            pass  # tab button not yet in DOM or already removed; styling update is best-effort
 
     def show_overlay(self) -> None:
         self.border_title = self._modal_title

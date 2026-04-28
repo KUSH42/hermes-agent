@@ -36,7 +36,7 @@ def _parse_trigger_phrases(body: str) -> list[str]:
         return []
     try:
         return _parse_prose_list(m.group(1))
-    except Exception:
+    except Exception:  # prose parse failed — return empty trigger list
         return []
 
 
@@ -46,7 +46,7 @@ def _parse_negative_phrases(body: str) -> list[str]:
         return []
     try:
         return _parse_prose_list(m.group(1))
-    except Exception:
+    except Exception:  # prose parse failed — return empty negative list
         return []
 
 
@@ -77,10 +77,10 @@ def _classify_source(
                     return "plugin"
                 except ValueError:
                     pass
-        except Exception:
+        except Exception:  # external skills dir resolution failed — treat as non-plugin
             pass
         return "user"
-    except Exception:
+    except Exception:  # path resolution failed entirely — default to "user"
         return "user"
 
 
@@ -125,11 +125,11 @@ class SkillCandidate:
                 fm_desc = _fm.get("description", "") or ""
                 if fm_desc:
                     description = fm_desc
-            except Exception:
+            except Exception:  # frontmatter parse failed — use full content as body
                 body = content
             trigger = _parse_trigger_phrases(body)
             negative = _parse_negative_phrases(body)
-        except Exception:
+        except Exception:  # skill_md_path unreadable or parse failed — use empty trigger/negative
             pass
 
         return cls(

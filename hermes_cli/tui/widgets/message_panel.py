@@ -160,6 +160,7 @@ class ReasoningPanel(Widget):
                     tw.deactivate()
                     break
         except Exception:
+            # widget absent during update; skip gracefully
             pass
         self._live_buf = ""
         # Only clear the log if no content committed yet.
@@ -316,6 +317,7 @@ class MessagePanel(Widget):
         try:
             self.app._refresh_live_response_metrics()
         except Exception:
+            # prose render failed; message panel shows empty content
             pass
 
     def set_response_metrics(
@@ -360,6 +362,7 @@ class MessagePanel(Widget):
                 try:
                     self._response_engine.process_line(self._carry_pending)
                 except Exception:
+                    # widget absent during update; skip gracefully
                     pass
                 self._carry_pending = None
             if self._carry_partial is not None:
@@ -369,6 +372,7 @@ class MessagePanel(Widget):
                 try:
                     self._response_engine.feed(self._carry_partial)
                 except Exception:
+                    # widget absent during refresh; skip gracefully
                     pass
                 self._carry_partial = None
         # Signal cli.py that the engine is ready — streaming may now start.
@@ -382,6 +386,7 @@ class MessagePanel(Widget):
                     _log.debug("[STARTUP] panels_ready_ms=%.1f", _panels_ms)
                 ev.set()
         except Exception:
+            # widget absent during refresh; skip gracefully
             pass
 
     @property
@@ -434,6 +439,7 @@ class MessagePanel(Widget):
             from hermes_cli.tui.tool_group import _maybe_start_group
             _maybe_start_group(self, block)
         except Exception:
+            # CSS variable lookup failed; use default colour
             pass
         if (
             self._response_block.parent is self
@@ -645,6 +651,7 @@ class MessagePanel(Widget):
                     ansi = _hl(label, BashLexer(), TerminalTrueColorFormatter(style="monokai")).rstrip("\n")
                     block._header._label_rich = _Text.from_ansi(ansi)
             except Exception:
+                # scroll-to position failed; panel is already rendered
                 pass
         return block
 
@@ -701,6 +708,7 @@ class _EchoBullet(PulseMixin, Widget):
             )
             self._bullet_dim = v.get("running-indicator-dim-color", "#6e6e6e")
         except Exception:
+            # widget absent during cleanup; skip gracefully
             pass
         self.watch(self.app, "agent_running", self._on_agent_running, init=False)
         self._watcher_registered = True
@@ -712,6 +720,7 @@ class _EchoBullet(PulseMixin, Widget):
                 if getattr(self.app, "_animations_enabled", True):
                     self._pulse_start()
         except Exception:
+            # widget absent during cleanup; skip gracefully
             pass
 
     def on_unmount(self) -> None:

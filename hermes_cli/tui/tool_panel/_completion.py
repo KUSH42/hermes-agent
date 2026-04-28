@@ -268,7 +268,7 @@ class _ToolPanelCompletionMixin:
     ) -> None:
         try:
             self.remove_class("--streaming")  # type: ignore[attr-defined]
-        except Exception:  # noqa: bare-except
+        except Exception:  # remove_class may fail on partially initialized widget; swap continues
             pass
         try:
             from hermes_cli.tui.tool_payload import ResultKind
@@ -443,7 +443,7 @@ class _ToolPanelCompletionMixin:
                         duration=0.5,
                         tone="success",
                     )
-                except Exception:  # noqa: bare-except
+                except Exception:  # FeedbackService unavailable (e.g. test harness); "done" flash is decorative
                     pass
 
         self._update_kind_from_classifier(line_count)

@@ -109,7 +109,7 @@ def _get_textual_builtins() -> frozenset[str]:
         return frozenset(_Probe().get_css_variables().keys())
     except AssertionError:
         raise
-    except Exception:
+    except Exception:  # Textual unavailable or introspection failed — use static fallback list
         return TEXTUAL_BUILTIN_VARS_FALLBACK
 
 
@@ -197,7 +197,7 @@ def scan_skin_keys(skin_path: Path) -> set[str]:
     # Legacy YAML
     try:
         data = yaml.safe_load(text) or {}
-    except Exception:
+    except Exception:  # YAML parse error in skin file — treat as having no component_vars keys
         return set()
     cv = data.get("component_vars", {}) if isinstance(data, dict) else {}
     if not isinstance(cv, dict):

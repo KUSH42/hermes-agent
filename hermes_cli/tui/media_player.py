@@ -134,6 +134,7 @@ class MpvController:
             )
             self._ipc_started = False
         except Exception:
+            logger.debug("mpv launch failed", exc_info=True)
             self._proc = None
 
     def stop(self) -> None:
@@ -141,7 +142,7 @@ class MpvController:
         if self._proc is not None:
             try:
                 self._proc.kill()
-            except Exception:
+            except Exception:  # process already exited — kill is a no-op
                 pass
             self._proc = None
 
@@ -275,7 +276,7 @@ def _fetch_youtube_thumbnail(url: str) -> str | None:
         os.close(fd)
         urlretrieve(thumb_url, tmp_path)
         return tmp_path
-    except Exception:
+    except Exception:  # network or filesystem failure fetching thumbnail — return None
         return None
 
 
@@ -298,6 +299,6 @@ def _extract_video_thumbnail(path_or_url: str) -> str | None:
         )
         if result.returncode == 0:
             return tmp_path
-    except Exception:
+    except Exception:  # ffmpeg timed out or was killed — no thumbnail
         pass
     return None

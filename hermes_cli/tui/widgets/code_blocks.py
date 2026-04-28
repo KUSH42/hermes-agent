@@ -81,6 +81,7 @@ class CodeBlockFooter(Widget):
                 CodeFooterAdapter(self),
             )
         except Exception:
+            # feedback channel registration failed; copy flash still works via fallback
             pass
 
     def on_unmount(self) -> None:
@@ -88,6 +89,7 @@ class CodeBlockFooter(Widget):
         try:
             self.app.feedback.deregister_channel(f"code-footer::{self.id}")
         except Exception:
+            # Syntax init failed (bad theme); plain text is safe fallback
             pass
 
     def set_actions(self, *, copy_label: str, toggle_label: str | None) -> None:
@@ -117,6 +119,7 @@ class CodeBlockFooter(Widget):
                 key="copy",
             )
         except Exception:
+            # CSS variable lookup failed; use default theme
             pass
 
     def on_click(self, event: Any) -> None:
@@ -131,6 +134,7 @@ class CodeBlockFooter(Widget):
             try:
                 self.app._copy_code_block(parent)  # type: ignore[attr-defined]
             except Exception:
+                # widget absent pre-mount; refresh skipped
                 pass
             event.prevent_default()
             return
@@ -140,6 +144,7 @@ class CodeBlockFooter(Widget):
                     parent.toggle_collapsed()
                     event.prevent_default()
             except Exception:
+                # render_markup failed; display continues with stale content
                 pass
 
 
@@ -248,6 +253,7 @@ class StreamingCodeBlock(Widget):
         try:
             _mounted = self.is_mounted
         except Exception:
+            # is_mounted check failed; treat as unmounted
             _mounted = False
         if (
             _mounted
@@ -259,6 +265,7 @@ class StreamingCodeBlock(Widget):
             try:
                 self.set_timer(0.6, lambda: self.remove_class("--browse-newly-anchored"))
             except Exception:
+                # widget absent during refresh; skip silently
                 pass
 
     def _try_render_mermaid_async(self) -> None:
@@ -274,12 +281,14 @@ class StreamingCodeBlock(Widget):
         try:
             mounted = bool(self.is_mounted)
         except Exception:
+            # is_mounted check failed; treat as unmounted
             mounted = False
         if not mounted:
             rendered = render_mermaid(code)
             try:
                 self.app.call_from_thread(self._on_mermaid_rendered, rendered)
             except Exception:
+                _log.debug("mermaid render callback failed", exc_info=True)
                 self._on_mermaid_rendered(rendered)
             return
         result = _build_mermaid_cmd(code)
@@ -288,6 +297,7 @@ class StreamingCodeBlock(Widget):
             try:
                 self.app.call_from_thread(self._on_mermaid_rendered, rendered)
             except Exception:
+                _log.debug("mermaid render subprocess failed", exc_info=True)
                 self._on_mermaid_rendered(rendered)
             return
 
@@ -297,10 +307,12 @@ class StreamingCodeBlock(Widget):
             try:
                 m.unlink(missing_ok=True)  # type: ignore[union-attr]
             except Exception:
+                # content update failed; widget may be detached
                 pass
             try:
                 p.unlink(missing_ok=True)  # type: ignore[union-attr]
             except Exception:
+                # content update failed; widget may be detached
                 pass
 
         safe_run(
@@ -333,6 +345,7 @@ class StreamingCodeBlock(Widget):
             img_widget = InlineImage(image=path, max_rows=max_rows)
             self.parent.mount(img_widget, after=self)
         except Exception:
+            # CSS variables unavailable; syntax highlight uses cached vars
             self._render_syntax(self._complete_skin_vars or None)
 
     def _render_syntax(self, skin_vars: dict[str, str] | None = None) -> None:
@@ -452,6 +465,7 @@ class StreamingCodeBlock(Widget):
                 try:
                     self.app._copy_text_with_hint(code)
                 except Exception:
+                    # copy action best-effort; widget may not be mounted
                     pass
                 event.prevent_default()
             return

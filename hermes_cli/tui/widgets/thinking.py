@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from hermes_cli.tui.anim_engines import AnimEngine, AnimParams
 
 logger = logging.getLogger(__name__)
+_log = logger
 
 
 def _schedule_awaitable(value: object) -> None:
@@ -36,7 +37,7 @@ def _schedule_awaitable(value: object) -> None:
         try:
             asyncio.ensure_future(value)  # type: ignore[arg-type]
         except Exception:
-            pass
+            pass  # ensure_future failed outside a running loop; awaitable dropped safely
 
 # ── Engine whitelists ─────────────────────────────────────────────────────────
 
@@ -187,6 +188,7 @@ _AnimSurface {
                 ]
                 return Strip(segments, text.cell_len).extend_cell_length(width).crop(0, width)
         except Exception:
+            # thinking content parse failed; widget shows empty content
             pass
         return Strip([Segment(" " * width, Style())], width)
 
@@ -349,6 +351,7 @@ _LabelLine   { height: 1;   width: 1fr; }
             if w > 0 and w < 100:
                 return ThinkingMode.COMPACT
         except Exception:
+            # streaming widget absent; thinking append skipped
             pass
         self._load_config()
         resolved = ThinkingMode.DEFAULT
@@ -396,7 +399,7 @@ _LabelLine   { height: 1;   width: 1fr; }
             self._accent_hex = f"#{accent.lstrip('#')}" if accent else "#888888"
             self._text_hex = f"#{text.lstrip('#')}" if text else "#ffffff"
         except Exception:
-            pass
+            pass  # CSS variable parse failed; accent/text colours use hardcoded fallback
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -498,12 +501,14 @@ _LabelLine   { height: 1;   width: 1fr; }
             try:
                 _schedule_awaitable(self._anim_surface.remove())
             except Exception:
+                # scroll target unavailable; thinking display continues
                 pass
             self._anim_surface = None
         if self._label_line is not None:
             try:
                 _schedule_awaitable(self._label_line.remove())
             except Exception:
+                # scroll target unavailable; thinking display continues
                 pass
             self._label_line = None
 
@@ -524,6 +529,7 @@ _LabelLine   { height: 1;   width: 1fr; }
             try:
                 self._reserve_fallback_timer.stop()
             except Exception:
+                # widget absent during cleanup; skip gracefully
                 pass
             self._reserve_fallback_timer = None
         if self._substate == "--reserved":

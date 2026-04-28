@@ -130,7 +130,7 @@ class WatchersService(AppService):
         try:
             self.sync_compact_visibility()
         except Exception as exc:
-            _log.debug("on_compact: sync_compact_visibility failed: %s", exc)
+            _log.debug("on_compact: sync_compact_visibility failed: %s", exc, exc_info=True)
 
     def sync_compact_visibility(self) -> None:
         from hermes_cli.tui.session_widgets import SessionBar
@@ -371,7 +371,7 @@ class WatchersService(AppService):
         except NoMatches:
             pass
         except Exception as exc:
-            _log.debug("_post_interrupt_focus: focus call failed: %s", exc)
+            _log.debug("_post_interrupt_focus: focus call failed: %s", exc, exc_info=True)
 
     def on_clarify_state(self, value: "ChoiceOverlayState | None") -> None:
         from hermes_cli.tui.overlays import InterruptKind
@@ -548,13 +548,13 @@ class WatchersService(AppService):
                 try:
                     inp._set_input_locked(True)
                 except Exception as exc:
-                    _log.debug("on_undo_state: _set_input_locked(True) failed: %s", exc)
+                    _log.debug("on_undo_state: _set_input_locked(True) failed: %s", exc, exc_info=True)
             elif not self.app.agent_running and not self.app.command_running:
                 inp.disabled = False
                 try:
                     inp._set_input_locked(False)
                 except Exception as exc:
-                    _log.debug("on_undo_state: _set_input_locked(False) failed: %s", exc)
+                    _log.debug("on_undo_state: _set_input_locked(False) failed: %s", exc, exc_info=True)
         except NoMatches:
             pass
         if value is None:

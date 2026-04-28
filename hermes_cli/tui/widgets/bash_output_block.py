@@ -1,8 +1,11 @@
 """BashOutputBlock — widget that displays streaming output from a bash command."""
 from __future__ import annotations
 
+import logging
 import time
 from typing import TYPE_CHECKING
+
+_log = logging.getLogger(__name__)
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal
@@ -79,13 +82,17 @@ class BashOutputBlock(Static):
             try:
                 self.app._svc_bash.kill()
             except Exception:
+                # best-effort process teardown; ignore if already dead
                 pass
 
     def push_line(self, line: str) -> None:
         """Append one output line. Call via app.call_from_thread."""
         if self._body is not None:
-            from rich.text import Text
-            self._body.write(Text.from_ansi(line))
+            try:
+                from rich.text import Text
+                self._body.write(Text.from_ansi(line))
+            except Exception:
+                _log.debug("push_line: line append failed", exc_info=True)
 
     def mark_done(self, exit_code: int, elapsed_s: float) -> None:
         """Transition to completed state. Called on event loop via call_from_thread."""

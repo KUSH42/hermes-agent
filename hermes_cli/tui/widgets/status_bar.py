@@ -62,6 +62,7 @@ def _safe_int(value: object, default: int = 0) -> int:
     try:
         return int(value)  # type: ignore[arg-type]
     except Exception:
+        # CSS variable lookup failed; return caller-supplied default
         return default
 
 
@@ -71,6 +72,7 @@ def _safe_bool(value: object, default: bool = False) -> bool:
     try:
         return bool(value)
     except Exception:
+        # CSS variable lookup failed; return caller-supplied default
         return default
 
 
@@ -261,6 +263,7 @@ class HintBar(Widget):
             v = self.app.get_css_variables()
             return v.get("accent-interactive", v.get("primary", "#5f87d7"))
         except Exception:
+            # colour resolve failed; use hardcoded fallback blue
             return "#5f87d7"
 
     def on_mount(self) -> None:
@@ -364,6 +367,7 @@ class HintBar(Widget):
             try:
                 k = self.app.get_css_variables().get("accent-interactive", "#5f87d7")
             except Exception:
+                # colour resolve failed; use hardcoded fallback blue
                 k = "#5f87d7"
             pinned = Text.from_markup(
                 f"[bold {k}]^C[/] [dim]interrupt[/dim]  ·  [bold {k}]Esc[/] [dim]dismiss[/dim]"
@@ -438,6 +442,7 @@ class StatusBar(PulseMixin, Widget):
             v = self.app.get_css_variables()
             return v.get("primary", "#5f87d7")
         except Exception:
+            # colour resolve failed; use hardcoded fallback blue
             return "#5f87d7"
 
     def on_mount(self) -> None:
@@ -660,6 +665,7 @@ class StatusBar(PulseMixin, Widget):
             try:
                 _flash_state = _feedback.peek("hint-bar")
             except Exception:
+                # flash state query failed; treat as no active flash
                 _flash_state = None
         _hintbar_flashing = _flash_state is not None and (
             not _mockish(_flash_state) or _feedback_explicit
@@ -1004,6 +1010,7 @@ def _extract_domain(url: str) -> str:
         host = urlparse(url).netloc
         return host.removeprefix("www.") if host else url[:30]
     except Exception:
+        # URL truncation failed; return first 30 chars as safe fallback
         return url[:30]
 
 

@@ -5,7 +5,10 @@ Contains: SeekBar, InlineMediaWidget.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
+
+_log = logging.getLogger(__name__)
 
 from rich.text import Text
 from textual import work
@@ -184,13 +187,13 @@ class InlineMediaWidget(Widget):
             try:
                 self.mount(InlineThumbnail(thumb_path), before="#media-controls")
             except Exception:
-                pass
+                pass  # thumbnail mount failed; media widget continues without preview
         self.state = "idle"
         try:
             ctrl_label = self.query_one("#media-controls", Static)
             ctrl_label.update(f"◉ {_short_url(self._url)}")
         except Exception:
-            pass
+            _log.debug("MediaWidget._load failed", exc_info=True)
 
     def action_play_pause(self) -> None:
         if self.state == "idle":
@@ -239,7 +242,7 @@ class InlineMediaWidget(Widget):
                 if self._cfg.timeline_auto_s == 0 or dur > self._cfg.timeline_auto_s:
                     sb.display = True
         except Exception:
-            pass
+            _log.debug("MediaWidget._update failed", exc_info=True)
 
     def _on_end(self) -> None:
         self.state = "stopped"

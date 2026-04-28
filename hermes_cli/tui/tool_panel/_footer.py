@@ -213,8 +213,8 @@ class BodyPane(Widget):
             from rich.text import Text
             t = Text("\n".join(tail))
             preview_widget.update(t)
-        except Exception:  # noqa: bare-except
-            pass
+        except Exception:
+            _log.debug("preview update failed", exc_info=True)
 
     def compose(self) -> ComposeResult:
         if self._block is not None:
@@ -496,7 +496,7 @@ class FooterPane(Widget):
                     _ac = css.get("accent-interactive") or css.get("primary") or _ACCENT_FALLBACK
                     tone_style = f"bold {_ac}"
                 except Exception as exc:
-                    _log.debug("accent css lookup failed: %s", exc)
+                    _log.debug("accent css lookup failed: %s", exc, exc_info=True)
                     tone_style = f"bold {_ACCENT_FALLBACK}"
             parts.append(f" {chip.text} ", style=tone_style)
             remediation = getattr(chip, "remediation", None)
@@ -524,17 +524,17 @@ class FooterPane(Widget):
         try:
             for btn in list(self._artifact_row.query(".--artifact-chip")):
                 btn.remove()
-        except Exception:  # noqa: bare-except
+        except Exception:  # artifact button may have been removed by a concurrent refresh; teardown safe
             pass
         try:
             for btn in list(self._artifact_row.query(".--artifact-overflow")):
                 btn.remove()
-        except Exception:  # noqa: bare-except
+        except Exception:  # artifact button may have been removed by a concurrent refresh; teardown safe
             pass
         try:
             for btn in list(self._artifact_row.query(".--artifact-collapse")):
                 btn.remove()
-        except Exception:  # noqa: bare-except
+        except Exception:  # artifact button may have been removed by a concurrent refresh; teardown safe
             pass
 
         if not summary.artifacts:

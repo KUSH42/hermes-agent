@@ -72,7 +72,7 @@ def _next_legal_tier_static(
     cycle = _density_cycle()
     try:
         idx = cycle.index(start)  # type: ignore[arg-type]
-    except ValueError:  # noqa: bare-except
+    except ValueError:  # tier not in density cycle (unknown enum value); DEFAULT is safe
         return DensityTier.DEFAULT
     for _ in range(len(cycle)):
         idx = (idx + direction) % len(cycle)
@@ -97,7 +97,7 @@ class _ToolPanelActionsMixin:
         cycle = _density_cycle()
         try:
             idx = cycle.index(current)  # type: ignore[arg-type]
-        except ValueError:  # noqa: bare-except
+        except ValueError:  # tier not in density cycle (unknown enum value); DEFAULT is safe
             return DensityTier.DEFAULT
         return cycle[(idx + 1) % len(cycle)]
 
@@ -354,7 +354,7 @@ class _ToolPanelActionsMixin:
             opener = "open" if sys.platform == "darwin" else "xdg-open"
             try:
                 self.app._open_path_action(header, header._full_path, opener, False)  # type: ignore[attr-defined]
-            except Exception:  # noqa: bare-except
+            except Exception:  # OS open failure surfaced to user via _flash_header("open failed")
                 self._flash_header("open failed", tone="error")
             return
         paths = self._result_paths_for_action()
@@ -466,7 +466,7 @@ class _ToolPanelActionsMixin:
             if existing:
                 try:
                     inp._save_to_history(existing)
-                except Exception:  # noqa: bare-except
+                except Exception:  # history save is best-effort; input proceeds regardless
                     pass
             inp.value = payload
             inp.focus()
@@ -506,7 +506,7 @@ class _ToolPanelActionsMixin:
         try:
             self.app._svc_commands.initiate_retry()  # type: ignore[attr-defined]
             self._flash_header("retrying…")
-        except Exception:  # noqa: bare-except
+        except Exception:  # retry failure surfaced to user via _flash_header("retry failed")
             self._flash_header("retry failed")
 
     def action_edit_args(self) -> None:
@@ -565,7 +565,7 @@ class _ToolPanelActionsMixin:
                 from hermes_cli.tui.widgets import CopyableRichLog
                 rl = block._body.query_one(CopyableRichLog)
                 all_rich = getattr(rl, "_all_rich", None)
-            except Exception:  # noqa: bare-except
+            except Exception:  # CopyableRichLog not yet mounted; falls back to action_copy_body()
                 pass
         if not all_rich:
             self.action_copy_body()
@@ -594,7 +594,7 @@ class _ToolPanelActionsMixin:
                 from hermes_cli.tui.widgets import CopyableRichLog
                 rl = block._body.query_one(CopyableRichLog)
                 all_rich = getattr(rl, "_all_rich", None)
-            except Exception:  # noqa: bare-except
+            except Exception:  # CopyableRichLog not yet mounted; falls back to action_copy_body()
                 pass
         if not all_rich:
             self._flash_header("HTML: nothing to copy", tone="warning")
@@ -722,7 +722,7 @@ class _ToolPanelActionsMixin:
             from hermes_cli.tui.widgets import CopyableRichLog
             log = self._block._body.query_one(CopyableRichLog)  # type: ignore[attr-defined]
             log.scroll_end(animate=False)
-        except Exception:  # noqa: bare-except
+        except Exception:  # CopyableRichLog not yet mounted; scroll is a no-op before first render
             pass
 
     def action_show_help(self) -> None:
@@ -798,7 +798,7 @@ class _ToolPanelActionsMixin:
                 block = self._block  # type: ignore[attr-defined]
                 if block is not None and getattr(block._header, "_path_clickable", False):
                     self.post_message(self.__class__.PathFocused(self))  # type: ignore[attr-defined]
-            except Exception:  # noqa: bare-except
+            except Exception:  # panel may be unmounting; PathFocused message is best-effort
                 pass
 
     def on_resize(self, event: object) -> None:
@@ -1005,7 +1005,7 @@ class _ToolPanelActionsMixin:
             bar = getattr(block, "_omission_bar_bottom", None)
             if isinstance(bar, _OB) and getattr(block, "_omission_bar_bottom_mounted", False):
                 return bar
-        except Exception:  # noqa: bare-except
+        except Exception:  # OmissionBar query failed (widget not mounted); None/no-op is safe
             pass
         return None
 
@@ -1082,7 +1082,7 @@ class _ToolPanelActionsMixin:
             bar = next(iter(self.query(OmissionBar)), None)  # type: ignore[attr-defined]
             if bar is not None:
                 bar._do_expand_one()
-        except Exception:  # noqa: bare-except
+        except Exception:  # OmissionBar query failed (widget not mounted); None/no-op is safe
             pass
 
     def action_omission_collapse(self) -> None:
@@ -1091,7 +1091,7 @@ class _ToolPanelActionsMixin:
             bar = next(iter(self.query(OmissionBar)), None)  # type: ignore[attr-defined]
             if bar is not None:
                 bar._do_collapse_one()
-        except Exception:  # noqa: bare-except
+        except Exception:  # OmissionBar query failed (widget not mounted); None/no-op is safe
             pass
 
     def force_renderer(self, kind: "ResultKind | None") -> None:
@@ -1238,7 +1238,7 @@ class _ToolPanelActionsMixin:
         )
         try:
             idx = cycle.index(current)
-        except ValueError:  # noqa: bare-except
+        except ValueError:  # tier not in density cycle (unknown enum value); DEFAULT is safe
             idx = -1
         nxt = cycle[(idx + 1) % len(cycle)]
         return nxt.value.lower() if nxt is not None else "auto"

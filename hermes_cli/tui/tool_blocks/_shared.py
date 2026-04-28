@@ -298,7 +298,7 @@ def _secondary_args_text(category: "Any", tool_input: "dict | None") -> str:
                 return "args: " + ", ".join(f"{k}: {v}" for k, v in pairs)
             return ""
 
-    except Exception:  # noqa: bare-except
+    except Exception:  # defensive catch for entire label render; "" is always a safe fallback
         pass
     return ""
 
@@ -411,7 +411,7 @@ def header_label_v4(
                 label_str = label_str[:max(1, available - 1)] + "…"
             t.append(f" {label_str}")
             return t
-    except Exception:  # noqa: bare-except
+    except Exception:  # ToolCategory import unavailable; skip category-specific args formatting
         pass
 
     if primary == "path":
@@ -436,7 +436,7 @@ def header_label_v4(
         try:
             from hermes_cli.tui.tool_category import ToolCategory as _TC
             _is_shell = cat == _TC.SHELL
-        except Exception:  # noqa: bare-except
+        except Exception:  # ToolCategory.SHELL check failed (import unavailable); skip $ prefix
             _is_shell = False
         if accent_color and _is_shell:
             t.append(" $", style=f"bold {accent_color}")
@@ -717,7 +717,7 @@ class OmissionBar(TooltipMixin, Widget):
                 if "--at-default" in btn.classes:
                     event.stop()
                     return
-            except Exception:  # noqa: bare-except
+            except Exception:  # .--ob-cap button not yet mounted; skip --at-default guard and proceed
                 pass
             pb.rerender_window(0, _VISIBLE_CAP)
         elif "--ob-up" in classes:

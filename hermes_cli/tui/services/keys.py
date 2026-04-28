@@ -1,6 +1,7 @@
 """Key event dispatcher, input submission service extracted from _app_key_handler.py."""
 from __future__ import annotations
 
+import logging
 import time as _time
 from typing import Any, TYPE_CHECKING
 
@@ -17,6 +18,8 @@ from .base import AppService
 if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
 
+_log = logging.getLogger(__name__)
+
 
 class KeyDispatchService(AppService):
     """Key event dispatcher and input submission logic extracted from _KeyHandlerMixin."""
@@ -29,7 +32,10 @@ class KeyDispatchService(AppService):
         from hermes_cli.tui.overlays import InterruptOverlay
         try:
             return self.app.query_one(InterruptOverlay)
+        except NoMatches:
+            return None
         except Exception:
+            _log.debug("_get_interrupt_overlay: query failed", exc_info=True)
             return None
 
     def dispatch_key(self, event: Any) -> None:
@@ -220,7 +226,7 @@ class KeyDispatchService(AppService):
                 except NoMatches:
                     self.app.log.warning("interrupt feedback: OutputPanel not available")
                 except Exception as exc:
-                    self.app.log.warning(f"interrupt feedback failed: {exc}")
+                    self.app.log.warning("interrupt feedback failed: %s", exc, exc_info=True)
                 event.prevent_default()
                 return
 
@@ -268,8 +274,11 @@ class KeyDispatchService(AppService):
                         _pm.focus_pane(PaneId.CENTER)
                         event.prevent_default()
                         return
-                    except Exception:
+                    except NoMatches:
+                        # Widget not found — skip navigation (expected mid-animation)
                         pass
+                    except Exception:
+                        _log.debug("dispatch_key (%s): navigation call failed", key, exc_info=True)
 
             if self.app.browse_mode:
                 self.app.browse_mode = False
@@ -307,7 +316,7 @@ class KeyDispatchService(AppService):
                 except NoMatches:
                     self.app.log.warning("interrupt feedback: OutputPanel not available")
                 except Exception as exc:
-                    self.app.log.warning(f"interrupt feedback failed: {exc}")
+                    self.app.log.warning("interrupt feedback failed: %s", exc, exc_info=True)
                 event.prevent_default()
                 return
 
@@ -399,8 +408,11 @@ class KeyDispatchService(AppService):
                                 focused.focus_first_child()
                             event.prevent_default()
                             return
-                    except Exception:
+                    except NoMatches:
+                        # Widget not found — skip navigation (expected mid-animation)
                         pass
+                    except Exception:
+                        _log.debug("dispatch_key (%s): navigation call failed", key, exc_info=True)
                 if headers:
                     idx = self.app.browse_index % len(headers)
                     parent = headers[idx].parent
@@ -444,8 +456,11 @@ class KeyDispatchService(AppService):
                                 grandparent.focus()
                                 event.prevent_default()
                                 return
-                    except Exception:
+                    except NoMatches:
+                        # Widget not found — skip navigation (expected mid-animation)
                         pass
+                    except Exception:
+                        _log.debug("dispatch_key (%s): navigation call failed", key, exc_info=True)
                 self.app.browse_mode = False
                 event.prevent_default()
                 return
@@ -567,7 +582,7 @@ class KeyDispatchService(AppService):
                 cli._postamble_pending = False
                 cli._show_banner_postamble()
         except Exception:
-            pass
+            _log.debug("dispatch_input_submitted: postamble flush failed", exc_info=True)
 
         from hermes_cli.tui.widgets import ThinkingWidget
         text = event.value
@@ -635,7 +650,7 @@ class KeyDispatchService(AppService):
             try:
                 self.app.cli._reset_turn_state()
             except Exception:
-                pass
+                _log.debug("dispatch_input_submitted: _reset_turn_state failed", exc_info=True)
         if hasattr(self.app, "cli") and self.app.cli is not None:
             if hasattr(self.app.cli, "_pending_input"):
                 self.app.cli._pending_input.put(payload)

@@ -122,6 +122,7 @@ class _PlanEntry(Static, can_focus=True):
             try:
                 self.app.query_one("#input-area").focus()
             except Exception:
+                # plan data parse failed; panel renders with empty plan
                 pass
             event.stop()
 
@@ -133,7 +134,7 @@ class _PlanEntry(Static, can_focus=True):
             if svc is not None:
                 svc.scroll_to_tool(self._tool_call_id)
         except Exception:
-            pass
+            pass  # scroll_to_tool failed; panel remains at current position
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +201,7 @@ class _NowSection(Vertical):
             try:
                 self._timer_handle.stop()
             except Exception:
+                # ToolBlock query failed (partially mounted); skip plan entry
                 pass
             self._timer_handle = None
 
@@ -339,7 +341,7 @@ class _BudgetSection(Horizontal):
             else:
                 ov.add_class("--visible")
         except Exception:
-            pass
+            pass  # UsageOverlay absent; best-effort — no crash on click
 
 
 # ---------------------------------------------------------------------------
@@ -381,6 +383,7 @@ class _ChipSegment(Static, can_focus=False):
             if running:
                 self.app._svc_browse.scroll_to_tool(running.tool_call_id)
         except Exception:
+            # cost_usd parse failed; use 0.0 as safe display fallback
             pass
 
     def _jump_first_error(self) -> None:
@@ -391,6 +394,7 @@ class _ChipSegment(Static, can_focus=False):
             if err:
                 self.app._svc_browse.scroll_to_tool(err.tool_call_id)
         except Exception:
+            # token count parse failed; use 0 as safe display fallback
             pass
 
     def _open_usage(self) -> None:
@@ -402,7 +406,7 @@ class _ChipSegment(Static, can_focus=False):
             else:
                 ov.add_class("--visible")
         except Exception:
-            pass
+            pass  # UsageOverlay absent; best-effort — no crash on open
 
 
 # ---------------------------------------------------------------------------
@@ -517,7 +521,7 @@ class _PlanPanelHeader(Horizontal):
             app = self.app
             app.plan_panel_collapsed = not app.plan_panel_collapsed
         except Exception:
-            pass
+            pass  # reactive write failed; collapse state unchanged
 
 
 # ---------------------------------------------------------------------------
@@ -588,6 +592,7 @@ class PlanPanel(Vertical):
         try:
             self._on_collapse_changed(getattr(self.app, "plan_panel_collapsed", True))
         except Exception:
+            # widget absent during refresh; skip gracefully
             pass
 
     def _on_planned_calls_changed(self, calls: list) -> None:
@@ -602,6 +607,7 @@ class PlanPanel(Vertical):
             else:
                 app.remove_class("plan-active")
         except Exception:
+            # cost label update failed; display continues with stale value
             pass
         # Debounced --active hide
         if has_any:
@@ -610,11 +616,13 @@ class PlanPanel(Vertical):
                 try:
                     self._active_hide_timer.stop()
                 except Exception:
+                    # plan entry widget absent; row update skipped
                     pass
                 self._active_hide_timer = None
             try:
                 self.add_class("--active")
             except Exception:
+                # plan entry widget absent; row update skipped
                 pass
         else:
             # Defer hide by 3s
@@ -629,7 +637,7 @@ class PlanPanel(Vertical):
             self.remove_class("--active")
             self.app.remove_class("plan-active")
         except Exception:
-            pass
+            pass  # CSS class removal failed; widget may already be unmounted
 
     def _on_budget_changed(self, _=None) -> None:
         try:
@@ -673,6 +681,7 @@ class PlanPanel(Vertical):
         try:
             calls: list = getattr(self.app, "planned_calls", [])
         except Exception:
+            # tool call list parse failed; empty list is safe fallback
             calls = []
         self._rebuild_header()
         self._rebuild_now(calls)
@@ -682,6 +691,7 @@ class PlanPanel(Vertical):
         try:
             calls: list = getattr(self.app, "planned_calls", [])
         except Exception:
+            # tool call list parse failed; empty list is safe fallback
             calls = []
         from hermes_cli.tui.plan_types import PlanState
         running = sum(1 for c in calls if c.state == PlanState.RUNNING)
@@ -699,6 +709,7 @@ class PlanPanel(Vertical):
             tokens_in_h: int = int(getattr(self.app, "turn_tokens_in", 0) or 0)
             tokens_out_h: int = int(getattr(self.app, "turn_tokens_out", 0) or 0)
         except Exception:
+            # cost_usd calculation failed; 0.0 is safe display fallback
             cost_usd = 0.0
             tokens_in_h = 0
             tokens_out_h = 0

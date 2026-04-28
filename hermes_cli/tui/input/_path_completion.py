@@ -36,7 +36,7 @@ class _PathCompletionMixin:
         try:
             clist = self.screen.query_one(VirtualCompletionList)  # type: ignore[attr-defined]
             clist.searching = value
-        except Exception:
+        except Exception:  # VirtualCompletionList absent — searching indicator not shown
             pass
 
     def _set_overlay_mode(self, *, slash_only: bool) -> None:
@@ -56,7 +56,7 @@ class _PathCompletionMixin:
         self.suggestion = ""  # type: ignore[attr-defined]
         try:
             self.app._completion_hint = "Tab accept  ·  ↑↓ navigate  ·  Esc dismiss"  # type: ignore[attr-defined]
-        except Exception:
+        except Exception:  # app._completion_hint absent — hint not shown
             pass
         try:
             self._mode = self._compute_mode()  # type: ignore[attr-defined]
@@ -76,7 +76,7 @@ class _PathCompletionMixin:
         overlay.remove_class("--slash-only")
         try:
             self.app._completion_hint = ""  # type: ignore[attr-defined]
-        except Exception:
+        except Exception:  # app._completion_hint absent — hint clear skipped
             pass
         try:
             self._mode = self._compute_mode()  # type: ignore[attr-defined]

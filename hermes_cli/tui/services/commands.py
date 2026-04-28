@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import queue
 import re
 import time as _time
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
 
 from .base import AppService
+
+_log = logging.getLogger(__name__)
 
 
 class CommandsService(AppService):
@@ -227,6 +230,7 @@ class CommandsService(AppService):
         try:
             return bool(getattr(self.app.cli.agent, "has_checkpoint", lambda: False)())
         except Exception:
+            _log.debug("has_rollback_checkpoint: probe failed", exc_info=True)
             return False
 
     def open_tools_overlay(self) -> None:
@@ -285,7 +289,7 @@ class CommandsService(AppService):
                 cfg["display"]["layout"] = args
                 save_config(cfg)
             except Exception:
-                pass
+                _log.warning("handle_layout_command: save_config failed", exc_info=True)
             app._flash_hint(f"Layout set to {args}. Restart to apply.", 4.0)
             return
 
@@ -296,8 +300,11 @@ class CommandsService(AppService):
         from hermes_cli.tui.drawbraille_overlay import AnimConfigPanel as _ACP
         try:
             self.app.query_one(_ACP).show()
-        except Exception:
+        except NoMatches:
+            # Panel not mounted yet; user can retry with /anim config
             pass
+        except Exception:
+            _log.debug("open_anim_config: show() failed unexpectedly", exc_info=True)
 
     def persist_anim_config(self, cfg_dict: dict) -> None:
         """Merge partial animation config dict into YAML config file."""
@@ -327,7 +334,11 @@ class CommandsService(AppService):
                 app._anim_hint = f"sdf: {ov.contextual_text}"
             else:
                 app._anim_hint = ""
+        except NoMatches:
+            # DrawbrailleOverlay not mounted; hint stays blank — correct behaviour
+            app._anim_hint = ""
         except Exception:
+            _log.debug("update_anim_hint: query failed", exc_info=True)
             app._anim_hint = ""
 
     def handle_anim_command(self, stripped: str) -> None:
@@ -357,8 +368,11 @@ class CommandsService(AppService):
                 cfg = _overlay_config()
                 cfg.enabled = True
                 ov.show(cfg)
-            except Exception:
+            except NoMatches:
+                # DrawbrailleOverlay not yet mounted; anim force flag already set — correct
                 pass
+            except Exception:
+                _log.debug("handle_anim_command (%s): overlay call failed", sub, exc_info=True)
             return
 
         if sub == "off":
@@ -367,8 +381,11 @@ class CommandsService(AppService):
                 ov = app.query_one(_DO)
                 cfg = _overlay_config()
                 ov.hide(cfg)
-            except Exception:
+            except NoMatches:
+                # DrawbrailleOverlay not yet mounted; anim force flag already set — correct
                 pass
+            except Exception:
+                _log.debug("handle_anim_command (%s): overlay call failed", sub, exc_info=True)
             return
 
         if sub == "toggle":
@@ -390,6 +407,7 @@ class CommandsService(AppService):
                 from rich.text import Text as _Text
                 msg._log.write(_Text("Animations: " + ", ".join(keys)))
             except Exception:
+                _log.debug("handle_anim_command list: OutputPanel write failed", exc_info=True)
                 app._flash_hint(", ".join(keys), 5.0)
             return
 
@@ -410,8 +428,11 @@ class CommandsService(AppService):
                     app._svc_spinner.drawbraille_show_hide(getattr(app, "agent_running", False))
 
                 app.set_timer(10.0, _revert_sdf)
-            except Exception:
+            except NoMatches:
+                # Overlay not mounted; config already persisted — silent skip is correct
                 pass
+            except Exception:
+                _log.debug("handle_anim_command (%s): overlay update failed", sub, exc_info=True)
             return
 
         if sub == "preset":
@@ -465,8 +486,11 @@ class CommandsService(AppService):
             try:
                 ov = app.query_one(_DO)
                 ov.fps = fps
-            except Exception:
+            except NoMatches:
+                # Overlay not mounted; config already persisted — silent skip is correct
                 pass
+            except Exception:
+                _log.debug("handle_anim_command (%s): overlay update failed", sub, exc_info=True)
             app._flash_hint(f"Animation FPS → {fps}", 2.0)
             return
 
@@ -485,8 +509,11 @@ class CommandsService(AppService):
                 ov = app.query_one(_DO)
                 if ov._visibility_state == "ambient":
                     ov._current_engine_instance = _ENGINES[matched_a]()
-            except Exception:
+            except NoMatches:
+                # Overlay not mounted; config already persisted — silent skip is correct
                 pass
+            except Exception:
+                _log.debug("handle_anim_command (%s): overlay update failed", sub, exc_info=True)
             app._flash_hint(f"Ambient → {matched_a}", 2.0)
             return
 
@@ -500,8 +527,11 @@ class CommandsService(AppService):
             try:
                 ov = app.query_one(_DO)
                 ov.color = color
-            except Exception:
+            except NoMatches:
+                # Overlay not mounted; config already persisted — silent skip is correct
                 pass
+            except Exception:
+                _log.debug("handle_anim_command (%s): overlay update failed", sub, exc_info=True)
             app._flash_hint(f"Color → {color}", 2.0)
             return
 
@@ -511,8 +541,11 @@ class CommandsService(AppService):
                 self.persist_anim_config({"gradient": False})
                 try:
                     app.query_one(_DO).gradient = False
-                except Exception:
+                except NoMatches:
+                    # Overlay not mounted; config already persisted — silent skip is correct
                     pass
+                except Exception:
+                    _log.debug("handle_anim_command (%s): overlay update failed", sub, exc_info=True)
                 app._flash_hint("Gradient off", 1.5)
                 return
 
@@ -542,8 +575,11 @@ class CommandsService(AppService):
                         ov.color = updates["color"]
                     if "color_secondary" in updates:
                         ov.color_b = updates["color_secondary"]
-                except Exception:
+                except NoMatches:
+                    # Overlay not mounted; config already persisted — silent skip is correct
                     pass
+                except Exception:
+                    _log.debug("handle_anim_command (%s): overlay update failed", sub, exc_info=True)
                 app._flash_hint("Gradient on", 1.5)
                 return
             app._flash_hint("Usage: /anim gradient [on|off|#color1 #color2]", 2.5)
@@ -562,8 +598,11 @@ class CommandsService(AppService):
             self.persist_anim_config({"hue_shift_speed": hue_speed})
             try:
                 app.query_one(_DO).hue_shift_speed = hue_speed
-            except Exception:
+            except NoMatches:
+                # DrawbrailleOverlay not mounted; preview skipped — correct
                 pass
+            except Exception:
+                _log.debug("handle_anim_command (%s): overlay show failed", sub, exc_info=True)
             label = "off" if hue_speed == 0.0 else f"{hue_speed:.2f}"
             app._flash_hint(f"Hue shift → {label}", 1.5)
             return
@@ -578,8 +617,11 @@ class CommandsService(AppService):
             try:
                 ov = app.query_one(_DO)
                 ov.size_name = sz
-            except Exception:
+            except NoMatches:
+                # DrawbrailleOverlay not mounted; preview skipped — correct
                 pass
+            except Exception:
+                _log.debug("handle_anim_command (%s): overlay show failed", sub, exc_info=True)
             app._flash_hint(f"Size → {sz}", 1.5)
             return
 
@@ -612,8 +654,11 @@ class CommandsService(AppService):
                 app._svc_spinner.drawbraille_show_hide(getattr(app, "agent_running", False))
 
             app.set_timer(preview_dur, _revert_engine)
-        except Exception:
+        except NoMatches:
+            # DrawbrailleOverlay not mounted; preview skipped — correct
             pass
+        except Exception:
+            _log.debug("handle_anim_command (%s): overlay show failed", sub, exc_info=True)
 
     def try_auto_title(self) -> None:
         """Derive a session title from the first user message and save it (once per session)."""
@@ -647,12 +692,12 @@ class CommandsService(AppService):
                 if updated:
                     app.call_from_thread(setattr, app, "session_label", _title)
             except Exception:
-                pass
+                _log.debug("try_auto_title: db.set_title_if_unset failed", exc_info=True)
 
         try:
             app.run_worker(_save_title_fn, thread=True)
         except Exception:
-            pass
+            _log.debug("try_auto_title: run_worker failed", exc_info=True)
         app._auto_title_done = True
 
     def toggle_drawbraille_overlay(self) -> None:
@@ -661,7 +706,11 @@ class CommandsService(AppService):
         from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO, DrawbrailleOverlayCfg, _overlay_config
         try:
             overlay = app.query_one("#drawbraille-overlay", _DO)
+        except NoMatches:
+            # Overlay not mounted; toggle has no effect — correct
+            return
         except Exception:
+            _log.debug("toggle_drawbraille_overlay: query failed", exc_info=True)
             return
         if overlay.has_class("-visible"):
             overlay.remove_class("-visible")

@@ -113,6 +113,7 @@ def _clear_thinking_reserve(tw: "ThinkingWidget") -> None:
     try:
         tw.clear_reserve()
     except Exception:
+        # best-effort UI update; widget may not be mounted
         pass
 
 
@@ -181,6 +182,7 @@ def _stream_effect_cfg() -> dict:
         from hermes_cli.config import read_raw_config
         raw = read_raw_config()
     except Exception:
+        # config dict read failed; use empty defaults
         raw = {}
     terminal_cfg = raw.get("terminal", {}) if isinstance(raw, dict) else {}
     se_cfg = terminal_cfg.get("stream_effect", {}) if isinstance(terminal_cfg, dict) else {}
@@ -195,12 +197,14 @@ def _stream_effect_cfg() -> dict:
         display_cfg = raw.get("display", {}) if isinstance(raw, dict) else {}
         skin_path = display_cfg.get("skin") if isinstance(display_cfg, dict) else None
     except Exception:
+        # widget refresh failed pre-mount; skip silently
         pass
     if not skin_path:
         try:
             from hermes_cli.tui.theme_manager import _active_skin_path
             skin_path = _active_skin_path()
         except Exception:
+            # CSS variable lookup unavailable; use default value
             pass
     skin_se_cfg: dict = {}
     if skin_path:
@@ -214,6 +218,7 @@ def _stream_effect_cfg() -> dict:
                 effect_name = se_skin.get("enabled", effect_name)
                 skin_se_cfg = {k: v for k, v in se_skin.items() if k != "enabled"}
         except Exception:
+            # reactive set failed before mount; skip gracefully
             pass
     merged_se_cfg = {**se_cfg, **skin_se_cfg} if isinstance(se_cfg, dict) else skin_se_cfg
     result: dict = {
@@ -302,6 +307,7 @@ class OutputPanel(ScrollableContainer):
         try:
             app = self.app
         except Exception:
+            # widget absent or unmounted; return early is correct
             return
         active_file = getattr(app, "status_active_file", "")
         if not active_file:
@@ -344,6 +350,7 @@ class OutputPanel(ScrollableContainer):
         try:
             self.app._startup_output_panel_width = self.size.width
         except Exception:
+            # best-effort UI update; widget may not be mounted
             pass
 
     def compose(self) -> ComposeResult:
@@ -831,6 +838,7 @@ class AssistantNameplate(Widget):
             self.app.hooks.register("on_error_set",   self._on_error_set,   owner=self, priority=100, name="nameplate_error_set")
             self.app.hooks.register("on_error_clear", self._on_error_clear, owner=self, priority=100, name="nameplate_error_clear")
         except Exception:
+            # best-effort UI update; widget may not be mounted
             pass
 
     def on_unmount(self) -> None:
@@ -838,6 +846,7 @@ class AssistantNameplate(Widget):
         try:
             self.app.hooks.unregister_owner(self)
         except Exception:
+            # best-effort UI update; widget may not be mounted
             pass
 
     def on_resize(self, event: Any) -> None:
@@ -957,6 +966,7 @@ class AssistantNameplate(Widget):
             try:
                 self._linked_rule.refresh()
             except Exception:
+                # best-effort turn-boundary cleanup; widget may be absent
                 pass
 
     def _tick_startup(self) -> None:
@@ -1257,6 +1267,7 @@ class AssistantNameplate(Widget):
                 pass  # transition_to_idle() drives IDLE transitions
             # Phase.ERROR handled by A3 (error-prominence spec)
         except Exception:
+            # best-effort status update; widget may be absent
             pass
 
     def _activate_idle_phase(self) -> None:

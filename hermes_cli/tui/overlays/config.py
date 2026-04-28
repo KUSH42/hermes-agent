@@ -11,8 +11,11 @@ Per spec §2.1 of 2026-04-22-tui-v2-R3-overlay-consolidation-spec.md:
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+_log = logging.getLogger(__name__)
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -180,7 +183,7 @@ class ConfigOverlay(Widget):
             for value, label in _VERBOSE_CHOICES:
                 ol.add_option(Option(f"  {label}", id=f"co-verbose-opt-{value}"))
         except NoMatches:
-            pass
+            pass  # widget not yet in DOM during deferred mount; options absent but non-fatal
 
     # ── Visibility / tab switching ────────────────────────────────────────
 
@@ -223,7 +226,7 @@ class ConfigOverlay(Widget):
         try:
             bar = self.query_one("#co-tab-bar", Static)
         except NoMatches:
-            return
+            return  # not yet mounted; called speculatively before compose completes
         parts = []
         for key, hotkey, label in _TABS:
             if key == self.active_tab:
@@ -372,17 +375,17 @@ class ConfigOverlay(Widget):
                 _cfg_set_nested(cfg, "approvals.mode", self._yolo_previous_mode)
             _cfg_save_config(cfg)
         except Exception:
-            pass
+            _log.warning("Failed to persist YOLO mode change", exc_info=True)
         _os.environ["HERMES_YOLO_MODE"] = "1" if enable else ""
         try:
             self.app.yolo_mode = enable  # type: ignore[attr-defined]
         except Exception:
-            pass
+            _log.debug("Failed to set app.yolo_mode reactive", exc_info=True)
         try:
             msg = "⚡  YOLO mode enabled" if enable else "  YOLO mode disabled"
             self.app._flash_hint(msg, 2.0)  # type: ignore[attr-defined]
         except Exception:
-            pass
+            pass  # flash hint is best-effort UI decoration; action already applied
         _dismiss_overlay_and_focus_input(self)
 
     # ── Skin tab (+ snapshot) ─────────────────────────────────────────────
@@ -428,7 +431,7 @@ class ConfigOverlay(Widget):
             if self._current_skin in names:
                 ol.highlighted = names.index(self._current_skin)
         except NoMatches:
-            pass
+            pass  # skin tab widgets not yet in DOM; refresh will retry on next show_overlay
 
     def _refresh_syntax_tab(self) -> None:
         # Static list of common syntax schemes; refined at runtime
@@ -502,7 +505,7 @@ class ConfigOverlay(Widget):
         try:
             tm.load_skin(name)
         except Exception:
-            pass
+            _log.debug("skin preview load_skin(%r) failed", name, exc_info=True)
         event.stop()
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
@@ -556,15 +559,15 @@ class ConfigOverlay(Widget):
             try:
                 inp.save_draft_stash()
             except Exception:
-                pass
+                pass  # draft stash is best-effort; model switch proceeds regardless
             inp.value = f"/model {value}"
             inp.action_submit()
         except Exception:
-            pass
+            _log.warning("Failed to apply model selection %r", value, exc_info=True)
         try:
             self.app._flash_hint(f"  Model → {value}", 2.0)  # type: ignore[attr-defined]
         except Exception:
-            pass
+            pass  # flash hint is best-effort UI decoration; action already applied
         _dismiss_overlay_and_focus_input(self)
 
     def _confirm_verbose(self, value: str) -> None:
@@ -573,11 +576,11 @@ class ConfigOverlay(Widget):
             _cfg_set_nested(cfg, "display.tool_progress", value)
             _cfg_save_config(cfg)
         except Exception:
-            pass
+            _log.warning("Failed to persist verbose setting %r", value, exc_info=True)
         try:
             self.app._flash_hint(f"  Tool progress → {value}", 2.0)  # type: ignore[attr-defined]
         except Exception:
-            pass
+            pass  # flash hint is best-effort UI decoration; action already applied
         _dismiss_overlay_and_focus_input(self)
 
     def _confirm_skin(self, name: str) -> None:
@@ -587,7 +590,7 @@ class ConfigOverlay(Widget):
             _cfg_set_nested(cfg, "display.skin", name)
             _cfg_save_config(cfg)
         except Exception:
-            pass
+            _log.warning("Failed to persist skin selection %r", name, exc_info=True)
         tm = getattr(self.app, "_theme_manager", None)
         if tm is not None and hasattr(tm, "load_skin"):
             try:
@@ -603,7 +606,7 @@ class ConfigOverlay(Widget):
         try:
             self.app._flash_hint(f"  Skin → {name}", 2.0)  # type: ignore[attr-defined]
         except Exception:
-            pass
+            pass  # flash hint is best-effort UI decoration; action already applied
 
     def _confirm_syntax(self, value: str) -> None:
         self._current_syntax = value
@@ -612,15 +615,15 @@ class ConfigOverlay(Widget):
             _cfg_set_nested(cfg, "display.skin_overrides.vars.preview-syntax-theme", value)
             _cfg_save_config(cfg)
         except Exception:
-            pass
+            _log.warning("Failed to persist syntax theme %r", value, exc_info=True)
         try:
             self.query_one("#co-syntax-current", Static).update(f"Current: {value}")
         except NoMatches:
-            pass
+            pass  # syntax tab may not be visible; label update is best-effort display
         try:
             self.app._flash_hint(f"  Syntax → {value}", 2.0)  # type: ignore[attr-defined]
         except Exception:
-            pass
+            pass  # flash hint is best-effort UI decoration; action already applied
 
     def _apply_reasoning_level(self, level: str) -> None:
         self._reasoning_current_level = level

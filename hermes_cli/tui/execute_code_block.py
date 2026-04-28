@@ -361,7 +361,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
                     css_vars = self.app.get_css_variables()
                     theme = css_vars.get("preview-syntax-theme", "monokai")
                     bg = css_vars.get("app-bg", None)
-                except Exception:
+                except Exception:  # CSS variables unavailable — use monokai fallback for syntax highlight
                     theme = "monokai"
                     bg = None
                 from hermes_cli.tui.body_renderers import pick_renderer, _STREAMING_EMPTY_CLS

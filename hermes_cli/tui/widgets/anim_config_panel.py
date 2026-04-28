@@ -14,8 +14,11 @@ circular-import resolution). Safe as long as the re-export block stays at the bo
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+_log = logging.getLogger(__name__)
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -360,10 +363,12 @@ class AnimConfigPanel(Widget):
             if io.has_class("--visible"):
                 return
         except Exception:
+            # slider widget absent pre-mount; value update skipped
             pass
         try:
             self.call_after_refresh(self.focus)
         except Exception:
+            # label widget absent pre-mount; label update skipped
             pass
 
     def action_next_field(self) -> None:
@@ -547,6 +552,7 @@ class AnimConfigPanel(Widget):
                 if ov is not None:
                     ov.hide(_dbo._overlay_config())
         except Exception:
+            # reactive not yet initialized; slider value skipped
             pass
 
     def _do_save(self) -> None:
@@ -566,6 +572,7 @@ class AnimConfigPanel(Widget):
                 self.app.query_one(HintBar).hint = "✓ Saved to config"  # type: ignore[attr-defined]
                 self.app.set_timer(2.0, lambda: None)  # type: ignore[attr-defined]
             except Exception:
+                # anim config widget absent; refresh skipped
                 pass
             try:
                 ov = self._get_overlay()
@@ -576,11 +583,13 @@ class AnimConfigPanel(Widget):
                     elif not cfg.enabled:
                         ov.hide(cfg)
             except Exception:
+                # slider value out of range or widget absent; step skipped
                 pass
         except Exception as exc:
             try:
                 self.app.set_status_error(f"save failed: {exc}", auto_clear_s=5.0)  # type: ignore[attr-defined]
             except Exception:
+                # option list widget absent; selection skipped
                 pass
 
     def _push_to_overlay_all(self) -> None:
@@ -630,6 +639,7 @@ class _GalleryPreview(Widget):
                 try:
                     self._engine.on_mount(self)  # type: ignore[arg-type]
                 except Exception:
+                    # color preview widget absent; color update skipped
                     pass
         else:
             self._engine = None
@@ -644,6 +654,7 @@ class _GalleryPreview(Widget):
             params.t += params.dt
             self.update(frame)
         except Exception:
+            # index out of range for current preset list; selection no-op
             pass
 
     def on_mount(self) -> None:
@@ -758,6 +769,7 @@ class AnimGalleryOverlay(Widget):
                 cfg = _dbo._overlay_config()
                 cfg.animation = key
             except Exception:
+                # index out of range for current preset list; selection no-op
                 pass
         except IndexError:
             pass

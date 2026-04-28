@@ -72,7 +72,7 @@ class CharacterPacer:
         if self._timer is not None:
             try:
                 self._timer.stop()
-            except Exception:
+            except Exception:  # timer already stopped or collected — safe to ignore
                 pass
             self._timer = None
 

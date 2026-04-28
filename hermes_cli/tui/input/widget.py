@@ -235,7 +235,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         """Keep the input 1-3 rows tall based only on visible text rows."""
         try:
             width = int(getattr(getattr(self, "content_size", None), "width", 0) or 0)
-        except Exception:
+        except Exception:  # content_size.width not a valid int — use 0 fallback
             width = 0
         width = max(1, width)
         rows = 0
@@ -359,7 +359,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                     if clist.highlighted >= 0 and not highlighted_is_typed:
                         self.action_accept_autocomplete()
                         return
-                except Exception:
+                except Exception:  # VirtualCompletionList absent — fallback to submit
                     pass
             self.action_submit()
             return
@@ -389,14 +389,14 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                 if hs.has_class("--visible"):
                     hs.action_dismiss()
                     return
-            except Exception:
+            except Exception:  # HistorySearchOverlay absent — proceed to next escape handler
                 pass
             if self._completion_overlay_visible():
                 self._hide_completion_overlay()
                 return
             try:
                 self.app.on_key(event)
-            except Exception:
+            except Exception:  # app.on_key unavailable — escape not forwarded to app
                 pass
             return
 
@@ -439,7 +439,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             self._sync_height_to_content()
             try:
                 self.app._flash_hint(f"Input height: {self._input_height_override}", 1.5)  # type: ignore[attr-defined]
-            except Exception:
+            except Exception:  # app._flash_hint unavailable — height hint not shown
                 pass
             return
 
@@ -450,7 +450,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             self._sync_height_to_content()
             try:
                 self.app._flash_hint(f"Input height: {self._input_height_override}", 1.5)  # type: ignore[attr-defined]
-            except Exception:
+            except Exception:  # app._flash_hint unavailable — height hint not shown
                 pass
             return
 
@@ -489,7 +489,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                     event.stop()
                     event.prevent_default()
                     return
-            except Exception:
+            except Exception:  # UsageOverlay absent — "c" processed normally by TextArea
                 pass
 
         await super()._on_key(event)
@@ -498,7 +498,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         """Intercept terminal drag-and-drop before TextArea inserts raw path text."""
         try:
             dropped_paths = parse_dragged_file_paste(event.text)
-        except Exception:
+        except Exception:  # drag parse failed — treat paste as plain text
             dropped_paths = None
         if dropped_paths:
             self.post_message(self.FilesDropped(dropped_paths))
@@ -673,7 +673,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             color_hex = self.app.get_css_variables().get(var_name, "")
             style = Style(color=color_hex) if color_hex else Style()
             self.query_one("#input-chevron", Label).update(RichText(glyph, style=style))
-        except Exception:
+        except Exception:  # CSS variables unavailable — chevron rendered without custom colour
             pass
 
     def _sync_legend_to_mode(self, mode: InputMode) -> None:

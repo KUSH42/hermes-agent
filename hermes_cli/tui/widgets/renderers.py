@@ -143,6 +143,7 @@ class CopyableRichLog(RichLog, can_focus=False):
                     sel_style = self.screen.get_component_rich_style("screen--selection")
                     strip = _apply_span_style(strip, start_x, end_x, sel_style)
                 except Exception:
+                    # skin color lookup failed; use hardcoded fallback
                     pass
 
         return strip.apply_offsets(scroll_x, content_y)
@@ -190,6 +191,7 @@ class CopyableRichLog(RichLog, can_focus=False):
                     try:
                         width = max(self.app.size.width - 5, 20)
                     except Exception:
+                        # CSS variable unavailable; use default value
                         width = 80
         return super().write(  # type: ignore[return-value]
             content,
@@ -223,7 +225,7 @@ class CopyableRichLog(RichLog, can_focus=False):
                 ansi_str = buf.getvalue().rstrip("\n")
                 return self.write(Text.from_ansi(inject_osc8(ansi_str, _enabled=True)), **kwargs)
         except Exception:
-            pass
+            pass  # OSC8 hyperlink injection failed; fall through to plain write below
         return self.write(styled, **kwargs)
 
     def get_selection(self, selection: Selection) -> tuple[str, str] | None:
@@ -321,6 +323,7 @@ class CopyableBlock(Widget):
             try:
                 self.app._copy_text_with_hint(text)
             except Exception:
+                # widget absent during render update; skip gracefully
                 pass
             event.prevent_default()
 
@@ -731,6 +734,7 @@ class TitledRule(PulseMixin, Widget):
                 v.get("rule-accent-color",     self._title_color),
             )
         except Exception:
+            # fade/accent lookup failed; return cached fallback values
             return self._fade_start, self._fade_end, self._accent, self._title_color
 
     def render(self) -> RenderResult:
@@ -746,6 +750,7 @@ class TitledRule(PulseMixin, Widget):
             op = self.app.query_one(OutputPanel)
             w = min(w, op.scrollable_content_region.width)
         except Exception:
+            # banner color lookup failed; skip colour update
             pass
         return max(1, w)
 
@@ -778,6 +783,7 @@ class TitledRule(PulseMixin, Widget):
             glyph_active = v.get("primary", _skin_color("banner_title", "#5f87d7"))
             glyph_err = v.get("status-error-color", "#EF5350")
         except Exception:
+            # SkinColors lookup failed; use hardcoded gold fallback
             glyph_idle = _skin_color("banner_title", "#FFD700")
             glyph_active = _skin_color("banner_title", "#5f87d7")
             glyph_err = "#EF5350"
@@ -808,6 +814,7 @@ class TitledRule(PulseMixin, Widget):
             try:
                 ts_text = self._created_at.strftime("%H:%M")
             except Exception:
+                # best-effort render hook; widget may be absent
                 ts_text = ""
         metrics_text = self._response_metrics_text()
         # Compute fill width: total minus every rendered segment.
@@ -891,6 +898,7 @@ class PlainRule(Widget):
             op = self.app.query_one(OutputPanel)
             w = min(w, op.scrollable_content_region.width)
         except Exception:
+            # best-effort render hook; widget may be absent
             pass
         if self._max_width:
             w = min(w, self._max_width)
@@ -903,6 +911,7 @@ class PlainRule(Widget):
             # Same fallback chain as TitledRule: rule-bg-color → app-bg → default
             fade_end = v.get("rule-bg-color") or v.get("app-bg", fade_end)
         except Exception:
+            # best-effort render hook; widget may be absent
             pass
         return _fade_rule(w, fade_start, fade_end)
 

@@ -21,7 +21,7 @@ def _hue_rotate(hex_color: str, delta: float) -> str:
     import colorsys
     try:
         r, g, b = _hex_to_rgb(hex_color)
-    except Exception:
+    except Exception:  # invalid hex input — return original string as-is
         return hex_color
     h, l, s = colorsys.rgb_to_hls(r / 255.0, g / 255.0, b / 255.0)
     h = (h + delta) % 1.0
@@ -42,7 +42,7 @@ def _rich_to_hex(value: str) -> str:
         from rich.color import Color as RichColor
         triplet = RichColor.parse(value).get_truecolor()
         return f"#{triplet.red:02x}{triplet.green:02x}{triplet.blue:02x}"
-    except Exception:
+    except Exception:  # rich colour parse failed — fall back to default cyan
         return "#00d7ff"
 
 
@@ -65,7 +65,7 @@ def _resolve_color(value: str, app: object, dim: float = 1.0) -> str:
                 resolved_hex = _rich_to_hex(raw)
             else:
                 resolved_hex = "#00d7ff"
-        except Exception:
+        except Exception:  # app.get_css_variables() unavailable (e.g. test env) — use default
             resolved_hex = "#00d7ff"
     else:
         resolved_hex = _rich_to_hex(value)

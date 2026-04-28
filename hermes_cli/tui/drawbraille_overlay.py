@@ -223,7 +223,7 @@ def _overlay_config() -> DrawbrailleOverlayCfg:
     try:
         from hermes_cli.config import read_raw_config
         d = read_raw_config().get("display", {}).get("drawbraille_overlay", {})
-    except Exception:
+    except Exception:  # config unavailable — use empty dict defaults
         d = {}
     return _cfg_from_mapping(d)
 
@@ -568,7 +568,7 @@ class DrawbrailleOverlay(Static):
         self._renderer = DrawbrailleRenderer()
         try:
             self._renderer.resolve_colors(self.color, self.color_b, self.multi_color, self.app)
-        except Exception:
+        except Exception:  # colour resolution failed before first paint — will retry on watch_color
             pass
         w = self.size.width or 50
         h = self.size.height or 14
@@ -610,21 +610,21 @@ class DrawbrailleOverlay(Static):
         try:
             self._ensure_renderer()
             self._renderer.resolve_colors(value, self.color_b, self.multi_color, self.app)
-        except Exception:
+        except Exception:  # renderer not ready or colour invalid — skip reactive colour update
             pass
 
     def watch_color_b(self, value: str) -> None:
         try:
             self._ensure_renderer()
             self._renderer.resolve_colors(self.color, value, self.multi_color, self.app)
-        except Exception:
+        except Exception:  # renderer not ready or colour_b invalid — skip update
             pass
 
     def watch_multi_color(self, value: list) -> None:
         try:
             self._ensure_renderer()
             self._renderer.resolve_colors(self.color, self.color_b, value, self.app)
-        except Exception:
+        except Exception:  # renderer not ready or colour list invalid — skip multi-colour update
             pass
 
     def watch_position(self, _value: str) -> None:
@@ -901,7 +901,7 @@ class DrawbrailleOverlay(Static):
         clock = None
         try:
             clock = getattr(self.app, "_anim_clock", None)
-        except Exception:
+        except Exception:  # app not yet attached — clock lookup skipped, fallback to set_interval
             pass
         if clock is not None:
             from hermes_cli.tui.animation import AnimationClock
@@ -910,7 +910,7 @@ class DrawbrailleOverlay(Static):
         else:
             try:
                 self._anim_handle = self.set_interval(1 / max(1, self.fps), self._tick)
-            except Exception:
+            except Exception:  # widget not yet mounted — interval start deferred
                 pass
 
     def _stop_anim(self) -> None:
@@ -928,7 +928,7 @@ class DrawbrailleOverlay(Static):
         self._ensure_renderer()
         try:
             gradient = self.gradient
-        except Exception:
+        except Exception:  # reactive not yet initialised — fall back to __dict__ default
             gradient = self.__dict__.get("gradient", False)
         return self._orchestrator.get_engine(
             self._anim_params,
@@ -951,7 +951,7 @@ class DrawbrailleOverlay(Static):
         self._ensure_renderer()
         try:
             gradient = self.gradient
-        except Exception:
+        except Exception:  # reactive not yet initialised — fall back to __dict__ default
             gradient = self.__dict__.get("gradient", False)
         return self._orchestrator.get_sdf_engine(
             params,
@@ -1093,7 +1093,7 @@ class DrawbrailleOverlay(Static):
         try:
             tw = self.app.size.width
             th = self.app.size.height
-        except Exception:
+        except Exception:  # app size not yet available — use 80×24 fallback
             tw, th = 80, 24
 
         if self.size_name == "fill":
@@ -1141,7 +1141,7 @@ class DrawbrailleOverlay(Static):
                         panel.styles.padding_right = rail_width
                     else:
                         panel.styles.padding_left = rail_width
-                except Exception:
+                except Exception:  # OutputPanel absent — rail padding not applied
                     pass
             return
 
@@ -1212,7 +1212,7 @@ class DrawbrailleOverlay(Static):
                 w, h, tw, th,
             )
             self.styles.offset = (ox, oy)
-        except Exception:
+        except Exception:  # size/app not available during drag — skip offset update
             pass
         event.stop()
 
@@ -1242,7 +1242,7 @@ class DrawbrailleOverlay(Static):
                 "custom_offset_x": ox,
                 "custom_offset_y": oy,
             })
-        except Exception:
+        except Exception:  # app service not ready — drag position not persisted, non-critical
             pass
         event.stop()
 

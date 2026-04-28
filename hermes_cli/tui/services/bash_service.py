@@ -2,6 +2,7 @@
 output to a BashOutputBlock widget."""
 from __future__ import annotations
 
+import logging
 import os
 import signal
 import subprocess
@@ -9,6 +10,8 @@ import time as _time
 from typing import TYPE_CHECKING
 
 from .base import AppService
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from hermes_cli.tui.widgets.bash_output_block import BashOutputBlock
@@ -90,6 +93,7 @@ class BashService(AppService):
         except FileNotFoundError:
             self.app.call_from_thread(block.push_line, "[error] sh not found")
         except Exception as exc:
+            _log.debug("BashService._exec_sync: unexpected error: %s", exc, exc_info=True)
             self.app.call_from_thread(block.push_line, f"[error] {exc}")
         finally:
             self._proc = None

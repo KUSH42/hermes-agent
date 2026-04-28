@@ -35,6 +35,7 @@ class SessionsService(AppService):
             from hermes_cli.config import CLI_CONFIG
             return bool(CLI_CONFIG.get("sessions", {}).get("enabled", False))
         except Exception:
+            _log.debug("_sessions_enabled: config read failed", exc_info=True)
             return False
 
     @_sessions_enabled.setter
@@ -201,12 +202,12 @@ class SessionsService(AppService):
             try:
                 self.app._notify_listener.stop()
             except Exception as exc:
-                _log.debug("switch_to_session: listener stop failed: %s", exc)
+                _log.debug("switch_to_session: listener stop failed: %s", exc, exc_info=True)
         if self.app._sessions_poll_timer:
             try:
                 self.app._sessions_poll_timer.stop()
             except Exception as exc:
-                _log.debug("switch_to_session: timer stop failed: %s", exc)
+                _log.debug("switch_to_session: timer stop failed: %s", exc, exc_info=True)
 
         import os as _os
         # RX4: fire session_switch hooks so callers can release blocking queues
@@ -352,6 +353,7 @@ class SessionsService(AppService):
             )
             diff_stat = result.stdout.strip() or "(no diff)"
         except Exception:
+            _log.debug("open_merge_overlay: git diff failed", exc_info=True)
             diff_stat = "(error fetching diff)"
         self.app.call_from_thread(self.show_merge_overlay, session_id, diff_stat)
 
@@ -400,9 +402,8 @@ class SessionsService(AppService):
                 )
                 return
         except Exception as exc:
-            self.app.call_from_thread(
-                getattr(overlay, "_set_error", lambda m: None), str(exc)
-            )
+            _log.warning("run_merge: subprocess failed: %s", exc, exc_info=True)
+            self.app.call_from_thread(getattr(overlay, "_set_error", lambda m: None), str(exc))
             return
         if close_on_success:
             try:
@@ -480,6 +481,7 @@ class SessionsService(AppService):
                     try:
                         session_meta = db.get_session(session_id) or {}
                     except Exception:
+                        # DB read for session metadata is best-effort; empty dict means no title shown
                         pass
                 title = session_meta.get("title") or ""
                 msgs = getattr(cli, "conversation_history", []) or []

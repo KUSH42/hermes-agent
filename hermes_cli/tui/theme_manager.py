@@ -91,6 +91,8 @@ from textual import log
 
 from hermes_cli.tui.skin_loader import SkinError, load_skin_full
 
+_log = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     from textual.app import App
 
@@ -423,14 +425,14 @@ class ThemeManager:
                     self._apply_overrides(overrides)
                 except SkinValidationError:
                     raise
-                except Exception:
+                except Exception:  # skin_overrides apply failed — partial overrides discarded
                     pass
                 return True
             except (SkinError, SkinValidationError, OSError) as exc:
                 log.warning(f"[THEME] SKIN_LOAD_FAILED: {p}: {exc}")
                 print(f"SKIN_LOAD_FAILED: {p}: {exc}", file=sys.stderr)
             except Exception as exc:
-                log.warning(f"[THEME] unexpected error loading {p}: {exc}")
+                _log.warning("[THEME] unexpected error loading %s", p, exc_info=True)
                 print(f"SKIN_LOAD_FAILED: {p}: {exc}", file=sys.stderr)
         return False
 
@@ -466,7 +468,7 @@ class ThemeManager:
                 self._load_path(bundled_default)
                 return "default"
             except Exception as exc:
-                log.warning(f"[THEME] SKIN_DEFAULT_FAILED: {exc}")
+                _log.warning("[THEME] SKIN_DEFAULT_FAILED", exc_info=True)
                 print(f"SKIN_DEFAULT_FAILED: {exc}", file=sys.stderr)
                 self._css_vars = {}
                 self._component_vars = _defaults_as_strs()
@@ -475,7 +477,7 @@ class ThemeManager:
         try:
             from hermes_cli.config import read_skin_overrides
             self._apply_overrides(read_skin_overrides())
-        except Exception:
+        except Exception:  # skin_overrides unavailable during emergency fallback — use bare defaults
             pass
         print("SKIN_EMERGENCY_FALLBACK: using COMPONENT_VAR_DEFAULTS only", file=sys.stderr)
         log.warning("[THEME] SKIN_EMERGENCY_FALLBACK")
@@ -504,7 +506,7 @@ class ThemeManager:
         try:
             self._app.refresh_css()
         except Exception as exc:
-            log.warning(f"[THEME] refresh_css failed: {exc}")
+            _log.warning("[THEME] refresh_css failed", exc_info=True)
 
     def start_hot_reload(self, poll_interval_s: float = 1.0) -> None:
         """Start background skin watcher.
@@ -560,7 +562,7 @@ class ThemeManager:
             self.apply()
             return True
         except Exception as exc:
-            log.warning(f"[THEME] hot-reload failed: {exc}")
+            _log.warning("[THEME] hot-reload failed", exc_info=True)
             return False
 
     def _watch_loop(self) -> None:
@@ -584,7 +586,7 @@ class ThemeManager:
             try:
                 css_vars, component_vars = load_skin_full(path)
             except Exception as exc:
-                log.warning(f"[THEME] hot-reload failed: {exc}")
+                _log.warning("[THEME] hot-reload failed in watcher", exc_info=True)
                 continue
             self._pending_reload_mtime = mtime
             try:

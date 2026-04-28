@@ -358,7 +358,7 @@ class DiffRenderer(BodyRenderer):
             from hermes_cli.config import read_raw_config
 
             cfg = read_raw_config()
-        except Exception:  # noqa: bare-except
+        except Exception:  # config file absent or malformed — use default auto-collapse=True
             cfg = {}
         self._cfg_auto_collapse = bool(
             cfg.get("tui", {}).get("diff", {}).get("auto_collapse", True)

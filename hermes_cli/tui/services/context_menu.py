@@ -1,6 +1,7 @@
 """Right-click context menu items service extracted from _app_context_menu.py."""
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -12,6 +13,8 @@ from hermes_cli.tui.io_boundary import safe_open_url
 
 if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
+
+_log = logging.getLogger(__name__)
 
 
 class ContextMenuService(AppService):
@@ -90,6 +93,7 @@ class ContextMenuService(AppService):
                 x = region.x + region.width // 2
                 y = region.y + region.height // 2
             except Exception:
+                # Region unavailable; use (0, 0) as fallback position — correct for menu placement
                 pass
         await self.show_context_menu_at(items, x, y)
 
@@ -188,6 +192,7 @@ class ContextMenuService(AppService):
                         try:
                             sel_text = node.get_text_range(sel.start, sel.end)
                         except Exception:
+                            # get_text_range not available in this widget version; fall back to selected_text
                             sel_text = getattr(node, "selected_text", "")
                         if sel_text:
                             items.append(MenuItem("⎘  Copy selected", "ctrl+c", lambda t=sel_text: self.app._svc_theme.copy_text_with_hint(t)))
@@ -226,6 +231,7 @@ class ContextMenuService(AppService):
             if hasattr(block, "flash_copy"):
                 block.flash_copy()
         except Exception:
+            _log.debug("copy action failed", exc_info=True)
             self.app._flash_hint("⚠ copy failed", 1.5)
 
     def copy_tool_output(self, block: Any) -> None:
@@ -234,6 +240,7 @@ class ContextMenuService(AppService):
             content = block.copy_content()
             self.app._svc_theme.copy_text_with_hint(content)
         except Exception:
+            _log.debug("copy action failed", exc_info=True)
             self.app._flash_hint("⚠ copy failed", 1.5)
 
     def build_tool_block_menu_items(self, block: Any) -> list:
@@ -316,6 +323,7 @@ class ContextMenuService(AppService):
             content = "\n".join(p for p in parts if p)
             self.app._svc_theme.copy_text_with_hint(content)
         except Exception:
+            _log.debug("copy action failed", exc_info=True)
             self.app._flash_hint("⚠ copy failed", 1.5)
 
     def copy_panel(self, panel: Any) -> None:
@@ -330,6 +338,7 @@ class ContextMenuService(AppService):
                 return
             self.app._svc_theme.copy_text_with_hint(content)
         except Exception:
+            _log.debug("copy action failed", exc_info=True)
             self.app._flash_hint("⚠ copy failed", 1.5)
 
     def copy_text(self, text: str) -> None:
@@ -378,6 +387,7 @@ class ContextMenuService(AppService):
             if _osc8_supported():
                 return
         except Exception:
+            # osc8 support check failed; assume unsupported and show plain hint
             pass
         app._path_open_hint_shown = True
         app._flash_hint("press o to open file", 3.0)

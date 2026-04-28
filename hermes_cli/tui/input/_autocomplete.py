@@ -186,7 +186,7 @@ class _AutocompleteMixin:
             self._hide_completion_overlay()  # type: ignore[attr-defined]
             try:
                 self.app._flash_hint("Tab: move cursor to end to accept", 2.0)  # type: ignore[attr-defined]
-            except Exception:
+            except Exception:  # app._flash_hint unavailable — hint not shown, completion continues
                 pass
             return
 

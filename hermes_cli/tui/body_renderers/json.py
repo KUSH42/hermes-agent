@@ -20,7 +20,7 @@ def _get_collapse_threshold(app) -> int:
     try:
         cfg = app.config if app else {}
         return int((cfg.get("tui") or {}).get("json", {}).get("collapse_threshold", _DEFAULT_COLLAPSE_THRESHOLD))
-    except Exception:  # noqa: bare-except
+    except Exception:  # config key absent or non-integer — use default threshold
         return _DEFAULT_COLLAPSE_THRESHOLD
 
 

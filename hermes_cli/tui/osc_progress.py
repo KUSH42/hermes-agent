@@ -44,7 +44,7 @@ def osc_progress_start() -> None:
         return
     try:
         os.write(sys.stdout.fileno(), _OSC_PROGRESS_START)
-    except Exception:
+    except Exception:  # stdout write failed (closed fd or unsupported) — OSC progress skipped
         pass
 
 
@@ -54,5 +54,5 @@ def osc_progress_end() -> None:
         return
     try:
         os.write(sys.stdout.fileno(), _OSC_PROGRESS_END)
-    except Exception:
+    except Exception:  # stdout write failed (closed fd or unsupported) — OSC clear skipped
         pass

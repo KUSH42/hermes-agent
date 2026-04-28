@@ -7,7 +7,10 @@ them to `InterruptPayload` instances at the overlay boundary.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
+
+_log = logging.getLogger(__name__)
 
 from hermes_cli.tui.overlays.interrupt import (
     InputSpec,
@@ -51,11 +54,11 @@ def _make_on_resolve(
             else:
                 state.response_queue.put(value)
         except Exception:
-            pass
+            _log.debug("response_queue.put failed; value lost", exc_info=True)
         try:
             setattr(app, state_attr, None)
         except Exception:
-            pass
+            _log.debug("Failed to clear app reactive %r", state_attr, exc_info=True)
 
     return _on_resolve
 
@@ -73,7 +76,7 @@ def _adopt_state_deadline(p: InterruptPayload, state: Any) -> InterruptPayload:
         if remaining is not None and remaining > 0:
             p.countdown_s = float(remaining)
     except Exception:
-        pass
+        _log.debug("Could not adopt state deadline; countdown may be wrong", exc_info=True)
     return p
 
 
@@ -151,7 +154,7 @@ def make_undo_payload(app: Any, state: "UndoOverlayState") -> InterruptPayload:
         try:
             state.response_queue.put("y" if value == "y" else "cancel")
         except Exception:
-            pass
+            _log.debug("undo response_queue.put failed", exc_info=True)
         if value == "y":
             pending_panel = getattr(app, "_pending_undo_panel", None)
             pending_n = getattr(app, "_pending_rollback_n", 0)
@@ -159,7 +162,7 @@ def make_undo_payload(app: Any, state: "UndoOverlayState") -> InterruptPayload:
                 app.undo_state = None
                 app._pending_undo_panel = None
             except Exception:
-                pass
+                _log.debug("Failed to clear undo app state (accepted path)", exc_info=True)
             if pending_panel is not None:
                 app.run_worker(app._svc_commands.run_undo_sequence(pending_panel), thread=False)
             else:
@@ -169,7 +172,7 @@ def make_undo_payload(app: Any, state: "UndoOverlayState") -> InterruptPayload:
             app.undo_state = None
             app._pending_undo_panel = None
         except Exception:
-            pass
+            _log.debug("Failed to clear undo app state (cancel path)", exc_info=True)
 
     p = InterruptPayload(
         kind=InterruptKind.UNDO,

@@ -139,14 +139,15 @@ class AgentLifecycleHooks:
             except (SystemExit, KeyboardInterrupt):
                 raise
             except Exception as exc:
-                msg = f"AgentLifecycleHooks: {transition}/{reg.name} raised {exc!r}"
+                msg = "AgentLifecycleHooks: %s/%s raised %r"
+                args = (transition, reg.name, exc)
                 if app is not None:
                     try:
-                        app.log.error(msg)
+                        app.log.error(msg, *args, exc_info=True)
                     except Exception:
-                        _log.error(msg)
+                        _log.error(msg, *args, exc_info=True)
                 else:
-                    _log.error(msg)
+                    _log.error(msg, *args, exc_info=True)
 
     def drain_deferred(self) -> None:
         """Call from app.on_mount() to fire events queued before is_running."""

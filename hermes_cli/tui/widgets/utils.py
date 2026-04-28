@@ -51,6 +51,7 @@ def _nf_or_text(glyph: str, fallback: str, app: "object | None" = None) -> str:
             if cs is None or cs == "standard":
                 return fallback
         except Exception:
+            # widget property lookup failed; skip gracefully
             pass
     return glyph
 
@@ -65,6 +66,7 @@ def _skin_color(key: str, fallback: str) -> str:
         from hermes_cli.skin_engine import get_active_skin
         return get_active_skin().get_color(key, fallback)
     except Exception:
+        # fallback return is the documented contract for this helper
         return fallback
 
 
@@ -153,6 +155,7 @@ def _prewrap_code_line(highlighted: str, source_line: str = "", width: int | Non
         try:
             width = shutil.get_terminal_size((80, 24)).columns - 6  # account for margins + scrollbar
         except Exception:
+            # width probe failed; use 74-char fallback
             width = 74
     plain = _strip_ansi(highlighted)
     if len(plain) <= width:
@@ -239,6 +242,7 @@ def _typewriter_enabled() -> bool:
             read_raw_config().get("terminal", {}).get("typewriter", {}).get("enabled", False)
         )
     except Exception:
+        # widget query failed; False is safe default
         return False
 
 
@@ -248,6 +252,7 @@ def _typewriter_delay_s() -> float:
         from hermes_cli.config import read_raw_config
         speed = read_raw_config().get("terminal", {}).get("typewriter", {}).get("speed", 60)
     except Exception:
+        # best-effort update; widget may be absent
         pass
     if speed <= 0:
         return 0.0
@@ -264,6 +269,7 @@ def _typewriter_burst_threshold() -> int:
         raw = read_raw_config().get("terminal", {}).get("typewriter", {}).get("burst_threshold", 128)
         return max(1, int(raw))
     except Exception:
+        # terminal width probe failed; use 128-col fallback
         return 128
 
 
@@ -274,6 +280,7 @@ def _typewriter_cursor_enabled() -> bool:
             read_raw_config().get("terminal", {}).get("typewriter", {}).get("cursor", True)
         )
     except Exception:
+        # is_mounted probe failed; assume mounted
         return True
 
 
@@ -287,6 +294,7 @@ def _cursor_blink_enabled() -> bool:
         from hermes_cli.config import read_raw_config
         return bool(read_raw_config().get("display", {}).get("cursor_blink", True))
     except Exception:
+        # is_mounted probe failed; assume mounted
         return True
 
 
@@ -296,6 +304,7 @@ def _pulse_enabled() -> bool:
         from hermes_cli.config import read_raw_config
         return bool(read_raw_config().get("display", {}).get("running_indicator_pulse", True))
     except Exception:
+        # is_mounted probe failed; assume mounted
         return True
 
 
@@ -305,6 +314,7 @@ def _animate_counters_enabled() -> bool:
         from hermes_cli.config import read_raw_config
         return bool(read_raw_config().get("display", {}).get("animate_counters", True))
     except Exception:
+        # is_mounted probe failed; assume mounted
         return True
 
 
@@ -314,6 +324,7 @@ def _fps_hud_enabled() -> bool:
         from hermes_cli.config import read_raw_config
         return bool(read_raw_config().get("display", {}).get("fps_hud", False))
     except Exception:
+        # is_mounted probe failed; assume mounted
         return False
 
 

@@ -5,8 +5,11 @@ Contains: InlineProseLog, MathBlockWidget.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+_log = logging.getLogger(__name__)
 
 from rich.segment import Segment
 from rich.style import Style
@@ -205,6 +208,7 @@ class InlineProseLog(CopyableRichLog):
             try:
                 self._prerender_halfblock(mode, wid, hb_spans)
             except Exception:
+                # Markdown render failed; prose widget shows empty content
                 pass
         elif rendered_tgp:
             self.refresh()
@@ -361,6 +365,7 @@ class InlineProseLog(CopyableRichLog):
                     sel_style = self.screen.get_component_rich_style("screen--selection")
                     strip = _apply_span_style(strip, sel_span[0], sel_span[1], sel_style)
                 except Exception:
+                    # Rich markup render failed; prose widget shows empty content
                     pass
 
         return strip.apply_offsets(scroll_x, content_y)

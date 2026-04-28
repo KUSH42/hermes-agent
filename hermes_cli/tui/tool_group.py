@@ -120,7 +120,7 @@ def _grouping_enabled() -> bool:
         from hermes_cli.config import read_raw_config
         cfg = read_raw_config()
         return bool(cfg.get("display", {}).get("tool_grouping", True))
-    except Exception:
+    except Exception:  # config unavailable (e.g. test environment); grouping defaults to enabled
         return True
 
 
@@ -388,7 +388,7 @@ class ToolGroup(Widget):
         # Rebuild browse anchors so hidden children are skipped
         try:
             self.app._svc_browse.rebuild_browse_anchors()
-        except Exception:
+        except Exception:  # _svc_browse not available; browse-anchor rebuild is best-effort
             pass
 
     def on_click(self, event: object) -> None:
@@ -615,7 +615,7 @@ class ToolGroup(Widget):
             try:
                 self.set_class(self._group_state == ToolGroupState.DONE, "--group-done")
                 self.set_class(self._group_state in (ToolGroupState.ERROR, ToolGroupState.PARTIAL), "--group-error")
-            except Exception:
+            except Exception:  # widget not fully mounted; CSS group-state class is decorative
                 pass
         except Exception:
             _log.exception("toolgroup: on_tool_panel_completed failed")
@@ -644,7 +644,7 @@ def _get_header_label(panel: Widget) -> str:
         header = next(iter(panel.query(_TH)), None)
         if header is not None:
             return str(getattr(header, "_label", ""))
-    except Exception:
+    except Exception:  # ToolBlock query failed (partially mounted tree); empty label is safe
         pass
     return ""
 
@@ -684,7 +684,7 @@ def _find_diff_target(siblings: list[Widget]) -> Widget | None:
     try:
         from hermes_cli.config import read_raw_config
         attach_window = float(read_raw_config().get("display", {}).get("diff_attach_window_s", 15.0))
-    except Exception:
+    except Exception:  # read_raw_config unavailable; hardcoded default window/threshold is safe
         attach_window = 15.0
     targets = _find_diff_targets(siblings, attach_window)
     return targets[0] if targets else None
@@ -698,7 +698,7 @@ def _is_diff_panel(panel: Widget) -> bool:
         from hermes_cli.tui.tool_blocks import ToolBlock as _TB
         blk = next(iter(panel.query(_TB)), None)
         return blk is not None and getattr(blk, "_label", "") == "diff"
-    except Exception:
+    except Exception:  # ToolBlock query failed in partially mounted tree; False is safe default
         return False
 
 
@@ -825,7 +825,7 @@ def _find_rule_match(
                 attach_window = float(
                     read_raw_config().get("display", {}).get("diff_attach_window_s", 15.0)
                 )
-            except Exception:
+            except Exception:  # read_raw_config unavailable; hardcoded default window/threshold is safe
                 attach_window = 15.0
             gap = (
                 abs(new_start - prev_start)
@@ -868,7 +868,7 @@ def _find_rule_match(
         try:
             from hermes_cli.config import read_raw_config
             pipeline_ms = int(read_raw_config().get("display", {}).get("shell_pipeline_ms", 500))
-        except Exception:
+        except Exception:  # read_raw_config unavailable; hardcoded default window/threshold is safe
             pipeline_ms = 500
         within_window = (
             prev_start is not None
@@ -956,7 +956,7 @@ async def _do_apply_group_widget(
     # Rebuild browse anchors
     try:
         group.app._svc_browse.rebuild_browse_anchors()
-    except Exception:
+    except Exception:  # _svc_browse not available; browse-anchor rebuild is best-effort
         pass
 
     return group
@@ -1020,7 +1020,7 @@ def _maybe_start_group(message_panel: Widget, new_panel: Widget) -> None:
         try:
             from hermes_cli.config import read_raw_config
             attach_window = float(read_raw_config().get("display", {}).get("diff_attach_window_s", 15.0))
-        except Exception:
+        except Exception:  # read_raw_config unavailable; hardcoded default window/threshold is safe
             attach_window = 15.0
         all_targets = _find_diff_targets(siblings, attach_window)
         if len(all_targets) > 1:

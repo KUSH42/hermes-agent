@@ -26,11 +26,14 @@ are only appropriate for prompts the agent is blocked on.
 
 from __future__ import annotations
 
+import logging
 import queue
 import time as _time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable
+
+_log = logging.getLogger(__name__)
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -261,7 +264,7 @@ class InterruptOverlay(Widget, can_focus=True):
             try:
                 self.call_after_refresh(self._activate, payload)
             except Exception:
-                self._activate(payload)
+                self._activate(payload)  # call_after_refresh unavailable pre-mount; activate immediately
             return
         if replace or preempt:
             prior = self._current_payload
@@ -273,18 +276,12 @@ class InterruptOverlay(Widget, can_focus=True):
             try:
                 self.call_after_refresh(self._activate, payload)
             except Exception:
-                self._activate(payload)
+                self._activate(payload)  # call_after_refresh unavailable pre-mount; activate immediately
             return
         # C-3: cap queue depth to _MAX_QUEUE_DEPTH, drop oldest if over limit
         if len(self._queue) >= _MAX_QUEUE_DEPTH:
             dropped = self._queue.pop(0)
-            try:
-                import logging
-                logging.getLogger(__name__).warning(
-                    "InterruptOverlay queue cap hit; dropped %s", dropped.kind
-                )
-            except Exception:
-                pass
+            _log.warning("InterruptOverlay queue cap hit; dropped %s", dropped.kind)
         self._queue.append(payload)
 
     def dismiss_current(self, value: str | None = "") -> None:
@@ -358,7 +355,7 @@ class InterruptOverlay(Widget, can_focus=True):
                 else:
                     self.border_subtitle = payload.subtitle or ""
             except Exception:
-                pass
+                pass  # border_title/subtitle assignment unavailable before full mount; cosmetic only
 
         self.current_kind = payload.kind
         self._render_current()
@@ -373,7 +370,7 @@ class InterruptOverlay(Widget, can_focus=True):
             try:
                 self.focus()
             except Exception:
-                pass
+                pass  # focus() unavailable before widget is fully attached; not fatal
 
         # Start countdown timer if applicable (CLARIFY only — APPROVAL/SUDO/SECRET never auto-dismiss).
         self._stop_countdown_timer()
@@ -388,12 +385,13 @@ class InterruptOverlay(Widget, can_focus=True):
                 )
             except Exception:
                 self._countdown_timer = None
+                _log.debug("Failed to start countdown timer; bar will be static", exc_info=True)
             self._refresh_countdown_display()
         else:
             try:
                 self.query_one("#interrupt-countdown", Static).update("")
             except NoMatches:
-                pass
+                pass  # countdown Static not yet in DOM; no-op is correct
 
     def _teardown_current(
         self, *, resolve: bool, value: str | None
@@ -406,7 +404,7 @@ class InterruptOverlay(Widget, can_focus=True):
             try:
                 payload.on_resolve(value if value is not None else "")
             except Exception:
-                pass
+                _log.warning("on_resolve callback raised during teardown", exc_info=True)
         # Clear body children.
         try:
             body = self.query_one("#interrupt-body", Vertical)
@@ -414,13 +412,13 @@ class InterruptOverlay(Widget, can_focus=True):
                 try:
                     child.remove()
                 except Exception:
-                    pass
+                    pass  # child may already be removed; safe to skip
         except NoMatches:
             pass
         try:
             self.query_one("#interrupt-countdown", Static).update("")
         except NoMatches:
-            pass
+            pass  # countdown widget may not exist during teardown
         self._current_payload = None
         self._clear_destructive_confirm()   # sees _current_payload=None → skips refresh
         self._enter_blocked_until = 0.0     # prevent block bleeding to next payload
@@ -534,7 +532,7 @@ class InterruptOverlay(Widget, can_focus=True):
             try:
                 child.remove()
             except Exception:
-                pass
+                pass  # child already removed (async race); skip safely
         kind = payload.kind
         renderer = {
             InterruptKind.CLARIFY: self._render_clarify,
@@ -853,7 +851,7 @@ class InterruptOverlay(Widget, can_focus=True):
         try:
             self.set_timer(0.3, lambda: self.remove_class("--flash-replace"))
         except Exception:
-            self.remove_class("--flash-replace")
+            self.remove_class("--flash-replace")  # set_timer unavailable pre-mount; remove class immediately
 
     def _refresh_base_row(self) -> None:
         """Update NEW_SESSION base buttons to reflect self._ns_base."""
@@ -868,7 +866,7 @@ class InterruptOverlay(Widget, can_focus=True):
                 else:
                     btn.remove_class("--selected-base")
             except Exception:
-                pass
+                pass  # button widget may be absent if pane not currently rendered
 
     def _refresh_strategy_row(self) -> None:
         """Update MERGE_CONFIRM strategy buttons to reflect self._merge_strategy."""
@@ -888,7 +886,7 @@ class InterruptOverlay(Widget, can_focus=True):
                 else:
                     btn.remove_class("--selected-strategy")
             except Exception:
-                pass
+                pass  # button widget may be absent if pane not currently rendered
 
     def _clear_destructive_confirm(self) -> None:
         self._confirm_destructive_id = None
@@ -910,7 +908,7 @@ class InterruptOverlay(Widget, can_focus=True):
                 try:
                     queued.on_resolve("")  # "" = timeout_value (safest: deny for approval)
                 except Exception:
-                    pass
+                    _log.warning("on_resolve raised during drain_queue for %s", queued.kind, exc_info=True)
         self.dismiss_current("__cancel__")  # resolve the active one too
 
     def _do_new_session_create(self) -> None:
@@ -937,7 +935,7 @@ class InterruptOverlay(Widget, can_focus=True):
                 overlay=self,
             )
         except Exception:
-            pass
+            _log.warning("run_merge raised unexpectedly", exc_info=True)
 
     # ── Choice navigation (used by _app_key_handler) ────────────────────────
 
@@ -957,7 +955,7 @@ class InterruptOverlay(Widget, can_focus=True):
             try:
                 linked.selected = new_sel
             except Exception:
-                pass
+                pass  # linked legacy state may not accept attribute; backward-compat best-effort
         sel_id = {
             InterruptKind.CLARIFY: "clarify-choices",
             InterruptKind.APPROVAL: "approval-choices",
@@ -984,7 +982,7 @@ class InterruptOverlay(Widget, can_focus=True):
                     try:
                         self._confirm_destructive_timer.stop()
                     except Exception:
-                        pass
+                        pass  # timer.stop() may raise if already fired; safe to ignore
                 self._confirm_destructive_timer = self.set_timer(
                     1.5, self._clear_destructive_confirm
                 )
@@ -994,7 +992,7 @@ class InterruptOverlay(Widget, can_focus=True):
                         f"[bold yellow]⚠ Press Enter again to confirm '{chosen.id}'[/bold yellow]"
                     )
                 except Exception:
-                    pass
+                    pass  # countdown Static query; not yet mounted or already torn down
                 return
         self._clear_destructive_confirm()
         self.dismiss_current(chosen.id)

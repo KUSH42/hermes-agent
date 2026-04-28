@@ -1,6 +1,7 @@
 """Spinner tick, hint phase, FPS HUD service extracted from _app_spinner.py."""
 from __future__ import annotations
 
+import logging
 import math
 import time as _time
 from typing import TYPE_CHECKING, Any
@@ -9,6 +10,8 @@ from textual.css.query import NoMatches
 from textual.content import Content
 from textual.widgets import Static
 from wcwidth import wcswidth
+
+_log = logging.getLogger(__name__)
 
 from hermes_cli.tui._app_utils import (
     _HELIX_DELAY_S,
@@ -85,6 +88,7 @@ class SpinnerService(AppService):
                         )
                         inp.placeholder = Content.from_rich_text(shimmer)
                     except Exception:
+                        _log.debug("tick_spinner: shimmer_text failed", exc_info=True)
                         inp.placeholder = padded
                 else:
                     inp.placeholder = padded
@@ -327,4 +331,4 @@ class SpinnerService(AppService):
         except NoMatches:
             pass
         except Exception:
-            pass
+            _log.debug("drawbraille_show_hide: overlay update failed", exc_info=True)

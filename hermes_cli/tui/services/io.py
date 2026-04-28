@@ -220,6 +220,7 @@ class IOService(AppService):
                 await loop.run_in_executor(None, _run_effect_sync, effect_name, text, params)
             return True
         except Exception:
+            logger.debug("play_effects_async: effect %r failed", effect_name, exc_info=True)
             return False
         finally:
             self.app._suspend_busy = False
@@ -317,4 +318,5 @@ class IOService(AppService):
         try:
             return Path(candidate).expanduser().resolve()
         except Exception:
+            logger.debug("get_working_directory: path resolve failed for candidate=%r", candidate, exc_info=True)
             return Path(_os_mod.getcwd()).resolve()

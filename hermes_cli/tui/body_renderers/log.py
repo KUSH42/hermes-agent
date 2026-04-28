@@ -92,7 +92,7 @@ class LogRenderer(BodyRenderer):
                         frac = float("0." + frac_m.group(1)) if frac_m else 0.0
                         first_ts_dt = dt.timestamp() + frac
                         break
-                    except Exception:  # noqa: bare-except
+                    except Exception:  # timestamp line malformed — skip relative-time annotation
                         pass
 
         prev_had_signal = False

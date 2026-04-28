@@ -190,7 +190,7 @@ class _HermesScreen(Screen):
             event._set_forwarded()
             try:
                 widget, region = self.get_widget_at(event.x, event.y)
-            except Exception:
+            except Exception:  # widget lookup failed (e.g. during rapid resize) — skip forward
                 return
             event.style = self.get_style_at(event.screen_x, event.screen_y)
             if widget.loading:
@@ -437,7 +437,7 @@ class HermesApp(App):
         try:
             if "app" in AssistantNameplate.__dict__:
                 delattr(AssistantNameplate, "app")
-        except Exception:
+        except Exception:  # attribute absent or already removed — safe to ignore
             pass
         self.cli = cli
         self._startup_fn = startup_fn
@@ -888,7 +888,7 @@ class HermesApp(App):
             from hermes_cli.tui.clipboard_cache import prune_expired as _prune_clipboard
             _prune_clipboard()
         except Exception:
-            pass
+            logger.debug("clipboard cache prune failed on mount", exc_info=True)
         _mount_elapsed_ms = (_time.monotonic() - _mount_start) * 1000.0
         logger.debug("[STARTUP] mount_ms=%.1f", _mount_elapsed_ms)
 
@@ -909,7 +909,7 @@ class HermesApp(App):
         try:
             from hermes_cli.tui.emoji_registry import _cell_px
             cpw, cph = _cell_px()
-        except Exception:
+        except Exception:  # _cell_px() unavailable (non-graphical terminal) — skip reload
             return
         cur = getattr(self, "_emoji_cell_px", None)
         if cur == (cpw, cph):
@@ -1204,7 +1204,8 @@ class HermesApp(App):
                     overwrite=True,
                 )
             except Exception:
-                logger.debug("Failed to register MCP tool %r from %r", tool_meta.get("name"), msg.server)
+                logger.debug("Failed to register MCP tool %r from %r",
+                             tool_meta.get("name"), msg.server, exc_info=True)
 
     def on_mcp_server_disconnected(self, msg: MCPServerDisconnected) -> None:
         """Consume MCPServerDisconnected: specs stay — panels may still be on screen."""
@@ -1238,9 +1239,9 @@ class HermesApp(App):
             for banner in banners:
                 try:
                     banner.remove()
-                except Exception:
+                except Exception:  # widget already removed or detached — safe to ignore
                     pass
-        except Exception:
+        except Exception:  # screen query failed (app shutting down) — safe to ignore
             pass
 
     # --- InlineImageBar handlers ---
@@ -1300,7 +1301,7 @@ class HermesApp(App):
             for hint in panel.query(".--empty-state-hint"):
                 try:
                     hint.remove()
-                except Exception:
+                except Exception:  # hint already removed — safe to ignore
                     pass
             ump = UserMessagePanel(text, images=images)
             logger.debug(
@@ -1382,7 +1383,7 @@ class HermesApp(App):
             try:
                 from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO
                 self.query_one(_DO).signal("thinking")
-            except Exception:
+            except Exception:  # overlay absent or not yet mounted — animation skipped
                 pass
             self._svc_commands.update_anim_hint()
             self._svc_spinner.set_chevron_phase("--phase-stream")
@@ -1405,7 +1406,7 @@ class HermesApp(App):
             try:
                 from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO
                 self.query_one(_DO).signal("complete")
-            except Exception:
+            except Exception:  # overlay absent or not yet mounted — animation skipped
                 pass
             self._svc_commands.update_anim_hint()
             self._sync_workspace_polling_state()
@@ -1522,7 +1523,7 @@ class HermesApp(App):
                             elif p is not None:
                                 # empty string sentinel — just clear it
                                 prev_engine._block_buf._pending = None
-                        except Exception:
+                        except Exception:  # old engine cleaned up; steal is best-effort
                             pass
                         try:
                             # Also steal any partial chunk (no \n yet) buffered by feed()
@@ -1530,7 +1531,7 @@ class HermesApp(App):
                             if frag:
                                 prev_engine._partial = ""
                                 stolen_partial = frag
-                        except Exception:
+                        except Exception:  # old engine cleaned up; steal is best-effort
                             pass
                     logger.debug(
                         "watch_agent_running: stolen_pending=%r stolen_partial=%r",
@@ -1646,7 +1647,7 @@ class HermesApp(App):
             msg = self.query_one(OutputPanel).current_message
             if msg is not None:
                 msg._last_file_tool_block = None
-        except Exception:
+        except Exception:  # lifecycle hook helper; failure must not break turn boundary
             pass
 
     def _lc_drain_gen_queue(self, **_: object) -> None:
@@ -1655,7 +1656,7 @@ class HermesApp(App):
             for block in pending:
                 try:
                     block.remove()
-                except Exception:
+                except Exception:  # lifecycle hook helper; failure must not break turn boundary
                     pass
             pending.clear()
 
@@ -1671,7 +1672,7 @@ class HermesApp(App):
                     widget.placeholder = f"Error: {err_snippet}…  (Esc to clear)"
                 else:
                     widget.placeholder = getattr(widget, "_idle_placeholder", "")
-        except Exception:
+        except Exception:  # lifecycle hook helper; failure must not break turn boundary
             pass
 
     def _lc_chevron_done_pulse(self, **_: object) -> None:
@@ -1681,7 +1682,7 @@ class HermesApp(App):
             if not chevron.has_class("--phase-error"):
                 self._svc_spinner.set_chevron_phase("--phase-done")
                 self.set_timer(0.4, lambda: self._svc_spinner.set_chevron_phase(""))
-        except Exception:
+        except Exception:  # lifecycle hook helper; failure must not break turn boundary
             pass
 
     def _lc_auto_title(self, **_: object) -> None:
@@ -1698,7 +1699,7 @@ class HermesApp(App):
         if _timer is not None:
             try:
                 _timer.stop()
-            except Exception:
+            except Exception:  # timer already stopped or expired — safe to ignore
                 pass
             self._status_error_timer = None
         if error:
@@ -1711,7 +1712,7 @@ class HermesApp(App):
         if _timer is not None:
             try:
                 _timer.stop()
-            except Exception:
+            except Exception:  # timer already stopped or expired — safe to ignore
                 pass
             self._status_error_timer = None
 
@@ -1733,13 +1734,13 @@ class HermesApp(App):
                 if q is not None:
                     try:
                         q.put_nowait(sentinel)
-                    except Exception:
+                    except Exception:  # queue full or already closed during session switch — safe to ignore
                         pass
         if getattr(self, "agent_running", False):
             try:
                 if hasattr(self.cli, "agent") and self.cli.agent:
                     self.cli.agent.interrupt()
-            except Exception:
+            except Exception:  # agent already stopped or interrupt not supported — safe to ignore
                 pass
 
     def _lc_session_resume_reset(self, session_id: str = "", turn_count: int = 0, **_: object) -> None:
@@ -1748,12 +1749,12 @@ class HermesApp(App):
         if _timer is not None:
             try:
                 _timer.stop()
-            except Exception:
+            except Exception:  # timer already stopped or expired — safe to ignore
                 pass
             self._status_error_timer = None
         try:
             self.status_error = ""
-        except Exception:
+        except Exception:  # reactive not yet initialised during early teardown — safe to ignore
             pass
 
     def _on_streaming_start(self, **_: object) -> None:
@@ -1805,7 +1806,7 @@ class HermesApp(App):
                 sound=bool(display.get("notify_sound", False)),
                 sound_name=str(display.get("notify_sound_name", "Glass")),
             )
-        except Exception:
+        except Exception:  # desktop notify unavailable — non-critical, skip silently
             pass
 
     def _refresh_live_response_metrics(self) -> None:
@@ -1867,7 +1868,7 @@ class HermesApp(App):
             from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
             ov = self.query_one(DrawbrailleOverlay)
             ov.signal("token")
-        except Exception:
+        except Exception:  # overlay absent or not yet mounted — heat signal skipped
             pass
         self._refresh_live_response_metrics()
 
@@ -2021,7 +2022,7 @@ class HermesApp(App):
         """o: move focus to OutputPanel."""
         try:
             self.query_one(OutputPanel).focus()
-        except Exception:
+        except Exception:  # widget absent or not yet mounted — focus skipped
             pass
 
     def action_focus_input_from_output(self) -> None:
@@ -2029,7 +2030,7 @@ class HermesApp(App):
         try:
             from hermes_cli.tui.input_widget import HermesInput
             self.query_one(HermesInput).focus()
-        except Exception:
+        except Exception:  # widget absent or not yet mounted — focus skipped
             pass
 
     def action_toggle_density(self) -> None:
@@ -2050,7 +2051,7 @@ class HermesApp(App):
             cfg = getattr(self.cli, "_cfg", None) or {}
             if isinstance(cfg, dict):
                 cfg.setdefault("display", {})["auto_mini_mode"] = True
-        except Exception:
+        except Exception:  # config dict absent or panel query failed — auto-mini cleanup skipped
             pass
         self._flash_hint("Auto-mini ON  (/density full to disable)", 2.0)
 
@@ -2064,7 +2065,7 @@ class HermesApp(App):
             from hermes_cli.tui.tool_panel import ToolPanel
             for panel in self.query(ToolPanel):
                 panel.remove_class("--minified")
-        except Exception:
+        except Exception:  # config dict absent or panel query failed — auto-mini cleanup skipped
             pass
 
     def _dismiss_floating_panels(self) -> None:
@@ -2471,12 +2472,12 @@ class HermesApp(App):
                 AnimConfigPanel as _ACP,
                 AnimGalleryOverlay as _AGO,
             )
-        except Exception:
+        except Exception:  # optional dep or widget not mounted — treat as not visible
             return False
         for cls in (_ACP, _AGO):
             try:
                 w = self.query_one(cls)
-            except Exception:
+            except Exception:  # optional dep or widget not mounted — treat as not visible
                 continue
             if w.has_class("--visible"):
                 return True
@@ -2634,7 +2635,7 @@ class HermesApp(App):
                 from hermes_cli.tui.overlays.interrupt import InterruptOverlay as _IO
                 _io = self.query_one(_IO)
                 _has_blocker = _io.has_class("--visible")
-            except Exception:
+            except Exception:  # InterruptOverlay not mounted — treat as not visible
                 pass
         if _has_blocker:
             self.ui_phase = "blocker"

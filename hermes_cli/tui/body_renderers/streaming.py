@@ -114,7 +114,7 @@ class ShellRenderer(BodyRenderer):
                 swap = app.config.get("tui", {}).get("render", {}).get("swap_on_complete", True)
                 if not swap:
                     return None
-            except Exception:  # noqa: bare-except
+            except Exception:  # config unavailable — proceed with swap (default=True behaviour)
                 pass
 
         colors = SkinColors.from_app(app)
@@ -125,7 +125,7 @@ class ShellRenderer(BodyRenderer):
             try:
                 _json.loads(text)
                 lang = "json"
-            except Exception:  # noqa: bare-except
+            except Exception:  # not valid JSON — lang stays None, no swap
                 pass
         if lang is None and text.startswith("---"):
             lang = "yaml"
@@ -139,7 +139,7 @@ class ShellRenderer(BodyRenderer):
         notice.append("\n")
         try:
             syntax = Syntax(text, lang, line_numbers=False, theme=theme, background_color="default")
-        except Exception:  # noqa: bare-except
+        except Exception:  # rich.Syntax init failed — fall back to plain text
             syntax = _Text(text)
 
         from rich.console import Group
@@ -232,7 +232,7 @@ class StreamingCodeRenderer(BodyRenderer):
                     line_numbers=False,
                     background_color=bg if bg and bg != "default" else None,
                 )
-            except Exception:  # noqa: bare-except
+            except Exception:  # rich.Syntax init failed — return plain text fallback
                 return Text(body_code)
 
     def highlight_line(self, line: str, theme: str = "ansi_dark") -> str:
@@ -342,7 +342,7 @@ class FileRenderer(BodyRenderer):
                 swap = app.config.get("tui", {}).get("render", {}).get("swap_on_complete", True)
                 if not swap:
                     return None
-            except Exception:  # noqa: bare-except
+            except Exception:  # config unavailable — proceed with swap (default=True behaviour)
                 pass
 
         from hermes_cli.tui.body_renderers._grammar import SkinColors, build_rule
@@ -356,7 +356,7 @@ class FileRenderer(BodyRenderer):
         try:
             from rich.syntax import Syntax
             syntax = Syntax(text, lang, theme=theme, background_color="default", line_numbers=False)
-        except Exception:  # noqa: bare-except
+        except Exception:  # rich.Syntax init failed — fall back to plain text
             syntax = Text(text)
 
         from rich.console import Group
@@ -542,7 +542,7 @@ class StreamingSearchRenderer(BodyRenderer):
                 web_items = parsed.get("data", {}).get("web", [])
                 if isinstance(web_items, list) and web_items:
                     return _render_web_search_results(web_items, colors=self.colors)
-            except Exception:  # noqa: bare-except
+            except Exception:  # JSON parse failed — fall back to plain-text listing
                 pass
         result = Text()
         for line in all_plain:
@@ -564,7 +564,7 @@ class StreamingSearchRenderer(BodyRenderer):
                     paths.append(line.strip())
             if paths and hasattr(tool_call, "result_paths"):
                 tool_call.result_paths[:] = list(dict.fromkeys(paths))
-        except Exception:  # noqa: bare-except
+        except Exception:  # path extraction failed — sidecar data unavailable, non-critical
             pass
 
     def preview(self, all_plain: list[str], max_lines: int) -> "ConsoleRenderable":

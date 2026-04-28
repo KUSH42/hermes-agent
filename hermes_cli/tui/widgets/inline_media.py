@@ -5,10 +5,13 @@ Contains: InlineImage, InlineThumbnail, InlineImageBar.
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+_log = logging.getLogger(__name__)
 
 from rich.segment import Segment
 from rich.text import Text
@@ -130,6 +133,7 @@ class InlineImage(Widget):
         try:
             result = self._encode_tgp_placeholder(img)
         except Exception:
+            _log.debug("InlineMedia image load failed", exc_info=True)
             return
         if self.is_mounted:
             self.app.call_from_thread(self._apply_tgp_result, *result)
@@ -217,7 +221,7 @@ class InlineImage(Widget):
             sys.stdout.write(seq)
             sys.stdout.flush()
         except Exception:
-            pass
+            _log.debug("InlineMedia video load failed", exc_info=True)
 
     def on_unmount(self) -> None:
         from hermes_cli.tui.kitty_graphics import _get_renderer

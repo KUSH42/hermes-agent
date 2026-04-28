@@ -505,7 +505,7 @@ ToolsScreen > #prefix-legend.--hidden {
             label_w, gantt_w = _split_flex(flex)
             scale = _gantt_scale_text(max(self._turn_total_s, 0.001), gantt_w, label_w)
             self.query_one("#gantt-scale", Static).update(scale)
-        except Exception:
+        except Exception:  # gantt scale widget absent — header not updated
             pass
         if not self._filtered:
             await listview.append(ListItem(Static(Text("  no matching tool calls", style="dim"))))
@@ -658,7 +658,7 @@ ToolsScreen > #prefix-legend.--hidden {
         try:
             fi = self.query_one("#filter-input", Input)
             fi.display = False
-        except Exception:
+        except Exception:  # filter-input widget absent — display state not changed
             pass
         self.app.pop_screen()
 
@@ -676,7 +676,7 @@ ToolsScreen > #prefix-legend.--hidden {
             fi = self.query_one("#filter-input", Input)
             fi.value = ""
             fi.display = False
-        except Exception:
+        except Exception:  # filter-input widget absent — filter input clear skipped
             pass
         await self._apply_filter()
         await self._rebuild()
@@ -715,13 +715,13 @@ ToolsScreen > #prefix-legend.--hidden {
                         if isinstance(ancestor, _TG) and ancestor.collapsed:
                             ancestor.collapsed = False
                             break
-                except Exception:
+                except Exception:  # ancestor query failed — tool group stays collapsed
                     pass
                 # Expand own body if collapsed
                 try:
                     if hasattr(panel, "_body") and not panel._body.has_class("expanded"):
                         panel.toggle()
-                except Exception:
+                except Exception:  # panel toggle failed — body expansion skipped
                     pass
                 panel.scroll_visible(animate=False)
                 if self.app.browse_mode:
@@ -732,7 +732,7 @@ ToolsScreen > #prefix-legend.--hidden {
                             if h.parent is panel or (hasattr(h, "parent") and getattr(h.parent, "parent", None) is panel):
                                 self.app.browse_index = i
                                 break
-                    except Exception:
+                    except Exception:  # scroll or browse_mode unavailable — panel jump without scroll
                         pass
             except Exception:
                 pass
@@ -799,7 +799,7 @@ ToolsScreen > #prefix-legend.--hidden {
         sort_label = _SORT_LABELS.get(self._sort_mode, "chrono")
         try:
             self.app._flash_hint(f"sort: {sort_label}", 1.5)
-        except Exception:
+        except Exception:  # app._flash_hint unavailable — sort hint not shown
             pass
 
     def action_toggle_view(self) -> None:
@@ -807,14 +807,14 @@ ToolsScreen > #prefix-legend.--hidden {
         # DU-6: explicit Shift+T press also suppresses the rebind hint.
         try:
             self.app._t_rebind_hint_shown = True
-        except Exception:
+        except Exception:  # app attribute absent — rebind hint flag not set
             pass
         self._tree_view = not self._tree_view
         self.call_after_refresh(self._rebuild)
         label = "tree" if self._tree_view else "timeline"
         try:
             self.app._flash_hint(f"view: {label}", 1.5)
-        except Exception:
+        except Exception:  # app._flash_hint unavailable — view-toggle hint not shown
             pass
 
     def _get_ordered_records(self, records: list[dict]) -> list[tuple[dict, int]]:

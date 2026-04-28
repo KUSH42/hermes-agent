@@ -465,6 +465,7 @@ def safe_read_file(
                 content = resolved.read_text(encoding=encoding)
             _safe_callback(app, on_done, content)
         except Exception as exc:
+            _log.debug("safe_read_file worker error: %s", exc, exc_info=True)
             _safe_callback(app, on_error, exc)
 
     _dispatch_worker(app, _worker_body)
@@ -513,6 +514,7 @@ def safe_write_file(
                     written = f.write(data)
             _safe_callback(app, on_done, written)
         except Exception as exc:
+            _log.debug("safe_write_file worker error: %s", exc, exc_info=True)
             _safe_callback(app, on_error, exc)
 
     _dispatch_worker(app, _worker_body)

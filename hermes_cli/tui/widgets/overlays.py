@@ -12,8 +12,11 @@ HistorySearchOverlay.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+
+_log = logging.getLogger(__name__)
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -458,7 +461,7 @@ class HistorySearchOverlay(Widget):
             max_r = cfg.get("display", {}).get("history_search_max_results", 50)
             self._max_results = int(max_r)
         except Exception:
-            pass
+            pass  # config parse failed; use default max_results limit
         self._build_index()
         self._selected_idx = 0
         # Save and update HintBar hint
@@ -502,7 +505,7 @@ class HistorySearchOverlay(Widget):
         try:
             self.app.highlighted_candidate = None
         except Exception:
-            pass
+            _log.debug("overlay ContentSwitcher toggle failed", exc_info=True)
         self.remove_class("--visible")
         try:
             from .status_bar import HintBar
@@ -643,6 +646,7 @@ class HistorySearchOverlay(Widget):
         try:
             items = list(self.query(TurnResultItem))
         except Exception:
+            # widget absent during dismiss; return early is correct
             return
         for i, item in enumerate(items):
             item.set_class(i == self._selected_idx, "--selected")
@@ -665,6 +669,7 @@ class HistorySearchOverlay(Widget):
             inp = self.query_one("#history-search-input", Input)
             inp.value = query
         except Exception:
+            # search query widget absent; filter not applied
             pass
 
     def action_find_next(self) -> None:
@@ -682,10 +687,11 @@ class HistorySearchOverlay(Widget):
             mode_bar = self.query_one(_ModeBar)
             mode_bar.set_mode(self._mode)
         except Exception:
-            pass
+            pass  # mode bar widget absent; visual indicator not updated
         try:
             query = self.query_one("#history-search-input", Input).value
         except Exception:
+            # search input absent; query defaults to empty string
             query = ""
         if self._mode == "all" and hasattr(self, "_search_cross_session"):
             self._cross_session_loading = True
@@ -704,6 +710,7 @@ class HistorySearchOverlay(Widget):
             title = result.session_title or result.session_id
             hint_bar.hint = f"Switch to session: {title}"
         except Exception:
+            # widget absent during reset; skip gracefully
             pass
 
     def action_jump(self) -> None:

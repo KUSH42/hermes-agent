@@ -146,6 +146,7 @@ class SkillPickerOverlay(Widget):
             self._candidates = list(getattr(inp, "_skills", []))
         except Exception:
             self._candidates = []
+            _log.debug("Could not load skill candidates from HermesInput", exc_info=True)
 
     def _filtered_candidates(self) -> list:
         q = self._filter.lower()
@@ -227,7 +228,7 @@ class SkillPickerOverlay(Widget):
                 if c.name == highlighted_id:
                     return c
         except Exception:
-            pass
+            pass  # option list not yet rendered or highlighted index invalid; treat as no selection
         return None
 
     def set_filter(self, seed: str) -> None:

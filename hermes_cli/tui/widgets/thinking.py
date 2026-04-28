@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import asyncio
 import threading
 import time
@@ -68,6 +69,26 @@ _WHITELIST_EFFECT: frozenset[str] = frozenset({
 
 _DEFAULT_ENGINE = "dna"
 _DEFAULT_EFFECT = "breathe"
+
+# ── Hex-color validation ───────────────────────────────────────────────────────
+
+# 3- or 6-digit hex, optional leading "#". Anchored.
+_HEX_COLOR_RE = re.compile(r"^#?(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+_DEFAULT_ACCENT_HEX = "#888888"
+_DEFAULT_TEXT_HEX = "#ffffff"
+
+
+def _normalize_hex(value: str | None, default: str) -> str:
+    """Return *value* normalized to ``#RRGGBB``; *default* if not a valid hex color."""
+    if not value:
+        return default
+    if not _HEX_COLOR_RE.match(value):
+        return default
+    body = value.lstrip("#")
+    if len(body) == 3:
+        body = "".join(ch * 2 for ch in body)
+    return f"#{body.lower()}"
 
 
 # ── ThinkingMode ──────────────────────────────────────────────────────────────
@@ -293,8 +314,8 @@ _LabelLine   { height: 1;   width: 1fr; }
     _resolved_effect: str = _DEFAULT_EFFECT  # D-2: stored so _tick can swap on STARTED→WORKING
 
     # Color cache
-    _accent_hex: str = "#888888"
-    _text_hex: str = "#ffffff"
+    _accent_hex: str = _DEFAULT_ACCENT_HEX
+    _text_hex: str = _DEFAULT_TEXT_HEX
 
     # Label text
     _base_label: str = "Thinking…"
@@ -392,14 +413,17 @@ _LabelLine   { height: 1;   width: 1fr; }
         return key
 
     def _refresh_colors(self) -> None:
+        css_vars: dict[str, str] = {}
         try:
             css_vars = self.app.get_css_variables()
-            accent = css_vars.get("accent", "#888888")
-            text = css_vars.get("text", "#ffffff")
-            self._accent_hex = f"#{accent.lstrip('#')}" if accent else "#888888"
-            self._text_hex = f"#{text.lstrip('#')}" if text else "#ffffff"
         except Exception:
-            pass  # CSS variable parse failed; accent/text colours use hardcoded fallback
+            logger.warning("ThinkingWidget._refresh_colors: get_css_variables failed", exc_info=True)
+            self._accent_hex = _DEFAULT_ACCENT_HEX
+            self._text_hex = _DEFAULT_TEXT_HEX
+            return
+
+        self._accent_hex = _normalize_hex(css_vars.get("accent"), _DEFAULT_ACCENT_HEX)
+        self._text_hex = _normalize_hex(css_vars.get("text"), _DEFAULT_TEXT_HEX)
 
     # ── Public API ─────────────────────────────────────────────────────────────
 

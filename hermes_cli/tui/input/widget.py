@@ -265,21 +265,46 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             self.suggestion = ""
             self._hide_completion_overlay()
             self._dismiss_skill_picker()
+            try:
+                self.app.status_ghost_suggestion = bool(self.suggestion.strip())
+            except Exception:
+                # Expected before mount (NoActiveAppError) or non-HermesApp pilots.
+                _log.debug("_resolve_assist: could not propagate ghost state to app")
             return
         if kind is AssistKind.GHOST:
             self._hide_completion_overlay()
             self._dismiss_skill_picker()
             self.suggestion = suggestion
+            try:
+                self.app.status_ghost_suggestion = bool(self.suggestion.strip())
+            except Exception:
+                # Expected before mount (NoActiveAppError) or non-HermesApp pilots.
+                _log.debug("_resolve_assist: could not propagate ghost state to app")
             return
         if kind is AssistKind.OVERLAY:
             self.suggestion = ""
             self._dismiss_skill_picker()
+            try:
+                self.app.status_ghost_suggestion = bool(self.suggestion.strip())
+            except Exception:
+                # Expected before mount (NoActiveAppError) or non-HermesApp pilots.
+                _log.debug("_resolve_assist: could not propagate ghost state to app")
             if self._completion_overlay_active:
                 return
             self._show_completion_overlay()
+            try:
+                self.app.status_ghost_suggestion = bool(self.suggestion.strip())
+            except Exception:
+                # Expected before mount (NoActiveAppError) or non-HermesApp pilots.
+                _log.debug("_resolve_assist: could not propagate ghost state to app")
             return
         if kind is AssistKind.PICKER:
             self._hide_completion_overlay()
+            try:
+                self.app.status_ghost_suggestion = False
+            except Exception:
+                # Expected before mount (NoActiveAppError) or non-HermesApp pilots.
+                _log.debug("_resolve_assist: could not propagate ghost state to app")
             self.app._open_skill_picker(
                 seed_filter=self._current_trigger.fragment,
                 trigger_source=SKILL_PICKER_TRIGGER_PREFIX,

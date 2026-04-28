@@ -124,9 +124,16 @@ class SkillPickerOverlay(Widget):
             ),
             ScrollableContainer(id="picker-right"),
         )
-        yield Static(
-            "[Enter] invoke · [Tab] insert · [?] open SKILL.md · [Esc] cancel",
-            id="picker-footer",
+        yield Static("", id="picker-footer")
+
+    @staticmethod
+    def _build_footer_text(k: str) -> str:
+        """C6: build colored key-chip footer string."""
+        return (
+            f"[bold {k}]Enter[/] run  ·  "
+            f"[bold {k}]Tab[/] paste  ·  "
+            f"[bold {k}]?[/] view docs  ·  "
+            f"[bold {k}]Esc[/] cancel"
         )
 
     def on_mount(self) -> None:
@@ -139,6 +146,18 @@ class SkillPickerOverlay(Widget):
             self.query_one("#picker-filter", Input).focus()
         except NoMatches:
             pass
+        try:
+            k = self.app.get_css_variables().get("primary", "cyan")
+        except Exception:
+            # get_css_variables() may raise before CSS is fully resolved;
+            # unstyled fallback is functionally identical to the user.
+            _log.debug("SkillPickerOverlay.on_mount: get_css_variables failed", exc_info=True)
+            k = ""
+        footer_text = self._build_footer_text(k) if k else (
+            # Fallback plain text — must stay in sync with _build_footer_text verbs.
+            "Enter run  ·  Tab paste  ·  ? view docs  ·  Esc cancel"
+        )
+        self.query_one("#picker-footer", Static).update(footer_text)
 
     def _load_candidates(self) -> None:
         """Pull SkillCandidates from HermesInput._skills if available."""

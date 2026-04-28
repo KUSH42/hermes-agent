@@ -86,6 +86,19 @@ def _remap_spans(seg: Text, strip_n: int) -> list:
 
 
 
+# C1: remediation hints for collapsed+error headers; keys are ErrorCategory .value strings
+_REMEDIATION_BY_CATEGORY: dict[str, str] = {
+    "EACCES":  "→ Approve & retry",
+    "timeout": "→ Retry",
+    "EINVAL":  "→ Edit args",
+    "usage":   "→ Edit args",
+    "ENOENT":  "→ Edit path",
+    "ENOTDIR": "→ Edit path",
+    "signal":  "→ Resume",
+    # "error" (UNKNOWN), "ENETUNREACH", "runtime" — no hint
+}
+
+
 class ToolHeader(TooltipMixin, PulseMixin, Widget):
     """Single-line header: '  ╌╌ {label}  {stats}  [▸/▾]'.
 
@@ -241,6 +254,29 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 self._streaming_kind_hint = None
                 if self.is_attached:
                     self.refresh()
+            # C1: populate remediation hint when ERROR arrives. Explicit refresh
+            # handles the pre-collapsed case where watch_collapsed never fires.
+            if new == ToolCallState.ERROR:
+                self._refresh_remediation_hint()
+                if self.is_attached:
+                    self.refresh()
+
+    def _refresh_remediation_hint(self) -> None:
+        """C1: set _remediation_hint from view-state for collapsed+error headers."""
+        view = getattr(self._panel, "_view_state", None) if self._panel else None
+        if view is None or not view.is_error or not self.collapsed:
+            self._remediation_hint = None
+            return
+        category = getattr(view, "error_category", None)
+        # ErrorCategory is a StrEnum — .value normalization is defensive clarity;
+        # StrEnum instances compare equal to their string values without it.
+        if hasattr(category, "value"):
+            category = category.value
+        self._remediation_hint = _REMEDIATION_BY_CATEGORY.get(category)
+
+    def watch_collapsed(self, value: bool) -> None:
+        """C1: refresh remediation hint when collapsed state changes."""
+        self._refresh_remediation_hint()
 
     def _colors(self):
         """Lazy resolve + cache SkinColors. Falls back to defaults pre-mount.
@@ -511,13 +547,18 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             from hermes_cli.tui.tool_panel.layout_resolver import default_resolver
             _resolver = default_resolver()
         if self._tool_icon_error:
-            # ER-2: ERR cell pin — exactly 2 chips, no trim, no elision at any tier.
+            # ER-2: ERR cell pin — up to 3 chips (error-category, outcome, optional remediation),
+            # no trim, no elision at any tier.
             _err_color = getattr(self, "_diff_del_color", _DIFF_DEL_FALLBACK)
             _cat_text = self._error_category_text()
             tail_segments = [
                 ("error-category", Text(f"  {_cat_text}", style=f"bold {_err_color}")),
                 ("outcome",        Text(f"  {_CHIP_ERR}", style=f"bold {_err_color}")),
             ]
+            if self._remediation_hint:
+                tail_segments.append(
+                    ("remediation", Text(f"  {self._remediation_hint}", style="dim"))
+                )
         else:
             tail_segments = _resolver.trim_header_tail(tail_segments, tail_budget, _tier)
         from hermes_cli.tui.body_renderers._grammar import GLYPH_META_SEP, glyph as _glyph
@@ -547,7 +588,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         if self._path_clickable and self._full_path and self._full_path != self._label:
             displayed_plain = label_text.plain.strip()
             if displayed_plain != self._full_path:
-                self._tooltip_text = self._full_path
+                pass  # C5: _compute_tooltip_text reads _full_path directly at hover time
         if self.has_class("result-empty"):
             label_text = Text(f"○ {label_text.plain}", style="italic")
         # FS-1: focus prefix glyph before label — never truncated
@@ -640,6 +681,20 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             )
         except Exception:  # FeedbackService unavailable; error flash is decorative, safe to skip
             pass
+
+    def _compute_tooltip_text(self) -> str:
+        """C5: return context-sensitive tooltip text based on current header state."""
+        view = getattr(self._panel, "_view_state", None) if self._panel else None
+        if self.collapsed and view and view.is_error:
+            return "Click to expand error detail · Right-click for menu"
+        if self.collapsed:
+            return "Click to expand · Right-click for menu"
+        return getattr(self, "_full_path", None) or "Click to collapse · Right-click for menu"
+
+    def _show_tooltip(self) -> None:
+        """C5: refresh tooltip text before showing so it reflects current state."""
+        self._tooltip_text = self._compute_tooltip_text()
+        super()._show_tooltip()
 
     def set_path(self, path: str) -> None:
         self._full_path = path

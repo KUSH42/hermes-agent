@@ -30,6 +30,8 @@ from .utils import (
     _pulse_enabled,
 )
 
+from hermes_cli.tui.tool_panel.density import DensityTier
+
 if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
     from hermes_cli.tui.body_renderers import RendererKind
@@ -53,6 +55,7 @@ KEY_DOWN    = "↓"
 KEY_CTRL_C  = "⌃C"
 KEY_CTRL_F  = "⌃F"
 KEY_CTRL_Z  = "⌃Z"
+KEY_S       = "S"
 HINT_MAX_PRIMARY = 3  # D-1: cap on primary hint entries visible at once (AT-D1)
 
 _COMPACTION_ZERO_PROBES: set[int] = set()
@@ -103,7 +106,8 @@ def _build_hints(phase: str, key_color: str) -> dict[str, str]:
         return sep.join(parts)
 
     if phase == "idle":
-        long_ = _fmt([("F1", "help"), (KEY_CTRL_F, "search"), ("/", "cmd"), ("@", "path")])
+        _s_hint = f"[bold {k}]{KEY_S}[/] [dim]session[/dim]"
+        long_ = _fmt([("F1", "help"), (KEY_CTRL_F, "search"), ("/", "cmd"), ("@", "path")]) + _SEP + _s_hint
         medium = long_
         short = _fmt([("F1", None), (KEY_CTRL_F, None), ("/", None), ("@", None)])
         minimal = f"[bold {k}]F1[/]"
@@ -262,6 +266,9 @@ class HintBar(Widget):
         # LL-1/LL-5: flash timer
         self._flash_timer: object | None = None
         self._flash_text: str = ""
+        # C2: compact ghost-text affordance
+        self._density_tier: str = DensityTier.DEFAULT.value
+        self._has_ghost_suggestion: bool = False
 
     def compose(self) -> "ComposeResult":
         yield KindOverrideChip(hintbar=self)
@@ -283,6 +290,19 @@ class HintBar(Widget):
         self.watch(self.app, "status_streaming", self._on_streaming_change)
         self._kind_chip = self.query_one(KindOverrideChip)
         self._kind_chip.display = False
+        # C2: compact ghost-text affordance watchers
+        self.watch(self.app, "status_ghost_suggestion", self._on_ghost_change)
+        self.watch(self.app, "status_density_tier", self._on_density_tier_change)
+
+    def _on_ghost_change(self, value: bool = False) -> None:
+        """C2: update ghost-suggestion state and repaint."""
+        self._has_ghost_suggestion = value
+        self.refresh()
+
+    def _on_density_tier_change(self, value: str = DensityTier.DEFAULT.value) -> None:
+        """C2: update density tier state and repaint."""
+        self._density_tier = value
+        self.refresh()
 
     def on_kind_override_changed(self, event: KindOverrideChanged) -> None:
         """LL-4: show/hide kind chip and store cycle callback."""
@@ -373,6 +393,14 @@ class HintBar(Widget):
         """8Hz shimmer timer callback — plain def."""
         self._shimmer_tick += 1
 
+    def _tab_hint_suffix(self, bucket: str, k: str) -> str:
+        """C2: return Tab-suggestion suffix when compact density + ghost suggestion active."""
+        if (self._density_tier == DensityTier.COMPACT.value
+                and self._has_ghost_suggestion
+                and bucket in ("long", "medium")):
+            return _SEP + f"[bold {k}]Tab[/] suggest"
+        return ""
+
     def render(self) -> "RenderResult":
         streaming = getattr(self.app, "status_streaming", False)
 
@@ -411,14 +439,15 @@ class HintBar(Widget):
         hints = _hints_for(self._phase, key_color)
         w = self.content_size.width
         if w >= 118:
-            variant = hints.get("long", hints["medium"])
+            bucket, hint_text = "long", hints.get("long", hints["medium"])
         elif w >= 78:
-            variant = hints["medium"]
+            bucket, hint_text = "medium", hints["medium"]
         elif w >= 48:
-            variant = hints["short"]
+            bucket, hint_text = "short", hints["short"]
         else:
-            variant = hints["minimal"]
-        return Text.from_markup(variant)
+            bucket, hint_text = "minimal", hints["minimal"]
+        hint_text = hint_text + self._tab_hint_suffix(bucket, key_color)
+        return Text.from_markup(hint_text)
 
 
 # ---------------------------------------------------------------------------

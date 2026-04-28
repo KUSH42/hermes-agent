@@ -98,8 +98,8 @@ class TestCollapsedActionStrip:
         actions = _get_collapsed_actions(ToolCategory.FILE)
         action_dict = {key: label for key, label in actions}
 
-        assert action_dict.get("c") == "copy", (
-            f"Expected 'c' → 'copy', got {action_dict.get('c')!r}"
+        assert action_dict.get("y") == "copy", (
+            f"Expected 'y' → 'copy', got {action_dict.get('y')!r}"
         )
         assert "diff" not in action_dict.values(), (
             "File strip must not advertise 'diff'; found in labels"

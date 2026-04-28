@@ -392,8 +392,14 @@ class ToolGroup(Widget):
             pass
 
     def on_click(self, event: object) -> None:
-        """Toggle collapsed on left-click only (button 1)."""
+        """Toggle collapsed on left-click on GroupHeader only.
+
+        Clicks on child ToolPanel body content bubble up uninvited; guard
+        against them by checking the originating widget.
+        """
         if getattr(event, "button", 1) != 1:
+            return
+        if not isinstance(getattr(event, "widget", None), GroupHeader):
             return
         self._user_collapsed = not self.collapsed
         self.collapsed = self._user_collapsed

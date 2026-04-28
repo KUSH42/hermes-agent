@@ -74,9 +74,6 @@ class _ToolPanelCompletionMixin:
         if not self.collapsed:  # type: ignore[attr-defined]
             strip.remove_class("--visible")
             return
-        if not self.has_focus:  # type: ignore[attr-defined]
-            strip.remove_class("--visible")
-            return
         if self._result_summary_v4 is None:  # type: ignore[attr-defined]
             strip.remove_class("--visible")
             return
@@ -233,6 +230,9 @@ class _ToolPanelCompletionMixin:
         cls_result: "ClassificationResult",
     ) -> None:
         if self._body_pane is None:  # type: ignore[attr-defined]
+            # compose() hasn't run yet — defer until on_mount().
+            self._pending_renderer_swap = (new_renderer_cls, payload, cls_result)  # type: ignore[attr-defined]
+            _log.debug("_swap_renderer deferred (body_pane not yet mounted)")
             return
         renderer = new_renderer_cls(payload, cls_result, app=self.app)  # type: ignore[attr-defined]
         # Update BodyPane renderer FIRST so apply_density() (fired later by the resolver

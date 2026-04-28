@@ -244,6 +244,10 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
 
         self._discovery_shown: bool = False
 
+        # Deferred renderer swap: set when _swap_renderer fires before compose().
+        # Consumed in on_mount() once _body_pane is available.
+        self._pending_renderer_swap: "tuple[type, Any, Any] | None" = None
+
         self._view_state: "ToolCallViewState | None" = None  # wired by service after mount
         self._resolver = ToolBlockLayoutResolver()
         self._resolver.subscribe(self._on_tier_change)
@@ -296,6 +300,15 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
                 pass
 
         self.collapsed = False
+
+        # Flush any renderer swap that arrived before compose() ran.
+        if self._pending_renderer_swap is not None:
+            renderer_cls, payload, cls_result = self._pending_renderer_swap
+            self._pending_renderer_swap = None
+            try:
+                self._swap_renderer(renderer_cls, payload, cls_result)
+            except Exception:
+                _log.exception("deferred _swap_renderer failed in on_mount")
 
         if self._result_summary_v4 is not None:
             self._apply_complete_auto_collapse()

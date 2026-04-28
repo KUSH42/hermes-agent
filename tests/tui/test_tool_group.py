@@ -377,12 +377,14 @@ def test_tool_group_on_click_stops_event():
 
 
 def test_tool_group_on_click_stops_event_runtime():
-    """on_click calls event.stop() at runtime with a mock event."""
-    from hermes_cli.tui.tool_group import ToolGroup
+    """on_click calls event.stop() when click originates on GroupHeader."""
+    from hermes_cli.tui.tool_group import ToolGroup, GroupHeader
 
     stop_calls = []
+    header = GroupHeader.__new__(GroupHeader)
     event = MagicMock()
     event.button = 1
+    event.widget = header
     event.stop = lambda: stop_calls.append(True)
 
     # Patch the reactive setter so we don't need a running app
@@ -396,8 +398,32 @@ def test_tool_group_on_click_stops_event_runtime():
         group.on_click(event)
 
     assert stop_calls, (
-        "ToolGroup.on_click must call event.stop() — missing call allows click to bubble"
+        "ToolGroup.on_click must call event.stop() when GroupHeader is clicked"
     )
+
+
+def test_tool_group_on_click_ignores_body_clicks():
+    """on_click must NOT toggle when click bubbled from body content (not GroupHeader)."""
+    from hermes_cli.tui.tool_group import ToolGroup
+
+    stop_calls = []
+    body_widget = MagicMock()  # some non-GroupHeader widget
+    event = MagicMock()
+    event.button = 1
+    event.widget = body_widget
+    event.stop = lambda: stop_calls.append(True)
+
+    with patch.object(ToolGroup, "collapsed", new_callable=lambda: property(
+        lambda self: getattr(self, "_collapsed_val", False),
+        lambda self, v: setattr(self, "_collapsed_val", v),
+    )):
+        group = ToolGroup.__new__(ToolGroup)
+        group._user_collapsed = False
+        group._collapsed_val = False
+        group.on_click(event)
+
+    assert not stop_calls, "body click must not trigger group toggle"
+    assert group._collapsed_val is False, "group must not have collapsed from body click"
 
 
 def test_tool_group_on_click_right_button_no_stop():

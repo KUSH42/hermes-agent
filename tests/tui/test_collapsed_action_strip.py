@@ -80,11 +80,12 @@ def _make_panel(
 # ---------------------------------------------------------------------------
 
 class TestCollapsedActionStrip:
-    def test_strip_hidden_when_unfocused_collapsed(self, monkeypatch):
+    def test_strip_visible_when_unfocused_collapsed(self, monkeypatch):
+        # QW-03: strip shows whenever collapsed, focus only affects color via CSS
         monkeypatch.delenv("HERMES_DETERMINISTIC", raising=False)
         panel = _make_panel(has_focus=False, collapsed=True, result=_make_summary())
         panel._refresh_collapsed_strip()
-        assert not panel._collapsed_strip._visible
+        assert panel._collapsed_strip._visible
 
     def test_strip_visible_when_focused_collapsed(self, monkeypatch):
         monkeypatch.delenv("HERMES_DETERMINISTIC", raising=False)
@@ -167,15 +168,17 @@ class TestCollapsedActionStrip:
         text_obj = call[0][0]
         assert "[?]" in str(text_obj)
 
-    def test_strip_clears_on_blur(self, monkeypatch):
+    def test_strip_stays_on_blur(self, monkeypatch):
+        # QW-03: blur no longer hides the strip; CSS dims it via color rules
         monkeypatch.delenv("HERMES_DETERMINISTIC", raising=False)
         panel = _make_panel(has_focus=True, collapsed=True, result=_make_summary())
         panel._refresh_collapsed_strip()
         assert panel._collapsed_strip._visible
 
-        # Simulate blur: remove_class directly (on_blur path)
-        panel._collapsed_strip.remove_class("--visible")
-        assert not panel._collapsed_strip._visible
+        # Simulate blur: _refresh_collapsed_strip is called with has_focus=False
+        panel.has_focus = False
+        panel._refresh_collapsed_strip()
+        assert panel._collapsed_strip._visible
 
     def test_strip_updates_on_collapse(self, monkeypatch):
         monkeypatch.delenv("HERMES_DETERMINISTIC", raising=False)

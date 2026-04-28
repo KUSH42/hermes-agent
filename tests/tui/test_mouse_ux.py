@@ -83,8 +83,8 @@ class TestA2GroupHeaderClickGuard:
         assert calls == [], "right-click should not set collapsed"
 
     def test_left_click_does_toggle(self) -> None:
-        """Left-click must negate _user_collapsed and assign to collapsed."""
-        from hermes_cli.tui.tool_group import ToolGroup
+        """Left-click on GroupHeader must negate _user_collapsed and assign to collapsed."""
+        from hermes_cli.tui.tool_group import ToolGroup, GroupHeader
         tg = object.__new__(ToolGroup)
         tg._user_collapsed = False
         calls = []
@@ -93,8 +93,9 @@ class TestA2GroupHeaderClickGuard:
             lambda self, v: calls.append(v),
         )):
             ev = _make_click(button=1)
+            ev.widget = GroupHeader.__new__(GroupHeader)
             tg.on_click(ev)
-        assert calls == [True], "left-click should set collapsed=True"
+        assert calls == [True], "left-click on GroupHeader should set collapsed=True"
 
 
 # ===========================================================================

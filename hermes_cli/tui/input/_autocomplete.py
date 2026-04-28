@@ -81,8 +81,8 @@ class _AutocompleteMixin:
                     _log.exception("skill picker open failed for fragment=%r", trigger.fragment)
                     try:
                         self.app._flash_hint("skill picker unavailable", 2.0)  # type: ignore[attr-defined]
-                    except Exception:
-                        pass
+                    except Exception as exc:  # app._flash_hint unavailable — fallback hint not shown
+                        _log.debug("skill picker fallback flash failed: %s", exc, exc_info=True)
                 return
 
             # Auto-dismiss a prefix-triggered picker when the regex no longer matches.

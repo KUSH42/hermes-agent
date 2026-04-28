@@ -211,7 +211,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         if self.disabled:
             self.placeholder = "running…  ·  Ctrl+C to interrupt"
             return
-        if getattr(self, "_rev_mode", False):
+        if self._rev_mode:
             query_display = self._rev_query or ""
             self.placeholder = f"reverse-i-search: {query_display}_"
             return
@@ -406,8 +406,8 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                         self.load_text("")
                         self.post_message(self.FilesDropped([drop_match.path]))
                         return
-                except Exception:
-                    pass
+                except Exception as exc:  # drop parse failed — fall through to submit
+                    _log.debug("file drop detection failed: %s", exc, exc_info=True)
             # B-2: Enter accepts highlighted completion when overlay is visible
             if self._completion_overlay_visible():
                 try:
@@ -572,8 +572,8 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         if len(event.text) > 80:
             try:
                 self.app._flash_hint(f"{ICON_COPY}  {len(event.text)} chars pasted", 1.2)
-            except Exception:
-                pass
+            except Exception as exc:  # app._flash_hint unavailable — paste hint not shown
+                _log.debug("paste flash hint failed: %s", exc, exc_info=True)
             self.focus()
         await super()._on_paste(event)
 
@@ -779,8 +779,8 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                 self.app._flash_hint("shell mode  ·  Ctrl+C to exit", 1.5)
             if not is_bash:
                 self.app.feedback.cancel("hint-bar")
-        except Exception:
-            pass
+        except Exception as exc:  # app._flash_hint / feedback unavailable — hint sync skipped
+            _log.debug("bash mode hint sync failed: %s", exc, exc_info=True)
 
     # --- Rev-search abort ---
 

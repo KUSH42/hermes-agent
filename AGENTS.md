@@ -163,29 +163,21 @@ v3.7.
 
 #### UX audit freeze
 
-UX audit Specs A-F under
-`/home/xush/.hermes/2026-04-28-ux-audit-{A,B,C,D,E,F}-*-spec.md` own a set of
-cross-cutting design surfaces. While any of these specs is still DRAFT or
-APPROVED, the surfaces below are soft-frozen; unrelated PRs touching them are
-review blocks:
+As of April 28, 2026, UX audit Specs A, B, D, E, and F are
+`IMPLEMENTED`. Their soft freezes are lifted. Spec C
+(`/home/xush/.hermes/2026-04-28-ux-audit-C-affordance-discoverability-spec.md`)
+is still `DRAFT`, so only its owned surface remains soft-frozen; unrelated PRs
+touching it are review blocks:
 
 | Surface | Owner spec | Lift freeze when |
 |---|---|---|
-| New skin tokens (`$*-accent`, opacity rule for category accents) | A (A3, A4) | Spec A is IMPLEMENTED |
-| TCSS category-accent opacity values and documentation comment | A (A4) | Spec A is IMPLEMENTED |
-| `_DROP_ORDER_*` constants in `tool_panel/layout_resolver.py` | B (B1) | Spec B is IMPLEMENTED |
-| Footer-visibility branch in `layout_resolver.py` | B (B2) | Spec B is IMPLEMENTED |
 | `_remediation_hint` field on `ToolHeader` and remediation lookup table | C (C1) | Spec C is IMPLEMENTED |
-| Hardcoded key literals (`^C`, `^Z`, Enter, Tab, Space) in hint composers | E (E4) | Spec E is IMPLEMENTED |
-| Focus-ring CSS pattern on overlays and ToolPanel | F (F7) | Spec F is IMPLEMENTED |
 
-Allowed during the freeze: bug fixes inside the owning spec's scope, read-only
-references to frozen surfaces, and tests that exercise frozen surfaces.
+Allowed during the freeze: bug fixes inside Spec C's scope, read-only
+references to the frozen surface, and tests that exercise it.
 
-Rejected during the freeze: new skin tokens that bypass A4's opacity tier rule,
-new `_DROP_ORDER_*` entries outside Spec B, new key-literal hint strings
-outside E4 constants, and ad-hoc focus-ring CSS rules that diverge from F7's
-focus-highlight pattern.
+Rejected during the freeze: unrelated `_remediation_hint` behavior changes or a
+new remediation lookup shape outside Spec C.
 
 ### Code quality
 

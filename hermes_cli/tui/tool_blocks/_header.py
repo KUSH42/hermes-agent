@@ -113,6 +113,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         self._label = label
         self._tool_name = tool_name
         self._line_count = line_count
+        self._truncated_line_count: int = 0  # B5: lines dropped by byte-cap; rendered in linecount chip
         self._stats = stats
         self._panel = panel
         self._has_affordances = line_count > COLLAPSE_THRESHOLD
@@ -398,7 +399,13 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         _has_diff_in_tail = any(name == "diff" for name, _ in tail_segments)
         if self._line_count and not _has_diff_in_tail and not self._primary_hero:
             lc_text = ">99K" if self._line_count > 99999 else f"{self._line_count}L"
-            tail_segments.append(("linecount", Text(f"  {lc_text}", style="dim")))
+            # B5: append truncation badge when byte-cap dropped lines during streaming
+            if self._truncated_line_count > 0:
+                _c = self._colors()
+                lc_text = f"{lc_text} [trunc:{self._truncated_line_count}]"
+                tail_segments.append(("linecount", Text(f"  {lc_text}", style=f"dim {_c.warning_dim}")))
+            else:
+                tail_segments.append(("linecount", Text(f"  {lc_text}", style="dim")))
         # META zone: flash → duration (header owns category only, not evidence)
         if self._duration:
             _pending_dur = self._duration

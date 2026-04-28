@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections import deque
 from typing import Any, TYPE_CHECKING
@@ -49,7 +50,17 @@ from hermes_cli.tui.managed_timer_mixin import ManagedTimerMixin
 _FLUSH_MAX_RETRIES = 32
 
 # SK-1: pre-first-chunk skeleton row constants
-_SKELETON_DELAY_S = 0.1
+# B3: delay configurable via env var; 0 disables skeleton entirely.
+try:
+    _SKELETON_DELAY_S: float = max(
+        0.0,
+        float(os.environ.get("HERMES_TOOL_SKELETON_DELAY_MS", "100")) / 1000.0,
+    )
+except ValueError:
+    logger.warning(
+        "HERMES_TOOL_SKELETON_DELAY_MS is not a valid number; using 100ms default",
+    )
+    _SKELETON_DELAY_S = 0.1
 _SKELETON_GLYPH = "· · ·"
 _SKELETON_PULSE_S = 0.4
 
@@ -236,11 +247,13 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
                     panel.add_class("first-in-turn")
             except Exception:  # noqa: bare-except
                 pass
-        # SK-1: arm pre-first-chunk skeleton timer (100ms). Registered with
+        # SK-1: arm pre-first-chunk skeleton timer. Registered with
         # ManagedTimerMixin so unmount/_stop_all_managed cancel it.
-        self._skeleton_timer = self._register_timer(
-            self.set_timer(_SKELETON_DELAY_S, self._maybe_mount_skeleton)
-        )
+        # B3: skip timer entirely when delay is 0 (env var HERMES_TOOL_SKELETON_DELAY_MS=0).
+        if _SKELETON_DELAY_S > 0.0:
+            self._skeleton_timer = self._register_timer(
+                self.set_timer(_SKELETON_DELAY_S, self._maybe_mount_skeleton)
+            )
 
     # ------------------------------------------------------------------
     # Streaming API
@@ -421,6 +434,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         else:
             self._header._duration = duration
         self._header._line_count = self._total_received
+        self._header._truncated_line_count = self._truncated_line_count  # B5: sync for header tail badge
         if self._total_received > COLLAPSE_THRESHOLD:
             self._header._has_affordances = True
         self._header.refresh()

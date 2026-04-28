@@ -83,11 +83,11 @@ _DROP_ORDER_COMPACT: list[str] = [
     "chip",
     "linecount",
     "flash",
-    "kind",          # kind override — after flash, before chevron
+    "kind",          # kind override — after flash, before diff
     "diff",
+    "duration",      # B1: duration dropped before hero; hero is the load-bearing word
     "hero",
     "chevron",
-    "duration",
     "trace_pending", # state indicator — preserve
     "exit",
 ]
@@ -250,8 +250,9 @@ class ToolBlockLayoutResolver:
 
     def resolve_full(self, inputs: LayoutInputs) -> LayoutDecision:
         tier, reason = self._compute_tier(inputs)
-        if inputs.is_streaming:
-            # FH-3: during streaming the footer earns no space (concept §multi-block-rhythm).
+        # B2: error footer shown during streaming (error msg visible mid-flight);
+        # non-error streaming still hides footer (FH-3 / concept §multi-block-rhythm).
+        if inputs.is_streaming and not (inputs.is_error and inputs.has_footer_content):
             footer_visible = False
         else:
             # FH-5: COMPACT no longer force-hides; has_footer_content is sole content gate.

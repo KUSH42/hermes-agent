@@ -879,6 +879,8 @@ ToolHeader.result-empty                      { color: $text-muted; }
 /* B3: cap label hidden by default, shown when --visible class added */
 OmissionBar .--cap-label                     { color: $warning; display: none; }
 OmissionBar .--cap-label.--visible           { display: block; }
+/* B4: narrow mode — abbreviated label uses auto width instead of 1fr */
+OmissionBar.--narrow .--ob-label            { width: auto; }
 
 /* A1: ToolHeaderBar deleted — rules removed */
 /* E2: --minified shows 1-line stub (not hidden) */

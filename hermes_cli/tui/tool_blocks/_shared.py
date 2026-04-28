@@ -592,7 +592,16 @@ class OmissionBar(TooltipMixin, Widget):
             self._sync_narrow_layout()
         if crosses_threshold(self._last_resize_w, w, THRESHOLD_NARROW):
             if self._label is not None:
-                self._label.display = w >= THRESHOLD_NARROW
+                # B4: abbreviated label when narrow instead of hiding entirely
+                if now_narrow:
+                    n_hidden = self._total - (self._visible_end - self._visible_start)
+                    if n_hidden > 0:
+                        self._label.update(f"↓{n_hidden}L↑")
+                    else:
+                        self._label.update("")
+                else:
+                    self._label.display = True  # full-width label text is managed by set_counts
+            self.toggle_class("--narrow", now_narrow)  # B4: CSS hook for narrow layout
         self._last_resize_w = w
 
     def _sync_narrow_layout(self) -> None:
@@ -640,6 +649,10 @@ class OmissionBar(TooltipMixin, Widget):
             all_showing = (visible_end - visible_start) == total
             if all_showing:
                 self._label.update("")
+            elif self._narrow:
+                # B4: abbreviated label for narrow viewports (<60 col)
+                n_hidden = total - (visible_end - visible_start)
+                self._label.update(f"↓{n_hidden}L↑")
             else:
                 self._label.update(f"  {visible_start + 1}–{visible_end} of {total}  ")
 

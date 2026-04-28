@@ -812,6 +812,8 @@ ToolPanel.category-agent.tool-panel--accent  { border-left: vkey $accent 40%; }
 ToolPanel.category-mcp.tool-panel--accent    { border-left: vkey $tool-mcp-accent 80%; }
 ToolPanel.category-vision.tool-panel--accent { border-left: vkey $tool-vision-accent 80%; }
 ToolPanel.tool-panel--error                  { border-left: vkey $error 80%; }
+/* --completed overrides category accent with success green; must come after category rules */
+ToolPanel.--completed.tool-panel--accent     { border-left: vkey $success 80%; }
 
 /* SLR-1: multi-block rhythm contract.
    Order is load-bearing — all rules share specificity (0,1,1).

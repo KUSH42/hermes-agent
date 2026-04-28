@@ -329,14 +329,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 icon_style = f"bold {err_color}"
             elif self._is_complete or self._duration:
                 ok_color = getattr(self, "_diff_add_color", _DIFF_ADD_FALLBACK)
-                try:
-                    from hermes_cli.tui.tool_category import display_tier_for
-                    _tier_key = display_tier_for(spec.category)
-                    # SC-2: resolved through SkinColors.tier_accents (→ $tool-tier-{k}-accent)
-                    _cat_accent = self._colors().tier_accents.get(_tier_key, ok_color)
-                except Exception:  # noqa: bare-except
-                    _cat_accent = ok_color
-                icon_style = f"bold {_cat_accent}"
+                icon_style = f"bold {ok_color}"
             else:
                 icon_style = "dim"
             t.append(f" {icon_str}", style=icon_style)
@@ -363,6 +356,9 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                     tail_segments.append(("hero", Text(f"  {self._primary_hero}", style=f"bold {self._colors().error}")))
             elif self._tool_icon_error:
                 tail_segments.append(("hero", Text(f"  {self._primary_hero}", style=f"bold {self._colors().error}")))
+            elif self._is_complete:
+                _ok = getattr(self, "_diff_add_color", _DIFF_ADD_FALLBACK)
+                tail_segments.append(("hero", Text(f"  {self._primary_hero}", style=f"bold {_ok}")))
             else:
                 tail_segments.append(("hero", Text(f"  {self._primary_hero}", style="dim")))
         elif self._is_complete and not self._tool_icon_error and not self._line_count:

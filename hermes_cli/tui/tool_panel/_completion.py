@@ -156,6 +156,7 @@ class _ToolPanelCompletionMixin:
         self._tool_args = args  # type: ignore[attr-defined]
         header = getattr(self._block, "_header", None)  # type: ignore[attr-defined]
         if header is not None:
+            header._header_args = dict(args or {})
             header.refresh()
 
     def _format_arg_summary(self) -> str:
@@ -408,11 +409,13 @@ class _ToolPanelCompletionMixin:
         final_state = "error" if summary.is_error else "ok"
         if summary.is_error:
             self.add_class("tool-panel--error")  # type: ignore[attr-defined]
+            self.remove_class("--completed")  # type: ignore[attr-defined]
             # Eager uncollapse — resolver (_apply_complete_auto_collapse) is never called for
             # error completions (_post_complete_tidy returns early). This write is the sole owner.
             self.collapsed = False  # type: ignore[attr-defined]
         else:
             self.remove_class("tool-panel--error")  # type: ignore[attr-defined]
+            self.add_class("--completed")  # type: ignore[attr-defined]
         header = getattr(self._block, "_header", None)  # type: ignore[attr-defined]
         line_count = self._body_line_count()
         if header is not None:

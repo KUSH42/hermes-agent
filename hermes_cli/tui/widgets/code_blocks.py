@@ -5,8 +5,11 @@ Contains: CodeBlockFooter, StreamingCodeBlock.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import TYPE_CHECKING, Any
+
+_log = logging.getLogger(__name__)
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -228,6 +231,11 @@ class StreamingCodeBlock(Widget):
         if self._state != "STREAMING":
             return
         self._state = "COMPLETE"
+        _log.debug(
+            "[STREAM-CODE] fence closed lang=%r %d lines STREAMING→COMPLETE",
+            self._lang,
+            len(self._code_lines),
+        )
         self._pygments_theme = skin_vars.get("preview-syntax-theme", self._pygments_theme)
         self._complete_skin_vars = dict(skin_vars)
         self.add_class("--complete")
@@ -353,6 +361,11 @@ class StreamingCodeBlock(Widget):
 
     def _finalize_syntax(self, skin_vars: dict[str, str]) -> None:
         """COMPLETE path — delegates to shared _render_syntax."""
+        _log.debug(
+            "[STREAM-CODE] finalize_syntax lang=%r %d lines (batch re-render)",
+            self._lang,
+            len(self._code_lines),
+        )
         self._render_syntax(skin_vars)
 
     # ------------------------------------------------------------------
@@ -383,6 +396,11 @@ class StreamingCodeBlock(Widget):
         if self._state != "STREAMING":
             return
         self._state = "FLUSHED"
+        _log.debug(
+            "[STREAM-CODE] fence flushed (turn ended) lang=%r %d lines STREAMING→FLUSHED",
+            self._lang,
+            len(self._code_lines),
+        )
         self.add_class("--flushed")
         self.add_class("--complete")
         self._render_flushed_content()

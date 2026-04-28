@@ -29,6 +29,7 @@ import logging
 import os
 import re
 import threading
+import time as _time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
@@ -554,6 +555,7 @@ class ResponseFlowEngine:
         from agent.rich_output import StreamingBlockBuffer
         self._block_buf: "StreamingBlockBuffer" = StreamingBlockBuffer()
         self._state: Literal["NORMAL", "IN_CODE", "IN_INDENTED_CODE", "IN_SOURCE_LIKE", "IN_MATH"] = "NORMAL"
+        self._fence_opened_at: float | None = None
         self._fence_char: str = "`"
         self._fence_depth: int = 3
         self._active_block: "StreamingCodeBlock | None" = None
@@ -784,6 +786,8 @@ class ResponseFlowEngine:
             self._flush_code_fence_buffer()
             self._flush_block_buf()
             self._state = "IN_CODE"
+            self._fence_opened_at = _time.monotonic()
+            _log.debug("[STREAM-FENCE] opened lang=%r", lang)
             self._fence_char = fchar
             self._fence_depth = fdepth
             self._list_cont_indent = ""
@@ -836,6 +840,7 @@ class ResponseFlowEngine:
                 )
         self._state = "NORMAL"
         self._active_block = None
+        self._fence_opened_at = None
         return False  # caller falls through to NORMAL classification + prose
 
     def _dispatch_non_normal_state(self, raw: str) -> bool:
@@ -850,9 +855,20 @@ class ResponseFlowEngine:
                 self._state = "NORMAL"
                 return False  # re-classify via A-1 path
             if self._clf.is_fence_close(raw, self._fence_char, self._fence_depth):
+                _lang = getattr(self._active_block, "_lang", "")
                 self._active_block.complete(self._skin_vars)
                 self._active_block = None
                 self._state = "NORMAL"
+                _elapsed_ms = (
+                    (_time.monotonic() - self._fence_opened_at) * 1000.0
+                    if self._fence_opened_at is not None else -1.0
+                )
+                _log.debug(
+                    "[STREAM-FENCE] closed lang=%r elapsed_ms=%.1f",
+                    _lang,
+                    _elapsed_ms,
+                )
+                self._fence_opened_at = None
                 return True
             self._active_block.append_line(raw)
             return True
@@ -1148,6 +1164,7 @@ class ResponseFlowEngine:
             self._active_block.flush()  # marks FLUSHED, stops spinner
             self._active_block = None
             self._state = "NORMAL"
+            self._fence_opened_at = None
         elif self._active_block is not None and self._state in ("IN_INDENTED_CODE", "IN_SOURCE_LIKE"):
             self._active_block.complete(self._skin_vars)
             self._active_block = None
@@ -1328,6 +1345,8 @@ class ResponseFlowEngine:
         to normal prose path.
         """
         if _NUMBERED_LINE_RE.match(plain):
+            if not self._code_fence_buffer:
+                _log.debug("[STREAM-BUF] InlineCodeFence buffering started (first numbered line)")
             if len(self._code_fence_buffer) < _MAX_CODE_FENCE_BUFFER:
                 self._code_fence_buffer.append(plain)
             else:
@@ -1348,6 +1367,11 @@ class ResponseFlowEngine:
         buf = self._code_fence_buffer
         if not buf:
             return
+        _log.debug(
+            "[STREAM-BUF] InlineCodeFence flushing %d lines → %s",
+            len(buf),
+            "widget" if len(buf) >= 2 else "prose",
+        )
         self._code_fence_buffer = []
         if len(buf) >= 2:
             # Mount as InlineCodeFence widget

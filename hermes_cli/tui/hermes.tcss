@@ -202,7 +202,7 @@ MessagePanel.--entering {
 
 ReasoningPanel {
     margin: 0 2;
-    border-left: vkey $primary 40%;
+    border-left: vkey $tool-tier-thinking-accent 40%;
 }
 
 /* Hover affordance on closeable reasoning panels */
@@ -723,6 +723,8 @@ HermesApp.density-compact SecretWidget          { padding: 0 1; }
 HermesApp.density-compact UndoConfirmOverlay    { padding: 0 1; }
 
 /* Phase B1: hide non-critical chrome */
+/* AssistantNameplate is always hidden — animation state drives TitledRule via link_to_rule() */
+AssistantNameplate { display: none; }
 HermesApp.density-compact AssistantNameplate   { display: none; }
 HermesApp.density-compact #nameplate-hint-row AssistantNameplate { display: none; }
 HermesApp.density-compact SourcesBar           { display: none; }
@@ -896,6 +898,8 @@ ToolGroup {
     margin: 0 0 1 0;
     border-left: vkey $accent 20%;
 }
+ToolGroup.--group-done  { border-left: vkey $success 60%; }
+ToolGroup.--group-error { border-left: vkey $error 60%; }
 /* H1/D2: ToolPanel inside SubAgentBody ToolGroup gets no extra left padding */
 SubAgentBody ToolGroup > ToolPanel { padding-left: 0; }
 

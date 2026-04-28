@@ -3539,6 +3539,8 @@ class HermesCLI:
         _preflight = self._render_startup_banner_text(print_hero=True)
         _queue_frame(_preflight)
         _tte_start = time.monotonic()   # time imported at module level
+        _frame_interval = 1.0 / 60      # match tc.frame_rate set in iter_frames
+        _next_frame_t = time.monotonic()
 
         try:
             for i, frame in enumerate(iter_frames(effect_name, plain_hero, params=params)):
@@ -3553,6 +3555,14 @@ class HermesCLI:
                 rich_frame.no_wrap = True
                 rich_frame.overflow = "ignore"
                 _queue_frame(rich_frame)
+                # Pace producer to 60fps so the consumer renders every frame.
+                # Without this sleep, frames are generated at CPU speed and
+                # _queue_frame's latest-frame coalescing skips most of them,
+                # causing uneven playback.
+                _next_frame_t += _frame_interval
+                _sleep = _next_frame_t - time.monotonic()
+                if _sleep > 0:
+                    time.sleep(_sleep)
         except Exception as exc:
             logger.warning("TTE frame error: %s", exc, exc_info=True)
 
@@ -7462,9 +7472,12 @@ class HermesCLI:
             # streaming callback), so compute result lines before closing.
             if _was_streaming and not _diff_display_lines:
                 try:
-                    from hermes_cli.tui.tool_category import classify_tool as _classify, ToolCategory as _TC
-                    _cat = _classify(function_name)
-                    if _cat in (_TC.SEARCH, _TC.WEB) and isinstance(function_result, str):
+                    from hermes_cli.tui.tool_category import spec_for as _spec_for_cat, ToolCategory as _TC
+                    _fa = function_args if isinstance(function_args, dict) else {}
+                    _cat = _spec_for_cat(function_name, args=_fa or None).category
+                    # Include MCP/UNKNOWN: web/extract MCP tools return JSON blobs that
+                    # are never streamed line-by-line, so _all_plain is empty without this.
+                    if _cat in (_TC.SEARCH, _TC.WEB, _TC.MCP, _TC.UNKNOWN) and isinstance(function_result, str):
                         _result_lines = function_result.splitlines()
                     elif function_name == "execute_code" and isinstance(function_result, str):
                         try:

@@ -866,6 +866,15 @@ class HermesApp(App):
                             self._pane_manager.apply_center_split(self)
         except Exception:
             pass
+        # Link AssistantNameplate animation to TitledRule so the nameplate's timer
+        # drives TitledRule.refresh() — nameplate is display:none but keeps ticking.
+        try:
+            _np = self.query_one("#nameplate", AssistantNameplate)
+            _tr = self.query_one("#input-rule", TitledRule)
+            _np.link_to_rule(_tr)
+            _tr._nameplate = _np
+        except Exception:
+            logger.debug("nameplate→rule link failed", exc_info=True)
         # RX4: register lifecycle hooks then drain any events queued before is_running
         self._register_lifecycle_hooks()
         self.hooks.drain_deferred()

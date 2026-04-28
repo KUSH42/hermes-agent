@@ -285,6 +285,58 @@ class ToolRenderingService(AppService):
         except NoMatches:
             return None
 
+    def _drain_output_before_tool_mount(self) -> None:
+        """Drain pending output queue items so pre-tool prose renders before the block.
+
+        Called synchronously on the event loop at the start of open_tool_generation.
+        Consuming the queue here races ahead of consume_output's next iteration and
+        ensures any text the agent sent before the tool call is written to the current
+        message's prose log before the ToolBlock is mounted into the DOM.
+        """
+        import asyncio as _asyncio
+        queue = self.app._output_queue
+        if queue.empty():
+            return
+        output = self._get_output_panel()
+        if output is None:
+            return
+        while not queue.empty():
+            try:
+                chunk = queue.get_nowait()
+            except _asyncio.QueueEmpty:
+                break  # queue drained between empty() check and get_nowait(); expected TOCTOU, not an error
+            except Exception:
+                logger.debug("_drain_output_before_tool_mount: get_nowait failed", exc_info=True)
+                break
+            if chunk is None:
+                # Sentinel arrived early — respect it by flushing live line
+                try:
+                    output.flush_live()
+                except Exception:
+                    logger.debug("_drain_output_before_tool_mount: flush_live on sentinel failed", exc_info=True)
+                continue
+            try:
+                output.live_line.feed(chunk)
+                msg = output.current_message
+                if msg is not None:
+                    engine = getattr(msg, "_response_engine", None)
+                    if engine is not None:
+                        engine.feed(chunk)
+            except Exception:
+                logger.debug("_drain_output_before_tool_mount: chunk feed failed", exc_info=True)
+        # Commit any partially-buffered line to prose so it's in the DOM
+        try:
+            live = output.live_line
+            if live._buf:
+                msg = output.current_message
+                if msg is not None:
+                    engine = getattr(msg, "_response_engine", None)
+                    if engine is not None:
+                        engine.process_line(live._buf)
+                        live._buf = ""
+        except Exception:
+            logger.debug("_drain_output_before_tool_mount: partial-buf flush failed", exc_info=True)
+
     # ------------------------------------------------------------------
     # Reasoning
     # ------------------------------------------------------------------
@@ -577,14 +629,27 @@ class ToolRenderingService(AppService):
             return
         self.app._streaming_tool_count = len(self.app._active_streaming_blocks)
         if result_lines:
+            # Store untruncated raw BEFORE append_line() which caps lines at
+            # _LINE_BYTE_CAP (2000 bytes). Single-blob results (web search JSON)
+            # are one long line; truncation produces invalid JSON that the
+            # classifier can't parse, breaking renderer swap.
+            block._renderer_output_raw = "\n".join(result_lines)
             for _line in result_lines:
                 block.append_line(_line)
         block.complete(duration, is_error=is_error)
+        panel = getattr(block, "_tool_panel", None)
         if summary is not None:
-            panel = getattr(block, "_tool_panel", None)
             if panel is not None:
                 from hermes_cli.tui.tool_result_parse import inject_recovery_actions
                 panel.set_result_summary_v4(inject_recovery_actions(summary))
+        elif panel is not None and result_lines:
+            # No summary but result_lines present — fire classifier so renderer swap
+            # (e.g. TEXT→SEARCH) still happens. Without this, blocks without a
+            # structured summary string stay on PlainBodyRenderer and show "(N rows)".
+            try:
+                panel._update_kind_from_classifier(len(result_lines))
+            except Exception:
+                logger.debug("post-completion classifier failed (no summary path)", exc_info=True)
         # R2-HIGH-01: route counters/phase/active-name/agent-stack/record-update
         # through the unified helper. mark_plan=False — complete_tool_call calls
         # mark_plan_done explicitly after this method returns.
@@ -1001,6 +1066,10 @@ class ToolRenderingService(AppService):
         must not capture a block reference; all block access goes through the
         state machine.
         """
+        # Drain any output-queue items queued before this tool call so pre-tool
+        # prose is written to the DOM before the ToolBlock mounts.
+        self._drain_output_before_tool_mount()
+
         cat = self._make_view_category(tool_name)
         now = _time.monotonic()
         turn_start = getattr(self.app, "_turn_start_monotonic", None) or now

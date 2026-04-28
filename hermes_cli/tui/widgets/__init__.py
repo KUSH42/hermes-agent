@@ -628,14 +628,19 @@ class TTEWidget(Widget):
         try:
             from hermes_cli.tui.tte_runner import iter_frames
 
+            _frame_interval = 1.0 / 60  # match tc.frame_rate set in iter_frames
+            _next_t = time.monotonic()
             for frame in iter_frames(effect_name, text, params=params):
                 if not self.is_mounted:
                     return
                 rich_text = Text.from_ansi(frame)
                 self.app.call_from_thread(self._update_frame, rich_text)
-                time.sleep(0.02)
+                _next_t += _frame_interval
+                _sleep = _next_t - time.monotonic()
+                if _sleep > 0:
+                    time.sleep(_sleep)
         except Exception:
-            pass
+            _LOG.debug("TTEWidget animation error", exc_info=True)
         finally:
             if self.is_mounted:
                 self.app.call_from_thread(self.remove_class, "active")
@@ -780,6 +785,7 @@ class AssistantNameplate(Widget):
         self._last_was_error = False
         self._error_color_hex: str = "#ef5350"
         self._accent_hex = "#7b68ee"
+        self._linked_rule: "Any | None" = None
         self._active_dim_hex = "#3d3480"
         self._text_hex = "#cccccc"
         # C-5/C-2: derived in on_mount; fallbacks point to module constants until then
@@ -852,6 +858,10 @@ class AssistantNameplate(Widget):
         self._last_nameplate_w = new_w
 
     # --- public API ---
+
+    def link_to_rule(self, rule: "Any") -> None:
+        """Drive *rule*.refresh() from this nameplate's animation timer."""
+        self._linked_rule = rule
 
     def transition_to_active(self, label: str = "● thinking") -> None:
         self._active_label = label
@@ -952,6 +962,11 @@ class AssistantNameplate(Widget):
         elif self._state == _NPState.ERROR_FLASH:
             self._tick_error_flash()
         self.refresh()
+        if self._linked_rule is not None:
+            try:
+                self._linked_rule.refresh()
+            except Exception:
+                pass
 
     def _tick_startup(self) -> None:
         all_locked = True

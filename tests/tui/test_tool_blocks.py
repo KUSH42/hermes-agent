@@ -1304,7 +1304,7 @@ def test_T48_other_tools_label_normal_color():
 
 
 def test_T49_right_align_preserves_affordances():
-    """Short label: affordances (toggle, line count, duration) remain right-flushed."""
+    """Short label: duration and line count appear in the output (tail follows label)."""
     from textual.geometry import Size
     header = ToolHeader(label="x", line_count=10)
     header._duration = "2.5s"
@@ -1314,11 +1314,10 @@ def test_T49_right_align_preserves_affordances():
     header._size = Size(80, 1)
     result = header.render()
     plain = result.plain
-    # Duration and toggle char must appear in the right half of the terminal
-    mid = len(plain) // 2
-    tail = plain[mid:]
-    assert "2.5s" in tail, f"Duration not in right half: {repr(plain)}"
-    assert any(ch in tail for ch in ("▾", "▸")), f"Toggle char not in right half: {repr(plain)}"
+    assert "2.5s" in plain, f"Duration not in output: {repr(plain)}"
+    assert "10L" in plain, f"Line count not in output: {repr(plain)}"
+    # Gutter glyph (collapse indicator) is on the left side
+    assert any(ch in plain for ch in ("▸", "│")), f"Gutter glyph not in output: {repr(plain)}"
 
 
 # ---------------------------------------------------------------------------

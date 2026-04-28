@@ -445,11 +445,17 @@ def header_label_v4(
 
     if primary == "query":
         label_str = full_label
-        trunc = available - 2 - _TRUNCATION_MARGIN
-        if _safe_cell_width(label_str) > trunc:
-            label_str = label_str[:max(1, trunc - 1)] + "…"
+        query_val = str(args.get("query") or args.get("pattern") or "")
         t = Text()
         t.append(f" {label_str}", style="bold")
+        if query_val:
+            # Budget: total available minus the bold tool-name portion
+            name_w = _safe_cell_width(label_str) + 1  # leading space
+            q_budget = max(0, available - name_w - 6)  # 6 for ' ("…")'
+            if q_budget > 3:
+                if _safe_cell_width(query_val) > q_budget:
+                    query_val = query_val[:q_budget - 1] + "…"
+                t.append(f' ("{query_val}")', style="dim italic")
         return t
 
     if primary == "url":

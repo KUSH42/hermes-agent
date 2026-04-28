@@ -67,7 +67,7 @@ DISPLAY_NAMES: dict[str, str] = {
     "session_search":     "search",
     "read_file":          "read",
     "write_file":         "write",
-    "web_search":         "web",
+    "web_search":         "web search",
     "web_extract":        "extract",
     "web_crawl":          "crawl",
     "browser_navigate":   "nav",

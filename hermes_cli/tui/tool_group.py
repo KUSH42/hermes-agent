@@ -604,6 +604,13 @@ class ToolGroup(Widget):
             self.recompute_aggregate()
             # PG-4: recompute group terminal state
             self._group_state = _recompute_group_state(children)
+            # Reflect terminal group state on the ToolGroup widget via CSS classes
+            # so hermes.tcss can style border-left based on outcome.
+            try:
+                self.set_class(self._group_state == ToolGroupState.DONE, "--group-done")
+                self.set_class(self._group_state in (ToolGroupState.ERROR, ToolGroupState.PARTIAL), "--group-error")
+            except Exception:
+                pass
         except Exception:
             _log.exception("toolgroup: on_tool_panel_completed failed")
 

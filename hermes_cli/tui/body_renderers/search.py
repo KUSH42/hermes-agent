@@ -18,6 +18,8 @@ import re
 import shlex
 from typing import TYPE_CHECKING, ClassVar
 
+from rich.text import Text
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.strip import Strip
@@ -43,6 +45,8 @@ if TYPE_CHECKING:
 
 _HIT_RE     = re.compile(r"^(\s*)(\d+)[:]\s*(.*)")
 _CONTEXT_RE = re.compile(r"^(\s*)(\d+)[\-]\s*(.*)")
+
+_LINK_COLOR_FALLBACK = "#7fa8d8"
 
 
 # ---------------------------------------------------------------------------
@@ -73,38 +77,52 @@ def _ansi_highlight(text: str, query: str) -> str:
 # Parse functions — R-Sr1: inner tuples are (line_num, content, is_hit)
 # ---------------------------------------------------------------------------
 
-def _parse_web_hit(item: dict, idx: int) -> "tuple[int, str, bool]":
-    """Convert a single web/news/extract item dict into a (line_num, content, is_hit) tuple."""
-    parts = []
-    title = item.get("title")
+def _build_web_hit_text(
+    title: "str | None",
+    url: "str | None",
+    desc: "str | None",
+    link_color: str = _LINK_COLOR_FALLBACK,
+) -> "Text":
+    """Build a styled Rich Text for a single web/extract result item.
+
+    Layout: [title]  [url underlined link-color]  [description dim]
+    """
+    from rich.text import Text as _Text
+    t = _Text()
     if title:
-        parts.append(str(title))
-    url = item.get("url")
+        t.append(str(title))
     if url:
-        parts.append(str(url))
-    desc = item.get("description") or item.get("snippet")
+        if t.plain:
+            t.append("  ", style="dim")
+        t.append(str(url), style=f"underline {link_color}")
     if desc:
-        parts.append(str(desc)[:180])
-    content = " | ".join(parts) if parts else repr(item)
-    return (idx, content, True)
+        if t.plain:
+            t.append("  ")
+        elif url:
+            t.append("  ", style="dim")
+        t.append(str(desc), style="dim")
+    return t
 
 
-def _parse_extract_hit(item: dict, idx: int) -> "tuple[int, str, bool]":
-    """Convert a single extract result dict into a (line_num, content, is_hit) tuple."""
-    parts = []
+def _parse_web_hit(item: dict, idx: int, link_color: str = _LINK_COLOR_FALLBACK) -> "tuple[int, object, bool]":
+    """Convert a single web/news item dict into a (line_num, styled_Text, is_hit) tuple."""
     title = item.get("title")
-    if title:
-        parts.append(str(title))
     url = item.get("url")
-    if url:
-        parts.append(str(url))
+    desc = item.get("description") or item.get("snippet")
+    desc_s = str(desc)[:180] if desc else None
+    return (idx, _build_web_hit_text(title, url, desc_s, link_color), True)
+
+
+def _parse_extract_hit(item: dict, idx: int, link_color: str = _LINK_COLOR_FALLBACK) -> "tuple[int, object, bool]":
+    """Convert a single extract result dict into a (line_num, styled_Text, is_hit) tuple."""
+    title = item.get("title")
+    url = item.get("url")
     raw_content = item.get("content")
+    desc_s: "str | None" = None
     if raw_content:
         lines = str(raw_content).splitlines()
-        first_line = lines[0] if lines else str(raw_content)
-        parts.append(first_line[:180])
-    content = " | ".join(parts) if parts else repr(item)
-    return (idx, content, True)
+        desc_s = (lines[0] if lines else str(raw_content))[:180]
+    return (idx, _build_web_hit_text(title, url, desc_s, link_color), True)
 
 
 def _parse_search_json(
@@ -439,7 +457,6 @@ class SearchRenderer(BodyRenderer):
 
     def build(self):
         """Build Rich Text with grammar path headers and hit/context distinction. R-Sr1/R-Sr2."""
-        from rich.text import Text
         from rich.style import Style
         from hermes_cli.tui.body_renderers._grammar import build_rule
 
@@ -474,14 +491,18 @@ class SearchRenderer(BodyRenderer):
                 line_t = build_gutter_line_num(line_num, colors=colors)
                 # R-Sr1: context lines are dim+italic; hit lines are normal
                 if is_hit:
-                    content_t = Text(content)
-                    if query:
-                        try:
-                            content_t.highlight_regex(re.escape(query), style="bold")
-                        except re.error:  # noqa: bare-except
-                            pass
+                    # Web/extract hits return a pre-styled Text; grep hits return str.
+                    if isinstance(content, Text):
+                        content_t = content
+                    else:
+                        content_t = Text(content)
+                        if query:
+                            try:
+                                content_t.highlight_regex(re.escape(query), style="bold")
+                            except re.error:  # noqa: bare-except
+                                pass
                 else:
-                    content_t = Text(content, style=Style(color=colors.muted, italic=True))
+                    content_t = Text(str(content), style=Style(color=colors.muted, italic=True))
                 line_t.append_text(content_t)
                 line_t.append("\n")
                 result.append_text(line_t)
@@ -509,7 +530,6 @@ class SearchRenderer(BodyRenderer):
                 lines.append((rule_plain, "rule", None, None))
 
             # Group header entry
-            from rich.text import Text
             header_t = Text("  ")
             header_t.append_text(build_path_header(
                 path, right_meta=f"{len(hits)} hits", colors=colors,
@@ -518,7 +538,8 @@ class SearchRenderer(BodyRenderer):
 
             for line_num, content, is_hit in hits:
                 gutter_plain = build_gutter_line_num(line_num, colors=colors).plain
-                highlighted = _ansi_highlight(content, query) if query else content
+                content_plain = content.plain if isinstance(content, Text) else content
+                highlighted = _ansi_highlight(content_plain, query) if query else content_plain
                 formatted = gutter_plain + highlighted
                 kind = "hit" if is_hit else "context"
                 lines.append((formatted, kind, path, line_num))
@@ -532,7 +553,7 @@ class SearchRenderer(BodyRenderer):
         lines = []
         for _group_name, hits in groups:
             for _line_num, content, _is_hit in hits:
-                lines.append(content)
+                lines.append(content.plain if isinstance(content, Text) else content)
         return "\n".join(lines)
 
     def hit_count(self) -> int:
@@ -554,7 +575,8 @@ class SearchRenderer(BodyRenderer):
                 _group_name, hits = groups[0]
                 if hits:
                     _line_num, content, _is_hit = hits[0]
-                    top_hit_title = content.strip() or None
+                    _c = content.plain if isinstance(content, Text) else content
+                    top_hit_title = _c.strip() or None
             n_hits = self.hit_count()
             if top_hit_title:
                 from hermes_cli.tui.body_renderers._grammar import GLYPH_META_SEP, glyph

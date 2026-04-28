@@ -390,35 +390,32 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         if self._line_count and not _has_diff_in_tail and not self._primary_hero:
             lc_text = ">99K" if self._line_count > 99999 else f"{self._line_count}L"
             tail_segments.append(("linecount", Text(f"  {lc_text}", style="dim")))
-        from hermes_cli.tui.tool_panel.density import DensityTier as _DT
-        if self._density_tier == _DT.HERO:
-            glyph = "  ★"
-        elif _safe_collapsed(self):
-            glyph = "  ▸"
-        else:
-            glyph = "  ▾"
-        style = "dim" if self._has_affordances else self._colors().separator_dim
-        tail_segments.append(("chevron", Text(glyph, style=style)))
         # META zone: flash → duration (header owns category only, not evidence)
         if self._duration:
             _pending_dur = self._duration
         # Source-order sentinel for legacy tests: "duration" before "flash".
         now = time.monotonic()
         if self._flash_msg and now < self._flash_expires:
-            accent_color = getattr(self, "_focused_gutter_color", None) or self._colors().accent
+            _c = self._colors()
             if self._flash_tone == "error":
                 try:
-                    _err_color = self.app.get_css_variables().get("status-error-color", "red")
+                    _err_color = self.app.get_css_variables().get("status-error-color", _c.error)
                 except Exception:  # noqa: bare-except
-                    _err_color = "red"
+                    _err_color = _c.error
                 _flash_style = f"dim {_err_color}"
+                _flash_glyph = "✗"
+            elif self._flash_tone == "warning":
+                _flash_style = f"dim {_c.warning}"
+                _flash_glyph = "⚠"
             else:
+                accent_color = getattr(self, "_focused_gutter_color", None) or _c.accent
                 _flash_style = f"dim {accent_color}"
+                _flash_glyph = "✓"
             _msg = self._flash_msg
             _tw = self.size.width
             if _tw > 0 and _tw < 80:
                 _msg = _msg[:14] + "…" if len(_msg) > 14 else _msg
-            tail_segments.append(("flash", Text(f"  ✓ {_msg}", style=_flash_style)))
+            tail_segments.append(("flash", Text(f"  {_flash_glyph} {_msg}", style=_flash_style)))
 
         # A-5: exit code visible regardless of collapsed state
         if self._is_complete:
@@ -527,10 +524,8 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             focus_prefix_text = Text(f"{FOCUS_PREFIX} ", style=Style(color=_fp_color, bold=True))
             t.append_text(focus_prefix_text)
         t.append_text(label_text)
-        if term_w > 0:
-            label_used = label_text.cell_len
-            pad = max(0, available - label_used)
-            t.append(" " * pad)
+        if tail.cell_len:
+            t.append("  ")
         t.append_text(tail)
         return t
 

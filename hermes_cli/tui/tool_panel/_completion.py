@@ -74,6 +74,9 @@ class _ToolPanelCompletionMixin:
         if not self.collapsed:  # type: ignore[attr-defined]
             strip.remove_class("--visible")
             return
+        if not self.has_focus:  # type: ignore[attr-defined]
+            strip.remove_class("--visible")
+            return
         if self._result_summary_v4 is None:  # type: ignore[attr-defined]
             strip.remove_class("--visible")
             return
@@ -177,11 +180,19 @@ class _ToolPanelCompletionMixin:
             output_raw = ""
             block = self._block  # type: ignore[attr-defined]
             if block is not None:
-                for attr in ("_all_plain", "_content_lines", "_plain_lines"):
-                    lines = getattr(block, attr, None)
-                    if isinstance(lines, list):
-                        output_raw = "\n".join(lines)
-                        break
+                # Prefer _renderer_output_raw (untruncated, set in close_streaming_tool_block)
+                # over _all_plain, which caps each line at _LINE_BYTE_CAP (2000 B).
+                # Single-blob results (web search JSON) become one truncated line in
+                # _all_plain → invalid JSON → classifier falls back to TEXT → no swap.
+                _untrunc = getattr(block, "_renderer_output_raw", None)
+                if _untrunc:
+                    output_raw = _untrunc
+                else:
+                    for attr in ("_all_plain", "_content_lines", "_plain_lines"):
+                        lines = getattr(block, attr, None)
+                        if isinstance(lines, list):
+                            output_raw = "\n".join(lines)
+                            break
             payload = ToolPayload(
                 tool_name=self._tool_name,  # type: ignore[attr-defined]
                 category=self._category,    # type: ignore[attr-defined]

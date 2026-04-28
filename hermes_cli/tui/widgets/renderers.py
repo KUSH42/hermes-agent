@@ -655,6 +655,7 @@ class TitledRule(PulseMixin, Widget):
         self._title_color = title_color or _skin_color("banner_title", "#FFD700")
         self._show_state = show_state
         self._created_at = created_at  # datetime | None — shown as HH:MM when set
+        self._nameplate: "Any | None" = None
         self._glyph_error: bool = False
         self._response_tok_s: float | None = None
         self._response_elapsed_s: float | None = None
@@ -811,7 +812,13 @@ class TitledRule(PulseMixin, Widget):
         metrics_text = self._response_metrics_text()
         # Compute fill width: total minus every rendered segment.
         # render appends: f" {metrics}" and f" · {ts}" directly after the fill.
-        fill = w - len(f"{title} ")
+        _np_text = self._nameplate.render() if self._nameplate is not None else None
+        if _np_text is not None:
+            # glyph (1) + space (1) + animated name + trailing space (1)
+            title_w = len(prefix) + len(accent_char) + 1 + _np_text.cell_len + 1
+        else:
+            title_w = len(f"{title} ")
+        fill = w - title_w
         fill -= state_suffix.cell_len
         if metrics_text:
             fill -= 1 + len(metrics_text)          # leading " "
@@ -820,11 +827,16 @@ class TitledRule(PulseMixin, Widget):
         right = max(0, fill)
         t = Text()
         # Title: preserve leading spaces, accent char gets dynamic glyph color,
-        # remainder stays in title_color.
+        # name portion is either animated (nameplate) or static.
         if prefix:
             t.append(prefix, style=f"{title_color}")
         t.append(accent_char, style=f"bold {glyph_color}")
-        t.append(f"{rest} ", style=f"{title_color}")
+        if _np_text is not None:
+            t.append(" ")
+            t.append_text(_np_text)
+            t.append(" ")
+        else:
+            t.append(f"{rest} ", style=f"{title_color}")
         # Right fill: fade out (start → end), then optional timestamp + state glyph
         t.append_text(_fade_rule(right, fade_start, fade_end))
         if metrics_text:

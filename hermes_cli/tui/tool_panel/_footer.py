@@ -245,10 +245,19 @@ class BodyPane(Widget):
     def _render_compact_body(self) -> None:
         from hermes_cli.tui.tool_panel.layout_resolver import DensityTier
         self.query("*").remove()
-        self.mount(Static(self._renderer.summary_line(
+        summary = self._renderer.summary_line(
             density=DensityTier.COMPACT,
-            cls_result=self._renderer.cls_result,
-        ), classes="compact-summary"))
+            cls_result=getattr(self._renderer, "cls_result", None),
+        )
+        # Renderer payload is empty for TEXT/SHELL kind (no swap path). Fall back to
+        # block's actual line count so compact summary doesn't show "(no output)".
+        if summary == "(no output)" and self._block is not None:
+            for attr in ("_all_plain", "_content_lines", "_plain_lines"):
+                lines = getattr(self._block, attr, None)
+                if isinstance(lines, list) and lines:
+                    summary = f"({len(lines)} rows)"
+                    break
+        self.mount(Static(summary, classes="compact-summary"))
 
     def _make_slow_placeholder(self, icon: str) -> Widget:
         w = Static(f"{icon}  rendering…")
@@ -257,6 +266,12 @@ class BodyPane(Widget):
 
     def _mount_body_with_deadline(self, tier: "object") -> None:
         from hermes_cli.tui.tool_panel.layout_resolver import _clamp_for_tier
+        # Restore the original block if it was detached by _render_compact_body
+        # (TEXT/SHELL kind: renderer has no content, streaming block holds the data).
+        if self._block is not None and not getattr(self._block, "is_attached", True):
+            self.query("*").remove()
+            self.mount(self._block)
+            return
         renderer = self._renderer
         clamp = _clamp_for_tier(tier)  # type: ignore[arg-type]
         start = time.monotonic()

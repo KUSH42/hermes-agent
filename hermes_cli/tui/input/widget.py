@@ -9,8 +9,9 @@ Hermes-specific features on top via mixins:
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from hermes_cli.file_drop import detect_file_drop_text, parse_dragged_file_paste
 
@@ -19,6 +20,7 @@ from rich.style import Style
 from rich.text import Text as RichText
 from textual import events
 from textual.binding import Binding
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Label, TextArea
@@ -26,11 +28,14 @@ from textual.widgets import Label, TextArea
 from hermes_cli.tui.constants import ICON_COPY
 from hermes_cli.tui.io_boundary import safe_run
 
+from ._assist import AssistKind, SKILL_PICKER_TRIGGER_PREFIX
 from ._autocomplete import _AutocompleteMixin
 from ._constants import _sanitize_input_text
 from ._history import _HistoryMixin
 from ._mode import InputMode
 from ._path_completion import _PathCompletionMixin
+
+_log = logging.getLogger(__name__)
 
 _CHEVRON_GLYPHS: dict[InputMode, str] = {
     InputMode.NORMAL:     "❯ ",
@@ -46,7 +51,8 @@ _CHEVRON_VAR: dict[InputMode, str] = {
     InputMode.COMPLETION: "chevron-completion",
     InputMode.LOCKED:     "chevron-locked",
 }
-_LEGEND_KEY: dict[InputMode, str] = {
+_LEGEND_KEY: dict[InputMode, str | None] = {
+    InputMode.NORMAL:     None,
     InputMode.BASH:       "bash",
     InputMode.REV_SEARCH: "rev_search",
     InputMode.COMPLETION: "completion",
@@ -64,6 +70,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
     Enter submits.  Emits :class:`HermesInput.Submitted` on non-empty submit.
     """
 
+    suggestion: str = ""
     DEFAULT_CSS = """
     HermesInput {
         height: auto;
@@ -141,6 +148,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         self._sanitizing: bool = False
         self._handling_file_drop: bool = False
         self._last_slash_hint_fragment: str = ""
+        self._last_slash_hint_time: float = 0.0
 
         from hermes_cli.tui.completion_context import CompletionContext, CompletionTrigger
         self._current_trigger: CompletionTrigger = CompletionTrigger(
@@ -149,12 +157,17 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         from hermes_cli.tui.path_search import PathCandidate
         self._raw_candidates: list[PathCandidate] = []
         self._path_debounce_timer: "object | None" = None
+        self._completion_overlay_active: bool = False
         self._draft_stash: str | None = None
+        self._pre_lock_disabled: bool = False
+        self._locked: bool = False
         self._write_fail_warned: bool = False
         self._ghost_legend_shown: bool = False  # A12: one-per-session gate
+        self._bash_hint_shown: bool = False
 
     # --- Mode reactive (derived display state) ---
     _mode: reactive[InputMode] = reactive(InputMode.NORMAL)
+    _rev_query: reactive[str] = reactive("")
 
     # --- Error state reactive ---
     error_state: reactive[str | None] = reactive(None)
@@ -193,10 +206,17 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
     def _refresh_placeholder(self) -> None:
         """Single source of truth for placeholder text.
 
-        Priority (highest→lowest): locked/disabled > bash > error_state > idle.
+        Priority (highest→lowest): locked > rev-search > bash > completion > error > idle.
         """
         if self.disabled:
             self.placeholder = "running…  ·  Ctrl+C to interrupt"
+            return
+        if self._rev_mode:
+            query_display = self._rev_query or ""
+            self.placeholder = f"reverse-i-search: {query_display}_"
+            return
+        if getattr(self, "_completion_overlay_active", False):
+            self.placeholder = "↑↓ select  ·  Tab accept  ·  Esc close"
             return
         if self.has_class("--bash-mode"):
             self.placeholder = "! shell mode  ·  Enter runs  ·  Ctrl+C clear"
@@ -208,21 +228,64 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         self.placeholder = self._idle_placeholder
 
     def watch_error_state(self, value: str | None) -> None:
+        self.set_class(bool(value), "--error")
         self._refresh_placeholder()
 
     def _set_input_locked(self, locked: bool) -> None:
-        """Sync visual locked state (class + placeholder). Does NOT set self.disabled."""
+        """Sync visual locked state and preserve the pre-lock disabled state."""
         if not getattr(self, "is_mounted", False):
             return
-        self._refresh_placeholder()
+        if locked and getattr(self, "_locked", False):
+            return
+        if not locked and not getattr(self, "_locked", False):
+            return
         if locked:
+            self._pre_lock_disabled = self.disabled
+            self.disabled = True
+            self._locked = True
             self.add_class("--locked")
         else:
+            self.disabled = getattr(self, "_pre_lock_disabled", False)
+            self._locked = False
             self.remove_class("--locked")
+        self._refresh_placeholder()
+
+    def _dismiss_skill_picker(self) -> None:
+        """Dismiss the mounted skill picker when present."""
         try:
-            self._mode = self._compute_mode()
-        except Exception:
-            pass
+            from hermes_cli.tui.overlays.skill_picker import SkillPickerOverlay
+            picker = self.app.query_one(SkillPickerOverlay)
+        except NoMatches:
+            return
+        picker.dismiss()
+
+    def _resolve_assist(self, kind: AssistKind, suggestion: str = "") -> None:
+        """Resolve persistent assist state through one write site."""
+        if kind is AssistKind.NONE:
+            self.suggestion = ""
+            self._hide_completion_overlay()
+            self._dismiss_skill_picker()
+            return
+        if kind is AssistKind.GHOST:
+            self._hide_completion_overlay()
+            self._dismiss_skill_picker()
+            self.suggestion = suggestion
+            return
+        if kind is AssistKind.OVERLAY:
+            self.suggestion = ""
+            self._dismiss_skill_picker()
+            if self._completion_overlay_active:
+                return
+            self._show_completion_overlay()
+            return
+        if kind is AssistKind.PICKER:
+            self._hide_completion_overlay()
+            self.app._open_skill_picker(
+                seed_filter=self._current_trigger.fragment,
+                trigger_source=SKILL_PICKER_TRIGGER_PREFIX,
+            )
+            return
+        raise ValueError(f"Unknown assist kind: {kind!r}")
 
     # --- Draft stash ---
 
@@ -343,8 +406,8 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                         self.load_text("")
                         self.post_message(self.FilesDropped([drop_match.path]))
                         return
-                except Exception:
-                    pass
+                except Exception as exc:  # drop parse failed — fall through to submit
+                    _log.debug("file drop detection failed: %s", exc, exc_info=True)
             # B-2: Enter accepts highlighted completion when overlay is visible
             if self._completion_overlay_visible():
                 try:
@@ -380,7 +443,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             if self.error_state is not None:
                 self.error_state = None
                 return
-            if getattr(self, "_rev_mode", False):
+            if self._rev_mode:
                 self._exit_rev_search()
                 return
             try:
@@ -392,7 +455,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             except Exception:  # HistorySearchOverlay absent — proceed to next escape handler
                 pass
             if self._completion_overlay_visible():
-                self._hide_completion_overlay()
+                self._resolve_assist(AssistKind.NONE)
                 return
             try:
                 self.app.on_key(event)
@@ -413,13 +476,13 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                 return
 
         if key == "up":
-            if getattr(self, "_rev_mode", False):
+            if self._rev_mode:
                 event.prevent_default()
                 self._rev_search_find(direction=-1)
                 return
             if self._completion_overlay_slash_only():
                 event.prevent_default()
-                self._hide_completion_overlay()
+                self._resolve_assist(AssistKind.NONE)
                 self._suppress_autocomplete_once = True
                 self.action_history_prev()
                 return
@@ -455,13 +518,13 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             return
 
         if key == "down":
-            if getattr(self, "_rev_mode", False):
+            if self._rev_mode:
                 event.prevent_default()
                 self._rev_search_find(direction=+1)
                 return
             if self._completion_overlay_slash_only():
                 event.prevent_default()
-                self._hide_completion_overlay()
+                self._resolve_assist(AssistKind.NONE)
                 self._suppress_autocomplete_once = True
                 self.action_history_next()
                 return
@@ -509,8 +572,9 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         if len(event.text) > 80:
             try:
                 self.app._flash_hint(f"{ICON_COPY}  {len(event.text)} chars pasted", 1.2)
-            except Exception:
-                pass
+            except Exception as exc:  # app._flash_hint unavailable — paste hint not shown
+                _log.debug("paste flash hint failed: %s", exc, exc_info=True)
+            self.focus()
         await super()._on_paste(event)
 
     # --- TextArea change handler ---
@@ -566,7 +630,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             return
         self._update_autocomplete()
         # Toggle bash-passthrough mode indicator
-        _is_bash = self.text.lstrip().startswith("!")
+        _is_bash = self.text.startswith("!")
         if _is_bash != self.has_class("--bash-mode"):
             self.set_class(_is_bash, "--bash-mode")
             self._sync_bash_mode_ui(_is_bash)
@@ -576,13 +640,17 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
 
     def action_submit(self) -> None:
         """Save to history, post Submitted, then clear the input."""
-        if getattr(self, "_rev_mode", False):
+        if self._rev_mode:
             self._exit_rev_mode(accept=True)
         text = self.text.strip()
         if self.disabled or not text:
             return
         self._save_to_history(text)
-        self._hide_completion_overlay()
+        resolver = getattr(self, "_resolve_assist", None)
+        if callable(resolver):
+            resolver(AssistKind.NONE)
+        else:
+            self._hide_completion_overlay()
         self.post_message(self.Submitted(text))
         self.load_text("")
         sync_height = getattr(self, "_sync_height_to_content", None)
@@ -597,7 +665,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
 
     def action_history_prev(self) -> None:
         if self._completion_overlay_slash_only():
-            self._hide_completion_overlay()
+            self._resolve_assist(AssistKind.NONE)
             self._suppress_autocomplete_once = True
         elif self._completion_overlay_visible():
             self._move_highlight(-1)
@@ -616,7 +684,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
 
     def action_history_next(self) -> None:
         if self._completion_overlay_slash_only():
-            self._hide_completion_overlay()
+            self._resolve_assist(AssistKind.NONE)
             self._suppress_autocomplete_once = True
         elif self._completion_overlay_visible():
             self._move_highlight(+1)
@@ -653,18 +721,23 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         """Derive display mode from source-of-truth flags. Priority: LOCKED > REV_SEARCH > BASH > COMPLETION > NORMAL."""
         if self.disabled:
             return InputMode.LOCKED
-        if getattr(self, "_rev_mode", False):
+        if self._rev_mode:
             return InputMode.REV_SEARCH
         if self.has_class("--bash-mode"):
             return InputMode.BASH
-        if self._completion_overlay_visible():
+        if self._completion_overlay_active:
             return InputMode.COMPLETION
         return InputMode.NORMAL
 
     def watch__mode(self, old: InputMode, new: InputMode) -> None:
         """Single source of truth for chevron glyph, chevron color, and InputLegendBar."""
+        _log.debug("[MODE] %s -> %s", old.name, new.name)
         self._sync_chevron_to_mode(new)
         self._sync_legend_to_mode(new)
+
+    def watch__rev_query(self, old: str, new: str) -> None:
+        if self._rev_mode:
+            self._refresh_placeholder()
 
     def _sync_chevron_to_mode(self, mode: InputMode) -> None:
         glyph = _CHEVRON_GLYPHS[mode]
@@ -689,8 +762,11 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                 if not getattr(self, "suggestion", ""):
                     legend.hide_legend()
                 # else: ghost legend is showing; leave it — update_suggestion owns it
-        except Exception:
-            pass
+        except NoMatches as exc:
+            # NoMatches: legend bar may not be mounted yet during early compose.
+            _log.debug("input legend unavailable during mode sync: %s", exc, exc_info=True)
+        except Exception as exc:
+            _log.debug("input legend sync failed: %s", exc, exc_info=True)
 
     # --- Bash mode UI sync ---
 
@@ -698,16 +774,19 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         """Chevron/legend owned by watch__mode. Placeholder via _refresh_placeholder()."""
         self._refresh_placeholder()
         try:
+            if is_bash and not self._bash_hint_shown:
+                self._bash_hint_shown = True
+                self.app._flash_hint("shell mode  ·  Ctrl+C to exit", 1.5)
             if not is_bash:
                 self.app.feedback.cancel("hint-bar")
-        except Exception:
-            pass
+        except Exception as exc:  # app._flash_hint / feedback unavailable — hint sync skipped
+            _log.debug("bash mode hint sync failed: %s", exc, exc_info=True)
 
     # --- Rev-search abort ---
 
     def action_abort_rev_search(self) -> None:
         """Ctrl+G: abort rev-search, restoring pre-search value."""
-        if not getattr(self, "_rev_mode", False):
+        if not self._rev_mode:
             return
         self._exit_rev_mode(accept=False)
 

@@ -361,6 +361,9 @@ UndoConfirmOverlay {
 HermesInput.--bash-mode #input-chevron { color: $chevron-shell; }
 HermesInput.--bash-mode { outline: tall $chevron-shell 40%; }
 HermesInput.--bash-mode:focus { outline: tall $chevron-shell 70%; }
+/* TODO(post-A-freeze): replace with $rev-search-accent per A4 tier rule. */
+HermesInput.--rev-search { border-left: wide white; }
+HermesInput.--error { border-left: wide red; }
 
 HermesInput.--locked {
     outline: tall $panel-lighten-1 30%;
@@ -673,6 +676,7 @@ MessagePanel.--highlighted {
 
 /* --- Overlay focus rings (§2.6) --- */
 
+/* Z-1 carve-out (concept v0.7 FA-3): inline-modal prompts paint a localised focus outline. */
 /* focus-ring contract: outline + tinted bg — keep in sync with ToolPanel:focus below */
 ClarifyWidget:focus,
 ApprovalWidget:focus {
@@ -935,9 +939,8 @@ ToolGroup.--group-error { border-left: vkey $error 60%; }
 /* H1/D2: ToolPanel inside SubAgentBody ToolGroup gets no extra left padding */
 SubAgentBody ToolGroup > ToolPanel { padding-left: 0; }
 
-ToolGroup:focus {
-    background: $accent 8%;
-    border-left: vkey $accent 60%;
+ToolGroup:focus-within {
+    background: $accent 6%;
 }
 
 ToolGroup.--collapsed GroupBody {
@@ -959,7 +962,7 @@ GroupHeader:hover {
     background: $boost;
 }
 
-GroupHeader:focus { background: $accent 10%; }
+ToolGroup:focus-within GroupHeader { background: $boost; }
 
 /* E4: group header with one or more child errors */
 GroupHeader.--group-has-error {
@@ -1142,6 +1145,7 @@ SubAgentPanel.--has-children SubAgentHeader .--badges.--done { color: $success; 
 .--depth-warning { color: $text-muted; padding-left: 4; }
 
 /* Focus styling */
+/* Z-1 child cue (concept v0.7 FA-2) — uses $boost (non-focus-channel) intentionally. */
 SubAgentPanel:focus SubAgentHeader { background: $boost; }
 
 /* ── R2 pane layout ───────────────────────────────────────────── */
@@ -1212,4 +1216,20 @@ ToolPanel.--streaming BodyFooter { display: none; }
 }
 .tool-skeleton--dim {
     opacity: 0.5;
+}
+
+/* W-6: modal trap marker — overlay captures all keys and dismisses explicitly */
+.--modal { /* trap marker: overlay captures all keys and dismisses explicitly */ }
+
+/* W-11: scroll-state badge — anchored/jumped indicator docked to OutputPanel bottom */
+OutputPanelScrollBadge {
+    dock: bottom;
+    background: $panel-lighten-1 80%;
+    color: $text-muted;
+    padding: 0 1;
+    height: 1;
+    display: none;
+}
+OutputPanelScrollBadge.--visible {
+    display: block;
 }

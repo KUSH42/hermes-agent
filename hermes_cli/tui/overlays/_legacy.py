@@ -121,7 +121,7 @@ class SessionOverlay(Widget):
     def open_sessions(self) -> None:
         """Show overlay and load sessions in background worker."""
         self.border_title = "Sessions"
-        self.add_class("--visible")
+        self.add_class("--visible", "--modal")
         self._selected_idx = 0
         try:
             self.query_one("#sess-scroll", ScrollableContainer).remove_children()
@@ -229,7 +229,7 @@ class SessionOverlay(Widget):
             _log.warning("SessionOverlay.action_new_session: handle_tui_command failed", exc_info=True)
 
     def action_dismiss(self) -> None:
-        self.remove_class("--visible")
+        self.remove_class("--visible", "--modal")
         try:
             from hermes_cli.tui.input_widget import HermesInput
             self.app.query_one(HermesInput).focus()

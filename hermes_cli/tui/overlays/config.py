@@ -175,6 +175,7 @@ class ConfigOverlay(Widget):
             yield Static("[dim]Space · Esc close[/dim]", classes="co-footer")
 
     def on_mount(self) -> None:
+        self.add_class("--modal")
         self.border_title = "Config"
         self._update_tab_bar()
         self._update_body_visibility()
@@ -197,7 +198,7 @@ class ConfigOverlay(Widget):
         self._focus_active_tab()  # focus AFTER visible — deterministic
 
     def hide_overlay(self) -> None:
-        self.remove_class("--visible")
+        self.remove_class("--visible", "--modal")
 
     def refresh_data(self, cli: object) -> None:
         """Populate active tab from config/app state. Called by slash handlers."""

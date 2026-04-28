@@ -338,7 +338,7 @@ class InterruptOverlay(Widget, can_focus=True):
         self._ns_base = "current"
 
         # Visibility + border urgency.
-        self.add_class("--visible")
+        self.add_class("--visible", "--modal")
         self.display = True
         for urg_cls in _URGENCY_CLASSES.values():
             self.remove_class(urg_cls)
@@ -423,7 +423,7 @@ class InterruptOverlay(Widget, can_focus=True):
         self._clear_destructive_confirm()   # sees _current_payload=None → skips refresh
         self._enter_blocked_until = 0.0     # prevent block bleeding to next payload
         self.current_kind = None
-        self.remove_class("--visible", "--diff-hint-visible")
+        self.remove_class("--visible", "--diff-hint-visible", "--modal")
         for urg_cls in _URGENCY_CLASSES.values():
             self.remove_class(urg_cls)
         self.display = False

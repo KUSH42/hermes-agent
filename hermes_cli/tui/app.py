@@ -85,6 +85,7 @@ from hermes_cli.tui.widgets import (
     OutputPanel,
     PlainRule,
     ReasoningPanel,
+    ScrollState,
     StartupBannerWidget,
     StatusBar,
     StreamingCodeBlock,
@@ -239,6 +240,12 @@ class MCPServerDisconnected(_TxtMessage):
 
 # ---------------------------------------------------------------------------
 
+# W-15 / D-3: first-time-in-zone extended hints (shown once per zone per turn)
+EXTENDED_HINT: dict[str, str] = {
+    "output": "↑↓ scroll · g jump · Esc → input · Ctrl+B browse",
+    "tool": "Enter toggle · t cmd · c copy · ? help",
+    "compose": "Enter submit · Tab complete · ↑ history",
+}
 
 # BrowseAnchorType, BrowseAnchor, _BROWSE_TYPE_GLYPH, _is_in_reasoning
 # moved to _browse_types.py — imported above
@@ -292,6 +299,7 @@ class HermesApp(App):
         Binding("alt+[", "collapse_left_pane", "Collapse left", show=False),
         Binding("alt+]", "collapse_right_pane", "Collapse right", show=False),
         Binding("ctrl+\\", "toggle_center_split", "Split center", show=False),
+        Binding("end", "scroll_to_latest", "Latest", show=False),
     ]
 
     _CHEVRON_PHASE_CLASSES: frozenset[str] = frozenset({
@@ -567,6 +575,10 @@ class HermesApp(App):
         self._mount_start_monotonic: float = 0.0
         # F4: track last keypress time for desktop notify active-user gate
         self._last_keypress_time: float = 0.0
+        # W-15: zone-hint tracking — cleared on new turn
+        self._zones_first_entry_seen: set[str] = set()
+        # W-10: scroll catchup hint — reset when PINNED
+        self._scroll_hint_shown: bool = False
 
         # R2 pane layout — read from display.layout in cli config
         _display_cfg = (getattr(self.cli, "_cfg", None) or {}).get("display", {})
@@ -793,8 +805,9 @@ class HermesApp(App):
         if _fps_hud_enabled():
             self.fps_hud_visible = True
         # Focus the input bar so the user can type immediately
+        from hermes_cli.tui.input_widget import HermesInput as _HI
         try:
-            self.query_one("#input-area").focus()
+            self.query_one(_HI).focus()
         except NoMatches:
             pass
         if not self._clipboard_available and not self._xclip_cmd:
@@ -886,6 +899,12 @@ class HermesApp(App):
             _prune_clipboard()
         except Exception:
             logger.debug("clipboard cache prune failed on mount", exc_info=True)
+        # W-10: watch OutputPanel.scroll_state to drive catchup hint in HintBar
+        try:
+            panel = self.query_one(OutputPanel)
+            self.watch(panel, "scroll_state", self._on_output_scroll_state)
+        except NoMatches:
+            pass
         _mount_elapsed_ms = (_time.monotonic() - _mount_start) * 1000.0
         if _mount_elapsed_ms > 500.0:
             logger.warning("[STARTUP] slow mount: mount_ms=%.1f (budget=500)", _mount_elapsed_ms)
@@ -1374,6 +1393,39 @@ class HermesApp(App):
         msg = "YOLO mode ON — auto-approving all tool calls" if value else "YOLO mode OFF"
         self._flash_hint(msg, 2.0)
 
+    def watch_focused(self, focused: "Widget | None") -> None:
+        """W-15 / D-3: flash extended hint on first entry into each zone per turn."""
+        if focused is None:
+            return
+        zone_name: str | None = None
+        try:
+            from hermes_cli.tui.input_widget import HermesInput as _HI
+            if isinstance(focused, _HI) or (hasattr(focused, "parent") and isinstance(focused.parent, _HI)):
+                zone_name = "compose"
+        except Exception:
+            pass
+        if zone_name is None:
+            try:
+                op = self.query_one(OutputPanel)
+                if op.is_ancestor_of(focused) or focused is op:
+                    zone_name = "output"
+            except Exception:
+                pass
+        if zone_name is None:
+            try:
+                from hermes_cli.tui.tool_panel import ToolPanel as _TP
+                for tp in self.query(_TP):
+                    if tp.is_ancestor_of(focused) or focused is tp:
+                        zone_name = "tool"
+                        break
+            except Exception:
+                pass
+        if zone_name and zone_name not in self._zones_first_entry_seen:
+            hint = EXTENDED_HINT.get(zone_name, "")
+            if hint:
+                self._flash_hint(hint, 4.0)
+            self._zones_first_entry_seen.add(zone_name)
+
     def watch_agent_running(self, value: bool) -> None:
         # A1: coarse phase transition on turn start/end
         self.status_phase = _Phase.REASONING if value else _Phase.IDLE
@@ -1618,6 +1670,13 @@ class HermesApp(App):
         self._response_wall_start_time = None
         self._response_segment_start_time = None
         self._response_token_window.clear()
+        # W-7 / AT-Z3: restore focus to compose on new turn start
+        self._zones_first_entry_seen.clear()
+        from hermes_cli.tui.input_widget import HermesInput as _HI
+        try:
+            self.query_one(_HI).focus()
+        except NoMatches:  # widget not mounted (e.g. headless mode)
+            pass
 
     def _lc_osc_progress_start(self) -> None:
         self._osc_progress_update(True)
@@ -2024,6 +2083,23 @@ class HermesApp(App):
             self.query_one(OutputPanel).focus()
         except Exception:  # widget absent or not yet mounted — focus skipped
             pass
+
+    def action_scroll_to_latest(self) -> None:
+        """W-10: End key — re-pin output to live edge and scroll to bottom."""
+        try:
+            panel = self.query_one(OutputPanel)
+        except NoMatches:
+            return
+        panel.scroll_state = ScrollState.PINNED
+        panel.scroll_end_if_pinned()
+
+    def _on_output_scroll_state(self, old: ScrollState, new: ScrollState) -> None:
+        """W-10: flash a catchup hint when output leaves PINNED; clear when it returns."""
+        if new == ScrollState.PINNED:
+            self._scroll_hint_shown = False
+        elif not self._scroll_hint_shown:
+            self._flash_hint("End → latest", 2.0)
+            self._scroll_hint_shown = True
 
     def action_focus_input_from_output(self) -> None:
         """i: move focus back to HermesInput from output area."""

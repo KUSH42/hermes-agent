@@ -96,6 +96,8 @@ High-signal flow:
   `__init__.py` — backward-compat re-export shim; all old `from hermes_cli.tui.tool_panel import X` still work.
   `_footer.py` — standalone helpers + `BodyPane`, `FooterPane`.
     `FooterPane.on_mount` raises `RuntimeError` if mounted twice (B13 guard).
+    `FooterPane.set_budget(int)` (DF-2) is the canonical visibility writer; `_apply_row_budget` walks chips → stderr → remediation → artifacts → actions, gating each on remaining row budget. `set_density(tier)` is a back-compat shim for tests.
+  `density.py` — `DensityTier`, `DensityInputs`, `LayoutDecision`, `DensityResolver.resolve_full(inputs) -> LayoutDecision` (DF-1). `_footer_budget_for(tier, inputs)` is the pure budget mapper (HERO=0, DEFAULT=2 or 3 if error, COMPACT=1, TRACE=99, user_collapsed/no-content → 0).
   `_completion.py` — `_ToolPanelCompletionMixin`; `_DISCOVERY_GLOBAL_SHOWN: bool` lives here (NOT in `__init__`).
   `_actions.py` — `_ToolPanelActionsMixin`; `action_show_help` does `from . import _completion as _comp_mod` to mutate the flag.
   `_core.py` — `ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget)`.
@@ -104,12 +106,14 @@ High-signal flow:
     `set_result_summary_v4(summary)` — wires result → header chips + footer + auto-collapse.
     `_apply_complete_auto_collapse()` — collapses when body > threshold; errors force expand.
     `action_toggle_collapse()` — sets `_user_collapse_override=True`, flips collapsed.
+    `_build_density_inputs(*, has_focus, user_override=None, user_override_tier=None)` (DF-4) — single helper used by all three resolve sites. Action paths pass `has_focus=False` (user gesture is explicit; bypasses focus modal).
+    `_apply_decision(LayoutDecision)` (DF-4) — sole writer to FooterPane visibility. Stores `_last_decision`; `set_result_summary` re-applies it.
     BINDINGS: `enter` (toggle), `+/-/*` (OmissionBar lines). ToolPanel.Completed posted after `set_result_summary_v4`.
   `_child.py` — `ChildPanel(ToolPanel)`; compact mode + `_user_touched_compact` guard (B14).
     `action_toggle_compact` sets `_user_touched_compact=True`. Auto-uncompact on error skipped when `_user_touched_compact=True`.
   `child_panel.py` — shim re-exporting `ChildPanel` from `tool_panel._child`.
   **Import gotcha**: `_DISCOVERY_GLOBAL_SHOWN` re-export in `__init__` is a value copy. Tests that set or check this flag MUST target `hermes_cli.tui.tool_panel._completion._DISCOVERY_GLOBAL_SHOWN` directly.
-  `FooterPane.on_resize` — hysteresis via `crosses_threshold`; sets `compact` class below `THRESHOLD_NARROW=60`; tracks `_last_resize_w`.
+  `FooterPane.on_resize` — DF-5: only tracks `_last_resize_w`; the `compact` class is owned by `_apply_row_budget` (driven by row budget, not width).
 
 - **`hermes_cli/tui/tool_category.py`**
   `ToolCategory` enum: `FILE / SHELL / CODE / SEARCH / WEB / AGENT / MCP / UNKNOWN`.
@@ -134,7 +138,7 @@ High-signal flow:
 
 - **`hermes_cli/tui/resize_utils.py`** (NEW)
   Shared resize constants: `THRESHOLD_ULTRA_NARROW=40`, `THRESHOLD_NARROW=60`, `THRESHOLD_TOOL_NARROW=80`,
-  `THRESHOLD_COMP_NARROW=100`, `THRESHOLD_MIN_HEIGHT=8`, `HYSTERESIS=2`.
+  `THRESHOLD_COMP_NARROW=100`, `THRESHOLD_MIN_HEIGHT=8`, `THRESHOLD_BAR_HIDE=12`, `HYSTERESIS=2`.
   `crosses_threshold(old, new, threshold, hyst=HYSTERESIS) -> bool` — fires only on clean crossing through
   dead-band `[threshold-hyst, threshold+hyst)`. Returns True when `old=0` and `new` is above hi (initial-state).
 
@@ -269,7 +273,7 @@ High-signal flow:
 - **`hermes_cli/tui/skin_loader.py`** — semantic color fan-out from skin files into CSS vars.
 - **`hermes_cli/tui/animation.py`** — `PulseMixin`, `lerp_color`, `shimmer_text`, `AnimationClock`.
 - **`hermes_cli/tui/perf.py`** — `PerfRegistry` singleton, `measure_v3()`, `TOOL_PANEL_V3_COUNTERS`,
-  `measure()`, `SuspicionDetector`, `WorkerWatcher`,
+  `measure()`, `measure_perf()`, `SuspicionDetector`, `WorkerWatcher`,
   `EventLoopLatencyProbe`, `FrameRateProbe`.
 
 - **`hermes_cli/tui/workspace_tracker.py`**

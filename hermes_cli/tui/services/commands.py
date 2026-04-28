@@ -223,6 +223,12 @@ class CommandsService(AppService):
             except NoMatches:
                 pass
             app._flash_hint("✨  Fresh start!", 2.0)
+            # W-7 / AT-Z3: restore focus to compose after /clear
+            from hermes_cli.tui.input_widget import HermesInput as _HI
+            try:
+                app.query_one(_HI).focus()
+            except NoMatches:  # widget not mounted
+                pass
         finally:
             app._clear_animation_in_progress = False
 

@@ -96,6 +96,11 @@ class _H:
 
     disabled: bool = False
     error_state: "str | None" = None
+    _rev_mode: bool = False
+    _rev_query: str = ""
+    _completion_overlay_active: bool = False
+    _locked: bool = False
+    _pre_lock_disabled: bool = False
     _idle_placeholder: str = "idle"
     placeholder: str = "idle"
     is_mounted: bool = True
@@ -524,6 +529,7 @@ class TestLockedInput:
     def test_locked_class_removed_when_unlocked(self):
         h = _H()
         h.add_class("--locked")
+        h._locked = True
         _H._set_input_locked(h, False)
         assert "--locked" not in h._classes
 
@@ -532,6 +538,7 @@ class TestLockedInput:
         h = _H()
         h.disabled = False
         h.error_state = "some error"
+        h._locked = True
         _H._set_input_locked(h, False)
         # _refresh_placeholder is called by _set_input_locked
         assert "⚠" in h.placeholder

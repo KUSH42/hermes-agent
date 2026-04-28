@@ -93,9 +93,10 @@ class _ContextItem(Static):
             prev.focus()
         else:
             try:
-                self.app.query_one("#input-area").focus()
+                from hermes_cli.tui.input_widget import HermesInput as _HI
+                self.app.query_one(_HI).focus()
             except Exception:
-                logger.debug("ContextMenu: focus restore to #input-area failed", exc_info=True)
+                logger.debug("ContextMenu: focus restore failed", exc_info=True)
 
 
 class ContextMenu(Widget):
@@ -146,6 +147,13 @@ class ContextMenu(Widget):
         super().__init__(**kwargs)
         self._selected_index: int = -1  # -1 = no selection
         self._prev_focus: Widget | None = None  # widget focused before menu opened
+        self._opener_browse_target: Widget | None = None  # W-8: browse target that opened this menu
+
+    def on_mount(self) -> None:
+        # W-8 / R-2: capture the current browse-focused target so dismiss can restore it
+        self._opener_browse_target = next(
+            (w for w in self.app.query(".--browse-focused")), None
+        )
 
     def _items(self) -> "list[_ContextItem]":
         """Return all non-separator item widgets in display order."""
@@ -244,7 +252,7 @@ class ContextMenu(Widget):
 
         self._selected_index = -1  # reset selection on each new show
         self._prev_focus = self.app.focused  # save for focus restore on item click
-        self.add_class("--visible")
+        self.add_class("--visible", "--modal")
         self.focus()
 
     def dismiss(self) -> None:
@@ -254,12 +262,17 @@ class ContextMenu(Widget):
         so that mouse-scroll events reach the OutputPanel rather than being
         swallowed by a hidden but still-focused ContextMenu widget.
         """
-        self.remove_class("--visible")
+        self.remove_class("--visible", "--modal")
         if self.app.focused is self:
+            # W-8 / R-2: if a browse-focused target opened this menu, restore its highlight
+            if self._opener_browse_target is not None:
+                self._opener_browse_target.add_class("--browse-focused")
+                return
             try:
-                self.app.query_one("#input-area").focus()
+                from hermes_cli.tui.input_widget import HermesInput as _HI
+                self.app.query_one(_HI).focus()
             except Exception:
-                logger.debug("ContextMenu.action_dismiss: focus restore to #input-area failed", exc_info=True)
+                logger.debug("ContextMenu.action_dismiss: focus restore failed", exc_info=True)
 
     def on_blur(self) -> None:
         """Dismiss when focus leaves the menu."""

@@ -1,5 +1,5 @@
 """
-Tests for Audit 3 I4 (mid-string Tab flash) and I10 (Enter respects highlighted candidate).
+Tests for composer completion acceptance and Enter-selection behavior.
 """
 
 from __future__ import annotations
@@ -9,8 +9,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from hermes_cli.tui.completion_context import CompletionContext, CompletionTrigger
 from hermes_cli.tui.input._autocomplete import _AutocompleteMixin
-from hermes_cli.tui.path_search import SlashCandidate
+from hermes_cli.tui.path_search import PathCandidate, SlashCandidate
 
 
 # ---------------------------------------------------------------------------
@@ -28,23 +29,49 @@ def _make_autocomplete_inp(value: str, cursor_pos: int, highlighted_cmd: str | N
 
     inp._completion_overlay_visible = lambda: True
     inp._hide_completion_overlay = MagicMock()
+    inp._resolve_assist = MagicMock()
 
     mock_clist = MagicMock()
     if highlighted_cmd is not None:
         mock_clist.highlighted = 0
-        mock_clist.items = [SlashCandidate(display=highlighted_cmd, command=highlighted_cmd + " ")]
+        mock_clist.items = [SlashCandidate(display=highlighted_cmd, command=highlighted_cmd)]
     else:
         mock_clist.highlighted = -1
         mock_clist.items = []
     inp.screen = types.SimpleNamespace()
     inp.screen.query_one = lambda cls: mock_clist
 
-    # Minimal trigger (not reached in mid-string path)
-    from hermes_cli.tui.completion_context import CompletionContext, CompletionTrigger
     inp._current_trigger = CompletionTrigger(CompletionContext.SLASH_COMMAND, "help", 1)
 
     inp.action_accept_autocomplete = _AutocompleteMixin.action_accept_autocomplete.__get__(inp)
     return inp, mock_clist
+
+
+def _make_path_autocomplete_inp(
+    value: str,
+    cursor_pos: int,
+    *,
+    display: str,
+    insert_text: str | None = None,
+    trigger: CompletionTrigger,
+):
+    inp = types.SimpleNamespace()
+    inp.value = value
+    inp.cursor_position = cursor_pos
+    inp.app = types.SimpleNamespace()
+    inp.app._flash_hint = MagicMock()
+    inp._completion_overlay_visible = lambda: True
+    inp._resolve_assist = MagicMock()
+
+    candidate = PathCandidate(display=display, insert_text=insert_text, abs_path=f"/tmp/{display}")
+    mock_clist = MagicMock()
+    mock_clist.highlighted = 0
+    mock_clist.items = [candidate]
+    inp.screen = types.SimpleNamespace()
+    inp.screen.query_one = lambda cls: mock_clist
+    inp._current_trigger = trigger
+    inp.action_accept_autocomplete = _AutocompleteMixin.action_accept_autocomplete.__get__(inp)
+    return inp
 
 
 def _make_enter_inp(
@@ -100,41 +127,55 @@ def _make_key_event(key: str) -> MagicMock:
 
 
 # ---------------------------------------------------------------------------
-# I4 — Mid-string Tab: flash hint
+# I4 — Mid-string Tab: accept splice
 # ---------------------------------------------------------------------------
 
 class TestI4MidStringTab:
-    def test_tab_mid_string_closes_overlay(self):
-        """Cursor not at end → overlay hidden."""
+    def test_slash_mid_string_replaces_value(self):
+        """Slash candidates replace the whole value even with a mid-string cursor."""
         inp, mock_clist = _make_autocomplete_inp("foobar", cursor_pos=3, highlighted_cmd="/help")
         inp.action_accept_autocomplete()
-        inp._hide_completion_overlay.assert_called_once()
+        assert inp.value == "/help "
+        inp._resolve_assist.assert_called_once()
 
-    def test_tab_mid_string_flashes_hint(self):
-        """Cursor not at end → flash hint with 'move cursor to end'."""
-        inp, _ = _make_autocomplete_inp("foobar", cursor_pos=3, highlighted_cmd="/help")
+    def test_tab_mid_string_no_flash(self):
+        """Mid-string acceptance no longer flashes a move-cursor hint."""
+        inp, _ = _make_autocomplete_inp("/hel tail", cursor_pos=3, highlighted_cmd="/help")
         inp.action_accept_autocomplete()
-        inp.app._flash_hint.assert_called_once()
-        args = inp.app._flash_hint.call_args[0]
-        assert "move cursor to end" in args[0]
-        assert args[1] == 2.0
-
-    def test_tab_at_end_accepts_without_flash(self):
-        """Cursor at end → no flash, candidate accepted (inserts new_value)."""
-        inp, _ = _make_autocomplete_inp("/hel", cursor_pos=4, highlighted_cmd="/help")
-        # The accept path will call load_text or similar — just verify no flash
-        try:
-            inp.action_accept_autocomplete()
-        except Exception:
-            pass  # load_text not stubbed; that's fine
         inp.app._flash_hint.assert_not_called()
 
-    def test_tab_mid_string_no_insertion(self):
-        """Cursor not at end → value unchanged."""
-        original = "foobar"
-        inp, _ = _make_autocomplete_inp(original, cursor_pos=3, highlighted_cmd="/help")
+    def test_accept_autocomplete_path_mid_word_single_line(self):
+        trigger = CompletionTrigger(CompletionContext.PLAIN_PATH_REF, "src/fi", 0)
+        inp = _make_path_autocomplete_inp(
+            "src/fi trailing",
+            cursor_pos=6,
+            display="file.txt",
+            trigger=trigger,
+        )
         inp.action_accept_autocomplete()
-        assert inp.value == original
+        assert inp.value == "src/file.txt trailing"
+
+    def test_accept_autocomplete_path_end_of_value(self):
+        trigger = CompletionTrigger(CompletionContext.PLAIN_PATH_REF, "src/fi", 0)
+        inp = _make_path_autocomplete_inp(
+            "src/fi",
+            cursor_pos=6,
+            display="file.txt",
+            trigger=trigger,
+        )
+        inp.action_accept_autocomplete()
+        assert inp.value == "src/file.txt "
+
+    def test_accept_autocomplete_path_trailing_text_preserved(self):
+        trigger = CompletionTrigger(CompletionContext.PATH_REF, "fi", 6)
+        inp = _make_path_autocomplete_inp(
+            "copy @fi later",
+            cursor_pos=8,
+            display="file.txt",
+            trigger=trigger,
+        )
+        inp.action_accept_autocomplete()
+        assert inp.value == "copy @file.txt later"
 
 
 # ---------------------------------------------------------------------------

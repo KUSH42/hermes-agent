@@ -130,6 +130,7 @@ class SkillPickerOverlay(Widget):
         )
 
     def on_mount(self) -> None:
+        self.add_class("--modal")
         self.border_title = "⚡ Skills  (Alt+$ to toggle)"
         self._load_candidates()
         self._rebuild_list()
@@ -341,6 +342,7 @@ class SkillPickerOverlay(Widget):
 
     def action_dismiss_picker(self) -> None:
         """Esc: dismiss without dispatch; input retains whatever fragment it had."""
+        self.remove_class("--modal")
         self.dismiss()
         try:
             from hermes_cli.tui.input_widget import HermesInput as _HI

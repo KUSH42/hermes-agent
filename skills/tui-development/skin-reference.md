@@ -61,6 +61,16 @@ vars:
 
 # ── Component Part variables (injected by ThemeManager) ─────────────────
 # All keys fall back to COMPONENT_VAR_DEFAULTS in theme_manager.py if omitted.
+#
+# In the canonical DESIGN.md form (skins/<name>/DESIGN.md), these live under
+# `x-hermes.component-vars` instead of a top-level `component_vars` block:
+#
+#     x-hermes:
+#       component-vars:
+#         app-bg: "{colors.background}"   # token refs allowed
+#         cursor-color: "#f5c2e7"
+#
+# Both forms produce the same runtime ThemeManager state.
 component_vars:
   app-bg:                   "#1E1E1E"   # Global app bg — Screen + HermesApp + chrome
                                         # rule-bg-color MUST match this value
@@ -92,6 +102,25 @@ component_vars:
   brand-glyph-color:        "#FFD700"   # ⟁/⚕ brand glyph — separate from title text
   scrollbar:                "#5f87d7"   # Scrollbar thumb colour
   drawille-canvas-color:    "#00d7ff"   # Braille animation canvas default colour
+  icon-dim:                 "#6e6e6e"   # SkinColors.icon_dim — spinner low-end / dimmed tool icon
+  separator-dim:            "#444444"   # SkinColors.separator_dim — header chevron-slot + meta separator
+  # SC-1 dim variants (2026-04-26)
+  error-dim:                "#8B2020"   # SkinColors.error_dim — exit-code ok chip, remediation hints
+  success-dim:              "#1E5C1E"   # SkinColors.success_dim — exit-code ok chip
+  warning-dim:              "#5C4A00"   # SkinColors.warning_dim — remediation hint text
+  text-muted-dim:           "#3A3A3A"   # SkinColors.text_muted_dim — chevron placeholder, parse-fail contexts
+  # SC-4 gutter (2026-04-26)
+  tool-header-gutter-color: "#00bcd4"   # SkinColors.tool_header_gutter — focused ToolPanel gutter (cascade: $accent-interactive)
+  # SC-2 per-tier tool header accents (2026-04-26)
+  tool-tier-read-accent:    "#0178D4"   # Tier accent for read-category tool icons
+  tool-tier-write-accent:   "#0178D4"   # Tier accent for write-category tool icons
+  tool-tier-exec-accent:    "#81C784"   # Tier accent for exec-category tool icons (green)
+  tool-tier-search-accent:  "#0178D4"   # Tier accent for search-category tool icons
+  tool-tier-shell-accent:   "#81C784"   # Tier accent for shell-category tool icons (green)
+  tool-tier-browse-accent:  "#0178D4"   # Tier accent for browse-category tool icons
+  tool-tier-mcp-accent:     "#9b59b6"   # Tier accent for MCP tool icons (purple)
+  tool-tier-thinking-accent: "#0178D4"  # Tier accent for reasoning/thinking blocks
+  tool-tier-tooling-accent:  "#0178D4"  # Tier accent for meta/sub-agent call blocks
   panel-border:             "#333333"   # SourcesBar + bordered panel borders
   footnote-ref-color:       "#888888"   # Footnote superscript marker colour
   tool-mcp-accent:          "#9b59b6"   # MCP tool accent (purple)

@@ -38,6 +38,7 @@ class KeyDispatchService(AppService):
             _log.debug("_get_interrupt_overlay: query failed", exc_info=True)
             return None
 
+    # B-1 carve-out (concept v0.7 FA-1): global-layer on_key dispatcher peer of input/widget.py:_on_key. Inline event.key reads are intentional.
     def dispatch_key(self, event: Any) -> None:
         """Global key handler for overlay navigation, copy, and interrupt."""
         from hermes_cli.tui.widgets import (
@@ -270,7 +271,8 @@ class KeyDispatchService(AppService):
                 from hermes_cli.tui.pane_manager import PaneId
                 if _pm._focused_pane != PaneId.CENTER:
                     try:
-                        self.app.query_one("#input-area").focus()
+                        from hermes_cli.tui.input_widget import HermesInput as _HI
+                        self.app.query_one(_HI).focus()
                         _pm.focus_pane(PaneId.CENTER)
                         event.prevent_default()
                         return

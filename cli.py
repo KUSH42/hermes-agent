@@ -3475,6 +3475,23 @@ class HermesCLI:
                 out.append("\n")
         return out
 
+    @staticmethod
+    def _handle_tte_producer_exc(exc: BaseException) -> None:
+        """Route TTE producer teardown exceptions to the correct log severity.
+
+        Extracted for testability (R7-T-L1). Call from the except clauses in
+        _play_tte_in_output_panel so the severity logic can be unit-tested without
+        spinning up a real Textual app or TTE run.
+        """
+        if isinstance(exc, concurrent.futures.CancelledError):
+            logger.debug("TTE frame producer cancelled at teardown", exc_info=True)
+        elif isinstance(exc, RuntimeError) and "Event loop is closed" in str(exc):
+            # R7-T-L1: symmetric teardown race — same recovery semantics as
+            # CancelledError (frame abandoned by design).
+            logger.debug("TTE frame producer hit closed loop at teardown", exc_info=True)
+        else:
+            logger.warning("TTE frame error: %s", exc, exc_info=True)
+
     def _play_tte_in_output_panel(
         self, effect_name: str, plain_hero: str, params: dict
     ) -> bool:
@@ -3579,15 +3596,8 @@ class HermesCLI:
                 _sleep = _next_frame_t - time.monotonic()
                 if _sleep > 0:
                     time.sleep(_sleep)
-        except concurrent.futures.CancelledError:
-            # Recovered race: app teardown cancelled an in-flight call_from_thread
-            # future while the producer was still queueing frames. No data loss —
-            # the static banner write at the end is gated on rendered_any.
-            # Note: concurrent.futures.CancelledError != asyncio.CancelledError;
-            # call_from_thread wraps cancellation via concurrent.futures.Future.
-            logger.debug("TTE frame producer cancelled at teardown", exc_info=True)
         except Exception as exc:
-            logger.warning("TTE frame error: %s", exc, exc_info=True)
+            self._handle_tte_producer_exc(exc)
 
         if rendered_any:
             # Hold final TTE frame for 250 ms, then queue the static banner through

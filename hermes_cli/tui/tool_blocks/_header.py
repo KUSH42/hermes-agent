@@ -376,6 +376,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             else:
                 tail_segments.append(("hero", Text(f"  {self._primary_hero}", style="dim")))
         elif self._is_complete and not self._tool_icon_error and not self._line_count:
+            self.add_class("result-empty")
             tail_segments.append(("hero", Text("  —", style="dim")))
         # A2: chips removed from header; always served by FooterPane only
         if self._stats and self._stats.has_diff_counts:
@@ -533,6 +534,8 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             displayed_plain = label_text.plain.strip()
             if displayed_plain != self._full_path:
                 self._tooltip_text = self._full_path
+        if self.has_class("result-empty"):
+            label_text = Text(f"○ {label_text.plain}", style="italic")
         # FS-1: focus prefix glyph before label — never truncated
         if focused:
             from hermes_cli.tui.body_renderers._grammar import FOCUS_PREFIX

@@ -890,7 +890,6 @@ async def test_click_left_toggles_expanded():
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(reason="resolver re-collapses after toggle due to on_resize re-resolve; timing issue", strict=False)
 async def test_click_left_toggles_back_to_collapsed():
     """Two ToolBlock header clicks return collapsed state to original."""
     from hermes_cli.tui.tool_panel import ToolPanel
@@ -1451,11 +1450,8 @@ async def test_ecb_mounts_top_omission_bar():
             await pilot.pause()
 
         from hermes_cli.tui.widgets import OutputPanel
-        try:
-            block = app.query_one(OutputPanel).query_one(ExecuteCodeBlock)
-            assert block._omission_bar_top_mounted is True
-        except Exception:
-            pytest.skip("ECB not mounted in this test setup")
+        block = app.query_one(OutputPanel).query_one(ExecuteCodeBlock)
+        assert block._omission_bar_top_mounted is True
 
 
 @pytest.mark.asyncio
@@ -1474,11 +1470,8 @@ async def test_ecb_mounts_bottom_omission_bar():
             await pilot.pause()
 
         from hermes_cli.tui.widgets import OutputPanel
-        try:
-            block = app.query_one(OutputPanel).query_one(ExecuteCodeBlock)
-            assert block._omission_bar_bottom_mounted is True
-        except Exception:
-            pytest.skip("ECB not mounted in this test setup")
+        block = app.query_one(OutputPanel).query_one(ExecuteCodeBlock)
+        assert block._omission_bar_bottom_mounted is True
 
 
 # §6 — FILE microcopy no denominators

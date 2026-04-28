@@ -288,7 +288,7 @@ class TestStreamingSearchHeaders:
 
     def test_stream_emits_header_on_path_change(self):
         """emit 'foo.py:1:x' then 'bar.py:1:y' → two path header lines."""
-        from hermes_cli.tui.body_renderers.streaming import SearchRenderer
+        from hermes_cli.tui.body_renderers.streaming import StreamingSearchRenderer as SearchRenderer
         r = SearchRenderer()
         r1 = r.render_stream_line("foo.py:1:x", "foo.py:1:x")
         r2 = r.render_stream_line("bar.py:1:y", "bar.py:1:y")
@@ -299,7 +299,7 @@ class TestStreamingSearchHeaders:
 
     def test_stream_no_duplicate_header(self):
         """emit 'foo.py:1:x' then 'foo.py:2:y' → one header, two hit lines."""
-        from hermes_cli.tui.body_renderers.streaming import SearchRenderer
+        from hermes_cli.tui.body_renderers.streaming import StreamingSearchRenderer as SearchRenderer
         r = SearchRenderer()
         r1 = r.render_stream_line("foo.py:1:x", "foo.py:1:x")
         r2 = r.render_stream_line("foo.py:2:y", "foo.py:2:y")
@@ -310,7 +310,7 @@ class TestStreamingSearchHeaders:
 
     def test_stream_header_matches_posthoc_format(self):
         """Stream-emitted header and post-hoc header for the same path render equal plain text (minus hit count)."""
-        from hermes_cli.tui.body_renderers.streaming import SearchRenderer
+        from hermes_cli.tui.body_renderers.streaming import StreamingSearchRenderer as SearchRenderer
         from hermes_cli.tui.body_renderers._grammar import build_path_header
         from rich.text import Text
         r = SearchRenderer()
@@ -429,7 +429,7 @@ class TestPickRendererLowConf:
     def test_low_conf_search_picked(self):
         """SEARCH + 0.6 → SearchRenderer is returned (not Fallback)."""
         from hermes_cli.tui.body_renderers import pick_renderer
-        from hermes_cli.tui.body_renderers.search import SearchRenderer
+        from hermes_cli.tui.body_renderers.streaming import StreamingSearchRenderer as SearchRenderer
         from hermes_cli.tui.tool_payload import ResultKind
         from hermes_cli.tui.tool_category import ToolCategory
         from hermes_cli.tui.services.tools import ToolCallState
@@ -441,7 +441,7 @@ class TestPickRendererLowConf:
 
     def test_low_conf_disclosure_header(self):
         """SearchRenderer with _low_confidence_disclosed flag → first rendered line contains 'low confidence'."""
-        from hermes_cli.tui.body_renderers.search import SearchRenderer
+        from hermes_cli.tui.body_renderers.streaming import StreamingSearchRenderer as SearchRenderer
         from hermes_cli.tui.tool_payload import ResultKind
         from hermes_cli.tui.tool_category import ToolCategory
         payload = _make_payload(
@@ -456,7 +456,7 @@ class TestPickRendererLowConf:
 
     def test_high_conf_no_disclosure(self):
         """SearchRenderer with confidence 0.9 → no disclosure header."""
-        from hermes_cli.tui.body_renderers.search import SearchRenderer
+        from hermes_cli.tui.body_renderers.streaming import StreamingSearchRenderer as SearchRenderer
         from hermes_cli.tui.tool_payload import ResultKind
         from hermes_cli.tui.tool_category import ToolCategory
         payload = _make_payload(

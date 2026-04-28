@@ -228,10 +228,11 @@ def test_show_path_completions_cancels_existing_timer():
     w._path_debounce_timer = mock_timer
     # Patch set_timer so it doesn't need an event loop
     with patch.object(w, "set_timer", return_value=MagicMock()):
-        with patch.object(w, "_set_overlay_mode"):
-            with patch.object(w, "_push_to_list"):
-                with patch.object(w, "_show_completion_overlay"):
-                    w._show_path_completions("test")
+        with patch.object(w, "_resolve_assist", return_value=None):
+            with patch.object(w, "_set_overlay_mode"):
+                with patch.object(w, "_push_to_list"):
+                    with patch.object(w, "_show_completion_overlay"):
+                        w._show_path_completions("test")
     mock_timer.stop.assert_called_once()
 
 

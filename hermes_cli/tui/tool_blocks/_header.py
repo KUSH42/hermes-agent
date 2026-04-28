@@ -371,8 +371,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             elif self._tool_icon_error:
                 tail_segments.append(("hero", _split_glyph_hero(self._primary_hero, f"bold {self._colors().error}")))
             elif self._is_complete:
-                _ok = getattr(self, "_diff_add_color", _DIFF_ADD_FALLBACK)
-                tail_segments.append(("hero", _split_glyph_hero(self._primary_hero, f"bold {_ok}")))
+                tail_segments.append(("hero", _split_glyph_hero(self._primary_hero, f"bold {self._colors().success}")))
             else:
                 tail_segments.append(("hero", Text(f"  {self._primary_hero}", style="dim")))
         elif self._is_complete and not self._tool_icon_error and not self._line_count:

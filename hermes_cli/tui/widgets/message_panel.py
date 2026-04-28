@@ -6,6 +6,7 @@ Contains: MessagePanel, ThinkingWidget, _EchoBullet, UserMessagePanel, Reasoning
 from __future__ import annotations
 
 import logging
+import time as _time
 from typing import TYPE_CHECKING, Any
 
 _log = logging.getLogger(__name__)
@@ -375,6 +376,10 @@ class MessagePanel(Widget):
             ev = getattr(self.app, "_panel_ready_event", None)
             if ev is not None:
                 self.app._panel_ready_event = None
+                _t0 = getattr(self.app, "_mount_start_monotonic", 0.0)
+                if _t0 > 0.0:
+                    _panels_ms = (_time.monotonic() - _t0) * 1000.0
+                    _log.debug("[STARTUP] panels_ready_ms=%.1f", _panels_ms)
                 ev.set()
         except Exception:
             pass

@@ -132,6 +132,7 @@ from hermes_cli.tui.perf import (
     FrameRateProbe,
     SuspicionDetector,
     WorkerWatcher,
+    measure,
 )
 from hermes_cli.tui.theme_manager import ThemeManager
 from wcwidth import wcswidth
@@ -562,6 +563,8 @@ class HermesApp(App):
         # mounted.  Eliminates the multi-line-chunk race where lines arrive on the
         # old panel before watch_agent_running(True) fires.
         self._panel_ready_event: "threading.Event | None" = None
+        # PM-05: wall-clock anchor for [STARTUP] timing (set at start of on_mount)
+        self._mount_start_monotonic: float = 0.0
         # F4: track last keypress time for desktop notify active-user gate
         self._last_keypress_time: float = 0.0
 
@@ -736,6 +739,8 @@ class HermesApp(App):
     # --- Lifecycle ---
 
     def on_mount(self) -> None:
+        self._mount_start_monotonic = _time.monotonic()
+        _mount_start = self._mount_start_monotonic
         self._event_loop = asyncio.get_running_loop()
         self._worker_watcher = WorkerWatcher(self)
         self._event_loop_probe = EventLoopLatencyProbe()
@@ -884,6 +889,8 @@ class HermesApp(App):
             _prune_clipboard()
         except Exception:
             pass
+        _mount_elapsed_ms = (_time.monotonic() - _mount_start) * 1000.0
+        logger.debug("[STARTUP] mount_ms=%.1f", _mount_elapsed_ms)
 
     _RESIZE_DEBOUNCE_S: float = 0.06  # 60 ms
 
@@ -2501,14 +2508,15 @@ class HermesApp(App):
 
     def get_css_variables(self) -> "dict[str, str]":
         """Merge ThemeManager overrides into Textual's CSS variable resolution."""
-        base = super().get_css_variables()
-        tm = getattr(self, "_theme_manager", None)
-        if tm is not None:
-            overrides = tm.css_variables
-        else:
-            from hermes_cli.tui.theme_manager import _defaults_as_strs
-            overrides = _defaults_as_strs()
-        return {**base, **overrides}
+        with measure("css_variables", budget_ms=5.0, silent=True):
+            base = super().get_css_variables()
+            tm = getattr(self, "_theme_manager", None)
+            if tm is not None:
+                overrides = tm.css_variables
+            else:
+                from hermes_cli.tui.theme_manager import _defaults_as_strs
+                overrides = _defaults_as_strs()
+            return {**base, **overrides}
 
     def apply_skin(self, skin_vars: "dict[str, str] | Path") -> None:
         return self._svc_theme.apply_skin(skin_vars)

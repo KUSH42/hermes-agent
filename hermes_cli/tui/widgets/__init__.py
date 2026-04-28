@@ -159,6 +159,7 @@ from .media import (  # noqa: F401
 )
 
 # R3 Phase B: interrupt widget classes are aliases routing to InterruptOverlay.
+from hermes_cli.tui.perf import measure  # noqa: E402
 from hermes_cli.tui.overlays._aliases import (  # noqa: F401,E402
     ApprovalWidget,
     ClarifyWidget,
@@ -390,28 +391,29 @@ class OutputPanel(ScrollableContainer):
         # Bug-2 fix: mount AFTER the most recent UserMessagePanel so the user
         # echo always precedes the assistant response regardless of call_from_thread
         # scheduling order between echo_user_message and watch_agent_running(True).
-        try:
-            last_ump = self.query(UserMessagePanel).last()
-            _LOG.debug(
-                "new_message: mounting MP after UMP (id=%s children_count=%d)",
-                getattr(last_ump, "id", None),
-                len(self.children),
-            )
-            self.mount(panel, after=last_ump)
-        except NoMatches:
-            # No UMP yet — fall back to before ThinkingWidget/LiveLineWidget.
-            anchor = self._live_anchor()
-            _LOG.debug(
-                "new_message: no UMP found, mounting MP before anchor=%s children_count=%d",
-                type(anchor).__name__ if anchor else "None",
-                len(self.children),
-            )
-            if anchor is not None:
-                self.mount(panel, before=anchor)
-            elif self.children:
-                self.mount(panel, before=self.children[-1])
-            else:
-                self.mount(panel)
+        with measure("output_panel.mount_message", budget_ms=16.0):
+            try:
+                last_ump = self.query(UserMessagePanel).last()
+                _LOG.debug(
+                    "new_message: mounting MP after UMP (id=%s children_count=%d)",
+                    getattr(last_ump, "id", None),
+                    len(self.children),
+                )
+                self.mount(panel, after=last_ump)
+            except NoMatches:
+                # No UMP yet — fall back to before ThinkingWidget/LiveLineWidget.
+                anchor = self._live_anchor()
+                _LOG.debug(
+                    "new_message: no UMP found, mounting MP before anchor=%s children_count=%d",
+                    type(anchor).__name__ if anchor else "None",
+                    len(self.children),
+                )
+                if anchor is not None:
+                    self.mount(panel, before=anchor)
+                elif self.children:
+                    self.mount(panel, before=self.children[-1])
+                else:
+                    self.mount(panel)
         # Remove --entering after the first render so the CSS opacity transition
         # plays: opacity 0 → 1 (fade-in).  call_after_refresh fires in the next
         # event loop pass — fast enough to keep the initial "black flash" invisible

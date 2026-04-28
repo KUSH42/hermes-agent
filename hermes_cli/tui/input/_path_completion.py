@@ -11,6 +11,7 @@ from hermes_cli.tui.completion_context import CompletionContext
 from hermes_cli.tui.completion_list import VirtualCompletionList
 from hermes_cli.tui.completion_overlay import CompletionOverlay
 from hermes_cli.tui.path_search import Candidate, PathSearchProvider
+from hermes_cli.tui.perf import measure
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,11 +215,12 @@ class _PathCompletionMixin:
 
         if len(self._raw_candidates) < 4096:
             self._raw_candidates.extend(message.batch)
-        ranked = fuzzy_rank(
-            request.match_query or self._current_trigger.fragment,
-            self._raw_candidates,
-            limit=200,
-        )
+        with measure("path_completion.fuzzy_rerank", budget_ms=4.0, silent=True):
+            ranked = fuzzy_rank(
+                request.match_query or self._current_trigger.fragment,
+                self._raw_candidates,
+                limit=200,
+            )
         self._push_to_list(ranked)
         if message.final:
             self._set_searching(False)

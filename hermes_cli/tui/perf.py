@@ -143,6 +143,7 @@ def measure(
     finally:
         result.elapsed_ms = (time.perf_counter() - t0) * 1000
         result.over_budget = result.elapsed_ms > budget_ms
+        _registry.record(label, result.elapsed_ms)
         if not silent:
             msg = f"[PERF] {label}: {result.elapsed_ms:.2f}ms"
             if result.over_budget:

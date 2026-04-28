@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING
 from rich.text import Text
 
 from hermes_cli.tui.body_renderers.base import BodyRenderer
+from hermes_cli.tui.perf import measure
 from hermes_cli.tui.services.tools import ToolCallState
 from hermes_cli.tui.tool_blocks._shared import _DIFF_ARROW_RE, _DIFF_HEADER_RE
 from hermes_cli.tui.tool_payload import ResultKind
@@ -221,30 +222,32 @@ class StreamingCodeRenderer(BodyRenderer):
         if len(lines) <= 1:
             return None
         body_code = "\n".join(lines[1:])
-        try:
-            from rich.syntax import Syntax
-            return Syntax(
-                body_code,
-                lexer="python",
-                theme=theme,
-                line_numbers=False,
-                background_color=bg if bg and bg != "default" else None,
-            )
-        except Exception:  # noqa: bare-except
-            return Text(body_code)
+        with measure("renderer.finalize_code", budget_ms=20.0):
+            try:
+                from rich.syntax import Syntax
+                return Syntax(
+                    body_code,
+                    lexer="python",
+                    theme=theme,
+                    line_numbers=False,
+                    background_color=bg if bg and bg != "default" else None,
+                )
+            except Exception:  # noqa: bare-except
+                return Text(body_code)
 
     def highlight_line(self, line: str, theme: str = "ansi_dark") -> str:
         """Return Pygments-highlighted ANSI string for a Python line."""
         return self._highlight_python(line, theme)
 
     def _highlight_python(self, line: str, theme: str) -> str:
-        try:
-            from pygments import highlight as _hl
-            from pygments.lexers import PythonLexer
-            from pygments.formatters import TerminalTrueColorFormatter
-            return _hl(line, PythonLexer(), TerminalTrueColorFormatter(style=theme)).rstrip("\n")
-        except Exception:  # noqa: bare-except
-            return line
+        with measure("renderer.highlight_line", budget_ms=2.0, silent=True):
+            try:
+                from pygments import highlight as _hl
+                from pygments.lexers import PythonLexer
+                from pygments.formatters import TerminalTrueColorFormatter
+                return _hl(line, PythonLexer(), TerminalTrueColorFormatter(style=theme)).rstrip("\n")
+            except Exception:  # noqa: bare-except
+                return line
 
 
 # ---------------------------------------------------------------------------

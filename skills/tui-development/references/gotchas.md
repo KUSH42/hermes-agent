@@ -193,6 +193,7 @@ fall through to the `set_interval` branch automatically.
 - **Slash-menu overlays MUST be modal — focus must never return to the input bar while an overlay is visible.** If `HermesInput` (or any `Input` widget) regains focus while a slash overlay is open, printable keystrokes go to the input field rather than the overlay, breaking keyboard navigation entirely. Enforce this by: (1) calling `overlay.focus()` immediately after mount; (2) overriding `on_focus` on the input widget to re-delegate focus to any active overlay; (3) NOT calling `input.focus()` in dismiss paths — use `app.set_focus(None)` or let the overlay's `on_dismiss` restore focus explicitly.
 - If an overlay needs printable key handling, disable the input while it is
   active so input does not consume those keys first.
+- **Composer assist state has one owner now: `HermesInput._resolve_assist(...)`.** Completion overlay, skill picker, and plain mode must converge through `AssistKind` (`NONE`, `OVERLAY`, `SKILL_PICKER`). Do not clear one assist surface directly from another subsystem.
 - Hidden focused widgets can still swallow scroll or key events. Dismiss paths
   may need explicit focus handoff.
 - Overlay stacking is centralized in `app.py`. Avoid one-off dismiss logic in
@@ -264,6 +265,10 @@ fall through to the `set_interval` branch automatically.
 - Blank overlay states usually mean list/preview lifecycle or worker-cancel
   logic regressed, not just rendering.
 - `TERMINAL_CWD` can silently change path-root behavior in tests and live runs.
+- **`_compute_mode()` must read `_completion_overlay_active`, not DOM/query state.** Mode resolution runs in tests and teardown paths where the overlay object may not exist or may be stale.
+- **Ghost suggestions and overlays are separate assist surfaces.** `_update_autocomplete()` may update inline ghost text without any overlay being active. Clearing assist unconditionally in the no-overlay branch regresses multiline ghost suggestions.
+- **History persistence is full-file rewrite, not append.** `_save_to_history()` now deduplicates and atomically rewrites the prompt_toolkit history file with `NamedTemporaryFile` + `os.replace`. The expected wire format starts at `+entry` with no synthetic leading blank line.
+- **Textual CSS `border-left` is stricter than `color`.** In this composer work, token/grey variants failed parse or mount, while plain `white` / `red` worked for `HermesInput.--rev-search` and `HermesInput.--error`.
 
 ## Text selection in RichLog / CopyableRichLog
 
@@ -521,6 +526,64 @@ immediately each time — making the guard useless. Only `action_submit()` reset
 `from .path_search import SlashCandidate` at module level is safe.
 No need for deferred inside-method import.
 
+## SkinColors / skin contract gotchas (SC-1..SC-5, 2026-04-26)
+
+**`MappingProxyType` field in a frozen dataclass requires `field(default_factory=...)`.**
+Even though `MappingProxyType` is immutable, Python 3.11 raises `ValueError: mutable default`
+for any non-primitive as a frozen-dataclass default. Use:
+```python
+tier_accents: MappingProxyType = field(
+    default_factory=lambda: _EMPTY_MAP, hash=False, compare=False, repr=False
+)
+```
+Not `field(default=_EMPTY_MAP, ...)`.
+
+**`SkinColors.tier_accents` must include legacy display-tier keys.**
+`display_tier_for()` in `tool_category.py` returns `"file"`, `"exec"`, `"query"`, `"agent"` —
+NOT the `TIER_KEYS` frozenset. Build `tier_accents` from `TIER_KEYS | frozenset({"file","exec","query","agent"})`.
+Without the legacy keys, `.get("file", fallback)` always falls back.
+
+**`hasattr(mock, "_resolver")` is always `True` for MagicMock — use `getattr(...) is not None`.**
+`MagicMock` auto-creates attributes on first access. `hasattr(panel, "_resolver")` returns True
+for any bare `MagicMock()`. Tests that mock a panel must set `panel._resolver = None` explicitly,
+and production code must guard with `getattr(self._panel, "_resolver", None) is not None`.
+
+**`ToolHeader._colors()` lazy-caches on `_skin_colors_cache` — not in `__init__`.**
+Tests using `ToolHeader.__new__()` start with no cache. First call resolves from `self.app`
+(mock via `PropertyMock` on `type(h)`). The cache persists for the object's life — if a test
+calls `_render_v4()` twice with different apps, only the first resolution is used.
+
+**`_DROP_ORDER` alias exists in `_header.py` as `_DROP_ORDER_DEFAULT`.**
+After DU (density unification), the single `_DROP_ORDER` was split into tier-specific lists.
+`_header.py` re-exports `_DROP_ORDER = _DROP_ORDER_DEFAULT` for backward compat. Flash is now
+at index 0 (drops first); Spec A overrode the header-signal-hardening spec's "flash drops last".
+Tests asserting `_DROP_ORDER[-1] == "flash"` must be updated to `_DROP_ORDER[0] == "flash"`.
+
+**AST parent-mapping required for targeted `style=` kwarg scanning.**
+`ast.walk` does not give parent info. To find only `style=` kwargs and `Style()` positional args
+(not dict values or docstrings), build a parent map first:
+```python
+parent = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+```
+Then check `isinstance(parent.get(node), ast.keyword) and parent[node].arg == "style"`.
+Skipping this yields false positives on `_TONE_STYLES = {"error": "bold red"}` dict literals.
+
+## Alt+$ key encoding is terminal-dependent (2026-04-26)
+
+`event.key` for `Alt+$` varies by terminal: can arrive as `"alt+4"`, `"alt+dollar_sign"`, or `"alt+$"` depending on whether the terminal sends alt-code or alt-meta sequences. Never match on `event.key == "alt+$"` alone.
+
+**Reliable pattern**: `getattr(event, "character", None) == "$" and event.key.startswith("alt+")`. This works because `event.character` is set to the base character (`$`) regardless of how the modifier is encoded.
+
+Affected site: `hermes_cli/tui/services/keys.py §dispatch_key` (SNS1 Phase 1, 2026-04-26).
+
+## SkillPickerOverlay trigger_source auto-dismiss contract (2026-04-26)
+
+`SkillPickerOverlay` has two trigger modes controlled by `_trigger: str`:
+- `"prefix"` — opened because user typed `$fragment`; **auto-dismisses** when `_SKILL_RE` no longer matches the input value (e.g. user deleted the `$`). The autocomplete handler in `_autocomplete.py` checks on every `Input.Changed` event.
+- `"chord"` — opened via `Alt+$`; **stays** until explicit Esc/Enter/Tab.
+
+If you forget this distinction and the picker disappears unexpectedly on input change, check `trigger_source` was passed correctly from `_open_skill_picker`.
+
 ## When to expand this file
 
 Add an entry only if it is:
@@ -529,3 +592,56 @@ Add an entry only if it is:
 - expensive to rediscover,
 - specific to Textual or hermes-agent TUI behavior,
 - and short enough to scan during active work.
+
+## NoActiveAppError vs AttributeError (2026-04-26)
+
+Textual's `self.app` property raises `NoActiveAppError` (subclass of `Exception`, NOT `AttributeError`) when widget has no active app. `getattr(self, "app", None)` only catches `AttributeError` — it does NOT suppress `NoActiveAppError`. Always use `try/except Exception: _app = None` when guarding app access outside a mounted widget.
+
+## SkinColors.from_app patch path (2026-04-26)
+
+When `SkinColors.from_app` is called inside a method via local import (e.g., `from hermes_cli.tui.body_renderers._grammar import SkinColors`), patching the import site does not work. Patch the source: `patch("hermes_cli.tui.body_renderers._grammar.SkinColors.from_app", ...)`.
+
+## Meta-test comment grep trap (2026-04-26)
+
+ER-5 meta-tests use `grep -rn "stderrwarn" hermes_cli/` to verify removal. Any code comment containing the literal word `stderrwarn` will trip this test. Reword comments to describe the pattern in abstract terms (e.g., "header owns category only, not evidence").
+
+## Module-level constants before class definition (2026-04-26)
+
+Constants used inside class methods (`_RECOVERY_KINDS`, `_RECOVERY_ORDER`) must be defined BEFORE the class body in the module. Defining them after the class causes `NameError` at call time even though the module loads. Python resolves names at call time for regular methods, not at class-definition time — but if the name is looked up in module scope and isn't there yet at the point of definition, it still fails on first call if Python didn't define it yet.
+
+## Read-only Widget property leakage (2026-04-27)
+
+`type(widget).is_attached = PropertyMock(...)` mutates the SHARED Widget subclass — leaks to every test in the pytest session that touches that class. Same trap for `size`, `app`, and any other Textual property. Fix: define a one-off `_IsolatedSubclass(StreamingToolBlock)` (cached at module scope) overriding the property as a class attribute or `@property`, then swap `instance.__class__ = _IsolatedSubclass`. This isolates the override to instances of the test subclass without touching the parent.
+
+## Static widget renderable accessor (2026-04-27)
+
+`Static(content)` stores its content at `_Static__content` (Python `__content` name-mangling), NOT `widget.renderable`. Tests that need to read back the rendered Text without a running App must use `widget._Static__content`. `widget.render()` and `widget.visual` both raise `NoActiveAppError` outside `run_test`.
+
+## Static.remove() requires App context (2026-04-27)
+
+`Widget.remove()` walks up to the App via the message pump — raises `NoActiveAppError` on bare-instance test mocks. For tests that exercise unmount paths, mock `widget.remove = MagicMock()` after constructing the widget.
+
+## Threading.Event for daemon-thread / widget-mount synchronization (2026-04-28)
+
+When a daemon thread needs to call `app.query_one(SomeWidget)` shortly after app startup, it will race `OutputPanel.compose()`. The fix: add a module-level `threading.Event` set in the widget's `on_mount` and cleared in `on_unmount`. The daemon thread calls `event.wait(timeout=N)` before any `query_one`. This is the canonical pattern for this class of pre-mount race in hermes (same defect class as R1-H-2 LiveLineWidget race).
+
+- `import threading as _threading` must be in the **top-level imports** of the widget module, not inline near the class definition (linters flag out-of-order imports).
+- The module-level constant (`STARTUP_BANNER_READY = _threading.Event()`) should live immediately before the class definition.
+- Tests must include an `autouse` fixture that calls `event.clear()` before and after each test to prevent module-level state from leaking between tests.
+
+## Textual default `Widget.render()` repr leak under real PTY (2026-04-28)
+
+Widgets with an empty `compose()` (children mounted dynamically in an `activate()` method) can emit their class-id-CSS-classes string as visible text during a transient CSS-class-transition frame under a real PTY. Textual's default `Widget.render()` fallback fires before cascaded `display: none` resolves for the new class set.
+
+- Captured in round-5 tmux audit (`tmux_B_80x24.txt` line 3) as `ThinkingWidget#thinking.--reserved.--fading`.
+- **Safe pattern**: always override `render()` to return `RichText("")` for any widget whose `compose()` yields nothing and all visuals come from dynamically-mounted children.
+- Bug is **invisible to Pilot** — only tmux/real-PTY harness surfaces it. Validates dual-harness audit procedure.
+- Fix: `hermes_cli/tui/widgets/thinking.py` — `render()` always returns `RichText("")`.
+
+## call_from_thread receives async function, not coroutine (2026-04-28)
+
+`app.call_from_thread(_drain_latest)` passes the **async function object**, not a coroutine. When capturing it in tests via `mock_app.call_from_thread.side_effect = _capture`, `captured_fns[0]` is the function. To run it in tests: `asyncio.run(captured_fns[0]())` — the extra `()` call creates the coroutine.
+
+## patch("cli.logger") scope: run asyncio coroutines inside the with-block (2026-04-28)
+
+`_drain_latest` resolves `logger` via `cli` module globals at call time. If `asyncio.run(coro())` is called **after** the `with patch("cli.logger"):` block closes, the logger has been restored and the mock captures nothing. Always run test coroutines inside the `with patch(...)` block.

@@ -10,6 +10,11 @@ For durable project-specific context that should survive across sessions, use
 Keep `docs/project-memory.md` as the repo-local mirror for important project
 context that should travel with the repository.
 
+For Codex sessions, also keep
+`~/.codex/memories/hermes-agent-project-memory.md` synchronized with the same
+project-memory index so the same durable context is available outside this
+repository checkout.
+
 ## Project Directory
 
 ```bash
@@ -35,15 +40,28 @@ source venv/bin/activate  # ALWAYS activate before running Python
   with Snyk Agent Scan first. Do not install it unless the scan returns safe.
 - After every implementation that touches TUI code, update the
   `tui-development` skill files before closing the task:
-  `~/.claude/skills/tui-development/SKILL.md` and any relevant reference files
-  inside that skill directory.
+  `skills/tui-development/SKILL.md` and any relevant reference files inside
+  that skill directory. When syncing from the source skill, copy-replace from
+  `~/.claude/skills/tui-development/` into the repo-local skill directory.
 - TUI skill updates must capture reusable details such as new APIs or methods,
   changed behavior, gotchas hit during implementation, non-obvious test
   patterns, module-level constants or maps, changed dispatch logic,
   Rich/Textual API quirks, and mocking patterns.
 - Update memory files under `~/.claude/projects/.../memory/` when a TUI change
   creates durable project context, including spec entries and reusable feedback
-  entries.
+  entries. Mirror the resulting memory index into `~/.hermes/project-memory.md`,
+  `docs/project-memory.md`, and
+  `~/.codex/memories/hermes-agent-project-memory.md`.
+
+### Agents / subagents
+
+- Do not spawn Agent tool subagents unless the user explicitly approves it in
+  the current turn. Describe the plan and ask first.
+- If subagents are approved, keep each delegated task concrete and scoped to a
+  disjoint file or responsibility. Prefer inheriting the current model unless a
+  stronger model is explicitly requested or clearly needed.
+- Do not carry over more permissive subagent policies from other agent-specific
+  instruction files into Codex sessions.
 
 ### Specs
 
@@ -76,22 +94,125 @@ source venv/bin/activate  # ALWAYS activate before running Python
   repo. Run only targeted TUI test files relevant to the changed modules.
 - Example TUI test targets: changes to `drawbraille_overlay.py` should use
   `test_anim_overlay.py` and `test_drawille_v2.py`; changes to `tool_blocks/`
-  should use `test_tool_blocks.py` and `test_tool_panel.py`; changes to
-  `app.py` should use `test_app.py` if it exists, not the whole TUI suite.
+  should use `test_tool_blocks.py`, `test_tool_panel.py`, and
+  `test_invariants.py`; changes to `tool_panel/` should use
+  `test_tool_panel.py`, `test_density_resolver.py`, and `test_invariants.py`;
+  changes to `body_renderers/` should use
+  `test_tool_body_renderer_regression.py`,
+  `test_renderer_registry_streaming.py`, and `test_invariants.py`; changes to
+  `services/tools.py`, `services/plan_sync.py`, or `services/feedback.py`
+  should use `test_tool_call_state_machine.py`,
+  `test_tool_call_lifecycle_regression.py`, and `test_invariants.py`; changes
+  to `app.py` should use `test_app.py` if it exists, not the whole TUI suite.
 - If no relevant test file exists yet, use an import check as the fallback:
   `python3 -c "from hermes_cli.tui.xxx import Foo; print('OK')"`
 - Use `pytest path/to/test.py::TestClass::test_name` to verify an individual
   fix.
-- If a full suite is truly needed, use a timeout of at least 1200000 ms and run
-  it in the background.
+- If a non-TUI full suite is truly needed, use a timeout of at least 1200000 ms
+  and run it in the background.
 - Use one discovery run to collect failures, fix the full batch, then run one
   verification pass. Use targeted single-test runs between those passes instead
   of rerunning whole suites repeatedly.
+
+### Tool call system
+
+`docs/concept.md` is the canonical concept note for the tool call system:
+PHASE x KIND x DENSITY, plus surrounding surfaces such as PHASE transitions,
+ToolGroup/PlanSyncBroker, feedback contract, error recovery, hint pipeline, and
+user overrides.
+
+- Always read `docs/concept.md` before working on `tool_blocks/`,
+  `tool_panel/`, `body_renderers/`, `services/tools.py`,
+  `services/plan_sync.py`, `services/feedback.py`, or the renderer registry.
+- Use the frame's vocabulary in specs and reviews, including questions such as
+  which axis a change touches and whether the change is vocabulary or resolver
+  work.
+- Suggest `docs/concept.md` updates when implementation drifts from the doc,
+  when a new surface needs naming, or when the frame stops fitting cleanly.
+  Flag drift to the user; do not edit the concept doc silently.
+
+#### Concept doc freeze
+
+`docs/concept.md` is frozen at v3.6 through May 11, 2026. During the freeze:
+
+- Allowed: typo fixes, broken cross-reference fixes, factual corrections, and
+  changelog entries that describe implementation work closing existing clauses.
+- Rejected: new clauses, new contract surfaces, new perception budgets, new
+  channel rules, new axis values, new role catalogue entries, new redundant
+  signal rows, or a version bump to v3.7 or higher.
+- Redirect new clause requests to
+  `/home/xush/.hermes/tool_block_convergence_plan.md`.
+
+#### Tool block definition of done
+
+The tool block subsystem is done, and auditing should stop, only when all four
+conditions hold simultaneously for 14 consecutive days:
+
+- `tests/tui/test_invariants.py` passes on every PR touching `tool_blocks/`,
+  `tool_panel/`, `body_renderers/`, `services/tools.py`,
+  `services/plan_sync.py`, or `services/feedback.py`.
+- `docs/concept.md` has no edits other than typo fixes and changelog entries.
+- Targeted tests for the owner paths are green on every PR, with no skipped or
+  xfail-tagged tests.
+- Audit produces at most 3 MED issues and 0 HIGH issues against the frozen
+  concept.
+
+When all four hold, close `/home/xush/.hermes/tool_block_convergence_plan.md`.
+Re-open only when targeted tests fail or the concept intentionally bumps to
+v3.7.
+
+#### UX audit freeze
+
+UX audit Specs A-F under
+`/home/xush/.hermes/2026-04-28-ux-audit-{A,B,C,D,E,F}-*-spec.md` own a set of
+cross-cutting design surfaces. While any of these specs is still DRAFT or
+APPROVED, the surfaces below are soft-frozen; unrelated PRs touching them are
+review blocks:
+
+| Surface | Owner spec | Lift freeze when |
+|---|---|---|
+| New skin tokens (`$*-accent`, opacity rule for category accents) | A (A3, A4) | Spec A is IMPLEMENTED |
+| TCSS category-accent opacity values and documentation comment | A (A4) | Spec A is IMPLEMENTED |
+| `_DROP_ORDER_*` constants in `tool_panel/layout_resolver.py` | B (B1) | Spec B is IMPLEMENTED |
+| Footer-visibility branch in `layout_resolver.py` | B (B2) | Spec B is IMPLEMENTED |
+| `_remediation_hint` field on `ToolHeader` and remediation lookup table | C (C1) | Spec C is IMPLEMENTED |
+| Hardcoded key literals (`^C`, `^Z`, Enter, Tab, Space) in hint composers | E (E4) | Spec E is IMPLEMENTED |
+| Focus-ring CSS pattern on overlays and ToolPanel | F (F7) | Spec F is IMPLEMENTED |
+
+Allowed during the freeze: bug fixes inside the owning spec's scope, read-only
+references to frozen surfaces, and tests that exercise frozen surfaces.
+
+Rejected during the freeze: new skin tokens that bypass A4's opacity tier rule,
+new `_DROP_ORDER_*` entries outside Spec B, new key-literal hint strings
+outside E4 constants, and ad-hoc focus-ring CSS rules that diverge from F7's
+focus-highlight pattern.
 
 ### Code quality
 
 - Every `except` block must re-raise, log with `exc_info=True`, or include an
   explicit comment explaining why swallowing the exception is correct.
+- `except Exception: pass` is always wrong. Narrow `except SomeType: pass` is
+  acceptable only when that type is the only expected failure mode and
+  swallowing is genuinely correct.
+- `@work(thread=True)` bodies must wrap top-level logic in a `try`/`except`
+  that logs, because worker exceptions are otherwise easy to miss.
+- User-facing "see log for details" messages require the enclosing exception
+  path to call `_log.exception(...)` or an equivalent full-traceback log.
+- Every module that catches recoverable exceptions must define
+  `import logging` and `_log = logging.getLogger(__name__)` at module top.
+- Use `_log.exception(...)` or `_log.error(..., exc_info=True)` for unexpected
+  errors, `_log.warning(...)` for expected-but-recoverable failures that leave
+  inconsistent state, and `_log.debug(...)` for teardown or best-effort
+  failures where partial failure is acceptable.
+
+### Quality bar
+
+- Each spec issue section must include the problem with file and line, the
+  exact fix, a behavior table when multiple cases exist, and named tests with
+  expected assertions.
+- Avoid vague language such as "handle X" or "improve Y"; each fix must be
+  precise enough to implement without guessing.
+- Add an implementation order section when issues depend on each other.
 
 ## Project Structure
 

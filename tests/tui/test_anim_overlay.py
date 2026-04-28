@@ -1303,3 +1303,42 @@ class TestPhaseFv2:
         assert hasattr(cfg, "position_margin")
         assert hasattr(cfg, "rail_width")
         assert hasattr(cfg, "rail_output_margin")
+
+
+class TestThinkingWidgetReprLeak:
+    """R5-T-M1: ThinkingWidget.render() must never emit default-repr text."""
+
+    def _make_widget(self):
+        from hermes_cli.tui.widgets.thinking import ThinkingWidget
+        return ThinkingWidget()
+
+    def test_render_returns_empty_text_when_inactive(self):
+        w = self._make_widget()
+        from rich.text import Text as RichText
+        result = w.render()
+        assert isinstance(result, RichText)
+        assert result.plain == ""
+
+    def test_render_returns_empty_text_in_reserved_fading_substate(self):
+        w = self._make_widget()
+        w.add_class("--reserved", "--fading")
+        from rich.text import Text as RichText
+        result = w.render()
+        assert isinstance(result, RichText)
+        assert result.plain == ""
+
+    def test_render_returns_empty_text_when_active(self):
+        w = self._make_widget()
+        w.add_class("--active", "--mode-default")
+        from rich.text import Text as RichText
+        result = w.render()
+        assert isinstance(result, RichText)
+        assert result.plain == ""
+
+    def test_render_does_not_emit_widget_classname(self):
+        w = self._make_widget()
+        w.add_class("--reserved", "--fading")
+        result = w.render()
+        rendered_str = str(result)
+        assert "ThinkingWidget" not in rendered_str
+        assert "--reserved" not in rendered_str

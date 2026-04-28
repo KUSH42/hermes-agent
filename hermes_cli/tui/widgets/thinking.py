@@ -326,6 +326,17 @@ _LabelLine   { height: 1;   width: 1fr; }
         return
         yield  # make it a generator
 
+    def render(self):
+        """Return empty Text always.
+
+        Why: during --reserved.--fading transition Textual may briefly invoke
+        the default Widget.render() repr fallback before cascaded `display: none`
+        resolves under a real PTY (R5-T-M1). ThinkingWidget itself never has
+        visible content — all visuals come from _AnimSurface / _LabelLine children.
+        """
+        from rich.text import Text as RichText  # noqa: PLC0415
+        return RichText("")
+
     def on_mount(self) -> None:
         """Pre-warm config cache during app startup (D-7)."""
         self._load_config()

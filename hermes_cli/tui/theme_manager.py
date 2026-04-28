@@ -357,6 +357,7 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     "tool-tier-browse-accent":  "#0178D4",
     "tool-tier-mcp-accent":     "#9b59b6",
     "tool-tier-thinking-accent": "#0178D4",  # pseudo-tier: reasoning blocks
+    "reasoning-accent":          "#0178D4",  # ReasoningPanel gutter (Primary tier)
     "tool-tier-tooling-accent":  "#0178D4",  # pseudo-tier: meta/sub-agent calls
     "tool-tier-file-accent":     "#4DB6AC",  # file-type tier accent
     "tool-tier-query-accent":    "#64B5F6",  # query-type tier accent

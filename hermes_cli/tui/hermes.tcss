@@ -57,6 +57,7 @@ $tool-tier-search-accent:   #0178D4;
 $tool-tier-shell-accent:    #81C784;
 $tool-tier-browse-accent:   #0178D4;
 $tool-tier-thinking-accent: #0178D4;
+$reasoning-accent:          #0178D4;
 $tool-tier-tooling-accent:  #0178D4;
 $error-timeout: #f59e0b;
 /* Browse mode visual marker colors */
@@ -202,7 +203,8 @@ MessagePanel.--entering {
 
 ReasoningPanel {
     margin: 0 2;
-    border-left: vkey $tool-tier-thinking-accent 40%;
+    /* 60% = Primary tier — see category accent opacity rule */
+    border-left: vkey $reasoning-accent 60%;
 }
 
 /* Hover affordance on closeable reasoning panels */
@@ -339,19 +341,20 @@ UndoConfirmOverlay {
 
 #input-chevron {
     color: $chevron-base;
+    opacity: 0.55;
     width: 2;
     height: auto;
     min-height: 1;
     content-align: left top;
-    transition: color 0.2s in_out_cubic;
+    transition: color 200ms in_out_cubic, opacity 200ms in_out_cubic;
 }
 
-/* Chevron phase colours — set by _set_chevron_phase() */
-#input-chevron.--phase-file   { color: $chevron-file; }
-#input-chevron.--phase-stream { color: $chevron-stream; }
-#input-chevron.--phase-shell  { color: $chevron-shell; }
-#input-chevron.--phase-done   { color: $chevron-done; }
-#input-chevron.--phase-error  { color: $chevron-error; }
+/* Chevron phase colours + opacity — set by _set_chevron_phase() */
+#input-chevron.--phase-file   { color: $chevron-file;   opacity: 0.85; }
+#input-chevron.--phase-stream { color: $chevron-stream; opacity: 0.85; }
+#input-chevron.--phase-shell  { color: $chevron-shell;  opacity: 0.85; }
+#input-chevron.--phase-done   { color: $chevron-done;   opacity: 0.55; }
+#input-chevron.--phase-error  { color: $chevron-error;  opacity: 1.0; }
 /* Yolo mode — persistent warning tint; coexists with phase classes */
 #input-chevron.--yolo-active  { color: $chevron-error; }
 /* Bash-passthrough mode indicator */
@@ -802,14 +805,22 @@ OmissionBar Button.--at-default { color: $text-muted 50%; }
  * Do not add a separate accent rail widget; category-* and tool-panel--error are
  * the single visual state source for category and error emphasis. */
 
+/*
+ * Category accent opacity is tiered by user-action criticality:
+ *   80%  Critical paths — file write/read, shell exec, vision
+ *   60%  Primary work — web/mcp tool calls, code edits
+ *   40%  Utility surfaces — search lookups, agent dispatches
+ * Error state uses tool-panel--error (not a category). New category?
+ * Match the action's blast radius, not its frequency.
+ */
 ToolPanel.tool-panel--accent                 { border-left: vkey $accent 30%; }
 ToolPanel.category-file.tool-panel--accent   { border-left: vkey $accent 80%; }
 ToolPanel.category-shell.tool-panel--accent  { border-left: vkey $warning 80%; }
-ToolPanel.category-code.tool-panel--accent   { border-left: vkey $primary 80%; }
-ToolPanel.category-search.tool-panel--accent { border-left: vkey $primary 60%; }
-ToolPanel.category-web.tool-panel--accent    { border-left: vkey $success 80%; }
+ToolPanel.category-code.tool-panel--accent   { border-left: vkey $primary 60%; }
+ToolPanel.category-search.tool-panel--accent { border-left: vkey $primary 40%; }
+ToolPanel.category-web.tool-panel--accent    { border-left: vkey $success 60%; }
 ToolPanel.category-agent.tool-panel--accent  { border-left: vkey $accent 40%; }
-ToolPanel.category-mcp.tool-panel--accent    { border-left: vkey $tool-mcp-accent 80%; }
+ToolPanel.category-mcp.tool-panel--accent    { border-left: vkey $tool-mcp-accent 60%; }
 ToolPanel.category-vision.tool-panel--accent { border-left: vkey $tool-vision-accent 80%; }
 ToolPanel.tool-panel--error                  { border-left: vkey $error 80%; }
 /* --completed overrides category accent with success green; must come after category rules */
@@ -859,7 +870,7 @@ ToolHeader.result-empty                      { color: $text-muted; }
 .error-banner {
     color: $error;
     background: $error 10%;
-    border-left: vkey #cc3333 80%;
+    border-left: vkey $error 80%;
     padding: 0 1;
     height: auto;
     max-height: 3;

@@ -674,10 +674,7 @@ class HermesApp(App):
             yield AssistantNameplate(
                 id="nameplate",
                 name=getattr(self, "_nameplate_name", "Hermes"),
-                effects_enabled=getattr(self, "_nameplate_effects", True),
-                idle_effect=getattr(self, "_nameplate_idle_effect", "breathe"),
                 morph_speed=getattr(self, "_nameplate_morph_speed", 1.0),
-                glitch_enabled=getattr(self, "_nameplate_glitch", True),
             )
             yield HintBar(id="hint-bar")
         yield SessionBar(id="session-bar")

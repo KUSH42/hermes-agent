@@ -145,6 +145,7 @@ x-hermes:
     tool-tier-browse-accent: "#89b4fa"
     tool-tier-mcp-accent: "#cba6f7"
     tool-tier-thinking-accent: "#89b4fa"
+    reasoning-accent: "#89b4fa"
     tool-tier-tooling-accent: "#89b4fa"
 ---
 

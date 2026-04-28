@@ -837,8 +837,8 @@ class AssistantNameplate(Widget):
         self._active_style = Style.parse(f"bold {self._accent_hex}")
         # C-2: idle color as 25% accent tint toward text color
         self._idle_color_hex: str = _lerp_hex(self._text_hex, self._accent_hex, 0.25)
-        if not self._effects_enabled:
-            return
+        if self.styles.display == "none":
+            return  # hidden — skip animation setup; widget is paint-ready if display is later restored
         self._init_decrypt()
         self._timer = self.set_interval(1 / 30, self._advance)
         # A2: watch status_phase to pause/resume pulse

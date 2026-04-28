@@ -174,6 +174,7 @@ x-hermes:
     tool-tier-browse-accent: '#00d849'
     tool-tier-mcp-accent: '#9b59b6'
     tool-tier-thinking-accent: '#00d849'
+    reasoning-accent: '#00d849'
     tool-tier-tooling-accent: '#00d849'
   tool_prefix: │
   tool_icons:

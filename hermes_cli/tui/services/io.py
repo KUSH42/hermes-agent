@@ -93,6 +93,9 @@ class IOService(AppService):
                     app.query_one(ThinkingWidget).clear_reserve()
                 except NoMatches:
                     pass
+            _seq = getattr(app, "_perf_chunk_seq", 0) + 1
+            app._perf_chunk_seq = _seq
+            logger.debug("[STREAM-SEQ] seq=%d size=%d", _seq, len(chunk))
             try:
                 panel = app.query_one(OutputPanel)
                 panel.record_raw_output(chunk)

@@ -26,6 +26,7 @@ class WatchersService(AppService):
         self._phase_before_error: str = ""  # A1: phase saved before ERROR overlay
         self._compact_warn_flashed: bool = False  # A7-1: guard single warn flash per cycle
         self._last_compact_value: bool | None = None  # PERF-3: dedup guard (None forces first call through)
+        self._approval_state_seen: bool = False  # M-1: skip initial reactive fire-through
 
     # ------------------------------------------------------------------
     # Input change watchers
@@ -391,7 +392,11 @@ class WatchersService(AppService):
     def on_approval_state(self, value: "ChoiceOverlayState | None") -> None:
         from hermes_cli.tui.overlays import InterruptKind
         from hermes_cli.tui.overlays._adapters import make_approval_payload
-        _log.warning("on_approval_state ENTER value_set=%s", value is not None)
+        if value is None and not self._approval_state_seen:
+            _log.debug("on_approval_state: initial fire-through (no approval pending)")
+            return
+        self._approval_state_seen = True
+        _log.debug("on_approval_state: value_set=%s", value is not None)
         try:
             from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
             self.app.query_one(DrawbrailleOverlay).signal("waiting" if value is not None else "thinking")
@@ -413,7 +418,7 @@ class WatchersService(AppService):
             self.app.call_after_refresh(ov.focus)
             try:
                 region = getattr(ov, "region", None)
-                _log.warning(
+                _log.debug(
                     "on_approval_state: present returned display=%s visible_cls=%s region=%s "
                     "current_kind=%s queue_len=%s",
                     getattr(ov, "display", "?"),

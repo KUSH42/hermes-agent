@@ -890,7 +890,10 @@ class HermesApp(App):
         except Exception:
             logger.debug("clipboard cache prune failed on mount", exc_info=True)
         _mount_elapsed_ms = (_time.monotonic() - _mount_start) * 1000.0
-        logger.debug("[STARTUP] mount_ms=%.1f", _mount_elapsed_ms)
+        if _mount_elapsed_ms > 500.0:
+            logger.warning("[STARTUP] slow mount: mount_ms=%.1f (budget=500)", _mount_elapsed_ms)
+        else:
+            logger.debug("[STARTUP] mount_ms=%.1f", _mount_elapsed_ms)
 
     _RESIZE_DEBOUNCE_S: float = 0.06  # 60 ms
 

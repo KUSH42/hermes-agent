@@ -6,6 +6,7 @@ Architecture: specs/kitty-graphics-charts.md §4–§8.
 from __future__ import annotations
 
 import base64
+import errno
 import fcntl
 import io
 import logging
@@ -20,6 +21,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 _log = logging.getLogger(__name__)
+
+# Latches True after the first ioctl/termios failure. Subsequent probes skip
+# the syscall silently. Process-scoped; intentionally never reset at runtime.
+_tty_unavailable: bool = False
 
 import rich.color
 from rich.segment import Segment
@@ -185,8 +190,18 @@ def _apc_probe() -> bool:
             response += chunk.decode("ascii", errors="replace")
             rlist, _, _ = select.select([sys.stdin], [], [], 0.01)
         return ";OK" in response
-    except Exception:
-        _log.debug("kitty_graphics: kitty probe failed", exc_info=True)
+    except Exception as exc:
+        global _tty_unavailable
+        _exc_errno = getattr(exc, "errno", None)
+        if _exc_errno in (errno.ENOTTY, errno.EBADF, errno.EINVAL, 25):
+            if not _tty_unavailable:
+                _tty_unavailable = True
+                _log.info(
+                    "kitty_graphics: TTY unavailable (errno=%d); skipping further probes this process",
+                    _exc_errno,
+                )
+        else:
+            _log.debug("kitty_graphics: kitty probe failed", exc_info=True)
         return False
     finally:
         if old_settings is not None:
@@ -222,8 +237,18 @@ def _sixel_probe() -> bool:
             resp += chunk.decode("ascii", errors="replace")
             rlist, _, _ = select.select([sys.stdin], [], [], 0.01)
         return ";4;" in resp or resp.startswith("\x1b[?4;") or ";4c" in resp
-    except Exception:
-        _log.debug("kitty_graphics: sixel probe failed", exc_info=True)
+    except Exception as exc:
+        global _tty_unavailable
+        _exc_errno = getattr(exc, "errno", None)
+        if _exc_errno in (errno.ENOTTY, errno.EBADF, errno.EINVAL, 25):
+            if not _tty_unavailable:
+                _tty_unavailable = True
+                _log.info(
+                    "kitty_graphics: TTY unavailable (errno=%d); skipping further probes this process",
+                    _exc_errno,
+                )
+        else:
+            _log.debug("kitty_graphics: sixel probe failed", exc_info=True)
         return False
     finally:
         if old is not None:
@@ -307,14 +332,25 @@ _cell_px_cache: tuple[int, int] | None = None
 
 def _cell_px() -> tuple[int, int]:
     """Return (cell_width_px, cell_height_px)."""
-    try:
-        buf = b"\x00" * 8
-        result = fcntl.ioctl(1, _TIOCGWINSZ, buf)
-        ws_row, ws_col, ws_xpixel, ws_ypixel = struct.unpack("HHHH", result)
-        if ws_col > 0 and ws_row > 0 and ws_xpixel > 0 and ws_ypixel > 0:
-            return ws_xpixel // ws_col, ws_ypixel // ws_row
-    except Exception:
-        _log.debug("kitty_graphics._cell_px: TIOCGWINSZ ioctl failed", exc_info=True)
+    global _tty_unavailable
+    if not _tty_unavailable:
+        try:
+            buf = b"\x00" * 8
+            result = fcntl.ioctl(1, _TIOCGWINSZ, buf)
+            ws_row, ws_col, ws_xpixel, ws_ypixel = struct.unpack("HHHH", result)
+            if ws_col > 0 and ws_row > 0 and ws_xpixel > 0 and ws_ypixel > 0:
+                return ws_xpixel // ws_col, ws_ypixel // ws_row
+        except OSError as exc:
+            if exc.errno in (errno.ENOTTY, errno.EBADF, errno.EINVAL, 25):
+                _tty_unavailable = True
+                _log.info(
+                    "kitty_graphics: TTY unavailable (errno=%d); skipping further probes this process",
+                    exc.errno,
+                )
+            else:
+                _log.debug("kitty_graphics._cell_px: TIOCGWINSZ ioctl failed", exc_info=True)
+        except Exception:
+            _log.debug("kitty_graphics._cell_px: TIOCGWINSZ ioctl failed", exc_info=True)
 
     env = os.environ.get("HERMES_CELL_PX", "")
     if env:

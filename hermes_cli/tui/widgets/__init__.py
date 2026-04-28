@@ -30,6 +30,7 @@ import enum
 import logging
 import math
 import random as _random
+import threading as _threading
 import time
 from dataclasses import dataclass
 from dataclasses import field as _dc_field
@@ -659,6 +660,11 @@ class TTEWidget(Widget):
 # StartupBannerWidget
 # ---------------------------------------------------------------------------
 
+# Set when StartupBannerWidget enters on_mount. Producer threads (the CLI TTE
+# worker) wait on this before assuming query_one() will succeed.
+STARTUP_BANNER_READY = _threading.Event()
+
+
 class StartupBannerWidget(Static):
     """Lightweight inline startup banner host inside OutputPanel.
 
@@ -678,6 +684,13 @@ class StartupBannerWidget(Static):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(Text(""), **kwargs)
+
+    def on_mount(self) -> None:
+        STARTUP_BANNER_READY.set()
+
+    def on_unmount(self) -> None:
+        # Clear so a hot-reload or second App instance waits correctly.
+        STARTUP_BANNER_READY.clear()
 
     def set_frame(self, rich_text: Text) -> None:
         self.update(rich_text)

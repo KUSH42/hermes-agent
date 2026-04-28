@@ -55,6 +55,7 @@ try:
 except (ImportError, AttributeError):
     _STEADY_CURSOR = None
 import threading
+import concurrent.futures
 import queue
 import re as _re_cli
 import unicodedata as _unicodedata_cli
@@ -3481,13 +3482,25 @@ class HermesCLI:
 
         Called from the daemon startup thread.  All widget mutations go through
         app.call_from_thread.  StartupBannerWidget is pre-mounted in
-        OutputPanel.compose() so it is always queryable — no runtime mount needed.
+        OutputPanel.compose(); a threading.Event gate (STARTUP_BANNER_READY) ensures
+        the producer thread waits for compose() to complete before querying.
         """
         import threading as _threading
         from rich.text import Text
 
         app = _hermes_app
         if app is None:
+            return False
+
+        # Block until OutputPanel.compose has mounted StartupBannerWidget.
+        # Bounded: if it never mounts (e.g. non-TUI fallback mis-routed here),
+        # give up quietly rather than hang the daemon thread.
+        from hermes_cli.tui.widgets import STARTUP_BANNER_READY
+        if not STARTUP_BANNER_READY.wait(timeout=2.0):
+            logger.debug(
+                "TTE: StartupBannerWidget did not mount within 2s; "
+                "skipping animation (no-op)"
+            )
             return False
 
         from hermes_cli.tui.tte_runner import iter_frames
@@ -3502,11 +3515,14 @@ class HermesCLI:
         async def _drain_latest() -> None:
             import asyncio as _asyncio
             nonlocal latest_frame, update_in_flight
+            from textual.css.query import NoMatches
             from hermes_cli.tui.widgets import StartupBannerWidget
             try:
                 widget = app.query_one(StartupBannerWidget)
-            except Exception as exc:
-                logger.warning("TTE: StartupBannerWidget not found: %s", exc, exc_info=True)
+            except NoMatches:
+                # Banner unmounted between event set and frame drain (e.g. teardown).
+                # Recovered: STARTUP_BANNER_READY will be cleared by on_unmount.
+                logger.debug("TTE: StartupBannerWidget vanished mid-stream", exc_info=True)
                 with state_lock:
                     update_in_flight = False
                 return
@@ -3563,6 +3579,13 @@ class HermesCLI:
                 _sleep = _next_frame_t - time.monotonic()
                 if _sleep > 0:
                     time.sleep(_sleep)
+        except concurrent.futures.CancelledError:
+            # Recovered race: app teardown cancelled an in-flight call_from_thread
+            # future while the producer was still queueing frames. No data loss —
+            # the static banner write at the end is gated on rendered_any.
+            # Note: concurrent.futures.CancelledError != asyncio.CancelledError;
+            # call_from_thread wraps cancellation via concurrent.futures.Future.
+            logger.debug("TTE frame producer cancelled at teardown", exc_info=True)
         except Exception as exc:
             logger.warning("TTE frame error: %s", exc, exc_info=True)
 

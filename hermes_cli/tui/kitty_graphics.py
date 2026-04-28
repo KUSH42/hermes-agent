@@ -168,6 +168,9 @@ def _apc_probe() -> bool:
     Sets stdin to raw mode with 100 ms read timeout. Always restores cooked
     mode in a finally block.
     """
+    global _tty_unavailable
+    if _tty_unavailable:
+        return False  # latched at boot — skip ioctl
     import select
     import tty
     old_settings = None
@@ -191,7 +194,6 @@ def _apc_probe() -> bool:
             rlist, _, _ = select.select([sys.stdin], [], [], 0.01)
         return ";OK" in response
     except Exception as exc:
-        global _tty_unavailable
         _exc_errno = getattr(exc, "errno", None)
         if _exc_errno in (errno.ENOTTY, errno.EBADF, errno.EINVAL, 25):
             if not _tty_unavailable:
@@ -217,6 +219,9 @@ def _apc_probe() -> bool:
 
 def _sixel_probe() -> bool:
     """Send DA1 (Primary Device Attributes); return True if terminal reports Sixel."""
+    global _tty_unavailable
+    if _tty_unavailable:
+        return False  # latched at boot — skip ioctl
     import select
     import tty
     old = None
@@ -238,7 +243,6 @@ def _sixel_probe() -> bool:
             rlist, _, _ = select.select([sys.stdin], [], [], 0.01)
         return ";4;" in resp or resp.startswith("\x1b[?4;") or ";4c" in resp
     except Exception as exc:
-        global _tty_unavailable
         _exc_errno = getattr(exc, "errno", None)
         if _exc_errno in (errno.ENOTTY, errno.EBADF, errno.EINVAL, 25):
             if not _tty_unavailable:

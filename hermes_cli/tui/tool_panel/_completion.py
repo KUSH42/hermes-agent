@@ -443,8 +443,17 @@ class _ToolPanelCompletionMixin:
                         duration=0.5,
                         tone="success",
                     )
-                except Exception:  # FeedbackService unavailable (e.g. test harness); "done" flash is decorative
-                    pass
+                except KeyError:
+                    _log.debug(
+                        "tool-header channel missing for 'done' flash on panel id=%r — "
+                        "decorative; if seen post-fix this is an adoption re-registration desync",
+                        self.id,  # type: ignore[attr-defined]
+                    )
+                except Exception:
+                    _log.exception(
+                        "tool-header 'done' flash failed on panel id=%r",
+                        self.id,  # type: ignore[attr-defined]
+                    )
 
         self._update_kind_from_classifier(line_count)
 

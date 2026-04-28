@@ -3551,9 +3551,7 @@ class HermesCLI:
                         update_in_flight = False
                         return
                 widget.set_frame(frame)
-                # Yield to event loop so the idle event fires and Textual renders the
-                # frame before the future resolves and the daemon queues the next one.
-                await _asyncio.sleep(1.0 / 60)
+                await _asyncio.sleep(0)  # yield to event loop; producer deadline loop is the sole pacer
 
         def _queue_frame(rich_text: Text) -> None:
             nonlocal latest_frame, update_in_flight
@@ -3572,7 +3570,7 @@ class HermesCLI:
         _preflight = self._render_startup_banner_text(print_hero=True)
         _queue_frame(_preflight)
         _tte_start = time.monotonic()   # time imported at module level
-        _frame_interval = 1.0 / 60      # match tc.frame_rate set in iter_frames
+        _frame_interval = 1.0 / 60      # sole frame pacer; TTE's internal frame_rate is disabled
         _next_frame_t = time.monotonic()
 
         try:

@@ -155,8 +155,7 @@ def iter_frames(effect_name: str, text: str, skin=None, params: dict[str, object
             effect.effect_config.final_gradient_stops = tuple(color_cls(c) for c in gradient)
         tc = getattr(effect, "terminal_config", None)
         if tc:
-            from textual.constants import MAX_FPS
-            tc.frame_rate = MAX_FPS
+            tc.frame_rate = 0  # disable TTE's internal sleep; producer in cli.py paces via deadline loop
     except Exception:
         _log.debug("tte_runner: skin/gradient apply failed", exc_info=True)
 
@@ -311,8 +310,7 @@ def run_effect(effect_name: str, text: str, skin=None, params: dict[str, object]
                 print(f"  Using custom colors from config params")
         tc = getattr(effect, "terminal_config", None)
         if tc:
-            from textual.constants import MAX_FPS
-            tc.frame_rate = MAX_FPS
+            tc.frame_rate = 0  # disable TTE's internal sleep; producer in cli.py paces via deadline loop
     except Exception:
         _log.debug("tte_runner.run_effect_inline: skin/gradient apply failed", exc_info=True)
         # skin failure is non-fatal; default TTE colours apply

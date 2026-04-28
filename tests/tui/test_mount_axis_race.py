@@ -218,7 +218,7 @@ class TestM6AppendStreamingLineGuards:
         assert result is None
 
     def test_append_streaming_line_writes_during_streaming(self):
-        """STREAMING view + live block → append_line + scroll scheduled."""
+        """STREAMING view + live block → append_line called and scroll attempted."""
         svc = _make_service()
         view = _make_view(state=ToolCallState.STREAMING)
         svc._tool_views_by_id["tid-1"] = view
@@ -231,7 +231,8 @@ class TestM6AppendStreamingLineGuards:
         svc.append_streaming_line("tid-1", "ok")
 
         block.append_line.assert_called_once_with("ok")
-        svc.app.call_after_refresh.assert_called()
+        # scroll_end_if_pinned is called directly (not via call_after_refresh)
+        panel_mock.scroll_end_if_pinned.assert_called()
 
 
 # ---------------------------------------------------------------------------

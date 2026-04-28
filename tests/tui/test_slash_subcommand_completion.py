@@ -205,6 +205,7 @@ async def test_subcommand_accept_inserts_into_correct_position():
         from hermes_cli.tui.completion_overlay import CompletionOverlay
         co = app.query_one(CompletionOverlay)
         co.add_class("--visible")
+        inp._completion_overlay_active = True  # _completion_overlay_visible() checks this flag
         clist = app.query_one(VirtualCompletionList)
         clist.items = [SlashCandidate(display="low", command="/reasoning low")]
         clist.highlighted = 0
@@ -246,6 +247,7 @@ async def test_subcommand_accept_replaces_existing_fragment():
         from hermes_cli.tui.completion_overlay import CompletionOverlay
         co = app.query_one(CompletionOverlay)
         co.add_class("--visible")
+        inp._completion_overlay_active = True  # _completion_overlay_visible() checks this flag
         clist = app.query_one(VirtualCompletionList)
         clist.items = [SlashCandidate(display="high", command="/reasoning high")]
         clist.highlighted = 0

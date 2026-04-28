@@ -424,8 +424,14 @@ class OutputPanel(ScrollableContainer):
         except Exception:
             # best-effort UI update; widget may not be mounted
             pass
-        # W-11: mount the scroll-state badge
-        self.mount(OutputPanelScrollBadge())
+        # W-11: mount the scroll-state badge before the live-output duo so the
+        # [ThinkingWidget, LiveLineWidget] suffix invariant is preserved.
+        badge = OutputPanelScrollBadge()
+        anchor = self._live_anchor()
+        if anchor is not None:
+            self.mount(badge, before=anchor)
+        else:
+            self.mount(badge)
 
     # W-9/W-11: gated scroll_end -----------------------------------------------
 

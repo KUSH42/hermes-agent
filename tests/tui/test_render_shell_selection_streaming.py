@@ -427,9 +427,9 @@ class TestPickRendererShell:
 
 class TestPickRendererLowConf:
     def test_low_conf_search_picked(self):
-        """SEARCH + 0.6 → SearchRenderer is returned (not Fallback)."""
+        """SEARCH + 0.6 → SearchRenderer (Phase C, non-streaming) is returned for DONE phase."""
         from hermes_cli.tui.body_renderers import pick_renderer
-        from hermes_cli.tui.body_renderers.streaming import StreamingSearchRenderer as SearchRenderer
+        from hermes_cli.tui.body_renderers.search import SearchRenderer
         from hermes_cli.tui.tool_payload import ResultKind
         from hermes_cli.tui.tool_category import ToolCategory
         from hermes_cli.tui.services.tools import ToolCallState
@@ -441,7 +441,7 @@ class TestPickRendererLowConf:
 
     def test_low_conf_disclosure_header(self):
         """SearchRenderer with _low_confidence_disclosed flag → first rendered line contains 'low confidence'."""
-        from hermes_cli.tui.body_renderers.streaming import StreamingSearchRenderer as SearchRenderer
+        from hermes_cli.tui.body_renderers.search import SearchRenderer
         from hermes_cli.tui.tool_payload import ResultKind
         from hermes_cli.tui.tool_category import ToolCategory
         payload = _make_payload(
@@ -456,7 +456,7 @@ class TestPickRendererLowConf:
 
     def test_high_conf_no_disclosure(self):
         """SearchRenderer with confidence 0.9 → no disclosure header."""
-        from hermes_cli.tui.body_renderers.streaming import StreamingSearchRenderer as SearchRenderer
+        from hermes_cli.tui.body_renderers.search import SearchRenderer
         from hermes_cli.tui.tool_payload import ResultKind
         from hermes_cli.tui.tool_category import ToolCategory
         payload = _make_payload(

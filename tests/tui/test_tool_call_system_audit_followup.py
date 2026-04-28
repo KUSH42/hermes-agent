@@ -502,6 +502,7 @@ class TestNameplateTiming:
     """TCS-MED-01: error hook, morph tick constant, static idle timer."""
 
     def _make_nameplate(self, effects_enabled=True):
+        from unittest.mock import MagicMock
         from hermes_cli.tui.widgets import AssistantNameplate
         np = AssistantNameplate.__new__(AssistantNameplate)
         np._timer = None
@@ -509,6 +510,10 @@ class TestNameplateTiming:
         np._effects_enabled = effects_enabled
         np._idle_fx = None
         np._idle_effect_name = "breathe"
+        np._idle_beat_min_s = 30.0
+        np._idle_beat_max_s = 61.0
+        np._idle_beat_timer = None
+        np.set_timer = MagicMock()
         return np
 
     def test_nameplate_error_set_uses_stop_timer(self):
@@ -659,6 +664,7 @@ class TestToolCardDensity:
         block._detected_cwd = None
         block._stream_started_at = None
         block._all_plain = []
+        block._truncated_line_count = 0
         block._header = MagicMock()
         block._header.add_class = MagicMock()
         block._body = MagicMock()

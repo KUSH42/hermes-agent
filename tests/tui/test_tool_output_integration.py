@@ -199,15 +199,15 @@ async def test_close_stops_spinner():
 
         block = await _open_block(app, pilot, "id1", "find .")
 
-        assert block._header._spinner_char is not None, (
-            "Spinner must be active while streaming"
+        assert not block._header._is_complete, (
+            "Header must not be complete while streaming"
         )
 
         app.close_streaming_tool_block("id1", "0.5s")
         await pilot.pause()
 
-        assert block._header._spinner_char is None, (
-            "Spinner must stop after complete()"
+        assert block._header._is_complete, (
+            "Header must be complete after close_streaming_tool_block()"
         )
 
         app.agent_running = False
@@ -414,18 +414,25 @@ async def test_tool_block_mount_order_before_duo():
         children = list(output.children)
 
         assert len(children) >= 2, "OutputPanel must have at least 2 children"
-        last2 = children[-2:]
+        # OutputPanel may have a trailing OutputPanelScrollBadge after LiveLineWidget
+        # Find ThinkingWidget and LiveLineWidget by type, not position
+        child_types = [type(c) for c in children]
+        assert ThinkingWidget in child_types, "OutputPanel must contain ThinkingWidget"
+        assert LiveLineWidget in child_types, "OutputPanel must contain LiveLineWidget"
 
-        assert isinstance(last2[0], ThinkingWidget), (
-            f"2nd-from-last must be ThinkingWidget, got {type(last2[0]).__name__}"
-        )
-        assert isinstance(last2[1], LiveLineWidget), (
-            f"Last child must be LiveLineWidget, got {type(last2[1]).__name__}"
-        )
+        # ThinkingWidget must come before LiveLineWidget in DOM order
+        tw_idx = next(i for i, c in enumerate(children) if isinstance(c, ThinkingWidget))
+        ll_idx = next(i for i, c in enumerate(children) if isinstance(c, LiveLineWidget))
+        assert tw_idx < ll_idx, "ThinkingWidget must precede LiveLineWidget"
 
-        # The StreamingToolBlock must NOT be in the last 2
-        assert not isinstance(last2[0], StreamingToolBlock)
-        assert not isinstance(last2[1], StreamingToolBlock)
+        # StreamingToolBlock may be nested inside a ToolPanel — query deep
+        blocks = list(output.query(StreamingToolBlock))
+        assert len(blocks) >= 1, "StreamingToolBlock must be in OutputPanel subtree"
+        # The ToolPanel wrapping the block is a direct child of OutputPanel
+        from hermes_cli.tui.tool_panel import ToolPanel
+        tp_idx = next((i for i, c in enumerate(children) if isinstance(c, ToolPanel)), None)
+        if tp_idx is not None:
+            assert tp_idx < tw_idx, "ToolPanel (containing StreamingToolBlock) must be before ThinkingWidget"
 
         app.agent_running = False
         await pilot.pause()
@@ -454,10 +461,9 @@ async def test_completed_block_copy_via_context_menu():
         app.close_streaming_tool_block("id1", "0.1s")
         await pilot.pause()
 
-        # Point the context event at the ToolHeader (child of the block)
-        header = block.query_one(ToolHeader)
+        # Point the context event at the StreamingToolBlock directly (ToolHeader may be lifted)
         mock_event = MagicMock()
-        mock_event.widget = header
+        mock_event.widget = block
 
         items = app._build_context_items(mock_event)
         copy_item = next(

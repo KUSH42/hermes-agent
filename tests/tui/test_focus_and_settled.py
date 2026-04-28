@@ -261,6 +261,7 @@ class TestSettledState:
         svc._channels = {"tool-header::x": _ChannelRecord(adapter=adapter)}
         svc._active = {}
         svc._counter = 0
+        svc._registering = set()
 
         # Need a scheduler for set_timer — provide a no-op
         class _FakeApp:
@@ -284,6 +285,7 @@ class TestSettledState:
         svc._channels = {"tool-header::x": _ChannelRecord(adapter=adapter)}
         svc._active = {}
         svc._counter = 0
+        svc._registering = set()
 
         # Mock scheduler used by flash() for timer
         class _FakeScheduler:

@@ -282,7 +282,8 @@ class TestOmissionBarResize:
         assert "_last_resize_w" in src
 
     def test_label_hidden_narrow(self):
-        # R15: label hidden at narrow widget width
+        # R15: label abbreviated (B4) at narrow widget width — not hidden,
+        # but update() called with short text.
         from hermes_cli.tui.tool_blocks import OmissionBar
 
         bar = MagicMock(spec=OmissionBar)
@@ -291,11 +292,17 @@ class TestOmissionBarResize:
         bar._label.display = True
         bar.size.width = 35  # on_resize uses self.size.width
         bar._narrow = False
+        # B4: on_resize reads _total/_visible_start/_visible_end to compute n_hidden
+        bar._total = 50
+        bar._visible_start = 0
+        bar._visible_end = 20  # n_hidden = 50 - 20 = 30 → label shows "↓30L↑"
 
         # Simulate crossing below THRESHOLD_NARROW
         OmissionBar.on_resize(bar, _make_size_event(35))
-        # After resize with clear crossing from 80→35, label should be hidden
-        assert bar._label.display is False
+        # After B4: label text is abbreviated, update() called (display not forced False)
+        bar._label.update.assert_called_once()
+        call_arg = bar._label.update.call_args[0][0]
+        assert "30" in call_arg, f"Expected abbreviated count in label; got: {call_arg!r}"
 
     def test_label_visible_wide(self):
         # R16: label visible at wide widget width

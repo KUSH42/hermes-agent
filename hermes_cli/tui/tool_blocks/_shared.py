@@ -445,6 +445,8 @@ def header_label_v4(
 
     if primary == "query":
         label_str = full_label
+        if _safe_cell_width(label_str) > available:
+            label_str = label_str[:max(1, available - 1)] + "…"
         query_val = str(args.get("query") or args.get("pattern") or "")
         t = Text()
         t.append(f" {label_str}", style="bold")

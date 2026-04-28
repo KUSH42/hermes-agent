@@ -247,6 +247,7 @@ class TestContextMenuActionFailure:
         menu._selected_index = -1
         menu._prev_focus = None
         menu._classes = set()  # DOMNode.__init__ sets this; __new__ skips it
+        menu._opener_browse_target = None  # set in __init__; __new__ skips it
         return menu
 
     def _make_item_widget(self, action_fn, label="Copy"):

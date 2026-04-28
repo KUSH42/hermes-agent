@@ -76,15 +76,15 @@ class TestSCT1MicrocopyStallSkin:
         assert any("yellow" in s for s in styles), f"expected 'yellow' in styles, got {styles}"
 
     def test_warning_glyph_routes_through_grammar(self):
-        """accessibility_mode=True → '!' replaces '⚠' in stall suffix (SHELL str path)."""
+        """accessibility_mode=True → '!' replaces '⚠' in stall suffix (SHELL path)."""
         spec = _spec(ToolCategory.SHELL)
         state = _state(lines_received=10, bytes_received=512, elapsed_s=3.0)
         with patch("hermes_cli.tui.constants.accessibility_mode", return_value=True):
             result = microcopy_line(spec, state, stalled=True)
-        # str fast-path (colors=None): legacy embedded warning unstyled
-        assert isinstance(result, str)
-        assert "! stalled?" in result
-        assert "⚠" not in result
+        # MCC-1: microcopy_line always returns Text; check .plain for content
+        assert isinstance(result, Text)
+        assert "! stalled?" in result.plain
+        assert "⚠" not in result.plain
 
     def test_no_stall_returns_no_warning_styling(self):
         """stalled=False, AGENT, with colors → no warning span."""
@@ -101,12 +101,13 @@ class TestSCT1MicrocopyStallSkin:
         assert not any("#ff8800" in s for s in styles)
 
     def test_str_fast_path_preserved(self):
-        """SHELL, stalled=False, colors=None → return type str (regression guard)."""
+        """SHELL, stalled=False, colors=None → returns Text with expected plain content."""
         spec = _spec(ToolCategory.SHELL)
         state = _state(lines_received=42, bytes_received=2048)
         result = microcopy_line(spec, state, stalled=False, colors=None)
-        assert isinstance(result, str)
-        assert result == "▸ 42 lines · 2.0kB"
+        # MCC-1: microcopy_line always returns Text (str fast-path removed)
+        assert isinstance(result, Text)
+        assert result.plain == "▸ 42 lines · 2.0kB"
 
 
 # ---------------------------------------------------------------------------

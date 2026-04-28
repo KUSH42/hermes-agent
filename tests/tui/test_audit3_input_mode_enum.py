@@ -24,6 +24,7 @@ def _make_inp(**kwargs) -> types.SimpleNamespace:
         disabled=False,
         _rev_mode=False,
         suggestion="",
+        _completion_overlay_active=False,
     )
     defaults.update(kwargs)
     inp = types.SimpleNamespace(**defaults)
@@ -101,8 +102,7 @@ class TestInputModeEnum:
     def test_mode_is_completion_when_overlay_visible(self):
         from hermes_cli.tui.input._mode import InputMode
         from hermes_cli.tui.input.widget import HermesInput
-        inp = _make_inp()
-        inp._completion_overlay_visible = lambda: True
+        inp = _make_inp(_completion_overlay_active=True)
         result = HermesInput._compute_mode(inp)
         assert result == InputMode.COMPLETION
 
@@ -283,6 +283,15 @@ class TestInputModeTransitions:
             def has_class(self, c):
                 return c in self._classes
 
+            def add_class(self, c):
+                self._classes.add(c)
+
+            def remove_class(self, c):
+                self._classes.discard(c)
+
+            def _refresh_placeholder(self):
+                pass
+
             def _compute_mode(self):
                 if self._rev_mode:
                     return InputMode.REV_SEARCH
@@ -322,6 +331,16 @@ class TestInputModeTransitions:
             _set_mode_calls: list = []
             app = MagicMock()
             _history_idx = -1
+            _classes: set = set()
+
+            def has_class(self, c):
+                return c in self._classes
+
+            def add_class(self, c):
+                self._classes.add(c)
+
+            def remove_class(self, c):
+                self._classes.discard(c)
 
             def _compute_mode(self):
                 return InputMode.NORMAL

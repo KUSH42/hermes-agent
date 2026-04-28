@@ -201,7 +201,7 @@ def test_post_complete_tidy_called_via_call_after_refresh():
 
 
 def test_post_complete_tidy_error_expands():
-    """E1: _post_complete_tidy with is_error=True forces collapsed=False."""
+    """E1: set_result_summary with is_error=True forces collapsed=False (sole writer for errors)."""
     from hermes_cli.tui.tool_result_parse import ResultSummaryV4
 
     panel, app_mock = _make_panel_with_cfg(auto_mini=False)
@@ -210,7 +210,7 @@ def test_post_complete_tidy_error_expands():
     summary = ResultSummaryV4(primary=None, is_error=True, exit_code=1, stderr_tail="", chips=(), actions=(), artifacts=())
 
     with patch.object(type(panel), "app", new_callable=PropertyMock, return_value=app_mock):
-        panel._post_complete_tidy(summary)
+        panel.set_result_summary(summary)
 
     assert panel.collapsed is False
 

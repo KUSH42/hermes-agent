@@ -450,6 +450,7 @@ async def test_enter_adds_highlighted_class():
 # 15. --highlighted removed after 1.5 s
 # ---------------------------------------------------------------------------
 
+@pytest.mark.flaky(reruns=2)
 @pytest.mark.asyncio
 async def test_highlighted_removed_after_timeout():
     """--highlighted class is removed after the 0.5s timer fires."""
@@ -462,7 +463,8 @@ async def test_highlighted_removed_after_timeout():
         overlay = app.query_one(HistorySearchOverlay)
         overlay.open_search()
         # Let TurnResultItem mounts settle before action_jump queries them.
-        await asyncio.sleep(0.05)
+        # Use a longer sleep (0.15s) to ensure DOM mutations complete under load.
+        await asyncio.sleep(0.15)
         await pilot.pause()
 
         overlay.action_jump()

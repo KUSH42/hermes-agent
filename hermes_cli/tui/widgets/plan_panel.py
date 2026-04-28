@@ -14,9 +14,12 @@ TCSS vars required (must also be in hermes.tcss and all skin files):
 """
 from __future__ import annotations
 
+import logging
 import os
 import time
 from typing import TYPE_CHECKING, Any
+
+_log = logging.getLogger(__name__)
 
 from rich.text import Text as RichText
 from textual import events
@@ -120,11 +123,9 @@ class _PlanEntry(Static, can_focus=True):
             event.stop()
         elif event.key == "escape":
             try:
-                from hermes_cli.tui.input_widget import HermesInput as _HI
-                self.app.query_one(_HI).focus()
+                self.app.query_one("#input-area").focus()
             except Exception:
-                # plan data parse failed; panel renders with empty plan
-                pass
+                _log.warning("_PlanEntry escape: could not focus #input-area", exc_info=True)
             event.stop()
 
     def _jump(self) -> None:

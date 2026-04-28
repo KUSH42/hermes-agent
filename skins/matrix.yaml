@@ -119,6 +119,10 @@ component_vars:
   tool-tier-mcp-accent: '#9b59b6'
   tool-tier-thinking-accent: '#00d849'
   tool-tier-tooling-accent: '#00d849'
+  reasoning-accent: '#00d849'
+  tool-tier-agent-accent: '#cc44ff'
+  tool-tier-file-accent: '#00cc88'
+  tool-tier-query-accent: '#00bbee'
 description: "The Matrix \u2014 dark void and hacker green phosphor"
 diff:
   addition_bg: '#0a2a14'

@@ -556,12 +556,13 @@ async def test_status_bar_running_label_right_anchored():
         app.status_model = "m"
         app.status_context_tokens = 0
         app.status_context_max = 128_000
+        app.status_cwd = ""  # CWD-1: suppress cwd prefix so model is left-anchored
         await pilot.pause()
 
         bar = app.query_one(StatusBar)
         with patch.object(type(bar), "size", new_callable=PropertyMock, return_value=Size(80, 1)):
             rendered = str(bar.render())
-        # Model name should be left-anchored; padding fills the rest to 80 cols
+        # Model name should be left-anchored when cwd is empty; padding fills the rest to 80 cols
         model_pos = rendered.find("m")
         assert model_pos < 5, f"Model too far right: pos {model_pos} in {rendered!r}"
         assert len(rendered) >= 78, f"Render too short: {len(rendered)!r}"

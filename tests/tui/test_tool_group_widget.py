@@ -18,6 +18,7 @@ from hermes_cli.tui.tool_group import (
     RULE_DIFF_ATTACH,
     RULE_SEARCH_OPEN,
     RULE_SHELL_PIPE,
+    RULE_SHELL_BATCH,
     RULE_SEARCH_BATCH,
     _find_rule_match,
     _is_streaming,
@@ -130,7 +131,11 @@ def test_t02_rule2_search_open():
 
 
 def test_t03_rule3_shell_pipe():
-    """Rule 3: two SHELL panels within 250ms → RULE_SHELL_PIPE."""
+    """Rule 3: two SHELL panels within 250ms without pipe operator → RULE_SHELL_BATCH.
+
+    RULE_SHELL_PIPE requires a pipeline operator (|, &&, ||, ;) in the command.
+    Without operators, temporal proximity produces RULE_SHELL_BATCH instead.
+    """
     from hermes_cli.tui.tool_panel import ToolPanel as _TP
     from hermes_cli.tui.tool_category import ToolCategory
 
@@ -151,6 +156,38 @@ def test_t03_rule3_shell_pipe():
         patch("hermes_cli.tui.tool_group._is_diff_panel", return_value=False),
         patch("hermes_cli.tui.tool_group._get_effective_tp_siblings", return_value=[shell1]),
         patch("hermes_cli.tui.tool_group._get_header_label", return_value="ls"),
+    ):
+        mp = MagicMock()
+        result = _find_rule_match(mp, shell2)
+
+    assert result is not None
+    # No pipeline operator in "ls" → temporal cluster only = RULE_SHELL_BATCH
+    assert result[1] == RULE_SHELL_BATCH
+
+
+def test_t03b_rule3_shell_pipe_with_operator():
+    """Rule 3: two SHELL panels within window with pipe operator → RULE_SHELL_PIPE."""
+    from hermes_cli.tui.tool_panel import ToolPanel as _TP
+    from hermes_cli.tui.tool_category import ToolCategory
+
+    now = time.monotonic()
+    shell1 = MagicMock(spec=_TP)
+    shell1._category = ToolCategory.SHELL
+    shell1._start_time = now
+    shell1.parent = MagicMock()
+    shell1.is_attached = True
+
+    shell2 = MagicMock(spec=_TP)
+    shell2._category = ToolCategory.SHELL
+    shell2._start_time = now + 0.1  # 100ms
+    shell2.parent = MagicMock()
+    shell2.is_attached = True
+
+    # Use a label with a pipe operator so has_operator is True
+    with (
+        patch("hermes_cli.tui.tool_group._is_diff_panel", return_value=False),
+        patch("hermes_cli.tui.tool_group._get_effective_tp_siblings", return_value=[shell1]),
+        patch("hermes_cli.tui.tool_group._get_header_label", return_value="ls | grep foo"),
     ):
         mp = MagicMock()
         result = _find_rule_match(mp, shell2)

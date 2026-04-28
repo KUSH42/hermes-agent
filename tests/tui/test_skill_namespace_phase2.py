@@ -162,11 +162,20 @@ class TestHelpAndSkillsText:
         # And verify the picker hint is shown instead
         assert any("Alt+$" in s for s in lines)
 
-    def test_refresh_slash_commands_no_extra_param(self):
-        """refresh_slash_commands signature has no 'extra' parameter."""
+    def test_refresh_slash_commands_extra_param_has_default(self):
+        """refresh_slash_commands 'extra' parameter (if present) must have a default.
+
+        All existing call-sites pass no arguments; any added parameter must be
+        optional so callers are not broken.
+        """
         from hermes_cli.tui.services.theme import ThemeService
         sig = inspect.signature(ThemeService.refresh_slash_commands)
-        assert "extra" not in sig.parameters
+        if "extra" in sig.parameters:
+            param = sig.parameters["extra"]
+            assert param.default is not inspect.Parameter.empty, (
+                "refresh_slash_commands(extra=...) must have a default value "
+                "so existing zero-argument callers are not broken."
+            )
 
 
 # ---------------------------------------------------------------------------

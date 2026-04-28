@@ -15,9 +15,11 @@ from hermes_cli.tui.tool_payload import ResultKind
 
 
 def _make_panel(tool_name: str = "bash") -> ToolPanel:
+    from hermes_cli.tui.tool_panel.density import DensityTier
     block_mock = MagicMock()
     block_mock._total_received = 0
     block_mock._all_plain = []
+    block_mock._tail = None  # prevent MagicMock truthy early-return in action_toggle_collapse
     panel = ToolPanel(block=block_mock, tool_name=tool_name)
     panel._body_pane = MagicMock()
     panel._body_pane.display = True
@@ -25,6 +27,28 @@ def _make_panel(tool_name: str = "bash") -> ToolPanel:
     panel._footer_pane.display = False
     panel.add_class = MagicMock()
     panel.remove_class = MagicMock()
+    panel._view_state = None
+    panel._flash_header = MagicMock()
+
+    # Wire resolver stub so action_toggle_collapse updates collapsed correctly.
+    class _FakeResolver:
+        def __init__(self):
+            self._subscribers = []
+
+        @property
+        def tier(self):
+            return DensityTier.COMPACT if panel.collapsed else DensityTier.DEFAULT
+
+        def resolve(self, inputs):
+            target = inputs.user_override_tier
+            panel.collapsed = (target == DensityTier.COMPACT)
+            panel._auto_collapsed = False
+            return target
+
+        def subscribe(self, cb):
+            self._subscribers.append(cb)
+
+    panel._resolver = _FakeResolver()
     return panel
 
 
@@ -229,7 +253,7 @@ def test_enter_in_bindings():
     assert "enter" in binding_keys
 
 
-def test_c_copy_in_bindings():
-    """ToolPanel bindings include c for copy."""
+def test_y_copy_in_bindings():
+    """ToolPanel bindings include y for copy_body (was 'c' in older versions)."""
     binding_keys = {b.key for b in ToolPanel.BINDINGS}
-    assert "c" in binding_keys
+    assert "y" in binding_keys

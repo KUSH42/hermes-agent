@@ -748,6 +748,7 @@ class _ToolPanelActionsMixin:
         import time as _time
         self._maybe_show_discovery_hint()  # type: ignore[attr-defined]
         self._refresh_collapsed_strip()  # type: ignore[attr-defined]
+        self._refresh_action_row_display()  # type: ignore[attr-defined]
         now = _time.monotonic()
         last_shown = getattr(self, "_toggle_hint_shown_at", 0.0)
         if now - last_shown < TOGGLE_HINT_RESHOW_SECONDS:
@@ -762,6 +763,47 @@ class _ToolPanelActionsMixin:
 
     def on_blur(self) -> None:
         self._refresh_collapsed_strip()  # type: ignore[attr-defined]
+        self._refresh_action_row_display()  # type: ignore[attr-defined]
+
+    def on_descendant_focus(self) -> None:
+        """Show action row when any child widget receives focus (focus-within)."""
+        self._refresh_action_row_display()  # type: ignore[attr-defined]
+
+    def on_descendant_blur(self) -> None:
+        """Hide action row when all descendants lose focus (focus-within lost)."""
+        self._refresh_action_row_display()  # type: ignore[attr-defined]
+
+    def _refresh_action_row_display(self) -> None:
+        """Programmatic fallback for :focus-within — Textual does not always propagate
+        CSS re-evaluation to deeply nested descendants when pseudo-class state changes.
+        We drive action-row visibility explicitly to complement the CSS rule.
+
+        NOTE: on_blur fires BEFORE Widget._on_blur (MRO order), so self.has_focus is
+        still True when we're called from on_blur.  Use app.focused to get the
+        authoritative post-transition focused widget instead.
+        """
+        from textual.css.query import NoMatches
+        try:
+            footer = self.query_one("FooterPane")  # type: ignore[attr-defined]
+        except NoMatches:
+            return
+        if not footer.has_class("has-actions"):
+            return
+        try:
+            action_row = footer.query_one(".action-row")
+        except NoMatches:
+            return
+        # Show when panel or any descendant currently holds focus.
+        # Use app.focused instead of self.has_focus because on_blur fires before
+        # Widget._on_blur (which updates has_focus), so has_focus is stale here.
+        try:
+            focused = self.app.focused  # type: ignore[attr-defined]
+        except Exception:  # app may not be available during teardown; skip silently
+            return
+        has_focus_within = (
+            focused is not None and self in focused.ancestors_with_self  # type: ignore[attr-defined]
+        )
+        action_row.display = has_focus_within
 
     def _available_width(self) -> int:
         """Return the content area width in terminal cells."""
@@ -838,6 +880,9 @@ class _ToolPanelActionsMixin:
             and not block._completed
         )
 
+        # HF-A: consult visible footer chips to suppress duplicate hints
+        visible_action_kinds = self._visible_footer_action_kinds()
+
         primary: list[tuple[str, str]] = []
         if _block_streaming:
             # Streaming: follow + tail are the two most important actions
@@ -848,12 +893,11 @@ class _ToolPanelActionsMixin:
             enter_label = "expand" if getattr(self, "collapsed", False) else "collapse"
             primary.append(("Enter", enter_label))
             if self._is_error():
-                primary.append(("r", "retry"))
+                # HF-A: dedup retry against visible footer chips before adding to primary
+                if "retry" not in visible_action_kinds:
+                    primary.append(("r", "retry"))
             else:
                 primary.append(("y", "copy"))
-
-        # HF-A: consult visible footer chips to suppress duplicate hints
-        visible_action_kinds = self._visible_footer_action_kinds()
 
         contextual: list[tuple[str, str]] = []
         bar = self._get_omission_bar()

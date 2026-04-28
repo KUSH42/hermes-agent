@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import pytest
-from unittest.mock import MagicMock, patch
 from textual.app import App, ComposeResult
+from textual.widgets import Button
 
-from hermes_cli.tui.tool_result_parse import Action, ResultSummaryV4, Chip
+from hermes_cli.tui.tool_result_parse import Action, ResultSummaryV4, Chip, inject_recovery_actions
 
 
 def _make_error_summary(actions=()):
@@ -33,36 +33,21 @@ def _make_ok_summary():
     )
 
 
+def _action_button_labels(fp) -> list[str]:
+    """Collect all action-chip button labels as lowercase strings."""
+    return [
+        str(btn.label).lower()
+        for btn in fp._action_row.query(".--action-chip")
+    ]
+
+
 @pytest.mark.asyncio
 async def test_retry_injected_when_no_server_retry():
-    """Error summary with no actions → retry is synthesized."""
-    from textual.app import App, ComposeResult
+    """Error summary with no actions → inject_recovery_actions synthesises retry → footer shows it."""
     from hermes_cli.tui.tool_panel import FooterPane
 
-    summary = _make_error_summary(actions=[])
-
-    class _App(App):
-        def compose(self) -> ComposeResult:
-            fp = FooterPane()
-            yield fp
-
-    async with _App().run_test() as pilot:
-        fp = pilot.app.query_one(FooterPane)
-        fp.update_summary_v4(summary, frozenset())
-        await pilot.pause()
-        # Access stored rich.Text via Static's private __content attr
-        content_obj = fp._content._Static__content
-        assert "retry" in str(content_obj).lower()
-
-
-@pytest.mark.asyncio
-async def test_retry_not_duplicated_when_already_present():
-    """Error summary that already has a retry action → no duplicate."""
-    from textual.app import App, ComposeResult
-    from hermes_cli.tui.tool_panel import FooterPane
-
-    retry_action = Action(label="retry", hotkey="r", kind="retry", payload=None)
-    summary = _make_error_summary(actions=[retry_action])
+    raw_summary = _make_error_summary(actions=[])
+    summary = inject_recovery_actions(raw_summary)
 
     class _App(App):
         def compose(self) -> ComposeResult:
@@ -72,14 +57,37 @@ async def test_retry_not_duplicated_when_already_present():
         fp = pilot.app.query_one(FooterPane)
         fp.update_summary_v4(summary, frozenset())
         await pilot.pause()
-        content_obj = fp._content._Static__content
-        assert str(content_obj).lower().count("retry") == 1
+        labels = _action_button_labels(fp)
+        assert any("retry" in lbl for lbl in labels), (
+            f"Expected a retry button; got labels: {labels}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_retry_not_duplicated_when_already_present():
+    """Error summary that already has a retry action → inject_recovery_actions doesn't duplicate it."""
+    from hermes_cli.tui.tool_panel import FooterPane
+
+    retry_action = Action(label="retry", hotkey="r", kind="retry", payload=None)
+    raw_summary = _make_error_summary(actions=[retry_action])
+    summary = inject_recovery_actions(raw_summary)
+
+    class _App(App):
+        def compose(self) -> ComposeResult:
+            yield FooterPane()
+
+    async with _App().run_test() as pilot:
+        fp = pilot.app.query_one(FooterPane)
+        fp.update_summary_v4(summary, frozenset())
+        await pilot.pause()
+        labels = _action_button_labels(fp)
+        retry_count = sum(1 for lbl in labels if "retry" in lbl)
+        assert retry_count == 1, f"Expected exactly 1 retry button; got: {labels}"
 
 
 @pytest.mark.asyncio
 async def test_retry_not_shown_on_success():
-    """Success summary → no retry in footer."""
-    from textual.app import App, ComposeResult
+    """Success summary → no retry in footer buttons."""
     from hermes_cli.tui.tool_panel import FooterPane
 
     summary = _make_ok_summary()
@@ -92,5 +100,7 @@ async def test_retry_not_shown_on_success():
         fp = pilot.app.query_one(FooterPane)
         fp.update_summary_v4(summary, frozenset())
         await pilot.pause()
-        content_obj = fp._content._Static__content
-        assert "retry" not in str(content_obj).lower()
+        labels = _action_button_labels(fp)
+        assert not any("retry" in lbl for lbl in labels), (
+            f"Expected no retry button on success; got labels: {labels}"
+        )

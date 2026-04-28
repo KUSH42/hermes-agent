@@ -297,7 +297,8 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             gutter_text = Text("    ", style="dim")
             gutter_w = 4
         elif self._is_child_diff:
-            gutter_text = Text("  ╰─", style="dim")
+            from hermes_cli.tui.body_renderers._grammar import GLYPH_GUTTER_CHILD_DIFF
+            gutter_text = Text(f"  {GLYPH_GUTTER_CHILD_DIFF}", style="dim")
             gutter_w = 4
         else:
             # FS-2: tier-keyed glyph; focused = brighter accent, unfocused = border tint
@@ -345,7 +346,17 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 err_color = getattr(self, "_diff_del_color", _DIFF_DEL_FALLBACK)
                 icon_style = f"bold {err_color}"
             elif self._is_complete or self._duration:
+                # A-7: tint completed icon with tool-tier accent from CSS vars
                 ok_color = getattr(self, "_diff_add_color", _DIFF_ADD_FALLBACK)
+                try:
+                    from hermes_cli.tui.tool_category import spec_for, display_tier_for
+                    _spec = spec_for(self._tool_name or "")
+                    _tier = display_tier_for(_spec.category)
+                    _tier_var = f"tool-tier-{_tier}-accent"
+                    _css = self.app.get_css_variables()
+                    ok_color = _css.get(_tier_var) or ok_color
+                except Exception:  # tool lookup or app.get_css_variables failed; use fallback
+                    pass
                 icon_style = f"bold {ok_color}"
             else:
                 icon_style = "dim"
@@ -670,6 +681,9 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 pass
             event.prevent_default()
             event.stop()
+            return
+        # Do not toggle while streaming — _spinner_char is set during active streaming.
+        if getattr(self, "_spinner_char", None) is not None:
             return
         panel = getattr(self, "_panel", None)
         if panel is not None:

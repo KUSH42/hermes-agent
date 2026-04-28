@@ -57,7 +57,7 @@ def _extract_title_from_try_auto_title(
 
     with patch.object(app, "run_worker", sync_run_worker):
         app._auto_title_done = False
-        app._try_auto_title()
+        app._svc_commands.try_auto_title()
 
     return captured_title[0] if captured_title else None
 
@@ -149,10 +149,10 @@ async def test_auto_title_fires_once():
             app._auto_title_done = False
             # Simulate watch_agent_running guard (two calls)
             if not app._auto_title_done:
-                app._try_auto_title()
+                app._svc_commands.try_auto_title()
             # _auto_title_done is now True
             if not app._auto_title_done:
-                app._try_auto_title()  # should NOT run
+                app._svc_commands.try_auto_title()  # should NOT run
 
         assert app._auto_title_done is True
         # set_title_if_unset called exactly once

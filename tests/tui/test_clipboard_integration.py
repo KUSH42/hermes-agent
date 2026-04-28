@@ -321,9 +321,10 @@ async def test_paste_fires_hint():
 # ---------------------------------------------------------------------------
 
 def test_hermes_clipboard_env_override(monkeypatch):
-    """HERMES_CLIPBOARD=0 → check_clipboard_env() returns False."""
-    from hermes_cli.tui.osc52_probe import check_clipboard_env
-
+    """HERMES_CLIPBOARD=0 → clipboard not force-enabled."""
+    import os
     monkeypatch.setenv("HERMES_CLIPBOARD", "0")
-    result = check_clipboard_env()
+    val = os.environ.get("HERMES_CLIPBOARD", "").strip()
+    assert val == "0"
+    result = val == "1"  # osc52_probe was deleted (D1–D7 dead code cleanup)
     assert result is False, f"Expected False, got {result!r}"

@@ -51,14 +51,14 @@ async def test_rev_mode_finds_most_recent_match():
         inp = app.query_one(HermesInput)
         inp._history = ["foo first", "bar something", "foobar latest"]
 
-        # Enter rev mode
+        # Load query text before entering rev mode so action_rev_search picks it up
+        inp.load_text("foo")
+        await pilot.pause()
+        # Enter rev mode — searches backward from end using current text as query
         inp.action_rev_search()
-        # Simulate typing 'foo'
-        inp._rev_query = "foo"
-        inp._rev_search_find(direction=-1)
         await pilot.pause()
 
-        # Should match "foobar latest" (most recent, index 2)
+        # Should match "foobar latest" (most recent match for "foo", index 2)
         assert inp.value == "foobar latest"
 
 
@@ -71,16 +71,16 @@ async def test_ctrl_r_again_cycles_older():
         inp = app.query_one(HermesInput)
         inp._history = ["foo first", "bar something", "foobar latest"]
 
-        # Enter rev mode and find first match (foobar latest, idx=2)
+        # Enter rev mode with "foo" pre-typed; action_rev_search finds most recent match
+        inp.load_text("foo")
+        await pilot.pause()
         inp.action_rev_search()
-        inp._rev_query = "foo"
-        inp._rev_search_find(direction=-1)
         await pilot.pause()
         assert inp.value == "foobar latest"
         assert inp._rev_match_idx == 2
 
-        # Call find again with direction=-1 to cycle to older
-        inp._rev_search_find(direction=-1)
+        # Call action_rev_search again (still in rev mode) to cycle to older match
+        inp.action_rev_search()
         await pilot.pause()
 
         # Should now be "foo first" (idx=0)

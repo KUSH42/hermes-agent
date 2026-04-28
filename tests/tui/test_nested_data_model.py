@@ -30,7 +30,8 @@ def _make_mock_app():
     app._explicit_parent_map = {}
     app._svc_commands.update_anim_hint = MagicMock()
     app.call_after_refresh = MagicMock()
-    app.query_one = MagicMock(side_effect=Exception("no match"))
+    from textual.css.query import NoMatches
+    app.query_one = MagicMock(side_effect=NoMatches("no match"))
     app.planned_calls = []
     return app
 
@@ -93,6 +94,7 @@ def test_agent_stack_push_pop():
 
 def test_agent_stack_pop_via_with_diff():
     """AGENT tool popped from stack via close_with_diff path."""
+    from hermes_cli.tui.services.tools import ToolCallViewState, ToolCallState
     svc = _make_svc()
     output = _mock_output()
     block = MagicMock()
@@ -103,6 +105,12 @@ def test_agent_stack_pop_via_with_diff():
         tool_call_id="tid-2", parent_tool_call_id=None, label="Task",
         tool_name="Task", category="agent", depth=0, start_s=0.0,
         dur_ms=None, is_error=False, error_kind=None, mcp_server=None,
+    )
+    # view needed so _terminalize_tool_view doesn't early-return
+    svc._tool_views_by_id["tid-2"] = ToolCallViewState(
+        tool_call_id="tid-2", gen_index=None, tool_name="Task", label="Task",
+        args={}, state=ToolCallState.STREAMING, block=block, panel=None,
+        parent_tool_call_id=None, category="agent", depth=0, start_s=0.0,
     )
 
     with patch.object(svc, "_get_output_panel", return_value=output), \

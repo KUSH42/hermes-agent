@@ -271,10 +271,8 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             return
         if self._completed:
             return
-        # SK-1: first chunk dismisses the skeleton (timer-cancel path <100ms, widget-remove path ≥100ms).
-        # _flush_pending also dismisses via FH-2 compositor path; both guards are safe to coexist.
-        if getattr(self, "_skeleton_timer", None) is not None or getattr(self, "_skeleton_widget", None) is not None:
-            self._dismiss_skeleton()
+        # SK-1 / FH-2: skeleton dismissal is handled in _flush_pending after the first
+        # successful write, so content and dismissal land in the same compositor tick.
         line_byte_cap = getattr(self, "_line_byte_cap", _LINE_BYTE_CAP)
         if len(raw) > line_byte_cap:
             over = len(raw) - line_byte_cap

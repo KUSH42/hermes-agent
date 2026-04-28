@@ -445,6 +445,10 @@ _LabelLine   { height: 1;   width: 1fr; }
         effect: str | None = None,
     ) -> None:
         """Show the widget and start animation."""
+        # Idempotent: if already active with a live timer, do nothing.
+        if self._timer is not None and self.has_class("--active"):
+            return
+
         if os.environ.get("HERMES_DETERMINISTIC"):
             # D-6: Show a static LINE-mode indicator so class-based observers work.
             self.add_class("--active", "--mode-line")

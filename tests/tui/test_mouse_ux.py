@@ -106,17 +106,21 @@ class TestB1MiddleClickPaste:
     @pytest.mark.skipif(sys.platform != "linux", reason="Primary selection is Linux/X11 only")
     def test_middle_click_inserts_primary_selection(self) -> None:
         from hermes_cli.tui.input_widget import HermesInput
+        from unittest.mock import PropertyMock
         widget = object.__new__(HermesInput)
         inserted = []
         widget.insert = lambda text: inserted.append(text)
         ev = _make_click(button=2)
         ev.stop = MagicMock()
 
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "hello world"
+        # on_click now delegates to safe_run; patch it and invoke on_success synchronously.
+        # is_mounted is a read-only Textual property; patch it via the class.
+        def _fake_safe_run(caller, cmd, *, timeout, on_success=None, on_error=None, **kw):
+            if on_success:
+                on_success("hello world", "", 0)
 
-        with patch("hermes_cli.tui.input_widget.subprocess.run", return_value=mock_result):
+        with patch("hermes_cli.tui.input.widget.safe_run", side_effect=_fake_safe_run), \
+             patch.object(type(widget), "is_mounted", new_callable=PropertyMock, return_value=True):
             widget.on_click(ev)
 
         assert inserted == ["hello world"]
@@ -131,7 +135,13 @@ class TestB1MiddleClickPaste:
         ev = _make_click(button=2)
         ev.stop = MagicMock()
 
-        with patch("hermes_cli.tui.input_widget.subprocess.run", side_effect=FileNotFoundError):
+        # on_click delegates to safe_run; simulate no on_success call (xclip absent → on_error)
+        def _fake_safe_run(caller, cmd, *, timeout, on_success=None, on_error=None, **kw):
+            if on_error:
+                on_error(FileNotFoundError("xclip not found"), "")
+            # on_success not called — nothing inserted
+
+        with patch("hermes_cli.tui.input.widget.safe_run", side_effect=_fake_safe_run):
             widget.on_click(ev)
 
         assert inserted == []
@@ -284,8 +294,19 @@ class TestC1ScrollConfig:
             def app(self):
                 return _app
 
+            # Override _user_scrolled_up to bypass the scroll_state reactive
+            # which requires Textual internals (W-11 change). We only test
+            # _get_scroll_lines() here, not scroll state tracking.
+            @property
+            def _user_scrolled_up(self):
+                return self.__dict__.get("_user_scrolled_up_val", False)
+
+            @_user_scrolled_up.setter
+            def _user_scrolled_up(self, v):
+                self.__dict__["_user_scrolled_up_val"] = v
+
         panel = object.__new__(_TestPanel)
-        panel._user_scrolled_up = False
+        panel.__dict__["_user_scrolled_up_val"] = False
         scrolled = []
         panel.scroll_relative = lambda y, animate, immediate: scrolled.append(y)
         ev = MagicMock()

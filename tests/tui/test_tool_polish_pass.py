@@ -216,22 +216,18 @@ class TestDensityCycleFlash:
         mixin.action_toggle_collapse()
         # Should have flashed the resulting tier
         assert len(flashes) >= 1
-        # The last flash is either the destination tier or rejection message
+        # The last flash is either the collapse/expand label or rejection message
         last_msg, last_tone = flashes[-1]
-        # Default→Compact is expected (no HERO rejection)
-        assert last_msg in (
-            DensityTier.COMPACT.value,
-            DensityTier.DEFAULT.value,
-            DensityTier.HERO.value,
-        ) or "unavailable" in last_msg
+        # Default→Compact is expected (no HERO rejection); flash is "collapsed" or "expanded"
+        assert last_msg in ("collapsed", "expanded") or "unavailable" in last_msg
 
     def test_density_cycle_flashes_compact_then_hero_then_default(self):
         mixin, flashes = self._make_panel_mixin()
         from hermes_cli.tui.tool_panel.layout_resolver import DensityTier
 
-        # First press: DEFAULT → COMPACT
+        # First press: DEFAULT → COMPACT (flash label is "collapsed")
         mixin.action_toggle_collapse()
-        assert any(DensityTier.COMPACT.value in msg for msg, _ in flashes)
+        assert any("collapsed" in msg for msg, _ in flashes)
 
     def test_rejection_flash_does_not_combine_with_destination_flash(self):
         from hermes_cli.tui.tool_panel._actions import _ToolPanelActionsMixin
@@ -421,14 +417,14 @@ class TestTruncationMarker:
         assert m is not None, f"expected +N more at narrow width: {plain!r}"
         assert int(m.group(1)) >= 1
 
-        # At wide width (120): 2 shown from 4 total → +2 dropped
+        # At wide width (120): 2 shown from 5 total (4 explicit + density-cycle hint) → +3 dropped
         mixin2 = self._make_mixin_with_contextual(n_contextual=4, width=120)
         text2 = mixin2._build_hint_text()
         plain2 = text2.plain
         assert "F1" in plain2
         m2 = re.search(r"\+(\d+)\s+more", plain2)
         assert m2 is not None, f"expected +N more at wide width with overflow: {plain2!r}"
-        assert int(m2.group(1)) == 2
+        assert int(m2.group(1)) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -442,14 +438,13 @@ class TestDensityCycleExcludesTrace:
 
         cycle_results = set()
         current = DensityTier.DEFAULT
-        for _ in range(6):  # more than 3 iterations to detect cycle length
+        for _ in range(8):  # enough iterations to cover full cycle
             nxt = _ToolPanelActionsMixin._next_tier_in_cycle(current)
             cycle_results.add(nxt)
             current = nxt
 
-        assert DensityTier.TRACE not in cycle_results
-        # Exactly 3 tiers in cycle
-        assert cycle_results == {DensityTier.DEFAULT, DensityTier.COMPACT, DensityTier.HERO}
+        # Cycle includes DEFAULT, COMPACT, TRACE, HERO (4-tier cycle per concept §H5)
+        assert cycle_results == {DensityTier.DEFAULT, DensityTier.COMPACT, DensityTier.HERO, DensityTier.TRACE}
 
 
 # ---------------------------------------------------------------------------

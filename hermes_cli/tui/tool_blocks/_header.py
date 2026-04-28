@@ -58,6 +58,20 @@ from hermes_cli.tui.tool_panel.layout_resolver import (  # noqa: F401
 _DROP_ORDER = _DROP_ORDER_DEFAULT
 
 
+def _split_glyph_hero(hero: str, glyph_style: str) -> "Text":
+    """Render 'GLYPH rest of text' with only GLYPH in glyph_style and rest dim.
+
+    e.g. '√ 5 matches' → bold-green '√' + dim ' 5 matches'
+    """
+    t = Text()
+    t.append("  ")
+    parts = hero.split(" ", 1)
+    t.append(parts[0], style=glyph_style)
+    if len(parts) > 1:
+        t.append(f" {parts[1]}", style="dim")
+    return t
+
+
 def _safe_collapsed(header: "ToolHeader") -> bool:
     panel = getattr(header, "_panel", None)
     return bool(panel.collapsed if panel is not None else False)
@@ -355,10 +369,10 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 except Exception:  # noqa: bare-except
                     tail_segments.append(("hero", Text(f"  {self._primary_hero}", style=f"bold {self._colors().error}")))
             elif self._tool_icon_error:
-                tail_segments.append(("hero", Text(f"  {self._primary_hero}", style=f"bold {self._colors().error}")))
+                tail_segments.append(("hero", _split_glyph_hero(self._primary_hero, f"bold {self._colors().error}")))
             elif self._is_complete:
                 _ok = getattr(self, "_diff_add_color", _DIFF_ADD_FALLBACK)
-                tail_segments.append(("hero", Text(f"  {self._primary_hero}", style=f"bold {_ok}")))
+                tail_segments.append(("hero", _split_glyph_hero(self._primary_hero, f"bold {_ok}")))
             else:
                 tail_segments.append(("hero", Text(f"  {self._primary_hero}", style="dim")))
         elif self._is_complete and not self._tool_icon_error and not self._line_count:

@@ -877,8 +877,8 @@ ToolPanel:focus {
 ToolPanel:hover                              { background: $accent 5%; }
 /* A6: first-in-turn correlation badge */
 ToolPanel.first-in-turn                      { border-top: solid $accent 30%; }
-/* A2: empty result header color */
-ToolHeader.result-empty                      { color: $text-muted; }
+/* E1: empty result header — italic + dimmed to distinguish from normal muted status */
+ToolHeader.result-empty                      { color: $text-muted 70%; text-style: italic; }
 /* C1: heavier error banner — covers both static ToolBlock and StreamingToolBlock */
 .error-banner {
     color: $error;
@@ -901,6 +901,9 @@ ToolPanel.--minified { height: 1; }
 ToolPanel.--minified BodyPane,
 ToolPanel.--minified FooterPane,
 ToolPanel.--minified .hint-row { display: none; }
+/* E2: errored blocks must always show ERR cell + remediation hint even when minified */
+ToolPanel.--minified.tool-panel--error { height: auto; }
+ToolPanel.--minified.tool-panel--error .--focus-hint { display: block; }
 /* E2: ToolPanelMini deleted */
 
 /* --- Tool grouping --- */

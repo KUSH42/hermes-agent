@@ -42,6 +42,17 @@ if TYPE_CHECKING:
 _hint_cache: dict[tuple[str, str], dict[str, str]] = {}
 
 _SEP = " [dim]·[/dim] "
+
+# E4: canonical key-symbol constants — use these in all hint composers
+KEY_ENTER   = "Enter"
+KEY_TAB     = "Tab"
+KEY_SPACE   = "Space"
+KEY_ESC     = "Esc"
+KEY_UP      = "↑"
+KEY_DOWN    = "↓"
+KEY_CTRL_C  = "⌃C"
+KEY_CTRL_F  = "⌃F"
+KEY_CTRL_Z  = "⌃Z"
 _COMPACTION_ZERO_PROBES: set[int] = set()
 
 # Compaction bar thresholds — sourced from display config so users can adjust.
@@ -90,44 +101,44 @@ def _build_hints(phase: str, key_color: str) -> dict[str, str]:
         return sep.join(parts)
 
     if phase == "idle":
-        long_ = _fmt([("F1", "help"), ("^F", "search"), ("/", "cmd"), ("@", "path")])
+        long_ = _fmt([("F1", "help"), (KEY_CTRL_F, "search"), ("/", "cmd"), ("@", "path")])
         medium = long_
-        short = _fmt([("F1", None), ("^F", None), ("/", None), ("@", None)])
+        short = _fmt([("F1", None), (KEY_CTRL_F, None), ("/", None), ("@", None)])
         minimal = f"[bold {k}]F1[/]"
     elif phase == "typing":
-        long_ = _fmt([("↵", "send"), ("Esc", "clear"), ("@", "path"), ("/", "cmd")])
+        long_ = _fmt([(KEY_ENTER, "send"), (KEY_ESC, "clear"), ("@", "path"), ("/", "cmd")])
         medium = long_
-        short = _fmt([("↵", None), ("Esc", None), ("@", None), ("/", None)])
-        minimal = f"[bold {k}]↵[/]"
+        short = _fmt([(KEY_ENTER, None), (KEY_ESC, None), ("@", None), ("/", None)])
+        minimal = f"[bold {k}]{KEY_ENTER}[/]"
     elif phase in ("stream", "file"):
-        s = f"[bold {k}]^C[/] [dim]interrupt[/dim]{_SEP}[bold {k}]Esc[/] [dim]dismiss[/dim]"
+        s = f"[bold {k}]{KEY_CTRL_C}[/] [dim]interrupt[/dim]{_SEP}[bold {k}]{KEY_ESC}[/] [dim]dismiss[/dim]"
         long_ = s
         medium = s
-        short = f"[bold {k}]^C[/]{_SEP}[bold {k}]Esc[/]"
-        minimal = f"[bold {k}]^C[/]"
+        short = f"[bold {k}]{KEY_CTRL_C}[/]{_SEP}[bold {k}]{KEY_ESC}[/]"
+        minimal = f"[bold {k}]{KEY_CTRL_C}[/]"
     elif phase == "browse":
-        long_ = _fmt([("⇥", "next"), ("c", "copy"), ("a", "expand"), ("A", "collapse"), ("Esc", "exit")])
+        long_ = _fmt([(KEY_TAB, "next"), ("c", "copy"), ("a", "expand"), ("A", "collapse"), (KEY_ESC, "exit")])
         medium = long_
-        short = _fmt([("⇥", None), ("c", None), ("a", None), ("A", None), ("Esc", None)])
-        minimal = f"[bold {k}]⇥[/]"
+        short = _fmt([(KEY_TAB, None), ("c", None), ("a", None), ("A", None), (KEY_ESC, None)])
+        minimal = f"[bold {k}]{KEY_TAB}[/]"
     elif phase == "overlay":
-        long_ = _fmt([("↑↓", "navigate"), ("↵", "confirm"), ("Esc", "close")])
+        long_ = _fmt([("↑↓", "navigate"), (KEY_ENTER, "confirm"), (KEY_ESC, "close")])
         medium = long_
-        short = _fmt([("↑↓", None), ("↵", None), ("Esc", None)])
-        minimal = f"[bold {k}]↵[/]"
+        short = _fmt([("↑↓", None), (KEY_ENTER, None), (KEY_ESC, None)])
+        minimal = f"[bold {k}]{KEY_ENTER}[/]"
     elif phase == "voice":
-        long_ = _fmt([("␣", "stop"), ("Esc", "cancel")])
+        long_ = _fmt([(KEY_SPACE, "stop"), (KEY_ESC, "cancel")])
         medium = long_
-        short = _fmt([("␣", None), ("Esc", None)])
-        minimal = f"[bold {k}]␣[/]"
+        short = _fmt([(KEY_SPACE, None), (KEY_ESC, None)])
+        minimal = f"[bold {k}]{KEY_SPACE}[/]"
     elif phase == "error":
-        long_ = _fmt([("^Z", "undo"), ("^C", "new prompt"), ("F1", "help")])
+        long_ = _fmt([(KEY_CTRL_Z, "undo"), (KEY_CTRL_C, "new prompt"), ("F1", "help")])
         medium = long_
-        short = _fmt([("^Z", None), ("^C", None), ("F1", None)])
-        minimal = f"[bold {k}]^Z[/]"
+        short = _fmt([(KEY_CTRL_Z, None), (KEY_CTRL_C, None), ("F1", None)])
+        minimal = f"[bold {k}]{KEY_CTRL_Z}[/] undo{_SEP}[bold {k}]{KEY_CTRL_C}[/] new"
     else:
         # Fallback: idle
-        long_ = _fmt([("F1", "help"), ("^F", "search")])
+        long_ = _fmt([("F1", "help"), (KEY_CTRL_F, "search")])
         medium = long_
         short = f"[bold {k}]F1[/]"
         minimal = f"[bold {k}]F1[/]"
@@ -159,7 +170,7 @@ def _build_streaming_hint(key_color: str) -> "tuple[Text, list[tuple[int, int]]]
         badges.append((start, len(text)))   # end is exclusive
         text.append(f" {desc}", style="dim")
 
-    badge("^C", "interrupt")
+    badge(KEY_CTRL_C, "interrupt")
     badge("Esc", "dismiss", sep=True)
     return text, badges
 
@@ -370,7 +381,7 @@ class HintBar(Widget):
                 # colour resolve failed; use hardcoded fallback blue
                 k = "#5f87d7"
             pinned = Text.from_markup(
-                f"[bold {k}]^C[/] [dim]interrupt[/dim]  ·  [bold {k}]Esc[/] [dim]dismiss[/dim]"
+                f"[bold {k}]{KEY_CTRL_C}[/] [dim]interrupt[/dim]  ·  [bold {k}]Esc[/] [dim]dismiss[/dim]"
             )
             flash_hint = self.hint
             if flash_hint:

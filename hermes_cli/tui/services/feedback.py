@@ -11,7 +11,8 @@ Public surface
 - ChannelAdapter           — protocol / base class for channel-specific paint logic
 - Scheduler / CancelToken  — protocols; production wraps set_timer, tests use fake
 - Priority constants       — LOW, NORMAL, WARN, ERROR, CRITICAL
-- ExpireReason             — StrEnum: NATURAL, CANCELLED, PREEMPTED, UNMOUNTED
+- ExpireReason             — StrEnum: NATURAL, CANCELLED, PREEMPTED, UNMOUNTED, SUPPRESSED
+- SettledAware             — runtime-checkable Protocol; widgets opt-in to settled-suppression
 
 Internal (not exported)
 -----------------------
@@ -48,6 +49,33 @@ class ExpireReason(StrEnum):
     CANCELLED = "cancelled"
     PREEMPTED = "preempted"
     UNMOUNTED = "unmounted"
+    SUPPRESSED = "suppressed"  # never displayed: channel is in a state that intentionally blocks motion
+
+
+# Tones that encode state changes (not incidental motion). These flash even on
+# settled widgets because they signal that something the user cares about just
+# changed. Add a tone here only when its semantics match.
+_STATE_CHANGE_TONES: frozenset[str] = frozenset({"focus", "err-enter"})
+
+
+@runtime_checkable
+class SettledAware(Protocol):
+    """Widgets that opt in to settled-suppression implement is_settled().
+
+    A True return value means the widget has finalised — incidental flashes on
+    its channel are suppressed (returns FlashHandle(displayed=False) and fires
+    on_expire(SUPPRESSED)). State-change tones in _STATE_CHANGE_TONES bypass
+    this check.
+    """
+
+    def is_settled(self) -> bool: ...
+
+
+def _widget_is_settled(widget: Any) -> bool:
+    """Return True iff the widget structurally implements SettledAware and is settled."""
+    if isinstance(widget, SettledAware):
+        return widget.is_settled()
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +148,13 @@ class ChannelAdapter:
 
     @property
     def widget(self) -> "Any | None":
-        """Return the target widget for this adapter, or None if not applicable."""
+        """Return the target widget, or None to opt out of settled-suppression.
+
+        A return value of None means the channel is global / app-level and is
+        never blocked by settled state. Per-block adapters should return the
+        block widget (or its closest SettledAware ancestor) so suppression can
+        take effect once the block is finalised.
+        """
         return None
 
     def apply(self, state: "FlashState") -> None:
@@ -160,7 +194,8 @@ class FlashHandle:
     """Opaque result of FeedbackService.flash().
 
     .displayed is True when the flash was applied to the channel.
-    False means it was blocked by a higher-priority active flash.
+    False means it was blocked by a strictly-higher-priority active flash, or
+    suppressed by a settled-aware widget (see ExpireReason.SUPPRESSED).
     Holding this object does NOT extend the flash lifetime.
     """
 
@@ -206,6 +241,9 @@ class FeedbackService:
         self._channels: dict[str, _ChannelRecord] = {}
         self._active: dict[str, FlashState] = {}  # channel -> active FlashState
         self._counter: int = 0
+        # FB-L1 re-entry guard: channel names mid-overwrite in register_channel.
+        # flash() short-circuits when its target is in this set.
+        self._registering: set[str] = set()
 
     # ------------------------------------------------------------------
     # Channel registration
@@ -222,8 +260,35 @@ class FeedbackService:
 
         lifecycle_aware=True marks this channel as participant in
         on_agent_idle / on_agent_active lifecycle events (e.g. hint-bar).
+
+        FB-L1: re-registration warns at WARNING level and cancels any active
+        flash on the OLD adapter (UNMOUNTED, no restore). Re-entrant flash()
+        calls from the cancelled flash's on_expire callback are blocked via
+        the _registering guard so the new adapter never receives a stray
+        timer-driven restore() from a flash registered against the old adapter.
         """
-        self._channels[name] = _ChannelRecord(adapter=adapter, lifecycle_aware=lifecycle_aware)
+        if name in self._channels:
+            _previous = type(self._channels[name].adapter).__name__
+            _incoming = type(adapter).__name__
+            _log.warning(
+                "FeedbackService: channel %r re-registered; previous=%s dropped, new=%s",
+                name, _previous, _incoming,
+            )
+            self._registering.add(name)
+            try:
+                if name in self._active:
+                    self._cancel_flash_internal(
+                        name, self._active[name], ExpireReason.UNMOUNTED,
+                    )
+                self._channels[name] = _ChannelRecord(
+                    adapter=adapter, lifecycle_aware=lifecycle_aware,
+                )
+            finally:
+                self._registering.discard(name)
+        else:
+            self._channels[name] = _ChannelRecord(
+                adapter=adapter, lifecycle_aware=lifecycle_aware,
+            )
 
     def deregister_channel(self, name: str) -> None:
         """Deregister a channel, cancelling any active flash with reason UNMOUNTED.
@@ -261,7 +326,8 @@ class FeedbackService:
     ) -> FlashHandle:
         """Display a flash message on the named channel.
 
-        Returns FlashHandle with .displayed=True if applied, False if blocked.
+        Returns FlashHandle with .displayed=True if applied, False if blocked
+        or suppressed.
         Raises KeyError if channel is not registered.
 
         Convention: called from the event loop only — workers should marshal via
@@ -272,33 +338,45 @@ class FeedbackService:
         if channel not in self._channels:
             raise KeyError(f"FeedbackService: channel {channel!r} not registered")
 
-        # FS-3: settled suppression — incidental flashes blocked on completed blocks;
-        # focus and err-enter tones are always exempt (they encode state changes, not motion).
-        _settled_tone_exempt = tone in ("focus", "err-enter")
+        # FB-L1: re-entry guard. A flash() call from inside an on_expire callback
+        # that fired during register_channel's mid-swap window would otherwise
+        # land in _active against the OLD adapter; the new adapter would later
+        # receive its timer-driven restore(). Block and warn instead.
+        if channel in self._registering:
+            _log.warning(
+                "flash() ignored during register_channel re-entry on %r", channel,
+            )
+            return FlashHandle(displayed=False)
+
+        # FS-3: settled suppression — incidental flashes blocked on settled-aware
+        # widgets; tones in _STATE_CHANGE_TONES are always exempt (they encode
+        # state changes, not motion).
+        _settled_tone_exempt = tone in _STATE_CHANGE_TONES
         if not _settled_tone_exempt:
             _record = self._channels[channel]
             _widget = _record.adapter.widget
-            if _widget is not None and getattr(_widget, "_settled", False):
+            if _widget is not None and _widget_is_settled(_widget):
                 _log.debug("flash suppressed: channel=%r settled block", channel)
+                if on_expire is not None:
+                    try:
+                        on_expire(ExpireReason.SUPPRESSED)
+                    except Exception:  # user-supplied callback must not crash flash()
+                        _log.debug("on_expire raised on SUPPRESSED", exc_info=True)
                 return FlashHandle(displayed=False)
 
         record = self._channels[channel]
         adapter = record.adapter
 
         # --- Preemption logic ---
+        # Branch precedence: key match short-circuits before priority compare.
+        # Equal-or-higher priority preempts; strictly-lower is blocked.
         if channel in self._active:
             existing = self._active[channel]
-            # key= match always replaces, regardless of priority
             if key is not None and existing.key == key:
                 self._cancel_flash_internal(channel, existing, ExpireReason.PREEMPTED)
-            elif priority > existing.priority:
-                # Higher priority preempts
+            elif priority >= existing.priority:
                 self._cancel_flash_internal(channel, existing, ExpireReason.PREEMPTED)
-            elif priority == existing.priority:
-                # Equal priority replaces (last-write-wins), no on_expire fired
-                self._stop_flash_internal(channel, existing)
             else:
-                # Lower priority — blocked
                 _log.debug(
                     "flash preempted: incoming=%r (p=%s) blocked by current=%r (p=%s)",
                     message, priority,
@@ -325,11 +403,30 @@ class FeedbackService:
         try:
             adapter.apply(state)
         except ChannelUnmountedError:
+            try:
+                adapter.restore()
+            except Exception:  # widget already gone (ChannelUnmountedError just fired);
+                # restore() failure here is teardown-tier per global rule — debug is correct.
+                _log.debug("post-preempt restore failed for %r", channel, exc_info=True)
             if on_expire is not None:
                 try:
                     on_expire(ExpireReason.UNMOUNTED)
-                except Exception:  # user-supplied callback must not crash the service
+                except Exception:  # user-supplied callback must not crash flash()
                     _log.debug("on_expire callback raised on ChannelUnmountedError", exc_info=True)
+            return FlashHandle(displayed=False)
+        except Exception:
+            # Generic-Exception branch (FB-M1): log full traceback (user-visible
+            # "see log for details" is now backed by an actual ERROR-level entry).
+            _log.exception("adapter.apply() failed for channel %r", channel)
+            try:
+                adapter.restore()
+            except Exception:  # restore is best-effort after a broken apply()
+                _log.debug("restore after apply failure raised for %r", channel, exc_info=True)
+            if on_expire is not None:
+                try:
+                    on_expire(ExpireReason.UNMOUNTED)
+                except Exception:  # user-supplied callback must not crash flash()
+                    _log.debug("on_expire callback raised after apply failure", exc_info=True)
             return FlashHandle(displayed=False)
 
         # --- Schedule expiry ---
@@ -384,6 +481,7 @@ class FeedbackService:
     def would_flash(self, channel: str, priority: int) -> bool:
         """Return True if flash(channel, priority=priority) would be applied (not blocked).
 
+        Equal-priority returns True (incoming would preempt).
         Raises KeyError if the channel is not registered (same contract as flash()).
         """
         if channel not in self._channels:
@@ -472,12 +570,6 @@ class FeedbackService:
                 _log.debug("on_expire callback raised for channel %r", channel, exc_info=True)
         self._active.pop(channel, None)
 
-    def _stop_flash_internal(self, channel: str, state: FlashState) -> None:
-        """Stop a flash without firing on_expire (equal-priority replace)."""
-        if state.token is not None:
-            state.token.stop()
-        self._active.pop(channel, None)
-
     def _on_expire(self, flash_id: str) -> None:
         """Timer callback — called when a flash expires naturally."""
         # Find state by id
@@ -519,16 +611,18 @@ class HintBarAdapter(ChannelAdapter):
         self._app = app
 
     def _get_bar(self) -> Any:
+        # FB-M1 companion: narrow to NoMatches only. Render errors / AttributeError
+        # propagate so the generic-Exception branch in flash() can ERROR-log them
+        # with full traceback instead of masking as cheap UNMOUNTED.
+        from textual.css.query import NoMatches
         from hermes_cli.tui.widgets import HintBar
         try:
             bar = self._app.query_one(HintBar)
-            if not bar.is_mounted:
-                raise ChannelUnmountedError("HintBar not mounted")
-            return bar
-        except Exception as exc:
-            if isinstance(exc, ChannelUnmountedError):
-                raise
+        except NoMatches as exc:
             raise ChannelUnmountedError("HintBar not found") from exc
+        if not bar.is_mounted:
+            raise ChannelUnmountedError("HintBar not mounted")
+        return bar
 
     def apply(self, state: FlashState) -> None:
         bar = self._get_bar()
@@ -575,10 +669,43 @@ class ToolHeaderAdapter(ChannelAdapter):
 
 
 class CodeFooterAdapter(ChannelAdapter):
-    """Adapter for CodeBlockFooter copy-label flash (per-block)."""
+    """Adapter for CodeBlockFooter copy-label flash (per-block).
+
+    widget resolves to the footer's closest SettledAware ancestor (today only
+    StreamingToolBlock, but defined by the protocol — not pinned to that class)
+    so footers participate in settled-suppression once their parent block is
+    finalised. CodeBlockFooter itself does not implement SettledAware, so
+    returning the footer directly would be a no-op against that goal.
+    """
 
     def __init__(self, footer: Any) -> None:
         self._footer = footer
+        self._settled_ancestor: Any | None = None
+
+    @property
+    def widget(self) -> "Any | None":
+        # Cache invariant: an adapter is constructed per-footer; the footer is
+        # owned by exactly one StreamingToolBlock for its lifetime. The retry
+        # path in _streaming.py:805,808 calls _clear_settled() on the same
+        # block — it never replaces the block — so the cached ancestor stays
+        # valid. None results are NOT cached: pre-mount ancestors_with_self
+        # returns []; the next call (post-mount) must walk again.
+        if self._settled_ancestor is not None:
+            return self._settled_ancestor
+        for node in self._footer.ancestors_with_self:
+            if isinstance(node, SettledAware):
+                self._settled_ancestor = node
+                return node
+        return None
+
+    def clear_cache(self) -> None:
+        """Defensive cache reset — call from CodeBlockFooter.on_unmount.
+
+        Reparenting is not a documented use case in the current code, but
+        nothing in the type system prevents it; if it ever happens, the cache
+        would otherwise hold a stale reference.
+        """
+        self._settled_ancestor = None
 
     def apply(self, state: FlashState) -> None:
         footer = self._footer

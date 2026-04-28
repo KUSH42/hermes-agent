@@ -861,6 +861,14 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         self._settled = False
         self._cancel_settled_timer()
 
+    def is_settled(self) -> bool:
+        """SettledAware protocol implementation (FB-M3).
+
+        Structural conformance only — do not add SettledAware to the base list
+        (would force a circular import: tool_blocks → services/feedback).
+        """
+        return bool(self._settled)
+
     # ------------------------------------------------------------------
     # LL-4: renderer kind override cycling via `t` / `Shift+T`
     # ------------------------------------------------------------------

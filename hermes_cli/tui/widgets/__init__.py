@@ -40,6 +40,7 @@ from rich.style import Style
 from rich.text import Text
 from textual import work
 from textual.app import ComposeResult, RenderResult
+from textual.binding import Binding
 from textual.containers import ScrollableContainer
 from textual.css.query import NoMatches
 from textual.reactive import reactive
@@ -261,11 +262,49 @@ class OutputPanel(ScrollableContainer):
     }
     """
 
+    # D6: panel must be focusable so its Space/Esc bindings reach it
+    # when no descendant has focus.
+    can_focus = True
+
+    BINDINGS = [
+        # D6: streaming-only — non-priority so a focused child (e.g.
+        # CopyableRichLog) handles Space normally; Esc bubbles to the
+        # panel only when no overlay/child claims it first.
+        Binding("space", "pause_scroll", "pause-scroll", show=False),
+        Binding("escape", "cancel_streaming", "cancel", show=False),
+    ]
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         _boost_layout_caches(self, box_model_maxsize=256, arrangement_maxsize=32)
         self._user_scrolled_up: bool = False
         self._turn_raw_output: str = ""
+
+    # D6 actions ----------------------------------------------------
+    def action_pause_scroll(self) -> None:
+        """D6: toggle _user_scrolled_up while streaming.
+
+        Idle: no-op (Space behaviour for the panel itself is undefined;
+        focused children handle their own Space).
+        """
+        if not getattr(self.app, "status_streaming", False):
+            return
+        self._user_scrolled_up = not self._user_scrolled_up
+
+    def action_cancel_streaming(self) -> None:
+        """D6: route Esc to cli.agent.interrupt() during streaming."""
+        if not getattr(self.app, "status_streaming", False):
+            return
+        try:
+            cli = getattr(self.app, "cli", None)
+            agent = getattr(cli, "agent", None) if cli is not None else None
+            if agent is not None and hasattr(agent, "interrupt"):
+                agent.interrupt()
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                "OutputPanel cancel_streaming: agent.interrupt() failed"
+            )
 
     def reset_turn_capture(self) -> None:
         """Clear the raw assistant text capture for the next turn."""

@@ -559,6 +559,7 @@ class ResponseFlowEngine:
         self._fence_char: str = "`"
         self._fence_depth: int = 3
         self._active_block: "StreamingCodeBlock | None" = None
+        self._first_fence_in_turn: bool = True  # D5: fence-open entrance cue gate
         self._math_lines: list[str] = []
         self._math_env: str = ""
         self._math_enabled: bool = True
@@ -792,6 +793,21 @@ class ResponseFlowEngine:
             self._fence_depth = fdepth
             self._list_cont_indent = ""
             self._active_block = self._open_code_block(lang)
+            # D5: fence-open entrance cue — first fence per turn only.
+            if self._first_fence_in_turn and self._active_block is not None:
+                host = self._active_block
+                try:
+                    host.add_class("streaming-fence-just-opened")
+                    self._panel.set_timer(
+                        0.08,
+                        lambda h=host: (
+                            h.remove_class("streaming-fence-just-opened")
+                            if h.is_mounted else None
+                        ),
+                    )
+                except Exception:
+                    _log.debug("D5 fence-open cue failed", exc_info=True)
+                self._first_fence_in_turn = False
             return True
 
         indent_content = self._clf.is_indented_code(raw)
@@ -1144,6 +1160,16 @@ class ResponseFlowEngine:
             _do_mount()
         else:
             app.call_from_thread(_do_mount)
+
+    def reset_first_fence_for_turn(self) -> None:
+        """D5: re-arm the fence-open entrance cue for a fresh turn.
+
+        ResponseFlowEngine is constructed once per assistant turn today
+        (see widgets/message_panel.py), so __init__ is the natural reset
+        path. This method exists for explicit per-turn re-use should a
+        future refactor share an engine across turns.
+        """
+        self._first_fence_in_turn = True
 
     def flush(self) -> None:
         """Turn ended — close any open code block; flush StreamingBlockBuffer pending state."""

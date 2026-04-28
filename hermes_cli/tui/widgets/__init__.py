@@ -723,6 +723,13 @@ class _NPState(enum.Enum):
     ERROR_FLASH = "error_flash"
 
 
+class _NPIdleBeat(enum.Enum):
+    NONE    = "none"
+    PULSE   = "pulse"
+    SHIMMER = "shimmer"
+    DECRYPT = "decrypt"
+
+
 class AssistantNameplate(Widget):
     """Animated assistant name above the input bar."""
 
@@ -741,7 +748,9 @@ class AssistantNameplate(Widget):
         self,
         name: str = "Hermes",
         effects_enabled: bool = True,
-        idle_effect: str = "breathe",
+        idle_effect: str = "auto",
+        idle_beat_min_s: float = 30.0,
+        idle_beat_max_s: float = 60.0,
         morph_speed: float = 1.0,
         glitch_enabled: bool = True,
         **kwargs: Any,
@@ -754,11 +763,18 @@ class AssistantNameplate(Widget):
         self._tick = 0
         self._timer = None
         self._effects_enabled = effects_enabled
+        if idle_effect == "breathe":
+            idle_effect = "pulse"
         self._idle_effect_name = idle_effect
         self._cfg_idle_effect = idle_effect  # A6: alias for tests/config inspection
+        self._idle_beat_min_s: float = idle_beat_min_s
+        self._idle_beat_max_s: float = max(idle_beat_max_s, idle_beat_min_s + 1.0)
+        self._idle_beat_timer = None
+        self._idle_beat_tick: int = 0
+        self._idle_beat_type: _NPIdleBeat = _NPIdleBeat.NONE
+        self._beat_decrypt_frame: list[_NPChar] = []
         self._morph_speed = morph_speed
         self._glitch_enabled = glitch_enabled
-        self._idle_fx: "Any | None" = None
         self._glitch_frame = 0
         self._error_frame = 0
         self._last_was_error = False
@@ -806,16 +822,6 @@ class AssistantNameplate(Widget):
         self._idle_color_hex: str = _lerp_hex(self._text_hex, self._accent_hex, 0.25)
         if not self._effects_enabled:
             return
-        from hermes_cli.stream_effects import VALID_EFFECTS, make_stream_effect
-        idle_name = self._idle_effect_name
-        if idle_name not in VALID_EFFECTS:
-            _LOG.warning(
-                "nameplate_idle_effect %r not in VALID_EFFECTS; falling back to shimmer",
-                idle_name,
-            )
-            idle_name = "shimmer"
-        if idle_name != "none":
-            self._idle_fx = make_stream_effect({"stream_effect": idle_name})
         self._init_decrypt()
         self._timer = self.set_interval(1 / 30, self._advance)
         # A2: watch status_phase to pause/resume pulse
@@ -831,9 +837,7 @@ class AssistantNameplate(Widget):
             pass
 
     def on_unmount(self) -> None:
-        if self._timer:
-            self._timer.stop()
-            self._timer = None
+        self._stop_all_idle_timers()
         try:
             self.app.hooks.unregister_owner(self)
         except Exception:
@@ -900,13 +904,8 @@ class AssistantNameplate(Widget):
         if not self._effects_enabled:
             return Text(self._target_name)
         if self._state == _NPState.IDLE:
-            if self._idle_fx is not None:
-                try:
-                    return self._idle_fx.render_tui(
-                        self._target_name, self._accent_hex, self._text_hex
-                    )
-                except Exception:
-                    pass
+            if self._idle_beat_type != _NPIdleBeat.NONE:
+                return self._render_idle_beat(self._idle_beat_type, self._idle_beat_tick)
             return Text(self._target_name, style=Style.parse(self._idle_color_hex))
         if self._state == _NPState.ACTIVE_IDLE:
             return self._render_active_pulse()
@@ -972,11 +971,14 @@ class AssistantNameplate(Widget):
             self._enter_idle_timer()
 
     def _tick_idle(self) -> None:
-        if self._idle_fx is not None:
-            try:
-                self._idle_fx.tick_tui()
-            except Exception:
-                pass
+        if self._idle_beat_type == _NPIdleBeat.NONE:
+            return
+        self._idle_beat_tick += 1
+        done = self._tick_idle_beat(self._idle_beat_type, self._idle_beat_tick)
+        if done:
+            self._idle_beat_type = _NPIdleBeat.NONE
+            self._stop_timer()
+            self._schedule_next_beat()
 
     def _tick_active_idle(self) -> None:
         try:
@@ -1044,6 +1046,10 @@ class AssistantNameplate(Widget):
 
     _DECRYPT_TICKS = 150  # 5s @ 30fps — startup splash only
     _MORPH_TICKS = 8      # ~267ms @ 30fps — active/idle transitions
+    _BEAT_PULSE_TICKS    = 30
+    _BEAT_SHIMMER_TICKS  = 30
+    _BEAT_DECRYPT_TICKS  = 30   # defined for symmetry; not used as completion gate — see NA-2c
+    _BEAT_CATALOGUE      = [_NPIdleBeat.PULSE, _NPIdleBeat.SHIMMER, _NPIdleBeat.DECRYPT]
 
     def _init_decrypt(self) -> None:
         self._frame = []
@@ -1106,11 +1112,124 @@ class AssistantNameplate(Widget):
             self._timer = None
 
     def _enter_idle_timer(self) -> None:
-        """Start idle timer only when an animated effect needs per-frame updates."""
-        if not self._effects_enabled or self._idle_fx is None:
-            self._stop_timer()
-        else:
-            self._set_timer_rate(30)
+        """Enter static wait; schedule first beat one-shot."""
+        self._stop_timer()
+        self._idle_beat_type = _NPIdleBeat.NONE
+        if not self._effects_enabled:
+            return
+        if self._idle_effect_name == "none":
+            return
+        self._schedule_next_beat()
+
+    def _schedule_next_beat(self) -> None:
+        delay = _random.uniform(self._idle_beat_min_s, self._idle_beat_max_s)
+        if self._idle_beat_timer is not None:
+            self._idle_beat_timer.stop()
+        self._idle_beat_timer = self.set_timer(delay, self._start_idle_beat)
+
+    def _start_idle_beat(self) -> None:
+        self._idle_beat_timer = None
+        self._idle_beat_tick = 0
+        self._idle_beat_type = self._pick_beat_type()
+        self._init_beat(self._idle_beat_type)
+        self._set_timer_rate(30)
+
+    def _stop_all_idle_timers(self) -> None:
+        """Call before leaving IDLE or on unmount."""
+        self._stop_timer()
+        if self._idle_beat_timer is not None:
+            self._idle_beat_timer.stop()
+            self._idle_beat_timer = None
+        self._idle_beat_type = _NPIdleBeat.NONE
+
+    # --- idle beat catalogue ---
+
+    def _pick_beat_type(self) -> _NPIdleBeat:
+        name = self._idle_effect_name
+        if name == "auto":
+            return _random.choice(self._BEAT_CATALOGUE)
+        mapping = {
+            "pulse":   _NPIdleBeat.PULSE,
+            "shimmer": _NPIdleBeat.SHIMMER,
+            "decrypt": _NPIdleBeat.DECRYPT,
+        }
+        result = mapping.get(name)
+        if result is None:
+            _LOG.warning("unknown idle_effect %r; falling back to pulse", name)
+            result = _NPIdleBeat.PULSE
+        return result
+
+    def _init_beat(self, beat: _NPIdleBeat) -> None:
+        if beat == _NPIdleBeat.DECRYPT:
+            self._beat_decrypt_frame = [
+                _NPChar(target=ch, current=_random.choice(_NP_POOL),
+                        locked=False, lock_at=0, style=_NP_DECRYPT_COLOR)
+                for ch in self._target_name
+            ]
+
+    def _tick_idle_beat(self, beat: _NPIdleBeat, tick: int) -> bool:
+        """Return True when the beat is complete."""
+        if beat == _NPIdleBeat.PULSE:
+            return tick >= self._BEAT_PULSE_TICKS
+        if beat == _NPIdleBeat.SHIMMER:
+            return tick >= self._BEAT_SHIMMER_TICKS
+        if beat == _NPIdleBeat.DECRYPT:
+            return self._tick_beat_decrypt(tick)
+        return True
+
+    def _tick_beat_decrypt(self, tick: int) -> bool:
+        n = len(self._target_name)
+        if tick < 10:
+            for ch in self._beat_decrypt_frame:
+                ch.current = _random.choice(_NP_POOL)
+            return False
+        t_rel = tick - 10
+        all_locked = True
+        for i, ch in enumerate(self._beat_decrypt_frame):
+            if ch.locked:
+                continue
+            if i <= (n - 1) * t_rel / 19:
+                ch.current = ch.target
+                ch.style = Style.parse(self._idle_color_hex)
+                ch.locked = True
+            else:
+                ch.current = _random.choice(_NP_POOL)
+                all_locked = False
+        return all_locked
+
+    def _render_idle_beat(self, beat: _NPIdleBeat, tick: int) -> Text:
+        if beat == _NPIdleBeat.PULSE:
+            return self._render_beat_pulse(tick)
+        if beat == _NPIdleBeat.SHIMMER:
+            return self._render_beat_shimmer(tick)
+        if beat == _NPIdleBeat.DECRYPT:
+            t = Text()
+            for ch in self._beat_decrypt_frame:
+                t.append(ch.current, style=ch.style)
+            return t
+        return Text(self._target_name, style=Style.parse(self._idle_color_hex))
+
+    def _render_beat_pulse(self, tick: int) -> Text:
+        t = Text()
+        n = max(3, len(self._target_name))
+        phase = 2 * math.pi * tick / self._BEAT_PULSE_TICKS
+        offset = math.pi / n
+        for i, ch in enumerate(self._target_name):
+            w = (math.sin(phase - i * offset) + 1.0) / 2.0
+            color = _lerp_hex(self._idle_color_hex, self._accent_hex, w)
+            t.append(ch, style=Style.parse(color))
+        return t
+
+    def _render_beat_shimmer(self, tick: int) -> Text:
+        t = Text()
+        n = max(3, len(self._target_name))
+        pos = (n + 4) * tick / self._BEAT_SHIMMER_TICKS - 2
+        for i, ch in enumerate(self._target_name):
+            dist = abs(i - pos)
+            w = max(0.0, 1.0 - dist / 1.5)
+            color = _lerp_hex(self._idle_color_hex, self._accent_hex, w)
+            t.append(ch, style=Style.parse(color))
+        return t
 
     def _pause_pulse(self) -> None:
         """Stop animation timer; --active stays so the turn-in-progress color persists."""

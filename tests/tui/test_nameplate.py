@@ -10,13 +10,13 @@ from rich.text import Text
 from hermes_cli.tui.widgets import (
     AssistantNameplate,
     _NPChar,
+    _NPIdleBeat,
     _NPState,
     _NP_POOL,
     _NP_IDLE_COLOR,
     _NP_ACTIVE_COLOR,
     _NP_ERROR_COLOR,
 )
-from hermes_cli.stream_effects import VALID_EFFECTS
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +39,7 @@ def _make_np_effects(**kwargs) -> AssistantNameplate:
     np = AssistantNameplate(**kw)
     # Stub out Textual event loop methods
     np.set_interval = MagicMock(return_value=MagicMock())
+    np.set_timer = MagicMock(return_value=MagicMock())
     np.refresh = MagicMock()
     # Manually call _init_decrypt to set frame (skipping on_mount timer)
     np._init_decrypt()
@@ -159,46 +160,32 @@ class TestDecryptReveal:
 # ---------------------------------------------------------------------------
 
 class TestIdleStreamEffect:
-    def test_idle_uses_stream_effect_render_tui(self):
+    def test_idle_static_returns_plain_text(self):
         np = _make_np_effects()
         np._state = _NPState.IDLE
-        mock_fx = MagicMock()
-        mock_fx.render_tui.return_value = Text("Hermes")
-        np._idle_fx = mock_fx
-        result = np.render()
-        mock_fx.render_tui.assert_called_once_with(
-            np._target_name, np._accent_hex, np._text_hex
-        )
-
-    def test_idle_effect_none_returns_plain_text(self):
-        np = _make_np_effects(idle_effect="none")
-        np._state = _NPState.IDLE
-        np._idle_fx = None
         result = np.render()
         assert isinstance(result, Text)
         assert "Hermes" in result.plain
 
-    def test_idle_effect_configurable_from_valid_effects(self):
-        for effect in VALID_EFFECTS:
+    def test_idle_effect_none_returns_plain_text(self):
+        np = _make_np_effects(idle_effect="none")
+        np._state = _NPState.IDLE
+        result = np.render()
+        assert isinstance(result, Text)
+        assert "Hermes" in result.plain
+
+    def test_idle_effect_named_types_stored(self):
+        for effect in ("pulse", "shimmer", "decrypt", "auto", "none"):
             np = AssistantNameplate(name="Hermes", idle_effect=effect)
             assert np._idle_effect_name == effect
 
-    def test_idle_invalid_effect_falls_back_to_shimmer(self):
-        # Directly test the fallback logic (same code path as on_mount)
-        idle_name = "invalid_xyz"
-        if idle_name not in VALID_EFFECTS:
-            idle_name = "shimmer"
-        assert idle_name == "shimmer"
+    def test_idle_invalid_effect_stored_as_is(self):
+        np = AssistantNameplate(name="Hermes", idle_effect="bogus")
+        assert np._idle_effect_name == "bogus"
 
-    def test_make_stream_effect_called_with_stream_effect_key(self):
-        """Verify make_stream_effect is called with {"stream_effect": name}."""
-        with patch("hermes_cli.tui.widgets.make_stream_effect") as mock_make:
-            mock_make.return_value = MagicMock()
-            # Simulate what on_mount does
-            from hermes_cli.tui.widgets import make_stream_effect as real_mse
-            result = real_mse({"stream_effect": "shimmer"})
-            # Should not raise; returns a StreamEffectRenderer subclass
-            assert result is not None
+    def test_breathe_alias_stored_as_pulse(self):
+        np = AssistantNameplate(name="Hermes", idle_effect="breathe")
+        assert np._idle_effect_name == "pulse"
 
 
 # ---------------------------------------------------------------------------
@@ -444,3 +431,219 @@ class TestAppIntegration:
         np.set_active_label(f"▸ {spinner_label[:16]}")
         assert np._state == _NPState.GLITCH
         assert np._active_label == "▸ bash"
+
+
+# ---------------------------------------------------------------------------
+# NA-1 — Beat cadence / timer architecture
+# ---------------------------------------------------------------------------
+
+class TestNA1BeatCadence:
+    def test_idle_no_timer_between_beats(self):
+        np = _make_np_effects()
+        np._enter_idle_timer()
+        # Between-beats: 30fps interval stopped, one-shot scheduled
+        assert np._timer is None
+        assert np._idle_beat_timer is not None
+        assert np._idle_beat_type == _NPIdleBeat.NONE
+
+    def test_idle_beat_starts_on_one_shot_fire(self):
+        np = _make_np_effects()
+        np._start_idle_beat()
+        assert np._idle_beat_type != _NPIdleBeat.NONE
+        assert np._timer is not None  # 30fps interval running
+
+    def test_idle_beat_done_reschedules(self):
+        np = _make_np_effects(idle_effect="pulse")
+        np._start_idle_beat()
+        # Force beat completion by advancing tick past threshold
+        np._idle_beat_tick = np._BEAT_PULSE_TICKS
+        np._tick_idle()
+        # Beat done: interval stopped, next one-shot scheduled
+        assert np._timer is None
+        assert np._idle_beat_timer is not None
+        assert np._idle_beat_type == _NPIdleBeat.NONE
+
+    def test_idle_effects_none_no_timer(self):
+        np = _make_np_effects(idle_effect="none")
+        np._enter_idle_timer()
+        assert np._timer is None
+        assert np._idle_beat_timer is None
+
+
+# ---------------------------------------------------------------------------
+# NA-2 — Beat catalogue
+# ---------------------------------------------------------------------------
+
+class TestNA2PulseBeat:
+    def test_beat_pulse_returns_text(self):
+        np = _make_np(name="Hermes")
+        t0 = np._render_beat_pulse(0)
+        t15 = np._render_beat_pulse(15)
+        assert isinstance(t0, Text)
+        assert len(t0._spans) == len("Hermes")
+        assert isinstance(t15, Text)
+        # Mid-cycle should be different colors than tick-0
+        assert t0._spans[0].style != t15._spans[0].style
+
+    def test_beat_pulse_completes_at_30(self):
+        np = _make_np(name="Hermes")
+        assert np._tick_idle_beat(_NPIdleBeat.PULSE, 29) is False
+        assert np._tick_idle_beat(_NPIdleBeat.PULSE, 30) is True
+
+    def test_beat_pulse_first_char_offset(self):
+        import math
+        np = _make_np(name="Hermes")
+        np._idle_color_hex = "#888888"
+        np._accent_hex = "#7b68ee"
+        tick = 0
+        n = max(3, len("Hermes"))
+        phase = 2 * math.pi * tick / np._BEAT_PULSE_TICKS  # = 0
+        offset = math.pi / n
+        w = (math.sin(phase - 0 * offset) + 1.0) / 2.0  # sin(0) = 0 → w = 0.5
+        assert abs(w - 0.5) < 1e-9
+        t = np._render_beat_pulse(0)
+        # w=0.5 means color is midpoint; just verify it returns a styled span
+        assert len(t._spans) == len("Hermes")
+
+
+class TestNA2ShimmerBeat:
+    def test_beat_shimmer_window_moves(self):
+        import math
+        np = _make_np(name="ABCDEF")  # 6-char name
+        np._idle_color_hex = "#888888"
+        np._accent_hex = "#7b68ee"
+        n = max(3, 6)
+        # At tick 6: pos = (6+4)*6/30 - 2 = 60/30 - 2 = 2 - 2 = 0
+        # char 0: dist=0, w=1.0 (bright); char 5: dist=5, w=0 (dark)
+        tick_a = 6
+        pos_a = (n + 4) * tick_a / np._BEAT_SHIMMER_TICKS - 2
+        w0_a = max(0.0, 1.0 - abs(0 - pos_a) / 1.5)
+        w5_a = max(0.0, 1.0 - abs(5 - pos_a) / 1.5)
+        assert w0_a > 0.0
+        assert w5_a == 0.0
+        # At tick 21: pos = (6+4)*21/30 - 2 = 7 - 2 = 5
+        # char 5: dist=0, w=1.0 (bright); char 0: dist=5, w=0 (dark)
+        tick_b = 21
+        pos_b = (n + 4) * tick_b / np._BEAT_SHIMMER_TICKS - 2
+        w0_b = max(0.0, 1.0 - abs(0 - pos_b) / 1.5)
+        w5_b = max(0.0, 1.0 - abs(5 - pos_b) / 1.5)
+        assert w5_b > 0.0
+        assert w0_b == 0.0
+
+    def test_beat_shimmer_completes_at_30(self):
+        np = _make_np(name="Hermes")
+        assert np._tick_idle_beat(_NPIdleBeat.SHIMMER, 29) is False
+        assert np._tick_idle_beat(_NPIdleBeat.SHIMMER, 30) is True
+
+
+class TestNA2DecryptBeat:
+    def test_init_beat_decrypt_sets_frame(self):
+        np = _make_np(name="Hermes")
+        np._init_beat(_NPIdleBeat.DECRYPT)
+        assert len(np._beat_decrypt_frame) == len("Hermes")
+        for ch in np._beat_decrypt_frame:
+            assert ch.current in _NP_POOL
+            assert not ch.locked
+
+    def test_beat_decrypt_scramble_phase(self):
+        import random as _r
+        np = _make_np(name="Hermes")
+        np._init_beat(_NPIdleBeat.DECRYPT)
+        # Seed so chars are deterministically from pool (not target)
+        with patch("hermes_cli.tui.widgets._random", _r):
+            _r.seed(42)
+            np._tick_beat_decrypt(5)
+        for ch in np._beat_decrypt_frame:
+            assert ch.current in _NP_POOL
+
+    def test_beat_decrypt_resolve_phase(self):
+        np = _make_np(name="Hermes")
+        np._init_beat(_NPIdleBeat.DECRYPT)
+        # Scramble first
+        for _ in range(10):
+            np._tick_beat_decrypt(_)
+        # At tick 10: t_rel=0, char 0 locks (0 <= 5*0/19 = 0)
+        np._tick_beat_decrypt(10)
+        assert np._beat_decrypt_frame[0].locked
+        assert np._beat_decrypt_frame[0].current == "H"
+        # At tick 29: all locked
+        for t in range(11, 30):
+            np._tick_beat_decrypt(t)
+        for ch in np._beat_decrypt_frame:
+            assert ch.locked
+
+    def test_beat_decrypt_completes_when_all_locked(self):
+        np = _make_np(name="Hermes")
+        np._init_beat(_NPIdleBeat.DECRYPT)
+        for t in range(30):
+            np._tick_beat_decrypt(t)
+        result = np._tick_idle_beat(_NPIdleBeat.DECRYPT, 30)
+        assert result is True
+
+    def test_render_idle_beat_dispatch(self):
+        np = _make_np(name="Hermes")
+        # PULSE dispatch
+        with patch.object(np, "_render_beat_pulse", return_value=Text("x")) as mock_p:
+            np._render_idle_beat(_NPIdleBeat.PULSE, 5)
+            mock_p.assert_called_once_with(5)
+        # SHIMMER dispatch
+        with patch.object(np, "_render_beat_shimmer", return_value=Text("x")) as mock_s:
+            np._render_idle_beat(_NPIdleBeat.SHIMMER, 5)
+            mock_s.assert_called_once_with(5)
+        # DECRYPT renders inline from _beat_decrypt_frame
+        np._init_beat(_NPIdleBeat.DECRYPT)
+        result = np._render_idle_beat(_NPIdleBeat.DECRYPT, 5)
+        assert isinstance(result, Text)
+        assert len(result._spans) == len("Hermes")
+
+
+# ---------------------------------------------------------------------------
+# NA-3 — Auto-variety mode + config params
+# ---------------------------------------------------------------------------
+
+class TestNA3AutoVariety:
+    def test_pick_beat_auto_returns_catalogue_member(self):
+        np = _make_np(name="Hermes", effects_enabled=False)
+        np._idle_effect_name = "auto"
+        for _ in range(100):
+            result = np._pick_beat_type()
+            assert result in np._BEAT_CATALOGUE
+
+    def test_pick_beat_named_type(self):
+        np = _make_np(name="Hermes")
+        np._idle_effect_name = "shimmer"
+        assert np._pick_beat_type() == _NPIdleBeat.SHIMMER
+        np._idle_effect_name = "decrypt"
+        assert np._pick_beat_type() == _NPIdleBeat.DECRYPT
+        np._idle_effect_name = "pulse"
+        assert np._pick_beat_type() == _NPIdleBeat.PULSE
+
+    def test_breathe_alias(self):
+        np = AssistantNameplate(name="Hermes", idle_effect="breathe")
+        assert np._idle_effect_name == "pulse"
+
+    def test_beat_cooldown_range(self):
+        np = _make_np_effects(name="Hermes", idle_beat_min_s=5.0, idle_beat_max_s=10.0)
+        delays = []
+        def _capture(delay, _cb):
+            delays.append(delay)
+            return MagicMock()
+        np.set_timer = _capture
+        for _ in range(50):
+            np._schedule_next_beat()
+        assert all(5.0 <= d <= 10.0 for d in delays)
+
+    def test_idle_effect_none_never_schedules(self):
+        np = _make_np_effects(idle_effect="none")
+        np._enter_idle_timer()
+        assert np._idle_beat_timer is None
+
+    def test_pick_beat_unknown_emits_warning(self):
+        np = _make_np(name="Hermes")
+        np._idle_effect_name = "bogus"
+        with patch("hermes_cli.tui.widgets._LOG") as mock_log:
+            result = np._pick_beat_type()
+        mock_log.warning.assert_called_once()
+        args = mock_log.warning.call_args[0]
+        assert "bogus" in str(args)
+        assert result == _NPIdleBeat.PULSE

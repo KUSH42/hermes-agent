@@ -400,9 +400,11 @@ ToolsScreen > #prefix-legend.--hidden {
         )  # B5/D2: include all active key bindings
 
     async def on_mount(self) -> None:
+        self.add_class("--modal")
         self._term_w = self.app.size.width
         if self._term_w < 60:
             self.app._flash_hint("⚠  terminal too narrow for /tools overlay", 2.0)
+            self.remove_class("--modal")
             self.app.pop_screen()
             return
         self.query_one("#filter-input", Input).display = False
@@ -660,6 +662,7 @@ ToolsScreen > #prefix-legend.--hidden {
             fi.display = False
         except Exception:  # filter-input widget absent — display state not changed
             pass
+        self.remove_class("--modal")
         self.app.pop_screen()
 
     async def action_open_filter(self) -> None:
@@ -698,6 +701,7 @@ ToolsScreen > #prefix-legend.--hidden {
             return
         entry = self._filtered[self._cursor]
         panel_id = f"tool-{entry['tool_call_id']}"
+        self.remove_class("--modal")
         self.app.pop_screen()
 
         def _after_pop() -> None:

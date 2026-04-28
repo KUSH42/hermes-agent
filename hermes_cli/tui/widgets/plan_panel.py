@@ -120,7 +120,8 @@ class _PlanEntry(Static, can_focus=True):
             event.stop()
         elif event.key == "escape":
             try:
-                self.app.query_one("#input-area").focus()
+                from hermes_cli.tui.input_widget import HermesInput as _HI
+                self.app.query_one(_HI).focus()
             except Exception:
                 # plan data parse failed; panel renders with empty plan
                 pass

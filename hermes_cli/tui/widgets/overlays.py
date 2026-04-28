@@ -479,7 +479,7 @@ class HistorySearchOverlay(Widget):
         except NoMatches:
             pass
         self._render_results("")
-        self.add_class("--visible")
+        self.add_class("--visible", "--modal")
         try:
             self.query_one("#history-search-input", Input).focus()
         except NoMatches:
@@ -506,7 +506,7 @@ class HistorySearchOverlay(Widget):
             self.app.highlighted_candidate = None
         except Exception:
             _log.debug("overlay ContentSwitcher toggle failed", exc_info=True)
-        self.remove_class("--visible")
+        self.remove_class("--visible", "--modal")
         try:
             from .status_bar import HintBar
             self.app.query_one(HintBar).hint = self._saved_hint

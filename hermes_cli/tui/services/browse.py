@@ -12,6 +12,7 @@ from hermes_cli.tui._browse_types import (
     _BROWSE_TYPE_GLYPH,
     _is_in_reasoning,
 )
+from hermes_cli.tui.widgets import ScrollState
 from .base import AppService
 
 if TYPE_CHECKING:
@@ -277,7 +278,10 @@ class BrowseService(AppService):
         self._browse_cursor = idx
         app._browse_cursor = idx
         try:
-            app.query_one(OutputPanel).scroll_to_widget(w, animate=True, center=True)
+            output = app.query_one(OutputPanel)
+            output._last_scroll_origin = "browse_jump"
+            output.scroll_state = ScrollState.JUMPED
+            output.scroll_to_widget(w, animate=True, center=True)
         except NoMatches:
             pass
         self.clear_browse_highlight()
@@ -398,8 +402,11 @@ class BrowseService(AppService):
             output = self.app.query_one(OutputPanel)
             for panel in output.query(ToolPanel):
                 if getattr(panel, "_plan_tool_call_id", None) == tool_call_id:
+                    output._last_scroll_origin = "browse_jump"
+                    output.scroll_state = ScrollState.JUMPED
                     output.scroll_to_widget(panel, animate=True, center=True)
                     self.clear_browse_highlight()
+                    # F-2 contract (concept v0.7 FA-4): scroll_to_tool flashes --browse-focused, does NOT call panel.focus().
                     panel.add_class("--browse-focused")
                     return True
         except NoMatches:

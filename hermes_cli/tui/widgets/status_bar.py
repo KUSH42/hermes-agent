@@ -53,6 +53,8 @@ KEY_DOWN    = "↓"
 KEY_CTRL_C  = "⌃C"
 KEY_CTRL_F  = "⌃F"
 KEY_CTRL_Z  = "⌃Z"
+HINT_MAX_PRIMARY = 3  # D-1: cap on primary hint entries visible at once (AT-D1)
+
 _COMPACTION_ZERO_PROBES: set[int] = set()
 
 # Compaction bar thresholds — sourced from display config so users can adjust.
@@ -93,7 +95,7 @@ def _build_hints(phase: str, key_color: str) -> dict[str, str]:
 
     def _fmt(entries: list[tuple[str, str | None]], sep: str = _SEP) -> str:
         parts = []
-        for key, desc in entries:
+        for key, desc in entries[:HINT_MAX_PRIMARY]:  # D-1: cap primary hints
             if desc is not None:
                 parts.append(f"[bold {k}]{key}[/] [dim]{desc}[/dim]")
             else:

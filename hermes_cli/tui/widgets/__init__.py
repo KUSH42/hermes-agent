@@ -27,6 +27,7 @@ StartupBannerWidget.
 from __future__ import annotations
 
 import enum
+from enum import StrEnum
 import logging
 import math
 import random as _random
@@ -244,6 +245,14 @@ _LOG = logging.getLogger(__name__)
 # OutputPanel — scrollable output container
 # ---------------------------------------------------------------------------
 
+
+class ScrollState(StrEnum):
+    """W-11: three-state scroll position enum for OutputPanel."""
+    PINNED = "pinned"      # at live edge; auto-scroll active
+    ANCHORED = "anchored"  # user scrolled up; pending-count badge shown
+    JUMPED = "jumped"      # programmatic browse jump; jump-hint badge shown
+
+
 class OutputPanel(ScrollableContainer):
     """Scrollable output area containing MessagePanels + live in-progress line.
 
@@ -266,6 +275,9 @@ class OutputPanel(ScrollableContainer):
     # when no descendant has focus.
     can_focus = True
 
+    # W-11: tri-state scroll position reactive
+    scroll_state: reactive[ScrollState] = reactive(ScrollState.PINNED)
+
     BINDINGS = [
         # D6: streaming-only — non-priority so a focused child (e.g.
         # CopyableRichLog) handles Space normally; Esc bubbles to the
@@ -277,8 +289,21 @@ class OutputPanel(ScrollableContainer):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         _boost_layout_caches(self, box_model_maxsize=256, arrangement_maxsize=32)
-        self._user_scrolled_up: bool = False
+        # W-11: _user_scrolled_up is now a property backed by scroll_state;
+        # keep these two extra fields for anchored-badge tracking.
+        self._last_scroll_origin: str | None = None
+        self._anchored_pending_count: int = 0
         self._turn_raw_output: str = ""
+
+    @property
+    def _user_scrolled_up(self) -> bool:
+        """W-11: True when not PINNED (ANCHORED or JUMPED)."""
+        return self.scroll_state != ScrollState.PINNED
+
+    @_user_scrolled_up.setter
+    def _user_scrolled_up(self, v: bool) -> None:
+        """W-11: writing True → ANCHORED; writing False → PINNED."""
+        self.scroll_state = ScrollState.ANCHORED if v else ScrollState.PINNED
 
     # D6 actions ----------------------------------------------------
     def action_pause_scroll(self) -> None:
@@ -380,8 +405,15 @@ class OutputPanel(ScrollableContainer):
         # watch_scroll_y handles re-engaging auto-scroll when near the bottom.
 
     def on_scroll_up(self, _event: Any) -> None:
-        """Mark that the user has scrolled up via keyboard — suppress auto-scroll."""
-        self._user_scrolled_up = True
+        """W-11: keyboard scroll up → ANCHORED state."""
+        self._last_scroll_origin = None
+        self.scroll_state = ScrollState.ANCHORED
+
+    def on_scroll_down(self, _event: Any) -> None:
+        """W-11: keyboard scroll down; JUMPED → ANCHORED (PINNED via watch_scroll_y)."""
+        self._last_scroll_origin = None
+        if self.scroll_state == ScrollState.JUMPED:
+            self.scroll_state = ScrollState.ANCHORED
 
     def on_mount(self) -> None:
         # Cache width for the startup banner daemon thread.
@@ -392,6 +424,37 @@ class OutputPanel(ScrollableContainer):
         except Exception:
             # best-effort UI update; widget may not be mounted
             pass
+        # W-11: mount the scroll-state badge
+        self.mount(OutputPanelScrollBadge())
+
+    # W-9/W-11: gated scroll_end -----------------------------------------------
+
+    def scroll_end_if_pinned(self, *, animate: bool = False) -> None:
+        """W-9/W-11: call scroll_end only when pinned; increment pending count when not."""
+        if not self._user_scrolled_up:
+            self.app.call_after_refresh(self.scroll_end, animate=animate)
+        else:
+            self._anchored_pending_count += 1
+            self._update_scroll_badge()
+
+    # W-11: badge helpers -------------------------------------------------------
+
+    def _update_scroll_badge(self) -> None:
+        """Sync badge visibility and pending count display."""
+        try:
+            badge = self.query_one(OutputPanelScrollBadge)
+        except NoMatches:
+            return  # not yet mounted; expected during startup
+        if self.scroll_state == ScrollState.PINNED:
+            self._anchored_pending_count = 0
+            badge.remove_class("--visible")
+        else:
+            badge.add_class("--visible")
+        badge.refresh()
+
+    def watch_scroll_state(self, new: ScrollState) -> None:
+        """W-11: keep badge in sync when scroll_state changes."""
+        self._update_scroll_badge()
 
     def compose(self) -> ComposeResult:
         # StartupBannerWidget must be first so startup TTE frames render above
@@ -553,6 +616,26 @@ class OutputPanel(ScrollableContainer):
                 new_vh = getattr(getattr(panel, "virtual_size", None), "height", 0)
                 panel.scroll_y = int(f * new_vh)
             self.call_after_refresh(_restore_frac)
+
+
+# ---------------------------------------------------------------------------
+# OutputPanelScrollBadge — W-11 anchored/jumped badge
+# ---------------------------------------------------------------------------
+
+
+class OutputPanelScrollBadge(Static):
+    """W-11: shows pending-event count or jump hint when output is not pinned."""
+
+    def render(self) -> str:
+        try:
+            panel = self.app.query_one(OutputPanel)
+        except NoMatches:
+            return ""
+        if panel.scroll_state == ScrollState.ANCHORED:
+            return f"↓ {panel._anchored_pending_count} new"
+        if panel.scroll_state == ScrollState.JUMPED:
+            return "↑ jump · End to latest"
+        return ""
 
 
 # ---------------------------------------------------------------------------

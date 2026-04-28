@@ -447,8 +447,7 @@ class ToolRenderingService(AppService):
         )
         msg.refresh(layout=True)
         self.app._browse_total += 1
-        if not output._user_scrolled_up:
-            self.app.call_after_refresh(output.scroll_end, animate=False)
+        output.scroll_end_if_pinned()
         return result
 
     # ------------------------------------------------------------------
@@ -463,8 +462,7 @@ class ToolRenderingService(AppService):
         msg = output.current_message or output.new_message()
         block = msg.open_streaming_tool_block(label=get_display_name(tool_name), tool_name=tool_name)
         self.app._browse_total += 1
-        if not output._user_scrolled_up:
-            self.app.call_after_refresh(output.scroll_end, animate=False)
+        output.scroll_end_if_pinned()
         return block
 
     def open_execute_code_block(self, idx: int) -> "Any | None":
@@ -480,8 +478,7 @@ class ToolRenderingService(AppService):
             panel = _ToolPanel(block, tool_name="execute_code")
             msg._mount_nonprose_block(panel)
             self.app._browse_total += 1
-            if not output._user_scrolled_up:
-                self.app.call_after_refresh(output.scroll_end, animate=False)
+            output.scroll_end_if_pinned()
             return block
         except Exception as e:  # noqa: bare-except
             logger.warning("open_execute_code_block failed for idx=%d: %s", idx, e)
@@ -501,8 +498,7 @@ class ToolRenderingService(AppService):
             msg._mount_nonprose_block(panel)
             msg._last_file_tool_block = block
             self.app._browse_total += 1
-            if not output._user_scrolled_up:
-                self.app.call_after_refresh(output.scroll_end, animate=False)
+            output.scroll_end_if_pinned()
             return block
         except Exception as e:  # noqa: bare-except
             logger.warning("open_write_file_block failed idx=%d: %s", idx, e)
@@ -622,8 +618,7 @@ class ToolRenderingService(AppService):
             self.app._svc_commands.update_anim_hint()
             msg.refresh(layout=True)
             self.app._browse_total += 1
-            if not output._user_scrolled_up:
-                self.app.call_after_refresh(output.scroll_end, animate=False)
+            output.scroll_end_if_pinned()
         except NoMatches:
             pass
 
@@ -648,8 +643,8 @@ class ToolRenderingService(AppService):
             return
         block.append_line(line)
         panel = self._get_output_panel()
-        if panel is not None and not panel._user_scrolled_up:
-            self.app.call_after_refresh(panel.scroll_end, animate=False)
+        if panel is not None:
+            panel.scroll_end_if_pinned()
 
     def close_streaming_tool_block(
         self,
@@ -700,8 +695,8 @@ class ToolRenderingService(AppService):
         )
         self.app._svc_commands.update_anim_hint()
         panel = self._get_output_panel()
-        if panel is not None and not panel._user_scrolled_up:
-            self.app.call_after_refresh(panel.scroll_end, animate=False)
+        if panel is not None:
+            panel.scroll_end_if_pinned()
         try:
             from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
             ov = self.app.query_one(DrawbrailleOverlay)
@@ -741,8 +736,8 @@ class ToolRenderingService(AppService):
             dur_ms=_parse_duration_ms(duration),
         )
         panel = self._get_output_panel()
-        if panel is not None and not panel._user_scrolled_up:
-            self.app.call_after_refresh(panel.scroll_end, animate=False)
+        if panel is not None:
+            panel.scroll_end_if_pinned()
         try:
             from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
             ov = self.app.query_one(DrawbrailleOverlay)
@@ -1428,8 +1423,7 @@ class ToolRenderingService(AppService):
                 msg = output.current_message or output.new_message()
                 msg._mount_nonprose_block(panel)
                 self.app._browse_total += 1
-                if not output._user_scrolled_up:
-                    self.app.call_after_refresh(output.scroll_end, animate=False)
+                output.scroll_end_if_pinned()
             self.app._active_streaming_blocks[tool_call_id] = block
             self.app._streaming_tool_count = len(self.app._active_streaming_blocks)
             # A1: count this as an open tool block

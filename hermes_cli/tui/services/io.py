@@ -75,8 +75,7 @@ class IOService(AppService):
                 try:
                     panel = app.query_one(OutputPanel)
                     panel.flush_live()
-                    if not panel._user_scrolled_up:
-                        app.call_after_refresh(panel.scroll_end, animate=False)
+                    panel.scroll_end_if_pinned()
                 except NoMatches:
                     pass
                 continue
@@ -128,8 +127,7 @@ class IOService(AppService):
                             with measure("io.panel_refresh", budget_ms=6.0, silent=True):
                                 _p.refresh(layout=True)
                         app.call_after_refresh(_do_layout_refresh)
-                    if not panel._user_scrolled_up:
-                        app.call_after_refresh(panel.scroll_end, animate=False)
+                    panel.scroll_end_if_pinned()
                 except NoMatches:
                     pass
             await asyncio.sleep(0)

@@ -58,7 +58,8 @@ class ContextMenuService(AppService):
                     return
                 node = getattr(node, "parent", None)
             try:
-                app.query_one("#input-area").focus()
+                from hermes_cli.tui.input_widget import HermesInput as _HI
+                app.query_one(_HI).focus()
             except NoMatches:
                 pass
             return

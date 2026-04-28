@@ -70,6 +70,7 @@ class ReferenceModal(Widget):
     ]
 
     def on_mount(self) -> None:
+        self.add_class("--modal")
         if self._modal_title and self.is_mounted:
             self.border_title = self._modal_title
 
@@ -79,7 +80,7 @@ class ReferenceModal(Widget):
         self.add_class("--visible")
 
     def hide_overlay(self) -> None:
-        self.remove_class("--visible")
+        self.remove_class("--visible", "--modal")
 
     def action_dismiss(self) -> None:
         self.hide_overlay()

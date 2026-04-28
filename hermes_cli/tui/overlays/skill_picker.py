@@ -60,7 +60,7 @@ class SkillPickerOverlay(Widget):
     SkillPickerOverlay #picker-left {
         width: 1fr;
         min-width: 24;
-        border-right: solid $primary 30%;
+        border-right: solid $pane-border;
     }
     SkillPickerOverlay #picker-filter {
         dock: top;
@@ -176,7 +176,7 @@ class SkillPickerOverlay(Widget):
                 seen_sources.add(src)
                 label = _SOURCE_LABELS.get(src, src.title())
                 option_list.add_option(Option(f"── {label} ──", disabled=True))
-            disabled_badge = "  [d]" if not candidate.enabled else ""
+            disabled_badge = "  [dim](disabled)[/dim]" if not candidate.enabled else ""
             _desc = candidate.description[:40] if candidate.description else "—"
             option_list.add_option(
                 Option(
@@ -191,6 +191,18 @@ class SkillPickerOverlay(Widget):
         except NoMatches:
             return
         detail.remove_children()
+
+        # Guard: if all filtered results are disabled, show actionable empty state.
+        filtered = self._filtered_candidates()
+        selectable = [c for c in filtered if c.enabled]
+        if not selectable:
+            if self._filter:
+                msg = "[dim]All matching skills are disabled. Try a different filter.[/dim]"
+            else:
+                msg = "[dim]No skills installed.[/dim]"
+            detail.mount(Static(msg, classes="detail-empty", markup=True))
+            return
+
         selected = self._selected_candidate()
         if selected is None:
             detail.mount(Static("Select a skill to see details.", classes="detail-empty"))

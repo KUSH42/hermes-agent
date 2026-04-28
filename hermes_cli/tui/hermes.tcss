@@ -667,16 +667,19 @@ MessagePanel.--highlighted {
 
 /* --- Overlay focus rings (§2.6) --- */
 
+/* focus-ring contract: outline + tinted bg — keep in sync with ToolPanel:focus below */
 ClarifyWidget:focus,
 ApprovalWidget:focus {
-    outline: tall $accent 50%;
+    outline: tall $accent 60%;
+    background: $accent 8%;
 }
 
 /* --- Write-approval diff panel (M3) --- */
 
 ApprovalWidget > CopyableRichLog#approval-diff {
     display: none;
-    max-height: 20;
+    max-height: 60%;
+    min-height: 6;
     overflow-y: auto;
     border: hkey $panel-lighten-1 20%;
     margin: 0 2;
@@ -788,7 +791,7 @@ OmissionBar Button {
 OmissionBar Button:hover { background: $primary 20%; }
 OmissionBar Button:disabled { color: $text-disabled; }
 /* E-1: [reset] at default state — dim but still clickable (never disabled) */
-OmissionBar Button.--at-default { color: $text-muted 50%; }
+OmissionBar Button.--at-default { color: $text-muted 70%; }
 
 .--omission-bar-top {
     margin-bottom: 0;
@@ -860,7 +863,11 @@ ToolPanel:focus _CollapsedActionStrip { color: $text-muted 85%; }
 ToolPanel:focus-within { offset: 0 0; background: $accent 5%; }
 ToolPanel:focus-within FooterPane.has-actions > .action-row { display: block; }
 /* D2: direct focus overrides focus-within background (comes after = wins) */
-ToolPanel:focus                              { background: $accent 10%; border-left: vkey $accent 60%; }
+ToolPanel:focus {
+    outline: tall $accent 60%;   /* match ClarifyWidget/ApprovalWidget focus contract */
+    background: $accent 10%;     /* intentionally 10% — border-left already tints; bg stays lighter */
+    border-left: vkey $accent 60%;
+}
 ToolPanel:hover                              { background: $accent 5%; }
 /* A6: first-in-turn correlation badge */
 ToolPanel.first-in-turn                      { border-top: solid $accent 30%; }

@@ -19,6 +19,7 @@ Correctness invariants (all load-bearing — do not remove):
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from rich.console import Segment
@@ -123,6 +124,8 @@ class VirtualCompletionList(ScrollView, can_focus=True):
         self._style_empty: Style = Style(bgcolor="#2A2000")
         self._shimmer_timer: object | None = None
         self._auto_close_timer: object | None = None
+        self._auto_close_delay: float = 0.0
+        self._auto_close_started_at: float = 0.0
         # Current query fragment — set by _push_to_list; used in empty-state label.
         self.current_query: str = ""
         # Tests and callers may force the plain fallback by setting this flag.
@@ -258,6 +261,8 @@ class VirtualCompletionList(ScrollView, can_focus=True):
         if self._auto_close_timer is not None:
             self._auto_close_timer.stop()
             self._auto_close_timer = None
+        self._auto_close_delay = 0.0
+        self._auto_close_started_at = 0.0
 
     def _maybe_schedule_auto_close(self) -> None:
         """Schedule auto-dismiss if walk done and no items."""
@@ -265,6 +270,8 @@ class VirtualCompletionList(ScrollView, can_focus=True):
         if self.items or self.searching:
             return
         delay = 3.0 if self.empty_reason in {"too_short", "no_slash_match"} else 1.5
+        self._auto_close_delay = delay
+        self._auto_close_started_at = time.monotonic()
         self._auto_close_timer = self.set_timer(delay, self._fire_auto_dismiss)
 
     def _fire_auto_dismiss(self) -> None:
@@ -361,6 +368,10 @@ class VirtualCompletionList(ScrollView, can_focus=True):
                 reason = self.empty_reason
                 base_label = _EMPTY_REASON_TEXT.get(reason, _NO_MATCH_PREFIX)
                 label = (f'{base_label} for \u201c{query}\u201d' if query and reason == "" else base_label)
+                if self._auto_close_timer is not None and self._auto_close_delay > 0:
+                    elapsed = time.monotonic() - self._auto_close_started_at
+                    remaining = max(0.0, self._auto_close_delay - elapsed)
+                    label = f"  {str(base_label).strip()} (closes in {remaining:.0f}s)"
                 t = Text(label, style="dim italic", overflow="ellipsis", no_wrap=True)
                 segs = _normalize_segments(list(t.render(self.app.console)))
                 strip = Strip(segs, t.cell_len)

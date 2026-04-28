@@ -92,6 +92,12 @@ class _FakeInput:
         if self._history_idx == -1:
             self._draft_stash = self.text
 
+    def _resolve_assist(self, kind, suggestion="") -> None:
+        if suggestion:
+            self.suggestion = suggestion
+        else:
+            self.suggestion = ""
+
 
 def _make_input(text="", history=None) -> "_FakeInput":
     return _FakeInput(text=text, history=history)

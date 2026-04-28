@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,8 @@ from hermes_cli.tui.completion_list import VirtualCompletionList
 from hermes_cli.tui.completion_overlay import CompletionOverlay
 from hermes_cli.tui.path_search import Candidate, PathSearchProvider
 from hermes_cli.tui.perf import measure
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,23 +54,24 @@ class _PathCompletionMixin:
             overlay = self.screen.query_one(CompletionOverlay)  # type: ignore[attr-defined]
         except NoMatches:
             return
+        self._completion_overlay_active = True  # type: ignore[attr-defined]
         overlay.add_class("--visible")
-        # Clear ghost text and set tab-hint so user knows how to accept
-        self.suggestion = ""  # type: ignore[attr-defined]
         try:
             self.app._completion_hint = "Tab accept  ·  ↑↓ navigate  ·  Esc dismiss"  # type: ignore[attr-defined]
         except Exception:  # app._completion_hint absent — hint not shown
             pass
         try:
             self._mode = self._compute_mode()  # type: ignore[attr-defined]
-        except Exception:
-            pass
+        except AttributeError as exc:
+            # AttributeError: partial mount/test harness without a fully initialised mode source.
+            _log.debug("completion overlay show mode sync skipped: %s", exc, exc_info=True)
 
     def _hide_completion_overlay(self) -> None:
         if self._path_debounce_timer is not None:
             self._path_debounce_timer.stop()
             self._path_debounce_timer = None
         self._set_searching(False)
+        self._completion_overlay_active = False  # type: ignore[attr-defined]
         try:
             overlay = self.screen.query_one(CompletionOverlay)  # type: ignore[attr-defined]
         except NoMatches:
@@ -80,14 +84,12 @@ class _PathCompletionMixin:
             pass
         try:
             self._mode = self._compute_mode()  # type: ignore[attr-defined]
-        except Exception:
-            pass
+        except AttributeError as exc:
+            # AttributeError: partial mount/test harness without a fully initialised mode source.
+            _log.debug("completion overlay hide mode sync skipped: %s", exc, exc_info=True)
 
     def _completion_overlay_visible(self) -> bool:
-        try:
-            return self.screen.query_one(CompletionOverlay).has_class("--visible")  # type: ignore[attr-defined]
-        except NoMatches:
-            return False
+        return self._completion_overlay_active  # type: ignore[attr-defined]
 
     def _completion_overlay_slash_only(self) -> bool:
         try:
@@ -190,7 +192,8 @@ class _PathCompletionMixin:
         self._set_overlay_mode(slash_only=False)
         self._push_to_list([])
         self._set_searching(True)
-        self._show_completion_overlay()
+        from ._assist import AssistKind
+        self._resolve_assist(AssistKind.OVERLAY)  # type: ignore[attr-defined]
         self._path_debounce_timer = self.set_timer(  # type: ignore[attr-defined]
             0.12, lambda: self._fire_path_search(fragment)
         )

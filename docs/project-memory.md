@@ -13,6 +13,7 @@
 - [on_focus affordances guard](feedback_on_focus_affordances.md) — ToolPanel.on_focus only flashes when _has_affordances=True; tests must wire _block mock
 - [Module split mutable globals](feedback_module_split_mutable_globals.md) — Re-exported bool globals in __init__ are value copies; tests must target source submodule directly
 - [Textual Widget.parent/.app are read-only](feedback_textual_property_mock.md) — Use PropertyMock patch; Syntax._theme is object not string — capture theme= kwarg instead
+- [Composer assist resolver + atomic history rewrite](feedback_composer_assist_atomic_history.md) — HermesInput assist state is centralized in AssistKind/_resolve_assist; _compute_mode reads _completion_overlay_active; history saves now dedupe + atomically rewrite the prompt_toolkit file
 
 ## Reference
 - [TUI load-bearing facts](reference_tui_facts.md) — Textual 8.2.3 stable; API gotchas, typed state protocol, bounded queue
@@ -45,6 +46,7 @@
 - [Audit 4 Chrome Density spec](project_audit4_chrome_density.md) — DRAFT; BROWSE-01 (2-cell minimap), IA-01 (legend→placeholder); 22 tests
 
 ## Active / Pending Work
+- [Composer surface audit spec](project_composer_surface_audit.md) — IMPLEMENTED 2026-04-28; centralized AssistKind resolver, completion-mode mirror flag, locked state restore, rev-search/error host classes, explicit-bash detection, atomic history rewrite, completion placeholder + ghost-suggestion hardening; tests/tui/test_composer_invariants.py plus targeted composer suite
 - [Audit 3 Quick Wins spec](project_audit3_quick_wins.md) — IMPLEMENTED 2026-04-24; I1/I2/I3/I7/I8/I11/I12/I13/I15/I16; 22 tests; commit fd34922b
 - [Audit 3 Completion Accept spec](project_audit3_completion_accept.md) — APPROVED 2026-04-24; I4/I10; 10 tests; /home/xush/.hermes/2026-04-24-audit3-completion-accept-spec.md
 - [Audit 3 Draft Unification spec](project_audit3_draft_unification.md) — APPROVED 2026-04-24; I5; 12 tests; /home/xush/.hermes/2026-04-24-audit3-draft-unification-spec.md

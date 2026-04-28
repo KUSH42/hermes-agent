@@ -289,7 +289,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         if header is not None:
             header._panel = self
 
-        if header is not None:
+        if header is not None and self.id is not None:
             try:
                 from hermes_cli.tui.services.feedback import ToolHeaderAdapter
                 self.app.feedback.register_channel(
@@ -471,6 +471,10 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
             block_id = "unknown"
             phase = "unknown"
             kind_val = None
+        if block_id == "unknown":
+            panel_id = self.id or ""
+            if panel_id.startswith("tool-"):
+                block_id = panel_id[len("tool-"):]
         return block_id, phase, kind_val
 
     def on_key(self, event: "Key") -> None:

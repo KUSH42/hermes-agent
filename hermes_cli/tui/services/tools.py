@@ -243,6 +243,41 @@ class ToolRenderingService(AppService):
         self._state_lock = threading.RLock()
 
     # ------------------------------------------------------------------
+    # R3-H1: FeedbackService channel rename helper (adoption path)
+    # ------------------------------------------------------------------
+
+    def _move_panel_channel(self, panel: "Any", old_id: "str | None", new_id: str) -> None:
+        """Move the FeedbackService header channel from old_id to new_id.
+
+        Called after a panel DOM id rename during adoption. deregister_channel is
+        safe on missing keys (pop(name, None) at feedback.py:245).
+        """
+        try:
+            self.app.feedback.deregister_channel(f"tool-header::{old_id}")
+        except Exception:
+            logger.debug(
+                "channel deregister failed for %r during adoption rename",
+                f"tool-header::{old_id}", exc_info=True,
+            )
+        try:
+            from hermes_cli.tui.services.feedback import ToolHeaderAdapter
+            header = getattr(getattr(panel, "_block", None), "_header", None)
+            if header is not None:
+                self.app.feedback.register_channel(
+                    f"tool-header::{new_id}", ToolHeaderAdapter(header)
+                )
+            else:
+                logger.warning(
+                    "adoption rename: panel %r has no _header; header channel not registered",
+                    new_id,
+                )
+        except Exception:
+            logger.debug(
+                "channel register failed for %r during adoption rename",
+                f"tool-header::{new_id}", exc_info=True,
+            )
+
+    # ------------------------------------------------------------------
     # PG-1/PG-2: single choke-point for view state changes
     # ------------------------------------------------------------------
 
@@ -1295,6 +1330,7 @@ class ToolRenderingService(AppService):
                 if current_id != new_id:
                     try:
                         view.panel.id = new_id
+                        self._move_panel_channel(view.panel, current_id, new_id)
                     except Exception:
                         # M19: id collision or Textual internal error; keep current id.
                         logger.debug(
@@ -1386,7 +1422,7 @@ class ToolRenderingService(AppService):
             from hermes_cli.tui.write_file_block import WriteFileBlock
             from hermes_cli.tui.tool_panel import ToolPanel as _ToolPanel
             block = WriteFileBlock(path=path)
-            panel = _ToolPanel(block, tool_name=tool_name)
+            panel = _ToolPanel(block, tool_name=tool_name, id=f"tool-{tool_call_id}")
             panel._plan_tool_call_id = tool_call_id
             if output is not None:
                 msg = output.current_message or output.new_message()

@@ -137,7 +137,11 @@ class TestThemeManagerLoad:
         app = _mock_app()
         tm = ThemeManager(app)
         for key, val in COMPONENT_VAR_DEFAULTS.items():
-            assert tm.css_variables[key] == val
+            # val may be a plain string or a VarSpec object; extract .default if needed
+            expected = val.default if hasattr(val, "default") else val
+            assert tm.css_variables[key] == expected, (
+                f"{key}: expected {expected!r}, got {tm.css_variables[key]!r}"
+            )
 
     def test_component_vars_override_defaults(self, tmp_path: Path) -> None:
         p = _json(tmp_path, {

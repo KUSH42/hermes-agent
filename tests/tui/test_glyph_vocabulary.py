@@ -103,9 +103,11 @@ class TestSeparatorMigration:
         spec.primary_result = "lines"
         state = StreamingState(lines_received=10, bytes_received=1024, elapsed_s=0.5)
         result = microcopy_line(spec, state)
-        assert isinstance(result, str)
+        from rich.text import Text
+        assert isinstance(result, Text)
         # The separator glyph (·) should appear between "lines" and the size
-        assert "·" in result or "-" in result  # ASCII fallback is "-"
+        plain = result.plain
+        assert "·" in plain or "-" in plain  # ASCII fallback is "-"
 
     def test_no_literal_dot_separator_in_tool_widget_code(self):
         """Meta: the three migrated chip surfaces no longer contain literal ' · ' in code lines."""

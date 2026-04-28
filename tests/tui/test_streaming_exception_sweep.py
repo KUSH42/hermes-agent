@@ -41,6 +41,9 @@ def _make_io_service_with_panel():
     panel.scroll_end = MagicMock()
     panel.record_raw_output = MagicMock()
     panel.flush_live = MagicMock()
+    # consume_output uses a _layout_refresh_pending bool guard to coalesce refreshes;
+    # start it as False so the first chunk always schedules the deferred refresh.
+    panel._layout_refresh_pending = False
 
     msg = MagicMock()
     msg.record_raw = MagicMock()
@@ -122,8 +125,19 @@ class TestH1IOServiceConsumeLoop:
         with patch("hermes_cli.tui.services.io.logger"):
             await _drive_consume_until_idle(svc, app)
 
-        # panel.refresh(layout=True) called for every chunk including the failing one
-        assert panel.refresh.call_count == 3
+        # consume_output coalesces layout refreshes via call_after_refresh to avoid
+        # flooding the compositor.  A _layout_refresh_pending guard ensures only
+        # one deferred refresh is scheduled per render frame (not one per chunk).
+        # With 3 sequential chunks processed before any render frame fires, the
+        # guard allows exactly 1 call_after_refresh to be enqueued.
+        assert app.call_after_refresh.call_count >= 1
+        # All 3 chunks must have been delivered (record_raw_output called 3x).
+        assert panel.record_raw_output.call_count == 3
+        # Execute the deferred callback(s) to verify refresh fires with layout=True.
+        for call in app.call_after_refresh.call_args_list:
+            fn = call.args[0]
+            fn()
+        assert panel.refresh.call_count >= 1
         for c in panel.refresh.call_args_list:
             assert c.kwargs.get("layout") is True
 
@@ -142,7 +156,13 @@ class TestH1IOServiceConsumeLoop:
             await _drive_consume_until_idle(svc, app, extra_yields=4)
 
         # If we got here the exception was swallowed.
-        assert panel.refresh.call_count == 1
+        # consume_output coalesces refreshes via call_after_refresh; verify it was
+        # enqueued, then execute the callback to confirm panel.refresh fires.
+        assert app.call_after_refresh.call_count >= 1
+        for call in app.call_after_refresh.call_args_list:
+            fn = call.args[0]
+            fn()
+        assert panel.refresh.call_count >= 1
 
 
 # ---------------------------------------------------------------------------

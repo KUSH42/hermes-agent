@@ -176,6 +176,9 @@ x-hermes:
     tool-tier-thinking-accent: '#00d849'
     reasoning-accent: '#00d849'
     tool-tier-tooling-accent: '#00d849'
+    tool-tier-file-accent: '#00cc88'
+    tool-tier-query-accent: '#00bbee'
+    tool-tier-agent-accent: '#cc44ff'
   tool_prefix: │
   tool_icons:
     search_files: ⌕

@@ -106,9 +106,9 @@ class ThemeService(AppService):
         tm._apply_overrides(overrides)
         tm.apply()
 
-    def refresh_slash_commands(self) -> None:
+    def refresh_slash_commands(self, extra: "list[str] | None" = None) -> None:
         """Update the slash command list after plugins are loaded."""
-        self.populate_slash_commands()
+        self.populate_slash_commands(extra)
         app = self.app
         try:
             from hermes_cli.tui.overlays import HelpOverlay as _HO
@@ -128,7 +128,7 @@ class ThemeService(AppService):
 
     # --- Slash command wiring ---
 
-    def populate_slash_commands(self) -> None:
+    def populate_slash_commands(self, extra: "list[str] | None" = None) -> None:
         """Feed the canonical command list from COMMAND_REGISTRY into HermesInput."""
         app = self.app
         try:
@@ -157,6 +157,8 @@ class ThemeService(AppService):
                     descs[f"/{alias}"] = cmd_desc
                     args_hints[f"/{alias}"] = cmd_args
                     keybind_hints[f"/{alias}"] = cmd_keybind
+            if extra:
+                names.extend(extra)
             try:
                 inp = app.query_one(_HI)
                 inp.set_slash_commands(names)

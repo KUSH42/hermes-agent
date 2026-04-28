@@ -151,7 +151,7 @@ class VirtualCompletionList(ScrollView, can_focus=True):
             empty_bg = css.get("completion-empty-bg", "#2A2000")
             self._completion_empty_bg: str = empty_bg
             self._style_empty = Style(bgcolor=empty_bg)  # PERF-1: refresh empty-bg cache
-            path_color = css.get("path-suffix-color", "#888888")
+            path_color = css.get("text-muted", "#888888")  # CSS-2: use Textual built-in text-muted
             self._style_path_suffix = Style(dim=True, color=path_color)  # PERF-1: refresh path-suffix cache
         except Exception:
             _log.debug("VirtualCompletionList._refresh_fuzzy_color: css var lookup failed", exc_info=True)
@@ -373,7 +373,8 @@ class VirtualCompletionList(ScrollView, can_focus=True):
                 if self._auto_close_timer is not None and self._auto_close_delay > 0:
                     elapsed = time.monotonic() - self._auto_close_started_at
                     remaining = max(0.0, self._auto_close_delay - elapsed)
-                    label = f"  {str(base_label).strip()} (closes in {remaining:.0f}s)"
+                    query_suffix = f" for “{query}”" if query and reason == "" else ""
+                    label = f"  {str(base_label).strip()}{query_suffix} (closes in {remaining:.0f}s)"
                 t = Text(label, style="dim italic", overflow="ellipsis", no_wrap=True)
                 segs = _normalize_segments(list(t.render(self.app.console)))
                 strip = Strip(segs, t.cell_len)

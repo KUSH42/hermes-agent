@@ -156,7 +156,11 @@ class TestActionShowHelpSetsGlobalFlag:
         panel = types.SimpleNamespace()
         panel._discovery_shown = False
         mock_app = MagicMock()
-        mock_app.query_one.side_effect = Exception("no overlay in test")
+        # Provide a mock overlay that is NOT visible so action_show_help opens it
+        mock_overlay = MagicMock()
+        mock_overlay.has_class.return_value = False  # not visible → is_opening = True
+        mock_overlay.add_class = MagicMock()
+        mock_app.query_one.return_value = mock_overlay
         panel.app = mock_app
 
         from hermes_cli.tui.tool_panel import ToolPanel

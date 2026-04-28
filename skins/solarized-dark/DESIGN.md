@@ -153,6 +153,9 @@ x-hermes:
     tool-tier-thinking-accent: '#268bd2'
     reasoning-accent: '#268bd2'
     tool-tier-tooling-accent: '#268bd2'
+    tool-tier-file-accent: '#2aa198'
+    tool-tier-query-accent: '#268bd2'
+    tool-tier-agent-accent: '#6c71c4'
 ---
 
 # Solarized-Dark

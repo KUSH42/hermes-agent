@@ -126,6 +126,8 @@ def _make_streaming_block(tool_call_id="tid-1") -> StreamingToolBlock:
     block._render_timer = None
     block._is_unmounted = False
     block._microcopy_tick = 0
+    block._skeleton_widget = None
+    block._skeleton_timer = None
     block._body = MagicMock()
     return block
 
@@ -216,7 +218,7 @@ class TestM6AppendStreamingLineGuards:
         assert result is None
 
     def test_append_streaming_line_writes_during_streaming(self):
-        """STREAMING view + live block → append_line + scroll scheduled."""
+        """STREAMING view + live block → append_line called and scroll attempted."""
         svc = _make_service()
         view = _make_view(state=ToolCallState.STREAMING)
         svc._tool_views_by_id["tid-1"] = view
@@ -229,7 +231,8 @@ class TestM6AppendStreamingLineGuards:
         svc.append_streaming_line("tid-1", "ok")
 
         block.append_line.assert_called_once_with("ok")
-        svc.app.call_after_refresh.assert_called()
+        # scroll_end_if_pinned is called directly (not via call_after_refresh)
+        panel_mock.scroll_end_if_pinned.assert_called()
 
 
 # ---------------------------------------------------------------------------

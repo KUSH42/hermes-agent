@@ -122,7 +122,7 @@ async def test_action_open_url_opens_artifact_url():
         )
         panel.set_result_summary(summary)
 
-        with patch("hermes_cli.tui.tool_panel.safe_open_url") as mock_open:
+        with patch("hermes_cli.tui.tool_panel._actions.safe_open_url") as mock_open:
             panel.action_open_url()
 
         assert mock_open.called
@@ -145,7 +145,7 @@ async def test_action_open_url_noop_when_no_urls():
 
     async with _App().run_test() as pilot:
         panel = pilot.app.query_one(ToolPanel)
-        with patch("hermes_cli.tui.tool_panel.safe_open_url") as mock_open:
+        with patch("hermes_cli.tui.tool_panel._actions.safe_open_url") as mock_open:
             panel.action_open_url()
         assert not mock_open.called
 
@@ -174,7 +174,7 @@ async def test_action_open_primary_falls_back_to_url_artifact():
         )
         panel.set_result_summary(summary)
 
-        with patch("hermes_cli.tui.tool_panel.safe_open_url") as mock_open:
+        with patch("hermes_cli.tui.tool_panel._actions.safe_open_url") as mock_open:
             panel.action_open_primary()
 
         assert mock_open.called
@@ -291,7 +291,7 @@ async def test_open_primary_covers_file_artifact():
         )
         panel.set_result_summary(summary)
 
-        with patch("hermes_cli.tui.tool_panel.safe_open_url") as mock_open:
+        with patch("hermes_cli.tui.tool_panel._actions.safe_open_url") as mock_open:
             panel.action_open_primary()
 
         assert mock_open.called

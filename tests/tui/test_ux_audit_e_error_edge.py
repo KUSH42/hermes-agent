@@ -78,12 +78,14 @@ def _render_header(h):
         with patch.object(Widget, "size", new_callable=PropertyMock,
                           return_value=Size(80, 24)):
             with patch.object(Widget, "update_node_styles", return_value=None):
-                with patch.object(h, "_accessible_mode", return_value=False):
-                    with patch.object(h, "_colors", return_value=MagicMock(
-                        success="#00ff00", error="#ff0000", accent="#5f87d7",
-                        muted="#888888", separator_dim="#444444", icon_dim="#666666",
-                    )):
-                        return h._render_v4()
+                with patch.object(type(h), "is_attached", new_callable=PropertyMock,
+                                  return_value=True):
+                    with patch.object(h, "_accessible_mode", return_value=False):
+                        with patch.object(h, "_colors", return_value=MagicMock(
+                            success="#00ff00", error="#ff0000", accent="#5f87d7",
+                            muted="#888888", separator_dim="#444444", icon_dim="#666666",
+                        )):
+                            return h._render_v4()
 
 
 # ---------------------------------------------------------------------------

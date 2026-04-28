@@ -130,13 +130,20 @@ class TestC3NarrowModeHintSort:
 class TestC4FirstFocusHint:
     """ToolPanel.on_focus flashes '(Enter) toggle' hint on first focus."""
 
-    def test_first_focus_flashes_hint(self):
-        """C4: on_focus fires flash on first call when affordances present."""
+    def _make_panel(self):
+        import time as _time
         from hermes_cli.tui.tool_panel import ToolPanel
         panel = ToolPanel.__new__(ToolPanel)
-        panel._toggle_hint_shown = False
+        panel._discovery_shown = False
+        panel._result_summary_v4 = None
+        panel._refresh_collapsed_strip = MagicMock()
         panel._flash_header = MagicMock()
-        # D4: flash only fires when _has_affordances=True
+        return panel
+
+    def test_first_focus_flashes_hint(self):
+        """C4: on_focus fires flash on first call when affordances present."""
+        panel = self._make_panel()
+        # No _toggle_hint_shown_at → defaults to 0.0 → hint fires
         header_mock = MagicMock()
         header_mock._has_affordances = True
         block_mock = MagicMock()
@@ -148,24 +155,20 @@ class TestC4FirstFocusHint:
         assert "Enter" in msg or "toggle" in msg
 
     def test_second_focus_no_flash(self):
-        """C4: on_focus does NOT flash on second+ focus."""
-        from hermes_cli.tui.tool_panel import ToolPanel
-        panel = ToolPanel.__new__(ToolPanel)
-        panel._toggle_hint_shown = True  # already shown
-        panel._flash_header = MagicMock()
+        """C4: on_focus does NOT flash within reshow window."""
+        import time as _time
+        panel = self._make_panel()
+        panel._toggle_hint_shown_at = _time.monotonic()  # just shown
         panel.on_focus()
         panel._flash_header.assert_not_called()
 
     def test_toggle_hint_shown_set_after_first_focus(self):
-        """C4: _toggle_hint_shown becomes True after first focus (requires affordances)."""
-        from hermes_cli.tui.tool_panel import ToolPanel
-        panel = ToolPanel.__new__(ToolPanel)
-        panel._toggle_hint_shown = False
-        panel._flash_header = MagicMock()
+        """C4: _toggle_hint_shown_at is set after first focus fires."""
+        panel = self._make_panel()
         header_mock = MagicMock()
         header_mock._has_affordances = True
         block_mock = MagicMock()
         block_mock._header = header_mock
         panel._block = block_mock
         panel.on_focus()
-        assert panel._toggle_hint_shown is True
+        assert hasattr(panel, "_toggle_hint_shown_at")

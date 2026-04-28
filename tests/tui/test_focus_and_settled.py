@@ -215,6 +215,8 @@ class TestSettledState:
         block._settled = False
         block._settled_timer = None
         block._is_unmounted = False
+        block._omission_bar_top_mounted = False
+        block._omission_bar_bottom_mounted = False
         return block
 
     def test_settled_armed_on_done(self):
@@ -259,6 +261,7 @@ class TestSettledState:
         svc._channels = {"tool-header::x": _ChannelRecord(adapter=adapter)}
         svc._active = {}
         svc._counter = 0
+        svc._registering = set()
 
         # Need a scheduler for set_timer — provide a no-op
         class _FakeApp:
@@ -282,6 +285,7 @@ class TestSettledState:
         svc._channels = {"tool-header::x": _ChannelRecord(adapter=adapter)}
         svc._active = {}
         svc._counter = 0
+        svc._registering = set()
 
         # Mock scheduler used by flash() for timer
         class _FakeScheduler:

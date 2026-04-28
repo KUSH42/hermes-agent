@@ -125,7 +125,7 @@ class TestStateModel:
         assert view.state == ToolCallState.STARTED
         assert view.tool_call_id == "tid-1"
         assert view.args == {"query": "hello"}
-        assert view.gen_index == 0  # retained
+        assert view.gen_index is None  # H7: gen_index cleared on adoption (view removed from _tool_views_by_gen_index)
 
     def test_start_without_generation_creates_record(self):
         """start_tool_call() with no GENERATED record creates a STARTED record directly."""

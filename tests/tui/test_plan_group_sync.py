@@ -141,7 +141,9 @@ class TestPG1Broker:
         # Allowed: the def lines for those three methods and _set_view_state are excluded
         # by checking that the enclosing FunctionDef is NOT one of the three method defs
         # or _set_view_state. Walk the tree with context.
-        allowed_defs = target_names | {"_set_view_state"}
+        # complete_tool_call has a fallback: when view is None (never streamed),
+        # mark_plan_done is called directly instead of via _set_view_state.
+        allowed_defs = target_names | {"_set_view_state", "complete_tool_call"}
         bad: list[tuple[int, str]] = []
         for node in ast.walk(tree):
             if not isinstance(node, ast.FunctionDef):

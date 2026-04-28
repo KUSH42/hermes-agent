@@ -21,6 +21,7 @@ class TestB1:
         bar._visible_end = 0
         bar._total = 0
         bar._last_resize_w = 0
+        bar._narrow = False
         bar._label = MagicMock()
         bar._cap_label = MagicMock()
         return bar
@@ -59,6 +60,7 @@ class TestB2:
         bar._visible_start = 0
         bar._visible_end = 0
         bar._total = 0
+        bar._narrow = False
         bar._label = MagicMock()
         bar._cap_label = MagicMock()
         return bar
@@ -126,6 +128,7 @@ class TestB3:
         bar._visible_start = 0
         bar._visible_end = 0
         bar._total = 0
+        bar._narrow = False
         bar._label = MagicMock()
         bar._cap_label = MagicMock()
         return bar

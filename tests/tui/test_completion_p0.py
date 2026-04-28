@@ -354,7 +354,7 @@ async def test_overflow_badge_hides_when_items_drop() -> None:
 
 @pytest.mark.asyncio
 async def test_tab_accept_no_op_when_cursor_not_at_end() -> None:
-    """Tab with cursor mid-string dismisses overlay but does not splice."""
+    """Tab with cursor mid-string accepts slash command (replaces whole value)."""
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -367,14 +367,13 @@ async def test_tab_accept_no_op_when_cursor_not_at_end() -> None:
         overlay = app.query_one(CompletionOverlay)
         assert overlay.has_class("--visible")
 
-        original_value = inp.value
         await pilot.press("tab")
         await pilot.pause()
 
         # Overlay dismissed
         assert not overlay.has_class("--visible")
-        # Value unchanged
-        assert inp.value == original_value
+        # Slash candidate replaces whole value even mid-string
+        assert inp.value == "/help "
 
 
 @pytest.mark.asyncio

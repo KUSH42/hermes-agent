@@ -201,6 +201,7 @@ def _make_bash_svc():
     svc.app = app
     svc._proc = None
     svc._running = False
+    svc._bash_cwd = None
     return svc, app
 
 
@@ -272,7 +273,11 @@ def test_t19b_parse_error_on_malformed_quote():
     block = MagicMock()
     svc._exec_sync('echo "unterminated', block)
     lines = [c[0][0] for c in block.push_line.call_args_list]
-    assert any("parse error" in ln for ln in lines)
+    # sh may say "parse error", "syntax error", or "unterminated" depending on shell
+    assert any(
+        "parse error" in ln.lower() or "syntax error" in ln.lower() or "unterminated" in ln.lower()
+        for ln in lines
+    )
     block.mark_done.assert_called_once()
 
 

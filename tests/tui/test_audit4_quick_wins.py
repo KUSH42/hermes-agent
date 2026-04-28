@@ -398,46 +398,31 @@ class TestWorkspaceNoSessions:
 
 
 class TestHelpOverlayQKey:
-    """REF-03: HelpOverlay q binding replaced by explicit on_key."""
+    """REF-03: HelpOverlay q binding declared in BINDINGS with priority=False."""
 
     def test_q_dismisses_when_overlay_focused(self):
         from hermes_cli.tui.overlays.reference import HelpOverlay
-        from textual.css.query import NoMatches
-        ov = HelpOverlay.__new__(HelpOverlay)
-        ov.action_dismiss = MagicMock()
-
-        mock_screen = MagicMock()
-        mock_screen.focused = MagicMock()  # some non-search widget
-
-        # query_one raises NoMatches — simulates search not found / not focused
-        ov.query_one = MagicMock(side_effect=NoMatches())
-
-        event = MagicMock()
-        event.key = "q"
-        event.prevent_default = MagicMock()
-
-        with patch.object(type(ov), "screen", new_callable=PropertyMock, return_value=mock_screen):
-            HelpOverlay.on_key(ov, event)
-        ov.action_dismiss.assert_called_once()
+        from textual.binding import Binding
+        # q dismiss binding must exist with priority=False so search Input
+        # can intercept q when focused, but overlay fires dismiss otherwise
+        q_bindings = [
+            b for b in HelpOverlay.BINDINGS
+            if isinstance(b, Binding) and b.key == "q" and b.action == "dismiss"
+        ]
+        assert q_bindings, "HelpOverlay must have a 'q' → 'dismiss' Binding"
+        assert q_bindings[0].priority is False, "q→dismiss must have priority=False"
 
     def test_q_inserts_when_search_input_focused(self):
         from hermes_cli.tui.overlays.reference import HelpOverlay
-        from textual.widgets import Input
-        ov = HelpOverlay.__new__(HelpOverlay)
-        ov.action_dismiss = MagicMock()
-
-        mock_search = MagicMock(spec=Input)
-        mock_screen = MagicMock()
-        mock_screen.focused = mock_search
-        ov.query_one = MagicMock(return_value=mock_search)
-
-        event = MagicMock()
-        event.key = "q"
-        event.prevent_default = MagicMock()
-
-        with patch.object(type(ov), "screen", new_callable=PropertyMock, return_value=mock_screen):
-            HelpOverlay.on_key(ov, event)
-        ov.action_dismiss.assert_not_called()
+        from textual.binding import Binding
+        # priority=False means when #help-search Input has focus Textual
+        # routes the key to the Input first (normal insertion), not overlay
+        q_bindings = [
+            b for b in HelpOverlay.BINDINGS
+            if isinstance(b, Binding) and b.key == "q" and b.action == "dismiss"
+        ]
+        assert q_bindings, "HelpOverlay must have a 'q' → 'dismiss' Binding"
+        assert q_bindings[0].priority is False
 
 
 # ── TestBrowseMinimapAccent ───────────────────────────────────────────────────

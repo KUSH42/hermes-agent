@@ -37,6 +37,7 @@ def _make_app(**kwargs):
         _animations_enabled=False,
         _cfg={},
         cli=None,
+        status_cwd="",  # prevent MagicMock str polluting position tests
     )
     defaults.update(kwargs)
     for k, v in defaults.items():
@@ -76,13 +77,15 @@ def _render_statusbar(width: int, **app_kwargs) -> str:
 # ---------------------------------------------------------------------------
 
 class TestA6DefaultIdleEffect:
-    def test_a6_default_idle_effect_is_breathe(self):
+    def test_a6_default_idle_effect_is_auto(self):
+        # Default changed from "breathe" to "auto" (auto selects beat style at runtime).
+        # "breathe" is now an alias for "pulse" when explicitly set.
         from hermes_cli.tui.widgets import AssistantNameplate
         np = AssistantNameplate.__new__(AssistantNameplate)
         # Simulate __init__ with default args
         AssistantNameplate.__init__(np)
-        assert np._cfg_idle_effect == "breathe"
-        assert np._idle_effect_name == "breathe"
+        assert np._cfg_idle_effect == "auto"
+        assert np._idle_effect_name == "auto"
 
     def test_a6_idle_effect_overrideable(self):
         from hermes_cli.tui.widgets import AssistantNameplate

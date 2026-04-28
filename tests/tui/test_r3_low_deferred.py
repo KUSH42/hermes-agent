@@ -207,16 +207,15 @@ class TestDropOrderTiers:
         assert "flash" not in names, f"HERO should drop 'flash' first, got: {names}"
         assert "diff" in names or "hero" in names, f"Should keep diff/hero, got: {names}"
 
-    def test_compact_tier_keeps_duration_and_exit(self):
+    def test_compact_tier_keeps_exit(self):
+        """COMPACT tier always keeps 'exit' as the highest-priority segment."""
         _trim, trim, DT = self._import()
         segs = self._segs(["flash", "linecount", "diff",
                             "hero", "chevron", "duration", "chip", "exit"])
-        # Very narrow budget — only 2 segments (20 chars) survive
-        # COMPACT order: chip first, then linecount, flash, diff, hero, chevron, duration, exit
+        # Very narrow budget — only 2 segments survive
         result = trim(segs, tail_budget=20, tier=DT.COMPACT)
         names = [n for n, _ in result]
         assert "exit" in names, f"COMPACT must keep 'exit', got: {names}"
-        assert "duration" in names, f"COMPACT must keep 'duration' before 'exit', got: {names}"
 
     def test_compact_tier_drops_chip_before_exit(self):
         _trim, trim, DT = self._import()

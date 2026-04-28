@@ -37,9 +37,14 @@ def cli_instance(mock_app):
     cli._splice_startup_banner_frame = MagicMock(return_value=MagicMock())
     # CRITICAL: stub call_from_thread to invoke the callback synchronously in tests.
     mock_app.call_from_thread = MagicMock(side_effect=lambda fn: fn())
+    # STARTUP_BANNER_READY gate must be pre-set so _play_tte_in_output_panel doesn't
+    # block 2s waiting for compose() to mount StartupBannerWidget.
+    from hermes_cli.tui.widgets import STARTUP_BANNER_READY
+    STARTUP_BANNER_READY.set()
     # Patch the module-level _hermes_app global
     with patch.object(cli_module, "_hermes_app", mock_app):
         yield cli, cli_module, mock_app
+    STARTUP_BANNER_READY.clear()
 
 
 # ---------------------------------------------------------------------------

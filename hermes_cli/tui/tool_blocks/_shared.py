@@ -445,6 +445,8 @@ def header_label_v4(
 
     if primary == "query":
         label_str = full_label
+        if _safe_cell_width(label_str) > available:
+            label_str = label_str[:max(1, available - 1)] + "…"
         query_val = str(args.get("query") or args.get("pattern") or "")
         t = Text()
         t.append(f" {label_str}", style="bold")
@@ -601,7 +603,7 @@ class OmissionBar(TooltipMixin, Widget):
                         self._label.update("")
                 else:
                     self._label.display = True  # full-width label text is managed by set_counts
-            self.toggle_class("--narrow", now_narrow)  # B4: CSS hook for narrow layout
+            self.set_class(now_narrow, "--narrow")  # B4: CSS hook for narrow layout
         self._last_resize_w = w
 
     def _sync_narrow_layout(self) -> None:

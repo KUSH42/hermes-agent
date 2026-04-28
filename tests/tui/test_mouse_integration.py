@@ -288,7 +288,7 @@ async def test_tool_header_renders_diff_delta_counts():
 
 @pytest.mark.asyncio
 async def test_tool_header_renders_expand_chevron_when_expanded():
-    """ToolHeader shows ▾ (down) chevron when the block is expanded."""
+    """ToolHeader with large block expanded: gutter glyph present, block not collapsed."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await _pause(pilot)
@@ -303,9 +303,12 @@ async def test_tool_header_renders_expand_chevron_when_expanded():
         await _pause(pilot)
 
         header = block.query_one(ToolHeader)
+        # Tier-based gutter: ▸ │ for DEFAULT — doesn't change with collapsed state.
+        # Just verify block is expanded and header renders without ▾ (old indicator gone).
+        assert not header.collapsed, "After toggle, block should be expanded"
         rendered = str(header.render())
-        assert "▾" in rendered, "Expanded block must show ▾ chevron"
-        assert "▸" not in rendered, "Expanded block must not show ▸ chevron"
+        assert "▾" not in rendered, "▾ is the old expand chevron — removed in tier-gutter migration"
+        assert "cat" in rendered
 
 
 @pytest.mark.asyncio
@@ -330,7 +333,7 @@ async def test_tool_header_renders_collapse_chevron_when_collapsed():
 
 @pytest.mark.asyncio
 async def test_tool_header_no_affordances_for_small_block():
-    """ToolHeader with ≤ COLLAPSE_THRESHOLD lines shows no copy icon and no chevron."""
+    """ToolHeader with ≤ COLLAPSE_THRESHOLD lines: no copy icon, no expand indicator."""
     from hermes_cli.tui.tool_blocks import COLLAPSE_THRESHOLD
 
     app = _make_app()
@@ -343,10 +346,12 @@ async def test_tool_header_no_affordances_for_small_block():
         await _pause(pilot)
 
         header = block.query_one(ToolHeader)
+        assert not header._has_affordances, "Block at COLLAPSE_THRESHOLD should have no affordances"
         rendered = str(header.render())
         assert "⎘" not in rendered
         assert "▾" not in rendered
-        assert "▸" not in rendered
+        # Note: ▸ appears in the tier-based gutter glyph (▸ │) regardless of affordances;
+        # the old "no chevron for small blocks" contract no longer applies to the gutter.
 
 
 # ---------------------------------------------------------------------------

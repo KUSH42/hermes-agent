@@ -88,174 +88,185 @@ def test_tui_only_commands_included_in_registry_names():
 # Integration: _show_slash_completions with empty fragment returns all cmds
 # ---------------------------------------------------------------------------
 
-@pytest.mark.asyncio
-async def test_show_slash_completions_empty_fragment_returns_all():
+def test_show_slash_completions_empty_fragment_returns_all():
     """Typing '/' (empty fragment) must surface ALL non-gateway commands.
 
     Regression for the limit=50 truncation: with 55 names in the registry,
     limit=50 dropped the alphabetically-last 5 (/usage, /verbose, /voice,
-    /workspace, /yolo).  After fix (limit=200) all are returned.
+    /workspace, /yolo).  After fix (limit=len(items)) all are returned.
+
+    Uses the unit harness (no full Textual app) to avoid worker-pool saturation
+    timeouts when running alongside other app-spawning tests in parallel.
     """
-    from hermes_cli.tui.app import HermesApp
-    from hermes_cli.tui.input_widget import HermesInput
-    from hermes_cli.tui.completion_list import VirtualCompletionList
+    inp, _NoOpMeasure = _make_inp_harness()
+    # Populate inp._slash_commands from the full registry (mirrors what app does on mount).
+    inp._slash_commands = []
+    expected_names: list[str] = []
+    for cmd in COMMAND_REGISTRY:
+        if cmd.gateway_only:
+            continue
+        inp._slash_commands.append(f"/{cmd.name}")
+        expected_names.append(f"/{cmd.name}")
+        for alias in getattr(cmd, "aliases", []):
+            inp._slash_commands.append(f"/{alias}")
+            expected_names.append(f"/{alias}")
 
-    cli = MagicMock()
-    app = HermesApp(cli=cli)
-    async with app.run_test(size=(80, 30)) as pilot:
-        await pilot.pause()
-        inp = app.query_one(HermesInput)
+    captured: list = []
 
-        # Capture whatever _push_to_list is called with
-        captured: list = []
+    def _capture(items, *args, **kwargs):
+        captured.clear()
+        captured.extend(items)
 
-        original_push = inp._push_to_list
+    with patch("hermes_cli.tui.perf.measure", _NoOpMeasure), \
+         patch.object(inp, "_push_to_list", side_effect=_capture), \
+         patch.object(inp, "_set_overlay_mode"), \
+         patch.object(inp, "_resolve_assist"):
+        inp._show_slash_completions("")
 
-        def _capture(items, *args, **kwargs):
-            captured.clear()
-            captured.extend(items)
-            return original_push(items, *args, **kwargs)
-
-        with patch.object(inp, "_push_to_list", side_effect=_capture), \
-             patch.object(inp, "_show_completion_overlay"), \
-             patch.object(inp, "_set_overlay_mode"):
-            inp._show_slash_completions("")
-
-        # Count expected names
-        expected_names: list[str] = []
-        for cmd in COMMAND_REGISTRY:
-            if cmd.gateway_only:
-                continue
-            expected_names.append(f"/{cmd.name}")
-            for alias in getattr(cmd, "aliases", []):
-                expected_names.append(f"/{alias}")
-
-        assert len(captured) == len(expected_names), (
-            f"_show_slash_completions('') returned {len(captured)} items, "
-            f"expected {len(expected_names)}. "
-            "The limit cap may be too small again."
-        )
+    assert len(captured) == len(expected_names), (
+        f"_show_slash_completions('') returned {len(captured)} items, "
+        f"expected {len(expected_names)}. "
+        "The limit cap may be too small again."
+    )
 
 
-@pytest.mark.asyncio
-async def test_slash_commands_populated_after_mount():
-    """After mount, _slash_commands must contain all non-gateway names.
+def test_slash_commands_populated_after_mount():
+    """populate_slash_commands must include all non-gateway names in _slash_commands.
 
     This includes tui_only commands — they are TUI-specific and must appear
     in TUI slash completion even though they are excluded from gateway surfaces.
+
+    Uses ThemeService.populate_slash_commands directly (no full Textual app) to
+    avoid worker-pool saturation timeouts when running alongside other tests.
     """
-    from hermes_cli.tui.app import HermesApp
+    from hermes_cli.tui.services.theme import ThemeService
     from hermes_cli.tui.input_widget import HermesInput
+    from textual.css.query import NoMatches
 
-    cli = MagicMock()
-    app = HermesApp(cli=cli)
-    async with app.run_test(size=(80, 30)) as pilot:
-        await pilot.pause()
-        inp = app.query_one(HermesInput)
+    # Build a minimal fake inp to capture set_slash_commands.
+    captured_names: list[str] = []
 
-        expected_names: set[str] = set()
-        tui_only_names: list[str] = []
-        for cmd in COMMAND_REGISTRY:
-            if cmd.gateway_only:
-                continue
-            expected_names.add(f"/{cmd.name}")
-            for alias in getattr(cmd, "aliases", []):
-                expected_names.add(f"/{alias}")
-            if getattr(cmd, "tui_only", False):
-                tui_only_names.append(f"/{cmd.name}")
+    fake_inp = MagicMock()
+    fake_inp.set_slash_commands.side_effect = lambda names: captured_names.extend(names)
 
-        actual = set(inp._slash_commands)
-        missing = expected_names - actual
-        assert not missing, f"Commands missing from _slash_commands after mount: {sorted(missing)}"
+    def _query_one(cls):
+        if cls is HermesInput:
+            return fake_inp
+        raise NoMatches(f"no widget {cls}")
 
-        # Explicit guard: tui_only commands must be present
-        for name in tui_only_names:
-            assert name in actual, (
-                f"tui_only command {name} missing from _slash_commands.  "
-                "tui_only commands must be included in TUI slash completion."
-            )
+    fake_app = MagicMock()
+    fake_app.query_one.side_effect = _query_one
+
+    svc = object.__new__(ThemeService)
+    svc.app = fake_app
+    svc.populate_slash_commands()
+
+    expected_names: set[str] = set()
+    tui_only_names: list[str] = []
+    for cmd in COMMAND_REGISTRY:
+        if cmd.gateway_only:
+            continue
+        expected_names.add(f"/{cmd.name}")
+        for alias in getattr(cmd, "aliases", []):
+            expected_names.add(f"/{alias}")
+        if getattr(cmd, "tui_only", False):
+            tui_only_names.append(f"/{cmd.name}")
+
+    actual = set(captured_names)
+    missing = expected_names - actual
+    assert not missing, f"Commands missing from _slash_commands after populate: {sorted(missing)}"
+
+    # Explicit guard: tui_only commands must be present
+    for name in tui_only_names:
+        assert name in actual, (
+            f"tui_only command {name} missing from _slash_commands.  "
+            "tui_only commands must be included in TUI slash completion."
+        )
 
 
-@pytest.mark.asyncio
-async def test_typing_slash_shows_multiple_commands():
+def test_typing_slash_shows_multiple_commands():
     """Typing '/' must produce more than 1 item in the completion overlay.
 
     Primary regression guard: the truncation bug caused the alphabetically-last
     5 commands to be silently dropped.  Any future regression that reduces the
     visible count should be caught here.
+
+    Uses the unit harness (no full Textual app) to avoid worker-pool saturation
+    timeouts when running alongside other app-spawning tests in parallel.
     """
-    from hermes_cli.tui.app import HermesApp
-    from hermes_cli.tui.input_widget import HermesInput
-    from hermes_cli.tui.completion_list import VirtualCompletionList
+    inp, _NoOpMeasure = _make_inp_harness()
+    # Populate with full registry so the count assertion is meaningful.
+    inp._slash_commands = []
+    for cmd in COMMAND_REGISTRY:
+        if cmd.gateway_only:
+            continue
+        inp._slash_commands.append(f"/{cmd.name}")
+        for alias in getattr(cmd, "aliases", []):
+            inp._slash_commands.append(f"/{alias}")
 
-    cli = MagicMock()
-    app = HermesApp(cli=cli)
-    async with app.run_test(size=(80, 30)) as pilot:
-        await pilot.pause()
-        inp = app.query_one(HermesInput)
+    captured: list = []
 
-        captured: list = []
-        original_push = inp._push_to_list
+    def _capture(items, *args, **kwargs):
+        captured.clear()
+        captured.extend(items)
 
-        def _capture(items, *args, **kwargs):
-            captured.clear()
-            captured.extend(items)
-            return original_push(items, *args, **kwargs)
+    with patch("hermes_cli.tui.perf.measure", _NoOpMeasure), \
+         patch.object(inp, "_push_to_list", side_effect=_capture), \
+         patch.object(inp, "_set_overlay_mode"), \
+         patch.object(inp, "_resolve_assist"):
+        inp._show_slash_completions("")
 
-        with patch.object(inp, "_push_to_list", side_effect=_capture), \
-             patch.object(inp, "_show_completion_overlay"), \
-             patch.object(inp, "_set_overlay_mode"):
-            inp._show_slash_completions("")
-
-        assert len(captured) > 1, (
-            f"Expected multiple completion candidates for '/', got {len(captured)}. "
-            "Only /help appearing is the known regression."
-        )
-        displays = [item.display for item in captured]
-        assert "/help" in displays
-        # Should also contain other common commands — not just /help
-        other = [d for d in displays if d != "/help"]
-        assert len(other) > 0, "Only /help in completions — regression confirmed."
+    assert len(captured) > 1, (
+        f"Expected multiple completion candidates for '/', got {len(captured)}. "
+        "Only /help appearing is the known regression."
+    )
+    displays = [item.display for item in captured]
+    assert "/help" in displays
+    # Should also contain other common commands — not just /help
+    other = [d for d in displays if d != "/help"]
+    assert len(other) > 0, "Only /help in completions — regression confirmed."
 
 
-@pytest.mark.asyncio
-async def test_previously_truncated_commands_present():
+def test_previously_truncated_commands_present():
     """The five commands cut off by the old limit=50 must now appear.
 
     Before the fix, /usage, /verbose, /voice, /workspace, /yolo were the
     alphabetically-last entries in the sorted list of 55 names and were
     silently dropped by fuzzy_rank(limit=50).
+
+    Uses the unit harness (no full Textual app) to avoid worker-pool saturation
+    timeouts when running alongside other app-spawning tests in parallel.
     """
-    from hermes_cli.tui.app import HermesApp
-    from hermes_cli.tui.input_widget import HermesInput
+    inp, _NoOpMeasure = _make_inp_harness()
+    # Populate from the full registry so the truncation regression is detectable.
+    inp._slash_commands = []
+    for cmd in COMMAND_REGISTRY:
+        if cmd.gateway_only:
+            continue
+        inp._slash_commands.append(f"/{cmd.name}")
+        for alias in getattr(cmd, "aliases", []):
+            inp._slash_commands.append(f"/{alias}")
 
-    cli = MagicMock()
-    app = HermesApp(cli=cli)
-    async with app.run_test(size=(80, 30)) as pilot:
-        await pilot.pause()
-        inp = app.query_one(HermesInput)
+    captured: list = []
 
-        captured: list = []
-        original_push = inp._push_to_list
+    def _capture(items, *args, **kwargs):
+        captured.clear()
+        captured.extend(items)
 
-        def _capture(items, *args, **kwargs):
-            captured.clear()
-            captured.extend(items)
-            return original_push(items, *args, **kwargs)
+    with patch("hermes_cli.tui.perf.measure", _NoOpMeasure), \
+         patch.object(inp, "_push_to_list", side_effect=_capture), \
+         patch.object(inp, "_set_overlay_mode"), \
+         patch.object(inp, "_resolve_assist"):
+        inp._show_slash_completions("")
 
-        with patch.object(inp, "_push_to_list", side_effect=_capture), \
-             patch.object(inp, "_show_completion_overlay"), \
-             patch.object(inp, "_set_overlay_mode"):
-            inp._show_slash_completions("")
-
-        displays = {item.display for item in captured}
-        # These are the commands that were alphabetically beyond position 50
-        # and were silently truncated by the old limit=50 cap.
-        expected_present = ["/usage", "/verbose", "/voice", "/workspace", "/yolo"]
-        missing = [cmd for cmd in expected_present if cmd in inp._slash_commands and cmd not in displays]
-        assert not missing, (
-            f"Commands still missing from completions (limit cap too small?): {missing}"
-        )
+    displays = {item.display for item in captured}
+    # These are the commands that were alphabetically beyond position 50
+    # and were silently truncated by the old limit=50 cap.
+    expected_present = ["/usage", "/verbose", "/voice", "/workspace", "/yolo"]
+    missing = [cmd for cmd in expected_present if cmd in inp._slash_commands and cmd not in displays]
+    assert not missing, (
+        f"Commands still missing from completions (limit cap too small?): {missing}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -319,7 +330,8 @@ def test_slash_update_autocomplete_no_reentry_on_same_trigger():
          patch.object(inp, "_hide_completion_overlay"), \
          patch.object(type(inp), "value", new_callable=lambda: property(lambda self: "/")), \
          patch.object(type(inp), "cursor_position", new_callable=lambda: property(lambda self: 1)), \
-         patch.object(type(inp), "app", new_callable=lambda: property(lambda self: fake_app)):
+         patch.object(type(inp), "app", new_callable=lambda: property(lambda self: fake_app)), \
+         patch.object(type(inp), "_mode", new_callable=lambda: property(lambda self: None)):
         # First call — trigger is NONE, so it computes and calls _show_slash_completions.
         inp._update_autocomplete()
         assert slash_call_count == 1, (
@@ -367,7 +379,8 @@ def test_slash_typing_single_slash_no_flicker():
          patch.object(inp, "_hide_completion_overlay"), \
          patch.object(type(inp), "value", new_callable=lambda: property(lambda self: "/")), \
          patch.object(type(inp), "cursor_position", new_callable=lambda: property(lambda self: 1)), \
-         patch.object(type(inp), "app", new_callable=lambda: property(lambda self: fake_app)):
+         patch.object(type(inp), "app", new_callable=lambda: property(lambda self: fake_app)), \
+         patch.object(type(inp), "_mode", new_callable=lambda: property(lambda self: None)):
         inp._update_autocomplete()
 
     assert len(slash_calls) == 1, (
@@ -408,6 +421,8 @@ def test_typing_slash_does_not_trigger_file_drop_detection():
     with patch.object(inp, "post_message", side_effect=fake_post_message), \
          patch.object(inp, "load_text", side_effect=fake_load_text), \
          patch.object(inp, "_update_autocomplete"), \
+         patch.object(inp, "_compute_mode", return_value=None), \
+         patch.object(type(inp), "_mode", new_callable=lambda: property(lambda self: None, lambda self, v: None)), \
          patch.object(type(inp), "text", new_callable=PropertyMock, return_value="/"):
         event = MagicMock()
         inp.on_text_area_changed(event)

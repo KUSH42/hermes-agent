@@ -493,6 +493,9 @@ class _ToolPanelCompletionMixin:
             pass
 
         if summary.is_error:
+            # set_result_summary is the sole writer of collapsed=False for errors;
+            # writing it again here would cause duplicate writes when call_after_refresh
+            # runs synchronously (e.g. in tests with HERMES_DETERMINISTIC or fake panels).
             return
 
         did_collapse = False

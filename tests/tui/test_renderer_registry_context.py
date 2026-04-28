@@ -321,7 +321,8 @@ class TestCompletionCallSite:
         cls = _cls(ResultKind.JSON, 0.9)
 
         with patch("hermes_cli.tui.body_renderers.pick_renderer", side_effect=_boom):
-            with caplog.at_level(logging.ERROR, logger="hermes_cli.tui.tool_panel._completion"):
+            # _maybe_swap_renderer catches and logs at DEBUG with exc_info=True
+            with caplog.at_level(logging.DEBUG, logger="hermes_cli.tui.tool_panel._completion"):
                 stub._maybe_swap_renderer(cls, payload)
 
         assert any("renderer swap" in r.message.lower() or "renderer" in r.message.lower() for r in caplog.records)

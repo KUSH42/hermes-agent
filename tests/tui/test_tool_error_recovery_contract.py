@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import types
 from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
@@ -332,6 +333,14 @@ class TestHintRowDefersToFooter:
 
         panel._get_omission_bar = MagicMock(return_value=None)
         panel._result_paths_for_action = MagicMock(return_value=[])
+
+        # Bind real hint-building methods so _build_hint_text works end-to-end
+        from hermes_cli.tui.tool_panel._actions import _ToolPanelActionsMixin
+        panel._collect_hints = types.MethodType(_ToolPanelActionsMixin._collect_hints, panel)
+        panel._truncate_hints = types.MethodType(_ToolPanelActionsMixin._truncate_hints, panel)
+        panel._render_hints = types.MethodType(_ToolPanelActionsMixin._render_hints, panel)
+        panel._is_error = MagicMock(return_value=is_error)
+        panel.collapsed = False
         return panel, summary
 
     def test_recovery_hint_suppressed_when_footer_visible_with_chip(self):

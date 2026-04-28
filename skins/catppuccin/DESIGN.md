@@ -147,6 +147,9 @@ x-hermes:
     tool-tier-thinking-accent: "#89b4fa"
     reasoning-accent: "#89b4fa"
     tool-tier-tooling-accent: "#89b4fa"
+    tool-tier-file-accent: "#94e2d5"
+    tool-tier-query-accent: "#89dceb"
+    tool-tier-agent-accent: "#cba6f7"
 ---
 
 # Catppuccin

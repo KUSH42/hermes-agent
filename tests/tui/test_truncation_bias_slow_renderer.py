@@ -299,6 +299,7 @@ class TestSlowRendererFallback:
         bp._slow_worker_active = False
         bp._hard_timer = None
         bp._last_tier = None
+        bp._err_body_locked = False
         return bp
 
     def test_fast_render_under_250ms_no_placeholder(self):
@@ -508,6 +509,7 @@ class TestResolverClampRows:
         bp._slow_worker_active = False
         bp._hard_timer = None
         bp._last_tier = None
+        bp._err_body_locked = False
 
         mock_widget = MagicMock()
         bp._renderer.build_widget.return_value = mock_widget

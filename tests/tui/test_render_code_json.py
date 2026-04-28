@@ -286,10 +286,15 @@ class TestJsonParseFailure:
         assert hint.plain.startswith("JSON parse failed at line")
 
     def test_parse_failure_hint_is_dim(self):
+        """Parse failure hint should use a muted/dim style (dim or a muted hex color)."""
         from rich.text import Text
         items = self._build_failure("{not json")
         hint = items[0]
-        assert "dim" in str(hint._spans) or str(hint.style) == "dim"
+        # Accept both "dim" style and muted hex colors (SkinColors.muted returns a hex string)
+        style_str = str(hint.style)
+        assert "dim" in str(hint._spans) or "dim" in style_str or style_str.startswith("#"), (
+            f"Expected dim or muted style, got: {style_str!r}"
+        )
 
     def test_parse_failure_body_preserves_raw(self):
         from rich.text import Text
@@ -330,12 +335,25 @@ class TestJsonCollapse:
         plain = result.plain if hasattr(result, "plain") else str(result)
         assert "collapsed" in plain
 
+    def _extract_collapse_widget(self, widget):
+        """Extract _JsonCollapseWidget from either a direct widget or a BodyFrame body."""
+        from hermes_cli.tui.body_renderers.json import _JsonCollapseWidget
+        from hermes_cli.tui.body_renderers._frame import BodyFrame
+        if isinstance(widget, _JsonCollapseWidget):
+            return widget
+        if isinstance(widget, BodyFrame):
+            body = widget._body
+            if isinstance(body, _JsonCollapseWidget):
+                return body
+        return widget
+
     def test_large_json_widget_has_expand_button(self):
         from hermes_cli.tui.body_renderers.json import _JsonCollapseWidget
         raw, _ = self._large_json(300)
         r = _make_json_renderer(output_raw=raw)
-        widget = r.build_widget()
-        assert isinstance(widget, _JsonCollapseWidget)
+        result = r.build_widget()
+        widget = self._extract_collapse_widget(result)
+        assert isinstance(widget, _JsonCollapseWidget), f"Expected _JsonCollapseWidget, got {type(widget)}"
         summary_plain = widget._summary.content.plain
         assert "[expand]" in summary_plain
         assert widget._syntax_view.display is False
@@ -344,7 +362,9 @@ class TestJsonCollapse:
         from hermes_cli.tui.body_renderers.json import _JsonCollapseWidget
         raw, _ = self._large_json(300)
         r = _make_json_renderer(output_raw=raw)
-        widget = r.build_widget()
+        result = r.build_widget()
+        widget = self._extract_collapse_widget(result)
+        assert isinstance(widget, _JsonCollapseWidget), f"Expected _JsonCollapseWidget, got {type(widget)}"
         assert widget._syntax_view.display is False
         widget._toggle_expand()
         assert widget._syntax_view.display is True

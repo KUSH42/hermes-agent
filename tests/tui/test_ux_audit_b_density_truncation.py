@@ -224,7 +224,7 @@ class TestB4OmissionBarNarrowLabel:
         from unittest.mock import PropertyMock
 
         ob = _make_ob_unit(narrow=False)
-        ob.toggle_class = MagicMock()
+        ob.set_class = MagicMock()
 
         # size is a read-only property on Widget; use an isolated subclass to avoid
         # leaking the mock across the pytest session (feedback: widget property leakage).
@@ -238,14 +238,14 @@ class TestB4OmissionBarNarrowLabel:
         type(ob).size = PropertyMock(return_value=mock_size)
 
         try:
-            # crosses_threshold → True so the label/toggle_class branch runs
+            # crosses_threshold → True so the label/set_class branch runs
             with patch("hermes_cli.tui.tool_blocks._shared.crosses_threshold", return_value=True):
                 ob.on_resize(MagicMock())
         finally:
             # Clean up class-level PropertyMock to avoid test session leakage
             del type(ob).size
 
-        ob.toggle_class.assert_called_with("--narrow", True)
+        ob.set_class.assert_called_with(True, "--narrow")
 
 
 # ---------------------------------------------------------------------------

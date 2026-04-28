@@ -38,8 +38,8 @@ class PaneHost(Protocol):
     def on_pane_width_change(self, w: int) -> None: ...
 
 
-# Right pane content not yet implemented. Keep collapsed until filled.
-_RIGHT_PANE_HAS_CONTENT: bool = False
+# Right pane hosts PlanPanel (implemented). Default follows start_collapsed_right config.
+_RIGHT_PANE_HAS_CONTENT: bool = True
 
 
 class PaneManager:

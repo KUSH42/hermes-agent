@@ -1323,14 +1323,25 @@ class ToolRenderingService(AppService):
                 new_id = f"tool-{tool_call_id}"
                 current_id = getattr(view.panel, "id", None)
                 if current_id != new_id:
+                    # M19: check for DOM collision before renaming
                     try:
-                        view.panel.id = new_id
-                        self._move_panel_channel(view.panel, current_id, new_id)
+                        collision = bool(list(self.app.query(f"#{new_id}")))
                     except Exception:
-                        # M19: id collision or Textual internal error; keep current id.
+                        # query() may fail before app is fully mounted; treat as no collision
+                        collision = False
+                    if not collision:
+                        try:
+                            view.panel.id = new_id
+                            self._move_panel_channel(view.panel, current_id, new_id)
+                        except Exception:
+                            logger.debug(
+                                "M19: rename failed for id %s; keeping panel id=%s",
+                                new_id, current_id, exc_info=True,
+                            )
+                    else:
                         logger.debug(
                             "M19: id %s collision during adoption; keeping panel id=%s",
-                            new_id, current_id, exc_info=True,
+                            new_id, current_id,
                         )
 
             # L13: clear any partial-stream state captured during gen so _wire_args

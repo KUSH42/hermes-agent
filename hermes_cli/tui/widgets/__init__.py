@@ -424,8 +424,14 @@ class OutputPanel(ScrollableContainer):
         except Exception:
             # best-effort UI update; widget may not be mounted
             pass
-        # W-11: mount the scroll-state badge
-        self.mount(OutputPanelScrollBadge())
+        # W-11: mount the scroll-state badge before the live-output duo so the
+        # [ThinkingWidget, LiveLineWidget] suffix invariant is preserved.
+        badge = OutputPanelScrollBadge()
+        anchor = self._live_anchor()
+        if anchor is not None:
+            self.mount(badge, before=anchor)
+        else:
+            self.mount(badge)
 
     # W-9/W-11: gated scroll_end -----------------------------------------------
 
@@ -959,6 +965,8 @@ class AssistantNameplate(Widget):
         self._active_style = Style.parse(f"bold {self._accent_hex}")
         # C-2: idle color as 25% accent tint toward text color
         self._idle_color_hex: str = _lerp_hex(self._text_hex, self._accent_hex, 0.25)
+        if not self._effects_enabled:
+            return  # effects disabled — skip animation/timer setup
         if self.styles.display == "none":
             return  # hidden — skip animation setup; widget is paint-ready if display is later restored
         self._init_decrypt()

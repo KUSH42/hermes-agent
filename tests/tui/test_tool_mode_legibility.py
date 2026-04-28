@@ -176,6 +176,9 @@ class TestKindRevertBinding:
             _block = block_mock
             collapsed = False
             _next_kind_label = staticmethod(_ToolPanelActionsMixin._next_kind_label)
+            _collect_hints = _ToolPanelActionsMixin._collect_hints
+            _truncate_hints = _ToolPanelActionsMixin._truncate_hints
+            _render_hints = _ToolPanelActionsMixin._render_hints
 
             def _lookup_view_state(self):
                 return self._view_state
@@ -241,6 +244,9 @@ class TestNextKindHint:
             _block = block_mock
             collapsed = False
             _next_kind_label = staticmethod(_ToolPanelActionsMixin._next_kind_label)
+            _collect_hints = _ToolPanelActionsMixin._collect_hints
+            _truncate_hints = _ToolPanelActionsMixin._truncate_hints
+            _render_hints = _ToolPanelActionsMixin._render_hints
 
             def _lookup_view_state(self):
                 return self._view_state

@@ -153,6 +153,9 @@ x-hermes:
     tool-tier-thinking-accent: '#7aa2f7'
     reasoning-accent: '#7aa2f7'
     tool-tier-tooling-accent: '#7aa2f7'
+    tool-tier-file-accent: '#73daca'
+    tool-tier-query-accent: '#7dcfff'
+    tool-tier-agent-accent: '#bb9af7'
 ---
 
 # Tokyo-Night

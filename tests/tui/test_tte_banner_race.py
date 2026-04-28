@@ -61,9 +61,12 @@ class TestStartupBannerEventLifecycle:
 
 def _make_cli_mock() -> MagicMock:
     """Minimal mock for HermesCLI instance used as 'self' in the worker."""
+    from cli import HermesCLI
     mock_self = MagicMock()
     mock_self._build_startup_banner_template.return_value = None
     mock_self._render_startup_banner_text.return_value = Text("banner")
+    # Bind the real _handle_tte_producer_exc so logger.debug calls go through
+    mock_self._handle_tte_producer_exc = lambda exc: HermesCLI._handle_tte_producer_exc(exc)
     return mock_self
 
 

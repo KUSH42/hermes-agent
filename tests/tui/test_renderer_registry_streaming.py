@@ -10,6 +10,7 @@ Total: 44
 """
 from __future__ import annotations
 
+import re
 import subprocess
 import types
 from pathlib import Path
@@ -643,8 +644,12 @@ class TestForCategoryRemoval:
         )
         matches = [
             line for line in result.stdout.splitlines()
-            # Exclude the removal-test file itself (grep of for_category in test string literals)
+            # Exclude the removal-test file itself (grep of for_category in test string literals).
+            # Also exclude helper method definitions and calls with a leading underscore prefix
+            # (e.g. _block_for_category) which are test helper names, not API calls.
             if "test_renderer_registry_streaming.py" not in line
+            and not re.search(r"\bdef\s+\w*for_category", line)
+            and not re.search(r"\bself\._\w*for_category\b", line)
         ]
         assert not matches, f"Unexpected for_category callers:\n" + "\n".join(matches)
 
@@ -708,7 +713,10 @@ class TestExistingTestSweep:
         )
         matches = [
             line for line in result.stdout.splitlines()
+            # Exclude this file itself and helper method definitions (not API calls).
             if "test_renderer_registry_streaming.py" not in line
+            and not re.search(r"\bdef\s+\w*for_category", line)
+            and not re.search(r"\bself\._\w*for_category\b", line)
         ]
         assert not matches, "Unexpected for_category in tests:\n" + "\n".join(matches)
 

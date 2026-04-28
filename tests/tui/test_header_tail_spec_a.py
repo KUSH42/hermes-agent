@@ -239,7 +239,12 @@ class TestGrammarSeparator:
         assert " - " in text
 
     def test_separator_not_doubled(self):
-        """Three tail segments produce exactly 2 separator patterns ' · '."""
+        """Two tail segments (hero + duration) produce exactly 1 separator ' · '.
+
+        exit_code=0 is suppressed when _primary_hero is set (A-5 guard at
+        ``if not self._primary_hero``), so only hero and duration appear in
+        tail_segments, joined by a single ' · '.
+        """
         h = _bare_header(
             _tool_name="read_file",
             _primary_hero="Read 10 lines",
@@ -248,9 +253,8 @@ class TestGrammarSeparator:
             _exit_code=0,  # suppressed because hero is present
         )
         text = _plain(h, width=200)
-        # Segments: hero, chevron, duration = 3 segments -> 2 separators ' · '
-        # (The chevron itself is '·' but without surrounding spaces as separator)
-        assert text.count(" · ") == 2, f"Expected 2 separators in {text!r}"
+        # hero + duration = 2 segments → exactly 1 separator
+        assert text.count(" · ") == 1, f"Expected 1 separator in {text!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +280,13 @@ class TestHeroStyling:
             assert "green" not in str(s.style), f"Span style should not contain 'green': {s.style!r}"
 
     def test_hero_dim_on_success(self):
-        """Success hero — span style is exactly 'dim' (no color, no bold)."""
+        """Success hero — the non-glyph part of hero text uses 'dim' style.
+
+        _split_glyph_hero("Read 120 lines", ...) emits:
+          "Read"      → bold success color (glyph word)
+          " 120 lines" → dim
+        So we look for any span intersecting the hero text with style=="dim".
+        """
         h = _bare_header(
             _tool_name="read_file",
             _primary_hero="Read 120 lines",
@@ -289,10 +299,11 @@ class TestHeroStyling:
         pos = plain.find("Read 120 lines")
         assert pos != -1, "Hero text not found in rendered output"
         hero_text = "Read 120 lines"
-        hero_spans = [s for s in result._spans
-                      if s.start <= pos and s.end >= pos + len(hero_text)]
+        end = pos + len(hero_text)
+        # Use intersection: any span that overlaps the hero range
+        hero_spans = [s for s in result._spans if s.start < end and s.end > pos]
         assert any(s.style == "dim" for s in hero_spans), (
-            f"Expected a 'dim' span covering hero; got: {[s.style for s in hero_spans]}"
+            f"Expected a 'dim' span intersecting hero; got: {[s.style for s in hero_spans]}"
         )
 
     def test_error_hero_shows_err_chip(self):

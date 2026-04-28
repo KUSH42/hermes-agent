@@ -307,10 +307,11 @@ class TestKeysService:
         pm._focused_pane = "left"  # not CENTER
         app._pane_manager = pm
 
-        # query_one returns NoMatches for overlay classes, RuntimeError for #input-area
+        # query_one returns RuntimeError for HermesInput (escape nav path),
+        # NoMatches for overlay classes
         def _query_one_side_effect(selector, *args, **kwargs):
             selector_str = str(selector)
-            if selector_str == "#input-area":
+            if selector_str == "#input-area" or "HermesInput" in selector_str:
                 raise RuntimeError("focus failed")
             raise NoMatches("not found")
 

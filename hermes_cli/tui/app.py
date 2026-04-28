@@ -2458,6 +2458,19 @@ class HermesApp(App):
         return self._svc_tools.cancel_tool_call(tool_call_id=tool_call_id,
                                                 gen_index=gen_index)
 
+    @property
+    def _turn_tool_calls(self) -> dict:
+        """Compat property: delegates to _svc_tools._turn_tool_calls."""
+        return self._svc_tools._turn_tool_calls
+
+    @_turn_tool_calls.setter
+    def _turn_tool_calls(self, value: dict) -> None:
+        self._svc_tools._turn_tool_calls = value
+
+    def _initiate_undo(self) -> None:
+        """Compat forwarder: delegates to _svc_commands.initiate_undo()."""
+        return self._svc_commands.initiate_undo()
+
     # --- from _app_browse.py ---
 
     def watch_browse_mode(self, value: bool) -> None:

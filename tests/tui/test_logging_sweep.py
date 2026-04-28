@@ -67,6 +67,8 @@ def _make_watchers_svc(app=None):
     svc.app = app
     svc._phase_before_error = ""
     svc._compact_warn_flashed = False
+    svc._last_compact_value = None
+    svc._approval_state_seen = False
     return svc
 
 
@@ -176,7 +178,7 @@ class TestSessionsLogging:
                 svc.switch_to_session("new-id")
 
         mock_log.debug.assert_any_call(
-            mock.ANY, mock.ANY  # message + exc
+            mock.ANY, mock.ANY, exc_info=True  # message + exc + exc_info
         )
         assert any("listener stop" in str(c) for c in mock_log.debug.call_args_list)
         timer.stop.assert_called_once()

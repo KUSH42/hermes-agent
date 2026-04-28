@@ -357,8 +357,11 @@ async def test_fps_counter_reactive_update() -> None:
         app.fps_hud_visible = True
         await pilot.pause()
         counter = app.query_one(FPSCounter)
+        # Disable hud before writing so tick_fps() won't overwrite during pilot.pause()
+        app.fps_hud_visible = False
+        await pilot.pause()
         counter.fps = 9.5
         counter.avg_ms = 105.2
-        await pilot.pause()
+        # No pause here — assert immediately so the background ticker cannot race.
         assert counter.fps == pytest.approx(9.5)
         assert counter.avg_ms == pytest.approx(105.2)

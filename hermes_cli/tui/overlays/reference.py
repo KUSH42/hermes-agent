@@ -129,23 +129,14 @@ class HelpOverlay(ReferenceModal):
 
     BINDINGS = [
         Binding("escape", "dismiss", priority=True),
+        # priority=False: when #help-search Input has focus, q inserts normally.
+        # When the overlay itself has focus, q fires dismiss.
+        Binding("q", "dismiss", priority=False),
     ]
 
     def compose(self) -> ComposeResult:
         yield Input(placeholder="Filter commands...", id="help-search")
         yield Vertical(id="help-content")
-
-    def on_key(self, event: events.Key) -> None:
-        if event.key != "q":
-            return
-        try:
-            search = self.query_one("#help-search", Input)
-            if self.screen.focused is search:
-                return
-        except NoMatches:
-            pass
-        self.action_dismiss()
-        event.prevent_default()
 
     def on_mount(self) -> None:
         self._refresh_commands_cache()

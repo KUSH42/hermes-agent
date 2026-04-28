@@ -14,7 +14,7 @@ def _summary_with_chips():
     return ResultSummaryV4(
         primary="ok",
         exit_code=0,
-        chips=(Chip(text="myChip", kind="exit", tone="ok"),),
+        chips=(Chip(text="myChip", kind="exit", tone="success"),),
         stderr_tail="",
         actions=(),
         artifacts=(),
@@ -25,7 +25,12 @@ def _summary_with_chips():
 @pytest.mark.asyncio
 async def test_chips_not_in_header():
     """After set_result_summary, header._header_chips is always []."""
-    fake_header = MagicMock()
+    from hermes_cli.tui.tool_blocks._header import ToolCallHeader
+    # Use a real Static subclass as fake_header so ToolPanel.compose() can mount it.
+    class FakeHeader(Static):
+        _header_chips: list = []
+
+    fake_header = FakeHeader()
     fake_header._header_chips = [("old chip", "dim")]  # pre-existing
 
     class FakeBlock(Static):

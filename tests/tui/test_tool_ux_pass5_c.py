@@ -183,6 +183,7 @@ class TestC3:
         from hermes_cli.tui.tool_blocks import ToolHeaderStats
         panel_mock = MagicMock()
         panel_mock.collapsed = False
+        panel_mock._resolver = None  # prevent MagicMock._resolver leak hijacking trim_header_tail
         panel_mock._block = MagicMock()
         panel_mock._block._visible_count = 50
         panel_mock._block._all_plain = ["x"] * 100  # 100 total, only 50 visible

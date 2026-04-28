@@ -208,12 +208,14 @@ class VirtualCompletionList(ScrollView, can_focus=True):
 
     def _render_shimmer_row(self, y: int) -> Strip:
         """Render one ThinkingWidget-style block density sweep row (P0-A)."""
+        if y == 0:
+            # D3: always emit the semantic "searching" label first row,
+            # regardless of color mode, so monochrome / low-contrast
+            # users see the state. Shimmer (color path) plays on y >= 1.
+            t = Text("  ⌛ searching…", style="dim italic", no_wrap=True, overflow="ellipsis")
+            segs = list(t.render(self.app.console))
+            return Strip(segs).extend_cell_length(self.size.width)
         if self._no_color:
-            # Plain fallback for NO_COLOR terminals — only show on row 0.
-            if y == 0:
-                t = Text("  searching…", style="dim italic", no_wrap=True, overflow="ellipsis")
-                segs = list(t.render(self.app.console))
-                return Strip(segs).extend_cell_length(self.size.width)
             return Strip.blank(self.size.width)
 
         width = self.size.width or 40

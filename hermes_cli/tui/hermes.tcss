@@ -580,6 +580,12 @@ StreamingCodeBlock.--browse-newly-anchored {
     background: $browse-code 15%;
 }
 
+/* D5: 80ms fence-open entrance cue. No transition — Textual 8.x does
+ * not animate borders. Class is removed by a set_timer(0.08, ...). */
+StreamingCodeBlock.streaming-fence-just-opened {
+    border-top: heavy $accent;
+}
+
 /* ToolBodyContainer inside ToolPanel is always visible — ToolPanel's
  * watch_collapsed controls BodyPane visibility, not ToolBodyContainer directly.
  * App TCSS overrides widget DEFAULT_CSS (display:none), so STB inner collapse

@@ -271,12 +271,7 @@ class WriteFileBlock(StreamingToolBlock):
 
         # Finalize lifecycle (mirrors StreamingToolBlock.complete but uses content count)
         self._completed = True
-        try:
-            self._render_timer.stop()
-            self._spinner_timer.stop()
-            self._duration_timer.stop()
-        except Exception:
-            _log.debug("WriteFileBlock.complete: timer stop failed", exc_info=True)
+        self._stop_all_managed()
         self._header._pulse_stop()
         self._header.set_error(is_error)
         self._flush_pending()  # no-op (we never use _pending)

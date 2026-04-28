@@ -301,8 +301,10 @@ def test_commit_lines_buffers_and_writes_directly_when_engine_missing():
 
     assert write_calls == ["alpha", "beta", "gamma"]
     assert live._pre_engine_lines == ["alpha", "beta", "gamma"]
-    assert mock_log.warning.call_count == 1
-    assert "engine missing" in mock_log.warning.call_args.args[0]
+    # H-2 fix: downgraded WARNING → DEBUG; one-shot latch still enforced
+    mock_log.warning.assert_not_called()
+    assert mock_log.debug.call_count >= 1
+    assert "engine missing on first chunk" in mock_log.debug.call_args_list[0].args[0]
 
 
 def test_commit_lines_drains_buffer_on_engine_attach():
@@ -340,8 +342,9 @@ def test_commit_lines_caps_buffer_but_keeps_direct_writes(monkeypatch):
     assert write_calls == ["a", "b", "c", "d"]
     # Buffer capped at 2
     assert live._pre_engine_lines == ["a", "b"]
-    # One-shot warning
-    assert mock_log.warning.call_count == 1
+    # H-2 fix: one-shot log now at DEBUG, not WARNING
+    mock_log.warning.assert_not_called()
+    assert mock_log.debug.call_count >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -380,8 +383,8 @@ class TestMetaSweepSitesHaveLogging:
         assert "_log.exception(" in src_wpe
         assert "_write_prose_inline_emojis" in src_wpe
 
-        # Site 4: LiveLineWidget._commit_lines — _log.warning with literal
-        # "engine missing".
+        # Site 4: LiveLineWidget._commit_lines — H-2: downgraded to _log.debug;
+        # "engine missing on first chunk" still present for grep discoverability.
         src_cl = inspect.getsource(LiveLineWidget._commit_lines)
-        assert "_log.warning(" in src_cl
-        assert "engine missing" in src_cl
+        assert "_log.debug(" in src_cl
+        assert "engine missing on first chunk" in src_cl

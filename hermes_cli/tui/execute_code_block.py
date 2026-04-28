@@ -447,13 +447,8 @@ class ExecuteCodeBlock(StreamingToolBlock):
         if self._code_state != _STATE_FINALIZED:
             self.finalize_code("")
 
-        # Stop timers
-        try:
-            self._render_timer.stop()
-            self._spinner_timer.stop()
-            self._duration_timer.stop()
-        except Exception:
-            _log.debug("ExecuteCodeBlock.complete: timer stop failed", exc_info=True)
+        # Stop timers (lifecycle-mixin tracker; idempotent, no AttributeError)
+        self._stop_all_managed()
 
         self._header._pulse_stop()
         self._header.set_error(is_error)

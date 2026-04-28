@@ -459,9 +459,10 @@ class LiveLineWidget(ManagedTimerMixin, Widget):
                     # via the direct write above. Capped silently after the one-shot
                     # warning below already fired.
                     if not self._pre_engine_warned:
-                        _log.warning(
-                            "LiveLineWidget._commit_lines: engine missing; line "
-                            "rendered direct + buffered for replay (one-shot warning)"
+                        _log.debug(
+                            "LiveLineWidget._commit_lines: engine missing on first chunk; "
+                            "line rendered direct + buffered for replay (recovered race, "
+                            "Streaming Exception Sweep H4)"
                         )
                         self._pre_engine_warned = True
                     continue

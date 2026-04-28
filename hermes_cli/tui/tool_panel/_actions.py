@@ -409,8 +409,8 @@ class _ToolPanelActionsMixin:
                 tone=tone,
                 priority=NORMAL,
             )
-        except Exception:  # noqa: bare-except
-            pass
+        except Exception:  # channel not registered or widget unmounted — best-effort flash
+            _log.debug("_flash_header suppressed: msg=%r", msg, exc_info=True)
 
     def action_copy_body(self) -> None:
         text = self.copy_content()  # type: ignore[attr-defined]

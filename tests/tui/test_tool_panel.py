@@ -1681,3 +1681,66 @@ def test_b2_question_mark_bound_to_context_menu():
     assert bindings.get("question_mark") == "show_context_menu", (
         f"? should be show_context_menu, got {bindings.get('question_mark')}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Deferred renderer swap (pre-mount race fix)
+# ---------------------------------------------------------------------------
+
+def test_swap_renderer_deferred_when_body_pane_none():
+    """_swap_renderer called before compose() stores pending swap instead of dropping it."""
+    from hermes_cli.tui.tool_blocks import StreamingToolBlock
+    from hermes_cli.tui.tool_payload import ToolPayload, ResultKind
+    from unittest.mock import MagicMock
+
+    block = StreamingToolBlock(label="web_search", tool_name="web_search")
+    panel = ToolPanel(block, tool_name="web_search")
+
+    assert panel._body_pane is None  # pre-compose
+    assert panel._pending_renderer_swap is None
+
+    fake_cls = MagicMock(name="FakeRenderer")
+    fake_payload = MagicMock(spec=ToolPayload)
+    fake_cls_result = MagicMock()
+
+    panel._swap_renderer(fake_cls, fake_payload, fake_cls_result)
+
+    # Must have been stashed, not silently dropped.
+    assert panel._pending_renderer_swap is not None
+    stored_cls, stored_payload, stored_result = panel._pending_renderer_swap
+    assert stored_cls is fake_cls
+    assert stored_payload is fake_payload
+    assert stored_result is fake_cls_result
+
+
+@pytest.mark.asyncio
+async def test_swap_renderer_deferred_applied_on_mount():
+    """Deferred renderer swap is executed in on_mount() after compose() populates _body_pane."""
+    from hermes_cli.tui.body_renderers.search import SearchRenderer
+    from hermes_cli.tui.tool_payload import ToolPayload, ResultKind
+    from unittest.mock import MagicMock, patch
+
+    app = _make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pause(pilot)
+        panel = await _get_shell_panel(app, pilot)
+        await _pause(pilot)
+
+        # Simulate a pending swap arriving before mount (set it now, call on_mount re-entry).
+        fake_cls = MagicMock(name="FakeRenderer")
+        fake_widget = MagicMock()
+        fake_widget.is_attached = False
+        fake_cls.return_value.build_widget.return_value = fake_widget
+        fake_cls.return_value.copy_text = MagicMock(return_value="")
+        fake_payload = MagicMock(spec=ToolPayload)
+        fake_payload.output_raw = ""
+        fake_cls_result = MagicMock()
+
+        panel._pending_renderer_swap = (fake_cls, fake_payload, fake_cls_result)
+
+        with patch.object(panel, "_swap_renderer", wraps=panel._swap_renderer) as mock_swap:
+            panel.on_mount()
+            await _pause(pilot)
+
+        # Pending must be cleared after flush.
+        assert panel._pending_renderer_swap is None

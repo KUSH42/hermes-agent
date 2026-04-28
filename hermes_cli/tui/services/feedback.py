@@ -90,7 +90,7 @@ class _TimerCancelToken:
     def stop(self) -> None:
         try:
             self._timer.stop()
-        except Exception:  # noqa: bare-except
+        except Exception:  # timer may already be expired/stopped — teardown swallow is correct
             pass
 
 
@@ -239,8 +239,8 @@ class FeedbackService:
             if state.on_expire is not None:
                 try:
                     state.on_expire(ExpireReason.UNMOUNTED)
-                except Exception:  # noqa: bare-except
-                    pass
+                except Exception:  # user-supplied callback must not crash the service
+                    _log.debug("on_expire callback raised during deregister", exc_info=True)
             del self._active[name]
         self._channels.pop(name, None)
 
@@ -328,8 +328,8 @@ class FeedbackService:
             if on_expire is not None:
                 try:
                     on_expire(ExpireReason.UNMOUNTED)
-                except Exception:  # noqa: bare-except
-                    pass
+                except Exception:  # user-supplied callback must not crash the service
+                    _log.debug("on_expire callback raised on ChannelUnmountedError", exc_info=True)
             return FlashHandle(displayed=False)
 
         # --- Schedule expiry ---
@@ -410,8 +410,8 @@ class FeedbackService:
                 continue  # active flash — leave it alone
             try:
                 record.adapter.restore()
-            except Exception:  # noqa: bare-except
-                pass
+            except Exception:  # adapter.restore() is best-effort; widget may be unmounted
+                _log.debug("on_agent_idle: adapter.restore() failed for %r", name, exc_info=True)
 
     def on_agent_active(self) -> None:
         """Called when agent transitions to active. No-op for flash state."""
@@ -436,8 +436,8 @@ class FeedbackService:
                 if state.on_expire is not None:
                     try:
                         state.on_expire(ExpireReason.UNMOUNTED)
-                    except Exception:  # noqa: bare-except
-                        pass
+                    except Exception:  # user-supplied callback must not crash shutdown
+                        _log.debug("on_expire callback raised during shutdown", exc_info=True)
         self._active.clear()
 
     # ------------------------------------------------------------------
@@ -463,13 +463,13 @@ class FeedbackService:
             if record is not None:
                 try:
                     record.adapter.restore()
-                except Exception:  # noqa: bare-except
-                    pass
+                except Exception:  # widget may be unmounted during cancel — best-effort
+                    _log.debug("_cancel_flash_internal: restore() failed for %r", channel, exc_info=True)
         if state.on_expire is not None:
             try:
                 state.on_expire(reason)
-            except Exception:  # noqa: bare-except
-                pass
+            except Exception:  # user-supplied callback must not crash the service
+                _log.debug("on_expire callback raised for channel %r", channel, exc_info=True)
         self._active.pop(channel, None)
 
     def _stop_flash_internal(self, channel: str, state: FlashState) -> None:
@@ -495,14 +495,14 @@ class FeedbackService:
         if record is not None:
             try:
                 record.adapter.restore()
-            except Exception:  # noqa: bare-except
-                pass
+            except Exception:  # widget may be unmounted on natural expiry — best-effort
+                _log.debug("_on_expire: restore() failed for %r", channel, exc_info=True)
 
         if state.on_expire is not None:
             try:
                 state.on_expire(ExpireReason.NATURAL)
-            except Exception:  # noqa: bare-except
-                pass
+            except Exception:  # user-supplied callback must not crash the service
+                _log.debug("on_expire callback raised on natural expiry for %r", channel, exc_info=True)
 
         self._active.pop(channel, None)
 
@@ -539,9 +539,9 @@ class HintBarAdapter(ChannelAdapter):
             bar = self._get_bar()
             bar.hint = ""
         except ChannelUnmountedError:
-            pass
-        except Exception:  # noqa: bare-except
-            pass
+            pass  # HintBar not mounted — teardown swallow is correct
+        except Exception:  # unexpected error restoring hint bar — log but don't crash
+            _log.debug("HintBarAdapter.restore() failed", exc_info=True)
 
 
 class ToolHeaderAdapter(ChannelAdapter):
@@ -570,8 +570,8 @@ class ToolHeaderAdapter(ChannelAdapter):
         try:
             hdr._flash_msg = None
             hdr.refresh()
-        except Exception:  # noqa: bare-except
-            pass
+        except Exception:  # ToolHeader may be unmounted between is_mounted check and refresh
+            _log.debug("ToolHeaderAdapter.restore() failed", exc_info=True)
 
 
 class CodeFooterAdapter(ChannelAdapter):
@@ -594,5 +594,5 @@ class CodeFooterAdapter(ChannelAdapter):
         try:
             footer.remove_class("--flash-copy")
             footer._copy.update(footer._copy_original)
-        except Exception:  # noqa: bare-except
-            pass
+        except Exception:  # footer may be unmounted between is_mounted check and update
+            _log.debug("CodeFooterAdapter.restore() failed", exc_info=True)

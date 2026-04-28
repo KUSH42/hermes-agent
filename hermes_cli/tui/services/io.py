@@ -13,6 +13,7 @@ from hermes_cli.tui.perf import measure
 
 if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
+    from hermes_cli.tui.widgets import OutputPanel
 
 import logging as _logging
 import os as _os_mod
@@ -117,8 +118,16 @@ class IOService(AppService):
                             "io.consume: per-chunk msg.record_raw / engine.feed failed: chunk_len=%d head=%r",
                             len(chunk), chunk[:80], exc_info=True,
                         )
-                    with measure("io.panel_refresh", budget_ms=6.0, silent=True):
-                        panel.refresh(layout=True)
+                    # Throttle: at most one deferred layout refresh per render frame.
+                    # Direct refresh(layout=True) on every chunk floods the compositor
+                    # with O(n_children) layout passes; call_after_refresh coalesces them.
+                    if not getattr(panel, "_layout_refresh_pending", False):
+                        panel._layout_refresh_pending = True
+                        def _do_layout_refresh(_p: "OutputPanel" = panel) -> None:
+                            _p._layout_refresh_pending = False
+                            with measure("io.panel_refresh", budget_ms=6.0, silent=True):
+                                _p.refresh(layout=True)
+                        app.call_after_refresh(_do_layout_refresh)
                     if not panel._user_scrolled_up:
                         app.call_after_refresh(panel.scroll_end, animate=False)
                 except NoMatches:

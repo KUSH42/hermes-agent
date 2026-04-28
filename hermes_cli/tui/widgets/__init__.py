@@ -494,18 +494,7 @@ class OutputPanel(ScrollableContainer):
                 engine2.flush()  # closes open StreamingCodeBlock if mid-fence; flushes StreamingBlockBuffer
 
     def on_resize(self, event: Any) -> None:
-        """Propagate resize to child RichLogs; anchor scroll position on resize."""
-        try:
-            new_w = getattr(getattr(event, "size", None), "width", 0)
-            if new_w <= 0:
-                return
-            for rl in self.query(CopyableRichLog):
-                try:
-                    rl.refresh()
-                except Exception:
-                    pass
-        except Exception:
-            pass
+        """Anchor scroll position on resize; Textual cascades resize to children automatically."""
         # R08/R09: scroll anchoring — preserve position after layout recalc
         if not getattr(self, "_user_scrolled_up", False):
             self.call_after_refresh(self.scroll_end, animate=False)

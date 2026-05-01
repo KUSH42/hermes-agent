@@ -838,6 +838,7 @@ class StartupBannerWidget(Static):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(Text(""), **kwargs)
+        self._frame_count: int = 0
 
     def on_mount(self) -> None:
         STARTUP_BANNER_READY.set()
@@ -852,7 +853,10 @@ class StartupBannerWidget(Static):
         self.refresh()
 
     def set_frame(self, rich_text: Text) -> None:
-        self.update(rich_text)
+        # layout=True only on the first frame so height:auto sizes correctly;
+        # subsequent frames skip the layout pass since line count is constant.
+        self._frame_count += 1
+        self.update(rich_text, layout=self._frame_count == 1)
 
 
 # ---------------------------------------------------------------------------

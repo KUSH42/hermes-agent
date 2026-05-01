@@ -262,6 +262,9 @@ Single widget handles 7 interrupt kinds (CLARIFY/APPROVAL/SUDO/SECRET/UNDO/NEW_S
 - `_SIN_LUT`/`_COS_LUT` (1024 entries) + `_lut_sin`/`_lut_cos` — max error ~0.006, fine for visuals only.
 - Bounds check (`if 0 <= x < w`) is 5–15% faster than `try/except` for out-of-bounds coords.
 - `DrawbrailleOverlay` split **complete** (2026-04-24): `anim_orchestrator.py` + `drawbraille_renderer.py` + thin shell + `widgets/anim_config_panel.py`. See changelog entry below.
+- **`/anim ambient <engine>`**: always call `ov._orchestrator.set_ambient_engine(key)` — NOT `ov._current_engine_instance = _ENGINES[key]()`. Direct mutation leaves `_current_engine_key` and `_carousel_key` stale. (ANIM-API-1, commit 520a48b7c)
+- **`Torus3DEngine` LUTs**: `_THETA_LUT`/`_PHI_LUT` are precomputed with magic literals (class-scope rule). `__init__` asserts `len(_THETA_LUT)==N_U` and `len(_PHI_LUT)==N_V`. Changing `N_U`/`N_V` without updating the list comprehension raises `AssertionError` at construction. (ANIM-API-2)
+- **`AnimConfigPanel._cycle`**: guards `f.choices.index(str(f.value))` with `try/except ValueError` — unknown value defaults to index 0. Missing guard crashes the key handler. (ANIM-API-3)
 
 ### Skin / RX3 vars (`theme_manager.py`, `hermes.tcss`)
 
@@ -1051,6 +1054,8 @@ Compact index — each entry keeps only gotchas/patterns not obvious from the co
 - `watch_collapsed` only fires when the reactive value changes. Collapsed-only error affordances on `ToolHeader` need a second refresh path from the `axis == "state"` / `ToolCallState.ERROR` branch for panels that were already collapsed before the error arrived.
 - `HintBar` app watchers belong in `on_mount`, but any attrs read by `render()` before mount (`_density_tier`, `_has_ghost_suggestion`) must be seeded in `__init__`.
 - Dynamic tooltip copy on `ToolHeader` must be computed at hover time (`_show_tooltip -> _compute_tooltip_text`), not cached once during header setup, because collapse/error/path context changes after mount.
+- `ErrorCategory(str, Enum)` instances compare equal to their string values in dict lookups — no `.value` normalization needed. The `if hasattr(category, "value"): category = category.value` guard is defensive clarity only.
+- `_tab_hint_suffix` must stay `str` until `Text.from_markup()`: Rich `Text` does not support `+` with `str`. Concatenate both strings before converting to Text.
 
 ### 2026-04-28 — UX Audit E: error/edge states (E1–E4) — commit cc428df73
 

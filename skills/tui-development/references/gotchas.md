@@ -678,3 +678,19 @@ Widgets with an empty `compose()` (children mounted dynamically in an `activate(
 ## patch("cli.logger") scope: run asyncio coroutines inside the with-block (2026-04-28)
 
 `_drain_latest` resolves `logger` via `cli` module globals at call time. If `asyncio.run(coro())` is called **after** the `with patch("cli.logger"):` block closes, the logger has been restored and the mock captures nothing. Always run test coroutines inside the `with patch(...)` block.
+
+## getattr fallback masks mixin class attributes (2026-04-28)
+
+`getattr(self, "_rev_mode", False)` silently returns `False` for a Textual reactive that happens to be defined as a class attribute on a mixin. Once the mixin is in the MRO, `self._rev_mode` works correctly. The `getattr(obj, attr, default)` form short-circuits through descriptor lookup and can return the default even when the class attribute exists if the attribute is a reactive descriptor with no instance backing yet. Pattern: prefer `self._attr` after confirming the mixin is in the MRO; use `getattr` only for attributes that might genuinely be absent (e.g. during `__new__`-based test construction).
+
+## Axis-bus mirror flag pattern for DOM-unavailable state (2026-04-28)
+
+When a reactive widget needs to know about the open/closed state of a sibling overlay without a DOM query on the hot path, declare a plain bool mirror flag on the host (`_completion_overlay_active: bool = False` in `__init__`), update it when the overlay opens/closes, and read that flag in `_compute_mode()` and `_refresh_placeholder()`. This avoids `query_one()` in unit tests where the overlay is not mounted, and eliminates async timing gaps between the overlay mounting and the mode resolver seeing it. Document the flag with "axis-bus mirror" in a comment so future readers don't replace it with a query.
+
+## ToolHeader.collapsed reactive on __new__ instances raises ReactiveError (2026-04-28)
+
+`Reactive.__set__` and `__get__` both check `hasattr(obj, "_id")` (set by Textual's `__init__`). `object.__new__(ToolHeader)` instances have no `_id`, so `setattr(h, "collapsed", True)` raises `ReactiveError: Node is missing data`. To test methods that read `self.collapsed` without a running app, create an isolated subclass that shadows `collapsed` with a plain property reading from `self.__dict__`.
+
+## watch_collapsed must be explicitly defined (2026-04-28)
+
+Textual only calls `watch_<attr>()` if the method EXISTS on the class. `ToolHeader` had no `watch_collapsed` — create it. The reactive's `repaint=True` already handles repaints; the watcher is needed only for side effects (e.g. `_refresh_remediation_hint()`).

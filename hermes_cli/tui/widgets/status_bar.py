@@ -416,7 +416,11 @@ class HintBar(Widget):
     def render(self) -> "RenderResult":
         streaming = getattr(self.app, "status_streaming", False)
 
-        if streaming:
+        _running = (
+            getattr(self.app, "agent_running", False)
+            or getattr(self.app, "command_running", False)
+        )
+        if streaming and _running:
             try:
                 k = self.app.get_css_variables().get("accent-interactive", "#5f87d7")
             except Exception:
@@ -439,10 +443,6 @@ class HintBar(Widget):
         if self.hint:
             return Text(self.hint)  # pre-existing: strips markup; fix deferred
         if self._shimmer_base is not None and self._shimmer_timer is not None:
-            _running = (
-                getattr(self.app, "agent_running", False)
-                or getattr(self.app, "command_running", False)
-            )
             if _running:
                 return shimmer_text(
                     self._shimmer_base,
@@ -456,15 +456,10 @@ class HintBar(Widget):
             self._shimmer_stop()
         key_color = self._get_key_color()
         phase = self._phase
-        if phase in ("stream", "file"):
-            _running = (
-                getattr(self.app, "agent_running", False)
-                or getattr(self.app, "command_running", False)
-            )
-            if not _running:
-                # Stale phase — agent/command not running; reset and show idle hints.
-                self._phase = "idle"
-                phase = "idle"
+        if phase in ("stream", "file") and not _running:
+            # Stale phase — agent/command not running; reset and show idle hints.
+            self._phase = "idle"
+            phase = "idle"
         hints = _hints_for(phase, key_color)
         w = self.content_size.width
         if w >= 118:

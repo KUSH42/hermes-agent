@@ -123,9 +123,10 @@ class TestHS1RenderGuard:
         assert isinstance(result, Text)
         assert "interrupt" in result.plain
 
-    def test_streaming_pinned_always_shown(self, bar_and_app):
+    def test_streaming_with_agent_running_shows_interrupt(self, bar_and_app):
+        """Streaming + agent_running=True → interrupt/dismiss shown (correct)."""
         bar, stub = bar_and_app
-        stub.agent_running = False
+        stub.agent_running = True
         stub.command_running = False
         stub.status_streaming = True
         bar._shimmer_base = None
@@ -134,6 +135,20 @@ class TestHS1RenderGuard:
         result = bar.render()
         assert isinstance(result, Text)
         assert "interrupt" in result.plain
+
+    def test_streaming_stale_no_agent_shows_idle_hints(self, bar_and_app):
+        """Streaming=True but agent_running=False → stale; show idle hints instead."""
+        bar, stub = bar_and_app
+        stub.agent_running = False
+        stub.command_running = False
+        stub.status_streaming = True
+        bar._phase = "idle"
+        bar._shimmer_base = None
+        bar._shimmer_timer = None
+
+        result = bar.render()
+        markup = result.markup if hasattr(result, "markup") else str(result)
+        assert "interrupt" not in markup
 
 
 # ---------------------------------------------------------------------------

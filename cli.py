@@ -4748,24 +4748,25 @@ class HermesCLI:
     def _play_tte_in_output_panel(
         self, cfg: _StartupTteConfig, plain_hero: str
     ) -> bool:
-        """Play TTE animation inside OutputPanel via the pre-mounted StartupBannerWidget.
+        """Play TTE animation by suspending Textual and writing frames directly to stdout.
 
-        Called from the daemon startup thread.  All widget mutations go through
-        app.call_from_thread.  StartupBannerWidget is pre-mounted in
-        OutputPanel.compose(); a threading.Event gate (STARTUP_BANNER_READY) ensures
-        the producer thread waits for compose() to complete before querying.
+        Called from the daemon startup thread.  Suspends Textual's compositor,
+        then runs the animation in a thread-pool executor using time.sleep-based
+        deadline pacing.  This is completely decoupled from the asyncio event loop —
+        no compositor jitter, no set_interval catch-up bursts, no widget update
+        coalescing.  After resume, updates StartupBannerWidget with the static banner
+        so the first Textual repaint is seamless.
         """
-        import threading as _threading
+        import asyncio as _asyncio
+        import sys as _sys
         from rich.text import Text
+        from rich.console import Console
 
         app = _hermes_app
         if app is None:
             return False
         plain_hero = _sanitize_startup_hero_text(plain_hero)
 
-        # Block until OutputPanel.compose has mounted StartupBannerWidget.
-        # Bounded: if it never mounts (e.g. non-TUI fallback mis-routed here),
-        # give up quietly rather than hang the daemon thread.
         from hermes_cli.tui.widgets import (
             OUTPUT_PANEL_WIDTH_READY,
             STARTUP_BANNER_READY,
@@ -4781,16 +4782,11 @@ class HermesCLI:
             return False
         if not OUTPUT_PANEL_WIDTH_READY.wait(timeout=2.0):
             logger.warning("TTE: OutputPanel width not ready within 2s; using terminal width")
-        logger.info("TTE: starting animation loop effect=%s frames_limit=%d wall_s=%.1f", cfg.effect_name, cfg.max_frames, cfg.max_wall_s)
+        logger.info(
+            "TTE: starting animation loop effect=%s frames_limit=%d wall_s=%.1f",
+            cfg.effect_name, cfg.max_frames, cfg.max_wall_s,
+        )
 
-        from hermes_cli.tui.tte_runner import iter_frames
-        MAX_FRAMES = cfg.max_frames
-        MAX_WALL_S = cfg.max_wall_s
-        rendered_any = False
-        skipped = False
-        state_lock = _threading.Lock()
-        latest_frame: Text | None = None
-        update_in_flight = False
         self._ensure_startup_banner_artefacts(plain_hero)
         template = (
             self._startup_banner_template
@@ -4798,111 +4794,120 @@ class HermesCLI:
             else None
         )
 
-        async def _drain_latest() -> None:
-            nonlocal latest_frame, update_in_flight
-            from textual.css.query import NoMatches
-            from hermes_cli.tui.widgets import StartupBannerWidget
-            try:
-                widget = app.query_one(StartupBannerWidget)
-            except NoMatches:
-                # Banner unmounted between event set and frame drain (e.g. teardown).
-                # Recovered: STARTUP_BANNER_READY will be cleared by on_unmount.
-                logger.debug("TTE: StartupBannerWidget vanished mid-stream", exc_info=True)
-                with state_lock:
-                    update_in_flight = False
-                return
-            with state_lock:
-                frame = latest_frame
-                latest_frame = None
-            if frame is not None:
-                widget.set_frame(frame)
-            # Release in-flight flag; if the producer sneaked a new frame in while we
-            # were processing, keep update_in_flight=True and schedule another drain so
-            # that frame is not orphaned.
-            should_reschedule = False
-            with state_lock:
-                if latest_frame is not None:
-                    should_reschedule = True
-                else:
-                    update_in_flight = False
-            if should_reschedule:
-                app.call_later(_drain_latest)
+        from hermes_cli.tui.tte_runner import iter_frames
+        MAX_FRAMES = cfg.max_frames
+        MAX_WALL_S = cfg.max_wall_s
+        rendered_any_ref = [False]
+        skipped_ref = [False]
 
-        def _queue_frame(rich_text: Text) -> None:
-            nonlocal latest_frame, update_in_flight
-            should_schedule = False
-            with state_lock:
-                latest_frame = rich_text
-                if not update_in_flight:
-                    update_in_flight = True
-                    should_schedule = True
-            if should_schedule:
-                # call_later posts to the message queue via call_soon_threadsafe — non-blocking.
-                # call_from_thread blocks until the drain completes, adding variable event-loop
-                # latency into the producer's deadline-sleep calculation and causing irregular
-                # frame intervals.
-                app.call_later(_drain_latest)
-
-        # Pre-flight: paint static banner before TTE starts so widget is never blank.
-        # Use the cached splice template so pre-flight and frame 0 are byte-identical
-        # outside the hero rectangle. The template already carries the full skin styling.
-        if template is not None:
-            _preflight = self._splice_startup_banner_frame(
-                template, self._hero_ansi_colored(plain_hero)
-            )
-        else:
-            _preflight = self._startup_banner_static or self._render_startup_banner_text(print_hero=True)
-        _queue_frame(_preflight)
-        _tte_start = time.monotonic()   # time imported at module level
-        _frame_interval = 1.0 / max(1, cfg.fps)
-        _next_frame_t = time.monotonic()
-
-        try:
-            for i, frame in enumerate(
-                iter_frames(cfg.effect_name, plain_hero, params=cfg.params)
-            ):
-                if not getattr(app, "is_running", True):
-                    break
-                if STARTUP_TTE_SKIP.is_set():
-                    skipped = True
-                    break
-                if i >= MAX_FRAMES or (time.monotonic() - _tte_start) >= MAX_WALL_S:
-                    break
-                rendered_any = True
-                rich_frame = (
-                    self._splice_startup_banner_frame(template, frame)
-                    if template is not None
-                    else Text.from_ansi(frame)
-                )
-                rich_frame.no_wrap = True
-                rich_frame.overflow = "ignore"
-                _queue_frame(rich_frame)
-                # Pace producer to 60fps so the consumer renders every frame.
-                # Without this sleep, frames are generated at CPU speed and
-                # _queue_frame's latest-frame coalescing skips most of them,
-                # causing uneven playback.
-                _next_frame_t += _frame_interval
-                _sleep = _next_frame_t - time.monotonic()
-                if _sleep > 0:
-                    time.sleep(_sleep)
-        except Exception as exc:
-            self._handle_tte_producer_exc(exc)
-
-        logger.info("TTE: animation loop done rendered_any=%s skipped=%s", rendered_any, skipped)
-        if skipped or rendered_any:
-            # Hold final TTE frame for 250 ms, then queue the static banner through
-            # the same coalescing path — guarantees static arrives after last TTE frame.
-            if rendered_any:
-                self._first_input_seen.wait(timeout=0.25)
+        def _build_static_frame():
             if template is not None:
-                static_banner = self._splice_startup_banner_frame(
+                return self._splice_startup_banner_frame(
                     template, self._hero_ansi_colored(plain_hero)
                 )
-            else:
-                static_banner = self._startup_banner_static or self._render_startup_banner_text(print_hero=True)
-            _queue_frame(static_banner)
+            return self._startup_banner_static or self._render_startup_banner_text(print_hero=True)
 
-        return rendered_any
+        def _sync_animation() -> None:
+            """Direct-write animation; runs in executor while compositor is suspended.
+
+            time.sleep deadline pacing is independent of asyncio — no jitter from
+            compositor timers, spinner timers, or event loop scheduling.
+            """
+            terminal_width = shutil.get_terminal_size((80, 24)).columns
+            con = Console(force_terminal=True, width=terminal_width, highlight=False)
+
+            # Pre-flight: render static banner so screen is never blank at start
+            _sys.stdout.write("\033[H")
+            con.print(_build_static_frame())
+            _sys.stdout.flush()
+
+            tte_start = time.monotonic()
+            interval = 1.0 / cfg.fps
+            next_t = tte_start + interval
+
+            try:
+                for i, frame in enumerate(iter_frames(cfg.effect_name, plain_hero, params=cfg.params)):
+                    if not getattr(app, "is_running", True):
+                        break
+                    if STARTUP_TTE_SKIP.is_set():
+                        skipped_ref[0] = True
+                        break
+                    if i >= MAX_FRAMES or (time.monotonic() - tte_start) >= MAX_WALL_S:
+                        break
+                    rendered_any_ref[0] = True
+
+                    rich_frame = (
+                        self._splice_startup_banner_frame(template, frame)
+                        if template is not None
+                        else Text.from_ansi(frame)
+                    )
+                    rich_frame.no_wrap = True
+
+                    _sys.stdout.write("\033[H")
+                    con.print(rich_frame)
+                    _sys.stdout.flush()
+
+                    # Deadline sleep: absorbs render cost, holds average fps steady
+                    now = time.monotonic()
+                    if next_t > now:
+                        time.sleep(next_t - now)
+                    next_t = max(time.monotonic(), next_t) + interval
+            except Exception as exc:
+                self._handle_tte_producer_exc(exc)
+
+            logger.info(
+                "TTE: animation loop done rendered_any=%s skipped=%s",
+                rendered_any_ref[0], skipped_ref[0],
+            )
+
+            # Brief hold, then write static frame so Textual's resume repaint is seamless
+            if rendered_any_ref[0]:
+                self._first_input_seen.wait(timeout=0.25)
+            _sys.stdout.write("\033[H")
+            con.print(_build_static_frame())
+            _sys.stdout.flush()
+
+        async def _run_suspended() -> None:
+            if app._suspend_busy:
+                logger.debug("TTE: _suspend_busy; skipping suspend-based animation")
+                return
+            try:
+                app._suspend_busy = True
+                loop = _asyncio.get_running_loop()
+                with app.suspend():
+                    await loop.run_in_executor(None, _sync_animation)
+                # Update widget before the first post-resume repaint so the transition
+                # from direct-write terminal to Textual compositor is seamless.
+                if rendered_any_ref[0] or skipped_ref[0]:
+                    await _update_widget_post_resume()
+            except Exception:
+                logger.debug("TTE: suspend-based startup animation failed", exc_info=True)
+            finally:
+                app._suspend_busy = False
+
+        async def _update_widget_post_resume() -> None:
+            from textual.css.query import NoMatches
+            from hermes_cli.tui.widgets import StartupBannerWidget
+            final_banner = _build_static_frame()
+            try:
+                widget = app.query_one(StartupBannerWidget)
+                widget.set_frame(final_banner)
+            except NoMatches:
+                pass
+            except Exception:
+                logger.debug("TTE: widget update after animation failed", exc_info=True)
+
+        if app._event_loop is None:
+            logger.debug("TTE: event loop not available; skipping animation")
+            return False
+
+        future = _asyncio.run_coroutine_threadsafe(_run_suspended(), app._event_loop)
+        try:
+            future.result(timeout=MAX_WALL_S + 5.0)
+        except Exception:
+            logger.debug("TTE: animation future timed out or failed", exc_info=True)
+
+        return rendered_any_ref[0]
 
     def show_banner_with_startup_effect(self, tui: bool = False) -> None:
         """Render startup effect then the static banner.
@@ -4931,9 +4936,9 @@ class HermesCLI:
     def _set_tui_startup_banner_static(self) -> None:
         """Render the static startup banner into StartupBannerWidget.
 
-        Called ONLY when TTE was not played (disabled, compact terminal, no hero).
-        When TTE was played, the static frame is enqueued inside
-        _play_tte_in_output_panel via _queue_frame instead.
+        Called when TTE was not played (disabled, compact terminal, no hero), and
+        also called by the suspend-based animation path after resume to restore
+        the widget from the non-TUI terminal writes.
         """
         app = _hermes_app
         if app is None:

@@ -1,12 +1,12 @@
-"""Tests for R4-T-H1: STARTUP_BANNER_READY event gate syncs TTE worker
-against StartupBannerWidget mount.
-"""
+"""Tests for startup TTE animation: STARTUP_BANNER_READY gate + suspend-based playback."""
 from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import threading
 import pytest
-from unittest.mock import MagicMock, patch
+from contextlib import contextmanager
+from unittest.mock import MagicMock, patch, PropertyMock
 
 from rich.text import Text
 
@@ -68,7 +68,7 @@ class TestStartupBannerEventLifecycle:
 
 
 # ---------------------------------------------------------------------------
-# CLI worker gate
+# CLI worker gate + suspend-based animation path
 # ---------------------------------------------------------------------------
 
 def _make_cli_mock() -> MagicMock:
@@ -77,9 +77,42 @@ def _make_cli_mock() -> MagicMock:
     mock_self = MagicMock()
     mock_self._build_startup_banner_template.return_value = None
     mock_self._render_startup_banner_text.return_value = Text("banner")
+    mock_self._startup_banner_template = None
+    mock_self._startup_banner_static = None
+    mock_self._first_input_seen = threading.Event()
+    mock_self._first_input_seen.set()  # don't block hold
+    mock_self._ensure_startup_banner_artefacts = MagicMock()
+    mock_self._splice_startup_banner_frame = MagicMock(return_value=Text("spliced"))
+    mock_self._hero_ansi_colored = MagicMock(return_value="hero_ansi")
     # Bind the real _handle_tte_producer_exc so logger.debug calls go through
     mock_self._handle_tte_producer_exc = lambda exc: HermesCLI._handle_tte_producer_exc(exc)
     return mock_self
+
+
+def _make_app_mock_with_loop(loop: asyncio.AbstractEventLoop) -> MagicMock:
+    """App mock wired to a real event loop with a no-op suspend context manager."""
+    mock_app = MagicMock()
+    mock_app._event_loop = loop
+    mock_app._suspend_busy = False
+    mock_app.is_running = True
+    # suspend() must be a sync context manager (contextlib-style)
+    @contextmanager
+    def _noop_suspend():
+        yield
+    mock_app.suspend = _noop_suspend
+    return mock_app
+
+
+@pytest.fixture
+def bg_event_loop():
+    """Run an asyncio event loop in a background thread for the duration of the test."""
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    yield loop
+    loop.call_soon_threadsafe(loop.stop)
+    thread.join(timeout=2)
+    loop.close()
 
 
 class TestTTEWorkerWaitGate:
@@ -102,50 +135,82 @@ class TestTTEWorkerWaitGate:
         assert any("did not mount within 2s" in s for s in debug_msgs)
         mock_logger.warning.assert_not_called()
 
-    def test_drain_latest_logs_debug_on_NoMatches(self):
-        """_drain_latest logs DEBUG (not WARNING) when query_one raises NoMatches."""
+    def test_play_tte_returns_false_when_no_event_loop(self):
+        """Returns False immediately when app._event_loop is None."""
         from cli import HermesCLI
-        from textual.css.query import NoMatches
-
         mock_self = _make_cli_mock()
         mock_app = MagicMock()
-        mock_app.query_one.side_effect = NoMatches()
-
-        captured_fns: list = []
-
-        def _capture(fn):
-            captured_fns.append(fn)
-
-        mock_app.call_later.side_effect = _capture
+        mock_app._event_loop = None
 
         with (
             patch("cli._hermes_app", mock_app),
             patch("hermes_cli.tui.widgets.STARTUP_BANNER_READY") as mock_event,
             patch("hermes_cli.tui.widgets.OUTPUT_PANEL_WIDTH_READY.wait", return_value=True),
-            patch("hermes_cli.tui.tte_runner.iter_frames", return_value=iter([])),
             patch("cli.logger") as mock_logger,
-            patch("time.sleep"),
         ):
             mock_event.wait.return_value = True
-            HermesCLI._play_tte_in_output_panel(mock_self, _tte_cfg(__import__("cli")), "hero")
+            result = HermesCLI._play_tte_in_output_panel(
+                mock_self, _tte_cfg(__import__("cli")), "hero"
+            )
+        assert result is False
+        debug_msgs = [str(c) for c in mock_logger.debug.call_args_list]
+        assert any("event loop not available" in s for s in debug_msgs)
 
-            assert captured_fns, "call_later should be called for preflight frame"
-            # call_later receives the async function — call it to get a coroutine
-            asyncio.run(captured_fns[0]())
+    def test_play_tte_skips_when_suspend_busy(self, bg_event_loop):
+        """When _suspend_busy is True, animation is skipped and returns False."""
+        from cli import HermesCLI
+        mock_self = _make_cli_mock()
+        mock_app = _make_app_mock_with_loop(bg_event_loop)
+        mock_app._suspend_busy = True
 
-            debug_msgs = [str(c) for c in mock_logger.debug.call_args_list]
-            assert any("vanished mid-stream" in s for s in debug_msgs)
-            mock_logger.warning.assert_not_called()
+        with (
+            patch("cli._hermes_app", mock_app),
+            patch("hermes_cli.tui.widgets.STARTUP_BANNER_READY") as mock_event,
+            patch("hermes_cli.tui.widgets.OUTPUT_PANEL_WIDTH_READY.wait", return_value=True),
+            patch("cli.logger") as mock_logger,
+        ):
+            mock_event.wait.return_value = True
+            result = HermesCLI._play_tte_in_output_panel(
+                mock_self, _tte_cfg(__import__("cli")), "hero"
+            )
+        assert result is False
+        debug_msgs = [str(c) for c in mock_logger.debug.call_args_list]
+        assert any("suspend_busy" in s for s in debug_msgs)
 
-    def test_frame_loop_swallows_CancelledError_at_debug(self):
-        """concurrent.futures.CancelledError from call_from_thread is DEBUG, not WARNING.
+    def test_suspend_path_renders_frames(self, bg_event_loop):
+        """Animation runs in executor; returns True when frames are produced."""
+        from cli import HermesCLI
+        mock_self = _make_cli_mock()
+        mock_app = _make_app_mock_with_loop(bg_event_loop)
+
+        def _two_frames(*args, **kwargs):
+            yield "frame1_ansi"
+            yield "frame2_ansi"
+
+        with (
+            patch("cli._hermes_app", mock_app),
+            patch("hermes_cli.tui.widgets.STARTUP_BANNER_READY") as mock_event,
+            patch("hermes_cli.tui.widgets.OUTPUT_PANEL_WIDTH_READY.wait", return_value=True),
+            patch("hermes_cli.tui.tte_runner.iter_frames", side_effect=_two_frames),
+            patch("sys.stdout"),
+            patch("cli.logger"),
+            patch("time.sleep"),
+            patch("rich.console.Console"),
+        ):
+            mock_event.wait.return_value = True
+            result = HermesCLI._play_tte_in_output_panel(
+                mock_self, _tte_cfg(__import__("cli")), "hero"
+            )
+        assert result is True
+
+    def test_frame_loop_swallows_CancelledError_at_debug(self, bg_event_loop):
+        """CancelledError from iter_frames is logged at DEBUG, not WARNING.
 
         rendered_any is True because one frame was produced before cancellation.
         """
         from cli import HermesCLI
-
         mock_self = _make_cli_mock()
-        mock_app = MagicMock()
+        mock_app = _make_app_mock_with_loop(bg_event_loop)
 
         def _one_frame_then_cancel(*args, **kwargs):
             yield "frame1"
@@ -154,12 +219,12 @@ class TestTTEWorkerWaitGate:
         with (
             patch("cli._hermes_app", mock_app),
             patch("hermes_cli.tui.widgets.STARTUP_BANNER_READY") as mock_event,
-            patch(
-                "hermes_cli.tui.tte_runner.iter_frames",
-                side_effect=_one_frame_then_cancel,
-            ),
+            patch("hermes_cli.tui.widgets.OUTPUT_PANEL_WIDTH_READY.wait", return_value=True),
+            patch("hermes_cli.tui.tte_runner.iter_frames", side_effect=_one_frame_then_cancel),
+            patch("sys.stdout"),
             patch("cli.logger") as mock_logger,
             patch("time.sleep"),
+            patch("rich.console.Console"),
         ):
             mock_event.wait.return_value = True
             result = HermesCLI._play_tte_in_output_panel(

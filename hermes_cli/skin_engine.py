@@ -22,6 +22,9 @@ All fields are optional. Missing values inherit from the ``default`` skin.
       banner_accent: "#FFBF00"            # Section headers (Available Tools, etc.)
       banner_dim: "#B8860B"               # Dim/muted text (separators, labels)
       banner_text: "#FFF8DC"              # Body text (tool names, skill names)
+      banner_warning: "#FF8C00"           # Warning glyph + count (⚠ N commits behind)
+      banner_warning_dim: "#CD6500"       # Warning body text (run … to update)
+      banner_key: "#FFD700"               # Key badge color (u dismiss, etc.)
       ui_accent: "#FFBF00"               # General UI accent
       ui_label: "#4dd0e1"                # UI labels
       ui_ok: "#4caf50"                   # Success indicators
@@ -652,6 +655,9 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "banner_accent": "#FFBF00",
             "banner_dim": "#B8860B",
             "banner_text": "#FFF8DC",
+            "banner_warning": "#FF8C00",
+            "banner_warning_dim": "#CD6500",
+            "banner_key": "#FFD700",
             "ui_accent": "#FFBF00",
             "ui_label": "#4dd0e1",
             "ui_ok": "#4caf50",
@@ -695,6 +701,9 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "banner_accent": "#DD4A3A",
             "banner_dim": "#6B1717",
             "banner_text": "#F1E6CF",
+            "banner_warning": "#FF8C00",
+            "banner_warning_dim": "#CD6500",
+            "banner_key": "#FFD700",
             "ui_accent": "#DD4A3A",
             "ui_label": "#C7A96B",
             "ui_ok": "#4caf50",
@@ -771,6 +780,9 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "banner_accent": "#aaaaaa",
             "banner_dim": "#444444",
             "banner_text": "#c9d1d9",
+            "banner_warning": "#FF8C00",
+            "banner_warning_dim": "#CD6500",
+            "banner_key": "#FFD700",
             "ui_accent": "#aaaaaa",
             "ui_label": "#888888",
             "ui_ok": "#888888",
@@ -811,6 +823,9 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "banner_accent": "#8EA8FF",
             "banner_dim": "#4b5563",
             "banner_text": "#c9d1d9",
+            "banner_warning": "#FF8C00",
+            "banner_warning_dim": "#CD6500",
+            "banner_key": "#FFD700",
             "ui_accent": "#7eb8f6",
             "ui_label": "#8EA8FF",
             "ui_ok": "#63D0A6",
@@ -851,6 +866,9 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "banner_accent": "#5DB8F5",
             "banner_dim": "#153C73",
             "banner_text": "#EAF7FF",
+            "banner_warning": "#FF8C00",
+            "banner_warning_dim": "#CD6500",
+            "banner_key": "#FFD700",
             "ui_accent": "#5DB8F5",
             "ui_label": "#A9DFFF",
             "ui_ok": "#4caf50",
@@ -927,6 +945,9 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "banner_accent": "#E7E7E7",
             "banner_dim": "#4A4A4A",
             "banner_text": "#D3D3D3",
+            "banner_warning": "#FF8C00",
+            "banner_warning_dim": "#CD6500",
+            "banner_key": "#FFD700",
             "ui_accent": "#E7E7E7",
             "ui_label": "#D3D3D3",
             "ui_ok": "#919191",
@@ -1002,6 +1023,9 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "banner_accent": "#F29C38",
             "banner_dim": "#7A3511",
             "banner_text": "#FFF0D4",
+            "banner_warning": "#FF8C00",
+            "banner_warning_dim": "#CD6500",
+            "banner_key": "#FFD700",
             "ui_accent": "#F29C38",
             "ui_label": "#FFD39A",
             "ui_ok": "#4caf50",

@@ -4830,7 +4830,8 @@ class HermesCLI:
             "TTE: pre-rendering frames effect=%s max_frames=%d max_wall_s=%.1f",
             cfg.effect_name, MAX_FRAMES, MAX_WALL_S,
         )
-        anim_frames: list[Text] = []
+        from textual.content import Content as _Content
+        anim_frames: list = []
         _pre_start = time.monotonic()
         try:
             for i, raw_frame in enumerate(
@@ -4849,7 +4850,14 @@ class HermesCLI:
                 )
                 rich_frame.no_wrap = True
                 rich_frame.overflow = "ignore"
-                anim_frames.append(rich_frame)
+                # Pre-convert Text→Content in the background thread so the event
+                # loop receives a Visual that widget.update() passes through
+                # visualize() with an O(1) isinstance check instead of calling
+                # Content.from_rich_text() (~2.5ms/frame) on every _tick.
+                try:
+                    anim_frames.append(_Content.from_rich_text(rich_frame, console=None))
+                except Exception:
+                    anim_frames.append(rich_frame)
         except Exception as exc:
             self._handle_tte_producer_exc(exc)
 
@@ -4863,7 +4871,12 @@ class HermesCLI:
             return False
 
         # Append static frame as final entry so animation always ends on a clean still.
-        anim_frames.append(_build_static())
+        static = _build_static()
+        try:
+            static = _Content.from_rich_text(static, console=None)
+        except Exception:
+            pass
+        anim_frames.append(static)
 
         # --- Phase 2: loop-driven playback ---
         idx = [0]

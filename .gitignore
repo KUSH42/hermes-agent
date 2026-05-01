@@ -1,3 +1,4 @@
+.DS_Store
 /venv/
 /_pycache/
 *.pyc*
@@ -51,14 +52,22 @@ ignored/
 .worktrees/
 environments/benchmarks/evals/
 
+# Web UI build output
+hermes_cli/web_dist/
+
+# Web UI assets — synced from @nous-research/ui at build time via
+# `npm run sync-assets` (see web/package.json).
+web/public/fonts/
+web/public/ds-assets/
+
 # Release script temp files
 .release_notes.md
 mini-swe-agent/
 
 # Nix
 .direnv/
+.nix-stamps/
 result
-
 # Wrong-language files (this is a Python project)
 *.java
 *.cpp
@@ -73,3 +82,6 @@ caveman/
 # Specific large dump files committed by mistake
 /os
 /textual
+
+website/static/api/skills-index.json
+models-dev-upstream/

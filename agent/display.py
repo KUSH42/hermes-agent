@@ -4,7 +4,6 @@ Pure display functions and classes with no AIAgent dependency.
 Used by AIAgent._execute_tool_calls for CLI feedback.
 """
 
-import json
 import logging
 import os
 import re
@@ -20,6 +19,7 @@ from hermes_cli.tool_icons import (
     GENERIC_NERD_FONT_TOOL_ICON,
     get_ascii_tool_icon,
 )
+from utils import safe_json_loads
 
 # ANSI escape codes for coloring tool failure indicators
 _RED = "\033[31m"
@@ -28,7 +28,6 @@ _RESET = "\033[0m"
 logger = logging.getLogger(__name__)
 
 _ANSI_RESET = "\033[0m"
-
 
 # ---------------------------------------------------------------------------
 # Hex → ANSI truecolor helpers (used by diff color accessors below)
@@ -180,26 +179,6 @@ def _get_skin():
         return None
 
 
-def get_skin_faces(key: str, default: list) -> list:
-    """Get spinner face list from active skin, falling back to default."""
-    skin = _get_skin()
-    if skin:
-        faces = skin.get_spinner_list(key)
-        if faces:
-            return faces
-    return default
-
-
-def get_skin_verbs() -> list:
-    """Get thinking verbs from active skin."""
-    skin = _get_skin()
-    if skin:
-        verbs = skin.get_spinner_list("thinking_verbs")
-        if verbs:
-            return verbs
-    return KawaiiSpinner.THINKING_VERBS
-
-
 def get_skin_tool_prefix() -> str:
     """Get tool output prefix character from active skin."""
     skin = _get_skin()
@@ -314,9 +293,11 @@ def build_tool_preview(tool_name: str, args: dict, max_len: int | None = None) -
             content = _oneline(args.get("content", ""))
             return f"+{target}: \"{content[:25]}{'...' if len(content) > 25 else ''}\""
         elif action == "replace":
-            return f"~{target}: \"{_oneline(args.get('old_text', '')[:20])}\""
+            old = _oneline(args.get("old_text") or "") or "<missing old_text>"
+            return f"~{target}: \"{old[:20]}\""
         elif action == "remove":
-            return f"-{target}: \"{_oneline(args.get('old_text', '')[:20])}\""
+            old = _oneline(args.get("old_text") or "") or "<missing old_text>"
+            return f"-{target}: \"{old[:20]}\""
         return action
 
     if tool_name == "send_message":
@@ -476,9 +457,8 @@ def _result_succeeded(result: str | None) -> bool:
     """Conservatively detect whether a tool result represents success."""
     if not result:
         return False
-    try:
-        data = json.loads(result)
-    except (json.JSONDecodeError, TypeError):
+    data = safe_json_loads(result)
+    if data is None:
         return False
     if not isinstance(data, dict):
         return False
@@ -527,10 +507,7 @@ def extract_edit_diff(
 ) -> str | None:
     """Extract a unified diff from a file-edit tool result."""
     if tool_name == "patch" and result:
-        try:
-            data = json.loads(result)
-        except (json.JSONDecodeError, TypeError):
-            data = None
+        data = safe_json_loads(result)
         if isinstance(data, dict):
             diff = data.get("diff")
             if isinstance(diff, str) and diff.strip():
@@ -943,6 +920,45 @@ class KawaiiSpinner:
         "analyzing", "computing", "synthesizing", "formulating", "brainstorming",
     ]
 
+    @classmethod
+    def get_waiting_faces(cls) -> list:
+        """Return waiting faces from the active skin, falling back to KAWAII_WAITING."""
+        try:
+            skin = _get_skin()
+            if skin:
+                faces = skin.spinner.get("waiting_faces", [])
+                if faces:
+                    return faces
+        except Exception:
+            pass
+        return cls.KAWAII_WAITING
+
+    @classmethod
+    def get_thinking_faces(cls) -> list:
+        """Return thinking faces from the active skin, falling back to KAWAII_THINKING."""
+        try:
+            skin = _get_skin()
+            if skin:
+                faces = skin.spinner.get("thinking_faces", [])
+                if faces:
+                    return faces
+        except Exception:
+            pass
+        return cls.KAWAII_THINKING
+
+    @classmethod
+    def get_thinking_verbs(cls) -> list:
+        """Return thinking verbs from the active skin, falling back to THINKING_VERBS."""
+        try:
+            skin = _get_skin()
+            if skin:
+                verbs = skin.spinner.get("thinking_verbs", [])
+                if verbs:
+                    return verbs
+        except Exception:
+            pass
+        return cls.THINKING_VERBS
+
     def __init__(self, message: str = "", spinner_type: str = 'dots', print_fn=None):
         self.message = message
         self.spinner_frames = self.SPINNERS.get(spinner_type, self.SPINNERS['dots'])
@@ -1100,46 +1116,6 @@ class KawaiiSpinner:
 
 
 # =========================================================================
-# Kawaii face arrays (used by AIAgent._execute_tool_calls for spinner text)
-# =========================================================================
-
-KAWAII_SEARCH = [
-    "♪(´ε` )", "(｡◕‿◕｡)", "ヾ(＾∇＾)", "(◕ᴗ◕✿)", "( ˘▽˘)っ",
-    "٩(◕‿◕｡)۶", "(✿◠‿◠)", "♪～(´ε｀ )", "(ノ´ヮ`)ノ*:・゚✧", "＼(◎o◎)／",
-]
-KAWAII_READ = [
-    "φ(゜▽゜*)♪", "( ˘▽˘)っ", "(⌐■_■)", "٩(｡•́‿•̀｡)۶", "(◕‿◕✿)",
-    "ヾ(＠⌒ー⌒＠)ノ", "(✧ω✧)", "♪(๑ᴖ◡ᴖ๑)♪", "(≧◡≦)", "( ´ ▽ ` )ノ",
-]
-KAWAII_TERMINAL = [
-    "ヽ(>∀<☆)ノ", "(ノ°∀°)ノ", "٩(^ᴗ^)۶", "ヾ(⌐■_■)ノ♪", "(•̀ᴗ•́)و",
-    "┗(＾0＾)┓", "(｀・ω・´)", "＼(￣▽￣)／", "(ง •̀_•́)ง", "ヽ(´▽`)/",
-]
-KAWAII_BROWSER = [
-    "(ノ°∀°)ノ", "(☞゚ヮ゚)☞", "( ͡° ͜ʖ ͡°)", "┌( ಠ_ಠ)┘", "(⊙_⊙)？",
-    "ヾ(•ω•`)o", "(￣ω￣)", "( ˇωˇ )", "(ᵔᴥᵔ)", "＼(◎o◎)／",
-]
-KAWAII_CREATE = [
-    "✧*。٩(ˊᗜˋ*)و✧", "(ﾉ◕ヮ◕)ﾉ*:・ﾟ✧", "ヽ(>∀<☆)ノ", "٩(♡ε♡)۶", "(◕‿◕)♡",
-    "✿◕ ‿ ◕✿", "(*≧▽≦)", "ヾ(＾-＾)ノ", "(☆▽☆)", "°˖✧◝(⁰▿⁰)◜✧˖°",
-]
-KAWAII_SKILL = [
-    "ヾ(＠⌒ー⌒＠)ノ", "(๑˃ᴗ˂)ﻭ", "٩(◕‿◕｡)۶", "(✿╹◡╹)", "ヽ(・∀・)ノ",
-    "(ノ´ヮ`)ノ*:・ﾟ✧", "♪(๑ᴖ◡ᴖ๑)♪", "(◠‿◠)", "٩(ˊᗜˋ*)و", "(＾▽＾)",
-    "ヾ(＾∇＾)", "(★ω★)/", "٩(｡•́‿•̀｡)۶", "(◕ᴗ◕✿)", "＼(◎o◎)／",
-    "(✧ω✧)", "ヽ(>∀<☆)ノ", "( ˘▽˘)っ", "(≧◡≦) ♡", "ヾ(￣▽￣)",
-]
-KAWAII_THINK = [
-    "(っ°Д°;)っ", "(；′⌒`)", "(・_・ヾ", "( ´_ゝ`)", "(￣ヘ￣)",
-    "(。-`ω´-)", "( ˘︹˘ )", "(¬_¬)", "ヽ(ー_ー )ノ", "(；一_一)",
-]
-KAWAII_GENERIC = [
-    "♪(´ε` )", "(◕‿◕✿)", "ヾ(＾∇＾)", "٩(◕‿◕｡)۶", "(✿◠‿◠)",
-    "(ノ´ヮ`)ノ*:・ﾟ✧", "ヽ(>∀<☆)ノ", "(☆▽☆)", "( ˘▽˘)っ", "(≧◡≦)",
-]
-
-
-# =========================================================================
 # Cute tool message (completion line that replaces the spinner)
 # =========================================================================
 
@@ -1154,23 +1130,19 @@ def _detect_tool_failure(tool_name: str, result: str | None) -> tuple[bool, str]
         return False, ""
 
     if tool_name == "terminal":
-        try:
-            data = json.loads(result)
+        data = safe_json_loads(result)
+        if isinstance(data, dict):
             exit_code = data.get("exit_code")
             if exit_code is not None and exit_code != 0:
                 return True, f" [exit {exit_code}]"
-        except (json.JSONDecodeError, TypeError, AttributeError):
-            logger.debug("Could not parse terminal result as JSON for exit code check")
         return False, ""
 
     # Memory-specific: distinguish "full" from real errors
     if tool_name == "memory":
-        try:
-            data = json.loads(result)
+        data = safe_json_loads(result)
+        if isinstance(data, dict):
             if data.get("success") is False and "exceed the limit" in data.get("error", ""):
                 return True, " [full]"
-        except (json.JSONDecodeError, TypeError, AttributeError):
-            logger.debug("Could not parse memory result as JSON for capacity check")
 
     # Generic heuristic for non-terminal tools
     lower = result[:500].lower()
@@ -1376,10 +1348,14 @@ def get_cute_tool_message(
         if action == "add":
             return _wrap(f"┊ 🧠 memory    +{target}: \"{_trunc(args.get('content', ''), 30)}\"")
         elif action == "replace":
-            return _wrap(f"┊ 🧠 memory    ~{target}: \"{_trunc(args.get('old_text', ''), 20)}\"")
+            old = args.get("old_text") or ""
+            old = old if old else "<missing old_text>"
+            return _wrap(f"┊ 🧠 memory    ~{target}: \"{_trunc(old, 20)}\"  {dur}")
         elif action == "remove":
-            return _wrap(f"┊ 🧠 memory    -{target}: \"{_trunc(args.get('old_text', ''), 20)}\"")
-        return _wrap(f"┊ 🧠 memory    {action}")
+            old = args.get("old_text") or ""
+            old = old if old else "<missing old_text>"
+            return _wrap(f"┊ 🧠 memory    -{target}: \"{_trunc(old, 20)}\"  {dur}")
+        return _wrap(f"┊ 🧠 memory    {action}  {dur}")
     if tool_name == "skills_list":
         return _wrap(f"┊ 📚 skills    list {args.get('category', 'all')}")
     if tool_name == "skill_view":
@@ -1432,10 +1408,6 @@ def get_cute_tool_message(
 # Honcho session line (one-liner with clickable OSC 8 hyperlink)
 # =========================================================================
 
-_DIM = "\033[2m"
-_SKY_BLUE = "\033[38;5;117m"
-_ANSI_RESET = "\033[0m"
-
 
 def honcho_session_url(workspace: str, session_name: str) -> str:
     """Build a Honcho app URL for a session."""
@@ -1464,16 +1436,6 @@ _DIM_ANSI = "\033[2m"
 _BAR_FILLED = "▰"
 _BAR_EMPTY = "▱"
 _BAR_WIDTH = 20
-
-
-def _hex_to_ansi_fg(hex_color: str) -> str:
-    """Convert #RRGGBB to ANSI truecolor foreground escape. Returns "" on error."""
-    try:
-        h = hex_color.lstrip("#")
-        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-        return f"\033[38;2;{r};{g};{b}m"
-    except Exception:
-        return ""
 
 
 def _ctx_color(pct: float) -> str:

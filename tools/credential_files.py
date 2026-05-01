@@ -25,6 +25,7 @@ import os
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Dict, List
+from hermes_cli.config import cfg_get
 
 logger = logging.getLogger(__name__)
 
@@ -80,20 +81,18 @@ def register_credential_file(
 
     # Resolve symlinks and normalise ``..`` before the containment check so
     # that traversal like ``../. ssh/id_rsa`` cannot escape HERMES_HOME.
-    try:
-        resolved = host_path.resolve()
-        hermes_home_resolved = hermes_home.resolve()
-        resolved.relative_to(hermes_home_resolved)  # raises ValueError if outside
-    except ValueError:
+    from tools.path_security import validate_within_dir
+
+    containment_error = validate_within_dir(host_path, hermes_home)
+    if containment_error:
         logger.warning(
-            "credential_files: rejected path traversal %r "
-            "(resolves to %s, outside HERMES_HOME %s)",
+            "credential_files: rejected path traversal %r (%s)",
             relative_path,
-            resolved,
-            hermes_home_resolved,
+            containment_error,
         )
         return False
 
+    resolved = host_path.resolve()
     if not resolved.is_file():
         logger.debug("credential_files: skipping %s (not found)", resolved)
         return False
@@ -140,9 +139,10 @@ def _load_config_files() -> List[Dict[str, str]]:
         from hermes_cli.config import read_raw_config
         hermes_home = _resolve_hermes_home()
         cfg = read_raw_config()
-        cred_files = cfg.get("terminal", {}).get("credential_files")
+        cred_files = cfg_get(cfg, "terminal", "credential_files")
         if isinstance(cred_files, list):
-            hermes_home_resolved = hermes_home.resolve()
+            from tools.path_security import validate_within_dir
+
             for item in cred_files:
                 if isinstance(item, str) and item.strip():
                     rel = item.strip()
@@ -151,24 +151,23 @@ def _load_config_files() -> List[Dict[str, str]]:
                             "credential_files: rejected absolute config path %r", rel,
                         )
                         continue
-                    host_path = (hermes_home / rel).resolve()
-                    try:
-                        host_path.relative_to(hermes_home_resolved)
-                    except ValueError:
+                    host_path = hermes_home / rel
+                    containment_error = validate_within_dir(host_path, hermes_home)
+                    if containment_error:
                         logger.warning(
-                            "credential_files: rejected config path traversal %r "
-                            "(resolves to %s, outside HERMES_HOME %s)",
-                            rel, host_path, hermes_home_resolved,
+                            "credential_files: rejected config path traversal %r (%s)",
+                            rel, containment_error,
                         )
                         continue
-                    if host_path.is_file():
+                    resolved_path = host_path.resolve()
+                    if resolved_path.is_file():
                         container_path = f"/root/.hermes/{rel}"
                         result.append({
-                            "host_path": str(host_path),
+                            "host_path": str(resolved_path),
                             "container_path": container_path,
                         })
     except Exception as e:
-        logger.debug("Could not read terminal.credential_files from config: %s", e)
+        logger.warning("Could not read terminal.credential_files from config: %s", e)
 
     _config_files = result
     return _config_files
@@ -407,7 +406,3 @@ def clear_credential_files() -> None:
     _get_registered().clear()
 
 
-def reset_config_cache() -> None:
-    """Force re-read of config on next access (for testing)."""
-    global _config_files
-    _config_files = None

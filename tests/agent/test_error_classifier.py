@@ -54,9 +54,12 @@ class TestFailoverReason:
         expected = {
             "auth", "auth_permanent", "billing", "rate_limit",
             "overloaded", "server_error", "timeout",
-            "context_overflow", "payload_too_large",
+            "context_overflow", "payload_too_large", "image_too_large",
             "model_not_found", "format_error",
-            "thinking_signature", "long_context_tier", "unknown",
+            "provider_policy_blocked",
+            "thinking_signature", "long_context_tier",
+            "oauth_long_context_beta_forbidden",
+            "unknown",
         }
         actual = {r.value for r in FailoverReason}
         assert expected == actual
@@ -74,28 +77,6 @@ class TestClassifiedError:
 
         e3 = ClassifiedError(reason=FailoverReason.billing)
         assert e3.is_auth is False
-
-    def test_is_transient_property(self):
-        transient_reasons = [
-            FailoverReason.rate_limit,
-            FailoverReason.overloaded,
-            FailoverReason.server_error,
-            FailoverReason.timeout,
-            FailoverReason.unknown,
-        ]
-        for reason in transient_reasons:
-            e = ClassifiedError(reason=reason)
-            assert e.is_transient is True, f"{reason} should be transient"
-
-        non_transient = [
-            FailoverReason.auth,
-            FailoverReason.billing,
-            FailoverReason.model_not_found,
-            FailoverReason.format_error,
-        ]
-        for reason in non_transient:
-            e = ClassifiedError(reason=reason)
-            assert e.is_transient is False, f"{reason} should NOT be transient"
 
     def test_defaults(self):
         e = ClassifiedError(reason=FailoverReason.unknown)
@@ -271,6 +252,22 @@ class TestClassifyApiError:
         assert result.reason == FailoverReason.rate_limit
         assert result.should_fallback is True
 
+    def test_alibaba_rate_increased_too_quickly(self):
+        """Alibaba/DashScope returns a unique throttling message.
+
+        Port from anomalyco/opencode#21355.
+        """
+        msg = (
+            "Upstream error from Alibaba: Request rate increased too quickly. "
+            "To ensure system stability, please adjust your client logic to "
+            "scale requests more smoothly over time."
+        )
+        e = MockAPIError(msg, status_code=400)
+        result = classify_api_error(e)
+        assert result.reason == FailoverReason.rate_limit
+        assert result.retryable is True
+        assert result.should_rotate_credential is True
+
     # ── Server errors ──
 
     def test_500_server_error(self):
@@ -304,9 +301,68 @@ class TestClassifyApiError:
         assert result.retryable is False
 
     def test_404_generic(self):
+        # Generic 404 with no "model not found" signal — common for local
+        # llama.cpp/Ollama/vLLM endpoints with slightly wrong paths.  Treat
+        # as unknown (retryable) so the real error surfaces, rather than
+        # claiming the model is missing and silently falling back.
         e = MockAPIError("Not Found", status_code=404)
         result = classify_api_error(e)
+        assert result.reason == FailoverReason.unknown
+        assert result.retryable is True
+        assert result.should_fallback is False
+
+    # ── Provider policy-block (OpenRouter privacy/guardrail) ──
+
+    def test_404_openrouter_policy_blocked(self):
+        # Real OpenRouter error when the user's account privacy setting
+        # excludes the only endpoint serving a model (e.g. DeepSeek V4 Pro
+        # which is hosted only by DeepSeek, and their endpoint may log
+        # inputs).  Must NOT classify as model_not_found — the model
+        # exists, falling back won't help (same account setting applies),
+        # and the error body already tells the user where to fix it.
+        e = MockAPIError(
+            "No endpoints available matching your guardrail restrictions "
+            "and data policy. Configure: https://openrouter.ai/settings/privacy",
+            status_code=404,
+        )
+        result = classify_api_error(e)
+        assert result.reason == FailoverReason.provider_policy_blocked
+        assert result.retryable is False
+        assert result.should_fallback is False
+
+    def test_400_openrouter_policy_blocked(self):
+        # Defense-in-depth: if OpenRouter ever returns this as 400 instead
+        # of 404, still classify it distinctly rather than as format_error
+        # or model_not_found.
+        e = MockAPIError(
+            "No endpoints available matching your data policy",
+            status_code=400,
+        )
+        result = classify_api_error(e)
+        assert result.reason == FailoverReason.provider_policy_blocked
+        assert result.retryable is False
+        assert result.should_fallback is False
+
+    def test_message_only_openrouter_policy_blocked(self):
+        # No status code — classifier should still catch the fingerprint
+        # via the message-pattern fallback.
+        e = Exception(
+            "No endpoints available matching your guardrail restrictions "
+            "and data policy"
+        )
+        result = classify_api_error(e)
+        assert result.reason == FailoverReason.provider_policy_blocked
+
+    def test_404_model_not_found_still_works(self):
+        # Regression guard: the new policy-block check must not swallow
+        # genuine model_not_found 404s.
+        e = MockAPIError(
+            "openrouter/nonexistent-model is not a valid model ID",
+            status_code=404,
+        )
+        result = classify_api_error(e)
         assert result.reason == FailoverReason.model_not_found
+        assert result.should_fallback is True
 
     # ── Payload too large ──
 
@@ -404,6 +460,40 @@ class TestClassifyApiError:
         result = classify_api_error(e, provider="anthropic")
         assert result.reason == FailoverReason.rate_limit
 
+    # ── Provider-specific: Anthropic OAuth 1M-context beta forbidden ──
+
+    def test_anthropic_oauth_1m_beta_forbidden(self):
+        """400 + 'long context beta is not yet available for this subscription'
+        → oauth_long_context_beta_forbidden (retryable, no compression)."""
+        e = MockAPIError(
+            "The long context beta is not yet available for this subscription.",
+            status_code=400,
+        )
+        result = classify_api_error(e, provider="anthropic", model="claude-sonnet-4.6")
+        assert result.reason == FailoverReason.oauth_long_context_beta_forbidden
+        assert result.retryable is True
+        assert result.should_compress is False
+
+    def test_anthropic_oauth_1m_beta_forbidden_does_not_collide_with_tier_gate(self):
+        """The 429 'extra usage' + 'long context' tier gate keeps its own
+        classification even though its message mentions 'long context'."""
+        e = MockAPIError(
+            "Extra usage is required for long context requests over 200k tokens",
+            status_code=429,
+        )
+        result = classify_api_error(e, provider="anthropic", model="claude-sonnet-4.6")
+        assert result.reason == FailoverReason.long_context_tier
+
+    def test_400_without_beta_phrase_is_not_1m_beta_forbidden(self):
+        """A generic 400 that happens to mention 'long context' but not the
+        exact beta-availability phrase should not be misclassified."""
+        e = MockAPIError(
+            "long context window exceeded",
+            status_code=400,
+        )
+        result = classify_api_error(e, provider="anthropic")
+        assert result.reason != FailoverReason.oauth_long_context_beta_forbidden
+
     # ── Transport errors ──
 
     def test_read_timeout(self):
@@ -480,6 +570,39 @@ class TestClassifyApiError:
         result = classify_api_error(e)
         assert result.reason == FailoverReason.context_overflow
 
+    # ── Message-only usage limit disambiguation (no status code) ──
+
+    def test_message_usage_limit_transient_is_rate_limit(self):
+        """'usage limit' + 'try again' with no status code → rate_limit, not billing."""
+        e = Exception("usage limit exceeded, try again in 5 minutes")
+        result = classify_api_error(e)
+        assert result.reason == FailoverReason.rate_limit
+        assert result.retryable is True
+        assert result.should_rotate_credential is True
+        assert result.should_fallback is True
+
+    def test_message_usage_limit_no_retry_signal_is_billing(self):
+        """'usage limit' with no transient signal and no status code → billing."""
+        e = Exception("usage limit reached")
+        result = classify_api_error(e)
+        assert result.reason == FailoverReason.billing
+        assert result.retryable is False
+        assert result.should_rotate_credential is True
+
+    def test_message_quota_with_reset_window_is_rate_limit(self):
+        """'quota' + 'resets at' with no status code → rate_limit."""
+        e = Exception("quota exceeded, resets at midnight UTC")
+        result = classify_api_error(e)
+        assert result.reason == FailoverReason.rate_limit
+        assert result.retryable is True
+
+    def test_message_limit_exceeded_with_wait_is_rate_limit(self):
+        """'limit exceeded' + 'wait' with no status code → rate_limit."""
+        e = Exception("key limit exceeded, please wait before retrying")
+        result = classify_api_error(e)
+        assert result.reason == FailoverReason.rate_limit
+        assert result.retryable is True
+
     # ── Unknown / fallback ──
 
     def test_generic_exception_is_unknown(self):
@@ -507,6 +630,38 @@ class TestClassifyApiError:
         assert result.reason == FailoverReason.format_error
         assert result.retryable is False
 
+    def test_400_flat_body_descriptive_not_context_overflow(self):
+        """Responses API flat body with descriptive error + large session → format error.
+
+        The Codex Responses API returns errors in flat body format:
+        {"message": "...", "type": "..."} without an "error" wrapper.
+        A descriptive 400 must NOT be misclassified as context overflow
+        just because the session is large.
+        """
+        e = MockAPIError(
+            "Invalid 'input[index].name': string does not match pattern.",
+            status_code=400,
+            body={"message": "Invalid 'input[index].name': string does not match pattern.",
+                  "type": "invalid_request_error"},
+        )
+        result = classify_api_error(e, approx_tokens=200000, context_length=400000, num_messages=500)
+        assert result.reason == FailoverReason.format_error
+        assert result.retryable is False
+
+    def test_400_flat_body_generic_large_session_still_context_overflow(self):
+        """Flat body with generic 'Error' message + large session → context overflow.
+
+        Regression: the flat-body fallback must not break the existing heuristic
+        for genuinely generic errors from providers that use flat bodies.
+        """
+        e = MockAPIError(
+            "Error",
+            status_code=400,
+            body={"message": "Error"},
+        )
+        result = classify_api_error(e, approx_tokens=100000, context_length=200000)
+        assert result.reason == FailoverReason.context_overflow
+
     # ── Peer closed + large session ──
 
     def test_peer_closed_large_session(self):
@@ -518,6 +673,48 @@ class TestClassifyApiError:
 
     def test_chinese_context_overflow(self):
         e = MockAPIError("超过最大长度限制", status_code=400)
+        result = classify_api_error(e)
+        assert result.reason == FailoverReason.context_overflow
+
+    # ── vLLM / local inference server error messages ──
+
+    def test_vllm_max_model_len_overflow(self):
+        """vLLM's 'exceeds the max_model_len' error → context_overflow."""
+        e = MockAPIError(
+            "The engine prompt length 1327246 exceeds the max_model_len 131072. "
+            "Please reduce prompt.",
+            status_code=400,
+        )
+        result = classify_api_error(e)
+        assert result.reason == FailoverReason.context_overflow
+
+    def test_vllm_prompt_length_exceeds(self):
+        """vLLM prompt length error → context_overflow."""
+        e = MockAPIError(
+            "prompt length 200000 exceeds maximum model length 131072",
+            status_code=400,
+        )
+        result = classify_api_error(e)
+        assert result.reason == FailoverReason.context_overflow
+
+    def test_vllm_input_too_long(self):
+        """vLLM 'input is too long' error → context_overflow."""
+        e = MockAPIError("input is too long for model", status_code=400)
+        result = classify_api_error(e)
+        assert result.reason == FailoverReason.context_overflow
+
+    def test_ollama_context_length_exceeded(self):
+        """Ollama 'context length exceeded' error → context_overflow."""
+        e = MockAPIError("context length exceeded", status_code=400)
+        result = classify_api_error(e)
+        assert result.reason == FailoverReason.context_overflow
+
+    def test_llamacpp_slot_context(self):
+        """llama.cpp / llama-server 'slot context' error → context_overflow."""
+        e = MockAPIError(
+            "slot context: 4096 tokens, prompt 8192 tokens — not enough space",
+            status_code=400,
+        )
         result = classify_api_error(e)
         assert result.reason == FailoverReason.context_overflow
 
@@ -748,3 +945,222 @@ class TestAdversarialEdgeCases:
         )
         result = classify_api_error(e, provider="openrouter")
         assert result.reason == FailoverReason.model_not_found
+
+    # ── Regression: dict-typed message field (Issue #11233) ──
+
+    def test_pydantic_dict_message_no_crash(self):
+        """Pydantic validation errors return message as dict, not string.
+
+        Regression: classify_api_error must not crash when body['message']
+        is a dict (e.g. {"detail": [...]} from FastAPI/Pydantic). The
+        'or ""' fallback only handles None/falsy values — a non-empty
+        dict is truthy and passed to .lower(), causing AttributeError.
+        """
+        e = MockAPIError(
+            "Unprocessable Entity",
+            status_code=422,
+            body={
+                "object": "error",
+                "message": {
+                    "detail": [
+                        {
+                            "type": "extra_forbidden",
+                            "loc": ["body", "think"],
+                            "msg": "Extra inputs are not permitted",
+                        }
+                    ]
+                },
+            },
+        )
+        result = classify_api_error(e)
+        assert result.reason == FailoverReason.format_error
+        assert result.status_code == 422
+        assert result.retryable is False
+
+    def test_nested_error_dict_message_no_crash(self):
+        """Nested body['error']['message'] as dict must not crash.
+
+        Some providers wrap Pydantic errors in an 'error' object.
+        """
+        e = MockAPIError(
+            "Validation error",
+            status_code=400,
+            body={
+                "error": {
+                    "message": {
+                        "detail": [
+                            {"type": "missing", "loc": ["body", "required"]}
+                        ]
+                    }
+                }
+            },
+        )
+        result = classify_api_error(e, approx_tokens=1000)
+        assert result.reason == FailoverReason.format_error
+        assert result.status_code == 400
+
+    def test_metadata_raw_dict_message_no_crash(self):
+        """OpenRouter metadata.raw with dict message must not crash."""
+        e = MockAPIError(
+            "Provider error",
+            status_code=400,
+            body={
+                "error": {
+                    "message": "Provider error",
+                    "metadata": {
+                        "raw": '{"error":{"message":{"detail":[{"type":"invalid"}]}}}'
+                    }
+                }
+            },
+        )
+        result = classify_api_error(e)
+        assert result.reason == FailoverReason.format_error
+
+    # Broader non-string type guards — defense against other provider quirks.
+
+    def test_list_message_no_crash(self):
+        """Some providers return message as a list of error entries."""
+        e = MockAPIError(
+            "validation",
+            status_code=400,
+            body={"message": [{"msg": "field required"}]},
+        )
+        result = classify_api_error(e)
+        assert result is not None
+
+    def test_int_message_no_crash(self):
+        """Any non-string type must be coerced safely."""
+        e = MockAPIError("server error", status_code=500, body={"message": 42})
+        result = classify_api_error(e)
+        assert result is not None
+
+    def test_none_message_still_works(self):
+        """Regression: None fallback (the 'or \"\"' path) must still work."""
+        e = MockAPIError("server error", status_code=500, body={"message": None})
+        result = classify_api_error(e)
+        assert result is not None
+
+
+# ── Test: SSL/TLS transient errors ─────────────────────────────────────
+
+class TestSSLTransientPatterns:
+    """SSL/TLS alerts mid-stream should retry as timeout, not unknown, and
+    should NOT trigger context compression even on a large session.
+
+    Motivation: OpenSSL 3.x changed TLS alert error code format
+    (`SSLV3_ALERT_BAD_RECORD_MAC` → `SSL/TLS_ALERT_BAD_RECORD_MAC`),
+    breaking string-exact matching in downstream retry logic.  We match
+    stable substrings instead.
+    """
+
+    def test_bad_record_mac_classifies_as_timeout(self):
+        """OpenSSL 3.x mid-stream bad record mac alert."""
+        e = Exception("[SSL: BAD_RECORD_MAC] sslv3 alert bad record mac (_ssl.c:2580)")
+        result = classify_api_error(e)
+        assert result.reason == FailoverReason.timeout
+        assert result.retryable is True
+        assert result.should_compress is False
+
+    def test_openssl_3x_format_classifies_as_timeout(self):
+        """New format `ERR_SSL_SSL/TLS_ALERT_BAD_RECORD_MAC` still matches
+        because we key on both space- and underscore-separated forms of
+        the stable `bad_record_mac` token."""
+        e = Exception("ERR_SSL_SSL/TLS_ALERT_BAD_RECORD_MAC during streaming")
+        result = classify_api_error(e)
+        assert result.reason == FailoverReason.timeout
+        assert result.retryable is True
+        assert result.should_compress is False
+
+    def test_tls_alert_internal_error_classifies_as_timeout(self):
+        e = Exception("[SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error")
+        result = classify_api_error(e)
+        assert result.reason == FailoverReason.timeout
+        assert result.retryable is True
+        assert result.should_compress is False
+
+    def test_ssl_handshake_failure_classifies_as_timeout(self):
+        e = Exception("ssl handshake failure during mid-stream")
+        result = classify_api_error(e)
+        assert result.reason == FailoverReason.timeout
+        assert result.retryable is True
+
+    def test_ssl_prefix_classifies_as_timeout(self):
+        """Python's generic '[SSL: XYZ]' prefix from the ssl module."""
+        e = Exception("[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol")
+        result = classify_api_error(e)
+        assert result.reason == FailoverReason.timeout
+        assert result.retryable is True
+
+    def test_ssl_alert_on_large_session_does_not_compress(self):
+        """Critical: SSL alerts on big contexts must NOT trigger context
+        compression — compression is expensive and won't fix a transport
+        hiccup.  This is why _SSL_TRANSIENT_PATTERNS is separate from
+        _SERVER_DISCONNECT_PATTERNS.
+        """
+        e = Exception("[SSL: BAD_RECORD_MAC] sslv3 alert bad record mac")
+        result = classify_api_error(
+            e,
+            approx_tokens=180000,      # 90% of a 200k-context window
+            context_length=200000,
+            num_messages=300,
+        )
+        assert result.reason == FailoverReason.timeout
+        assert result.should_compress is False
+
+    def test_plain_disconnect_on_large_session_still_compresses(self):
+        """Regression guard: the context-overflow-via-disconnect path
+        (non-SSL disconnects on large sessions) must still trigger
+        compression.  Only SSL-specific disconnects skip it.
+        """
+        e = Exception("Server disconnected without sending a response")
+        result = classify_api_error(
+            e,
+            approx_tokens=180000,
+            context_length=200000,
+            num_messages=300,
+        )
+        assert result.reason == FailoverReason.context_overflow
+        assert result.should_compress is True
+
+    def test_real_ssl_error_type_classifies_as_timeout(self):
+        """Real ssl.SSLError instance — the type name alone (not message)
+        should route to the transport bucket."""
+        import ssl
+        e = ssl.SSLError("arbitrary ssl error")
+        result = classify_api_error(e)
+        assert result.reason == FailoverReason.timeout
+        assert result.retryable is True
+
+# ── Test: RateLimitError without status_code (Copilot/GitHub Models) ──────────
+
+class TestRateLimitErrorWithoutStatusCode:
+    """Regression tests for the Copilot/GitHub Models edge case where the
+    OpenAI SDK raises RateLimitError but does not populate .status_code."""
+
+    def _make_rate_limit_error(self, status_code=None):
+        """Create an exception whose class name is 'RateLimitError' with
+        an optionally missing status_code, mirroring the OpenAI SDK shape."""
+        cls = type("RateLimitError", (Exception,), {})
+        e = cls("You have exceeded your rate limit.")
+        e.status_code = status_code  # None simulates the Copilot case
+        return e
+
+    def test_rate_limit_error_without_status_code_classified_as_rate_limit(self):
+        """RateLimitError with status_code=None must classify as rate_limit."""
+        e = self._make_rate_limit_error(status_code=None)
+        result = classify_api_error(e, provider="copilot", model="gpt-4o")
+        assert result.reason == FailoverReason.rate_limit
+
+    def test_rate_limit_error_with_status_code_429_classified_as_rate_limit(self):
+        """RateLimitError that does set status_code=429 still classifies correctly."""
+        e = self._make_rate_limit_error(status_code=429)
+        result = classify_api_error(e, provider="copilot", model="gpt-4o")
+        assert result.reason == FailoverReason.rate_limit
+
+    def test_other_error_without_status_code_not_forced_to_rate_limit(self):
+        """A non-RateLimitError with missing status_code must NOT be forced to 429."""
+        cls = type("APIError", (Exception,), {})
+        e = cls("something went wrong")
+        e.status_code = None
+        result = classify_api_error(e, provider="copilot", model="gpt-4o")
+        assert result.reason != FailoverReason.rate_limit

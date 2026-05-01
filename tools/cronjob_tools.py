@@ -6,11 +6,16 @@ Compatibility wrappers remain for direct Python callers and legacy tests.
 """
 
 import json
+import logging
 import os
 import re
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
+
+from hermes_constants import display_hermes_home
+
+logger = logging.getLogger(__name__)
 
 # Import from cron module (will be available when properly installed)
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -64,14 +69,21 @@ def _scan_cron_prompt(prompt: str) -> str:
 
 
 def _origin_from_env() -> Optional[Dict[str, str]]:
-    origin_platform = os.getenv("HERMES_SESSION_PLATFORM")
-    origin_chat_id = os.getenv("HERMES_SESSION_CHAT_ID")
+    from gateway.session_context import get_session_env
+    origin_platform = get_session_env("HERMES_SESSION_PLATFORM")
+    origin_chat_id = get_session_env("HERMES_SESSION_CHAT_ID")
     if origin_platform and origin_chat_id:
+        thread_id = get_session_env("HERMES_SESSION_THREAD_ID") or None
+        if thread_id:
+            logger.debug(
+                "Cron origin captured thread_id=%s for %s:%s",
+                thread_id, origin_platform, origin_chat_id,
+            )
         return {
             "platform": origin_platform,
             "chat_id": origin_chat_id,
-            "chat_name": os.getenv("HERMES_SESSION_CHAT_NAME"),
-            "thread_id": os.getenv("HERMES_SESSION_THREAD_ID"),
+            "chat_name": get_session_env("HERMES_SESSION_CHAT_NAME") or None,
+            "thread_id": thread_id,
         }
     return None
 
@@ -138,6 +150,27 @@ def _normalize_optional_job_value(value: Optional[Any], *, strip_trailing_slash:
     return text or None
 
 
+def _normalize_deliver_param(value: Any) -> Optional[str]:
+    """Normalize a user-supplied ``deliver`` value to the canonical string form.
+
+    The cron schema documents ``deliver`` as a string (``"local"``, ``"origin"``,
+    ``"telegram"``, ``"telegram:chat_id[:thread_id]"``, or comma-separated combos).
+    Some callers — MCP clients passing arrays, scripts building the payload as a
+    list — supply ``["telegram"]``.  ``create_job``/``update_job`` store it as-is,
+    and the scheduler's ``str(deliver).split(",")`` then serializes the list to
+    the literal ``"['telegram']"`` which is not a known platform.  Flatten lists
+    / tuples at the API boundary so storage is always a string.  Returns ``None``
+    for ``None``/empty so callers can treat it as "not supplied".
+    """
+    if value is None:
+        return None
+    if isinstance(value, (list, tuple)):
+        parts = [str(p).strip() for p in value if str(p).strip()]
+        return ",".join(parts) if parts else None
+    text = str(value).strip()
+    return text or None
+
+
 def _validate_cron_script_path(script: Optional[str]) -> Optional[str]:
     """Validate a cron job script path at the API boundary.
 
@@ -164,12 +197,12 @@ def _validate_cron_script_path(script: Optional[str]) -> Optional[str]:
         )
 
     # Validate containment after resolution
+    from tools.path_security import validate_within_dir
+
     scripts_dir = get_hermes_home() / "scripts"
     scripts_dir.mkdir(parents=True, exist_ok=True)
-    resolved = (scripts_dir / raw).resolve()
-    try:
-        resolved.relative_to(scripts_dir.resolve())
-    except ValueError:
+    containment_error = validate_within_dir(scripts_dir / raw, scripts_dir)
+    if containment_error:
         return (
             f"Script path escapes the scripts directory via traversal: {raw!r}"
         )
@@ -203,6 +236,10 @@ def _format_job(job: Dict[str, Any]) -> Dict[str, Any]:
     }
     if job.get("script"):
         result["script"] = job["script"]
+    if job.get("enabled_toolsets"):
+        result["enabled_toolsets"] = job["enabled_toolsets"]
+    if job.get("workdir"):
+        result["workdir"] = job["workdir"]
     return result
 
 
@@ -222,6 +259,9 @@ def cronjob(
     base_url: Optional[str] = None,
     reason: Optional[str] = None,
     script: Optional[str] = None,
+    context_from: Optional[Union[str, List[str]]] = None,
+    enabled_toolsets: Optional[List[str]] = None,
+    workdir: Optional[str] = None,
     task_id: str = None,
 ) -> str:
     """Unified cron job management tool."""
@@ -247,18 +287,33 @@ def cronjob(
                 if script_error:
                     return tool_error(script_error, success=False)
 
+            # Validate context_from references existing jobs
+            if context_from:
+                from cron.jobs import get_job as _get_job
+                refs = [context_from] if isinstance(context_from, str) else context_from
+                for ref_id in refs:
+                    if not _get_job(ref_id):
+                        return tool_error(
+                            f"context_from job '{ref_id}' not found. "
+                            "Use cronjob(action='list') to see available jobs.",
+                            success=False,
+                        )
+
             job = create_job(
                 prompt=prompt or "",
                 schedule=schedule,
                 name=name,
                 repeat=repeat,
-                deliver=deliver,
+                deliver=_normalize_deliver_param(deliver),
                 origin=_origin_from_env(),
                 skills=canonical_skills,
                 model=_normalize_optional_job_value(model),
                 provider=_normalize_optional_job_value(provider),
                 base_url=_normalize_optional_job_value(base_url, strip_trailing_slash=True),
                 script=_normalize_optional_job_value(script),
+                context_from=context_from,
+                enabled_toolsets=enabled_toolsets or None,
+                workdir=_normalize_optional_job_value(workdir),
             )
             return json.dumps(
                 {
@@ -330,7 +385,7 @@ def cronjob(
             if name is not None:
                 updates["name"] = name
             if deliver is not None:
-                updates["deliver"] = deliver
+                updates["deliver"] = _normalize_deliver_param(deliver)
             if skills is not None or skill is not None:
                 canonical_skills = _canonical_skills(skill, skills)
                 updates["skills"] = canonical_skills
@@ -348,6 +403,30 @@ def cronjob(
                     if script_error:
                         return tool_error(script_error, success=False)
                 updates["script"] = _normalize_optional_job_value(script) if script else None
+            if context_from is not None:
+                # Empty string / empty list clears the field; otherwise validate
+                # each referenced job exists before storing. Normalized to a list
+                # (or None) to match the shape stored by create_job().
+                if isinstance(context_from, str):
+                    refs = [context_from.strip()] if context_from.strip() else []
+                else:
+                    refs = [str(j).strip() for j in context_from if str(j).strip()]
+                if refs:
+                    from cron.jobs import get_job as _get_job
+                    for ref_id in refs:
+                        if not _get_job(ref_id):
+                            return tool_error(
+                                f"context_from job '{ref_id}' not found. "
+                                "Use cronjob(action='list') to see available jobs.",
+                                success=False,
+                            )
+                updates["context_from"] = refs or None
+            if enabled_toolsets is not None:
+                updates["enabled_toolsets"] = enabled_toolsets or None
+            if workdir is not None:
+                # Empty string clears the field (restores old behaviour);
+                # otherwise pass raw — update_job() validates / normalizes.
+                updates["workdir"] = _normalize_optional_job_value(workdir) or None
             if repeat is not None:
                 # Normalize: treat 0 or negative as None (infinite)
                 normalized_repeat = None if repeat <= 0 else repeat
@@ -372,42 +451,6 @@ def cronjob(
         return tool_error(str(e), success=False)
 
 
-# ---------------------------------------------------------------------------
-# Compatibility wrappers
-# ---------------------------------------------------------------------------
-
-def schedule_cronjob(
-    prompt: str,
-    schedule: str,
-    name: Optional[str] = None,
-    repeat: Optional[int] = None,
-    deliver: Optional[str] = None,
-    model: Optional[str] = None,
-    provider: Optional[str] = None,
-    base_url: Optional[str] = None,
-    task_id: str = None,
-) -> str:
-    return cronjob(
-        action="create",
-        prompt=prompt,
-        schedule=schedule,
-        name=name,
-        repeat=repeat,
-        deliver=deliver,
-        model=model,
-        provider=provider,
-        base_url=base_url,
-        task_id=task_id,
-    )
-
-
-def list_cronjobs(include_disabled: bool = False, task_id: str = None) -> str:
-    return cronjob(action="list", include_disabled=include_disabled, task_id=task_id)
-
-
-def remove_cronjob(job_id: str, task_id: str = None) -> str:
-    return cronjob(action="remove", job_id=job_id, task_id=task_id)
-
 
 CRONJOB_SCHEMA = {
     "name": "cronjob",
@@ -416,6 +459,8 @@ CRONJOB_SCHEMA = {
 Use action='create' to schedule a new job from a prompt or one or more skills.
 Use action='list' to inspect jobs.
 Use action='update', 'pause', 'resume', 'remove', or 'run' to manage an existing job.
+
+To stop a job the user no longer wants: first action='list' to find the job_id, then action='remove' with that job_id. Never guess job IDs — always list first.
 
 Jobs run in a fresh session with no current-chat context, so prompts must be self-contained.
 If skills are provided on create, the future cron run loads those skills in order, then follows the prompt as the task instruction.
@@ -455,7 +500,7 @@ Important safety rule: cron-run sessions should not recursively schedule more cr
             },
             "deliver": {
                 "type": "string",
-                "description": "Delivery target: origin, local, telegram, discord, slack, whatsapp, signal, matrix, mattermost, homeassistant, dingtalk, feishu, wecom, email, sms, bluebubbles, or platform:chat_id or platform:chat_id:thread_id for Telegram topics. Examples: 'origin', 'local', 'telegram', 'telegram:-1001234567890:17585', 'discord:#engineering'"
+                "description": "Omit this parameter to auto-deliver back to the current chat and topic (recommended). Auto-detection preserves thread/topic context. Only set explicitly when the user asks to deliver somewhere OTHER than the current conversation. Values: 'origin' (same as omitting), 'local' (no delivery, save only), or platform:chat_id:thread_id for a specific destination. Examples: 'telegram:-1001234567890:17585', 'discord:#engineering', 'sms:+15551234567'. WARNING: 'platform:chat_id' without :thread_id loses topic targeting."
             },
             "skills": {
                 "type": "array",
@@ -479,7 +524,29 @@ Important safety rule: cron-run sessions should not recursively schedule more cr
             },
             "script": {
                 "type": "string",
-                "description": "Optional path to a Python script that runs before each cron job execution. Its stdout is injected into the prompt as context. Use for data collection and change detection. Relative paths resolve under ~/.hermes/scripts/. On update, pass empty string to clear."
+                "description": f"Optional path to a Python script that runs before each cron job execution. Its stdout is injected into the prompt as context. Use for data collection and change detection. Relative paths resolve under {display_hermes_home()}/scripts/. On update, pass empty string to clear."
+            },
+            "context_from": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Optional job ID or list of job IDs whose most recent completed output is "
+                    "injected into the prompt as context before each run. "
+                    "Use this to chain cron jobs: job A collects data, job B processes it. "
+                    "Each entry must be a valid job ID (from cronjob action='list'). "
+                    "Note: injects the most recent completed output — does not wait for "
+                    "upstream jobs running in the same tick. "
+                    "On update, pass an empty array to clear."
+                ),
+            },
+            "enabled_toolsets": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional list of toolset names to restrict the job's agent to (e.g. [\"web\", \"terminal\", \"file\", \"delegation\"]). When set, only tools from these toolsets are loaded, significantly reducing input token overhead. When omitted, all default tools are loaded. Infer from the job's prompt — e.g. use \"web\" if it calls web_search, \"terminal\" if it runs scripts, \"file\" if it reads files, \"delegation\" if it calls delegate_task. On update, pass an empty array to clear."
+            },
+            "workdir": {
+                "type": "string",
+                "description": "Optional absolute path to run the job from. When set, AGENTS.md / CLAUDE.md / .cursorrules from that directory are injected into the system prompt, and the terminal/file/code_exec tools use it as their working directory — useful for running a job inside a specific project repo. Must be an absolute path that exists. When unset (default), preserves the original behaviour: no project context files, tools use the scheduler's cwd. On update, pass an empty string to clear. Jobs with workdir run sequentially (not parallel) to keep per-job directories isolated."
             },
         },
         "required": ["action"]
@@ -525,6 +592,9 @@ registry.register(
         base_url=args.get("base_url"),
         reason=args.get("reason"),
         script=args.get("script"),
+        context_from=args.get("context_from"),
+        enabled_toolsets=args.get("enabled_toolsets"),
+        workdir=args.get("workdir"),
         task_id=kw.get("task_id"),
     ))(),
     check_fn=check_cronjob_requirements,

@@ -137,12 +137,12 @@ def prompt_for_secret(cli, var_name: str, prompt: str, metadata=None) -> dict:
         if not hasattr(cli, "_secret_deadline"):
             cli._secret_deadline = 0
         try:
-            value = getpass.getpass(f"{prompt} (hidden, Enter to skip): ")
+            value = getpass.getpass(f"{prompt} (hidden, ESC or empty Enter to skip): ")
         except (EOFError, KeyboardInterrupt):
             value = ""
 
         if not value:
-            cprint(f"\n{_DIM}  ⏭ Secret entry cancelled{_RST}")
+            cprint(f"\n{_DIM}  ⏭ Secret entry skipped{_RST}")
             return {
                 "success": True,
                 "reason": "cancelled",
@@ -195,7 +195,7 @@ def prompt_for_secret(cli, var_name: str, prompt: str, metadata=None) -> dict:
                 cli._app.invalidate()
 
             if not value:
-                cprint(f"\n{_DIM}  ⏭ Secret entry cancelled{_RST}")
+                cprint(f"\n{_DIM}  ⏭ Secret entry skipped{_RST}")
                 return {
                     "success": True,
                     "reason": "cancelled",

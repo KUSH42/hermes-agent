@@ -836,6 +836,9 @@ DEFAULT_CONFIG = {
         "startup_text_effect": {
             "enabled": False,
             "effect": "matrix",
+            "max_wall_s": 30.0,
+            "max_frames": 3000,
+            "fps": 60,
             "params": {},
         },
         # TUI busy indicator style: kaomoji (default), emoji, unicode (braille

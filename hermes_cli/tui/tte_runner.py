@@ -14,6 +14,7 @@ import logging
 from typing import Any
 
 _log = logging.getLogger(__name__)
+_TTE_MISSING_LOGGED = False
 
 # ---------------------------------------------------------------------------
 # Effect catalogue
@@ -118,6 +119,7 @@ def resolve_effect(name: str) -> tuple[str, str] | None:
 def iter_frames(effect_name: str, text: str, skin=None, params: dict[str, object] | None = None):
     """Yield TTE animation frames as ANSI strings without stdout takeover."""
     import importlib
+    global _TTE_MISSING_LOGGED
 
     spec = resolve_effect(effect_name)
     if spec is None:
@@ -127,6 +129,13 @@ def iter_frames(effect_name: str, text: str, skin=None, params: dict[str, object
         mod = importlib.import_module(spec[0])
         cls = getattr(mod, spec[1])
     except ImportError:
+        if not _TTE_MISSING_LOGGED:
+            _log.info(
+                "TTE animation requested (%s) but terminaltexteffects is not installed. "
+                "Install with: pip install \"hermes-agent[fun]\"",
+                effect_name,
+            )
+            _TTE_MISSING_LOGGED = True
         return
 
     effect = cls(text)

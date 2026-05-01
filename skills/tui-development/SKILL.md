@@ -2911,6 +2911,41 @@ Direct `widget.app = mock` raises `AttributeError: property 'app' of 'ThinkingWi
 - A synchronous `call_from_thread` stub must execute async callbacks via `asyncio.run(...)`; otherwise `_drain_latest()` never updates the fake widget.
 - Old `tests/tui/test_startup_banner_polish.py` imports from the main checkout path directly; use a local worktree-targeted file for new startup pipeline tests instead of extending that file.
 
+## Changelog — 2026-05-01 — Startup TTE config and diagnostics — config caps + widened teardown DEBUG + once-only missing-TTE INFO — 66-test verification
+
+**Spec:** `/home/xush/.hermes/2026-05-01-startup-tte-config-diagnostics.md`
+(Status: IMPLEMENTED on `feat/textual-migration` descendants).
+
+**Config surface:** `display.startup_text_effect` now includes `max_wall_s`,
+`max_frames`, and `fps` in both CLI and shared config defaults. Resolver return
+type is module-level frozen dataclass `_StartupTteConfig` with fields
+`effect_name`, `params`, `max_wall_s`, `max_frames`, and `fps`.
+
+**Validation contract:** `_get_startup_text_effect_config()` clamps
+`max_wall_s` to `1.0..600.0`, `max_frames` to `100..100000`, and `fps` to
+`1..240`. Out-of-range values log WARNING before building the dataclass. The
+producer loop reads the resolved caps directly and computes pacing as
+`1.0 / max(1, cfg.fps)`.
+
+**Teardown diagnostics:** `_LOOP_TEARDOWN_RUNTIME_ERRORS` centralizes the
+normal shutdown RuntimeError fragments. `CancelledError`, `"Event loop is
+closed"`, `"no running event loop"`, and `"no current event loop"` all log at
+DEBUG with `exc_info=True`; unrelated failures still log WARNING.
+
+**Missing dependency diagnostic:** `hermes_cli.tui.tte_runner.iter_frames()`
+tracks `_TTE_MISSING_LOGGED` and emits a single INFO-level install hint per
+process when `terminaltexteffects` is missing. This is TUI-only; non-TUI
+`run_effect()` keeps the stdout install hint path.
+
+**Testing gotchas:**
+- Resolver tests now assert dataclass fields (`result.fps`,
+  `result.max_wall_s`) instead of tuple unpacking.
+- Producer-loop tests that hold `time.monotonic()` constant must stub
+  `time.sleep()` too, or the max-frame loop waits in real time.
+- Legacy startup-banner tests that inserted
+  `"/home/xush/.hermes/hermes-agent"` into `sys.path` imported the base checkout
+  instead of the worktree. Use a dynamic repo-root path in worktree tests.
+
 ## Changelog — 2026-04-28 — UX Audit A — Skin/visual hierarchy consistency (A1–A6) — 12 tests, commit `d72ff0c07`
 
 **Spec:** `/home/xush/.hermes/2026-04-28-ux-audit-A-skin-hierarchy-consistency-spec.md` (Status: IMPLEMENTED).

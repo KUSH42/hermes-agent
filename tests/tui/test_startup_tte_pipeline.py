@@ -24,6 +24,18 @@ def _sync_call_from_thread(fn, *args, **kwargs):
     return result
 
 
+def _tte_cfg(cli_module, **overrides):
+    data = {
+        "effect_name": "matrix",
+        "params": {},
+        "max_wall_s": 30.0,
+        "max_frames": 3000,
+        "fps": 60,
+    }
+    data.update(overrides)
+    return cli_module._StartupTteConfig(**data)
+
+
 def _bind_cli(cli_module, app: MagicMock):
     cli = MagicMock()
     cli.enabled_toolsets = None
@@ -185,7 +197,7 @@ def test_play_tte_uses_splice_for_preflight_and_post_static():
     ), patch(
         "cli.time.sleep", return_value=None
     ):
-        rendered = cli._play_tte_in_output_panel("matrix", "hero", {})
+        rendered = cli._play_tte_in_output_panel(_tte_cfg(cli_module), "hero")
 
     assert rendered is True
     assert [frame.plain for frame in widget.frames] == ["preflight", "frame-1", "static"]
@@ -210,7 +222,7 @@ def test_width_timeout_logs_warning_and_uses_terminal_fallback():
     ), patch(
         "hermes_cli.tui.tte_runner.iter_frames", return_value=iter([])
     ), patch.object(cli_module.logger, "warning") as warning_mock:
-        rendered = cli._play_tte_in_output_panel("matrix", "hero", {})
+        rendered = cli._play_tte_in_output_panel(_tte_cfg(cli_module), "hero")
 
     assert rendered is False
     warning_mock.assert_called_once()
@@ -253,7 +265,7 @@ def test_skip_queues_final_static_frame():
     ), patch(
         "hermes_cli.tui.tte_runner.iter_frames", side_effect=_frames
     ):
-        rendered = cli._play_tte_in_output_panel("matrix", "hero", {})
+        rendered = cli._play_tte_in_output_panel(_tte_cfg(cli_module), "hero")
 
     assert rendered is True
     assert [frame.plain for frame in widget.frames] == ["preflight", "frame-1", "static"]
@@ -283,7 +295,7 @@ def test_producer_breaks_when_app_not_running():
     ), patch(
         "hermes_cli.tui.tte_runner.iter_frames", side_effect=_frames
     ):
-        rendered = cli._play_tte_in_output_panel("matrix", "hero", {})
+        rendered = cli._play_tte_in_output_panel(_tte_cfg(cli_module), "hero")
 
     assert rendered is False
     assert frame_counter["count"] == 1

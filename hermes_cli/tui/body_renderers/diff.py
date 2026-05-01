@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from hermes_cli.tui.tool_payload import ClassificationResult, ToolPayload
 
 _TOK = _re.compile(r"\s+|\w+|[^\w\s]")
+_HUNK_CTX_RE = _re.compile(r'^@@[^@]*@@ ?(.*)')
 
 
 def _tokenise(s: str) -> list[str]:
@@ -45,7 +46,7 @@ def _word_diff(removed: str, added: str) -> tuple[Text, Text]:
     sm = difflib.SequenceMatcher(None, rem_tok, add_tok, autojunk=False)
     rem_t, add_t = Text(), Text()
 
-    emphasis = Style(bold=True, underline=True)
+    emphasis = Style(bold=True)
     for tag, i1, i2, j1, j2 in sm.get_opcodes():
         rem_chunk = "".join(rem_tok[i1:i2])
         add_chunk = "".join(add_tok[j1:j2])
@@ -97,6 +98,13 @@ def _build_stat_text(added: int, removed: int, colors: SkinColors) -> Text:
     return t
 
 
+def _hunk_context(hunk_line: str) -> str:
+    """Strip @@ -n,m +n,m @@ prefix; return context label or '…'."""
+    m = _HUNK_CTX_RE.match(hunk_line)
+    ctx = m.group(1).strip() if m else ""
+    return ctx or "…"
+
+
 def _next_hunk_boundary(lines: list[str], hunk_start: int) -> int:
     return next(
         (
@@ -120,16 +128,19 @@ def _line_text(diff_line: str, colors: SkinColors, *, context_dim: bool = False)
         _style_entire_text(content, Style(bgcolor=colors.diff_add_bg))
         line = diff_gutter("+", colors=colors)
         line.append_text(content)
+        line.style = Style(bgcolor=colors.diff_add_bg)
         return line
     if diff_line.startswith("-") and not diff_line.startswith("--- "):
         content = Text(diff_line[1:])
         _style_entire_text(content, Style(bgcolor=colors.diff_del_bg))
         line = diff_gutter("-", colors=colors)
         line.append_text(content)
+        line.style = Style(bgcolor=colors.diff_del_bg)
         return line
     if diff_line.startswith("@@"):
+        ctx = _hunk_context(diff_line)
         line = diff_gutter(" ", colors=colors)
-        line.append(diff_line, style=Style(color=colors.muted))
+        line.append(f"@@ {ctx}", style=Style(color=colors.muted))
         return line
 
     content = diff_line[1:] if diff_line.startswith(" ") else diff_line
@@ -146,8 +157,10 @@ def _render_word_diff_pair(removed: str, added: str, colors: SkinColors) -> tupl
 
     rem_line = diff_gutter("-", colors=colors)
     rem_line.append_text(rem_t)
+    rem_line.style = Style(bgcolor=colors.diff_del_bg)
     add_line = diff_gutter("+", colors=colors)
     add_line.append_text(add_t)
+    add_line.style = Style(bgcolor=colors.diff_add_bg)
     return rem_line, add_line
 
 
@@ -157,7 +170,8 @@ def _build_body_text(
     colors: SkinColors,
 ) -> Text:
     result = Text()
-    first = _line_text(f"▾ {hunk_header}", colors, context_dim=True)
+    ctx = _hunk_context(hunk_header)
+    first = _line_text(f"▾ @@ {ctx}", colors, context_dim=True)
     result.append_text(first)
     for line in body_lines:
         result.append("\n")
@@ -166,10 +180,11 @@ def _build_body_text(
 
 
 def _collapsed_hunk_hint(hunk_header: str, body_line_count: int, colors: SkinColors) -> Text:
+    ctx = _hunk_context(hunk_header)
     line = diff_gutter(" ", colors=colors)
     line.append_text(
         build_rule(
-            f"hunk {hunk_header} {glyph('·')} +{body_line_count} lines "
+            f"@@ {ctx} {glyph('·')} +{body_line_count} lines "
             f"(c to copy {glyph('·')} space to expand)",
             colors=colors,
         )
@@ -299,8 +314,9 @@ _HunkHeader:focus ._summary {
         self._raw_hunk = raw_hunk
         self._body_text = body_text
         self._expanded = False
+        ctx = _hunk_context(hunk_header)
         self._summary_base = (
-            f"  {hunk_header}  {glyph('·')}  +{body_line_count} lines"
+            f"  @@ {ctx}  {glyph('·')}  +{body_line_count} lines"
             f"  (c to copy {glyph('·')} space to expand)"
         )
         self._summary = Static(f"▸{self._summary_base}", classes="_summary")
@@ -428,7 +444,9 @@ class DiffRenderer(BodyRenderer):
 
             if line.startswith("--- "):
                 if pending_removed is not None:
-                    children.append(Static(_line_text("-" + pending_removed, self.colors)))
+                    w = Static(_line_text("-" + pending_removed, self.colors))
+                    w.styles.background = self.colors.diff_del_bg
+                    children.append(w)
                     pending_removed = None
                 if i + 1 < len(lines) and lines[i + 1].startswith("+++ "):
                     path = lines[i + 1][4:].removeprefix("b/")
@@ -452,7 +470,9 @@ class DiffRenderer(BodyRenderer):
 
             if line.startswith("@@"):
                 if pending_removed is not None:
-                    children.append(Static(_line_text("-" + pending_removed, self.colors)))
+                    w = Static(_line_text("-" + pending_removed, self.colors))
+                    w.styles.background = self.colors.diff_del_bg
+                    children.append(w)
                     pending_removed = None
                 next_boundary = _next_hunk_boundary(lines, i)
                 body_lines = lines[i + 1:next_boundary]
@@ -480,7 +500,9 @@ class DiffRenderer(BodyRenderer):
 
             if line.startswith("-") and not line.startswith("--- "):
                 if pending_removed is not None:
-                    children.append(Static(_line_text("-" + pending_removed, self.colors)))
+                    w = Static(_line_text("-" + pending_removed, self.colors))
+                    w.styles.background = self.colors.diff_del_bg
+                    children.append(w)
                 pending_removed = line[1:]
                 i += 1
                 continue
@@ -488,23 +510,33 @@ class DiffRenderer(BodyRenderer):
             if line.startswith("+"):
                 if pending_removed is not None:
                     rem_line, add_line = _render_word_diff_pair(pending_removed, line[1:], self.colors)
-                    children.append(Static(rem_line))
-                    children.append(Static(add_line))
+                    rem_w = Static(rem_line)
+                    rem_w.styles.background = self.colors.diff_del_bg
+                    add_w = Static(add_line)
+                    add_w.styles.background = self.colors.diff_add_bg
+                    children.append(rem_w)
+                    children.append(add_w)
                     pending_removed = None
                 else:
-                    children.append(Static(_line_text(line, self.colors)))
+                    w = Static(_line_text(line, self.colors))
+                    w.styles.background = self.colors.diff_add_bg
+                    children.append(w)
                 i += 1
                 continue
 
             if pending_removed is not None:
-                children.append(Static(_line_text("-" + pending_removed, self.colors)))
+                w = Static(_line_text("-" + pending_removed, self.colors))
+                w.styles.background = self.colors.diff_del_bg
+                children.append(w)
                 pending_removed = None
 
             children.append(Static(_line_text(line, self.colors, context_dim=True)))
             i += 1
 
         if pending_removed is not None:
-            children.append(Static(_line_text("-" + pending_removed, self.colors)))
+            w = Static(_line_text("-" + pending_removed, self.colors))
+            w.styles.background = self.colors.diff_del_bg
+            children.append(w)
 
         return _DiffContainer(*children)
 

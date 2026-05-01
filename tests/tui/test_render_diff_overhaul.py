@@ -223,7 +223,7 @@ class TestWordDiffFidelity:
         assert any(
             span.start == 4
             and span.end == 7
-            and span.style == Style(bold=True, underline=True)
+            and span.style == Style(bold=True)
             for span in rem_t._spans
         )
         assert rem_t.plain[0:4] == "foo "

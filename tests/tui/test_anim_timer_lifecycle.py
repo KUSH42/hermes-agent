@@ -74,6 +74,17 @@ class TestAnimTimer1TimerLeak:
 # ── ANIM-TIMER-2: params persist across ticks ─────────────────────────────────
 
 class TestAnimTimer2ParamsPersist:
+    def test_gallery_preview_update_stores_renderable(self):
+        from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay  # noqa: F401
+        from hermes_cli.tui.widgets.anim_config_panel import _GalleryPreview
+
+        gp = _GalleryPreview()
+        gp.refresh = MagicMock()
+
+        gp.update("frame-1")
+
+        assert gp.render().plain == "frame-1"
+        gp.refresh.assert_called_once()
 
     def test_preview_tick_advances_t(self):
         gp = _make_gallery_preview()

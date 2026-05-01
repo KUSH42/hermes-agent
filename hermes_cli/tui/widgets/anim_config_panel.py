@@ -644,6 +644,19 @@ class _GalleryPreview(Widget):
         self._engine_key: str = ""
         self._engine: object | None = None
         self._preview_timer: "Timer | None" = None
+        self._frame: Text = Text("")
+
+    def render(self) -> Text:
+        """Render the latest preview frame as Rich text."""
+        return self._frame
+
+    def update(self, frame: object) -> None:
+        """Store a new preview frame and refresh the widget."""
+        if isinstance(frame, Text):
+            self._frame = frame
+        else:
+            self._frame = Text(str(frame))
+        self.refresh()
 
     def set_engine(self, key: str) -> None:
         """Switch to a new engine. Creates a fresh instance."""

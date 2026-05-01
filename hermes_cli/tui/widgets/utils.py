@@ -351,17 +351,17 @@ def _safe_widget_call(app: "Any", widget_type: type, method: str, *args: "Any") 
 # ---------------------------------------------------------------------------
 
 def _format_compact_tokens(value: int) -> str:
-    """Format token counts as short lowercase units, e.g. 96000 -> 96k."""
+    """Format token counts as short SI units, e.g. 96000 -> 96K, 1000000 -> 1M."""
     value = max(0, int(value))
     if value >= 1_000_000:
         scaled = value / 1_000_000
-        return f"{scaled:.1f}".rstrip("0").rstrip(".") + "m"
+        return f"{scaled:.1f}".rstrip("0").rstrip(".") + "M"
     if value >= 1_000:
         scaled = value / 1_000
         rounded = round(scaled)
         if abs(scaled - rounded) < 0.05:
-            return f"{rounded}k"
-        return f"{scaled:.1f}".rstrip("0").rstrip(".") + "k"
+            return f"{rounded}K"
+        return f"{scaled:.1f}".rstrip("0").rstrip(".") + "K"
     return str(value)
 
 

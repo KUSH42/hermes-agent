@@ -294,6 +294,11 @@ PlanPanel _BudgetSection {
     color: $text-muted;
 }
 
+/* SS-3: base height: auto so ThinkingWidget doesn't stretch when inactive */
+ThinkingWidget {
+    height: auto;
+}
+
 /* When the app has an active plan, force ThinkingWidget to LINE mode */
 HermesApp.plan-active ThinkingWidget.--active {
     height: 1;

@@ -320,6 +320,9 @@ _LabelLine   { height: 1;   width: 1fr; }
     # Label text
     _base_label: str = "Thinking…"
 
+    # SS-2: stall tracking — updated by on_token_delta()
+    _last_token_time: float | None = None
+
     def compose(self):
         # Children are created in activate() because we don't know mode yet.
         # compose() yields nothing — activate() mounts children dynamically.
@@ -593,8 +596,13 @@ _LabelLine   { height: 1;   width: 1fr; }
             return 0.0
         return time.monotonic() - self._activate_time
 
+    def on_token_delta(self) -> None:
+        """Called by the streaming path on each token arrival to reset stall timer."""
+        self._last_token_time = time.monotonic()
+
     def _get_label_text(self, elapsed: float | None = None) -> str:
         """A9: derive label text for current substate."""
+        from hermes_cli.tui.streaming_microcopy import STALL_THRESHOLD_S, _stall_markup
         if self._substate == "STARTED":
             return "Connecting…"
         if self._substate == "LONG_WAIT" and self._cfg_show_elapsed:
@@ -609,7 +617,13 @@ _LabelLine   { height: 1;   width: 1fr; }
                 prefix = "Thinking deeply"
             else:
                 prefix = "Thinking"
-            return f"{prefix}… ({n}s)"
+            elapsed_since_token = (
+                time.monotonic() - self._last_token_time
+                if self._last_token_time is not None
+                else 0.0
+            )
+            stall_str = _stall_markup(elapsed_since_token >= STALL_THRESHOLD_S)
+            return f"{prefix}… ({n}s){stall_str}"
         return self._base_label
 
     # ── Internal tick ──────────────────────────────────────────────────────────

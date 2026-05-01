@@ -455,6 +455,60 @@ def _display_toolset_name(toolset_name: str) -> str:
     )
 
 
+_BANNER_ACK_DRIFT = 50   # re-show when behind grows by this many commits
+_BANNER_ACK_TTL_S = 7 * 86400  # re-show after 7 days
+
+
+def _should_show_update_banner(behind: int) -> bool:
+    """Return True when the update warning should be displayed.
+
+    Suppressed if the user previously acknowledged a behind count within 7 days
+    and the drift since ack is < 50 commits.
+    """
+    ack_file = get_hermes_home() / "banner_ack.json"
+    if not ack_file.exists():
+        return True
+    try:
+        data = json.loads(ack_file.read_text())
+        acked = int(data.get("acked_behind", 0))
+        ts = float(data.get("ts", 0))
+        age = time.time() - ts
+        if age > _BANNER_ACK_TTL_S:
+            return True
+        if behind - acked >= _BANNER_ACK_DRIFT:
+            return True
+        return False
+    except Exception:
+        return True
+
+
+def write_banner_ack(behind: int) -> None:
+    """Write/overwrite the banner ack file with current behind count."""
+    try:
+        ack_file = get_hermes_home() / "banner_ack.json"
+        ack_file.write_text(json.dumps({"acked_behind": behind, "ts": time.time()}))
+    except Exception:
+        logger.debug("banner_ack write failed", exc_info=True)
+
+
+# Tracks the current session's behind value for the 'u' dismiss action.
+_session_update_behind: int = 0
+
+
+def _format_skill_list(skills: list, width: int = 47) -> str:
+    """Render skills joined by ', ' fitting in `width`, with '…+N more' overflow."""
+    rendered: list[str] = []
+    used = 0
+    for i, s in enumerate(skills):
+        sep_len = 2 if rendered else 0  # ', '
+        if used + sep_len + len(s) > width:
+            remaining = len(skills) - i
+            return ", ".join(rendered) + f" …+{remaining} more"
+        rendered.append(s)
+        used += sep_len + len(s)
+    return ", ".join(rendered)
+
+
 def build_welcome_banner(console: Console, model: str, cwd: str,
                          tools: List[dict] = None,
                          enabled_toolsets: List[str] = None,
@@ -637,13 +691,7 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     if skills_by_category:
         for category in sorted(skills_by_category.keys()):
             skill_names = sorted(skills_by_category[category])
-            if len(skill_names) > 8:
-                display_names = skill_names[:8]
-                skills_str = ", ".join(display_names) + f" +{len(skill_names) - 8} more"
-            else:
-                skills_str = ", ".join(skill_names)
-            if len(skills_str) > 50:
-                skills_str = skills_str[:47] + "..."
+            skills_str = _format_skill_list(skill_names)
             right_lines.append(f"[dim {dim}]{category}:[/] [{text}]{skills_str}[/]")
     else:
         right_lines.append(f"[dim {dim}]No skills installed[/]")
@@ -668,12 +716,15 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     # Update check — use prefetched result if available
     try:
         behind = get_update_result(timeout=0.5)
-        if behind and behind > 0:
+        if behind and behind > 0 and _should_show_update_banner(behind):
+            global _session_update_behind
+            _session_update_behind = behind
             from hermes_cli.config import recommended_update_command
             commits_word = "commit" if behind == 1 else "commits"
             right_lines.append(
                 f"[bold yellow]⚠ {behind} {commits_word} behind[/]"
-                f"[dim yellow] — run [bold]{recommended_update_command()}[/bold] to update[/]"
+                f"[dim yellow] — run [bold]{recommended_update_command()}[/bold] to update"
+                f" [dim](press u to dismiss)[/dim][/]"
             )
     except Exception:
         pass  # Never break the banner over an update check

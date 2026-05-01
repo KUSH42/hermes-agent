@@ -133,6 +133,18 @@ class CommandsService(AppService):
                 pass
             return True
 
+        _cmd_parts = stripped.split()
+        # SS-10: /model <name> inline switch — must check before _TAB_FOR_CMD
+        if len(_cmd_parts) >= 2 and _cmd_parts[0] == "/model":
+            requested = _cmd_parts[1].strip()
+            current = str(getattr(app, "active_model", None) or getattr(app, "status_model", "") or "")
+            if requested == current:
+                app._flash_hint(f"[dim]Already on {requested}; no change.[/dim]", 2.0)
+                return True
+            app._apply_model_inline(requested)
+            app._flash_hint(f"✓ Model switched: {requested}", 2.5)
+            return True
+
         _TAB_FOR_CMD = {
             "/model":     "model",
             "/verbose":   "verbose",

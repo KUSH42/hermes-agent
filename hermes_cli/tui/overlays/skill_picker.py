@@ -25,6 +25,8 @@ from textual.widgets.option_list import Option
 
 _log = logging.getLogger(__name__)
 
+from hermes_cli.tui.completion_overlay import _NO_DESCRIPTION_FALLBACK  # shared em-dash fallback
+
 # Source labels shown as group headers in the left pane.
 _SOURCE_LABELS: dict[str, str] = {
     "hermes": "Hermes",
@@ -233,7 +235,7 @@ class SkillPickerOverlay(Widget):
             return
         widgets = []
         widgets.append(Static(f"[bold]${selected.name}[/bold]", classes="detail-section-header"))
-        desc_text = selected.description or "[dim](no description)[/dim]"
+        desc_text = selected.description or _NO_DESCRIPTION_FALLBACK
         widgets.append(Static(desc_text, markup=True))
         if selected.trigger_phrases:
             widgets.append(Static("", classes="detail-spacer"))

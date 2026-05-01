@@ -460,6 +460,10 @@ def _append_status_segment(text_obj: "Text", label: str, style: str, *, streamin
     text_obj.append(label, style=final_style)
 
 
+import logging as _logging
+_log_sb = _logging.getLogger(__name__)
+
+
 class StatusBar(PulseMixin, Widget):
     """Bottom status bar showing model, compaction bar, ctx usage, and state.
 
@@ -469,11 +473,26 @@ class StatusBar(PulseMixin, Widget):
 
     DEFAULT_CSS = "StatusBar { height: 1; dock: bottom; }"
 
+    BINDINGS = [
+        ("s", "copy_session_id", "Copy session ID"),
+    ]
+
     # Animated tok/s backing reactive — drives smooth counter easing
     _tok_s_displayed: reactive[float] = reactive(0.0, repaint=True)
 
+    # SS-9: full (non-truncated) session ID for copy action
+    _full_session_id: str = ""
+
     def __getattr__(self, name: str) -> Any:
         raise AttributeError(name)
+
+    def action_copy_session_id(self) -> None:
+        """Copy the full session ID to the clipboard."""
+        try:
+            import pyperclip
+            pyperclip.copy(self._full_session_id)
+        except Exception:
+            _log_sb.debug("clipboard unavailable; skipping session copy")
 
     def compose(self) -> "ComposeResult":
         yield Static("⚠ no clipboard", id="status-clipboard-warning")
@@ -642,9 +661,11 @@ class StatusBar(PulseMixin, Widget):
             _safe_bool(getattr(app, "agent_running", False))
             or _safe_bool(getattr(app, "command_running", False))
         )
+        _is_compact_narrow = _safe_bool(getattr(app, "compact", False)) and width < 70
+        _ctx_suffix = "" if _is_compact_narrow else " ctx"
         ctx_label = (
-            f"{_format_compact_tokens(ctx_tokens)}/{_format_compact_tokens(ctx_max)}"
-            if ctx_max > 0 else _format_compact_tokens(ctx_tokens)
+            f"{_format_compact_tokens(ctx_tokens)}/{_format_compact_tokens(ctx_max)}{_ctx_suffix}"
+            if ctx_max > 0 else f"{_format_compact_tokens(ctx_tokens)}{_ctx_suffix}"
         )
         yolo_mode = _safe_bool(getattr(app, "yolo_mode", False))
         compact = _safe_bool(getattr(app, "compact", False))

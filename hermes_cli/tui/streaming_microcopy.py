@@ -70,6 +70,16 @@ _ELAPSED_STYLE = "dim"
 _STALL_STYLE = "bold yellow"
 
 
+STALL_THRESHOLD_S: float = 30.0
+
+
+def _stall_markup(stalled: bool) -> str:
+    """Return Rich-markup stall suffix string (empty when not stalled)."""
+    if not stalled:
+        return ""
+    return " [bold yellow]◌[/bold yellow] [dim]stalled?[/dim]"
+
+
 def _stall_text(stalled: bool, colors: "SkinColors | None" = None) -> "Text | None":
     if not stalled:
         return None

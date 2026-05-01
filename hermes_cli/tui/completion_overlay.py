@@ -38,6 +38,9 @@ from .preview_panel import PreviewPanel
 from .resize_utils import THRESHOLD_COMP_NARROW, crosses_threshold
 
 
+_NO_DESCRIPTION_FALLBACK = "[dim]—[/dim]"
+
+
 class SlashDescPanel(RichLog):
     """Shows the description for the currently highlighted slash command."""
 
@@ -63,7 +66,7 @@ class SlashDescPanel(RichLog):
             # Build title line: "/command [args_hint]"
             args = f" [dim]{c.args_hint}[/dim]" if c.args_hint else ""
             title = f"[bold]{c.command}[/bold]{args}"
-            desc = c.description or "(no description)"
+            desc = c.description or _NO_DESCRIPTION_FALLBACK
             # Keybind hint on same line as description (right-aligned dim)
             keybind = f"  [dim]{c.keybind_hint}[/dim]" if c.keybind_hint else ""
             self.write(f"{title}\n\n{desc}{keybind}")

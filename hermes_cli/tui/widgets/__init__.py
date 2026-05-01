@@ -945,10 +945,22 @@ class AssistantNameplate(Widget):
         self._anim_min_end: float = 0.0  # monotonic deadline; 0 = no gate
         self._pending_idle: bool = False
 
+    def _resolve_accent_hex(self, css_vars: dict, tier: "str | None" = None) -> str:
+        """Resolve accent in priority order: tier_accents → nameplate-active-color → default."""
+        if tier:
+            tier_key = f"nameplate-tier-{tier}-accent"
+            if tier_key in css_vars:
+                return css_vars[tier_key]
+            tier_accents_raw = css_vars.get("tier_accents", {})
+            if isinstance(tier_accents_raw, dict) and tier in tier_accents_raw:
+                return tier_accents_raw[tier]
+        return css_vars.get("nameplate-active-color", "#7b68ee")
+
     def on_mount(self) -> None:
         try:
             css_vars = self.app.get_css_variables()
-            self._accent_hex = css_vars.get("nameplate-active-color", "#7b68ee")
+            _tier = getattr(self.app, "active_tier", None)
+            self._accent_hex = self._resolve_accent_hex(css_vars, _tier)
             self._text_hex = css_vars.get("foreground", "#cccccc")
             # dim end of pulse wave: 30% of the accent blended toward black
             self._active_dim_hex = _lerp_hex("#000000", self._accent_hex, 0.30)
@@ -983,6 +995,18 @@ class AssistantNameplate(Widget):
         except Exception:
             # best-effort UI update; widget may not be mounted
             pass
+
+    def set_tier(self, tier: "str | None") -> None:
+        """Update the active tier and recompute accent color. Triggers a repaint."""
+        try:
+            css_vars = self.app.get_css_variables()
+            self._accent_hex = self._resolve_accent_hex(css_vars, tier)
+            self._active_dim_hex = _lerp_hex("#000000", self._accent_hex, 0.30)
+            self._active_style = Style.parse(f"bold {self._accent_hex}")
+            self._idle_color_hex = _lerp_hex(self._text_hex, self._accent_hex, 0.25)
+            self.refresh()
+        except Exception:
+            pass  # best-effort — tier change without mounted app is fine
 
     def on_unmount(self) -> None:
         self._stop_all_idle_timers()

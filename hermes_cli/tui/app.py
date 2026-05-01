@@ -301,6 +301,7 @@ class HermesApp(App):
         Binding("alt+]", "collapse_right_pane", "Collapse right", show=False),
         Binding("ctrl+\\", "toggle_center_split", "Split center", show=False),
         Binding("end", "scroll_to_latest", "Latest", show=False),
+        Binding("u", "dismiss_update_banner", "Dismiss update notice", show=False),
     ]
 
     _CHEVRON_PHASE_CLASSES: frozenset[str] = frozenset({
@@ -410,6 +411,9 @@ class HermesApp(App):
 
     # Current session label — display-only; shown in StatusBar chip
     session_label: reactive[str] = reactive("")
+
+    # SS-9: full (non-truncated) session ID for clipboard copy
+    _active_session_id: str = ""
 
     # S0-D/S0-E: True while assistant is actively streaming tokens
     status_streaming: reactive[bool] = reactive(False)
@@ -1255,6 +1259,35 @@ class HermesApp(App):
             ov.show_overlay()
             self._sync_workspace_polling_state()
             self._trigger_git_poll()
+
+    def _apply_model_inline(self, name: str) -> None:
+        """Route a /model <name> switch to the CLI agent via pending_input.
+
+        Mirrors what ConfigOverlay._confirm_model does without going through
+        the TUI input widget (avoids recursive handle_slash_command invocation).
+        """
+        try:
+            cli = getattr(self, "cli", None)
+            if cli is not None and hasattr(cli, "_pending_input"):
+                cli._pending_input.put(f"/model {name}")
+            else:
+                # Fallback: update display-side only (CLI will sync on next turn)
+                self.status_model = name
+        except Exception:
+            _log.debug("_apply_model_inline: routing failed", exc_info=True)
+            try:
+                self.status_model = name
+            except Exception:
+                pass
+
+    def action_dismiss_update_banner(self) -> None:
+        """Write banner ack file to suppress the update warning for the current behind count."""
+        try:
+            from hermes_cli.banner import _session_update_behind, write_banner_ack
+            if _session_update_behind > 0:
+                write_banner_ack(_session_update_behind)
+        except Exception:
+            _log.debug("dismiss_update_banner failed", exc_info=True)
 
     def action_dismiss_all_error_banners(self) -> None:
         """E5: query all .error-banner widgets in the screen and remove each."""
@@ -2178,6 +2211,12 @@ class HermesApp(App):
         banner = _SessionResumedBanner(session_title or session_id[-8:], turn_count)
         panel.mount(banner)
         self.session_label = session_title or session_id[-8:]
+        self._active_session_id = session_id  # SS-9: full ID for copy
+        try:
+            from hermes_cli.tui.widgets.status_bar import StatusBar as _StatusBar
+            self.query_one(_StatusBar)._full_session_id = session_id
+        except Exception:
+            pass
         self._auto_title_done = False
         # D3: reset browse anchor state so old indices do not point to removed widgets
         self._browse_anchors = []

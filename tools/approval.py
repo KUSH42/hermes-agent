@@ -616,6 +616,25 @@ def prompt_dangerous_approval(command: str, description: str,
         # tests, sshd, etc.).
         pass
 
+    # Textual TUI guard: same reasoning as above — if the Textual TUI owns
+    # the terminal and no callback was registered on this thread, input()
+    # cannot see keystrokes, producing a silent 60s timeout.  Deny fast.
+    # Any thread that needs approval must call set_approval_callback() before
+    # reaching this point (see cli.py run_agent() for the established pattern).
+    try:
+        import sys as _sys
+        _cli = _sys.modules.get("cli") or _sys.modules.get("__main__")
+        if _cli is not None and getattr(_cli, "_hermes_app", None) is not None:
+            logger.warning(
+                "Dangerous-command approval requested on a thread with no "
+                "approval callback while Textual TUI is active; denying "
+                "to avoid stdin deadlock. command=%r description=%r",
+                command, description,
+            )
+            return "deny"
+    except Exception:
+        pass
+
     os.environ["HERMES_SPINNER_PAUSE"] = "1"
     try:
         while True:

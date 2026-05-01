@@ -116,7 +116,7 @@ class TestTTEWorkerWaitGate:
         def _capture(fn):
             captured_fns.append(fn)
 
-        mock_app.call_from_thread.side_effect = _capture
+        mock_app.call_later.side_effect = _capture
 
         with (
             patch("cli._hermes_app", mock_app),
@@ -129,8 +129,8 @@ class TestTTEWorkerWaitGate:
             mock_event.wait.return_value = True
             HermesCLI._play_tte_in_output_panel(mock_self, _tte_cfg(__import__("cli")), "hero")
 
-            assert captured_fns, "call_from_thread should be called for preflight frame"
-            # call_from_thread receives the async function — call it to get a coroutine
+            assert captured_fns, "call_later should be called for preflight frame"
+            # call_later receives the async function — call it to get a coroutine
             asyncio.run(captured_fns[0]())
 
             debug_msgs = [str(c) for c in mock_logger.debug.call_args_list]

@@ -17,11 +17,12 @@ def _load_cli_module():
     return importlib.reload(cli_module)
 
 
-def _sync_call_from_thread(fn, *args, **kwargs):
+def _sync_execute(fn, *args, **kwargs):
+    """Synchronously execute a call_later / call_from_thread callback for testing."""
     result = fn(*args, **kwargs)
     if inspect.isawaitable(result):
         asyncio.run(result)
-    return result
+    return True
 
 
 def _tte_cfg(cli_module, **overrides):
@@ -52,7 +53,8 @@ def _bind_cli(cli_module, app: MagicMock):
     cli._set_tui_startup_banner_static = cli_module.HermesCLI._set_tui_startup_banner_static.__get__(cli)
     cli.show_banner_with_startup_effect = cli_module.HermesCLI.show_banner_with_startup_effect.__get__(cli)
     cli._handle_tte_producer_exc = cli_module.HermesCLI._handle_tte_producer_exc
-    app.call_from_thread.side_effect = _sync_call_from_thread
+    app.call_later.side_effect = _sync_execute
+    app.call_from_thread.side_effect = _sync_execute
     return cli
 
 
@@ -308,31 +310,24 @@ def test_producer_breaks_when_app_not_running():
     assert widget.frames[-1].plain == "static"
 
 
-def test_set_tui_startup_banner_static_uses_cached_template():
+def test_set_tui_startup_banner_static_renders_via_call_from_thread():
+    """_set_tui_startup_banner_static always calls _render_startup_banner_text
+    (not the splice path) and delivers the result via call_from_thread."""
     cli_module = _load_cli_module()
     widget = SimpleNamespace(frames=[])
     widget.set_frame = widget.frames.append
     app = MagicMock()
     app.query_one.return_value = widget
     cli = _bind_cli(cli_module, app)
-    cli._startup_banner_template = {
-        "lines": [_template_line("X" * 20)],
-        "hero_row": 0,
-        "hero_col": 5,
-        "hero_width": 4,
-        "hero_height": 1,
-    }
-    cli._startup_banner_static = None
-    cli._splice_startup_banner_frame.return_value = Text("spliced-static")
+    static_text = Text("static-banner")
+    cli._render_startup_banner_text.return_value = static_text
 
-    with patch.object(cli_module, "_hermes_app", app), patch(
-        "hermes_cli.banner.resolve_banner_hero_assets", return_value=("markup", "hero")
-    ):
+    with patch.object(cli_module, "_hermes_app", app):
         cli._set_tui_startup_banner_static()
 
-    assert widget.frames[-1].plain == "spliced-static"
-    cli._splice_startup_banner_frame.assert_called_once()
-    cli._render_startup_banner_text.assert_not_called()
+    assert widget.frames[-1] is static_text
+    cli._render_startup_banner_text.assert_called_once_with(print_hero=True)
+    cli._splice_startup_banner_frame.assert_not_called()
 
 
 def test_show_banner_with_startup_effect_clears_banner_cache_before_play():

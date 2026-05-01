@@ -67,7 +67,9 @@ def cli_instance(mock_app):
         "lines": [], "hero_row": 0, "hero_col": 0, "hero_width": 10, "hero_height": 5
     })
     cli._splice_startup_banner_frame = MagicMock(return_value=MagicMock())
-    # CRITICAL: stub call_from_thread to invoke the callback synchronously in tests.
+    # Stub both call_later (used by _play_tte_in_output_panel) and call_from_thread
+    # (used by _set_tui_startup_banner_static) to invoke callbacks synchronously.
+    mock_app.call_later = MagicMock(side_effect=_sync_call_from_thread)
     mock_app.call_from_thread = MagicMock(side_effect=_sync_call_from_thread)
     # STARTUP_BANNER_READY gate must be pre-set so _play_tte_in_output_panel doesn't
     # block 2s waiting for compose() to mount StartupBannerWidget.
@@ -94,8 +96,8 @@ def test_T_SBP_01_preflight_fires_even_with_no_tte_frames(cli_instance):
         cli._play_tte_in_output_panel(_tte_cfg(cli_module), "hero")
 
     cli._splice_startup_banner_frame.assert_called()
-    # call_from_thread must have been called (to dispatch _drain_latest)
-    mock_app.call_from_thread.assert_called()
+    # call_later must have been called (to dispatch _drain_latest non-blocking)
+    mock_app.call_later.assert_called()
 
 
 def test_T_SBP_02_preflight_sends_nonempty_text(cli_instance):

@@ -4799,7 +4799,6 @@ class HermesCLI:
         )
 
         async def _drain_latest() -> None:
-            import asyncio as _asyncio
             nonlocal latest_frame, update_in_flight
             from textual.css.query import NoMatches
             from hermes_cli.tui.widgets import StartupBannerWidget
@@ -4812,15 +4811,22 @@ class HermesCLI:
                 with state_lock:
                     update_in_flight = False
                 return
-            while True:
-                with state_lock:
-                    frame = latest_frame
-                    latest_frame = None
-                    if frame is None:
-                        update_in_flight = False
-                        return
+            with state_lock:
+                frame = latest_frame
+                latest_frame = None
+            if frame is not None:
                 widget.set_frame(frame)
-                await _asyncio.sleep(0)  # yield to event loop; producer deadline loop is the sole pacer
+            # Release in-flight flag; if the producer sneaked a new frame in while we
+            # were processing, keep update_in_flight=True and schedule another drain so
+            # that frame is not orphaned.
+            should_reschedule = False
+            with state_lock:
+                if latest_frame is not None:
+                    should_reschedule = True
+                else:
+                    update_in_flight = False
+            if should_reschedule:
+                app.call_later(_drain_latest)
 
         def _queue_frame(rich_text: Text) -> None:
             nonlocal latest_frame, update_in_flight
@@ -4831,7 +4837,11 @@ class HermesCLI:
                     update_in_flight = True
                     should_schedule = True
             if should_schedule:
-                app.call_from_thread(_drain_latest)
+                # call_later posts to the message queue via call_soon_threadsafe — non-blocking.
+                # call_from_thread blocks until the drain completes, adding variable event-loop
+                # latency into the producer's deadline-sleep calculation and causing irregular
+                # frame intervals.
+                app.call_later(_drain_latest)
 
         # Pre-flight: paint static banner before TTE starts so widget is never blank.
         # Use the cached splice template so pre-flight and frame 0 are byte-identical

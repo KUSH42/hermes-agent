@@ -109,7 +109,7 @@ def test_show_banner_with_startup_effect_tui_updates_startup_widget(_isolate):
 
     fake_widget = MagicMock()
 
-    def fake_call_from_thread(fn, *args):
+    def fake_call_later(fn, *args):
         result = fn(*args)
         if hasattr(result, "__await__"):
             import asyncio
@@ -117,7 +117,8 @@ def test_show_banner_with_startup_effect_tui_updates_startup_widget(_isolate):
             asyncio.run(result)
 
     fake_app = SimpleNamespace(
-        call_from_thread=fake_call_from_thread,
+        call_later=fake_call_later,
+        call_from_thread=fake_call_later,  # _set_tui_startup_banner_static still uses this
         query_one=MagicMock(return_value=fake_widget),
         is_running=True,
     )

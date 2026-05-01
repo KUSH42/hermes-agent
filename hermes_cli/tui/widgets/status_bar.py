@@ -455,7 +455,17 @@ class HintBar(Widget):
             # Stale shimmer — agent/command not running; stop and fall through.
             self._shimmer_stop()
         key_color = self._get_key_color()
-        hints = _hints_for(self._phase, key_color)
+        phase = self._phase
+        if phase in ("stream", "file"):
+            _running = (
+                getattr(self.app, "agent_running", False)
+                or getattr(self.app, "command_running", False)
+            )
+            if not _running:
+                # Stale phase — agent/command not running; reset and show idle hints.
+                self._phase = "idle"
+                phase = "idle"
+        hints = _hints_for(phase, key_color)
         w = self.content_size.width
         if w >= 118:
             bucket, hint_text = "long", hints.get("long", hints["medium"])

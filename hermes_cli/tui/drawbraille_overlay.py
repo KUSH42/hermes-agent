@@ -678,8 +678,9 @@ class DrawbrailleOverlay(Static):
             self._anim_params.depth_cues = value
 
     def watch_fps(self, _value: int) -> None:
-        self._stop_anim()
-        self._start_anim()
+        if self._anim_handle is not None:
+            self._stop_anim()
+            self._start_anim()
 
     # ── show / hide ────────────────────────────────────────────────────────
 

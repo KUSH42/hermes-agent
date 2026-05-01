@@ -281,6 +281,11 @@ class AnimConfigPanel(Widget):
     def on_mount(self) -> None:
         pass
 
+    def on_unmount(self) -> None:
+        if self._preview_timer is not None:
+            self._preview_timer.stop()
+            self._preview_timer = None
+
     def _get_overlay(self) -> "DrawbrailleOverlay | None":
         try:
             return self.app.query_one(DrawbrailleOverlay)
@@ -570,10 +575,16 @@ class AnimConfigPanel(Widget):
             try:
                 from hermes_cli.tui.widgets import HintBar
                 self.app.query_one(HintBar).hint = "✓ Saved to config"  # type: ignore[attr-defined]
-                self.app.set_timer(2.0, lambda: None)  # type: ignore[attr-defined]
+
+                def _clear_hint() -> None:
+                    try:
+                        self.app.query_one(HintBar).hint = ""  # type: ignore[attr-defined]
+                    except NoMatches:
+                        pass  # hint bar removed before timer fired; skip
+
+                self.app.set_timer(2.0, _clear_hint)  # type: ignore[attr-defined]
             except Exception:
-                # anim config widget absent; refresh skipped
-                pass
+                pass  # HintBar absent (e.g. minimal test harness); hint update skipped
             try:
                 ov = self._get_overlay()
                 if ov is not None:
@@ -646,23 +657,28 @@ class _GalleryPreview(Widget):
                     pass
         else:
             self._engine = None
+        self._params = AnimParams(width=40, height=24, heat=0.5)
         self.refresh()
 
     def _preview_tick(self) -> None:
         if self._engine is None:
             return
         try:
-            params = AnimParams(width=40, height=24, heat=0.5)
-            frame = self._engine.next_frame(params)
-            params.t += params.dt
+            frame = self._engine.next_frame(self._params)
+            self._params.t += self._params.dt
             self.update(frame)
         except Exception:
-            # index out of range for current preset list; selection no-op
-            pass
+            _log.debug("_GalleryPreview._preview_tick raised", exc_info=True)
 
     def on_mount(self) -> None:
         self._engine = None
+        self._params: AnimParams = AnimParams(width=40, height=24, heat=0.5)
         self._preview_timer = self.set_interval(0.5, self._preview_tick)
+
+    def on_unmount(self) -> None:
+        if self._preview_timer is not None:
+            self._preview_timer.stop()
+            self._preview_timer = None
 
 
 # ── AnimGalleryOverlay ────────────────────────────────────────────────────────
@@ -792,14 +808,26 @@ class AnimGalleryOverlay(Widget):
             import hermes_cli.tui.drawbraille_overlay as _dbo
             key = self._engine_list[self._focus_idx]
             ov = self.app.query_one(DrawbrailleOverlay)
+            pre_cfg = _dbo._overlay_config()
             cfg = _dbo._overlay_config()
             cfg.enabled = True
             cfg.animation = key
             ov.animation = key
             ov.show(cfg)
-            self.app.set_timer(5.0, lambda: None)  # type: ignore[attr-defined]
+
+            def _revert() -> None:
+                try:
+                    ov2 = self.app.query_one(DrawbrailleOverlay)
+                    if pre_cfg.enabled:
+                        ov2.show(pre_cfg)
+                    else:
+                        ov2.hide(pre_cfg)
+                except NoMatches:
+                    pass  # overlay already gone; skip silently
+
+            self.app.set_timer(5.0, _revert)  # type: ignore[attr-defined]
         except (NoMatches, Exception):
-            pass
+            pass  # overlay absent or app not ready; preview is best-effort
 
     def action_open_config(self) -> None:
         self.remove_class("--visible")

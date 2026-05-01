@@ -5,9 +5,12 @@ Plugs into AnimationClock; zero overhead when disabled.
 """
 from __future__ import annotations
 
+import logging
 import random
 import time
 from dataclasses import asdict, dataclass, replace
+
+_log = logging.getLogger(__name__)
 from typing import TYPE_CHECKING
 
 from textual.app import ComposeResult
@@ -839,7 +842,11 @@ class DrawbrailleOverlay(Static):
             try:
                 engine.on_signal(event, value)
             except Exception:
-                pass
+                _log.warning(
+                    "engine.on_signal(%r, %r) raised — signal dropped",
+                    event, value,
+                    exc_info=True,
+                )
 
     # ── contextual SDF text (C1) ───────────────────────────────────────────
 

@@ -540,6 +540,54 @@ def _format_skill_list(skills: list, width: int = 47) -> str:
     return ", ".join(rendered)
 
 
+def _format_session_id(sid: str, max_len: int) -> str:
+    """Width-cap a session id, preserving the tail (the discriminator).
+
+    Returns sid if short enough; otherwise emits "…<tail>" up to max_len chars.
+    Empty input returns empty.
+    """
+    if not sid:
+        return ""
+    max_len = max(1, max_len)
+    if len(sid) <= max_len:
+        return sid
+    if max_len == 1:
+        return "…"
+    tail_len = max_len - 1  # 1 char for the leading ellipsis
+    return "…" + sid[-tail_len:]
+
+
+def _format_cwd(cwd: str, max_len: int) -> str:
+    """Compact cwd: ~ for home, drop middle segments, keep last 1-2."""
+    if not cwd:
+        return ""
+    home = os.path.expanduser("~")
+    if cwd == home:
+        return "~"
+    if cwd.startswith(home + "/"):
+        cwd = "~" + cwd[len(home):]
+    # Strip trailing separator (preserve bare "/" for root).
+    if len(cwd) > 1:
+        cwd = cwd.rstrip("/")
+    if len(cwd) <= max_len:
+        return cwd
+    parts = cwd.split("/")
+    if len(parts) <= 3:
+        return "…" + cwd[-(max(1, max_len) - 1):]
+    head = parts[0] if parts[0] else "/"
+    # Try last 2 segments
+    tail2 = "/".join(parts[-2:])
+    candidate = f"{head}/…/{tail2}" if head != "/" else f"/…/{tail2}"
+    if len(candidate) <= max_len:
+        return candidate
+    # Fall back to last segment only
+    candidate = f"{head}/…/{parts[-1]}" if head != "/" else f"/…/{parts[-1]}"
+    if len(candidate) <= max_len:
+        return candidate
+    # Nothing fits the structured form; tail-truncate raw
+    return "…" + cwd[-(max(1, max_len) - 1):]
+
+
 def build_welcome_banner(console: Console, model: str, cwd: str,
                          tools: List[dict] = None,
                          enabled_toolsets: List[str] = None,
@@ -630,9 +678,12 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     ctx_str = f" [dim {dim}]·[/] [dim {dim}]{_format_context_length(context_length)} context[/]" if context_length else ""
     left_meta: list = []
     left_meta.append(Text.from_markup(f"[{accent}]{model_short}[/]{ctx_str} [dim {dim}]·[/] [dim {dim}]Nous Research[/]"))
-    left_meta.append(Text.from_markup(f"[dim {dim}]{cwd}[/]"))
+    cwd_display = _format_cwd(cwd, max_len=_hero_width)
+    left_meta.append(Text.from_markup(f"[dim {dim}]{cwd_display}[/]"))
     if session_id:
-        left_meta.append(Text.from_markup(f"[dim {session_color}]Session: {session_id}[/]"))
+        sid_budget = max(1, _hero_width - len("Session: "))
+        sid_display = _format_session_id(session_id, max_len=sid_budget)
+        left_meta.append(Text.from_markup(f"[dim {session_color}]Session: {sid_display}[/]"))
 
     # BL-3: hoist MCP and skills computation; build summary as the FIRST line
     try:
@@ -687,31 +738,33 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
                 colored_names.append(f"[{text}]{name}[/]")
 
         tools_str = ", ".join(colored_names)
-        if len(", ".join(sorted(tool_names))) > 45:
+        if len(", ".join(sorted(tool_names))) > 42:
+            sorted_names = sorted(tool_names)
             short_names = []
             length = 0
-            for name in sorted(tool_names):
+            overflow_count = 0
+            for i, name in enumerate(sorted_names):
                 if length + len(name) + 2 > 42:
-                    short_names.append("...")
+                    overflow_count = len(sorted_names) - i
                     break
                 short_names.append(name)
                 length += len(name) + 2
             colored_names = []
             for name in short_names:
-                if name == "...":
-                    colored_names.append("[dim]...[/]")
-                elif name in disabled_tools:
+                if name in disabled_tools:
                     colored_names.append(f"[red]{name}[/]")
                 elif name in lazy_tools:
                     colored_names.append(f"[yellow]{name}[/]")
                 else:
                     colored_names.append(f"[{text}]{name}[/]")
+            if overflow_count > 0:
+                colored_names.append(f"[dim {dim}]…+{overflow_count} more[/]")
             tools_str = ", ".join(colored_names)
 
         right_lines.append(f"[dim {dim}]{toolset}:[/] {tools_str}")
 
     if remaining_toolsets > 0:
-        right_lines.append(f"[dim {dim}](and {remaining_toolsets} more toolsets...)[/]")
+        right_lines.append(f"[dim {dim}]…+{remaining_toolsets} more toolsets[/]")
 
     # MCP Servers section (only if configured) — uses pre-computed mcp_status
     if mcp_status:

@@ -631,10 +631,11 @@ async def test_T_SBP_20_printable_key_sets_first_input_seen():
 @pytest.mark.parametrize(
     ("panel_width", "terminal_width", "compact", "expected"),
     [
-        (70, 200, False, True),
-        (100, 60, False, False),
-        (0, 70, False, True),
-        (0, 200, True, True),
+        (50, 200, False, True),   # panel 50 < 60 → compact
+        (79, 80, False, False),   # panel 79 >= 60 → not compact (80-col terminal case)
+        (100, 60, False, False),  # panel 100 >= 60 → not compact
+        (0, 55, False, True),     # no panel, terminal 55 < 60 → compact
+        (0, 200, True, True),     # self.compact=True → always compact
     ],
 )
 def test_T_SBP_21_use_compact_banner_prefers_panel_width(

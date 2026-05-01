@@ -4418,13 +4418,18 @@ class HermesCLI:
         """Return whether startup should render the compact banner."""
         if self.compact:
             return True
+        # Prefer OutputPanel width (set by on_resize, excludes 1-col scrollbar).
+        # Fall back to terminal width when the panel width isn't known yet.
+        # Compare against 60 rather than 80: the panel width is always smaller
+        # than the terminal (scrollbar, borders) so 80 would silently suppress
+        # the animation on standard 80-column terminals.
         width = 0
         app = _hermes_app
         if app is not None:
             width = int(getattr(app, "_startup_output_panel_width", 0) or 0)
         if width <= 0:
             width = shutil.get_terminal_size().columns
-        return width < 80
+        return width < 60
 
     def _get_startup_text_effect_config(self) -> _StartupTteConfig | None:
         """Return configured startup text effect, or None when disabled/invalid."""
@@ -4667,6 +4672,24 @@ class HermesCLI:
         ):
             self._startup_banner_static = self._render_startup_banner_text(print_hero=True)
 
+    def _hero_ansi_colored(self, plain_hero: str) -> str:
+        """Return ANSI-colored hero text suitable for _splice_startup_banner_frame.
+
+        Applies the skin 3-tone gradient (accent/text/dim) to the plain hero text
+        and exports it as an ANSI string so the hero region renders with color when
+        the template splice path is used for the pre-flight and final static frames.
+        """
+        from io import StringIO
+        from rich.console import Console as _RichConsole
+        from hermes_cli.banner import render_banner_hero_text
+        hero_rich = render_banner_hero_text(plain_hero)
+        buf = StringIO()
+        con = _RichConsole(
+            file=buf, force_terminal=True, color_system="truecolor", width=200
+        )
+        con.print(hero_rich, end="", highlight=False)
+        return buf.getvalue()
+
     def _splice_startup_banner_frame(self, template: dict[str, object], frame_text: str):
         """Return banner Text with the animated hero frame spliced in."""
         from rich.text import Text
@@ -4745,6 +4768,7 @@ class HermesCLI:
             STARTUP_TTE_SKIP,
         )
         STARTUP_TTE_SKIP.clear()
+        logger.info("TTE: waiting for StartupBannerWidget mount (effect=%s)", cfg.effect_name)
         if not STARTUP_BANNER_READY.wait(timeout=2.0):
             logger.debug(
                 "TTE: StartupBannerWidget did not mount within 2s; "
@@ -4753,6 +4777,7 @@ class HermesCLI:
             return False
         if not OUTPUT_PANEL_WIDTH_READY.wait(timeout=2.0):
             logger.warning("TTE: OutputPanel width not ready within 2s; using terminal width")
+        logger.info("TTE: starting animation loop effect=%s frames_limit=%d wall_s=%.1f", cfg.effect_name, cfg.max_frames, cfg.max_wall_s)
 
         from hermes_cli.tui.tte_runner import iter_frames
         MAX_FRAMES = cfg.max_frames
@@ -4808,7 +4833,9 @@ class HermesCLI:
         # Use the cached splice template so pre-flight and frame 0 are byte-identical
         # outside the hero rectangle. The template already carries the full skin styling.
         if template is not None:
-            _preflight = self._splice_startup_banner_frame(template, plain_hero)
+            _preflight = self._splice_startup_banner_frame(
+                template, self._hero_ansi_colored(plain_hero)
+            )
         else:
             _preflight = self._startup_banner_static or self._render_startup_banner_text(print_hero=True)
         _queue_frame(_preflight)
@@ -4847,13 +4874,16 @@ class HermesCLI:
         except Exception as exc:
             self._handle_tte_producer_exc(exc)
 
+        logger.info("TTE: animation loop done rendered_any=%s skipped=%s", rendered_any, skipped)
         if skipped or rendered_any:
             # Hold final TTE frame for 250 ms, then queue the static banner through
             # the same coalescing path — guarantees static arrives after last TTE frame.
             if rendered_any:
                 self._first_input_seen.wait(timeout=0.25)
             if template is not None:
-                static_banner = self._splice_startup_banner_frame(template, plain_hero)
+                static_banner = self._splice_startup_banner_frame(
+                    template, self._hero_ansi_colored(plain_hero)
+                )
             else:
                 static_banner = self._startup_banner_static or self._render_startup_banner_text(print_hero=True)
             _queue_frame(static_banner)
@@ -4895,19 +4925,9 @@ class HermesCLI:
         if app is None:
             return
 
-        from hermes_cli.banner import resolve_banner_hero_assets
-
-        _, plain_hero = resolve_banner_hero_assets()
-        plain_hero = _sanitize_startup_hero_text(plain_hero)
-        self._ensure_startup_banner_artefacts(plain_hero)
-        if isinstance(self._startup_banner_template, dict):
-            final_banner = self._splice_startup_banner_frame(
-                self._startup_banner_template, plain_hero
-            )
-        else:
-            final_banner = self._startup_banner_static or self._render_startup_banner_text(
-                print_hero=True
-            )
+        # Always do a full colored render — the template/splice path is only needed
+        # for TTE animation frame efficiency; a one-shot static render is correct here.
+        final_banner = self._render_startup_banner_text(print_hero=True)
 
         def _apply() -> None:
             from hermes_cli.tui.widgets import StartupBannerWidget

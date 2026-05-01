@@ -2909,7 +2909,7 @@ Direct `widget.app = mock` raises `AttributeError: property 'app' of 'ThinkingWi
 **Testing gotchas:**
 - New startup-TTE tests should clear **all three** module-level events around each test: `STARTUP_BANNER_READY`, `OUTPUT_PANEL_WIDTH_READY`, and `STARTUP_TTE_SKIP`.
 - A synchronous `call_from_thread` stub must execute async callbacks via `asyncio.run(...)`; otherwise `_drain_latest()` never updates the fake widget.
-- Old `tests/tui/test_startup_banner_polish.py` imports from the main checkout path directly; use a local worktree-targeted file for new startup pipeline tests instead of extending that file.
+- `HermesInput.app` is read-only in tests; patch `type(widget).app` with `PropertyMock` when `_on_key()` needs access to `self.app.cli`.
 
 ## Changelog — 2026-05-01 — Startup TTE config and diagnostics — config caps + widened teardown DEBUG + once-only missing-TTE INFO — 66-test verification
 
@@ -2945,6 +2945,52 @@ process when `terminaltexteffects` is missing. This is TUI-only; non-TUI
 - Legacy startup-banner tests that inserted
   `"/home/xush/.hermes/hermes-agent"` into `sys.path` imported the base checkout
   instead of the worktree. Use a dynamic repo-root path in worktree tests.
+
+## Changelog — 2026-05-01 — Startup banner render polish — first-input hold collapse + panel-width compact mode + per-skin hero width cache — 57-test verification
+
+**Spec:** `/home/xush/.hermes/2026-05-01-startup-banner-render-polish.md`
+(Status: IMPLEMENTED on `feat/textual-migration` descendants).
+
+**First-input hold collapse:** `HermesCLI` now owns `_first_input_seen:
+threading.Event`, cleared at the start of each startup-banner run. The
+250 ms post-TTE hold uses `self._first_input_seen.wait(timeout=0.25)`
+instead of `time.sleep(0.25)`, so the final static banner repaints
+immediately once the user has typed.
+
+**Composer hook:** `HermesInput._on_key()` sets both startup events on the
+first printable character:
+- `STARTUP_TTE_SKIP` still cancels live animation.
+- `cli._first_input_seen` collapses the post-loop hold even if the user
+  types after the last animated frame but before the static repaint.
+
+**Compact banner width source:** `_use_compact_banner()` now prefers
+`_hermes_app._startup_output_panel_width` when available instead of raw
+terminal width. Keep compact/full startup decisions aligned with the
+actual `OutputPanel` width, not the outer terminal width.
+
+**Hero render/cache contract:** `hermes_cli.banner` now caches
+`(plain_hero, hero_width)` per active skin in `_HERO_CACHE`, invalidated
+through `register_skin_callback()`. `build_welcome_banner()` should use
+`get_cached_hero_width()` instead of recomputing `resolve_banner_hero_assets()`
+for every render.
+
+**Partial-markup hero gradient:** `render_banner_hero_text()` is now
+line-granular. Fully or partially styled lines keep their markup spans;
+unstyled lines still receive the brand accent/text/dim gradient. Do not
+short-circuit on `hero_text.spans` globally.
+
+**StartupBannerWidget CSS:** use `width: 100%` instead of the old
+`width: auto; min-width: 100%` pairing. The banner host should match the
+parent width explicitly and let the precomputed banner text handle any
+internal clipping discipline.
+
+**Testing gotchas:**
+- Gradient assertions should inspect `Text.spans` on the full rendered
+  object; `Text.split()` does not preserve top-level line style in the way
+  naive `line.style` assertions suggest.
+- `_use_compact_banner()` tests must patch `cli._hermes_app` and
+  `cli.shutil.get_terminal_size` together; panel width wins when >0,
+  terminal width is fallback only.
 
 ## Changelog — 2026-04-28 — UX Audit A — Skin/visual hierarchy consistency (A1–A6) — 12 tests, commit `d72ff0c07`
 

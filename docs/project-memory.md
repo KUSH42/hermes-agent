@@ -8,6 +8,9 @@ Memory index links use canonical absolute targets under `~/.hermes` when availab
 ## Startup TTE Config & Diagnostics (2026-05-01)
 - [Startup TTE config & diagnostics](/home/xush/.hermes/2026-05-01-startup-tte-config-diagnostics.md) — IMPLEMENTED on `feat/textual-migration` descendant worktree; `display.startup_text_effect` now exposes `max_wall_s`, `max_frames`, and `fps`, the CLI resolver returns `_StartupTteConfig` with clamp+WARNING semantics, producer pacing reads `cfg.fps`, loop-teardown RuntimeErrors demote to DEBUG, and `iter_frames()` logs once per process at INFO when `terminaltexteffects` is missing; targeted verification suite: 66 tests across startup config, banner, race, pipeline, CLI teardown, and runner files
 
+## Startup Banner Render Polish (2026-05-01)
+- [Startup banner polish](/home/xush/.hermes/2026-05-01-startup-banner-render-polish.md) — IMPLEMENTED on `feat/textual-migration` descendant worktree; `_first_input_seen` collapses the 250 ms post-TTE hold on first printable composer input, `_use_compact_banner()` prefers `_startup_output_panel_width`, hero gradients are applied per unstyled line instead of all-or-nothing, hero width is cached per active skin via `register_skin_callback()`, and `StartupBannerWidget` now uses `width: 100%`; targeted verification suite: 57 tests across startup banner polish, TTE pipeline, and TTE config files
+
 ## services/feedback Audit FB-H1..FB-L2 (2026-04-28)
 - [services/feedback Audit](/home/xush/.hermes/project_feedback_service_audit.md) — IMPLEMENTED 2026-04-28; equal-priority PREEMPTED, apply-failure restore + ERROR log, SUPPRESSED reason, SettledAware Protocol, CodeFooterAdapter ancestor walk, register_channel warn+cancel+reentry guard, _STATE_CHANGE_TONES; 20 new tests; 9-pass review
 

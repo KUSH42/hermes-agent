@@ -859,6 +859,10 @@ This is a `config.yaml` key, **not** a skin YAML key.
 - Cache contract: `_startup_banner_template` is `None` (untried), `_TEMPLATE_FAILED` (attempted and failed), or a template dict. `_startup_banner_static` is only populated for the fallback path.
 - Reserved marker: `_STARTUP_BANNER_PLACEHOLDER_MARKER = "\uE000"` is used only inside template detection. Sanitize user hero text through `_sanitize_startup_hero_text()` before sizing or splicing.
 - Skip contract: `STARTUP_TTE_SKIP` is set by `StartupBannerWidget` bindings (`escape`, `s`) and by the first printable key in `HermesInput._on_key()`. The producer clears the event at entry and queues the final static frame when skip trips.
+- Hold-collapse contract: `HermesCLI._first_input_seen` is a second event, set by the same printable-key path in `HermesInput._on_key()`. Post-TTE static repaint uses `Event.wait(timeout=0.25)` so typing after the last frame collapses the hold without skipping the final static banner.
+- Compact/full banner choice now keys off `_hermes_app._startup_output_panel_width` when available; `_use_compact_banner()` must not rely on terminal width alone in split-pane TUI layouts.
+- `render_banner_hero_text()` applies the banner gradient per line, not per whole hero. A single styled line must not disable gradient styling for all unstyled lines.
+- `hermes_cli.banner.get_cached_hero_width()` owns the per-skin `(plain_hero, hero_width)` cache; invalidation happens through `skin_engine.register_skin_callback()`.
 - Teardown diagnostics widened in `HermesCLI._handle_tte_producer_exc()`:
   `CancelledError` plus loop-shutdown RuntimeErrors containing
   `"Event loop is closed"`, `"no running event loop"`, or

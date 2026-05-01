@@ -26,6 +26,7 @@ from prompt_toolkit import print_formatted_text as _pt_print
 from prompt_toolkit.formatted_text import ANSI as _PT_ANSI
 
 logger = logging.getLogger(__name__)
+_HERO_CACHE: dict[str, tuple[str, int]] = {}
 
 
 # =========================================================================
@@ -157,30 +158,57 @@ def resolve_banner_hero_assets() -> tuple[str, str]:
     return markup_hero, plain_hero
 
 
+def _invalidate_hero_cache() -> None:
+    """Clear cached hero widths after a skin switch or reload."""
+    _HERO_CACHE.clear()
+
+
+def get_cached_hero_width() -> tuple[str, int]:
+    """Return cached plain hero text and width for the active skin."""
+    try:
+        from hermes_cli.skin_engine import get_active_skin_name
+
+        key = get_active_skin_name() or ""
+    except Exception:
+        # Banner width caching must stay usable before skin engine init settles.
+        key = ""
+    cached = _HERO_CACHE.get(key)
+    if cached is not None:
+        return cached
+    _, plain = resolve_banner_hero_assets()
+    width = max((len(line) for line in plain.splitlines()), default=30)
+    _HERO_CACHE[key] = (plain, width)
+    return _HERO_CACHE[key]
+
+
 def render_banner_hero_text(markup_hero: str) -> Text:
     """Render banner hero markup; plain text gets a top→bottom three-tone gradient."""
     try:
         hero_text = Text.from_markup(markup_hero)
     except Exception:
         hero_text = Text(markup_hero)
-    if hero_text.style or hero_text.spans:
-        return hero_text
     accent = _skin_color("banner_accent", "#FFBF00")
     text = _skin_color("banner_text", "#FFF8DC")
     dim = _skin_color("banner_dim", "#B8860B")
-    lines = hero_text.plain.splitlines() or [""]
+    lines = hero_text.split("\n", allow_blank=True)
     n = len(lines)
     out = Text()
     for i, line in enumerate(lines):
-        if n < 3:
-            color = accent
-        elif i < n // 3:
-            color = accent
-        elif i < 2 * (n // 3):
-            color = text
+        if line.style or line.spans:
+            styled_line = line
         else:
-            color = dim
-        out.append(line + ("\n" if i < n - 1 else ""), style=color)
+            if n < 3:
+                color = accent
+            elif i < n // 3:
+                color = accent
+            elif i < 2 * (n // 3):
+                color = text
+            else:
+                color = dim
+            styled_line = Text(line.plain, style=color)
+        out.append_text(styled_line)
+        if i < n - 1:
+            out.append("\n")
     return out
 
 
@@ -258,6 +286,15 @@ def _recover_multiline_user_skin_art(skin_name: str, key: str, value: str) -> st
         return value
 
     return value
+
+
+try:
+    from hermes_cli.skin_engine import register_skin_callback as _register_skin_callback
+except Exception:
+    # Banner rendering still works without callback registration; cache stays process-local.
+    _register_skin_callback = None
+else:
+    _register_skin_callback(_invalidate_hero_cache)
 
 
 # =========================================================================
@@ -642,8 +679,7 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
 
     layout_table = Table.grid(padding=(0, 2))
     try:
-        _, _plain_hero = resolve_banner_hero_assets()
-        _hero_width = max((len(line) for line in _plain_hero.splitlines()), default=30)
+        _, _hero_width = get_cached_hero_width()
     except Exception:
         _hero_width = 30
     layout_table.add_column("left", justify="center", width=_hero_width, no_wrap=True)

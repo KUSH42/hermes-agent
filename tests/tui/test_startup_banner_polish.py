@@ -5,9 +5,11 @@ import sys
 import os
 import asyncio
 import inspect
+import threading
 from pathlib import Path
+from types import SimpleNamespace
 import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, PropertyMock, patch, call
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -580,3 +582,163 @@ def test_T_SBP_18_dispatch_input_postamble_not_called_second_time(monkeypatch):
     # Second call: postamble should NOT fire again
     svc.dispatch_input_submitted(event)
     mock_cli._show_banner_postamble.assert_not_called()
+
+
+def test_T_SBP_19_post_tte_hold_waits_on_first_input_event(cli_instance, monkeypatch):
+    """T-SBP-19: rendered TTE uses Event.wait(timeout=0.25) for the post-loop hold."""
+    cli, cli_module, _mock_app = cli_instance
+    cli._first_input_seen = MagicMock()
+
+    monkeypatch.setattr("cli.time.monotonic", lambda: 0.0)
+    monkeypatch.setattr("cli.time.sleep", MagicMock())
+
+    with patch("hermes_cli.tui.tte_runner.iter_frames", return_value=iter(["frame"])):
+        rendered = cli._play_tte_in_output_panel(_tte_cfg(cli_module), "hero")
+
+    assert rendered is True
+    cli._first_input_seen.wait.assert_called_once_with(timeout=0.25)
+
+
+@pytest.mark.asyncio
+async def test_T_SBP_20_printable_key_sets_first_input_seen():
+    """T-SBP-20: HermesInput._on_key marks first input seen on single-char printable keys."""
+    from textual.widgets import TextArea
+    from hermes_cli.tui.input.widget import HermesInput
+
+    widget = HermesInput()
+    cli = SimpleNamespace(_first_input_seen=threading.Event())
+    event = SimpleNamespace(
+        is_printable=True,
+        character="a",
+        key="a",
+        prevent_default=lambda: None,
+        stop=lambda: None,
+    )
+
+    from unittest.mock import AsyncMock
+
+    with patch.object(TextArea, "_on_key", new=AsyncMock(return_value=None)), patch.object(
+        type(widget),
+        "app",
+        new_callable=PropertyMock,
+        return_value=SimpleNamespace(cli=cli),
+    ):
+        await widget._on_key(event)
+
+    assert cli._first_input_seen.is_set() is True
+
+
+@pytest.mark.parametrize(
+    ("panel_width", "terminal_width", "compact", "expected"),
+    [
+        (70, 200, False, True),
+        (100, 60, False, False),
+        (0, 70, False, True),
+        (0, 200, True, True),
+    ],
+)
+def test_T_SBP_21_use_compact_banner_prefers_panel_width(
+    panel_width: int,
+    terminal_width: int,
+    compact: bool,
+    expected: bool,
+):
+    """T-SBP-21: compact-banner selection uses OutputPanel width when available."""
+    sys.path.insert(0, str(REPO_ROOT))
+    import cli as cli_module
+
+    cli = MagicMock()
+    cli.compact = compact
+    cli._use_compact_banner = cli_module.HermesCLI._use_compact_banner.__get__(cli)
+    app = SimpleNamespace(_startup_output_panel_width=panel_width)
+
+    with patch.object(cli_module, "_hermes_app", app), patch(
+        "cli.shutil.get_terminal_size",
+        return_value=SimpleNamespace(columns=terminal_width),
+    ):
+        assert cli._use_compact_banner() is expected
+
+
+def test_T_SBP_22_plain_hero_gets_gradient():
+    """T-SBP-22: unstyled hero lines receive accent/text/dim buckets."""
+    from hermes_cli.banner import render_banner_hero_text
+
+    hero = "l0\nl1\nl2\nl3\nl4\nl5"
+    rendered = render_banner_hero_text(hero)
+    spans = [(span.start, span.end, str(span.style)) for span in rendered.spans]
+
+    assert spans == [
+        (0, 2, "#FFBF00"),
+        (3, 5, "#FFBF00"),
+        (6, 8, "#FFF8DC"),
+        (9, 11, "#FFF8DC"),
+        (12, 14, "#B8860B"),
+        (15, 17, "#B8860B"),
+    ]
+
+
+def test_T_SBP_23_styled_hero_lines_are_preserved():
+    """T-SBP-23: fully styled hero markup stays untouched."""
+    from hermes_cli.banner import render_banner_hero_text
+
+    rendered = render_banner_hero_text("[bold red]alpha[/]\n[dim blue]beta[/]")
+    lines = rendered.split("\n", allow_blank=True)
+
+    assert lines[0].plain == "alpha"
+    assert any("bold" in str(span.style) and "red" in str(span.style) for span in lines[0].spans)
+    assert lines[1].plain == "beta"
+    assert any("dim" in str(span.style) and "blue" in str(span.style) for span in lines[1].spans)
+
+
+def test_T_SBP_24_mixed_hero_gets_partial_gradient():
+    """T-SBP-24: mixed markup preserves styled lines and gradients plain ones."""
+    from hermes_cli.banner import render_banner_hero_text
+
+    rendered = render_banner_hero_text("l0\nl1\n[dim red]l2[/]\nl3\nl4\nl5")
+    spans = [(span.start, span.end, str(span.style)) for span in rendered.spans]
+
+    assert spans[0] == (0, 2, "#FFBF00")
+    assert spans[1] == (3, 5, "#FFBF00")
+    assert spans[2] == (6, 8, "dim red")
+    assert spans[3] == (9, 11, "#FFF8DC")
+    assert spans[4] == (12, 14, "#B8860B")
+    assert spans[5] == (15, 17, "#B8860B")
+
+
+def test_T_SBP_25_hero_width_cached_per_skin(monkeypatch):
+    """T-SBP-25: repeated hero-width lookups reuse the per-skin cache."""
+    from hermes_cli import banner as banner_module
+
+    banner_module._HERO_CACHE.clear()
+    resolver = MagicMock(return_value=("markup", "abc\ndef"))
+    monkeypatch.setattr(banner_module, "resolve_banner_hero_assets", resolver)
+
+    with patch("hermes_cli.skin_engine.get_active_skin_name", return_value="default"):
+        assert banner_module.get_cached_hero_width() == ("abc\ndef", 3)
+        assert banner_module.get_cached_hero_width() == ("abc\ndef", 3)
+
+    assert resolver.call_count == 1
+
+
+def test_T_SBP_26_hero_cache_invalidated_on_skin_reload(monkeypatch):
+    """T-SBP-26: invalidation callback clears the width cache for the active skin."""
+    from hermes_cli import banner as banner_module
+
+    banner_module._HERO_CACHE.clear()
+    resolver = MagicMock(side_effect=[("markup-1", "abc"), ("markup-2", "wxyz")])
+    monkeypatch.setattr(banner_module, "resolve_banner_hero_assets", resolver)
+
+    with patch("hermes_cli.skin_engine.get_active_skin_name", return_value="default"):
+        assert banner_module.get_cached_hero_width() == ("abc", 3)
+        banner_module._invalidate_hero_cache()
+        assert banner_module.get_cached_hero_width() == ("wxyz", 4)
+
+    assert resolver.call_count == 2
+
+
+def test_T_SBP_27_startup_banner_widget_css_uses_full_width():
+    """T-SBP-27: StartupBannerWidget CSS fills the parent width explicitly."""
+    from hermes_cli.tui.widgets import StartupBannerWidget
+
+    assert "width: 100%" in StartupBannerWidget.DEFAULT_CSS
+    assert "min-width: 100%" not in StartupBannerWidget.DEFAULT_CSS

@@ -420,6 +420,11 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
 
             if not STARTUP_TTE_SKIP.is_set():
                 STARTUP_TTE_SKIP.set()
+            character = getattr(event, "character", None)
+            if character and len(character) == 1:
+                cli = getattr(self.app, "cli", None)
+                if cli is not None:
+                    cli._first_input_seen.set()
 
         if self.disabled and event.is_printable:
             event.prevent_default()

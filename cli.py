@@ -2621,6 +2621,7 @@ class HermesCLI:
         self._startup_skills_line_shown = False
         self._startup_banner_template: dict[str, object] | object | None = None
         self._startup_banner_static = None
+        self._first_input_seen = threading.Event()
 
         # Voice mode state (also reinitialized inside run() for interactive TUI).
         self._voice_lock = threading.Lock()
@@ -4406,8 +4407,15 @@ class HermesCLI:
 
     def _use_compact_banner(self) -> bool:
         """Return whether startup should render the compact banner."""
-        term_width = shutil.get_terminal_size().columns
-        return self.compact or term_width < 80
+        if self.compact:
+            return True
+        width = 0
+        app = _hermes_app
+        if app is not None:
+            width = int(getattr(app, "_startup_output_panel_width", 0) or 0)
+        if width <= 0:
+            width = shutil.get_terminal_size().columns
+        return width < 80
 
     def _get_startup_text_effect_config(self) -> _StartupTteConfig | None:
         """Return configured startup text effect, or None when disabled/invalid."""
@@ -4817,7 +4825,7 @@ class HermesCLI:
             # Hold final TTE frame for 250 ms, then queue the static banner through
             # the same coalescing path — guarantees static arrives after last TTE frame.
             if rendered_any:
-                time.sleep(0.25)   # time is module-level; do not re-import as _t
+                self._first_input_seen.wait(timeout=0.25)
             if template is not None:
                 static_banner = self._splice_startup_banner_frame(template, plain_hero)
             else:
@@ -4836,6 +4844,7 @@ class HermesCLI:
         """
         self._startup_banner_template = None
         self._startup_banner_static = None
+        self._first_input_seen.clear()
         if tui:
             self._ensure_tui_startup_message()
             played = self._play_startup_text_effect(tui=True)

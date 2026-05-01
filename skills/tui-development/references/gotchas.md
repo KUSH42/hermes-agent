@@ -227,6 +227,11 @@ fall through to the `set_interval` branch automatically.
 - **`$text-muted 20%` is a TCSS parse error.** The opacity-modifier syntax `$VAR N%`
   only works for Textual native design tokens (`$primary`, `$accent`, etc.). Use
   `$primary 15%` for dim neutral, or a raw hex color.
+- **`App.get_css_variables()` can still surface Textual-only color strings.** In the
+  completion list, `text-muted` may resolve to values like `"auto 60%"`. That is
+  valid for Textual theming but invalid for Rich `Style(color=...)`. Any code that
+  caches Rich styles from CSS vars must validate with `RichColor.parse(...)` and
+  fall back to a concrete color such as `text-muted-dim` or `#888888`.
 
 ## Textual behavior traps
 

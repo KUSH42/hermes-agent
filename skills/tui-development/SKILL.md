@@ -1955,6 +1955,7 @@ top-level: `theme_manager.py`
 **Gotchas:**
 - DESIGN.md skin YAML frontmatter: `component-vars` is nested under `x-hermes`, not at top level. `fm.get("component-vars")` returns None; correct path is `fm["x-hermes"]["component-vars"]`.
 - `VirtualCompletionList.app` is a Textual `@property` that walks the DOM tree — cannot be patched via `instance.__dict__["app"] = mock`. Use `patch.object(type(widget), "app", new_callable=PropertyMock, return_value=mock_app)`.
+- `App.get_css_variables()` may return Textual-only color tokens such as `"auto 60%"` for muted values. Rich `Style(color=...)` cannot parse those strings; completion-list style caches must validate the value first and fall back to a concrete color (for path suffix, prefer `text-muted-dim`, then `#888888`) instead of letting `_refresh_fuzzy_color()` fail wholesale.
 - `VarSpec.optional_in_skin=True` suppresses the missing-key `UserWarning` from `validate_skin_dict`. The `required` set in that function filters out VarSpec instances where `optional_in_skin` is True, so skins need not declare non-colour layout knobs.
 - `tools_overlay.render_tool_row` is a module-level function, not a method. Testing the `app` kwarg requires passing a mock directly — no Textual pilot needed.
 

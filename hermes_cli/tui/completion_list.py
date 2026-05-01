@@ -22,6 +22,7 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from rich.color import Color as RichColor
 from rich.console import Segment
 from rich.style import Style
 from rich.text import Text
@@ -151,10 +152,31 @@ class VirtualCompletionList(ScrollView, can_focus=True):
             empty_bg = css.get("completion-empty-bg", "#2A2000")
             self._completion_empty_bg: str = empty_bg
             self._style_empty = Style(bgcolor=empty_bg)  # PERF-1: refresh empty-bg cache
-            path_color = css.get("text-muted", "#888888")  # CSS-2: use Textual built-in text-muted
+            path_color = self._safe_style_color(
+                css.get("text-muted", ""),
+                fallback=css.get("text-muted-dim", "#888888"),
+            )
             self._style_path_suffix = Style(dim=True, color=path_color)  # PERF-1: refresh path-suffix cache
         except Exception:
             _log.debug("VirtualCompletionList._refresh_fuzzy_color: css var lookup failed", exc_info=True)
+
+    @staticmethod
+    def _safe_style_color(value: str, *, fallback: str) -> str:
+        """Return a Rich-parseable color string, falling back for Textual-only tokens.
+
+        ``App.get_css_variables()`` may return values like ``"auto 60%"`` for muted
+        colors. Rich cannot parse those directly, so guard the cache refresh path and
+        use a concrete fallback instead of dropping the whole theme refresh.
+        """
+        for candidate in (value, fallback, "#888888"):
+            if not candidate:
+                continue
+            try:
+                RichColor.parse(candidate)
+            except Exception:
+                continue
+            return candidate
+        return "#888888"
 
     def refresh_theme(self) -> None:
         """Called by HermesApp.apply_skin() after a hot-reload.

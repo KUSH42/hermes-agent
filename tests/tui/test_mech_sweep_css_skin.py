@@ -93,6 +93,16 @@ class TestCSS2PathSuffix:
             "Expected #888888 fallback in suffix text spans"
         )
 
+    def test_path_suffix_falls_back_when_textual_token_is_not_rich_parseable(self):
+        """Textual-only tokens like 'auto 60%' must not break the style cache refresh."""
+        result = self._make_styled_candidate(
+            {"text-muted": "auto 60%", "text-muted-dim": "#445566"},
+            "foo/bar",
+        )
+        assert "#445566" in repr(result), (
+            "Expected text-muted-dim fallback when text-muted is a Textual-only token"
+        )
+
 
 # ---------------------------------------------------------------------------
 # CSS-3 — overlay-selection-bg var

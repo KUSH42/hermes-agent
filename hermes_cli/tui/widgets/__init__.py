@@ -823,12 +823,18 @@ class StartupBannerWidget(Static):
     ``CopyableRichLog.clear()+write()`` on every frame.
     """
 
+    # TTE frames use fully-explicit ANSI colors; link scanning on every render
+    # clones every Segment in every Strip (O(lines × spans)) at 60fps, driving
+    # Python Gen-2 GC at ~1Hz.  There are no interactive links in animation frames.
+    auto_links = False
+
     DEFAULT_CSS = """
     StartupBannerWidget {
         height: auto;
         width: 100%;
         overflow-x: hidden;
         margin: 1 0 0 0;
+        text-wrap: nowrap;
     }
     """
 

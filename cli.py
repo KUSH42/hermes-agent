@@ -4825,6 +4825,38 @@ class HermesCLI:
 
         app.call_later(_apply_preflight)
 
+        # Minimal Visual subclass that returns pre-rendered Strip lists at O(1) with
+        # zero allocation — used by Phase 1.5 to eliminate _wrap_and_format() at
+        # render time and kill the ~1Hz Gen-2 GC stutter.
+        from textual.visual import Visual as _Visual
+        from textual.strip import Strip as _Strip
+        from textual.style import Style as _TxtStyle
+
+        class _CachedStripsVisual(_Visual):
+            __slots__ = ("_strips", "_cell_len", "_line_count", "_source")
+
+            def __init__(self, strips: list, cell_len: int, source: object = None) -> None:
+                self._strips = strips
+                self._cell_len = cell_len
+                self._line_count = len(strips)
+                self._source = source  # original Content — exposes .plain for tests/debug
+
+            @property
+            def plain(self) -> str:
+                """Delegate to source Content.plain so tests can inspect frame text."""
+                src = self._source
+                return src.plain if src is not None else ""
+
+            def render_strips(self, width, height, style, options):
+                s = self._strips
+                return s[:height] if height is not None else s
+
+            def get_optimal_width(self, rules, container_width):
+                return self._cell_len
+
+            def get_height(self, rules, width):
+                return self._line_count
+
         # --- Phase 1: pre-render all frames into a list ---
         logger.info(
             "TTE: pre-rendering frames effect=%s max_frames=%d max_wall_s=%.1f",
@@ -4878,10 +4910,45 @@ class HermesCLI:
             pass
         anim_frames.append(static)
 
+        # --- Phase 1.5: pre-render Content → Strip lists in background thread ---
+        # Each Content.render_strips() call runs _wrap_and_format() creating O(lines×spans)
+        # Segment objects.  At 60fps the allocation rate drives Python Gen-2 GC at ~1Hz,
+        # producing the visible 1Hz stutter even after Content pre-conversion.
+        # We pre-render every frame to a _CachedStripsVisual before installing the timer;
+        # the event loop then calls render_strips() → O(1) list return, zero allocation.
+        _render_w = int(getattr(app, "_startup_output_panel_width", 0) or 0)
+        if not _render_w:
+            try:
+                import shutil as _shutil
+                _render_w = _shutil.get_terminal_size(fallback=(80, 24)).columns
+            except Exception:
+                _render_w = 80
+        if _render_w > 0:
+            _pre15_start = time.monotonic()
+            _base_style = _TxtStyle()
+            _pre15_ok = 0
+            for _i15, _frame15 in enumerate(anim_frames):
+                if isinstance(_frame15, _Content):
+                    try:
+                        _lines15 = _frame15._wrap_and_format(
+                            _render_w, no_wrap=True, overflow="fold"
+                        )
+                        _strips15 = [_Strip(*_ln.to_strip(_base_style)) for _ln in _lines15]
+                        anim_frames[_i15] = _CachedStripsVisual(_strips15, _render_w, source=_frame15)
+                        _pre15_ok += 1
+                    except Exception:
+                        pass  # leave as Content — acceptable but not optimal
+            logger.info(
+                "TTE: pre-rendered %d/%d frames to strips in %.3fs (width=%d)",
+                _pre15_ok, len(anim_frames), time.monotonic() - _pre15_start, _render_w,
+            )
+
         # --- Phase 2: loop-driven playback ---
         idx = [0]
         playback_done = _threading.Event()
         timer_ref: list = []
+
+        _widget_cache: list = []  # [0] = cached StartupBannerWidget or None sentinel
 
         def _tick() -> None:
             from textual.css.query import NoMatches
@@ -4893,8 +4960,8 @@ class HermesCLI:
                 if skipping and not exhausted:
                     final = anim_frames[-1]
                     try:
-                        widget = app.query_one(StartupBannerWidget)
-                        widget.set_frame(final)
+                        w = _widget_cache[0] if _widget_cache else app.query_one(StartupBannerWidget)
+                        w.set_frame(final)
                     except Exception:
                         logger.debug("TTE: set_frame on skip failed", exc_info=True)
                 if timer_ref:
@@ -4904,7 +4971,11 @@ class HermesCLI:
             frame = anim_frames[idx[0]]
             idx[0] += 1
             try:
-                widget = app.query_one(StartupBannerWidget)
+                if _widget_cache:
+                    widget = _widget_cache[0]
+                else:
+                    widget = app.query_one(StartupBannerWidget)
+                    _widget_cache.append(widget)
                 widget.set_frame(frame)
             except NoMatches:
                 logger.debug("TTE: StartupBannerWidget vanished mid-tick")

@@ -184,7 +184,9 @@ class TestTTEWorkerWaitGate:
                     break
                 import time; time.sleep(0.01)
             assert tick_fn_ref, "set_interval should have been called"
-            asyncio.run(tick_fn_ref[0]())
+            _r = tick_fn_ref[0]()
+            if asyncio.iscoroutine(_r):
+                asyncio.run(_r)
 
             done.wait(timeout=3.0)
 
@@ -268,7 +270,9 @@ class TestTTEWorkerWaitGate:
 
             # 2 anim frames + 1 appended static = 3 total; drain all + one extra to trigger stop
             for _ in range(4):
-                asyncio.run(tick_fn_ref[0]())
+                _r = tick_fn_ref[0]()
+                if asyncio.iscoroutine(_r):
+                    asyncio.run(_r)
 
             done.wait(timeout=3.0)
 
@@ -322,7 +326,9 @@ class TestTTEWorkerWaitGate:
 
             # drain 5 anim + 1 static + 1 stop tick
             for _ in range(7):
-                asyncio.run(tick_fn_ref[0]())
+                _r = tick_fn_ref[0]()
+                if asyncio.iscoroutine(_r):
+                    asyncio.run(_r)
 
             done.wait(timeout=3.0)
 

@@ -72,7 +72,9 @@ def _install_draining_set_interval(mock_app):
         if inspect.isawaitable(r):
             _run_coro(r)
         while _tick_fn and not _stop[0]:
-            _run_coro(_tick_fn[0]())
+            tick_r = _tick_fn[0]()
+            if inspect.isawaitable(tick_r):
+                _run_coro(tick_r)
         return r
 
     mock_app.call_from_thread.side_effect = _call_from_thread_side_effect

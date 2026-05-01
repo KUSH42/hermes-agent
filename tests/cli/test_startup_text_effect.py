@@ -136,7 +136,9 @@ def test_show_banner_with_startup_effect_tui_updates_startup_widget(_isolate):
         if hasattr(result, "__await__"):
             _run_coro(result)
         while _tick_fn and not _stop[0]:
-            _run_coro(_tick_fn[0]())
+            tick_r = _tick_fn[0]()
+            if hasattr(tick_r, "__await__"):
+                _run_coro(tick_r)
 
     fake_app = SimpleNamespace(
         call_later=fake_call_later,

@@ -63,7 +63,9 @@ def _make_draining_call_from_thread(app_mock):
         if inspect.isawaitable(r):
             _run_coro(r)
         while _tick_fn and not _stop[0]:
-            _run_coro(_tick_fn[0]())
+            tick_r = _tick_fn[0]()
+            if inspect.isawaitable(tick_r):
+                _run_coro(tick_r)
         return r
 
     app_mock.call_from_thread.side_effect = _call_from_thread_side_effect

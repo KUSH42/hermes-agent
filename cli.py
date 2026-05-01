@@ -4675,14 +4675,18 @@ class HermesCLI:
     def _hero_ansi_colored(self, plain_hero: str) -> str:
         """Return ANSI-colored hero text suitable for _splice_startup_banner_frame.
 
-        Applies the skin 3-tone gradient (accent/text/dim) to the plain hero text
-        and exports it as an ANSI string so the hero region renders with color when
-        the template splice path is used for the pre-flight and final static frames.
+        Uses the markup hero so per-line colors in HERMES_CADUCEUS (and custom
+        skin heroes) are preserved in the static frame.  Falls back to the plain
+        hero with the 3-tone gradient when markup resolution fails.
         """
         from io import StringIO
         from rich.console import Console as _RichConsole
-        from hermes_cli.banner import render_banner_hero_text
-        hero_rich = render_banner_hero_text(plain_hero)
+        from hermes_cli.banner import render_banner_hero_text, resolve_banner_hero_assets
+        try:
+            markup_hero, _ = resolve_banner_hero_assets()
+        except Exception:
+            markup_hero = plain_hero
+        hero_rich = render_banner_hero_text(markup_hero)
         buf = StringIO()
         con = _RichConsole(
             file=buf, force_terminal=True, color_system="truecolor", width=200

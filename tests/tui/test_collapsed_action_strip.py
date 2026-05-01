@@ -69,6 +69,9 @@ def _make_panel(
     panel._category = category_map.get(category_name, ToolCategory.SHELL)
     panel._deterministic = deterministic
 
+    # Support `self.query("*:focus")` focus check — return empty list when unfocused.
+    panel.query = MagicMock(return_value=[])
+
     from hermes_cli.tui.tool_panel import ToolPanel
     panel._refresh_collapsed_strip = ToolPanel._refresh_collapsed_strip.__get__(panel)
 
@@ -80,12 +83,12 @@ def _make_panel(
 # ---------------------------------------------------------------------------
 
 class TestCollapsedActionStrip:
-    def test_strip_visible_when_unfocused_collapsed(self, monkeypatch):
-        # QW-03: strip shows whenever collapsed, focus only affects color via CSS
+    def test_strip_hidden_when_unfocused_collapsed(self, monkeypatch):
+        # Strip only shows when collapsed AND focused.
         monkeypatch.delenv("HERMES_DETERMINISTIC", raising=False)
         panel = _make_panel(has_focus=False, collapsed=True, result=_make_summary())
         panel._refresh_collapsed_strip()
-        assert panel._collapsed_strip._visible
+        assert not panel._collapsed_strip._visible
 
     def test_strip_visible_when_focused_collapsed(self, monkeypatch):
         monkeypatch.delenv("HERMES_DETERMINISTIC", raising=False)
@@ -168,17 +171,18 @@ class TestCollapsedActionStrip:
         text_obj = call[0][0]
         assert "[?]" in str(text_obj)
 
-    def test_strip_stays_on_blur(self, monkeypatch):
-        # QW-03: blur no longer hides the strip; CSS dims it via color rules
+    def test_strip_hidden_on_blur(self, monkeypatch):
+        # Strip disappears when focus leaves the panel.
         monkeypatch.delenv("HERMES_DETERMINISTIC", raising=False)
         panel = _make_panel(has_focus=True, collapsed=True, result=_make_summary())
         panel._refresh_collapsed_strip()
         assert panel._collapsed_strip._visible
 
-        # Simulate blur: _refresh_collapsed_strip is called with has_focus=False
+        # Simulate blur: has_focus=False, no focused descendants
         panel.has_focus = False
+        panel.query = MagicMock(return_value=[])
         panel._refresh_collapsed_strip()
-        assert panel._collapsed_strip._visible
+        assert not panel._collapsed_strip._visible
 
     def test_strip_updates_on_collapse(self, monkeypatch):
         monkeypatch.delenv("HERMES_DETERMINISTIC", raising=False)

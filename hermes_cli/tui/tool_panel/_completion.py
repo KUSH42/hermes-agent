@@ -74,6 +74,9 @@ class _ToolPanelCompletionMixin:
         if not self.collapsed:  # type: ignore[attr-defined]
             strip.remove_class("--visible")
             return
+        if not (self.has_focus or bool(list(self.query("*:focus")))):  # type: ignore[attr-defined]
+            strip.remove_class("--visible")
+            return
         if self._result_summary_v4 is None:  # type: ignore[attr-defined]
             strip.remove_class("--visible")
             return

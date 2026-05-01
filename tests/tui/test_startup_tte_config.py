@@ -19,11 +19,49 @@ def _load_cli_module():
     return importlib.reload(cli_module)
 
 
+def _run_coro(coro) -> None:
+    """Drive a coroutine that makes no async I/O to completion without an event loop.
+
+    Uses .send(None) so asyncio never calls time.monotonic() internally — safe when
+    time.monotonic is mocked with a finite side_effect list.
+    """
+    try:
+        coro.send(None)
+    except StopIteration:
+        pass
+
+
 def _sync_call_from_thread(fn, *args, **kwargs):
     result = fn(*args, **kwargs)
     if inspect.isawaitable(result):
-        asyncio.run(result)
+        _run_coro(result)
     return result
+
+
+def _make_draining_call_from_thread(app_mock):
+    """Install set_interval + call_from_thread side effects that drain ticks synchronously."""
+    _tick_fn: list = []
+    _stop: list[bool] = [False]
+
+    class _MockTimer:
+        def stop(self) -> None:
+            _stop[0] = True
+
+    def _set_interval_side_effect(interval, fn):
+        _tick_fn.append(fn)
+        return _MockTimer()
+
+    app_mock.set_interval.side_effect = _set_interval_side_effect
+
+    def _call_from_thread_side_effect(fn, *a, **kw):
+        r = fn(*a, **kw)
+        if inspect.isawaitable(r):
+            _run_coro(r)
+        while _tick_fn and not _stop[0]:
+            _run_coro(_tick_fn[0]())
+        return r
+
+    app_mock.call_from_thread.side_effect = _call_from_thread_side_effect
 
 
 def _bind_cli(cli_module):
@@ -142,7 +180,8 @@ class TestConfigResolution:
         app = MagicMock()
         app.is_running = True
         app.query_one.return_value = widget
-        app.call_from_thread.side_effect = _sync_call_from_thread
+        _make_draining_call_from_thread(app)
+        app.call_later.side_effect = _sync_call_from_thread
         frame_counter = {"seen": 0}
 
         def _frames(_name, _text, params=None):

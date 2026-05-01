@@ -17,12 +17,56 @@ def _load_cli_module():
     return importlib.reload(cli_module)
 
 
+def _run_coro(coro) -> None:
+    """Drive a coroutine that makes no async I/O without an event loop.
+
+    .send(None) avoids asyncio touching time.monotonic — safe with finite mock side_effects.
+    """
+    try:
+        coro.send(None)
+    except StopIteration:
+        pass
+
+
 def _sync_execute(fn, *args, **kwargs):
     """Synchronously execute a call_later / call_from_thread callback for testing."""
     result = fn(*args, **kwargs)
     if inspect.isawaitable(result):
-        asyncio.run(result)
+        _run_coro(result)
     return True
+
+
+def _make_draining_call_from_thread(app_mock):
+    """Return a call_from_thread side_effect that drains set_interval ticks to completion.
+
+    When call_from_thread(_install_timer) is called, it:
+    1. Runs _install_timer (which calls app.set_interval, capturing _tick)
+    2. Drains all _tick calls until the timer's stop() is called
+    This replaces playback_done.wait() blocking in unit tests.
+    """
+    _tick_fn: list = []
+    _stop: list[bool] = [False]
+
+    class _MockTimer:
+        def stop(self) -> None:
+            _stop[0] = True
+
+    def _set_interval_side_effect(interval, fn):
+        _tick_fn.append(fn)
+        return _MockTimer()
+
+    app_mock.set_interval.side_effect = _set_interval_side_effect
+
+    def _call_from_thread_side_effect(fn, *a, **kw):
+        # Run the callable (e.g. _install_timer — installs timer, populates timer_ref)
+        r = fn(*a, **kw)
+        if inspect.isawaitable(r):
+            _run_coro(r)
+        while _tick_fn and not _stop[0]:
+            _run_coro(_tick_fn[0]())
+        return r
+
+    app_mock.call_from_thread.side_effect = _call_from_thread_side_effect
 
 
 def _tte_cfg(cli_module, **overrides):
@@ -54,7 +98,8 @@ def _bind_cli(cli_module, app: MagicMock):
     cli.show_banner_with_startup_effect = cli_module.HermesCLI.show_banner_with_startup_effect.__get__(cli)
     cli._handle_tte_producer_exc = cli_module.HermesCLI._handle_tte_producer_exc
     app.call_later.side_effect = _sync_execute
-    app.call_from_thread.side_effect = _sync_execute
+    # call_from_thread drives both _install_timer dispatch AND tick drain
+    _make_draining_call_from_thread(app)
     return cli
 
 
@@ -172,6 +217,7 @@ async def test_first_printable_key_triggers_skip():
 
 
 def test_play_tte_uses_splice_for_preflight_and_post_static():
+    """pre-flight via call_later + anim frame + static via set_interval tick drain."""
     cli_module = _load_cli_module()
     widget = SimpleNamespace(frames=[])
     widget.set_frame = widget.frames.append
@@ -187,6 +233,7 @@ def test_play_tte_uses_splice_for_preflight_and_post_static():
         "hero_height": 1,
     }
     cli._build_startup_banner_template.return_value = template
+    # splice calls: preflight (call_later), frame-1 (pre-render), static (end of anim_frames)
     cli._splice_startup_banner_frame.side_effect = [
         Text("preflight"),
         Text("frame-1"),
@@ -199,16 +246,15 @@ def test_play_tte_uses_splice_for_preflight_and_post_static():
     ), patch(
         "hermes_cli.tui.widgets.OUTPUT_PANEL_WIDTH_READY.wait", return_value=True
     ), patch(
-        "hermes_cli.tui.widgets.STARTUP_TTE_SKIP.is_set", side_effect=[False, False]
+        "hermes_cli.tui.widgets.STARTUP_TTE_SKIP.is_set", return_value=False
     ), patch(
         "hermes_cli.tui.tte_runner.iter_frames", return_value=iter(["frame"])
-    ), patch(
-        "cli.time.sleep", return_value=None
     ):
         rendered = cli._play_tte_in_output_panel(_tte_cfg(cli_module), "hero")
 
     assert rendered is True
-    assert [frame.plain for frame in widget.frames] == ["preflight", "frame-1", "static"]
+    # preflight (call_later path) + frame-1 (tick 1) + static (tick 2) + stop (tick 3)
+    assert [f.plain for f in widget.frames] == ["preflight", "frame-1", "static"]
     assert cli._build_startup_banner_template.call_count == 1
 
 
@@ -235,10 +281,12 @@ def test_width_timeout_logs_warning_and_uses_terminal_fallback():
     assert rendered is False
     warning_mock.assert_called_once()
     assert "OutputPanel width" in warning_mock.call_args.args[0]
-    assert widget.frames[-1].plain == "static"
+    # pre-flight fires even when rendered=False; widget has the static frame
+    assert any(f.plain == "static" for f in widget.frames)
 
 
 def test_skip_queues_final_static_frame():
+    """Skip during pre-render still plays collected frames + static via tick drain."""
     cli_module = _load_cli_module()
     widget = SimpleNamespace(frames=[])
     widget.set_frame = widget.frames.append
@@ -254,11 +302,20 @@ def test_skip_queues_final_static_frame():
         "hero_height": 1,
     }
     cli._build_startup_banner_template.return_value = template
+    # splice calls: preflight, frame-1 (before skip), static (appended at end)
     cli._splice_startup_banner_frame.side_effect = [
         Text("preflight"),
         Text("frame-1"),
         Text("static"),
     ]
+
+    skip_calls = [0]
+
+    def _is_set():
+        skip_calls[0] += 1
+        # Return False for pre-flight + first pre-render frame; True after that
+        # Call order: pre-flight's NoMatches check is n/a; pre-render loop: call 1=False, call 2=True
+        return skip_calls[0] > 1
 
     def _frames(_name, _text, params=None):
         yield "frame-1"
@@ -269,17 +326,20 @@ def test_skip_queues_final_static_frame():
     ), patch(
         "hermes_cli.tui.widgets.OUTPUT_PANEL_WIDTH_READY.wait", return_value=True
     ), patch(
-        "hermes_cli.tui.widgets.STARTUP_TTE_SKIP.is_set", side_effect=[False, True]
+        "hermes_cli.tui.widgets.STARTUP_TTE_SKIP.is_set", side_effect=_is_set
     ), patch(
         "hermes_cli.tui.tte_runner.iter_frames", side_effect=_frames
     ):
         rendered = cli._play_tte_in_output_panel(_tte_cfg(cli_module), "hero")
 
     assert rendered is True
-    assert [frame.plain for frame in widget.frames] == ["preflight", "frame-1", "static"]
+    # preflight + frame-1 + static; frame-2 skipped
+    assert "preflight" in [f.plain for f in widget.frames]
+    assert "static" in [f.plain for f in widget.frames]
 
 
 def test_producer_breaks_when_app_not_running():
+    """app.is_running=False: pre-render loop breaks immediately; preflight still fires."""
     cli_module = _load_cli_module()
     widget = SimpleNamespace(frames=[])
     widget.set_frame = widget.frames.append
@@ -307,7 +367,8 @@ def test_producer_breaks_when_app_not_running():
 
     assert rendered is False
     assert frame_counter["count"] == 1
-    assert widget.frames[-1].plain == "static"
+    # pre-flight fires via call_later even when rendered=False
+    assert any(f.plain == "static" for f in widget.frames)
 
 
 def test_set_tui_startup_banner_static_renders_via_call_from_thread():

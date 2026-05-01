@@ -109,16 +109,39 @@ def test_show_banner_with_startup_effect_tui_updates_startup_widget(_isolate):
 
     fake_widget = MagicMock()
 
+    def _run_coro(coro) -> None:
+        try:
+            coro.send(None)
+        except StopIteration:
+            pass
+
     def fake_call_later(fn, *args):
         result = fn(*args)
         if hasattr(result, "__await__"):
-            import asyncio
+            _run_coro(result)
 
-            asyncio.run(result)
+    _tick_fn: list = []
+    _stop: list[bool] = [False]
+
+    class _MockTimer:
+        def stop(self) -> None:
+            _stop[0] = True
+
+    def fake_set_interval(interval, fn):
+        _tick_fn.append(fn)
+        return _MockTimer()
+
+    def fake_call_from_thread(fn, *args):
+        result = fn(*args)
+        if hasattr(result, "__await__"):
+            _run_coro(result)
+        while _tick_fn and not _stop[0]:
+            _run_coro(_tick_fn[0]())
 
     fake_app = SimpleNamespace(
         call_later=fake_call_later,
-        call_from_thread=fake_call_later,  # _set_tui_startup_banner_static still uses this
+        call_from_thread=fake_call_from_thread,
+        set_interval=fake_set_interval,
         query_one=MagicMock(return_value=fake_widget),
         is_running=True,
     )

@@ -27,11 +27,55 @@ def _tte_cfg(cli_module, **overrides):
     return cli_module._StartupTteConfig(**data)
 
 
+def _run_coro(coro) -> None:
+    """Drive a coroutine that makes no async I/O without an event loop.
+
+    .send(None) avoids asyncio touching time.monotonic — safe with finite mock side_effects.
+    """
+    try:
+        coro.send(None)
+    except StopIteration:
+        pass
+
+
 def _sync_call_from_thread(fn, *args, **kwargs):
     result = fn(*args, **kwargs)
     if inspect.isawaitable(result):
-        asyncio.run(result)
+        _run_coro(result)
     return result
+
+
+def _install_draining_set_interval(mock_app):
+    """Add set_interval + call_from_thread mocks that drain ticks synchronously.
+
+    call_from_thread(_install_timer):
+      1. Runs _install_timer (which calls set_interval, capturing _tick into timer_ref)
+      2. Drains all _tick calls until timer.stop() fires
+
+    call_from_thread(other_fn): runs fn normally without draining.
+    """
+    _tick_fn: list = []
+    _stop: list[bool] = [False]
+
+    class _MockTimer:
+        def stop(self) -> None:
+            _stop[0] = True
+
+    def _set_interval_side_effect(interval, fn):
+        _tick_fn.append(fn)
+        return _MockTimer()
+
+    mock_app.set_interval.side_effect = _set_interval_side_effect
+
+    def _call_from_thread_side_effect(fn, *a, **kw):
+        r = fn(*a, **kw)
+        if inspect.isawaitable(r):
+            _run_coro(r)
+        while _tick_fn and not _stop[0]:
+            _run_coro(_tick_fn[0]())
+        return r
+
+    mock_app.call_from_thread.side_effect = _call_from_thread_side_effect
 
 
 # ---------------------------------------------------------------------------
@@ -67,10 +111,10 @@ def cli_instance(mock_app):
         "lines": [], "hero_row": 0, "hero_col": 0, "hero_width": 10, "hero_height": 5
     })
     cli._splice_startup_banner_frame = MagicMock(return_value=MagicMock())
-    # Stub both call_later (used by _play_tte_in_output_panel) and call_from_thread
-    # (used by _set_tui_startup_banner_static) to invoke callbacks synchronously.
+    # call_later: sync execute (used for pre-flight and _set_tui_startup_banner_static)
     mock_app.call_later = MagicMock(side_effect=_sync_call_from_thread)
-    mock_app.call_from_thread = MagicMock(side_effect=_sync_call_from_thread)
+    # call_from_thread: sync execute + tick drain (used by _install_timer in _play_tte_in_output_panel)
+    _install_draining_set_interval(mock_app)
     # STARTUP_BANNER_READY gate must be pre-set so _play_tte_in_output_panel doesn't
     # block 2s waiting for compose() to mount StartupBannerWidget.
     from hermes_cli.tui.widgets import OUTPUT_PANEL_WIDTH_READY, STARTUP_BANNER_READY

@@ -521,6 +521,11 @@ def write_banner_ack(behind: int) -> None:
 _session_update_behind: int = 0
 
 
+def _section_break(dim_color: str, width: int = 30) -> list[str]:
+    """Two-element block: blank row + horizontal rule. Use between right-column sections."""
+    return ["", f"[dim {dim_color}]{'─' * max(8, width)}[/]"]
+
+
 def _format_skill_list(skills: list, width: int = 47) -> str:
     """Render skills joined by ', ' fitting in `width`, with '…+N more' overflow."""
     rendered: list[str] = []
@@ -710,7 +715,7 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
 
     # MCP Servers section (only if configured) — uses pre-computed mcp_status
     if mcp_status:
-        right_lines.append("")
+        right_lines.extend(_section_break(dim))
         right_lines.append(f"[bold {accent}]MCP Servers[/]")
         for srv in mcp_status:
             if srv["connected"]:
@@ -724,7 +729,7 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
                     f"[red]— failed[/]"
                 )
 
-    right_lines.append("")
+    right_lines.extend(_section_break(dim))
     right_lines.append(f"[bold {accent}]Available Skills[/]")
     if skills_by_category:
         for category in sorted(skills_by_category.keys()):
@@ -751,10 +756,17 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
             _session_update_behind = behind
             from hermes_cli.config import recommended_update_command
             commits_word = "commit" if behind == 1 else "commits"
+            update_cmd = recommended_update_command()
+            warn_color = _skin_color("banner_warning", "#FF8C00")
+            warn_dim = _skin_color("banner_warning_dim", "#CD6500")
+            key_color = _skin_color("banner_key", "#FFD700")
             right_lines.append(
-                f"[bold yellow]⚠ {behind} {commits_word} behind[/]"
-                f"[dim yellow] — run [bold]{recommended_update_command()}[/bold] to update"
-                f" [dim](press u to dismiss)[/dim][/]"
+                f"[bold {warn_color}]⚠ {behind} {commits_word} behind[/]"
+                f"[{warn_dim}] — run [bold]{update_cmd}[/bold] to update[/]"
+            )
+            right_lines.append(
+                f"  [bold {key_color}]u[/] [dim {dim}]dismiss[/]   "
+                f"[dim {dim}]run[/] [{text}]{update_cmd}[/] [dim {dim}]to install[/]"
             )
     except Exception:
         logger.debug("update check failed", exc_info=True)

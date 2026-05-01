@@ -527,7 +527,7 @@ class CommandsService(AppService):
             try:
                 ov = app.query_one(_DO)
                 if ov._visibility_state == "ambient":
-                    ov._current_engine_instance = _ENGINES[matched_a]()
+                    ov._orchestrator.set_ambient_engine(matched_a)
             except NoMatches:
                 # Overlay not mounted; config already persisted — silent skip is correct
                 pass

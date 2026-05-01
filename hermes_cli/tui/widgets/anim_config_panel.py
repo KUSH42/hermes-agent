@@ -453,7 +453,11 @@ class AnimConfigPanel(Widget):
             return
         if f.kind != "cycle" or not f.choices:
             return
-        idx = (f.choices.index(str(f.value)) + direction) % len(f.choices)
+        try:
+            cur = f.choices.index(str(f.value))
+        except ValueError:
+            cur = 0
+        idx = (cur + direction) % len(f.choices)
         f.value = f.choices[idx]
         self._push_to_overlay(f)
         self._refresh_body()

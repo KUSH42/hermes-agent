@@ -19,6 +19,12 @@ from hermes_cli.tui.anim_engines import (
     PlasmaEngine,
     Torus3DEngine,
     MatrixRainEngine,
+    DoubleHelixEngine,
+    DoubleHelixLitEngine,
+    TripleHelixEngine,
+    LissajousWeaveEngine,
+    MandalaBloomEngine,
+    RopeBraidEngine,
     _bresenham_pts,
 )
 from hermes_cli.tui.drawbraille_overlay import (
@@ -655,3 +661,75 @@ class TestHueShiftSpeedField:
             panel._focus_idx = 0
             panel._build_fields()
         assert any(f.name == "hue_shift_speed" for f in panel._fields)
+
+
+# ── ANIM-API-4: helix engine coverage ─────────────────────────────────────────
+
+class TestDoubleHelixEngine:
+
+    def test_next_frame_returns_nonempty(self) -> None:
+        e = DoubleHelixEngine()
+        result = e.next_frame(AnimParams(width=40, height=24))
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    def test_depth_cues_false_path(self) -> None:
+        e = DoubleHelixEngine()
+        result = e.next_frame(AnimParams(width=40, height=24, depth_cues=False))
+        assert isinstance(result, str)
+
+
+class TestDoubleHelixLitEngine:
+
+    def test_next_frame_always_dense_path(self) -> None:
+        e = DoubleHelixLitEngine()
+        result = e.next_frame(AnimParams(width=40, height=24))
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    def test_tiny_canvas_no_exception(self) -> None:
+        e = DoubleHelixLitEngine()
+        e.next_frame(AnimParams(width=4, height=4))
+
+
+class TestTripleHelixEngine:
+
+    def test_next_frame_returns_nonempty(self) -> None:
+        e = TripleHelixEngine()
+        result = e.next_frame(AnimParams(width=40, height=24))
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    def test_rung_count_matches_n_turns(self) -> None:
+        e = TripleHelixEngine()
+        e.next_frame(AnimParams(width=80, height=48))
+
+
+# ── ANIM-API-5: on_signal path coverage ───────────────────────────────────────
+
+class TestOnSignalPaths:
+
+    def test_lissajous_on_signal_tool_sets_phase_jump(self) -> None:
+        e = LissajousWeaveEngine()
+        assert e._phase_jump == 0.0
+        e.on_signal("tool")
+        assert e._phase_jump != 0.0
+        assert 0 <= e._phase_jump < math.pi
+
+    def test_mandala_on_signal_complete_sets_bloom_fast(self) -> None:
+        e = MandalaBloomEngine()
+        assert e._bloom_fast is False
+        e.on_signal("complete")
+        assert e._bloom_fast is True
+        result = e.next_frame(AnimParams(width=40, height=24))
+        assert len(result) > 0
+
+    def test_rope_on_signal_complete_sets_unwind(self) -> None:
+        e = RopeBraidEngine()
+        e.on_signal("complete")
+        assert e._unwind is True
+        # heat=-0.5 → twist = 1.0 + (-0.5)*2.0 = 0.0, then max(0, 0.0-0.2)=0.0 ≤ 0.1
+        # so unwind clears on the very first frame
+        params = AnimParams(width=40, height=24, heat=-0.5, dt=1.0)
+        e.next_frame(params)
+        assert e._unwind is False

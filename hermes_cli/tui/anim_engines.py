@@ -1883,6 +1883,14 @@ class Torus3DEngine(_BaseEngine):
     _PHI_LUT:   list = [v * (2.0 * math.pi / 36) for v in range(36)]  # N_V=36
 
     def __init__(self) -> None:
+        assert len(self._THETA_LUT) == self.N_U, (
+            f"Torus3DEngine._THETA_LUT length {len(self._THETA_LUT)} != N_U={self.N_U}; "
+            "update the LUT list comprehension to match"
+        )
+        assert len(self._PHI_LUT) == self.N_V, (
+            f"Torus3DEngine._PHI_LUT length {len(self._PHI_LUT)} != N_V={self.N_V}; "
+            "update the LUT list comprehension to match"
+        )
         self._rot_dir: float = 1.0
         self._reverse_frames: int = 0
 

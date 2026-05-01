@@ -834,6 +834,13 @@ automatically via `run_effect()` unless explicitly overridden.
 
 This is a `config.yaml` key, **not** a skin YAML key.
 
+**Inline startup-banner TTE pipeline (2026-05-01):**
+- `HermesCLI._play_tte_in_output_panel()` now waits on two widget-side events before building the banner artefacts: `STARTUP_BANNER_READY` (widget mounted) and `OUTPUT_PANEL_WIDTH_READY` (panel width cached). Keep the width wait before `_ensure_startup_banner_artefacts()`.
+- Startup banner rendering uses a splice template path whenever possible: pre-flight, live frames, skip completion, and post-TTE static all flow through `_splice_startup_banner_frame(template, plain_hero)` so only the hero rectangle changes between frames.
+- Cache contract: `_startup_banner_template` is `None` (untried), `_TEMPLATE_FAILED` (attempted and failed), or a template dict. `_startup_banner_static` is only populated for the fallback path.
+- Reserved marker: `_STARTUP_BANNER_PLACEHOLDER_MARKER = "\uE000"` is used only inside template detection. Sanitize user hero text through `_sanitize_startup_hero_text()` before sizing or splicing.
+- Skip contract: `STARTUP_TTE_SKIP` is set by `StartupBannerWidget` bindings (`escape`, `s`) and by the first printable key in `HermesInput._on_key()`. The producer clears the event at entry and queues the final static frame when skip trips.
+
 ## ExecuteCodeBlock patterns
 
 `ExecuteCodeBlock(StreamingToolBlock)` in `execute_code_block.py` — two-section

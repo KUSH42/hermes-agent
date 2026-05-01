@@ -197,6 +197,9 @@ _TITLE_SAFE_STYLES: frozenset[str] = frozenset({
     #               keycap/hi (multi-codepoint sequences)
 })
 
+_TEMPLATE_FAILED = object()
+_STARTUP_BANNER_PLACEHOLDER_MARKER = "\uE000"
+
 
 # Load .env from ~/.hermes/.env first, then project root as dev fallback.
 # User-managed env files should override stale shell exports on restart.
@@ -221,6 +224,31 @@ _REASONING_TAGS = (
     "reasoning",
     "thought",
 )
+
+
+def _fit_hero_line(hero_line, target_cells: int):
+    """Crop/pad a hero line to an exact terminal-cell budget."""
+    from rich.cells import cell_len
+
+    plain = hero_line.plain
+    current_cells = cell_len(plain)
+    if current_cells == target_cells:
+        return hero_line
+    if current_cells > target_cells:
+        out = hero_line.copy()
+        out.truncate(target_cells, overflow="crop")
+        current_cells = cell_len(out.plain)
+        if current_cells < target_cells:
+            out.append(" " * (target_cells - current_cells), style="")
+        return out
+    out = hero_line.copy()
+    out.append(" " * (target_cells - current_cells), style="")
+    return out
+
+
+def _sanitize_startup_hero_text(text: str) -> str:
+    """Remove the reserved placeholder marker from user-provided hero art."""
+    return text.replace(_STARTUP_BANNER_PLACEHOLDER_MARKER, "?")
 
 
 def _strip_reasoning_tags(text: str) -> str:
@@ -2571,6 +2599,8 @@ class HermesCLI:
         self._image_counter = 0
         self.preloaded_skills: list[str] = []
         self._startup_skills_line_shown = False
+        self._startup_banner_template: dict[str, object] | object | None = None
+        self._startup_banner_static = None
 
         # Voice mode state (also reinitialized inside run() for interactive TUI).
         self._voice_lock = threading.Lock()
@@ -4495,12 +4525,10 @@ class HermesCLI:
         Returns a dict containing template line Texts and the hero insertion
         rectangle so per-frame updates only replace the animated hero region.
         """
-        from rich.text import Text
-
-        marker = "\u2588"
-        hero_lines = plain_hero.splitlines() or [plain_hero]
+        sanitized_hero = _sanitize_startup_hero_text(plain_hero)
+        hero_lines = sanitized_hero.splitlines() or [sanitized_hero]
         hero_width = max((len(line) for line in hero_lines), default=1)
-        placeholder_lines = [marker * hero_width for _ in hero_lines]
+        placeholder_lines = [_STARTUP_BANNER_PLACEHOLDER_MARKER * hero_width for _ in hero_lines]
         placeholder_text = "\n".join(placeholder_lines)
         template = self._render_startup_banner_text(hero_text=placeholder_text)
         template_lines = list(template.split("\n", allow_blank=True))
@@ -4525,6 +4553,17 @@ class HermesCLI:
             "hero_height": len(placeholder_lines),
         }
 
+    def _ensure_startup_banner_artefacts(self, plain_hero: str) -> None:
+        """Build and cache startup banner artefacts at most once per banner run."""
+        if self._startup_banner_template is None:
+            result = self._build_startup_banner_template(plain_hero)
+            self._startup_banner_template = result if result is not None else _TEMPLATE_FAILED
+        if (
+            self._startup_banner_static is None
+            and self._startup_banner_template is _TEMPLATE_FAILED
+        ):
+            self._startup_banner_static = self._render_startup_banner_text(print_hero=True)
+
     def _splice_startup_banner_frame(self, template: dict[str, object], frame_text: str):
         """Return banner Text with the animated hero frame spliced in."""
         from rich.text import Text
@@ -4545,13 +4584,7 @@ class HermesCLI:
                 hero_line = Text.from_ansi(frame_line)
                 hero_line.no_wrap = True
                 hero_line.overflow = "ignore"
-                hero_plain = hero_line.plain
-                if len(hero_plain) > hero_width:
-                    hero_line = hero_line[:hero_width]
-                elif len(hero_plain) < hero_width:
-                    hero_line = hero_line.copy()
-                    delta = hero_width - len(hero_plain)
-                    hero_line.append(" " * delta, style="")
+                hero_line = _fit_hero_line(hero_line, hero_width)
                 composed = base_line[:hero_col] + hero_line + base_line[hero_col + hero_width :]
             else:
                 composed = base_line.copy()
@@ -4593,26 +4626,40 @@ class HermesCLI:
         app = _hermes_app
         if app is None:
             return False
+        plain_hero = _sanitize_startup_hero_text(plain_hero)
 
         # Block until OutputPanel.compose has mounted StartupBannerWidget.
         # Bounded: if it never mounts (e.g. non-TUI fallback mis-routed here),
         # give up quietly rather than hang the daemon thread.
-        from hermes_cli.tui.widgets import STARTUP_BANNER_READY
+        from hermes_cli.tui.widgets import (
+            OUTPUT_PANEL_WIDTH_READY,
+            STARTUP_BANNER_READY,
+            STARTUP_TTE_SKIP,
+        )
+        STARTUP_TTE_SKIP.clear()
         if not STARTUP_BANNER_READY.wait(timeout=2.0):
             logger.debug(
                 "TTE: StartupBannerWidget did not mount within 2s; "
                 "skipping animation (no-op)"
             )
             return False
+        if not OUTPUT_PANEL_WIDTH_READY.wait(timeout=2.0):
+            logger.warning("TTE: OutputPanel width not ready within 2s; using terminal width")
 
         from hermes_cli.tui.tte_runner import iter_frames
         MAX_FRAMES = 3000
         MAX_WALL_S = 30.0  # long effects (decrypt=15s, matrix=21s) must run to completion
         rendered_any = False
+        skipped = False
         state_lock = _threading.Lock()
         latest_frame: Text | None = None
         update_in_flight = False
-        template = self._build_startup_banner_template(plain_hero)
+        self._ensure_startup_banner_artefacts(plain_hero)
+        template = (
+            self._startup_banner_template
+            if isinstance(self._startup_banner_template, dict)
+            else None
+        )
 
         async def _drain_latest() -> None:
             import asyncio as _asyncio
@@ -4650,9 +4697,12 @@ class HermesCLI:
                 app.call_from_thread(_drain_latest)
 
         # Pre-flight: paint static banner before TTE starts so widget is never blank.
-        # Use _render_startup_banner_text (not _splice_startup_banner_frame) because
-        # it applies skin coloring; plain_hero is uncolored ANSI-free text.
-        _preflight = self._render_startup_banner_text(print_hero=True)
+        # Use the cached splice template so pre-flight and frame 0 are byte-identical
+        # outside the hero rectangle. The template already carries the full skin styling.
+        if template is not None:
+            _preflight = self._splice_startup_banner_frame(template, plain_hero)
+        else:
+            _preflight = self._startup_banner_static or self._render_startup_banner_text(print_hero=True)
         _queue_frame(_preflight)
         _tte_start = time.monotonic()   # time imported at module level
         _frame_interval = 1.0 / 60      # sole frame pacer; TTE's internal frame_rate is disabled
@@ -4660,6 +4710,11 @@ class HermesCLI:
 
         try:
             for i, frame in enumerate(iter_frames(effect_name, plain_hero, params=params)):
+                if not getattr(app, "is_running", True):
+                    break
+                if STARTUP_TTE_SKIP.is_set():
+                    skipped = True
+                    break
                 if i >= MAX_FRAMES or (time.monotonic() - _tte_start) >= MAX_WALL_S:
                     break
                 rendered_any = True
@@ -4682,11 +4737,15 @@ class HermesCLI:
         except Exception as exc:
             self._handle_tte_producer_exc(exc)
 
-        if rendered_any:
+        if skipped or rendered_any:
             # Hold final TTE frame for 250 ms, then queue the static banner through
             # the same coalescing path — guarantees static arrives after last TTE frame.
-            time.sleep(0.25)   # time is module-level; do not re-import as _t
-            static_banner = self._render_startup_banner_text(print_hero=True)
+            if rendered_any:
+                time.sleep(0.25)   # time is module-level; do not re-import as _t
+            if template is not None:
+                static_banner = self._splice_startup_banner_frame(template, plain_hero)
+            else:
+                static_banner = self._startup_banner_static or self._render_startup_banner_text(print_hero=True)
             _queue_frame(static_banner)
 
         return rendered_any
@@ -4699,6 +4758,8 @@ class HermesCLI:
         the full banner layout.  When TTE finishes, a static frame is written.
         Non-TUI: effect plays on stdout, then banner prints below.
         """
+        self._startup_banner_template = None
+        self._startup_banner_static = None
         if tui:
             self._ensure_tui_startup_message()
             played = self._play_startup_text_effect(tui=True)
@@ -4723,7 +4784,19 @@ class HermesCLI:
         if app is None:
             return
 
-        final_banner = self._render_startup_banner_text(print_hero=True)
+        from hermes_cli.banner import resolve_banner_hero_assets
+
+        _, plain_hero = resolve_banner_hero_assets()
+        plain_hero = _sanitize_startup_hero_text(plain_hero)
+        self._ensure_startup_banner_artefacts(plain_hero)
+        if isinstance(self._startup_banner_template, dict):
+            final_banner = self._splice_startup_banner_frame(
+                self._startup_banner_template, plain_hero
+            )
+        else:
+            final_banner = self._startup_banner_static or self._render_startup_banner_text(
+                print_hero=True
+            )
 
         def _apply() -> None:
             from hermes_cli.tui.widgets import StartupBannerWidget

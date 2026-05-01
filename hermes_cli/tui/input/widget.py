@@ -415,6 +415,12 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
 
     async def _on_key(self, event: events.Key) -> None:
         """Override to handle special keys before TextArea's default handling."""
+        if event.is_printable:
+            from hermes_cli.tui.widgets import STARTUP_TTE_SKIP
+
+            if not STARTUP_TTE_SKIP.is_set():
+                STARTUP_TTE_SKIP.set()
+
         if self.disabled and event.is_printable:
             event.prevent_default()
             return

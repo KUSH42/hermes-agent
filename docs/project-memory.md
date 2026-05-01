@@ -2,6 +2,9 @@
 
 Memory index links use canonical absolute targets under `~/.hermes` when available; `project_*.md`, `feedback_*.md`, and `reference_*.md` are stable alias names there.
 
+## Startup TTE Pipeline Correctness (2026-05-01)
+- [Startup TTE pipeline correctness](/home/xush/.hermes/2026-05-01-startup-tte-pipeline-correctness.md) — IMPLEMENTED on `feat/textual-migration` descendant worktree; startup banner now waits on `OUTPUT_PANEL_WIDTH_READY` before caching splice artefacts, uses cached splice/static paths to avoid preflight/frame-0 jump and redundant banner rebuilds, reserves PUA marker `\uE000` for hero placeholders, clips hero rows by terminal cells, exits producer when `app.is_running` is false, and exposes startup skip through `StartupBannerWidget` (`Esc`/`s`) plus first printable composer key; targeted verification file `tests/tui/test_startup_tte_pipeline.py` (13 tests)
+
 ## services/feedback Audit FB-H1..FB-L2 (2026-04-28)
 - [services/feedback Audit](/home/xush/.hermes/project_feedback_service_audit.md) — IMPLEMENTED 2026-04-28; equal-priority PREEMPTED, apply-failure restore + ERROR log, SUPPRESSED reason, SettledAware Protocol, CodeFooterAdapter ancestor walk, register_channel warn+cancel+reentry guard, _STATE_CHANGE_TONES; 20 new tests; 9-pass review
 

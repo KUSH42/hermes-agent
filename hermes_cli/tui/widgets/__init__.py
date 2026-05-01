@@ -422,6 +422,7 @@ class OutputPanel(ScrollableContainer):
         try:
             # Subtract 1 for the vertical scrollbar (scrollbar-size-vertical: 1 in TCSS).
             self.app._startup_output_panel_width = max(1, self.size.width - 1)
+            OUTPUT_PANEL_WIDTH_READY.set()
         except Exception:
             # best-effort UI update; widget may not be mounted
             pass
@@ -433,6 +434,9 @@ class OutputPanel(ScrollableContainer):
             self.mount(badge, before=anchor)
         else:
             self.mount(badge)
+
+    def on_unmount(self) -> None:
+        OUTPUT_PANEL_WIDTH_READY.clear()
 
     # W-9/W-11: gated scroll_end -----------------------------------------------
 
@@ -792,6 +796,8 @@ class TTEWidget(Widget):
 # Set when StartupBannerWidget enters on_mount. Producer threads (the CLI TTE
 # worker) wait on this before assuming query_one() will succeed.
 STARTUP_BANNER_READY = _threading.Event()
+OUTPUT_PANEL_WIDTH_READY = _threading.Event()
+STARTUP_TTE_SKIP = _threading.Event()
 
 
 class StartupBannerWidget(Static):
@@ -811,6 +817,11 @@ class StartupBannerWidget(Static):
     }
     """
 
+    BINDINGS = [
+        Binding("escape", "skip_tte", "Skip", show=False),
+        Binding("s", "skip_tte", "Skip", show=False),
+    ]
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(Text(""), **kwargs)
 
@@ -820,6 +831,11 @@ class StartupBannerWidget(Static):
     def on_unmount(self) -> None:
         # Clear so a hot-reload or second App instance waits correctly.
         STARTUP_BANNER_READY.clear()
+        STARTUP_TTE_SKIP.clear()
+
+    def action_skip_tte(self) -> None:
+        STARTUP_TTE_SKIP.set()
+        self.refresh()
 
     def set_frame(self, rich_text: Text) -> None:
         self.update(rich_text)

@@ -2884,6 +2884,33 @@ Direct `widget.app = mock` raises `AttributeError: property 'app' of 'ThinkingWi
 - `app.call_from_thread` receives the async **function**, not a coroutine — capture as `captured_fns[0]` then call `asyncio.run(captured_fns[0]())`.
 - Run `asyncio.run(coro())` INSIDE the `with patch("cli.logger"):` block — closure resolves `logger` via module globals at call time, not at closure-creation time.
 
+## Changelog — 2026-05-01 — Startup TTE pipeline correctness — width-ready gate + cached splice path + skip event — 13 tests
+
+**Spec:** `/home/xush/.hermes/2026-05-01-startup-tte-pipeline-correctness.md` (Status: APPROVED when implemented on `feat/textual-migration` descendants).
+
+**Startup banner artefacts:** `HermesCLI` now caches two one-run artefacts:
+- `_startup_banner_template`: `dict | _TEMPLATE_FAILED | None` — successful splice template, failed-attempt sentinel, or untried.
+- `_startup_banner_static`: fallback Rich `Text` built only when template construction fails.
+
+**Cache entrypoint/order:** `_play_tte_in_output_panel()` must wait for both `STARTUP_BANNER_READY` and `OUTPUT_PANEL_WIDTH_READY` **before** calling `_ensure_startup_banner_artefacts()`. If width wait moves after cache population, the template captures terminal width instead of `OutputPanel` width and stays wrong for the whole startup run.
+
+**Width race fix:** `OutputPanel.on_mount()` now sets `OUTPUT_PANEL_WIDTH_READY` immediately after assigning `self.app._startup_output_panel_width`; `on_unmount()` clears it. The producer logs a WARNING and falls back to terminal width when the event does not arrive within 2 seconds.
+
+**Pre-flight / final static rule:** when a template exists, pre-flight and post-TTE static frames must both use `_splice_startup_banner_frame(template, plain_hero)` rather than `_render_startup_banner_text(print_hero=True)`. That keeps the outer banner bytes identical across pre-flight, frame 0, skip, and final static.
+
+**Reserved placeholder marker:** `_STARTUP_BANNER_PLACEHOLDER_MARKER = "\uE000"` (Private Use Area) replaces the old `█` placeholder. User hero text must be sanitized through `_sanitize_startup_hero_text()` before template sizing or static/splice use so the reserved marker never appears in real output.
+
+**Wide-char splice rule:** `_splice_startup_banner_frame()` must route every hero line through `_fit_hero_line()`; do not slice Rich `Text` by character count for the startup hero rectangle. Use Rich's cell-aware truncation and pad back to the exact target cell width.
+
+**Skip path:** module-level `STARTUP_TTE_SKIP` is set by `StartupBannerWidget` bindings (`escape`, `s`) and by the first printable key in `HermesInput._on_key()`. The producer clears the event at entry, checks it once per iteration, and queues the cached final static banner when skip trips.
+
+**Teardown guard:** the producer loop checks `getattr(app, "is_running", True)` once per iteration and bails immediately on app shutdown. Missing `is_running` must be treated as running.
+
+**Testing gotchas:**
+- New startup-TTE tests should clear **all three** module-level events around each test: `STARTUP_BANNER_READY`, `OUTPUT_PANEL_WIDTH_READY`, and `STARTUP_TTE_SKIP`.
+- A synchronous `call_from_thread` stub must execute async callbacks via `asyncio.run(...)`; otherwise `_drain_latest()` never updates the fake widget.
+- Old `tests/tui/test_startup_banner_polish.py` imports from the main checkout path directly; use a local worktree-targeted file for new startup pipeline tests instead of extending that file.
+
 ## Changelog — 2026-04-28 — UX Audit A — Skin/visual hierarchy consistency (A1–A6) — 12 tests, commit `d72ff0c07`
 
 **Spec:** `/home/xush/.hermes/2026-04-28-ux-audit-A-skin-hierarchy-consistency-spec.md` (Status: IMPLEMENTED).

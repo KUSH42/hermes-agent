@@ -774,8 +774,9 @@ class TTEWidget(Widget):
         """Background worker — generates TTE frames and pushes to UI."""
         try:
             from hermes_cli.tui.tte_runner import iter_frames
+            from textual import constants as _tc
 
-            _frame_interval = 1.0 / 60  # match tc.frame_rate set in iter_frames
+            _frame_interval = 1.0 / _tc.MAX_FPS
             _next_t = time.monotonic()
             for frame in iter_frames(effect_name, text, params=params):
                 if not self.is_mounted:

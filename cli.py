@@ -4784,11 +4784,10 @@ class HermesCLI:
             logger.warning("TTE: OutputPanel width not ready within 2s; using terminal width")
 
         from hermes_cli.tui.tte_runner import iter_frames
+        from textual import constants as _tc
         MAX_FRAMES = cfg.max_frames
         MAX_WALL_S = cfg.max_wall_s
-        # Cap display at 30 fps regardless of cfg.fps — halves compositor pressure
-        # and is smooth enough for character-particle effects.
-        DISPLAY_FPS = min(30, max(1, cfg.fps))
+        DISPLAY_FPS = min(_tc.MAX_FPS, max(1, cfg.fps))
 
         self._ensure_startup_banner_artefacts(plain_hero)
         template = (

@@ -342,8 +342,14 @@ class HintBar(Widget):
             self._shimmer_stop()
             self.refresh()
         elif not streaming and self._phase in ("stream", "file"):
-            if getattr(self.app, "_animations_enabled", True):
+            _running = (
+                getattr(self.app, "agent_running", False)
+                or getattr(self.app, "command_running", False)
+            )
+            if _running and getattr(self.app, "_animations_enabled", True):
                 self._shimmer_start()
+            else:
+                self.refresh()  # guard-fail path; repaint to show idle hints
 
     def set_phase(self, phase: str) -> None:
         """Transition to a new hint phase. Manages shimmer lifecycle."""
@@ -354,8 +360,14 @@ class HintBar(Widget):
         self._phase = phase
         streaming = getattr(self.app, "status_streaming", False)
         if phase in ("stream", "file") and not streaming:
-            if getattr(self.app, "_animations_enabled", True):
+            _running = (
+                getattr(self.app, "agent_running", False)
+                or getattr(self.app, "command_running", False)
+            )
+            if _running and getattr(self.app, "_animations_enabled", True):
                 self._shimmer_start()
+            else:
+                self.refresh()  # guard failed or animations off — repaint without shimmer
         else:
             self.refresh()
 
@@ -427,14 +439,21 @@ class HintBar(Widget):
         if self.hint:
             return Text(self.hint)  # pre-existing: strips markup; fix deferred
         if self._shimmer_base is not None and self._shimmer_timer is not None:
-            return shimmer_text(
-                self._shimmer_base,
-                self._shimmer_tick,
-                dim="#6e6e6e",
-                peak="#909090",
-                period=32,
-                skip_ranges=self._shimmer_skip,
+            _running = (
+                getattr(self.app, "agent_running", False)
+                or getattr(self.app, "command_running", False)
             )
+            if _running:
+                return shimmer_text(
+                    self._shimmer_base,
+                    self._shimmer_tick,
+                    dim="#6e6e6e",
+                    peak="#909090",
+                    period=32,
+                    skip_ranges=self._shimmer_skip,
+                )
+            # Stale shimmer — agent/command not running; stop and fall through.
+            self._shimmer_stop()
         key_color = self._get_key_color()
         hints = _hints_for(self._phase, key_color)
         w = self.content_size.width

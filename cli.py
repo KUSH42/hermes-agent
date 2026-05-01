@@ -4803,13 +4803,21 @@ class HermesCLI:
                 )
             return self._startup_banner_static or self._render_startup_banner_text(print_hero=True)
 
-        # Pre-flight: paint static banner immediately so widget is never blank during pre-render.
+        # Pre-flight: paint banner with BLANK hero so layout is visible while
+        # frames pre-render but the full logo does NOT appear before the animation.
+        # When no template exists (splice unavailable), fall back to full static.
         async def _apply_preflight() -> None:
             from textual.css.query import NoMatches
             from hermes_cli.tui.widgets import StartupBannerWidget
             try:
                 widget = app.query_one(StartupBannerWidget)
-                widget.set_frame(_build_static())
+                if template is not None:
+                    hero_height = int(template["hero_height"])
+                    hero_width = int(template["hero_width"])
+                    blank_hero = "\n".join(" " * hero_width for _ in range(hero_height))
+                    widget.set_frame(self._splice_startup_banner_frame(template, blank_hero))
+                else:
+                    widget.set_frame(_build_static())
             except NoMatches:
                 logger.debug("TTE: StartupBannerWidget not found for pre-flight")
             except Exception:
@@ -4862,7 +4870,7 @@ class HermesCLI:
         playback_done = _threading.Event()
         timer_ref: list = []
 
-        async def _tick() -> None:
+        def _tick() -> None:
             from textual.css.query import NoMatches
             from hermes_cli.tui.widgets import StartupBannerWidget
             exhausted = idx[0] >= len(anim_frames)

@@ -809,7 +809,12 @@ class HermesApp(App):
         self._anim_clock_h = self.set_interval(1 / 15, self._anim_clock.tick)
         self._spinner_h = self.set_interval(0.14, self._svc_spinner.tick_spinner)  # ~7Hz — smooth enough, 30% less event-loop pressure vs 10Hz
         self._fps_h = self.set_interval(_frame_interval, self._svc_spinner.tick_fps)
-        self._duration_h = self.set_interval(1.0, self._svc_spinner.tick_duration)
+        # Staggered 500ms start so tick_duration (1Hz) doesn't land on the same
+        # 1s boundary as anim_clock's 15th tick + fps_probe's 60th tick, avoiding
+        # a triple timer pile-up at t=1.0, 2.0, 3.0... during the startup animation.
+        def _install_duration_h() -> None:
+            self._duration_h = self.set_interval(1.0, self._svc_spinner.tick_duration)
+        self.set_timer(0.5, _install_duration_h)
         # Restore FPS HUD state from config (runtime toggle overrides this)
         if _fps_hud_enabled():
             self.fps_hud_visible = True

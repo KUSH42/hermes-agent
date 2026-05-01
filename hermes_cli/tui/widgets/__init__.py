@@ -419,10 +419,16 @@ class OutputPanel(ScrollableContainer):
         # Cache width for the startup banner daemon thread.
         # Written once from the event loop; read as a Python int from the daemon thread
         # (GIL-safe on CPython for integer attribute reads).
+        # NOTE: In Textual 8.x, self.size.width is 0 at on_mount (layout hasn't run yet).
+        # Guard against width=0 here; on_resize fires after the first layout pass and
+        # sets the correct width via _update_startup_panel_width.
         try:
-            # Subtract 1 for the vertical scrollbar (scrollbar-size-vertical: 1 in TCSS).
-            self.app._startup_output_panel_width = max(1, self.size.width - 1)
-            OUTPUT_PANEL_WIDTH_READY.set()
+            w = self.size.width
+            if w > 0:
+                # Subtract 1 for the vertical scrollbar (scrollbar-size-vertical: 1 in TCSS).
+                self.app._startup_output_panel_width = max(1, w - 1)
+                OUTPUT_PANEL_WIDTH_READY.set()
+            # else: on_resize will set it once Textual completes initial layout
         except Exception:
             # best-effort UI update; widget may not be mounted
             pass
@@ -616,6 +622,15 @@ class OutputPanel(ScrollableContainer):
 
     def on_resize(self, event: Any) -> None:
         """Anchor scroll position on resize; Textual cascades resize to children automatically."""
+        # Set startup banner width on first resize (size.width is 0 at on_mount in Textual 8.x).
+        if not OUTPUT_PANEL_WIDTH_READY.is_set():
+            try:
+                w = self.size.width
+                if w > 0:
+                    self.app._startup_output_panel_width = max(1, w - 1)
+                    OUTPUT_PANEL_WIDTH_READY.set()
+            except Exception:
+                pass
         # R08/R09: scroll anchoring — preserve position after layout recalc
         if not getattr(self, "_user_scrolled_up", False):
             self.call_after_refresh(self.scroll_end, animate=False)

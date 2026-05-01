@@ -11260,7 +11260,9 @@ class HermesCLI:
         if self.agent is None:
             # Keep this line plain. Some terminals/TUI render paths occasionally
             # corrupt the first visible glyph on lines that begin with ANSI SGR.
-            _cprint("Initializing agent...")
+            # TUI mode: suppress — status bar / nameplate handle initialization state.
+            if _hermes_app is None:
+                _cprint("Initializing agent...")
         if not self._init_agent(
             model_override=turn_route["model"],
             runtime_override=turn_route["runtime"],

@@ -420,7 +420,8 @@ class OutputPanel(ScrollableContainer):
         # Written once from the event loop; read as a Python int from the daemon thread
         # (GIL-safe on CPython for integer attribute reads).
         try:
-            self.app._startup_output_panel_width = self.size.width
+            # Subtract 1 for the vertical scrollbar (scrollbar-size-vertical: 1 in TCSS).
+            self.app._startup_output_panel_width = max(1, self.size.width - 1)
         except Exception:
             # best-effort UI update; widget may not be mounted
             pass

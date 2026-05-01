@@ -71,26 +71,26 @@ High-signal flow:
   `_apply_min_size_overlay`: mounts `MinSizeBackdrop` when `w < 40 or h < 8`; updates if already shown; removes when adequate.
   Key attrs: `_pending_resize`, `_resize_timer`, `_RESIZE_DEBOUNCE_S = 0.06`.
 
-- **`hermes_cli/tui/widgets.py`**
-  All shared widgets, output panel, rules, bars, overlays, CountdownMixin, startup banner,
-  FPS HUD. Key classes: `CopyableRichLog`, `InlineProseLog`, `LiveLineWidget`, `MessagePanel`,
+- **`hermes_cli/tui/widgets/`** (subpackage — `widgets.py` deleted; shim kept as backward-compat re-export)
+  Key modules: `message_panel.py`, `status_bar.py` (`HintBar`, `StatusBar`, `AnimatedCounter`, `VoiceStatusBar`),
+  `thinking.py` (`ThinkingWidget`), `plan_panel.py`, `code_blocks.py` (`StreamingCodeBlock`),
+  `inline_media.py` (`InlineMediaWidget`, `SeekBar`), `prose.py` (`CopyableRichLog`, `InlineProseLog`),
+  `input_legend_bar.py`, `pane_container.py`, `anim_config_panel.py` (`AnimConfigPanel`),
+  `renderers.py` (re-export shim for streaming renderers).
+  Key classes still queryable: `CopyableRichLog`, `InlineProseLog`, `LiveLineWidget`, `MessagePanel`,
   `StreamingCodeBlock`, `ThinkingWidget`, `OutputPanel`, `UserMessagePanel`, `ReasoningPanel`,
   `TitledRule`, `PlainRule`, `HintBar`, `StatusBar`, `AnimatedCounter`, `VoiceStatusBar`,
-  `ImageBar`, `ClarifyWidget`, `ApprovalWidget`, `SudoWidget`, `SecretWidget`,
-  `UndoConfirmOverlay`, `TurnCandidate`, `TurnResultItem`, `KeymapOverlay`, `HistorySearchOverlay`,
-  `FPSCounter`, `TTEWidget`, `InlineImage`, `MathBlockWidget`, `InlineThumbnail`, `InlineImageBar`,
-  `StartupBannerWidget`, `SeekBar`, `InlineMediaWidget`, `SourcesBar`, `AssistantNameplate`.
+  `ImageBar`, `TTEWidget`, `InlineImage`, `MathBlockWidget`, `InlineThumbnail`, `InlineImageBar`,
+  `StartupBannerWidget`, `SeekBar`, `InlineMediaWidget`, `AssistantNameplate`.
+  `STARTUP_BANNER_READY: threading.Event` — module-level; set in `StartupBannerWidget.on_mount`; cleared in `on_unmount`.
 
-- **`hermes_cli/tui/tool_blocks.py`**
-  `ToolHeader`, `ToolBodyContainer`, `ToolBlock`, `OmissionBar`, `ToolTail`, `StreamingToolBlock`.
-  Also: `ImageMounted(Message)`, `ToolHeaderStats`, collapse constants (`COLLAPSE_THRESHOLD=3`,
-  `_VISIBLE_CAP`, `_LINE_BYTE_CAP`), `header_label_v4()`, `_format_duration_v4()`.
-  STB: `_try_mount_media()`, `inject_diff()`, `append_line()`, `complete()`, OmissionBar lifecycle.
-  ToolHeader: `collapsed: reactive[bool] = reactive(True)` — starts collapsed by default;
-  `_has_affordances`, `_spinner_char`, `_duration`, `_primary_hero`, `_header_chips`,
-  `_label_rich`, `_panel` (back-ref to ToolPanel), `flash_copy()`.
+- **`hermes_cli/tui/tool_blocks/`** (subpackage — `tool_blocks.py` deleted)
+  `__init__.py` — backward-compat re-exports; all old `from hermes_cli.tui.tool_blocks import X` still work.
+  `_shared.py` — `OmissionBar`, `ToolBodyContainer`, `ImageMounted(Message)`, `ToolHeaderStats`, collapse constants (`COLLAPSE_THRESHOLD=3`, `_VISIBLE_CAP`, `_LINE_BYTE_CAP`).
+  `_header.py` — `ToolHeader`: `collapsed: reactive[bool] = reactive(True)`, `_has_affordances`, `_duration`, `_primary_hero`, `_header_chips`, `_label_rich`, `_panel` (back-ref to ToolPanel), `flash_copy()`. Also `header_label_v4()`, `_format_duration_v4()`.
+  `_block.py` — `ToolBlock`, `ToolTail`. `ToolBlock.toggle()` delegates to `panel.action_toggle_collapse()` when `header._panel` is set.
+  `_streaming.py` — `StreamingToolBlock`. `_try_mount_media()`, `inject_diff()`, `append_line()`, `complete()`, OmissionBar lifecycle.
   **ToolHeader is inside BodyPane inside ToolPanel — always visible even when panel.collapsed=True.**
-  ToolBlock.toggle(): when `header._panel` is set, delegates to `panel.action_toggle_collapse()`.
 
 - **`hermes_cli/tui/tool_panel/`** (subpackage — B16 split; `tool_panel.py` deleted)
   `__init__.py` — backward-compat re-export shim; all old `from hermes_cli.tui.tool_panel import X` still work.
@@ -138,7 +138,7 @@ High-signal flow:
 
 - **`hermes_cli/tui/resize_utils.py`** (NEW)
   Shared resize constants: `THRESHOLD_ULTRA_NARROW=40`, `THRESHOLD_NARROW=60`, `THRESHOLD_TOOL_NARROW=80`,
-  `THRESHOLD_COMP_NARROW=100`, `THRESHOLD_MIN_HEIGHT=8`, `HYSTERESIS=2`.
+  `THRESHOLD_COMP_NARROW=100`, `THRESHOLD_MIN_HEIGHT=8`, `THRESHOLD_BAR_HIDE=12`, `HYSTERESIS=2`.
   `crosses_threshold(old, new, threshold, hyst=HYSTERESIS) -> bool` — fires only on clean crossing through
   dead-band `[threshold-hyst, threshold+hyst)`. Returns True when `old=0` and `new` is above hi (initial-state).
 
@@ -163,13 +163,18 @@ High-signal flow:
   MCP→ `▸ mcp · {server} server` (clears on complete like all tools — §7 UX pass 3),
   CODE→ `▸ N lines · NkB`, AGENT→ `▸ thinking…`, UNKNOWN→ `▸ N lines`.
 
-- **`hermes_cli/tui/body_renderer.py`**
-  `BodyRenderer` ABC — `kind`, `supports_streaming`, `build()`, `build_widget()`, `refresh_incremental()`.
-  Subclasses: `ShellRenderer`, `CodeRenderer`, `FileRenderer`, `SearchRenderer`, `WebRenderer`,
-  `AgentRenderer`, `TextRenderer`, `MCPBodyRenderer`. `BodyRenderer.for_category(category)` factory.
-  `FileRenderer.render_diff_line(plain)` — styled Rich Text for diff lines.
-  `MCPBodyRenderer`: ANSI passthrough stream; `finalize()` extracts `content[].text` from JSON.
-  NOTE: this is `body_renderer.py` (singular) — the `body_renderers/` package was never shipped.
+- **`hermes_cli/tui/body_renderers/`** (package — `body_renderer.py` deleted)
+  Two parallel renderer systems — do NOT unify their APIs:
+  **`streaming.py`** (`StreamingBodyRenderer`, was `BodyRenderer`) — per-line streaming during live tool execution.
+    Factory: `StreamingBodyRenderer.for_category(ToolCategory)`. API: `render_stream_line()`, `finalize()`, `preview()`, `render_diff_line()`, `highlight_line()`.
+    Subclasses: `ShellRenderer`, `CodeRenderer`, `FileRenderer`, `SearchRenderer`, `WebRenderer`, `AgentRenderer`, `TextRenderer`, `MCPBodyRenderer`, `PlainBodyRenderer`.
+    Import: `from hermes_cli.tui.body_renderers.streaming import StreamingBodyRenderer`
+  **`base.py`** (`BodyRenderer` ABC) — post-hoc rich rendering after tool completion.
+    Factory: `pick_renderer(cls_result, payload)` in `__init__.py`. API: `can_render()`, `build()`, `build_widget(density=None)`.
+    Subclasses: `code.py`, `diff.py`, `json.py`, `table.py`, `log.py`, `search.py`, `shell.py`, `fallback.py`, `empty.py`.
+    Import: `from hermes_cli.tui.body_renderers import pick_renderer, FallbackRenderer`
+  **`_frame.py`** (`BodyFrame`) — canonical body container: header + body + footer slots; density → CSS class.
+  **`_grammar.py`** (`SkinColors`, `glyph`, `build_path_header`, `build_gutter_line_num`, `build_rule`, `BodyFooter`, `WRAP_CONTINUATION`)
 
 - **`hermes_cli/tui/response_flow.py`**
   `ResponseFlowEngine` — prose buffering, inline markdown, code-block routing, math routing.
@@ -208,18 +213,12 @@ High-signal flow:
 
 ## Input and completion
 
-- **`hermes_cli/tui/input_widget.py`**
-  `HermesInput(TextArea)` — history, submission, masking, trigger dispatch, file-drop handling.
-  Key: `_on_key` (async), `on_text_area_changed` replaces watch_value/watch_cursor_position,
-  ghost text via `self.suggestion`, `_push_undo_snapshot()` removed (TextArea manages undo).
-  `_idle_placeholder` stores default hint text; `set_slash_descriptions(dict)` wires command descriptions.
-  `_history_load(text)` uses `TextArea.replace()` to preserve undo ring (not `load_text()`).
-  `_last_slash_hint_fragment` debounces "did you mean" flash — resets only on `action_submit`, NOT on hide.
+- **`hermes_cli/tui/input/`** (subpackage — see Input system section above; `input_widget.py` is a 5-line backward-compat shim)
+  `widget.py` — `HermesInput(TextArea)`. Key: `_on_key` (async), `on_text_area_changed`.
+  Ghost text: `self.suggestion`. `_last_slash_hint_fragment` debounces slash hint — resets on `action_submit` only.
   `ctrl+shift+up/down` adjusts `_input_height_override` (3–10); resets on submit.
-  Subcommand completion: `_slash_subcommands`, `_slash_args_hints`, `_slash_keybind_hints` dicts;
-  `set_slash_subcommands()` / `set_slash_args_hints()` / `set_slash_keybind_hints()` methods;
+  Subcommand completion: `_slash_subcommands`, `_slash_args_hints`, `_slash_keybind_hints` dicts.
   `_show_subcommand_completions(parent_cmd, fragment)` dispatched when `SLASH_SUBCOMMAND` context detected.
-  Accept splices only the fragment (preserves `/parent ` prefix).
 - **`hermes_cli/tui/completion_context.py`** — trigger detection for slash, `@`, path contexts.
   `SLASH_SUBCOMMAND = 6` context — `/cmd fragment` after a space.
   `CompletionTrigger.parent_command: str` field carries the parent command name.
@@ -273,7 +272,7 @@ High-signal flow:
 - **`hermes_cli/tui/skin_loader.py`** — semantic color fan-out from skin files into CSS vars.
 - **`hermes_cli/tui/animation.py`** — `PulseMixin`, `lerp_color`, `shimmer_text`, `AnimationClock`.
 - **`hermes_cli/tui/perf.py`** — `PerfRegistry` singleton, `measure_v3()`, `TOOL_PANEL_V3_COUNTERS`,
-  `measure()`, `SuspicionDetector`, `WorkerWatcher`,
+  `measure()`, `measure_perf()`, `SuspicionDetector`, `WorkerWatcher`,
   `EventLoopLatencyProbe`, `FrameRateProbe`.
 
 - **`hermes_cli/tui/workspace_tracker.py`**
@@ -306,19 +305,37 @@ High-signal flow:
   Effects: `none`, `flash`, `gradient_tail`, `glow_settle`, `decrypt`, `shimmer`, `breathe`,
   `glitch_morph` (symbol ladder), `cascade` (index-delayed wave), `nier` (Katakana scramble),
   `zalgo` (decaying combining diacritics), `cosmic` (ghost-glyph fade-in).
-  `LiveLineWidget` wired in `widgets.py` via `_stream_effect_cfg()`.
+  `LiveLineWidget` wired in `widgets/code_blocks.py` via `_stream_effect_cfg()`.
   **Skin override**: active skin YAML can set top-level `stream_effect: <name>` (string) or
   `stream_effect: {enabled: ..., cascade_ticks: ..., morph_steps: ..., zalgo_marks: ...,
   fade_frames: ...}` (dict). Skin value takes precedence over `config.yaml`.
   `_stream_effect_cfg()` reads skin raw YAML via `yaml.safe_load` — runs on first `on_mount`,
   not hot-reloaded mid-session.
 
+## Input system
+
+- **`hermes_cli/tui/input/`** (subpackage — `input_widget.py` kept as backward-compat shim)
+  `widget.py` — `HermesInput(TextArea)`: history, submission, masking, trigger dispatch, file-drop.
+  `_history.py` — `_HistoryMixin`; `_apply_assist()` shim; `_rev_mode: bool` class attr.
+  `_autocomplete.py` — completion trigger dispatch, `SkillPickerOverlay` auto-dismiss.
+  `_path_completion.py` — threaded path walker, fuzzy rank, `on_path_search_provider_batch`.
+  `_constants.py` — `InputMode`, `AssistKind`, keybind constants.
+  `_mode.py` — `_compute_mode()`, mode-to-placeholder map.
+  `_assist.py` — `AssistKind(Enum)` (NONE/GHOST/OVERLAY/PICKER), `SKILL_PICKER_TRIGGER_PREFIX`.
+
 ## Overlays and state
 
-- **`hermes_cli/tui/overlays.py`**
-  `HelpOverlay`, `UsageOverlay`, `CommandsOverlay`, `ModelOverlay`, `WorkspaceOverlay`.
-  Info overlays: dismissed by `_dismiss_all_info_overlays()` (called before opening, from `watch_agent_running(True)`).
-  Escape at Priority -2 in `on_key`.
+- **`hermes_cli/tui/overlays/`** (subpackage — `overlays.py` moved to `widgets/overlays.py` for backward compat)
+  `config.py` — `ConfigOverlay` (7 tabs: model, skin, syntax, options, reasoning, verbose, yolo).
+  `interrupt.py` — `InterruptOverlay` (7 kinds: CLARIFY/APPROVAL/SUDO/SECRET/UNDO/NEW_SESSION/MERGE_CONFIRM); FIFO queue; `layer: interrupt`.
+  `skill_picker.py` — `SkillPickerOverlay`; `"prefix"`/`"chord"` trigger modes.
+  `reference.py` — `HistorySearchOverlay`, `KeymapOverlay`, `ToolPanelHelpOverlay`.
+  `_adapters.py` — adapter helpers for overlay state.
+  `_aliases.py` — alias classes using `_AliasMeta` (e.g. `ModelPickerOverlay = ConfigOverlay`).
+  `_legacy.py` — `HelpOverlay`, `UsageOverlay`, `CommandsOverlay`, `ModelOverlay`, `WorkspaceOverlay`.
+  5 canonical overlays (always pre-mounted, show/hide via `--visible` CSS class only):
+  `ConfigOverlay`, `InterruptOverlay`, `HistorySearchOverlay`, `KeymapOverlay`, `ToolPanelHelpOverlay`.
+  `_dismiss_all_info_overlays()` iterates all 5; Escape at Priority -2 in `on_key`.
 - **`hermes_cli/tui/tools_overlay.py`**
   `ToolsScreen(Screen)` — full-screen timeline. Snapshot frozen at construction.
   First `push_screen` in repo — `pop_screen()` to dismiss; `_dismiss_all_info_overlays()` does NOT affect it.
@@ -387,32 +404,32 @@ High-signal flow:
 
 ## Files that move together
 
-- `tool_panel.py` + `tool_blocks.py` + `tool_category.py` — binary collapse, category, header
-- `tool_blocks.py` + `test_tool_blocks.py` + `test_streaming_tool_block.py` + `test_omission_bar.py` + `test_path_context_menu.py` + `test_browse_nav_markers.py`
+- `tool_panel/` + `tool_blocks/` + `tool_category.py` — binary collapse, category, header
+- `tool_blocks/` + `test_tool_blocks.py` + `test_streaming_tool_block.py` + `test_omission_bar.py` + `test_path_context_menu.py` + `test_browse_nav_markers.py`
 - `tool_group.py` + `test_tool_group.py` + `test_tool_group_widget.py`
 - `tool_result_parse.py` + `test_tool_result_parse.py` + `test_result_summary_v2.py`
 - `response_flow.py` + `test_response_flow.py` + `test_math_renderer.py` + `test_response_flow_chunk.py`
-- `widgets.py` + overlay/status/output tests + `test_image_bar.py`
+- `widgets/` + overlay/status/output tests + `test_image_bar.py`
 - `kitty_graphics.py` + `test_kitty_graphics.py` + `test_halfblock_renderer.py` + `test_inline_image.py` + `test_sixel.py`
-- `media_player.py` + `widgets.py §SeekBar,InlineMediaWidget` + `test_inline_media.py`
+- `media_player.py` + `widgets/inline_media.py §SeekBar,InlineMediaWidget` + `test_inline_media.py`
 - `drawbraille_overlay.py` + `test_drawbraille_overlay.py` + `test_drawbraille_v2.py` + `test_drawbraille_toggle.py`
-- `overlays.py` + `test_slash_command_overlays.py`
+- `overlays/` + `test_slash_command_overlays.py`
 - `app.py` + `test_turn_lifecycle.py` + `test_integration.py` + focused module test
 - `cli.py` + `tests/cli/test_reasoning_tui_bridge.py`
 - `emoji_registry.py` + `response_flow.py §_EMOJI_RE/_extract_emoji_refs/_mount_emoji` + `app.py §_resolve_user_emoji/on_resize` + `cli.py §_emoji_registry` + `test_emoji_registry.py`
-- `stream_effects.py` + `widgets.py §LiveLineWidget` + `test_stream_effects.py`
-- `resize_utils.py` + `min_size_overlay.py` + `app.py §on_resize/_flush_resize/_apply_min_size_overlay` + `tool_group.py §on_resize` + `tool_panel.py §FooterPane.on_resize` + `completion_overlay.py §on_resize` + `drawbraille_overlay.py §on_resize` + `tool_blocks.py §OmissionBar.on_resize` + `widgets.py §OutputPanel.on_resize/InlineMediaWidget.on_resize/AssistantNameplate.on_resize` + `test_resize_spec.py` + `test_resize_widgets.py` + `test_resize_integration.py`
+- `stream_effects.py` + `widgets/code_blocks.py §LiveLineWidget` + `test_stream_effects.py`
+- `resize_utils.py` + `min_size_overlay.py` + `app.py §on_resize/_flush_resize/_apply_min_size_overlay` + `tool_group.py §on_resize` + `tool_panel/_footer.py §FooterPane.on_resize` + `completion_overlay.py §on_resize` + `drawbraille_overlay.py §on_resize` + `tool_blocks/_shared.py §OmissionBar.on_resize` + `widgets/ §OutputPanel.on_resize/InlineMediaWidget.on_resize/AssistantNameplate.on_resize` + `test_resize_spec.py` + `test_resize_widgets.py` + `test_resize_integration.py`
 - `write_file_block.py` + `test_write_file_block.py`
-- `math_renderer.py` + `response_flow.py` + `widgets.py` + `config.py` + `cli.py` + `test_math_renderer.py`
+- `math_renderer.py` + `response_flow.py` + `widgets/` + `config.py` + `cli.py` + `test_math_renderer.py`
 
 ## Usual read order by task
 
-- **Output/render bug:** `app.py` → `widgets.py` → `tool_blocks.py` or `response_flow.py` → tests
-- **ToolPanel/collapse bug:** `tool_panel.py` → `tool_blocks.py` → `test_tool_panel.py`
-- **ToolCategory/spec bug:** `tool_category.py` → `streaming_microcopy.py` → `body_renderer.py` → `test_tool_spec.py`
-- **Browse mode bug:** `app.py §browse` → `tool_blocks.py §inject_diff` → `test_browse_nav_markers.py` → `test_tool_blocks.py`
-- **Overlay/input bug:** `app.py` → `widgets.py` → `state.py` → overlay tests
-- **Completion/preview bug:** `input_widget.py` → `completion_context.py` → `path_search.py` → completion tests
+- **Output/render bug:** `app.py` → `widgets/` → `tool_blocks/` or `response_flow.py` → tests
+- **ToolPanel/collapse bug:** `tool_panel/` → `tool_blocks/` → `test_tool_panel.py`
+- **ToolCategory/spec bug:** `tool_category.py` → `streaming_microcopy.py` → `body_renderers/streaming.py` → `test_tool_spec.py`
+- **Browse mode bug:** `app.py §browse` → `tool_blocks/_block.py §inject_diff` → `test_browse_nav_markers.py` → `test_tool_blocks.py`
+- **Overlay/input bug:** `app.py` → `overlays/` → `state.py` → overlay tests
+- **Completion/preview bug:** `input/widget.py` → `completion_context.py` → `path_search.py` → completion tests
 - **Theme bug:** `hermes.tcss` → `theme_manager.py` → `skin_loader.py` → theme tests
 - **Animation bug:** `drawbraille_overlay.py` → `animation.py` → drawbraille tests
-- **Inline image/media bug:** `kitty_graphics.py` → `widgets.py §InlineImage` → `media_player.py` → inline tests
+- **Inline image/media bug:** `kitty_graphics.py` → `widgets/inline_media.py §InlineImage` → `media_player.py` → inline tests

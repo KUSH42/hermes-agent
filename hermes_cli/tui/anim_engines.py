@@ -1612,6 +1612,7 @@ class CompositeEngine:
         frames = [e.next_frame(params) for e in self.layers]
         result = frames[0]
         for f in frames[1:]:
+            # THREADING: UI-thread only — _LAYER_ROW_BUF/_LAYER_RESULT_BUF not reentrant
             result = _layer_frames(result, f, self.blend_mode, params.heat)
         return result
 
@@ -1631,6 +1632,7 @@ class CrossfadeEngine:
         fa = self.engine_a.next_frame(params)
         fb = self.engine_b.next_frame(params)
         self.progress = min(1.0, self.progress + self.speed)
+        # THREADING: UI-thread only — _LAYER_ROW_BUF/_LAYER_RESULT_BUF not reentrant
         return _layer_frames(fa, fb, "overlay")
 
 

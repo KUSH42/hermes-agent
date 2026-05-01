@@ -363,12 +363,12 @@ class AnimConfigPanel(Widget):
             if io.has_class("--visible"):
                 return
         except Exception:
-            # slider widget absent pre-mount; value update skipped
+            # InterruptOverlay absent (NoMatches) or app torn down — proceed with refocus
             pass
         try:
             self.call_after_refresh(self.focus)
         except Exception:
-            # label widget absent pre-mount; label update skipped
+            # call_after_refresh unavailable before mount or after detach — focus deferral skipped
             pass
 
     def action_next_field(self) -> None:
@@ -589,8 +589,11 @@ class AnimConfigPanel(Widget):
             try:
                 self.app.set_status_error(f"save failed: {exc}", auto_clear_s=5.0)  # type: ignore[attr-defined]
             except Exception:
-                # option list widget absent; selection skipped
-                pass
+                _log.warning(
+                    "set_status_error unavailable after save failure: %r",
+                    exc,
+                    exc_info=True,
+                )
 
     def _push_to_overlay_all(self) -> None:
         """Apply all field changes to DrawbrailleOverlay."""

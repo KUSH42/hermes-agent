@@ -673,12 +673,13 @@ class ToolRenderingService(AppService):
             if panel is not None:
                 from hermes_cli.tui.tool_result_parse import inject_recovery_actions
                 panel.set_result_summary_v4(inject_recovery_actions(summary))
-        elif panel is not None and result_lines:
-            # No summary but result_lines present — fire classifier so renderer swap
-            # (e.g. TEXT→SEARCH) still happens. Without this, blocks without a
-            # structured summary string stay on PlainBodyRenderer and show "(N rows)".
+        elif panel is not None:
+            # No summary — fire classifier so renderer swap (e.g. TEXT→SEARCH) still
+            # happens. Must run even for 0-result tools (empty result_lines): without
+            # this, a grep/search that finds nothing stays frozen at "0 matches so far…"
+            # because the streaming microcopy is never replaced.
             try:
-                panel._update_kind_from_classifier(len(result_lines))
+                panel._update_kind_from_classifier(len(result_lines) if result_lines else 0)
             except Exception:
                 logger.debug("post-completion classifier failed (no summary path)", exc_info=True)
         # R2-HIGH-01: route counters/phase/active-name/agent-stack/record-update

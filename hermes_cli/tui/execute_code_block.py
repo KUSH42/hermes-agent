@@ -465,6 +465,17 @@ class ExecuteCodeBlock(StreamingToolBlock):
 
         # Final stdout flush
         self._flush_pending()
+        # If no output was produced, hide the separator and output section — showing
+        # an empty "— output" section is confusing.
+        if self._total_received == 0:
+            try:
+                self.query_one(OutputSeparator).display = False
+            except NoMatches:
+                pass
+            try:
+                self.query_one(OutputSection).display = False
+            except NoMatches:
+                pass
         # Hide tail badge
         self._tail.dismiss()
         self._header._duration = duration

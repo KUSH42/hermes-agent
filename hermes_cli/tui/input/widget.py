@@ -115,7 +115,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         id: str | None = None,
         classes: str | None = None,
     ) -> None:
-        _default_placeholder = "Type a message  @file  /cmd  !shell"
+        _default_placeholder = "Type a message · @file · /cmd · !shell"
         _effective_placeholder = placeholder if placeholder else _default_placeholder
         super().__init__(
             text="",

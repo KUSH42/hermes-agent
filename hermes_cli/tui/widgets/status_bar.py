@@ -769,8 +769,10 @@ class StatusBar(PulseMixin, Widget):
                 if session_label:
                     t.append(f" \u00b7 {session_label}", style="dim")
             if enabled:
-                pct_color = StatusBar._compaction_color(progress, _vars)
-                t.append(" \u25b0", style=pct_color)  # leading space \u2014 model text precedes
+                pct_int = min(100, max(0, int(round(progress * 100))))
+                if pct_int >= 1:
+                    pct_color = StatusBar._compaction_color(progress, _vars)
+                    t.append(" \u25b0", style=pct_color)  # leading space \u2014 model text precedes
             if show_ctx_label:
                 t.append(" \u00b7 ", style="dim")
                 _append_status_segment(t, ctx_label, "dim", streaming=_status_streaming)
@@ -784,17 +786,18 @@ class StatusBar(PulseMixin, Widget):
             else:
                 _append_status_segment(t, model, _model_style, streaming=_status_streaming)  # A11/S1-C
                 if enabled:
-                    if progress >= _compact_crit:
-                        t.append("[!] ", style="bold red blink")
-                    filled  = min(int(progress * _BAR_WIDTH), _BAR_WIDTH)
-                    bar_str = _BAR_FILLED * filled + _BAR_EMPTY * (_BAR_WIDTH - filled)
-                    bar_color = StatusBar._compaction_color(progress, _vars)
-                    t.append(" \u00b7 ", style="dim")
-                    t.append(bar_str, style=bar_color)
-                    if _pct_enabled:
-                        pct_text = f"{min(100, max(0, int(round(progress * 100))))}%"
+                    pct_int = min(100, max(0, int(round(progress * 100))))
+                    if pct_int >= 1:
+                        if progress >= _compact_crit:
+                            t.append("[!] ", style="bold red blink")
+                        filled  = min(int(progress * _BAR_WIDTH), _BAR_WIDTH)
+                        bar_str = _BAR_FILLED * filled + _BAR_EMPTY * (_BAR_WIDTH - filled)
+                        bar_color = StatusBar._compaction_color(progress, _vars)
                         t.append(" \u00b7 ", style="dim")
-                        t.append(pct_text, style="dim")
+                        t.append(bar_str, style=bar_color)
+                        if _pct_enabled:
+                            t.append(" \u00b7 ", style="dim")
+                            t.append(f"{pct_int}%", style="dim")
                 if show_ctx_label:
                     t.append(" \u00b7 ", style="dim")
                     _append_status_segment(t, ctx_label, "dim", streaming=_status_streaming)

@@ -64,7 +64,7 @@ _WHITELIST_DEEP = _WHITELIST_DEEP_AMBIENT
 # ── Effect whitelist (static-safe only) ───────────────────────────────────────
 
 _WHITELIST_EFFECT: frozenset[str] = frozenset({
-    "breathe", "glow_settle", "cosmic", "nier", "flash",
+    "breathe", "glow_settle", "cosmic", "nier", "flash", "shimmer",
 })
 
 _DEFAULT_ENGINE = "dna"
@@ -144,6 +144,7 @@ _AnimSurface {
         self._frame_lines: list[str] = []
         self._elapsed: float = 0.0
         self._last_w: int = 0
+        self._accent_hex: str = "#888888"
 
     def on_mount(self) -> None:
         self._init_engine()
@@ -180,8 +181,16 @@ _AnimSurface {
             dt=dt,
         )
 
-    def tick_anim(self, dt: float) -> None:
+    def swap_engine(self, engine_key: str) -> None:
+        """Re-initialize engine in place; resets elapsed and clears frame buffer."""
+        self._engine_key = engine_key
+        self._elapsed = 0.0
+        self._frame_lines = []
+        self._init_engine()
+
+    def tick_anim(self, dt: float, accent_hex: str = "#888888") -> None:
         """Called from ThinkingWidget._tick. Advances frame and refreshes."""
+        self._accent_hex = accent_hex
         if self._engine is None:
             return
         try:
@@ -202,7 +211,7 @@ _AnimSurface {
                 raw = self._frame_lines[y]
                 # Pad/crop to widget width
                 raw = raw.ljust(width)[:width]
-                text = Text(raw, style="dim", no_wrap=True, overflow="ellipsis")
+                text = Text(raw, style=f"dim {self._accent_hex}", no_wrap=True, overflow="ellipsis")
                 segments = [
                     Segment(seg.text, seg.style or Style(), seg.control)
                     for seg in text.render(self.app.console)
@@ -307,6 +316,9 @@ _LabelLine   { height: 1;   width: 1fr; }
     _cfg_deep_after_s: float = 120.0  # A4: DEEP only after extended wait
     _cfg_show_elapsed: bool = True
     _cfg_allow_intense: bool = False  # D-5: gate for intense engines
+    _cfg_long_wait_engine: str = "wave_function"
+    _cfg_long_wait_effect: str = "shimmer"
+    _actual_tick_interval: float = 1.0 / 12.0
 
     # Children (created in compose)
     _anim_surface: _AnimSurface | None = None
@@ -367,6 +379,8 @@ _LabelLine   { height: 1;   width: 1fr; }
             self._cfg_deep_after_s = float(thinking.get("deep_after_s", 120.0))
             self._cfg_show_elapsed = bool(thinking.get("show_elapsed", True))
             self._cfg_allow_intense = bool(thinking.get("allow_intense", False))
+            self._cfg_long_wait_engine = str(thinking.get("long_wait_engine", "wave_function"))
+            self._cfg_long_wait_effect = str(thinking.get("long_wait_effect", "shimmer"))
         except Exception:
             pass  # use defaults
 
@@ -510,8 +524,10 @@ _LabelLine   { height: 1;   width: 1fr; }
 
         # Start single timer — registered through mixin so on_unmount stops it automatically
         self._load_config()
-        hz = max(1.0, self._cfg_tick_hz)
-        self._timer = self._register_timer(self.set_interval(1.0 / hz, self._tick))
+        hz = max(1.0, self._cfg_tick_hz) if anim_rows > 0 else 4.0
+        interval = 1.0 / hz
+        self._actual_tick_interval = interval
+        self._timer = self._register_timer(self.set_interval(interval, self._tick))
 
     def deactivate(self) -> None:
         """Stop animation timer immediately; schedule 150ms visual fade-out."""
@@ -653,13 +669,29 @@ _LabelLine   { height: 1;   width: 1fr; }
         if self._substate == "WORKING" and elapsed >= self._cfg_long_wait_after_s:
             self._substate = "LONG_WAIT"
             self._substate_start = time.monotonic()  # A4: record when LONG_WAIT began
+            # TW-A — engine swap
+            if self._anim_surface is not None:
+                lw_engine = self._resolve_engine(self._cfg_long_wait_engine, self._current_mode or ThinkingMode.DEFAULT)
+                if lw_engine != self._anim_surface._engine_key:
+                    self._anim_surface.swap_engine(lw_engine)
+            # TW-C — effect swap
+            if self._label_line is not None:
+                lw_effect = self._resolve_effect(self._cfg_long_wait_effect)
+                try:
+                    from hermes_cli.stream_effects import make_stream_effect
+                    self._label_line._effect = make_stream_effect(
+                        {"stream_effect": lw_effect},
+                        lock=self._label_line._lock,
+                    )
+                except Exception:
+                    logger.warning("ThinkingWidget: long_wait effect swap failed", exc_info=True)
 
         # ── Label text ─────────────────────────────────────────────────────────
         label_text = self._get_label_text(elapsed)
 
         # ── Drive children ─────────────────────────────────────────────────────
         if self._anim_surface is not None:
-            self._anim_surface.tick_anim(dt)
+            self._anim_surface.tick_anim(dt, self._accent_hex or "#888888")
 
         if self._label_line is not None:
             # STARTED: use flash effect for first cycle

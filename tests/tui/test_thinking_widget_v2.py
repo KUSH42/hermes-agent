@@ -435,3 +435,99 @@ def test_V4_user_message_panel_default_padding_is_2() -> None:
     assert left_padding == "2", (
         f"UserMessagePanel left padding is {left_padding!r}, expected '2'"
     )
+
+
+# --- TW-A/B/C/D additions ---
+
+def test_tick_anim_signature_compat() -> None:
+    """TW-B backward compat — tick_anim(dt) with no accent arg must not raise."""
+    from hermes_cli.tui.widgets.thinking import _AnimSurface
+    s = _AnimSurface.__new__(_AnimSurface)
+    s._engine_key = "dna"
+    s._engine = None
+    s._frame_lines = []
+    s._elapsed = 0.0
+    s._last_w = 0
+    s._accent_hex = "#888888"
+    # No accent arg — default kicks in
+    from unittest.mock import patch
+    with patch.object(s, "refresh"):
+        s.tick_anim(0.1)
+    assert s._accent_hex == "#888888"
+
+
+def test_long_wait_transition_combined() -> None:
+    """TW-A + TW-C fire in same tick — both engine and effect swap."""
+    import time
+    import threading
+    from unittest.mock import MagicMock, patch
+    from hermes_cli.tui.widgets.thinking import ThinkingWidget, ThinkingMode, _AnimSurface
+    from hermes_cli.stream_effects import ShimmerEffect
+
+    w = ThinkingWidget.__new__(ThinkingWidget)
+    w._cfg_loaded = True
+    w._cfg_long_wait_after_s = 8.0
+    w._cfg_long_wait_engine = "wave_function"
+    w._cfg_long_wait_effect = "shimmer"
+    w._cfg_engine = "dna"
+    w._cfg_effect = "breathe"
+    w._cfg_allow_intense = False
+    w._substate = "WORKING"
+    w._activate_time = time.monotonic() - 10.0
+    w._current_mode = ThinkingMode.DEFAULT
+
+    s = _AnimSurface.__new__(_AnimSurface)
+    s._engine_key = "dna"
+    s._engine = MagicMock()
+    s._frame_lines = []
+    s._elapsed = 0.0
+    s._accent_hex = "#888888"
+    w._anim_surface = s
+
+    lock = threading.Lock()
+    ll = MagicMock()
+    ll._lock = lock
+    w._label_line = ll
+
+    from hermes_cli.stream_effects import make_stream_effect
+    elapsed = 10.0
+    if w._substate == "WORKING" and elapsed >= w._cfg_long_wait_after_s:
+        w._substate = "LONG_WAIT"
+        if w._anim_surface is not None:
+            lw_engine = w._resolve_engine(w._cfg_long_wait_engine, w._current_mode or ThinkingMode.DEFAULT)
+            if lw_engine != w._anim_surface._engine_key:
+                with patch.object(s, "_init_engine"):
+                    w._anim_surface.swap_engine(lw_engine)
+        if w._label_line is not None:
+            lw_effect = w._resolve_effect(w._cfg_long_wait_effect)
+            new_fx = make_stream_effect({"stream_effect": lw_effect}, lock=lock)
+            w._label_line._effect = new_fx
+
+    assert s._engine_key == "wave_function"
+    assert isinstance(w._label_line._effect, ShimmerEffect)
+
+
+def test_config_long_wait_keys_loaded() -> None:
+    """Both long_wait_engine and long_wait_effect loaded from config."""
+    from unittest.mock import patch
+    from hermes_cli.tui.widgets.thinking import ThinkingWidget
+
+    w = ThinkingWidget.__new__(ThinkingWidget)
+    w._cfg_loaded = False
+    w._cfg_mode = "default"
+    w._cfg_engine = "dna"
+    w._cfg_effect = "breathe"
+    w._cfg_tick_hz = 12.0
+    w._cfg_long_wait_after_s = 8.0
+    w._cfg_deep_after_s = 120.0
+    w._cfg_show_elapsed = True
+    w._cfg_allow_intense = False
+    w._cfg_long_wait_engine = "wave_function"
+    w._cfg_long_wait_effect = "shimmer"
+
+    cfg = {"tui": {"thinking": {"long_wait_engine": "rope_braid", "long_wait_effect": "breathe"}}}
+    with patch("hermes_cli.config.read_raw_config", return_value=cfg):
+        w._load_config()
+
+    assert w._cfg_long_wait_engine == "rope_braid"
+    assert w._cfg_long_wait_effect == "breathe"

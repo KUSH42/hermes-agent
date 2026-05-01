@@ -361,6 +361,9 @@ class DecryptEffect(StreamEffectRenderer):
 # ShimmerEffect
 # ---------------------------------------------------------------------------
 
+_SHIMMER_ADVANCE_PER_TICK: float = 1.2  # chars/tick; at 12 Hz → ~2s cycle (30 ticks × 1/12s)
+
+
 class ShimmerEffect(StreamEffectRenderer):
     """Bright wave sweeps across text — static label animation in the demo."""
 
@@ -397,6 +400,14 @@ class ShimmerEffect(StreamEffectRenderer):
 
     def on_turn_end(self) -> None:
         self.on_line_complete()
+
+    def tick_tui(self) -> bool:
+        # called directly by _LabelLine.tick_label(); needs_clock stays False intentionally
+        label_len = 20  # soft ceiling for wrap reset; ThinkingWidget labels are ~12–20 chars
+        self._pos += _SHIMMER_ADVANCE_PER_TICK
+        if self._pos > label_len + self._window:
+            self._pos = -float(self._window)
+        return True
 
     def render_tui(self, buf: str, accent_hex: str, text_hex: str) -> "Text":
         from rich.text import Text

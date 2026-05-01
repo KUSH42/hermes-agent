@@ -77,6 +77,7 @@ Key invariant: `_save_to_history` writes `\n+line\n…\n` (leading blank + trail
 ## Startup banner gotchas
 
 - `StartupBannerWidget` startup art cannot rely on `U+2800 BRAILLE PATTERN BLANK` for indentation. In the Textual startup widget path some terminal/font stacks don't advance the cursor consistently for that codepoint, so the visible braille glyphs collapse into the first column. Normalize startup hero art with `cli._sanitize_startup_hero_text()` before templating or frame splicing; that helper replaces `U+2800` with plain spaces and also strips the reserved placeholder marker.
+- The same `U+2800` normalization must be applied to the static startup banner path. `HermesCLI._render_startup_banner_text(print_hero=True)` should build a sanitized `hero_renderable` instead of delegating to `build_welcome_banner(..., print_hero=True)`, or the final post-TTE/static banner can still collapse even when the splice-template path is correct.
 
 ## ToolsScreen async gotchas
 

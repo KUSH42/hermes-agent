@@ -2910,6 +2910,8 @@ Direct `widget.app = mock` raises `AttributeError: property 'app' of 'ThinkingWi
 **Testing gotchas:**
 - New startup-TTE tests should clear **all three** module-level events around each test: `STARTUP_BANNER_READY`, `OUTPUT_PANEL_WIDTH_READY`, and `STARTUP_TTE_SKIP`.
 - A synchronous `call_from_thread` stub must execute async callbacks via `asyncio.run(...)`; otherwise `_drain_latest()` never updates the fake widget.
+
+**Static-banner normalization rule:** `_render_startup_banner_text(print_hero=True)` must resolve the startup hero, sanitize it with `_sanitize_startup_hero_text()`, and pass it back through `hero_renderable`. Do not rely on the `build_welcome_banner(..., print_hero=True)` branch for the startup widget path; that branch reintroduces raw `U+2800` indentation and can still produce the collapsed first-column startup banner seen in real Textual/xterm sessions.
 - `HermesInput.app` is read-only in tests; patch `type(widget).app` with `PropertyMock` when `_on_key()` needs access to `self.app.cli`.
 
 ## Changelog — 2026-05-01 — Startup TTE config and diagnostics — config caps + widened teardown DEBUG + once-only missing-TTE INFO — 66-test verification

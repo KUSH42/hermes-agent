@@ -4567,7 +4567,7 @@ class HermesCLI:
         from rich.console import Console as _Console
         from rich.text import Text
         from model_tools import get_tool_definitions
-        from hermes_cli.banner import build_welcome_banner
+        from hermes_cli.banner import build_welcome_banner, render_banner_hero_text, resolve_banner_hero_assets
 
         tools = get_tool_definitions(enabled_toolsets=self.enabled_toolsets, quiet_mode=True)
         ctx_len = None
@@ -4598,6 +4598,14 @@ class HermesCLI:
             width=capture_width,
         )
         hero_renderable = Text.from_ansi(hero_text) if hero_text is not None else None
+        if hero_renderable is None and print_hero:
+            # Startup banner rendering goes through Static/Textual instead of the
+            # normal terminal path. Replace braille blank indentation with spaces
+            # before building the hero renderable so the startup widget keeps its
+            # left-column geometry on terminals that mis-measure U+2800.
+            _, plain_hero = resolve_banner_hero_assets()
+            sanitized_hero = _sanitize_startup_hero_text(plain_hero)
+            hero_renderable = render_banner_hero_text(sanitized_hero)
         if hero_renderable is not None:
             hero_renderable.no_wrap = True
             hero_renderable.overflow = "ignore"

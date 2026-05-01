@@ -3,8 +3,33 @@ from __future__ import annotations
 
 import sys
 import os
+import asyncio
+import inspect
+from pathlib import Path
 import pytest
 from unittest.mock import MagicMock, patch, call
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _tte_cfg(cli_module, **overrides):
+    data = {
+        "effect_name": "matrix",
+        "params": {},
+        "max_wall_s": 30.0,
+        "max_frames": 3000,
+        "fps": 60,
+    }
+    data.update(overrides)
+    return cli_module._StartupTteConfig(**data)
+
+
+def _sync_call_from_thread(fn, *args, **kwargs):
+    result = fn(*args, **kwargs)
+    if inspect.isawaitable(result):
+        asyncio.run(result)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -22,29 +47,36 @@ def mock_app():
 @pytest.fixture
 def cli_instance(mock_app):
     # root-level cli.py — NOT hermes_cli.cli
-    sys.path.insert(0, "/home/xush/.hermes/hermes-agent")
+    sys.path.insert(0, str(REPO_ROOT))
     import cli as cli_module
 
     cli = MagicMock()
     # Bind real methods under test
     cli._play_tte_in_output_panel = cli_module.HermesCLI._play_tte_in_output_panel.__get__(cli)
     cli._get_startup_text_effect_config = cli_module.HermesCLI._get_startup_text_effect_config.__get__(cli)
+    cli._ensure_startup_banner_artefacts = (
+        cli_module.HermesCLI._ensure_startup_banner_artefacts.__get__(cli)
+    )
     cli._render_startup_banner_text = MagicMock(return_value=MagicMock())
+    cli._startup_banner_template = None
+    cli._startup_banner_static = None
     # Template dict must use the keys _splice_startup_banner_frame actually reads
     cli._build_startup_banner_template = MagicMock(return_value={
         "lines": [], "hero_row": 0, "hero_col": 0, "hero_width": 10, "hero_height": 5
     })
     cli._splice_startup_banner_frame = MagicMock(return_value=MagicMock())
     # CRITICAL: stub call_from_thread to invoke the callback synchronously in tests.
-    mock_app.call_from_thread = MagicMock(side_effect=lambda fn: fn())
+    mock_app.call_from_thread = MagicMock(side_effect=_sync_call_from_thread)
     # STARTUP_BANNER_READY gate must be pre-set so _play_tte_in_output_panel doesn't
     # block 2s waiting for compose() to mount StartupBannerWidget.
-    from hermes_cli.tui.widgets import STARTUP_BANNER_READY
+    from hermes_cli.tui.widgets import OUTPUT_PANEL_WIDTH_READY, STARTUP_BANNER_READY
     STARTUP_BANNER_READY.set()
+    OUTPUT_PANEL_WIDTH_READY.set()
     # Patch the module-level _hermes_app global
     with patch.object(cli_module, "_hermes_app", mock_app):
         yield cli, cli_module, mock_app
     STARTUP_BANNER_READY.clear()
+    OUTPUT_PANEL_WIDTH_READY.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -57,10 +89,9 @@ def test_T_SBP_01_preflight_fires_even_with_no_tte_frames(cli_instance):
     cli, cli_module, mock_app = cli_instance
 
     with patch("hermes_cli.tui.tte_runner.iter_frames", return_value=iter([])):
-        cli._play_tte_in_output_panel("matrix", "hero", {})
+        cli._play_tte_in_output_panel(_tte_cfg(cli_module), "hero")
 
-    # _render_startup_banner_text must have been called for the pre-flight
-    cli._render_startup_banner_text.assert_called()
+    cli._splice_startup_banner_frame.assert_called()
     # call_from_thread must have been called (to dispatch _drain_latest)
     mock_app.call_from_thread.assert_called()
 
@@ -85,10 +116,9 @@ def test_T_SBP_02_preflight_sends_nonempty_text(cli_instance):
     original_render = cli._render_startup_banner_text
 
     with patch("hermes_cli.tui.tte_runner.iter_frames", return_value=iter([])):
-        cli._play_tte_in_output_panel("matrix", "hero", {})
+        cli._play_tte_in_output_panel(_tte_cfg(cli_module), "hero")
 
-    # _render_startup_banner_text returns our preflight_text
-    assert cli._render_startup_banner_text.call_count >= 1
+    assert cli._splice_startup_banner_frame.call_count >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +137,7 @@ def test_T_SBP_03_wall_clock_cap_exits_early(cli_instance, monkeypatch):
         return 0.0 if calls[0] == 1 else 7.0
 
     monkeypatch.setattr("cli.time.monotonic", fake_monotonic)
+    monkeypatch.setattr("cli.time.sleep", MagicMock())
 
     frame_count = [0]
 
@@ -116,7 +147,7 @@ def test_T_SBP_03_wall_clock_cap_exits_early(cli_instance, monkeypatch):
             yield "frame"
 
     with patch("hermes_cli.tui.tte_runner.iter_frames", many_frames):
-        cli._play_tte_in_output_panel("matrix", "hero", {})
+        cli._play_tte_in_output_panel(_tte_cfg(cli_module), "hero")
 
     assert frame_count[0] < 10000, f"Expected early exit, got {frame_count[0]} frames"
 
@@ -127,6 +158,7 @@ def test_T_SBP_04_max_frames_guard_still_works(cli_instance, monkeypatch):
 
     # Constant time — no wall-clock advance
     monkeypatch.setattr("cli.time.monotonic", lambda: 0.0)
+    monkeypatch.setattr("cli.time.sleep", MagicMock())
 
     frame_count = [0]
 
@@ -136,7 +168,7 @@ def test_T_SBP_04_max_frames_guard_still_works(cli_instance, monkeypatch):
             yield "frame"
 
     with patch("hermes_cli.tui.tte_runner.iter_frames", many_frames):
-        cli._play_tte_in_output_panel("matrix", "hero", {})
+        cli._play_tte_in_output_panel(_tte_cfg(cli_module), "hero")
 
     # Should have stopped at or near MAX_FRAMES (3000) not all 10000
     # The loop checks i >= MAX_FRAMES at start of each iteration, so at most 3001 frames counted
@@ -155,19 +187,14 @@ def test_T_SBP_05_hold_frame_queues_static_after_tte(cli_instance, monkeypatch):
     monkeypatch.setattr("cli.time.monotonic", lambda: 0.0)
     monkeypatch.setattr("cli.time.sleep", MagicMock())
 
-    render_calls = []
-    original_render = MagicMock(side_effect=lambda **kw: MagicMock())
-    cli._render_startup_banner_text = original_render
-
     def one_frame(name, text, params):
         yield "frame line 1"
 
     with patch("hermes_cli.tui.tte_runner.iter_frames", one_frame):
-        result = cli._play_tte_in_output_panel("matrix", "hero", {})
+        result = cli._play_tte_in_output_panel(_tte_cfg(cli_module), "hero")
 
     assert result is True
-    # At minimum: preflight call + post-loop static banner call
-    assert original_render.call_count >= 2
+    assert cli._splice_startup_banner_frame.call_count >= 3
 
 
 def test_T_SBP_06_no_tte_frames_skips_hold_frame(cli_instance, monkeypatch):
@@ -179,22 +206,18 @@ def test_T_SBP_06_no_tte_frames_skips_hold_frame(cli_instance, monkeypatch):
     sleep_mock = MagicMock()
     monkeypatch.setattr("cli.time.sleep", sleep_mock)
 
-    render_mock = MagicMock(return_value=MagicMock())
-    cli._render_startup_banner_text = render_mock
-
     with patch("hermes_cli.tui.tte_runner.iter_frames", return_value=iter([])):
-        result = cli._play_tte_in_output_panel("matrix", "hero", {})
+        result = cli._play_tte_in_output_panel(_tte_cfg(cli_module), "hero")
 
     assert result is False
-    # Only preflight should have been called (no hold-frame after empty loop)
-    assert render_mock.call_count == 1
+    assert cli._splice_startup_banner_frame.call_count == 1
     # sleep should not have been called
     sleep_mock.assert_not_called()
 
 
 def test_T_SBP_07_set_tui_static_not_called_when_played(monkeypatch):
     """T-SBP-07: _set_tui_startup_banner_static is not called when played=True."""
-    sys.path.insert(0, "/home/xush/.hermes/hermes-agent")
+    sys.path.insert(0, str(REPO_ROOT))
     import cli as cli_module
 
     mock_app = MagicMock()
@@ -221,7 +244,7 @@ def test_T_SBP_07_set_tui_static_not_called_when_played(monkeypatch):
 
 def test_T_SBP_08_reduced_motion_config_returns_none(monkeypatch):
     """T-SBP-08: tui.reduced_motion: true in config causes early return None."""
-    sys.path.insert(0, "/home/xush/.hermes/hermes-agent")
+    sys.path.insert(0, str(REPO_ROOT))
     import cli as cli_module
 
     cli = MagicMock()
@@ -236,7 +259,7 @@ def test_T_SBP_08_reduced_motion_config_returns_none(monkeypatch):
 
 def test_T_SBP_09_hermes_reduced_motion_env_returns_none(monkeypatch):
     """T-SBP-09: HERMES_REDUCED_MOTION=1 env var causes early return None."""
-    sys.path.insert(0, "/home/xush/.hermes/hermes-agent")
+    sys.path.insert(0, str(REPO_ROOT))
     import cli as cli_module
 
     cli = MagicMock()
@@ -251,7 +274,7 @@ def test_T_SBP_09_hermes_reduced_motion_env_returns_none(monkeypatch):
 
 def test_T_SBP_10_none_config_uses_fallback(monkeypatch):
     """T-SBP-10: When self.config=None, the 'or {}' fallback prevents AttributeError."""
-    sys.path.insert(0, "/home/xush/.hermes/hermes-agent")
+    sys.path.insert(0, str(REPO_ROOT))
     import cli as cli_module
 
     cli = MagicMock()
@@ -268,7 +291,7 @@ def test_T_SBP_10_none_config_uses_fallback(monkeypatch):
 
 def test_T_SBP_11_no_flags_returns_valid_tuple(monkeypatch):
     """T-SBP-11: Neither flag set: function returns valid (effect_name, params) tuple."""
-    sys.path.insert(0, "/home/xush/.hermes/hermes-agent")
+    sys.path.insert(0, str(REPO_ROOT))
     import cli as cli_module
 
     cli = MagicMock()
@@ -282,9 +305,8 @@ def test_T_SBP_11_no_flags_returns_valid_tuple(monkeypatch):
 
     result = cli._get_startup_text_effect_config()
     assert result is not None
-    effect_name, params = result
-    assert effect_name == "matrix"
-    assert isinstance(params, dict)
+    assert result.effect_name == "matrix"
+    assert isinstance(result.params, dict)
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +316,7 @@ def test_T_SBP_11_no_flags_returns_valid_tuple(monkeypatch):
 def test_T_SBP_12_short_frame_line_has_empty_style_padding(monkeypatch):
     """T-SBP-12: A TTE frame line 5 chars shorter than hero_width produces spliced
     Text whose final padding characters have empty style."""
-    sys.path.insert(0, "/home/xush/.hermes/hermes-agent")
+    sys.path.insert(0, str(REPO_ROOT))
     import cli as cli_module
     from rich.text import Text
 
@@ -342,7 +364,7 @@ def test_T_SBP_12_short_frame_line_has_empty_style_padding(monkeypatch):
 
 def test_T_SBP_13_full_width_frame_line_no_extra_padding(monkeypatch):
     """T-SBP-13: A full-width TTE frame line produces no extra padding (delta==0)."""
-    sys.path.insert(0, "/home/xush/.hermes/hermes-agent")
+    sys.path.insert(0, str(REPO_ROOT))
     import cli as cli_module
     from rich.text import Text
 
@@ -378,7 +400,7 @@ def test_T_SBP_13_full_width_frame_line_no_extra_padding(monkeypatch):
 def test_T_SBP_14_panel_width_used_when_set(monkeypatch):
     """T-SBP-14: When app._startup_output_panel_width=60, _render_startup_banner_text
     uses 60 as capture width."""
-    sys.path.insert(0, "/home/xush/.hermes/hermes-agent")
+    sys.path.insert(0, str(REPO_ROOT))
     import cli as cli_module
 
     mock_app = MagicMock()
@@ -426,7 +448,7 @@ def test_T_SBP_14_panel_width_used_when_set(monkeypatch):
 
 def test_T_SBP_15_panel_width_zero_falls_back(monkeypatch):
     """T-SBP-15: When app._startup_output_panel_width=0, falls back to app/terminal width."""
-    sys.path.insert(0, "/home/xush/.hermes/hermes-agent")
+    sys.path.insert(0, str(REPO_ROOT))
     import cli as cli_module
 
     mock_app = MagicMock()
@@ -473,7 +495,7 @@ def test_T_SBP_15_panel_width_zero_falls_back(monkeypatch):
 def test_T_SBP_16_show_banner_sets_postamble_pending(monkeypatch):
     """T-SBP-16: show_banner_with_startup_effect(tui=True) does not call
     _show_banner_postamble and sets _postamble_pending=True."""
-    sys.path.insert(0, "/home/xush/.hermes/hermes-agent")
+    sys.path.insert(0, str(REPO_ROOT))
     import cli as cli_module
 
     mock_app = MagicMock()
@@ -496,7 +518,7 @@ def test_T_SBP_16_show_banner_sets_postamble_pending(monkeypatch):
 def test_T_SBP_17_dispatch_input_calls_postamble_once(monkeypatch):
     """T-SBP-17: dispatch_input_submitted calls cli._show_banner_postamble once
     and resets _postamble_pending=False."""
-    sys.path.insert(0, "/home/xush/.hermes/hermes-agent")
+    sys.path.insert(0, str(REPO_ROOT))
     from hermes_cli.tui.services.keys import KeyDispatchService
 
     mock_cli = MagicMock()
@@ -526,7 +548,7 @@ def test_T_SBP_17_dispatch_input_calls_postamble_once(monkeypatch):
 
 def test_T_SBP_18_dispatch_input_postamble_not_called_second_time(monkeypatch):
     """T-SBP-18: On second dispatch_input_submitted, _show_banner_postamble NOT called."""
-    sys.path.insert(0, "/home/xush/.hermes/hermes-agent")
+    sys.path.insert(0, str(REPO_ROOT))
     from hermes_cli.tui.services.keys import KeyDispatchService
 
     mock_cli = MagicMock()

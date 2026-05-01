@@ -31,6 +31,7 @@ from urllib.parse import unquote, urlparse
 from contextlib import contextmanager
 from pathlib import Path
 from datetime import datetime
+from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -199,6 +200,22 @@ _TITLE_SAFE_STYLES: frozenset[str] = frozenset({
 
 _TEMPLATE_FAILED = object()
 _STARTUP_BANNER_PLACEHOLDER_MARKER = "\uE000"
+
+
+@dataclass(frozen=True)
+class _StartupTteConfig:
+    effect_name: str
+    params: dict[str, object]
+    max_wall_s: float
+    max_frames: int
+    fps: int
+
+
+_LOOP_TEARDOWN_RUNTIME_ERRORS = (
+    "Event loop is closed",
+    "no running event loop",
+    "no current event loop",
+)
 
 
 # Load .env from ~/.hermes/.env first, then project root as dev fallback.
@@ -490,6 +507,9 @@ def load_cli_config() -> Dict[str, Any]:
             "startup_text_effect": {
                 "enabled": False,
                 "effect": "matrix",
+                "max_wall_s": 30.0,
+                "max_frames": 3000,
+                "fps": 60,
                 "params": {},
             },
         },
@@ -4389,7 +4409,7 @@ class HermesCLI:
         term_width = shutil.get_terminal_size().columns
         return self.compact or term_width < 80
 
-    def _get_startup_text_effect_config(self) -> tuple[str, dict[str, object]] | None:
+    def _get_startup_text_effect_config(self) -> _StartupTteConfig | None:
         """Return configured startup text effect, or None when disabled/invalid."""
         # Reduced motion: skip TTE on both TUI and non-TUI paths.
         # config is getattr(self, "config", CLI_CONFIG) — already loaded; no I/O.
@@ -4410,7 +4430,53 @@ class HermesCLI:
         params = effect_cfg.get("params") or {}
         if not isinstance(params, dict):
             params = {}
-        return effect_name, dict(params)
+
+        def _clamp(value: float | int, lo: float | int, hi: float | int, key: str):
+            if not (lo <= value <= hi):
+                logger.warning(
+                    "TTE config: %s=%r out of range [%s, %s]; clamping",
+                    key,
+                    value,
+                    lo,
+                    hi,
+                )
+                return max(lo, min(hi, value))
+            return value
+
+        def _coerce_float(raw: object, default: float, key: str) -> float:
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "TTE config: %s=%r is invalid; using default %s",
+                    key,
+                    raw,
+                    default,
+                )
+                return default
+
+        def _coerce_int(raw: object, default: int, key: str) -> int:
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "TTE config: %s=%r is invalid; using default %s",
+                    key,
+                    raw,
+                    default,
+                )
+                return default
+
+        raw_wall_s = _coerce_float(effect_cfg.get("max_wall_s", 30.0), 30.0, "max_wall_s")
+        raw_frames = _coerce_int(effect_cfg.get("max_frames", 3000), 3000, "max_frames")
+        raw_fps = _coerce_int(effect_cfg.get("fps", 60), 60, "fps")
+        return _StartupTteConfig(
+            effect_name=effect_name,
+            params=dict(params),
+            max_wall_s=float(_clamp(raw_wall_s, 1.0, 600.0, "max_wall_s")),
+            max_frames=int(_clamp(raw_frames, 100, 100_000, "max_frames")),
+            fps=int(_clamp(raw_fps, 1, 240, "fps")),
+        )
 
     def _play_startup_text_effect(self, tui: bool = False) -> bool:
         """Play configured startup text effect on the caduceus hero art.
@@ -4424,18 +4490,21 @@ class HermesCLI:
         if effect_cfg is None:
             return False
 
-        effect_name, params = effect_cfg
         from hermes_cli.banner import resolve_banner_hero_assets
         _, plain_hero = resolve_banner_hero_assets()
         if not plain_hero.strip():
             return False
 
         if tui:
-            return self._play_tte_in_output_panel(effect_name, plain_hero, params)
+            return self._play_tte_in_output_panel(effect_cfg, plain_hero)
 
         from hermes_cli.tui.tte_runner import run_effect
         print()
-        rendered = run_effect(effect_name, plain_hero, params=params)
+        rendered = run_effect(
+            effect_cfg.effect_name,
+            plain_hero,
+            params=effect_cfg.params,
+        )
         print()
         return rendered
 
@@ -4603,15 +4672,20 @@ class HermesCLI:
         """
         if isinstance(exc, concurrent.futures.CancelledError):
             logger.debug("TTE frame producer cancelled at teardown", exc_info=True)
-        elif isinstance(exc, RuntimeError) and "Event loop is closed" in str(exc):
-            # R7-T-L1: symmetric teardown race — same recovery semantics as
-            # CancelledError (frame abandoned by design).
-            logger.debug("TTE frame producer hit closed loop at teardown", exc_info=True)
-        else:
-            logger.warning("TTE frame error: %s", exc, exc_info=True)
+            return
+        if isinstance(exc, RuntimeError):
+            msg = str(exc)
+            if any(token in msg for token in _LOOP_TEARDOWN_RUNTIME_ERRORS):
+                logger.debug(
+                    "TTE frame producer hit loop teardown: %s",
+                    msg,
+                    exc_info=True,
+                )
+                return
+        logger.warning("TTE frame error: %s", exc, exc_info=True)
 
     def _play_tte_in_output_panel(
-        self, effect_name: str, plain_hero: str, params: dict
+        self, cfg: _StartupTteConfig, plain_hero: str
     ) -> bool:
         """Play TTE animation inside OutputPanel via the pre-mounted StartupBannerWidget.
 
@@ -4647,8 +4721,8 @@ class HermesCLI:
             logger.warning("TTE: OutputPanel width not ready within 2s; using terminal width")
 
         from hermes_cli.tui.tte_runner import iter_frames
-        MAX_FRAMES = 3000
-        MAX_WALL_S = 30.0  # long effects (decrypt=15s, matrix=21s) must run to completion
+        MAX_FRAMES = cfg.max_frames
+        MAX_WALL_S = cfg.max_wall_s
         rendered_any = False
         skipped = False
         state_lock = _threading.Lock()
@@ -4705,11 +4779,13 @@ class HermesCLI:
             _preflight = self._startup_banner_static or self._render_startup_banner_text(print_hero=True)
         _queue_frame(_preflight)
         _tte_start = time.monotonic()   # time imported at module level
-        _frame_interval = 1.0 / 60      # sole frame pacer; TTE's internal frame_rate is disabled
+        _frame_interval = 1.0 / max(1, cfg.fps)
         _next_frame_t = time.monotonic()
 
         try:
-            for i, frame in enumerate(iter_frames(effect_name, plain_hero, params=params)):
+            for i, frame in enumerate(
+                iter_frames(cfg.effect_name, plain_hero, params=cfg.params)
+            ):
                 if not getattr(app, "is_running", True):
                     break
                 if STARTUP_TTE_SKIP.is_set():

@@ -28,12 +28,12 @@ class TestTteProducerTeardown:
         warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
         debug_records = [
             r for r in caplog.records
-            if r.levelno == logging.DEBUG and "closed loop at teardown" in r.message
+            if r.levelno == logging.DEBUG and "hit loop teardown" in r.message
         ]
         assert not warning_records, (
             f"Expected zero WARNING records; got {warning_records}"
         )
-        assert debug_records, "Expected ≥1 DEBUG record matching 'closed loop at teardown'"
+        assert debug_records, "Expected ≥1 DEBUG record matching 'hit loop teardown'"
 
     def test_runtime_error_other_message_still_warning(
         self, caplog: pytest.LogCaptureFixture

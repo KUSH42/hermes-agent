@@ -818,6 +818,9 @@ display:
   startup_text_effect:
     enabled: true
     effect: matrix          # any key from tte_runner.EFFECT_MAP
+    max_wall_s: 30.0        # producer hard cap in seconds
+    max_frames: 3000        # producer hard cap in frames
+    fps: 60                 # producer pacing; TTE internal frame_rate stays off
     params:
       rain_time: 1          # effect-specific override (snake_case field name)
 ```
@@ -834,12 +837,33 @@ automatically via `run_effect()` unless explicitly overridden.
 
 This is a `config.yaml` key, **not** a skin YAML key.
 
+**Resolver contract (2026-05-01):**
+- `HermesCLI._get_startup_text_effect_config()` returns a frozen
+  `_StartupTteConfig(effect_name, params, max_wall_s, max_frames, fps)`, not
+  the older `(effect_name, params)` tuple.
+- Clamp ranges live in the CLI resolver, not in the producer loop:
+  `max_wall_s` `1.0..600.0`, `max_frames` `100..100000`, `fps` `1..240`.
+  Out-of-range values log WARNING and clamp before the dataclass is built.
+- The producer loop trusts the resolved dataclass. Tests that need smaller caps
+  than the public config range should construct `_StartupTteConfig(...)`
+  directly instead of routing through config parsing.
+- `_frame_interval` is `1.0 / max(1, cfg.fps)`. TTE's own
+  `terminal_config.frame_rate` stays `0`; Hermes owns pacing.
+- `tte_runner.iter_frames()` logs INFO only once per process when
+  `terminaltexteffects` is missing. Reset `_TTE_MISSING_LOGGED` in tests with
+  `monkeypatch.setattr(tte_runner, "_TTE_MISSING_LOGGED", False)`.
+
 **Inline startup-banner TTE pipeline (2026-05-01):**
 - `HermesCLI._play_tte_in_output_panel()` now waits on two widget-side events before building the banner artefacts: `STARTUP_BANNER_READY` (widget mounted) and `OUTPUT_PANEL_WIDTH_READY` (panel width cached). Keep the width wait before `_ensure_startup_banner_artefacts()`.
 - Startup banner rendering uses a splice template path whenever possible: pre-flight, live frames, skip completion, and post-TTE static all flow through `_splice_startup_banner_frame(template, plain_hero)` so only the hero rectangle changes between frames.
 - Cache contract: `_startup_banner_template` is `None` (untried), `_TEMPLATE_FAILED` (attempted and failed), or a template dict. `_startup_banner_static` is only populated for the fallback path.
 - Reserved marker: `_STARTUP_BANNER_PLACEHOLDER_MARKER = "\uE000"` is used only inside template detection. Sanitize user hero text through `_sanitize_startup_hero_text()` before sizing or splicing.
 - Skip contract: `STARTUP_TTE_SKIP` is set by `StartupBannerWidget` bindings (`escape`, `s`) and by the first printable key in `HermesInput._on_key()`. The producer clears the event at entry and queues the final static frame when skip trips.
+- Teardown diagnostics widened in `HermesCLI._handle_tte_producer_exc()`:
+  `CancelledError` plus loop-shutdown RuntimeErrors containing
+  `"Event loop is closed"`, `"no running event loop"`, or
+  `"no current event loop"` are DEBUG-only. Other failures stay WARNING with
+  `exc_info=True`.
 
 ## ExecuteCodeBlock patterns
 

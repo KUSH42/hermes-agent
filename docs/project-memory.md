@@ -5,6 +5,9 @@ Memory index links use canonical absolute targets under `~/.hermes` when availab
 ## Startup TTE Pipeline Correctness (2026-05-01)
 - [Startup TTE pipeline correctness](/home/xush/.hermes/2026-05-01-startup-tte-pipeline-correctness.md) — IMPLEMENTED on `feat/textual-migration` descendant worktree; startup banner now waits on `OUTPUT_PANEL_WIDTH_READY` before caching splice artefacts, uses cached splice/static paths to avoid preflight/frame-0 jump and redundant banner rebuilds, reserves PUA marker `\uE000` for hero placeholders, clips hero rows by terminal cells, exits producer when `app.is_running` is false, and exposes startup skip through `StartupBannerWidget` (`Esc`/`s`) plus first printable composer key; targeted verification file `tests/tui/test_startup_tte_pipeline.py` (13 tests)
 
+## Startup TTE Config & Diagnostics (2026-05-01)
+- [Startup TTE config & diagnostics](/home/xush/.hermes/2026-05-01-startup-tte-config-diagnostics.md) — IMPLEMENTED on `feat/textual-migration` descendant worktree; `display.startup_text_effect` now exposes `max_wall_s`, `max_frames`, and `fps`, the CLI resolver returns `_StartupTteConfig` with clamp+WARNING semantics, producer pacing reads `cfg.fps`, loop-teardown RuntimeErrors demote to DEBUG, and `iter_frames()` logs once per process at INFO when `terminaltexteffects` is missing; targeted verification suite: 66 tests across startup config, banner, race, pipeline, CLI teardown, and runner files
+
 ## services/feedback Audit FB-H1..FB-L2 (2026-04-28)
 - [services/feedback Audit](/home/xush/.hermes/project_feedback_service_audit.md) — IMPLEMENTED 2026-04-28; equal-priority PREEMPTED, apply-failure restore + ERROR log, SUPPRESSED reason, SettledAware Protocol, CodeFooterAdapter ancestor walk, register_channel warn+cancel+reentry guard, _STATE_CHANGE_TONES; 20 new tests; 9-pass review
 

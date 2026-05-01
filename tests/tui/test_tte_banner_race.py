@@ -11,6 +11,18 @@ from unittest.mock import MagicMock, patch
 from rich.text import Text
 
 
+def _tte_cfg(cli_module, **overrides):
+    data = {
+        "effect_name": "matrix",
+        "params": {},
+        "max_wall_s": 30.0,
+        "max_frames": 3000,
+        "fps": 60,
+    }
+    data.update(overrides)
+    return cli_module._StartupTteConfig(**data)
+
+
 @pytest.fixture(autouse=True)
 def reset_startup_banner_event():
     """Reset module-level STARTUP_BANNER_READY before/after each test."""
@@ -83,7 +95,7 @@ class TestTTEWorkerWaitGate:
         ):
             mock_event.wait.return_value = False
             result = HermesCLI._play_tte_in_output_panel(
-                mock_self, "matrix", "test hero", {}
+                mock_self, _tte_cfg(__import__("cli")), "test hero"
             )
         assert result is False
         debug_msgs = [str(c) for c in mock_logger.debug.call_args_list]
@@ -109,12 +121,13 @@ class TestTTEWorkerWaitGate:
         with (
             patch("cli._hermes_app", mock_app),
             patch("hermes_cli.tui.widgets.STARTUP_BANNER_READY") as mock_event,
+            patch("hermes_cli.tui.widgets.OUTPUT_PANEL_WIDTH_READY.wait", return_value=True),
             patch("hermes_cli.tui.tte_runner.iter_frames", return_value=iter([])),
             patch("cli.logger") as mock_logger,
             patch("time.sleep"),
         ):
             mock_event.wait.return_value = True
-            HermesCLI._play_tte_in_output_panel(mock_self, "matrix", "hero", {})
+            HermesCLI._play_tte_in_output_panel(mock_self, _tte_cfg(__import__("cli")), "hero")
 
             assert captured_fns, "call_from_thread should be called for preflight frame"
             # call_from_thread receives the async function — call it to get a coroutine
@@ -149,7 +162,11 @@ class TestTTEWorkerWaitGate:
             patch("time.sleep"),
         ):
             mock_event.wait.return_value = True
-            result = HermesCLI._play_tte_in_output_panel(mock_self, "matrix", "hero", {})
+            result = HermesCLI._play_tte_in_output_panel(
+                mock_self,
+                _tte_cfg(__import__("cli")),
+                "hero",
+            )
 
         assert result is True, "rendered_any should be True (one frame produced)"
         debug_msgs = [str(c) for c in mock_logger.debug.call_args_list]

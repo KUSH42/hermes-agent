@@ -158,15 +158,41 @@ def resolve_banner_hero_assets() -> tuple[str, str]:
 
 
 def render_banner_hero_text(markup_hero: str) -> Text:
-    """Render banner hero markup, tinting plain text with the skin hero color."""
+    """Render banner hero markup; plain text gets a top→bottom three-tone gradient."""
     try:
         hero_text = Text.from_markup(markup_hero)
     except Exception:
         hero_text = Text(markup_hero)
     if hero_text.style or hero_text.spans:
         return hero_text
-    hero_color = _skin_color("banner_text", "#FFF8DC")
-    return Text(hero_text.plain, style=hero_color)
+    accent = _skin_color("banner_accent", "#FFBF00")
+    text = _skin_color("banner_text", "#FFF8DC")
+    dim = _skin_color("banner_dim", "#B8860B")
+    lines = hero_text.plain.splitlines() or [""]
+    n = len(lines)
+    out = Text()
+    for i, line in enumerate(lines):
+        if n < 3:
+            color = accent
+        elif i < n // 3:
+            color = accent
+        elif i < 2 * (n // 3):
+            color = text
+        else:
+            color = dim
+        out.append(line + ("\n" if i < n - 1 else ""), style=color)
+    return out
+
+
+def _count_visual_rows(renderables: list) -> int:
+    """Count visual rows: Text counts \\n+1; other renderables count 1."""
+    n = 0
+    for r in renderables:
+        if isinstance(r, Text):
+            n += r.plain.count("\n") + 1
+        else:
+            n += 1
+    return n
 
 
 def render_banner_logo_text(markup_logo: str) -> Text:
@@ -576,33 +602,54 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     text = _skin_color("banner_text", "#FFF8DC")
     session_color = _skin_color("session_border", "#8B8682")
 
-    # Build left column: hero (caduceus) + model/cwd/session
-    left_renderables = []
+    # Build left column TOP (hero only); meta lines appended after right_lines is final
+    left_top: list = []
     if hero_renderable is not None:
-        left_renderables.extend([Text(""), hero_renderable, Text("")])
+        left_top.extend([Text(""), hero_renderable, Text("")])
     elif hero_text:
-        left_renderables.extend([Text(""), render_banner_hero_text(hero_text), Text("")])
+        left_top.extend([Text(""), render_banner_hero_text(hero_text), Text("")])
     elif print_hero:
         try:
             from hermes_cli.skin_engine import get_active_skin
             _bskin = get_active_skin()
             _hero = _bskin.banner_hero if hasattr(_bskin, 'banner_hero') and _bskin.banner_hero else HERMES_CADUCEUS
         except Exception:
+            logger.debug("hero resolution failed", exc_info=True)
             _hero = HERMES_CADUCEUS
-        left_renderables.extend([Text(""), render_banner_hero_text(_hero), Text("")])
+        left_top.extend([Text(""), render_banner_hero_text(_hero), Text("")])
     model_short = model.split("/")[-1] if "/" in model else model
     if model_short.endswith(".gguf"):
         model_short = model_short[:-5]
     if len(model_short) > 28:
         model_short = model_short[:25] + "..."
     ctx_str = f" [dim {dim}]·[/] [dim {dim}]{_format_context_length(context_length)} context[/]" if context_length else ""
-    left_renderables.append(Text.from_markup(f"[{accent}]{model_short}[/]{ctx_str} [dim {dim}]·[/] [dim {dim}]Nous Research[/]"))
-    left_renderables.append(Text.from_markup(f"[dim {dim}]{cwd}[/]"))
+    left_meta: list = []
+    left_meta.append(Text.from_markup(f"[{accent}]{model_short}[/]{ctx_str} [dim {dim}]·[/] [dim {dim}]Nous Research[/]"))
+    left_meta.append(Text.from_markup(f"[dim {dim}]{cwd}[/]"))
     if session_id:
-        left_renderables.append(Text.from_markup(f"[dim {session_color}]Session: {session_id}[/]"))
-    left_content = Group(*left_renderables)
+        left_meta.append(Text.from_markup(f"[dim {session_color}]Session: {session_id}[/]"))
 
-    right_lines = [f"[bold {accent}]Available Tools[/]"]
+    # BL-3: hoist MCP and skills computation; build summary as the FIRST line
+    try:
+        from tools.mcp_tool import get_mcp_status
+        mcp_status = get_mcp_status()
+    except Exception:
+        logger.debug("get_mcp_status failed", exc_info=True)
+        mcp_status = []
+    mcp_connected = sum(1 for s in mcp_status if s["connected"]) if mcp_status else 0
+
+    skills_by_category = get_available_skills()
+    total_skills = sum(len(s) for s in skills_by_category.values())
+
+    summary_parts = [f"{len(tools)} tools", f"{total_skills} skills"]
+    if mcp_connected:
+        summary_parts.append(f"{mcp_connected} MCP servers")
+    summary_parts.append("/help for commands")
+    right_lines = [
+        f"[dim {dim}]{' · '.join(summary_parts)}[/]",
+        "",
+        f"[bold {accent}]Available Tools[/]",
+    ]
     toolsets_dict: Dict[str, list] = {}
 
     for tool in tools:
@@ -661,13 +708,7 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     if remaining_toolsets > 0:
         right_lines.append(f"[dim {dim}](and {remaining_toolsets} more toolsets...)[/]")
 
-    # MCP Servers section (only if configured)
-    try:
-        from tools.mcp_tool import get_mcp_status
-        mcp_status = get_mcp_status()
-    except Exception:
-        mcp_status = []
-
+    # MCP Servers section (only if configured) — uses pre-computed mcp_status
     if mcp_status:
         right_lines.append("")
         right_lines.append(f"[bold {accent}]MCP Servers[/]")
@@ -685,9 +726,6 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
 
     right_lines.append("")
     right_lines.append(f"[bold {accent}]Available Skills[/]")
-    skills_by_category = get_available_skills()
-    total_skills = sum(len(s) for s in skills_by_category.values())
-
     if skills_by_category:
         for category in sorted(skills_by_category.keys()):
             skill_names = sorted(skills_by_category[category])
@@ -696,12 +734,6 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     else:
         right_lines.append(f"[dim {dim}]No skills installed[/]")
 
-    right_lines.append("")
-    mcp_connected = sum(1 for s in mcp_status if s["connected"]) if mcp_status else 0
-    summary_parts = [f"{len(tools)} tools", f"{total_skills} skills"]
-    if mcp_connected:
-        summary_parts.append(f"{mcp_connected} MCP servers")
-    summary_parts.append("/help for commands")
     # Show active profile name when not 'default'
     try:
         from hermes_cli.profiles import get_active_profile_name
@@ -709,9 +741,7 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
         if _profile_name and _profile_name != "default":
             right_lines.append(f"[bold {accent}]Profile:[/] [{text}]{_profile_name}[/]")
     except Exception:
-        pass  # Never break the banner over a profiles.py bug
-
-    right_lines.append(f"[dim {dim}]{' · '.join(summary_parts)}[/]")
+        logger.debug("get_active_profile_name failed", exc_info=True)
 
     # Update check — use prefetched result if available
     try:
@@ -727,11 +757,19 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
                 f" [dim](press u to dismiss)[/dim][/]"
             )
     except Exception:
-        pass  # Never break the banner over an update check
+        logger.debug("update check failed", exc_info=True)
+
+    # BL-2: pad left column so meta lines pin to bottom of right column
+    right_row_count = len(right_lines)
+    left_row_count = _count_visual_rows(left_top) + len(left_meta)
+    pad = max(0, right_row_count - left_row_count)
+    left_renderables = left_top + [Text("")] * pad + left_meta
+    left_content = Group(*left_renderables)
 
     right_content = "\n".join(right_lines)
     layout_table.add_row(left_content, right_content)
 
+    # BL-1: hoisted up so wordmark/logo fallback can use these
     agent_name = _skin_branding("agent_name", "Hermes Agent")
     title_color = _skin_color("banner_title", "#FFD700")
     border_color = _skin_color("banner_border", "#CD7F32")
@@ -744,9 +782,15 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     )
 
     console.print()
-    term_width = shutil.get_terminal_size().columns
+    term_size = shutil.get_terminal_size()
+    term_width = term_size.columns
+    term_rows = term_size.lines
     if print_logo and term_width >= 95:
-        markup_logo, _ = resolve_banner_logo_assets()
-        console.print(Align.center(render_banner_logo_text(markup_logo)))
+        if term_rows >= 32:
+            markup_logo, _ = resolve_banner_logo_assets()
+            console.print(Align.center(render_banner_logo_text(markup_logo)))
+        else:
+            wordmark = f"[bold {title_color}]{agent_name.upper()}[/]"
+            console.print(Align.center(Text.from_markup(wordmark)))
         console.print()
     console.print(outer_panel)

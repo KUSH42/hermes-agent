@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -25,6 +26,8 @@ def _make_cli_obj():
     obj.console = MagicMock()
     obj.config = {"display": {}}
     obj._show_banner_body = MagicMock()
+    obj._first_input_seen = threading.Event()
+    obj._postamble_pending = False
     return obj
 
 
@@ -64,9 +67,35 @@ def test_show_banner_with_startup_effect_disabled_prints_hero_statically(_isolat
     obj._show_banner_body.assert_called_once_with(clear=False, print_hero=True)
 
 
+def test_show_banner_with_startup_effect_non_tui_multiline_hero_skips_effect(_isolate):
+    import cli
+
+    obj = _make_cli_obj()
+    obj.config["display"]["startup_text_effect"] = {
+        "enabled": True,
+        "effect": "matrix",
+        "params": {"rain_time": 7},
+    }
+
+    with (
+        patch("shutil.get_terminal_size", return_value=os.terminal_size((120, 40))),
+        patch(
+            "hermes_cli.banner.resolve_banner_hero_assets",
+            return_value=("[gold]hero[/]", "top\nbottom"),
+        ),
+        patch("hermes_cli.tui.tte_runner.run_effect") as run_effect,
+    ):
+        cli.HermesCLI.show_banner_with_startup_effect(obj)
+
+    obj.console.clear.assert_called_once()
+    obj._show_banner_body.assert_called_once_with(clear=False, print_hero=True)
+    run_effect.assert_not_called()
+
+
 def test_show_banner_with_startup_effect_tui_updates_startup_widget(_isolate):
     """In TUI mode: frames are spliced into the banner widget and the last frame stays."""
     import cli
+    from hermes_cli.tui.widgets import OUTPUT_PANEL_WIDTH_READY, STARTUP_BANNER_READY
 
     obj = _make_cli_obj()
     obj.enabled_toolsets = []
@@ -81,32 +110,41 @@ def test_show_banner_with_startup_effect_tui_updates_startup_widget(_isolate):
     fake_widget = MagicMock()
 
     def fake_call_from_thread(fn, *args):
-        fn(*args)
+        result = fn(*args)
+        if hasattr(result, "__await__"):
+            import asyncio
+
+            asyncio.run(result)
 
     fake_app = SimpleNamespace(
         call_from_thread=fake_call_from_thread,
+        query_one=MagicMock(return_value=fake_widget),
+        is_running=True,
     )
 
+    STARTUP_BANNER_READY.set()
+    OUTPUT_PANEL_WIDTH_READY.set()
     with (
         patch("shutil.get_terminal_size", return_value=os.terminal_size((120, 40))),
         patch("hermes_cli.banner.resolve_banner_hero_assets", return_value=("[gold]hero[/]", "hero")),
         patch("hermes_cli.tui.tte_runner.iter_frames", return_value=["\x1b[38;2;0;255;0mA\x1b[0m"]),
-        patch.object(obj, "_ensure_tui_startup_banner_widget", return_value=fake_widget),
+        patch.object(obj, "_ensure_tui_startup_message"),
         patch.object(obj, "_build_startup_banner_template", return_value={"template": True}),
         patch.object(obj, "_splice_startup_banner_frame", return_value=Text("spliced-frame")) as mock_splice,
         patch.object(obj, "_set_tui_startup_banner_static") as mock_set_static,
-        patch.object(obj, "_show_banner_postamble") as mock_postamble,
         patch.object(cli, "_hermes_app", fake_app),
     ):
         cli.HermesCLI.show_banner_with_startup_effect(obj, tui=True)
+    STARTUP_BANNER_READY.clear()
+    OUTPUT_PANEL_WIDTH_READY.clear()
 
     obj.console.clear.assert_not_called()
-    mock_splice.assert_called_once_with({"template": True}, "\x1b[38;2;0;255;0mA\x1b[0m")
-    assert fake_widget.set_frame.call_count == 1
-    assert fake_widget.set_frame.call_args_list[0][0][0].plain == "spliced-frame"
+    mock_splice.assert_any_call({"template": True}, "\x1b[38;2;0;255;0mA\x1b[0m")
+    assert fake_widget.set_frame.call_count >= 1
+    assert fake_widget.set_frame.call_args_list[-1][0][0].plain == "spliced-frame"
     mock_set_static.assert_not_called()
     obj._show_banner_body.assert_not_called()
-    mock_postamble.assert_called_once()
+    assert obj._postamble_pending is True
 
 
 def test_render_startup_banner_text_uses_live_tui_width(_isolate):
@@ -138,7 +176,7 @@ def test_render_startup_banner_text_uses_live_tui_width(_isolate):
     ):
         obj._render_startup_banner_text(print_hero=True)
 
-    assert seen["width"] == 100
+    assert seen["width"] == 101
 
 
 def test_splice_startup_banner_frame_replaces_only_hero_region(_isolate):

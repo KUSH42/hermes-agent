@@ -74,6 +74,10 @@ Key invariant: `_save_to_history` writes `\n+line\n…\n` (leading blank + trail
 - **WEB/MCP `emit_heartbeat` default**: `ToolSpec.emit_heartbeat` defaults `False`. For MCP-derived WEB/MCP specs, always set `emit_heartbeat=True` — the `_derive_mcp_spec` condition `elif category in (WEB, MCP) and not inner_spec.streaming` was never True because `inner_spec.streaming` defaults `True`. Fix: `elif category in (WEB, MCP)`.
 - **`_ENGINES` in drawbraille_overlay is class refs, not instances**. After v2, `_ENGINES` is `dict[str, type]`. `_get_engine()` caches instance in `_current_engine_instance`. Tests must call `engine_cls()` to get an instance — do NOT iterate `_ENGINES` as instances.
 
+## Startup banner gotchas
+
+- `StartupBannerWidget` startup art cannot rely on `U+2800 BRAILLE PATTERN BLANK` for indentation. In the Textual startup widget path some terminal/font stacks don't advance the cursor consistently for that codepoint, so the visible braille glyphs collapse into the first column. Normalize startup hero art with `cli._sanitize_startup_hero_text()` before templating or frame splicing; that helper replaces `U+2800` with plain spaces and also strips the reserved placeholder marker.
+
 ## ToolsScreen async gotchas
 
 - **`_apply_filter` / `_rebuild` must be `async def`**. Both call `await listview.clear()` / `await listview.append(...)`. A bare `self._apply_filter()` without `await` silently discards the coroutine — ListView never repopulates. All call sites must `await`.

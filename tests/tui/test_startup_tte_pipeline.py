@@ -111,6 +111,12 @@ def test_template_strips_pua_marker_from_user_hero():
     ) == "A?B"
 
 
+def test_sanitize_startup_hero_replaces_braille_blank_with_space():
+    cli_module = _load_cli_module()
+
+    assert cli_module._sanitize_startup_hero_text("A\u2800B") == "A B"
+
+
 def test_output_panel_width_event_lifecycle():
     from hermes_cli.tui.widgets import OUTPUT_PANEL_WIDTH_READY, OutputPanel
 

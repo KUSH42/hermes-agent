@@ -264,8 +264,17 @@ def _fit_hero_line(hero_line, target_cells: int):
 
 
 def _sanitize_startup_hero_text(text: str) -> str:
-    """Remove the reserved placeholder marker from user-provided hero art."""
-    return text.replace(_STARTUP_BANNER_PLACEHOLDER_MARKER, "?")
+    """Normalize startup hero art for safe banner templating and TUI display.
+
+    ``U+2800 BRAILLE PATTERN BLANK`` is visually used as indentation in the
+    bundled hero art, but some Textual/xterm stacks don't advance the cursor for
+    it consistently during startup widget rendering. Replace it with plain
+    spaces so the startup banner keeps its left-column geometry stable.
+    """
+    return (
+        text.replace(_STARTUP_BANNER_PLACEHOLDER_MARKER, "?")
+        .replace("\u2800", " ")
+    )
 
 
 def _strip_reasoning_tags(text: str) -> str:
@@ -4500,11 +4509,20 @@ class HermesCLI:
 
         from hermes_cli.banner import resolve_banner_hero_assets
         _, plain_hero = resolve_banner_hero_assets()
+        plain_hero = _sanitize_startup_hero_text(plain_hero)
         if not plain_hero.strip():
             return False
 
         if tui:
             return self._play_tte_in_output_panel(effect_cfg, plain_hero)
+
+        # Raw stdout playback cannot preserve the startup banner's two-column
+        # layout for multiline hero art, so keep the static banner intact.
+        if "\n" in plain_hero:
+            logger.debug(
+                "Skipping non-TUI startup text effect for multiline hero art"
+            )
+            return False
 
         from hermes_cli.tui.tte_runner import run_effect
         print()

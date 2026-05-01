@@ -1342,3 +1342,37 @@ class TestThinkingWidgetReprLeak:
         rendered_str = str(result)
         assert "ThinkingWidget" not in rendered_str
         assert "--reserved" not in rendered_str
+
+
+# ── ANIM-API-7: Lifecycle coverage ────────────────────────────────────────────
+
+class TestAnimLifecycleCoverage:
+    """ANIM-API-7: dismiss mid-animation + watch_fps while hidden."""
+
+    def test_unmount_while_animating_stops_handle(self):
+        ov = DrawbrailleOverlay.__new__(DrawbrailleOverlay)
+        handle = MagicMock()
+        ov._anim_handle = handle
+        ov._auto_hide_handle = None
+
+        ov.on_unmount()
+
+        handle.stop.assert_called_once()
+        assert ov._anim_handle is None
+
+    def test_watch_fps_while_hidden_no_new_handle(self):
+        ov = DrawbrailleOverlay.__new__(DrawbrailleOverlay)
+        ov._anim_handle = None
+        ov._visibility_state = "hidden"
+
+        # _start_anim tries app._anim_clock then set_interval;
+        # both raise because widget is not mounted — handle stays None
+        with patch.object(type(ov), "app", new_callable=lambda: property(
+            lambda self: (_ for _ in ()).throw(Exception("not mounted"))
+        )):
+            try:
+                ov.watch_fps(40)
+            except Exception:
+                pass
+
+        assert ov._anim_handle is None

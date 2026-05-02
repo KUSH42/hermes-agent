@@ -299,6 +299,23 @@ class TestBlockMathDetection:
         assert engine._state == "IN_MATH"
         assert engine._state != "IN_CODE"
 
+    def test_e7_double_dollar_with_head_content_starts_math_block(self) -> None:
+        engine = _make_engine()
+        engine.process_line(r"$$e^{i\pi} + 1")
+        assert engine._state == "IN_MATH"
+        assert engine._math_lines == [r"e^{i\pi} + 1"]
+
+    def test_e8_double_dollar_with_tail_content_closes_math_block(self) -> None:
+        engine = _make_engine()
+        called: list[str] = []
+        engine._flush_math_block = lambda latex: called.append(latex)  # type: ignore[method-assign]
+
+        engine.process_line(r"$$e^{i\pi} +")
+        engine.process_line(r"1 = 0$$")
+
+        assert engine._state == "NORMAL"
+        assert called == [r"e^{i\pi} +" + "\n" + r"1 = 0"]
+
 
 # ---------------------------------------------------------------------------
 # Group F — Mermaid rendering in StreamingCodeBlock
@@ -483,3 +500,36 @@ async def test_streamed_display_math_stays_out_of_source_like_code_blocks() -> N
         assert r"\frac" not in prose
         assert "Ψ" in prose
         assert "ρ" in prose
+
+
+@pytest.mark.asyncio
+async def test_streamed_multiline_display_math_open_head_close_tail_renders_as_math() -> None:
+    """Regression: `$$expr` ... `tail$$` must enter IN_MATH in streamed turns."""
+    app = HermesApp(cli=MagicMock())
+    app._math_enabled = True
+    app._math_renderer = "unicode"
+    app._math_max_rows = 12
+
+    async with app.run_test(size=(100, 28)) as pilot:
+        await pilot.pause()
+        app.agent_running = True
+        await pilot.pause()
+
+        app.write_output("Euler's Identity\n")
+        app.write_output(r"$$e^{i\pi} +" + "\n")
+        app.write_output(r"1 = 0$$" + "\n")
+
+        await asyncio.sleep(0.05)
+        await pilot.pause()
+        app.agent_running = False
+        for _ in range(5):
+            await pilot.pause()
+
+        msg = app.query_one(OutputPanel).current_message
+        assert msg is not None
+        assert len(list(msg.query(StreamingCodeBlock))) == 0
+
+        prose = msg.all_prose_text()
+        assert "$$" not in prose
+        assert "eiπ +" in prose
+        assert "1 = 0" in prose

@@ -41,6 +41,7 @@ Key invariant: `_save_to_history` writes `\n+line\n…\n` (leading blank + trail
 - **Guard on TeX shape before source heuristics.** Lines starting with `$$`, `\[` , `\(`, `\begin{...}` or containing LaTeX-style backslash commands like `\frac`, `\Psi`, `\mathbf`, `\left` should return `False` from `_looks_like_source_line()`.
 - **Symptom**: assistant math renders as syntax-highlighted code with line numbers, and raw `$$...$$` / `\Psi` / `\frac` remain visible even though markdown streaming is otherwise working.
 - **Affected site**: `hermes_cli/tui/response_flow.py §_looks_like_source_line` (fixed 2026-05-02).
+- **Block math must accept opener-head / closer-tail forms too.** LLMs often stream display math as `$$e^{i\pi} +` on one line and `1 = 0$$` on the next, not as a bare opener line followed by body lines. `ResponseFlowEngine` must enter `IN_MATH` for `$$<head>` / `\[<head>` and close on `<tail>$$` / `<tail>\]`; exact-line-only delimiters are insufficient.
 
 ## `call_from_thread` must not be called from the app thread
 

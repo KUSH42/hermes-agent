@@ -111,6 +111,14 @@ _BLOCK_MATH_CLOSE_RE = re.compile(
 _BLOCK_MATH_ONELINE_RE = re.compile(r"^\$\$(.+)\$\$\s*$")
 # Single-line: \[expr\] on one line
 _BLOCK_MATH_ONELINE_BRACKET_RE = re.compile(r"^\\\[(.+)\\\]\s*$")
+# Multi-line display math with content on the opener / closer line:
+#   $$x + y
+#   = z$$
+# and the analogous \[...\] form.
+_BLOCK_MATH_OPEN_DOLLAR_HEAD_RE = re.compile(r"^\$\$(.*)$")
+_BLOCK_MATH_CLOSE_DOLLAR_TAIL_RE = re.compile(r"^(.*?)\$\$\s*$")
+_BLOCK_MATH_OPEN_BRACKET_HEAD_RE = re.compile(r"^\\\[(.*)$")
+_BLOCK_MATH_CLOSE_BRACKET_TAIL_RE = re.compile(r"^(.*?)\\\]\s*$")
 
 # Inline $$expr$$ embedded within a prose line (text before/after $$)
 _INLINE_DOUBLE_MATH_RE = re.compile(r"\$\$([^$\n]+)\$\$")
@@ -520,6 +528,30 @@ class _LineClassifier:
     def is_block_math_close(self, raw: str) -> bool:
         return bool(_BLOCK_MATH_CLOSE_RE.match(raw.strip()))
 
+    def block_math_open_with_head(self, raw: str) -> "tuple[str, str] | None":
+        stripped = raw.strip()
+        m = _BLOCK_MATH_OPEN_DOLLAR_HEAD_RE.match(stripped)
+        if m is not None:
+            return "$$", m.group(1)
+        m = _BLOCK_MATH_OPEN_BRACKET_HEAD_RE.match(stripped)
+        if m is not None:
+            return r"\[", m.group(1)
+        if stripped.startswith(r"\begin{"):
+            return "env", ""
+        return None
+
+    def block_math_close_with_tail(self, raw: str, delim: str) -> "str | None":
+        stripped = raw.strip()
+        if delim == "$$":
+            m = _BLOCK_MATH_CLOSE_DOLLAR_TAIL_RE.match(stripped)
+            return m.group(1) if m is not None else None
+        if delim == r"\[":
+            m = _BLOCK_MATH_CLOSE_BRACKET_TAIL_RE.match(stripped)
+            return m.group(1) if m is not None else None
+        if delim == "env" and _BLOCK_MATH_CLOSE_RE.match(stripped):
+            return ""
+        return None
+
     def is_inline_code_label(self, raw: str) -> "tuple[str, str] | None":
         m = _INLINE_CODE_LABEL_RE.match(raw.strip())
         if m:
@@ -578,6 +610,7 @@ class ResponseFlowEngine:
         self._first_fence_in_turn: bool = True  # D5: fence-open entrance cue gate
         self._math_lines: list[str] = []
         self._math_env: str = ""
+        self._math_delim: str = ""
         self._math_enabled: bool = True
         self._math_renderer_mode: str = "auto"
         self._math_dpi: int = 150
@@ -789,11 +822,15 @@ class ResponseFlowEngine:
                 self._flush_block_buf()
                 self._flush_math_block(oneline)
                 return True
-            if self._clf.is_block_math_open(raw):
+            open_with_head = self._clf.block_math_open_with_head(raw)
+            if open_with_head is not None:
                 self._flush_code_fence_buffer()
                 self._flush_block_buf()
                 self._math_lines = []
+                self._math_delim, head = open_with_head
                 self._math_env = stripped
+                if head.strip():
+                    self._math_lines.append(head)
                 self._state = "IN_MATH"
                 return True
 
@@ -934,10 +971,14 @@ class ResponseFlowEngine:
             return False  # fall through to prose for the closing line
 
         if self._state == "IN_MATH":
-            if self._clf.is_block_math_close(raw):
+            tail = self._clf.block_math_close_with_tail(raw, self._math_delim)
+            if tail is not None:
+                if tail.strip():
+                    self._math_lines.append(tail)
                 self._flush_math_block("\n".join(self._math_lines))
                 self._math_lines = []
                 self._math_env = ""
+                self._math_delim = ""
                 self._state = "NORMAL"
             else:
                 if len(self._math_lines) >= _MAX_MATH_LINES:
@@ -947,6 +988,7 @@ class ResponseFlowEngine:
                     )
                     self._state = "NORMAL"
                     self._math_lines.clear()
+                    self._math_delim = ""
                     return True
                 self._math_lines.append(raw)
             return True
@@ -1201,6 +1243,7 @@ class ResponseFlowEngine:
                 self._flush_math_block("\n".join(self._math_lines))
             self._math_lines = []
             self._math_env = ""
+            self._math_delim = ""
             self._state = "NORMAL"
         if self._active_block is not None and self._state == "IN_CODE":
             self._active_block.flush()  # marks FLUSHED, stops spinner

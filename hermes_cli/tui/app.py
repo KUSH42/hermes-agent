@@ -824,11 +824,6 @@ class HermesApp(App):
             self.query_one(_HI).focus()
         except NoMatches:
             pass
-        if not self._clipboard_available and not self._xclip_cmd:
-            try:
-                self.query_one("#status-clipboard-warning").add_class("--active")
-            except NoMatches:
-                pass
         if self._startup_fn is not None:
             threading.Thread(target=self._startup_fn, daemon=True).start()
         import os as _os

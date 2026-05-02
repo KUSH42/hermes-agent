@@ -10,6 +10,8 @@ Hermes-specific features on top via mixins:
 from __future__ import annotations
 
 import logging
+import os
+import shutil as _shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -36,6 +38,20 @@ from ._mode import InputMode
 from ._path_completion import _PathCompletionMixin
 
 _log = logging.getLogger(__name__)
+
+
+def _primary_selection_cmd() -> "list[str] | None":
+    """Return the right command to read the primary selection, or None."""
+    if os.environ.get("WAYLAND_DISPLAY"):
+        if _shutil.which("wl-paste"):
+            return ["wl-paste", "--primary"]
+        # WSLg may bridge via xclip — fall through
+    if _shutil.which("xclip"):
+        return ["xclip", "-selection", "primary", "-o"]
+    if _shutil.which("xsel"):
+        return ["xsel", "--primary", "--output"]
+    return None
+
 
 _CHEVRON_GLYPHS: dict[InputMode, str] = {
     InputMode.NORMAL:     "❯ ",
@@ -180,16 +196,20 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         self._sync_height_to_content()
 
     def on_click(self, event: Any) -> None:
-        """Middle-click (button=2) pastes primary selection on Linux/X11."""
+        """Middle-click pastes primary selection (X11: xclip, Wayland: wl-paste)."""
         import sys
         if getattr(event, "button", 1) != 2:
             return
         event.stop()
         if sys.platform != "linux":
             return
+        cmd = _primary_selection_cmd()
+        if cmd is None:
+            _log.debug("middle-click paste: no primary selection tool found (xclip/wl-paste)")
+            return
         safe_run(
             self,
-            ["xclip", "-selection", "primary", "-o"],
+            cmd,
             timeout=1,
             on_success=lambda out, err, rc: (
                 self.insert(out) if (self.is_mounted and out) else None

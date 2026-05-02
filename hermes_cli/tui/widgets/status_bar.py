@@ -518,11 +518,12 @@ class StatusBar(PulseMixin, Widget):
 
     def action_copy_session_id(self) -> None:
         """Copy the full session ID to the clipboard."""
+        if not self._full_session_id:
+            return
         try:
-            import pyperclip
-            pyperclip.copy(self._full_session_id)
+            self.app._copy_text_with_hint(self._full_session_id)
         except Exception:
-            _log_sb.debug("clipboard unavailable; skipping session copy")
+            _log_sb.debug("copy session id failed", exc_info=True)
 
     def compose(self) -> "ComposeResult":
         yield Static("⚠ no clipboard", id="status-clipboard-warning")

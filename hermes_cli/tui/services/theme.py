@@ -10,6 +10,7 @@ from textual.css.query import NoMatches
 
 from .base import AppService
 from hermes_cli.tui.io_boundary import safe_run
+from hermes_cli.tui import osc52 as _osc52
 
 if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
@@ -305,22 +306,29 @@ class ThemeService(AppService):
             app.set_timer(auto_clear_s, lambda: setattr(app, "status_error", ""))
 
     def copy_text_with_hint(self, text: str) -> None:
-        """Copy text to clipboard with capability guard and hint flash."""
+        """Copy *text* to clipboard via all available mechanisms, then flash hint."""
         app = self.app
         app._clipboard = text
-        if not app._clipboard_available:
-            if app._xclip_cmd:
-                safe_run(
-                    app,
-                    app._xclip_cmd,
-                    timeout=2,
-                    input_bytes=text.encode(),
-                    capture=False,
-                    on_success=lambda o, e, rc: self.flash_hint(f"⎘  {len(text)} chars copied", 1.2),
-                    on_error=lambda exc, e: self.set_status_error("copy failed", auto_clear_s=10.0),
-                )
-            else:
-                self.set_status_error("no clipboard — install xclip or xsel", auto_clear_s=0)
-            return
-        app.copy_to_clipboard(text)
+
+        # 1. OSC 52 — primary path; works over SSH, in most modern terminals.
+        #    Fire-and-forget: no readback, no capability probe needed.
+        _osc52.write(text)
+
+        # 2. Belt-and-suspenders: also push to system clipboard via xclip/wl-copy
+        #    or Textual's pyperclip integration, so terminals without OSC 52 work.
+        if app._clipboard_available:
+            app.copy_to_clipboard(text)
+        elif app._xclip_cmd:
+            safe_run(
+                app,
+                app._xclip_cmd,
+                timeout=2,
+                input_bytes=text.encode(),
+                capture=False,
+                on_error=lambda exc, e: logger.warning(
+                    "xclip copy failed", exc_info=exc
+                ),
+            )
+
+        # Always flash hint — OSC 52 is assumed to have worked.
         self.flash_hint(f"⎘  {len(text)} chars copied", 1.2)

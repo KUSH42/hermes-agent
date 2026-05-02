@@ -4644,7 +4644,7 @@ class HermesCLI:
         sanitized_hero = _sanitize_startup_hero_text(plain_hero)
         hero_lines = sanitized_hero.splitlines() or [sanitized_hero]
         from rich.cells import cell_len as _cell_len
-        hero_width = max((_cell_len(line) for line in hero_lines), default=1) + 1  # +1 padding
+        hero_width = max((_cell_len(line) for line in hero_lines), default=1)
         hero_height = len(hero_lines) + 1  # +1 padding row
         placeholder_lines = [_STARTUP_BANNER_PLACEHOLDER_MARKER * hero_width for _ in range(hero_height)]
         placeholder_text = "\n".join(placeholder_lines)

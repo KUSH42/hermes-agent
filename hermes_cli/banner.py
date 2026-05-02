@@ -889,7 +889,10 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     if print_logo and term_width >= 95:
         if term_rows >= 32:
             markup_logo, _ = resolve_banner_logo_assets()
-            console.print(Align.center(render_banner_logo_text(markup_logo)))
+            logo_text = render_banner_logo_text(markup_logo)
+            logo_text.no_wrap = True
+            logo_text.overflow = "ignore"
+            console.print(logo_text, justify="center", no_wrap=True)
         else:
             wordmark = f"[bold {title_color}]{agent_name.upper()}[/]"
             console.print(Align.center(Text.from_markup(wordmark)))

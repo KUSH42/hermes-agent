@@ -90,10 +90,12 @@ class ConfigOverlay(Widget):
     ConfigOverlay .co-section-header { color: $accent; }
     ConfigOverlay .co-current { color: $text-muted; }
     ConfigOverlay .co-list { height: auto; max-height: 14; }
+    ConfigOverlay .co-provider-list { max-height: 6; }
     ConfigOverlay .co-row { height: auto; margin-bottom: 1; }
     ConfigOverlay .co-lbl { width: 18; color: $text-muted; }
     ConfigOverlay .co-btn { min-width: 8; height: 1; margin-right: 1; }
     ConfigOverlay .co-footer { color: $text-muted; margin-top: 1; }
+    ConfigOverlay .co-subheader { color: $text-muted; margin-top: 1; }
     ConfigOverlay .co-fixture { margin-top: 1; }
     """
 
@@ -112,6 +114,9 @@ class ConfigOverlay(Widget):
         self._yolo_previous_mode: str = "manual"
         # Reasoning tab state
         self._reasoning_current_level: str = "medium"
+        # Model tab state
+        self._browsed_provider: str = ""  # provider currently selected in provider list
+        self._provider_slugs: list[str] = []  # parallel list to co-provider-list options
         # Skin tab snapshot (for Esc revert)
         self._snap_css_vars: dict[str, str] = {}
         self._snap_component_vars: dict[str, str] = {}
@@ -128,6 +133,8 @@ class ConfigOverlay(Widget):
         # ── Tab: model ───────────────────────────────────────────────────
         with Vertical(id="co-body-model"):
             yield Static("  Model", classes="co-section-header")
+            yield Static("Provider", classes="co-subheader")
+            yield OptionList(id="co-provider-list", classes="co-list co-provider-list")
             yield Static("", id="co-model-current", classes="co-current")
             yield OptionList(id="co-model-list", classes="co-list")
 
@@ -239,7 +246,7 @@ class ConfigOverlay(Widget):
 
     def _focus_active_tab(self) -> None:
         focus_map = {
-            "model":     "#co-model-list",
+            "model":     "#co-provider-list",
             "skin":      "#co-skin-list",
             "syntax":    "#co-syntax-list",
             "verbose":   "#co-verbose-list",
@@ -299,26 +306,70 @@ class ConfigOverlay(Widget):
 
     def _refresh_model_tab(self, cli: object) -> None:
         cfg = _cfg_read_raw_config()
-        models = list(cfg.get("models", {}).keys())
+        model_section = cfg.get("model", {})
+        config_provider = model_section.get("provider", "openrouter") or "openrouter"
         current = (
-            getattr(getattr(cli, "agent", None), "model", None)
+            model_section.get("default")
+            or getattr(getattr(cli, "agent", None), "model", None)
             or getattr(cli, "model", None)
             or "unknown"
         )
-        if current and current not in models:
-            models.insert(0, current)
+        self._browsed_provider = config_provider
+        self._populate_provider_list(config_provider)
+        self._populate_model_list(config_provider, current)
+
+    def _populate_provider_list(self, active_provider: str) -> None:
         try:
-            self.query_one("#co-model-current", Static).update(f"Current: {current}")
+            from hermes_cli.models import list_available_providers, normalize_provider
+        except Exception:
+            _log.debug("_populate_provider_list: import failed", exc_info=True)
+            return
+        try:
+            providers = list_available_providers()
+        except Exception:
+            _log.debug("_populate_provider_list: list_available_providers() failed", exc_info=True)
+            providers = []
+        active_norm = normalize_provider(active_provider)
+        # Ensure active provider appears even if not in list
+        slugs = [p["id"] for p in providers]
+        if active_norm not in slugs:
+            providers.insert(0, {"id": active_norm, "label": active_provider, "authenticated": False})
+        self._provider_slugs = [p["id"] for p in providers]
+        try:
+            ol = self.query_one("#co-provider-list", OptionList)
+            ol.clear_options()
+            for p in providers:
+                pid = p["id"]
+                label = p.get("label") or pid
+                auth_mark = " ✓" if p.get("authenticated") else ""
+                marker = "● " if pid == active_norm else "  "
+                ol.add_option(Option(f"{marker}{label}{auth_mark}", id=f"co-provider-opt-{pid}"))
+            if active_norm in self._provider_slugs:
+                ol.highlighted = self._provider_slugs.index(active_norm)
+        except NoMatches:
+            pass
+
+    def _populate_model_list(self, provider: str, current_model: str) -> None:
+        models: list[str] = []
+        try:
+            from hermes_cli.models import provider_model_ids
+            models = list(provider_model_ids(provider, force_refresh=False))
+        except Exception:
+            _log.debug("_populate_model_list: provider_model_ids(%r) failed", provider, exc_info=True)
+        if current_model and current_model not in models:
+            models.insert(0, current_model)
+        try:
+            self.query_one("#co-model-current", Static).update(f"Current:  {current_model}")
         except NoMatches:
             pass
         try:
             ol = self.query_one("#co-model-list", OptionList)
             ol.clear_options()
             for m in models:
-                marker = "● " if m == current else "  "
+                marker = "● " if m == current_model else "  "
                 ol.add_option(Option(f"{marker}{m}", id=f"co-model-opt-{m}"))
-            if current in models:
-                ol.highlighted = models.index(current)
+            if current_model in models:
+                ol.highlighted = models.index(current_model)
         except NoMatches:
             pass
 
@@ -548,8 +599,20 @@ class ConfigOverlay(Widget):
     # ── Event wiring ──────────────────────────────────────────────────────
 
     def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
-        """Preview skin/syntax on highlight WITHOUT committing to disk."""
+        """Preview skin/syntax/provider on highlight WITHOUT committing to disk."""
         opt_id = getattr(event.option, "id", None) or ""
+        if event.option_list.id == "co-provider-list":
+            if not opt_id.startswith("co-provider-opt-"):
+                return
+            slug = opt_id[len("co-provider-opt-"):]
+            if slug == self._browsed_provider:
+                return
+            self._browsed_provider = slug
+            cfg = _cfg_read_raw_config()
+            current = cfg.get("model", {}).get("default", "")
+            self._populate_model_list(slug, current)
+            event.stop()
+            return
         if event.option_list.id == "co-skin-list":
             if not opt_id.startswith("co-skin-opt-"):
                 return
@@ -576,6 +639,15 @@ class ConfigOverlay(Widget):
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
         opt_id = event.option_id or ""
+        if opt_id.startswith("co-provider-opt-"):
+            # Provider Enter → commit _browsed_provider + move focus to model list
+            slug = opt_id[len("co-provider-opt-"):]
+            self._browsed_provider = slug
+            try:
+                self.query_one("#co-model-list", OptionList).focus()
+            except NoMatches:
+                pass
+            return
         if opt_id.startswith("co-model-opt-"):
             self._confirm_model(opt_id[len("co-model-opt-"):])
         elif opt_id.startswith("co-verbose-opt-"):
@@ -618,6 +690,15 @@ class ConfigOverlay(Widget):
     # ── Confirm handlers ──────────────────────────────────────────────────
 
     def _confirm_model(self, value: str) -> None:
+        cfg = _cfg_read_raw_config()
+        config_provider = cfg.get("model", {}).get("provider", "openrouter") or "openrouter"
+        browsed = self._browsed_provider or config_provider
+        try:
+            from hermes_cli.models import normalize_provider
+            provider_changed = normalize_provider(browsed) != normalize_provider(config_provider)
+        except Exception:
+            provider_changed = browsed != config_provider
+        cmd_args = f"{value} --provider {browsed}" if provider_changed else value
         try:
             from hermes_cli.tui.input_widget import HermesInput
             inp = self.app.query_one(HermesInput)
@@ -625,12 +706,13 @@ class ConfigOverlay(Widget):
                 inp.save_draft_stash()
             except Exception:
                 pass  # draft stash is best-effort; model switch proceeds regardless
-            inp.value = f"/model {value}"
+            inp.value = f"/model {cmd_args}"
             inp.action_submit()
         except Exception:
-            _log.warning("Failed to apply model selection %r", value, exc_info=True)
+            _log.warning("Failed to apply model selection %r (provider=%r)", value, browsed, exc_info=True)
+        label = f"{browsed}:{value}" if provider_changed else value
         try:
-            self.app._flash_hint(f"  Model → {value}", 2.0)  # type: ignore[attr-defined]
+            self.app._flash_hint(f"  Model → {label}", 2.0)  # type: ignore[attr-defined]
         except Exception:
             pass  # flash hint is best-effort UI decoration; action already applied
         _dismiss_overlay_and_focus_input(self)

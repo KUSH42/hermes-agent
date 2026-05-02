@@ -3180,3 +3180,46 @@ internal clipping discipline.
 - AT-S1 scope: skip `.scroll_end()` calls where receiver `ast.Name.id` contains `log` (catches CopyableRichLog.scroll_end in `tool_panel/_actions.py`)
 - AST receiver extraction: `isinstance(callee.value, ast.Name)` to get the receiver variable name in attribute-call patterns
 - Both invariant tests are structural/lint (no pilot/App required) — run in ~2s total
+
+## Changelog 2026-05-02 — Config overlay: provider+model picker
+
+**Files:** `hermes_cli/tui/overlays/config.py`, `hermes_cli/tui/services/commands.py`
+
+**New APIs / changed behaviour:**
+- `ConfigOverlay._browsed_provider: str` — tracks which provider is highlighted in the provider list (may differ from config provider during browse)
+- `ConfigOverlay._provider_slugs: list[str]` — parallel slug list for `#co-provider-list` OptionList (index maps to option index)
+- `ConfigOverlay._populate_provider_list(active_provider)` — builds provider OptionList from `list_available_providers()`; marks authenticated providers with `✓`, active with `●`
+- `ConfigOverlay._populate_model_list(provider, current_model)` — calls `provider_model_ids(provider, force_refresh=False)`; inserts current model at index 0 if not in catalog
+- Model tab compose: `OptionList(id="co-provider-list", classes="co-list co-provider-list")` added above model list; CSS `.co-provider-list { max-height: 6; }`
+- Provider highlight → `_populate_model_list` for that provider (synchronous; static catalogs are fast)
+- Provider Enter → commits `_browsed_provider` + focuses `#co-model-list`
+- Model Enter → injects `/model {model}` or `/model {model} --provider {slug}` when provider changed
+- `handle_slash_command` `/model` branch now passes `stripped[len("/model "):].strip()` (full args) to `_apply_model_inline` so `--provider` flags survive
+
+**Gotchas:**
+- `cfg.get("models", {})` is always an empty dict in practice. The real config keys are `cfg["model"]["default"]` (current model) and `cfg["model"]["provider"]` (current provider). Don't confuse `model` (singular, the active config) with `models` (plural, a legacy section).
+- `list_available_providers()` returns all 34 CANONICAL_PROVIDERS entries with `authenticated: bool`. For most users only 1-2 are authenticated. The full list is still shown so users can switch — auth is informational.
+- `provider_model_ids(provider, force_refresh=False)` is fast for static providers (openrouter returns 31 curated models). For live providers (nous, copilot, codex), `force_refresh=True` would hit the network. Default `False` uses the cached/static catalog — correct for a picker.
+- When `_browsed_provider` differs from `cfg["model"]["provider"]`, `_confirm_model` injects `--provider` flag. The CLI's `parse_model_input` handles this natively. The TUI handler (`handle_slash_command`) previously only read `_cmd_parts[1]` — fixed to use full args string.
+
+## Changelog 2026-05-02 — Clipboard unification (spec_clipboard_copy_paste)
+
+**Files:** `hermes_cli/tui/osc52.py` (NEW), `hermes_cli/tui/input/widget.py`, `hermes_cli/tui/services/theme.py`, `hermes_cli/tui/tool_panel/_actions.py`, `hermes_cli/tui/widgets/status_bar.py`, `hermes_cli/tui/app.py`
+
+**New APIs:**
+- `hermes_cli/tui/osc52.py` — new module; `write(text: str) -> bool` sends OSC 52 sequence to terminal stdout. `_MAX_RAW_BYTES = 50_000`. Truncates with `_log.warning`; wraps in DCS passthrough when `$TMUX` is set; catches `OSError` and returns `False` (logs at DEBUG).
+- `hermes_cli/tui/input/widget.py` — `_primary_selection_cmd() -> list[str] | None` at module level; prefers `wl-paste --primary` on Wayland, falls back to `xclip -selection primary -o`, then `xsel --primary --output`, then `None`.
+
+**Changed behaviour:**
+- `ThemeService.copy_text_with_hint`: now always calls `_osc52.write(text)` first (primary path, fire-and-forget). Belt-and-suspenders: `app.copy_to_clipboard` if `_clipboard_available`, else `safe_run(xclip_cmd)` if `_xclip_cmd`. Never shows "no clipboard" error — OSC 52 is assumed to have worked. Hint always flashed: `"⎘  {n} chars copied"`.
+- `_actions.action_copy_output` / `action_copy_input`: route through `self.app._copy_text_with_hint(text)`. Flash `"nothing to copy"` warning on empty content instead of silently no-oping.
+- `StatusBar.action_copy_session_id`: routes through `self.app._copy_text_with_hint(session_id)` instead of `app.copy_to_clipboard`.
+- `HermesApp.on_mount`: removed 5-line block that added `--active` class to `#status-clipboard-warning` widget.
+- `input/widget.py on_click` (middle-click paste): now uses `_primary_selection_cmd()` — Wayland-aware instead of hardcoded `xclip`.
+
+**Gotchas:**
+- Textual `app` property is **read-only** on all Widget subclasses (it's a Python `property`, not an instance attr). Testing methods that call `self.app._copy_text_with_hint(...)` requires isolated subclass pattern: define `class _Stub(StatusBar)` with `@property def app(self): return mock`, then `object.__new__(_Stub)` to skip Textual init. Assigning `bar.app = MagicMock()` will raise `AttributeError: property 'app' of ... has no setter`.
+- OSC 52 write uses `os.write(sys.stdout.fileno(), ...)` — avoids Python buffering that can split the escape sequence across multiple writes. This is intentional; do not refactor to `sys.stdout.write()`.
+- tmux DCS passthrough: outer sequence is `\033Ptmux;\033<inner-seq>\033\\`. The inner OSC 52 sequence must NOT be double-escaped — just wrap the literal bytes. Any `\033` in the inner sequence must appear once, not escaped again.
+- Worktree creation gotcha: `EnterWorktree` branches from the *current HEAD*, not from the branch you're working on. If HEAD is not on your feature branch, run `git reset --hard <branch>` inside the worktree immediately after creation.
+- `safe_run` `on_error` for xclip is `lambda exc, e: ...` (2-arg: exception object + stderr string). Pass `exc_info=exc` to the logger (not `exc_info=True`) so the lambda captures the right exception.

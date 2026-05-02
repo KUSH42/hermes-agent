@@ -232,16 +232,14 @@ class TestSessionInlineIndicator:
                 break
         assert rule_found, "SessionBar { display: none !important; } rule not found in hermes.tcss"
 
-    def test_s_key_opens_sessions_overlay(self):
-        """'S' key binding exists in HermesApp BINDINGS pointing to open_sessions."""
+    def test_session_shortcuts_open_sessions_overlay(self):
+        """Session overlay bindings exist in HermesApp BINDINGS."""
         from hermes_cli.tui.app import HermesApp
         bindings = HermesApp.BINDINGS
-        s_bindings = [b for b in bindings if getattr(b, "key", None) == "S"]
-        assert len(s_bindings) >= 1, "HermesApp.BINDINGS must include a binding for 'S'"
-        action = getattr(s_bindings[0], "action", "")
-        assert "open_sessions" in action, (
-            f"'S' binding action must be 'open_sessions', got {action!r}"
-        )
+        session_bindings = [b for b in bindings if getattr(b, "action", None) == "open_sessions"]
+        keys = {getattr(b, "key", "") for b in session_bindings}
+        assert "ctrl+j" in keys
+        assert "ctrl+shift+h" in keys
 
     def test_total_bottom_chrome_height_reduced_session_case(self):
         """With BD-2, SessionBar is hidden unconditionally; no extra row when sessions > 1."""

@@ -594,7 +594,10 @@ class ConfigOverlay(Widget):
             _log.warning("_revert_skin_preview_if_any: CSS restore failed", exc_info=True)
 
     def _preview_syntax_theme(self, theme: str) -> None:
-        tm = getattr(self.app, "_theme_manager", None)
+        try:
+            tm = getattr(self.app, "_theme_manager", None)
+        except Exception:
+            tm = None
         if tm is not None and hasattr(tm, "_css_vars"):
             try:
                 tm._css_vars["preview-syntax-theme"] = theme
@@ -779,8 +782,14 @@ class ConfigOverlay(Widget):
             _cfg_save_config(cfg)
         except Exception:
             _log.warning("Failed to persist syntax theme %r", value, exc_info=True)
-        self._preview_syntax_theme(value)
-        self._take_skin_snapshot()
+        try:
+            self._preview_syntax_theme(value)
+        except Exception:
+            _log.warning("Failed to apply syntax theme %r", value, exc_info=True)
+        try:
+            self._take_skin_snapshot()
+        except Exception:
+            _log.debug("_confirm_syntax: snapshot refresh failed for %r", value, exc_info=True)
         try:
             self.query_one("#co-syntax-current", Static).update(f"Current: {value}")
         except NoMatches:

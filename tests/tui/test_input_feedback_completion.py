@@ -367,7 +367,7 @@ class TestInputLegendBar:
         from hermes_cli.tui.widgets.input_legend_bar import InputLegendBar
         InputLegendBar.show_legend(legend, "completion")
         assert "--visible" in legend._classes
-        assert "Tab=accept" in legend._content
+        assert "Tab=insert" in legend._content
 
     def test_legend_hidden_in_compact_mode(self):
         """InputLegendBar has display:none in CSS for density-compact."""

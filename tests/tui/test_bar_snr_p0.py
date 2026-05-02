@@ -225,7 +225,7 @@ class TestHintBarStreaming:
 
     def test_T15_render_streaming_starts_with_caret_c(self):
         from hermes_cli.tui.widgets.status_bar import HintBar
-        app = _make_mock_app(status_streaming=True)
+        app = _make_mock_app(status_streaming=True, agent_running=True)
         hb, cs = self._hint_bar_ctx(app)
         with patch.object(type(hb), "content_size", new_callable=PropertyMock, return_value=cs):
             with patch.object(type(hb), "hint", new_callable=PropertyMock, return_value=""):
@@ -234,7 +234,7 @@ class TestHintBarStreaming:
         assert "⌃C" in result
 
     def test_T16_render_streaming_with_hint_shows_flash(self):
-        app = _make_mock_app(status_streaming=True)
+        app = _make_mock_app(status_streaming=True, agent_running=True)
         hb, cs = self._hint_bar_ctx(app, width=200)
         with patch.object(type(hb), "content_size", new_callable=PropertyMock, return_value=cs):
             with patch.object(type(hb), "hint", new_callable=PropertyMock, return_value="File saved"):
@@ -244,7 +244,7 @@ class TestHintBarStreaming:
         assert "File saved" in result
 
     def test_T16b_render_streaming_hint_treats_brackets_as_plain_text(self):
-        app = _make_mock_app(status_streaming=True)
+        app = _make_mock_app(status_streaming=True, agent_running=True)
         hint = "/anim gradient [on|off|#c1 #c2]"
         hb, cs = self._hint_bar_ctx(app, width=200)
         with patch.object(type(hb), "content_size", new_callable=PropertyMock, return_value=cs):
@@ -255,7 +255,7 @@ class TestHintBarStreaming:
         assert hint in result
 
     def test_T17_render_streaming_wide_flash_absent_when_too_long(self):
-        app = _make_mock_app(status_streaming=True)
+        app = _make_mock_app(status_streaming=True, agent_running=True)
         hb, cs = self._hint_bar_ctx(app, width=40)
         with patch.object(type(hb), "content_size", new_callable=PropertyMock, return_value=cs):
             with patch.object(type(hb), "hint", new_callable=PropertyMock, return_value="x" * 200):
@@ -275,7 +275,7 @@ class TestHintBarStreaming:
         mock_start.assert_not_called()
 
     def test_T19_set_phase_stream_not_streaming_shimmer_start_called(self):
-        app = _make_mock_app(status_streaming=False, _animations_enabled=True)
+        app = _make_mock_app(status_streaming=False, agent_running=True, _animations_enabled=True)
         hb, _ = self._hint_bar_ctx(app)
         hb._phase = "idle"
         with patch.object(type(hb), "app", new_callable=PropertyMock, return_value=app):
@@ -296,7 +296,7 @@ class TestHintBarStreaming:
         mock_stop.assert_called_once()
 
     def test_T21_on_streaming_change_false_with_stream_phase_starts_shimmer(self):
-        app = _make_mock_app(status_streaming=False, _animations_enabled=True)
+        app = _make_mock_app(status_streaming=False, agent_running=True, _animations_enabled=True)
         hb, _ = self._hint_bar_ctx(app)
         hb._phase = "stream"
         hb._shimmer_timer = None

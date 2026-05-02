@@ -72,7 +72,10 @@ class SpinnerService(AppService):
             spinner_display = f"{frame} {hint_suffix}" if frame and hint_suffix else (frame or hint_suffix)
             padded = f" {spinner_display}" if spinner_display else ""
             if hasattr(inp, "placeholder"):
-                inp.placeholder = getattr(inp, "_idle_placeholder", "")
+                # While the running spinner/status is visible, suppress the idle
+                # composer hint so the row reads as one active state instead of
+                # "idle hints ... spinner" split across the input bar.
+                inp.placeholder = ""
             if not padded:
                 self._clear_spinner_overlay(overlay=overlay)
             elif getattr(app, "_animations_enabled", True):

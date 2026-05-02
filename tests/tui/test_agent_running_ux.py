@@ -30,8 +30,8 @@ def _make_app() -> HermesApp:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_tick_spinner_renders_on_overlay_not_placeholder():
-    """Running spinner renders on #spinner-overlay; input placeholder stays idle."""
+async def test_tick_spinner_renders_on_overlay_and_clears_idle_placeholder():
+    """Running spinner renders on #spinner-overlay and suppresses the idle hint."""
     from textual.widgets import Static
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
@@ -42,7 +42,7 @@ async def test_tick_spinner_renders_on_overlay_not_placeholder():
         await pilot.pause()
         inp = app.query_one("#input-area")
         overlay = app.query_one("#spinner-overlay", Static)
-        assert inp.placeholder == getattr(inp, "_idle_placeholder", "")
+        assert inp.placeholder == ""
         assert overlay.display is True
         assert str(overlay.render()) != ""
 
@@ -89,8 +89,8 @@ async def test_tick_spinner_plain_overlay_when_animations_disabled():
 
 
 @pytest.mark.asyncio
-async def test_tick_spinner_preserves_idle_placeholder_contract():
-    """Spinner cleanup restores the idle placeholder contract."""
+async def test_tick_spinner_restores_idle_placeholder_after_cleanup():
+    """Spinner cleanup restores the idle placeholder after the running state ends."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         inp = app.query_one("#input-area")
@@ -101,7 +101,7 @@ async def test_tick_spinner_preserves_idle_placeholder_contract():
         await pilot.pause()
         await asyncio.sleep(0.15)
         await pilot.pause()
-        assert inp.placeholder == idle_placeholder
+        assert inp.placeholder == ""
 
         app.agent_running = False
         app._svc_spinner.tick_spinner()

@@ -4625,7 +4625,15 @@ class HermesCLI:
             print_hero=print_hero if hero_renderable is None else False,
             hero_renderable=hero_renderable,
         )
-        return Text.from_ansi(capture.export_text(styles=True))
+        rendered = Text.from_ansi(capture.export_text(styles=True))
+        try:
+            if app is not None and hasattr(app, "get_css_variables"):
+                app_bg = app.get_css_variables().get("app-bg")
+                if app_bg:
+                    rendered.stylize(f"on {app_bg}")
+        except Exception:
+            logger.debug("startup banner app-bg lookup failed", exc_info=True)
+        return rendered
 
     def _build_startup_banner_template(self, plain_hero: str):
         """Pre-render a startup banner with a placeholder hero block.

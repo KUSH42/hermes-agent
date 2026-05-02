@@ -23,6 +23,7 @@ from hermes_cli.tui.input_widget import HermesInput
 from hermes_cli.tui.widgets import (
     HintBar,
     OutputPanel,
+    StartupBannerWidget,
     StatusBar,
     ThinkingWidget,
     UserMessagePanel,
@@ -548,6 +549,20 @@ async def test_input_background_equals_status_background():
         assert inp_bg == app_bg, f"HermesInput bg {inp_bg} != app bg {app_bg}"
         assert status_bg == app_bg, f"StatusBar bg {status_bg} != app bg {app_bg}"
         assert row_bg == app_bg, f"#input-row bg {row_bg} != app bg {app_bg}"
+
+
+@pytest.mark.asyncio
+async def test_startup_banner_background_equals_app_background():
+    """StartupBannerWidget must paint app-bg so hero art doesn't fall back to terminal black."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        startup_bg = _rgb(app.query_one(StartupBannerWidget).styles.background)
+        app_bg = _rgb(app.styles.background)
+
+        assert startup_bg == app_bg, (
+            f"StartupBannerWidget bg {startup_bg} != app bg {app_bg}"
+        )
 
 
 @pytest.mark.asyncio

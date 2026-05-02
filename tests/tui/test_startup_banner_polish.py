@@ -249,7 +249,7 @@ def test_T_SBP_05_hold_frame_queues_static_after_tte(cli_instance, monkeypatch):
 
 def test_T_SBP_06_no_tte_frames_skips_hold_frame(cli_instance, monkeypatch):
     """T-SBP-06: When iter_frames yields nothing (rendered_any=False),
-    _render_startup_banner_text is called only once (preflight), not for static banner."""
+    playback aborts before the hold loop; producer still builds the final static frame."""
     cli, cli_module, mock_app = cli_instance
 
     monkeypatch.setattr("cli.time.monotonic", lambda: 0.0)
@@ -260,7 +260,7 @@ def test_T_SBP_06_no_tte_frames_skips_hold_frame(cli_instance, monkeypatch):
         result = cli._play_tte_in_output_panel(_tte_cfg(cli_module), "hero")
 
     assert result is False
-    assert cli._splice_startup_banner_frame.call_count == 1
+    assert cli._splice_startup_banner_frame.call_count == 2
     # sleep should not have been called
     sleep_mock.assert_not_called()
 
@@ -536,6 +536,40 @@ def test_T_SBP_15_panel_width_zero_falls_back(monkeypatch):
     if captured_widths:
         # Should use app width (120) not panel width (0)
         assert captured_widths[0] == 120, f"Expected fallback to 120, got {captured_widths[0]}"
+
+
+def test_T_SBP_15b_startup_banner_uses_app_bg(monkeypatch):
+    """T-SBP-15b: TUI startup banner applies app-bg over captured banner text."""
+    sys.path.insert(0, str(REPO_ROOT))
+    import cli as cli_module
+    from rich.text import Text
+
+    mock_app = MagicMock()
+    mock_app.size.width = 120
+    mock_app._startup_output_panel_width = 0
+    mock_app.get_css_variables.return_value = {"app-bg": "#202224"}
+
+    cli = MagicMock()
+    cli._render_startup_banner_text = cli_module.HermesCLI._render_startup_banner_text.__get__(cli)
+    cli.model = "test-model"
+    cli.enabled_toolsets = []
+    cli.session_id = "test-session"
+    cli.agent = None
+
+    banner_text = Text("banner")
+
+    with patch.object(cli_module, "_hermes_app", mock_app), \
+         patch("cli.shutil.get_terminal_size", return_value=MagicMock(columns=80)), \
+         patch("hermes_cli.banner.build_welcome_banner", lambda **kw: None), \
+         patch("model_tools.get_tool_definitions", return_value=[]), \
+         patch("rich.text.Text.from_ansi", return_value=banner_text):
+        result = cli._render_startup_banner_text(print_hero=True)
+
+    assert result is banner_text
+    assert any(
+        span.style == "on #202224" and span.start == 0 and span.end == len("banner")
+        for span in result.spans
+    ), "Expected app-bg background span on startup banner text"
 
 
 # ---------------------------------------------------------------------------

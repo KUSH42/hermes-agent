@@ -283,7 +283,6 @@ class HermesApp(App):
         Binding("ctrl+shift+a", "open_anim_config", "Animation config", show=True, priority=True),
         Binding("ctrl+b", "toggle_browse_mode", "Browse", show=True, priority=True),
         Binding("ctrl+shift+h", "open_sessions", show=False),
-        Binding("S", "open_sessions", "Sessions", show=False),
         Binding("ctrl+w+n", "new_worktree_session", show=False),
         Binding("o", "focus_output", "Output", show=False),
         Binding("i", "focus_input_from_output", "Input", show=False),

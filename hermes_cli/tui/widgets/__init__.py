@@ -837,6 +837,7 @@ class StartupBannerWidget(Static):
         overflow-x: hidden;
         margin: 1 0 0 0;
         text-wrap: nowrap;
+        background: $app-bg;
     }
     """
 

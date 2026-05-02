@@ -1,6 +1,6 @@
 """Tests for UX Audit C — Affordance / Discoverability (Spec C).
 
-Covers C1 (remediation hint), C2 (ghost-text Tab suffix), C3 (S-key session hint),
+Covers C1 (remediation hint), C2 (ghost-text Tab suffix), C3 (session shortcut hint),
 C5 (dynamic header tooltip), C6 (SkillPicker footer).
 """
 from __future__ import annotations
@@ -11,7 +11,12 @@ from types import SimpleNamespace
 import pytest
 
 from hermes_cli.tui.tool_blocks._header import ToolHeader, _REMEDIATION_BY_CATEGORY
-from hermes_cli.tui.widgets.status_bar import HintBar, _build_hints, _hint_cache, KEY_S
+from hermes_cli.tui.widgets.status_bar import (
+    HintBar,
+    KEY_CTRL_SHIFT_H,
+    _build_hints,
+    _hint_cache,
+)
 from hermes_cli.tui.overlays.skill_picker import SkillPickerOverlay
 from hermes_cli.tui.tool_panel.density import DensityTier
 
@@ -116,7 +121,7 @@ class TestC2GhostTextHint:
 
 
 # ---------------------------------------------------------------------------
-# C3 — S-key session hint in HintBar idle phase
+# C3 — Session shortcut hint in HintBar idle phase
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(autouse=True)
@@ -127,13 +132,13 @@ def _clear_hint_cache():
 
 
 class TestC3SessionHint:
-    def test_idle_default_hint_contains_s_session(self):
+    def test_idle_default_hint_contains_ctrl_shift_h_session(self):
         hints = _build_hints("idle", "cyan")
         long_hint = hints["long"]
-        assert KEY_S in long_hint
+        assert KEY_CTRL_SHIFT_H in long_hint
         assert "session" in long_hint
 
-    def test_idle_minimal_hint_omits_s_session(self):
+    def test_idle_minimal_hint_omits_session_shortcut(self):
         hints = _build_hints("idle", "cyan")
         assert "session" not in hints["minimal"]
 

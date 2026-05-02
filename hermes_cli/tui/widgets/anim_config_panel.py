@@ -355,12 +355,13 @@ class AnimConfigPanel(Widget):
         self.action_dismiss()
 
     def action_dismiss(self) -> None:
+        self._save_fields_only()  # persist without re-showing overlay
         self.remove_class("--visible")
         try:
             from hermes_cli.tui.input_widget import HermesInput
             self.app.query_one(HermesInput).focus()
         except (NoMatches, ImportError):
-            pass
+            pass  # NoMatches: widget absent; ImportError: module not yet loaded — focus restoration is best-effort
 
     def on_blur(self, event: object) -> None:
         """Trap focus: while visible, never let focus escape the panel."""
@@ -567,6 +568,29 @@ class AnimConfigPanel(Widget):
         except Exception:
             # reactive not yet initialized; slider value skipped
             pass
+
+    def _save_fields_only(self) -> None:
+        """Persist current fields to disk without touching overlay visibility."""
+        payload = _fields_to_dict(self._fields)  # module-level helper, same as _do_save()
+        try:
+            self.app._svc_commands.persist_anim_config(payload)  # type: ignore[attr-defined]
+        except Exception:
+            _log.debug("_save_fields_only: persist failed", exc_info=True)
+            return  # don't flash success hint if persist failed
+        try:
+            from hermes_cli.tui.widgets import HintBar
+            bar = self.app.query_one(HintBar)  # type: ignore[attr-defined]
+            bar.hint = "✓ Saved to config"
+
+            def _clear_hint() -> None:
+                try:
+                    self.app.query_one(HintBar).hint = ""  # type: ignore[attr-defined]
+                except NoMatches:
+                    pass  # HintBar removed before timer fired — harmless
+
+            self.app.set_timer(2.0, _clear_hint)  # type: ignore[attr-defined]
+        except Exception:
+            _log.debug("_save_fields_only: hint flash failed", exc_info=True)
 
     def _do_save(self) -> None:
         self._push_to_overlay_all()

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -452,6 +452,56 @@ async def test_reasoning_checkbox_persists_config():
             from textual.widgets import Checkbox as _CB
             ov.on_checkbox_changed(_CB.Changed(cb, True))
         assert saved["display"]["show_reasoning"] is True
+
+
+@pytest.mark.asyncio
+async def test_syntax_tab_renders_fixture_with_selected_theme():
+    app = await _app_with_overlay()
+    async with app.run_test():
+        ov = app.query_one(ConfigOverlay)
+        ov.show_overlay(tab="syntax")
+        captured = {}
+
+        def _capture_syntax(*args, **kwargs):
+            captured["lexer"] = kwargs.get("lexer", args[1] if len(args) > 1 else None)
+            captured["theme"] = kwargs.get("theme")
+            return "syntax-renderable"
+
+        with patch("hermes_cli.tui.overlays.config._cfg_read_raw_config", return_value=_fake_cfg()), \
+             patch.object(type(app), "status_active_file", "main.rs", create=True), \
+             patch("hermes_cli.tui.overlays.config.Syntax", side_effect=_capture_syntax):
+            ov.refresh_data(_FakeCli())
+
+        fixture = ov.query_one("#co-syntax-fixture")
+        assert captured["lexer"] == "rust"
+        assert captured["theme"] == "monokai"
+        assert str(fixture.render()) == "syntax-renderable"
+
+
+@pytest.mark.asyncio
+async def test_syntax_highlight_live_previews_without_persisting():
+    app = await _app_with_overlay()
+    async with app.run_test():
+        ov = app.query_one(ConfigOverlay)
+        ov.show_overlay(tab="syntax")
+        theme_manager = MagicMock()
+        theme_manager._css_vars = {}
+        app._theme_manager = theme_manager
+
+        with patch("hermes_cli.tui.overlays.config._cfg_read_raw_config", return_value=_fake_cfg()), \
+             patch.object(ov, "_render_syntax_fixture") as mock_render:
+            ov.refresh_data(_FakeCli())
+            event = MagicMock()
+            event.option_list = MagicMock()
+            event.option_list.id = "co-syntax-list"
+            event.option = MagicMock()
+            event.option.id = "co-syntax-opt-nord"
+            event.stop = MagicMock()
+            ov.on_option_list_option_highlighted(event)
+
+        assert theme_manager._css_vars["preview-syntax-theme"] == "nord"
+        theme_manager.refresh_css.assert_called()
+        mock_render.assert_any_call("nord")
 
 
 # ────────────────────────────────────────────────────────────────────────────

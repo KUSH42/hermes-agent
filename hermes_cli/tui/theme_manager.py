@@ -515,6 +515,52 @@ class ThemeManager:
         self._component_vars = updated
         self._source_path = None  # dict loads cannot hot-reload
 
+    def list_skins(self) -> list[str]:
+        """Return the available skin names for TUI pickers."""
+        from hermes_cli.skin_engine import list_skins
+
+        names: list[str] = []
+        for entry in list_skins():
+            name = entry.get("name") if isinstance(entry, dict) else None
+            if isinstance(name, str) and name:
+                names.append(name)
+        return names
+
+    def load_skin(self, name: str) -> bool:
+        """Load a named skin for preview or confirmation in the TUI.
+
+        This bridges the CLI skin registry into ThemeManager so overlays can
+        work with skin names instead of only raw paths.
+        """
+        from hermes_cli.skin_engine import (
+            _resolve_user_skin_path,
+            load_skin_payload,
+            set_active_skin,
+        )
+
+        skin = set_active_skin(name)
+        user_path = _resolve_user_skin_path(name)
+
+        if user_path is not None:
+            payload = load_skin_payload(user_path)
+            updated_component = _defaults_as_strs()
+            updated_component.update(payload.component_vars)
+            self._css_vars = dict(payload.css_vars)
+            self._component_vars = updated_component
+            self._source_path = user_path
+            self._source_mtime = user_path.stat().st_mtime
+        else:
+            updated_component = _defaults_as_strs()
+            updated_component.update(getattr(skin, "component_vars", {}) or {})
+            self._css_vars = {}
+            self._component_vars = updated_component
+            self._source_path = None
+            self._source_mtime = 0.0
+
+        self._pending_reload_mtime = 0.0
+        self.apply()
+        return True
+
     def apply(self) -> None:
         """Push the loaded skin to the app via ``refresh_css()``."""
         try:

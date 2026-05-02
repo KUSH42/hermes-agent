@@ -169,6 +169,22 @@ class TestCO_H2_TabContentRefresh:
             assert ol.option_count > 0
 
     @pytest.mark.asyncio
+    async def test_skin_tab_populates_available_skins(self):
+        async with _make_app().run_test() as pilot:
+            ov = pilot.app.query_one(ConfigOverlay)
+            from hermes_cli.tui.theme_manager import ThemeManager
+            pilot.app._theme_manager = ThemeManager(pilot.app)  # type: ignore[attr-defined]
+            with patch(
+                "hermes_cli.tui.overlays.config._cfg_read_raw_config",
+                return_value=_fake_cfg(),
+            ):
+                ov.show_overlay(tab="skin")
+                await pilot.pause()
+            from textual.widgets import OptionList
+            ol = ov.query_one("#co-skin-list", OptionList)
+            assert ol.option_count > 1
+
+    @pytest.mark.asyncio
     async def test_watch_active_tab_no_refresh_when_hidden(self):
         """Tab switch while hidden must NOT call refresh (guard check)."""
         async with _make_app().run_test() as pilot:

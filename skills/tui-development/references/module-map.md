@@ -327,6 +327,9 @@ High-signal flow:
 
 - **`hermes_cli/tui/overlays/`** (subpackage — `overlays.py` moved to `widgets/overlays.py` for backward compat)
   `config.py` — `ConfigOverlay` (7 tabs: model, skin, syntax, options, reasoning, verbose, yolo).
+  `show_overlay(tab=...)` must call `_refresh_active_tab()` after adding
+  `--visible`; first-open population for the skin/model/syntax lists depends on
+  it, not only on `watch_active_tab()`.
   `interrupt.py` — `InterruptOverlay` (7 kinds: CLARIFY/APPROVAL/SUDO/SECRET/UNDO/NEW_SESSION/MERGE_CONFIRM); FIFO queue; `layer: interrupt`.
   `skill_picker.py` — `SkillPickerOverlay`; `"prefix"`/`"chord"` trigger modes.
   `reference.py` — `HistorySearchOverlay`, `KeymapOverlay`, `ToolPanelHelpOverlay`.

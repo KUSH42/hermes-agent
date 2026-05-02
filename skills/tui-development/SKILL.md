@@ -3101,6 +3101,7 @@ internal clipping discipline.
 - `Widget.focus()` uses `call_later` — deferred to next event tick. Focus assertions MUST `await pilot.pause()` first.
 - `Widget.visible` checks CSS `visibility` rule, NOT `display`. `display:none` does NOT set `visible=False`.
 - `patch.object(widget, "app")` FAILS — `app` is a Textual read-only property. Patch `widget.query_one` instead.
+- `ConfigOverlay` syntax-tab preview must render a real `rich.syntax.Syntax` object and also update `ThemeManager._css_vars["preview-syntax-theme"]` during OptionList highlight. Persisting only `display.skin_overrides.vars.preview-syntax-theme` updates config text but produces no live preview, and `Esc` revert will restore the open-time snapshot unless `_take_skin_snapshot()` is refreshed after commit.
 - `except Exception: pass` with an explicit comment IS compliant. AST sweeps that flag all bare-pass swallows will false-positive on best-effort flash-hint sites.
 - Test `test_tab_state_preserved_across_switch` updated: CO-H2 intentionally refreshes the list on tab switch (old "preserve manual highlight" expectation was the pre-fix buggy behavior).
 

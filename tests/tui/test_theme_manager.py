@@ -186,6 +186,47 @@ class TestThemeManagerLoad:
         tm = ThemeManager(app)
         tm.apply()  # must not raise
 
+    def test_list_skins_returns_names(self) -> None:
+        app = _mock_app()
+        tm = ThemeManager(app)
+        with patch(
+            "hermes_cli.skin_engine.list_skins",
+            return_value=[
+                {"name": "default", "description": "", "source": "builtin"},
+                {"name": "aurora", "description": "", "source": "user"},
+            ],
+        ):
+            assert tm.list_skins() == ["default", "aurora"]
+
+    def test_named_skin_load_updates_theme_state(self, tmp_path: Path) -> None:
+        skin_path = tmp_path / "aurora.yaml"
+        skin_path.write_text(
+            json.dumps(
+                {
+                    "vars": {"primary": "#123456"},
+                    "component_vars": {"cursor-color": "#abcdef"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        app = _mock_app()
+        tm = ThemeManager(app)
+
+        with patch(
+            "hermes_cli.skin_engine.set_active_skin",
+            return_value=MagicMock(component_vars={"cursor-color": "#111111"}),
+        ) as mock_set_active_skin, patch(
+            "hermes_cli.skin_engine._resolve_user_skin_path",
+            return_value=skin_path,
+        ):
+            assert tm.load_skin("aurora") is True
+
+        mock_set_active_skin.assert_called_once_with("aurora")
+        app.refresh_css.assert_called_once()
+        assert tm.css_variables["primary"] == "#123456"
+        assert tm.css_variables["cursor-color"] == "#abcdef"
+        assert tm._source_path == skin_path
+
 
 # ---------------------------------------------------------------------------
 # ThemeManager — hot reload

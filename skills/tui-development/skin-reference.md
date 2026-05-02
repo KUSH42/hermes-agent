@@ -15,6 +15,12 @@ Full reference for the hermes-agent skin system. Consumed by `tui-development` s
 
 **Layer 2 — `theme_manager.py` + `skin_loader.py` (Textual CSS variable layer)**
 - `ThemeManager` translates skin files into Textual CSS variables via `get_css_variables()`.
+- `ThemeManager.list_skins()` is the TUI-facing discovery API for the config
+  overlay. It returns plain skin names sourced from `skin_engine.list_skins()`.
+- `ThemeManager.load_skin(name)` is the TUI-facing named preview/apply path for
+  the config overlay. It must update the global active skin with
+  `skin_engine.set_active_skin(name)`, sync ThemeManager state for user skin
+  files, and call `apply()` so highlight-preview works immediately.
 - `apply_skin(skin_vars: dict | Path)` on `HermesApp` — single entry point; calls `_theme_manager.load_dict()` or `load([path])` then `apply()`.
 - `ThemeManager.css_variables` property: `{**_css_vars, **_component_vars}` — component vars win on conflict.
 

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 _log = logging.getLogger(__name__)
 
+from rich.syntax import Syntax
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -195,7 +196,8 @@ class ConfigOverlay(Widget):
             tab = "model"
         self.active_tab = tab
         self.add_class("--visible")
-        self._focus_active_tab()  # focus AFTER visible — deterministic
+        self._refresh_active_tab()
+        self.call_after_refresh(self._focus_active_tab)
 
     def hide_overlay(self) -> None:
         self.remove_class("--visible", "--modal")
@@ -472,17 +474,46 @@ class ConfigOverlay(Widget):
                 ol.highlighted = schemes.index(self._current_syntax)
         except NoMatches:
             pass
+        self._render_syntax_fixture(self._current_syntax)
+
+    def _syntax_fixture_content(self) -> tuple[str, str]:
+        active = getattr(self.app, "status_active_file", "") or ""
+        ext = Path(active).suffix.lstrip(".").lower() if active else ""
+        ext_to_lang = {
+            "py": "python", "js": "javascript", "ts": "typescript",
+            "go": "go", "rs": "rust", "rb": "ruby", "sh": "bash",
+            "java": "java", "cpp": "cpp", "c": "c", "md": "markdown",
+        }
+        lang = ext_to_lang.get(ext, "python")
+        return lang, _FIXTURE_BY_LANG.get(lang, FIXTURE_CODE)
+
+    def _render_syntax_fixture(self, theme: str) -> None:
         try:
-            active = getattr(self.app, "status_active_file", "") or ""
-            ext = Path(active).suffix.lstrip(".").lower() if active else ""
-            _EXT_TO_LANG = {
-                "py": "python", "js": "javascript", "ts": "typescript",
-                "go": "go", "rs": "rust", "rb": "ruby", "sh": "bash",
-                "java": "java", "cpp": "cpp", "c": "c", "md": "markdown",
-            }
-            lang = _EXT_TO_LANG.get(ext, "python")
-            fixture = _FIXTURE_BY_LANG.get(lang, FIXTURE_CODE)
-            self.query_one("#co-syntax-fixture", Static).update(fixture)
+            css = self.app.get_css_variables()
+            background = css.get("app-bg", "#1e1e1e")
+        except Exception:
+            _log.debug("ConfigOverlay syntax fixture CSS lookup failed", exc_info=True)
+            background = "#1e1e1e"
+        try:
+            lang, fixture = self._syntax_fixture_content()
+            self.query_one("#co-syntax-fixture", Static).update(
+                Syntax(
+                    fixture,
+                    lexer=lang,
+                    theme=theme,
+                    line_numbers=False,
+                    word_wrap=False,
+                    indent_guides=False,
+                    background_color=background,
+                )
+            )
+        except Exception:
+            _log.debug("ConfigOverlay syntax fixture render failed", exc_info=True)
+            try:
+                _lang, fixture = self._syntax_fixture_content()
+                self.query_one("#co-syntax-fixture", Static).update(fixture)
+            except NoMatches:
+                pass
         except NoMatches:
             pass
 
@@ -503,26 +534,42 @@ class ConfigOverlay(Widget):
         except Exception:
             _log.warning("_revert_skin_preview_if_any: CSS restore failed", exc_info=True)
 
+    def _preview_syntax_theme(self, theme: str) -> None:
+        tm = getattr(self.app, "_theme_manager", None)
+        if tm is not None and hasattr(tm, "_css_vars"):
+            try:
+                tm._css_vars["preview-syntax-theme"] = theme
+                if hasattr(tm, "refresh_css"):
+                    tm.refresh_css()
+            except Exception:
+                _log.debug("syntax preview refresh_css(%r) failed", theme, exc_info=True)
+        self._render_syntax_fixture(theme)
+
     # ── Event wiring ──────────────────────────────────────────────────────
 
     def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
-        """Preview skin on highlight WITHOUT committing to disk."""
-        if event.option_list.id != "co-skin-list":
-            return
+        """Preview skin/syntax on highlight WITHOUT committing to disk."""
         opt_id = getattr(event.option, "id", None) or ""
-        if not opt_id.startswith("co-skin-opt-"):
+        if event.option_list.id == "co-skin-list":
+            if not opt_id.startswith("co-skin-opt-"):
+                return
+            name = opt_id[len("co-skin-opt-"):]
+            tm = getattr(self.app, "_theme_manager", None)
+            if tm is None:
+                return
+            if not hasattr(tm, "load_skin"):
+                return
+            try:
+                tm.load_skin(name)
+            except Exception:
+                _log.debug("skin preview load_skin(%r) failed", name, exc_info=True)
+            event.stop()
             return
-        name = opt_id[len("co-skin-opt-"):]
-        tm = getattr(self.app, "_theme_manager", None)
-        if tm is None:
-            return
-        if not hasattr(tm, "load_skin"):
-            return
-        try:
-            tm.load_skin(name)
-        except Exception:
-            _log.debug("skin preview load_skin(%r) failed", name, exc_info=True)
-        event.stop()
+        if event.option_list.id == "co-syntax-list":
+            if not opt_id.startswith("co-syntax-opt-"):
+                return
+            self._preview_syntax_theme(opt_id[len("co-syntax-opt-"):])
+            event.stop()
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
@@ -632,6 +679,8 @@ class ConfigOverlay(Widget):
             _cfg_save_config(cfg)
         except Exception:
             _log.warning("Failed to persist syntax theme %r", value, exc_info=True)
+        self._preview_syntax_theme(value)
+        self._take_skin_snapshot()
         try:
             self.query_one("#co-syntax-current", Static).update(f"Current: {value}")
         except NoMatches:
